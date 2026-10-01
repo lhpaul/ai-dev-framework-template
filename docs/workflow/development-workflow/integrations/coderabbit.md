@@ -362,6 +362,7 @@ Four kinds of CodeRabbit comment are explicitly **excluded** from that activity 
 | ---------------------------------------------------------- | --------------------------------------------------------------- |
 | CodeRabbit review on the current head, or a `success` status on it | Review complete — proceed to Step 7.3                  |
 | CodeRabbit `failure` or `error` status on the current head (not a rate/review-limit notice) | Ends the wait at once. Bound findings → `needs_fixes`; a review on the current head keeps its verdict; otherwise **Reviewer failed** — `RESULT=escalate`, `REASON=coderabbit_status_failed`, `reviewer-failed` applied |
+| A reviews, statuses, or activity-comment poll read is refused with HTTP 401 or 403 (not a rate limit) | Ends the wait at once. **Reviewer failed** — `RESULT=escalate`, `REASON=coderabbit-read-denied`, `READ_DENIED_DETAIL=<gh error>`, exit 2, `reviewer-failed` applied; never No verdict yet or the `no_review` kept skip. A rate-limit 403 or another failed read keeps polling |
 | No review yet and `elapsed < max_wait`                     | Not finished yet — wait another `poll_interval` and poll again  |
 | `elapsed >= max_wait` and only a `Review skipped` banner   | Escalate — `REASON=review_skipped_banner` (fix `.coderabbit.yaml`) |
 | `elapsed >= max_wait` and a pause or rate-limit banner     | Escalate — `REASON=rate_limit_max_retries`                      |

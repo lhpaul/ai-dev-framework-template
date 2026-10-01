@@ -142,6 +142,7 @@ gh api "repos/$OWNER/$REPO/pulls/$PR_NUMBER/reviews" \
 | `CHANGES_REQUESTED`  | `needs_fixes`   | Blocking findings; fix and re-run the loop     |
 | No review on the current head when the wait budget runs out | `waiting_on_reviewer` | **No verdict yet** — `REASON=reviewer-no-verdict-yet`, `WAIT_EXPIRED_DETAIL=review_not_submitted`, exit 4; not an escalation and no `reviewer-failed` label |
 | Reviewer request failed | `escalate` | `REASON=unavailable` — apply unavailability policy |
+| The reviews poll read is refused with HTTP 401 or 403 (not a rate limit) | `escalate` | **Reviewer failed** — `REASON=copilot-read-denied`, `READ_DENIED_DETAIL=<gh error>`, exit 2, `reviewer-failed` applied; never No verdict yet. A rate-limit 403 or another failed read keeps polling |
 
 Only a review whose `commit_id` is the current head counts. A review of an
 older revision is not this head's verdict, so a run that sees only older

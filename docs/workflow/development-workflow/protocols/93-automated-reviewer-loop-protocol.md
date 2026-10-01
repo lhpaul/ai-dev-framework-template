@@ -538,6 +538,24 @@ new failure reasons are `bugbot-run-timed-out`,
 whose description is a rate or review-limit notice keeps the rate-limit
 handling.
 
+**A refused polling read is a failure.** When GitHub refuses a polling read
+with an authorization or permission error (HTTP 401 or 403, `Bad
+credentials`, `Resource not accessible`, `Forbidden`, `Unauthorized`), the
+platform ends at once with `RESULT=escalate`,
+`REASON=<platform>-read-denied`, and `READ_DENIED_DETAIL=<gh error line>`,
+and the loop applies `reviewer-failed`. It is never No verdict yet or a kept
+skip. The reasons are `copilot-read-denied` (reviews read),
+`greptile-read-denied` (trigger-comment reactions read),
+`devin-read-denied` (reviews, check runs, and statuses reads), and
+`coderabbit-read-denied` (bound reviews, CodeRabbit status, and activity
+comment reads). An HTTP 403 whose text is a rate limit (primary or secondary)
+is not a refusal. That error, and any other failed read such as a 5xx or a
+network error, keeps polling, and budget expiry stays No verdict yet. Ronda
+and Bugbot already escalate `fetch-failed` on any failed check-run read. The
+Claude companion reports a refused run read as `unavailable` (exit 3).
+PR-Agent keeps its rule: a failed read leaves the last successful read in
+force.
+
 #### Built-in wait budgets
 
 | Platform | Built-in default (seconds) |

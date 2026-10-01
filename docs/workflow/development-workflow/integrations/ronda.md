@@ -79,6 +79,7 @@ every poll:
 | Found, `status=completed`, `conclusion=failure`                  | `RESULT=escalate` (`REASON=ronda_pass_failed`, `RONDA_CHECK_TITLE` names the cause) |
 | Found, `status=completed`, any other conclusion (including `action_required`) | `RESULT=escalate` (`REASON=ronda_unexpected_conclusion`) — fail closed |
 | `max_wait` exhausted with no completed run observed               | **No verdict yet** — `RESULT=waiting_on_reviewer` (`REASON=reviewer-no-verdict-yet`, `WAIT_EXPIRED_DETAIL=check_not_completed`), exit 4; not an escalation and no `reviewer-failed` label |
+| The check-run read fails (including an HTTP 401 or 403 refusal)   | `RESULT=escalate` (`REASON=fetch-failed`), `reviewer-failed` applied; never No verdict yet |
 
 `max_wait` is Ronda's own wait budget: 1200 s by default, configurable as
 `review.wait_budgets.ronda` (see "Reviewer wait budgets and outcome classes"

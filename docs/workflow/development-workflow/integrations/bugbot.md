@@ -257,7 +257,8 @@ also leads to No verdict yet.
 `RESULT=escalate`, `REASON=bugbot-run-timed-out` (formerly reported as
 `timeout`), and applies `reviewer-failed`. The disabled, usage-limit,
 fetch-failed, trigger-failed, and head-unavailable outcomes keep their
-existing reasons.
+existing reasons. A failed check-run or issue-comment read, including an
+HTTP 401 or 403 refusal, is `fetch-failed` and never No verdict yet.
 
 **Request record and re-wait.** The loop records the `bugbot run` comment as
 `REVIEW_REQUESTED_AT` / `REVIEW_REQUEST_REF` (`PLATFORM_<n>_REQUEST_REF`).

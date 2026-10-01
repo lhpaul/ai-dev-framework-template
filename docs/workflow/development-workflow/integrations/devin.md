@@ -72,6 +72,7 @@ The helper script:
 | `elapsed >= max_wait` and no Devin check run was ever seen                                   | Stale findings recovery, then the kept skip `no_check_run` if none found (`NO_VERDICT_YET=1`, `DISPLAY_RESULT=no verdict yet (non-blocking skip: no_check_run)`; no `reviewer-failed` label) |
 | `elapsed >= max_wait` and a Devin check run was seen but has not completed                   | **No verdict yet** — `RESULT=waiting_on_reviewer`, `REASON=reviewer-no-verdict-yet`, `WAIT_EXPIRED_DETAIL=check_not_completed`, exit 4; not an escalation |
 | A Devin check run on the head completed `failure`, `timed_out`, `cancelled`, `action_required`, `startup_failure`, or `stale`, or a Devin status is `failure` or `error`, and no finding or completion review is bound to the head | **Reviewer failed** — `RESULT=escalate`, `REASON=devin_run_failed`, `reviewer-failed` applied (also when the budget ends inside the 120 s grace) |
+| A reviews, check-runs, or statuses poll read is refused with HTTP 401 or 403 (not a rate limit) | **Reviewer failed** — `RESULT=escalate`, `REASON=devin-read-denied`, `READ_DENIED_DETAIL=<gh error>`, exit 2, `reviewer-failed` applied; never No verdict yet or the `no_check_run` kept skip. A rate-limit 403 or another failed read keeps polling |
 
 `max_wait` is Devin's own wait budget (#1789): 1200 s by default on
 implementation branches. Devin is the only platform that does not review

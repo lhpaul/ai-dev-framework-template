@@ -86,6 +86,7 @@ thumbs_up=$(gh api repos/{owner}/{repo}/issues/comments/{review_comment_id}/reac
 | `thumbs_up > 0`                            | Review complete — proceed to Step 7.3 to check for inline comments |
 | `thumbs_up == 0` and `elapsed < max_wait`  | Not finished yet — wait another `poll_interval` and poll again     |
 | `thumbs_up == 0` and `elapsed >= max_wait` | **No verdict yet** — `RESULT=waiting_on_reviewer`, `REASON=reviewer-no-verdict-yet`, `WAIT_EXPIRED_DETAIL=no_acknowledgement`, exit 4; not an escalation and no `reviewer-failed` label |
+| The reactions poll read is refused with HTTP 401 or 403 (not a rate limit) | **Reviewer failed** — `RESULT=escalate`, `REASON=greptile-read-denied`, `READ_DENIED_DETAIL=<gh error>`, exit 2, `reviewer-failed` applied; never No verdict yet. A rate-limit 403 or another failed read keeps polling |
 
 `max_wait` is Greptile's own wait budget: 1200 s by default, configurable as
 `review.wait_budgets.greptile` (see "Reviewer wait budgets and outcome
