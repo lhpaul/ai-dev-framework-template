@@ -9813,10 +9813,19 @@ reviewer_loop_compare_restore_aggregate() {
   [ "${compare_mode:-0}" -eq 1 ] || return 0
   [ -n "${compare_first_blocking_result:-}" ] || return 0
 
+  # BR 5 / D10: a loop-level gate escalation recorded during the platform loop
+  # is never replaced by a platform-precedence result.
+  [ "${reviewer_loop_gate_break_result:-}" = "escalate" ] && return 0
+
   if ! selection="$(reviewer_loop_precedence_select)" || [ -z "$selection" ]; then
     selection=""
   fi
   IFS='|' read -r rank platform result reason <<<"$selection"
+  # A gate needs_fixes deferral outranks No verdict yet / clean platform rows.
+  if [ "${reviewer_loop_gate_break_result:-}" = "needs_fixes" ] \
+      && { [ -z "$selection" ] || [ "${rank:-5}" -ge 3 ]; }; then
+    return 0
+  fi
   if [ -z "$selection" ] || ! [ "${rank:-5}" -le 3 ] 2>/dev/null; then
     # Defensive: a blocking outcome was seen but the recorded evidence holds no
     # rank 1-3 entry. Fall back to the first blocking outcome (fail closed:
@@ -11171,6 +11180,7 @@ reviewer_loop_platform_pre_dispatch() {
         platform_result_tokens+=("${platform_name}:deferred (${expensive_gate_last_reason:-unknown})")
       fi
       reviewer_loop_pre_dispatch_action="break"
+      reviewer_loop_gate_break_result="$aggregate_result"
       return 0
     fi
     stage_skip_gate_state="passed"
@@ -15515,6 +15525,11 @@ compare_first_blocking_result=""
 compare_first_blocking_reason=""
 compare_first_blocking_output=""
 compare_first_blocking_status=0
+# Loop-level gate outcome (#1789, BR 5 / plan D10): set to the aggregate_result a
+# gate (pre-dispatch expensive gate, #1656 second pass, ready-phase preflight,
+# ensure_pr_ready) produced when it broke the platform loop. A gate escalation
+# keeps precedence over every platform row in the compare restore.
+reviewer_loop_gate_break_result=""
 phase_after_clean_enabled=0
 phase_after_clean_started=0
 phase_after_clean_net_new_blocker=0
@@ -15609,6 +15624,7 @@ for index in "${!platforms[@]}"; do
       if reviewer_loop_second_local_pass_before_ready_gate "$pr_number"; then
         :
       else
+        reviewer_loop_gate_break_result="$aggregate_result"
         break
       fi
       # Issue #1649: preflight expensive ready-phase gates BEFORE gh pr ready.
@@ -15677,6 +15693,7 @@ for index in "${!platforms[@]}"; do
       unset _eg_i _eg_plat
       if [ "$_eg_ready_preflight_failed" -eq 1 ]; then
         unset _eg_ready_preflight_failed
+        reviewer_loop_gate_break_result="$aggregate_result"
         break
       fi
       unset _eg_ready_preflight_failed
@@ -15707,6 +15724,7 @@ for index in "${!platforms[@]}"; do
           aggregate_output="$(printf 'RESULT=escalate\nREASON=ready_for_review_failed\nCOMMENT_COUNT=0\nBLOCKING_COUNT=0\nSUGGESTION_COUNT=0\n')"
         fi
         aggregate_status=2
+        reviewer_loop_gate_break_result="escalate"
         break
       fi
       unset ready_status

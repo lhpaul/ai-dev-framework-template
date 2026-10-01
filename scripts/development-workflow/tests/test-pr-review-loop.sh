@@ -22262,6 +22262,7 @@ _1789_reset_processing_globals() {
   compare_first_blocking_reason=""
   compare_first_blocking_output=""
   compare_first_blocking_status=0
+  reviewer_loop_gate_break_result=""
   platform_peer_evidence=()
   platform_result_records=()
   platform_reviewed_heads=()
@@ -23369,6 +23370,80 @@ compare_first_blocking_output="$(_1789_o escalate r)"; compare_first_blocking_st
 platform_peer_evidence=("pr-agent|clean|")
 reviewer_loop_compare_restore_aggregate
 run_test "1789_T3.8_defensive_fallback_first_blocking" "escalate|r|2" "${aggregate_result}|${aggregate_reason}|${aggregate_status}"
+# Loop-level gate escalations recorded during the platform loop keep precedence
+# over every platform row in compare mode (BR 5 / D10; cycle-6 finding).
+# _1789_gate_cap_run <order> [compare_mode]: drive the real pre-dispatch
+# function with the expensive gate returning deferral_cap, in a subshell, and
+# print "<result>|<reason>|<status>|<label adds on required>|<rewait key present>".
+_1789_gate_cap_run() {
+  local _order="$1" _mode="${2:-1}"
+  (
+    _1789_reset_processing_globals
+    compare_mode="$_mode"
+    stage_skip_enabled=0
+    pr_number=42
+    is_expensive_reviewer_platform() { [ "$1" = "bugbot" ]; }
+    expensive_reviewer_gate() {
+      printf 'EXPENSIVE_GATE_PLATFORM=%s\nEXPENSIVE_GATE_RESULT=deferral_cap\nEXPENSIVE_GATE_REASON=cap\n' "$2"
+      return 1
+    }
+    _w() { reviewer_loop_process_platform_output "local-ai-reviewer" 1 "$(print_no_verdict_yet local-ai-reviewer check_not_completed "$loop_head_sha" "")" 4 1 >/dev/null 2>&1; }
+    if [ "$_order" = "waiting_first" ]; then
+      _w
+      reviewer_loop_platform_pre_dispatch "bugbot" 2 >/dev/null 2>&1
+    elif [ "$_order" = "findings_first" ]; then
+      reviewer_loop_process_platform_output "pr-agent" 1 "$(_1789_o needs_fixes blocking)" 1 1 >/dev/null 2>&1
+      reviewer_loop_platform_pre_dispatch "bugbot" 2 >/dev/null 2>&1
+    else
+      # The gate breaks the loop, so nothing runs after it.
+      reviewer_loop_platform_pre_dispatch "bugbot" 1 >/dev/null 2>&1
+    fi
+    reviewer_loop_compare_restore_aggregate
+    printf '%s|%s|%s|%s\n' "$aggregate_result" "$aggregate_reason" "$aggregate_status" "$(kv_value_default RESULT "$aggregate_output" "")"
+    reviewer_failed_label_required_for_result "$aggregate_result" "$aggregate_reason" && echo "label_required" || echo "label_not_required"
+  )
+}
+run_test "1789_T3.9_gate_cap_after_waiting_stays_escalate" \
+  "escalate|expensive_gate_deferral_cap|2|escalate" "$(_1789_gate_cap_run waiting_first | sed -n 1p)"
+run_test "1789_T3.9_gate_cap_after_waiting_label_required" "label_required" \
+  "$(_1789_gate_cap_run waiting_first | sed -n 2p)"
+run_test "1789_T3.9_gate_cap_after_findings_stays_escalate" \
+  "escalate|expensive_gate_deferral_cap|2|escalate" "$(_1789_gate_cap_run findings_first | sed -n 1p)"
+run_test "1789_T3.9_gate_cap_after_findings_label_required" "label_required" \
+  "$(_1789_gate_cap_run findings_first | sed -n 2p)"
+# Guard: normal (non-compare) mode is unchanged by the restore (a no-op there).
+run_test "1789_T3.9_normal_mode_gate_cap_escalates" \
+  "escalate|expensive_gate_deferral_cap|2|escalate" "$(_1789_gate_cap_run gate_first 0 | sed -n 1p)"
+# Another in-loop loop-level escalation (#1656 second pass local_pass_unavailable,
+# ready_for_review_failed): simulated exactly as the loop records it.
+for _1789_gr in local_pass_unavailable ready_for_review_failed; do
+  _1789_reset_processing_globals
+  compare_mode=1
+  reviewer_loop_process_platform_output "bugbot" 1 "$(print_no_verdict_yet bugbot check_not_completed "$loop_head_sha" "")" 4 1 >/dev/null 2>&1
+  aggregate_result="escalate"; aggregate_reason="$_1789_gr"; aggregate_status=2
+  aggregate_output="$(_1789_o escalate "$_1789_gr")"
+  reviewer_loop_gate_break_result="escalate"
+  reviewer_loop_compare_restore_aggregate
+  run_test "1789_T3.9_gate_${_1789_gr}_stays_escalate" "escalate|${_1789_gr}|2" "${aggregate_result}|${aggregate_reason}|${aggregate_status}"
+done
+# A gate needs_fixes deferral outranks No verdict yet but not a platform failure.
+_1789_reset_processing_globals
+compare_mode=1
+reviewer_loop_process_platform_output "bugbot" 1 "$(print_no_verdict_yet bugbot check_not_completed "$loop_head_sha" "")" 4 1 >/dev/null 2>&1
+aggregate_result="needs_fixes"; aggregate_reason="expensive_gate_deferred"; aggregate_status=1
+reviewer_loop_gate_break_result="needs_fixes"
+reviewer_loop_compare_restore_aggregate
+run_test "1789_T3.9_gate_needs_fixes_beats_waiting" "needs_fixes|expensive_gate_deferred" "${aggregate_result}|${aggregate_reason}"
+_1789_reset_processing_globals
+compare_mode=1
+reviewer_loop_process_platform_output "devin" 1 "$(_1789_o escalate devin_run_failed)" 2 1 >/dev/null 2>&1
+aggregate_result="needs_fixes"; aggregate_reason="expensive_gate_deferred"; aggregate_status=1
+reviewer_loop_gate_break_result="needs_fixes"
+reviewer_loop_compare_restore_aggregate
+run_test "1789_T3.9_platform_failed_beats_gate_needs_fixes" "escalate|devin_run_failed" "${aggregate_result}|${aggregate_reason}"
+# Source: every gate break site records the gate outcome.
+run_test "1789_T3.9_all_gate_break_sites_record_outcome" "5" \
+  "$(grep -c '^ *reviewer_loop_gate_break_result="' "$_1789_loop_src")"
 # Source: the main flow's compare block calls the restore function and no
 # longer copies compare_first_blocking_* into the aggregate itself.
 run_test "1789_T3.8_main_flow_uses_restore" "1" \
