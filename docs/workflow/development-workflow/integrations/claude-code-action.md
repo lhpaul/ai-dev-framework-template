@@ -212,8 +212,8 @@ loop re-waits once on the same revision (Protocol 91 Step 7,
 time instead of dispatching again (both flags are required together). The
 companion reads `actions/runs/<id>` and adopts it only when the id matches,
 the run's `path` ends with the workflow file (an optional `@<ref>` suffix
-on the path is ignored), and its name's `PR #<n>` token
-names this PR; it then polls only that run and keeps the original dispatch
+on the path is ignored), and a `PR #<n>` token in its `display_title` (the
+run title) or `name` names this PR; it then polls only that run and keeps the original dispatch
 time as the review boundary. A run that fails those checks or cannot be read
 is not adopted: the companion prints a `WARN` and dispatches normally. Only
 the run recorded for the current head and run id is ever adopted; a recorded

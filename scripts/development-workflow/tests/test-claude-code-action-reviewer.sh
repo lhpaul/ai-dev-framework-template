@@ -246,7 +246,12 @@ case "$*" in
     [ "${MOCK_T45_888_READ:-ok}" = "fail" ] && { echo "gh: Not Found (HTTP 404)" >&2; exit 1; }
     _concl=null
     [ -n "${MOCK_T45_888_CONCLUSION:-}" ] && _concl="\"${MOCK_T45_888_CONCLUSION}\""
-    printf '{"id":888,"name":"%s","path":"%s","status":"%s","conclusion":%s,"html_url":"https://example.invalid/runs/888"}\n' \
+    # MOCK_T45_888_DISPLAY_TITLE adds GitHub's display_title field (the
+    # PR-specific run title) when set; by default the field is absent.
+    _title=""
+    [ -n "${MOCK_T45_888_DISPLAY_TITLE:-}" ] && _title="\"display_title\":\"${MOCK_T45_888_DISPLAY_TITLE}\","
+    printf '{"id":888,%s"name":"%s","path":"%s","status":"%s","conclusion":%s,"html_url":"https://example.invalid/runs/888"}\n' \
+      "$_title" \
       "${MOCK_T45_888_NAME:-Claude Code Review — PR #42}" \
       "${MOCK_T45_888_PATH:-.github/workflows/claude-code-review.yml}" \
       "${MOCK_T45_888_STATUS:-in_progress}" "$_concl"
@@ -333,6 +338,20 @@ run_test "1789_T4.5_pr_mismatch_dispatches_exit_4" "4" \
   "$(MOCK_T45_888_NAME='Claude Code Review — PR #421' _t45_run "${_t45_adopt[@]}")"
 run_test "1789_T4.5_pr_mismatch_dispatched" "1" "$(_t45_calls '/dispatches')"
 run_test "1789_T4.5_pr_mismatch_warns" "1" "$(grep -c '^WARN: recorded Claude Code Action run 888 is not named for PR #42' "$_t45_dir/err" || true)"
+# GitHub's run response can carry only the workflow name in `name` and the
+# PR-specific run title in `display_title`: the run is still adopted.
+run_test "1789_T4.5_display_title_pr_adopted_exit_4" "4" \
+  "$(MOCK_T45_888_NAME='Claude Code Review' MOCK_T45_888_DISPLAY_TITLE='Claude Code Review — PR #42' _t45_run "${_t45_adopt[@]}")"
+run_test "1789_T4.5_display_title_pr_no_dispatch" "0" "$(_t45_calls '/dispatches')"
+run_test "1789_T4.5_display_title_pr_dispatch_result" "1" "$(grep -c '^DISPATCH_RESULT=adopted$' "$_t45_dir/out" || true)"
+# A display_title naming another PR (with a plain workflow name) is not adopted.
+run_test "1789_T4.5_display_title_other_pr_dispatches_exit_4" "4" \
+  "$(MOCK_T45_888_NAME='Claude Code Review' MOCK_T45_888_DISPLAY_TITLE='Claude Code Review — PR #421' _t45_run "${_t45_adopt[@]}")"
+run_test "1789_T4.5_display_title_other_pr_dispatched" "1" "$(_t45_calls '/dispatches')"
+# Neither field names a PR: not adopted.
+run_test "1789_T4.5_no_pr_in_either_field_dispatched_exit_4" "4" \
+  "$(MOCK_T45_888_NAME='Claude Code Review' MOCK_T45_888_DISPLAY_TITLE='Claude Code Review' _t45_run "${_t45_adopt[@]}")"
+run_test "1789_T4.5_no_pr_in_either_field_dispatched" "1" "$(_t45_calls '/dispatches')"
 # A recorded run that cannot be read is not adopted.
 run_test "1789_T4.5_unreadable_dispatches_exit_4" "4" "$(MOCK_T45_888_READ=fail _t45_run "${_t45_adopt[@]}")"
 run_test "1789_T4.5_unreadable_dispatched" "1" "$(_t45_calls '/dispatches')"

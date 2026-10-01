@@ -419,8 +419,12 @@ if [ -n "$ADOPT_RUN_ID" ]; then
                         ($p | wfmatch)
                         or ([$p | match("@"; "g").offset]
                             | any(. as $i | $p[0:$i] | wfmatch))),
-            pr_ok: ((((.name // "") | tostring)
-                     | capture("PR #(?<pr>[0-9]+)(?:[^0-9]|$)")? | .pr) == $pr)
+            # The PR-specific run title is in display_title; name may hold
+            # only the workflow name. Accept the PR number from either.
+            pr_ok: ([.display_title, .name]
+                    | map(select(. != null) | tostring
+                          | capture("PR #(?<pr>[0-9]+)(?:[^0-9]|$)")? | .pr)
+                    | any(. == $pr))
           }
         else error("response is not workflow run " + $id) end' 2>/dev/null)" || ADOPT_STATUS=$?
   if [ "$ADOPT_STATUS" -ne 0 ] || [ -z "$ADOPT_INFO" ]; then
