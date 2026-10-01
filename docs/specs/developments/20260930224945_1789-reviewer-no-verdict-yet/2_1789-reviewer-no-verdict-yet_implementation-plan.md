@@ -203,7 +203,8 @@ is the newest current-head trigger; a newer, still-unanswered trigger is kept
   to stderr and the platform falls back to its built-in default with source
   `default`. An invalid `CODEX_GITHUB_MAX_WAIT` keeps its existing warning and
   then falls through to the YAML value or default.
-- Claude companion cap: a `review.wait_budgets.claude-code-action` value
+- Claude companion cap (plan addition beyond BR 10, like D13's upper
+  bound): a `review.wait_budgets.claude-code-action` value
   inside that range but above 3600 would fail every run at the companion's
   own `--max-wait` check (`claude-code-action-reviewer.sh:197-200`, exit 2,
   V41), so it prints
@@ -535,8 +536,10 @@ Runner side (Protocol 91 Step 7, D11 rows of the decision-gate matrix):
 `NO_FAILURE_DETECTED=0` it does not; it names each `FAILED_PEER_PLATFORMS`
 platform as carrying failure evidence with `reviewer-failed` applied, and
 adds the human action "fix the failed peer's problem and re-run the loop"
-(spec Use Case 3). With the key absent or any other value it makes no
-failure statement either way (fails closed). The failure-evidence peer does
+(spec Use Case 3). With `0` and no or an empty `FAILED_PEER_PLATFORMS`, it
+states that `reviewer-failed` was applied and names no peer. With the key
+absent or any other value it makes no failure statement either way (fails
+closed). The failure-evidence peer does
 not change the row taken: the automatic re-wait (`available`) still runs,
 because BR 7 keys it on the pending platform's No verdict yet and the peer's
 skip is non-blocking (D10 rank 4); the re-wait invocation evaluates the peer
@@ -615,8 +618,10 @@ On a `waiting_on_reviewer` aggregate with a reason in
 `REVIEWER_LOOP_NO_VERDICT_REASONS`, the loop also prints
 `PENDING_REVIEW_REQUESTED_AT`, `PENDING_REVIEW_WAITED_SECONDS`, and
 `NO_FAILURE_DETECTED`. Its value follows this invocation's D9 label
-decision: new `reviewer_loop_failed_peer_platforms` prints, comma-separated
-in evaluation order, each platform whose `platform_peer_evidence` entry
+decision: new `reviewer_loop_failed_peer_platforms` prints, one
+`<platform>|<reason>` pair per line in evaluation order (the platform names
+form `FAILED_PEER_PLATFORMS`, comma-separated; the reasons feed the summary
+clause below), each platform whose `platform_peer_evidence` entry
 satisfies `reviewer_failed_label_required_for_result` (the entries D9's
 `reviewer_failed_required` is set from, `pr-review-loop.sh:9839-9841`,
 `:9115-9124`); an empty list prints `NO_FAILURE_DETECTED=1`, and a non-empty
@@ -625,8 +630,9 @@ waiting aggregate never requires the label itself (D9), so the two agree.
 Under D10 a waiting aggregate has no `escalate` or findings peer, so a
 non-empty list is a failure-evidence skip
 (`REVIEWER_LOOP_FAILURE_SKIP_REASONS`, D8) on a platform evaluated before the
-pending one: a skip does not stop evaluation and a waiting result does
-(V42). Example: CodeRabbit CLI `skipped`/`no_output`, then Bugbot No verdict
+pending one in a normal run, because a skip does not stop evaluation and a
+waiting result does (V42); in a `--compare` run, which does not stop, it can
+be any evaluated platform. Example: CodeRabbit CLI `skipped`/`no_output`, then Bugbot No verdict
 yet → aggregate `waiting_on_reviewer`, label applied,
 `NO_FAILURE_DETECTED=0`, `FAILED_PEER_PLATFORMS=coderabbit-cli`. The summary
 result line for `reviewer-no-verdict-yet` reads
@@ -1501,6 +1507,9 @@ no reviewer-loop result or wait-budget text affected by this change.
    `success` run (D15). Claude run selection has a
    binding for both paths: fresh dispatch by the D15 Claude dispatch rule,
    including the response-without-run-id state, and re-wait adoption by D11.
+   A waiting result whose `NO_FAILURE_DETECTED` is absent or not `0`/`1`
+   makes no failure statement, and `0` with no peer list states only that
+   the label was applied (D11 failure statement).
 3. Precedence / order — pass: D7 states override → configured → default then
    adjustments; D10 states ranks and tie-break; loop-level escalations stay
    after platform aggregation.
@@ -1536,7 +1545,8 @@ no reviewer-loop result or wait-budget text affected by this change.
    skip, or a failure, never clean.
 6. Terminal vs waiting vs escalation — pass: every D11 runner row ends in
    continue, re-wait once, or a named Waiting on reviewer stop; failure paths
-   escalate.
+   escalate. A Waiting on reviewer stop with `NO_FAILURE_DETECTED=0` names
+   the `FAILED_PEER_PLATFORMS` and the fix-and-re-run human action (D11).
 
 ---
 
