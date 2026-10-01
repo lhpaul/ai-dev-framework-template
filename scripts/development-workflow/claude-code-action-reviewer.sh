@@ -415,7 +415,10 @@ if [ -n "$ADOPT_RUN_ID" ]; then
         if type == "object" and ((.id // "") | tostring) == $id then
           {
             path_ok: (((.path // "") | tostring) as $p
-                      | ($p == $wf) or ($p | endswith("/" + $wf))),
+                      | def wfmatch: . == $wf or endswith("/" + $wf);
+                        ($p | wfmatch)
+                        or ([$p | match("@"; "g").offset]
+                            | any(. as $i | $p[0:$i] | wfmatch))),
             pr_ok: ((((.name // "") | tostring)
                      | capture("PR #(?<pr>[0-9]+)(?:[^0-9]|$)")? | .pr) == $pr)
           }

@@ -310,6 +310,24 @@ run_test "1789_T4.5_path_mismatch_dispatches_exit_4" "4" \
 run_test "1789_T4.5_path_mismatch_dispatched" "1" "$(_t45_calls '/dispatches')"
 run_test "1789_T4.5_path_mismatch_warns" "1" "$(grep -c "^WARN: recorded Claude Code Action run 888 is not a 'claude-code-review.yml' run" "$_t45_dir/err" || true)"
 run_test "1789_T4.5_path_mismatch_binds_new_run" "1" "$(grep -c '^REVIEW_REQUEST_REF=777$' "$_t45_dir/out" || true)"
+# GitHub may return a ref-qualified path (<file>@<ref>): still the same
+# workflow file, so it is adopted without a duplicate dispatch.
+for _t45_ref in '@main' '@refs/heads/main'; do
+  _t45_tag="${_t45_ref//[^a-z]/_}"
+  run_test "1789_T4.5_path_ref_${_t45_tag}_adopted_exit_4" "4" \
+    "$(MOCK_T45_888_PATH=".github/workflows/claude-code-review.yml${_t45_ref}" _t45_run "${_t45_adopt[@]}")"
+  run_test "1789_T4.5_path_ref_${_t45_tag}_no_dispatch" "0" "$(_t45_calls '/dispatches')"
+  run_test "1789_T4.5_path_ref_${_t45_tag}_dispatch_result" "1" "$(grep -c '^DISPATCH_RESULT=adopted$' "$_t45_dir/out" || true)"
+done
+# A ref-qualified path of another workflow file, or a lookalike file name, is
+# not adopted.
+run_test "1789_T4.5_path_other_ref_dispatches_exit_4" "4" \
+  "$(MOCK_T45_888_PATH=.github/workflows/other.yml@main _t45_run "${_t45_adopt[@]}")"
+run_test "1789_T4.5_path_other_ref_dispatched" "1" "$(_t45_calls '/dispatches')"
+run_test "1789_T4.5_path_bak_dispatches_exit_4" "4" \
+  "$(MOCK_T45_888_PATH=.github/workflows/claude-code-review.yml.bak _t45_run "${_t45_adopt[@]}")"
+run_test "1789_T4.5_path_bak_dispatched" "1" "$(_t45_calls '/dispatches')"
+unset _t45_ref _t45_tag
 # A recorded run named for another PR is not adopted.
 run_test "1789_T4.5_pr_mismatch_dispatches_exit_4" "4" \
   "$(MOCK_T45_888_NAME='Claude Code Review — PR #421' _t45_run "${_t45_adopt[@]}")"
