@@ -366,24 +366,40 @@ Loop side:
 - Ledger entries carry `run_id`, `head_sha`, `result`, and `reason` today, and
   `waiting_on_reviewer` runs already persist an entry (`_post_review_summary`
   runs for every non-`skipped` result, `:14470-14486`), so the state needs no
-  new ledger field.
+  new ledger field. Adoption (below) reads the D12 additive keys
+  `requested_at`, `requested_at_source`, and `request_ref` from that entry's
+  platform record.
 - The re-wait never counts toward the cycle caps: the per-run and lifetime
   counts are taken only from `needs_fixes`/`needs_rerun` entries
   (`reviewer_loop_history_entries_count`, `:11797-11830`), and Protocol 91
   increments `cycle` only when it dispatches a fixer.
 
 Outstanding-request adoption in re-wait mode (no duplicate request while one
-is outstanding). An outstanding request is one posted after the current head
-commit's committer time with no verdict yet:
+is outstanding). The **outstanding request** is the one this loop recorded,
+not one inferred from timestamps: the platform's `platform_results[]` record
+in the newest ledger entry that made the state `rewait` (same `run_id`,
+`head_sha` equal to the current loop head, `waiting_on_reviewer`), when that
+record has `requested_at_source` `request`. Its `request_ref` and
+`requested_at` (D12) identify the request. The head commit's committer time
+is never used: it does not establish when that revision became the PR head,
+so a request or run created after it can still belong to the previous head.
+The binding is sound because the recording invocation read the loop head
+before posting the request, and its entry's `head_sha` equals the current
+head; a request posted then was posted while the current head was already
+the PR head. New `reviewer_loop_rewait_recorded_request <history_payload> <head_sha> <platform>`
+prints `<request_ref> <requested_at>` (either may be empty) or nothing; the
+loop calls it per platform in re-wait mode and hands the values to the
+handler. When it prints nothing, the handler behaves as in a fresh run and
+logs `INFO: no recorded outstanding request for <platform> on <head>; requesting a review`.
 
-| Platform | Re-wait behavior |
+| Platform | Re-wait behavior with a recorded request |
 | --- | --- |
-| `bugbot` | Phase 2 adopts the newest `BUGBOT_TRIGGER_COMMENT` issue comment created after the head commit time instead of posting (this adoption also applies outside re-wait mode); the #1390 re-trigger is skipped |
-| `codex-github` | `--max-retriggers 0` (D5) |
-| `greptile` | Reuse the newest trigger comment created after the head commit time that has no bot thumbs-up, regardless of the `max_wait` reuse window |
-| `pr-agent` | The trigger reuse window becomes "since the head commit time" |
-| `coderabbit` | No conditional `@coderabbitai review` re-trigger when one was posted after the head commit time |
-| `claude-code-action` | Companion `--adopt-existing-run`: when a run named for this PR was created after the head commit time (any status), poll it instead of dispatching |
+| `bugbot` | Adopt the recorded trigger comment (`request_ref`, still present) instead of posting; the #1390 re-trigger is skipped. Outside re-wait mode the handler posts as today; no timestamp-based adoption |
+| `codex-github` | `--max-retriggers 0` (D5); no recorded request needed, the companion's own duplicate guard applies (V10) |
+| `greptile` | Reuse the recorded trigger comment when it still has no bot thumbs-up, regardless of the `max_wait` reuse window; a thumbs-up on it is that request's answer |
+| `pr-agent` | Treat the recorded trigger comment as the pending trigger instead of the reuse-window search |
+| `coderabbit` | No conditional `@coderabbitai review` re-trigger (a recorded request exists) |
+| `claude-code-action` | Pass `--adopt-run-id <request_ref> --adopt-requested-at <requested_at>` to the companion (both required together). It skips Phase 1 dispatch, polls only `actions/runs/<request_ref>` after checking that the run's `path` ends with the workflow file and its name's `PR #<n>` token equals this PR, sets `DISPATCH_TIME` to the recorded `requested_at` so the review fetch keeps the original `.submitted_at >= DISPATCH_TIME` boundary (`claude-code-action-reviewer.sh:429-434`, V24), and never searches by `created_at`. A missing run or a run that fails those checks is not adopted: the companion prints a `WARN` and dispatches normally. With a recorded `requested_at` but no `request_ref` (the first invocation never saw a run) the loop passes no adoption flags and the companion dispatches, because GitHub creates the run at dispatch time and an accepted dispatch that produced no visible run for a whole budget has no run that could answer |
 | `copilot` | No change: re-requesting a reviewer with a pending request is a no-op |
 | `devin`, `ronda`, `haystack` | No change: they post no request |
 | `local-ai-reviewer`, `coderabbit-cli` | No change: the local review runs again (BR 3) |
@@ -411,6 +427,7 @@ Per dispatched platform `n` (the second local pass uses its existing index
 | `PLATFORM_<n>_WAIT_BUDGET_ADJUSTMENT` | `none`, `documentation_branch`, `large_diff` |
 | `PLATFORM_<n>_REQUESTED_AT` | the handler's `REVIEW_REQUESTED_AT` when it posted or adopted a request, else the wait start (ISO-8601 UTC) |
 | `PLATFORM_<n>_REQUESTED_AT_SOURCE` | `request` or `wait_start` |
+| `PLATFORM_<n>_REQUEST_REF` | the handler's `REVIEW_REQUEST_REF` when it printed one; omitted otherwise |
 | `PLATFORM_<n>_LATENCY_SECONDS` | end minus requested-at, for `verdict_received`, `reviewer_failed`, `existing_handling` |
 | `PLATFORM_<n>_WAITED_SECONDS` | end minus requested-at, for `no_verdict_yet` |
 | `PLATFORM_<n>_ELAPSED_SECONDS` | end minus requested-at, for `skipped` and `skipped_failure_evidence` |
@@ -423,8 +440,13 @@ and Bugbot (trigger comment `created_at`), PR-Agent and CodeRabbit (their
 trigger `created_at` when they posted or reused one), Copilot (time of the
 reviewer request), `codex-github-reviewer.sh` (its `TRIGGER_TIME`, printed by
 `emit_reviewed_head_if_known` and on the pending exit), and
-`claude-code-action-reviewer.sh` (its `DISPATCH_TIME` or the adopted run's
-`created_at`).
+`claude-code-action-reviewer.sh` (its `DISPATCH_TIME`, which in adoption is
+the recorded `requested_at`, D11). Greptile, Bugbot, and PR-Agent also print
+`REVIEW_REQUEST_REF` with the trigger comment `id` from the REST response
+(Greptile already captures it; Bugbot and PR-Agent read it from the POST
+response they discard or parse today, V25), and the Claude companion prints
+it with the workflow run `id` once it has found or adopted the run. D11
+adoption reads these recorded values.
 
 The summary comment gains a **Reviewer timing** section with one line per
 platform (at most 200 characters), for example
@@ -433,7 +455,8 @@ or `- pr-agent: verdict reused from an earlier run on this revision`. The same
 fields are added to each `platform_results[]` ledger record as additive keys
 (`outcome_class`, `wait_budget_seconds`, `wait_budget_source`,
 `wait_budget_adjustment`, `requested_at`, `requested_at_source`,
-`elapsed_seconds`, `elapsed_kind` = `latency`/`waited`/`elapsed`, `reused`),
+`request_ref`, `elapsed_seconds`, `elapsed_kind` =
+`latency`/`waited`/`elapsed`, `reused`),
 schema string unchanged. The ledger copy matters because the summary comment
 is rewritten in place every run; only the ledger keeps the per-run latency
 history that tuning (Use Case 5) reads.
@@ -502,6 +525,8 @@ cite is identical at `13bf4c7f`.
 | V21 | In-loop readers of the normalized ledger outcome (Rule 5) | `grep -n '\.result //' scripts/development-workflow/pr-review-loop.sh`, then `grep -n 'reviewer_loop_local_latest_verdict\|reviewer_loop_platform_clean_for_head' scripts/development-workflow/pr-review-loop.sh` for the callers | Platform-record readers: `:9210` in `reviewer_loop_local_latest_verdict` (callers `reviewer_loop_retain_local_evidence_for_current_run` `:9169`, `reviewer_loop_local_pass_required` `:9357`, `reviewer_loop_missed_finding_records` `:10363`), `:9414` in `reviewer_loop_platform_clean_for_head` (caller `:9476`, #1692 stage skip), and `:10374` (missed-finding walk); the other hits (`:1708`, `:8710`, `:11867-11877`, `:14112`) read entry-level or gate fields, not `platform_results[].result`. Cross-script readers are V13's. Writers: `grep -rn 'reviewer_loop_normalize_platform_outcome\|reviewer_loop_platform_result_record_json' scripts \| grep -v '/tests/'` finds the normalizer's only caller in `reviewer_loop_platform_result_record_json` (`:9008`) and that function's three callers `:9182`, `:9894`, `:10266`, all in `pr-review-loop.sh` |
 | V22 | Documentation surfaces that restate reviewer-loop timeout, wait, or label semantics | `grep -rln -i 'times out\|REASON=timeout\|~20 min\|(20 min)\|1200 s\|reviewer-failed' docs/workflow docs/project REVIEW.md AGENTS.md .claude .cursor .codex .agents` | Every hit is in Documentation Updates except: `retro-metrics.md` (historical batch records), `provider-contingency-runner-failover.md` and Protocol 90 (agent stream timeouts, not reviewer waits), and `github-projects.md`, `AGENTS.md`, `.claude/agents/orchestrator.md`, `.cursor/agents/orchestrator.md` (list `reviewer-failed` as an operational label only) |
 | V23 | `run_with_timeout` forwards a command's own 124/137 (reviewer-loop finding, revision `06d435e7`, whose script files equal `13bf4c7f`) | Extract the function with `sed -n '/^run_with_timeout() {/,/^}/p' scripts/development-workflow/local-ai-reviewer.sh`, source it, and call `run_with_timeout 3 <out> <err> sh -c '<cmd>'` for `exit 124`, `exit 137`, `sleep 6`; read both copies (`local-ai-reviewer.sh:174-223`, `coderabbit-cli-reviewer.sh:289-314`), their callers (`grep -n run_with_timeout` → `local-ai-reviewer.sh:696`, `:1314`; `coderabbit-cli-reviewer.sh:325`, `:328`), and the non-zero handling (`grep -n "malformed_output\|no_output\|cli_failed"`) | This host has no GNU `timeout` with `--kill-after`, so the fallback path ran: `exit 124` → 124 after 1 s, `exit 137` → 137 after 2 s, `sleep 6` → 124 after 4 s (budget 3). The fallback returns 124 itself only in its watchdog branch (`:203-220`) and otherwise forwards the child status through `wait` (`:222`); the GNU branch (`:180-186`) returns `timeout`'s status, which GNU documents as 124 on expiry and otherwise the command's own status (not reproducible on this host). The CodeRabbit CLI copy has the same shape. Early non-zero exits with unreadable stdout reach `malformed_output` (`local-ai-reviewer.sh:1392`) and `no_output` / `cli_failed` (`coderabbit-cli-reviewer.sh:346-352`, `:523-525`). The strict pass (`:696-704`) treats any non-zero status as `strict_pass_failed` |
+| V24 | Claude companion run selection and review boundary (reviewer-loop finding, revision `06d435e7`) | Read `claude-code-action-reviewer.sh:247-455` and `.github/workflows/claude-code-review.yml:11-58`; `grep -c "head_sha\|HEAD_SHA" scripts/development-workflow/claude-code-action-reviewer.sh` | The companion selects the newest `workflow_dispatch` run whose `path` ends with the workflow file, whose name carries `PR #<this PR>`, and whose `created_at >= POLL_AFTER_TIME` (`DISPATCH_TIME` minus 10 s; `:336-353`); the grep returns 0, so it has no head SHA input or check; a completed `success` run then reads bot reviews with `.submitted_at >= DISPATCH_TIME` (`:429-434`) and returns clean unless one requested changes (`:449-455`). The workflow takes only `pr_number` (`:16-21`), reviews the PR at execution time (`:58`), and cancels an in-progress run for the same PR when a new one is dispatched (`:26-28`) |
+| V25 | Request identifiers the request-posting handlers can record (revision `06d435e7`) | `grep -nF -e 'issues/$pr_number/comments" --method POST' -e '-X POST "repos/$repo/issues/$pr_number/comments"' scripts/development-workflow/pr-review-loop.sh` (hits `:2110`, `:3673`, `:4289`, `:5528`) and `grep -n "@coderabbitai review" scripts/development-workflow/pr-review-loop.sh`, then read the hits | Greptile captures the trigger comment `id` (`:2110`, `--jq '.id'`); Bugbot posts with output discarded (`:3673-3674`, `:4289-4290`); PR-Agent keeps the POST response and reads its `created_at` (`:5528-5533`); CodeRabbit posts with `gh pr comment` (`:7405`, `:7465`) and needs only the recorded `requested_at` under D11 |
 
 ### Factual claim evidence
 
@@ -552,8 +577,11 @@ and `local-http-reviewer.sh`, which pass the exit code through unchanged to
 their standalone callers; the companion's usage text and
 `local-ai-reviewer.md` document exit 4.
 
-`claude-code-action-reviewer.sh` exit 4 (new): the only invoker is the loop
-handler (V17).
+`claude-code-action-reviewer.sh` exit 4, `--adopt-run-id` /
+`--adopt-requested-at`, and `REVIEW_REQUEST_REF` (new): the only invoker is
+the loop handler (V17). The new ledger key `request_ref` has one reader,
+`reviewer_loop_rewait_recorded_request` (D11); the existing ledger readers in
+the tables above select fields by name and ignore additive keys (T5.3).
 
 `run_with_timeout` expiry semantics (D4 watchdog contract; V23): in
 `local-ai-reviewer.sh`, the ordinary review call (`:1314`) reads
@@ -571,7 +599,7 @@ two copies (V23).
 | --- | --- | --- |
 | Documentation-branch shortening applies (D7) | platforms in D1, source `default`, branches `spec/*` and `implementation-plan/*` | `reviewer_wait_budget_resolve`; tests T1.4–T1.6 |
 | Large-diff lengthening applies (D7) | non-documentation branches, no `--max-wait`, changed files above threshold, value below `LARGE_DIFF_MAX_WAIT` | `reviewer_wait_budget_resolve`; test T1.7 |
-| Re-wait mode suppresses re-requests (D11) | invocations whose `reviewer_loop_no_verdict_rewait_state` is `rewait`; the six request-posting handlers in the D11 table | each handler's request step; tests T4.3–T4.6 |
+| Re-wait mode suppresses re-requests (D11) | invocations whose `reviewer_loop_no_verdict_rewait_state` is `rewait`; the six request-posting handlers in the D11 table; only when `reviewer_loop_rewait_recorded_request` returns a recorded request for that platform (Codex excepted) | each handler's request step; tests T2.12, T4.3–T4.6 |
 | Bugbot #1390 re-trigger fires (D3) | fresh (non-re-wait) Bugbot runs whose latest current-head check run is not completed at the re-trigger point | `run_bugbot_review`; tests T2.11–T2.12 |
 | Runner re-waits (D11) | Step 7 results with `NO_VERDICT_REWAIT=available`, once per head per `PR_REVIEW_LOOP_RUN_ID` | Protocol 91 Step 7 table; tests T4.1–T4.2 and smoke Step 6 |
 | Label required (D9) | each invocation that reaches the post-loop path; per-platform failure evidence or a loop-level escalation in that invocation | `reviewer_loop_reconcile_reviewer_failed_label`; tests T3.1–T3.6 |
@@ -580,7 +608,7 @@ two copies (V23).
 deliberately does not inspect a stopped reviewer's partial output; the Bugbot
 and Claude Code Action changes key on GitHub API enumerated fields
 (check-run and workflow-run `status`/`conclusion`), not on prose; adoption
-matches comments whose bodies this loop itself posts.
+reads the request id and time this loop recorded in its own ledger (D11).
 
 ---
 
@@ -646,15 +674,17 @@ harness can call them.
   `claude_code_action_run_failed`; Bugbot's `timed_out` conclusion reason
   becomes `bugbot-run-timed-out`; Bugbot's budget bounds both attempts with
   the D3 re-trigger point; request-posting handlers print
-  `REVIEW_REQUESTED_AT` (D12).
+  `REVIEW_REQUESTED_AT` and, where D12 says so, `REVIEW_REQUEST_REF`.
 - [ ] `reviewer_failed_label_required_for_result` (D9) and new
   `reviewer_loop_reconcile_reviewer_failed_label`, called from the post-loop
   path.
 - [ ] `reviewer_loop_precedence_select` (D10) used by the compare-mode
   aggregate restore; update the `--compare` help text.
-- [ ] `reviewer_loop_no_verdict_rewait_state`, `reviewer_loop_rewait_mode`, the
-  `NO_VERDICT_REWAIT` / `PENDING_REVIEW_*` / `NO_FAILURE_DETECTED` keys, and
-  `--max-retriggers 0` for Codex in re-wait mode (D5, D11).
+- [ ] `reviewer_loop_no_verdict_rewait_state`, `reviewer_loop_rewait_mode`,
+  `reviewer_loop_rewait_recorded_request` and the per-handler adoption of the
+  recorded request (D11 adoption table), the `NO_VERDICT_REWAIT` /
+  `PENDING_REVIEW_*` / `NO_FAILURE_DETECTED` keys, and `--max-retriggers 0`
+  for Codex in re-wait mode (D5, D11).
 - [ ] Timing (D12): wait-start/end capture around both dispatch sites,
   `reviewer_loop_record_platform_timing`, a `platform_timing_records` array
   (cleared with the other per-run arrays and filtered by
@@ -683,8 +713,10 @@ harness can call them.
   watchdog contract in its own `run_with_timeout` (`:289-314`); the `:339`
   `timeout` skip tests the flag instead of status 124.
 - [ ] `scripts/development-workflow/claude-code-action-reviewer.sh`: exit 4
-  when no run completed within the budget; `--adopt-existing-run` flag (D11);
-  print `REVIEW_REQUESTED_AT`; exit-code header comment updated.
+  when no run completed within the budget; `--adopt-run-id` and
+  `--adopt-requested-at` flags with the D11 run checks and preserved
+  review-fetch boundary; print `REVIEW_REQUESTED_AT` and
+  `REVIEW_REQUEST_REF` (D12); usage and exit-code header comment updated.
 - [ ] `scripts/development-workflow/codex-github-reviewer.sh`: print
   `REVIEW_REQUESTED_AT=$TRIGGER_TIME` from `emit_reviewed_head_if_known` and
   on the pending exit when a trigger time is known; no verdict-logic change.
@@ -757,7 +789,7 @@ resolver is a single function.
 | T2.9 | Second local pass returning waiting → aggregate waiting, no `failed_for_head` record | AC-1 |
 | T2.10 | Ledger normalization `no_verdict_yet` for a waiting record and for a kept skip recorded through `reviewer_loop_process_platform_output` (the `platform_result_records` entry, not only the normalizer called directly); `apply-readiness-labels.sh` refuses it as `reviewer-check-absent` (extend `test-apply-readiness-labels.sh`) | AC-1 |
 | T2.11 | Bugbot fresh run: no completed run by the D3 re-trigger point → exactly one re-trigger, total wait bounded by the budget | AC-3, AC-6 |
-| T2.12 | Bugbot re-wait mode: adopts the existing trigger, posts no comment | AC-11 |
+| T2.12 | Bugbot re-wait mode with a recorded request: adopts the recorded trigger comment, posts no comment | AC-11 |
 | T3.1 | Reconcile: PR carries `reviewer-failed`, run re-reviews and is clean → `--remove-label` issued | AC-7 |
 | T3.2 | Reconcile: same, but every platform replayed from a clean ledger (#1692) → `--remove-label` issued | AC-7 |
 | T3.3 | Reconcile: needs-fixes or waiting run with no failure evidence → label removed / not added | AC-8 |
@@ -769,10 +801,10 @@ resolver is a single function.
 | T4.1 | Re-wait state: no prior entry → `fresh` and `NO_VERDICT_REWAIT=available`; prior waiting entry same run and head → `rewait` and `used`; other head or other run → `fresh`; unset run id or unavailable ledger → `untracked` | AC-11 |
 | T4.2 | A re-wait entry adds nothing to the cycle counts (`reviewer_loop_history_entries_count` unchanged) | AC-11 |
 | T4.3 | Codex in re-wait mode receives `--max-retriggers 0` | AC-11 |
-| T4.4 | Greptile and PR-Agent in re-wait mode reuse an older trigger; CodeRabbit posts no conditional re-trigger | AC-11 |
-| T4.5 | Claude companion `--adopt-existing-run` polls the existing run and does not dispatch | AC-11 |
-| T4.6 | Bugbot outside re-wait mode adopts a trigger posted after the head commit instead of posting | AC-11 |
-| T5.1 | Timing keys for a verdict, a No verdict yet, a skip, a failure, and a replay; `REQUESTED_AT_SOURCE` `request` vs `wait_start` | AC-12 |
+| T4.4 | Greptile and PR-Agent in re-wait mode reuse the recorded trigger comment; CodeRabbit posts no conditional re-trigger; with no recorded request each posts as in a fresh run and logs the D11 `INFO` line | AC-11 |
+| T4.5 | Claude companion with `--adopt-run-id`/`--adopt-requested-at`: polls only that run and does not dispatch; a bot review submitted before the recorded `requested_at` is not counted (boundary preserved); a completed `success` run for this PR that is **not** the recorded run and was created after the head commit's committer time (an older-head run) is never read, so the result follows the recorded run (still running → exit 4, never clean); a recorded run whose `path` or `PR #<n>` does not match is not adopted and the companion dispatches | AC-10, AC-11 |
+| T4.6 | `reviewer_loop_rewait_recorded_request`: matching run, head, waiting entry, and platform with source `request` → ref and time; other head, other run, `wait_start` source, or no platform record → nothing; Bugbot outside re-wait mode posts its own trigger even when a `bugbot run` comment newer than the head commit time exists | AC-10, AC-11 |
+| T5.1 | Timing keys for a verdict, a No verdict yet, a skip, a failure, and a replay; `REQUESTED_AT_SOURCE` `request` vs `wait_start`; `REQUEST_REF` printed and recorded only when the handler printed one | AC-12 |
 | T5.2 | Summary "Reviewer timing" section lines and the `reviewer-no-verdict-yet` result line; reused marked reused | AC-12 |
 | T5.3 | Ledger `platform_results[]` additive fields present; existing readers (`reviewer_loop_platform_clean_for_head`, #1692) still pass | AC-12 |
 | T5.4 | Waiting aggregate prints `PENDING_REVIEWER`, `PENDING_REVIEW_HEAD_SHA`, `PENDING_REVIEW_REQUESTED_AT`, `PENDING_REVIEW_WAITED_SECONDS`, `NO_FAILURE_DETECTED=1` | AC-1, AC-11 |
@@ -860,7 +892,7 @@ spec's examples unless stated.
 | Budget ran out, first time for this revision | D8 No verdict yet (local reviewers: D4 watchdog flag); D11 `available` → runner re-wait | Protocol 91 Step 7, Protocol 93, guides | T2.1, T2.7, T2.13, T4.1 |
 | Expired wait kept as non-blocking skip | D8 kept skips; D9 no label | Protocol 93, CodeRabbit, Devin, PR-Agent guides | T2.4 |
 | No verdict yet again after re-wait | D11 `used` → runner stops as Waiting on reviewer | Protocol 91 Step 7, Protocol 93 | T4.1, smoke Step 6 |
-| Only older-revision evidence | Existing head filters → No verdict yet (D8) | Protocol 93 | T2.5 |
+| Only older-revision evidence | Existing head filters → No verdict yet (D8); re-wait adoption bound to the recorded request (D11) | Protocol 93, Claude Code Action guide | T2.5, T4.5, T4.6 |
 | No sign of a started review, no unavailability report | D8 Bugbot `check_not_started`, Devin kept skip | Protocol 93, Bugbot guide | T2.1, T2.4 |
 | Platform reports itself unavailable | D8 kept failure paths (Bugbot disabled, Copilot request failure, Haystack `unavailable`) | guides | T2.6 |
 | Platform's own run timed out or failed | D8 `bugbot-run-timed-out`, `claude_code_action_run_failed`, `ronda_pass_failed` | Bugbot, Claude Code Action, Ronda guides | T2.3, T2.8 |
@@ -892,7 +924,8 @@ no reviewer-loop result or wait-budget text affected by this change.
 4. Malformed / unknown input — pass: D6 and D13 define invalid budget
    handling; unreadable ledger → `untracked`.
 5. Stale vs current evidence — pass: D8 relies on current-head filters; D11
-   keys re-wait state on `loop_head_sha` and `run_id`.
+   keys re-wait state on `loop_head_sha` and `run_id`, and adopts only the
+   request recorded for that head and run, never one selected by timestamp.
 6. Terminal vs waiting vs escalation — pass: every D11 runner row ends in
    continue, re-wait once, or a named Waiting on reviewer stop; failure paths
    escalate.
@@ -953,7 +986,9 @@ These are executed in the implementation PR.
   reasons are in the No verdict yet class; re-wait with `--max-retriggers 0`;
   budget source wording for `CODEX_GITHUB_MAX_WAIT`.
 - [ ] `docs/workflow/development-workflow/integrations/claude-code-action.md`
-  — exit-code table (new exit 4), `claude_code_action_run_failed`, adoption.
+  — exit-code table (new exit 4), `claude_code_action_run_failed`, the
+  `--adopt-run-id` / `--adopt-requested-at` flags and the D11 rule that only
+  the recorded run for the current head is adopted.
 - [ ] `docs/workflow/development-workflow/integrations/haystack-triage.md` and
   `docs/workflow/development-workflow/integrations/haystack.md` — correct the
   stale "skipped / continue / apply `reviewer-failed`" text for `timeout` and
@@ -983,7 +1018,7 @@ These are executed in the implementation PR.
 | A stuck platform now costs up to its budget plus one re-wait before a human sees it, instead of a fast false failure | Med | Med | The stop names the platform and the human action; budgets are tunable per platform (D6) from recorded latency (D12) |
 | Total run time with several slow platforms exceeds what a caller allows | Low | Med | Budgets are sequential and bounded; the D2 sum for this repository's configured reviewers (PR-Agent + `local-ai-reviewer`) is 2400 s, inside the existing execution budget default (`PR_REVIEW_LOOP_EXECUTION_BUDGET_DEFAULT`, `pr-review-loop.sh:117`); Protocol 93 documents the sum rule |
 | Renamed reasons (`bugbot-run-timed-out`, `claude_code_action_run_failed`) break an external consumer that matched `timeout` | Low | Low | V13 shows no in-repo consumer matching those reasons other than `normalize_platform_verdict` (updated); changelog names the renames |
-| Adoption of an old trigger hides a request the vendor silently dropped | Low | Med | Bugbot keeps its #1390 re-trigger in fresh runs; other platforms adopt only in re-wait mode, which ends in a named stop |
+| Adoption of an old trigger hides a request the vendor silently dropped | Low | Med | Adoption happens only in re-wait mode and only of the request recorded for the current head and run (D11), and re-wait mode ends in a named stop; Bugbot keeps its #1390 re-trigger in fresh runs |
 | Large test-harness edits collide with the #1562 snapshot runner | Low | Low | New tests live in one new area appended before the footer; run with `--area 1789` while iterating |
 
 ---
@@ -1089,12 +1124,13 @@ SHA).
 - Implementation-order consistency: Checked — phases reference the same
   decisions, functions, files, and test IDs as the Layer sections.
 - Verification support: Checked — existence, count, and consumer claims cite
-  V1–V23.
+  V1–V25.
 - Behavioral guarantees: Checked — "once per revision" cites the ledger
   query keyed on `run_id` and `head_sha` (D11); "never shortens" cites the
   D7 comparison; "no duplicate request" cites the D11 adoption table and
-  V10; "stopped at the budget" cites the D4 watchdog flag and V23, not the
-  wrapper's exit status.
+  V10, and adoption binds to the recorded request id, time, and head (D11,
+  V24, V25), not to the head commit time; "stopped at the budget" cites the
+  D4 watchdog flag and V23, not the wrapper's exit status.
 - Complex workflow decision-gate matrix: Checked — plan mirror table above.
 - Matrix coherence preflight: Checked — six checks pass (see the preflight
   list above).
@@ -1108,6 +1144,6 @@ SHA).
 | Rule 1 | Not applicable | No new design depends on externally produced free text (see Factual claim evidence). |
 | Rule 2 | Satisfied | Values and decisions are asserted once in D1–D14 and referenced elsewhere. |
 | Rule 3 | Satisfied | Platform count (V1) and emit-site enumeration (V2) carry commands, revision, and population; the D8 binding table carries the enumeration. |
-| Rule 4 | Satisfied | Existence and absence claims cite V3–V6, V8–V11, V14, V15, V17, V19, V20, V22, V23. |
+| Rule 4 | Satisfied | Existence and absence claims cite V3–V6, V8–V11, V14, V15, V17, V19, V20, V22–V25. |
 | Rule 5 | Satisfied | Consumer tables for the label function, the waiting result and the normalized ledger outcome, the global budget, both companion exit codes, and `run_with_timeout` expiry semantics (V12, V13, V17, V19, V20, V21, V23). |
 | Rule 6 | Satisfied | Rule 6 table names scope and discharge for every conditional obligation. |

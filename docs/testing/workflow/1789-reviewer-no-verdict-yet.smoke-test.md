@@ -122,11 +122,12 @@ run):
 
 - Step 2: `RESULT=waiting_on_reviewer`, `REASON=reviewer-no-verdict-yet`,
   `PENDING_REVIEWER=bugbot`, `PENDING_REVIEW_WAITED_SECONDS` present,
-  `NO_FAILURE_DETECTED=1`, `NO_VERDICT_REWAIT=available`, exit 4. The
-  `reviewer-failed` label is removed (no platform carried failure evidence).
-  The summary says no reviewer failure was detected.
+  `NO_FAILURE_DETECTED=1`, `NO_VERDICT_REWAIT=available`,
+  `PLATFORM_1_REQUEST_REF` equal to the id of the `bugbot run` comment it
+  posted, exit 4. The `reviewer-failed` label is removed (no platform carried
+  failure evidence). The summary says no reviewer failure was detected.
 - Step 3: `RESULT=clean`; no new `bugbot run` comment was posted (the
-  outstanding one was adopted, D11).
+  request recorded in Step 2 was adopted, D11).
 - Step 4: `STAGE_SKIPPED_PLATFORMS=bugbot`,
   `PLATFORM_1_VERDICT_REUSED=1`, no latency key; the summary marks Bugbot
   as reused, and the re-added `reviewer-failed` label is removed on this
@@ -205,7 +206,7 @@ exit with status 124 is a failure, not a stopped reviewer, D4).
 | Symptom | Likely cause | Fix |
 | --- | --- | --- |
 | `NO_VERDICT_REWAIT=untracked` | `PR_REVIEW_LOOP_RUN_ID` not exported | Export a stable run id before each scenario |
-| A second `bugbot run` comment appears in Step 5, step 3 | Adoption not applied | Check that the earlier trigger is newer than the head commit time |
+| A second `bugbot run` comment appears in Step 5, step 3 | Adoption not applied: no recorded request for this head and run | Check that Step 5, step 2 printed `PLATFORM_1_REQUEST_REF`, that step 3 used the same `PR_REVIEW_LOOP_RUN_ID`, and that the head did not change between them (D11 adopts only the recorded request) |
 | Step 5, step 4 shows no `STAGE_SKIPPED_PLATFORMS` | `--platform` was passed, or `PR_REVIEW_LOOP_DISABLE_STAGE_SKIP=1` is set | Re-run with platforms taken from configuration and the variable unset |
 | Step 4 times out | Bugbot slower than its budget on this repository | Record the waited seconds and compare with the D3 rationale; raise `review.wait_budgets.bugbot` if the data supports it |
 
