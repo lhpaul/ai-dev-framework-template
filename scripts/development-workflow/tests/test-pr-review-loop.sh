@@ -17825,11 +17825,13 @@ cat > "$_pr_agent_mock_dir_1702/gh" <<'PR_AGENT_GH_1702'
 printf '%s\n' "$*" >> "$PR_AGENT_CALL_LOG"
 case "$*" in
   *"--jq .head.sha"*)
-    printf 'abc1702sha\n'; exit 0 ;;
+    printf 'abc1702000000000000000000000000000000000\n'; exit 0 ;;
   *"--jq .commit.committer.date"*)
     printf '2020-01-01T00:00:00Z\n'; exit 0 ;;
   *"issues/42/comments"*)
-    printf '[{"user":{"login":"github-actions[bot]"},"updated_at":"2020-01-01T00:00:02Z","html_url":"https://example.test/comment","body":"PR Reviewer Guide abc1702sha\\nNo major issues detected"}]\n'
+    # #1789 (plan D15 rule (a)): the summary is bound to the head by its
+    # visible marker line, not by the SHA appearing anywhere in the body.
+    printf '[{"user":{"login":"github-actions[bot]"},"updated_at":"2020-01-01T00:00:02Z","html_url":"https://example.test/comment","body":"PR Reviewer Guide\\n#### (Review updated until commit https://github.com/owner/repo/commit/abc1702000000000000000000000000000000000)\\nNo major issues detected"}]\n'
     exit 0 ;;
   *)
     printf '[]\n'; exit 0 ;;
@@ -17894,14 +17896,17 @@ case "$*" in
   *"commits/abc1704sha/check-runs"*)
     printf '{"check_runs":[]}\n'; exit 0 ;;
   *"issues/42/comments"*)
-    printf '[{"user":{"login":"lhpaul"},"created_at":"2020-01-01T00:00:01Z","updated_at":"2020-01-01T00:00:01Z","body":"/review"}]\n'; exit 0 ;;
+    printf '[{"id":1704,"user":{"login":"lhpaul"},"created_at":"2020-01-01T00:00:01Z","updated_at":"2020-01-01T00:00:01Z","body":"/review"}]\n'; exit 0 ;;
   *)
     printf '[]\n'; exit 0 ;;
 esac
 PR_AGENT_GH_1704
 chmod +x "$_pr_agent_mock_dir_1704/gh"
 
+# #1789 (plan D15): only a trigger recorded for the head is reused, so the
+# loop hands its id over in reviewer_loop_head_request_refs.
 actual_output="$(
+  reviewer_loop_head_request_refs="1704"
   PATH="$_pr_agent_mock_dir_1704:$PATH" PR_AGENT_CALL_LOG="$_pr_agent_call_log_1704" \
     PR_AGENT_TRIGGER_REUSE_WINDOW_SECONDS=999999999 \
     run_pr_agent_review "42" "feature/42-test" "1" "0" || true
@@ -22522,7 +22527,18 @@ case "$*" in
   *"/pulls/42/comments"*) out="$(fixture review-comments '[]')" ;;
   *"/pulls/42/reviews"*) out="$(fixture reviews '[]')" ;;
   *"/issues/42/comments"*) out="$(fixture issue-comments '[]')" ;;
-  *"/pulls/42"*) out="{\"head\":{\"sha\":\"$head\"}}" ;;
+  *"actions/runs?check_suite_id="*)
+    [ "$(fixture suite-runs-fail 0)" = "0" ] || exit 1
+    out="$(fixture suite-runs '{"workflow_runs":[{"id":3001,"workflow_id":77}]}')"
+    ;;
+  *"actions/workflows/"*"/runs"*)
+    [ "$(fixture branch-runs-fail 0)" = "0" ] || exit 1
+    out="$(fixture branch-runs '{"workflow_runs":[]}')"
+    ;;
+  *"/pulls/42"*)
+    [ "$(fixture pull-fail 0)" = "0" ] || exit 1
+    out="{\"head\":{\"sha\":\"$head\",\"ref\":\"feature/1789-x\"}}"
+    ;;
   *"/commits/"*) out='{"commit":{"committer":{"date":"2020-01-01T00:00:00Z"}}}' ;;
   *) out='[]' ;;
 esac
@@ -24035,6 +24051,205 @@ run_test "1789_T2.20_main_flow_clean_with_threads_becomes_needs_fixes" "yes" \
   "$(awk -v start="$_1789_ret_line" 'NR > start && /if \[ "\$unresolved_thread_count" -gt 0 \]; then/ {f=NR} f && NR > f && NR <= f + 2 && /aggregate_result="needs_fixes"/ {a=1} f && NR > f && NR <= f + 3 && /aggregate_reason="unresolved_review_threads"/ {b=1} END {print (a && b) ? "yes" : "no"}' "$_1789_loop_src")"
 unset _1789_t221_payload _1789_t215_push _1789_now _1789_gr_up _1789_gr_h0_comment _1789_gr_h1_comment _1789_gr_login
 unset -f _1789_refs _1789_gr_rec _1789_gr_trigger
+
+# ---------------------------------------------------------------------------
+# Phase 5 — PR-Agent summary rules (plan D15): rule (a) unit rows (deferred
+# note a: any <owner>/<repo>, a GitHub Enterprise host, the unterminated
+# review-state block), T2.18, and T2.22. The handler's phases are named as in
+# run_pr_agent_review: "Phase 1" (an existing summary, rule (a) only),
+# "Phase 2" (the poll, rule (a) or rule (b)), "Phase 3" (classification).
+# ---------------------------------------------------------------------------
+_1789_pa_marker() { printf '#### (Review updated until commit https://%s/%s/commit/%s)' "${2:-github.com}" "${3:-acme/widgets}" "$1"; }
+_1789_pa_block() { printf '<!-- pr-agent-review-state:v1 {"head_sha":"%s","findings":[{"last_seen_head_sha":"%s"}]} -->' "$1" "$1"; }
+_1789_pa_body() { printf '## PR Reviewer Guide 🔍\n\n%s\n\nNo major issues detected\n%s' "${1:-}" "${2:-}"; }
+# _1789_pa_sum <id> <created_at> <updated_at> <body>
+_1789_pa_sum() {
+  jq -nc --argjson id "$1" --arg c "$2" --arg u "$3" --arg body "$4" \
+    '{id: $id, user: {login: "github-actions[bot]"}, created_at: $c, updated_at: $u,
+      html_url: ("https://github.com/acme/widgets/pull/42#issuecomment-" + ($id | tostring)), body: $body}'
+}
+# _1789_pa_run <id> <status> <conclusion-json> <started_at> <completed_at-json>
+_1789_pa_run() {
+  printf '{"id":%s,"name":"PR-Agent review","status":"%s","conclusion":%s,"started_at":"%s","completed_at":%s,"check_suite":{"id":555}}' \
+    "$1" "$2" "$3" "$4" "$5"
+}
+# _1789_pa_wf <id> <head_sha> <status> <run_started_at> <updated_at>
+_1789_pa_wf() {
+  printf '{"id":%s,"workflow_id":77,"event":"pull_request","head_sha":"%s","status":"%s","run_started_at":"%s","updated_at":"%s"}' \
+    "$1" "$2" "$3" "$4" "$5"
+}
+_1789_pa_kept="skipped|no_review|0"
+
+# --- Rule (a) unit rows (pr_agent_summary_marker_names_head).
+_1789_ra() { if pr_agent_summary_marker_names_head "$1" "$2"; then echo yes; else echo no; fi; }
+run_test "1789_D15a_marker_names_head" "yes" "$(_1789_ra "$(_1789_pa_body "$(_1789_pa_marker "$_1789_H")")" "$_1789_H")"
+run_test "1789_D15a_any_owner_repo" "yes" \
+  "$(_1789_ra "$(_1789_pa_body "$(_1789_pa_marker "$_1789_H" github.com some-org/other.repo_name)")" "$_1789_H")"
+run_test "1789_D15a_enterprise_host" "yes" \
+  "$(_1789_ra "$(_1789_pa_body "$(_1789_pa_marker "$_1789_H" ghe.example.com team/svc)")" "$_1789_H")"
+run_test "1789_D15a_head_case_insensitive" "yes" \
+  "$(_1789_ra "$(_1789_pa_body "$(_1789_pa_marker "$_1789_H")")" "$(printf '%s' "$_1789_H" | tr 'a-f' 'A-F')")"
+run_test "1789_D15a_marker_other_head" "no" "$(_1789_ra "$(_1789_pa_body "$(_1789_pa_marker "$_1789_OLD")")" "$_1789_H")"
+run_test "1789_D15a_sha_only_in_block" "no" \
+  "$(_1789_ra "$(_1789_pa_body "" "$(_1789_pa_block "$_1789_H")")" "$_1789_H")"
+run_test "1789_D15a_old_marker_block_names_head" "no" \
+  "$(_1789_ra "$(_1789_pa_body "$(_1789_pa_marker "$_1789_OLD")" "$(_1789_pa_block "$_1789_H")")" "$_1789_H")"
+run_test "1789_D15a_sha_in_plain_text" "no" "$(_1789_ra "$(_1789_pa_body "Reviewed $_1789_H")" "$_1789_H")"
+run_test "1789_D15a_marker_inside_block_not_visible" "no" \
+  "$(_1789_ra "$(_1789_pa_body "" "<!-- pr-agent-review-state:v1 $(_1789_pa_marker "$_1789_H") -->")" "$_1789_H")"
+run_test "1789_D15a_terminated_block_plus_marker" "yes" \
+  "$(_1789_ra "$(_1789_pa_body "$(_1789_pa_marker "$_1789_H")" "$(_1789_pa_block "$_1789_OLD")")" "$_1789_H")"
+# Unterminated review-state block: fail closed (not bound), never a crash.
+run_test "1789_D15a_unterminated_block_after_marker_not_bound" "no" \
+  "$(_1789_ra "$(_1789_pa_body "$(_1789_pa_marker "$_1789_H")" "<!-- pr-agent-review-state:v1 {\"head_sha\":\"$_1789_H\"")" "$_1789_H")"
+run_test "1789_D15a_unterminated_block_before_marker_not_bound" "no" \
+  "$(_1789_ra "$(_1789_pa_body "<!-- pr-agent-review-state:v1 {" "$(_1789_pa_marker "$_1789_H")")" "$_1789_H")"
+run_test "1789_D15a_unterminated_block_no_crash" "0" \
+  "$(pr_agent_summary_marker_names_head "<!-- pr-agent-review-state:v1 $(_1789_pa_marker "$_1789_H")" "$_1789_H" 2>&1 | grep -c . || true)"
+run_test "1789_D15a_short_head_never_matches" "no" "$(_1789_ra "$(_1789_pa_body "$(_1789_pa_marker 1789dd)")" 1789dd)"
+run_test "1789_D15a_marker_without_close_paren" "no" \
+  "$(_1789_ra "#### (Review updated until commit https://github.com/acme/widgets/commit/${_1789_H}0)" "$_1789_H")"
+run_test "1789_D15a_extra_path_segment" "no" \
+  "$(_1789_ra "$(_1789_pa_marker "$_1789_H" github.com acme/widgets/tree)" "$_1789_H")"
+run_test "1789_D15a_empty_head_or_body" "no|no" "$(_1789_ra "" "$_1789_H")|$(_1789_ra "$(_1789_pa_marker "$_1789_H")" "")"
+
+# --- T2.18 rule (a) in the handler.
+# A summary edited after the committer time whose marker names H0 → not
+# accepted; expiry is the no_review kept skip.
+_1789_gh_reset
+_1789_fx issue-comments "[$(_1789_pa_sum 801 2020-01-01T00:00:01Z 2020-01-01T00:00:40Z "$(_1789_pa_body "$(_1789_pa_marker "$_1789_OLD")")")]"
+_1789_out="$(_1789_run_gh run_pr_agent_review 2)"
+run_test "1789_T2.18_edited_summary_naming_h0_kept_skip" "$_1789_pa_kept" "$(_1789_rre "$_1789_out")"
+# The same summary naming H1 (the head) → accepted in Phase 1, nothing posted.
+_1789_gh_reset
+_1789_fx issue-comments "[$(_1789_pa_sum 801 2020-01-01T00:00:01Z 2020-01-01T00:00:40Z "$(_1789_pa_body "$(_1789_pa_marker "$_1789_H")")")]"
+_1789_out="$(_1789_run_gh run_pr_agent_review 2)"
+run_test "1789_T2.18_summary_naming_h1_accepted_phase1" "clean||0|0" "$(_1789_rre "$_1789_out")|$(_1789_posts)"
+# Regression — block-only head SHA. (i) Phase 2: a summary that appears after
+# Phase 1 with its marker naming H0 while the review-state block's head_sha
+# and last_seen_head_sha are H1 → not accepted, kept skip at expiry.
+_1789_pa_block_only="$(_1789_pa_body "$(_1789_pa_marker "$_1789_OLD")" "$(_1789_pa_block "$_1789_H")")"
+_1789_gh_reset
+_1789_fx issue-comments@1 "[$(_1789_pa_sum 802 2020-01-01T00:00:01Z 2020-01-01T00:00:40Z "$_1789_pa_block_only")]"
+_1789_out="$(_1789_run_gh run_pr_agent_review 3)"
+run_test "1789_T2.18_i_phase2_block_only_head_not_accepted" "$_1789_pa_kept|3" "$(_1789_rre "$_1789_out")|$(_1789_tick)"
+# (ii) Phase 1 with the same body returns no verdict: it goes on to request a
+# review (one /review posted) and ends in the kept skip.
+_1789_gh_reset
+_1789_fx issue-comments "[$(_1789_pa_sum 802 2020-01-01T00:00:01Z 2020-01-01T00:00:40Z "$_1789_pa_block_only")]"
+_1789_out="$(_1789_run_gh run_pr_agent_review 2)"
+run_test "1789_T2.18_ii_phase1_block_only_head_no_verdict" "$_1789_pa_kept|1" "$(_1789_rre "$_1789_out")|$(_1789_posts)"
+
+# --- T2.18 rule (b): the V32 shape. An unedited, marker-free first summary
+# whose review-state block holds H, created inside a completed success
+# "PR-Agent review" check run window on H, with no active run on H, no
+# overlapping branch run on another head, and no earlier /review → accepted.
+_1789_pa_first="$(_1789_pa_sum 803 2020-01-01T00:00:30Z 2020-01-01T00:00:30Z "$(_1789_pa_body "" "$(_1789_pa_block "$_1789_H")")")"
+_1789_pa_ok_runs="$(_1789_pra_runs "$(_1789_pa_run 20 completed '"success"' 2020-01-01T00:00:10Z '"2020-01-01T00:01:00Z"')")"
+_1789_pa_ok_branch="{\"workflow_runs\":[$(_1789_pa_wf 3001 "$_1789_H" completed 2020-01-01T00:00:10Z 2020-01-01T00:01:00Z),$(_1789_pa_wf 2999 "$_1789_OLD" completed 2019-12-31T00:00:00Z 2019-12-31T00:05:00Z)]}"
+# _1789_pa_rule_b [fixture-name fixture-value]...: the V32 fixtures, each
+# optionally overridden, then one handler run (budget 2).
+_1789_pa_rule_b() {
+  _1789_gh_reset
+  _1789_fx issue-comments "[$_1789_pa_first]"
+  _1789_fx check-runs "$_1789_pa_ok_runs"
+  _1789_fx branch-runs "$_1789_pa_ok_branch"
+  while [ "$#" -ge 2 ]; do _1789_fx "$1" "$2"; shift 2; done
+  _1789_run_gh run_pr_agent_review 2
+}
+_1789_out="$(_1789_pa_rule_b)"
+run_test "1789_T2.18_rule_b_v32_shape_accepted" "clean||0" "$(_1789_rre "$_1789_out")"
+run_test "1789_T2.18_iii_rule_b_accepted_in_phase2_not_phase1" "1|1" \
+  "$(_1789_posts)|$(_1789_stderr_has "first summary 803 is bound to $_1789_H by its PR-Agent review run (D15 rule b)")"
+run_test "1789_T2.18_rule_b_reads_branch_runs_of_binding_workflow" "1|1" \
+  "$(grep -c 'actions/runs?check_suite_id=555' "$_1789_gh_dir/calls.log" || true)|$(grep 'actions/workflows/77/runs' "$_1789_gh_dir/calls.log" | grep -c 'event=pull_request.*branch=feature/1789-x' || true)"
+# Each single failed rule (b) condition leaves it unaccepted.
+_1789_out="$(_1789_pa_rule_b issue-comments "[$(_1789_pa_sum 803 2020-01-01T00:00:30Z 2020-01-01T00:00:31Z "$(_1789_pa_body "" "$(_1789_pa_block "$_1789_H")")")]")"
+run_test "1789_T2.18_rule_b_edited_not_accepted" "$_1789_pa_kept" "$(_1789_rre "$_1789_out")"
+_1789_out="$(_1789_pa_rule_b issue-comments "[$(_1789_pa_sum 803 2020-01-01T00:00:05Z 2020-01-01T00:00:05Z "$(_1789_pa_body "" "$(_1789_pa_block "$_1789_H")")")]")"
+run_test "1789_T2.18_rule_b_outside_window_not_accepted" "$_1789_pa_kept" "$(_1789_rre "$_1789_out")"
+for _1789_concl in failure cancelled; do
+  _1789_out="$(_1789_pa_rule_b check-runs "$(_1789_pra_runs "$(_1789_pa_run 20 completed "\"$_1789_concl\"" 2020-01-01T00:00:10Z '"2020-01-01T00:01:00Z"')")")"
+  # Never accepted; the failure-type newest run on H is D8's pr_agent_run_failed.
+  run_test "1789_T2.18_rule_b_window_run_${_1789_concl}_not_accepted" "escalate|pr_agent_run_failed|2" "$(_1789_rre "$_1789_out")"
+done
+_1789_out="$(_1789_pa_rule_b check-runs "$(_1789_pra_runs "$(_1789_pa_run 20 completed '"success"' 2020-01-01T00:00:10Z '"2020-01-01T00:01:00Z"'),$(_1789_pa_run 21 in_progress null 2020-01-01T00:00:50Z null)")")"
+run_test "1789_T2.18_rule_b_active_h1_run_not_accepted" "$_1789_pa_kept" "$(_1789_rre "$_1789_out")"
+_1789_out="$(_1789_pa_rule_b branch-runs "{\"workflow_runs\":[$(_1789_pa_wf 2998 "$_1789_OLD" completed 2020-01-01T00:00:05Z 2020-01-01T00:00:45Z)]}")"
+run_test "1789_T2.18_rule_b_overlapping_h0_run_not_accepted" "$_1789_pa_kept" "$(_1789_rre "$_1789_out")"
+_1789_out="$(_1789_pa_rule_b branch-runs "{\"workflow_runs\":[$(_1789_pa_wf 2997 "$_1789_OLD" in_progress 2020-01-01T00:00:05Z 2020-01-01T00:00:06Z)]}")"
+run_test "1789_T2.18_rule_b_running_h0_run_not_accepted" "$_1789_pa_kept" "$(_1789_rre "$_1789_out")"
+_1789_out="$(_1789_pa_rule_b branch-runs "{\"workflow_runs\":[$(_1789_pa_wf 2996 "$_1789_OLD" completed 2020-01-01T00:00:35Z 2020-01-01T00:00:50Z)]}")"
+run_test "1789_T2.18_rule_b_h0_run_started_after_summary_accepted" "clean||0" "$(_1789_rre "$_1789_out")"
+_1789_out="$(_1789_pa_rule_b issue-comments "[{\"id\":804,\"user\":{\"login\":\"maintainer\"},\"created_at\":\"2020-01-01T00:00:20Z\",\"updated_at\":\"2020-01-01T00:00:20Z\",\"body\":\"/review\"},$_1789_pa_first]")"
+run_test "1789_T2.18_rule_b_earlier_review_comment_not_accepted" "$_1789_pa_kept" "$(_1789_rre "$_1789_out")"
+for _1789_failing in check-runs-fail suite-runs-fail branch-runs-fail pull-fail; do
+  _1789_out="$(_1789_pa_rule_b "$_1789_failing" 1)"
+  run_test "1789_T2.18_rule_b_${_1789_failing}_not_accepted" "$_1789_pa_kept" "$(_1789_rre "$_1789_out")"
+done
+_1789_out="$(_1789_pa_rule_b suite-runs '{"workflow_runs":[]}')"
+run_test "1789_T2.18_rule_b_no_binding_workflow_not_accepted" "$_1789_pa_kept" "$(_1789_rre "$_1789_out")"
+# (iii) with a rule (b) condition false (here: edited), the block holding H
+# does not bind it either — the block never satisfies rule (a).
+_1789_out="$(_1789_pa_rule_b issue-comments "[$(_1789_pa_sum 803 2020-01-01T00:00:30Z 2020-01-01T00:00:59Z "$(_1789_pa_body "" "$(_1789_pa_block "$_1789_H")")")]")"
+run_test "1789_T2.18_iii_rule_b_false_block_holding_head_not_accepted" "$_1789_pa_kept" "$(_1789_rre "$_1789_out")"
+# A summary that carries a marker (for another head) is never a rule (b)
+# candidate, even with every run condition true.
+_1789_out="$(_1789_pa_rule_b issue-comments "[$(_1789_pa_sum 805 2020-01-01T00:00:30Z 2020-01-01T00:00:30Z "$(_1789_pa_body "$(_1789_pa_marker "$_1789_OLD")" "$(_1789_pa_block "$_1789_H")")")]")"
+run_test "1789_T2.18_marker_for_other_head_not_rule_b_candidate" "$_1789_pa_kept" "$(_1789_rre "$_1789_out")"
+# An unterminated review-state block is not a rule (b) candidate (fail closed).
+_1789_out="$(_1789_pa_rule_b issue-comments "[$(_1789_pa_sum 806 2020-01-01T00:00:30Z 2020-01-01T00:00:30Z "$(_1789_pa_body "" "<!-- pr-agent-review-state:v1 {\"head_sha\":\"$_1789_H\"")")]")"
+run_test "1789_T2.18_unterminated_block_not_rule_b_candidate" "$_1789_pa_kept" "$(_1789_rre "$_1789_out")"
+# A /review trigger inside the reuse window that is not listed for H does not
+# suppress the new request; the same trigger listed for H does (and is recorded).
+_1789_pa_now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+_1789_gh_reset
+_1789_fx issue-comments "[{\"id\":807,\"user\":{\"login\":\"runner\"},\"created_at\":\"$_1789_pa_now\",\"updated_at\":\"$_1789_pa_now\",\"body\":\"/review\"}]"
+reviewer_loop_head_request_refs=""
+_1789_out="$(_1789_run_gh run_pr_agent_review 2)"
+run_test "1789_T2.18_unlisted_recent_trigger_does_not_suppress_request" "1|" \
+  "$(_1789_posts)|$(kv_value_default PR_AGENT_TRIGGER_SKIPPED "$_1789_out" "")"
+_1789_gh_reset
+_1789_fx issue-comments "[{\"id\":807,\"user\":{\"login\":\"runner\"},\"created_at\":\"$_1789_pa_now\",\"updated_at\":\"$_1789_pa_now\",\"body\":\"/review\"}]"
+reviewer_loop_head_request_refs="807"
+_1789_out="$(_1789_run_gh run_pr_agent_review 2)"
+run_test "1789_T2.18_listed_recent_trigger_reused_and_recorded" "0|recent_review_trigger|${_1789_pa_now}|807" \
+  "$(_1789_posts)|$(kv_value_default PR_AGENT_TRIGGER_SKIPPED "$_1789_out" "")|$(_1789_keys "$_1789_out")"
+reviewer_loop_head_request_refs=""
+
+# --- T2.22 regression: a delayed older-head first summary arrives after the
+# current request. Phase 1: no summary, and the H1 pull_request check run (the
+# push's own review request) is in progress, so no /review is posted. A
+# pull_request run on H0 that started before the push is still running. An
+# unedited marker-free summary is then created while both runs are in
+# progress, and the H1 run completes after it (the comment lies inside a
+# completed H1 window). Not accepted; the result is the no_review kept skip.
+_1789_gh_reset
+_1789_fx check-runs "$(_1789_pra_runs "$(_1789_pa_run 30 in_progress null 2020-01-01T00:00:10Z null)")"
+_1789_fx issue-comments@1 "[$_1789_pa_first]"
+_1789_fx check-runs@2 "$(_1789_pra_runs "$(_1789_pa_run 30 completed '"success"' 2020-01-01T00:00:10Z '"2020-01-01T00:01:00Z"')")"
+_1789_fx branch-runs "{\"workflow_runs\":[$(_1789_pa_wf 3001 "$_1789_H" in_progress 2020-01-01T00:00:10Z 2020-01-01T00:00:10Z),$(_1789_pa_wf 2990 "$_1789_OLD" in_progress 2020-01-01T00:00:05Z 2020-01-01T00:00:05Z)]}"
+_1789_fx branch-runs@2 "{\"workflow_runs\":[$(_1789_pa_wf 3001 "$_1789_H" completed 2020-01-01T00:00:10Z 2020-01-01T00:01:00Z),$(_1789_pa_wf 2990 "$_1789_OLD" completed 2020-01-01T00:00:05Z 2020-01-01T00:00:50Z)]}"
+_1789_out="$(_1789_run_gh run_pr_agent_review 4)"
+run_test "1789_T2.22_overlapping_h0_run_kept_skip" "$_1789_pa_kept|4" "$(_1789_rre "$_1789_out")|$(_1789_tick)"
+run_test "1789_T2.22_no_review_posted" "0|active_review_in_progress" \
+  "$(_1789_posts)|$(kv_value_default PR_AGENT_TRIGGER_SKIPPED "$_1789_out" "")"
+# Variant: no overlapping H0 run, but the invocation posted its /review before
+# the summary was created → not accepted; when the summary is then edited to
+# carry the H1 marker, rule (a) accepts it.
+_1789_gh_reset
+_1789_fx check-runs@1 "$_1789_pa_ok_runs"
+_1789_fx branch-runs "$_1789_pa_ok_branch"
+_1789_fx issue-comments@1 "[{\"id\":9001,\"user\":{\"login\":\"runner\"},\"created_at\":\"2020-01-01T00:00:20Z\",\"updated_at\":\"2020-01-01T00:00:20Z\",\"body\":\"/review\"},$_1789_pa_first]"
+_1789_out="$(_1789_run_gh run_pr_agent_review 3)"
+run_test "1789_T2.22_review_before_summary_kept_skip" "$_1789_pa_kept|1" "$(_1789_rre "$_1789_out")|$(_1789_posts)"
+_1789_fx issue-comments@2 "[{\"id\":9001,\"user\":{\"login\":\"runner\"},\"created_at\":\"2020-01-01T00:00:20Z\",\"updated_at\":\"2020-01-01T00:00:20Z\",\"body\":\"/review\"},$(_1789_pa_sum 803 2020-01-01T00:00:30Z 2020-01-01T00:01:30Z "$(_1789_pa_body "$(_1789_pa_marker "$_1789_H")" "$(_1789_pa_block "$_1789_H")")")]"
+printf '0\n' > "$_1789_gh_dir/tick"
+: > "$_1789_gh_dir/posts.log"
+_1789_out="$(_1789_run_gh run_pr_agent_review 3)"
+run_test "1789_T2.22_edited_to_h1_marker_rule_a_accepts" "clean||0|2" "$(_1789_rre "$_1789_out")|$(_1789_tick)"
+unset _1789_pa_kept _1789_pa_block_only _1789_pa_first _1789_pa_ok_runs _1789_pa_ok_branch _1789_pa_now _1789_failing
+unset -f _1789_pa_marker _1789_pa_block _1789_pa_body _1789_pa_sum _1789_pa_run _1789_pa_wf _1789_ra _1789_pa_rule_b
 
 unset _1789_T0 _1789_kv_file _1789_rec_verdict _1789_rec_waiting _1789_rec_replay _1789_t53_payload _1789_t212_payload
 unset _1789_section _1789_wk _1789_line _1789_claude_args _1789_t47_rec _1789_t47_payload

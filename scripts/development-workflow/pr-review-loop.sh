@@ -5723,7 +5723,12 @@ run_pr_agent_review() {
   cd_workflow_repo_root
   repo="$(repo_slug)"
 
-  head_sha="$(gh api "repos/$repo/pulls/$pr_number" --jq '.head.sha')"
+  # #1789 (plan D15): bind to the loop head handed over by the loop, or read the
+  # PR head as before when the loop has none.
+  head_sha="${loop_head_sha:-}"
+  if reviewer_loop_head_is_unknown_or_invalid "$head_sha"; then
+    head_sha="$(gh api "repos/$repo/pulls/$pr_number" --jq '.head.sha')"
+  fi
   if [ -z "$head_sha" ]; then
     print_kv RESULT escalate
     print_kv REASON "head-sha-unavailable"
@@ -5745,38 +5750,166 @@ run_pr_agent_review() {
   [ "$since_iso" \> "$_now_iso" ] && since_iso="$_now_iso"
   unset _now_iso
 
-  # Common helper: fetch the matching PR-Agent comment and return one of its fields.
-  # Parameters: field (e.g. "body" or "html_url"), match_mode (optional, default "strict_sha").
-  # Returns the empty string when no matching comment is found.
-  _pr_agent_latest_comment_field() {
-    local field="$1"
-    local match_mode="${2:-strict_sha}"
-    gh api "repos/$repo/issues/$pr_number/comments" --paginate \
-      | jq -rs --arg bot "$bot_login" --arg sha "$head_sha" --arg since "$since_iso" \
-               --arg mode "$match_mode" --arg field "$field" '
-          add // []
-          | [.[]
-             | select(
-                 .user.login == $bot and
-                 (
-                   ($mode == "strict_sha" and ((.body // "") | contains($sha))) or
-                   ($mode == "recent_or_sha" and (((.body // "") | contains($sha)) or .updated_at > $since))
-                 ) and
-                 ((.body // "") | test("PR Reviewer Guide"; "i"))
-               )
-            ]
-          | sort_by(.updated_at)
-          | last
-          | .[$field] // ""
-        '
+  # #1789 (plan D15 PR-Agent summary rules). A PR-Agent summary comment counts
+  # for the head only by rule (a) — its visible marker line names the head —
+  # or, in Phase 2 only, by rule (b) for an unedited marker-free first
+  # summary (_pr_agent_first_summary_bound_to_head). No rule accepts a
+  # comment because its time follows a request or the head commit's committer
+  # time (the removed recent_or_sha mode), and a SHA anywhere else in the
+  # body (for example inside the hidden review-state block) never binds it.
+  # _pr_agent_bound_summary sets these for the poll that found a bound summary.
+  local pr_agent_bound_body=""
+  local pr_agent_bound_url=""
+  # The PR's issue comments as read by the current _pr_agent_bound_summary
+  # call; rule (b) condition 4 reads the /review comments from it.
+  local pr_agent_issue_comments_json=""
+
+  # _pr_agent_first_summary_bound_to_head <comment_id> <created_at> <updated_at>
+  #
+  # D15 rule (b): true only when every condition holds; any failed API read
+  # or failed condition means the comment is not bound to the head.
+  #   1. never edited (updated_at == created_at);
+  #   2. a "PR-Agent review" check run read from commits/<head>/check-runs is
+  #      completed with conclusion success (D8: a run that ended any other way
+  #      did not finish its review) and started_at <= created_at <= completed_at;
+  #   3. no "PR-Agent review" check run on the head is queued or in progress;
+  #   4. no other revision's run could have posted it: the binding run's
+  #      workflow (actions/runs?check_suite_id → workflow_id) has no
+  #      pull_request run on the PR's head branch, fully paginated, with
+  #      head_sha != head that was in progress at created_at
+  #      (run_started_at <= created_at, and status != completed or
+  #      updated_at >= created_at; a missing time counts as in progress), and
+  #      no /review comment on the PR was created at or before created_at.
+  _pr_agent_first_summary_bound_to_head() {
+    local comment_id="${1:-}" created_at="${2:-}" updated_at="${3:-}"
+    local check_runs_json="" binding="" workflow_id="" head_ref="" branch_runs="" verdict=""
+
+    [ -n "$comment_id" ] && [ -n "$created_at" ] || return 1
+    # 1. Never edited.
+    [ "$updated_at" = "$created_at" ] || return 1
+    # 2 and 3. The PR-Agent review check runs on the head.
+    if ! check_runs_json="$(gh api "repos/$repo/commits/$head_sha/check-runs" --paginate 2>/dev/null)" \
+        || [ -z "$check_runs_json" ]; then
+      return 1
+    fi
+    if ! binding="$(printf '%s\n' "$check_runs_json" | jq -rs --arg at "$created_at" '
+        [ .[] | (if type == "object" then (.check_runs // []) else [] end)[]
+          | select(type == "object" and .name == "PR-Agent review") ] as $runs
+        | if ($runs | any(.status == "queued" or .status == "in_progress" or .status == "waiting"
+                          or .status == "requested" or .status == "pending"))
+          then "active"
+          else
+            ([ $runs[]
+               | select(.status == "completed" and .conclusion == "success"
+                        and ((.started_at // "") != "") and ((.completed_at // "") != "")
+                        and (.started_at <= $at) and ($at <= .completed_at)) ]
+             | sort_by(.started_at) | last
+             | if . == null then "none" else ((.check_suite.id // "") | tostring) end)
+          end' 2>/dev/null)"; then
+      return 1
+    fi
+    case "$binding" in
+      ''|*[!0-9]*) return 1 ;;
+    esac
+    # 4. The binding run's workflow, then its pull_request runs on the branch.
+    if ! workflow_id="$(gh api "repos/$repo/actions/runs?check_suite_id=$binding" 2>/dev/null \
+        | jq -r '[.workflow_runs[]? | .workflow_id | select(type == "number")] | first // empty' 2>/dev/null)"; then
+      return 1
+    fi
+    case "$workflow_id" in
+      ''|*[!0-9]*) return 1 ;;
+    esac
+    if ! head_ref="$(gh api "repos/$repo/pulls/$pr_number" --jq '.head.ref // empty' 2>/dev/null)" \
+        || [ -z "$head_ref" ]; then
+      return 1
+    fi
+    if ! branch_runs="$(gh api -X GET "repos/$repo/actions/workflows/$workflow_id/runs" \
+          -f event=pull_request -f branch="$head_ref" --paginate 2>/dev/null)" \
+        || [ -z "$branch_runs" ]; then
+      return 1
+    fi
+    if ! verdict="$(printf '%s\n' "$branch_runs" | jq -rs --arg at "$created_at" --arg head "$head_sha" '
+        [ .[] | (if type == "object" then (.workflow_runs // []) else [] end)[] | select(type == "object") ]
+        | [ .[]
+            | select(((.head_sha // "") | ascii_downcase) != ($head | ascii_downcase))
+            | select(((.run_started_at // .created_at // "") as $s | ($s == "" or $s <= $at))
+                     and ((.status // "") != "completed"
+                          or ((.updated_at // "") == "")
+                          or (.updated_at >= $at))) ]
+        | if length > 0 then "overlap" else "clear" end' 2>/dev/null)"; then
+      return 1
+    fi
+    [ "$verdict" = "clear" ] || return 1
+    if ! verdict="$(printf '%s' "${pr_agent_issue_comments_json:-}" | jq -r --arg at "$created_at" '
+        if type != "array" then "unreadable"
+        else
+          [ .[] | select(type == "object"
+                         and ((.body // "") | test("^\\s*/review(\\s|$)"))
+                         and ((.created_at // "") <= $at)) ]
+          | if length > 0 then "review_before" else "clear" end
+        end' 2>/dev/null)"; then
+      return 1
+    fi
+    [ "$verdict" = "clear" ] || return 1
+    return 0
   }
 
-  _pr_agent_latest_comment() {
-    _pr_agent_latest_comment_field "body" "${1:-strict_sha}"
-  }
+  # _pr_agent_bound_summary <phase1|phase2>
+  #
+  # Reads the PR's issue comments once and looks for a PR-Agent summary
+  # ("PR Reviewer Guide") bound to the head: rule (a) first (the newest by
+  # updated_at whose visible marker names the head), then — in phase2 only —
+  # rule (b) over the marker-free summaries, newest first. Sets
+  # pr_agent_bound_body / _url and returns 0 when one is bound;
+  # returns 1 (nothing bound, keep polling) otherwise, including on a failed
+  # read.
+  _pr_agent_bound_summary() {
+    local phase="${1:-phase2}"
+    local summaries="" match="" candidates=""
+    local cand_id="" cand_created="" cand_updated=""
 
-  _pr_agent_latest_comment_url() {
-    _pr_agent_latest_comment_field "html_url" "${1:-strict_sha}"
+    pr_agent_bound_body=""
+    pr_agent_bound_url=""
+    pr_agent_issue_comments_json=""
+    if ! pr_agent_issue_comments_json="$(gh api "repos/$repo/issues/$pr_number/comments" --paginate 2>/dev/null \
+        | jq -cs 'add // [] | if type == "array" then . else error("not an array") end' 2>/dev/null)" \
+        || [ -z "$pr_agent_issue_comments_json" ]; then
+      pr_agent_issue_comments_json=""
+      return 1
+    fi
+    if ! summaries="$(printf '%s' "$pr_agent_issue_comments_json" | jq -c --arg bot "$bot_login" '
+        [ .[] | select(type == "object" and (.user.login // "") == $bot
+                       and ((.body // "") | test("PR Reviewer Guide"; "i"))) ]' 2>/dev/null)"; then
+      return 1
+    fi
+    match="$(printf '%s' "$summaries" | jq -c --arg head "$head_sha" "$REVIEWER_LOOP_PR_AGENT_MARKER_JQ"'
+        [ .[] | select((.body // "") | pr_agent_has_head_marker($head)) ]
+        | sort_by(.updated_at // .created_at // "") | last // empty' 2>/dev/null)" || match=""
+    if [ -n "$match" ]; then
+      pr_agent_bound_body="$(printf '%s' "$match" | jq -r '.body // ""')"
+      pr_agent_bound_url="$(printf '%s' "$match" | jq -r '.html_url // ""')"
+      return 0
+    fi
+    [ "$phase" = "phase2" ] || return 1
+    candidates="$(printf '%s' "$summaries" | jq -r "$REVIEWER_LOOP_PR_AGENT_MARKER_JQ"'
+        [ .[] | select(((.body // "") | pr_agent_has_any_marker) | not) ]
+        | sort_by(.created_at // "") | reverse | .[]
+        | [((.id // "") | tostring), (.created_at // ""), (.updated_at // "")] | @tsv' 2>/dev/null)" || candidates=""
+    while IFS=$'\t' read -r cand_id cand_created cand_updated; do
+      [ -n "$cand_id" ] || continue
+      if _pr_agent_first_summary_bound_to_head "$cand_id" "$cand_created" "$cand_updated"; then
+        match="$(printf '%s' "$summaries" | jq -c --arg id "$cand_id" \
+          '[ .[] | select(((.id // "") | tostring) == $id) ] | first // empty' 2>/dev/null)" || match=""
+        [ -n "$match" ] || continue
+        pr_agent_bound_body="$(printf '%s' "$match" | jq -r '.body // ""')"
+        pr_agent_bound_url="$(printf '%s' "$match" | jq -r '.html_url // ""')"
+        echo "INFO: run_pr_agent_review: first summary ${cand_id} is bound to $head_sha by its PR-Agent review run (D15 rule b)" >&2
+        return 0
+      fi
+    done <<_PR_AGENT_RULE_B_CANDIDATES_
+$candidates
+_PR_AGENT_RULE_B_CANDIDATES_
+    return 1
   }
 
   _pr_agent_active_review_check_count() {
@@ -5786,17 +5919,27 @@ run_pr_agent_review() {
       || printf '0'
   }
 
-  _pr_agent_recent_trigger_comment_created_at() {
+  # _pr_agent_recent_trigger_comment
+  # Prints "<created_at> <id>" for the newest /review trigger inside the reuse
+  # window that is a request recorded for the head (#1789, plan D15:
+  # reviewer_loop_head_request_refs); prints nothing otherwise. A trigger an
+  # earlier invocation posted for a previous head never suppresses this
+  # head's request.
+  _pr_agent_recent_trigger_comment() {
     local trigger_reuse_window="${PR_AGENT_TRIGGER_REUSE_WINDOW_SECONDS:-$max_wait}"
+    local head_refs_json="[]"
 
     case "$trigger_reuse_window" in
       ''|*[!0-9]*)
         trigger_reuse_window="$max_wait"
         ;;
     esac
+    head_refs_json="$(printf '%s\n' "${reviewer_loop_head_request_refs:-}" | jq -R 'select(. != "")' | jq -sc '.' 2>/dev/null)" || head_refs_json="[]"
+    [ -n "$head_refs_json" ] || head_refs_json="[]"
 
     gh api "repos/$repo/issues/$pr_number/comments" --paginate \
-      | jq -rs --arg body "$trigger_body" --arg since "$since_iso" --argjson reuse_window "$trigger_reuse_window" '
+      | jq -rs --arg body "$trigger_body" --arg since "$since_iso" --argjson reuse_window "$trigger_reuse_window" \
+               --argjson head_refs "$head_refs_json" '
           add // []
           | [.[]
              | . as $comment
@@ -5805,12 +5948,14 @@ run_pr_agent_review() {
                  ((.body // "") == $body) and
                  ((.created_at // .updated_at // "") > $since) and
                  ($trigger_time != null) and
-                 ((now - $trigger_time) <= $reuse_window)
+                 ((now - $trigger_time) <= $reuse_window) and
+                 (((.id // "") | tostring) as $id | any($head_refs[]; . == $id))
                )
             ]
           | sort_by(.created_at // .updated_at)
           | last
-          | .created_at // .updated_at // ""
+          | if . == null then empty
+            else "\(.created_at // .updated_at // "") \((.id // "") | tostring)" end
         '
   }
 
@@ -5839,10 +5984,19 @@ run_pr_agent_review() {
       return 0
     fi
 
-    recent_trigger_created_at="$(_pr_agent_recent_trigger_comment_created_at)"
+    local recent_trigger="" recent_trigger_id=""
+    recent_trigger="$(_pr_agent_recent_trigger_comment)"
+    recent_trigger_created_at="${recent_trigger%% *}"
+    recent_trigger_id=""
+    case "$recent_trigger" in
+      *" "*) recent_trigger_id="${recent_trigger#* }" ;;
+    esac
     if [ -n "$recent_trigger_created_at" ]; then
       print_kv PR_AGENT_TRIGGER_SKIPPED recent_review_trigger
       print_kv PR_AGENT_TRIGGER_COMMENT_CREATED_AT "$recent_trigger_created_at"
+      # #1789 (plan D12/D15): the reused trigger is recorded for this head, so
+      # it is this invocation's request.
+      print_review_request_keys "$recent_trigger_created_at" "$recent_trigger_id"
       pr_agent_outstanding_request=1
       return 0
     fi
@@ -6065,7 +6219,12 @@ _PR_AGENT_LABELS_
   }
 
   # --- Phase 1: Check for an existing PR-Agent summary comment on this HEAD ---
-  comment_body="$(_pr_agent_latest_comment strict_sha)"
+  # #1789 (plan D15): Phase 1 accepts a summary only by rule (a), its visible
+  # marker line naming the head.
+  comment_body=""
+  if _pr_agent_bound_summary phase1; then
+    comment_body="$pr_agent_bound_body"
+  fi
   local verdict
   verdict="$(_pr_agent_classify "$comment_body")"
 
@@ -6074,7 +6233,7 @@ _PR_AGENT_LABELS_
       local _advisory_labels _comment_url _advisory_entry _eval_status
       _advisory_labels="$(_pr_agent_extract_advisory_labels "$comment_body")"
       if [ -n "$_advisory_labels" ]; then
-        _comment_url="$(_pr_agent_latest_comment_url strict_sha)"
+        _comment_url="$pr_agent_bound_url"
         _advisory_entry="${_advisory_labels}@@@${_comment_url}"
       else
         _advisory_entry=""
@@ -6153,7 +6312,11 @@ _PR_AGENT_LABELS_
 
   # --- Phase 2: Poll until PR-Agent posts its summary comment ---
   while :; do
-    comment_body="$(_pr_agent_latest_comment recent_or_sha)"
+    # #1789 (plan D15): Phase 2 accepts a summary only by rule (a) or rule (b).
+    comment_body=""
+    if _pr_agent_bound_summary phase2; then
+      comment_body="$pr_agent_bound_body"
+    fi
     verdict="$(_pr_agent_classify "$comment_body")"
 
     if [ "$verdict" != "none" ]; then
@@ -6215,7 +6378,7 @@ _PR_AGENT_LABELS_
       local _advisory_labels _comment_url _advisory_entry _eval_status
       _advisory_labels="$(_pr_agent_extract_advisory_labels "$comment_body")"
       if [ -n "$_advisory_labels" ]; then
-        _comment_url="$(_pr_agent_latest_comment_url recent_or_sha)"
+        _comment_url="$pr_agent_bound_url"
         _advisory_entry="${_advisory_labels}@@@${_comment_url}"
       else
         _advisory_entry=""
@@ -9012,6 +9175,56 @@ def bound_review($head):
 def bound_review_comment($head):
   type == "object" and reviewer_loop_head_eq(.original_commit_id; $head);
 '
+
+# REVIEWER_LOOP_PR_AGENT_MARKER_JQ (#1789, plan D15 PR-Agent summary rule (a))
+# defines, over a comment body string:
+#   pr_agent_visible_body        — the body with every hidden
+#                                  `<!-- pr-agent-review-state:v1 … -->` block
+#                                  removed; null when a block opener has no
+#                                  `-->` terminator (unterminated: the visible
+#                                  part cannot be told apart, fail closed);
+#   pr_agent_has_head_marker($h) — the visible body carries the marker line
+#                                  `Review updated until commit
+#                                  https://<host>/<owner>/<repo>/commit/<h>)`.
+#                                  <owner>/<repo> (and the host, so a GitHub
+#                                  Enterprise host matches too) are any single
+#                                  path segments, never this repository's
+#                                  name; <h> must be a full 40-hex SHA and is
+#                                  matched case-insensitively. A SHA anywhere
+#                                  else — including the review-state block's
+#                                  head_sha or last_seen_head_sha — never
+#                                  satisfies rule (a);
+#   pr_agent_has_any_marker      — the visible body carries a marker line for
+#                                  any commit, or is unterminated (null). A
+#                                  body for which this is false is a
+#                                  marker-free first summary, the only shape
+#                                  rule (b) may consider.
+# shellcheck disable=SC2034
+REVIEWER_LOOP_PR_AGENT_MARKER_JQ='
+def pr_agent_visible_body:
+  ((. // "") | tostring)
+  | gsub("<!--\\s*pr-agent-review-state:v1[\\s\\S]*?-->"; "")
+  | if test("<!--\\s*pr-agent-review-state:v1") then null else . end;
+def pr_agent_has_head_marker($head):
+  (($head // "") | tostring | ascii_downcase) as $h
+  | ($h | test("^[0-9a-f]{40}$"))
+    and (pr_agent_visible_body as $v
+         | ($v != null)
+           and ($v | test("Review updated until commit https://[^/\\s()]+/[^/\\s()]+/[^/\\s()]+/commit/" + $h + "\\)"; "i")));
+def pr_agent_has_any_marker:
+  pr_agent_visible_body as $v
+  | ($v == null) or ($v | test("Review updated until commit"; "i"));
+'
+
+# pr_agent_summary_marker_names_head <body> <head_sha>
+# True when the PR-Agent summary body satisfies D15 rule (a) for <head_sha>
+# (REVIEWER_LOOP_PR_AGENT_MARKER_JQ pr_agent_has_head_marker).
+pr_agent_summary_marker_names_head() {
+  local body="${1:-}" head="${2:-}"
+  [ -n "$body" ] && [ -n "$head" ] || return 1
+  jq -en --arg body "$body" --arg head "$head" "$REVIEWER_LOOP_PR_AGENT_MARKER_JQ"'
+    $body | pr_agent_has_head_marker($head)' >/dev/null 2>&1
+}
 
 # print_no_verdict_yet <platform> <detail> <head_sha> <requested_at>
 #
