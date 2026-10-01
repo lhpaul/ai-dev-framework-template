@@ -677,8 +677,11 @@ Usage: ./scripts/development-workflow/pr-review-loop.sh <pr-number> [--branch na
 Runs the automated PR review loop for one or more platforms in sequence. Before
 triggering a new review, each platform checks for existing blocking findings. If
 any platform reports blocking findings, the script stops immediately and exits 1.
-If a platform times out or escalates, the script exits 2. If all configured
-platforms are clean or skipped, the script exits 0. If a second instance is
+If a platform's wait budget runs out with no verdict and no failure evidence
+(No verdict yet), the script stops with RESULT=waiting_on_reviewer and exits 4;
+that is not a failure. If a platform reports failure evidence or escalates
+(Reviewer failed), the script exits 2. If all configured platforms are clean or
+skipped, the script exits 0. If a second instance is
 detected for the same PR number in the same repository, the script emits
 RESULT=escalate with REASON=lock_contention and exits 75 (EX_TEMPFAIL).
 
@@ -764,7 +767,38 @@ Per-platform wait budgets:
   The resolved budgets are printed once as
   PLATFORM_WAIT_BUDGETS=<platform>:<seconds>:<source>[:<adjustment>],…
   with source override|configured|default and adjustment
-  documentation_branch|large_diff.
+  documentation_branch|large_diff. Platforms run one after another, so a run's
+  worst-case wait is the sum of its platforms' budgets (plus one automatic
+  re-wait by the runner). The canonical statement of budgets, outcome classes,
+  precedence, the re-wait, and the reviewer-failed label rule is "Reviewer wait
+  budgets and outcome classes" in
+  docs/workflow/development-workflow/protocols/93-automated-reviewer-loop-protocol.md.
+
+Outcome classes (issue #1789):
+  Verdict received  clean, needs_fixes, needs_rerun.
+  No verdict yet    the budget ran out with no verdict and no failure evidence:
+                    RESULT=waiting_on_reviewer REASON=reviewer-no-verdict-yet
+                    (exit 4), or Codex GitHub's codex-github-review-pending /
+                    codex-github-reaction-without-review. Never applies
+                    reviewer-failed. Four expired waits stay non-blocking kept
+                    skips with NO_VERDICT_YET=1: devin no_check_run, coderabbit
+                    no_review, coderabbit-cli timeout, pr-agent no_review.
+  Reviewer failed   RESULT=escalate, including a reviewer's own failed or
+                    timed-out run (bugbot-run-timed-out,
+                    claude_code_action_run_failed, devin_run_failed,
+                    coderabbit_status_failed, pr_agent_run_failed).
+  Precedence across platforms (--compare): Reviewer failed, then findings, then
+  No verdict yet, then clean/skipped; ties go to the earliest platform.
+  reviewer-failed is reconciled after every run that evaluated reviewers: added
+  when any platform in this run carries failure evidence (an escalate other
+  than rate_limited, or a skip with reason unavailable, thread-check-failed,
+  forbidden, unauthorized, no_output, invalid_json, ambiguous_output, or
+  cli_failed), removed otherwise — including runs that replay a recorded clean
+  verdict.
+  Evidence counts for the current head only when it is bound to it: check runs
+  and statuses read from commits/<head>, reviews with commit_id == head, review
+  comments with original_commit_id == head, issue comments that answer a
+  request recorded for the head (PR-Agent: its head marker or binding run).
 
 Branch-type-aware default timeout:
   On spec/* and implementation-plan/* branches, Devin has no trigger condition and
@@ -839,6 +873,35 @@ Outputs stable key=value lines including:
   CHANGED_FILES_COUNT=<n> (PR's changed-files count, or -1 when the fetch failed)
   LARGE_DIFF_EXTENDED=1 (present and set to 1 when at least one platform budget was extended for a large-diff PR)
   PLATFORM_WAIT_BUDGETS=<platform>:<seconds>:<source>[:<adjustment>],… (per-platform wait budgets)
+  Per dispatched platform <n> (issue #1789):
+    PLATFORM_<n>_OUTCOME_CLASS=verdict_received|no_verdict_yet|reviewer_failed|existing_handling|skipped_failure_evidence|skipped
+    PLATFORM_<n>_WAIT_BUDGET_SECONDS / _WAIT_BUDGET_SOURCE (override|configured|default)
+      / _WAIT_BUDGET_ADJUSTMENT (none|documentation_branch|large_diff)
+    PLATFORM_<n>_REQUESTED_AT=<iso8601> / PLATFORM_<n>_REQUESTED_AT_SOURCE=request|wait_start
+    PLATFORM_<n>_REQUEST_REF=<comment or workflow run id> (only when the platform recorded one)
+    PLATFORM_<n>_LATENCY_SECONDS (verdict, failure, existing handling)
+      | PLATFORM_<n>_WAITED_SECONDS (No verdict yet) | PLATFORM_<n>_ELAPSED_SECONDS (skip)
+    PLATFORM_<n>_VERDICT_REUSED=1 (a #1692 replay; no budget, request, or seconds key)
+    The summary comment's "Reviewer timing" section and the ledger's
+    platform_results[] records carry the same values (additive keys).
+  RESULT=waiting_on_reviewer REASON=reviewer-no-verdict-yet (exit 4; No verdict yet)
+    NO_VERDICT_YET=1 and WAIT_EXPIRED_DETAIL=<detail> in the platform output
+      (kept skips print NO_VERDICT_YET=1 and
+      DISPLAY_RESULT=no verdict yet (non-blocking skip: <reason>) instead)
+    With a waiting result whose reason is reviewer-no-verdict-yet,
+    codex-github-review-pending, or codex-github-reaction-without-review:
+    NO_VERDICT_REWAIT=available|used|untracked (available: the runner may re-run
+      the loop once, immediately, with the same PR_REVIEW_LOOP_RUN_ID; used: that
+      re-wait already ran; untracked: no stable run id, unknown head, unreadable
+      ledger, or the summary could not be persisted — stop without re-waiting)
+    PENDING_REVIEWER=<platform>  PENDING_REVIEW_HEAD_SHA=<sha>
+    PENDING_REVIEW_REQUESTED_AT=<iso8601> / PENDING_REVIEW_WAITED_SECONDS=<n> (when recorded)
+    NO_FAILURE_DETECTED=1|0 (0 when any platform in this run carried failure
+      evidence; reviewer-failed is then applied)
+    FAILED_PEER_PLATFORMS=<comma-separated platforms> (only when NO_FAILURE_DETECTED=0
+      and the platforms can be named)
+    A re-wait run adopts the request the earlier run recorded for the same run id
+    and head and posts no duplicate review request.
   REASON=late_review_threads (when post-clean recheck finds new unresolved threads)
   COMPARE_MODE=1 (when --compare is active)
   COMPARE_VERDICT_<n>_PLATFORM / COMPARE_VERDICT_<n>_RESULT (when --compare is active)
