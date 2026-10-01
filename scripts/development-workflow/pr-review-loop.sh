@@ -3576,6 +3576,9 @@ run_bugbot_review() {
   # --- Phase 1: Check for existing blocking cursor[bot] findings on current HEAD ---
   # If blocking findings already exist (e.g. from a previous trigger in the same
   # review cycle) return needs_fixes immediately without re-triggering.
+  # #1789 (plan D15 bugbot row): this and the three later review-comment
+  # filters bind a comment by original_commit_id; GitHub moves commit_id to the
+  # newest head while the commented line is unchanged. Reviews keep commit_id.
   set +e
   local _existing_comments_rc=0
   local _existing_reviews_rc=0
@@ -3583,7 +3586,7 @@ run_bugbot_review() {
     gh api "repos/$repo/pulls/$pr_number/comments" --paginate 2>/dev/null \
       | jq -r --arg bot "$bot_login" --arg since "$since_iso" --arg sha "$head_sha" '
           .[]
-          | select((.user.login == $bot or .user.login == ($bot + "[bot]")) and .created_at > $since and .commit_id == $sha and .in_reply_to_id == null)
+          | select((.user.login == $bot or .user.login == ($bot + "[bot]")) and .created_at > $since and .original_commit_id == $sha and .in_reply_to_id == null)
           | { path, line: (.line // .original_line // 0), body: (.body // ""), commit_id: (.commit_id // "") }
           | @json
         ' 2>/dev/null
@@ -3983,7 +3986,7 @@ run_bugbot_review() {
 	            gh api "repos/$repo/pulls/$pr_number/comments" --paginate 2>/dev/null \
 	              | jq -r --arg bot "$bot_login" --arg since "$_current_since_iso" --arg sha "$_current_sha" '
 	                  .[]
-	                  | select((.user.login == $bot or .user.login == ($bot + "[bot]")) and .created_at > $since and .commit_id == $sha and .in_reply_to_id == null)
+	                  | select((.user.login == $bot or .user.login == ($bot + "[bot]")) and .created_at > $since and .original_commit_id == $sha and .in_reply_to_id == null)
 	                  | { path, line: (.line // .original_line // 0), body: (.body // ""), commit_id: (.commit_id // "") }
                   | @json
                 ' 2>/dev/null
@@ -4074,7 +4077,7 @@ run_bugbot_review() {
 	            gh api "repos/$repo/pulls/$pr_number/comments" --paginate 2>/dev/null \
 	              | jq -r --arg bot "$bot_login" --arg since "$_current_since_iso" --arg sha "$_current_sha" '
 	                  .[]
-	                  | select((.user.login == $bot or .user.login == ($bot + "[bot]")) and .created_at > $since and .commit_id == $sha and .in_reply_to_id == null)
+	                  | select((.user.login == $bot or .user.login == ($bot + "[bot]")) and .created_at > $since and .original_commit_id == $sha and .in_reply_to_id == null)
 	                  | { path, line: (.line // .original_line // 0), body: (.body // ""), commit_id: (.commit_id // "") }
                   | @json
                 ' 2>/dev/null
@@ -4252,7 +4255,7 @@ run_bugbot_review() {
             gh api "repos/$repo/pulls/$pr_number/comments" --paginate 2>/dev/null \
               | jq -r --arg bot "$bot_login" --arg since "$_current_since_iso" --arg sha "$_current_sha" '
                   .[]
-                  | select((.user.login == $bot or .user.login == ($bot + "[bot]")) and .created_at > $since and .commit_id == $sha and .in_reply_to_id == null)
+                  | select((.user.login == $bot or .user.login == ($bot + "[bot]")) and .created_at > $since and .original_commit_id == $sha and .in_reply_to_id == null)
                   | { path, line: (.line // .original_line // 0), body: (.body // ""), commit_id: (.commit_id // "") }
                   | @json
                 ' 2>/dev/null
@@ -5171,22 +5174,26 @@ run_devin_review() {
   unset _now_iso
 
   # --- Phase 1: Check for existing blocking findings on the current HEAD ---
+  # #1789 (plan D15 devin row): findings count only when bound to the head —
+  # review comments by original_commit_id, reviews by commit_id — in addition
+  # to the time filter.
   existing_comments="$(
     gh api "repos/$repo/pulls/$pr_number/comments" --paginate \
-      | jq -r --arg bot "$bot_login" --arg since "$since_iso" '
+      | jq -r --arg bot "$bot_login" --arg since "$since_iso" --arg head "$head_sha" "$REVIEWER_LOOP_HEAD_BINDING_JQ"'
           .[]
-          | select(.user.login == $bot and .created_at > $since and .in_reply_to_id == null)
+          | select(.user.login == $bot and .created_at > $since and .in_reply_to_id == null and bound_review_comment($head))
           | { path, line: (.line // .original_line // 0), body: (.body // ""), commit_id: (.commit_id // "") }
           | @json
         '
   )"
   existing_reviews="$(
     gh api "repos/$repo/pulls/$pr_number/reviews" --paginate \
-      | jq -r --arg bot "$bot_login" --arg since "$since_iso" '
+      | jq -r --arg bot "$bot_login" --arg since "$since_iso" --arg head "$head_sha" "$REVIEWER_LOOP_HEAD_BINDING_JQ"'
           .[]
           | select(
               .user.login == $bot and
               .submitted_at > $since and
+              bound_review($head) and
               (
                 .state == "CHANGES_REQUESTED" or
                 .state == "COMMENTED"
@@ -5286,14 +5293,18 @@ run_devin_review() {
   local devin_ended_on_check=0
 
   while :; do
-    # Check for any Devin completion review every iteration (so "No Issues Found" is detected)
+    # Check for any Devin completion review every iteration (so "No Issues Found" is detected).
+    # #1789 (plan D15 devin row): only a completion review bound to the head
+    # (commit_id == head) ends the wait; an older head's summary submitted
+    # after the committer time does not.
     devin_summary_count="$(
       gh api "repos/$repo/pulls/$pr_number/reviews" --paginate \
-        | jq --arg bot "$bot_login" --arg since "$since_iso" '
+        | jq --arg bot "$bot_login" --arg since "$since_iso" --arg head "$head_sha" "$REVIEWER_LOOP_HEAD_BINDING_JQ"'
             [.[]
              | select(
                  .user.login == $bot and
                  .submitted_at > $since and
+                 bound_review($head) and
                  (.body // "" | test("\\*\\*Devin Review\\*\\*|Devin Review has completed|No Issues Found"; "i"))
                )
             ] | length
@@ -5481,13 +5492,14 @@ run_devin_review() {
   done
 
   # --- Phase 3: Collect results after completion ---
+  # #1789 (plan D15 devin row): findings bound to the head only.
   blocking_lines_file="$(mktemp)"
 
   comments="$(
     gh api "repos/$repo/pulls/$pr_number/comments" --paginate \
-      | jq -r --arg bot "$bot_login" --arg since "$since_iso" '
+      | jq -r --arg bot "$bot_login" --arg since "$since_iso" --arg head "$head_sha" "$REVIEWER_LOOP_HEAD_BINDING_JQ"'
         .[]
-        | select(.user.login == $bot and .created_at > $since and .in_reply_to_id == null)
+        | select(.user.login == $bot and .created_at > $since and .in_reply_to_id == null and bound_review_comment($head))
         | {
             path,
             line: (.line // .original_line // 0),
@@ -5500,11 +5512,12 @@ run_devin_review() {
 
   blocking_reviews="$(
     gh api "repos/$repo/pulls/$pr_number/reviews" --paginate \
-      | jq -r --arg bot "$bot_login" --arg since "$since_iso" '
+      | jq -r --arg bot "$bot_login" --arg since "$since_iso" --arg head "$head_sha" "$REVIEWER_LOOP_HEAD_BINDING_JQ"'
         .[]
         | select(
             .user.login == $bot and
             .submitted_at > $since and
+            bound_review($head) and
             (
               .state == "CHANGES_REQUESTED" or
               .state == "COMMENTED"
@@ -7457,22 +7470,26 @@ run_coderabbit_review() {
   unset _now_iso
 
   # --- Phase 1: Check for existing blocking findings on the current HEAD ---
+  # #1789 (plan D15 coderabbit row): findings count only when bound to the
+  # head — review comments by original_commit_id, reviews by commit_id — in
+  # addition to the time filter.
   existing_comments="$(
     gh api "repos/$repo/pulls/$pr_number/comments" --paginate \
-      | jq -r --arg bot "$bot_login" --arg since "$since_iso" '
+      | jq -r --arg bot "$bot_login" --arg since "$since_iso" --arg head "$head_sha" "$REVIEWER_LOOP_HEAD_BINDING_JQ"'
           .[]
-          | select(.user.login == $bot and .created_at > $since and .in_reply_to_id == null)
+          | select(.user.login == $bot and .created_at > $since and .in_reply_to_id == null and bound_review_comment($head))
           | { path, line: (.line // .original_line // 0), body: (.body // ""), commit_id: (.commit_id // "") }
           | @json
         '
   )"
   existing_reviews="$(
     gh api "repos/$repo/pulls/$pr_number/reviews" --paginate \
-      | jq -r --arg bot "$bot_login" --arg since "$since_iso" '
+      | jq -r --arg bot "$bot_login" --arg since "$since_iso" --arg head "$head_sha" "$REVIEWER_LOOP_HEAD_BINDING_JQ"'
           .[]
           | select(
               .user.login == $bot and
               .submitted_at > $since and
+              bound_review($head) and
               .state == "CHANGES_REQUESTED"
             )
           | { path: "", line: 0, body: (.body // "CHANGES_REQUESTED review without body"), commit_id: (.commit_id // .commitId // "") }
@@ -7599,6 +7616,8 @@ run_coderabbit_review() {
   local coderabbit_review_count=0
   local coderabbit_any_activity=0
   local coderabbit_status_failed_seen=0
+  # #1789 (plan D15): the wait ended on a CodeRabbit success status on the head.
+  local coderabbit_status_success_seen=0
   # Initialize retrigger flag from Phase 0 so Phase 2 does not double-post a resume.
   local coderabbit_retrigger_attempted=$coderabbit_phase0_retrigger
   local coderabbit_rate_limit_retries=0
@@ -7646,14 +7665,17 @@ run_coderabbit_review() {
   fi
 
   while :; do
-    # Check for any CodeRabbit review submitted after the HEAD commit
+    # Check for any CodeRabbit review submitted after the HEAD commit.
+    # #1789 (plan D15 coderabbit row): only a review bound to the head
+    # (commit_id == head) ends the wait; an older head's review does not.
     coderabbit_review_count="$(
       gh api "repos/$repo/pulls/$pr_number/reviews" --paginate \
-        | jq --arg bot "$bot_login" --arg since "$since_iso" '
+        | jq --arg bot "$bot_login" --arg since "$since_iso" --arg head "$head_sha" "$REVIEWER_LOOP_HEAD_BINDING_JQ"'
             [.[]
              | select(
                  .user.login == $bot and
-                 .submitted_at > $since
+                 .submitted_at > $since and
+                 bound_review($head)
                )
             ] | length
           '
@@ -7674,6 +7696,18 @@ run_coderabbit_review() {
     coderabbit_failed_status_poll_count="$(coderabbit_failed_status_count "$repo" "$head_sha")"
     if [ "${coderabbit_failed_status_poll_count:-0}" -gt 0 ]; then
       coderabbit_status_failed_seen=1
+      break
+    fi
+
+    # #1789 (plan D15 coderabbit row): a genuine CodeRabbit success status on
+    # the head (coderabbit_success_status_count: state success, description
+    # outside the #1437 rate/review-limit wording) is bound to the head by its
+    # commits/<head>/statuses endpoint and ends the wait. Phase 3 then reads
+    # bound findings and the thread gate as for a bound review.
+    local coderabbit_success_status_poll_count
+    coderabbit_success_status_poll_count="$(coderabbit_success_status_count "$repo" "$head_sha")"
+    if [ "${coderabbit_success_status_poll_count:-0}" -gt 0 ]; then
+      coderabbit_status_success_seen=1
       break
     fi
 
@@ -7709,10 +7743,15 @@ run_coderabbit_review() {
             '
       )"
       if [ "${activity_count:-0}" -gt 0 ]; then
+        # #1789 (plan D15 coderabbit row): a walkthrough or summary issue
+        # comment carries no commit field, and its created_at/updated_at
+        # cannot show which revision it answers (an older head's walkthrough
+        # edited after this head's committer time looks the same). It records
+        # that CodeRabbit is active — so budget expiry is the D8 No verdict
+        # yet, not the no_review kept skip — but it no longer ends the wait:
+        # only a review bound to the head or a CodeRabbit status on the head
+        # does.
         coderabbit_any_activity=1
-        # Issue-comment activity means CodeRabbit finished this HEAD cycle, but unlike
-        # a formal PR review it does not hit the `break` above — continue to Phase 3.
-        break
       fi
     fi
 
@@ -8285,13 +8324,24 @@ run_coderabbit_review() {
   done
 
   # --- Phase 3: Collect results after completion ---
+  # #1789 (plan D15 coderabbit row): when a success status on the head ended
+  # the wait, give asynchronously posted inline threads time to arrive before
+  # collecting (the coderabbit_status_success_fallback settle wait), then read
+  # only findings bound to the head.
+  if [ "$coderabbit_status_success_seen" -eq 1 ]; then
+    local cr_status_success_settle_wait="${FALLBACK_THREAD_SETTLE_WAIT:-60}"
+    if [ "$cr_status_success_settle_wait" -gt 0 ] 2>/dev/null; then
+      echo "INFO: CodeRabbit success status on $head_sha ended the wait — waiting ${cr_status_success_settle_wait}s for async threads to settle before collecting findings" >&2
+      _interruptible_sleep "$cr_status_success_settle_wait"
+    fi
+  fi
   blocking_lines_file="$(mktemp)"
 
   comments="$(
     gh api "repos/$repo/pulls/$pr_number/comments" --paginate \
-      | jq -r --arg bot "$bot_login" --arg since "$since_iso" '
+      | jq -r --arg bot "$bot_login" --arg since "$since_iso" --arg head "$head_sha" "$REVIEWER_LOOP_HEAD_BINDING_JQ"'
         .[]
-        | select(.user.login == $bot and .created_at > $since and .in_reply_to_id == null)
+        | select(.user.login == $bot and .created_at > $since and .in_reply_to_id == null and bound_review_comment($head))
         | {
             path,
             line: (.line // .original_line // 0),
@@ -8304,11 +8354,12 @@ run_coderabbit_review() {
 
   blocking_reviews="$(
     gh api "repos/$repo/pulls/$pr_number/reviews" --paginate \
-      | jq -r --arg bot "$bot_login" --arg since "$since_iso" '
+      | jq -r --arg bot "$bot_login" --arg since "$since_iso" --arg head "$head_sha" "$REVIEWER_LOOP_HEAD_BINDING_JQ"'
         .[]
         | select(
             .user.login == $bot and
             .submitted_at > $since and
+            bound_review($head) and
             .state == "CHANGES_REQUESTED"
           )
         | {
@@ -8409,6 +8460,9 @@ run_coderabbit_review() {
     return "$cr_phase3_gate_rc"
   fi
   print_kv RESULT clean
+  if [ "$coderabbit_status_success_seen" -eq 1 ] && [ "${coderabbit_review_count:-0}" -eq 0 ]; then
+    print_kv REASON coderabbit_status_success_fallback
+  fi
       {
         [ -n "${comments:-}" ] && printf '%s\n' "$comments"
         [ -n "${existing_comments:-}" ] && printf '%s\n' "$existing_comments"
@@ -8896,6 +8950,28 @@ def reviewer_failed_completion:
 # signals (plan D8 failure-type completion signals).
 # shellcheck disable=SC2034
 REVIEWER_FAILED_COMPLETION_JQ="$(reviewer_loop_build_failed_completion_jq)"
+
+# REVIEWER_LOOP_HEAD_BINDING_JQ (#1789, plan D15) defines the per-object
+# current-revision bindings handlers add to their existing filters:
+#   bound_review($head)         — a pull request review, bound by commit_id,
+#                                 which GitHub fixes at submission (V29);
+#   bound_review_comment($head) — a pull request review comment, bound by
+#                                 original_commit_id, never commit_id, which
+#                                 GitHub moves to the newest head while the
+#                                 commented line is unchanged (V29).
+# Both compare case-insensitively and never bind to an empty head, so a
+# missing field or an unknown head binds nothing (fail closed).
+# shellcheck disable=SC2034
+REVIEWER_LOOP_HEAD_BINDING_JQ='
+def reviewer_loop_head_eq($a; $b):
+  (($a // "") | tostring | ascii_downcase) as $x
+  | (($b // "") | tostring | ascii_downcase) as $y
+  | ($y != "") and ($x == $y);
+def bound_review($head):
+  type == "object" and reviewer_loop_head_eq((.commit_id // .commitId); $head);
+def bound_review_comment($head):
+  type == "object" and reviewer_loop_head_eq(.original_commit_id; $head);
+'
 
 # print_no_verdict_yet <platform> <detail> <head_sha> <requested_at>
 #

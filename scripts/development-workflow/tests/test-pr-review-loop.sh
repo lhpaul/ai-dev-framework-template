@@ -16507,7 +16507,7 @@ case "$*" in
     if [ "$calls" -eq 1 ]; then
       printf '[]\n'
     else
-      printf '[{"user":{"login":"cursor[bot]"},"created_at":"2020-01-02T00:00:00Z","commit_id":"abc161bsha","path":"src/lib.c","line":10,"body":"Skipping Bugbot: your auto mode classified this PR to skip. Visit the Bugbot dashboard to update your settings."},{"user":{"login":"cursor[bot]"},"created_at":"2020-01-02T00:01:00Z","commit_id":"abc161bsha","path":"src/lib.c","line":11,"body":"BUGBOT_REVIEW: null pointer"}]\n'
+      printf '[{"user":{"login":"cursor[bot]"},"created_at":"2020-01-02T00:00:00Z","commit_id":"abc161bsha","original_commit_id":"abc161bsha","path":"src/lib.c","line":10,"body":"Skipping Bugbot: your auto mode classified this PR to skip. Visit the Bugbot dashboard to update your settings."},{"user":{"login":"cursor[bot]"},"created_at":"2020-01-02T00:01:00Z","commit_id":"abc161bsha","original_commit_id":"abc161bsha","path":"src/lib.c","line":11,"body":"BUGBOT_REVIEW: null pointer"}]\n'
     fi
     exit 0 ;;
   *"pulls/"*"/reviews"*)
@@ -16560,7 +16560,7 @@ case "$*" in
     if [ "$calls" -eq 1 ]; then
       printf '[]\n'
     else
-      printf '[{"user":{"login":"cursor[bot]"},"created_at":"2020-01-02T00:00:00Z","commit_id":"abc161csha","path":"src/lib.c","line":10,"body":"Skipping Bugbot: your auto mode classified this PR to skip. Visit the Bugbot dashboard to update your settings."}]\n'
+      printf '[{"user":{"login":"cursor[bot]"},"created_at":"2020-01-02T00:00:00Z","commit_id":"abc161csha","original_commit_id":"abc161csha","path":"src/lib.c","line":10,"body":"Skipping Bugbot: your auto mode classified this PR to skip. Visit the Bugbot dashboard to update your settings."}]\n'
     fi
     exit 0 ;;
   *"pulls/"*"/reviews"*)
@@ -16986,7 +16986,7 @@ case "$*" in
   *"--jq .commit.committer.date"*)
     printf '2020-01-01T00:00:00Z\n'; exit 0 ;;
   *"pulls/"*"/comments"*)
-    printf '[{"user":{"login":"cursor[bot]"},"created_at":"2020-01-02T00:00:00Z","commit_id":"abc166bsha","path":"src/lib.c","line":10,"body":"BUGBOT_REVIEW: null pointer"},{"user":{"login":"cursor[bot]"},"created_at":"2020-01-02T00:01:00Z","commit_id":"abc166bsha","path":"src/lib.c","line":11,"body":"Skipping Bugbot: your auto mode classified this PR to skip. Visit the Bugbot dashboard to update your settings."}]\n'
+    printf '[{"user":{"login":"cursor[bot]"},"created_at":"2020-01-02T00:00:00Z","commit_id":"abc166bsha","original_commit_id":"abc166bsha","path":"src/lib.c","line":10,"body":"BUGBOT_REVIEW: null pointer"},{"user":{"login":"cursor[bot]"},"created_at":"2020-01-02T00:01:00Z","commit_id":"abc166bsha","original_commit_id":"abc166bsha","path":"src/lib.c","line":11,"body":"Skipping Bugbot: your auto mode classified this PR to skip. Visit the Bugbot dashboard to update your settings."}]\n'
     exit 0 ;;
   *"pulls/"*"/reviews"*)
     printf '[]\n'; exit 0 ;;
@@ -17347,7 +17347,7 @@ case "$*" in
   *"--jq .commit.committer.date"*)
     printf '2020-01-01T00:00:00Z\n'; exit 0 ;;
   *"pulls/"*"/comments"*)
-    printf '[{"user":{"login":"cursor[bot]"},"created_at":"2020-01-02T00:00:00Z","commit_id":"abc169bnew","path":"src/tenant.ts","line":42,"body":"**High Severity**\\n\\nRBAC is checked but tenant ownership is never verified.\\n\\n<!-- BUGBOT_BUG_ID: bug-1 -->"},{"user":{"login":"cursor[bot]"},"created_at":"2020-01-02T00:01:00Z","commit_id":"abc169bnew","path":"src/status.ts","line":88,"body":"**High Severity**\\n\\nCheck-then-update race on status === pending.\\n\\n<!-- BUGBOT_BUG_ID: bug-2 -->"},{"user":{"login":"cursor[bot]"},"created_at":"2020-01-02T00:02:00Z","commit_id":"abc169bnew","path":"src/audit.ts","line":12,"body":"**Medium Severity**\\n\\nState transition nulls the audit trail column.\\n\\n<!-- BUGBOT_BUG_ID: bug-3 -->"}]\n'
+    printf '[{"user":{"login":"cursor[bot]"},"created_at":"2020-01-02T00:00:00Z","commit_id":"abc169bnew","original_commit_id":"abc169bnew","path":"src/tenant.ts","line":42,"body":"**High Severity**\\n\\nRBAC is checked but tenant ownership is never verified.\\n\\n<!-- BUGBOT_BUG_ID: bug-1 -->"},{"user":{"login":"cursor[bot]"},"created_at":"2020-01-02T00:01:00Z","commit_id":"abc169bnew","original_commit_id":"abc169bnew","path":"src/status.ts","line":88,"body":"**High Severity**\\n\\nCheck-then-update race on status === pending.\\n\\n<!-- BUGBOT_BUG_ID: bug-2 -->"},{"user":{"login":"cursor[bot]"},"created_at":"2020-01-02T00:02:00Z","commit_id":"abc169bnew","original_commit_id":"abc169bnew","path":"src/audit.ts","line":12,"body":"**Medium Severity**\\n\\nState transition nulls the audit trail column.\\n\\n<!-- BUGBOT_BUG_ID: bug-3 -->"}]\n'
     exit 0 ;;
   *"pulls/"*"/reviews"*)
     printf '[]\n'; exit 0 ;;
@@ -22896,6 +22896,162 @@ _1789_fx check-runs "$(_1789_pra_runs "$(_1789_pra 10 completed '"timed_out"' 10
 _1789_fx check-runs-fail@2 1
 _1789_out="$(_1789_run_gh run_pr_agent_review 5)"
 run_test "1789_T2.26_pr_agent_failed_read_keeps_last_signal" "escalate|pr_agent_run_failed|2" "$(_1789_rre "$_1789_out")"
+
+# ---------------------------------------------------------------------------
+# Phase 5 — current-revision binding (plan D15): T2.16 (review-comment drift)
+# and T2.17 (completion signals) for Bugbot, Devin, and CodeRabbit. A
+# "drifted" comment is an older head's review comment that GitHub moved to the
+# current head: commit_id H, original_commit_id OLD, created after every time
+# filter. It is never H's finding; the same comment with original_commit_id H
+# is.
+# ---------------------------------------------------------------------------
+# _1789_rc <id> <login> <commit_id> <original_commit_id> <body> [created_at]
+_1789_rc() {
+  jq -nc --argjson id "$1" --arg login "$2" --arg c "$3" --arg o "$4" --arg body "$5" \
+    --arg at "${6:-2020-01-01T00:00:20Z}" \
+    '{id: $id, user: {login: $login}, created_at: $at, in_reply_to_id: null, path: "a.sh", line: 7,
+      body: $body, commit_id: $c, original_commit_id: $o}'
+}
+_1789_bb_check() {
+  printf '{"check_runs":[{"id":%s,"name":"Cursor Bugbot","app":{"slug":"cursor"},"status":"completed","conclusion":"%s","started_at":"2020-01-01T00:00:01Z","output":{"summary":"%s"}}]}' \
+    "$1" "$2" "${3:-}"
+}
+_1789_bb_finding="BUGBOT_REVIEW: null pointer dereference"
+
+# --- T2.16 Bugbot: Phase 1 existing findings.
+_1789_gh_reset
+_1789_fx review-comments "[$(_1789_rc 601 "cursor[bot]" "$_1789_H" "$_1789_OLD" "$_1789_bb_finding")]"
+_1789_fx check-runs "$(_1789_bb_check 61 success)"
+_1789_out="$(_1789_run_gh run_bugbot_review 4)"
+run_test "1789_T2.16_bugbot_drifted_comment_ignored_clean" "clean||0" "$(_1789_rre "$_1789_out")"
+_1789_fx review-comments "[$(_1789_rc 602 "cursor[bot]" "$_1789_H" "$_1789_H" "$_1789_bb_finding")]"
+_1789_out="$(_1789_run_gh run_bugbot_review 4)"
+run_test "1789_T2.16_bugbot_bound_comment_phase1_needs_fixes" "needs_fixes|1" \
+  "$(kv_value_default RESULT "$_1789_out" "")|$(kv_value_default EXIT "$_1789_out" "")"
+# --- T2.16 Bugbot: the success-conclusion inspection (comments appear after Phase 1).
+_1789_gh_reset
+_1789_fx check-runs "$(_1789_bb_check 62 success)"
+_1789_fx review-comments@1 "[$(_1789_rc 603 "cursor[bot]" "$_1789_H" "$_1789_OLD" "$_1789_bb_finding")]"
+_1789_fx check-runs@1 "$(_1789_bb_check 62 success)"
+_1789_out="$(_1789_run_gh run_bugbot_review 4)"
+run_test "1789_T2.16_bugbot_success_path_drifted_ignored" "clean|0" \
+  "$(kv_value_default RESULT "$_1789_out" "")|$(kv_value_default BLOCKING_COUNT "$_1789_out" "")"
+# --- T2.16 Bugbot: the failure-conclusion collection — a drifted comment is
+# not surfaced as this head's finding (only the synthetic blocker remains).
+_1789_gh_reset
+_1789_fx check-runs "$(_1789_bb_check 63 failure)"
+_1789_fx review-comments "[$(_1789_rc 604 "cursor[bot]" "$_1789_H" "$_1789_OLD" "$_1789_bb_finding")]"
+_1789_out="$(_1789_run_gh run_bugbot_review 4)"
+run_test "1789_T2.16_bugbot_failure_path_drifted_body_not_surfaced" "0" \
+  "$(printf '%s\n' "$_1789_out" | grep -c 'null pointer dereference' || true)"
+_1789_fx review-comments "[$(_1789_rc 605 "cursor[bot]" "$_1789_H" "$_1789_H" "$_1789_bb_finding")]"
+_1789_out="$(_1789_run_gh run_bugbot_review 4)"
+run_test "1789_T2.16_bugbot_failure_path_bound_body_surfaced" "needs_fixes|yes" \
+  "$(kv_value_default RESULT "$_1789_out" "")|$( [ "$(printf '%s\n' "$_1789_out" | grep -c 'null pointer dereference' || true)" -ge 1 ] && echo yes || echo no)"
+# --- T2.16 Bugbot: the neutral-conclusion collection — a summary that reports
+# a finding with only a drifted comment is not retrievable for this head.
+_1789_gh_reset
+_1789_fx check-runs "$(_1789_bb_check 64 neutral 'Final Result: Bugbot completed review and found 1 potential issue.')"
+_1789_fx review-comments "[$(_1789_rc 606 "cursor[bot]" "$_1789_H" "$_1789_OLD" "**High Severity** $_1789_bb_finding")]"
+_1789_out="$(_1789_run_gh run_bugbot_review 4)"
+run_test "1789_T2.16_bugbot_neutral_path_drifted_not_retrievable" "escalate|bugbot-findings-not-retrievable" \
+  "$(kv_value_default RESULT "$_1789_out" "")|$(kv_value_default REASON "$_1789_out" "")"
+_1789_fx review-comments "[$(_1789_rc 607 "cursor[bot]" "$_1789_H" "$_1789_H" "**High Severity** $_1789_bb_finding")]"
+_1789_out="$(_1789_run_gh run_bugbot_review 4)"
+run_test "1789_T2.16_bugbot_neutral_path_bound_needs_fixes" "needs_fixes|1" \
+  "$(kv_value_default RESULT "$_1789_out" "")|$(kv_value_default BLOCKING_COUNT "$_1789_out" "")"
+
+# --- T2.16 Devin: Phase 1 (pre-trigger) findings and the Phase 3 collection.
+_1789_gh_reset
+_1789_fx check-runs "$(_1789_dv_run completed '"success"')"
+_1789_fx review-comments "[$(_1789_rc 611 "devin-ai-integration[bot]" "$_1789_H" "$_1789_OLD" "Bug: off-by-one in the loop bound")]"
+_1789_out="$(_1789_run_gh run_devin_review 300 60)"
+run_test "1789_T2.16_devin_drifted_comment_ignored_both_phases_clean" "clean||0" "$(_1789_rre "$_1789_out")"
+_1789_fx review-comments "[$(_1789_rc 612 "devin-ai-integration[bot]" "$_1789_H" "$_1789_H" "Bug: off-by-one in the loop bound")]"
+_1789_out="$(_1789_run_gh run_devin_review 300 60)"
+run_test "1789_T2.16_devin_bound_comment_phase1_needs_fixes" "needs_fixes|existing_findings|1" "$(_1789_rre "$_1789_out")"
+_1789_gh_reset
+_1789_fx check-runs "$(_1789_dv_run completed '"success"')"
+_1789_fx review-comments@60 "[$(_1789_rc 613 "devin-ai-integration[bot]" "$_1789_H" "$_1789_H" "Bug: off-by-one in the loop bound")]"
+_1789_out="$(_1789_run_gh run_devin_review 300 60)"
+run_test "1789_T2.16_devin_bound_comment_phase3_needs_fixes" "needs_fixes||1" "$(_1789_rre "$_1789_out")"
+# A Devin review bound to another revision is not a finding either.
+_1789_gh_reset
+_1789_fx check-runs "$(_1789_dv_run completed '"success"')"
+_1789_fx reviews "[{\"id\":9,\"user\":{\"login\":\"devin-ai-integration[bot]\"},\"state\":\"CHANGES_REQUESTED\",\"submitted_at\":\"2020-01-01T00:00:30Z\",\"commit_id\":\"$_1789_OLD\",\"body\":\"Fix the loop bound\"}]"
+_1789_out="$(_1789_run_gh run_devin_review 300 60)"
+run_test "1789_T2.16_devin_other_revision_review_not_a_finding" "clean||0" "$(_1789_rre "$_1789_out")"
+
+# --- T2.16 CodeRabbit: Phase 1 (pre-trigger) findings and the Phase 3 collection.
+_1789_cr_finding="🔴 Critical: unquoted expansion"
+_1789_cr_ok_status='[{"id":9,"context":"CodeRabbit","state":"success","description":"Review completed","created_at":"2020-01-01T00:00:09Z"}]'
+_1789_gh_reset
+_1789_fx review-comments "[$(_1789_rc 621 "coderabbitai[bot]" "$_1789_H" "$_1789_OLD" "$_1789_cr_finding")]"
+_1789_fx statuses "$_1789_cr_ok_status"
+_1789_out="$(_1789_run_gh run_coderabbit_review 3)"
+# The finding filters drop the drifted comment (no existing_findings from
+# Phase 1, no Phase 3 finding); an unreplied older-head comment still blocks
+# through the CodeRabbit thread gate, which reads threads regardless of
+# revision (plan D15: unresolved threads are out of the binding).
+run_test "1789_T2.16_coderabbit_drifted_comment_not_a_finding_thread_gate_blocks" "needs_fixes|coderabbit_unreplied_rest_comments|1" "$(_1789_rre "$_1789_out")"
+_1789_out="$(_1789_handler_overrides="$_1789_handler_overrides
+  check_unreplied_rest_comments() { printf '0\n'; }" _1789_run_gh run_coderabbit_review 3)"
+run_test "1789_T2.16_coderabbit_drifted_comment_ignored_both_phases_clean" "clean|coderabbit_status_success_fallback|0" "$(_1789_rre "$_1789_out")"
+_1789_fx review-comments "[$(_1789_rc 622 "coderabbitai[bot]" "$_1789_H" "$_1789_H" "$_1789_cr_finding")]"
+_1789_out="$(_1789_run_gh run_coderabbit_review 3)"
+run_test "1789_T2.16_coderabbit_bound_comment_phase1_needs_fixes" "needs_fixes|existing_findings|1" "$(_1789_rre "$_1789_out")"
+_1789_gh_reset
+_1789_fx statuses@1 "$_1789_cr_ok_status"
+_1789_fx review-comments@1 "[$(_1789_rc 623 "coderabbitai[bot]" "$_1789_H" "$_1789_H" "$_1789_cr_finding")]"
+_1789_out="$(_1789_run_gh run_coderabbit_review 3)"
+run_test "1789_T2.16_coderabbit_bound_comment_phase3_needs_fixes" "needs_fixes||1" "$(_1789_rre "$_1789_out")"
+_1789_gh_reset
+_1789_fx statuses@1 "$_1789_cr_ok_status"
+_1789_fx review-comments@1 "[$(_1789_rc 624 "coderabbitai[bot]" "$_1789_H" "$_1789_OLD" "$_1789_cr_finding")]"
+_1789_out="$(_1789_handler_overrides="$_1789_handler_overrides
+  check_unreplied_rest_comments() { printf '0\n'; }" _1789_run_gh run_coderabbit_review 3)"
+run_test "1789_T2.16_coderabbit_drifted_comment_phase3_ignored" "clean|coderabbit_status_success_fallback|0" "$(_1789_rre "$_1789_out")"
+
+# --- T2.17 completion signals.
+# Devin: a summary review on H0 submitted after the committer time does not
+# end the wait; the Devin check on H never completes → the D8 Devin row.
+_1789_gh_reset
+_1789_fx check-runs "$(_1789_dv_run in_progress null)"
+_1789_fx reviews "[{\"id\":10,\"user\":{\"login\":\"devin-ai-integration[bot]\"},\"state\":\"COMMENTED\",\"submitted_at\":\"2020-01-01T00:00:30Z\",\"commit_id\":\"$_1789_OLD\",\"body\":\"No Issues Found\"}]"
+_1789_out="$(_1789_run_gh run_devin_review 2)"
+run_test "1789_T2.17_devin_other_revision_summary_does_not_end_wait" "waiting_on_reviewer|reviewer-no-verdict-yet|4|check_not_completed|2" \
+  "$(_1789_rre "$_1789_out")|$(kv_value_default WAIT_EXPIRED_DETAIL "$_1789_out" "")|$(_1789_tick)"
+# The same summary bound to H ends the wait at once (clean).
+_1789_fx reviews "[{\"id\":10,\"user\":{\"login\":\"devin-ai-integration[bot]\"},\"state\":\"COMMENTED\",\"submitted_at\":\"2020-01-01T00:00:30Z\",\"commit_id\":\"$_1789_H\",\"body\":\"No Issues Found\"}]"
+printf '0\n' > "$_1789_gh_dir/tick"
+_1789_out="$(_1789_run_gh run_devin_review 2)"
+run_test "1789_T2.17_devin_bound_summary_ends_wait" "clean||0|0" "$(_1789_rre "$_1789_out")|$(_1789_tick)"
+# CodeRabbit: a review on H0 does not end the wait (no other activity → kept skip).
+_1789_gh_reset
+_1789_fx reviews "[{\"id\":11,\"user\":{\"login\":\"coderabbitai[bot]\"},\"state\":\"COMMENTED\",\"submitted_at\":\"2020-01-01T00:00:30Z\",\"commit_id\":\"$_1789_OLD\",\"body\":\"Summary\"}]"
+_1789_out="$(_1789_run_gh run_coderabbit_review 3)"
+run_test "1789_T2.17_coderabbit_other_revision_review_does_not_end_wait" "skipped|no_review|0|3" \
+  "$(_1789_rre "$_1789_out")|$(_1789_tick)"
+# A walkthrough comment edited after the committer time, with no H review and
+# no status, records activity but keeps polling and expires as No verdict yet
+# review_not_submitted (the CodeRabbit activity-seen expiry is now reachable).
+_1789_gh_reset
+_1789_fx issue-comments '[{"id":700,"user":{"login":"coderabbitai[bot]"},"created_at":"2019-12-31T00:00:00Z","updated_at":"2020-01-01T00:00:30Z","body":"<!-- walkthrough_start -->\n## Walkthrough\nThe change adds a guard."}]'
+_1789_out="$(_1789_run_gh run_coderabbit_review 3)"
+_1789_assert_waiting T2.17_coderabbit_walkthrough_only coderabbit "$_1789_out" review_not_submitted "$_1789_H"
+run_test "1789_T2.17_coderabbit_walkthrough_keeps_polling_to_budget" "3" "$(_1789_tick)"
+# A CodeRabbit success status on H ends the wait (clean after the thread gate).
+_1789_gh_reset
+_1789_fx statuses@1 "$_1789_cr_ok_status"
+_1789_out="$(_1789_run_gh run_coderabbit_review 3)"
+run_test "1789_T2.17_coderabbit_success_status_ends_wait" "clean|coderabbit_status_success_fallback|0|1" \
+  "$(_1789_rre "$_1789_out")|$(_1789_tick)"
+# A review bound to H also ends the wait at once.
+_1789_gh_reset
+_1789_fx reviews "[{\"id\":12,\"user\":{\"login\":\"coderabbitai[bot]\"},\"state\":\"COMMENTED\",\"submitted_at\":\"2020-01-01T00:00:30Z\",\"commit_id\":\"$_1789_H\",\"body\":\"Summary\"}]"
+_1789_out="$(_1789_run_gh run_coderabbit_review 3)"
+run_test "1789_T2.17_coderabbit_bound_review_ends_wait" "clean||0|0" "$(_1789_rre "$_1789_out")|$(_1789_tick)"
+unset _1789_bb_finding _1789_cr_finding _1789_cr_ok_status
 
 # ---------------------------------------------------------------------------
 # Phase 3 — reviewer-failed label reconciliation (plan D9) and cross-platform
