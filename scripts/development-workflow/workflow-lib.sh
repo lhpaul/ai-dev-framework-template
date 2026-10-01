@@ -1350,6 +1350,145 @@ workflow_config_review_max_total_cycles() {
   _workflow_config_review_scalar "$config_file" max_total_cycles
 }
 
+# Internal helper shared by workflow_config_review_wait_budget and
+# workflow_config_review_wait_budget_keys (#1789). Scans the block mapping
+# review.wait_budgets in .ai-dev-workflow.yaml:
+#
+#   review:
+#     wait_budgets:
+#       bugbot: 2700
+#       local-ai-reviewer: 1500
+#
+# Scope rules:
+#   - only the top-level `review:` section is read; any other top-level key
+#     ends it;
+#   - `wait_budgets:` must sit at the indentation of review's direct children
+#     (the first non-comment line under `review:` fixes that indentation), so
+#     a `wait_budgets:` nested under review.on_ready or a top-level one is
+#     ignored;
+#   - the keys are the lines one level deeper than `wait_budgets:` (the first
+#     non-comment child fixes that indentation); the scope ends at the first
+#     non-comment line indented at or above `wait_budgets:`;
+#   - blank and comment-only lines are skipped everywhere, so `# bugbot: 1800`
+#     never matches;
+#   - the first `wait_budgets:` block and the first occurrence of a key win.
+#
+# mode=value prints the trimmed raw value of key <platform> (surrounding
+# quotes and a trailing `# comment` removed) and exits, or prints nothing.
+# mode=keys prints every key once, in file order.
+# In both modes a `wait_budgets:` line that itself carries a non-comment value
+# (for example a flow mapping `{bugbot: 1800}`) prints the literal `__flow__`
+# and nothing else. Values are never validated here; callers do that.
+_workflow_config_review_wait_budgets_scan() {
+  local config_file="$1"
+  local mode="$2"
+  local want="${3:-}"
+
+  [ -f "$config_file" ] || return 0
+
+  awk -v mode="$mode" -v want="$want" '
+    function indent_of(s) {
+      match(s, /^ */)
+      return RLENGTH
+    }
+    function clean(v) {
+      sub(/^[[:space:]]+/, "", v)
+      if (v ~ /^#/) return ""
+      sub(/[[:space:]]+#.*$/, "", v)
+      sub(/[[:space:]]+$/, "", v)
+      if (length(v) >= 2 && (v ~ /^".*"$/ || v ~ /^'"'"'.*'"'"'$/)) {
+        v = substr(v, 2, length(v) - 2)
+      }
+      return v
+    }
+
+    { sub(/\r$/, "") }
+    /^[[:space:]]*$/ { next }
+    /^[[:space:]]*#/ { next }
+
+    /^review:[[:space:]]*(#.*)?$/ {
+      in_review = 1
+      child_ind = -1
+      next
+    }
+    /^[^ ]/ {
+      in_review = 0
+      in_wb = 0
+      next
+    }
+    !in_review { next }
+
+    {
+      ind = indent_of($0)
+      if (in_wb) {
+        if (ind <= wb_ind) {
+          in_wb = 0
+          wb_done = 1
+        } else {
+          if (key_ind < 0) key_ind = ind
+          if (ind == key_ind && $0 ~ /^ +[A-Za-z0-9_.-]+:([[:space:]]|$)/) {
+            line = $0
+            sub(/^ +/, "", line)
+            key = line
+            sub(/:.*$/, "", key)
+            rest = line
+            sub(/^[^:]*:/, "", rest)
+            if (mode == "keys") {
+              if (!(key in seen)) {
+                seen[key] = 1
+                print key
+              }
+            } else if (key == want) {
+              print clean(rest)
+              exit
+            }
+          }
+          next
+        }
+      }
+      if (child_ind < 0) child_ind = ind
+      if (!wb_done && ind == child_ind && $0 ~ /^ +wait_budgets:([[:space:]]|$)/) {
+        rest = $0
+        sub(/^ +wait_budgets:/, "", rest)
+        if (clean(rest) != "") {
+          print "__flow__"
+          exit
+        }
+        in_wb = 1
+        wb_ind = ind
+        key_ind = -1
+      }
+    }
+  ' "$config_file"
+}
+
+# workflow_config_review_wait_budget <platform> [config_file]
+#
+# Reads review.wait_budgets.<platform> (#1789, plan D6) and prints the raw
+# value (trimmed, quotes and trailing comment removed), `__flow__` when
+# `wait_budgets:` is not a block mapping, or nothing when the file, section,
+# block, or key is absent. Callers validate the value
+# (pr-review-loop.sh reviewer_wait_budget_configured).
+workflow_config_review_wait_budget() {
+  local platform="${1:-}"
+  local config_file="${2:-$(workflow_config_file)}"
+
+  [ -n "$platform" ] || return 0
+  _workflow_config_review_wait_budgets_scan "$config_file" value "$platform"
+}
+
+# workflow_config_review_wait_budget_keys [config_file]
+#
+# Prints every key under review.wait_budgets, one per line in file order (or
+# `__flow__` when `wait_budgets:` is not a block mapping). Used for the
+# unsupported-key warning (#1789, plan D6) and to tell a key that is present
+# with an empty value from a missing key.
+workflow_config_review_wait_budget_keys() {
+  local config_file="${1:-$(workflow_config_file)}"
+
+  _workflow_config_review_wait_budgets_scan "$config_file" keys
+}
+
 workflow_config_review_phase_after_clean_platforms() {
   local config_file="${1:-$(workflow_config_file)}"
 

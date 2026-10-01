@@ -746,28 +746,51 @@ Platform selection (in priority order):
      at the repo root
   3. Legacy review.platforms / review.phase_after_clean compatibility mapping
 
+Per-platform wait budgets:
+  Each platform waits for its own budget, resolved in this order:
+    1. --max-wait <seconds> — one-run override for every platform; must be a
+       whole number of seconds from 1 to 999999, otherwise the run is refused
+       (exit 64) before any review request is posted.
+    2. review.wait_budgets.<platform> in .ai-dev-workflow.yaml (whole seconds,
+       1-999999; an invalid value warns and falls back to the default). For
+       codex-github, CODEX_GITHUB_MAX_WAIT takes precedence over the YAML value.
+       A claude-code-action value above 3600 warns and falls back to the
+       default (the companion's own maximum).
+    3. The built-in default: bugbot 2400 s, codex-github 1800 s, every other
+       platform 1200 s.
+  The resolved budgets are printed once as
+  PLATFORM_WAIT_BUDGETS=<platform>:<seconds>:<source>[:<adjustment>],…
+  with source override|configured|default and adjustment
+  documentation_branch|large_diff.
+
 Branch-type-aware default timeout:
   On spec/* and implementation-plan/* branches, Devin has no trigger condition and
-  exits immediately with REASON=no_check_run. To avoid wasting the full 20-minute
-  default wait budget on these branches, the script automatically reduces
-  --max-wait to PR_REVIEW_LOOP_DOC_MAX_WAIT seconds (default: 180) and
-  --poll-interval to 30 s when the branch matches spec/* or
-  implementation-plan/* and the caller did not pass the respective flag
-  explicitly. poll_interval is also reduced when needed so it stays below
-  max_wait — the per-loop timeout check requires elapsed >= max_wait, which can
-  only fire after at least one poll_interval has elapsed. Pass --max-wait and/or
-  --poll-interval explicitly to override either value.
+  exits immediately with REASON=no_check_run. Devin is the only platform that does
+  not review these branches, so only Devin's built-in default is reduced to
+  PR_REVIEW_LOOP_DOC_MAX_WAIT seconds (default: 180) there; a configured Devin
+  value or --max-wait is never reduced, and every other platform keeps its own
+  budget on these branches.
+
+Poll interval:
+  --poll-interval when given; otherwise CODEX_GITHUB_POLL_INTERVAL (default
+  60 s) for codex-github only, 30 s for other platforms on spec/* and
+  implementation-plan/* branches, and 120 s elsewhere. The interval is reduced
+  when needed so it stays below the platform's budget — the per-loop timeout
+  check requires elapsed >= budget, which can only fire after at least one poll
+  interval has elapsed.
 
 Large-diff poll-window extension:
   CodeRabbit takes significantly longer to post its review on PRs with a large
   number of changed files (e.g., release PRs or sync-template PRs). When the
-  caller did not pass --max-wait explicitly, the script fetches the PR's changed-
-  files count and extends max_wait when it exceeds a threshold.
+  caller did not pass --max-wait explicitly and the branch is not spec/* or
+  implementation-plan/*, the script fetches the PR's changed-files count and,
+  when it exceeds a threshold, lengthens every platform budget below
+  LARGE_DIFF_MAX_WAIT to that value (it never shortens a budget).
 
   Environment variables (both optional):
     LARGE_DIFF_THRESHOLD  — changed-files count above which the extension applies
                             (default: 50; must be a positive integer)
-    LARGE_DIFF_MAX_WAIT   — extended max_wait in seconds for large-diff PRs
+    LARGE_DIFF_MAX_WAIT   — extended wait budget in seconds for large-diff PRs
                             (default: 2400, i.e. 40 minutes; must be a positive integer)
 
   The extension is suppressed when --max-wait is passed explicitly. The emitted
@@ -811,7 +834,8 @@ Outputs stable key=value lines including:
     or GH_REPO count as explicit. Origins are compared, not checkouts: pass
     --repo-root so local work also runs in the item checkout.
   CHANGED_FILES_COUNT=<n> (PR's changed-files count, or -1 when the fetch failed)
-  LARGE_DIFF_EXTENDED=1 (present and set to 1 when max_wait was extended for a large-diff PR)
+  LARGE_DIFF_EXTENDED=1 (present and set to 1 when at least one platform budget was extended for a large-diff PR)
+  PLATFORM_WAIT_BUDGETS=<platform>:<seconds>:<source>[:<adjustment>],… (per-platform wait budgets)
   REASON=late_review_threads (when post-clean recheck finds new unresolved threads)
   COMPARE_MODE=1 (when --compare is active)
   COMPARE_VERDICT_<n>_PLATFORM / COMPARE_VERDICT_<n>_RESULT (when --compare is active)
@@ -8765,16 +8789,6 @@ doc_branch_default_max_wait() {
   printf '%s\n' "$configured"
 }
 
-doc_branch_default_poll_interval() {
-  local max_wait="$1"
-  local interval=30
-  if [ "$interval" -ge "$max_wait" ]; then
-    interval=$((max_wait / 2))
-    [ "$interval" -lt 1 ] && interval=1
-  fi
-  printf '%s\n' "$interval"
-}
-
 codex_github_default_max_wait() {
   local configured="${CODEX_GITHUB_MAX_WAIT:-1800}"
   if ! [[ "$configured" =~ ^[1-9][0-9]*$ ]]; then
@@ -8798,8 +8812,247 @@ codex_github_default_poll_interval() {
   printf '%s\n' "$configured"
 }
 
-codex_github_defaults_should_apply() {
-  array_contains_value "codex-github" "${platforms[@]:-}"
+# --- Per-platform reviewer wait budgets and poll intervals (#1789) ---
+# Each platform waits for its own budget, resolved in this order (plan D7):
+#   1. --max-wait (max_wait_override) — applies to every platform, never
+#      adjusted;
+#   2. a valid configured value: review.wait_budgets.<platform> in the PR-base
+#      .ai-dev-workflow.yaml snapshot (config_file); for codex-github,
+#      CODEX_GITHUB_MAX_WAIT first (plan D6);
+#   3. the built-in default (plan D2).
+# Adjustments after step 2 or 3: `documentation_branch` (built-in default of a
+# platform that does not review spec/* or implementation-plan/* branches, on
+# those branches) and `large_diff` (non-documentation branch whose
+# changed-files count exceeds LARGE_DIFF_THRESHOLD; lengthens only).
+
+REVIEWER_LOOP_SUPPORTED_PLATFORMS="greptile devin coderabbit coderabbit-cli local-ai-reviewer pr-agent codex-github claude-code-action copilot haystack bugbot ronda"
+# The Claude Code Action companion rejects --max-wait above this value
+# (claude-code-action-reviewer.sh argument validation).
+REVIEWER_LOOP_CLAUDE_CODE_ACTION_MAX_WAIT=3600
+
+reviewer_loop_is_supported_platform() {
+  local candidate="${1:-}" known
+  [ -n "$candidate" ] || return 1
+  for known in $REVIEWER_LOOP_SUPPORTED_PLATFORMS; do
+    [ "$candidate" = "$known" ] && return 0
+  done
+  return 1
+}
+
+reviewer_wait_branch_is_documentation() {
+  case "${1:-}" in
+    spec/*|implementation-plan/*) return 0 ;;
+  esac
+  return 1
+}
+
+# A whole number of seconds in 1-999999 (plan D13 / D6). The upper bound keeps
+# every budget inside bash integer tests and arithmetic in the wait loops.
+reviewer_wait_seconds_is_valid() {
+  [[ "${1:-}" =~ ^[1-9][0-9]{0,5}$ ]]
+}
+
+# reviewer_platform_reviews_documentation_branches <platform>
+# Plan D1: the set of platforms that do not review spec/* or
+# implementation-plan/* branches is exactly {devin}. Add a platform here, and
+# only here, to give it the shortened documentation-branch default.
+reviewer_platform_reviews_documentation_branches() {
+  case "${1:-}" in
+    devin) return 1 ;;
+  esac
+  return 0
+}
+
+# reviewer_wait_budget_builtin_default <platform>
+# Plan D2 built-in defaults (implementation-branch values; the documentation-
+# branch shortening is an adjustment applied by reviewer_wait_budget_resolve).
+reviewer_wait_budget_builtin_default() {
+  case "${1:-}" in
+    bugbot) printf '2400\n' ;;
+    # Unchanged prior codex_github_default_max_wait default. The
+    # CODEX_GITHUB_MAX_WAIT override is a configured value, read by
+    # reviewer_wait_budget_configured.
+    codex-github) printf '1800\n' ;;
+    *) printf '1200\n' ;;
+  esac
+}
+
+# reviewer_wait_budget_config_warnings
+# Prints, once per run, the configuration-shape warnings that are not tied to
+# one platform's value (plan D6): a non-block `wait_budgets:` value and each
+# key that is not a supported platform.
+reviewer_wait_budget_config_warnings() {
+  local cfg key
+  cfg="${config_file:-$(workflow_config_file)}"
+  [ -f "$cfg" ] || return 0
+  while IFS= read -r key; do
+    [ -n "$key" ] || continue
+    if [ "$key" = "__flow__" ]; then
+      echo "WARN: review.wait_budgets must be a block mapping; ignored" >&2
+      continue
+    fi
+    if ! reviewer_loop_is_supported_platform "$key"; then
+      echo "WARN: review.wait_budgets.${key} is not a supported platform; ignored" >&2
+    fi
+  done < <(workflow_config_review_wait_budget_keys "$cfg" 2>/dev/null || true)
+  return 0
+}
+
+# reviewer_wait_budget_configured <platform>
+# Prints the platform's valid configured budget, or nothing (plan D6).
+# Invalid values print a WARN to stderr and print nothing, so the caller falls
+# back to the built-in default.
+reviewer_wait_budget_configured() {
+  local platform="${1:-}" cfg value key present=0
+  [ -n "$platform" ] || return 0
+
+  if [ "$platform" = "codex-github" ] && [ -n "${CODEX_GITHUB_MAX_WAIT:-}" ]; then
+    if reviewer_wait_seconds_is_valid "$CODEX_GITHUB_MAX_WAIT"; then
+      printf '%s\n' "$CODEX_GITHUB_MAX_WAIT"
+      return 0
+    fi
+    if [[ "$CODEX_GITHUB_MAX_WAIT" =~ ^[1-9][0-9]*$ ]]; then
+      echo "WARN: CODEX_GITHUB_MAX_WAIT value '${CODEX_GITHUB_MAX_WAIT}' is not a positive whole number of seconds (1-999999); ignored" >&2
+    else
+      # Existing warning, emitted by the unchanged value source.
+      codex_github_default_max_wait >/dev/null
+    fi
+  fi
+
+  cfg="${config_file:-$(workflow_config_file)}"
+  [ -f "$cfg" ] || return 0
+  value="$(workflow_config_review_wait_budget "$platform" "$cfg" 2>/dev/null || true)"
+  # A non-block wait_budgets value is reported once by
+  # reviewer_wait_budget_config_warnings; every platform uses its default.
+  [ "$value" = "__flow__" ] && return 0
+  if [ -z "$value" ]; then
+    # Tell a key present with an empty value (invalid) from a missing key.
+    while IFS= read -r key; do
+      [ "$key" = "$platform" ] && present=1
+    done < <(workflow_config_review_wait_budget_keys "$cfg" 2>/dev/null || true)
+    [ "$present" -eq 1 ] || return 0
+  fi
+  if ! reviewer_wait_seconds_is_valid "$value"; then
+    echo "WARN: review.wait_budgets.${platform} value '${value}' is not a positive whole number of seconds (1-999999); using the built-in default" >&2
+    return 0
+  fi
+  if [ "$platform" = "claude-code-action" ] && [ "$value" -gt "$REVIEWER_LOOP_CLAUDE_CODE_ACTION_MAX_WAIT" ]; then
+    echo "WARN: review.wait_budgets.claude-code-action value '${value}' exceeds the companion's ${REVIEWER_LOOP_CLAUDE_CODE_ACTION_MAX_WAIT}-second maximum; using the built-in default" >&2
+    return 0
+  fi
+  printf '%s\n' "$value"
+}
+
+# reviewer_wait_budget_resolve <platform>
+# Prints "<seconds> <source> <adjustment>" (plan D7):
+#   source     override | configured | default
+#   adjustment none | documentation_branch | large_diff
+# Reads the globals max_wait_override, branch_name, config_file,
+# changed_files_count, large_diff_threshold, and large_diff_max_wait.
+reviewer_wait_budget_resolve() {
+  local platform="${1:-}" value budget_source adjustment="none"
+  local threshold="${large_diff_threshold:-50}"
+  local large_wait="${large_diff_max_wait:-2400}"
+  local changed="${changed_files_count:--1}"
+
+  if [ -n "${max_wait_override:-}" ]; then
+    printf '%s override none\n' "$max_wait_override"
+    return 0
+  fi
+
+  value="$(reviewer_wait_budget_configured "$platform")"
+  if [ -n "$value" ]; then
+    budget_source="configured"
+  else
+    value="$(reviewer_wait_budget_builtin_default "$platform")"
+    budget_source="default"
+    if reviewer_wait_branch_is_documentation "${branch_name:-}" \
+        && ! reviewer_platform_reviews_documentation_branches "$platform"; then
+      value="$(doc_branch_default_max_wait)"
+      adjustment="documentation_branch"
+    fi
+  fi
+
+  if ! reviewer_wait_branch_is_documentation "${branch_name:-}" \
+      && [[ "$changed" =~ ^[0-9]+$ ]] && [[ "$threshold" =~ ^[0-9]+$ ]] \
+      && reviewer_wait_seconds_is_valid "$large_wait" \
+      && [ "$changed" -gt "$threshold" ] && [ "$large_wait" -gt "$value" ]; then
+    value="$large_wait"
+    adjustment="large_diff"
+  fi
+
+  printf '%s %s %s\n' "$value" "$budget_source" "$adjustment"
+}
+
+# reviewer_poll_interval_resolve <platform> <budget>
+# Plan D14: --poll-interval (poll_interval_override) when given; else the
+# Codex GitHub default for codex-github only; else 30 on documentation
+# branches; else 120. The result is clamped below the budget
+# (max(1, floor(budget / 2)) when it is not smaller).
+reviewer_poll_interval_resolve() {
+  local platform="${1:-}" budget="${2:-}" interval
+  if [ -n "${poll_interval_override:-}" ]; then
+    interval="$poll_interval_override"
+  elif [ "$platform" = "codex-github" ]; then
+    interval="$(codex_github_default_poll_interval "${budget:-1800}")"
+  elif reviewer_wait_branch_is_documentation "${branch_name:-}"; then
+    interval=30
+  else
+    interval=120
+  fi
+  if [[ "$interval" =~ ^[0-9]+$ ]] && [[ "$budget" =~ ^[0-9]+$ ]] \
+      && [ "$interval" -ge "$budget" ]; then
+    interval=$((budget / 2))
+    [ "$interval" -lt 1 ] && interval=1
+  fi
+  printf '%s\n' "$interval"
+}
+
+# Per-run cache of resolved budgets, filled once before the platform loop so
+# configuration warnings print once and every dispatch site (including the
+# second local pass) uses the same value. Parallel indexed arrays (bash 3.2).
+reviewer_wait_budget_cache_platforms=()
+reviewer_wait_budget_cache_values=()
+
+reviewer_wait_budget_cache_fill() {
+  local platform resolved
+  for platform in "$@"; do
+    [ -n "$platform" ] || continue
+    array_contains_value "$platform" "${reviewer_wait_budget_cache_platforms[@]:-}" && continue
+    resolved="$(reviewer_wait_budget_resolve "$platform")"
+    reviewer_wait_budget_cache_platforms+=("$platform")
+    reviewer_wait_budget_cache_values+=("$resolved")
+  done
+}
+
+# reviewer_wait_budget_for_platform <platform>
+# Prints the cached "<seconds> <source> <adjustment>"; on a miss (a platform
+# outside this run's platform list) it resolves the budget without caching.
+reviewer_wait_budget_for_platform() {
+  local platform="${1:-}" i=0 count="${#reviewer_wait_budget_cache_platforms[@]}"
+  while [ "$i" -lt "$count" ]; do
+    if [ "${reviewer_wait_budget_cache_platforms[$i]}" = "$platform" ]; then
+      printf '%s\n' "${reviewer_wait_budget_cache_values[$i]}"
+      return 0
+    fi
+    i=$((i + 1))
+  done
+  reviewer_wait_budget_resolve "$platform"
+}
+
+# reviewer_wait_budgets_summary <platform>...
+# Prints the PLATFORM_WAIT_BUDGETS value:
+# <platform>:<seconds>:<source>[:<adjustment>],… (adjustment omitted when none).
+reviewer_wait_budgets_summary() {
+  local platform seconds budget_source adjustment entry out=""
+  for platform in "$@"; do
+    [ -n "$platform" ] || continue
+    read -r seconds budget_source adjustment < <(reviewer_wait_budget_for_platform "$platform")
+    entry="${platform}:${seconds}:${budget_source}"
+    [ "${adjustment:-none}" != "none" ] && entry="${entry}:${adjustment}"
+    out="${out}${out:+,}${entry}"
+  done
+  printf '%s\n' "$out"
 }
 
 reviewer_loop_history_platforms_json() {
@@ -9754,8 +10007,13 @@ reviewer_loop_second_local_pass_before_ready_gate() {
   fi
 
   local_second_pass=1
+  # Per-platform budget and poll interval (#1789, plan D7/D14): the second
+  # pass waits with local-ai-reviewer's own budget, never another platform's.
+  local _sl_max_wait _sl_poll_interval
+  read -r _sl_max_wait _ _ < <(reviewer_wait_budget_for_platform "local-ai-reviewer")
+  _sl_poll_interval="$(reviewer_poll_interval_resolve "local-ai-reviewer" "$_sl_max_wait")"
   set +e
-  _sl_output="$(run_platform_review "local-ai-reviewer" "$pr_number_arg" "$branch_name" "$poll_interval" "$max_wait")"
+  _sl_output="$(run_platform_review "local-ai-reviewer" "$pr_number_arg" "$branch_name" "$_sl_poll_interval" "$_sl_max_wait")"
   _sl_status=$?
   set -e
   _sl_platform_index=$((${#platforms[@]} + 1))
@@ -12527,10 +12785,11 @@ repo_root="$(workflow_repo_root)"
 repo_root_explicit=0
 local_review_override_root=""
 review_policy_source="shared"
-poll_interval=120
-poll_interval_explicit=0
-max_wait=1200
-max_wait_explicit=0
+# One-run overrides (#1789): set only by --poll-interval / --max-wait. Without
+# them every platform waits with its own resolved budget and poll interval
+# (reviewer_wait_budget_resolve / reviewer_poll_interval_resolve).
+poll_interval_override=""
+max_wait_override=""
 codex_github_pre_trigger_wait=""
 post_final_summary=0
 compare_mode=0
@@ -12599,14 +12858,12 @@ while [ "$#" -gt 0 ]; do
       ;;
     --poll-interval)
       require_option_value "$@"
-      poll_interval="$2"
-      poll_interval_explicit=1
+      poll_interval_override="$2"
       shift 2
       ;;
     --max-wait)
       require_option_value "$@"
-      max_wait="$2"
-      max_wait_explicit=1
+      max_wait_override="$2"
       shift 2
       ;;
     --pre-trigger-wait)
@@ -12640,6 +12897,15 @@ while [ "$#" -gt 0 ]; do
       ;;
   esac
 done
+
+# --max-wait validation (#1789, plan D13): refuse an invalid one-run override
+# before any gh call, so no review request is posted for a run that could
+# never wait correctly. 1-999999 keeps the budget inside bash integer tests.
+if [ -n "$max_wait_override" ] && ! reviewer_wait_seconds_is_valid "$max_wait_override"; then
+  echo "--max-wait must be a positive whole number of seconds (1-999999) (got '${max_wait_override}')." >&2
+  usage >&2
+  exit 64
+fi
 
 if ! local_review_override_root="$(resolve_local_review_override_root "$repo_root")"; then
   echo "ERROR: could not resolve the initiating checkout's local reviewer policy." >&2
@@ -13034,81 +13300,65 @@ if [ "${#platforms[@]}" -gt 0 ]; then
   fi
 fi
 
-# Branch-type-aware timeout: spec/* and implementation-plan/* branches produce
-# REASON=no_check_run immediately when Devin has no trigger condition (non-implementation
-# branches). Waiting the full 1200-second default wastes orchestrator budget.
-# Apply a bounded doc-branch max_wait / poll_interval=30 default when the caller
-# did not pass --max-wait / --poll-interval explicitly. poll_interval must be
-# less than max_wait so the per-loop timeout check can fire within the budget.
-if [ "$max_wait_explicit" -eq 0 ]; then
-  case "$branch_name" in
-    spec/*|implementation-plan/*)
-      max_wait="$(doc_branch_default_max_wait)"
-      if [ "$poll_interval_explicit" -eq 0 ]; then
-        poll_interval="$(doc_branch_default_poll_interval "$max_wait")"
-      fi
-      ;;
-  esac
-fi
-
-if codex_github_defaults_should_apply; then
-  if [ "$max_wait_explicit" -eq 0 ]; then
-    max_wait="$(codex_github_default_max_wait)"
-  fi
-  if [ "$poll_interval_explicit" -eq 0 ]; then
-    poll_interval="$(codex_github_default_poll_interval "$max_wait")"
-  fi
-fi
-
+# --- Per-platform wait budgets (#1789, plan D1/D2/D6/D7/D14) ---
+# Every platform waits for its own budget: --max-wait when given (applies to
+# all platforms, never adjusted), else review.wait_budgets.<platform> from the
+# PR-base config snapshot, else the platform's built-in default. Only Devin's
+# built-in default is shortened to PR_REVIEW_LOOP_DOC_MAX_WAIT on spec/* and
+# implementation-plan/* branches (the only platform that does not review
+# them); every other platform, local-ai-reviewer included, keeps its own
+# budget there. Poll intervals are resolved per platform at each dispatch
+# (reviewer_poll_interval_resolve).
+#
 # Large-diff poll-window extension.
 # CodeRabbit takes significantly longer to post its review on large-diff PRs
-# (e.g. release PRs with hundreds of changed files). The default max_wait=1200 s
-# was calibrated for typical feature PRs and is too short for large release diffs:
-# during release v0.27.0 (PR #665, 185-file diff), the loop returned RESULT=clean
-# before CodeRabbit finished posting 16 findings.
-#
-# When the caller did not pass --max-wait explicitly, fetch the PR's changed-files
-# count and extend max_wait to LARGE_DIFF_MAX_WAIT (default 2400 s) when the count
-# exceeds LARGE_DIFF_THRESHOLD (default 50 files). A case guard excludes spec/* and
-# implementation-plan/* branches — those are already handled by the branch-type-aware
-# timeout block above and must not have their bounded doc-branch budget overridden.
+# (e.g. release PRs with hundreds of changed files): during release v0.27.0
+# (PR #665, 185-file diff), the loop returned RESULT=clean before CodeRabbit
+# finished posting 16 findings. When the caller did not pass --max-wait and the
+# branch is not spec/* or implementation-plan/*, fetch the PR's changed-files
+# count; a platform whose budget is below LARGE_DIFF_MAX_WAIT (default 2400 s)
+# is lengthened to it when the count exceeds LARGE_DIFF_THRESHOLD (default 50
+# files). The extension never shortens a budget.
 large_diff_threshold="${LARGE_DIFF_THRESHOLD:-50}"
 large_diff_max_wait="${LARGE_DIFF_MAX_WAIT:-2400}"
 if ! [[ "$large_diff_threshold" =~ ^[1-9][0-9]*$ ]]; then
   echo "WARN: LARGE_DIFF_THRESHOLD must be a positive integer; defaulting to 50" >&2
   large_diff_threshold=50
 fi
-if ! [[ "$large_diff_max_wait" =~ ^[1-9][0-9]*$ ]]; then
+if ! reviewer_wait_seconds_is_valid "$large_diff_max_wait"; then
   echo "WARN: LARGE_DIFF_MAX_WAIT must be a positive integer; defaulting to 2400" >&2
   large_diff_max_wait=2400
 fi
 changed_files_count=-1
 large_diff_extended=0
-if [ "$max_wait_explicit" -eq 0 ]; then
-  case "$branch_name" in
-    spec/*|implementation-plan/*)
-      # Already handled by the branch-type rule above — do not extend.
-      ;;
-    *)
-      if [ -n "$pr_number" ] && [ "${#platforms[@]}" -gt 0 ]; then
-        set +e
-        changed_files_count="$(gh api "repos/$(repo_slug)/pulls/$pr_number" \
-          --jq '.changed_files // -1' 2>/dev/null)"
-        set -e
-        if ! [[ "${changed_files_count:-}" =~ ^-?[0-9]+$ ]]; then
-          echo "WARN: failed to fetch changed_files count for PR #$pr_number — skipping large-diff extension" >&2
-          changed_files_count=-1
-        fi
-        if [ "$changed_files_count" -ge 0 ] && [ "$changed_files_count" -gt "$large_diff_threshold" ]; then
-          if [ "$large_diff_max_wait" -gt "$max_wait" ]; then
-            echo "INFO: PR #$pr_number has ${changed_files_count} changed files (threshold: ${large_diff_threshold}) — extending max_wait from ${max_wait}s to ${large_diff_max_wait}s for large-diff poll window" >&2
-            max_wait="$large_diff_max_wait"
-            large_diff_extended=1
-          fi
-        fi
-      fi
-      ;;
-  esac
+if [ -z "$max_wait_override" ] && ! reviewer_wait_branch_is_documentation "$branch_name"; then
+  if [ -n "$pr_number" ] && [ "${#platforms[@]}" -gt 0 ]; then
+    set +e
+    changed_files_count="$(gh api "repos/$(repo_slug)/pulls/$pr_number" \
+      --jq '.changed_files // -1' 2>/dev/null)"
+    set -e
+    if ! [[ "${changed_files_count:-}" =~ ^-?[0-9]+$ ]]; then
+      echo "WARN: failed to fetch changed_files count for PR #$pr_number — skipping large-diff extension" >&2
+      changed_files_count=-1
+    fi
+  fi
+fi
+
+platform_wait_budgets_summary=""
+if [ "${#platforms[@]}" -gt 0 ]; then
+  reviewer_wait_budget_config_warnings
+  reviewer_wait_budget_cache_fill "${platforms[@]}"
+  _wb_index=0
+  while [ "$_wb_index" -lt "${#reviewer_wait_budget_cache_platforms[@]}" ]; do
+    read -r _wb_seconds _wb_source _wb_adjustment <<< "${reviewer_wait_budget_cache_values[$_wb_index]}"
+    if [ "$_wb_adjustment" = "large_diff" ]; then
+      large_diff_extended=1
+      echo "INFO: PR #$pr_number has ${changed_files_count} changed files (threshold: ${large_diff_threshold}) — extending the ${reviewer_wait_budget_cache_platforms[$_wb_index]} wait budget to ${_wb_seconds}s for large-diff poll window" >&2
+    fi
+    _wb_index=$((_wb_index + 1))
+  done
+  unset _wb_index _wb_seconds _wb_source _wb_adjustment
+  platform_wait_budgets_summary="$(reviewer_wait_budgets_summary "${platforms[@]}")"
 fi
 
 # Step 7b regression-label auto-restore (implementation PRs only).
@@ -13249,6 +13499,9 @@ print_kv PHASE_AFTER_CLEAN_ENABLED "$phase_after_clean_enabled"
   print_kv PHASE_AFTER_CLEAN_PLATFORM_LIST "$(IFS=,; printf '%s' "${phase_after_clean_platforms[*]}")"
 print_kv CHANGED_FILES_COUNT "${changed_files_count:--1}"
 [ "$large_diff_extended" -eq 1 ] && print_kv LARGE_DIFF_EXTENDED 1
+# Per-platform wait budgets (#1789, plan D7):
+# <platform>:<seconds>:<source>[:<adjustment>],…
+[ -n "$platform_wait_budgets_summary" ] && print_kv PLATFORM_WAIT_BUDGETS "$platform_wait_budgets_summary"
 # Reviewer cycle cap telemetry (#1502, dual-cap): CYCLE_COUNT is the number
 # of fixer dispatches already issued THIS ORCHESTRATION RUN (resets to 0 at
 # each run boundary — see RUN_ID above); TOTAL_CYCLE_COUNT is the same
@@ -13402,8 +13655,11 @@ for index in "${!platforms[@]}"; do
     replay) continue ;;
   esac
 
+  # Per-platform budget and poll interval (#1789, plan D7/D14).
+  read -r platform_max_wait _ _ < <(reviewer_wait_budget_for_platform "$platform_name")
+  platform_poll_interval="$(reviewer_poll_interval_resolve "$platform_name" "$platform_max_wait")"
   set +e
-  platform_output="$(run_platform_review "$platform_name" "$pr_number" "$branch_name" "$poll_interval" "$max_wait")"
+  platform_output="$(run_platform_review "$platform_name" "$pr_number" "$branch_name" "$platform_poll_interval" "$platform_max_wait")"
   platform_status=$?
   set -e
 

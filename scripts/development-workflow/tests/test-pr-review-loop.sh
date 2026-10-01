@@ -943,9 +943,17 @@ export PR_REVIEW_LOOP_DOC_MAX_WAIT
 _doc_timeout_output="$(doc_branch_default_max_wait 2>/dev/null)"
 run_test "doc_branch_invalid_env_falls_back" "180" "$_doc_timeout_output"
 
-run_test "doc_branch_poll_interval_default" "30" "$(doc_branch_default_poll_interval 180)"
-run_test "doc_branch_poll_interval_equal_clamps" "15" "$(doc_branch_default_poll_interval 30)"
-run_test "doc_branch_poll_interval_greater_clamps" "10" "$(doc_branch_default_poll_interval 20)"
+# #1789: the documentation-branch poll interval is resolved per platform by
+# reviewer_poll_interval_resolve (plan D14); the clamp below the budget is
+# unchanged.
+_0b_saved_branch="${branch_name-}"
+branch_name="spec/0b-doc"
+unset poll_interval_override
+run_test "doc_branch_poll_interval_default" "30" "$(reviewer_poll_interval_resolve devin 180)"
+run_test "doc_branch_poll_interval_equal_clamps" "15" "$(reviewer_poll_interval_resolve devin 30)"
+run_test "doc_branch_poll_interval_greater_clamps" "10" "$(reviewer_poll_interval_resolve devin 20)"
+branch_name="$_0b_saved_branch"
+unset _0b_saved_branch
 
 unset PR_REVIEW_LOOP_DOC_MAX_WAIT _doc_timeout_output
 
@@ -968,23 +976,33 @@ _codex_poll_output="$(codex_github_default_poll_interval 1800 2>/dev/null)"
 run_test "codex_github_invalid_env_falls_back_max_wait" "1800" "$_codex_timeout_output"
 run_test "codex_github_invalid_env_falls_back_poll_interval" "60" "$_codex_poll_output"
 
+# #1789: the Codex GitHub defaults no longer drive a global budget or poll
+# interval. They apply to codex-github only; a peer platform configured in the
+# same run keeps its own default (plan D2/D14).
+unset CODEX_GITHUB_MAX_WAIT CODEX_GITHUB_POLL_INTERVAL max_wait_override poll_interval_override
+_0b_saved_branch="${branch_name-}"
+_0b_saved_config="${config_file-}"
+branch_name="feature/0b-codex"
+config_file="/nonexistent/0b-config.yaml"
+changed_files_count=-1
 declare -a platforms=("pr-agent" "codex-github")
 declare -a phase_after_clean_platforms=()
-if codex_github_defaults_should_apply; then
-  _codex_defaults_apply_active="yes"
-else
-  _codex_defaults_apply_active="no"
-fi
-run_test "codex_github_defaults_apply_active_platform" "yes" "$_codex_defaults_apply_active"
-
-declare -a platforms=("pr-agent")
-declare -a phase_after_clean_platforms=("codex-github")
-if codex_github_defaults_should_apply; then
-  _codex_defaults_apply_telemetry="yes"
-else
-  _codex_defaults_apply_telemetry="no"
-fi
-run_test "codex_github_defaults_ignore_telemetry_only_platform" "no" "$_codex_defaults_apply_telemetry"
+run_test "codex_github_defaults_apply_to_codex_budget" "1800 default none" "$(reviewer_wait_budget_resolve codex-github)"
+run_test "codex_github_defaults_apply_to_codex_poll" "60" "$(reviewer_poll_interval_resolve codex-github 1800)"
+run_test "codex_github_defaults_not_applied_to_peer_budget" "1200 default none" "$(reviewer_wait_budget_resolve pr-agent)"
+run_test "codex_github_defaults_not_applied_to_peer_poll" "120" "$(reviewer_poll_interval_resolve pr-agent 1200)"
+CODEX_GITHUB_MAX_WAIT=2400
+export CODEX_GITHUB_MAX_WAIT
+run_test "codex_github_env_budget_is_codex_configured_value" "2400 configured none" "$(reviewer_wait_budget_resolve codex-github)"
+run_test "codex_github_env_budget_not_applied_to_peer" "1200 default none" "$(reviewer_wait_budget_resolve pr-agent)"
+CODEX_GITHUB_MAX_WAIT=bad
+_0b_codex_bad_err="$(reviewer_wait_budget_resolve codex-github 2>&1 >/dev/null)"
+run_test "codex_github_invalid_env_budget_falls_back_to_default" "1800 default none" "$(reviewer_wait_budget_resolve codex-github 2>/dev/null)"
+run_contains "codex_github_invalid_env_budget_keeps_existing_warning" "WARN: CODEX_GITHUB_MAX_WAIT must be a positive integer" "$_0b_codex_bad_err"
+unset CODEX_GITHUB_MAX_WAIT _0b_codex_bad_err
+branch_name="$_0b_saved_branch"
+config_file="$_0b_saved_config"
+unset _0b_saved_branch _0b_saved_config
 
 run_test "codex_github_pre_trigger_wait_forwarded" "yes" \
   "$(if grep -q -- '--pre-trigger-wait "$pre_trigger_wait"' "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh"; then printf yes; else printf no; fi)"
@@ -21563,6 +21581,346 @@ unset _1692_head _1692_other
 unset -f _1692_hist_one _1692_reset_processing_globals 2>/dev/null || true
 
 echo "=== Area 1692 complete ==="
+
+# ---------------------------------------------------------------------------
+# Area 1789: reviewer no verdict yet (#1789)
+# Phase 1 — per-platform wait budgets (plan D1, D2, D6, D7, D13, D14): the
+# review.wait_budgets config reader, the budget and poll-interval resolvers,
+# and --max-wait validation (T1.1–T1.10).
+# ---------------------------------------------------------------------------
+echo ""
+echo "=== Area 1789: reviewer no verdict yet ==="
+
+_1789_dir="$(mktemp -d)"
+_1789_saved_branch="${branch_name-}"
+_1789_saved_config="${config_file-}"
+_1789_saved_changed="${changed_files_count-}"
+unset max_wait_override poll_interval_override PR_REVIEW_LOOP_DOC_MAX_WAIT
+unset CODEX_GITHUB_MAX_WAIT CODEX_GITHUB_POLL_INTERVAL
+unset large_diff_threshold large_diff_max_wait
+changed_files_count=-1
+branch_name="feature/1789-x"
+
+# _1789_cfg <name> <yaml body>: writes a config file and prints its path.
+_1789_cfg() {
+  printf '%s\n' "$2" > "$_1789_dir/$1.yaml"
+  printf '%s\n' "$_1789_dir/$1.yaml"
+}
+
+_1789_none_cfg="$(_1789_cfg none 'review:
+  max_cycles: 10')"
+
+# --- T1.1: no override, no config → D2 default for each of the twelve platforms
+config_file="$_1789_none_cfg"
+for _1789_p in greptile devin coderabbit coderabbit-cli local-ai-reviewer pr-agent claude-code-action copilot haystack ronda; do
+  run_test "1789_T1.1_default_${_1789_p}" "1200 default none" "$(reviewer_wait_budget_resolve "$_1789_p")"
+done
+run_test "1789_T1.1_default_bugbot" "2400 default none" "$(reviewer_wait_budget_resolve bugbot)"
+run_test "1789_T1.1_default_codex-github" "1800 default none" "$(reviewer_wait_budget_resolve codex-github)"
+run_test "1789_T1.1_twelve_supported_platforms" "12" "$(printf '%s\n' $REVIEWER_LOOP_SUPPORTED_PLATFORMS | grep -c .)"
+config_file="$_1789_dir/missing.yaml"
+run_test "1789_T1.1_missing_config_file_default" "2400 default none" "$(reviewer_wait_budget_resolve bugbot 2>/dev/null)"
+
+# --- T1.2: valid configured value → configured; --max-wait override wins for every platform
+config_file="$(_1789_cfg valid 'review:
+  wait_budgets:
+    bugbot: 2700')"
+run_test "1789_T1.2_bugbot_configured" "2700 configured none" "$(reviewer_wait_budget_resolve bugbot)"
+run_test "1789_T1.2_unconfigured_peer_default" "1200 default none" "$(reviewer_wait_budget_resolve pr-agent)"
+max_wait_override=5
+for _1789_p in $REVIEWER_LOOP_SUPPORTED_PLATFORMS; do
+  run_test "1789_T1.2_override_wins_${_1789_p}" "5 override none" "$(reviewer_wait_budget_resolve "$_1789_p")"
+done
+unset max_wait_override
+
+# --- T1.3: invalid configured values → default plus the D6 warning
+_1789_invalid_n=0
+for _1789_v in abc 0 -5 1.5 1e3 1000000 1234567 '""'; do
+  _1789_invalid_n=$((_1789_invalid_n + 1))
+  config_file="$(_1789_cfg "invalid_${_1789_invalid_n}" "review:
+  wait_budgets:
+    bugbot: ${_1789_v}")"
+  _1789_raw="$_1789_v"
+  [ "$_1789_v" = '""' ] && _1789_raw=""
+  run_test "1789_T1.3_invalid_${_1789_invalid_n}_falls_back" "2400 default none" "$(reviewer_wait_budget_resolve bugbot 2>/dev/null)"
+  run_test "1789_T1.3_invalid_${_1789_invalid_n}_warning" \
+    "WARN: review.wait_budgets.bugbot value '${_1789_raw}' is not a positive whole number of seconds (1-999999); using the built-in default" \
+    "$(reviewer_wait_budget_resolve bugbot 2>&1 >/dev/null)"
+done
+config_file="$(_1789_cfg empty_value 'review:
+  wait_budgets:
+    bugbot:
+    pr-agent: 600')"
+run_test "1789_T1.3_empty_value_falls_back" "2400 default none" "$(reviewer_wait_budget_resolve bugbot 2>/dev/null)"
+run_contains "1789_T1.3_empty_value_warns" "review.wait_budgets.bugbot value '' is not a positive whole number of seconds (1-999999)" \
+  "$(reviewer_wait_budget_resolve bugbot 2>&1 >/dev/null)"
+run_test "1789_T1.3_missing_key_no_warning" "" "$(reviewer_wait_budget_resolve devin 2>&1 >/dev/null)"
+config_file="$(_1789_cfg upper_bound 'review:
+  wait_budgets:
+    bugbot: 999999')"
+run_test "1789_T1.3_upper_bound_configured" "999999 configured none" "$(reviewer_wait_budget_resolve bugbot)"
+config_file="$(_1789_cfg unsupported 'review:
+  wait_budgets:
+    bugbot: 1800
+    not-a-reviewer: 600')"
+_1789_warn="$(reviewer_wait_budget_config_warnings 2>&1 >/dev/null)"
+run_test "1789_T1.3_unsupported_key_warning" "WARN: review.wait_budgets.not-a-reviewer is not a supported platform; ignored" "$_1789_warn"
+run_test "1789_T1.3_unsupported_key_does_not_disturb_valid" "1800 configured none" "$(reviewer_wait_budget_resolve bugbot)"
+config_file="$(_1789_cfg flow 'review:
+  wait_budgets: {bugbot: 1800}')"
+_1789_warn="$(reviewer_wait_budget_config_warnings 2>&1 >/dev/null)"
+run_test "1789_T1.3_flow_mapping_warning" "WARN: review.wait_budgets must be a block mapping; ignored" "$_1789_warn"
+run_test "1789_T1.3_flow_mapping_uses_default" "2400 default none" "$(reviewer_wait_budget_resolve bugbot 2>/dev/null)"
+config_file="$(_1789_cfg claude_cap 'review:
+  wait_budgets:
+    claude-code-action: 3601')"
+run_test "1789_T1.3_claude_cap_falls_back" "1200 default none" "$(reviewer_wait_budget_resolve claude-code-action 2>/dev/null)"
+run_test "1789_T1.3_claude_cap_warning" \
+  "WARN: review.wait_budgets.claude-code-action value '3601' exceeds the companion's 3600-second maximum; using the built-in default" \
+  "$(reviewer_wait_budget_resolve claude-code-action 2>&1 >/dev/null)"
+config_file="$(_1789_cfg claude_at_cap 'review:
+  wait_budgets:
+    claude-code-action: 3600')"
+run_test "1789_T1.3_claude_at_cap_configured" "3600 configured none" "$(reviewer_wait_budget_resolve claude-code-action)"
+max_wait_override=7200
+run_test "1789_T1.3_claude_override_not_adjusted" "7200 override none" "$(reviewer_wait_budget_resolve claude-code-action)"
+unset max_wait_override
+# CODEX_GITHUB_MAX_WAIT is codex-github's configured value and wins over YAML.
+config_file="$(_1789_cfg codex 'review:
+  wait_budgets:
+    codex-github: 2100')"
+run_test "1789_T1.3_codex_yaml_configured" "2100 configured none" "$(reviewer_wait_budget_resolve codex-github)"
+CODEX_GITHUB_MAX_WAIT=2500
+run_test "1789_T1.3_codex_env_over_yaml" "2500 configured none" "$(reviewer_wait_budget_resolve codex-github)"
+CODEX_GITHUB_MAX_WAIT=nope
+run_test "1789_T1.3_codex_invalid_env_falls_through_to_yaml" "2100 configured none" "$(reviewer_wait_budget_resolve codex-github 2>/dev/null)"
+CODEX_GITHUB_MAX_WAIT=1000000
+run_test "1789_T1.3_codex_oversized_env_falls_through_to_yaml" "2100 configured none" "$(reviewer_wait_budget_resolve codex-github 2>/dev/null)"
+run_contains "1789_T1.3_codex_oversized_env_warns" "CODEX_GITHUB_MAX_WAIT value '1000000' is not a positive whole number of seconds (1-999999)" \
+  "$(reviewer_wait_budget_resolve codex-github 2>&1 >/dev/null)"
+unset CODEX_GITHUB_MAX_WAIT
+
+# --- T1.4: implementation-plan/* — only Devin (plan D1) is shortened
+config_file="$_1789_none_cfg"
+branch_name="implementation-plan/x"
+changed_files_count=500
+run_test "1789_T1.4_devin_documentation_branch" "180 default documentation_branch" "$(reviewer_wait_budget_resolve devin)"
+run_test "1789_T1.4_bugbot_keeps_default" "2400 default none" "$(reviewer_wait_budget_resolve bugbot)"
+run_test "1789_T1.4_local_ai_reviewer_keeps_default" "1200 default none" "$(reviewer_wait_budget_resolve local-ai-reviewer)"
+run_test "1789_T1.4_pr_agent_keeps_default" "1200 default none" "$(reviewer_wait_budget_resolve pr-agent)"
+run_test "1789_T1.4_d1_set_is_devin_only" "devin" \
+  "$(for _1789_p in $REVIEWER_LOOP_SUPPORTED_PLATFORMS; do reviewer_platform_reviews_documentation_branches "$_1789_p" || printf '%s' "$_1789_p"; done)"
+changed_files_count=-1
+
+# --- T1.5: spec/* with a configured Devin value — configured, never shortened
+branch_name="spec/x"
+config_file="$(_1789_cfg devin 'review:
+  wait_budgets:
+    devin: 900')"
+run_test "1789_T1.5_spec_devin_configured" "900 configured none" "$(reviewer_wait_budget_resolve devin)"
+max_wait_override=40
+run_test "1789_T1.5_spec_devin_override" "40 override none" "$(reviewer_wait_budget_resolve devin)"
+unset max_wait_override
+
+# --- T1.6: PR_REVIEW_LOOP_DOC_MAX_WAIT keeps today's behavior, for Devin only
+config_file="$_1789_none_cfg"
+PR_REVIEW_LOOP_DOC_MAX_WAIT=240
+export PR_REVIEW_LOOP_DOC_MAX_WAIT
+run_test "1789_T1.6_doc_env_devin" "240 default documentation_branch" "$(reviewer_wait_budget_resolve devin)"
+run_test "1789_T1.6_doc_env_not_applied_to_peer" "1200 default none" "$(reviewer_wait_budget_resolve pr-agent)"
+PR_REVIEW_LOOP_DOC_MAX_WAIT=abc
+run_test "1789_T1.6_doc_env_invalid_devin" "180 default documentation_branch" "$(reviewer_wait_budget_resolve devin 2>/dev/null)"
+run_contains "1789_T1.6_doc_env_invalid_warns" "WARN: PR_REVIEW_LOOP_DOC_MAX_WAIT must be a positive integer; defaulting to 180" \
+  "$(reviewer_wait_budget_resolve devin 2>&1 >/dev/null)"
+run_test "1789_T1.6_doc_env_invalid_peer_silent" "" "$(reviewer_wait_budget_resolve bugbot 2>&1 >/dev/null)"
+unset PR_REVIEW_LOOP_DOC_MAX_WAIT
+
+# --- T1.7: large diff lengthens, never shortens, never touches an override
+branch_name="feature/1789-x"
+large_diff_threshold=50
+large_diff_max_wait=2400
+changed_files_count=80
+config_file="$_1789_none_cfg"
+run_test "1789_T1.7_large_diff_lengthens_default" "2400 default large_diff" "$(reviewer_wait_budget_resolve pr-agent)"
+run_test "1789_T1.7_large_diff_leaves_bugbot" "2400 default none" "$(reviewer_wait_budget_resolve bugbot)"
+max_wait_override=30
+run_test "1789_T1.7_large_diff_leaves_override" "30 override none" "$(reviewer_wait_budget_resolve pr-agent)"
+unset max_wait_override
+config_file="$(_1789_cfg large 'review:
+  wait_budgets:
+    bugbot: 3000
+    local-ai-reviewer: 1500')"
+run_test "1789_T1.7_large_diff_never_shortens" "3000 configured none" "$(reviewer_wait_budget_resolve bugbot)"
+run_test "1789_T1.7_large_diff_lengthens_configured" "2400 configured large_diff" "$(reviewer_wait_budget_resolve local-ai-reviewer)"
+changed_files_count=50
+run_test "1789_T1.7_at_threshold_not_extended" "1500 configured none" "$(reviewer_wait_budget_resolve local-ai-reviewer)"
+changed_files_count=-1
+run_test "1789_T1.7_fetch_failed_not_extended" "1500 configured none" "$(reviewer_wait_budget_resolve local-ai-reviewer)"
+changed_files_count=80
+branch_name="spec/x"
+config_file="$_1789_none_cfg"
+run_test "1789_T1.7_doc_branch_not_extended" "1200 default none" "$(reviewer_wait_budget_resolve pr-agent)"
+branch_name="feature/1789-x"
+changed_files_count=-1
+unset large_diff_threshold large_diff_max_wait
+
+# --- Per-run cache and PLATFORM_WAIT_BUDGETS value
+branch_name="implementation-plan/x"
+config_file="$(_1789_cfg summary 'review:
+  wait_budgets:
+    pr-agent: 600')"
+reviewer_wait_budget_cache_platforms=()
+reviewer_wait_budget_cache_values=()
+reviewer_wait_budget_cache_fill bugbot pr-agent devin bugbot
+run_test "1789_cache_dedupes_platforms" "3" "${#reviewer_wait_budget_cache_platforms[@]}"
+run_test "1789_platform_wait_budgets_value" \
+  "bugbot:2400:default,pr-agent:600:configured,devin:180:default:documentation_branch" \
+  "$(reviewer_wait_budgets_summary bugbot pr-agent devin)"
+run_test "1789_cache_lookup_hit" "600 configured none" "$(reviewer_wait_budget_for_platform pr-agent)"
+run_test "1789_cache_lookup_miss_resolves" "1200 default none" "$(reviewer_wait_budget_for_platform local-ai-reviewer)"
+reviewer_wait_budget_cache_platforms=()
+reviewer_wait_budget_cache_values=()
+branch_name="feature/1789-x"
+
+# Dispatch sites use the per-platform budget and poll interval, including the
+# second local pass (plan D4: local-ai-reviewer keeps its own budget).
+_1789_loop_src="$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh"
+run_test "1789_main_dispatch_uses_platform_budget" "1" \
+  "$(grep -c 'run_platform_review "\$platform_name" "\$pr_number" "\$branch_name" "\$platform_poll_interval" "\$platform_max_wait"' "$_1789_loop_src")"
+run_test "1789_second_pass_uses_local_budget" "1" \
+  "$(grep -c 'run_platform_review "local-ai-reviewer" "\$pr_number_arg" "\$branch_name" "\$_sl_poll_interval" "\$_sl_max_wait"' "$_1789_loop_src")"
+run_test "1789_platform_wait_budgets_printed" "1" \
+  "$(grep -c 'print_kv PLATFORM_WAIT_BUDGETS' "$_1789_loop_src")"
+run_test "1789_no_global_max_wait_dispatch" "0" \
+  "$(grep -c '"\$poll_interval" "\$max_wait")' "$_1789_loop_src" || true)"
+
+# --- T1.8: invalid --max-wait refused before any gh call (plan D13)
+_1789_n=0
+for _1789_v in 0 abc -5 1.5 1000000; do
+  _1789_n=$((_1789_n + 1))
+  _1789_log="$_1789_dir/gh-${_1789_n}.log"
+  : > "$_1789_log"
+  set +e
+  _1789_err="$(MOCK_GH_CALL_LOG="$_1789_log" HARNESS_MODE=0 \
+    bash "$_1789_loop_src" 917890 --repo acme/widgets --branch feature/1789-x --max-wait "$_1789_v" 2>&1 >/dev/null)"
+  _1789_rc=$?
+  set -e
+  run_test "1789_T1.8_max_wait_${_1789_n}_exit_64" "64" "$_1789_rc"
+  run_contains "1789_T1.8_max_wait_${_1789_n}_message" \
+    "--max-wait must be a positive whole number of seconds (1-999999) (got '${_1789_v}')." "$_1789_err"
+  run_contains "1789_T1.8_max_wait_${_1789_n}_usage" "Usage: ./scripts/development-workflow/pr-review-loop.sh" "$_1789_err"
+  run_test "1789_T1.8_max_wait_${_1789_n}_no_gh_call" "0" "$(grep -c . "$_1789_log" || true)"
+done
+run_test "1789_T1.8_valid_bounds" "yes yes no" \
+  "$(for _1789_v in 1 999999 1000000; do if reviewer_wait_seconds_is_valid "$_1789_v"; then printf 'yes '; else printf 'no '; fi; done | sed 's/ $//')"
+
+# --- T1.9: poll interval resolver (plan D14)
+branch_name="feature/1789-x"
+run_test "1789_T1.9_default_120" "120" "$(reviewer_poll_interval_resolve pr-agent 1200)"
+run_test "1789_T1.9_codex_default_60" "60" "$(reviewer_poll_interval_resolve codex-github 1800)"
+CODEX_GITHUB_POLL_INTERVAL=90
+export CODEX_GITHUB_POLL_INTERVAL
+run_test "1789_T1.9_codex_env_interval" "90" "$(reviewer_poll_interval_resolve codex-github 1800)"
+run_test "1789_T1.9_codex_env_not_applied_to_peer" "120" "$(reviewer_poll_interval_resolve bugbot 2400)"
+unset CODEX_GITHUB_POLL_INTERVAL
+branch_name="spec/x"
+run_test "1789_T1.9_documentation_30" "30" "$(reviewer_poll_interval_resolve local-ai-reviewer 1200)"
+run_test "1789_T1.9_documentation_codex_keeps_60" "60" "$(reviewer_poll_interval_resolve codex-github 1800)"
+branch_name="feature/1789-x"
+poll_interval_override=7
+run_test "1789_T1.9_explicit_wins" "7" "$(reviewer_poll_interval_resolve codex-github 1800)"
+poll_interval_override=5000
+run_test "1789_T1.9_explicit_clamped_below_budget" "600" "$(reviewer_poll_interval_resolve pr-agent 1200)"
+unset poll_interval_override
+run_test "1789_T1.9_clamp_default" "50" "$(reviewer_poll_interval_resolve pr-agent 100)"
+run_test "1789_T1.9_clamp_budget_2" "1" "$(reviewer_poll_interval_resolve pr-agent 2)"
+run_test "1789_T1.9_clamp_budget_1" "1" "$(reviewer_poll_interval_resolve pr-agent 1)"
+
+# --- T1.10: config reader edge cases (parser-risk addendum E1–E13)
+_1789_read() { workflow_config_review_wait_budget "$1" "$2"; }
+run_test "1789_T1.10_E1_plain" "1800" "$(_1789_read bugbot "$(_1789_cfg e1 'review:
+  wait_budgets:
+    bugbot: 1800')")"
+run_test "1789_T1.10_E2_double_quoted" "1800" "$(_1789_read bugbot "$(_1789_cfg e2a 'review:
+  wait_budgets:
+    bugbot: "1800"')")"
+run_test "1789_T1.10_E2_single_quoted" "1800" "$(_1789_read bugbot "$(_1789_cfg e2b "review:
+  wait_budgets:
+    bugbot: '1800'")")"
+run_test "1789_T1.10_E3_trailing_comment" "1800" "$(_1789_read bugbot "$(_1789_cfg e3 'review:
+  wait_budgets:
+    bugbot: 1800  # slow vendor')")"
+_1789_e4="$(_1789_cfg e4 'review:
+  wait_budgets:
+    local-ai-reviewer: 1500')"
+run_test "1789_T1.10_E4_hyphenated_key" "1500" "$(_1789_read local-ai-reviewer "$_1789_e4")"
+run_test "1789_T1.10_E5_prefix_lookalike" "" "$(_1789_read local-ai "$_1789_e4")"
+run_test "1789_T1.10_E6_under_on_ready" "" "$(_1789_read bugbot "$(_1789_cfg e6a 'review:
+  on_ready:
+    github: [local-ai-reviewer]
+    bugbot: 1800')")"
+run_test "1789_T1.10_E6_top_level_wait_budgets" "" "$(_1789_read bugbot "$(_1789_cfg e6b 'review:
+  max_cycles: 10
+wait_budgets:
+  bugbot: 1800')")"
+run_test "1789_T1.10_E6_wait_budgets_under_on_ready" "" "$(_1789_read bugbot "$(_1789_cfg e6c 'review:
+  on_ready:
+    wait_budgets:
+      bugbot: 1800')")"
+run_test "1789_T1.10_E7_scope_end" "" "$(_1789_read bugbot "$(_1789_cfg e7 'review:
+  wait_budgets:
+  max_cycles: 10
+    bugbot: 1800')")"
+run_test "1789_T1.10_E8_commented_key" "" "$(_1789_read bugbot "$(_1789_cfg e8 'review:
+  wait_budgets:
+    # bugbot: 1800
+    pr-agent: 600')")"
+run_test "1789_T1.10_E9_missing_file" "" "$(_1789_read bugbot "$_1789_dir/absent.yaml")"
+run_test "1789_T1.10_E9_missing_section" "" "$(_1789_read bugbot "$(_1789_cfg e9b 'issue_tracker:
+  provider: github_projects')")"
+run_test "1789_T1.10_E9_missing_key" "" "$(_1789_read bugbot "$(_1789_cfg e9c 'review:
+  wait_budgets:
+    pr-agent: 600')")"
+run_test "1789_T1.10_E10_duplicate_key_first_wins" "1800" "$(_1789_read bugbot "$(_1789_cfg e10 'review:
+  wait_budgets:
+    bugbot: 1800
+    bugbot: 900')")"
+run_test "1789_T1.10_E11_flow_mapping" "__flow__" "$(_1789_read bugbot "$(_1789_cfg e11 'review:
+  wait_budgets: {bugbot: 1800}')")"
+run_test "1789_T1.10_E12_deeper_indentation" "1800" "$(_1789_read bugbot "$(_1789_cfg e12 'review:
+    max_cycles: 10
+    wait_budgets:
+        pr-agent: 600
+        bugbot: 1800')")"
+_1789_n=0
+for _1789_v in abc 0 -5 1.5 1e3 1234567; do
+  _1789_n=$((_1789_n + 1))
+  run_test "1789_T1.10_E13_raw_value_${_1789_n}" "$_1789_v" "$(_1789_read bugbot "$(_1789_cfg "e13_${_1789_n}" "review:
+  wait_budgets:
+    bugbot: ${_1789_v}")")"
+done
+_1789_e13_empty="$(_1789_cfg e13_empty 'review:
+  wait_budgets:
+    bugbot:')"
+run_test "1789_T1.10_E13_empty_value" "" "$(_1789_read bugbot "$_1789_e13_empty")"
+run_test "1789_T1.10_E13_empty_value_key_listed" "bugbot" "$(workflow_config_review_wait_budget_keys "$_1789_e13_empty")"
+run_test "1789_T1.10_keys_in_file_order_unique" "bugbot,pr-agent,bogus" \
+  "$(workflow_config_review_wait_budget_keys "$(_1789_cfg keys 'review:
+  wait_budgets:
+    bugbot: 1
+    pr-agent: 2
+    bugbot: 3
+    bogus: 4')" | paste -sd, -)"
+
+rm -rf "$_1789_dir"
+branch_name="$_1789_saved_branch"
+config_file="$_1789_saved_config"
+changed_files_count="$_1789_saved_changed"
+unset _1789_dir _1789_saved_branch _1789_saved_config _1789_saved_changed _1789_none_cfg _1789_p _1789_v _1789_raw
+unset _1789_invalid_n _1789_warn _1789_n _1789_log _1789_err _1789_rc _1789_loop_src _1789_e4 _1789_e13_empty
+unset -f _1789_cfg _1789_read 2>/dev/null || true
+
+echo "=== Area 1789 complete ==="
 
 # ---------------------------------------------------------------------------
 # Summary
