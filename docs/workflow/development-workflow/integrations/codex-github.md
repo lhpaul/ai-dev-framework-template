@@ -51,7 +51,8 @@ evaluated in order and stopping at the first unmet one:
    confirmed by `reviewer_failed_label_required_for_result` returning false
 3. Zero unresolved, non-outdated review threads on the same head
 4. Non-reviewer baseline checks are non-empty and all green on the same head
-   (empty set → `baseline_checks_unobserved`; reviewer-owned checks excluded)
+   (empty set → `baseline_checks_unobserved`; reviewer-owned checks and the
+   loop's own `Reviewer-loop completion guard (#<pr>)` status excluded)
 
 Expensive reviewers are reordered last **within their own phase bucket** so
 those peers can run first; the reorder never moves a draft-configured
