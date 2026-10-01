@@ -553,8 +553,10 @@ is not a refusal. That error, and any other failed read such as a 5xx or a
 network error, keeps polling, and budget expiry stays No verdict yet. Ronda
 and Bugbot already escalate `fetch-failed` on any failed check-run read. The
 Claude companion reports a refused run read as `unavailable` (exit 3).
-PR-Agent keeps its rule: a failed read leaves the last successful read in
-force.
+PR-Agent and Devin keep the rule that a failed read leaves the last
+successful read in force: Devin retains each endpoint's check-run and status
+counts, so an observed failure signal or a once-seen check is never forgotten
+because a later poll read failed.
 
 #### Built-in wait budgets
 

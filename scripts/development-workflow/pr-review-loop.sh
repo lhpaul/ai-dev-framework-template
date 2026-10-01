@@ -5424,6 +5424,8 @@ run_devin_review() {
   # check run or status on the head reports Devin's own run as failed or timed
   # out (re-read every poll), and whether the wait ended on a check-or-status
   # completion rather than on a completion review.
+  local devin_check_run_count=0
+  local devin_check_completed_count=0
   local devin_failed_check_count=0
   local devin_failed_status_count=0
   local devin_failure_signal=0
@@ -5463,27 +5465,39 @@ run_devin_review() {
       break
     fi
 
-    read -r devin_any_check_count check_completed devin_failed_check_count < <(
-      gh api "repos/$repo/commits/$head_sha/check-runs" --paginate 2>"${devin_read_err_file:-/dev/null}" \
-        | jq -s -r "$STATUS_CHECK_ROLLUP_DEDUPE_JQ$REVIEWER_FAILED_COMPLETION_JQ"'
-            ([.[].check_runs[] | select(
-              (.app.slug == "devin-ai-integration") or
-              (.name | test("devin"; "i"))
-            )] | dedupe_status_check_rollup) as $runs
-            | ($runs | length),
-              ($runs | map(select(.status == "completed")) | length),
-              ($runs | map(select(reviewer_failed_completion)) | length)
-            | tostring
-          ' | tr '\n' ' '; echo
-    )
+    # #1789 (plan D8 failure-type completion signals): each endpoint keeps its
+    # last SUCCESSFUL read in force. A failed read (gh exit non-zero or no
+    # output) leaves the previous check-run / status counts untouched, so an
+    # observed failure signal or a once-seen check never regresses to "no
+    # check ever seen" because of a later transient error; only a successful
+    # read supersedes it.
+    local _dv_raw="" _dv_a="" _dv_b="" _dv_c=""
+    if _dv_raw="$(gh api "repos/$repo/commits/$head_sha/check-runs" --paginate 2>"${devin_read_err_file:-/dev/null}")" \
+        && [ -n "$_dv_raw" ]; then
+      read -r _dv_a _dv_b _dv_c <<< "$(
+        printf '%s\n' "$_dv_raw" \
+          | jq -s -r "$STATUS_CHECK_ROLLUP_DEDUPE_JQ$REVIEWER_FAILED_COMPLETION_JQ"'
+              ([.[] | (if type == "object" then (.check_runs // []) else [] end)[] | select(
+                (.app.slug == "devin-ai-integration") or
+                (.name | test("devin"; "i"))
+              )] | dedupe_status_check_rollup) as $runs
+              | ($runs | length),
+                ($runs | map(select(.status == "completed")) | length),
+                ($runs | map(select(reviewer_failed_completion)) | length)
+              | tostring
+            ' 2>/dev/null | tr '\n' ' '
+      )" || true
+      if [ -n "$_dv_a" ] && [ -n "$_dv_b" ] && [ -n "$_dv_c" ]; then
+        devin_check_run_count="$_dv_a"
+        devin_check_completed_count="$_dv_b"
+        devin_failed_check_count="$_dv_c"
+      fi
+    fi
     if devin_read_denied_detail="$(reviewer_loop_gh_read_denied "$devin_read_err_file")"; then
       print_reviewer_read_denied "$platform" "$pr_number" "$branch_name" "$devin_read_denied_detail"
       print_kv REVIEW_COMMENT_ID ""
       return 2
     fi
-    devin_any_check_count="${devin_any_check_count:-0}"
-    check_completed="${check_completed:-0}"
-    devin_failed_check_count="${devin_failed_check_count:-0}"
 
     # Also count Devin status contexts (Devin sometimes signals via a GitHub Status
     # Context on the commit rather than a Check Run — both mean Devin has completed).
@@ -5495,42 +5509,38 @@ run_devin_review() {
     # when the same context transitions through multiple states (e.g. pending → success).
     # Shared dedupe (workflow-lib.sh, #1559); the REST list is newest-first, so it
     # is reversed first and a same-second tie resolves to the newer status.
-    read -r devin_status_count devin_completed_status_count devin_failed_status_count < <(
-      gh api "repos/$repo/commits/$head_sha/statuses" --paginate 2>"${devin_read_err_file:-/dev/null}" \
-        | jq -s -r "$STATUS_CHECK_ROLLUP_DEDUPE_JQ$REVIEWER_FAILED_COMPLETION_JQ"'
-            ( [.[].[] | select(.context | test("devin"; "i"))]
-              | reverse | dedupe_status_check_rollup | length ),
-            ( [.[].[] | select(.context | test("devin"; "i"))]
-              | reverse | dedupe_status_check_rollup
-              | map(select(.state == "success" or .state == "failure" or .state == "error"))
-              | length ),
-            ( [.[].[] | select(.context | test("devin"; "i"))]
-              | reverse | dedupe_status_check_rollup
-              | map(select(reviewer_failed_completion))
-              | length )
-            | tostring
-          ' | tr '\n' ' '; echo
-    )
+    _dv_raw="" _dv_a="" _dv_b="" _dv_c=""
+    if _dv_raw="$(gh api "repos/$repo/commits/$head_sha/statuses" --paginate 2>"${devin_read_err_file:-/dev/null}")" \
+        && [ -n "$_dv_raw" ]; then
+      read -r _dv_a _dv_b _dv_c <<< "$(
+        printf '%s\n' "$_dv_raw" \
+          | jq -s -r "$STATUS_CHECK_ROLLUP_DEDUPE_JQ$REVIEWER_FAILED_COMPLETION_JQ"'
+              ( [.[] | (if type == "array" then . else [] end)[] | select(.context | test("devin"; "i"))]
+                | reverse | dedupe_status_check_rollup ) as $sts
+              | ($sts | length),
+                ($sts | map(select(.state == "success" or .state == "failure" or .state == "error")) | length),
+                ($sts | map(select(reviewer_failed_completion)) | length)
+              | tostring
+            ' 2>/dev/null | tr '\n' ' '
+      )" || true
+      if [ -n "$_dv_a" ] && [ -n "$_dv_b" ] && [ -n "$_dv_c" ]; then
+        devin_status_count="$_dv_a"
+        devin_completed_status_count="$_dv_b"
+        devin_failed_status_count="$_dv_c"
+      fi
+    fi
     if devin_read_denied_detail="$(reviewer_loop_gh_read_denied "$devin_read_err_file")"; then
       print_reviewer_read_denied "$platform" "$pr_number" "$branch_name" "$devin_read_denied_detail"
       print_kv REVIEW_COMMENT_ID ""
       return 2
     fi
-    devin_status_count="${devin_status_count:-0}"
-    devin_completed_status_count="${devin_completed_status_count:-0}"
-    devin_failed_status_count="${devin_failed_status_count:-0}"
     devin_failure_signal=0
     if [ "$devin_failed_check_count" -gt 0 ] || [ "$devin_failed_status_count" -gt 0 ]; then
       devin_failure_signal=1
     fi
-    if [ "$devin_status_count" -gt 0 ]; then
-      devin_any_check_count=$(( devin_any_check_count + devin_status_count ))
-    fi
-
-    # Only count status contexts in terminal states toward check_completed.
-    if [ "$devin_completed_status_count" -gt 0 ]; then
-      check_completed=$(( check_completed + devin_completed_status_count ))
-    fi
+    # Only terminal-state status contexts count toward check_completed.
+    devin_any_check_count=$(( devin_check_run_count + devin_status_count ))
+    check_completed=$(( devin_check_completed_count + devin_completed_status_count ))
 
     if [ "$check_completed" -gt 0 ]; then
       if [ "$check_completed_at" -eq -1 ]; then

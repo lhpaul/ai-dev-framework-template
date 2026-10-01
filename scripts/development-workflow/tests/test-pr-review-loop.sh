@@ -22557,7 +22557,10 @@ case "$*" in
     if [ -e "$d/check-runs.$sha" ]; then out="$(cat "$d/check-runs.$sha")"
     else out="$(fixture check-runs '{"check_runs":[]}')"; fi
     ;;
-  *"/statuses"*) out="$(fixture statuses '[]')" ;;
+  *"/statuses"*)
+    [ "$(fixture statuses-fail 0)" = "0" ] || exit 1
+    out="$(fixture statuses '[]')"
+    ;;
   *"/reactions"*)
     all_args="$*"; cid="${all_args#*comments/}"; cid="${cid%%/*}"
     [ -e "$d/reactions-fail.$cid" ] && exit 1
@@ -22833,6 +22836,35 @@ _1789_fx check-runs "$(_1789_dv_run completed '"success"')"
 _1789_out="$(_1789_run_gh run_devin_review 60 30)"
 run_test "1789_T2.24_devin_success_inside_grace_no_verdict_yet" "waiting_on_reviewer|reviewer-no-verdict-yet|4|check_not_completed" \
   "$(_1789_rre "$_1789_out")|$(kv_value_default WAIT_EXPIRED_DETAIL "$_1789_out" "")"
+# Failed polling reads keep the last successful read in force (plan D8): a
+# timed_out check / error status observed once is not forgotten when later
+# reads fail, and a once-seen in-progress check is not "no check ever seen".
+_1789_gh_reset
+_1789_fx check-runs "$(_1789_dv_run completed '"timed_out"')"
+_1789_fx check-runs-fail@30 1
+_1789_out="$(_1789_run_gh run_devin_review 60 30)"
+_1789_assert_failed T2.24_devin_timed_out_then_failed_reads devin "$_1789_out" devin_run_failed
+run_test "1789_T2.24_devin_timed_out_then_failed_reads_exit" "escalate|devin_run_failed|2" "$(_1789_rre "$_1789_out")"
+_1789_gh_reset
+_1789_fx statuses '[{"id":3,"context":"Devin Review","state":"error","created_at":"2020-01-01T00:00:02Z"}]'
+_1789_fx statuses-fail@30 1
+_1789_out="$(_1789_run_gh run_devin_review 60 30)"
+run_test "1789_T2.24_devin_error_status_then_failed_reads" "escalate|devin_run_failed|2" "$(_1789_rre "$_1789_out")"
+_1789_gh_reset
+_1789_fx check-runs "$(_1789_dv_run in_progress null)"
+_1789_fx check-runs-fail@30 1
+_1789_out="$(_1789_run_gh run_devin_review 60 30)"
+run_test "1789_T2.24_devin_seen_check_then_failed_reads_no_verdict_yet" \
+  "waiting_on_reviewer|reviewer-no-verdict-yet|4|check_not_completed" \
+  "$(_1789_rre "$_1789_out")|$(kv_value_default WAIT_EXPIRED_DETAIL "$_1789_out" "")"
+# A later successful read supersedes the retained evidence (timed_out then a
+# success run on the same check).
+_1789_gh_reset
+_1789_fx check-runs "$(_1789_dv_run completed '"timed_out"')"
+_1789_fx check-runs@30 "$(_1789_dv_run completed '"success"')"
+_1789_out="$(_1789_run_gh run_devin_review 60 30)"
+run_test "1789_T2.24_devin_successful_read_supersedes_failure" \
+  "waiting_on_reviewer|reviewer-no-verdict-yet|4" "$(_1789_rre "$_1789_out")"
 
 # --- CodeRabbit (T2.4, T2.25)
 _1789_cr_status() {
