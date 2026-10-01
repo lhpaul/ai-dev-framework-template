@@ -24276,6 +24276,69 @@ unset _1789_cr_repo _1789_cr_bin _1789_cr_head _1789_cr_out _1789_handler_overri
 unset _1789_nvy_head
 unset -f _1789_fc _1789_label _1789_reset_processing_globals _1789_stub_companion _1789_run_handler _1789_run_cr_cli _1789_real_git 2>/dev/null || true
 
+# --- T6.1 (plan Phase 6, AC-14): documentation assertions -------------------
+# Protocol 93 carries the canonical section, its subsections, and the D2
+# table; Protocol 91's Step 7 table carries every D11 runner row and the
+# failure statement; each guide in the plan's Documentation Updates names the
+# No verdict yet reason or its kept skip and links the canonical section.
+_1789_doc_dir="$REPO_ROOT/docs/workflow/development-workflow"
+_1789_p93="$_1789_doc_dir/protocols/93-automated-reviewer-loop-protocol.md"
+_1789_p91="$_1789_doc_dir/protocols/91-orchestrate-work-protocol.md"
+_1789_doc_has() {
+  # _1789_doc_has <file> <fixed string> → yes|no
+  if [ -f "$1" ] && grep -Fq -- "$2" "$1"; then printf 'yes\n'; else printf 'no\n'; fi
+}
+for _1789_h in \
+    '### Reviewer wait budgets and outcome classes (#1789)' \
+    '#### Outcome classes' \
+    '#### Built-in wait budgets' \
+    '#### Configuring budgets' \
+    '#### Precedence across platforms' \
+    '#### The `reviewer-failed` label rule' \
+    '#### Automatic re-wait' \
+    '#### Timing and waiting keys' \
+    '#### Current-revision binding'; do
+  run_test "1789_T6.1_p93_heading:${_1789_h}" "yes" "$(_1789_doc_has "$_1789_p93" "$_1789_h")"
+done
+for _1789_h in \
+    '| `bugbot` | 2400 |' \
+    '| `codex-github` | 1800 |' \
+    '| `greptile`, `devin`, `coderabbit`, `coderabbit-cli`, `local-ai-reviewer`, `pr-agent`, `claude-code-action`, `copilot`, `haystack`, `ronda` | 1200 |' \
+    '| `devin` on `spec/*` or `implementation-plan/*` | `PR_REVIEW_LOOP_DOC_MAX_WAIT` (default 180) |'; do
+  run_test "1789_T6.1_p93_d2_row:${_1789_h}" "yes" "$(_1789_doc_has "$_1789_p93" "$_1789_h")"
+done
+# The D2 table in Protocol 93 agrees with the built-in defaults the loop uses.
+run_test "1789_T6.1_p93_d2_matches_builtin_defaults" "2400|1800|1200|1200" \
+  "$(reviewer_wait_budget_builtin_default bugbot)|$(reviewer_wait_budget_builtin_default codex-github)|$(reviewer_wait_budget_builtin_default local-ai-reviewer)|$(reviewer_wait_budget_builtin_default claude-code-action)"
+for _1789_h in \
+    '| `waiting_on_reviewer` (exit code 4) with `NO_VERDICT_REWAIT=available` |' \
+    '| `waiting_on_reviewer` (exit code 4) with `NO_VERDICT_REWAIT=used` |' \
+    '| `waiting_on_reviewer` (exit code 4) with `NO_VERDICT_REWAIT=untracked` |' \
+    '| `waiting_on_reviewer` (exit code 4) with `NO_VERDICT_REWAIT` absent or any other value |' \
+    '| Result of the automatic re-wait run |' \
+    '- `NO_FAILURE_DETECTED=1`: state that no reviewer failure was detected.' \
+    '- `NO_FAILURE_DETECTED=0` with a non-empty `FAILED_PEER_PLATFORMS`' \
+    '- `NO_FAILURE_DETECTED=0` with `FAILED_PEER_PLATFORMS` absent or empty' \
+    '- `NO_FAILURE_DETECTED` absent or any other value: make no failure statement'; do
+  run_test "1789_T6.1_p91_step7_row:${_1789_h}" "yes" "$(_1789_doc_has "$_1789_p91" "$_1789_h")"
+done
+run_test "1789_T6.1_p91_single_waiting_row_removed" "no" \
+  "$(_1789_doc_has "$_1789_p91" '| `waiting_on_reviewer` (exit code 4)     |')"
+for _1789_g in bugbot greptile devin coderabbit copilot codex-github claude-code-action \
+    haystack-triage haystack local-ai-reviewer pr-agent ronda pr-review-platform; do
+  _1789_gf="$_1789_doc_dir/integrations/${_1789_g}.md"
+  if [ -f "$_1789_gf" ] && grep -Eq 'reviewer-no-verdict-yet|NO_VERDICT_YET=1|NO_VERDICT_REWAIT' "$_1789_gf"; then
+    _1789_r=yes
+  else
+    _1789_r=no
+  fi
+  run_test "1789_T6.1_guide_names_no_verdict_yet:${_1789_g}" "yes" "$_1789_r"
+  run_test "1789_T6.1_guide_links_canonical_section:${_1789_g}" "yes" \
+    "$(_1789_doc_has "$_1789_gf" '93-automated-reviewer-loop-protocol.md#reviewer-wait-budgets-and-outcome-classes-1789')"
+done
+unset _1789_doc_dir _1789_p93 _1789_p91 _1789_h _1789_g _1789_gf _1789_r
+unset -f _1789_doc_has
+
 rm -rf "$_1789_dir"
 branch_name="$_1789_saved_branch"
 config_file="$_1789_saved_config"

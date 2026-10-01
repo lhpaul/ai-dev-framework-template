@@ -78,7 +78,14 @@ every poll:
 | Found, `status=completed`, `conclusion=success`, severity line missing, duplicated, or unparseable | `RESULT=escalate` (`REASON=ronda_severity_unparseable`) — fail closed |
 | Found, `status=completed`, `conclusion=failure`                  | `RESULT=escalate` (`REASON=ronda_pass_failed`, `RONDA_CHECK_TITLE` names the cause) |
 | Found, `status=completed`, any other conclusion (including `action_required`) | `RESULT=escalate` (`REASON=ronda_unexpected_conclusion`) — fail closed |
-| `max_wait` exhausted with no completed run observed               | `RESULT=escalate` (`REASON=timeout`)                                   |
+| `max_wait` exhausted with no completed run observed               | **No verdict yet** — `RESULT=waiting_on_reviewer` (`REASON=reviewer-no-verdict-yet`, `WAIT_EXPIRED_DETAIL=check_not_completed`), exit 4; not an escalation and no `reviewer-failed` label |
+
+`max_wait` is Ronda's own wait budget: 1200 s by default, configurable as
+`review.wait_budgets.ronda` (see "Reviewer wait budgets and outcome classes"
+in
+[`../protocols/93-automated-reviewer-loop-protocol.md`](../protocols/93-automated-reviewer-loop-protocol.md#reviewer-wait-budgets-and-outcome-classes-1789)).
+A `failure` conclusion stays Reviewer failed (`ronda_pass_failed`): it is the
+pass's own report that it could not complete.
 
 Because the check-runs query is scoped to the current head SHA on every
 poll, a new commit pushed mid-poll naturally supersedes any in-flight pass

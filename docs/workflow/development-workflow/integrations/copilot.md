@@ -140,12 +140,24 @@ gh api "repos/$OWNER/$REPO/pulls/$PR_NUMBER/reviews" \
 | `APPROVED`           | `clean`         | No blocking findings                           |
 | `COMMENTED`          | `clean`         | Non-blocking comment; treated as advisory only |
 | `CHANGES_REQUESTED`  | `needs_fixes`   | Blocking findings; fix and re-run the loop     |
-| No review (timeout)  | `escalate`      | `REASON=timeout` — apply unavailability policy |
+| No review on the current head when the wait budget runs out | `waiting_on_reviewer` | **No verdict yet** — `REASON=reviewer-no-verdict-yet`, `WAIT_EXPIRED_DETAIL=review_not_submitted`, exit 4; not an escalation and no `reviewer-failed` label |
+| Reviewer request failed | `escalate` | `REASON=unavailable` — apply unavailability policy |
+
+Only a review whose `commit_id` is the current head counts. A review of an
+older revision is not this head's verdict, so a run that sees only older
+reviews ends in No verdict yet. When the runner's automatic re-wait runs
+(Protocol 91 Step 7, `NO_VERDICT_REWAIT=available`), re-requesting Copilot
+while its request is still pending is a no-op, so no duplicate request is
+posted.
 
 ### Step 7.3 — Polling parameters
 
-The default poll interval and maximum wait follow the same values as other
-platforms and are configurable via `pr-review-loop.sh` flags:
+Copilot waits for its own budget: 1200 s by default, configurable as
+`review.wait_budgets.copilot` (see "Reviewer wait budgets and outcome classes"
+in
+[`../protocols/93-automated-reviewer-loop-protocol.md`](../protocols/93-automated-reviewer-loop-protocol.md#reviewer-wait-budgets-and-outcome-classes-1789)).
+The poll interval and a one-run budget override (`--max-wait`, applied to every
+platform in the run) are also available as `pr-review-loop.sh` flags:
 
 <!-- workflow-shell-contract: bash-zsh -->
 ```bash
