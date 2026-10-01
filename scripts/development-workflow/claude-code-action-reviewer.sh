@@ -35,6 +35,14 @@
 #                            (YYYY-MM-DDTHH:MM:SSZ). It becomes DISPATCH_TIME,
 #                            so the review fetch keeps the original
 #                            `.submitted_at >= DISPATCH_TIME` boundary.
+#   --head-sha <sha>         Current-revision binding (#1789, plan D15): the
+#                            full 40-hex PR head the loop read. When given, a
+#                            bot review counts only when its commit_id equals
+#                            this head (GitHub fixes a review's commit_id at
+#                            submission), in addition to the DISPATCH_TIME
+#                            boundary, so a review on another revision is never
+#                            this head's verdict. Without it, today's count is
+#                            kept.
 #
 # Exit codes:
 #   0 — APPROVED       (Actions run completed successfully, no new blocking review
@@ -187,12 +195,13 @@ fi
 # ── Argument parsing ──────────────────────────────────────────────────────────
 
 if [ $# -lt 3 ]; then
-  echo "Usage: $0 <pr_number> <owner> <repo> [--workflow-file <name>] [--bot-login <login>] [--poll-interval <seconds>] [--max-wait <seconds>] [--adopt-run-id <id> --adopt-requested-at <iso8601>]" >&2
+  echo "Usage: $0 <pr_number> <owner> <repo> [--workflow-file <name>] [--bot-login <login>] [--poll-interval <seconds>] [--max-wait <seconds>] [--adopt-run-id <id> --adopt-requested-at <iso8601>] [--head-sha <sha>]" >&2
   exit 2
 fi
 
 ADOPT_RUN_ID=""
 ADOPT_REQUESTED_AT=""
+HEAD_SHA=""
 
 PR_NUMBER="$1"
 OWNER="$2"
@@ -243,6 +252,9 @@ while [ $# -gt 0 ]; do
     --adopt-requested-at)
       if [ $# -lt 2 ]; then echo "ERROR: --adopt-requested-at requires a value" >&2; exit 2; fi
       ADOPT_REQUESTED_AT="$2"; shift 2;;
+    --head-sha)
+      if [ $# -lt 2 ]; then echo "ERROR: --head-sha requires a value" >&2; exit 2; fi
+      HEAD_SHA="$2"; shift 2;;
     *)
       echo "ERROR: unknown option '$1'" >&2; exit 2;;
   esac
@@ -264,6 +276,17 @@ if [ -n "$ADOPT_RUN_ID" ] || [ -n "$ADOPT_REQUESTED_AT" ]; then
     echo "ERROR: --adopt-requested-at value '$ADOPT_REQUESTED_AT' is not an ISO-8601 UTC time (YYYY-MM-DDTHH:MM:SSZ)" >&2
     exit 2
   fi
+fi
+
+# --head-sha (#1789, plan D15) must be a full 40-hex commit SHA: it is compared
+# with each review's commit_id, so a short or malformed value would silently
+# discard every review.
+if [ -n "$HEAD_SHA" ]; then
+  if ! [[ "$HEAD_SHA" =~ ^[0-9a-fA-F]{40}$ ]]; then
+    echo "ERROR: --head-sha value '$HEAD_SHA' is not a full 40-hex commit SHA" >&2
+    exit 2
+  fi
+  HEAD_SHA="$(printf '%s' "$HEAD_SHA" | tr '[:upper:]' '[:lower:]')"
 fi
 
 # ── Validate numeric options ──────────────────────────────────────────────────
@@ -555,7 +578,7 @@ verify_claude_code_action_run_log "$RUN_ID" "$OWNER" "$REPO" || exit $?
 # If any review has state=CHANGES_REQUESTED, exit 1 (NEEDS_REVISION).
 # Otherwise exit 0 (APPROVED).
 
-echo "INFO: checking PR #$PR_NUMBER reviews from '$BOT_LOGIN' posted after $DISPATCH_TIME..."
+echo "INFO: checking PR #$PR_NUMBER reviews from '$BOT_LOGIN' posted after $DISPATCH_TIME${HEAD_SHA:+ on commit $HEAD_SHA}..."
 
 REVIEW_STDERR=$(mktemp)
 REVIEW_TMPFILE=$(mktemp)
@@ -563,8 +586,9 @@ REVIEW_STATUS=0
 gh api "repos/$OWNER/$REPO/pulls/$PR_NUMBER/reviews" --paginate \
   2>"$REVIEW_STDERR" \
   | jq -r --arg bot "$BOT_LOGIN" --arg bot_plain "$BOT_LOGIN_PLAIN" \
-      --arg dispatch_time "$DISPATCH_TIME" \
-      '[.[] | select((.user.login == $bot or .user.login == ($bot_plain + "[bot]")) and .submitted_at != null and .submitted_at >= $dispatch_time)] | length, (.[].state // empty)' \
+      --arg dispatch_time "$DISPATCH_TIME" --arg head_sha "$HEAD_SHA" \
+      '[.[] | select((.user.login == $bot or .user.login == ($bot_plain + "[bot]")) and .submitted_at != null and .submitted_at >= $dispatch_time)
+            | select($head_sha == "" or (((.commit_id // "") | ascii_downcase) == $head_sha))] | length, (.[].state // empty)' \
   > "$REVIEW_TMPFILE" 2>/dev/null || REVIEW_STATUS=$?
 
 if [ "$REVIEW_STATUS" -ne 0 ]; then

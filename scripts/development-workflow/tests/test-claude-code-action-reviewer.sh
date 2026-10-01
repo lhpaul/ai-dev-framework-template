@@ -330,6 +330,74 @@ unset _t45_dir MOCK_T45_LOG _t45_adopt
 unset -f _t45_run _t45_calls
 
 # ---------------------------------------------------------------------------
+# Area 4 (#1789, T2.19): --head-sha binds counted reviews to the loop head
+# (plan D15 claude-code-action row). The bound run completes success; the only
+# bot review is a CHANGES_REQUESTED review submitted after DISPATCH_TIME. With
+# --head-sha H1 it counts only when its commit_id is H1 (GitHub fixes a
+# review's commit_id at submission); a review on H0 is another revision's
+# verdict and is not counted, so the run is clean. Without --head-sha today's
+# time-bounded count is kept.
+# ---------------------------------------------------------------------------
+echo ""
+echo "=== Area 4: --head-sha review binding (#1789 T2.19) ==="
+
+_t219_h1="1789abcdef000000000000000000000000000001"
+_t219_h0="1789abcdef000000000000000000000000000000"
+_t219_dir="$(mktemp -d)" || { echo "ERROR: mktemp -d failed" >&2; exit 1; }
+cat > "$_t219_dir/gh" <<'MOCK_GH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$MOCK_T219_LOG"
+case "$*" in
+  "auth status"*) exit 0 ;;
+  *"pr view"*"baseRefName"*) echo "develop"; exit 0 ;;
+  *"repo view"*"defaultBranchRef"*) echo "main"; exit 0 ;;
+  *"actions/runs/888"*)
+    printf '{"id":888,"name":"Claude Code Review — PR #42","path":".github/workflows/claude-code-review.yml","status":"completed","conclusion":"success","html_url":"https://example.invalid/runs/888"}\n'
+    exit 0
+    ;;
+  "run view 888 "*"--log"*)
+    echo 'Claude Code Action review	UNKNOWN STEP	Trigger result: true'
+    exit 0
+    ;;
+  *"pulls/42/reviews"*)
+    printf '[{"user":{"login":"claude[bot]"},"state":"CHANGES_REQUESTED","submitted_at":"2026-01-01T00:00:20Z","commit_id":"%s"}]\n' "$MOCK_T219_REVIEW_COMMIT"
+    exit 0
+    ;;
+  *) echo "unexpected gh call: $*" >&2; exit 1 ;;
+esac
+MOCK_GH
+chmod +x "$_t219_dir/gh"
+MOCK_T219_LOG="$_t219_dir/calls.log"
+export MOCK_T219_LOG
+
+# _t219_run <review_commit_id> [extra args...]: prints the exit code.
+_t219_run() {
+  local status=0 commit="$1"
+  shift
+  : > "$MOCK_T219_LOG"
+  MOCK_T219_REVIEW_COMMIT="$commit" PATH="$_t219_dir:$PATH" bash "$REVIEWER_SCRIPT" 42 owner repo \
+    --max-wait 2 --poll-interval 1 --adopt-run-id 888 --adopt-requested-at 2026-01-01T00:00:10Z \
+    "$@" >"$_t219_dir/out" 2>"$_t219_dir/err" || status=$?
+  printf '%s\n' "$status"
+}
+
+run_test "1789_T2.19_other_revision_review_not_counted_clean" "0" "$(_t219_run "$_t219_h0" --head-sha "$_t219_h1")"
+run_test "1789_T2.19_other_revision_review_verdict_approved" "1" "$(grep -c '^VERDICT: APPROVED' "$_t219_dir/out" || true)"
+run_test "1789_T2.19_bound_review_counted_needs_revision" "1" "$(_t219_run "$_t219_h1" --head-sha "$_t219_h1")"
+run_test "1789_T2.19_bound_review_case_insensitive" "1" \
+  "$(_t219_run "$_t219_h1" --head-sha "$(printf '%s' "$_t219_h1" | tr 'a-f' 'A-F')")"
+run_test "1789_T2.19_without_head_sha_keeps_time_count" "1" "$(_t219_run "$_t219_h0")"
+run_test "1789_T2.19_review_without_commit_id_not_counted" "0" "$(_t219_run "" --head-sha "$_t219_h1")"
+run_test "1789_T2.19_short_head_sha_exit_2" "2" "$(_t219_run "$_t219_h1" --head-sha 1789abc)"
+run_test "1789_T2.19_short_head_sha_calls_nothing" "0" "$(grep -c . "$MOCK_T219_LOG" || true)"
+run_test "1789_T2.19_head_sha_requires_value_exit_2" "2" "$(_t219_run "$_t219_h1" --head-sha)"
+run_test "1789_T2.19_usage_names_head_sha" "1" "$(grep -c '\[--head-sha <sha>\]' "$REVIEWER_SCRIPT" || true)"
+
+rm -rf "$_t219_dir"
+unset _t219_dir MOCK_T219_LOG _t219_h0 _t219_h1
+unset -f _t219_run
+
+# ---------------------------------------------------------------------------
 # Area 6: epoch→ISO8601 conversion fallback
 # ---------------------------------------------------------------------------
 echo ""

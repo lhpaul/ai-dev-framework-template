@@ -22277,7 +22277,7 @@ _1789_run_handler() {
     eval "$_1789_handler_overrides"
     workflow_repo_root() { printf '%s\n' "$_1789_stub_root"; }
     repo_root="$_1789_stub_root"
-    loop_head_sha="1789aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    loop_head_sha="${_1789_handler_loop_head-1789aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}"
     export MOCK_GH_OUTPUT="false"
     _ec=0
     "$1" "42" "feature/1789-x" "1" "${2:-30}" 2>/dev/null || _ec=$?
@@ -23687,6 +23687,16 @@ reviewer_loop_recorded_request_ref=""; reviewer_loop_recorded_requested_at="2020
 _1789_out="$(_1789_run_handler run_claude_code_action_review 30)"
 run_test "1789_T4.7_requested_at_only_no_flags" "0" "$(grep -c -- '--adopt-' "$_1789_claude_args" || true)"
 _1789_rewait_off
+# T2.19 (plan D15 claude-code-action row): the loop handler passes the loop
+# head as --head-sha, so the companion counts only reviews bound to it; with no
+# valid loop head the flag is omitted (the companion rejects a malformed one).
+_1789_out="$(_1789_run_handler run_claude_code_action_review 30)"
+run_test "1789_T2.19_loop_passes_head_sha" "1" \
+  "$(grep -c -- '--head-sha 1789aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' "$_1789_claude_args" || true)"
+_1789_out="$(_1789_handler_loop_head="unknown-head" _1789_run_handler run_claude_code_action_review 30)"
+run_test "1789_T2.19_loop_omits_head_sha_without_valid_head" "0" "$(grep -c -- '--head-sha' "$_1789_claude_args" || true)"
+_1789_out="$(_1789_handler_loop_head="" _1789_run_handler run_claude_code_action_review 30)"
+run_test "1789_T2.19_loop_omits_head_sha_without_head" "0" "$(grep -c -- '--head-sha' "$_1789_claude_args" || true)"
 unset reviewer_loop_rewait_history_payload
 
 unset _1789_T0 _1789_kv_file _1789_rec_verdict _1789_rec_waiting _1789_rec_replay _1789_t53_payload _1789_t212_payload

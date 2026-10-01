@@ -2665,6 +2665,13 @@ run_claude_code_action_review() {
   else
     reviewer_loop_rewait_log_no_recorded_request "$platform" "${loop_head_sha:-}"
   fi
+  # #1789 (plan D15 claude-code-action row): bind counted reviews to the loop
+  # head — the companion then counts a bot review only when its commit_id is
+  # that head. With no valid loop head the flag is omitted and the companion
+  # keeps its time-bounded count (it rejects a malformed --head-sha).
+  if ! reviewer_loop_head_is_unknown_or_invalid "${loop_head_sha:-}"; then
+    claude_args+=(--head-sha "$loop_head_sha")
+  fi
   # #1789 (plan D12): capture the companion's stdout (stderr stays discarded)
   # so its REVIEW_REQUESTED_AT / REVIEW_REQUEST_REF reach the ledger; without
   # them no Claude request is recorded and every re-wait would re-dispatch.
