@@ -123,7 +123,17 @@ The #1390 re-trigger is skipped in re-wait mode (D11).
   stdin (#1843) and the TERM-grace-KILL process-group sequence are kept. The
   same contract applies to the separate copy of `run_with_timeout` in
   `coderabbit-cli-reviewer.sh` (V23), whose `skipped`/`timeout` result becomes
-  the D8 kept skip.
+  the D8 kept skip. That copy's fallback is weaker than the local reviewer's:
+  it starts no process group and sends one `TERM` to the direct child only,
+  then waits without a `KILL` (`coderabbit-cli-reviewer.sh:301-311`), while
+  its GNU branch (plain `timeout`, no `--kill-after`) signals the whole
+  process group. Removing only the GNU branch would therefore leak CLI
+  descendants and let a CLI that ignores `TERM` block the wait on Linux. The
+  CodeRabbit CLI copy is instead replaced by the local reviewer's watchdog —
+  new process group via `setsid` / `perl setpgrp`, group `TERM`, 2 s grace,
+  group `KILL` — plus the flag, so both companions share one shape. The
+  unrelated `run_with_timeout` in `batch-merge.sh` (different signature, no
+  reviewer) is not changed.
 - **No verdict yet**: `RUN_WITH_TIMEOUT_EXPIRED=1` after the ordinary review
   command. The companion then prints `RESULT=waiting_on_reviewer`,
   `REASON=reviewer-no-verdict-yet`, `NO_VERDICT_YET=1` and exits **4**. The
@@ -446,7 +456,17 @@ the recorded `requested_at`, D11). Greptile, Bugbot, and PR-Agent also print
 (Greptile already captures it; Bugbot and PR-Agent read it from the POST
 response they discard or parse today, V25), and the Claude companion prints
 it with the workflow run `id` once it has found or adopted the run. D11
-adoption reads these recorded values.
+adoption reads these recorded values. Companion keys reach the loop only
+through the handler: `run_codex_github_review` already captures the
+companion output and re-prints selected keys with `kv_value_default`, and
+adds `REVIEW_REQUESTED_AT` to them; `run_claude_code_action_review` today
+discards the companion's stdout and stderr (`pr-review-loop.sh:2579-2582`,
+`>/dev/null 2>&1`), so it now captures stdout (stderr stays discarded),
+re-prints the companion's `REVIEW_REQUESTED_AT` and `REVIEW_REQUEST_REF`
+on every exit arm, and appends the D11 adoption flags when the loop hands it
+a recorded request. Without that capture no Claude request is ever recorded
+and every re-wait re-dispatches, which `cancel-in-progress` turns into
+cancelling the outstanding run (V24).
 
 The summary comment gains a **Reviewer timing** section with one line per
 platform (at most 200 characters), for example
@@ -524,8 +544,8 @@ cite is identical at `13bf4c7f`.
 | V20 | Readiness-gate outcome arms for ledger `platform_results[].result` | `grep -n '_adapter_refusal_reason="reviewer-' scripts/development-workflow/apply-readiness-labels.sh` (the `case "$outcome"` arms are the hits at `:759` and `:760`) and read `reviewer_loop_normalize_platform_outcome` (`pr-review-loop.sh:8982-8999`) | `:759` maps `not_yet_run\|unknown` to `reviewer-check-absent`; `:760` maps every other non-`clean` value to `reviewer-evidence-unreadable`; the normalizer maps `waiting_on_reviewer` to `unknown` and `escalate` to `unavailable` |
 | V21 | In-loop readers of the normalized ledger outcome (Rule 5) | `grep -n '\.result //' scripts/development-workflow/pr-review-loop.sh`, then `grep -n 'reviewer_loop_local_latest_verdict\|reviewer_loop_platform_clean_for_head' scripts/development-workflow/pr-review-loop.sh` for the callers | Platform-record readers: `:9210` in `reviewer_loop_local_latest_verdict` (callers `reviewer_loop_retain_local_evidence_for_current_run` `:9169`, `reviewer_loop_local_pass_required` `:9357`, `reviewer_loop_missed_finding_records` `:10363`), `:9414` in `reviewer_loop_platform_clean_for_head` (caller `:9476`, #1692 stage skip), and `:10374` (missed-finding walk); the other hits (`:1708`, `:8710`, `:11867-11877`, `:14112`) read entry-level or gate fields, not `platform_results[].result`. Cross-script readers are V13's. Writers: `grep -rn 'reviewer_loop_normalize_platform_outcome\|reviewer_loop_platform_result_record_json' scripts \| grep -v '/tests/'` finds the normalizer's only caller in `reviewer_loop_platform_result_record_json` (`:9008`) and that function's three callers `:9182`, `:9894`, `:10266`, all in `pr-review-loop.sh` |
 | V22 | Documentation surfaces that restate reviewer-loop timeout, wait, or label semantics | `grep -rln -i 'times out\|REASON=timeout\|~20 min\|(20 min)\|1200 s\|reviewer-failed' docs/workflow docs/project REVIEW.md AGENTS.md .claude .cursor .codex .agents` | Every hit is in Documentation Updates except: `retro-metrics.md` (historical batch records), `provider-contingency-runner-failover.md` and Protocol 90 (agent stream timeouts, not reviewer waits), and `github-projects.md`, `AGENTS.md`, `.claude/agents/orchestrator.md`, `.cursor/agents/orchestrator.md` (list `reviewer-failed` as an operational label only) |
-| V23 | `run_with_timeout` forwards a command's own 124/137 (reviewer-loop finding, revision `06d435e7`, whose script files equal `13bf4c7f`) | Extract the function with `sed -n '/^run_with_timeout() {/,/^}/p' scripts/development-workflow/local-ai-reviewer.sh`, source it, and call `run_with_timeout 3 <out> <err> sh -c '<cmd>'` for `exit 124`, `exit 137`, `sleep 6`; read both copies (`local-ai-reviewer.sh:174-223`, `coderabbit-cli-reviewer.sh:289-314`), their callers (`grep -n run_with_timeout` → `local-ai-reviewer.sh:696`, `:1314`; `coderabbit-cli-reviewer.sh:325`, `:328`), and the non-zero handling (`grep -n "malformed_output\|no_output\|cli_failed"`) | This host has no GNU `timeout` with `--kill-after`, so the fallback path ran: `exit 124` → 124 after 1 s, `exit 137` → 137 after 2 s, `sleep 6` → 124 after 4 s (budget 3). The fallback returns 124 itself only in its watchdog branch (`:203-220`) and otherwise forwards the child status through `wait` (`:222`); the GNU branch (`:180-186`) returns `timeout`'s status, which GNU documents as 124 on expiry and otherwise the command's own status (not reproducible on this host). The CodeRabbit CLI copy has the same shape. Early non-zero exits with unreadable stdout reach `malformed_output` (`local-ai-reviewer.sh:1392`) and `no_output` / `cli_failed` (`coderabbit-cli-reviewer.sh:346-352`, `:523-525`). The strict pass (`:696-704`) treats any non-zero status as `strict_pass_failed` |
-| V24 | Claude companion run selection and review boundary (reviewer-loop finding, revision `06d435e7`) | Read `claude-code-action-reviewer.sh:247-455` and `.github/workflows/claude-code-review.yml:11-58`; `grep -c "head_sha\|HEAD_SHA" scripts/development-workflow/claude-code-action-reviewer.sh` | The companion selects the newest `workflow_dispatch` run whose `path` ends with the workflow file, whose name carries `PR #<this PR>`, and whose `created_at >= POLL_AFTER_TIME` (`DISPATCH_TIME` minus 10 s; `:336-353`); the grep returns 0, so it has no head SHA input or check; a completed `success` run then reads bot reviews with `.submitted_at >= DISPATCH_TIME` (`:429-434`) and returns clean unless one requested changes (`:449-455`). The workflow takes only `pr_number` (`:16-21`), reviews the PR at execution time (`:58`), and cancels an in-progress run for the same PR when a new one is dispatched (`:26-28`) |
+| V23 | `run_with_timeout` forwards a command's own 124/137 (reviewer-loop finding, revision `06d435e7`, whose script files equal `13bf4c7f`) | Extract the function with `sed -n '/^run_with_timeout() {/,/^}/p' scripts/development-workflow/local-ai-reviewer.sh`, source it, and call `run_with_timeout 3 <out> <err> sh -c '<cmd>'` for `exit 124`, `exit 137`, `sleep 6`; read both copies (`local-ai-reviewer.sh:174-223`, `coderabbit-cli-reviewer.sh:289-314`), their callers (`grep -n run_with_timeout` → `local-ai-reviewer.sh:696`, `:1314`; `coderabbit-cli-reviewer.sh:325`, `:328`), and the non-zero handling (`grep -n "malformed_output\|no_output\|cli_failed"`) | This host has no GNU `timeout` with `--kill-after`, so the fallback path ran: `exit 124` → 124 after 1 s, `exit 137` → 137 after 2 s, `sleep 6` → 124 after 4 s (budget 3). The fallback returns 124 itself only in its watchdog branch (`:203-220`) and otherwise forwards the child status through `wait` (`:222`); the GNU branch (`:180-186`) returns `timeout`'s status, which GNU documents as 124 on expiry and otherwise the command's own status (not reproducible on this host). The CodeRabbit CLI copy has the same status forwarding (its watchdog branch returns 124 at `:308-311`, otherwise `wait` at `:313`), but its fallback starts no process group and sends a single `TERM` to the direct child with no `KILL` (`:301-310`), and its GNU branch is plain `timeout` without `--kill-after` (`:295-298`). `batch-merge.sh:152` defines an unrelated `run_with_timeout` (no reviewer, different signature). Early non-zero exits with unreadable stdout reach `malformed_output` (`local-ai-reviewer.sh:1392`) and `no_output` / `cli_failed` (`coderabbit-cli-reviewer.sh:346-352`, `:523-525`). The strict pass (`:696-704`) treats any non-zero status as `strict_pass_failed` |
+| V24 | Claude companion run selection and review boundary (reviewer-loop finding, revision `06d435e7`) | Read `claude-code-action-reviewer.sh:247-455` and `.github/workflows/claude-code-review.yml:11-58`; `grep -c "head_sha\|HEAD_SHA" scripts/development-workflow/claude-code-action-reviewer.sh` | The companion selects the newest `workflow_dispatch` run whose `path` ends with the workflow file, whose name carries `PR #<this PR>`, and whose `created_at >= POLL_AFTER_TIME` (`DISPATCH_TIME` minus 10 s; `:336-353`); the grep returns 0, so it has no head SHA input or check; a completed `success` run then reads bot reviews with `.submitted_at >= DISPATCH_TIME` (`:429-434`) and returns clean unless one requested changes (`:449-455`). The workflow takes only `pr_number` (`:16-21`), reviews the PR at execution time (`:58`), and cancels an in-progress run for the same PR when a new one is dispatched (`:26-28`). The loop handler invokes the companion with `>/dev/null 2>&1` (`grep -nF 'max-wait "$max_wait" >/dev/null 2>&1' scripts/development-workflow/pr-review-loop.sh` → `:2582`, the end of the `:2579` invocation in `run_claude_code_action_review`), so none of the companion's stdout reaches the loop today; `run_codex_github_review` captures its companion's output (`script_output=…2>&1`, `:2341`) and re-prints keys with `kv_value_default` |
 | V25 | Request identifiers the request-posting handlers can record (revision `06d435e7`) | `grep -nF -e 'issues/$pr_number/comments" --method POST' -e '-X POST "repos/$repo/issues/$pr_number/comments"' scripts/development-workflow/pr-review-loop.sh` (hits `:2110`, `:3673`, `:4289`, `:5528`) and `grep -n "@coderabbitai review" scripts/development-workflow/pr-review-loop.sh`, then read the hits | Greptile captures the trigger comment `id` (`:2110`, `--jq '.id'`); Bugbot posts with output discarded (`:3673-3674`, `:4289-4290`); PR-Agent keeps the POST response and reads its `created_at` (`:5528-5533`); CodeRabbit posts with `gh pr comment` (`:7405`, `:7465`) and needs only the recorded `requested_at` under D11 |
 
 ### Factual claim evidence
@@ -599,7 +619,7 @@ two copies (V23).
 | --- | --- | --- |
 | Documentation-branch shortening applies (D7) | platforms in D1, source `default`, branches `spec/*` and `implementation-plan/*` | `reviewer_wait_budget_resolve`; tests T1.4–T1.6 |
 | Large-diff lengthening applies (D7) | non-documentation branches, no `--max-wait`, changed files above threshold, value below `LARGE_DIFF_MAX_WAIT` | `reviewer_wait_budget_resolve`; test T1.7 |
-| Re-wait mode suppresses re-requests (D11) | invocations whose `reviewer_loop_no_verdict_rewait_state` is `rewait`; the six request-posting handlers in the D11 table; only when `reviewer_loop_rewait_recorded_request` returns a recorded request for that platform (Codex excepted) | each handler's request step; tests T2.12, T4.3–T4.6 |
+| Re-wait mode suppresses re-requests (D11) | invocations whose `reviewer_loop_no_verdict_rewait_state` is `rewait`; the six request-posting handlers in the D11 table; only when `reviewer_loop_rewait_recorded_request` returns a recorded request for that platform (Codex excepted) | each handler's request step; tests T2.12, T4.3–T4.7 |
 | Bugbot #1390 re-trigger fires (D3) | fresh (non-re-wait) Bugbot runs whose latest current-head check run is not completed at the re-trigger point | `run_bugbot_review`; tests T2.11–T2.12 |
 | Runner re-waits (D11) | Step 7 results with `NO_VERDICT_REWAIT=available`, once per head per `PR_REVIEW_LOOP_RUN_ID` | Protocol 91 Step 7 table; tests T4.1–T4.2 and smoke Step 6 |
 | Label required (D9) | each invocation that reaches the post-loop path; per-platform failure evidence or a loop-level escalation in that invocation | `reviewer_loop_reconcile_reviewer_failed_label`; tests T3.1–T3.6 |
@@ -674,7 +694,9 @@ harness can call them.
   `claude_code_action_run_failed`; Bugbot's `timed_out` conclusion reason
   becomes `bugbot-run-timed-out`; Bugbot's budget bounds both attempts with
   the D3 re-trigger point; request-posting handlers print
-  `REVIEW_REQUESTED_AT` and, where D12 says so, `REVIEW_REQUEST_REF`.
+  `REVIEW_REQUESTED_AT` and, where D12 says so, `REVIEW_REQUEST_REF`;
+  `run_claude_code_action_review` captures the companion's stdout instead of
+  discarding it and forwards those two keys (D12).
 - [ ] `reviewer_failed_label_required_for_result` (D9) and new
   `reviewer_loop_reconcile_reviewer_failed_label`, called from the post-loop
   path.
@@ -709,8 +731,10 @@ harness can call them.
   contract in `run_with_timeout` (`RUN_WITH_TIMEOUT_EXPIRED`, GNU branch
   removed, alive check at the deadline); the `:1321` branch tests the flag
   instead of the status and exits 4; usage text lists exit 4.
-- [ ] `scripts/development-workflow/coderabbit-cli-reviewer.sh`: the same D4
-  watchdog contract in its own `run_with_timeout` (`:289-314`); the `:339`
+- [ ] `scripts/development-workflow/coderabbit-cli-reviewer.sh`: replace its
+  own `run_with_timeout` (`:289-314`) with the local reviewer's process-group
+  watchdog plus the D4 flag (GNU branch removed, new process group,
+  TERM-grace-KILL to the group, alive check at the deadline); the `:339`
   `timeout` skip tests the flag instead of status 124.
 - [ ] `scripts/development-workflow/claude-code-action-reviewer.sh`: exit 4
   when no run completed within the budget; `--adopt-run-id` and
@@ -784,7 +808,7 @@ resolver is a single function.
 | T2.5 | Older-revision evidence only (Bugbot completed check on another SHA; Copilot review on another `commit_id`) → No verdict yet, never clean or failed | AC-10 |
 | T2.6 | Availability reasons in `REVIEWER_LOOP_AVAILABILITY_REASONS` keep result, reason, exit code, and label decision; Bugbot "disabled" self-report and Copilot request failure keep their existing failure handling | AC-13 |
 | T2.7 | `local-ai-reviewer.sh` with a command that sleeps past `--timeout`: exit 4 and the D4 keys; commands exiting 1, 124, and 137 immediately with a 30 s budget, and unreadable output, keep `escalate` (never exit 4); `coderabbit-cli-reviewer.sh` with a CLI that exits 124 immediately reports `no_output`, not the `timeout` kept skip, and one that sleeps past the budget reports the kept skip (extend `test-coderabbit-cli-reviewer.sh`) | AC-1, AC-2 |
-| T2.13 | `run_with_timeout` unit (both companions): early `exit 124` and `exit 137` → status forwarded and `RUN_WITH_TIMEOUT_EXPIRED=0`; command sleeping past the budget → `RUN_WITH_TIMEOUT_EXPIRED=1`; command finishing inside the final poll second → its own status and flag `0` | AC-1, AC-2 |
+| T2.13 | `run_with_timeout` unit (both companions): early `exit 124` and `exit 137` → status forwarded and `RUN_WITH_TIMEOUT_EXPIRED=0`; command sleeping past the budget → `RUN_WITH_TIMEOUT_EXPIRED=1`; command finishing inside the final poll second → its own status and flag `0`; for the CodeRabbit CLI copy, a CLI that leaves a background descendant and one that ignores `TERM` are both gone and the wrapper returns within the budget plus the 2 s grace (the local reviewer's existing `fallback_timeout_kills_*` and `fallback_timeout_ignores_term_*` cases, mirrored) | AC-1, AC-2 |
 | T2.8 | `claude-code-action-reviewer.sh`: run never completes → exit 4; completed `failure` → exit 2; loop maps 4 and 2 per D8 | AC-1, AC-2 |
 | T2.9 | Second local pass returning waiting → aggregate waiting, no `failed_for_head` record | AC-1 |
 | T2.10 | Ledger normalization `no_verdict_yet` for a waiting record and for a kept skip recorded through `reviewer_loop_process_platform_output` (the `platform_result_records` entry, not only the normalizer called directly); `apply-readiness-labels.sh` refuses it as `reviewer-check-absent` (extend `test-apply-readiness-labels.sh`) | AC-1 |
@@ -804,6 +828,7 @@ resolver is a single function.
 | T4.4 | Greptile and PR-Agent in re-wait mode reuse the recorded trigger comment; CodeRabbit posts no conditional re-trigger; with no recorded request each posts as in a fresh run and logs the D11 `INFO` line | AC-11 |
 | T4.5 | Claude companion with `--adopt-run-id`/`--adopt-requested-at`: polls only that run and does not dispatch; a bot review submitted before the recorded `requested_at` is not counted (boundary preserved); a completed `success` run for this PR that is **not** the recorded run and was created after the head commit's committer time (an older-head run) is never read, so the result follows the recorded run (still running → exit 4, never clean); a recorded run whose `path` or `PR #<n>` does not match is not adopted and the companion dispatches | AC-10, AC-11 |
 | T4.6 | `reviewer_loop_rewait_recorded_request`: matching run, head, waiting entry, and platform with source `request` → ref and time; other head, other run, `wait_start` source, or no platform record → nothing; Bugbot outside re-wait mode posts its own trigger even when a `bugbot run` comment newer than the head commit time exists | AC-10, AC-11 |
+| T4.7 | Loop-side Claude handler with a mock companion: a fresh run that exits 4 after printing `REVIEW_REQUESTED_AT` and `REVIEW_REQUEST_REF` yields `PLATFORM_<n>_REQUEST_REF` and a ledger `request_ref`; the following re-wait invocation (same run id and head) passes `--adopt-run-id`/`--adopt-requested-at` with those values; with only a recorded `requested_at` it passes neither | AC-11, AC-12 |
 | T5.1 | Timing keys for a verdict, a No verdict yet, a skip, a failure, and a replay; `REQUESTED_AT_SOURCE` `request` vs `wait_start`; `REQUEST_REF` printed and recorded only when the handler printed one | AC-12 |
 | T5.2 | Summary "Reviewer timing" section lines and the `reviewer-no-verdict-yet` result line; reused marked reused | AC-12 |
 | T5.3 | Ledger `platform_results[]` additive fields present; existing readers (`reviewer_loop_platform_clean_for_head`, #1692) still pass | AC-12 |
@@ -818,10 +843,19 @@ drives a global budget); Area 16 Bugbot timeout and unavailable rows; the
 Copilot (Area 8), Haystack (Area 9), Devin, Ronda, Greptile, and CodeRabbit
 timeout rows; compare-mode first-blocking rows (Area 3/compare). The
 implementer runs `grep -n "REASON timeout\|=timeout\|no_check_run\|no_review\|first blocking" scripts/development-workflow/tests/test-pr-review-loop.sh`
-and confirms each hit is either updated or still correct.
+and confirms each hit is either updated or still correct. In
+`test-local-ai-reviewer.sh`, the D4 change also moves `timeout_result` /
+`timeout_reason` and the `fallback_timeout_*_result` / `_reason` rows from
+`escalate`/`timeout` to the exit-4 No verdict yet keys (the grandchild-kill
+and bounded-time assertions stay), and removes the two rows that pin the GNU
+branch: `timeout_kill_after_137_*` (a fake `timeout` on `PATH`, no longer
+consulted) and `s9d_gnu_timeout_has_kill_after` (asserts the removed
+`timeout --kill-after=2s` line).
 
 **Regression suites to run before pushing**: `test-pr-review-loop.sh`,
 `test-local-ai-reviewer.sh`, `test-local-ai-reviewer-pr-review-loop-dispatch.sh`,
+`test-local-codex-review-command.sh` (its #1843 stdin probes run
+`local-ai-reviewer.sh` through `run_with_timeout`),
 `test-coderabbit-cli-reviewer.sh`, `test-coderabbit-cli-pr-review-loop-dispatch.sh`,
 `test-ronda-pr-review-loop-dispatch.sh`, `test-claude-code-action-reviewer.sh`,
 `test-haystack-reviewer.sh`, `test-expensive-reviewer-gate.sh`,
@@ -1065,7 +1099,8 @@ the behavior they cover.
    `claude-code-action-reviewer.sh`, Rule 5 consumer updates, label-function
    change; T2.1–T2.11 and T2.13; update the existing timeout rows listed in
    Testing Strategy. Run the full `test-pr-review-loop.sh`,
-   `test-local-ai-reviewer.sh`, `test-coderabbit-cli-reviewer.sh`,
+   `test-local-ai-reviewer.sh`, `test-local-codex-review-command.sh`,
+   `test-coderabbit-cli-reviewer.sh`,
    `test-claude-code-action-reviewer.sh`, `test-haystack-reviewer.sh`, and
    `test-apply-readiness-labels.sh`.
 3. **Phase 3 — Label reconciliation and precedence (D9, D10).** Reconcile
@@ -1073,7 +1108,7 @@ the behavior they cover.
    `--compare` help text; T3.1–T3.8.
 4. **Phase 4 — Re-wait and timing (D5, D11, D12).** Re-wait state, re-wait
    mode in handlers and companions, waiting output keys, timing capture,
-   summary section, ledger fields; T2.12, T4.1–T4.6, T5.1–T5.4.
+   summary section, ledger fields; T2.12, T4.1–T4.7, T5.1–T5.4.
 5. **Phase 5 — Documentation.** Every item in Documentation Updates, the
    `--help` text, and T6.1. Run
    `python3 scripts/lint/workflow-shell-snippet-lint.py --base-ref origin/develop`
@@ -1145,5 +1180,5 @@ SHA).
 | Rule 2 | Satisfied | Values and decisions are asserted once in D1–D14 and referenced elsewhere. |
 | Rule 3 | Satisfied | Platform count (V1) and emit-site enumeration (V2) carry commands, revision, and population; the D8 binding table carries the enumeration. |
 | Rule 4 | Satisfied | Existence and absence claims cite V3–V6, V8–V11, V14, V15, V17, V19, V20, V22–V25. |
-| Rule 5 | Satisfied | Consumer tables for the label function, the waiting result and the normalized ledger outcome, the global budget, both companion exit codes, and `run_with_timeout` expiry semantics (V12, V13, V17, V19, V20, V21, V23). |
+| Rule 5 | Satisfied | Consumer tables for the label function, the waiting result and the normalized ledger outcome, the global budget, both companion exit codes, `run_with_timeout` expiry semantics in both reviewer companions, and the loop handler that consumes the Claude companion's new output keys (V12, V13, V17, V19, V20, V21, V23, V24). |
 | Rule 6 | Satisfied | Rule 6 table names scope and discharge for every conditional obligation. |
