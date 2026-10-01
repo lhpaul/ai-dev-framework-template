@@ -31,12 +31,29 @@
 #   2 — FAILED         (Actions run completed with a conclusion other than 'success',
 #                       or invalid arguments; pr-review-loop.sh maps this to
 #                       RESULT=escalate / REASON=claude_code_action_run_failed)
-#   3 — UNAVAILABLE    (workflow file absent, dispatch rejected, or the run did not
-#                       execute a review — callers map to REASON=unavailable)
-#   4 — NO_VERDICT_YET (no run completed within max-wait: the reviewer has not
-#                       answered yet; pr-review-loop.sh maps this to
-#                       RESULT=waiting_on_reviewer / REASON=reviewer-no-verdict-yet,
+#   3 — UNAVAILABLE    (workflow file absent, dispatch rejected by the API, a
+#                       dispatch response without an integer workflow_run_id, or
+#                       the run did not execute a review — callers map to
+#                       REASON=unavailable; never clean, never No verdict yet)
+#   4 — NO_VERDICT_YET (the dispatched run did not complete within max-wait: the
+#                       reviewer has not answered yet; pr-review-loop.sh maps this
+#                       to RESULT=waiting_on_reviewer / REASON=reviewer-no-verdict-yet,
 #                       not a failure — #1789)
+#
+# Run binding (#1789, plan D15 Claude dispatch rule): the dispatch is sent with
+# return_run_details=true and the run is bound to THIS request only by the
+# workflow_run_id GitHub returns for it; only actions/runs/<workflow_run_id> is
+# polled. No run list is searched and no timestamp, run name, or head_sha is
+# used to pick a run. Machine-readable dispatch lines on stdout:
+#   DISPATCH_RESULT=accepted            the response carried workflow_run_id
+#   DISPATCH_WORKFLOW_RUN_ID=<id>       printed with DISPATCH_RESULT=accepted
+#   DISPATCH_RESULT=workflow_not_found  the API rejected the dispatch as 404 /
+#                                       not found (exit 3)
+#   DISPATCH_RESULT=rejected            the API rejected the dispatch for any
+#                                       other reason (exit 3)
+#   DISPATCH_RESULT=no_workflow_run_id  the dispatch was accepted but the
+#                                       response (for example an empty 204) had
+#                                       no integer workflow_run_id (exit 3)
 
 set -euo pipefail
 
@@ -116,6 +133,31 @@ verify_claude_code_action_run_log() {
       return 3
       ;;
   esac
+}
+
+# claude_code_action_dispatch_run_id <response_file>
+#
+# #1789 (plan D15 Claude dispatch rule): print the workflow_run_id from a
+# workflow_dispatch response body (sent with return_run_details=true), or
+# nothing when the body is empty (HTTP 204), not JSON, not an object, or holds
+# no positive integer workflow_run_id. Always returns 0; the caller treats an
+# empty result as "the run cannot be bound to this request".
+claude_code_action_dispatch_run_id() {
+  local response_file="${1:-}"
+  local run_id=""
+
+  [ -n "$response_file" ] && [ -s "$response_file" ] || return 0
+  run_id="$(jq -r '
+    if type == "object"
+       and ((.workflow_run_id | type) == "number")
+       and (.workflow_run_id > 0)
+       and (.workflow_run_id == (.workflow_run_id | floor))
+    then (.workflow_run_id | tostring)
+    else empty end' "$response_file" 2>/dev/null)" || run_id=""
+  case "$run_id" in
+    ''|*[!0-9]*) return 0 ;;
+  esac
+  printf '%s\n' "$run_id"
 }
 
 if [ "${CLAUDE_CODE_ACTION_REVIEWER_LIBRARY_MODE:-0}" = "1" ]; then
@@ -248,63 +290,81 @@ echo "INFO: Poll interval: ${POLL_INTERVAL}s, Max wait (total): ${MAX_WAIT}s"
 BOT_LOGIN_PLAIN="${BOT_LOGIN%\[bot\]}"
 echo "INFO: Bot login (plain, for review matching): $BOT_LOGIN_PLAIN"
 
-# ── Record dispatch time (before dispatch to scope run polling) ───────────────
-# Subtract a 10-second buffer from the local clock to guard against clock skew
-# between the runner and GitHub's servers. GitHub Actions run created_at
-# timestamps reflect the server clock; if the server clock lags behind ours,
-# a run created_at value could be earlier than our local DISPATCH_TIME,
-# causing the polling filter (.created_at >= $POLL_AFTER_TIME) to miss the run.
-# Using a 10-second buffer ensures runs are matched even with moderate clock skew.
+# ── Record dispatch time (before dispatch) ────────────────────────────────────
+# DISPATCH_TIME bounds which bot reviews count (Phase 3). It no longer selects
+# the run: the run is bound by the workflow_run_id the dispatch returns (#1789,
+# plan D15 Claude dispatch rule).
 
 _DISPATCH_EPOCH=$(date -u +%s)
 DISPATCH_TIME=$(date -u -r "$_DISPATCH_EPOCH" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || \
   date -u -d "@$_DISPATCH_EPOCH" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || \
   python3 -c "import datetime,sys; print(datetime.datetime.fromtimestamp(int(sys.argv[1]), datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'))" "$_DISPATCH_EPOCH")
-_POLL_EPOCH=$((_DISPATCH_EPOCH - 10))
-POLL_AFTER_TIME=$(date -u -r "$_POLL_EPOCH" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || \
-  date -u -d "@$_POLL_EPOCH" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || \
-  python3 -c "import datetime,sys; print(datetime.datetime.fromtimestamp(int(sys.argv[1]), datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'))" "$_POLL_EPOCH")
-unset _DISPATCH_EPOCH _POLL_EPOCH
+unset _DISPATCH_EPOCH
 echo "INFO: dispatch time (pre-dispatch): $DISPATCH_TIME"
-echo "INFO: poll filter time (with 10s clock-skew buffer): $POLL_AFTER_TIME"
 
 # ── Phase 1: Dispatch workflow ────────────────────────────────────────────────
-# Call workflow_dispatch with ref=DISPATCH_REF (default branch) and pr_number
-# input. On failure:
+# Call workflow_dispatch with ref=DISPATCH_REF (default branch), the pr_number
+# input, and return_run_details=true (sent as JSON true), so GitHub answers 200
+# with the new run's workflow_run_id instead of an empty 204. On failure:
 #   - 404 / "workflow was not found" → exit 3 (UNAVAILABLE: file absent)
-#   - other errors → exit 3 (UNAVAILABLE: dispatch failure)
+#   - other API rejections → exit 3 (UNAVAILABLE: dispatch failure)
+#   - accepted but no integer workflow_run_id in the response → exit 3
+#     (UNAVAILABLE: the run cannot be bound to this request; the time-window
+#     run search is never used as a fallback)
 
 echo "INFO: dispatching workflow '$WORKFLOW_FILE' on ref '$DISPATCH_REF' for PR #$PR_NUMBER..."
 
 DISPATCH_STDERR=$(mktemp)
+DISPATCH_RESPONSE=$(mktemp)
 DISPATCH_STATUS=0
 gh api "repos/$OWNER/$REPO/actions/workflows/$WORKFLOW_FILE/dispatches" \
   --method POST \
   --raw-field "ref=$DISPATCH_REF" \
   --raw-field "inputs[pr_number]=$PR_NUMBER" \
-  2>"$DISPATCH_STDERR" || DISPATCH_STATUS=$?
+  --field "return_run_details=true" \
+  >"$DISPATCH_RESPONSE" 2>"$DISPATCH_STDERR" || DISPATCH_STATUS=$?
 
 if [ "$DISPATCH_STATUS" -ne 0 ]; then
   DISPATCH_ERR=$(cat "$DISPATCH_STDERR")
-  rm -f "$DISPATCH_STDERR"
+  rm -f "$DISPATCH_STDERR" "$DISPATCH_RESPONSE"
   echo "ERROR: workflow dispatch failed (exit $DISPATCH_STATUS): $DISPATCH_ERR" >&2
   # Distinguish 404 (workflow file absent / not found) from other errors
   if echo "$DISPATCH_ERR" | grep -qi "not found\|404\|workflow was not found"; then
+    echo "DISPATCH_RESULT=workflow_not_found"
     echo "VERDICT: UNAVAILABLE — workflow file '$WORKFLOW_FILE' not found on ref '$DISPATCH_REF'"
   else
+    echo "DISPATCH_RESULT=rejected"
     echo "VERDICT: UNAVAILABLE — workflow dispatch failed: $DISPATCH_ERR"
   fi
   exit 3
 fi
 rm -f "$DISPATCH_STDERR"
 
-echo "INFO: workflow dispatch accepted (HTTP 204 — no body expected)"
+RUN_ID="$(claude_code_action_dispatch_run_id "$DISPATCH_RESPONSE")"
+if [ -z "$RUN_ID" ]; then
+  if [ -s "$DISPATCH_RESPONSE" ]; then
+    echo "WARNING: dispatch response body had no integer workflow_run_id: $(head -c 300 "$DISPATCH_RESPONSE" | tr '\n' ' ')" >&2
+  else
+    echo "WARNING: dispatch response body was empty (HTTP 204 without run details)" >&2
+  fi
+  rm -f "$DISPATCH_RESPONSE"
+  echo "DISPATCH_RESULT=no_workflow_run_id"
+  echo "VERDICT: UNAVAILABLE — dispatch response carried no workflow_run_id; the run cannot be bound to this request"
+  exit 3
+fi
+rm -f "$DISPATCH_RESPONSE"
 
-# ── Phase 2: Poll for run completion ─────────────────────────────────────────
-# Poll at POLL_INTERVAL intervals for a run matching WORKFLOW_FILE that was
-# created at or after DISPATCH_TIME. Stop when the run reaches a terminal status.
+echo "DISPATCH_RESULT=accepted"
+echo "DISPATCH_WORKFLOW_RUN_ID=$RUN_ID"
+echo "INFO: workflow dispatch accepted; bound to workflow run id $RUN_ID"
 
-echo "INFO: polling for workflow run created after $DISPATCH_TIME..."
+# ── Phase 2: Poll the dispatched run until it completes ──────────────────────
+# Poll only actions/runs/<RUN_ID> at POLL_INTERVAL intervals until it reaches
+# status=completed or the budget ends. No run list is searched: a run another
+# dispatch created (for example an earlier dispatch for a previous head, inside
+# any time window) can never be read as this request's answer.
+
+echo "INFO: polling workflow run $RUN_ID..."
 
 TOTAL_ELAPSED=0
 RUN_URL=""
@@ -314,54 +374,22 @@ RUN_CONCLUSION=""
 while [ "$TOTAL_ELAPSED" -lt "$MAX_WAIT" ]; do
   echo "INFO: polling... elapsed ${TOTAL_ELAPSED}s / ${MAX_WAIT}s"
 
-  # Query workflow runs filtered by event=workflow_dispatch. We look for the
-  # most recent run matching our workflow file and created at or after
-  # POLL_AFTER_TIME (dispatch time minus 10-second clock-skew buffer).
-  #
-  # PR-scoping via run-name (required for concurrent/parallel dispatch):
-  #   The GitHub Actions Runs API always returns inputs: null regardless of what
-  #   was passed at dispatch time (confirmed empirically via
-  #   `gh api ".../actions/runs/<id>" --jq 'has("inputs")'` → false for all tested
-  #   runs, including workflow_dispatch-triggered runs). Under concurrent dispatch,
-  #   two PRs that trigger claude-code-review.yml within the same poll window both
-  #   match the timestamp filter, so `sort_by | reverse | first` could select the
-  #   wrong PR's run. To fix this, claude-code-review.yml sets
-  #   `run-name: "Claude Code Review — PR #${{ inputs.pr_number }}"`, and GitHub
-  #   populates that string into the .name field on Runs API objects. The filter
-  #   below prefers name-scoped runs whose parsed "PR #<number>" token equals
-  #   this PR number, and falls back to timestamp-only selection when the
-  #   workflow has not yet been updated to include run-name (backward compatibility
-  #   during the transition period after #808 is merged to the default branch).
-  #   The timestamp filter remains as a secondary guard in the fallback path to
-  #   exclude pre-dispatch runs. See issue #806 and #808.
   # Use a temp file to avoid SIGPIPE under pipefail.
   RUN_POLL_STDERR=$(mktemp)
   RUN_POLL_TMPFILE=$(mktemp)
   POLL_STATUS=0
-  gh api --paginate "repos/$OWNER/$REPO/actions/runs?event=workflow_dispatch&per_page=100" \
+  gh api "repos/$OWNER/$REPO/actions/runs/$RUN_ID" \
     2>"$RUN_POLL_STDERR" \
-    | jq -sr --arg wf "$WORKFLOW_FILE" --arg poll_after "$POLL_AFTER_TIME" \
-        --arg pr "$PR_NUMBER" \
-        '# Candidate set: workflow-file + timestamp match
-         [.[] | .workflow_runs[]?] as $all |
-         [$all[] | select((.path | endswith($wf)) and .created_at >= $poll_after)] as $candidates |
-         # PR-scoping via run-name (#808): if any candidate has a "PR #N"-style name
-         # (indicating the workflow uses run-name), require name match for THIS PR to
-         # prevent selecting the wrong PR'\''s run under concurrent/parallel dispatch.
-         # Fall back to all candidates when no run has the "PR #N" pattern — backward
-         # compat with pre-#808 deployments where the workflow has no run-name yet.
-         ([$candidates[] | select((.name // "") | capture("PR #(?<pr>[0-9]+)(?:[^0-9]|$)")?)] | length > 0) as $name_scoped |
-         ($candidates | if $name_scoped then
-           [.[] | select(((.name // "") | capture("PR #(?<pr>[0-9]+)(?:[^0-9]|$)")? | .pr) == $pr)]
-         else . end) |
-         sort_by(.created_at) | reverse | first |
-         {status: .status, conclusion: .conclusion, html_url: .html_url, id: .id}' \
+    | jq -c --arg id "$RUN_ID" \
+        'if type == "object" and ((.id // "") | tostring) == $id
+         then {status: .status, conclusion: .conclusion, html_url: .html_url, id: .id}
+         else error("response is not workflow run " + $id) end' \
     > "$RUN_POLL_TMPFILE" 2>/dev/null || POLL_STATUS=$?
 
   if [ "$POLL_STATUS" -ne 0 ]; then
     POLL_ERR=$(cat "$RUN_POLL_STDERR")
     rm -f "$RUN_POLL_STDERR" "$RUN_POLL_TMPFILE"
-    echo "WARNING: gh api failed during run polling: $POLL_ERR" >&2
+    echo "WARNING: could not read workflow run $RUN_ID during polling: ${POLL_ERR:-unreadable response}" >&2
     sleep "$POLL_INTERVAL"
     TOTAL_ELAPSED=$((TOTAL_ELAPSED + POLL_INTERVAL))
     continue
@@ -371,9 +399,8 @@ while [ "$TOTAL_ELAPSED" -lt "$MAX_WAIT" ]; do
   RUN_INFO=$(cat "$RUN_POLL_TMPFILE")
   rm -f "$RUN_POLL_TMPFILE"
 
-  # jq outputs "null" when no matching run is found via `first` on empty array
-  if [ -z "$RUN_INFO" ] || [ "$RUN_INFO" = "null" ]; then
-    echo "INFO: no matching run found yet..."
+  if [ -z "$RUN_INFO" ]; then
+    echo "INFO: workflow run $RUN_ID not readable yet..."
     sleep "$POLL_INTERVAL"
     TOTAL_ELAPSED=$((TOTAL_ELAPSED + POLL_INTERVAL))
     continue
@@ -382,7 +409,6 @@ while [ "$TOTAL_ELAPSED" -lt "$MAX_WAIT" ]; do
   RUN_STATUS=$(echo "$RUN_INFO" | jq -r '.status // empty')
   RUN_CONCLUSION=$(echo "$RUN_INFO" | jq -r '.conclusion // empty')
   RUN_URL=$(echo "$RUN_INFO" | jq -r '.html_url // empty')
-  RUN_ID=$(echo "$RUN_INFO" | jq -r '.id // empty')
 
   echo "INFO: found run — id=$RUN_ID status=$RUN_STATUS conclusion=$RUN_CONCLUSION url=$RUN_URL"
 
