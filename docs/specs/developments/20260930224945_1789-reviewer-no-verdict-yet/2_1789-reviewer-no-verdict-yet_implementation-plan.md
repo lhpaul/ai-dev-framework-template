@@ -372,7 +372,15 @@ Loop side:
 - On a `waiting_on_reviewer` result whose reason is in
   `REVIEWER_LOOP_NO_VERDICT_REASONS`, the loop prints
   `NO_VERDICT_REWAIT=available` (state `fresh`), `used` (state `rewait`), or
-  `untracked`.
+  `untracked`. It prints `available` only when this invocation's
+  `_post_review_summary` call returned 0 (it returns 1 when the summary
+  comment could not be persisted, `:13945`); when that call fails, the waiting
+  entry the next invocation needs in order to see state `rewait` may not have
+  been written, so the loop prints `untracked` instead. This keeps a ledger
+  that can be read but not written from turning the single re-wait into an
+  unbounded series (`reviewer_loop_persist_failure_should_escalate` escalates
+  only `needs_fixes`/`needs_rerun`, `:12047-12063`, so a waiting result is not
+  escalated on a persistence failure today; V27).
 - Ledger entries carry `run_id`, `head_sha`, `result`, and `reason` today, and
   `waiting_on_reviewer` runs already persist an entry (`_post_review_summary`
   runs for every non-`skipped` result, `:14470-14486`), so the state needs no
@@ -456,8 +464,15 @@ the recorded `requested_at`, D11). Greptile, Bugbot, and PR-Agent also print
 (Greptile already captures it; Bugbot and PR-Agent read it from the POST
 response they discard or parse today, V25), and the Claude companion prints
 it with the workflow run `id` once it has found or adopted the run. D11
-adoption reads these recorded values. Companion keys reach the loop only
-through the handler: `run_codex_github_review` already captures the
+adoption reads these recorded values. A handler that adopts or reuses a
+recorded request in re-wait mode (Bugbot, Greptile, PR-Agent, Claude Code
+Action; D11 adoption table) prints that request's recorded `requested_at` as
+`REVIEW_REQUESTED_AT` and its recorded `request_ref` as `REVIEW_REQUEST_REF`,
+unchanged, so the adopting invocation's ledger record carries the same
+request forward and a later invocation with the same run id on the same head
+adopts it again instead of finding an empty `request_ref` (discharged in
+each adopting handler's adoption branch; tests T2.12, T4.4, T4.7). Companion
+keys reach the loop only through the handler: `run_codex_github_review` already captures the
 companion output and re-prints selected keys with `kv_value_default`, and
 adds `REVIEW_REQUESTED_AT` to them; `run_claude_code_action_review` today
 discards the companion's stdout and stderr (`pr-review-loop.sh:2579-2582`,
@@ -548,6 +563,7 @@ cite is identical at `13bf4c7f`.
 | V24 | Claude companion run selection and review boundary (reviewer-loop finding, revision `06d435e7`) | Read `claude-code-action-reviewer.sh:247-455` and `.github/workflows/claude-code-review.yml:11-58`; `grep -c "head_sha\|HEAD_SHA" scripts/development-workflow/claude-code-action-reviewer.sh` | The companion selects the newest `workflow_dispatch` run whose `path` ends with the workflow file, whose name carries `PR #<this PR>`, and whose `created_at >= POLL_AFTER_TIME` (`DISPATCH_TIME` minus 10 s; `:336-353`); the grep returns 0, so it has no head SHA input or check; a completed `success` run then reads bot reviews with `.submitted_at >= DISPATCH_TIME` (`:429-434`) and returns clean unless one requested changes (`:449-455`). The workflow takes only `pr_number` (`:16-21`), reviews the PR at execution time (`:58`), and cancels an in-progress run for the same PR when a new one is dispatched (`:26-28`). The loop handler invokes the companion with `>/dev/null 2>&1` (`grep -nF 'max-wait "$max_wait" >/dev/null 2>&1' scripts/development-workflow/pr-review-loop.sh` → `:2582`, the end of the `:2579` invocation in `run_claude_code_action_review`), so none of the companion's stdout reaches the loop today; `run_codex_github_review` captures its companion's output (`script_output=…2>&1`, `:2341`) and re-prints keys with `kv_value_default` |
 | V25 | Request identifiers the request-posting handlers can record (revision `06d435e7`) | `grep -nF -e 'issues/$pr_number/comments" --method POST' -e '-X POST "repos/$repo/issues/$pr_number/comments"' scripts/development-workflow/pr-review-loop.sh` (hits `:2110`, `:3673`, `:4289`, `:5528`) and `grep -n "@coderabbitai review" scripts/development-workflow/pr-review-loop.sh`, then read the hits | Greptile captures the trigger comment `id` (`:2110`, `--jq '.id'`); Bugbot posts with output discarded (`:3673-3674`, `:4289-4290`); PR-Agent keeps the POST response and reads its `created_at` (`:5528-5533`); CodeRabbit posts with `gh pr comment` (`:7405`, `:7465`) and needs only the recorded `requested_at` under D11 |
 | V26 | CodeRabbit CLI test PATH that runs the CLI without GNU `timeout` (revision `74d82039`, whose script files equal `13bf4c7f`) | `grep -n 'NO_CLI_BIN' scripts/development-workflow/tests/test-coderabbit-cli-reviewer.sh`, read the symlink loop at `:34-37`; then link the same ten commands into an empty directory, source the function extracted with V23's `sed` from `local-ai-reviewer.sh`, and call `run_with_timeout 2 <out> <err> sleep 5` with only that directory on `PATH` | The loop links `awk bash cat dirname grep jq mktemp rm sleep tr` (no `perl`, no `setsid`); the CLI runs under `$MOCK_BIN:$NO_CLI_BIN` at `:420` (`fallback_timeout_*`) and `:466` (`fallback_coderabbit_*`). The probe on this host (macOS, no `setsid`) returned status 127 after 1 s with `perl: command not found` on stderr |
+| V27 | Summary-persistence status and which results escalate on a persistence failure (revision `7a8d15db`, whose script files equal `13bf4c7f`) | `grep -n -A16 '^reviewer_loop_persist_failure_should_escalate' scripts/development-workflow/pr-review-loop.sh`; `grep -n '^_post_review_summary' scripts/development-workflow/pr-review-loop.sh` and read to its closing brace; read the caller at `:14470-14486` | `reviewer_loop_persist_failure_should_escalate` (`:12047-12063`) returns false for every result other than `needs_fixes`/`needs_rerun`; `_post_review_summary` (`:13426`) returns 1 when the summary comment could not be persisted (`:13945`) and 0 otherwise (`:13947`); the caller records that status in `_post_summary_exit`, so a `waiting_on_reviewer` run whose ledger write failed keeps its result today |
 
 ### Factual claim evidence
 
@@ -814,7 +830,7 @@ resolver is a single function.
 | T2.9 | Second local pass returning waiting → aggregate waiting, no `failed_for_head` record | AC-1 |
 | T2.10 | Ledger normalization `no_verdict_yet` for a waiting record and for a kept skip recorded through `reviewer_loop_process_platform_output` (the `platform_result_records` entry, not only the normalizer called directly); `apply-readiness-labels.sh` refuses it as `reviewer-check-absent` (extend `test-apply-readiness-labels.sh`) | AC-1 |
 | T2.11 | Bugbot fresh run: no completed run by the D3 re-trigger point → exactly one re-trigger, total wait bounded by the budget | AC-3, AC-6 |
-| T2.12 | Bugbot re-wait mode with a recorded request: adopts the recorded trigger comment, posts no comment | AC-11 |
+| T2.12 | Bugbot re-wait mode with a recorded request: adopts the recorded trigger comment, posts no comment, and prints the recorded `REVIEW_REQUESTED_AT` and `REVIEW_REQUEST_REF` unchanged (D12 carry-forward), so a third invocation with the same run id and head adopts the same comment | AC-11 |
 | T3.1 | Reconcile: PR carries `reviewer-failed`, run re-reviews and is clean → `--remove-label` issued | AC-7 |
 | T3.2 | Reconcile: same, but every platform replayed from a clean ledger (#1692) → `--remove-label` issued | AC-7 |
 | T3.3 | Reconcile: needs-fixes or waiting run with no failure evidence → label removed / not added | AC-8 |
@@ -823,13 +839,13 @@ resolver is a single function.
 | T3.6 | Source-order check: the post-loop path calls the reconcile function once after the persistence step; pre-loop refusal exits do not | AC-7, AC-13 |
 | T3.7 | Precedence function: failed + waiting → escalate; findings + waiting → needs_fixes; waiting + clean → waiting; kept skip + clean → clean; tie → earliest platform | AC-9 |
 | T3.8 | Compare-mode aggregate uses the precedence function | AC-9 |
-| T4.1 | Re-wait state: no prior entry → `fresh` and `NO_VERDICT_REWAIT=available`; prior waiting entry same run and head → `rewait` and `used`; other head or other run → `fresh`; unset run id or unavailable ledger → `untracked` | AC-11 |
+| T4.1 | Re-wait state: no prior entry → `fresh` and `NO_VERDICT_REWAIT=available`; prior waiting entry same run and head → `rewait` and `used`; other head or other run → `fresh`; unset run id or unavailable ledger → `untracked`; state `fresh` with a failing `_post_review_summary` (mock comment write fails) → `NO_VERDICT_REWAIT=untracked`, not `available` | AC-11 |
 | T4.2 | A re-wait entry adds nothing to the cycle counts (`reviewer_loop_history_entries_count` unchanged) | AC-11 |
 | T4.3 | Codex in re-wait mode receives `--max-retriggers 0` | AC-11 |
-| T4.4 | Greptile and PR-Agent in re-wait mode reuse the recorded trigger comment; CodeRabbit posts no conditional re-trigger; with no recorded request each posts as in a fresh run and logs the D11 `INFO` line | AC-11 |
+| T4.4 | Greptile and PR-Agent in re-wait mode reuse the recorded trigger comment and print its recorded `REVIEW_REQUESTED_AT` and `REVIEW_REQUEST_REF` (D12 carry-forward); CodeRabbit posts no conditional re-trigger; with no recorded request each posts as in a fresh run and logs the D11 `INFO` line | AC-11 |
 | T4.5 | Claude companion with `--adopt-run-id`/`--adopt-requested-at`: polls only that run and does not dispatch; a bot review submitted before the recorded `requested_at` is not counted (boundary preserved); a completed `success` run for this PR that is **not** the recorded run and was created after the head commit's committer time (an older-head run) is never read, so the result follows the recorded run (still running → exit 4, never clean); a recorded run whose `path` or `PR #<n>` does not match is not adopted and the companion dispatches | AC-10, AC-11 |
 | T4.6 | `reviewer_loop_rewait_recorded_request`: matching run, head, waiting entry, and platform with source `request` → ref and time; other head, other run, `wait_start` source, or no platform record → nothing; Bugbot outside re-wait mode posts its own trigger even when a `bugbot run` comment newer than the head commit time exists | AC-10, AC-11 |
-| T4.7 | Loop-side Claude handler with a mock companion: a fresh run that exits 4 after printing `REVIEW_REQUESTED_AT` and `REVIEW_REQUEST_REF` yields `PLATFORM_<n>_REQUEST_REF` and a ledger `request_ref`; the following re-wait invocation (same run id and head) passes `--adopt-run-id`/`--adopt-requested-at` with those values; with only a recorded `requested_at` it passes neither | AC-11, AC-12 |
+| T4.7 | Loop-side Claude handler with a mock companion: a fresh run that exits 4 after printing `REVIEW_REQUESTED_AT` and `REVIEW_REQUEST_REF` yields `PLATFORM_<n>_REQUEST_REF` and a ledger `request_ref`; the following re-wait invocation (same run id and head) passes `--adopt-run-id`/`--adopt-requested-at` with those values, and its own ledger record carries the same `request_ref` and `requested_at`; with only a recorded `requested_at` it passes neither | AC-11, AC-12 |
 | T5.1 | Timing keys for a verdict, a No verdict yet, a skip, a failure, and a replay; `REQUESTED_AT_SOURCE` `request` vs `wait_start`; `REQUEST_REF` printed and recorded only when the handler printed one | AC-12 |
 | T5.2 | Summary "Reviewer timing" section lines and the `reviewer-no-verdict-yet` result line; reused marked reused | AC-12 |
 | T5.3 | Ledger `platform_results[]` additive fields present; existing readers (`reviewer_loop_platform_clean_for_head`, #1692) still pass | AC-12 |
@@ -1167,9 +1183,10 @@ SHA).
 - Implementation-order consistency: Checked — phases reference the same
   decisions, functions, files, and test IDs as the Layer sections.
 - Verification support: Checked — existence, count, and consumer claims cite
-  V1–V26.
+  V1–V27.
 - Behavioral guarantees: Checked — "once per revision" cites the ledger
-  query keyed on `run_id` and `head_sha` (D11); "never shortens" cites the
+  query keyed on `run_id` and `head_sha` and the persist-success gate on
+  `available` (D11); "never shortens" cites the
   D7 comparison; "no duplicate request" cites the D11 adoption table and
   V10, and adoption binds to the recorded request id, time, and head (D11,
   V24, V25), not to the head commit time; "stopped at the budget" cites the
@@ -1187,6 +1204,6 @@ SHA).
 | Rule 1 | Not applicable | No new design depends on externally produced free text (see Factual claim evidence). |
 | Rule 2 | Satisfied | Values and decisions are asserted once in D1–D14 and referenced elsewhere. |
 | Rule 3 | Satisfied | Platform count (V1) and emit-site enumeration (V2) carry commands, revision, and population; the D8 binding table carries the enumeration. |
-| Rule 4 | Satisfied | Existence and absence claims cite V3–V6, V8–V11, V14, V15, V17, V19, V20, V22–V26. |
+| Rule 4 | Satisfied | Existence and absence claims cite V3–V6, V8–V11, V14, V15, V17, V19, V20, V22–V27. |
 | Rule 5 | Satisfied | Consumer tables for the label function, the waiting result and the normalized ledger outcome, the global budget, both companion exit codes, `run_with_timeout` expiry semantics in both reviewer companions, and the loop handler that consumes the Claude companion's new output keys (V12, V13, V17, V19, V20, V21, V23, V24). |
 | Rule 6 | Satisfied | Rule 6 table names scope and discharge for every conditional obligation. |
