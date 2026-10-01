@@ -2089,8 +2089,9 @@ run_greptile_review() {
   local comment_count=0
   local index=1
   local blocking_json=""
+  local greptile_read_err_file=""
 
-  trap 'rm -f "${existing_blocking_file:-}" "${blocking_lines_file:-}"' RETURN
+  trap 'rm -f "${existing_blocking_file:-}" "${blocking_lines_file:-}" "${greptile_read_err_file:-}"' RETURN
 
   require_gh
   cd_workflow_repo_root
@@ -2287,12 +2288,23 @@ run_greptile_review() {
   fi
 
   blocking_lines_file="$(mktemp)"
+  # #1789 (spec BR 2): the reactions poll read's stderr is captured so a
+  # 401/403 refusal ends the wait as greptile-read-denied instead of No
+  # verdict yet. Removed by the RETURN trap above.
+  local greptile_read_denied_detail=""
+  greptile_read_err_file="$(reviewer_loop_gh_read_err_file)"
 
   while :; do
     thumbs_up="$(
-      gh api "repos/$repo/issues/comments/$review_comment_id/reactions" \
+      gh api "repos/$repo/issues/comments/$review_comment_id/reactions" 2>"${greptile_read_err_file:-/dev/null}" \
         | jq --arg bot "$bot_login" '[.[] | select(.content == "+1" and .user.login == $bot)] | length'
     )"
+    if greptile_read_denied_detail="$(reviewer_loop_gh_read_denied "$greptile_read_err_file")"; then
+      rm -f "$blocking_lines_file"
+      print_reviewer_read_denied "$platform" "$pr_number" "$branch_name" "$greptile_read_denied_detail"
+      print_kv REVIEW_COMMENT_ID "$review_comment_id"
+      return 2
+    fi
 
     if [ "$thumbs_up" -gt 0 ]; then
       break
@@ -2949,6 +2961,12 @@ run_copilot_review() {
   fi
   [ "$effective_poll_interval" -le 0 ] && effective_poll_interval=1
 
+  # #1789 (spec BR 2): the reviews poll read's stderr is captured so a 401/403
+  # refusal ends the wait as copilot-read-denied instead of No verdict yet.
+  local copilot_read_err_file="" copilot_read_denied_detail=""
+  copilot_read_err_file="$(reviewer_loop_gh_read_err_file)"
+  trap 'rm -f "${copilot_read_err_file:-}"' RETURN
+
   while [ "$elapsed" -lt "$max_wait" ]; do
     # Re-fetch the HEAD SHA on each iteration so that if a new commit is pushed
     # while Copilot's review is still in-flight, the filter matches the review
@@ -2963,10 +2981,14 @@ run_copilot_review() {
     fi
     unset _sha_rc
     set +e
-    review_state="$(gh api --paginate "repos/$owner/$repo_name/pulls/$pr_number/reviews" 2>/dev/null \
+    review_state="$(gh api --paginate "repos/$owner/$repo_name/pulls/$pr_number/reviews" 2>"${copilot_read_err_file:-/dev/null}" \
       | jq -rs --arg login "$bot_login" --arg sha "$current_sha" \
         '[ .[] | .[] | select(.user.login == $login and .commit_id == $sha) ] | last | .state // empty')"
     set -e
+    if copilot_read_denied_detail="$(reviewer_loop_gh_read_denied "$copilot_read_err_file")"; then
+      print_reviewer_read_denied "$platform" "$pr_number" "$branch_name" "$copilot_read_denied_detail"
+      return 2
+    fi
 
     case "$review_state" in
       APPROVED)
@@ -5259,8 +5281,9 @@ run_devin_review() {
   local index=1
   local blocking_json=""
   local stale_file=""
+  local devin_read_err_file=""
 
-  trap 'rm -f "${existing_blocking_file:-}" "${blocking_lines_file:-}" "${stale_file:-}"' RETURN
+  trap 'rm -f "${existing_blocking_file:-}" "${blocking_lines_file:-}" "${stale_file:-}" "${devin_read_err_file:-}"' RETURN
 
   require_gh
   cd_workflow_repo_root
@@ -5405,6 +5428,11 @@ run_devin_review() {
   local devin_failed_status_count=0
   local devin_failure_signal=0
   local devin_ended_on_check=0
+  # #1789 (spec BR 2): the three poll reads (reviews, check runs, statuses)
+  # capture gh's stderr so a 401/403 refusal ends the wait as
+  # devin-read-denied instead of No verdict yet or the no_check_run kept skip.
+  local devin_read_denied_detail=""
+  devin_read_err_file="$(reviewer_loop_gh_read_err_file)"
 
   while :; do
     # Check for any Devin completion review every iteration (so "No Issues Found" is detected).
@@ -5412,7 +5440,7 @@ run_devin_review() {
     # (commit_id == head) ends the wait; an older head's summary submitted
     # after the committer time does not.
     devin_summary_count="$(
-      gh api "repos/$repo/pulls/$pr_number/reviews" --paginate \
+      gh api "repos/$repo/pulls/$pr_number/reviews" --paginate 2>"${devin_read_err_file:-/dev/null}" \
         | jq --arg bot "$bot_login" --arg since "$since_iso" --arg head "$head_sha" "$REVIEWER_LOOP_HEAD_BINDING_JQ"'
             [.[]
              | select(
@@ -5424,6 +5452,11 @@ run_devin_review() {
             ] | length
           '
     )"
+    if devin_read_denied_detail="$(reviewer_loop_gh_read_denied "$devin_read_err_file")"; then
+      print_reviewer_read_denied "$platform" "$pr_number" "$branch_name" "$devin_read_denied_detail"
+      print_kv REVIEW_COMMENT_ID ""
+      return 2
+    fi
     devin_summary_count="${devin_summary_count:-0}"
     if [ "$devin_summary_count" -gt 0 ]; then
       # Summary or "No Issues Found" review — Devin is done
@@ -5431,7 +5464,7 @@ run_devin_review() {
     fi
 
     read -r devin_any_check_count check_completed devin_failed_check_count < <(
-      gh api "repos/$repo/commits/$head_sha/check-runs" --paginate \
+      gh api "repos/$repo/commits/$head_sha/check-runs" --paginate 2>"${devin_read_err_file:-/dev/null}" \
         | jq -s -r "$STATUS_CHECK_ROLLUP_DEDUPE_JQ$REVIEWER_FAILED_COMPLETION_JQ"'
             ([.[].check_runs[] | select(
               (.app.slug == "devin-ai-integration") or
@@ -5443,6 +5476,11 @@ run_devin_review() {
             | tostring
           ' | tr '\n' ' '; echo
     )
+    if devin_read_denied_detail="$(reviewer_loop_gh_read_denied "$devin_read_err_file")"; then
+      print_reviewer_read_denied "$platform" "$pr_number" "$branch_name" "$devin_read_denied_detail"
+      print_kv REVIEW_COMMENT_ID ""
+      return 2
+    fi
     devin_any_check_count="${devin_any_check_count:-0}"
     check_completed="${check_completed:-0}"
     devin_failed_check_count="${devin_failed_check_count:-0}"
@@ -5458,7 +5496,7 @@ run_devin_review() {
     # Shared dedupe (workflow-lib.sh, #1559); the REST list is newest-first, so it
     # is reversed first and a same-second tie resolves to the newer status.
     read -r devin_status_count devin_completed_status_count devin_failed_status_count < <(
-      gh api "repos/$repo/commits/$head_sha/statuses" --paginate \
+      gh api "repos/$repo/commits/$head_sha/statuses" --paginate 2>"${devin_read_err_file:-/dev/null}" \
         | jq -s -r "$STATUS_CHECK_ROLLUP_DEDUPE_JQ$REVIEWER_FAILED_COMPLETION_JQ"'
             ( [.[].[] | select(.context | test("devin"; "i"))]
               | reverse | dedupe_status_check_rollup | length ),
@@ -5473,6 +5511,11 @@ run_devin_review() {
             | tostring
           ' | tr '\n' ' '; echo
     )
+    if devin_read_denied_detail="$(reviewer_loop_gh_read_denied "$devin_read_err_file")"; then
+      print_reviewer_read_denied "$platform" "$pr_number" "$branch_name" "$devin_read_denied_detail"
+      print_kv REVIEW_COMMENT_ID ""
+      return 2
+    fi
     devin_status_count="${devin_status_count:-0}"
     devin_completed_status_count="${devin_completed_status_count:-0}"
     devin_failed_status_count="${devin_failed_status_count:-0}"
@@ -7102,7 +7145,7 @@ coderabbit_thread_gate_clean() {
 # first and a same-second tie resolves to the newer status) before checking
 # state/description, so a superseded status is not counted.
 coderabbit_success_status_count() {
-  local repo="$1" head_sha="$2"
+  local repo="$1" head_sha="$2" read_err_file="${3:-}"
   # Validate arguments before the API call: a missing repo or head_sha would
   # otherwise build an invalid endpoint and fail inside the pipeline with an
   # unstructured shell error. Print "0" and return 0 (rather than a nonzero
@@ -7117,7 +7160,10 @@ coderabbit_success_status_count() {
     printf '%s\n' 0
     return 0
   fi
-  gh api "repos/$repo/commits/$head_sha/statuses" --paginate \
+  # #1789: optional <read_err_file> captures gh's stderr for the poll loop's
+  # read-refusal check (reviewer_loop_gh_read_denied); without it stderr is
+  # left as before.
+  reviewer_loop_gh_capture_stderr "$read_err_file" api "repos/$repo/commits/$head_sha/statuses" --paginate \
     | jq -s "$STATUS_CHECK_ROLLUP_DEDUPE_JQ"'[.[].[] | select(
               (.context // "" | ascii_downcase | test("coderabbit"))
             )]
@@ -7131,7 +7177,7 @@ coderabbit_success_status_count() {
             | length'
 }
 
-# coderabbit_failed_status_count <repo> <head_sha>
+# coderabbit_failed_status_count <repo> <head_sha> [read_err_file]
 #
 # #1789 (plan D8 failure-type completion signals): the count of CodeRabbit
 # commit statuses on <head_sha> whose newest state per context is `failure` or
@@ -7142,13 +7188,15 @@ coderabbit_success_status_count() {
 # its outcome (AC-13). Always prints an integer and returns 0 (callers assign
 # it under `set -e`); an unreadable status list counts as 0.
 coderabbit_failed_status_count() {
-  local repo="$1" head_sha="$2"
+  local repo="$1" head_sha="$2" read_err_file="${3:-}"
   local statuses_json="" count=""
   if [ -z "$repo" ] || [ -z "$head_sha" ]; then
     printf '%s\n' 0
     return 0
   fi
-  if ! statuses_json="$(gh api "repos/$repo/commits/$head_sha/statuses" --paginate 2>/dev/null)"; then
+  # #1789: optional <read_err_file> captures gh's stderr for the poll loop's
+  # read-refusal check; without it stderr is discarded as before.
+  if ! statuses_json="$(gh api "repos/$repo/commits/$head_sha/statuses" --paginate 2>>"${read_err_file:-/dev/null}")"; then
     printf '%s\n' 0
     return 0
   fi
@@ -7716,8 +7764,9 @@ run_coderabbit_review() {
   local blocking_json=""
   local stale_file=""
   local coderabbit_trigger_attempts=0
+  local coderabbit_read_err_file=""
 
-  trap 'rm -f "${existing_blocking_file:-}" "${blocking_lines_file:-}" "${stale_file:-}"' RETURN
+  trap 'rm -f "${existing_blocking_file:-}" "${blocking_lines_file:-}" "${stale_file:-}" "${coderabbit_read_err_file:-}"' RETURN
 
   require_gh
   cd_workflow_repo_root
@@ -7941,12 +7990,20 @@ run_coderabbit_review() {
     coderabbit_rate_limit_wait=900
   fi
 
+  # #1789 (spec BR 2): the poll reads that decide whether a verdict exists
+  # (bound reviews, the failure and success status counts, the activity probe)
+  # capture gh's stderr so a 401/403 refusal ends the wait as
+  # coderabbit-read-denied instead of No verdict yet or the no_review kept
+  # skip. Rate-limit text stays transient (reviewer_loop_gh_read_error_class).
+  local coderabbit_read_denied_detail=""
+  coderabbit_read_err_file="$(reviewer_loop_gh_read_err_file)"
+
   while :; do
     # Check for any CodeRabbit review submitted after the HEAD commit.
     # #1789 (plan D15 coderabbit row): only a review bound to the head
     # (commit_id == head) ends the wait; an older head's review does not.
     coderabbit_review_count="$(
-      gh api "repos/$repo/pulls/$pr_number/reviews" --paginate \
+      gh api "repos/$repo/pulls/$pr_number/reviews" --paginate 2>"${coderabbit_read_err_file:-/dev/null}" \
         | jq --arg bot "$bot_login" --arg since "$since_iso" --arg head "$head_sha" "$REVIEWER_LOOP_HEAD_BINDING_JQ"'
             [.[]
              | select(
@@ -7957,6 +8014,10 @@ run_coderabbit_review() {
             ] | length
           '
     )"
+    if coderabbit_read_denied_detail="$(reviewer_loop_gh_read_denied "$coderabbit_read_err_file")"; then
+      print_reviewer_read_denied "$platform" "$pr_number" "$branch_name" "$coderabbit_read_denied_detail"
+      return 2
+    fi
     coderabbit_review_count="${coderabbit_review_count:-0}"
 
     if [ "$coderabbit_review_count" -gt 0 ]; then
@@ -7970,7 +8031,11 @@ run_coderabbit_review() {
     # ends the wait like a success status; Phase 3 decides between a bound
     # verdict and coderabbit_status_failed.
     local coderabbit_failed_status_poll_count
-    coderabbit_failed_status_poll_count="$(coderabbit_failed_status_count "$repo" "$head_sha")"
+    coderabbit_failed_status_poll_count="$(coderabbit_failed_status_count "$repo" "$head_sha" "$coderabbit_read_err_file")"
+    if coderabbit_read_denied_detail="$(reviewer_loop_gh_read_denied "$coderabbit_read_err_file")"; then
+      print_reviewer_read_denied "$platform" "$pr_number" "$branch_name" "$coderabbit_read_denied_detail"
+      return 2
+    fi
     if [ "${coderabbit_failed_status_poll_count:-0}" -gt 0 ]; then
       coderabbit_status_failed_seen=1
       break
@@ -7982,7 +8047,11 @@ run_coderabbit_review() {
     # commits/<head>/statuses endpoint and ends the wait. Phase 3 then reads
     # bound findings and the thread gate as for a bound review.
     local coderabbit_success_status_poll_count
-    coderabbit_success_status_poll_count="$(coderabbit_success_status_count "$repo" "$head_sha")"
+    coderabbit_success_status_poll_count="$(coderabbit_success_status_count "$repo" "$head_sha" "$coderabbit_read_err_file")"
+    if coderabbit_read_denied_detail="$(reviewer_loop_gh_read_denied "$coderabbit_read_err_file")"; then
+      print_reviewer_read_denied "$platform" "$pr_number" "$branch_name" "$coderabbit_read_denied_detail"
+      return 2
+    fi
     if [ "${coderabbit_success_status_poll_count:-0}" -gt 0 ]; then
       coderabbit_status_success_seen=1
       break
@@ -8006,7 +8075,7 @@ run_coderabbit_review() {
     if [ "$coderabbit_any_activity" -eq 0 ]; then
       local activity_count
       activity_count="$(
-        gh api "repos/$repo/issues/$pr_number/comments" --paginate \
+        gh api "repos/$repo/issues/$pr_number/comments" --paginate 2>"${coderabbit_read_err_file:-/dev/null}" \
           | jq -s --arg bot "$bot_login" --arg since "$since_iso" \
                --arg skip_re "$CODERABBIT_SKIP_BANNER_RE" '
               [.[].[] | select(
@@ -8019,6 +8088,10 @@ run_coderabbit_review() {
               )] | length
             '
       )"
+      if coderabbit_read_denied_detail="$(reviewer_loop_gh_read_denied "$coderabbit_read_err_file")"; then
+        print_reviewer_read_denied "$platform" "$pr_number" "$branch_name" "$coderabbit_read_denied_detail"
+        return 2
+      fi
       if [ "${activity_count:-0}" -gt 0 ]; then
         # #1789 (plan D15 coderabbit row): a walkthrough or summary issue
         # comment carries no commit field, and its created_at/updated_at
@@ -9387,6 +9460,112 @@ reviewer_loop_platform_outcome_class() {
       printf 'reviewer_failed\n'
       ;;
   esac
+}
+
+# --- Polling-read refusals (#1789, spec BR 2 / BR 3) ---
+# A handler's polling read that GitHub refuses with an authorization or
+# permission error is positive failure evidence, not "no verdict yet". The
+# polling reads of copilot, greptile, devin, and coderabbit capture gh's
+# stderr in a file (reviewer_loop_gh_read_err_file) and check it after each
+# read (reviewer_loop_gh_read_denied); a denied read ends the handler at once
+# with RESULT=escalate and REASON=<platform>-read-denied
+# (print_reviewer_read_denied). Every other read failure keeps the handler's
+# existing behavior (keep polling; budget expiry stays No verdict yet or the
+# kept skip). Ronda and Bugbot already escalate fetch-failed on any failed
+# check-run read; PR-Agent keeps plan D8 (a failed read leaves the last
+# successful read in force).
+
+# reviewer_loop_gh_read_error_class <gh-stderr-text>
+# Prints `denied` for a 401/403 authorization or permission refusal and
+# `transient` for everything else. Rate-limit text (primary or secondary,
+# including an HTTP 403 rate limit) is checked first and is transient, so the
+# existing rate-limit handling keeps its outcome. Same vocabulary as
+# claude_code_action_classify_poll_error in claude-code-action-reviewer.sh.
+# Always returns 0.
+reviewer_loop_gh_read_error_class() {
+  local err="${1:-}"
+  local lower=""
+  # Bash regex on a lower-cased copy (bash 3.2 has no ${var,,}); no
+  # `printf | grep -q` pipeline, so no SIGPIPE status under pipefail.
+  local rate_re='rate limit|abuse detection|retry-after'
+  local denied_re='http 40[13]|forbidden|unauthorized|bad credentials|resource not accessible|requires authentication'
+  lower="$(printf '%s' "$err" | tr '[:upper:]' '[:lower:]')" || lower=""
+  if [[ "$lower" =~ $rate_re ]]; then
+    printf 'transient\n'
+  elif [[ "$lower" =~ $denied_re ]]; then
+    printf 'denied\n'
+  else
+    printf 'transient\n'
+  fi
+  return 0
+}
+
+# reviewer_loop_gh_read_err_file
+# Prints the path of a new empty file for one handler's polling-read stderr,
+# or nothing when mktemp fails. Callers redirect with
+# `2>"${file:-/dev/null}"` (a failed mktemp keeps the old discard behavior)
+# and remove the file with `rm -f "${file:-}"`, never a /dev/null fallback.
+reviewer_loop_gh_read_err_file() {
+  mktemp 2>/dev/null || true
+  return 0
+}
+
+# reviewer_loop_gh_read_denied <stderr-file>
+# Returns 0 and prints the refusal text (first non-empty line, one line,
+# capped at 200 characters) when the captured stderr classifies `denied`.
+# Otherwise returns 1 and replays any captured text on stderr as a WARN so a
+# transient read failure stays visible. Empties the file either way so the
+# next read starts clean. A missing or empty path returns 1.
+reviewer_loop_gh_read_denied() {
+  local err_file="${1:-}"
+  local err_text="" detail=""
+  [ -n "$err_file" ] && [ -f "$err_file" ] || return 1
+  err_text="$(cat "$err_file" 2>/dev/null)" || err_text=""
+  : > "$err_file" 2>/dev/null || true
+  [ -n "$err_text" ] || return 1
+  if [ "$(reviewer_loop_gh_read_error_class "$err_text")" = "denied" ]; then
+    # awk reads all input (no early exit), so no SIGPIPE under pipefail.
+    detail="$(printf '%s\n' "$err_text" | awk 'NF && !d { print; d = 1 }' | tr -d '\r' | cut -c1-200)" || detail=""
+    printf '%s\n' "${detail:-authorization or permission refused}"
+    return 0
+  fi
+  printf 'WARN: polling read failed (transient, still polling): %s\n' \
+    "$(printf '%s' "$err_text" | tr '\r\n' '  ' | cut -c1-300)" >&2
+  return 1
+}
+
+# reviewer_loop_gh_capture_stderr <stderr-file> <gh args...>
+# Runs `gh <args>` with stdout unchanged and stderr appended to <stderr-file>,
+# or left on stderr when <stderr-file> is empty (the caller's previous
+# behavior). Returns gh's exit status.
+reviewer_loop_gh_capture_stderr() {
+  local err_file="${1:-}"
+  shift
+  if [ -n "$err_file" ]; then
+    gh "$@" 2>>"$err_file"
+  else
+    gh "$@"
+  fi
+}
+
+# print_reviewer_read_denied <platform> <pr> <branch> <detail>
+# The standard block for a denied polling read: RESULT=escalate,
+# REASON=<platform>-read-denied (class reviewer_failed, reviewer-failed label
+# required). The caller returns 2.
+print_reviewer_read_denied() {
+  local platform="${1:-}" pr_number="${2:-}" branch_name="${3:-}" detail="${4:-}"
+  echo "WARN: ${platform} polling read refused (authorization or permission): ${detail}" >&2
+  print_kv RESULT escalate
+  print_kv REASON "${platform}-read-denied"
+  print_kv READ_DENIED_DETAIL "$detail"
+  print_kv PLATFORM "$platform"
+  print_kv PR_NUMBER "$pr_number"
+  print_kv BRANCH "$branch_name"
+  print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+  print_kv COMMENT_COUNT 0
+  print_kv BLOCKING_COUNT 0
+  print_kv SUGGESTION_COUNT 0
+  return 0
 }
 
 # --- Compare-mode helpers ---

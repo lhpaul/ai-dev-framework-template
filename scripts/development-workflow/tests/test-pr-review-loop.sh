@@ -22528,6 +22528,21 @@ for a in "$@"; do
   prev="$a"
 done
 head="$(cat "$d/head")"
+# Read refusals (#1789 BR 2): each gh-error line `<substring>|<stderr text>`
+# makes the first matching non-POST call print <stderr text> and exit 1.
+if [ -e "$d/gh-error" ]; then
+  case "$*" in
+    *"--method POST"*|*"-X POST"*|"pr comment"*) ;;
+    *)
+      while IFS='|' read -r pat msg; do
+        [ -n "$pat" ] || continue
+        case "$*" in
+          *"$pat"*) printf '%s\n' "$msg" >&2; exit 1 ;;
+        esac
+      done < "$d/gh-error"
+      ;;
+  esac
+fi
 case "$*" in
   *"--method POST"*|*"-X POST"*|"pr comment"*)
     printf 'tick=%s %s\n' "$tick" "$*" >> "$d/posts.log"
@@ -24274,6 +24289,152 @@ _1789_out="$(_1789_run_gh run_pr_agent_review 3)"
 run_test "1789_T2.22_edited_to_h1_marker_rule_a_accepts" "clean||0|2" "$(_1789_rre "$_1789_out")|$(_1789_tick)"
 unset _1789_pa_kept _1789_pa_block_only _1789_pa_first _1789_pa_ok_runs _1789_pa_ok_branch _1789_pa_now _1789_failing
 unset -f _1789_pa_marker _1789_pa_block _1789_pa_body _1789_pa_sum _1789_pa_run _1789_pa_wf _1789_ra _1789_pa_rule_b
+
+# ---------------------------------------------------------------------------
+# #1789 (spec BR 2 / BR 3, PR #1882 review): a polling read GitHub refuses with
+# an authorization or permission error (401/403) is failure evidence on every
+# platform, never No verdict yet. Rate-limit text and other read failures stay
+# transient (keep polling).
+# ---------------------------------------------------------------------------
+_1789_e403='HTTP 403: Resource not accessible by integration (https://api.github.com/repos/o/r/x)'
+_1789_e401='HTTP 401: Bad credentials (https://api.github.com/repos/o/r/x)'
+_1789_erl='HTTP 403: You have exceeded a secondary rate limit. Please wait a few minutes before you try again.'
+_1789_e502='HTTP 502: Bad Gateway (https://api.github.com/repos/o/r/x)'
+
+# Unit rows: reviewer_loop_gh_read_error_class.
+run_test "1789_RD_class_403_resource_not_accessible" "denied" "$(reviewer_loop_gh_read_error_class "$_1789_e403")"
+run_test "1789_RD_class_401_bad_credentials" "denied" "$(reviewer_loop_gh_read_error_class "$_1789_e401")"
+run_test "1789_RD_class_forbidden_word" "denied" "$(reviewer_loop_gh_read_error_class "gh: Forbidden")"
+run_test "1789_RD_class_unauthorized_word" "denied" "$(reviewer_loop_gh_read_error_class "Unauthorized")"
+run_test "1789_RD_class_requires_authentication" "denied" "$(reviewer_loop_gh_read_error_class "gh: Requires authentication (HTTP 401)")"
+run_test "1789_RD_class_403_secondary_rate_limit_transient" "transient" "$(reviewer_loop_gh_read_error_class "$_1789_erl")"
+run_test "1789_RD_class_403_primary_rate_limit_transient" "transient" \
+  "$(reviewer_loop_gh_read_error_class "HTTP 403: API rate limit exceeded for installation ID 1.")"
+run_test "1789_RD_class_502_transient" "transient" "$(reviewer_loop_gh_read_error_class "$_1789_e502")"
+run_test "1789_RD_class_network_transient" "transient" "$(reviewer_loop_gh_read_error_class "dial tcp: i/o timeout")"
+run_test "1789_RD_class_404_transient" "transient" "$(reviewer_loop_gh_read_error_class "HTTP 404: Not Found")"
+run_test "1789_RD_class_empty_transient" "transient" "$(reviewer_loop_gh_read_error_class "")"
+# Unit rows: reviewer_loop_gh_read_denied (file in, detail out, file emptied).
+_1789_rd_file="$_1789_dir/rd-err"
+printf '\n%s\nsecond line\n' "$_1789_e403" > "$_1789_rd_file"
+_1789_rd_rc=0
+_1789_rd_detail="$(reviewer_loop_gh_read_denied "$_1789_rd_file" 2>/dev/null)" || _1789_rd_rc=$?
+run_test "1789_RD_denied_file_rc_detail" "0|$_1789_e403" "${_1789_rd_rc}|${_1789_rd_detail}"
+run_test "1789_RD_denied_file_emptied" "0" "$(wc -c < "$_1789_rd_file" | tr -d ' ')"
+printf '%s\n' "$_1789_erl" > "$_1789_rd_file"
+_1789_rd_rc=0
+_1789_rd_warn="$(reviewer_loop_gh_read_denied "$_1789_rd_file" 2>&1 >/dev/null)" || _1789_rd_rc=$?
+run_test "1789_RD_rate_limit_file_not_denied" "1" "$_1789_rd_rc"
+run_test "1789_RD_rate_limit_file_warns" "yes" \
+  "$(printf '%s\n' "$_1789_rd_warn" | grep -q 'transient, still polling.*secondary rate limit' && echo yes || echo no)"
+run_test "1789_RD_rate_limit_file_emptied" "0" "$(wc -c < "$_1789_rd_file" | tr -d ' ')"
+_1789_rd_rc=0
+reviewer_loop_gh_read_denied "$_1789_dir/no-such-file" >/dev/null 2>&1 || _1789_rd_rc=$?
+run_test "1789_RD_missing_file_not_denied" "1" "$_1789_rd_rc"
+_1789_rd_rc=0
+reviewer_loop_gh_read_denied "" >/dev/null 2>&1 || _1789_rd_rc=$?
+run_test "1789_RD_empty_path_not_denied" "1" "$_1789_rd_rc"
+# The reasons are not availability reasons: class reviewer_failed, label required.
+for _1789_p in copilot greptile devin coderabbit; do
+  run_test "1789_RD_reason_not_availability:${_1789_p}" "no" \
+    "$(if reviewer_loop_reason_in_list "${_1789_p}-read-denied" "${REVIEWER_LOOP_AVAILABILITY_REASONS[@]}"; then echo yes; else echo no; fi)"
+  run_test "1789_RD_compare_token:${_1789_p}" "unavailable" \
+    "$(normalize_platform_verdict escalate "REASON=${_1789_p}-read-denied")"
+done
+
+# _1789_rd_assert <tag> <platform> <output> <reason>: escalate, exit 2, class
+# reviewer_failed, label required, no No verdict yet, stopped at the first read.
+_1789_rd_assert() {
+  local tag="$1" platform="$2" out="$3" reason="$4"
+  _1789_assert_failed "$tag" "$platform" "$out" "$reason"
+  run_test "1789_${tag}_not_no_verdict_yet" "|" \
+    "$(kv_value_default NO_VERDICT_YET "$out" "")|$(kv_value_default WAIT_EXPIRED_DETAIL "$out" "")"
+  run_test "1789_${tag}_stops_at_first_read" "0" "$(_1789_tick)"
+}
+
+# --- Copilot: the reviews poll read.
+_1789_gh_reset
+printf '/pulls/42/reviews|%s\n' "$_1789_e403" > "$_1789_gh_dir/gh-error"
+_1789_out="$(_1789_run_gh run_copilot_review 4)"
+_1789_rd_assert RD_copilot_reviews_403 copilot "$_1789_out" copilot-read-denied
+run_test "1789_RD_copilot_detail" "$_1789_e403" "$(kv_value_default READ_DENIED_DETAIL "$_1789_out" "")"
+_1789_gh_reset
+printf '/pulls/42/reviews|%s\n' "$_1789_e401" > "$_1789_gh_dir/gh-error"
+_1789_out="$(_1789_run_gh run_copilot_review 4)"
+run_test "1789_RD_copilot_reviews_401" "escalate|copilot-read-denied|2" "$(_1789_rre "$_1789_out")"
+# A 403 rate limit and a 502 stay transient: the wait runs to the budget.
+_1789_gh_reset
+printf '/pulls/42/reviews|%s\n' "$_1789_erl" > "$_1789_gh_dir/gh-error"
+_1789_out="$(_1789_run_gh run_copilot_review 2)"
+run_test "1789_RD_copilot_rate_limit_403_not_denied" "waiting_on_reviewer|reviewer-no-verdict-yet|4|2" \
+  "$(_1789_rre "$_1789_out")|$(_1789_tick)"
+run_test "1789_RD_copilot_rate_limit_403_logged" "yes" \
+  "$(grep -q 'transient, still polling' "$_1789_gh_dir/stderr" && echo yes || echo no)"
+_1789_gh_reset
+printf '/pulls/42/reviews|%s\n' "$_1789_e502" > "$_1789_gh_dir/gh-error"
+_1789_out="$(_1789_run_gh run_copilot_review 2)"
+run_test "1789_RD_copilot_502_not_denied" "waiting_on_reviewer|reviewer-no-verdict-yet|4" "$(_1789_rre "$_1789_out")"
+
+# --- Greptile: the reactions poll read on the posted trigger.
+_1789_gh_reset
+printf '/reactions|%s\n' "$_1789_e403" > "$_1789_gh_dir/gh-error"
+_1789_out="$(_1789_run_gh run_greptile_review 4)"
+_1789_rd_assert RD_greptile_reactions_403 greptile "$_1789_out" greptile-read-denied
+run_test "1789_RD_greptile_trigger_posted_once" "1|9001" \
+  "$(_1789_posts)|$(kv_value_default REVIEW_COMMENT_ID "$_1789_out" "")"
+_1789_gh_reset
+printf '/reactions|%s\n' "$_1789_erl" > "$_1789_gh_dir/gh-error"
+_1789_out="$(_1789_run_gh run_greptile_review 2)"
+run_test "1789_RD_greptile_rate_limit_403_not_denied" "waiting_on_reviewer|reviewer-no-verdict-yet|4" "$(_1789_rre "$_1789_out")"
+
+# --- Devin: reviews, check-runs, and statuses poll reads.
+for _1789_rd_ep in /pulls/42/reviews /check-runs /statuses; do
+  _1789_gh_reset
+  # (A refused Phase 1 findings read reads as empty, as before; the poll
+  # read is the one that classifies the refusal.)
+  printf '%s|%s\n' "$_1789_rd_ep" "$_1789_e403" > "$_1789_gh_dir/gh-error"
+  _1789_out="$(_1789_run_gh run_devin_review 300 60)"
+  _1789_rd_assert "RD_devin_${_1789_rd_ep//\//_}_403" devin "$_1789_out" devin-read-denied
+done
+_1789_gh_reset
+printf '/check-runs|%s\n' "$_1789_erl" > "$_1789_gh_dir/gh-error"
+_1789_out="$(_1789_run_gh run_devin_review 2)"
+run_test "1789_RD_devin_rate_limit_403_kept_skip" "skipped|no_check_run|0|1" \
+  "$(_1789_rre "$_1789_out")|$(kv_value_default NO_VERDICT_YET "$_1789_out" "")"
+
+# --- CodeRabbit: bound-review, failure/success status, and activity reads.
+for _1789_rd_ep in /pulls/42/reviews /statuses /issues/42/comments; do
+  _1789_gh_reset
+  printf '%s|%s\n' "$_1789_rd_ep" "$_1789_e403" > "$_1789_gh_dir/gh-error"
+  _1789_out="$(_1789_run_gh run_coderabbit_review 5)"
+  _1789_rd_assert "RD_coderabbit_${_1789_rd_ep//\//_}_403" coderabbit "$_1789_out" coderabbit-read-denied
+done
+_1789_gh_reset
+printf '/pulls/42/reviews|%s\n' "$_1789_erl" > "$_1789_gh_dir/gh-error"
+_1789_out="$(_1789_run_gh run_coderabbit_review 3)"
+run_test "1789_RD_coderabbit_rate_limit_403_kept_skip" "skipped|no_review|0|1" \
+  "$(_1789_rre "$_1789_out")|$(kv_value_default NO_VERDICT_YET "$_1789_out" "")"
+# Unit rows: the status counters keep stderr out of stdout with the new
+# optional third argument and still print an integer.
+_1789_gh_reset
+printf '/statuses|%s\n' "$_1789_e403" > "$_1789_gh_dir/gh-error"
+: > "$_1789_rd_file"
+run_test "1789_RD_coderabbit_failed_count_denied_prints_zero" "0" "$(_1789_cr_count owner/repo "$_1789_H" "$_1789_rd_file")"
+run_test "1789_RD_coderabbit_failed_count_captures_stderr" "denied" \
+  "$(reviewer_loop_gh_read_error_class "$(cat "$_1789_rd_file")")"
+
+# --- Ronda and Bugbot: already failure evidence (any failed check-run read
+# escalates fetch-failed); a 403 there is never No verdict yet.
+_1789_gh_reset
+printf '/check-runs|%s\n' "$_1789_e403" > "$_1789_gh_dir/gh-error"
+_1789_out="$(_1789_run_gh run_ronda_review 4)"
+_1789_rd_assert RD_ronda_check_runs_403 ronda "$_1789_out" fetch-failed
+_1789_gh_reset
+printf '/check-runs|%s\n' "$_1789_e403" > "$_1789_gh_dir/gh-error"
+_1789_out="$(_1789_run_gh run_bugbot_review 4)"
+_1789_rd_assert RD_bugbot_check_runs_403 bugbot "$_1789_out" fetch-failed
+unset _1789_e403 _1789_e401 _1789_erl _1789_e502 _1789_rd_file _1789_rd_rc _1789_rd_detail _1789_rd_warn _1789_rd_ep
+unset -f _1789_rd_assert
 
 unset _1789_T0 _1789_kv_file _1789_rec_verdict _1789_rec_waiting _1789_rec_replay _1789_t53_payload _1789_t212_payload
 unset _1789_section _1789_wk _1789_line _1789_claude_args _1789_t47_rec _1789_t47_payload
