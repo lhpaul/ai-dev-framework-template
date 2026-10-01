@@ -405,17 +405,21 @@ The binding is sound because the recording invocation read the loop head
 before posting the request, and its entry's `head_sha` equals the current
 head; a request posted then was posted while the current head was already
 the PR head. New `reviewer_loop_rewait_recorded_request <history_payload> <head_sha> <platform>`
-prints `<request_ref> <requested_at>` (either may be empty) or nothing; the
-loop calls it per platform in re-wait mode and hands the values to the
-handler. When it prints nothing, the handler behaves as in a fresh run and
-logs `INFO: no recorded outstanding request for <platform> on <head>; requesting a review`.
+prints two key lines, `RECORDED_REQUEST_REF=<ref>` and
+`RECORDED_REQUESTED_AT=<time>` (either value may be empty), read with the
+loop's `kv_value` helper, or prints nothing. Key lines rather than one
+space-separated pair keep an empty `request_ref` from shifting the time into
+the ref field under `read`. The loop calls it per platform in re-wait mode
+and hands the values to the handler. When it prints nothing, the handler
+behaves as in a fresh run and logs
+`INFO: no recorded outstanding request for <platform> on <head>; requesting a review`.
 
 | Platform | Re-wait behavior with a recorded request |
 | --- | --- |
-| `bugbot` | Adopt the recorded trigger comment (`request_ref`, still present) instead of posting; the #1390 re-trigger is skipped. Outside re-wait mode the handler posts as today; no timestamp-based adoption |
+| `bugbot` | Do not post; the recorded request is the outstanding one whether or not its `request_ref` is empty or the comment still exists, because Bugbot's verdict is read from current-head check runs, not from the trigger comment. The #1390 re-trigger is skipped. Outside re-wait mode the handler posts as today; no timestamp-based adoption |
 | `codex-github` | `--max-retriggers 0` (D5); no recorded request needed, the companion's own duplicate guard applies (V10) |
-| `greptile` | Reuse the recorded trigger comment when it still has no bot thumbs-up, regardless of the `max_wait` reuse window; a thumbs-up on it is that request's answer |
-| `pr-agent` | Treat the recorded trigger comment as the pending trigger instead of the reuse-window search |
+| `greptile` | When `request_ref` is non-empty and its reactions can be read, reuse that trigger comment regardless of the `max_wait` reuse window; a bot thumbs-up on it is that request's answer. When `request_ref` is empty or the reactions read fails (for example, the comment was deleted), there is no observable outstanding request: the handler prints `WARN: recorded greptile request <ref> on <head> is not readable; requesting a review` and posts as in a fresh run |
+| `pr-agent` | Treat the recorded request as already pending (the handler's pending check before posting, `_pr_agent_trigger_already_pending` at `:5778`, returns pending) instead of the reuse-window search; an empty `request_ref` still adopts, because the pending check needs no comment id |
 | `coderabbit` | No conditional `@coderabbitai review` re-trigger (a recorded request exists) |
 | `claude-code-action` | Pass `--adopt-run-id <request_ref> --adopt-requested-at <requested_at>` to the companion (both required together). It skips Phase 1 dispatch, polls only `actions/runs/<request_ref>` after checking that the run's `path` ends with the workflow file and its name's `PR #<n>` token equals this PR, sets `DISPATCH_TIME` to the recorded `requested_at` so the review fetch keeps the original `.submitted_at >= DISPATCH_TIME` boundary (`claude-code-action-reviewer.sh:429-434`, V24), and never searches by `created_at`. A missing run or a run that fails those checks is not adopted: the companion prints a `WARN` and dispatches normally. With a recorded `requested_at` but no `request_ref` (the first invocation never saw a run) the loop passes no adoption flags and the companion dispatches, because GitHub creates the run at dispatch time and an accepted dispatch that produced no visible run for a whole budget has no run that could answer |
 | `copilot` | No change: re-requesting a reviewer with a pending request is a no-op |
@@ -428,7 +432,8 @@ Runner side (Protocol 91 Step 7, D11 rows of the decision-gate matrix):
 | --- | --- |
 | `waiting_on_reviewer` + `NO_VERDICT_REWAIT=available` | Re-run Step 7 once, immediately, with the same `PR_REVIEW_LOOP_RUN_ID`; no fixer, no `cycle` increment, no readiness label |
 | `waiting_on_reviewer` + `NO_VERDICT_REWAIT=used` | Stop as **Waiting on reviewer**: name `PENDING_REVIEWER`, `PENDING_REVIEW_HEAD_SHA`, the request time, and waited seconds; state that no failure was detected; human action is "re-run the reviewer loop later on the same revision, or investigate the platform if it still has not answered" |
-| `waiting_on_reviewer` + `NO_VERDICT_REWAIT=untracked` | Stop as Waiting on reviewer as above, without the automatic re-wait, because the once-per-revision bound cannot be enforced without a stable run id |
+| `waiting_on_reviewer` + `NO_VERDICT_REWAIT=untracked` | Stop as Waiting on reviewer as above, without the automatic re-wait, because the once-per-revision bound cannot be enforced without a stable run id or a persisted waiting entry |
+| `waiting_on_reviewer` with `NO_VERDICT_REWAIT` absent or any other value | Treated as `untracked`: stop as Waiting on reviewer without the automatic re-wait. Fails closed, so a result the runner cannot place within the once-per-revision bound never re-runs Step 7 automatically |
 | Re-wait run returns any other result | Act on it with its existing Step 7 row |
 
 ### D12 — Budget source and latency record (BR 12, AC-12)
@@ -636,7 +641,7 @@ two copies (V23).
 | --- | --- | --- |
 | Documentation-branch shortening applies (D7) | platforms in D1, source `default`, branches `spec/*` and `implementation-plan/*` | `reviewer_wait_budget_resolve`; tests T1.4–T1.6 |
 | Large-diff lengthening applies (D7) | non-documentation branches, no `--max-wait`, changed files above threshold, value below `LARGE_DIFF_MAX_WAIT` | `reviewer_wait_budget_resolve`; test T1.7 |
-| Re-wait mode suppresses re-requests (D11) | invocations whose `reviewer_loop_no_verdict_rewait_state` is `rewait`; the six request-posting handlers in the D11 table; only when `reviewer_loop_rewait_recorded_request` returns a recorded request for that platform (Codex excepted) | each handler's request step; tests T2.12, T4.3–T4.7 |
+| Re-wait mode suppresses re-requests (D11) | invocations whose `reviewer_loop_no_verdict_rewait_state` is `rewait`; the request-posting handlers with a changed row in the D11 adoption table (Bugbot, Codex GitHub, Greptile, PR-Agent, CodeRabbit, Claude Code Action); only when `reviewer_loop_rewait_recorded_request` returns a recorded request for that platform (Codex excepted), and further only under that platform's own row conditions in the D11 adoption table (Greptile: a non-empty, readable `request_ref`; Claude: a `request_ref` whose run passes the checks) | each handler's request step; tests T2.12, T4.3–T4.7 |
 | Bugbot #1390 re-trigger fires (D3) | fresh (non-re-wait) Bugbot runs whose latest current-head check run is not completed at the re-trigger point | `run_bugbot_review`; tests T2.11–T2.12 |
 | Runner re-waits (D11) | Step 7 results with `NO_VERDICT_REWAIT=available`, once per head per `PR_REVIEW_LOOP_RUN_ID` | Protocol 91 Step 7 table; tests T4.1–T4.2 and smoke Step 6 |
 | Label required (D9) | each invocation that reaches the post-loop path; per-platform failure evidence or a loop-level escalation in that invocation | `reviewer_loop_reconcile_reviewer_failed_label`; tests T3.1–T3.6 |
@@ -830,7 +835,7 @@ resolver is a single function.
 | T2.9 | Second local pass returning waiting → aggregate waiting, no `failed_for_head` record | AC-1 |
 | T2.10 | Ledger normalization `no_verdict_yet` for a waiting record and for a kept skip recorded through `reviewer_loop_process_platform_output` (the `platform_result_records` entry, not only the normalizer called directly); `apply-readiness-labels.sh` refuses it as `reviewer-check-absent` (extend `test-apply-readiness-labels.sh`) | AC-1 |
 | T2.11 | Bugbot fresh run: no completed run by the D3 re-trigger point → exactly one re-trigger, total wait bounded by the budget | AC-3, AC-6 |
-| T2.12 | Bugbot re-wait mode with a recorded request: adopts the recorded trigger comment, posts no comment, and prints the recorded `REVIEW_REQUESTED_AT` and `REVIEW_REQUEST_REF` unchanged (D12 carry-forward), so a third invocation with the same run id and head adopts the same comment | AC-11 |
+| T2.12 | Bugbot re-wait mode with a recorded request: adopts the recorded trigger comment, posts no comment, and prints the recorded `REVIEW_REQUESTED_AT` and `REVIEW_REQUEST_REF` unchanged (D12 carry-forward), so a third invocation with the same run id and head adopts the same comment; a recorded request with an empty `request_ref` also posts no comment | AC-11 |
 | T3.1 | Reconcile: PR carries `reviewer-failed`, run re-reviews and is clean → `--remove-label` issued | AC-7 |
 | T3.2 | Reconcile: same, but every platform replayed from a clean ledger (#1692) → `--remove-label` issued | AC-7 |
 | T3.3 | Reconcile: needs-fixes or waiting run with no failure evidence → label removed / not added | AC-8 |
@@ -842,15 +847,15 @@ resolver is a single function.
 | T4.1 | Re-wait state: no prior entry → `fresh` and `NO_VERDICT_REWAIT=available`; prior waiting entry same run and head → `rewait` and `used`; other head or other run → `fresh`; unset run id or unavailable ledger → `untracked`; state `fresh` with a failing `_post_review_summary` (mock comment write fails) → `NO_VERDICT_REWAIT=untracked`, not `available` | AC-11 |
 | T4.2 | A re-wait entry adds nothing to the cycle counts (`reviewer_loop_history_entries_count` unchanged) | AC-11 |
 | T4.3 | Codex in re-wait mode receives `--max-retriggers 0` | AC-11 |
-| T4.4 | Greptile and PR-Agent in re-wait mode reuse the recorded trigger comment and print its recorded `REVIEW_REQUESTED_AT` and `REVIEW_REQUEST_REF` (D12 carry-forward); CodeRabbit posts no conditional re-trigger; with no recorded request each posts as in a fresh run and logs the D11 `INFO` line | AC-11 |
+| T4.4 | Greptile and PR-Agent in re-wait mode reuse the recorded trigger comment and print its recorded `REVIEW_REQUESTED_AT` and `REVIEW_REQUEST_REF` (D12 carry-forward); PR-Agent with a recorded request whose `request_ref` is empty still posts nothing; Greptile with an empty `request_ref` or a recorded comment whose reactions read fails (mock 404) prints the D11 `WARN` and posts once; CodeRabbit posts no conditional re-trigger; with no recorded request each posts as in a fresh run and logs the D11 `INFO` line | AC-11 |
 | T4.5 | Claude companion with `--adopt-run-id`/`--adopt-requested-at`: polls only that run and does not dispatch; a bot review submitted before the recorded `requested_at` is not counted (boundary preserved); a completed `success` run for this PR that is **not** the recorded run and was created after the head commit's committer time (an older-head run) is never read, so the result follows the recorded run (still running → exit 4, never clean); a recorded run whose `path` or `PR #<n>` does not match is not adopted and the companion dispatches | AC-10, AC-11 |
-| T4.6 | `reviewer_loop_rewait_recorded_request`: matching run, head, waiting entry, and platform with source `request` → ref and time; other head, other run, `wait_start` source, or no platform record → nothing; Bugbot outside re-wait mode posts its own trigger even when a `bugbot run` comment newer than the head commit time exists | AC-10, AC-11 |
+| T4.6 | `reviewer_loop_rewait_recorded_request`: matching run, head, waiting entry, and platform with source `request` → `RECORDED_REQUEST_REF` and `RECORDED_REQUESTED_AT` lines; a record with an empty ref → an empty `RECORDED_REQUEST_REF` line and the time intact in `RECORDED_REQUESTED_AT`; other head, other run, `wait_start` source, or no platform record → nothing; Bugbot outside re-wait mode posts its own trigger even when a `bugbot run` comment newer than the head commit time exists | AC-10, AC-11 |
 | T4.7 | Loop-side Claude handler with a mock companion: a fresh run that exits 4 after printing `REVIEW_REQUESTED_AT` and `REVIEW_REQUEST_REF` yields `PLATFORM_<n>_REQUEST_REF` and a ledger `request_ref`; the following re-wait invocation (same run id and head) passes `--adopt-run-id`/`--adopt-requested-at` with those values, and its own ledger record carries the same `request_ref` and `requested_at`; with only a recorded `requested_at` it passes neither | AC-11, AC-12 |
 | T5.1 | Timing keys for a verdict, a No verdict yet, a skip, a failure, and a replay; `REQUESTED_AT_SOURCE` `request` vs `wait_start`; `REQUEST_REF` printed and recorded only when the handler printed one | AC-12 |
 | T5.2 | Summary "Reviewer timing" section lines and the `reviewer-no-verdict-yet` result line; reused marked reused | AC-12 |
 | T5.3 | Ledger `platform_results[]` additive fields present; existing readers (`reviewer_loop_platform_clean_for_head`, #1692) still pass | AC-12 |
 | T5.4 | Waiting aggregate prints `PENDING_REVIEWER`, `PENDING_REVIEW_HEAD_SHA`, `PENDING_REVIEW_REQUESTED_AT`, `PENDING_REVIEW_WAITED_SECONDS`, `NO_FAILURE_DETECTED=1` | AC-1, AC-11 |
-| T6.1 | Documentation assertions: Protocol 93 contains the canonical section headings and the D2 table; Protocol 91's Step 7 table contains the three D11 rows; each guide in Documentation Updates names `reviewer-no-verdict-yet` or the kept skip | AC-14 |
+| T6.1 | Documentation assertions: Protocol 93 contains the canonical section headings and the D2 table; Protocol 91's Step 7 table contains every D11 runner row; each guide in Documentation Updates names `reviewer-no-verdict-yet` or the kept skip | AC-14 |
 
 Existing tests whose expectations change and must be updated in the same
 commit as the behavior: Area 12 rows `reviewer_failed_escalate_timeout`
@@ -974,13 +979,19 @@ no reviewer-loop result or wait-budget text affected by this change.
    `skipped` rows are disjoint by `NO_VERDICT_YET` and reason; D7 adjustments
    are mutually exclusive by branch type.
 2. Missing states — pass: unknown results classify as `reviewer_failed`
-   (D8) and rank 1 (D10); unknown `NO_VERDICT_REWAIT` inputs fall to
-   `untracked` (D11).
+   (D8) and rank 1 (D10); a `waiting_on_reviewer` result with an absent or
+   unknown `NO_VERDICT_REWAIT` has its own D11 runner row (treated as
+   `untracked`); a fresh state whose waiting entry could not be persisted
+   prints `untracked`, not `available` (D11).
 3. Precedence / order — pass: D7 states override → configured → default then
    adjustments; D10 states ranks and tie-break; loop-level escalations stay
    after platform aggregation.
 4. Malformed / unknown input — pass: D6 and D13 define invalid budget
-   handling; unreadable ledger → `untracked`.
+   handling; unreadable ledger → `untracked`; the recorded-request lookup
+   prints key lines so an empty `request_ref` cannot shift fields, and each
+   D11 adoption row states what happens with an empty or unreadable
+   `request_ref` (Bugbot and PR-Agent still adopt, Greptile and Claude post
+   or dispatch afresh).
 5. Stale vs current evidence — pass: D8 relies on current-head filters; D11
    keys re-wait state on `loop_head_sha` and `run_id`, and adopts only the
    request recorded for that head and run, never one selected by timestamp.
@@ -1026,7 +1037,7 @@ These are executed in the implementation PR.
   points to the per-platform budgets in Protocol 93 and the one automatic
   re-wait instead of the old single 20-minute wait.
 - [ ] `docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md`
-  — Step 7 result table: the three D11 rows replacing the single
+  — Step 7 result table: the D11 runner rows replacing the single
   `waiting_on_reviewer` row; the settle-forward snippet's non-zero branch
   mentions re-wait for exit 4 with `NO_VERDICT_REWAIT=available`.
 - [ ] `docs/workflow/development-workflow/integrations/bugbot.md` — D3 budget
