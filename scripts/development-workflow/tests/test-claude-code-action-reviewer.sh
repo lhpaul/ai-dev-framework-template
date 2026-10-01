@@ -6,7 +6,8 @@
 # (T2.23) runs the whole companion against a mock gh and proves it polls only
 # the returned run id and never searches the run list, so an older run for the
 # same PR can never answer this request (this replaces the #806/#808 run-list
-# filter tests: the fresh path no longer has that filter). Areas 6-8 cover the
+# filter tests: the fresh path no longer has that filter). Area 3 (T4.5) covers
+# re-wait adoption of a recorded run. Areas 6-8 cover the
 # date fallback, the Actions log verification, and the workflow prompt; Area 9
 # covers the exit codes for a run that never completes (4) or fails (2).
 #
@@ -171,6 +172,10 @@ run_test "1789_T2.23_dispatch_requests_run_details" "1" \
 run_test "1789_T2.23_dispatch_result_accepted" "1" "$(grep -c '^DISPATCH_RESULT=accepted$' "$_t223_dir/out" || true)"
 run_test "1789_T2.23_dispatch_run_id_printed" "1" "$(grep -c '^DISPATCH_WORKFLOW_RUN_ID=777$' "$_t223_dir/out" || true)"
 run_test "1789_T2.23_no_poll_after_time" "0" "$(grep -c 'POLL_AFTER_TIME\|poll filter time' "$REVIEWER_SCRIPT" "$_t223_dir/out" | awk -F: '{s+=$NF} END{print s+0}')"
+# D12 request record: the bound run id and the dispatch time.
+run_test "1789_D12_fresh_request_ref_is_bound_run" "1" "$(grep -c '^REVIEW_REQUEST_REF=777$' "$_t223_dir/out" || true)"
+run_test "1789_D12_fresh_requested_at_is_dispatch_time" "yes" \
+  "$( [ "$(grep '^REVIEW_REQUESTED_AT=' "$_t223_dir/out" | cut -d= -f2)" = "$(grep '^INFO: dispatch time (pre-dispatch): ' "$_t223_dir/out" | sed 's/^INFO: dispatch time (pre-dispatch): //')" ] && echo yes || echo no)"
 
 # Variant: the returned run completes success → exit 0.
 run_test "1789_T2.23_returned_run_success_exit_0" "0" "$(_t223_run id completed success)"
@@ -207,6 +212,122 @@ run_test "1789_T2.23_dispatch_not_found_no_polling" "0" "$(_t223_calls 'actions/
 rm -rf "$_t223_dir"
 unset _t223_dir MOCK_T223_LOG
 unset -f _t223_run _t223_calls
+
+# ---------------------------------------------------------------------------
+# Area 3 (#1789, T4.5): re-wait adoption with --adopt-run-id /
+# --adopt-requested-at (plan D11 Claude row). The recorded run 888 is polled
+# and nothing is dispatched; a bot review submitted before the recorded
+# requested_at is not counted (the review boundary is kept); a completed
+# success run 555 for this PR that is not the recorded run (an older-head run)
+# is never read, so the result follows run 888 (still running → exit 4, never
+# clean); a recorded run whose path or "PR #<n>" does not match, or that
+# cannot be read, is not adopted and the companion dispatches.
+# ---------------------------------------------------------------------------
+echo ""
+echo "=== Area 3: re-wait adoption of the recorded run (#1789 T4.5) ==="
+
+_t45_dir="$(mktemp -d)" || { echo "ERROR: mktemp -d failed" >&2; exit 1; }
+cat > "$_t45_dir/gh" <<'MOCK_GH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$MOCK_T45_LOG"
+case "$*" in
+  "auth status"*) exit 0 ;;
+  *"pr view"*"baseRefName"*) echo "develop"; exit 0 ;;
+  *"repo view"*"defaultBranchRef"*) echo "main"; exit 0 ;;
+  *"/dispatches"*)
+    printf '{"workflow_run_id":777}\n'
+    exit 0
+    ;;
+  *"actions/runs?"*|*"actions/runs/555"*|"run view 555 "*)
+    printf '{"id":555,"name":"Claude Code Review — PR #42","path":".github/workflows/claude-code-review.yml","status":"completed","conclusion":"success"}\n'
+    exit 0
+    ;;
+  *"actions/runs/888"*)
+    [ "${MOCK_T45_888_READ:-ok}" = "fail" ] && { echo "gh: Not Found (HTTP 404)" >&2; exit 1; }
+    _concl=null
+    [ -n "${MOCK_T45_888_CONCLUSION:-}" ] && _concl="\"${MOCK_T45_888_CONCLUSION}\""
+    printf '{"id":888,"name":"%s","path":"%s","status":"%s","conclusion":%s,"html_url":"https://example.invalid/runs/888"}\n' \
+      "${MOCK_T45_888_NAME:-Claude Code Review — PR #42}" \
+      "${MOCK_T45_888_PATH:-.github/workflows/claude-code-review.yml}" \
+      "${MOCK_T45_888_STATUS:-in_progress}" "$_concl"
+    exit 0
+    ;;
+  *"actions/runs/777"*)
+    printf '{"id":777,"name":"Claude Code Review — PR #42","path":".github/workflows/claude-code-review.yml","status":"in_progress","conclusion":null}\n'
+    exit 0
+    ;;
+  "run view 888 "*"--log"*)
+    echo 'Claude Code Action review	UNKNOWN STEP	Trigger result: true'
+    exit 0
+    ;;
+  *"pulls/42/reviews"*)
+    # A CHANGES_REQUESTED bot review at MOCK_T45_REVIEW_AT.
+    printf '[{"user":{"login":"claude[bot]"},"state":"CHANGES_REQUESTED","submitted_at":"%s"}]\n' "${MOCK_T45_REVIEW_AT:-2026-01-01T00:00:05Z}"
+    exit 0
+    ;;
+  *) echo "unexpected gh call: $*" >&2; exit 1 ;;
+esac
+MOCK_GH
+chmod +x "$_t45_dir/gh"
+MOCK_T45_LOG="$_t45_dir/calls.log"
+export MOCK_T45_LOG
+
+# _t45_run [extra args...]: runs the companion with the given adoption args;
+# prints the exit code. MOCK_T45_* in the caller's environment shape the mock.
+_t45_run() {
+  local status=0
+  : > "$MOCK_T45_LOG"
+  PATH="$_t45_dir:$PATH" bash "$REVIEWER_SCRIPT" 42 owner repo \
+    --max-wait 2 --poll-interval 1 "$@" >"$_t45_dir/out" 2>"$_t45_dir/err" || status=$?
+  printf '%s\n' "$status"
+}
+_t45_calls() { grep -c -- "$1" "$MOCK_T45_LOG" || true; }
+_t45_adopt=(--adopt-run-id 888 --adopt-requested-at 2026-01-01T00:00:10Z)
+
+# The recorded run is still running → exit 4; nothing dispatched; only run 888
+# polled; the other completed run 555 and the run list are never read.
+run_test "1789_T4.5_adopted_running_exit_4" "4" "$(_t45_run "${_t45_adopt[@]}")"
+run_test "1789_T4.5_adopted_no_dispatch" "0" "$(_t45_calls '/dispatches')"
+run_test "1789_T4.5_adopted_polls_recorded_run" "yes" \
+  "$( [ "$(_t45_calls 'actions/runs/888')" -ge 2 ] && echo yes || echo no)"
+run_test "1789_T4.5_adopted_other_run_never_read" "0" "$(_t45_calls 'actions/runs?\|actions/runs/555\|run view 555\|actions/runs/777')"
+run_test "1789_T4.5_adopted_dispatch_result" "1" "$(grep -c '^DISPATCH_RESULT=adopted$' "$_t45_dir/out" || true)"
+run_test "1789_T4.5_adopted_request_keys_carried_forward" "REVIEW_REQUESTED_AT=2026-01-01T00:00:10Z|REVIEW_REQUEST_REF=888" \
+  "$(grep '^REVIEW_REQUESTED_AT=' "$_t45_dir/out")|$(grep '^REVIEW_REQUEST_REF=' "$_t45_dir/out")"
+
+# The recorded run completed success; the only CHANGES_REQUESTED bot review was
+# submitted before the recorded requested_at → not counted → exit 0.
+run_test "1789_T4.5_boundary_kept_review_before_request_not_counted" "0" \
+  "$(MOCK_T45_888_STATUS=completed MOCK_T45_888_CONCLUSION=success MOCK_T45_REVIEW_AT=2026-01-01T00:00:05Z _t45_run "${_t45_adopt[@]}")"
+run_test "1789_T4.5_boundary_kept_no_dispatch" "0" "$(_t45_calls '/dispatches')"
+# The same review submitted after the recorded requested_at counts → exit 1.
+run_test "1789_T4.5_review_after_request_counted" "1" \
+  "$(MOCK_T45_888_STATUS=completed MOCK_T45_888_CONCLUSION=success MOCK_T45_REVIEW_AT=2026-01-01T00:00:20Z _t45_run "${_t45_adopt[@]}")"
+
+# A recorded run from another workflow file is not adopted: WARN, dispatch.
+run_test "1789_T4.5_path_mismatch_dispatches_exit_4" "4" \
+  "$(MOCK_T45_888_PATH=.github/workflows/other.yml _t45_run "${_t45_adopt[@]}")"
+run_test "1789_T4.5_path_mismatch_dispatched" "1" "$(_t45_calls '/dispatches')"
+run_test "1789_T4.5_path_mismatch_warns" "1" "$(grep -c "^WARN: recorded Claude Code Action run 888 is not a 'claude-code-review.yml' run" "$_t45_dir/err" || true)"
+run_test "1789_T4.5_path_mismatch_binds_new_run" "1" "$(grep -c '^REVIEW_REQUEST_REF=777$' "$_t45_dir/out" || true)"
+# A recorded run named for another PR is not adopted.
+run_test "1789_T4.5_pr_mismatch_dispatches_exit_4" "4" \
+  "$(MOCK_T45_888_NAME='Claude Code Review — PR #421' _t45_run "${_t45_adopt[@]}")"
+run_test "1789_T4.5_pr_mismatch_dispatched" "1" "$(_t45_calls '/dispatches')"
+run_test "1789_T4.5_pr_mismatch_warns" "1" "$(grep -c '^WARN: recorded Claude Code Action run 888 is not named for PR #42' "$_t45_dir/err" || true)"
+# A recorded run that cannot be read is not adopted.
+run_test "1789_T4.5_unreadable_dispatches_exit_4" "4" "$(MOCK_T45_888_READ=fail _t45_run "${_t45_adopt[@]}")"
+run_test "1789_T4.5_unreadable_dispatched" "1" "$(_t45_calls '/dispatches')"
+# The two flags come together; malformed values are argument errors (exit 2).
+run_test "1789_T4.5_run_id_alone_exit_2" "2" "$(_t45_run --adopt-run-id 888)"
+run_test "1789_T4.5_requested_at_alone_exit_2" "2" "$(_t45_run --adopt-requested-at 2026-01-01T00:00:10Z)"
+run_test "1789_T4.5_bad_run_id_exit_2" "2" "$(_t45_run --adopt-run-id abc --adopt-requested-at 2026-01-01T00:00:10Z)"
+run_test "1789_T4.5_bad_requested_at_exit_2" "2" "$(_t45_run --adopt-run-id 888 --adopt-requested-at yesterday)"
+run_test "1789_T4.5_argument_errors_call_nothing" "0" "$(_t45_calls '.')"
+
+rm -rf "$_t45_dir"
+unset _t45_dir MOCK_T45_LOG _t45_adopt
+unset -f _t45_run _t45_calls
 
 # ---------------------------------------------------------------------------
 # Area 6: epoch→ISO8601 conversion fallback
@@ -469,7 +590,7 @@ MOCK_CCA_RUN_STATUS=completed MOCK_CCA_RUN_CONCLUSION=""
 export MOCK_CCA_RUN_STATUS MOCK_CCA_RUN_CONCLUSION
 run_test "1789_run_completed_without_conclusion_exit_2" "2" "$(_cca_run)"
 
-_cca_usage="$(sed -n '1,45p' "$REVIEWER_SCRIPT")"
+_cca_usage="$(sed -n '1,/^set -euo pipefail$/p' "$REVIEWER_SCRIPT")"
 run_test "1789_header_documents_exit_4" "1" \
   "$(grep -c '^#   4 — NO_VERDICT_YET' <<<"$_cca_usage" || true)"
 

@@ -23,6 +23,18 @@
 #   --poll-interval <secs>   Seconds between polling attempts. Default: 30
 #   --max-wait      <secs>   Maximum total wait time for Actions run to complete.
 #                            Default: 600
+#   --adopt-run-id  <id>     Re-wait adoption (#1789, plan D11): poll this
+#                            recorded workflow run instead of dispatching a new
+#                            one. Requires --adopt-requested-at. The run is
+#                            adopted only when actions/runs/<id> reads back with
+#                            that id, a path ending with the workflow file, and
+#                            a "PR #<n>" run name naming this PR; otherwise the
+#                            companion prints a WARN and dispatches normally.
+#   --adopt-requested-at <iso8601>
+#                            The recorded request time of the adopted run
+#                            (YYYY-MM-DDTHH:MM:SSZ). It becomes DISPATCH_TIME,
+#                            so the review fetch keeps the original
+#                            `.submitted_at >= DISPATCH_TIME` boundary.
 #
 # Exit codes:
 #   0 — APPROVED       (Actions run completed successfully, no new blocking review
@@ -54,6 +66,14 @@
 #   DISPATCH_RESULT=no_workflow_run_id  the dispatch was accepted but the
 #                                       response (for example an empty 204) had
 #                                       no integer workflow_run_id (exit 3)
+#   DISPATCH_RESULT=adopted             --adopt-run-id named a run that passed
+#                                       the adoption checks; nothing dispatched
+#
+# Request record (#1789, plan D12), printed once the run is bound (dispatched
+# or adopted), on every later exit path:
+#   REVIEW_REQUESTED_AT=<iso8601>       DISPATCH_TIME (the recorded requested_at
+#                                       when a run was adopted)
+#   REVIEW_REQUEST_REF=<run id>         the bound workflow run id
 
 set -euo pipefail
 
@@ -167,9 +187,12 @@ fi
 # ── Argument parsing ──────────────────────────────────────────────────────────
 
 if [ $# -lt 3 ]; then
-  echo "Usage: $0 <pr_number> <owner> <repo> [--workflow-file <name>] [--bot-login <login>] [--poll-interval <seconds>] [--max-wait <seconds>]" >&2
+  echo "Usage: $0 <pr_number> <owner> <repo> [--workflow-file <name>] [--bot-login <login>] [--poll-interval <seconds>] [--max-wait <seconds>] [--adopt-run-id <id> --adopt-requested-at <iso8601>]" >&2
   exit 2
 fi
+
+ADOPT_RUN_ID=""
+ADOPT_REQUESTED_AT=""
 
 PR_NUMBER="$1"
 OWNER="$2"
@@ -214,10 +237,34 @@ while [ $# -gt 0 ]; do
     --max-wait)
       if [ $# -lt 2 ]; then echo "ERROR: --max-wait requires a value" >&2; exit 2; fi
       MAX_WAIT="$2"; shift 2;;
+    --adopt-run-id)
+      if [ $# -lt 2 ]; then echo "ERROR: --adopt-run-id requires a value" >&2; exit 2; fi
+      ADOPT_RUN_ID="$2"; shift 2;;
+    --adopt-requested-at)
+      if [ $# -lt 2 ]; then echo "ERROR: --adopt-requested-at requires a value" >&2; exit 2; fi
+      ADOPT_REQUESTED_AT="$2"; shift 2;;
     *)
       echo "ERROR: unknown option '$1'" >&2; exit 2;;
   esac
 done
+
+# Adoption flags (#1789, plan D11) come together or not at all.
+if [ -n "$ADOPT_RUN_ID" ] || [ -n "$ADOPT_REQUESTED_AT" ]; then
+  if [ -z "$ADOPT_RUN_ID" ] || [ -z "$ADOPT_REQUESTED_AT" ]; then
+    echo "ERROR: --adopt-run-id and --adopt-requested-at must be given together" >&2
+    exit 2
+  fi
+  case "$ADOPT_RUN_ID" in
+    0|*[!0-9]*)
+      echo "ERROR: --adopt-run-id value '$ADOPT_RUN_ID' is not a positive integer" >&2
+      exit 2
+      ;;
+  esac
+  if ! [[ "$ADOPT_REQUESTED_AT" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]]; then
+    echo "ERROR: --adopt-requested-at value '$ADOPT_REQUESTED_AT' is not an ISO-8601 UTC time (YYYY-MM-DDTHH:MM:SSZ)" >&2
+    exit 2
+  fi
+fi
 
 # ── Validate numeric options ──────────────────────────────────────────────────
 # POLL_INTERVAL and MAX_WAIT are used in 'sleep' and arithmetic. Validate them
@@ -302,6 +349,45 @@ DISPATCH_TIME=$(date -u -r "$_DISPATCH_EPOCH" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null ||
 unset _DISPATCH_EPOCH
 echo "INFO: dispatch time (pre-dispatch): $DISPATCH_TIME"
 
+# ── Re-wait adoption (#1789, plan D11) ───────────────────────────────────────
+# With --adopt-run-id, the loop hands over the run this loop recorded for the
+# current head and run id. Adopt it only when it reads back as that run, from
+# this workflow file, for this PR; then skip the dispatch, poll only that run,
+# and keep the original review boundary by using the recorded request time as
+# DISPATCH_TIME. Never search runs by created_at. A run that cannot be read or
+# fails a check is not adopted: WARN and dispatch normally.
+ADOPTED=0
+RUN_ID=""
+if [ -n "$ADOPT_RUN_ID" ]; then
+  ADOPT_STATUS=0
+  ADOPT_INFO=""
+  ADOPT_INFO="$(gh api "repos/$OWNER/$REPO/actions/runs/$ADOPT_RUN_ID" 2>/dev/null \
+    | jq -c --arg id "$ADOPT_RUN_ID" --arg wf "$WORKFLOW_FILE" --arg pr "$PR_NUMBER" '
+        if type == "object" and ((.id // "") | tostring) == $id then
+          {
+            path_ok: (((.path // "") | tostring) as $p
+                      | ($p == $wf) or ($p | endswith("/" + $wf))),
+            pr_ok: ((((.name // "") | tostring)
+                     | capture("PR #(?<pr>[0-9]+)(?:[^0-9]|$)")? | .pr) == $pr)
+          }
+        else error("response is not workflow run " + $id) end' 2>/dev/null)" || ADOPT_STATUS=$?
+  if [ "$ADOPT_STATUS" -ne 0 ] || [ -z "$ADOPT_INFO" ]; then
+    echo "WARN: recorded Claude Code Action run $ADOPT_RUN_ID could not be read; not adopting it — dispatching a new review" >&2
+  elif [ "$(printf '%s' "$ADOPT_INFO" | jq -r '.path_ok')" != "true" ]; then
+    echo "WARN: recorded Claude Code Action run $ADOPT_RUN_ID is not a '$WORKFLOW_FILE' run; not adopting it — dispatching a new review" >&2
+  elif [ "$(printf '%s' "$ADOPT_INFO" | jq -r '.pr_ok')" != "true" ]; then
+    echo "WARN: recorded Claude Code Action run $ADOPT_RUN_ID is not named for PR #$PR_NUMBER; not adopting it — dispatching a new review" >&2
+  else
+    ADOPTED=1
+    RUN_ID="$ADOPT_RUN_ID"
+    DISPATCH_TIME="$ADOPT_REQUESTED_AT"
+    echo "DISPATCH_RESULT=adopted"
+    echo "DISPATCH_WORKFLOW_RUN_ID=$RUN_ID"
+    echo "INFO: adopted the recorded workflow run id $RUN_ID (requested at $DISPATCH_TIME); no new dispatch"
+  fi
+  unset ADOPT_STATUS ADOPT_INFO
+fi
+
 # ── Phase 1: Dispatch workflow ────────────────────────────────────────────────
 # Call workflow_dispatch with ref=DISPATCH_REF (default branch), the pr_number
 # input, and return_run_details=true (sent as JSON true), so GitHub answers 200
@@ -312,6 +398,8 @@ echo "INFO: dispatch time (pre-dispatch): $DISPATCH_TIME"
 #     (UNAVAILABLE: the run cannot be bound to this request; the time-window
 #     run search is never used as a fallback)
 
+# Fresh dispatch only when no recorded run was adopted above.
+if [ "$ADOPTED" -eq 0 ]; then
 echo "INFO: dispatching workflow '$WORKFLOW_FILE' on ref '$DISPATCH_REF' for PR #$PR_NUMBER..."
 
 DISPATCH_STDERR=$(mktemp)
@@ -357,6 +445,13 @@ rm -f "$DISPATCH_RESPONSE"
 echo "DISPATCH_RESULT=accepted"
 echo "DISPATCH_WORKFLOW_RUN_ID=$RUN_ID"
 echo "INFO: workflow dispatch accepted; bound to workflow run id $RUN_ID"
+fi  # end: ADOPTED -eq 0 (fresh dispatch)
+
+# #1789 (plan D12): the request this run answers — the dispatch (or the
+# adopted recorded request) and the bound run id. Printed once, here, so every
+# later exit path carries it.
+echo "REVIEW_REQUESTED_AT=$DISPATCH_TIME"
+echo "REVIEW_REQUEST_REF=$RUN_ID"
 
 # ── Phase 2: Poll the dispatched run until it completes ──────────────────────
 # Poll only actions/runs/<RUN_ID> at POLL_INTERVAL intervals until it reaches

@@ -5334,7 +5334,7 @@ MOCK_POST_LOG="$_codex_provisional_changes_requested_mock_dir/posts.log" PATH="$
 run_test "codex_provisional_changes_requested_posts_trigger" "1" \
   "$(wc -l < "$_codex_provisional_changes_requested_mock_dir/posts.log" | tr -d ' ')"
 run_test "codex_provisional_changes_requested_no_fast_path" "yes" \
-  "$(if grep -Fq "inline-review summary has only cleared thread findings; posting a fresh trigger" "$_codex_provisional_changes_requested_mock_dir/output.txt"; then printf yes; else printf no; fi)"
+  "$(if grep -Fq "inline-review summary has only cleared thread findings; a fresh trigger is needed unless a newer one is outstanding" "$_codex_provisional_changes_requested_mock_dir/output.txt"; then printf yes; else printf no; fi)"
 rm -rf "$_codex_provisional_changes_requested_mock_dir"
 unset _codex_provisional_changes_requested_mock_dir _codex_provisional_changes_requested_exit
 
@@ -5380,7 +5380,7 @@ MOCK_POST_LOG="$_codex_resolved_changes_requested_mock_dir/posts.log" PATH="$_co
 run_test "codex_resolved_changes_requested_posts_trigger" "1" \
   "$(wc -l < "$_codex_resolved_changes_requested_mock_dir/posts.log" | tr -d ' ')"
 run_test "codex_resolved_changes_requested_no_fast_path" "yes" \
-  "$(if grep -Fq "inline-review summary has only cleared thread findings; posting a fresh trigger" "$_codex_resolved_changes_requested_mock_dir/output.txt"; then printf yes; else printf no; fi)"
+  "$(if grep -Fq "inline-review summary has only cleared thread findings; a fresh trigger is needed unless a newer one is outstanding" "$_codex_resolved_changes_requested_mock_dir/output.txt"; then printf yes; else printf no; fi)"
 rm -rf "$_codex_resolved_changes_requested_mock_dir"
 unset _codex_resolved_changes_requested_mock_dir _codex_resolved_changes_requested_exit
 
@@ -5427,9 +5427,78 @@ MOCK_POST_LOG="$_codex_addressed_changes_requested_mock_dir/posts.log" PATH="$_c
 run_test "codex_addressed_changes_requested_posts_trigger" "1" \
   "$(wc -l < "$_codex_addressed_changes_requested_mock_dir/posts.log" | tr -d ' ')"
 run_test "codex_addressed_changes_requested_no_fast_path" "yes" \
-  "$(if grep -Fq "inline-review summary has only cleared thread findings; posting a fresh trigger" "$_codex_addressed_changes_requested_mock_dir/output.txt"; then printf yes; else printf no; fi)"
+  "$(if grep -Fq "inline-review summary has only cleared thread findings; a fresh trigger is needed unless a newer one is outstanding" "$_codex_addressed_changes_requested_mock_dir/output.txt"; then printf yes; else printf no; fi)"
 rm -rf "$_codex_addressed_changes_requested_mock_dir"
 unset _codex_addressed_changes_requested_mock_dir _codex_addressed_changes_requested_exit
+
+# #1789 T4.8 — regression: an older cleared Codex review plus a newer
+# unanswered trigger (plan D11 Codex row, V36). The cleared review was
+# submitted at 00:00:01; a runner trigger for the head created strictly later
+# (00:00:05) is the outstanding replacement: nothing is posted, the D11 INFO
+# line is logged, and the companion polls with that trigger's time (and
+# reports it as REVIEW_REQUESTED_AT, plan D12). A trigger created at the same
+# second as the review was answered by it, so exactly one fresh trigger is
+# posted, as today.
+_codex_t48_dir="$(mktemp -d)"
+cat > "$_codex_t48_dir/gh" <<'CODEX_T48_GH'
+#!/usr/bin/env bash
+log="$MOCK_POST_LOG"
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf '9999999999999999999999999999999999999999\n'; exit 0 ;;
+  *"api graphql"*)
+    printf '{"data":{"repository":{"pullRequest":{"headRef":{"target":{"committedDate":"2026-01-01T00:00:00Z"}},"reviewThreads":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"isResolved":false,"isOutdated":false,"firstComment":{"nodes":[{"author":{"login":"chatgpt-codex-connector"},"body":"✅ Addressed in latest commit"}]},"lastComment":{"nodes":[{"author":{"login":"chatgpt-codex-connector"},"createdAt":"2026-01-01T00:00:01Z"}]}}]}}}}}\n'
+    exit 0 ;;
+  *"--method POST"*)
+    printf 'POST\n' >> "$log"
+    printf '{"id":412,"created_at":"2026-01-01T00:00:10Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/timeline"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    jq -nc --arg t "$MOCK_T48_TRIGGER_AT" '[{id:312,created_at:$t,user:{login:"lhpaul"},body:"@codex review (review triggered by workflow runner, commit: 999999999999)"}]'
+    exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    jq -nc '[{submitted_at:"2026-01-01T00:00:01Z",commit_id:"9999999999999999999999999999999999999999",state:"COMMENTED",user:{login:"chatgpt-codex-connector[bot]"},body:"### 💡 Codex Review\n\nHere are some automated review suggestions for this pull request.\n\n**Reviewed commit:** `999999999999`"}]'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_T48_GH
+chmod +x "$_codex_t48_dir/gh"
+_codex_t48_run() {
+  : > "$_codex_t48_dir/posts.log"
+  _codex_t48_exit=0
+  MOCK_T48_TRIGGER_AT="$1" MOCK_POST_LOG="$_codex_t48_dir/posts.log" PATH="$_codex_t48_dir:$PATH" \
+    "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+    42 owner repo --poll-interval 1 --max-wait 1 --pre-trigger-wait 1 --max-retriggers 0 \
+    >"$_codex_t48_dir/output.txt" 2>&1 || _codex_t48_exit=$?
+}
+_codex_t48_run "2026-01-01T00:00:05Z"
+run_test "1789_T4.8_newer_trigger_posts_nothing" "0" \
+  "$(wc -l < "$_codex_t48_dir/posts.log" | tr -d ' ')"
+run_test "1789_T4.8_newer_trigger_logs_outstanding" "1" \
+  "$(grep -Fc "INFO: trigger for commit 999999999999 posted after the cleared Codex review is still outstanding — not posting a duplicate" "$_codex_t48_dir/output.txt" || true)"
+run_test "1789_T4.8_newer_trigger_polls_with_its_time" "1" \
+  "$(grep -Fc "(trigger time: 2026-01-01T00:00:05Z)" "$_codex_t48_dir/output.txt" || true)"
+run_test "1789_T4.8_newer_trigger_pending_exit" "4" "$_codex_t48_exit"
+run_test "1789_T4.8_newer_trigger_requested_at" "REVIEW_REQUESTED_AT=2026-01-01T00:00:05Z" \
+  "$(grep '^REVIEW_REQUESTED_AT=' "$_codex_t48_dir/output.txt" | sort -u)"
+_codex_t48_run "2026-01-01T00:00:01Z"
+run_test "1789_T4.8_same_second_trigger_posts_once" "1" \
+  "$(wc -l < "$_codex_t48_dir/posts.log" | tr -d ' ')"
+run_test "1789_T4.8_same_second_trigger_requested_at_is_new_post" "REVIEW_REQUESTED_AT=2026-01-01T00:00:10Z" \
+  "$(grep '^REVIEW_REQUESTED_AT=' "$_codex_t48_dir/output.txt" | sort -u)"
+rm -rf "$_codex_t48_dir"
+unset _codex_t48_dir _codex_t48_exit
+unset -f _codex_t48_run
 
 _codex_cleared_thread_top_level_blocker_mock_dir="$(mktemp -d)"
 cat > "$_codex_cleared_thread_top_level_blocker_mock_dir/gh" <<'CODEX_CLEARED_THREAD_TOP_LEVEL_BLOCKER_GH'
