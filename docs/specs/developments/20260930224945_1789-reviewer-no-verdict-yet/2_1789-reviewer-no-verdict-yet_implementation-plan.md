@@ -437,7 +437,11 @@ not one inferred from timestamps: the platform's `platform_results[]` record
 in the newest ledger entry that made the state `rewait` (same `run_id`,
 `head_sha` equal to the current loop head, `waiting_on_reviewer`), when that
 record has `requested_at_source` `request`. Its `request_ref` and
-`requested_at` (D12) identify the request. The head commit's committer time
+`requested_at` (D12) identify the request. One exception sits inside the
+Codex GitHub companion: its cleared-findings guard (Codex row below) compares
+two GitHub server times on objects already bound to the head (a trigger whose
+body names the head SHA and a review whose `commit_id` is the head), and it
+decides only whether to post, never a verdict. The head commit's committer time
 is never used: it does not establish when that revision became the PR head,
 so a request or run created after it can still belong to the previous head.
 The binding is sound because the recording invocation read the loop head
@@ -456,7 +460,7 @@ behaves as in a fresh run and logs
 | Platform | Re-wait behavior with a recorded request |
 | --- | --- |
 | `bugbot` | Do not post; the recorded request is the outstanding one whether or not its `request_ref` is empty or the comment still exists, because Bugbot's verdict is read from current-head check runs, not from the trigger comment. The #1390 re-trigger is skipped. Outside re-wait mode the handler posts as today; no timestamp-based adoption |
-| `codex-github` | `--max-retriggers 0` (D5); no recorded request needed, the companion's own duplicate guard applies (V10). That guard must also hold on the cleared-findings path. Today a current-head review whose findings were all cleared sets `FORCE_RETRIGGER_AFTER_CLEARED_FINDINGS` (`codex-github-reviewer.sh:1944-1950`), and the guard then drops the newest current-head trigger (`:2069-2075`) whatever its age and whatever `MAX_RETRIGGERS` is. So the fresh invocation's replacement trigger, posted after that review and still unanswered, is posted again on re-wait (V36). Change: at `:1949` the companion also records the cleared review's `submitted_at` (`EXISTING_BOT_RESPONSE_TIME`) as `CLEARED_FINDINGS_REVIEW_TIME`. At `:2070` it drops the found trigger only when that trigger's `created_at` is not later than `CLEARED_FINDINGS_REVIEW_TIME` (the review answered it; same-second counts as answered, as today). A strictly later trigger is the outstanding replacement: the companion logs `INFO: trigger for commit <sha> posted after the cleared Codex review is still outstanding — not posting a duplicate`, keeps `TRIGGER_TIME` and `TRIGGER_COMMENT_ID`, and polls it. Both values are GitHub ISO-8601 UTC strings, so a string comparison orders them. The rule does not depend on mode: the companion has no re-wait input, and a trigger newer than the cleared review is unanswered in every mode, so fresh runs gain the same protection. The #1526 refusal recovery (`:2044-2068`) runs first and is unchanged |
+| `codex-github` | `--max-retriggers 0` (D5); no recorded request needed, the companion's own duplicate guard applies (V10). That guard must also hold on the cleared-findings path. Today a current-head review whose findings were all cleared sets `FORCE_RETRIGGER_AFTER_CLEARED_FINDINGS` (`codex-github-reviewer.sh:1944-1950`), and the guard then drops the newest current-head trigger (`:2069-2075`) whatever its age and whatever `MAX_RETRIGGERS` is. So the fresh invocation's replacement trigger, posted after that review and still unanswered, is posted again on re-wait (V36). Change: at `:1949` the companion also records the cleared review's `submitted_at` (`EXISTING_BOT_RESPONSE_TIME`) as `CLEARED_FINDINGS_REVIEW_TIME`, and its `:1948` log line ends `a fresh trigger is needed unless a newer one is outstanding` instead of `posting a fresh trigger`. At `:2070` it drops the found trigger only when that trigger's `created_at` is not later than `CLEARED_FINDINGS_REVIEW_TIME` (the review answered it; same-second counts as answered, as today). A strictly later trigger is the outstanding replacement: the companion logs `INFO: trigger for commit <sha> posted after the cleared Codex review is still outstanding — not posting a duplicate`, keeps `TRIGGER_TIME` and `TRIGGER_COMMENT_ID`, and polls it. Both values are GitHub ISO-8601 UTC strings, so a string comparison orders them. The rule does not depend on mode: the companion has no re-wait input, and a trigger newer than the cleared review is unanswered in every mode, so fresh runs gain the same protection. The #1526 refusal recovery (`:2044-2068`) runs first and is unchanged |
 | `greptile` | When `request_ref` is non-empty and its reactions can be read, reuse that trigger comment regardless of the `max_wait` reuse window; a bot thumbs-up on it is that request's answer. When `request_ref` is empty or the reactions read fails (for example, the comment was deleted), there is no observable outstanding request: the handler prints `WARN: recorded greptile request <ref> on <head> is not readable; requesting a review` and posts as in a fresh run. Outside re-wait mode, trigger reuse follows D15 |
 | `pr-agent` | Treat the recorded request as already pending (the handler's pending check before posting, `_pr_agent_trigger_already_pending` at `:5778`, returns pending) instead of the reuse-window search; an empty `request_ref` still adopts, because the pending check needs no comment id. Outside re-wait mode, trigger reuse follows D15 |
 | `coderabbit` | No conditional `@coderabbitai review` re-trigger (a recorded request exists) |
@@ -1322,9 +1326,12 @@ no reviewer-loop result or wait-budget text affected by this change.
    re-wait state on `loop_head_sha` and `run_id`, and adopts only the request
    recorded for that head and run. No binding rests on comparing a comment,
    review, or run time with a request time or with the head commit's
-   committer time; the time filters that remain (Greptile's, Devin's, and
-   CodeRabbit's collection windows, Claude's `DISPATCH_TIME` review boundary)
-   only narrow evidence a commit field already binds. Failure evidence is
+   committer time, except the Codex cleared-findings guard (D11 Codex row),
+   which compares a head-bound trigger with a head-bound review and decides
+   only whether to post; the time filters that remain (Greptile's, Devin's,
+   and CodeRabbit's collection windows, Claude's `DISPATCH_TIME` review
+   boundary, and that Codex guard) only narrow evidence a commit field
+   already binds. Failure evidence is
    stale only when positive evidence on the same head supersedes it: the
    newest check run or status per key on `H` governs on every platform that
    reads one (`dedupe_status_check_rollup`, V35), and no handler excludes a
@@ -1460,8 +1467,9 @@ Reversal is a revert of the implementation PR as one unit: scripts,
 companions, `apply-readiness-labels.sh`, Protocols 91 and 93, the guides,
 tests, and the changelog fragment together. A partial revert is not
 supported, because Protocol 91's D11 rows read loop keys
-(`NO_VERDICT_REWAIT`, `reviewer-no-verdict-yet`) and companion exit 4 that
-only the new scripts produce. The renamed reasons
+(`NO_VERDICT_REWAIT`, `reviewer-no-verdict-yet`) that only the new loop
+produces; the new exit 4 of `local-ai-reviewer.sh` and
+`claude-code-action-reviewer.sh` (D4, D8 Claude row) reverts with them. The renamed reasons
 (`bugbot-run-timed-out`, `claude_code_action_run_failed`) and the companion
 exit codes revert with the scripts. No data migration is needed, in either
 direction:
@@ -1635,7 +1643,9 @@ SHA).
   the regression tests T2.24–T2.27.
 - Complex workflow decision-gate matrix: Checked — plan mirror table above.
 - Matrix coherence preflight: Checked — six checks pass (see the preflight
-  list above).
+  list above); re-audited at `81977c6b`/`d708592d` for the D11 Codex
+  cleared-findings row, with check 5 scoped for its head-bound time
+  comparison.
 - Parser/API/concurrency checklist: Checked — parser-risk addendum for the
   config reader; concurrency not applicable with rationale.
 - Reversal: Checked — Rollback states the one-unit revert, the reverted
