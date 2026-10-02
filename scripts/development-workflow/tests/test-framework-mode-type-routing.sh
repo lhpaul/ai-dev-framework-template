@@ -46,6 +46,11 @@ cleanup() {
   if [ -f "$REAL_AGENTS_BACKUP" ]; then
     cp "$REAL_AGENTS_BACKUP" "$REAL_AGENTS"
   fi
+  # The guidance plant may target a synced orchestrator mirror instead of
+  # AGENTS.md (consumer mode); restore it too if the run stops mid-plant.
+  if [ -n "${GUIDANCE_PLANT_TARGET:-}" ] && [ -f "${_agents_backup:-}" ]; then
+    cp "$_agents_backup" "$REPO_ROOT/$GUIDANCE_PLANT_TARGET"
+  fi
   rm -rf "$TMP_ROOT"
 }
 trap cleanup EXIT
@@ -760,10 +765,23 @@ assert_absent() {
   esac
 }
 
+# AGENTS.md, CLAUDE.md, and GEMINI.md are project-owned in sync-manifest.yaml:
+# sync never overwrites them, and a consumer repository is told to classify
+# framework items as `Workflow`, so its own guidance may legitimately say so.
+# Only the template asserts on their wording (#1874); the synced orchestrator
+# mirrors are checked everywhere. Read the mode from the untouched config
+# backup, since earlier scenarios swap the live file.
+GUIDANCE_IS_TEMPLATE="$(workflow_template_is_template "$REAL_CONFIG_BACKUP")"
+GUIDANCE_AGENT_FILES=(.cursor/agents/orchestrator.md .claude/agents/orchestrator.md)
+GUIDANCE_PLANT_TARGET=".claude/agents/orchestrator.md"
+if [ "$GUIDANCE_IS_TEMPLATE" = "true" ]; then
+  GUIDANCE_AGENT_FILES=(AGENTS.md CLAUDE.md GEMINI.md "${GUIDANCE_AGENT_FILES[@]}")
+  GUIDANCE_PLANT_TARGET="AGENTS.md"
+fi
+
 guidance_check_all_pass() {
   assert_absent 'agent-guidance Workflow recommendation' \
-    'Use `Workflow` for' AGENTS.md CLAUDE.md GEMINI.md \
-    .cursor/agents/orchestrator.md .claude/agents/orchestrator.md || return 1
+    'Use `Workflow` for' "${GUIDANCE_AGENT_FILES[@]}" || return 1
   assert_absent 'retrospective create assigns Workflow' \
     'update_tracker_type_best_effort "\$ISSUE_NUMBER" "Workflow"' \
     docs/workflow/development-workflow/protocols/06-retrospective-protocol.md \
@@ -793,15 +811,17 @@ fi
 # guidance-check-planted-violation: re-introduce one pre-change string and
 # assert the check now fails; revert and assert it passes again. A guard
 # that has never failed is not known to work.
-_agents_backup="$TMP_ROOT/AGENTS.md.bak"
-cp "$REPO_ROOT/AGENTS.md" "$_agents_backup"
-printf '\nUse `Workflow` for framework work (planted violation).\n' >> "$REPO_ROOT/AGENTS.md"
+# The plant goes in AGENTS.md in the template and in a synced orchestrator
+# mirror in a consumer, where AGENTS.md is not asserted on.
+_agents_backup="$TMP_ROOT/guidance-plant-target.bak"
+cp "$REPO_ROOT/$GUIDANCE_PLANT_TARGET" "$_agents_backup"
+printf '\nUse `Workflow` for framework work (planted violation).\n' >> "$REPO_ROOT/$GUIDANCE_PLANT_TARGET"
 if guidance_check_all_pass; then
   run_test "guidance_check_planted_violation_detected" "fail" "pass"
 else
   run_test "guidance_check_planted_violation_detected" "fail" "fail"
 fi
-cp "$_agents_backup" "$REPO_ROOT/AGENTS.md"
+cp "$_agents_backup" "$REPO_ROOT/$GUIDANCE_PLANT_TARGET"
 
 if guidance_check_all_pass; then
   run_test "guidance_check_planted_violation_reverted_passes" "pass" "pass"
