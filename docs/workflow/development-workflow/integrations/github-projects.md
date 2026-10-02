@@ -188,6 +188,39 @@ The function is **fail-open**: if the issue is already on the board it returns 0
 
 Use the shared helper when a stage completes and the tracker status must advance. It performs a targeted `repository.issue(...).projectItems` lookup for the single issue and avoids `gh project item-list`, which paginates the whole board and can drain the GraphQL rate-limit bucket.
 
+#### Organization project with an unlinked personal repository
+
+An organization-owned project cannot be linked to a repository in a personal
+account. Cards for that repository's issues can still be added with
+`gh project item-add`, and `gh project item-list` shows their Status and Type,
+but `repository.issue(...).projectItems` returns no nodes for them. The
+targeted lookup alone would report every such issue as "not on the board", so
+Status and Type reads would come back empty and `/run-epic` would classify each
+child as `ambiguous` (#1801).
+
+When the targeted lookup succeeds but finds no item for the configured project,
+`workflow_github_project_item_for_issue` falls back to the board's
+`gh project item-list` result. The fallback:
+
+- matches the card by repository and issue number, never by number alone, so
+  another repository's issue with the same number on the same board is ignored;
+- reads the board once per process and caches it in a private file under
+  `${TMPDIR:-/tmp}/workflow-gh-item-list-<uid>/` (override with
+  `WORKFLOW_GH_ITEM_LIST_CACHE_DIR`), so `status="$(get_tracker_status_for_issue N)"`
+  callers and multi-item epic resolution share one board scan;
+- reuses that cache for `WORKFLOW_GH_ITEM_LIST_CACHE_TTL_MINUTES` (default `5`;
+  `0` disables reuse) and removes cache files older than an hour when it writes;
+- is invalidated by `ensure_on_project_board` after a successful
+  `gh project item-add`, so the initial-status update sees the new card;
+- reports an empty result with a warning when the board cannot be read
+  completely, as before.
+
+The board's native Issue Type is not part of `gh project item-list` output, so
+fallback Type reads use the configured, `Custom Type`, `CustomType`, or `Type`
+project field. Set `WORKFLOW_GH_ITEM_LIST_FALLBACK=0` to disable the fallback
+for boards where every repository is linked and a missing card should never
+cost a board scan.
+
 <!-- workflow-shell-contract: bash-zsh -->
 ```bash
 # Source workflow-lib.sh to get the targeted GitHub Projects helpers.
