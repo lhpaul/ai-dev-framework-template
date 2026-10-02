@@ -2266,14 +2266,24 @@ print(project.get('id') or '', end='')
 # resolves the same literal names). Used by add-backlog-item.sh's
 # post-creation field verification (issue #1778) as well as status/type reads.
 #
-# This intentionally uses repository.issue(...).projectItems instead of
-# `gh project item-list` so single-item status reads/updates do not paginate the
-# entire board and drain the GraphQL budget.
+# The primary lookup is repository.issue(...).projectItems, not
+# `gh project item-list`, so single-item status reads/updates do not paginate
+# the entire board and drain the GraphQL budget (issue #824).
+#
+# That connection can be empty although the card exists: an organization
+# project whose cards were added with `gh project item-add` for issues in a
+# personal repository (which cannot be linked to the org project) is not
+# reported through issue.projectItems. When the GraphQL read succeeds but finds
+# no item for the configured project, this falls back once to the board's
+# `gh project item-list` result, shared per process through a short-lived file
+# cache (see workflow_github_project_item_from_item_list, issue #1801). Set
+# WORKFLOW_GH_ITEM_LIST_FALLBACK=0 to disable the fallback.
 workflow_github_project_item_for_issue() {
   local issue_number="$1"
   local project_number="$2"
   local project_owner project_id repo_owner repo_name response
   local cursor page_state item_json has_next end_cursor page_count line missing_fields type_field_name
+  local graphql_exhausted="false"
   local -a graphql_args
 
   case "$issue_number" in
@@ -2465,6 +2475,7 @@ EOF
       return 0
     fi
     if [ "$has_next" != "true" ] || [ -z "$end_cursor" ]; then
+      graphql_exhausted="true"
       break
     fi
     page_count=$((page_count + 1))
@@ -2475,7 +2486,149 @@ EOF
     cursor="$end_cursor"
   done
 
+  # issue #1801: the GraphQL read completed without an item for the configured
+  # project. That is not proof the card is absent (org project + unlinked
+  # personal repository), so consult the board itself before reporting "not
+  # on board".
+  if [ "$graphql_exhausted" = "true" ] && [ "${WORKFLOW_GH_ITEM_LIST_FALLBACK:-1}" != "0" ]; then
+    workflow_github_project_item_from_item_list \
+      "$issue_number" "$project_number" "$project_owner" "$project_id" \
+      "${repo_owner}/${repo_name}" "$type_field_name"
+    return 0
+  fi
+
   printf ''
+}
+
+# workflow_github_project_item_list_cache_file <project_owner> <project_number>
+#
+# Prints the per-process cache file path for one board's
+# `gh project item-list` result, creating the private cache directory when
+# needed. Prints nothing (caching disabled, never an error) when the
+# directory cannot be created or is not a real directory owned by this user.
+#
+# The file name carries $$, which bash keeps equal to the top-level script's
+# PID inside command substitutions, so `status="$(get_tracker_status_for_issue
+# N)"` callers — whose in-memory globals are discarded with the subshell —
+# still share one board scan per process. Directory override:
+# WORKFLOW_GH_ITEM_LIST_CACHE_DIR (default ${TMPDIR:-/tmp}/workflow-gh-item-list-<uid>).
+workflow_github_project_item_list_cache_file() {
+  local project_owner="$1"
+  local project_number="$2"
+  local cache_dir safe_owner
+
+  cache_dir="${WORKFLOW_GH_ITEM_LIST_CACHE_DIR:-${TMPDIR:-/tmp}/workflow-gh-item-list-$(id -u 2>/dev/null || echo user)}"
+  cache_dir="${cache_dir%/}"
+  if [ ! -d "$cache_dir" ]; then
+    (umask 077 && mkdir -p "$cache_dir") 2>/dev/null || return 0
+  fi
+  if [ -L "$cache_dir" ] || [ ! -d "$cache_dir" ] || [ ! -O "$cache_dir" ]; then
+    return 0
+  fi
+  safe_owner="$(printf '%s' "$project_owner" | tr -c 'A-Za-z0-9-' '_')"
+  printf '%s/%s-%s-%s.json' "$cache_dir" "$$" "$safe_owner" "$project_number"
+}
+
+# workflow_github_project_item_list_cache_invalidate <project_owner> <project_number>
+#
+# Drops this process's cached board scan, for example after a successful
+# `gh project item-add` so the next lookup sees the new card.
+workflow_github_project_item_list_cache_invalidate() {
+  local cache_file
+  cache_file="$(workflow_github_project_item_list_cache_file "$1" "$2")"
+  if [ -n "$cache_file" ]; then
+    rm -f "$cache_file" 2>/dev/null || true
+  fi
+  return 0
+}
+
+# workflow_github_project_item_from_item_list <issue_number> <project_number> <project_owner> <project_id> <owner/repo> <type_field_name>
+#
+# Fallback for workflow_github_project_item_for_issue (issue #1801). Reads the
+# board with workflow_gh_project_items_exhaustive — at most once per process
+# within WORKFLOW_GH_ITEM_LIST_CACHE_TTL_MINUTES (default 5) — and prints the
+# same compact JSON shape for the card whose content is <owner/repo>#<issue>.
+# The join is by (repository, number), never by number alone, using
+# WORKFLOW_PROJECT_ITEM_REPO_JQ_DEFS (#1804): an org board can hold another
+# repository's issue with the same number. Prints nothing when the card is not
+# on the board or the board cannot be read completely.
+#
+# Cache files older than an hour are swept on every write, so files left by
+# exited processes do not accumulate; no EXIT trap is needed.
+workflow_github_project_item_from_item_list() {
+  local issue_number="$1"
+  local project_number="$2"
+  local project_owner="$3"
+  local project_id="$4"
+  local repo_slug="$5"
+  local type_field_name="$6"
+  local cache_file cache_dir ttl board_json tmp_file read_rc candidate_keys_json
+
+  if [ -z "$project_owner" ] || [ -z "$project_id" ] || [ -z "$repo_slug" ]; then
+    printf ''
+    return 0
+  fi
+
+  ttl="${WORKFLOW_GH_ITEM_LIST_CACHE_TTL_MINUTES:-5}"
+  case "$ttl" in
+    ''|*[!0-9]*) ttl=5 ;;
+  esac
+
+  board_json=""
+  cache_file="$(workflow_github_project_item_list_cache_file "$project_owner" "$project_number")"
+  if [ -n "$cache_file" ] && [ -f "$cache_file" ] && [ ! -L "$cache_file" ] && [ "$ttl" -gt 0 ] && \
+     [ -n "$(find "$cache_file" -mmin "-${ttl}" 2>/dev/null)" ]; then
+    board_json="$(cat "$cache_file" 2>/dev/null || true)"
+  fi
+
+  if [ -z "$board_json" ]; then
+    read_rc=0
+    board_json="$(workflow_gh_project_items_exhaustive "$project_number" "$project_owner")" || read_rc=$?
+    if [ "$read_rc" -ne 0 ]; then
+      echo "Warning: issue #${issue_number} has no project item via issue.projectItems, and the project #${project_number} item-list fallback failed (exit ${read_rc}); tracker status not read." >&2
+      printf ''
+      return 0
+    fi
+    if [ -n "$cache_file" ]; then
+      cache_dir="${cache_file%/*}"
+      find "$cache_dir" -maxdepth 1 -type f -name '*.json' -mmin +60 -exec rm -f {} + 2>/dev/null || true
+      if tmp_file="$(mktemp "${cache_dir}/.item-list.XXXXXX" 2>/dev/null)"; then
+        if printf '%s' "$board_json" > "$tmp_file" 2>/dev/null; then
+          mv -f "$tmp_file" "$cache_file" 2>/dev/null || rm -f "$tmp_file"
+        else
+          rm -f "$tmp_file"
+        fi
+      fi
+    fi
+  fi
+
+  candidate_keys_json="$(_workflow_lowti_candidate_keys_json "$type_field_name")"
+  printf '%s' "$board_json" | jq -c \
+    --arg repoSlug "$repo_slug" \
+    --argjson issueNumber "$issue_number" \
+    --arg projectId "$project_id" \
+    --argjson candidateKeys "${candidate_keys_json:-[]}" \
+    "$WORKFLOW_PROJECT_ITEM_REPO_JQ_DEFS"'
+      def text($v): if ($v | type) == "string" then $v else "" end;
+      [ (.items // [])[]
+        | . as $item
+        | select(($item.content.number // null) == $issueNumber)
+        | select(same_repo_item($item; $repoSlug))
+      ] | first // empty
+      | . as $item
+      | {
+          item_id: text($item.id),
+          project_id: $projectId,
+          status: text($item.status),
+          type: (([ $candidateKeys[] as $k | text($item[$k]) ] | map(select(. != "")) | first) // ""),
+          priority: text($item.priority),
+          size: text($item.size)
+        }
+    ' 2>/dev/null || {
+    echo "Warning: could not parse the project #${project_number} item-list fallback for issue #${issue_number}; tracker status not read." >&2
+    printf ''
+  }
+  return 0
 }
 
 workflow_github_project_status_field_json() {
@@ -2889,6 +3042,10 @@ ensure_on_project_board() {
   fi
 
   echo "Board membership check: issue #${issue_number} added to project board."
+
+  # The membership read above may have cached a board scan that predates this
+  # card (issue #1801); drop it so the status update below can find the item.
+  workflow_github_project_item_list_cache_invalidate "$owner" "$project_number"
 
   # Set initial status for the newly added item.
   update_tracker_status_best_effort "$issue_number" "$initial_status"
