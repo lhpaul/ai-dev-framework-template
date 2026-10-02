@@ -13768,7 +13768,8 @@ unset _codex_placeholder_86_char_instruction_not_approved_mock_dir _codex_placeh
 # quotes the pattern (comments start with `#`) can never be picked up instead.
 # Each file must carry exactly one such element; a second element or a moved
 # template fails the count assertions rather than silently comparing the
-# wrong lines.
+# wrong lines. Planted-violation proof: setting apply-readiness-labels.sh's
+# cap back to {1,40} fails the parity assertion; restoring {1,60} passes it.
 _codex_template_element_re="^[[:space:]]+'\\^Codex Review: Didn"
 _codex_template_line_reviewer="$(grep -E "$_codex_template_element_re" "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" || true)"
 _codex_template_line_labels="$(grep -E "$_codex_template_element_re" "$REPO_ROOT/scripts/development-workflow/apply-readiness-labels.sh" || true)"
