@@ -12753,7 +12753,7 @@ unset _codex_footer_near_miss_async_reaction_final_safe_fails_mock_dir _codex_fo
 # — is LLM-generated variety, not a fixed vocabulary, and enumerating it
 # would not converge (issue #1491's original complaint reappearing on a new
 # axis). CODEX_APPROVED_TEMPLATES' flavor slot is now the single bounded
-# placeholder `[^*`[:cntrl:]]{1,40}` — see the production script's own
+# placeholder `[^*`[:cntrl:]]{1,60}` (cap widened from 40 by issue #1878) — see the production script's own
 # comment above CODEX_APPROVED_TEMPLATES and the implementation plan's
 # Decision 2 second addendum for the full derivation of both the length
 # cap and the excluded-character set. codex_e1_real_pr1489_capture_approved
@@ -13389,7 +13389,7 @@ run_test "codex_placeholder_unevidenced_flavor_now_approved_verdict" "VERDICT: A
 rm -rf "$_codex_placeholder_unevidenced_flavor_now_approved_mock_dir"
 unset _codex_placeholder_unevidenced_flavor_now_approved_mock_dir _codex_placeholder_unevidenced_flavor_now_approved_output _codex_placeholder_unevidenced_flavor_now_approved_exit
 
-# Boundary: a flavor slot of exactly 40 characters (the cap, inclusive)
+# Boundary: a flavor slot of exactly 60 characters (the cap, inclusive)
 # still APPROVES — confirms the upper bound is inclusive, not an off-by-one
 # exclusion, matching the SHA field's own inclusive-upper-bound precedent
 # (codex_e7_full_length_sha_approved).
@@ -13412,7 +13412,7 @@ case "$*" in
   *"issues/"*"/timeline"*)
     printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
-    jq -nc '[{id:764,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("Codex Review: Didn'\''t find any major issues. xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx **Reviewed commit:** `fa000000e` <details> <summary>ℹ️ About Codex in GitHub</summary> <br/> [Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you - Open a pull request for review - Mark a draft as ready - Comment \"@codex review\". If Codex has suggestions, it will comment; otherwise it will react with 👍. Codex can also answer questions or update the PR. Try commenting \"@codex address that feedback\". </details>")}]'
+    jq -nc '[{id:764,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("Codex Review: Didn'\''t find any major issues. xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx **Reviewed commit:** `fa000000e` <details> <summary>ℹ️ About Codex in GitHub</summary> <br/> [Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you - Open a pull request for review - Mark a draft as ready - Comment \"@codex review\". If Codex has suggestions, it will comment; otherwise it will react with 👍. Codex can also answer questions or update the PR. Try commenting \"@codex address that feedback\". </details>")}]'
     exit 0 ;;
   *)
     printf 'ERROR=unexpected-gh-invocation\n' >&2
@@ -13435,7 +13435,7 @@ run_test "codex_placeholder_exactly_cap_length_approved_verdict" "VERDICT: APPRO
 rm -rf "$_codex_placeholder_exactly_cap_length_approved_mock_dir"
 unset _codex_placeholder_exactly_cap_length_approved_mock_dir _codex_placeholder_exactly_cap_length_approved_output _codex_placeholder_exactly_cap_length_approved_exit
 
-# Structure/length guard: a flavor slot of 41 characters (one past the cap)
+# Structure/length guard: a flavor slot of 61 characters (one past the cap)
 # safe-fails. Confirms the length cap is enforced, not merely documented.
 _codex_placeholder_exceeds_length_cap_not_approved_mock_dir="$(mktemp -d)"
 cat > "$_codex_placeholder_exceeds_length_cap_not_approved_mock_dir/gh" <<'CODEX_PLACEHOLDER_EXCEEDS_LENGTH_CAP_NOT_APPROVED_GH'
@@ -13456,7 +13456,7 @@ case "$*" in
   *"issues/"*"/timeline"*)
     printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
-    jq -nc '[{id:765,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("Codex Review: Didn'\''t find any major issues. xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx **Reviewed commit:** `fa000000f` <details> <summary>ℹ️ About Codex in GitHub</summary> <br/> [Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you - Open a pull request for review - Mark a draft as ready - Comment \"@codex review\". If Codex has suggestions, it will comment; otherwise it will react with 👍. Codex can also answer questions or update the PR. Try commenting \"@codex address that feedback\". </details>")}]'
+    jq -nc '[{id:765,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("Codex Review: Didn'\''t find any major issues. xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx **Reviewed commit:** `fa000000f` <details> <summary>ℹ️ About Codex in GitHub</summary> <br/> [Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you - Open a pull request for review - Mark a draft as ready - Comment \"@codex review\". If Codex has suggestions, it will comment; otherwise it will react with 👍. Codex can also answer questions or update the PR. Try commenting \"@codex address that feedback\". </details>")}]'
     exit 0 ;;
   *)
     printf 'ERROR=unexpected-gh-invocation\n' >&2
@@ -13574,7 +13574,8 @@ unset _codex_placeholder_backtick_not_approved_mock_dir _codex_placeholder_backt
 # (blank line) inside the flavor position, followed by an extra sentence,
 # safe-fails once whitespace normalization (Decision 1, unchanged) collapses
 # the break to a single space and the flattened flavor text exceeds the
-# 40-character cap. Proves the length cap still catches injected content
+# 60-character cap (the flattened sentence is 79 characters). Proves the
+# length cap still catches injected content
 # smuggled in via a newline-separated paragraph, not only content appended
 # on the same line.
 _codex_placeholder_newline_separated_overflow_not_approved_mock_dir="$(mktemp -d)"
@@ -13622,6 +13623,152 @@ run_test "codex_placeholder_newline_separated_overflow_not_approved_verdict" "VE
   "$(printf '%s\n' "$_codex_placeholder_newline_separated_overflow_not_approved_output" | grep "^VERDICT:")"
 rm -rf "$_codex_placeholder_newline_separated_overflow_not_approved_mock_dir"
 unset _codex_placeholder_newline_separated_overflow_not_approved_mock_dir _codex_placeholder_newline_separated_overflow_not_approved_output _codex_placeholder_newline_separated_overflow_not_approved_exit
+
+# Issue #1878: evidenced 41-character flavor sentence from a genuinely clean
+# Codex review (Grunten/grunten-platform PR #73) — "Already looking forward
+# to the next diff." The former 40-character cap rejected it and the loop
+# escalated; the 60-character cap must approve it.
+_codex_placeholder_pr73_flavor_sentence_approved_mock_dir="$(mktemp -d)"
+cat > "$_codex_placeholder_pr73_flavor_sentence_approved_mock_dir/gh" <<'CODEX_PLACEHOLDER_PR73_FLAVOR_SENTENCE_APPROVED_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'fa00000131234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":719,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/timeline"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    jq -nc '[{id:769,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("Codex Review: Didn'\''t find any major issues. Already looking forward to the next diff. **Reviewed commit:** `fa0000013` <details> <summary>ℹ️ About Codex in GitHub</summary> <br/> [Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you - Open a pull request for review - Mark a draft as ready - Comment \"@codex review\". If Codex has suggestions, it will comment; otherwise it will react with 👍. Codex can also answer questions or update the PR. Try commenting \"@codex address that feedback\". </details>")}]'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_PLACEHOLDER_PR73_FLAVOR_SENTENCE_APPROVED_GH
+chmod +x "$_codex_placeholder_pr73_flavor_sentence_approved_mock_dir/gh"
+
+_codex_placeholder_pr73_flavor_sentence_approved_output=""
+_codex_placeholder_pr73_flavor_sentence_approved_exit=0
+PATH="$_codex_placeholder_pr73_flavor_sentence_approved_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_placeholder_pr73_flavor_sentence_approved_mock_dir/output.txt" 2>&1 || _codex_placeholder_pr73_flavor_sentence_approved_exit=$?
+_codex_placeholder_pr73_flavor_sentence_approved_output="$(cat "$_codex_placeholder_pr73_flavor_sentence_approved_mock_dir/output.txt")"
+run_test "codex_placeholder_pr73_flavor_sentence_approved_exit_clean" "0" "$_codex_placeholder_pr73_flavor_sentence_approved_exit"
+run_test "codex_placeholder_pr73_flavor_sentence_approved_verdict" "VERDICT: APPROVED" \
+  "$(printf '%s\n' "$_codex_placeholder_pr73_flavor_sentence_approved_output" | grep "^VERDICT:")"
+rm -rf "$_codex_placeholder_pr73_flavor_sentence_approved_mock_dir"
+unset _codex_placeholder_pr73_flavor_sentence_approved_mock_dir _codex_placeholder_pr73_flavor_sentence_approved_output _codex_placeholder_pr73_flavor_sentence_approved_exit
+
+# Issue #1878: a 79-character actionable instruction on the same line as the
+# clean verdict must still safe-fail under the 60-character cap. This is the
+# case that made a 120-character cap unacceptable downstream.
+_codex_placeholder_79_char_instruction_not_approved_mock_dir="$(mktemp -d)"
+cat > "$_codex_placeholder_79_char_instruction_not_approved_mock_dir/gh" <<'CODEX_PLACEHOLDER_79_CHAR_INSTRUCTION_NOT_APPROVED_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'fa00000141234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":720,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/timeline"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    jq -nc '[{id:770,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("Codex Review: Didn'\''t find any major issues. Rename the unsafe function immediately before merging this pull request please. **Reviewed commit:** `fa0000014` <details> <summary>ℹ️ About Codex in GitHub</summary> <br/> [Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you - Open a pull request for review - Mark a draft as ready - Comment \"@codex review\". If Codex has suggestions, it will comment; otherwise it will react with 👍. Codex can also answer questions or update the PR. Try commenting \"@codex address that feedback\". </details>")}]'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_PLACEHOLDER_79_CHAR_INSTRUCTION_NOT_APPROVED_GH
+chmod +x "$_codex_placeholder_79_char_instruction_not_approved_mock_dir/gh"
+
+_codex_placeholder_79_char_instruction_not_approved_output=""
+_codex_placeholder_79_char_instruction_not_approved_exit=0
+PATH="$_codex_placeholder_79_char_instruction_not_approved_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_placeholder_79_char_instruction_not_approved_mock_dir/output.txt" 2>&1 || _codex_placeholder_79_char_instruction_not_approved_exit=$?
+_codex_placeholder_79_char_instruction_not_approved_output="$(cat "$_codex_placeholder_79_char_instruction_not_approved_mock_dir/output.txt")"
+run_test "codex_placeholder_79_char_instruction_not_approved_exit_needs_revision" "2" "$_codex_placeholder_79_char_instruction_not_approved_exit"
+run_test "codex_placeholder_79_char_instruction_not_approved_verdict" "VERDICT: ESCALATE — Codex terminal verdict matches neither an approved clean template nor the documented blocking markers" \
+  "$(printf '%s\n' "$_codex_placeholder_79_char_instruction_not_approved_output" | grep "^VERDICT:")"
+rm -rf "$_codex_placeholder_79_char_instruction_not_approved_mock_dir"
+unset _codex_placeholder_79_char_instruction_not_approved_mock_dir _codex_placeholder_79_char_instruction_not_approved_output _codex_placeholder_79_char_instruction_not_approved_exit
+
+# Issue #1878: an 86-character actionable instruction in the flavor position
+# must safe-fail under the 60-character cap.
+_codex_placeholder_86_char_instruction_not_approved_mock_dir="$(mktemp -d)"
+cat > "$_codex_placeholder_86_char_instruction_not_approved_mock_dir/gh" <<'CODEX_PLACEHOLDER_86_CHAR_INSTRUCTION_NOT_APPROVED_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'fa00000151234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":721,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/timeline"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    jq -nc '[{id:771,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("Codex Review: Didn'\''t find any major issues. Rename the unsafe function and add a regression test before merging this pull request. **Reviewed commit:** `fa0000015` <details> <summary>ℹ️ About Codex in GitHub</summary> <br/> [Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you - Open a pull request for review - Mark a draft as ready - Comment \"@codex review\". If Codex has suggestions, it will comment; otherwise it will react with 👍. Codex can also answer questions or update the PR. Try commenting \"@codex address that feedback\". </details>")}]'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_PLACEHOLDER_86_CHAR_INSTRUCTION_NOT_APPROVED_GH
+chmod +x "$_codex_placeholder_86_char_instruction_not_approved_mock_dir/gh"
+
+_codex_placeholder_86_char_instruction_not_approved_output=""
+_codex_placeholder_86_char_instruction_not_approved_exit=0
+PATH="$_codex_placeholder_86_char_instruction_not_approved_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_placeholder_86_char_instruction_not_approved_mock_dir/output.txt" 2>&1 || _codex_placeholder_86_char_instruction_not_approved_exit=$?
+_codex_placeholder_86_char_instruction_not_approved_output="$(cat "$_codex_placeholder_86_char_instruction_not_approved_mock_dir/output.txt")"
+run_test "codex_placeholder_86_char_instruction_not_approved_exit_needs_revision" "2" "$_codex_placeholder_86_char_instruction_not_approved_exit"
+run_test "codex_placeholder_86_char_instruction_not_approved_verdict" "VERDICT: ESCALATE — Codex terminal verdict matches neither an approved clean template nor the documented blocking markers" \
+  "$(printf '%s\n' "$_codex_placeholder_86_char_instruction_not_approved_output" | grep "^VERDICT:")"
+rm -rf "$_codex_placeholder_86_char_instruction_not_approved_mock_dir"
+unset _codex_placeholder_86_char_instruction_not_approved_mock_dir _codex_placeholder_86_char_instruction_not_approved_output _codex_placeholder_86_char_instruction_not_approved_exit
+
+# Issue #1878: apply-readiness-labels.sh carries its own copy of
+# CODEX_APPROVED_TEMPLATES. Both copies must stay byte-identical so the
+# readiness gate and the reviewer never disagree on what a clean Codex
+# response is (a cap widened in only one copy would re-escalate clean PRs).
+_codex_template_line_reviewer="$(grep -F "^Codex Review: Didn" "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" | grep -F 'CODEX_APPROVED' -v | grep -F '{1,' | head -1)"
+_codex_template_line_labels="$(grep -F "^Codex Review: Didn" "$REPO_ROOT/scripts/development-workflow/apply-readiness-labels.sh" | grep -F 'CODEX_APPROVED' -v | grep -F '{1,' | head -1)"
+run_test "codex_approved_template_parity_reviewer_vs_readiness_labels" "$_codex_template_line_reviewer" "$_codex_template_line_labels"
+run_test "codex_approved_template_flavor_cap_is_60" "1" \
+  "$(printf '%s\n' "$_codex_template_line_reviewer" | grep -cF '[^*`[:cntrl:]]{1,60} ')"
+unset _codex_template_line_reviewer _codex_template_line_labels
 
 
 
