@@ -164,7 +164,7 @@ Report all `Conflict risk` files with a one-line summary of what differs. This p
 
 Check for known CI/CD configuration mismatches between the template and the project:
 
-1. **Workflow file presence**: compare the selected set of `.github/workflows/` files in the template (under `categories.special_handling` if manifest is loaded, otherwise the embedded special-handling list) against the project. List any files that are in the template but absent from the project — these may be needed for full CI coverage after the sync.
+1. **Workflow file presence**: compare every selected `.github/workflows/` entry in the template — from `categories.always_sync` **and** `categories.special_handling` when the manifest is loaded, otherwise the embedded special-handling list — against the project. List any files that are in the template but absent from the project, and any that differ from the template, naming the synced test suites that read each one (from the coverage check in item 4). A missing or stale framework workflow (for example `pr-policy.yml`, `shellcheck.yml`, `workflow-tests.yml`, `markdown-lint.yml`, `closing-keyword-scope.yml`) makes the synced suites that assert on it fail after the sync (#1874).
 
 2. **Workflow YAML parse test** (pre-apply): for each workflow file that _would be updated_ based on the Category 1 diff, verify the _template_ version parses correctly before applying:
 
@@ -191,6 +191,21 @@ Check for known CI/CD configuration mismatches between the template and the proj
        done
    ```
    Missing script paths indicate that the sync would introduce broken workflow references. List them here so the agent can plan to copy the missing scripts (from the template `scripts/development-workflow/` tree) as part of the same sync commit.
+
+4. **Synced-test file coverage and required additions** (#1874): when the template ships `scripts/development-workflow/check-sync-manifest-coverage.py`, run it from the template source against this project:
+
+   ```bash
+   python3 "<template_dir>/scripts/development-workflow/check-sync-manifest-coverage.py" \
+     --repo-root "<template_dir>" --role "$REPOSITORY_ROLE" --consumer-root .
+   ```
+
+   It lists every file a synced test suite reads and how the manifest handles it, then evaluates the manifest's `required_additions` against this project. Report:
+
+   - `UNCOVERED` lines — a synced test reads a file the template manifest does not ship. This is a template defect: name the path and the reading suites, and note that those suites may fail after the sync until the template is fixed upstream.
+   - `PROJECT_OWNED` lines — informational. A synced suite reads a project-owned file (for example `AGENTS.md` or `.ai-dev-workflow.yaml`); sync never overwrites it.
+   - `REQUIRED_ADDITION_MISSING` lines — a project-owned file lacks an addition a synced test or protocol depends on (for example `push_verification_failed` in a declared `guardrails.stop_conditions` list). Carry each one into Step 3 under **Required additive updates**.
+
+   Exit `1` means at least one `UNCOVERED` or `REQUIRED_ADDITION_MISSING` line; it is a finding, not a reason to abort. Exit `2` means the check itself could not run — report it as a diagnostic gap. When the template does not ship the helper, report `Synced-test coverage: not checked (template predates #1874)`.
 
 ### Category 3 — CHANGELOG structure issues
 
@@ -266,8 +281,11 @@ Selected manifest entries: [N selected / M skipped by mode_scope]
 
 ### Category 2 — CI configuration
   Workflow files missing from project: [list or "none"]
+  Workflow files differing from template: [list with reading suites, or "none"]
   Template workflow YAML parse issues: [list or "none"]
   Script reference gaps: [list or "none"]
+  Synced-test coverage gaps (template manifest): [UNCOVERED paths with reading suites, or "none"]
+  Required additions missing (project-owned files): [path — must_contain — introduced_in, or "none"]
 
 ### Category 3 — CHANGELOG structure
   [Unreleased] section: [present / MISSING]
@@ -432,6 +450,8 @@ docs/workflow/retro-metrics-platforms.md    <- see "Append-only metrics logs" ca
 
 For each of these: if template and project differ, show what the template has that the project might want to add; classify as **Optional additive update** (user decides). Do not apply changes to these paths without explicit user approval.
 
+**Required additive updates** (`required_additions` in the manifest, #1874): a template change sometimes adds a key outside a project file's `TEMPLATE-OWNED` block — for example a new baseline entry in `guardrails.stop_conditions`. Sync never overwrites project-owned content, so such an addition never arrives on its own, and the synced tests or protocols that depend on it fail. Classify every `REQUIRED_ADDITION_MISSING` result from the Step 0.5 coverage check as a **Required additive update**: show the entry's `description`, the exact text to add, and the synced test or protocol that reads it (`read_by`). It is discretionary like other additive updates (never applied without approval), but the recommendation is always **apply**, and skipping it must be recorded in the sync summary together with the suite that will fail.
+
 **Append-only metrics logs carve-out**: `docs/workflow/retro-metrics.md` and `docs/workflow/retro-metrics-platforms.md` are append-only history logs, not documentation the template ever meaningfully "improves." Do not diff them against the template or propose additive updates from the template's own rows — the template's rows describe the template repository's own batch history, not this project's, and merging them in would corrupt the log. Only ever mention these two files if the manifest's `docs/workflow/retro-metrics*` migration note (see Step 0.5 / migration notes) applies.
 
 Everything else not listed above (application code, project configs, etc.) is also never overwritten.
@@ -480,6 +500,9 @@ Repository role: workflow_hub  (selected: N entries, skipped by mode_scope: M)
   .cursor/rules/code.mdc
   ... (N files)
 
+### Required additive updates (project-specific — recommended: apply)
+  .ai-dev-workflow.yaml — add `- push_verification_failed` to guardrails.stop_conditions (since v0.45.0; read by test-worktree-recipe.sh)
+
 ### Optional additive updates (project-specific — discretionary)
   AGENTS.md — template has [brief description]; project keeps its own content; suggest adding: ...
   README.md — no template additions suggested
@@ -511,6 +534,7 @@ Repository role: workflow_hub  (selected: N entries, skipped by mode_scope: M)
 **Taxonomy rules for the summary:**
 
 - **Optional additive updates** is the discretionary bucket (walkthrough yes/skip under Decide with me; disposition-table rows under Accept recommendations).
+- **Required additive updates** are discretionary items too, with a fixed **apply** recommendation. Omit the section when the coverage check reported none.
 - **Escalation / hard-stop** lists `categories.special_handling` paths (including `.claude/settings.json`, deploy/e2e workflows, `e2e/`). Do **not** put these under a discretionary “you decide” / manual-review walkthrough heading.
 - **Rename cleanup** is escalation-only. Omit the section entirely when no candidates were detected.
 

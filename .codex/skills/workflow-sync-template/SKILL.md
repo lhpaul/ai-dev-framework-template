@@ -10,7 +10,7 @@ Recommended model tier: `economy`
 1. Read `AGENTS.md` for repository-wide rules.
 2. Read `.claude/commands/sync-template.md` (the canonical sync-template protocol).
 3. Follow that protocol exactly, starting from Step 0.
-   3a. After Step 0 (template source resolved), run Step 0.5 — the comprehensive pre-flight diagnostic. This step surfaces all foreseeable conflict categories (file-level conflicts, CI configuration issues, CHANGELOG structure issues, protocol file incompatibilities) in a single pass before any files are modified. If `--dry-run` was passed, stop after printing the diagnostic report and do not proceed to Step 1. The diagnostic report format is defined in the protocol's Step 0.5 section.
+   3a. After Step 0 (template source resolved), run Step 0.5 — the comprehensive pre-flight diagnostic. This step surfaces all foreseeable conflict categories (file-level conflicts, CI configuration issues, CHANGELOG structure issues, protocol file incompatibilities) in a single pass before any files are modified. Category 2 includes the synced-test coverage check (`check-sync-manifest-coverage.py --consumer-root .`); carry each `REQUIRED_ADDITION_MISSING` result into the Step 3 summary as a Required additive update. If `--dry-run` was passed, stop after printing the diagnostic report and do not proceed to Step 1. The diagnostic report format is defined in the protocol's Step 0.5 section.
 4. Apply the same manifest-driven procedure as the Claude Code and Cursor sync-template artefacts:
    - Check for `sync-manifest.yaml` at the template root after resolving the template source.
    - Resolve the current repository role from `.ai-dev-workflow.yaml` (`single_repo` when missing).

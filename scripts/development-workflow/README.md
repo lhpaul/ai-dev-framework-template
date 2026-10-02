@@ -1020,6 +1020,45 @@ Run focused coverage with:
 bash scripts/development-workflow/tests/test-sync-template-mode-scopes.sh
 ```
 
+### `check-sync-manifest-coverage.py`
+
+Reports files that synced test suites read but `sync-manifest.yaml` does not
+ship, and checks a downstream checkout for the manifest's `required_additions`
+(#1874). Sync-template Step 0.5 runs it from the template source; the template's
+own CI runs it through its test suite so the manifest cannot fall behind a new
+test.
+
+Usage:
+
+```bash
+# Template: every file a synced suite reads must be shipped, project-owned, or exempt.
+python3 scripts/development-workflow/check-sync-manifest-coverage.py \
+  --repo-root . --role single_repo
+
+# Consumer pre-flight: also report additive updates project-owned files still need.
+python3 <template>/scripts/development-workflow/check-sync-manifest-coverage.py \
+  --repo-root <template> --role single_repo --consumer-root .
+```
+
+What it does:
+
+- Scans the suites the role receives for repository paths they read, resolving
+  `VAR="$REPO_ROOT/dir"` assignments and counting `# covers:` declarations.
+  Other comment lines and JSON data literals are skipped.
+- Prints `UNCOVERED`, `PROJECT_OWNED`, and `EXEMPT` lines (`--show-covered`
+  adds `COVERED`). Exemptions come from the manifest's
+  `sync_coverage_exemptions`, each with a reason.
+- With `--consumer-root`, prints `REQUIRED_ADDITION_MISSING`, `_PRESENT`, or
+  `_NOT_APPLICABLE` for each `required_additions` entry.
+- Exits `0` when clean, `1` on any uncovered path or missing required
+  addition, and `2` when the manifest or tracked file list cannot be read.
+
+Run focused coverage with:
+
+```bash
+bash scripts/development-workflow/tests/test-check-sync-manifest-coverage.sh
+```
+
 #### `hub-sync-product-repos.sh`
 
 Safely prepares clean product repository checkouts.

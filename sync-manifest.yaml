@@ -47,6 +47,10 @@
 # NOTE: If a new framework file is added to the template, add a corresponding entry here.
 # Files absent from this manifest will not be included in always-sync batches.
 # (CI-enforced manifest completeness is out of scope for this iteration — see issue #252.)
+# One slice is enforced: every file a synced test suite reads must be shipped here,
+# be project-owned, or be listed in sync_coverage_exemptions with a reason.
+# scripts/development-workflow/tests/test-check-sync-manifest-coverage.sh fails
+# otherwise (#1874).
 
 schema_version: 1
 
