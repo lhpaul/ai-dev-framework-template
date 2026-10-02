@@ -137,6 +137,8 @@ waiting for the budget to reset.
 
 - Scan coverage: **Full scan**.
 - GraphQL points spent by this scan, points remaining, and the reset time.
+- The warning **GraphQL budget below reserve after scan** when other
+  consumers' spending left less than the reserve (rule 10).
 - The usual Protocol 90 report categories (informational, actionable resume,
   proposed batch, held).
 
@@ -359,12 +361,15 @@ board. Workflow status transitions still waiting to happen (for example
     after-scan reading. When the after-scan reading fails, all three fields
     read **Unavailable** and the summary shows the warning **GraphQL budget
     could not be read**; the coverage already decided stands. The reserve
-    bounds the scan's own projected spend only. When the after-scan reading
-    shows fewer points remaining than the reserve and no rate-limit
-    rejection occurred, the coverage already decided stands and the summary
-    shows the warning **GraphQL budget below reserve after scan**, which
-    says that other consumers on the same account may have spent budget
-    during the scan.
+    bounds the scan's own projected spend only. When the scan read the board
+    (coverage **Full scan** or **Partial scan (budget-limited)**), no
+    rate-limit rejection occurred, and the after-scan reading shows fewer
+    points remaining than the reserve, the coverage already decided stands
+    and the summary shows the warning **GraphQL budget below reserve after
+    scan**, which says that other consumers on the same account may have
+    spent budget during the scan. A **Scan deferred (budget too low)** scan
+    never shows this warning, because it read no board items and its
+    reason already states that the budget is below the reserve.
 11. **Spend across a reset.** If the budget resets between the before-scan
     and after-scan readings (the remaining budget went up, or the reset time
     changed), the scan does not compute a figure for points spent. That
@@ -438,9 +443,10 @@ only narrow after that:
   the three spend report fields on every no-target scan.
 - **Warnings**: **GraphQL budget could not be read** appears on the scan
   summary whenever the before-scan or after-scan budget reading fails.
-  **GraphQL budget below reserve after scan** appears when the after-scan
-  reading is below the reserve without a rate-limit rejection (rule 10). It
-  is a warning, not a coverage reason. The existing Protocol 90 warnings for low budget after discovery are
+  **GraphQL budget below reserve after scan** appears on a Full or Partial
+  scan when the after-scan reading is below the reserve without a
+  rate-limit rejection (rule 10). It is a warning, not a coverage reason.
+  The existing Protocol 90 warnings for low budget after discovery are
   unchanged.
 - **Audit trail**: none added. `/run-work` stays read-only and posts no
   comments.
@@ -505,7 +511,8 @@ only narrow after that:
   spending by another consumer leaves the after-scan points remaining below
   the reserve with no rate-limit rejection, the coverage chosen before the
   scan stands and the summary shows the warning **GraphQL budget below
-  reserve after scan**.
+  reserve after scan**. A scan with coverage **Scan deferred (budget too
+  low)** never shows that warning.
 - [ ] **AC9** — In a test environment where the general (REST) API budget
   shows points left and the GraphQL budget does not, the scan's budget check
   uses the GraphQL budget and picks its coverage from it.
@@ -694,7 +701,7 @@ Mid-scan evidence takes precedence over the pre-scan decision.
 | --- | --- | --- | --- | --- |
 | 5 | Rate-limit rejection, at least one item fully read | Partial scan (budget-limited) | GraphQL budget ran out during the scan | Stop board reads. Propose only from fully read items, and never a not-yet-started Backlog item (rule 7). List what was not covered. Report the reset time. |
 | 6 | Rate-limit rejection, no item fully read | Scan deferred (budget too low) | GraphQL budget ran out during the scan | Stop board reads. Propose no batch. Report the reset time. |
-| 7 | No rate-limit rejection | Pre-scan decision stands | Pre-scan reason stands | As in the pre-scan row. If the after-scan reading is below the reserve, also show the warning **GraphQL budget below reserve after scan** (rule 10). |
+| 7 | No rate-limit rejection | Pre-scan decision stands | Pre-scan reason stands | As in the pre-scan row. If the coverage is Full scan or Partial scan and the after-scan reading is below the reserve, also show the warning **GraphQL budget below reserve after scan** (rule 10). Scan deferred never shows it. |
 
 Only a rate-limit rejection triggers rows 5 and 6. A board read that fails
 for any other reason keeps today's error handling (rule 8). A failed
