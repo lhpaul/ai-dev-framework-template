@@ -337,7 +337,9 @@ board. Workflow status transitions still waiting to happen (for example
 5. **Conservative projection.** The projected scan costs must not
    underestimate. When the scan cannot work out a projection, it uses a
    conservative upper bound in its place. Working out the projection must
-   itself cost an amount that does not grow with terminal items. The
+   itself cost an amount that does not grow with terminal items, and each
+   projected cost includes the points spent working out the projections, so
+   the reserve also covers that spend. The
    projected partial-scan cost never exceeds the projected full-scan cost:
    when the partial projection (or its conservative bound) would exceed the
    full projection, the full projection is used for both.
