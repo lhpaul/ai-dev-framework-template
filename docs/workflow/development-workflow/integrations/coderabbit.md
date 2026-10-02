@@ -77,6 +77,28 @@ companion-script contract as other CLI reviewers:
 - `RESULT=escalate` with `REASON=rate_limited` when the rate-limit policy is
   strict.
 
+How the reviewer loop treats those skips (#1789):
+
+- `timeout` is reported only when the companion's own watchdog stopped a CLI
+  still running at the end of its wait budget. It is the kept **No verdict
+  yet** skip: it stays non-blocking, prints `NO_VERDICT_YET=1` and
+  `DISPLAY_RESULT=no verdict yet (non-blocking skip: timeout)`, and does not
+  apply `reviewer-failed`. A CLI that itself exits 124 or 137 before the
+  budget is not a stopped review; it reports `no_output` (or another failure
+  reason) instead.
+- `no_output`, `invalid_json`, `ambiguous_output`, `cli_failed`, `unavailable`,
+  and `unauthorized` are failure evidence: they stay non-blocking skips (the
+  loop moves on to the next platform) but apply `reviewer-failed`, and a later
+  waiting stop reports them in `FAILED_PEER_PLATFORMS`.
+- `rate_limited` keeps its existing handling.
+
+The CLI's wait budget is `max_wait` from the loop: 1200 s by default,
+configurable as `review.wait_budgets.coderabbit-cli` (see "Reviewer wait
+budgets and outcome classes" in
+[`../protocols/93-automated-reviewer-loop-protocol.md`](../protocols/93-automated-reviewer-loop-protocol.md#reviewer-wait-budgets-and-outcome-classes-1789)).
+The watchdog runs the CLI in its own process group and stops the whole group
+(TERM, a 2 s grace, then KILL) at the budget on every host.
+
 The default rate-limit policy is `warn`, which records
 `RESULT=skipped`, `REASON=rate_limited`, and `DISPLAY_RESULT=rate_limited`.
 Set `CODERABBIT_CLI_RATE_LIMIT_POLICY=strict` or configure
@@ -326,27 +348,54 @@ The helper does post one **conditional** trigger. When no CodeRabbit activity ha
 
 CodeRabbit signals completion by posting a review (typically `COMMENTED` or `CHANGES_REQUESTED`) on the PR after analyzing the pushed commit.
 
-The helper script checks for a CodeRabbit review on each poll iteration. If a review from `coderabbitai[bot]` is found submitted after the HEAD commit timestamp, the review is considered complete and the script proceeds to Phase 3.
+The helper script checks on each poll iteration for one of three completion signals bound to the current head (#1789):
 
-As a secondary signal, the script also checks for CodeRabbit issue comments (e.g., the PR summary comment) as an **activity indicator** — this is used only to distinguish "CodeRabbit is active but hasn't finished" from "CodeRabbit didn't review this HEAD at all" when the timeout is reached.
+1. a review from `coderabbitai[bot]` whose `commit_id` is the current head (submitted after the HEAD commit timestamp) — an older revision's review never ends the wait;
+2. a CodeRabbit `success` commit status on the current head; or
+3. a CodeRabbit `failure` or `error` commit status on the current head (see the failure row below).
+
+As a secondary signal, the script also checks for CodeRabbit issue comments (e.g., the PR summary or walkthrough comment) as an **activity indicator** — this is used only to distinguish "CodeRabbit is active but hasn't finished" from "CodeRabbit didn't review this HEAD at all" when the wait budget runs out. **A walkthrough comment, or an edit to it, no longer ends the wait on its own**: CodeRabbit edits one walkthrough comment in place for every revision, so its time cannot show which revision it describes. A walkthrough with no current-head review and no status keeps the loop polling, and the wait ends as No verdict yet.
 
 Four kinds of CodeRabbit comment are explicitly **excluded** from that activity signal, because each one is CodeRabbit announcing that it did *not* review: the `Reviews paused` banner, a `rate limit` notice, a `Reviews resumed` acknowledgement, and the `Review skipped` banner (`CODERABBIT_SKIP_BANNER_RE`, which keys on the `skip review by coderabbit.ai` HTML marker and the banner's markdown heading rather than a bare "review skipped" substring, so a walkthrough using that phrase in prose is not mistaken for a banner). Counting any of them as activity would break the poll loop into Phase 3, which would then collect zero inline comments and report the PR clean.
 
 | Result                                                     | Action                                                          |
 | ---------------------------------------------------------- | --------------------------------------------------------------- |
-| CodeRabbit review found after HEAD commit                  | Review complete — proceed to Step 7.3                           |
+| CodeRabbit review on the current head, or a `success` status on it | Review complete — proceed to Step 7.3                  |
+| CodeRabbit `failure` or `error` status on the current head (not a rate/review-limit notice) | Ends the wait at once. Bound findings → `needs_fixes`; a review on the current head keeps its verdict; otherwise **Reviewer failed** — `RESULT=escalate`, `REASON=coderabbit_status_failed`, `reviewer-failed` applied |
+| A reviews, statuses, or activity-comment poll read is refused with HTTP 401 or 403 (not a rate limit) | Ends the wait at once. **Reviewer failed** — `RESULT=escalate`, `REASON=coderabbit-read-denied`, `READ_DENIED_DETAIL=<gh error>`, exit 2, `reviewer-failed` applied; never No verdict yet or the `no_review` kept skip. A rate-limit 403 or another failed read keeps polling |
 | No review yet and `elapsed < max_wait`                     | Not finished yet — wait another `poll_interval` and poll again  |
 | `elapsed >= max_wait` and only a `Review skipped` banner   | Escalate — `REASON=review_skipped_banner` (fix `.coderabbit.yaml`) |
 | `elapsed >= max_wait` and a pause or rate-limit banner     | Escalate — `REASON=rate_limit_max_retries`                      |
-| `elapsed >= max_wait` and no CodeRabbit activity detected  | Stale findings recovery, then skip as `no_review` if none found |
-| `elapsed >= max_wait` and CodeRabbit activity was detected | Timeout — escalate to human                                     |
+| `elapsed >= max_wait` and no CodeRabbit activity detected  | Stale findings recovery, then the kept skip `no_review` if none found (`NO_VERDICT_YET=1`; no `reviewer-failed` label) |
+| `elapsed >= max_wait` and CodeRabbit activity was detected (for example a walkthrough) | **No verdict yet** — `RESULT=waiting_on_reviewer`, `REASON=reviewer-no-verdict-yet`, `WAIT_EXPIRED_DETAIL=review_not_submitted`, exit 4; not an escalation |
+
+`max_wait` is CodeRabbit's own wait budget: 1200 s by default on every branch,
+configurable as `review.wait_budgets.coderabbit` (see "Reviewer wait budgets
+and outcome classes" in
+[`../protocols/93-automated-reviewer-loop-protocol.md`](../protocols/93-automated-reviewer-loop-protocol.md#reviewer-wait-budgets-and-outcome-classes-1789)).
+A `failure` status whose description matches the rate/review-limit notice
+pattern is not counted as a failed review; the rate-limit path handles it as
+before. When the runner re-waits once on the same revision (Protocol 91 Step
+7, `NO_VERDICT_REWAIT=available`), a request recorded by the first run is still
+outstanding, so the loop does not post the conditional `@coderabbitai review`
+re-trigger again.
 
 ### Step 7.3 — Fetch inline comments and reviews
 
+Findings count only from review comments whose `original_commit_id` is the
+current head (GitHub moves a comment's `commit_id` to the newest head while the
+commented line is unchanged) and from reviews whose `commit_id` is the current
+head:
+
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
 gh api repos/{owner}/{repo}/pulls/{pr_number}/comments \
-  --jq "[.[] | select(.user.login == \"coderabbitai[bot]\" and .created_at > \"$since_iso\" and .in_reply_to_id == null) | {path, line, body}]"
+  --jq "[.[] | select(.user.login == \"coderabbitai[bot]\" and .created_at > \"$since_iso\" and .original_commit_id == \"$head_sha\" and .in_reply_to_id == null) | {path, line, body}]"
 ```
+
+An older revision's unresolved CodeRabbit thread is not a finding for the
+current head, but it still blocks a clean result through the unresolved-thread
+audit until it is resolved.
 
 Additionally, `CHANGES_REQUESTED` reviews posted by `coderabbitai[bot]` after the HEAD commit are also fetched from the reviews endpoint and counted as blocking, regardless of the emoji severity marker in their body. This matches the behavior of the other platform adapters.
 

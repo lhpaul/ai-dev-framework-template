@@ -35,6 +35,13 @@ for _cmd in awk bash cat dirname grep jq mktemp rm sleep tr; do
   _cmd_path="$(command -v "$_cmd")"
   ln -sf "$_cmd_path" "$NO_CLI_BIN/$_cmd"
 done
+# #1789 (plan D4, V26): the CLI wrapper starts the CLI in a new process group
+# through setsid or perl setpgrp, so the restricted PATH must provide them.
+for _cmd in perl setsid; do
+  _cmd_path="$(command -v "$_cmd" || true)"
+  [ -n "$_cmd_path" ] || continue
+  ln -sf "$_cmd_path" "$NO_CLI_BIN/$_cmd"
+done
 unset _cmd _cmd_path
 
 PASS_COUNT=0
@@ -421,6 +428,88 @@ run_reviewer "$MOCK_BIN:$NO_CLI_BIN"
 run_test "fallback_timeout_result" "RESULT=skipped" "$(line_for RESULT)"
 run_test "fallback_timeout_reason" "REASON=timeout" "$(line_for REASON)"
 run_test "fallback_timeout_exit" "3" "$(exit_code)"
+
+# #1789 (plan D4, T2.7): the same budget expiry on the default PATH (where a
+# GNU timeout may exist) is the kept `timeout` skip, decided by the watchdog
+# flag; a CLI that itself exits 124 immediately is `no_output` (failure
+# evidence), never the `timeout` kept skip.
+reset_mocks
+set_mock_stdout '{"findings":[]}'
+MOCK_CODERABBIT_SLEEP=3
+CODERABBIT_CLI_REVIEW_TIMEOUT=1
+export MOCK_CODERABBIT_SLEEP CODERABBIT_CLI_REVIEW_TIMEOUT
+run_reviewer "$MOCK_BIN:$PATH"
+run_test "1789_sleep_past_budget_result" "RESULT=skipped" "$(line_for RESULT)"
+run_test "1789_sleep_past_budget_reason" "REASON=timeout" "$(line_for REASON)"
+run_test "1789_sleep_past_budget_exit" "3" "$(exit_code)"
+
+for _early_exit in 124 137; do
+  reset_mocks
+  MOCK_CODERABBIT_STDOUT=''
+  MOCK_CODERABBIT_EXIT="$_early_exit"
+  CODERABBIT_CLI_REVIEW_TIMEOUT=30
+  export MOCK_CODERABBIT_STDOUT MOCK_CODERABBIT_EXIT CODERABBIT_CLI_REVIEW_TIMEOUT
+  run_reviewer "$MOCK_BIN:$PATH"
+  run_test "1789_early_exit_${_early_exit}_result" "RESULT=skipped" "$(line_for RESULT)"
+  run_test "1789_early_exit_${_early_exit}_reason" "REASON=no_output" "$(line_for REASON)"
+  run_test "1789_early_exit_${_early_exit}_exit" "3" "$(exit_code)"
+done
+unset _early_exit
+
+# #1789 (plan D4, T2.13): run_with_timeout watchdog contract unit cases for
+# this companion's own copy. The function is defined inline in the main flow,
+# so it is extracted and evaluated in a subshell. Prints
+# "<status> <RUN_WITH_TIMEOUT_EXPIRED>".
+RWT_DEFINITION="$(awk '/^RUN_WITH_TIMEOUT_EXPIRED=0$/ {p=1} p {print} p && /^}$/ {exit}' "$REVIEWER")"
+run_test "1789_rwt_definition_extracted" "yes" \
+  "$(grep -q '^run_with_timeout() {' <<<"$RWT_DEFINITION" && echo yes || echo no)"
+run_test "1789_no_gnu_timeout_branch" "no" \
+  "$(grep -Eq '^[[:space:]]*timeout "\$timeout_seconds"' "$REVIEWER" && echo yes || echo no)"
+rwt_probe() {
+  bash -c '
+    eval "$1"
+    shift
+    rwt_budget="$1"
+    shift
+    rwt_out="$(mktemp)"
+    rwt_err="$(mktemp)"
+    set +e
+    run_with_timeout "$rwt_budget" "$rwt_out" "$rwt_err" "$@"
+    rwt_status=$?
+    rm -f "$rwt_out" "$rwt_err"
+    printf "%s %s\n" "$rwt_status" "$RUN_WITH_TIMEOUT_EXPIRED"
+  ' _ "$RWT_DEFINITION" "$@" 2>/dev/null
+}
+run_test "1789_rwt_early_exit_124" "124 0" "$(rwt_probe 30 sh -c 'exit 124')"
+run_test "1789_rwt_early_exit_137" "137 0" "$(rwt_probe 30 sh -c 'exit 137')"
+run_test "1789_rwt_sleeps_past_budget" "124 1" "$(rwt_probe 1 sleep 10)"
+run_test "1789_rwt_finishes_in_final_poll_second" "5 0" "$(rwt_probe 2 sh -c 'sleep 1.5; exit 5')"
+
+# A CLI that leaves a background descendant: the group KILL reaps it too.
+RWT_PIDFILE="$(mktemp)"
+run_test "1789_rwt_descendant_result" "124 1" \
+  "$(rwt_probe 1 sh -c 'sleep 30 & echo $! > "$0"; wait' "$RWT_PIDFILE")"
+_rwt_descendant_alive=0
+_rwt_descendant_pid="$(cat "$RWT_PIDFILE" 2>/dev/null || true)"
+if [ -n "$_rwt_descendant_pid" ] && kill -0 "$_rwt_descendant_pid" 2>/dev/null; then
+  case "$(ps -o stat= -p "$_rwt_descendant_pid" 2>/dev/null | tr -d '[:space:]' || true)" in
+    Z*) ;;
+    *)
+      _rwt_descendant_alive=1
+      kill -KILL "$_rwt_descendant_pid" 2>/dev/null || true
+      ;;
+  esac
+fi
+run_test "1789_rwt_descendant_killed" "0" "$_rwt_descendant_alive"
+rm -f "$RWT_PIDFILE"
+unset RWT_PIDFILE _rwt_descendant_alive _rwt_descendant_pid
+
+# A CLI that ignores TERM is KILLed after the 2 s grace, within budget + grace.
+_rwt_start="$(date +%s)"
+run_test "1789_rwt_ignores_term_result" "124 1" "$(rwt_probe 1 sh -c 'trap "" TERM; sleep 30')"
+_rwt_elapsed=$(( $(date +%s) - _rwt_start ))
+run_test "1789_rwt_ignores_term_bounded" "yes" "$([ "$_rwt_elapsed" -le 6 ] && echo yes || echo no)"
+unset _rwt_start _rwt_elapsed
 
 reset_mocks
 set_mock_stdout '{"findings":[{"severity":"Minor"},{"severity":"Critical"}]}'

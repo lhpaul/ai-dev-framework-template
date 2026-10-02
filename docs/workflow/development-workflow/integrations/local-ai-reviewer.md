@@ -379,12 +379,41 @@ The local reviewer fails closed:
 | Provider usage/quota refusal (no verdict on stdout) | `RESULT=escalate`, `REASON=quota_exhausted` (optional `QUOTA_RESET_AT`) |
 | Checkout head mismatch | `RESULT=escalate`, `REASON=head_mismatch` |
 | Missing `REVIEW.md` | `RESULT=escalate`, `REASON=review_contract_missing` |
-| Timeout | `RESULT=escalate`, `REASON=timeout` |
+| Reviewer still running when the wait budget ends (stopped by the watchdog) | `RESULT=waiting_on_reviewer`, `REASON=reviewer-no-verdict-yet`, `NO_VERDICT_YET=1`, `WAIT_EXPIRED_DETAIL=stopped_at_budget`, exit 4 — **No verdict yet**, not a failure |
+| Command exits non-zero before the budget (including its own exit 124 or 137) | handled by the decision gate below — never No verdict yet |
 | Malformed output | `RESULT=escalate`, `REASON=malformed_output` |
 | Explicit disabled config | `RESULT=skipped`, `REASON=disabled_by_config` |
 
 A skipped or escalated local result is availability evidence, not clean review
 evidence.
+
+### Wait budget and No verdict yet (#1789)
+
+When `pr-review-loop.sh` runs the local reviewer, it passes the platform's
+wait budget as `--timeout`: 1200 s by default on every branch, including
+`spec/*` and `implementation-plan/*` (the local reviewer reviews documentation
+branches with its own checklists, so it no longer receives the 180 s
+documentation-branch budget), configurable as
+`review.wait_budgets.local-ai-reviewer`. `LOCAL_AI_REVIEWER_TIMEOUT` applies
+only to standalone companion runs. See "Reviewer wait budgets and outcome
+classes" in
+[`../protocols/93-automated-reviewer-loop-protocol.md`](../protocols/93-automated-reviewer-loop-protocol.md#reviewer-wait-budgets-and-outcome-classes-1789).
+
+The command's exit status is never evidence that the budget ran out, because
+a reviewer command can itself exit 124 or 137 before the budget. The
+companion's watchdog runs the command in its own process group on every host
+(`setsid` or `perl setpgrp`; GNU `timeout` is no longer used) and reports
+expiry out of band: only when the watchdog reached the budget **and** the
+command was still running does the companion stop the process group (TERM,
+a 2 s grace, then KILL) and exit 4 with the No verdict yet keys. The stopped
+process's partial output is not inspected. The loop reports that as
+`RESULT=waiting_on_reviewer`, `REASON=reviewer-no-verdict-yet`, applies no
+`reviewer-failed` label, and the runner re-waits once on the same revision
+(Protocol 91 Step 7), when the local review runs again.
+
+The strict spec and plan passes keep their non-blocking `strict_pass_failed`
+state when they run out of the shared budget; they never change the ordinary
+verdict.
 
 ### Setup-probe precedence (#1762)
 
@@ -411,7 +440,7 @@ rows are mutually exclusive):
 
 | # | Precondition | stdout shape | probe pattern in combined output | Outcome | Next action |
 | --- | --- | --- | --- | --- | --- |
-| 1 | command exit 124 / 137 | any | any | `escalate` / `timeout` | none — hard timeout |
+| 1 | the watchdog stopped a command still running at the budget (`RUN_WITH_TIMEOUT_EXPIRED=1`) | not inspected | not inspected | `waiting_on_reviewer` / `reviewer-no-verdict-yet` (exit 4) | none — No verdict yet; the runner re-waits once |
 | 2 | any command exit | not exactly one valid verdict object (invalid JSON, empty, multiple JSON values, `{}`, `{"issues":"quota exceeded"}`, `{"result":"provider_error"}`) | model-access pattern | `escalate` / `missing_model_access` | fix model config |
 | 3 | any command exit | not a valid verdict object | auth / 401 / 403 pattern | `escalate` / `missing_credentials` | fix credentials |
 | 4 | any command exit | not a valid verdict object | usage/quota pattern | `escalate` / `quota_exhausted` | wait for reset, then rerun |

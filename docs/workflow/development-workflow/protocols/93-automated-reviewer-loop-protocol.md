@@ -92,8 +92,9 @@ alignment, completion verification, or readiness gates.
 
 Generic skip-like text, comments, incomplete check runs, and prior-head
 evidence are not authoritative. If the exact terminal reason is absent, keep
-following the existing pending, unavailable, finding, or timeout path rather
-than manually posting a clean summary.
+following the existing pending, unavailable, finding, or No verdict yet path
+(see "Reviewer wait budgets and outcome classes" below) rather than manually
+posting a clean summary.
 
 #### CodeRabbit CLI unavailable or rate-limited reviews
 
@@ -103,7 +104,11 @@ When `coderabbit-cli` is configured in `review.on_draft.github` or
 platform may return `RESULT=skipped` for missing CLI installation, missing auth,
 invalid or ambiguous output, timeout, or warning-policy rate limits. This is
 permissive for aggregate sequencing but is not evidence that a fresh CodeRabbit
-CLI review found no issues.
+CLI review found no issues. A `timeout` skip (the CLI was still running when
+its wait budget ended) is the kept No verdict yet skip and does not apply
+`reviewer-failed`; the `no_output`, `invalid_json`, `ambiguous_output`,
+`cli_failed`, `unavailable`, and `unauthorized` skips carry failure evidence
+and apply `reviewer-failed` while staying non-blocking (#1789).
 
 Strict CLI rate-limit policy returns `RESULT=escalate` with
 `REASON=rate_limited`. Treat that like any other platform escalation.
@@ -194,6 +199,14 @@ decision-gate matrix rows in
 | `escalate` | `codex_current_verdict_unrecognized` | A current terminal verdict reproduces neither an approved template nor the documented blocking markers, and is not a recognized availability response |
 | `escalate` | `codex_finding_thread_correlation_missing` | A current terminal finding has no stable review-thread identifier (a root-comment finding, or a review's own body finding) or no identifiable matching conversation |
 | `escalate` | `evidence_unavailable_codex_thread_state` | The bounded thread/correlation evidence query failed or was left indeterminate after retry |
+
+Both `waiting_on_reviewer` reasons are in the No verdict yet class (#1789):
+they never apply `reviewer-failed`, they print `NO_VERDICT_REWAIT` and the
+waiting keys, and they get the one automatic re-wait per revision, during
+which the loop runs the Codex companion with `--max-retriggers 0` so no
+duplicate trigger is posted. On the cleared-findings path the companion posts
+a fresh trigger only when the cleared review answered the newest current-head
+trigger; a strictly newer, still-unanswered trigger is polled instead.
 
 The four `escalate` reason codes are terminal for the current run and are
 never converted into `needs_fixes`, `waiting_on_reviewer`, or clean
@@ -470,6 +483,261 @@ explicit selection is an instruction to run those reviewers), in `--compare`
 runs, when the ledger for this PR is unreadable, when the loop cannot read its
 own head, and when `PR_REVIEW_LOOP_DISABLE_STAGE_SKIP=1` is set.
 
+### Reviewer wait budgets and outcome classes (#1789)
+
+This section is the canonical statement of how long `pr-review-loop.sh` waits
+for each reviewer platform, what it reports when a wait runs out, and how
+those outcomes combine. The per-platform integration guides describe each
+platform's own signals and link back here.
+
+#### Outcome classes
+
+Every platform outcome falls into one of three classes:
+
+| Class | Loop result | Meaning |
+| --- | --- | --- |
+| **Verdict received** | `clean`, `needs_fixes`, `needs_rerun` | The platform answered for the current revision |
+| **No verdict yet** | `waiting_on_reviewer` with `REASON=reviewer-no-verdict-yet` (or Codex GitHub's `codex-github-review-pending` / `codex-github-reaction-without-review`) | The platform's wait budget ran out with no verdict and no failure evidence for the current revision. This is not a failure: no `reviewer-failed` label, no escalation, no fixer |
+| **Reviewer failed** | `escalate` | Positive failure evidence: the reviewer errored, its own run concluded with a failure-type value, it returned output the loop cannot read, or it reported a failure the loop cannot classify |
+
+A No verdict yet platform prints `NO_VERDICT_YET=1`,
+`WAIT_EXPIRED_DETAIL=<detail>` (for example `check_not_completed`,
+`review_not_submitted`, `no_acknowledgement`, `run_not_completed`, or
+`stopped_at_budget`), `PENDING_REVIEWER=<platform>`, and
+`PENDING_REVIEW_HEAD_SHA=<sha>`, and the loop exits 4.
+
+**Kept skips.** Four expired waits stay non-blocking skips so the run keeps
+its existing progression: Devin `no_check_run`, CodeRabbit `no_review`,
+CodeRabbit CLI `timeout`, and PR-Agent `no_review`. They keep
+`RESULT=skipped` and their reason, add `NO_VERDICT_YET=1` and
+`DISPLAY_RESULT=no verdict yet (non-blocking skip: <reason>)`, and never apply
+`reviewer-failed`. No other skip is a kept skip.
+
+**Skips that carry failure evidence.** A non-blocking skip whose reason is
+`unavailable`, `thread-check-failed`, `forbidden`, `unauthorized`, or one of
+the CodeRabbit CLI reasons `no_output`, `invalid_json`, `ambiguous_output`,
+`cli_failed` stays `skipped` (it does not stop the run), but it applies
+`reviewer-failed`.
+
+**Availability outcomes are unchanged.** `rate_limited`,
+`rate_limit_max_retries`, `codex-github-usage-limit`,
+`codex-github-account-not-connected`, `bugbot-usage-limit`, and
+`quota_exhausted` keep their results, reasons, exit codes, and label
+behavior. A platform that reports itself unavailable keeps its existing
+handling.
+
+**A reviewer's own failed run is a failure.** A check run on the current head
+that completed with `failure`, `timed_out`, `cancelled`, `action_required`,
+`startup_failure`, or `stale`, a commit status in `failure` or `error`, or a
+dispatched workflow run whose conclusion is not `success` is failure evidence
+unless a verdict bound to the current head exists (bound findings give
+`needs_fixes`; a bound completion review keeps its verdict). The renamed and
+new failure reasons are `bugbot-run-timed-out`,
+`claude_code_action_run_failed`, `devin_run_failed`,
+`coderabbit_status_failed`, and `pr_agent_run_failed`. A failure-type status
+whose description is a rate or review-limit notice keeps the rate-limit
+handling.
+
+**A refused polling read is a failure.** When GitHub refuses a polling read
+with an authorization or permission error (HTTP 401 or 403, `Bad
+credentials`, `Resource not accessible`, `Forbidden`, `Unauthorized`), the
+platform ends at once with `RESULT=escalate`,
+`REASON=<platform>-read-denied`, and `READ_DENIED_DETAIL=<gh error line>`,
+and the loop applies `reviewer-failed`. It is never No verdict yet or a kept
+skip. The reasons are `copilot-read-denied` (reviews read),
+`greptile-read-denied` (trigger-comment reactions read),
+`devin-read-denied` (reviews, check runs, and statuses reads), and
+`coderabbit-read-denied` (bound reviews, CodeRabbit status, and activity
+comment reads). An HTTP 403 whose text is a rate limit (primary or secondary)
+is not a refusal. That error, and any other failed read such as a 5xx or a
+network error, keeps polling, and budget expiry stays No verdict yet. Ronda
+and Bugbot already escalate `fetch-failed` on any failed check-run read. The
+Claude companion reports a refused run read as `unavailable` (exit 3).
+PR-Agent and Devin keep the rule that a failed read leaves the last
+successful read in force: Devin retains each endpoint's check-run and status
+counts, so an observed failure signal or a once-seen check is never forgotten
+because a later poll read failed.
+
+#### Built-in wait budgets
+
+| Platform | Built-in default (seconds) |
+| --- | --- |
+| `bugbot` | 2400 |
+| `codex-github` | 1800 |
+| `greptile`, `devin`, `coderabbit`, `coderabbit-cli`, `local-ai-reviewer`, `pr-agent`, `claude-code-action`, `copilot`, `haystack`, `ronda` | 1200 |
+| `devin` on `spec/*` or `implementation-plan/*` | `PR_REVIEW_LOOP_DOC_MAX_WAIT` (default 180) |
+
+Devin is the only platform that does not review documentation branches, so
+it is the only platform whose default is shortened there. Every other
+platform, including Bugbot and `local-ai-reviewer`, keeps its own default on
+`spec/*` and `implementation-plan/*` branches.
+
+Bugbot's 2400 s budget bounds its whole wait. Its one-shot #1390 re-trigger
+fires at `budget - min(600, floor(budget / 2))` seconds, 1800 s for the
+default, so a Bugbot run that answers within 25 minutes of the request is
+always observed before any re-trigger.
+
+#### Configuring budgets
+
+Each platform's budget is resolved in this order, and the run prints the
+result once as
+`PLATFORM_WAIT_BUDGETS=<platform>:<seconds>:<source>[:<adjustment>],…`:
+
+1. `--max-wait <seconds>` — a one-run override for every platform (source
+   `override`). It must be a whole number of seconds from 1 to 999999;
+   anything else is refused with exit 64 before any review request is posted.
+   No adjustment ever changes an override.
+2. A configured value (source `configured`) under `review.wait_budgets` in
+   `.ai-dev-workflow.yaml`:
+
+   ```yaml
+   review:
+     wait_budgets:
+       bugbot: 2700
+       local-ai-reviewer: 1500
+   ```
+
+   Values are whole seconds from 1 to 999999. An invalid value prints a `WARN`
+   and the platform uses its built-in default. A key that is not a supported
+   platform name, or a `wait_budgets` value that is not a block mapping, is
+   warned about and ignored. `CODEX_GITHUB_MAX_WAIT`, when set, is Codex
+   GitHub's configured value and wins over the YAML key. A
+   `claude-code-action` value above 3600 (the companion's own maximum) warns
+   and falls back to the default.
+3. The built-in default above (source `default`).
+
+Adjustments: `documentation_branch` shortens only Devin's built-in default on
+documentation branches. `large_diff` lengthens a configured or default budget
+below `LARGE_DIFF_MAX_WAIT` (default 2400) to that value when the PR's
+changed-files count exceeds `LARGE_DIFF_THRESHOLD` (default 50) on a
+non-documentation branch; it never shortens a budget.
+
+The poll interval is `--poll-interval` when given; otherwise
+`CODEX_GITHUB_POLL_INTERVAL` (default 60) for `codex-github` only, 30 s on
+documentation branches, and 120 s elsewhere, reduced when needed to stay
+below the platform's budget.
+
+**Worst-case run time.** Platforms run one after another, so a run's
+worst-case wait is the sum of the budgets of the platforms it evaluates, and
+the automatic re-wait below can repeat that once for the same revision.
+Size an outer caller timeout from that sum.
+
+#### Precedence across platforms
+
+When a run produces outcomes from several platforms, the overall result is
+the best-ranked one:
+
+1. Reviewer failed (`escalate`, or any result the loop does not recognize)
+2. Findings (`needs_fixes`, `needs_rerun`)
+3. No verdict yet (`waiting_on_reviewer`)
+4. Clean, or a skip (including the kept skips)
+
+Ties go to the earliest platform in evaluation order, and that platform's
+output becomes the run's output. A normal run already stops at the first
+outcome ranked 1–3. A `--compare` run evaluates every platform and applies
+this order instead of "first blocking platform governs". Loop-level
+escalations (cycle caps, `ledger_persist_failed`, thread-audit failures, PR
+ownership, the expensive-reviewer deferral cap, the second local pass) are
+applied after platform aggregation and keep precedence over every platform
+outcome.
+
+#### The `reviewer-failed` label rule
+
+After the platform loop, every run that evaluated reviewers reconciles the
+`reviewer-failed` label from that run alone: the label is required when any
+platform carries failure evidence (an `escalate` other than `rate_limited`,
+or a skip whose reason carries failure evidence) or the aggregate result
+itself requires it, and removed otherwise. This includes runs whose
+platforms were all replayed from the ledger (#1692), so a later clean run on
+the same revision removes the label. `needs_fixes`, `waiting_on_reviewer`,
+and the kept skips never apply it. A failed add or remove prints a `WARN` and
+does not change the result. Runs that stop before evaluating reviewers (lock
+contention, PR ownership refusals, `truncated_run`,
+`execution_budget_misconfigured`) leave the label unchanged.
+
+#### Automatic re-wait
+
+On a `waiting_on_reviewer` result whose reason is `reviewer-no-verdict-yet`
+or one of the two Codex wait reasons, the loop prints
+`NO_VERDICT_REWAIT=<value>`:
+
+| Value | Meaning |
+| --- | --- |
+| `available` | First waiting result for this `PR_REVIEW_LOOP_RUN_ID` and head, and its summary comment (with the ledger entry) was persisted. The runner may re-run Step 7 once, immediately, with the same run id |
+| `used` | This invocation was that re-wait. The runner stops as **Waiting on reviewer** |
+| `untracked` | The bound cannot be enforced: `PR_REVIEW_LOOP_RUN_ID` is unset, the head is unknown, the ledger is unreadable, or the summary could not be persisted. The runner stops without re-waiting |
+
+The re-wait never posts a duplicate request. In re-wait mode each platform
+adopts the request the earlier invocation recorded for the same run and
+head: Bugbot posts nothing and skips its #1390 re-trigger; Greptile polls the
+recorded trigger comment (with a `WARN` and a new post only when that
+comment is empty or unreadable); PR-Agent treats the recorded request as
+pending; CodeRabbit posts no silent-non-trigger re-trigger; Codex GitHub runs
+with `--max-retriggers 0`; Claude Code Action polls the recorded workflow run
+(`--adopt-run-id` / `--adopt-requested-at`). When nothing was recorded, the
+platform logs `INFO: no recorded outstanding request for <platform> on <head>; requesting a review`
+and requests normally. A re-wait entry never counts toward `max_cycles` or
+`max_total_cycles`. A push between runs makes the next run a fresh run for
+the new head, with its own unspent re-wait. Protocol 91 Step 7 defines the
+runner rows.
+
+#### Timing and waiting keys
+
+For every dispatched platform `<n>` the run prints:
+
+| Key | Value |
+| --- | --- |
+| `PLATFORM_<n>_OUTCOME_CLASS` | `verdict_received`, `no_verdict_yet`, `reviewer_failed`, `existing_handling`, `skipped_failure_evidence`, or `skipped` |
+| `PLATFORM_<n>_WAIT_BUDGET_SECONDS` / `_WAIT_BUDGET_SOURCE` / `_WAIT_BUDGET_ADJUSTMENT` | The resolved budget, `override`/`configured`/`default`, and `none`/`documentation_branch`/`large_diff` |
+| `PLATFORM_<n>_REQUESTED_AT` / `_REQUESTED_AT_SOURCE` | The review request time (`request`) when the platform posted or adopted one, else the wait start (`wait_start`) |
+| `PLATFORM_<n>_REQUEST_REF` | The request's comment or workflow run id, when the platform printed one |
+| `PLATFORM_<n>_LATENCY_SECONDS` | For a verdict, a failure, or existing handling |
+| `PLATFORM_<n>_WAITED_SECONDS` | For No verdict yet |
+| `PLATFORM_<n>_ELAPSED_SECONDS` | For a skip |
+| `PLATFORM_<n>_VERDICT_REUSED=1` | For a #1692 replay; no budget, request, or seconds key is printed |
+
+Latency is measured to the poll that observed the verdict. The summary
+comment carries the same values in a **Reviewer timing** section, and each
+ledger `platform_results[]` record carries them as additive keys
+(`outcome_class`, `wait_budget_seconds`, `wait_budget_source`,
+`wait_budget_adjustment`, `requested_at`, `requested_at_source`,
+`request_ref`, `elapsed_seconds`, `elapsed_kind`, `reused`); the ledger schema
+string is unchanged.
+
+A waiting result with a No verdict yet reason also prints
+`PENDING_REVIEWER`, `PENDING_REVIEW_HEAD_SHA`,
+`PENDING_REVIEW_REQUESTED_AT` and `PENDING_REVIEW_WAITED_SECONDS` (when
+recorded), and `NO_FAILURE_DETECTED`. `NO_FAILURE_DETECTED=1` means no
+platform in this run carried failure evidence. `NO_FAILURE_DETECTED=0` means
+at least one did (for example a CodeRabbit CLI `no_output` skip evaluated
+before the waiting platform); the run then applies `reviewer-failed` and
+prints `FAILED_PEER_PLATFORMS=<comma-separated platforms>` when it can name
+them. The summary result line says "no reviewer failure was detected" only
+when `NO_FAILURE_DETECTED=1`; otherwise it names each failed peer and its
+reason and says `reviewer-failed` was applied.
+
+#### Current-revision binding
+
+A verdict, finding, or completion signal counts for the loop head `H` only
+through one of these bindings; anything else is ignored, so the platform
+keeps polling and ends in No verdict yet (or its kept skip), never in a
+verdict for another revision:
+
+| Evidence kind | Bound to `H` by |
+| --- | --- |
+| Check runs and commit statuses | being read from `commits/H/check-runs` or `commits/H/statuses` |
+| Workflow runs the loop dispatches (Claude Code Action) | the run id returned by this invocation's dispatch, or the run id recorded for `H` by an earlier invocation |
+| Pull request reviews | `commit_id == H` |
+| Pull request review comments | `original_commit_id == H` (GitHub moves `commit_id` to the newest head while the commented line is unchanged) |
+| Issue comments and reactions | being the answer to a request recorded for `H` (posted by this invocation after it read `H`, or recorded for `H` in the ledger); PR-Agent's summary comment by its own head-marker and run-binding rules |
+
+A timestamp compared with the head commit's committer time never binds
+evidence to `H`. Platform state notices (paused, disabled, usage-limit, and
+rate-limit comments) are availability reports, not verdicts, and keep their
+existing reads. Unresolved review threads are not a verdict for any revision:
+an older revision's unresolved thread still blocks a clean aggregate through
+the thread audit. Each integration guide describes its platform's binding.
+
 ### Pre-flight: check for existing unresolved review findings
 
 Before running any scripts, inspect the PR's current review state:
@@ -542,9 +810,9 @@ If the SHA is **not found**, the agent must **not** record it as the resolved co
 
 **Escalation**: If `git commit` fails (e.g., pre-commit hook rejection or empty diff), investigate and resolve the failure before marking any finding resolved. Do not fabricate a SHA or skip the commit step.
 
-#### Stale review after timeout
+#### Stale review after a waiting stop
 
-Also handle the case where a platform posted blocking findings after a previous run timed out and the agent moved on: if those findings are still unresolved per the rules above, address them before re-running the scripts. Apply the **Inline fix rule below first** when all findings are mechanical (single file, fully described, ≤ 5 lines); fall back to dispatching a fixer sub-agent only when the inline rule does not apply. In either case, wait for the push to land before running the scripts again — do not re-trigger the reviewer loop against stale findings.
+Also handle the case where a platform posted blocking findings after a previous run stopped as Waiting on reviewer (No verdict yet) and the agent moved on: if those findings are still unresolved per the rules above, address them before re-running the scripts. Apply the **Inline fix rule below first** when all findings are mechanical (single file, fully described, ≤ 5 lines); fall back to dispatching a fixer sub-agent only when the inline rule does not apply. In either case, wait for the push to land before running the scripts again — do not re-trigger the reviewer loop against stale findings.
 
 ### Inline fix rule (attempt before sub-agent dispatch)
 
@@ -891,6 +1159,9 @@ what to check when diagnosing a stalled loop.
 CodeRabbit posts a "Reviews paused" issue comment on the PR and does not post a new review.
 The push appears to complete normally but no review follows.
 
+In this section `max_wait` is CodeRabbit's own wait budget (1200 s by default;
+see "Reviewer wait budgets and outcome classes" above).
+
 **Script behavior**: After half the max-wait window has elapsed with no activity
 (`elapsed >= max_wait / 2`), `pr-review-loop.sh` checks for a "Reviews paused" issue
 comment from `coderabbitai[bot]` posted after the current HEAD's `since_iso` timestamp. If
@@ -900,7 +1171,10 @@ timer to give the resumed review a full polling window.
 
 **Trigger condition**: Only attempted once per HEAD cycle (`coderabbit_retrigger_attempted`
 flag). If CodeRabbit remains unresponsive after the retrigger and the max-wait window
-elapses, the loop times out and exits `escalate`.
+elapses, the result is No verdict yet: `waiting_on_reviewer` /
+`reviewer-no-verdict-yet` (detail `review_not_submitted`) when CodeRabbit showed
+activity, or the kept `skipped` / `no_review` skip when it showed none. Neither
+escalates or applies `reviewer-failed` (#1789).
 
 #### Pattern 2: Silent non-trigger
 
@@ -913,31 +1187,35 @@ activity, no "Reviews paused" comment, and no rate-limit comment, `pr-review-loo
 `@coderabbitai review` to force a fresh review. The `coderabbit_no_trigger_retriggers`
 counter is incremented; `CODERABBIT_RATE_LIMIT_MAX_RETRIES` is the combined cap for total
 retrigger attempts across both this mechanism and the rate-limit retry path. The elapsed
-timer resets after posting so the triggered review has a full polling window.
+timer resets after posting so the triggered review has a full polling window. In the
+automatic re-wait (#1789), a request recorded by the earlier invocation is still
+outstanding, so this re-trigger is not posted.
 
 **Default timeout (issue #1433)**: reduced from a fixed 600 s to a computed default via
 `coderabbit_no_trigger_timeout_default` in `pr-review-loop.sh`, following this effective-timeout
-rule based on the invocation's `--max-wait`:
+rule based on CodeRabbit's resolved wait budget (`max_wait`):
 
-| `--max-wait`          | Effective `CODERABBIT_NO_TRIGGER_TIMEOUT` default                                                                             |
+| CodeRabbit wait budget | Effective `CODERABBIT_NO_TRIGGER_TIMEOUT` default                                                                             |
 | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| >= 360 s (e.g. the 1200 s script default, or the 2400 s large-diff default) | 180 s — the hardcoded default; the half-`max_wait` cap does not bind.                                    |
-| 60 s – 359 s            | `floor(max_wait / 2)` — the cap binds and is always less than `max_wait`, guaranteeing room for a subsequent poll cycle before the outer timeout. |
-| < 60 s (e.g. the 180 s spec/\*/implementation-plan/\* doc-branch default) | `max(30 s, floor(max_wait / 2))` — a 30 s floor takes precedence over the halved cap; for `max_wait` at or below ~30 s this can leave little or no room before the outer timeout, but this repo never configures `--max-wait` below 180 s, so this is a defensive edge case rather than a realistic operating point. |
+| >= 360 s (e.g. the 1200 s built-in default, or the 2400 s large-diff budget) | 180 s — the hardcoded default; the half-`max_wait` cap does not bind.                                    |
+| 60 s – 359 s            | `floor(max_wait / 2)` — the cap binds and is always less than `max_wait`, guaranteeing room for a subsequent poll cycle before the budget ends. |
+| < 60 s (only from an explicit `--max-wait` or `review.wait_budgets.coderabbit` value) | `max(30 s, floor(max_wait / 2))` — a 30 s floor takes precedence over the halved cap; for `max_wait` at or below ~30 s this can leave little or no room before the budget ends, so this is a defensive edge case rather than a realistic operating point. CodeRabbit keeps its 1200 s default on documentation branches. |
 
 An explicit `CODERABBIT_NO_TRIGGER_TIMEOUT` env var override is honored as-is (uncapped);
 `coderabbit_resolve_no_trigger_timeout` validates it and falls back to the computed default
 (with a `WARN` message) only when the override is not a positive integer.
 
 **Trigger condition**: Allowed up to `CODERABBIT_RATE_LIMIT_MAX_RETRIES` times total. If
-the cap is reached and CodeRabbit still has not responded, the loop exits `escalate`.
+the cap is reached and CodeRabbit still has not responded by the end of its budget, the
+result is No verdict yet (the kept `no_review` skip when CodeRabbit showed no activity),
+not an escalation. The rate-limit path's own `rate_limit_max_retries` outcome is unchanged.
 
 #### Diagnosing a stalled loop (manual polling)
 
 When an agent is polling manually — or when `pr-review-loop.sh` has been running for more
 than the effective `CODERABBIT_NO_TRIGGER_TIMEOUT` window with no CodeRabbit activity (180 s
-on the default 1200 s `--max-wait` invocation; see the effective-timeout table above for
-other `--max-wait` values) — check these markers before escalating:
+with CodeRabbit's default 1200 s budget; see the effective-timeout table above for
+other budgets) — check these markers before concluding anything:
 
 1. **Check for a "Reviews paused" comment**: run:
 
@@ -960,14 +1238,23 @@ other `--max-wait` values) — check these markers before escalating:
 
 #### When to escalate vs. wait
 
-Do **not** escalate while the script is still within its wait window or while an
-auto-retrigger was just posted. Escalate only when **both** of the following are true:
+A CodeRabbit wait that runs out with no review is **No verdict yet**, not a failure
+(#1789). Do **not** escalate while the script is still within its wait window or while an
+auto-retrigger was just posted, and do not escalate on a No verdict yet result:
 
-- The script has posted `@coderabbitai review` (auto-retrigger for either pattern), AND
-- A full `max_wait` window has elapsed after the retrigger with still no CodeRabbit review.
+- When the script reports `waiting_on_reviewer` / `reviewer-no-verdict-yet` with
+  `NO_VERDICT_REWAIT=available`, the runner re-runs Step 7 once on the same revision
+  (Protocol 91 Step 7); the re-run adopts the recorded request and posts no new one.
+- When it reports `NO_VERDICT_REWAIT=used` or `untracked`, stop as **Waiting on
+  reviewer** and name CodeRabbit, the revision, the request time, and the waited seconds.
+  The human action is to re-run the loop later on the same revision, or to investigate
+  CodeRabbit if it still has not answered.
+- Escalate only on failure evidence: a CodeRabbit `failure` or `error` status on the
+  current head (`coderabbit_status_failed`), the skip banner, or another `escalate`
+  result the script reports.
 
-If you are running the script, it handles escalation automatically. If you are polling
-manually, apply this rule before concluding the loop is stuck and escalating to human.
+If you are polling manually, apply the same rule: a quiet CodeRabbit after the retrigger and
+a full budget is a waiting stop, not an escalation.
 
 ### CodeRabbit summary comment update-in-place pattern
 
@@ -1103,7 +1390,7 @@ The sequence after each fixer push is:
 
 ### Stuck-loop detection and escalation
 
-The automated reviewer loop can become stuck if findings are not being resolved or if the same issues keep reappearing. Complement the per-platform timeouts in `pr-review-loop.sh` (20 min) with these higher-level heuristics to detect when a fix-review cycle is not making progress:
+The automated reviewer loop can become stuck if findings are not being resolved or if the same issues keep reappearing. Complement the per-platform wait budgets in `pr-review-loop.sh` (see "Reviewer wait budgets and outcome classes" above: 2400 s for Bugbot, 1800 s for Codex GitHub, 1200 s for the others, plus one automatic re-wait per revision) with these higher-level heuristics to detect when a fix-review cycle is not making progress:
 
 #### Detection rules
 
@@ -1625,7 +1912,8 @@ This prevents declaring a PR "clean" while substantive reviewer findings remain 
 After processing the requested PR(s), report:
 
 - **Ready for human review**: PR link, branch, and that the internal review gate, every configured automated reviewer, and CI are all clean (or skipped). For spec and plan PRs, mention that the `Document Quality Gate` log is present. Confirm that `gh pr ready` was run (after Step 7a APPROVED, before Step 7) to convert the draft PR to non-draft.
-- **Escalated**: PR link, reason (no progress over consecutive cycles, finding reappeared after fix, max cycles, timeout, or review platform escalate).
+- **Escalated**: PR link, reason (no progress over consecutive cycles, finding reappeared after fix, max cycles, or a review platform escalate such as Reviewer failed).
+- **Waiting on reviewer**: PR link, the pending platform (`PENDING_REVIEWER`), the revision (`PENDING_REVIEW_HEAD_SHA`), the request time and waited seconds, and the failure statement from `NO_FAILURE_DETECTED` / `FAILED_PEER_PLATFORMS` (see Protocol 91 Step 7). A No verdict yet stop is not an escalation; the human action is to re-run the loop later on the same revision, or to investigate the platform if it still has not answered.
 - **Skipped**: If no review platform is configured, or a configured platform is
   currently unsupported, unavailable, unauthenticated, rate-limited under
   warning policy, or otherwise skipped, note that in the result for the listed

@@ -1325,6 +1325,54 @@ ec=$(cat "$_REVIEWER_EXIT_FILE")
 run_test "check_run_fallback_pending_result" "RESULT=skipped" "$(echo "$output" | grep '^RESULT=')"
 run_test "check_run_fallback_pending_reason" "REASON=pending_check_run" "$(echo "$output" | grep '^REASON=')"
 run_test "check_run_fallback_pending_exit_code" "2" "$ec"
+# #1789 (plan D8 Haystack row, T2.27): the check-run fallback ran after the
+# pending_timeout budget expiry and the check run is still pending.
+run_test "1789_pending_timeout_pending_check_budget_expired" "HAYSTACK_BUDGET_EXPIRED=1" \
+  "$(echo "$output" | grep '^HAYSTACK_BUDGET_EXPIRED=')"
+
+# #1789 (T2.27): the per-call `timeout` budget-expiry path with a still-pending
+# check run also prints the key.
+MOCK_HAYSTACK_OUTPUTS='{"owner":"owner","repo":"repo","prNumber":123,"status":"pending"}'
+MOCK_HAYSTACK_EXITS='0'
+MOCK_HAYSTACK_SLEEPS='4'
+_install_mock_with_exits
+_install_gh_check_run_mock
+
+output=$(_run_reviewer 2 1)
+ec=$(cat "$_REVIEWER_EXIT_FILE")
+
+run_test "1789_timeout_pending_check_reason" "REASON=pending_check_run" "$(echo "$output" | grep '^REASON=')"
+run_test "1789_timeout_pending_check_budget_expired" "HAYSTACK_BUDGET_EXPIRED=1" \
+  "$(echo "$output" | grep '^HAYSTACK_BUDGET_EXPIRED=')"
+run_test "1789_timeout_pending_check_exit_code" "2" "$ec"
+unset MOCK_HAYSTACK_SLEEPS
+
+# #1789 (T2.27): the CLI-missing path's pending check run is not a budget
+# expiry, so it never prints the key.
+_cli_missing_bin="$(mktemp -d)"
+cp "$MOCK_BIN/gh" "$_cli_missing_bin/gh"
+_cli_missing_path="$_cli_missing_bin"
+_IFS_SAVE="$IFS"
+IFS=:
+for _cli_missing_dir in $PATH; do
+  [ -n "$_cli_missing_dir" ] || continue
+  [ "$_cli_missing_dir" = "$MOCK_BIN" ] && continue
+  [ -x "$_cli_missing_dir/haystack" ] && continue
+  _cli_missing_path="$_cli_missing_path:$_cli_missing_dir"
+done
+IFS="$_IFS_SAVE"
+set +e
+output=$(HAYSTACK_REVIEWER_TIMEOUT=5 HAYSTACK_POLL_INTERVAL=1 \
+  MOCK_GH_CHECK_RUNS="$MOCK_GH_CHECK_RUNS" \
+  PATH="$_cli_missing_path" \
+  bash "$HAYSTACK_REVIEWER" "123" "owner" "repo" 2>/dev/null)
+ec=$?
+set -e
+rm -rf "$_cli_missing_bin"
+run_test "1789_cli_missing_pending_check_reason" "REASON=pending_check_run" "$(echo "$output" | grep '^REASON=')"
+run_test "1789_cli_missing_pending_check_no_budget_key" "" "$(echo "$output" | grep '^HAYSTACK_BUDGET_EXPIRED=' || true)"
+run_test "1789_cli_missing_pending_check_exit_code" "2" "$ec"
+unset _cli_missing_bin _cli_missing_path _cli_missing_dir _IFS_SAVE
 
 unset MOCK_GH_CHECK_RUNS _check_summary_blocking _check_summary_advisory _check_summary_custom
 

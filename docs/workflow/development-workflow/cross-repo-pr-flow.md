@@ -262,8 +262,13 @@ Safe repair:
 
 ### Reviewer-Loop Failures
 
-Symptom: `pr-review-loop.sh` reports `needs_fixes`, `escalate`, or
-`reviewer-failed`.
+Symptom: `pr-review-loop.sh` reports `needs_fixes`, `escalate`,
+`waiting_on_reviewer`, or `reviewer-failed`.
+
+`waiting_on_reviewer` with `REASON=reviewer-no-verdict-yet` means a reviewer
+has not answered within its wait budget (No verdict yet). It is not a
+failure: re-run the reviewer loop later on the same revision, and investigate
+the named platform (`PENDING_REVIEWER`) only if it still has not answered.
 
 Confirm from the hub checkout:
 

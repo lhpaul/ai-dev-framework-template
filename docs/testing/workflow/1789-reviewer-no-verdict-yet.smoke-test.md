@@ -185,26 +185,63 @@ exit with status 124 is a failure, not a stopped reviewer, D4).
 **Maps to**: AC-10 (plan D15 Claude dispatch rule, V31)
 
 1. Run
-   `bash scripts/development-workflow/claude-code-action-reviewer.sh <pr> <owner> <repo> --head-sha "$(gh pr view <pr> --json headRefOid --jq .headRefOid)" --max-wait 900`
-   against the implementation-branch PR and keep its full output.
+   `bash scripts/development-workflow/claude-code-action-reviewer.sh <pr> <owner> <repo> --head-sha "$(gh pr view <pr> --json headRefOid --jq .headRefOid)" --max-wait 900 > /tmp/smoke-1789-step8.log 2>&1; echo "exit=$?"`
+   against the implementation-branch PR, and keep its full output (stdout
+   and stderr, in the log file) and the printed exit status.
+   `--head-sha` takes the full 40-character head SHA; `--max-wait` must not
+   exceed the companion's 3600 s maximum.
 2. Run
    `gh api "repos/<owner>/<repo>/actions/workflows/claude-code-review.yml/runs?event=workflow_dispatch&per_page=5" --jq '.workflow_runs[] | [.id,.name,.created_at,.status]'`.
 
-**Expected result**: the companion prints `REVIEW_REQUEST_REF=<integer id>`
-(the dispatch response's `workflow_run_id`), every `found run — id=` line
-it prints names that same id, and the id appears in the step 2 list with
-this PR's `PR #<n>` in its name. That confirms plan V31. The pass criterion
-is the dispatch binding, not the review outcome: the exit code then reflects
-the bound run as plan D8 states (0 clean, 1 findings, 2 run failed, 3 for an
-unavailable result after the run such as log verification, 4 still running
-at 900 s), and any of these passes this step.
+**Expected result** (the pass criterion is the dispatch binding, not the
+review outcome): the companion prints, in this order,
 
-The D15 defect is specifically the D15 `VERDICT: UNAVAILABLE` line for a
-dispatch response without `workflow_run_id` (plan D15 Claude dispatch rule),
-with exit 3 and no `REVIEW_REQUEST_REF`. That is a blocking defect for this
-item: record the response status and body and escalate. Do not restore the
-time-window run selection. An exit 3 before the dispatch (authentication or
-base-branch resolution) is a setup failure: fix it and re-run the step.
+- `DISPATCH_RESULT=accepted`
+- `DISPATCH_WORKFLOW_RUN_ID=<integer id>` (the dispatch response's
+  `workflow_run_id`) and the line
+  `INFO: workflow dispatch accepted; bound to workflow run id <id>`
+- `REVIEW_REQUESTED_AT=<ISO-8601 UTC time>` and
+  `REVIEW_REQUEST_REF=<the same id>`
+
+and every `INFO: found run — id=<id> …` line it prints names that same id,
+and the id appears in the step 2 list with this PR's `PR #<n>` in its name.
+That confirms plan V31 on this repository's host. The exit status then
+reflects the bound run as plan D8 states (0 clean, 1 findings, 2 run failed,
+3 for an unavailable result after the run such as log verification or a
+failed review fetch, 4 still running at 900 s), and any of these passes this
+step, provided the `DISPATCH_RESULT=accepted` lines above were printed.
+
+**Failures of this live check** (none of these is a pass; record the full
+output and the exit status for each):
+
+- `DISPATCH_RESULT=no_workflow_run_id` with
+  `VERDICT: UNAVAILABLE — dispatch response carried no workflow_run_id; the run cannot be bound to this request`
+  and exit 3, with no `REVIEW_REQUEST_REF` and no polling: the host accepted
+  the dispatch but returned no integer `workflow_run_id` (for example an
+  empty `204`). This is the D15 **blocking defect** for this item: record the
+  `WARNING: dispatch response body …` line from stderr (it carries the
+  response status or the first 300 bytes of the body) and escalate. Do not
+  restore the time-window run selection.
+- `DISPATCH_RESULT=rejected` (with `VERDICT: UNAVAILABLE — workflow dispatch failed: …`)
+  or `DISPATCH_RESULT=workflow_not_found` (with
+  `VERDICT: UNAVAILABLE — workflow file '<file>' not found on ref '<ref>'`),
+  exit 3, no polling: the GitHub API rejected the dispatch request itself, so
+  the binding could not be observed at all. This is the companion's exit-3
+  `unavailable` path (the loop maps it to `escalate`/`unavailable`, never
+  clean and never No verdict yet). It is a **failure of this step**, not a
+  pass and not merely a setup note: record the `ERROR: workflow dispatch failed (exit <n>): …`
+  stderr line, fix the cause (workflow file missing on the default branch,
+  `actions: write` permission, an API rejection of `return_run_details`),
+  and re-run the step until it prints `DISPATCH_RESULT=accepted`. If the API
+  rejects `return_run_details` itself, treat it as the D15 blocking defect
+  above and escalate.
+- An exit 3 before any `DISPATCH_RESULT=` line (for example
+  `VERDICT: UNAVAILABLE — gh CLI authentication failed` or
+  `… could not resolve PR base branch`) is a setup failure: fix it and
+  re-run the step. It is not a pass.
+- An exit 2 with `ERROR: --head-sha …` or another argument error before any
+  `gh` call means the command line is wrong (for example a short SHA): fix the
+  arguments and re-run.
 
 ### Last Step: Validate and clean up
 

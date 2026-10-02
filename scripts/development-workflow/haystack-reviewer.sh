@@ -26,6 +26,10 @@
 #   COMMENT_COUNT=<n>
 #   DISPLAY_RESULT=<value> (optional; used by pr-review-loop.sh summaries)
 #   POLICY_REVIEW_REQUIRED=0|1 (optional; present when pr-status is available)
+#   HAYSTACK_BUDGET_EXPIRED=1 (only with REASON=pending_check_run when the
+#                     check-run fallback ran after the triage wait budget ran
+#                     out and the check run was still pending — #1789; the
+#                     loop reports that as No verdict yet)
 #   REASON=<value>   (only when RESULT=skipped — values: unavailable, timeout,
 #                     pending_timeout, unauthorized, forbidden,
 #                     analysis_skipped_file_limit)
@@ -344,7 +348,13 @@ emit_haystack_analysis_file_limit_skip_if_present() {
   emit_haystack_analysis_file_limit_skip_from_json "$check_json"
 }
 
+# emit_haystack_check_run_result [after_budget]
+#   after_budget=1 when called after the triage wait budget ran out (#1789);
+#   a check run that is still pending there also prints
+#   HAYSTACK_BUDGET_EXPIRED=1 so pr-review-loop.sh can report No verdict yet
+#   instead of escalating. Every conclusion arm is unchanged.
 emit_haystack_check_run_result() {
+  local after_budget="${1:-0}"
   local check_json=""
   local status=""
   local conclusion=""
@@ -378,6 +388,7 @@ emit_haystack_check_run_result() {
     printf 'RESULT=skipped\n'
   emit_reviewed_head_if_known
     printf 'REASON=pending_check_run\n'
+    [ "$after_budget" = "1" ] && printf 'HAYSTACK_BUDGET_EXPIRED=1\n'
     printf 'BLOCKING_COUNT=0\n'
     printf 'SUGGESTION_COUNT=0\n'
     printf 'COMMENT_COUNT=0\n'
@@ -465,10 +476,15 @@ EOF
   esac
 }
 
+# emit_check_run_fallback_or_skip [after_budget]
+#   Pass after_budget=1 from the two budget-expiry paths (timeout and
+#   pending_timeout) so a still-pending check run is marked
+#   HAYSTACK_BUDGET_EXPIRED=1 (#1789). The CLI-missing path passes nothing.
 emit_check_run_fallback_or_skip() {
+  local after_budget="${1:-0}"
   local fallback_exit=0
   set +e
-  emit_haystack_check_run_result
+  emit_haystack_check_run_result "$after_budget"
   fallback_exit=$?
   set -e
   [ "$fallback_exit" -eq 4 ] && exit 3
@@ -788,7 +804,7 @@ if [ "$TRIAGE_EXIT" -eq 124 ]; then
   # overall budget was exhausted.
   echo "INFO: haystack triage timed out after ${TIMEOUT}s" >&2
   echo "INFO: trying GitHub App check-run fallback after triage timeout" >&2
-  if emit_check_run_fallback_or_skip; then
+  if emit_check_run_fallback_or_skip 1; then
     :
   fi
   printf 'RESULT=skipped\n'
@@ -809,7 +825,7 @@ if [ "$TRIAGE_EXIT" -eq 200 ]; then
   # (per-call OS timeout).
   echo "INFO: haystack triage transient state persisted — budget exhausted after ${TIMEOUT}s (pending_timeout)" >&2
   echo "INFO: trying GitHub App check-run fallback after pending_timeout" >&2
-  if emit_check_run_fallback_or_skip; then
+  if emit_check_run_fallback_or_skip 1; then
     :
   fi
   printf 'RESULT=skipped\n'

@@ -68,12 +68,22 @@ The shipped workflow is triggered via `workflow_dispatch` — not by posting a
 comment on the PR. When `pr-review-loop.sh` runs the `claude-code-action`
 platform, it calls the GitHub Actions dispatch API directly:
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
 gh api "repos/$OWNER/$REPO/actions/workflows/claude-code-review.yml/dispatches" \
   --method POST \
-  --raw-field ref="$BASE_BRANCH" \
-  --raw-field inputs='{"pr_number":"'"$PR_NUMBER"'"}'
+  --raw-field "ref=$DEFAULT_BRANCH" \
+  --raw-field "inputs[pr_number]=$PR_NUMBER" \
+  --field "return_run_details=true"
 ```
+
+The dispatch targets the repository's default branch (GitHub serves
+`workflow_dispatch` only for workflows registered there) and asks for
+`return_run_details=true`, so GitHub answers `200` with the
+`workflow_run_id` of the run this dispatch created. The companion binds the
+review to that run id (see Step 7.2). A host that answers `204` with no body
+(for example, a GitHub Enterprise Server version without
+`return_run_details`) cannot be bound and is reported as unavailable.
 
 The companion script `claude-code-action-reviewer.sh` handles this step
 automatically. You do not need to dispatch the workflow manually when using
@@ -162,21 +172,57 @@ to dispatch the workflow manually when using the helper.
 ### Step 7.2 — Detect review completion
 
 Claude Code Action completes its review by finishing the GitHub Actions run it
-dispatches. The companion script polls the Actions API for the run triggered
-after the workflow was dispatched:
+dispatches. The run is bound to this request only by the `workflow_run_id`
+returned by the dispatch (#1789): the companion polls
+`repos/$OWNER/$REPO/actions/runs/<workflow_run_id>` and nothing else. It never
+searches the run list, and never selects a run by `created_at`, run name, or
+`head_sha` — a `workflow_dispatch` run's `head_sha` is the dispatched ref's
+tip, not the PR head — so an earlier dispatch's run for the same PR can never
+answer for this one.
 
-```bash
-run_status=$(gh api --paginate \
-  "repos/$OWNER/$REPO/actions/runs?event=workflow_dispatch&per_page=100" \
-  | jq -sr '[.[] | .workflow_runs[]?] | sort_by(.created_at) | reverse | .[0].status')
-```
+The companion prints machine-readable dispatch lines on stdout:
+
+| Line | Meaning |
+| --- | --- |
+| `DISPATCH_RESULT=accepted` and `DISPATCH_WORKFLOW_RUN_ID=<id>` | The response carried `workflow_run_id`; that run is polled |
+| `DISPATCH_RESULT=adopted` | A recorded run was adopted (`--adopt-run-id`, below); nothing was dispatched |
+| `DISPATCH_RESULT=rejected` | The API rejected the dispatch; exit 3 |
+| `DISPATCH_RESULT=workflow_not_found` | The API rejected the dispatch as not found (404); exit 3 |
+| `DISPATCH_RESULT=no_workflow_run_id` | The dispatch was accepted but the response (for example an empty `204`) had no integer `workflow_run_id`; exit 3 with `VERDICT: UNAVAILABLE — dispatch response carried no workflow_run_id; the run cannot be bound to this request` |
+| `REVIEW_REQUESTED_AT=<iso8601>` and `REVIEW_REQUEST_REF=<run id>` | Printed once the run is bound; the loop records them so its automatic re-wait can adopt the same run |
 
 | Result                                           | Action                                                                |
 | ------------------------------------------------ | --------------------------------------------------------------------- |
-| Actions run completed with `conclusion: success` | Review complete — proceed to Step 7.3                                 |
-| Actions run in progress and `elapsed < max_wait` | Not finished yet — wait another `poll_interval` and poll again        |
-| `elapsed >= max_wait`                            | Timeout — escalate to human                                           |
-| Workflow file absent or dispatch rejected        | Unavailable — apply `internal_reviewers_unavailable_policy` behaviour |
+| Bound run completed with `conclusion: success`   | Review complete — proceed to Step 7.3                                 |
+| Bound run in progress and `elapsed < max_wait`   | Not finished yet — wait another `poll_interval` and poll again        |
+| Bound run not completed at `elapsed >= max_wait` | **No verdict yet** — companion exit 4; the loop reports `waiting_on_reviewer` / `reviewer-no-verdict-yet` (detail `run_not_completed`), not an escalation |
+| Bound run completed with any other conclusion    | **Reviewer failed** — companion exit 2; the loop reports `escalate` / `claude_code_action_run_failed` |
+| Workflow file absent, dispatch rejected, or no `workflow_run_id` | Unavailable — companion exit 3; the loop reports `escalate` / `unavailable`, never clean and never No verdict yet |
+| Reading the bound run while polling is refused (401/403) or the run is not found (404), or no poll read the run within the budget | Unavailable — companion exit 3 (`POLL_RESULT=read_denied`, `run_not_found`, or `run_unreadable`); positive failure evidence (spec BR 2), never No verdict yet. A rate limit (including a 403 rate limit) or a transient 5xx keeps polling |
+
+**Current-revision binding (`--head-sha`).** The loop passes its head as
+`--head-sha <40-hex sha>` (omitted when the loop head is unknown). A
+`claude[bot]` review then counts only when its `commit_id` equals that head,
+in addition to being submitted at or after the dispatch time, so a review of
+another revision is never this head's verdict.
+
+**Automatic re-wait (`--adopt-run-id` / `--adopt-requested-at`).** When the
+loop re-waits once on the same revision (Protocol 91 Step 7,
+`NO_VERDICT_REWAIT=available`), it passes the recorded run id and request
+time instead of dispatching again (both flags are required together). The
+companion reads `actions/runs/<id>` and adopts it only when the id matches,
+the run's `path` ends with the workflow file (an optional `@<ref>` suffix
+on the path is ignored), and a `PR #<n>` token in its `display_title` (the
+run title) or `name` names this PR; it then polls only that run and keeps the original dispatch
+time as the review boundary. A run that fails those checks or cannot be read
+is not adopted: the companion prints a `WARN` and dispatches normally. Only
+the run recorded for the current head and run id is ever adopted; a recorded
+request time without a run id passes no adoption flags.
+
+The wait budget is `max_wait` from the loop: 1200 s by default, configurable
+under `review.wait_budgets.claude-code-action` up to the companion's own
+3600 s maximum (see "Reviewer wait budgets and outcome classes" in
+[`../protocols/93-automated-reviewer-loop-protocol.md`](../protocols/93-automated-reviewer-loop-protocol.md#reviewer-wait-budgets-and-outcome-classes-1789)).
 
 ### Step 7.3 — Fetch review threads
 
@@ -278,8 +324,9 @@ Step 7a gate maps to outcomes:
 | --------- | -------------- | --------------------------------------------------------- |
 | `0`       | APPROVED       | Reviewer approved — continue to the next reviewer         |
 | `1`       | NEEDS_REVISION | Blocking threads found — fix and re-run the review cycle  |
-| `2`       | TIMED_OUT      | Workflow did not complete within `max_wait`               |
-| `3`       | UNAVAILABLE    | Workflow file absent or dispatch rejected                 |
+| `2`       | FAILED         | The bound run completed with a conclusion other than `success`, or the arguments were invalid; `pr-review-loop.sh` reports `escalate` / `claude_code_action_run_failed` |
+| `3`       | UNAVAILABLE    | Workflow file absent, dispatch rejected, dispatch response without `workflow_run_id`, or no review could be verified; `pr-review-loop.sh` reports `escalate` / `unavailable` |
+| `4`       | NO_VERDICT_YET | The bound run did not complete within `max_wait`; `pr-review-loop.sh` reports `waiting_on_reviewer` / `reviewer-no-verdict-yet` (no `reviewer-failed` label) |
 
 ---
 
@@ -288,7 +335,9 @@ Step 7a gate maps to outcomes:
 | Symptom                                                        | Cause                                                          | Resolution                                                                                                                      |
 | -------------------------------------------------------------- | -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
 | `RESULT=escalate REASON=unavailable`                           | Workflow file absent or `ANTHROPIC_API_KEY` not set            | Confirm `.github/workflows/claude-code-review.yml` exists and the secret is added in repository settings                       |
-| `RESULT=escalate REASON=timeout`                               | Actions run did not complete within `max_wait` (default 600 s) | Check the Actions tab for the run status; increase `--max-wait` if the review consistently takes longer than 10 minutes         |
+| `RESULT=waiting_on_reviewer REASON=reviewer-no-verdict-yet`    | The bound run did not complete within its wait budget (1200 s by default in the loop) | Not a failure. Let the runner's automatic re-wait adopt the same run; if the review consistently takes longer, raise `review.wait_budgets.claude-code-action` (at most 3600) |
+| `RESULT=escalate REASON=claude_code_action_run_failed`         | The bound run completed with a conclusion other than `success` | Open the run named in the `found run — id=` log line and fix the workflow failure                                             |
+| `DISPATCH_RESULT=no_workflow_run_id`                           | The host answered the dispatch without a `workflow_run_id` (for example `204`) | The run cannot be bound; use a GitHub host that supports `return_run_details`. Time-window run selection is intentionally not used as a fallback |
 | Review threads not detected after Actions run succeeds         | Bot login mismatch                                             | Confirm the bot posting threads is `claude[bot]`; if using a custom App, set `CLAUDE_CODE_ACTION_BOT_LOGIN` to the correct login |
 | `pr-review-loop.sh` reports `skipped` for `claude-code-action` | Platform not listed in `review.on_draft.github` or `review.on_ready.github` | Add `claude-code-action` to the appropriate GitHub reviewer bucket in `.ai-dev-workflow.yaml`                                    |
 | Workflow dispatched but no Actions run appears                 | Dispatch accepted but workflow file not found or wrong ref     | Confirm `.github/workflows/claude-code-review.yml` exists on the default branch and the dispatch `ref` matches the repository default branch |

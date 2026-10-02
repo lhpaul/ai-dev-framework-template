@@ -72,13 +72,24 @@ For repositories that open implementation PRs as drafts, configure Haystack in
 mark the PR ready before running ready-phase platforms; Haystack triage may stay
 `pending` indefinitely while a PR remains draft.
 
+When Haystack's wait budget runs out (`timeout` or `pending_timeout`, or a
+`Haystack / Review` check run still pending at the budget), the reviewer loop
+reports **No verdict yet** — `RESULT=waiting_on_reviewer`,
+`REASON=reviewer-no-verdict-yet` — and stops as waiting without applying
+`reviewer-failed`; it no longer treats these as a skipped failure. A check run
+that itself concluded `timed_out`, `cancelled`, or `stale` stays a failure
+(`escalate`, `reviewer-failed` applied). See
+[`haystack-triage.md`](haystack-triage.md#graceful-degradation) and "Reviewer
+wait budgets and outcome classes" in
+[`../protocols/93-automated-reviewer-loop-protocol.md`](../protocols/93-automated-reviewer-loop-protocol.md#reviewer-wait-budgets-and-outcome-classes-1789).
+
 ### Hardening roadmap
 
 Use small PRs when expanding this integration:
 
 1. Promote deterministic invariants out of `.haystack/pr-rules.yml` when they can be checked without LLM judgement.
 2. Extend local hooks only for repo-wide contracts with low false-positive risk.
-3. Keep `haystack triage` visible in reviewer-loop summaries, especially `unavailable`, `pending_timeout`, and advisory-only outcomes.
+3. Keep `haystack triage` visible in reviewer-loop summaries, especially `unavailable`, `pending_timeout` (No verdict yet), and advisory-only outcomes.
 4. Add agent detection only for tools that the team actively uses. Cursor is not detected by the stock parsers today; those commits behave like human commits unless detection is extended.
 5. When refining mirror guidance, prefer semantic workflow-body checks over byte-for-byte matching and treat absent surfaces as out of scope unless the repo actually contains them.
 

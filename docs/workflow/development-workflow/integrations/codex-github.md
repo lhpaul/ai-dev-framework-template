@@ -329,6 +329,42 @@ a `waiting_on_reviewer` aggregate result the same as `needs_fixes` /
 review cycle — including a cleared-findings retrigger. A `clean` result is
 never overridden by an exhausted allowance.
 
+## Wait budget, No verdict yet, and the automatic re-wait (#1789)
+
+**Budget.** Codex GitHub waits for its own budget: 1800 s by default. Its
+configured value is `CODEX_GITHUB_MAX_WAIT` when that variable is set to a
+valid value (whole seconds, 1-999999), else `review.wait_budgets.codex-github`
+in `.ai-dev-workflow.yaml`; an invalid `CODEX_GITHUB_MAX_WAIT` warns and falls
+through to the YAML value or the default. A one-run `--max-wait` overrides
+both. `CODEX_GITHUB_POLL_INTERVAL` (default 60 s) now applies to Codex GitHub
+only; other platforms in the same run keep their own poll interval. See
+"Reviewer wait budgets and outcome classes" in
+[`../protocols/93-automated-reviewer-loop-protocol.md`](../protocols/93-automated-reviewer-loop-protocol.md#reviewer-wait-budgets-and-outcome-classes-1789).
+
+**No verdict yet.** Both Codex wait reasons, `codex-github-review-pending` and
+`codex-github-reaction-without-review` (exit `4`), are in the No verdict yet
+class: they keep their names and meaning, never apply `reviewer-failed`, and
+print the waiting keys (`NO_VERDICT_REWAIT`, `PENDING_REVIEWER`,
+`NO_FAILURE_DETECTED`, …).
+
+**Automatic re-wait.** When the runner re-runs Step 7 once on the same
+revision (Protocol 91 Step 7, `NO_VERDICT_REWAIT=available`), the loop runs the
+companion with `--max-retriggers 0`, which also disables the async-arrival
+trigger, and the companion's existing guard skips a new trigger while a
+current-head trigger is pending. On the cleared-findings path the companion
+records the cleared review's `submitted_at` and drops the newest current-head
+trigger only when that trigger is not later than the review (the review
+answered it); a strictly later trigger is still outstanding, so the companion
+logs `INFO: trigger for commit <sha> posted after the cleared Codex review is still outstanding — not posting a duplicate`
+and polls it. The companion prints its trigger time as
+`REVIEW_REQUESTED_AT`, which the loop records as the request time.
+
+**Current-revision binding.** Inline review comments count as current-head
+findings only when their `original_commit_id` is the current head (GitHub moves
+`commit_id` to the newest head while the commented line is unchanged), so an
+older revision's inline comment never returns `NEEDS_REVISION` for the current
+head.
+
 ## Step 7a runner reviewer
 
 `codex-github` is an opt-in Step 7a runner reviewer value; it is not in the
@@ -474,8 +510,8 @@ is exhausted.
 
 | Symptom | Likely cause | Action |
 | --- | --- | --- |
-| The loop waits until timeout after posting `@codex review` | Codex GitHub is not installed, not enabled for the repository, or the account cannot run reviews | Install/enable the integration, confirm account access, then rerun the loop |
-| Codex leaves only a thumbs-up reaction on the trigger comment | Codex acknowledged the trigger but did not publish SHA-pinned review evidence | Treat the run as unavailable; do not mark the PR clean from the reaction alone |
+| The loop reports `waiting_on_reviewer` / `codex-github-review-pending` after posting `@codex review`, even after the automatic re-wait | Codex GitHub has not answered within its budget; repeated on every run, it can mean Codex GitHub is not installed, not enabled for the repository, or the account cannot run reviews | Re-run the loop later on the same revision; if Codex never answers, install/enable the integration and confirm account access |
+| Codex leaves only a thumbs-up reaction on the trigger comment | Codex acknowledged the trigger but did not publish SHA-pinned review evidence (`codex-github-reaction-without-review`, No verdict yet) | Do not mark the PR clean from the reaction alone; wait for or re-run review on the current head |
 | Codex says to create an environment for this repo | Manual trigger path is missing a Codex cloud environment | Create the environment or remove `codex-github` from the reviewer list until it is available |
 | Codex review threads remain open after a fix commit | GitHub did not auto-resolve a fixed thread | Verify the current head addresses the finding, then resolve the thread or rerun review if unsure |
 | Codex submitted a review for an older commit | Review arrived for a stale head SHA | Push or retrigger only if needed, then wait for a submitted review whose `commit_id` matches the current head |

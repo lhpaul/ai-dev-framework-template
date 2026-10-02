@@ -20,6 +20,17 @@ Options:
   --repo-root <path>   Repository checkout to review. When supplied, HEAD must
                        match the pull request head SHA before review runs.
 
+Exit codes:
+  0  RESULT=clean
+  1  RESULT=needs_fixes or needs_rerun
+  2  RESULT=escalate (reviewer failed: a non-zero command exit before the
+     budget, including a command that itself exits 124 or 137, unreadable
+     output, credential, model-access, quota, repository, or head failures)
+  3  RESULT=skipped (for example disabled_by_config)
+  4  RESULT=waiting_on_reviewer, REASON=reviewer-no-verdict-yet,
+     NO_VERDICT_YET=1: the reviewer was still running when --timeout ran out
+     and was stopped (no verdict yet; not a failure)
+
 Environment:
   LOCAL_AI_REVIEWER_COMMAND         Optional. When unset, defaults from
                                     LOCAL_AI_REVIEWER_BACKEND (codex or
@@ -171,22 +182,31 @@ redact_github_remote_slug() {
   esac
 }
 
+# run_with_timeout <seconds> <stdout_file> <stderr_file> <command...>
+#
+# Watchdog contract (#1789, plan D4): the return status is the command's own
+# status, or 124 when the watchdog stopped it. Because a command can itself
+# exit 124 or 137 before the budget, the status is never evidence of expiry.
+# Expiry is reported out of band: RUN_WITH_TIMEOUT_EXPIRED is 0 on entry and
+# becomes 1 only when the watchdog reached the budget AND the command was
+# still running at that moment. A command that exits during the final poll
+# second takes the normal wait path and keeps its own status with the flag 0.
+#
+# GNU timeout is deliberately not used: it reports expiry only through the
+# same 124/137 statuses it forwards from the command. The wrapper's own
+# process-group watchdog runs on every host.
+RUN_WITH_TIMEOUT_EXPIRED=0
 run_with_timeout() {
   local timeout_seconds="$1"
   local stdout_file="$2"
   local stderr_file="$3"
   shift 3
 
-  if command -v timeout >/dev/null 2>&1 \
-      && timeout --help 2>&1 | grep -q -- '--kill-after'; then
-    # Close stdin so reviewer CLIs cannot block reading an idle inherited
-    # pipe from a background harness (#1843).
-    timeout --kill-after=2s "$timeout_seconds" "$@" </dev/null >"$stdout_file" 2>"$stderr_file"
-    return $?
-  fi
+  RUN_WITH_TIMEOUT_EXPIRED=0
 
-  # macOS and other hosts without GNU timeout: start a new process group so
-  # descendant reviewer processes die with the leader (Codex P2 / #1635).
+  # Start a new process group so descendant reviewer processes die with the
+  # leader (Codex P2 / #1635). Close stdin so reviewer CLIs cannot block
+  # reading an idle inherited pipe from a background harness (#1843).
   local child_pid
   if command -v setsid >/dev/null 2>&1; then
     setsid "$@" </dev/null >"$stdout_file" 2>"$stderr_file" &
@@ -200,7 +220,10 @@ run_with_timeout() {
     sleep 1
     elapsed=$((elapsed + 1))
   done
-  if [ "$elapsed" -ge "$timeout_seconds" ]; then
+  # Alive check at the deadline: only a command still running when the budget
+  # is reached is stopped and reported as expired.
+  if [ "$elapsed" -ge "$timeout_seconds" ] && kill -0 "$child_pid" 2>/dev/null; then
+    RUN_WITH_TIMEOUT_EXPIRED=1
     kill -TERM -- "-$child_pid" 2>/dev/null || kill -TERM "$child_pid" 2>/dev/null || true
     local terminate_elapsed=0
     local terminate_grace_seconds=2
@@ -1318,10 +1341,21 @@ set -e
 command_stdout="$(cat "$stdout_file" 2>/dev/null || true)"
 command_stderr="$(cat "$stderr_file" 2>/dev/null || true)"
 
-if [ "$command_exit" -eq 124 ] || [ "$command_exit" -eq 137 ]; then
-  echo "WARN: local AI reviewer timed out after ${TIMEOUT}s" >&2
-  print_result escalate 0 0 0 timeout timeout
-  exit 2
+# #1789 (plan D4): only the watchdog flag means the budget ran out while the
+# reviewer was still running. That is No verdict yet, not a failure, and the
+# stopped process's partial output is not inspected. A command that itself
+# exited 124 or 137 before the budget leaves the flag at 0 and reaches the
+# ordinary non-zero handling below.
+if [ "${RUN_WITH_TIMEOUT_EXPIRED:-0}" = "1" ]; then
+  echo "WARN: local AI reviewer had not returned a verdict after ${TIMEOUT}s; stopped at the wait budget (no verdict yet)" >&2
+  print_kv RESULT waiting_on_reviewer
+  print_kv REASON reviewer-no-verdict-yet
+  print_kv NO_VERDICT_YET 1
+  print_kv WAIT_EXPIRED_DETAIL stopped_at_budget
+  print_kv COMMENT_COUNT 0
+  print_kv BLOCKING_COUNT 0
+  print_kv SUGGESTION_COUNT 0
+  exit 4
 fi
 
 combined_output="${command_stdout}

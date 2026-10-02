@@ -113,6 +113,22 @@ review:
   # max_cycles: 10
   # max_total_cycles: 25
   #
+  # Optional: per-platform reviewer wait budgets in whole seconds (1-999999;
+  # issue #1789). Each platform waits for its own budget; a wait that runs out
+  # with no verdict and no failure evidence is reported as waiting_on_reviewer
+  # / reviewer-no-verdict-yet, not as a failure. Resolution order: the
+  # one-run --max-wait override, then this block (CODEX_GITHUB_MAX_WAIT wins
+  # over the codex-github key), then the built-in defaults (bugbot 2400,
+  # codex-github 1800, every other platform 1200; Devin only is shortened on
+  # spec/* and implementation-plan/* branches). An invalid value warns and
+  # falls back to the default; a claude-code-action value above 3600 does too.
+  # See "Reviewer wait budgets and outcome classes" in
+  # docs/workflow/development-workflow/protocols/93-automated-reviewer-loop-protocol.md.
+  # Uncomment to override:
+  # wait_budgets:
+  #   bugbot: 2700
+  #   local-ai-reviewer: 1500
+  #
   # Bugbot is the default ready-phase GitHub reviewer for this repository.
   # CodeRabbit remains supported as an opt-in reviewer (`coderabbit` for the
   # GitHub App, `coderabbit-cli` for the local CLI), but it is not a default

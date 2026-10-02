@@ -27,9 +27,16 @@ Default policy is **sequential gating**:
 - Run the first configured reviewer tool
 - Only continue to the next reviewer tool when the current one is `clean` or `skipped`
 - If any reviewer tool returns blocking PR feedback, stop the loop, fix the branch, push, and start again from the first configured reviewer tool
-- If any reviewer tool escalates, the overall loop escalates
+- If a reviewer tool's wait budget runs out with no verdict and no failure evidence (**No verdict yet**), stop the loop as `waiting_on_reviewer`; this is not an escalation and applies no `reviewer-failed` label
+- If any reviewer tool escalates (**Reviewer failed**), the overall loop escalates
 
 Readiness requires every configured reviewer tool to be `clean` or `skipped`.
+Each reviewer waits for its own budget (2400 s for Bugbot, 1800 s for Codex
+GitHub, 1200 s for the others, configurable under `review.wait_budgets`). See
+"Reviewer wait budgets and outcome classes" in
+[`93-automated-reviewer-loop-protocol.md`](../protocols/93-automated-reviewer-loop-protocol.md#reviewer-wait-budgets-and-outcome-classes-1789)
+for the outcome classes, the budgets, the automatic re-wait, and the
+`reviewer-failed` label rule.
 
 ---
 
@@ -57,8 +64,19 @@ The aggregate loop result is:
 
 - `clean` when every configured reviewer tool is `clean` or `skipped`
 - `needs_fixes` when the first unfinished reviewer tool reports blocking PR feedback
-- `escalate` when the first unfinished reviewer tool times out or otherwise escalates
+- `waiting_on_reviewer` (`REASON=reviewer-no-verdict-yet`, exit 4) when the
+  first unfinished reviewer tool's wait budget runs out with no verdict and no
+  failure evidence for the current revision; a wait that runs out is not
+  `escalate`
+- `escalate` when the first unfinished reviewer tool reports failure evidence
+  (an error, its own failed or timed-out run, unreadable output) or otherwise
+  escalates
 - `skipped` when no automated reviewer tool is configured at all
+
+When a run produces outcomes from several reviewer tools (a `--compare` run),
+the overall result follows this precedence: a failed reviewer first, then
+findings, then No verdict yet, then clean or skipped; ties go to the earliest
+tool in evaluation order.
 
 Additional rules:
 
@@ -85,8 +103,9 @@ review:
       # local-ai-reviewer: local-only CLI reviewer. When
       # LOCAL_AI_REVIEWER_COMMAND is unset, local-ai-reviewer.sh defaults to
       # scripts/development-workflow/local-codex-review-command.sh (Codex CLI).
-      # Missing codex binary, credentials, model access, timeout, or malformed
-      # output escalates. Set LOCAL_AI_REVIEWER_DISABLE_DEFAULT=1 to require an
+      # Missing codex binary, credentials, model access, or malformed output
+      # escalates; a review still running when its wait budget ends reports
+      # No verdict yet. Set LOCAL_AI_REVIEWER_DISABLE_DEFAULT=1 to require an
       # explicit LOCAL_AI_REVIEWER_COMMAND. Set LOCAL_AI_REVIEWER_DISABLED=1
       # or override this list locally to skip.
       - local-ai-reviewer
