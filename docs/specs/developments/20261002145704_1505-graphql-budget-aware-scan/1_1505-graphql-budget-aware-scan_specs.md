@@ -337,7 +337,10 @@ board. Workflow status transitions still waiting to happen (for example
 5. **Conservative projection.** The projected scan costs must not
    underestimate. When the scan cannot work out a projection, it uses a
    conservative upper bound in its place. Working out the projection must
-   itself cost an amount that does not grow with terminal items.
+   itself cost an amount that does not grow with terminal items. The
+   projected partial-scan cost never exceeds the projected full-scan cost:
+   when the partial projection (or its conservative bound) would exceed the
+   full projection, the full projection is used for both.
 6. **Reserve default.** The reserve defaults to 1,000 points. The
    implementation plan decides whether operators can configure it. A
    configured value that is empty, not a whole number, or outside 0 to 5,000
@@ -463,12 +466,13 @@ only narrow after that:
 ### Scan then execute in one quota window
 
 - [ ] **AC1** — On this repository's board with 500 or more items, most of
-  them terminal, a no-target `/run-work` scan that uses the default reserve
-  (1,000 points) and starts in a quota window with at least 4,500 points
-  remaining finishes with coverage **Full scan**. When no other consumer
-  spends budget during the scan, the scan reports spending no more than
-  1,000 GraphQL points, and its reported points remaining are at least the
-  reserve (other consumers' spending is covered by rule 10 and AC8).
+  them terminal, and with no other consumer spending budget during the scan
+  (so no rate-limit rejection occurs), a no-target `/run-work` scan that
+  uses the default reserve (1,000 points) and starts in a quota window with
+  at least 4,500 points remaining finishes with coverage **Full scan**,
+  reports spending no more than 1,000 GraphQL points, and reports points
+  remaining of at least the reserve. Other consumers' spending and mid-scan
+  rejections are covered by rules 8 and 10, AC8, and AC12.
 - [ ] **AC2** — Right after AC1's scan, in the same quota window, running the
   recommended `/run-items` command (or `/run-items` with two of the proposed
   items when the proposal is larger) resolves every target, passes its
@@ -677,7 +681,8 @@ This spec adds a scan-coverage gate to the no-target `/run-work` scan.
 - **R**: the remaining GraphQL budget, read immediately before the scan. It
   can be unreadable.
 - **C_full**: the projected cost of a full scan.
-- **C_partial**: the projected cost of a partial scan.
+- **C_partial**: the projected cost of a partial scan. Always
+  C_partial ≤ C_full (rule 5).
 - **S**: the reserve (default 1,000).
 - **Mid-scan evidence**: a rate-limit rejection observed during the scan
   (yes or no), and whether at least one item was fully read before it.
@@ -695,8 +700,9 @@ Rows are checked in order, and the first match wins.
 
 A projection that cannot be worked out is replaced by a conservative upper
 bound (rule 5), so rows 2 to 4 always have numeric inputs once R is
-readable. Rows 2 to 4 split the readable values of R into ranges that do not
-overlap and leave no gaps.
+readable. Because C_partial ≤ C_full (rule 5), rows 2 to 4 split the
+readable values of R into ranges that do not overlap and leave no gaps. When
+the two projections are equal, row 3's range is empty.
 
 ### Mid-scan override
 
