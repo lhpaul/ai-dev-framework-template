@@ -394,8 +394,7 @@ chmod +x "$MOCK_BIN/git"
 # Preserved before the mocks are prepended, so a test that needs to invoke a
 # real tool (or re-enter this harness) can do so with the genuine PATH. Without
 # it, a nested run picks up the mock git and cannot resolve the repo root.
-# Read by the suites that source this file.
-# shellcheck disable=SC2034
+# shellcheck disable=SC2034  # read by the suites that source this file
 TEST_PR_REVIEW_LOOP_REAL_PATH="$PATH"
 export PATH="$MOCK_BIN:$PATH"
 

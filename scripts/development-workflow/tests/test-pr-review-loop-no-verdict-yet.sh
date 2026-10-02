@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# shellcheck disable=SC2034
 # test-pr-review-loop-no-verdict-yet.sh — pr-review-loop.sh harness: reviewer
 # wait budgets and the no-verdict-yet outcome (#1789).
 # duration: 65
@@ -32,11 +31,9 @@
 #
 # Exit code: 0 if all tests pass, 1 if any test fails, 2 on a usage error.
 #
-# SC2034 is disabled for the whole file (line 2). Most assignments here set
-# pr-review-loop.sh globals that the functions under test read; ShellCheck does
-# not follow that source, so it sees every one as unused. When the harness was
-# a single file the warning stayed quiet only because some other area happened
-# to read the same name — coincidence, not analysis.
+# Many assignments here set pr-review-loop.sh globals that the functions under
+# test read. ShellCheck does not follow that source, so each such assignment
+# carries its own `# shellcheck disable=SC2034` with the reason inline.
 
 set -euo pipefail
 
@@ -174,6 +171,7 @@ CODEX_GITHUB_MAX_WAIT=2500
 run_test "1789_T1.3_codex_env_over_yaml" "2500 configured none" "$(reviewer_wait_budget_resolve codex-github)"
 CODEX_GITHUB_MAX_WAIT=nope
 run_test "1789_T1.3_codex_invalid_env_falls_through_to_yaml" "2100 configured none" "$(reviewer_wait_budget_resolve codex-github 2>/dev/null)"
+# shellcheck disable=SC2034  # read by functions sourced from pr-review-loop.sh
 CODEX_GITHUB_MAX_WAIT=1000000
 run_test "1789_T1.3_codex_oversized_env_falls_through_to_yaml" "2100 configured none" "$(reviewer_wait_budget_resolve codex-github 2>/dev/null)"
 run_contains "1789_T1.3_codex_oversized_env_warns" "CODEX_GITHUB_MAX_WAIT value '1000000' is not a positive whole number of seconds (1-999999)" \
@@ -217,12 +215,15 @@ unset PR_REVIEW_LOOP_DOC_MAX_WAIT
 
 # --- T1.7: large diff lengthens, never shortens, never touches an override
 branch_name="feature/1789-x"
+# shellcheck disable=SC2034  # read by functions sourced from pr-review-loop.sh
 large_diff_threshold=50
+# shellcheck disable=SC2034  # read by functions sourced from pr-review-loop.sh
 large_diff_max_wait=2400
 changed_files_count=80
 config_file="$_1789_none_cfg"
 run_test "1789_T1.7_large_diff_lengthens_default" "2400 default large_diff" "$(reviewer_wait_budget_resolve pr-agent)"
 run_test "1789_T1.7_large_diff_leaves_bugbot" "2400 default none" "$(reviewer_wait_budget_resolve bugbot)"
+# shellcheck disable=SC2034  # read by functions sourced from pr-review-loop.sh
 max_wait_override=30
 run_test "1789_T1.7_large_diff_leaves_override" "30 override none" "$(reviewer_wait_budget_resolve pr-agent)"
 unset max_wait_override
@@ -259,6 +260,7 @@ run_test "1789_platform_wait_budgets_value" \
 run_test "1789_cache_lookup_hit" "600 configured none" "$(reviewer_wait_budget_for_platform pr-agent)"
 run_test "1789_cache_lookup_miss_resolves" "1200 default none" "$(reviewer_wait_budget_for_platform local-ai-reviewer)"
 reviewer_wait_budget_cache_platforms=()
+# shellcheck disable=SC2034  # read by functions sourced from pr-review-loop.sh
 reviewer_wait_budget_cache_values=()
 branch_name="feature/1789-x"
 
@@ -309,6 +311,7 @@ run_test "1789_T1.9_documentation_codex_keeps_60" "60" "$(reviewer_poll_interval
 branch_name="feature/1789-x"
 poll_interval_override=7
 run_test "1789_T1.9_explicit_wins" "7" "$(reviewer_poll_interval_resolve codex-github 1800)"
+# shellcheck disable=SC2034  # read by functions sourced from pr-review-loop.sh
 poll_interval_override=5000
 run_test "1789_T1.9_explicit_clamped_below_budget" "600" "$(reviewer_poll_interval_resolve pr-agent 1200)"
 unset poll_interval_override
@@ -536,11 +539,15 @@ run_test "1789_T2.10_local_evidence_not_a_miss" "not_a_miss" \
 
 # --- Loop handler composition helpers
 _1789_reset_processing_globals() {
+  # shellcheck disable=SC2034  # read by functions sourced from pr-review-loop.sh
   total_comment_count=0
+  # shellcheck disable=SC2034  # read by functions sourced from pr-review-loop.sh
   total_blocking_count=0
+  # shellcheck disable=SC2034  # read by functions sourced from pr-review-loop.sh
   total_suggestion_count=0
   reviewer_failed_required=0
   compare_mode=0
+  # shellcheck disable=SC2034  # read by functions sourced from pr-review-loop.sh
   compare_verdicts=()
   compare_first_blocking_result=""
   compare_first_blocking_reason=""
@@ -549,23 +556,33 @@ _1789_reset_processing_globals() {
   reviewer_loop_gate_break_result=""
   platform_peer_evidence=()
   platform_result_records=()
+  # shellcheck disable=SC2034  # read by functions sourced from pr-review-loop.sh
   platform_reviewed_heads=()
   platform_result_tokens=()
   platform_blocking_outputs=()
+  # shellcheck disable=SC2034  # read by functions sourced from pr-review-loop.sh
   platform_timing_records=()
+  # shellcheck disable=SC2034  # read by functions sourced from pr-review-loop.sh
   reviewer_loop_timing_pending=0
+  # shellcheck disable=SC2034  # read by functions sourced from pr-review-loop.sh
   aggregate_blocking_paths=()
+  # shellcheck disable=SC2034  # read by functions sourced from pr-review-loop.sh
   aggregate_blocking_findings=()
+  # shellcheck disable=SC2034  # read by functions sourced from pr-review-loop.sh
   platform_policy_status_notes=()
   aggregate_result="skipped"
   aggregate_reason=""
   aggregate_output=""
   aggregate_status=0
+  # shellcheck disable=SC2034  # read by functions sourced from pr-review-loop.sh
   aggregate_advisory_labels=""
+  # shellcheck disable=SC2034  # read by functions sourced from pr-review-loop.sh
   phase_after_clean_enabled=0
+  # shellcheck disable=SC2034  # read by functions sourced from pr-review-loop.sh
   phase_after_clean_started=0
   reviewer_loop_platform_loop_should_break=0
   loop_head_sha="1789aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  # shellcheck disable=SC2034  # read by functions sourced from pr-review-loop.sh
   last_platform=""
 }
 _1789_handler_overrides='
@@ -725,6 +742,7 @@ _1789_run_cr_cli() {
   (
     eval "$_1789_handler_overrides"
     workflow_repo_root() { printf '%s\n' "$REPO_ROOT"; }
+    # shellcheck disable=SC2034  # read by functions sourced from pr-review-loop.sh
     repo_root="$_1789_cr_repo"
     unset AI_DEV_WORKFLOW_CONFIG_FILE
     config_file=""
@@ -1649,8 +1667,14 @@ run_test "1789_T3.8_normal_mode_untouched" "needs_fixes|sentinel" "${aggregate_r
 _1789_reset_processing_globals
 compare_mode=1
 aggregate_result="clean"
-compare_first_blocking_result="escalate"; compare_first_blocking_reason="r"
-compare_first_blocking_output="$(_1789_o escalate r)"; compare_first_blocking_status=2
+# shellcheck disable=SC2034  # read by functions sourced from pr-review-loop.sh
+compare_first_blocking_result="escalate"
+# shellcheck disable=SC2034  # read by functions sourced from pr-review-loop.sh
+compare_first_blocking_reason="r"
+# shellcheck disable=SC2034  # read by functions sourced from pr-review-loop.sh
+compare_first_blocking_output="$(_1789_o escalate r)"
+# shellcheck disable=SC2034  # read by functions sourced from pr-review-loop.sh
+compare_first_blocking_status=2
 platform_peer_evidence=("pr-agent|clean|")
 reviewer_loop_compare_restore_aggregate
 run_test "1789_T3.8_defensive_fallback_first_blocking" "escalate|r|2" "${aggregate_result}|${aggregate_reason}|${aggregate_status}"
@@ -1664,7 +1688,9 @@ _1789_gate_cap_run() {
   (
     _1789_reset_processing_globals
     compare_mode="$_mode"
+    # shellcheck disable=SC2034  # read by functions sourced from pr-review-loop.sh
     stage_skip_enabled=0
+    # shellcheck disable=SC2034  # read by functions sourced from pr-review-loop.sh
     pr_number=42
     is_expensive_reviewer_platform() { [ "$1" = "bugbot" ]; }
     expensive_reviewer_gate() {
@@ -1719,9 +1745,11 @@ reviewer_loop_gate_break_result="needs_fixes"
 reviewer_loop_compare_restore_aggregate
 run_test "1789_T3.9_gate_needs_fixes_beats_waiting" "needs_fixes|expensive_gate_deferred" "${aggregate_result}|${aggregate_reason}"
 _1789_reset_processing_globals
+# shellcheck disable=SC2034  # read by functions sourced from pr-review-loop.sh
 compare_mode=1
 reviewer_loop_process_platform_output "devin" 1 "$(_1789_o escalate devin_run_failed)" 2 1 >/dev/null 2>&1
 aggregate_result="needs_fixes"; aggregate_reason="expensive_gate_deferred"; aggregate_status=1
+# shellcheck disable=SC2034  # read by functions sourced from pr-review-loop.sh
 reviewer_loop_gate_break_result="needs_fixes"
 reviewer_loop_compare_restore_aggregate
 run_test "1789_T3.9_platform_failed_beats_gate_needs_fixes" "escalate|devin_run_failed" "${aggregate_result}|${aggregate_reason}"
@@ -2074,7 +2102,9 @@ _1789_kv_file="$_1789_dir/kv.out"
 _1789_timed() {
   reviewer_loop_timing_begin "$4" "$5" "$6"
   reviewer_loop_timing_end
+  # shellcheck disable=SC2034  # read by functions sourced from pr-review-loop.sh
   reviewer_loop_timing_start_epoch="$_1789_T0"
+  # shellcheck disable=SC2034  # read by functions sourced from pr-review-loop.sh
   reviewer_loop_timing_end_epoch="$((_1789_T0 + $7))"
   reviewer_loop_process_platform_output "$1" "$2" "$8" "$3" 1 > "$_1789_kv_file" 2>/dev/null
 }
@@ -2283,8 +2313,14 @@ _1789_timed claude-code-action 1 4 1200 default none 30 "$_1789_out"
 run_test "1789_T4.7_rewait_record_carries_request" "777|2020-01-01T00:00:07Z|request" \
   "$(_1789_last_record | jq -r '[.request_ref, .requested_at, .requested_at_source] | join("|")')"
 # Only a recorded requested_at (empty ref) → neither flag; the companion dispatches.
-reviewer_loop_rewait_mode=1; reviewer_loop_recorded_request_found=1
-reviewer_loop_recorded_request_ref=""; reviewer_loop_recorded_requested_at="2020-01-01T00:00:07Z"
+# shellcheck disable=SC2034  # read by functions sourced from pr-review-loop.sh
+reviewer_loop_rewait_mode=1
+# shellcheck disable=SC2034  # read by functions sourced from pr-review-loop.sh
+reviewer_loop_recorded_request_found=1
+# shellcheck disable=SC2034  # read by functions sourced from pr-review-loop.sh
+reviewer_loop_recorded_request_ref=""
+# shellcheck disable=SC2034  # read by functions sourced from pr-review-loop.sh
+reviewer_loop_recorded_requested_at="2020-01-01T00:00:07Z"
 _1789_out="$(_1789_run_handler run_claude_code_action_review 30)"
 run_test "1789_T4.7_requested_at_only_no_flags" "0" "$(grep -c -- '--adopt-' "$_1789_claude_args" || true)"
 _1789_rewait_off
@@ -2353,11 +2389,13 @@ reviewer_loop_rewait_history_payload='{"schema":"reviewer_loop_history.v1","hist
 reviewer_loop_head_refs_prepare_platform greptile 42
 run_test "1789_T2.15_prepare_unavailable_ledger_empty" "" "$reviewer_loop_head_request_refs"
 reviewer_loop_head_refs_payload_loaded=0
+# shellcheck disable=SC2034  # read by functions sourced from pr-review-loop.sh
 reviewer_loop_rewait_history_payload="$_1789_t221_payload"
 loop_head_sha=""
 reviewer_loop_head_refs_prepare_platform greptile 42
 run_test "1789_T2.15_prepare_no_loop_head_empty" "" "$reviewer_loop_head_request_refs"
 loop_head_sha="$_1789_H"
+# shellcheck disable=SC2034  # read by functions sourced from pr-review-loop.sh
 reviewer_loop_head_refs_payload_loaded=0
 unset reviewer_loop_rewait_history_payload
 reviewer_loop_head_request_refs=""

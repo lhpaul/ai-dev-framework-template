@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# shellcheck disable=SC2034
 # test-pr-review-loop-staged-gates.sh — pr-review-loop.sh harness: expensive-
 # reviewer gate, strict ledgers, missed-finding telemetry, staged reviewers.
 # duration: 10
@@ -38,11 +37,9 @@
 #
 # Exit code: 0 if all tests pass, 1 if any test fails, 2 on a usage error.
 #
-# SC2034 is disabled for the whole file (line 2). Most assignments here set
-# pr-review-loop.sh globals that the functions under test read; ShellCheck does
-# not follow that source, so it sees every one as unused. When the harness was
-# a single file the warning stayed quiet only because some other area happened
-# to read the same name — coincidence, not analysis.
+# Many assignments here set pr-review-loop.sh globals that the functions under
+# test read. ShellCheck does not follow that source, so each such assignment
+# carries its own `# shellcheck disable=SC2034` with the reason inline.
 
 set -euo pipefail
 
@@ -121,6 +118,7 @@ run_test "1649_s14b_one" "1" "$(expensive_gate_resolve_max_deferrals)"
 PR_REVIEW_LOOP_MAX_EXPENSIVE_DEFERRALS=999999
 run_test "1649_s14b_max" "999999" "$(expensive_gate_resolve_max_deferrals)"
 for bad in 0 -1 1000000 abc 2.5 " 2 "; do
+  # shellcheck disable=SC2034  # read by functions sourced from pr-review-loop.sh
   PR_REVIEW_LOOP_MAX_EXPENSIVE_DEFERRALS="$bad"
   _warn="$(expensive_gate_resolve_max_deferrals 2>&1 >/dev/null)" || true
   _val="$(PR_REVIEW_LOOP_MAX_EXPENSIVE_DEFERRALS="$bad" expensive_gate_resolve_max_deferrals 2>/dev/null)"
@@ -444,6 +442,7 @@ _1649_ledger_entries() {
 \`\`\`"
 }
 
+# shellcheck disable=SC2034  # read by functions sourced from pr-review-loop.sh
 expensive_gate_max_deferrals=3
 # Force a defer reason (stale local) with 3 prior deferrals → cap
 platform_reviewed_heads=("local-ai-reviewer:$_1649_other")
@@ -490,6 +489,7 @@ run_test "1649_s19_deferrals_neg1" "-1" "$(_1649_kv EXPENSIVE_GATE_DEFERRALS "$_
 
 # --- Scenario 19b: absent ledger → 0 ---
 unset EXPENSIVE_GATE_MOCK_LEDGER_BODY
+# shellcheck disable=SC2034  # read by functions sourced from pr-review-loop.sh
 EXPENSIVE_GATE_MOCK_LEDGER_BODY=""
 _out="$(_1649_run_gate)"
 run_test "1649_s19b_absent_zero" "0" "$(_1649_kv EXPENSIVE_GATE_DEFERRALS "$_out")"
@@ -514,13 +514,17 @@ run_test "1649_history_gate_reason" "local_evidence_stale" \
 unset EXPENSIVE_GATE_MOCK_LEDGER_BODY
 unset -f expensive_gate_unresolved_threads_status expensive_gate_baseline_checks_status 2>/dev/null || true
 # Re-source would be heavy; leave defaults — later suites redefine if needed.
+# shellcheck disable=SC2034  # read by functions sourced from pr-review-loop.sh
 expensive_gate_last_platform=""
 expensive_gate_last_result=""
+# shellcheck disable=SC2034  # read by functions sourced from pr-review-loop.sh
 expensive_gate_last_reason=""
+# shellcheck disable=SC2034  # read by functions sourced from pr-review-loop.sh
 expensive_gate_last_head=""
 platform_peer_evidence=()
 platform_reviewed_heads=()
 platforms=()
+# shellcheck disable=SC2034  # read by functions sourced from pr-review-loop.sh
 phase_after_clean_platforms=()
 unset _1649_head _1649_other _out _entry _legacy_body _legacy_payload _warn _val
 unset _orig_cfg _orig_hc
@@ -563,6 +567,7 @@ strict_spec_state="not_applicable"
 strict_spec_count=""
 strict_spec_checks=""
 strict_spec_applied=""
+# shellcheck disable=SC2034  # read by functions sourced from pr-review-loop.sh
 strict_spec_unknown_count=""
 strict_spec_reason=""
 _entry="$(reviewer_loop_history_build_entry 1 clean "" "local-ai-reviewer" 0 0 0 "" 0 0 "")"
@@ -584,10 +589,15 @@ run_test "1650_ledger_absent_object" "false" \
 
 # unavailable carries reason only
 strict_spec_recorded=1
+# shellcheck disable=SC2034  # read by functions sourced from pr-review-loop.sh
 strict_spec_state="unavailable"
+# shellcheck disable=SC2034  # read by functions sourced from pr-review-loop.sh
 strict_spec_reason="checklist_unreadable"
+# shellcheck disable=SC2034  # read by functions sourced from pr-review-loop.sh
 strict_spec_count=""
+# shellcheck disable=SC2034  # read by functions sourced from pr-review-loop.sh
 strict_spec_checks=""
+# shellcheck disable=SC2034  # read by functions sourced from pr-review-loop.sh
 strict_spec_applied=""
 _entry="$(reviewer_loop_history_build_entry 1 clean "" "local-ai-reviewer" 0 0 0 "" 0 0 "")"
 run_test "1650_ledger_unavail_reason" "checklist_unreadable" \
@@ -635,6 +645,7 @@ strict_plan_state="not_applicable"
 strict_plan_count=""
 strict_plan_checks=""
 strict_plan_applied=""
+# shellcheck disable=SC2034  # read by functions sourced from pr-review-loop.sh
 strict_plan_unknown_count=""
 strict_plan_reason="stage_not_plan"
 _entry="$(reviewer_loop_history_build_entry 1 clean "" "local-ai-reviewer" 0 0 0 "" 0 0 "")"
@@ -653,11 +664,17 @@ _entry="$(reviewer_loop_history_build_entry 1 clean "" "bugbot" 0 0 0 "" 0 0 "")
 run_test "1655_ledger_absent_object" "false" \
   "$(printf '%s\n' "$_entry" | jq -r 'has("strict_plan")')"
 
+# shellcheck disable=SC2034  # read by functions sourced from pr-review-loop.sh
 strict_plan_recorded=1
+# shellcheck disable=SC2034  # read by functions sourced from pr-review-loop.sh
 strict_plan_state="unavailable"
+# shellcheck disable=SC2034  # read by functions sourced from pr-review-loop.sh
 strict_plan_reason="checklist_unreadable"
+# shellcheck disable=SC2034  # read by functions sourced from pr-review-loop.sh
 strict_plan_count=""
+# shellcheck disable=SC2034  # read by functions sourced from pr-review-loop.sh
 strict_plan_checks=""
+# shellcheck disable=SC2034  # read by functions sourced from pr-review-loop.sh
 strict_plan_applied=""
 _entry="$(reviewer_loop_history_build_entry 1 clean "" "local-ai-reviewer" 0 0 0 "" 0 0 "")"
 run_test "1655_ledger_unavail_reason" "checklist_unreadable" \
@@ -984,12 +1001,18 @@ unset _1651_plat _1651_head_out _1651_head_count
 
 # --- Scenario 14: history entry fields ---
 pr_number=""
+# shellcheck disable=SC2034  # read by functions sourced from pr-review-loop.sh
 current_run_id="1651-ledger"
+# shellcheck disable=SC2034  # read by functions sourced from pr-review-loop.sh
 unresolved_thread_count=0
+# shellcheck disable=SC2034  # read by functions sourced from pr-review-loop.sh
 late_thread_count=0
+# shellcheck disable=SC2034  # read by functions sourced from pr-review-loop.sh
 expensive_gate_last_result=""
+# shellcheck disable=SC2034  # read by functions sourced from pr-review-loop.sh
 strict_spec_recorded=0
 platform_reviewed_heads=("local-ai-reviewer:${_1651_descendant}")
+# shellcheck disable=SC2034  # read by functions sourced from pr-review-loop.sh
 platform_results_json="$(jq -nc '[{platform:"local-ai-reviewer",result:"clean",raw_result:"clean",raw_reason:""}]')"
 missed_findings_json='[]'
 loop_head_sha="$_1651_descendant"
@@ -1074,8 +1097,7 @@ fi
 # missing_history_json reason vocabulary
 _1651_missing_marker="$(printf '%s\n' "### Automated Reviewer Loop Summary" "<!-- reviewer-loop-history:v1 -->" "no json block")"
 reviewer_loop_history_payload_from_existing "$_1651_missing_marker" clean "" "x" 0 0 >/dev/null
-# Assigned by the sourced pr-review-loop.sh function called above.
-# shellcheck disable=SC2154
+# shellcheck disable=SC2154  # assigned by the sourced pr-review-loop.sh function called above
 run_test "1651_s11a_missing_json_reason" "missing_history_json" \
   "${reviewer_loop_history_last_unavailable_reason}"
 
@@ -1448,12 +1470,17 @@ _1656_reset_guard_globals() {
   phase_after_clean_started=0
   local_second_pass=0
   local_second_pass_reason="not_required"
+  # shellcheck disable=SC2034  # read by functions sourced from pr-review-loop.sh
   local_second_pass_result=""
   local_second_pass_failed_head_record=""
   loop_head_sha="$_1656_guard_head"
+  # shellcheck disable=SC2034  # read by functions sourced from pr-review-loop.sh
   branch_name="refactor/1656-second-local-pass"
+  # shellcheck disable=SC2034  # read by functions sourced from pr-review-loop.sh
   pr_number=1693
+  # shellcheck disable=SC2034  # read by functions sourced from pr-review-loop.sh
   poll_interval=1
+  # shellcheck disable=SC2034  # read by functions sourced from pr-review-loop.sh
   max_wait=10
   platforms=(local-ai-reviewer codex-github)
   repo_review_platforms=(local-ai-reviewer codex-github)
@@ -1471,6 +1498,7 @@ _1656_reset_guard_globals() {
   total_suggestion_count=0
   reviewer_failed_required=0
   compare_mode=0
+  # shellcheck disable=SC2034  # read by functions sourced from pr-review-loop.sh
   compare_first_blocking_result=""
   _1656_run_platform_review_calls=0
   _1656_stub_pass_result="clean"
@@ -1675,6 +1703,7 @@ unset cycle_count lifetime_cycle_count
 
 # Scenario 13: no ready-phase — guard no-op
 _1656_reset_guard_globals
+# shellcheck disable=SC2034  # read by functions sourced from pr-review-loop.sh
 phase_after_clean_enabled=0
 _1656_guard_hist_payload='{"schema":"reviewer_loop_history.v1","entries":[]}'
 reviewer_loop_second_local_pass_before_ready_gate 1693 && _st=0 || _st=$?
@@ -1807,14 +1836,18 @@ _1692_reset_processing_globals() {
   platform_result_records=()
   platform_reviewed_heads=()
   platform_result_tokens=()
+  # shellcheck disable=SC2034  # read by functions sourced from pr-review-loop.sh
   platform_blocking_outputs=()
   aggregate_blocking_paths=()
+  # shellcheck disable=SC2034  # read by functions sourced from pr-review-loop.sh
   aggregate_blocking_findings=()
+  # shellcheck disable=SC2034  # read by functions sourced from pr-review-loop.sh
   platform_policy_status_notes=()
   aggregate_result="skipped"
   aggregate_reason=""
   aggregate_output=""
   aggregate_status=0
+  # shellcheck disable=SC2034  # read by functions sourced from pr-review-loop.sh
   aggregate_advisory_labels=""
   reviewer_loop_platform_loop_should_break=0
   loop_head_sha="$_1692_head"
@@ -1845,6 +1878,7 @@ if declare -p platforms >/dev/null 2>&1 && [ "${#platforms[@]}" -gt 0 ]; then
   _1692_saved_platforms=("${platforms[@]}")
 fi
 platforms=(local-ai-reviewer)
+# shellcheck disable=SC2034  # read by functions sourced from pr-review-loop.sh
 repo_review_platforms=(local-ai-reviewer)
 _1692_local_ai_keys="$(reviewer_loop_emit_local_ai_head_evidence_keys 2>/dev/null)"
 run_test "1692_sF_check06_configured" "1" \
@@ -1895,10 +1929,9 @@ _1692_reset_stage_globals() {
 
 _1692_reset_stage_globals
 reviewer_loop_stage_skip_resolve 1692
-# stage_skip_* are assigned by the sourced reviewer_loop_stage_skip_resolve.
-# shellcheck disable=SC2154
+# shellcheck disable=SC2154  # assigned by the sourced reviewer_loop_stage_skip_resolve
 run_test "1692_sH_enabled" "1" "$stage_skip_enabled"
-# shellcheck disable=SC2154
+# shellcheck disable=SC2154  # assigned by the sourced reviewer_loop_stage_skip_resolve
 run_test "1692_sH_enabled_no_reason" "" "$stage_skip_disabled_reason"
 
 _1692_reset_stage_globals
@@ -1910,17 +1943,20 @@ unset PR_REVIEW_LOOP_DISABLE_STAGE_SKIP
 
 # An empty or absent value is not "1" and must not disable staging.
 _1692_reset_stage_globals
+# shellcheck disable=SC2034  # read by functions sourced from pr-review-loop.sh
 PR_REVIEW_LOOP_DISABLE_STAGE_SKIP=""
 reviewer_loop_stage_skip_resolve 1692
 run_test "1692_sH_empty_env_does_not_disable" "1" "$stage_skip_enabled"
 unset PR_REVIEW_LOOP_DISABLE_STAGE_SKIP
 
 _1692_reset_stage_globals
+# shellcheck disable=SC2034  # read by functions sourced from pr-review-loop.sh
 compare_mode=1
 reviewer_loop_stage_skip_resolve 1692
 run_test "1692_sH_compare_mode" "compare_mode" "$stage_skip_disabled_reason"
 
 _1692_reset_stage_globals
+# shellcheck disable=SC2034  # read by functions sourced from pr-review-loop.sh
 platform_selection_explicit=1
 reviewer_loop_stage_skip_resolve 1692
 run_test "1692_sH_explicit_platform" "explicit_platform_selection" "$stage_skip_disabled_reason"
@@ -1944,7 +1980,7 @@ _1692_stage_payload_to_return="$_1692_stage_hist_unavailable"
 reviewer_loop_stage_skip_resolve 1692
 run_test "1692_sH_history_unavailable" "history_unavailable" "$stage_skip_disabled_reason"
 run_test "1692_sH_history_unavailable_flag" "0" "$stage_skip_enabled"
-# shellcheck disable=SC2154
+# shellcheck disable=SC2154  # assigned by the sourced reviewer_loop_stage_skip_resolve
 run_test "1692_sH_history_unavailable_payload_cleared" "" "$stage_skip_history_payload"
 
 unset _1692_stage_hist _1692_stage_hist_unavailable _1692_stage_payload_to_return

@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# shellcheck disable=SC2034
 # test-pr-review-loop-release-bugbot.sh — pr-review-loop.sh harness: release-
 # PR guard and the Bugbot platform.
 # duration: 30
@@ -34,11 +33,9 @@
 #
 # Exit code: 0 if all tests pass, 1 if any test fails, 2 on a usage error.
 #
-# SC2034 is disabled for the whole file (line 2). Most assignments here set
-# pr-review-loop.sh globals that the functions under test read; ShellCheck does
-# not follow that source, so it sees every one as unused. When the harness was
-# a single file the warning stayed quiet only because some other area happened
-# to read the same name — coincidence, not analysis.
+# Many assignments here set pr-review-loop.sh globals that the functions under
+# test read. ShellCheck does not follow that source, so each such assignment
+# carries its own `# shellcheck disable=SC2034` with the reason inline.
 
 set -euo pipefail
 

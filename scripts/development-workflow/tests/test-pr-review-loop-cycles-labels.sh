@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# shellcheck disable=SC2034
 # test-pr-review-loop-cycles-labels.sh — pr-review-loop.sh harness: cycle
 # limits, regression/reviewer-failed labels, and the rate-limit ready-phase
 # gate.
@@ -36,11 +35,9 @@
 #
 # Exit code: 0 if all tests pass, 1 if any test fails, 2 on a usage error.
 #
-# SC2034 is disabled for the whole file (line 2). Most assignments here set
-# pr-review-loop.sh globals that the functions under test read; ShellCheck does
-# not follow that source, so it sees every one as unused. When the harness was
-# a single file the warning stayed quiet only because some other area happened
-# to read the same name — coincidence, not analysis.
+# Many assignments here set pr-review-loop.sh globals that the functions under
+# test read. ShellCheck does not follow that source, so each such assignment
+# carries its own `# shellcheck disable=SC2034` with the reason inline.
 
 set -euo pipefail
 
@@ -1181,6 +1178,7 @@ unset MOCK_GH_HEAD_SHA MOCK_GH_UPDATED_AT
 #     reviewer_loop_history_entries_count). A guaranteed-unique synthetic
 #     placeholder keeps the entry countable instead. ---
 
+# shellcheck disable=SC2034  # read by functions sourced from pr-review-loop.sh
 pr_number=42
 export MOCK_GH_EXIT=1
 run_test "cycles_head_sha_fallback_on_lookup_failure_nonempty" "yes" "$(

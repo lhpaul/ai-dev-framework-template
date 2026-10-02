@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# shellcheck disable=SC2034
 # test-pr-review-loop-pr-agent-coderabbit.sh — pr-review-loop.sh harness: PR-
 # Agent and CodeRabbit platforms, post-clean settle, late threads, current-
 # head evidence.
@@ -41,11 +40,9 @@
 #
 # Exit code: 0 if all tests pass, 1 if any test fails, 2 on a usage error.
 #
-# SC2034 is disabled for the whole file (line 2). Most assignments here set
-# pr-review-loop.sh globals that the functions under test read; ShellCheck does
-# not follow that source, so it sees every one as unused. When the harness was
-# a single file the warning stayed quiet only because some other area happened
-# to read the same name — coincidence, not analysis.
+# Many assignments here set pr-review-loop.sh globals that the functions under
+# test read. ShellCheck does not follow that source, so each such assignment
+# carries its own `# shellcheck disable=SC2034` with the reason inline.
 
 set -euo pipefail
 
@@ -198,6 +195,7 @@ chmod +x "$_pr_agent_mock_dir_1704/gh"
 # #1789 (plan D15): only a trigger recorded for the head is reused, so the
 # loop hands its id over in reviewer_loop_head_request_refs.
 actual_output="$(
+  # shellcheck disable=SC2034  # read by functions sourced from pr-review-loop.sh
   reviewer_loop_head_request_refs="1704"
   PATH="$_pr_agent_mock_dir_1704:$PATH" PR_AGENT_CALL_LOG="$_pr_agent_call_log_1704" \
     PR_AGENT_TRIGGER_REUSE_WINDOW_SECONDS=999999999 \

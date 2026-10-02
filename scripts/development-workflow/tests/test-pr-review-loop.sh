@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# shellcheck disable=SC2034
 # test-pr-review-loop.sh — pr-review-loop.sh harness: verdict, config, and
 # lifecycle core, plus the ergonomics and size checks for the whole split
 # harness.
@@ -52,11 +51,9 @@
 #
 # Exit code: 0 if all tests pass, 1 if any test fails, 2 on a usage error.
 #
-# SC2034 is disabled for the whole file (line 2). Most assignments here set
-# pr-review-loop.sh globals that the functions under test read; ShellCheck does
-# not follow that source, so it sees every one as unused. When the harness was
-# a single file the warning stayed quiet only because some other area happened
-# to read the same name — coincidence, not analysis.
+# Many assignments here set pr-review-loop.sh globals that the functions under
+# test read. ShellCheck does not follow that source, so each such assignment
+# carries its own `# shellcheck disable=SC2034` with the reason inline.
 
 set -euo pipefail
 
@@ -594,6 +591,7 @@ _0b_saved_branch="${branch_name-}"
 _0b_saved_config="${config_file-}"
 branch_name="feature/0b-codex"
 config_file="/nonexistent/0b-config.yaml"
+# shellcheck disable=SC2034  # read by functions sourced from pr-review-loop.sh
 changed_files_count=-1
 declare -a platforms=("pr-agent" "codex-github")
 declare -a phase_after_clean_platforms=()
@@ -1874,6 +1872,7 @@ unset compare_mode compare_verdicts platform_policy_status_notes pr_number branc
 echo ""
 echo "=== Area 10b: reviewer-loop history payload ==="
 
+# shellcheck disable=SC2034  # read by functions sourced from pr-review-loop.sh
 pr_number=42
 branch_name="fix/42-history"
 # shellcheck disable=SC2034 # read via "${unresolved_thread_count:-0}" inside

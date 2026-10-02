@@ -41,6 +41,7 @@ after the file was put back.
 
 | Planted violation | File | Guard | Planted | Restored |
 | ----------------- | ---- | ----- | ------- | -------- |
+| All sibling suites moved out (harness merged back into one file) | `tests/test-pr-review-loop-*.sh` | `1876_harness_is_split_across_suites` | FAIL, exit 1 | 9 passed |
 | Suite grown past the 4000-line cap (+2100 comment lines) | `tests/test-pr-review-loop-staged-gates.sh` | `1876_every_suite_under_line_cap` | FAIL, exit 1 | 9 passed |
 | Library grown past the cap (+3700 comment lines) | `tests/lib/pr-review-loop-harness.sh` | `1876_every_suite_under_line_cap` | FAIL, exit 1 | 9 passed |
 | Suite loads the library with `.` instead of the canonical `source` line | `tests/test-pr-review-loop-cycles-labels.sh` | `1876_every_suite_sources_shared_harness` | FAIL, exit 1 | 9 passed |
@@ -55,10 +56,13 @@ after the file was put back.
 In the `--area 0a` row, `1876_list_areas_reads_calling_suite` also failed. The
 same edit removed the Area 13 title that guard looks for, so that is expected.
 
-`1876_harness_is_split_across_suites` was not planted separately. It counts the
-suites that the other guards inspect. Fewer than two suites means the harness
-has been merged back into one file. A merged file of the original size would
-also fail `1876_every_suite_under_line_cap`.
+`1876_harness_is_split_across_suites` was planted by temporarily moving all
+nine `test-pr-review-loop-*.sh` suites out of `tests/`, leaving only
+`test-pr-review-loop.sh`. That is the shape of a harness merged back into one
+file. The planted run exited 1 with
+`FAIL: 1876_harness_is_split_across_suites — expected 'yes', got 'no'`. The two
+per-suite filter guards also failed, as expected, because the suite they
+target was gone. With the suites moved back, the area passed 9 of 9.
 
 The first attempt at the direct-execution row ran away. With the guard
 disabled, the library followed the parent run's exported
