@@ -330,8 +330,8 @@ board. Workflow status transitions still waiting to happen (for example
    itself cost an amount that does not grow with terminal items.
 6. **Reserve default.** The reserve defaults to 1,000 points. The
    implementation plan decides whether operators can configure it. A
-   configured value outside 0 to 5,000 points is ignored with a warning, and
-   the default is used.
+   configured value that is empty, not a whole number, or outside 0 to 5,000
+   points is ignored with a warning, and the default is used.
 7. **Partial scan content.** A partial scan reads in-flight items only. It
    skips Backlog discovery. A scan whose coverage is **Partial scan
    (budget-limited)**, for either reason, never proposes a not-yet-started
@@ -483,7 +483,9 @@ only narrow after that:
   reads **Unavailable** and points remaining and the reset time come from
   the after-scan reading. Where only the after-scan reading fails, the
   coverage chosen from the before-scan reading stands, the warning is shown,
-  and all three spend fields read **Unavailable**.
+  and all three spend fields read **Unavailable**. In each case the board
+  reads meet no rate-limit rejection; when one occurs, the mid-scan override
+  (rule 8, AC12) sets the coverage instead.
 - [ ] **AC8** — In a test environment where the simulated budget resets
   between the before-scan and after-scan readings, points spent reads
   **Unavailable (budget reset during scan)**. Points remaining and the reset
