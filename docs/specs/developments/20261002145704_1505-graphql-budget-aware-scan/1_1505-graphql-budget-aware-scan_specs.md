@@ -95,9 +95,11 @@ workflow behavior. Each one is recorded here so a reviewer can challenge it.
 - **Fully read item**: an item for which the scan has read every input the
   Protocol 90 categorization needs (its board fields and its in-flight
   evidence). An item with any of those inputs still unread is not fully read.
-- **Reserve**: the GraphQL points a scan must leave unspent so the command it
-  recommends can start. The default is 1,000 points. This matches the
-  existing Protocol 90 Step 1a low-budget warning threshold.
+- **Reserve**: the GraphQL points a scan's own projected spend must leave
+  unspent so the command it recommends can start. Spending by other
+  consumers during the scan is reported, not prevented (rule 10). The
+  default is 1,000 points. This matches the existing Protocol 90 Step 1a
+  low-budget warning threshold.
 - **Bounded command**: `/run-item`, `/run-items`, or `/run-epic`. Each acts
   on an explicit set of targets.
 - **Scan coverage**: how much of the portfolio a scan actually read. The
@@ -463,10 +465,10 @@ only narrow after that:
 - [ ] **AC1** — On this repository's board with 500 or more items, most of
   them terminal, a no-target `/run-work` scan that uses the default reserve
   (1,000 points) and starts in a quota window with at least 4,500 points
-  remaining finishes with coverage **Full scan**. The scan reports spending
-  no more than 1,000 GraphQL points. When no other consumer spends budget
-  during the scan, its reported points remaining are at least the reserve
-  (other consumers' spending is covered by rule 10 and AC8).
+  remaining finishes with coverage **Full scan**. When no other consumer
+  spends budget during the scan, the scan reports spending no more than
+  1,000 GraphQL points, and its reported points remaining are at least the
+  reserve (other consumers' spending is covered by rule 10 and AC8).
 - [ ] **AC2** — Right after AC1's scan, in the same quota window, running the
   recommended `/run-items` command (or `/run-items` with two of the proposed
   items when the proposal is larger) resolves every target, passes its
