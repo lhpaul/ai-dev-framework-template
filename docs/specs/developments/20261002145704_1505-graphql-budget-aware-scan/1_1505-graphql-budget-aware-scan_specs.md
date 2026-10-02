@@ -86,8 +86,10 @@ workflow behavior. Each one is recorded here so a reviewer can challenge it.
   Status is `Released` or `Cancelled`. An item that meets both definitions
   (an open issue whose Status is `Released` or `Cancelled`) counts as an
   active item.
-- **In-flight item**: an item with a development folder, a workflow branch,
-  or an open workflow pull request.
+- **In-flight item**: an active item with a development folder, a workflow
+  branch, or an open workflow pull request. A terminal item is never
+  in-flight, even though its development folder and branches remain in the
+  repository after it finishes.
 - **Fully read item**: an item for which the scan has read every input the
   Protocol 90 categorization needs (its board fields and its in-flight
   evidence). An item with any of those inputs still unread is not fully read.
