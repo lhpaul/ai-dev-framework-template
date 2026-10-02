@@ -13763,12 +13763,23 @@ unset _codex_placeholder_86_char_instruction_not_approved_mock_dir _codex_placeh
 # CODEX_APPROVED_TEMPLATES. Both copies must stay byte-identical so the
 # readiness gate and the reviewer never disagree on what a clean Codex
 # response is (a cap widened in only one copy would re-escalate clean PRs).
-_codex_template_line_reviewer="$(grep -F "^Codex Review: Didn" "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" | grep -F 'CODEX_APPROVED' -v | grep -F '{1,' | head -1)"
-_codex_template_line_labels="$(grep -F "^Codex Review: Didn" "$REPO_ROOT/scripts/development-workflow/apply-readiness-labels.sh" | grep -F 'CODEX_APPROVED' -v | grep -F '{1,' | head -1)"
+# The extraction anchors on the array-element form — leading whitespace, then
+# the single-quoted `'^Codex Review: Didn` literal — so a comment line that
+# quotes the pattern (comments start with `#`) can never be picked up instead.
+# Each file must carry exactly one such element; a second element or a moved
+# template fails the count assertions rather than silently comparing the
+# wrong lines.
+_codex_template_element_re="^[[:space:]]+'\\^Codex Review: Didn"
+_codex_template_line_reviewer="$(grep -E "$_codex_template_element_re" "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" || true)"
+_codex_template_line_labels="$(grep -E "$_codex_template_element_re" "$REPO_ROOT/scripts/development-workflow/apply-readiness-labels.sh" || true)"
+run_test "codex_approved_template_reviewer_single_element" "1" \
+  "$(grep -cE "$_codex_template_element_re" "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" || true)"
+run_test "codex_approved_template_readiness_labels_single_element" "1" \
+  "$(grep -cE "$_codex_template_element_re" "$REPO_ROOT/scripts/development-workflow/apply-readiness-labels.sh" || true)"
 run_test "codex_approved_template_parity_reviewer_vs_readiness_labels" "$_codex_template_line_reviewer" "$_codex_template_line_labels"
 run_test "codex_approved_template_flavor_cap_is_60" "1" \
   "$(printf '%s\n' "$_codex_template_line_reviewer" | grep -cF '[^*`[:cntrl:]]{1,60} ')"
-unset _codex_template_line_reviewer _codex_template_line_labels
+unset _codex_template_element_re _codex_template_line_reviewer _codex_template_line_labels
 
 
 
