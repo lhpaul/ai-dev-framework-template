@@ -469,8 +469,9 @@ only narrow after that:
 
 - [ ] **AC6** — Every no-target scan summary, at each coverage value, shows
   **GraphQL points spent by this scan**, **GraphQL points remaining**, and
-  **GraphQL budget resets at**, each with a numeric or time value when the
-  budget is readable.
+  **GraphQL budget resets at**. Each shows a numeric or time value when both
+  budget readings succeed and the budget did not reset during the scan; the
+  other cases are covered by AC7 and AC8.
 - [ ] **AC7** — In a test environment where every budget reading fails, the
   scan finishes with coverage **Full scan**, shows the warning **GraphQL
   budget could not be read**, and reports all three spend fields as
@@ -525,7 +526,7 @@ only narrow after that:
 - [ ] **AC15** — The GitHub Projects integration guide's performance note
   points to that subsection. Neither document still says a full-board fetch
   is unavoidable for portfolio discovery, and neither still describes the
-  cost as a "~3.5-minute hard pause".
+  cost as a "~3.5-minute pause" (with or without "hard").
 - [ ] **AC16** — An archived `Released` item can still be read by the
   workflow's single-item tracker status read. Alternatively, the guidance
   states the exact limit the implementation plan found.
@@ -653,7 +654,7 @@ Rows are checked in order, and the first match wins.
 
 | # | Condition | Coverage | Reason | Required next action |
 | --- | --- | --- | --- | --- |
-| 1 | R unreadable (the before-scan reading fails) | Full scan | GraphQL budget could not be read (warning) | Run the full scan. Report the spend fields as Unavailable. |
+| 1 | R unreadable (the before-scan reading fails) | Full scan | GraphQL budget could not be read (warning) | Run the full scan. Report points spent as Unavailable. Take points remaining and the reset time from the after-scan reading (rule 9). |
 | 2 | R ≥ C_full + S | Full scan | GraphQL budget sufficient | Run the full scan. Report the spend. |
 | 3 | C_partial + S ≤ R < C_full + S | Partial scan (budget-limited) | GraphQL budget too low for a full scan | Read in-flight items only. Skip Backlog discovery. Report the spend and what was skipped. |
 | 4 | R < C_partial + S | Scan deferred (budget too low) | GraphQL budget too low to scan | Read no board items. Propose no batch. Report the remaining budget and reset time. |
