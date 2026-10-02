@@ -299,11 +299,14 @@ def run(argv: list[str]) -> int:
         raise InputError(str(exc)) from exc
     scopes = selector.ROLE_SCOPE_SELECTION[args.role]
     entries = [entry for entry in all_entries if entry.mode_scope in scopes]
-    exemptions = {
-        item["path"]: item.get("reason", "")
-        for item in parse_section_list(manifest, "sync_coverage_exemptions", selector.strip_inline_comment)
-        if item.get("path")
-    }
+    exemptions: dict[str, str] = {}
+    for item in parse_section_list(manifest, "sync_coverage_exemptions", selector.strip_inline_comment):
+        path = item.get("path", "").strip()
+        reason = item.get("reason", "").strip()
+        # An exemption silences a gap, so one without a stated reason is refused.
+        if not path or not reason:
+            raise InputError(f"sync_coverage_exemptions entry needs a nonblank path and reason: {item!r}")
+        exemptions[path] = reason
     additions = parse_section_list(manifest, "required_additions", selector.strip_inline_comment)
 
     tracked = tracked_files(repo_root)

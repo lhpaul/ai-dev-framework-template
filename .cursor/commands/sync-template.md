@@ -196,10 +196,10 @@ Check for known CI/CD configuration mismatches between the template and the proj
    <!-- workflow-shell-contract: bash-zsh -->
    ```bash
    python3 "<template_dir>/scripts/development-workflow/check-sync-manifest-coverage.py" \
-     --repo-root "<template_dir>" --role "$REPOSITORY_ROLE" --consumer-root .
+     --repo-root "<template_dir>" --role "$REPOSITORY_ROLE" --consumer-root . --show-covered
    ```
 
-   It lists every file a synced test suite reads and how the manifest handles it, then evaluates the manifest's `required_additions` against this project. Report:
+   `--show-covered` adds a `COVERED` line, with its `read_by` suites, for every shipped file a synced suite reads; item 1 takes the reading suites from those lines. It lists every file a synced test suite reads and how the manifest handles it, then evaluates the manifest's `required_additions` against this project. Report:
 
    - `UNCOVERED` lines — a synced test reads a file the template manifest does not ship. This is a template defect: name the path and the reading suites, and note that those suites may fail after the sync until the template is fixed upstream.
    - `PROJECT_OWNED` lines — informational. A synced suite reads a project-owned file (for example `AGENTS.md` or `.ai-dev-workflow.yaml`); sync never overwrites it.

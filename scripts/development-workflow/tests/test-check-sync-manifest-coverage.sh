@@ -274,6 +274,14 @@ status="$(run_checker "$out" --repo-root "$FIX" --consumer-root "$TMP_ROOT/no-su
 run_test "missing_consumer_root_exit_2" "2" "$status"
 run_test "missing_consumer_root_error" "yes" "$(has_line "$out" "is not a directory")"
 
+# An exemption silences a gap, so one without a reason is refused (exit 2).
+NO_REASON_MANIFEST="$TMP_ROOT/no-reason-manifest.yaml"
+grep -v '^    reason: named as data only$' "$FIX/sync-manifest.yaml" >"$NO_REASON_MANIFEST"
+out="$TMP_ROOT/no-reason.out"
+status="$(run_checker "$out" --repo-root "$FIX" --manifest "$NO_REASON_MANIFEST")"
+run_test "exemption_without_reason_exit_2" "2" "$status"
+run_test "exemption_without_reason_error" "yes" "$(has_line "$out" "needs a nonblank path and reason")"
+
 # A nested list inside an entry is refused rather than split into two entries.
 NESTED_MANIFEST="$TMP_ROOT/nested-manifest.yaml"
 python3 - "$FIX/sync-manifest.yaml" "$NESTED_MANIFEST" <<'PY'
