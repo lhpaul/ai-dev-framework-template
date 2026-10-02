@@ -362,9 +362,14 @@ board. Workflow status transitions still waiting to happen (for example
      upper bound can be derived without further reads, that projection is
      treated as exceeding the remaining budget, so the scan picks a narrower
      coverage or defers (rows 3 to 5 of the decision table).
-   - **Spend accounting.** Each projected cost includes the points spent
-     working out the projections. That spend happens after the before-scan
-     reading, so it counts in points spent (rule 10).
+   - **Spend accounting.** The scan works out both C_full and C_partial
+     before the coverage decision, so all projection spend is already
+     incurred whichever coverage is picked. Each of C_full and C_partial
+     therefore includes the entire projection spend (all points spent
+     working out both projections), not a share attributed to that
+     projection. This holds however the implementation splits or
+     interleaves the projection work. That spend happens after the
+     before-scan reading, so it counts in points spent (rule 10).
 
    Taken together, when the before-scan reading succeeds, that reading is
    at or above the reserve, and no other consumer spends budget during the
@@ -774,8 +779,10 @@ Rows are checked in order, and the first match wins.
 
 Row 2 is evaluated before the projections are worked out, so projection
 work only starts when R ≥ P + S, and it never spends more than P (rule 5).
-Rows 3 to 5 are evaluated after the projections. Each projection includes
-its share of the projection spend, and a projection that cannot be worked
+Rows 3 to 5 are evaluated after the projections. C_full and C_partial
+each include the entire projection spend already incurred, not a share of
+it, because either coverage must pay for working out both projections
+(rule 5). A projection that cannot be worked
 out within P is replaced by a conservative upper bound, or treated as
 exceeding R when no bound can be derived (rule 5), so rows 3 to 5 always
 have inputs once R is readable. Because C_partial ≤ C_full (rule 5), rows 3
@@ -816,7 +823,8 @@ operator's next command is always named.
 ### Examples
 
 The examples use an illustrative P = 50; the implementation plan sets the
-real value.
+real value. Every C_full and C_partial below already includes the entire
+projection spend (rule 5).
 
 - Fresh window, R = 4,980, C_full = 600, S = 1,000 → 4,980 ≥ 1,050, so the
   projections run; then row 3, Full scan.
