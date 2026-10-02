@@ -133,8 +133,12 @@ def parse_section_list(manifest: Path, section: str, strip_comment) -> list[dict
             entries.append(current)
             content = content[2:].strip()
             indent += 2
-        if current is None or ":" not in content:
-            continue
+        elif current is None or (list_indent is not None and indent <= list_indent):
+            # Content that is not inside a "- " entry would otherwise be
+            # dropped, leaving the section silently empty and its checks off.
+            raise InputError(f"{section}: expected a list of '- key: value' entries (line: {raw.strip()!r})")
+        if ":" not in content:
+            raise InputError(f"{section}: expected 'key: value' (line: {raw.strip()!r})")
         key, value = content.split(":", 1)
         value = value.strip()
         if value in {">", "|", ">-", "|-", ">+", "|+"}:

@@ -282,6 +282,27 @@ status="$(run_checker "$out" --repo-root "$FIX" --manifest "$NO_REASON_MANIFEST"
 run_test "exemption_without_reason_exit_2" "2" "$status"
 run_test "exemption_without_reason_error" "yes" "$(has_line "$out" "needs a nonblank path and reason")"
 
+# A section written as a mapping instead of a list must not parse as empty
+# (which would turn the required-addition check off).
+MAPPING_MANIFEST="$TMP_ROOT/mapping-manifest.yaml"
+python3 - "$FIX/sync-manifest.yaml" "$MAPPING_MANIFEST" <<'PY'
+import sys
+from pathlib import Path
+text = Path(sys.argv[1]).read_text()
+needle = "required_additions:\n  - path: .ai-dev-workflow.yaml\n"
+assert needle in text
+Path(sys.argv[2]).write_text(text.replace(needle, "required_additions:\n  path: .ai-dev-workflow.yaml\n", 1))
+PY
+out="$TMP_ROOT/mapping.out"
+status="$(run_checker "$out" --repo-root "$FIX" --manifest "$MAPPING_MANIFEST" --consumer-root "$CONSUMER")"
+run_test "section_without_list_exit_2" "2" "$status"
+run_test "section_without_list_error" "yes" "$(has_line "$out" "expected a list of '- key: value' entries")"
+# The well-formed list still evaluates the addition (the failing/passing pair).
+out="$TMP_ROOT/mapping-ok.out"
+status="$(run_checker "$out" --repo-root "$FIX" --consumer-root "$CONSUMER")"
+run_test "section_as_list_still_checked" "1" "$status"
+run_test "section_as_list_reports_missing" "yes" "$(has_line "$out" "REQUIRED_ADDITION_MISSING path=.ai-dev-workflow.yaml")"
+
 # A nested list inside an entry is refused rather than split into two entries.
 NESTED_MANIFEST="$TMP_ROOT/nested-manifest.yaml"
 python3 - "$FIX/sync-manifest.yaml" "$NESTED_MANIFEST" <<'PY'
