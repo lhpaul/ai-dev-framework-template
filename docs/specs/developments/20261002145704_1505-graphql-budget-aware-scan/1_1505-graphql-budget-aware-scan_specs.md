@@ -348,8 +348,10 @@ board. Workflow status transitions still waiting to happen (for example
    projected partial-scan cost never exceeds the projected full-scan cost:
    when the partial projection (or its conservative bound) would exceed the
    full projection, the full projection is used for both.
-6. **Reserve default.** The reserve defaults to 1,000 points. The
-   implementation plan decides whether operators can configure it. A
+6. **Reserve default.** The reserve defaults to 1,000 points. Operators can
+   configure it through one optional key in `.ai-dev-workflow.yaml`; the
+   implementation plan names the key. The reserve is not configured by an
+   environment variable alone. A
    configured value that is empty, not a whole number, or outside 0 to 5,000
    points is ignored with a warning, and the default is used.
 7. **Partial scan content.** A partial scan reads in-flight items only. It
@@ -602,13 +604,16 @@ only narrow after that:
 
 ## Open Questions
 
-1. Are the AC1 thresholds right? The proposed targets are at most 1,000
-   points per scan (20% of the hourly budget) on a 500-plus item board, and
-   a 1,000-point reserve. The alternative would be a tighter cap or a
-   reserve that scales with the size of the proposed batch.
-2. Should operators be able to configure the reserve, or is a fixed
-   1,000-point default enough for now? This spec leaves it to the
-   implementation plan (rule 6).
+None. Both questions raised in review were answered by the human and are
+recorded here:
+
+1. **AC1 thresholds: resolved.** Keep the targets as written: at most 1,000
+   points per scan (20% of the hourly budget) on a 500-plus item board, and a
+   1,000-point reserve. A reserve that scales with the batch size is not
+   adopted. Revisit only if a scan followed by `/run-items` still hits the
+   rate limit.
+2. **Reserve configurability: resolved.** Operators can configure the reserve
+   through one optional key in `.ai-dev-workflow.yaml` (rule 6).
 
 ---
 
@@ -664,8 +669,7 @@ comments:
 - **DN1 — Snapshot reuse (O6).** Deferred. A mutating bounded command should
   decide from current tracker state, not from a snapshot taken earlier.
   Rules 1 and 2 make both the scan and the target resolution cheap enough
-  that a cache is not needed to meet O1. Human confirmation requested: yes,
-  in case the human still wants snapshot reuse as a follow-up.
+  that a cache is not needed to meet O1. Human confirmed: stays deferred.
 - **DN2 — Automated archival (O8, automation part).** Deferred. Archiving
   changes a live, shared board, and the safe set depends on release
   closeout timing. The guidance (AC14) delivers the hygiene part of the
@@ -675,7 +679,7 @@ comments:
   The merge gate runs mid-pipeline, not in the scan-then-execute discovery
   phase this issue targets. The objective's transferable lesson, reading the
   GraphQL budget specifically, is adopted for the scan (AC9). Human
-  confirmation requested: yes, on whether to file a follow-up backlog item.
+  confirmed: filed as follow-up backlog item #1890.
 
 ---
 
