@@ -387,7 +387,7 @@ board. Workflow status transitions still waiting to happen (for example
 | --- | --- | --- |
 | `full` | Full scan | All active items, in-flight items, and Backlog discovery were read. |
 | `partial` | Partial scan (budget-limited) | Only in-flight items were read, or the read stopped partway. Backlog discovery, or the named items, were not covered. |
-| `deferred` | Scan deferred (budget too low) | No board items were read and no batch is proposed. |
+| `deferred` | Scan deferred (budget too low) | No board item was fully read: either the pre-scan check allowed no board reads, or a rate-limit rejection stopped the reads before any item was fully read. No batch is proposed. |
 
 ### Coverage reason
 
@@ -428,8 +428,9 @@ only narrow after that:
 - **Scan summary**: shows the scan coverage label, the coverage reason, and
   the three spend report fields on every no-target scan.
 - **Warnings**: **GraphQL budget could not be read** appears on the scan
-  summary whenever the before-scan or after-scan budget reading fails. The existing Protocol 90
-  warnings for low budget after discovery are unchanged.
+  summary whenever the before-scan or after-scan budget reading fails. The
+  existing Protocol 90 warnings for low budget after discovery are
+  unchanged.
 - **Audit trail**: none added. `/run-work` stays read-only and posts no
   comments.
 
