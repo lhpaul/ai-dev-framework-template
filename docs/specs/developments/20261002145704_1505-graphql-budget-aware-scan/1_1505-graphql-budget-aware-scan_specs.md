@@ -200,8 +200,11 @@ scan and still leave the reserve.
 **Steps**:
 
 1. The operator runs `/run-work` with no target.
-2. The scan checks the remaining budget against the projected cost of a full
-   scan plus the reserve, and finds it too low.
+2. If the remaining budget is below the projection ceiling plus the reserve
+   (rule 5), the scan does no projection work and goes straight to step 4.
+   Otherwise it works out the projections within the ceiling, checks the
+   remaining budget against the projected cost of a full scan plus the
+   reserve, and finds it too low.
 3. If a partial scan fits and still leaves the reserve, the scan reads only
    the in-flight items and skips Backlog discovery. Scan coverage is
    **Partial scan (budget-limited)**.
@@ -210,9 +213,10 @@ scan and still leave the reserve.
 5. The summary names the reason, the points remaining, the reset time, and
    what was not covered.
 
-**Postconditions**: Apart from the points spent working out the projections
-(rule 5), the scan's own spend has not pushed the remaining budget below the
-reserve. Spending by other consumers during the
+**Postconditions**: The scan's own spend, including the points spent working
+out the projections (rule 5), has not pushed the remaining budget below the
+reserve. When the scan started below the projection ceiling plus the
+reserve, it did no projection work at all. Spending by other consumers during the
 scan is reported, not prevented (rule 10). The operator knows what the scan
 did not cover and when a full scan will be possible again.
 
@@ -336,18 +340,39 @@ board. Workflow status transitions still waiting to happen (for example
    the reserve. The table's rows do not overlap, and they are checked in the
    order listed.
 5. **Conservative projection.** The projected scan costs must not
-   underestimate. When the scan cannot work out a projection, it uses a
-   conservative upper bound in its place. Working out the projection must
-   itself cost an amount that does not grow with terminal items, and each
-   projected cost includes the points spent working out the projections, so
-   on a Full or Partial scan the reserve also covers that spend. That spend
-   happens after the before-scan reading (rule 3), so it counts in points
-   spent (rule 10). A **Scan deferred (budget too low)** scan has still spent
-   the points used to work out the projections, and that spend alone is not
-   bounded by the reserve. The
-   projected partial-scan cost never exceeds the projected full-scan cost:
-   when the partial projection (or its conservative bound) would exceed the
-   full projection, the full projection is used for both.
+   underestimate. Working out the projections is itself bounded by the
+   budget above the reserve:
+   - **Projection ceiling.** Working out the projections has a fixed upper
+     bound on its spend, the projection ceiling (**P**). P is known before
+     any projection read, and it does not grow with terminal items. The
+     implementation plan sets its value.
+   - **Projection gate.** Before its first projection read, the scan checks
+     the before-scan reading (rule 3) against P plus the reserve. When the
+     remaining budget is below P plus the reserve, the scan does no
+     projection work and reads no board items. Its coverage is **Scan
+     deferred (budget too low)**, with reason **GraphQL budget too low to
+     scan**. This always applies when the remaining budget is already at or
+     below the reserve.
+   - **Stop at the ceiling.** Projection work never spends more than P. When
+     a projection cannot be worked out within P, the scan stops estimating
+     and uses a conservative upper bound in its place. When no conservative
+     upper bound can be derived without further reads, that projection is
+     treated as exceeding the remaining budget, so the scan picks a narrower
+     coverage or defers (rows 3 to 5 of the decision table).
+   - **Spend accounting.** Each projected cost includes the points spent
+     working out the projections. That spend happens after the before-scan
+     reading, so it counts in points spent (rule 10).
+
+   Taken together, when no other consumer spends budget during the scan, the
+   scan's own spend (projection work plus board reads) never leaves fewer
+   points remaining than the reserve, whatever the coverage. When the scan
+   starts below P plus the reserve, its only GraphQL reads are the budget
+   readings themselves (rules 3 and 10). A rate-limit rejection during
+   projection work is handled as a mid-scan rejection with no item fully
+   read (rule 8). The projected partial-scan cost never exceeds the
+   projected full-scan cost: when the partial projection (or its
+   conservative bound) would exceed the full projection, the full projection
+   is used for both.
 6. **Reserve default.** The reserve defaults to 1,000 points. Operators can
    configure it through one optional key in `.ai-dev-workflow.yaml`; the
    implementation plan names the key. The reserve is not configured by an
@@ -555,8 +580,24 @@ only narrow after that:
   read, and **Scan deferred (budget too low)** otherwise. No item that was
   not fully read appears under the proposed batch or actionable resume, and
   no not-yet-started Backlog item is proposed even when it was fully read.
-- [ ] **AC13** — In AC10, AC11, and AC12, the scan performs no tracker,
-  branch, pull-request, or board mutation.
+- [ ] **AC13** — In AC10, AC11, AC12, and AC17, the scan performs no
+  tracker, branch, pull-request, or board mutation.
+- [ ] **AC17** — In a test environment with a simulated board, the default
+  reserve (1,000 points), and no other consumer spending budget, projection
+  work stays within the budget above the reserve:
+  - With 900 points remaining before the scan, the scan makes no projection
+    read and no board read. It finishes with coverage **Scan deferred
+    (budget too low)** and reason **GraphQL budget too low to scan**, and
+    the after-scan reading shows the same 900 points remaining.
+  - With points remaining at or above the reserve but below the projection
+    ceiling plus the reserve, the scan makes no projection read and no board
+    read, and finishes with the same coverage and reason.
+  - Where working out a projection would need more than the projection
+    ceiling, the scan stops projection work once it has spent the ceiling.
+    It then uses a conservative upper bound or defers, and never spends more
+    than the ceiling on projection work.
+  - For every starting budget at or above the reserve, at every coverage
+    value, the after-scan reading shows at least the reserve remaining.
 
 ### Archival guidance
 
@@ -653,12 +694,12 @@ comments:
 | O1 | AC1, AC2, AC3 | Scope of "completes" set by D3. |
 | O2 | AC4, AC5 | Business rule 2. |
 | O3 | AC6, AC7, AC8 | Business rules 9, 10, and 11. |
-| O4 | AC9, AC10, AC11, AC12, AC13 | Business rules 3, 4, 5, 7, 8. |
+| O4 | AC9, AC10, AC11, AC12, AC13, AC17 | Business rules 3, 4, 5, 7, 8. AC17 covers the projection ceiling and gate (rule 5). |
 | O5 | AC14, AC15, AC16 | Business rules 15 and 16. |
 | O6 | Out of Scope (snapshot reuse) | Deferral Note DN1. |
 | O7 | AC4 | Combined with O2. |
 | O8 | AC14, AC15, AC16; Out of Scope (automated archival) | Documentation only (D4); Deferral Note DN2. |
-| O9 | AC9, AC10, AC11, AC12 | Combined with O4. |
+| O9 | AC9, AC10, AC11, AC12, AC17 | Combined with O4. |
 | O10 | AC6, AC7, AC8 | Combined with O3. |
 | O11 | AC9 | Business rule 3; D5. |
 | O12 | Out of Scope (merge gate budget awareness) | Deferral Note DN3. |
@@ -695,6 +736,8 @@ This spec adds a scan-coverage gate to the no-target `/run-work` scan.
 - **C_partial**: the projected cost of a partial scan. Always
   C_partial ≤ C_full (rule 5).
 - **S**: the reserve (default 1,000).
+- **P**: the projection ceiling, the most the scan may spend working out
+  C_full and C_partial (rule 5). It is known before any projection read.
 - **Mid-scan evidence**: a rate-limit rejection observed during the scan
   (yes or no), and whether at least one item was fully read before it.
 
@@ -705,15 +748,22 @@ Rows are checked in order, and the first match wins.
 | # | Condition | Coverage | Reason | Required next action |
 | --- | --- | --- | --- | --- |
 | 1 | R unreadable (the before-scan reading fails) | Full scan | GraphQL budget could not be read (warning) | Run the full scan. Report points spent as Unavailable. Take points remaining and the reset time from the after-scan reading (rule 9). |
-| 2 | R ≥ C_full + S | Full scan | GraphQL budget sufficient | Run the full scan. Report the spend. |
-| 3 | C_partial + S ≤ R < C_full + S | Partial scan (budget-limited) | GraphQL budget too low for a full scan | Read in-flight items only. Skip Backlog discovery. Report the spend and what was skipped. |
-| 4 | R < C_partial + S | Scan deferred (budget too low) | GraphQL budget too low to scan | Read no board items. Propose no batch. Report the remaining budget and reset time. |
+| 2 | R < P + S (checked before any projection read) | Scan deferred (budget too low) | GraphQL budget too low to scan | Do no projection work. Read no board items. Propose no batch. Report the remaining budget and reset time. |
+| 3 | R ≥ C_full + S | Full scan | GraphQL budget sufficient | Run the full scan. Report the spend. |
+| 4 | C_partial + S ≤ R < C_full + S | Partial scan (budget-limited) | GraphQL budget too low for a full scan | Read in-flight items only. Skip Backlog discovery. Report the spend and what was skipped. |
+| 5 | R < C_partial + S | Scan deferred (budget too low) | GraphQL budget too low to scan | Read no board items. Propose no batch. Report the remaining budget and reset time. |
 
-A projection that cannot be worked out is replaced by a conservative upper
-bound (rule 5), so rows 2 to 4 always have numeric inputs once R is
-readable. Because C_partial ≤ C_full (rule 5), rows 2 to 4 split the
-readable values of R into ranges that do not overlap and leave no gaps. When
-the two projections are equal, row 3's range is empty.
+Row 2 is evaluated before the projections are worked out, so projection
+work only starts when R ≥ P + S, and it never spends more than P (rule 5).
+Rows 3 to 5 are evaluated after the projections. Each projection includes
+its share of the projection spend, and a projection that cannot be worked
+out within P is replaced by a conservative upper bound, or treated as
+exceeding R when no bound can be derived (rule 5), so rows 3 to 5 always
+have inputs once R is readable. Because C_partial ≤ C_full (rule 5), rows 3
+to 5 split the readable values of R ≥ P + S into ranges that do not overlap
+and leave no gaps. When the two projections are equal, row 4's range is
+empty. With no other consumer spending, every row from 2 to 5 leaves at
+least S points remaining after the scan when R ≥ S before it.
 
 ### Mid-scan override
 
@@ -721,11 +771,11 @@ Mid-scan evidence takes precedence over the pre-scan decision.
 
 | # | Mid-scan evidence | Coverage | Reason | Required next action |
 | --- | --- | --- | --- | --- |
-| 5 | Rate-limit rejection, at least one item fully read | Partial scan (budget-limited) | GraphQL budget ran out during the scan | Stop board reads. Propose only from fully read items, and never a not-yet-started Backlog item (rule 7). List what was not covered. Report the reset time. |
-| 6 | Rate-limit rejection, no item fully read | Scan deferred (budget too low) | GraphQL budget ran out during the scan | Stop board reads. Propose no batch. Report the reset time. |
-| 7 | No rate-limit rejection | Pre-scan decision stands | Pre-scan reason stands | As in the pre-scan row. If the coverage is Full scan or Partial scan and the after-scan reading is below the reserve, also show the warning **GraphQL budget below reserve after scan** (rule 10). Scan deferred never shows it. |
+| 6 | Rate-limit rejection, at least one item fully read | Partial scan (budget-limited) | GraphQL budget ran out during the scan | Stop board reads. Propose only from fully read items, and never a not-yet-started Backlog item (rule 7). List what was not covered. Report the reset time. |
+| 7 | Rate-limit rejection, no item fully read (including a rejection during projection work) | Scan deferred (budget too low) | GraphQL budget ran out during the scan | Stop projection work and board reads. Propose no batch. Report the reset time. |
+| 8 | No rate-limit rejection | Pre-scan decision stands | Pre-scan reason stands | As in the pre-scan row. If the coverage is Full scan or Partial scan and the after-scan reading is below the reserve, also show the warning **GraphQL budget below reserve after scan** (rule 10). Scan deferred never shows it. |
 
-Only a rate-limit rejection triggers rows 5 and 6. A board read that fails
+Only a rate-limit rejection triggers rows 6 and 7. A board read that fails
 for any other reason keeps today's error handling (rule 8). A failed
 after-scan budget reading never changes the coverage; it only affects the
 spend report (rule 10).
@@ -744,15 +794,28 @@ operator's next command is always named.
 
 ### Examples
 
-- Fresh window, R = 4,980, C_full = 600, S = 1,000 → row 2, Full scan.
-- R = 1,400, C_full = 600, C_partial = 150 → 1,400 < 1,600 and
-  1,400 ≥ 1,150 → row 3, Partial scan.
-- R = 900 → row 4, Scan deferred.
-- Row 2 chosen, but a concurrent consumer drains the budget after 10 items
-  were fully read → row 5, Partial scan, reason "GraphQL budget ran out
+The examples use an illustrative P = 50; the implementation plan sets the
+real value.
+
+- Fresh window, R = 4,980, C_full = 600, S = 1,000 → 4,980 ≥ 1,050, so the
+  projections run; then row 3, Full scan.
+- R = 1,400, C_full = 600, C_partial = 150 → 1,400 ≥ 1,050, so the
+  projections run; then 1,400 < 1,600 and 1,400 ≥ 1,150 → row 4, Partial
+  scan.
+- R = 900, S = 1,000 → 900 < 1,050 → row 2, Scan deferred. No projection
+  work runs, so the scan spends none of the 900 points on board or
+  projection reads.
+- R = 1,030, S = 1,000 → 1,030 < 1,050 → row 2, Scan deferred, even though
+  R is above the reserve, because projection work could take up to 50
+  points and leave less than the reserve.
+- R = 1,100, S = 1,000, C_partial = 150 → the projections run (at most 50
+  points), then 1,100 < 1,150 → row 5, Scan deferred. At least 1,050 points
+  remain, above the reserve.
+- Row 3 chosen, but a concurrent consumer drains the budget after 10 items
+  were fully read → row 6, Partial scan, reason "GraphQL budget ran out
   during the scan".
-- R = 2,000, C_full = 600, S = 1,000 → row 2, Full scan. Another consumer
-  spends 500 during the scan with no rejection, leaving 900 → row 7, Full
+- R = 2,000, C_full = 600, S = 1,000 → row 3, Full scan. Another consumer
+  spends 500 during the scan with no rejection, leaving 900 → row 8, Full
   scan stands, with the warning **GraphQL budget below reserve after scan**.
 
 ### Mirror surfaces
