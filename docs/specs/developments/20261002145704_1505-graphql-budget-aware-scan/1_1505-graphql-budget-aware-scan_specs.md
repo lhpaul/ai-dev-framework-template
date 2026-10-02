@@ -210,8 +210,9 @@ scan and still leave the reserve.
 5. The summary names the reason, the points remaining, the reset time, and
    what was not covered.
 
-**Postconditions**: The scan's own projected spend has not pushed the
-remaining budget below the reserve. Spending by other consumers during the
+**Postconditions**: Apart from the points spent working out the projections
+(rule 5), the scan's own spend has not pushed the remaining budget below the
+reserve. Spending by other consumers during the
 scan is reported, not prevented (rule 10). The operator knows what the scan
 did not cover and when a full scan will be possible again.
 
@@ -339,7 +340,11 @@ board. Workflow status transitions still waiting to happen (for example
    conservative upper bound in its place. Working out the projection must
    itself cost an amount that does not grow with terminal items, and each
    projected cost includes the points spent working out the projections, so
-   the reserve also covers that spend. The
+   on a Full or Partial scan the reserve also covers that spend. That spend
+   happens after the before-scan reading (rule 3), so it counts in points
+   spent (rule 10). A **Scan deferred (budget too low)** scan has still spent
+   the points used to work out the projections, and that spend alone is not
+   bounded by the reserve. The
    projected partial-scan cost never exceeds the projected full-scan cost:
    when the partial projection (or its conservative bound) would exceed the
    full projection, the full projection is used for both.
