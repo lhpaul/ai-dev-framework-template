@@ -208,16 +208,19 @@ scan and still leave the reserve.
 5. The summary names the reason, the points remaining, the reset time, and
    what was not covered.
 
-**Postconditions**: The scan has not pushed the remaining budget below the
-reserve. The operator knows what the scan did not cover and when a full scan
-will be possible again.
+**Postconditions**: The scan's own projected spend has not pushed the
+remaining budget below the reserve. Spending by other consumers during the
+scan is reported, not prevented (rule 10). The operator knows what the scan
+did not cover and when a full scan will be possible again.
 
 **Information shown**:
 
 - Scan coverage label and the named reason (see Statuses / Enum Values).
 - Points remaining and reset time.
 - For **Partial scan**: what was skipped, which is Backlog discovery, so no
-  new-start proposals are made.
+  new-start proposals are made. The warning **GraphQL budget below reserve
+  after scan** when other consumers' spending left less than the reserve
+  (rule 10).
 - For **Scan deferred**: a statement that no batch is proposed. The operator
   can re-run the scan after the reset time, or run bounded commands on
   targets they already know.
