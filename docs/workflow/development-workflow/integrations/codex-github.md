@@ -130,7 +130,8 @@ cases, and the same instruction smuggled in as a newline-separated
 paragraph, still fall outside the slot and safe-fail. The cap lives in two
 byte-identical copies of the template, in `codex-github-reviewer.sh` and
 `apply-readiness-labels.sh`. A parity test in `test-pr-review-loop.sh`
-fails if they drift. The excluded characters protect adjacent template structure only:
+fails if they drift. The excluded characters protect adjacent template
+structure only:
 asterisk protects the `**Reviewed commit:**` marker that follows, backtick
 protects the SHA field's delimiters, and control characters (including
 newline) are excluded as defense in depth even though whitespace

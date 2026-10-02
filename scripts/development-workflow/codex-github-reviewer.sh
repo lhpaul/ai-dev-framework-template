@@ -826,7 +826,8 @@ codex_normalize_whitespace() {
 # ("Rename the unsafe function immediately before merging this pull
 # request please.") would then match as approval. 60 keeps every known
 # actionable-instruction test case (79 and 86 characters) outside the
-# slot while admitting the longest evidenced genuine flavor sentence. `[^*`[:cntrl:]]` excludes only the characters that
+# slot while admitting the longest evidenced genuine flavor sentence.
+# `[^*`[:cntrl:]]` excludes only the characters that
 # could let this slot swallow adjacent template structure: `*` (protects
 # the literal `**Reviewed commit:**` bold-marker syntax immediately
 # after this slot), backtick (protects the backtick-delimited SHA field
