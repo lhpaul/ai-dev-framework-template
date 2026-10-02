@@ -101,8 +101,11 @@ run_test "1648_dispatch_missing_reviewed_head" "LOCAL_AI_HEAD_CURRENT=" \
 run_test "1648_dispatch_configured_no_head" "LOCAL_AI_CONFIGURED=1" \
   "$(grep '^LOCAL_AI_CONFIGURED=' "$_1648_dispatch_out")"
 
+# shellcheck disable=SC2034  # read by sourced reviewer_loop_emit_local_ai_head_evidence_keys
 platforms=(local-ai-reviewer)
+# shellcheck disable=SC2034  # read by sourced reviewer_loop_emit_local_ai_head_evidence_keys
 platform_reviewed_heads=("local-ai-reviewer:$_1648_live_sha")
+# shellcheck disable=SC2034  # read by sourced reviewer_loop_emit_local_ai_head_evidence_keys
 loop_head_sha="$_1648_live_sha"
 reviewer_loop_emit_local_ai_head_evidence_keys > "$_1648_dispatch_out"
 run_test "1648_dispatch_current_head" "LOCAL_AI_HEAD_CURRENT=1" \

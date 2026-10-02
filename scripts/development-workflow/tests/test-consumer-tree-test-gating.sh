@@ -17,6 +17,7 @@
 # covers: scripts/development-workflow/tests/test-placeholder-workflows-opt-in.sh
 # covers: scripts/development-workflow/tests/test-batch-merge-recheck-remaining.sh
 # covers: scripts/development-workflow/tests/test-local-ai-reviewer-pr-review-loop-dispatch.sh
+# covers: scripts/development-workflow/tests/test-pr-review-loop-pr-agent-coderabbit.sh
 
 set -euo pipefail
 
@@ -453,7 +454,9 @@ run_test "placeholder_guard_is_load_bearing" "yes" \
 
 # --- the two suites too expensive to nest -----------------------------------
 # test-batch-merge-recheck-remaining.sh mocks a full gh surface, and
-# test-pr-review-loop.sh runs for roughly 13 minutes; re-running either inside
+# the pr-review-loop harness (the PR-Agent area now lives in
+# test-pr-review-loop-pr-agent-coderabbit.sh, #1876) sources the whole
+# reviewer loop and real reviewer companions; re-running either inside
 # this suite would dominate its cost. Assert structurally instead that the
 # gated assertion sits *inside* the guard block, which a comment or a dead
 # branch cannot satisfy. Both still run for real in CI, in both trees.
@@ -511,7 +514,7 @@ run_test "batch_merge_assertion_inside_is_template_guard" "yes" \
   "$(assertion_is_inside_guard test-batch-merge-recheck-remaining.sh \
       'workflow_template_is_template' 'placeholder_e2e_workflow_name_synced')"
 run_test "pr_review_loop_assertion_inside_reviewer_guard" "yes" \
-  "$(assertion_is_inside_guard test-pr-review-loop.sh \
+  "$(assertion_is_inside_guard test-pr-review-loop-pr-agent-coderabbit.sh \
       'workflow_config_review_github_reviewer_configured' 'workflows/pr-agent.yml')"
 
 # --- assertions that must not come back -------------------------------------

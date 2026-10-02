@@ -27,37 +27,58 @@ enough to detect a failure even though each script's own PASS/FAIL lines keep
 scrolling past. Individual `test-*.sh` files typically run in a few seconds
 each and are safe to invoke with a default foreground timeout.
 
-Note that the full harness is heavily lopsided: `test-pr-review-loop.sh` alone
-is roughly half the total wall clock (~13 minutes of ~27), while the median
-suite finishes in a few seconds.
+Note that the full harness is lopsided: the `test-pr-review-loop*.sh` suites
+together are the largest share of the total wall clock, while the median suite
+finishes in a few seconds.
 
-### Iterating on `test-pr-review-loop.sh`
+### Iterating on the `test-pr-review-loop*.sh` suites
 
-That suite is ~13.6k lines and ~900 assertions, and its runtime is extremely
-lopsided (issue #1562): **Area 13 is ~94% of it** — 156 `codex-github-reviewer.sh`
-invocations that each really sleep — while the other 27 areas together take
-about 13 seconds. Use `--area` when you are not working on Area 13:
+The `pr-review-loop.sh` harness is ~2,900 assertions split across ten suites
+(issue #1876). As one 24k-line file it needed ~17 GB of memory for ShellCheck
+to lint, enough to get the smaller runners private repositories use shut down
+mid-step. The suites share their preamble through
+`tests/lib/pr-review-loop-harness.sh`:
+
+| Suite | Areas |
+| ----- | ----- |
+| `test-pr-review-loop.sh` | 0a–10b core, 18 suite ergonomics, 1876 split size |
+| `test-pr-review-loop-cycles-labels.sh` | 10c cycle limits, 11–12b labels and rate-limit gate |
+| `test-pr-review-loop-failure-paths-1.sh` … `-4.sh` | 13 PR #801 failure paths |
+| `test-pr-review-loop-release-bugbot.sh` | 14–16 release guard and Bugbot |
+| `test-pr-review-loop-pr-agent-coderabbit.sh` | 17 PR-Agent, CodeRabbit, 19, 20, 1648 |
+| `test-pr-review-loop-staged-gates.sh` | 1649–1692 expensive gate, ledgers, staging |
+| `test-pr-review-loop-no-verdict-yet.sh` | 1789 wait budgets and no-verdict-yet |
+
+Area 13 is still the slow one: about 156 `codex-github-reviewer.sh` invocations
+that each really sleep, so each failure-paths suite takes a minute or two while
+most of the others take seconds. Each suite accepts `--area`, which filters
+that suite's own areas:
 
 <!-- workflow-shell-contract: bash-zsh -->
 
 ```bash
-# What areas are there?
+# What areas does a suite have?
 bash scripts/development-workflow/tests/test-pr-review-loop.sh --list-areas
 
 # Run one area (matches an area number exactly, or any substring of its title)
 bash scripts/development-workflow/tests/test-pr-review-loop.sh --area 1
 bash scripts/development-workflow/tests/test-pr-review-loop.sh --area haystack
-bash scripts/development-workflow/tests/test-pr-review-loop.sh --area 0a --area 12b
+bash scripts/development-workflow/tests/test-pr-review-loop-cycles-labels.sh --area 12b
 ```
 
 A filtered run still prints the summary and still exits non-zero if anything in
 the selected areas failed.
 
-The suite re-executes itself from a temp-file snapshot. Bash reads a script
-incrementally, so editing this file mid-run used to make the running shell pick
-up part of the new text — during the #1531 work that produced a run whose
+Keep every suite small. `test-pr-review-loop.sh` checks that each suite, and the
+shared library, stays at or under 4,000 lines. When a suite gets close, move
+areas into a new `test-pr-review-loop-<topic>.sh` that sources the library,
+with the same `# covers:` lines as the other suites. Do not raise the cap.
+
+Each suite re-executes itself from a temp-file snapshot. Bash reads a script
+incrementally, so editing a suite mid-run used to make the running shell pick
+up part of the new text. During the #1531 work that produced a run whose
 pass/fail counts matched neither version of the file, with nothing to indicate
-it. You can now edit it freely while a run is in flight.
+it. You can now edit freely while a run is in flight.
 
 ### How CI decides which suites to run
 
