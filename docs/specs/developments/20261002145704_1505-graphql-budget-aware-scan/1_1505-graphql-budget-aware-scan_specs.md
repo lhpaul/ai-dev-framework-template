@@ -50,8 +50,11 @@ workflow behavior. Each one is recorded here so a reviewer can challenge it.
 - **D3 — "Completes within one quota window" covers getting started, not the
   whole pipeline.** A `/run-items` run can last hours across many stages and
   review loops. No single quota window can hold all of that work. The
-  measurable promise is narrower. The scan's own projected spend leaves at
-  least the reserve unspent; spending by other consumers on the same account
+  measurable promise is narrower. When the before-scan budget reading
+  succeeds and is at or above the reserve, the scan's own projected spend
+  leaves at least the reserve unspent (rule 5); an unreadable before-scan
+  budget runs the scan at full coverage without that guarantee (rule 9), and
+  spending by other consumers on the same account
   is outside the scan's control and is reported, not prevented (rule 10).
   The recommended `/run-items` command then resolves its targets,
   passes its pre-mutation checks, and starts its first item, all without a
@@ -363,11 +366,17 @@ board. Workflow status transitions still waiting to happen (for example
      working out the projections. That spend happens after the before-scan
      reading, so it counts in points spent (rule 10).
 
-   Taken together, when no other consumer spends budget during the scan, the
-   scan's own spend (projection work plus board reads) never leaves fewer
-   points remaining than the reserve, whatever the coverage. When the scan
-   starts below P plus the reserve, its only GraphQL reads are the budget
-   readings themselves (rules 3 and 10). A rate-limit rejection during
+   Taken together, when the before-scan reading succeeds, that reading is
+   at or above the reserve, and no other consumer spends budget during the
+   scan, the scan's own spend (projection work plus board reads) never
+   leaves fewer points remaining than the reserve, whatever the coverage.
+   When the before-scan reading is below the reserve, the scan spends
+   nothing on projection or board reads, so it leaves the starting budget
+   unchanged rather than restoring the reserve. When the before-scan reading
+   fails, this guarantee does not apply: the scan runs at full coverage
+   without a budget check (rule 9). When the scan starts below P plus the
+   reserve, its only GraphQL reads are the budget readings themselves
+   (rules 3 and 10). A rate-limit rejection during
    projection work is handled as a mid-scan rejection with no item fully
    read (rule 8). The projected partial-scan cost never exceeds the
    projected full-scan cost: when the partial projection (or its
@@ -392,7 +401,10 @@ board. Workflow status transitions still waiting to happen (for example
    fails for any reason other than rate limiting keeps today's error
    handling; this spec does not change it.
 9. **Unreadable budget.** When the before-scan budget reading fails, the scan
-   still runs at full coverage, because rule 1 keeps it cheap. It shows the
+   still runs at full coverage, because rule 1 keeps it cheap. The scan has
+   no starting budget to check against, so the reserve guarantee of rule 5
+   does not apply, and the scan may leave fewer points than the reserve
+   unspent. It shows the
    warning **GraphQL budget could not be read**, and points spent reads
    **Unavailable**. Points remaining and the reset time come from the
    after-scan reading, and read **Unavailable** when that reading also
@@ -599,8 +611,12 @@ only narrow after that:
     ceiling, the scan stops projection work once it has spent the ceiling.
     It then uses a conservative upper bound or defers, and never spends more
     than the ceiling on projection work.
-  - For every starting budget at or above the reserve, at every coverage
-    value, the after-scan reading shows at least the reserve remaining.
+  - For every starting budget at or above the reserve where the before-scan
+    reading succeeds, at every coverage value, the after-scan reading shows
+    at least the reserve remaining. A starting budget below the reserve is
+    covered by the 900-point case above (the budget is left unchanged), and
+    an unreadable before-scan budget is covered by AC7 and rule 9, where
+    this guarantee does not apply.
 
 ### Archival guidance
 
@@ -766,7 +782,9 @@ have inputs once R is readable. Because C_partial ≤ C_full (rule 5), rows 3
 to 5 split the readable values of R ≥ P + S into ranges that do not overlap
 and leave no gaps. When the two projections are equal, row 4's range is
 empty. With no other consumer spending, every row from 2 to 5 leaves at
-least S points remaining after the scan when R ≥ S before it.
+least S points remaining after the scan when R ≥ S before it. Row 1 carries
+no such guarantee: with R unreadable, the full scan runs without a budget
+check and may leave fewer than S points (rule 9).
 
 ### Mid-scan override
 
