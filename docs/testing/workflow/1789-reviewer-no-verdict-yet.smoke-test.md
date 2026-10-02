@@ -53,7 +53,7 @@ design-fidelity step.
 
 **Maps to**: AC-1 through AC-13 (unit coverage)
 
-1. Run `bash scripts/development-workflow/tests/test-pr-review-loop.sh --area 1789`.
+1. Run `bash scripts/development-workflow/tests/test-pr-review-loop-no-verdict-yet.sh --area 1789`.
 2. Run `bash scripts/development-workflow/tests/test-local-ai-reviewer.sh`,
    `bash scripts/development-workflow/tests/test-coderabbit-cli-reviewer.sh`,
    `bash scripts/development-workflow/tests/test-claude-code-action-reviewer.sh`, and

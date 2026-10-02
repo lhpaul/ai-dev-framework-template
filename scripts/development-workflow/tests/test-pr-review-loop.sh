@@ -8,6 +8,7 @@
 # covers: scripts/development-workflow/tests/lib/pr-review-loop-harness.sh
 # covers: docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md
 # covers: .github/workflows/shellcheck.yml
+# covers: scripts/development-workflow/tests/test-pr-review-loop-*.sh
 #
 # The pr-review-loop.sh harness is split across these suites (#1876), which
 # share their preamble — snapshot re-exec, --area filter, gh/git mocks, the
@@ -2299,9 +2300,11 @@ run_test "1876_every_suite_sources_shared_harness" "" "$_1876_unshared"
 run_test "1876_every_suite_covers_loop_and_harness" "" "$_1876_uncovered"
 
 # The library is sourced, never run: running it directly is a usage error.
+# Unset the origin as well: this run exported it, and without the guard a
+# direct run would follow it and re-run this whole suite recursively.
 run_test "1876_harness_refuses_direct_execution" "2" \
-  "$(env -u TEST_PR_REVIEW_LOOP_SNAPSHOT PATH="$TEST_PR_REVIEW_LOOP_REAL_PATH" \
-      bash "$_1876_lib" >/dev/null 2>&1; echo $?)"
+  "$(env -u TEST_PR_REVIEW_LOOP_SNAPSHOT -u TEST_PR_REVIEW_LOOP_ORIGIN \
+      PATH="$TEST_PR_REVIEW_LOOP_REAL_PATH" bash "$_1876_lib" >/dev/null 2>&1; echo $?)"
 
 # --list-areas and --area act on the calling suite, not on this one. Unset the
 # origin too: this run exported it, and it would redirect the nested run here.
