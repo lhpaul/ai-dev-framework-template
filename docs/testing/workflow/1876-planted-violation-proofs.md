@@ -37,21 +37,22 @@ Tests: 9 passed, 0 failed
 
 Each run used `test-pr-review-loop.sh --area 1876` with a 120-second bound.
 "Planted" is the result with the violation in place. "Restored" is the result
-after the file was put back.
+after the file was put back. Line numbers are at commit `9accef48`; mutation
+paths are relative to the repository root.
 
-| Planted violation | File | Guard | Planted | Restored |
-| ----------------- | ---- | ----- | ------- | -------- |
-| All sibling suites moved out (harness merged back into one file) | `tests/test-pr-review-loop-*.sh` | `1876_harness_is_split_across_suites` | FAIL, exit 1 | 9 passed |
-| Suite grown past the 4000-line cap (+2100 comment lines) | `tests/test-pr-review-loop-staged-gates.sh` | `1876_every_suite_under_line_cap` | FAIL, exit 1 | 9 passed |
-| Library grown past the cap (+3700 comment lines) | `tests/lib/pr-review-loop-harness.sh` | `1876_every_suite_under_line_cap` | FAIL, exit 1 | 9 passed |
-| Suite loads the library with `.` instead of the canonical `source` line | `tests/test-pr-review-loop-cycles-labels.sh` | `1876_every_suite_sources_shared_harness` | FAIL, exit 1 | 9 passed |
-| Suite drops `# covers:` for the library | `tests/test-pr-review-loop-release-bugbot.sh` | `1876_every_suite_covers_loop_and_harness` | FAIL, exit 1 | 9 passed |
-| Suite drops `# covers:` for `pr-review-loop.sh` | `tests/test-pr-review-loop-no-verdict-yet.sh` | `1876_every_suite_covers_loop_and_harness` | FAIL, exit 1 | 9 passed |
-| Library's direct-execution guard disabled | `tests/lib/pr-review-loop-harness.sh` | `1876_harness_refuses_direct_execution` | FAIL, exit 1 | 9 passed |
-| Calling suite's Area 13 title changed, so `--list-areas` no longer shows it | `tests/test-pr-review-loop-failure-paths-2.sh` | `1876_list_areas_reads_calling_suite` | FAIL, exit 1 | 9 passed |
-| Calling suite gains an `Area 0a` title, so `--area 0a` resolves in it | `tests/test-pr-review-loop-failure-paths-2.sh` | `1876_area_filter_is_per_suite` | FAIL, exit 1 | 9 passed |
-| ShellCheck batches files (`xargs -0 -P 2`, no `-n 1`) | `.github/workflows/shellcheck.yml` | `1876_shellcheck_lints_one_file_per_process` | FAIL, exit 1 | 9 passed |
-| ShellCheck job timeout removed | `.github/workflows/shellcheck.yml` | `1876_shellcheck_job_has_timeout` | FAIL, exit 1 | 9 passed |
+| Planted violation | Mutation location | Guard (assertion location) | Planted | Restored |
+| ----------------- | ----------------- | -------------------------- | ------- | -------- |
+| All sibling suites moved out of `tests/` (harness merged back into one file) | `scripts/development-workflow/tests/test-pr-review-loop-*.sh` (whole files moved) | `1876_harness_is_split_across_suites` (`scripts/development-workflow/tests/test-pr-review-loop.sh:2295`) | FAIL, exit 1 | 9 passed |
+| Suite grown past the 4000-line cap (+2100 comment lines) | `scripts/development-workflow/tests/test-pr-review-loop-staged-gates.sh:2087-4186` (appended after line 2086) | `1876_every_suite_under_line_cap` (`scripts/development-workflow/tests/test-pr-review-loop.sh:2297`) | FAIL, exit 1 | 9 passed |
+| Library grown past the cap (+3700 comment lines) | `scripts/development-workflow/tests/lib/pr-review-loop-harness.sh:478-4177` (appended after line 477) | `1876_every_suite_under_line_cap` (`scripts/development-workflow/tests/test-pr-review-loop.sh:2297`) | FAIL, exit 1 | 9 passed |
+| Suite loads the library with `.` instead of the canonical `source` line | `scripts/development-workflow/tests/test-pr-review-loop-cycles-labels.sh:54` | `1876_every_suite_sources_shared_harness` (`scripts/development-workflow/tests/test-pr-review-loop.sh:2298`) | FAIL, exit 1 | 9 passed |
+| Suite drops `# covers:` for the library | `scripts/development-workflow/tests/test-pr-review-loop-release-bugbot.sh:6` (line deleted) | `1876_every_suite_covers_loop_and_harness` (`scripts/development-workflow/tests/test-pr-review-loop.sh:2299`) | FAIL, exit 1 | 9 passed |
+| Suite drops `# covers:` for `pr-review-loop.sh` | `scripts/development-workflow/tests/test-pr-review-loop-no-verdict-yet.sh:5` (line deleted) | `1876_every_suite_covers_loop_and_harness` (`scripts/development-workflow/tests/test-pr-review-loop.sh:2299`) | FAIL, exit 1 | 9 passed |
+| Library's direct-execution guard disabled (`[ "${BASH_SOURCE[0]}" = "$0" ]` replaced with `false`) | `scripts/development-workflow/tests/lib/pr-review-loop-harness.sh:30` | `1876_harness_refuses_direct_execution` (`scripts/development-workflow/tests/test-pr-review-loop.sh:2304`) | FAIL, exit 1 | 9 passed |
+| Calling suite's Area 13 title changed, so `--list-areas` no longer shows it | `scripts/development-workflow/tests/test-pr-review-loop-failure-paths-2.sh:62` | `1876_list_areas_reads_calling_suite` (`scripts/development-workflow/tests/test-pr-review-loop.sh:2311`) | FAIL, exit 1 | 9 passed |
+| Calling suite gains an `Area 0a` title, so `--area 0a` resolves in it | `scripts/development-workflow/tests/test-pr-review-loop-failure-paths-2.sh:62` | `1876_area_filter_is_per_suite` (`scripts/development-workflow/tests/test-pr-review-loop.sh:2314`) | FAIL, exit 1 | 9 passed |
+| ShellCheck batches files (`xargs -0 -P 2`, no `-n 1`) | `.github/workflows/shellcheck.yml:70` | `1876_shellcheck_lints_one_file_per_process` (`scripts/development-workflow/tests/test-pr-review-loop.sh:2321`) | FAIL, exit 1 | 9 passed |
+| ShellCheck job timeout removed | `.github/workflows/shellcheck.yml:39` (line deleted) | `1876_shellcheck_job_has_timeout` (`scripts/development-workflow/tests/test-pr-review-loop.sh:2323`) | FAIL, exit 1 | 9 passed |
 
 In the `--area 0a` row, `1876_list_areas_reads_calling_suite` also failed. The
 same edit removed the Area 13 title that guard looks for, so that is expected.
