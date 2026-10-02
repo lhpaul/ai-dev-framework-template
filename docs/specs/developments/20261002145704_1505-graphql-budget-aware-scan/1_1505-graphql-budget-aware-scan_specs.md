@@ -83,7 +83,14 @@ workflow behavior. Each one is recorded here so a reviewer can challenge it.
   when the tracker provider is GitHub Projects.
 - **Active item**: a board item linked to an open issue in this repository.
 - **Terminal item**: a board item whose linked issue is closed, or whose
-  Status is `Released` or `Cancelled`.
+  Status is `Released` or `Cancelled`. An item that meets both definitions
+  (an open issue whose Status is `Released` or `Cancelled`) counts as an
+  active item.
+- **In-flight item**: an item with a development folder, a workflow branch,
+  or an open workflow pull request.
+- **Fully read item**: an item for which the scan has read every input the
+  Protocol 90 categorization needs (its board fields and its in-flight
+  evidence). An item with any of those inputs still unread is not fully read.
 - **Reserve**: the GraphQL points a scan must leave unspent so the command it
   recommends can start. The default is 1,000 points. This matches the
   existing Protocol 90 Step 1a low-budget warning threshold.
@@ -323,20 +330,30 @@ board. Workflow status transitions still waiting to happen (for example
    implementation plan decides whether operators can configure it. A
    configured value outside 0 to 5,000 points is ignored with a warning, and
    the default is used.
-7. **Partial scan content.** A partial scan reads in-flight items: items with
-   development folders, workflow branches, or open workflow pull requests. It
-   skips Backlog discovery. It never proposes a not-yet-started Backlog item.
+7. **Partial scan content.** A partial scan reads in-flight items only. It
+   skips Backlog discovery. A scan whose coverage is **Partial scan
+   (budget-limited)**, for either reason, never proposes a not-yet-started
+   Backlog item. This holds even when a mid-scan rejection (rule 8) cut short
+   a full scan after some Backlog items were fully read, because an
+   incomplete Backlog discovery cannot rank them.
 8. **Mid-scan exhaustion.** A rate-limit rejection during a scan ends the
    scan's board reads. Evidence from the rejection overrides the outcome of
-   the pre-scan budget check. An item whose state was not fully read is never
-   proposed and never listed under actionable resume.
-9. **Unreadable budget.** When the remaining budget cannot be read, the scan
+   the pre-scan budget check. An item that was not fully read is never
+   proposed and never listed under actionable resume. A board read that
+   fails for any reason other than rate limiting keeps today's error
+   handling; this spec does not change it.
+9. **Unreadable budget.** When the before-scan budget reading fails, the scan
    still runs at full coverage, because rule 1 keeps it cheap. It shows the
-   warning **GraphQL budget could not be read**, and the spend report reads
-   **Unavailable**.
+   warning **GraphQL budget could not be read**, and points spent reads
+   **Unavailable**. Points remaining and the reset time come from the
+   after-scan reading, and read **Unavailable** when that reading also
+   fails.
 10. **Spend report.** Every scan summary, whatever the coverage, reports the
     GraphQL points spent during the scan, the points remaining, and the
-    reset time.
+    reset time. Points remaining and the reset time always come from the
+    after-scan reading. When the after-scan reading fails, all three fields
+    read **Unavailable** and the summary shows the warning **GraphQL budget
+    could not be read**; the coverage already decided stands.
 11. **Spend across a reset.** If the budget resets between the before-scan
     and after-scan readings (the remaining budget went up, or the reset time
     changed), the scan does not compute a figure for points spent. That
@@ -375,7 +392,7 @@ board. Workflow status transitions still waiting to happen (for example
 | Code value | Display label | Applies to coverage |
 | --- | --- | --- |
 | `budget_sufficient` | GraphQL budget sufficient | Full scan |
-| `budget_unreadable` | GraphQL budget could not be read | Full scan (shown as a warning) |
+| `budget_unreadable` | GraphQL budget could not be read | Full scan (shown as a warning; set only when the before-scan reading fails) |
 | `budget_below_full_scan` | GraphQL budget too low for a full scan | Partial scan |
 | `budget_below_any_scan` | GraphQL budget too low to scan | Scan deferred |
 | `rate_limited_during_scan` | GraphQL budget ran out during the scan | Partial scan or Scan deferred |
@@ -397,6 +414,9 @@ only narrow after that:
   fully read.
 - `partial` → `deferred` when a rate-limit rejection occurs before any item
   was fully read.
+- `partial` stays `partial` when a rate-limit rejection occurs after at
+  least one item was fully read. The reason changes to
+  `rate_limited_during_scan`.
 - Coverage never widens within an invocation.
 
 ---
@@ -406,7 +426,7 @@ only narrow after that:
 - **Scan summary**: shows the scan coverage label, the coverage reason, and
   the three spend report fields on every no-target scan.
 - **Warnings**: **GraphQL budget could not be read** appears on the scan
-  summary whenever the budget reading fails. The existing Protocol 90
+  summary whenever the before-scan or after-scan budget reading fails. The existing Protocol 90
   warnings for low budget after discovery are unchanged.
 - **Audit trail**: none added. `/run-work` stays read-only and posts no
   comments.
@@ -426,7 +446,9 @@ only narrow after that:
   recommended `/run-items` command (or `/run-items` with two of the proposed
   items when the proposal is larger) resolves every target, passes its
   pre-mutation checks, and starts its first item without a rate-limit stop or
-  a **Tracker unavailable** routing result.
+  a **Tracker unavailable** routing result. When the proposal holds a single
+  item, `/run-item` on that item is used instead. The board state for this
+  check must yield at least one proposed item.
 - [ ] **AC3** — In a test environment with a simulated board, raising the
   number of terminal items from 50 to 1,000 with the same active and
   in-flight items does not raise the number of board read requests a
@@ -449,9 +471,14 @@ only narrow after that:
   **GraphQL points spent by this scan**, **GraphQL points remaining**, and
   **GraphQL budget resets at**, each with a numeric or time value when the
   budget is readable.
-- [ ] **AC7** — When the budget reading fails, the scan finishes with coverage
-  **Full scan**, shows the warning **GraphQL budget could not be read**, and
-  reports the spend fields as **Unavailable**.
+- [ ] **AC7** — In a test environment where every budget reading fails, the
+  scan finishes with coverage **Full scan**, shows the warning **GraphQL
+  budget could not be read**, and reports all three spend fields as
+  **Unavailable**. Where only the before-scan reading fails, points spent
+  reads **Unavailable** and points remaining and the reset time come from
+  the after-scan reading. Where only the after-scan reading fails, the
+  coverage chosen from the before-scan reading stands, the warning is shown,
+  and all three spend fields read **Unavailable**.
 - [ ] **AC8** — In a test environment where the simulated budget resets
   between the before-scan and after-scan readings, points spent reads
   **Unavailable (budget reset during scan)**. Points remaining and the reset
@@ -478,7 +505,8 @@ only narrow after that:
   reports reason **GraphQL budget ran out during the scan**. It reports
   coverage **Partial scan (budget-limited)** when at least one item was fully
   read, and **Scan deferred (budget too low)** otherwise. No item that was
-  not fully read appears under the proposed batch or actionable resume.
+  not fully read appears under the proposed batch or actionable resume, and
+  no not-yet-started Backlog item is proposed even when it was fully read.
 - [ ] **AC13** — In AC10, AC11, and AC12, the scan performs no tracker,
   branch, pull-request, or board mutation.
 
@@ -573,7 +601,7 @@ comments:
 | --- | --- | --- |
 | O1 | AC1, AC2, AC3 | Scope of "completes" set by D3. |
 | O2 | AC4, AC5 | Business rule 2. |
-| O3 | AC6, AC7, AC8 | Business rules 10 and 11. |
+| O3 | AC6, AC7, AC8 | Business rules 9, 10, and 11. |
 | O4 | AC9, AC10, AC11, AC12, AC13 | Business rules 3, 4, 5, 7, 8. |
 | O5 | AC14, AC15, AC16 | Business rules 15 and 16. |
 | O6 | Out of Scope (snapshot reuse) | Deferral Note DN1. |
@@ -625,7 +653,7 @@ Rows are checked in order, and the first match wins.
 
 | # | Condition | Coverage | Reason | Required next action |
 | --- | --- | --- | --- | --- |
-| 1 | R unreadable | Full scan | GraphQL budget could not be read (warning) | Run the full scan. Report the spend fields as Unavailable. |
+| 1 | R unreadable (the before-scan reading fails) | Full scan | GraphQL budget could not be read (warning) | Run the full scan. Report the spend fields as Unavailable. |
 | 2 | R ≥ C_full + S | Full scan | GraphQL budget sufficient | Run the full scan. Report the spend. |
 | 3 | C_partial + S ≤ R < C_full + S | Partial scan (budget-limited) | GraphQL budget too low for a full scan | Read in-flight items only. Skip Backlog discovery. Report the spend and what was skipped. |
 | 4 | R < C_partial + S | Scan deferred (budget too low) | GraphQL budget too low to scan | Read no board items. Propose no batch. Report the remaining budget and reset time. |
@@ -641,9 +669,14 @@ Mid-scan evidence takes precedence over the pre-scan decision.
 
 | # | Mid-scan evidence | Coverage | Reason | Required next action |
 | --- | --- | --- | --- | --- |
-| 5 | Rate-limit rejection, at least one item fully read | Partial scan (budget-limited) | GraphQL budget ran out during the scan | Stop board reads. Propose only from fully read items. List what was not covered. Report the reset time. |
+| 5 | Rate-limit rejection, at least one item fully read | Partial scan (budget-limited) | GraphQL budget ran out during the scan | Stop board reads. Propose only from fully read items, and never a not-yet-started Backlog item (rule 7). List what was not covered. Report the reset time. |
 | 6 | Rate-limit rejection, no item fully read | Scan deferred (budget too low) | GraphQL budget ran out during the scan | Stop board reads. Propose no batch. Report the reset time. |
-| 7 | No rejection | Pre-scan decision stands | Pre-scan reason stands | As in the pre-scan row. |
+| 7 | No rate-limit rejection | Pre-scan decision stands | Pre-scan reason stands | As in the pre-scan row. |
+
+Only a rate-limit rejection triggers rows 5 and 6. A board read that fails
+for any other reason keeps today's error handling (rule 8). A failed
+after-scan budget reading never changes the coverage; it only affects the
+spend report (rule 10).
 
 ### Outcome classes
 
