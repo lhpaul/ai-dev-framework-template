@@ -562,14 +562,17 @@ only narrow after that:
 
 ### Graceful degradation with a named reason
 
-- [ ] **AC10** — In a test environment where the remaining GraphQL budget is
-  below the projected full-scan cost plus the reserve, but at or above the
-  projected partial-scan cost plus the reserve, the scan finishes with
+- [ ] **AC10** — In a test environment where the remaining GraphQL budget
+  passes the projection gate (it is at or above the projection ceiling plus
+  the reserve, rule 5), and is below the projected full-scan cost plus the
+  reserve but at or above the projected partial-scan cost plus the reserve,
+  the scan finishes with
   coverage **Partial scan (budget-limited)** and reason **GraphQL budget too
   low for a full scan**. It proposes no not-yet-started Backlog item, and it
   states that Backlog discovery was skipped.
-- [ ] **AC11** — In a test environment where the remaining GraphQL budget is
-  below the projected partial-scan cost plus the reserve, the scan reads no
+- [ ] **AC11** — In a test environment where the remaining GraphQL budget
+  passes the projection gate (rule 5) but is below the projected
+  partial-scan cost plus the reserve, the scan reads no
   board items, finishes with coverage **Scan deferred (budget too low)** and
   reason **GraphQL budget too low to scan**, proposes no batch, and shows the
   reset time.
