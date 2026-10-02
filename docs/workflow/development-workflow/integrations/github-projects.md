@@ -210,8 +210,10 @@ When the targeted lookup succeeds but finds no item for the configured project,
   callers and multi-item epic resolution share one board scan;
 - reuses that cache for `WORKFLOW_GH_ITEM_LIST_CACHE_TTL_MINUTES` (default `5`;
   `0` disables reuse) and removes cache files older than an hour when it writes;
-- is invalidated by `ensure_on_project_board` after a successful
-  `gh project item-add`, so the initial-status update sees the new card;
+- is invalidated after a successful `gh project item-add` in
+  `ensure_on_project_board` and after every successful Status, Type,
+  Priority, or Size write, so a later read never returns a value the same
+  process has just overwritten;
 - reports an empty result with a warning when the board cannot be read
   completely, as before.
 

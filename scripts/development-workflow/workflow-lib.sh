@@ -2517,6 +2517,21 @@ workflow_github_project_item_list_cache_file() {
   local project_number="$2"
   local cache_dir safe_owner
 
+  cache_dir="$(_workflow_github_project_item_list_cache_dir)"
+  if [ -z "$cache_dir" ]; then
+    return 0
+  fi
+  safe_owner="$(printf '%s' "$project_owner" | tr -c 'A-Za-z0-9-' '_')"
+  printf '%s/%s-%s-%s.json' "$cache_dir" "$$" "$safe_owner" "$project_number"
+}
+
+# _workflow_github_project_item_list_cache_dir
+#
+# Prints the private item-list cache directory, creating it when needed, or
+# nothing when it cannot be created or is not a real directory owned by this
+# user (caching is then disabled).
+_workflow_github_project_item_list_cache_dir() {
+  local cache_dir
   cache_dir="${WORKFLOW_GH_ITEM_LIST_CACHE_DIR:-${TMPDIR:-/tmp}/workflow-gh-item-list-$(id -u 2>/dev/null || echo user)}"
   cache_dir="${cache_dir%/}"
   if [ ! -d "$cache_dir" ]; then
@@ -2525,19 +2540,20 @@ workflow_github_project_item_list_cache_file() {
   if [ -L "$cache_dir" ] || [ ! -d "$cache_dir" ] || [ ! -O "$cache_dir" ]; then
     return 0
   fi
-  safe_owner="$(printf '%s' "$project_owner" | tr -c 'A-Za-z0-9-' '_')"
-  printf '%s/%s-%s-%s.json' "$cache_dir" "$$" "$safe_owner" "$project_number"
+  printf '%s' "$cache_dir"
 }
 
-# workflow_github_project_item_list_cache_invalidate <project_owner> <project_number>
+# workflow_github_project_item_list_cache_invalidate
 #
-# Drops this process's cached board scan, for example after a successful
-# `gh project item-add` so the next lookup sees the new card.
+# Drops every board scan cached by this process. Called after a successful
+# `gh project item-add` (so the next lookup sees the new card) and after every
+# successful project field mutation (Status, Type, Priority, Size), so a
+# fallback read never reports a value this process has just overwritten.
 workflow_github_project_item_list_cache_invalidate() {
-  local cache_file
-  cache_file="$(workflow_github_project_item_list_cache_file "$1" "$2")"
-  if [ -n "$cache_file" ]; then
-    rm -f "$cache_file" 2>/dev/null || true
+  local cache_dir
+  cache_dir="$(_workflow_github_project_item_list_cache_dir)"
+  if [ -n "$cache_dir" ]; then
+    rm -f "$cache_dir/$$-"*.json 2>/dev/null || true
   fi
   return 0
 }
@@ -2591,7 +2607,7 @@ workflow_github_project_item_from_item_list() {
     fi
     if [ -n "$cache_file" ]; then
       cache_dir="${cache_file%/*}"
-      find "$cache_dir" -maxdepth 1 -type f -name '*.json' -mmin +60 -exec rm -f {} + 2>/dev/null || true
+      find "$cache_dir" -maxdepth 1 -type f \( -name '*.json' -o -name '.item-list.*' \) -mmin +60 -exec rm -f {} + 2>/dev/null || true
       if tmp_file="$(mktemp "${cache_dir}/.item-list.XXXXXX" 2>/dev/null)"; then
         if printf '%s' "$board_json" > "$tmp_file" 2>/dev/null; then
           mv -f "$tmp_file" "$cache_file" 2>/dev/null || rm -f "$tmp_file"
@@ -3045,7 +3061,7 @@ ensure_on_project_board() {
 
   # The membership read above may have cached a board scan that predates this
   # card (issue #1801); drop it so the status update below can find the item.
-  workflow_github_project_item_list_cache_invalidate "$owner" "$project_number"
+  workflow_github_project_item_list_cache_invalidate
 
   # Set initial status for the newly added item.
   update_tracker_status_best_effort "$issue_number" "$initial_status"
@@ -3218,6 +3234,7 @@ print(item.get('status') or '', end='')
         }
       }
     '; then
+    workflow_github_project_item_list_cache_invalidate
     printf '%s' "$__workflow_last_gh_stdout"
     printf '\nTRACKER_STATUS_APPLIED issue=%s status=%s\n' "$issue_number" "'${status_label}'"
   else
@@ -3562,6 +3579,7 @@ print((data.get('options') or {}).get(sys.argv[1]) or '', end='')
         }
       }
     '; then
+    workflow_github_project_item_list_cache_invalidate
     printf '%s' "$__workflow_last_gh_stdout"
   else
     if [ "$required" = "required" ]; then
@@ -3987,6 +4005,7 @@ print((data.get('options') or {}).get(sys.argv[1]) or '', end='')
         }
       }
     '; then
+    workflow_github_project_item_list_cache_invalidate
     printf '%s' "$__workflow_last_gh_stdout"
   else
     if [ "$required" = "required" ]; then

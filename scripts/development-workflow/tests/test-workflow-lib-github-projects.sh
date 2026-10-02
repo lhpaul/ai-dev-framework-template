@@ -620,11 +620,59 @@ reset_log
 export MOCK_PROJECT_ITEM_MODE=missing
 export MOCK_ITEM_LIST_MODE=org_board_unlinked
 get_tracker_status_for_issue 824 >/dev/null
-workflow_github_project_item_list_cache_invalidate lhpaul 1
+workflow_github_project_item_list_cache_invalidate
 get_tracker_status_for_issue 824 >/dev/null
 unset MOCK_PROJECT_ITEM_MODE
 unset MOCK_ITEM_LIST_MODE
 run_test "fallback_cache_invalidate_forces_rescan" "2" "$(count_log_matches 'project item-list')"
+
+# A successful field write must drop the cached board, or the next fallback
+# read reports the value this process just overwrote. Each case: one read
+# (scan 1), one write whose item lookup reuses the cache, one read (scan 2).
+for fallback_write in status type priority; do
+  reset_log
+  export MOCK_PROJECT_ITEM_MODE=missing
+  export MOCK_ITEM_LIST_MODE=org_board_unlinked
+  get_tracker_status_for_issue 824 >/dev/null
+  case "$fallback_write" in
+    status) update_tracker_status_best_effort 824 "In Development" >/dev/null ;;
+    type) update_tracker_type_best_effort 824 "Bug" >/dev/null ;;
+    priority)
+      export MOCK_STATUS_FIELD_MODE=priority_configured
+      update_tracker_named_field_best_effort 824 "Priority" "High" >/dev/null 2>&1 || true
+      unset MOCK_STATUS_FIELD_MODE
+      ;;
+  esac
+  writes_after="$(count_log_matches 'updateProjectV2ItemFieldValue')"
+  get_tracker_status_for_issue 824 >/dev/null
+  unset MOCK_PROJECT_ITEM_MODE
+  unset MOCK_ITEM_LIST_MODE
+  run_test "fallback_${fallback_write}_write_lands" "1" "$writes_after"
+  run_test "fallback_${fallback_write}_write_invalidates_board_cache" "2" "$(count_log_matches 'project item-list')"
+done
+
+reset_log
+export MOCK_PROJECT_ITEM_MODE=missing
+export MOCK_ITEM_LIST_MODE=org_board_unlinked
+get_tracker_status_for_issue 824 >/dev/null
+export MOCK_STATUS_FIELD_MODE=graphql_fail
+update_tracker_status_best_effort 824 "In Development" >/dev/null 2>&1 || true
+unset MOCK_STATUS_FIELD_MODE
+get_tracker_status_for_issue 824 >/dev/null
+unset MOCK_PROJECT_ITEM_MODE
+unset MOCK_ITEM_LIST_MODE
+run_test "fallback_failed_write_keeps_board_cache" "1" "$(count_log_matches 'project item-list')"
+
+reset_log
+orphan_tmp_file="$ITEM_LIST_CACHE_DIR/.item-list.orphan1"
+printf 'partial' > "$orphan_tmp_file"
+touch -t 200001010000 "$orphan_tmp_file"
+export MOCK_PROJECT_ITEM_MODE=missing
+export MOCK_ITEM_LIST_MODE=org_board_unlinked
+get_tracker_status_for_issue 824 >/dev/null
+unset MOCK_PROJECT_ITEM_MODE
+unset MOCK_ITEM_LIST_MODE
+run_test "fallback_write_sweeps_hour_old_orphan_temp_files" "absent" "$([ -e "$orphan_tmp_file" ] && echo present || echo absent)"
 
 reset_log
 update_output="$(update_tracker_status_best_effort 824 "In Development" "Spec Ready")"
