@@ -28,6 +28,12 @@ declarations) and JSON key values such as ``{"path": "..."}`` or the first
 element of ``"files": ["..."]`` are skipped because they name a path without
 reading it.
 
+Known limits: a read through a variable that is not ``$REPO_ROOT``-anchored
+(``DIR=".github/workflows"`` then ``"$DIR/x.yml"``) or through a glob
+(``"$REPO_ROOT/dir/"*.yml``) names no single tracked file and is not counted.
+The check catches the common direct-read case; it is not a proof of
+completeness.
+
 Consumer mode (``--consumer-root``) evaluates the manifest's
 ``required_additions`` against a downstream checkout and reports each additive
 update a project-owned file still needs, so the pre-flight diagnostic can name
@@ -87,6 +93,7 @@ def parse_section_list(manifest: Path, section: str, strip_comment) -> list[dict
     entries: list[dict[str, str]] = []
     current: dict[str, str] | None = None
     in_section = False
+    list_indent: int | None = None
     block_indent: int | None = None
     block_key = ""
     block_lines: list[str] = []
@@ -111,10 +118,17 @@ def parse_section_list(manifest: Path, section: str, strip_comment) -> list[dict
         content = line.strip()
         if indent == 0:
             in_section = content == f"{section}:"
+            list_indent = None
             continue
         if not in_section:
             continue
         if content.startswith("- "):
+            if list_indent is None:
+                list_indent = indent
+            elif indent != list_indent:
+                # Entries are flat mappings; a nested list would silently
+                # split one entry into two, so refuse the shape instead.
+                raise InputError(f"{section}: nested lists are not supported (line: {raw.strip()!r})")
             current = {}
             entries.append(current)
             content = content[2:].strip()
@@ -300,7 +314,9 @@ def run(argv: list[str]) -> int:
         if path.startswith(test_dir + "/") and path.endswith(TEST_SUFFIXES) and "/fixtures/" not in path
     )
     # Only suites the role actually receives can break downstream.
-    synced_tests = [path for path in tests if classify(entries, path)[0] == "covered"]
+    # Same classification rule as the references below, so one file never
+    # counts as shipped in one place and project-owned in the other.
+    synced_tests = [path for path in tests if classify(entries, path, all_entries)[0] == "covered"]
 
     readers: dict[str, set[str]] = {}
     for test in synced_tests:

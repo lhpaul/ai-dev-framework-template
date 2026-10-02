@@ -46,6 +46,11 @@ cleanup() {
   if [ -f "$REAL_AGENTS_BACKUP" ]; then
     cp "$REAL_AGENTS_BACKUP" "$REAL_AGENTS"
   fi
+  # The guidance plant may target a synced orchestrator mirror instead of
+  # AGENTS.md (consumer mode); restore it too if the run stops mid-plant.
+  if [ -n "${GUIDANCE_PLANT_TARGET:-}" ] && [ -f "${_agents_backup:-}" ]; then
+    cp "$_agents_backup" "$REPO_ROOT/$GUIDANCE_PLANT_TARGET"
+  fi
   rm -rf "$TMP_ROOT"
 }
 trap cleanup EXIT

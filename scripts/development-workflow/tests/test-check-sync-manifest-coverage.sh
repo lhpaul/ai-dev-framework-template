@@ -274,6 +274,21 @@ status="$(run_checker "$out" --repo-root "$FIX" --consumer-root "$TMP_ROOT/no-su
 run_test "missing_consumer_root_exit_2" "2" "$status"
 run_test "missing_consumer_root_error" "yes" "$(has_line "$out" "is not a directory")"
 
+# A nested list inside an entry is refused rather than split into two entries.
+NESTED_MANIFEST="$TMP_ROOT/nested-manifest.yaml"
+python3 - "$FIX/sync-manifest.yaml" "$NESTED_MANIFEST" <<'PY'
+import sys
+from pathlib import Path
+text = Path(sys.argv[1]).read_text()
+needle = "    must_contain: push_verification_failed\n"
+assert needle in text
+Path(sys.argv[2]).write_text(text.replace(needle, needle + "    extra:\n      - nested\n"))
+PY
+out="$TMP_ROOT/nested.out"
+status="$(run_checker "$out" --repo-root "$FIX" --manifest "$NESTED_MANIFEST")"
+run_test "nested_list_entry_exit_2" "2" "$status"
+run_test "nested_list_entry_error" "yes" "$(has_line "$out" "nested lists are not supported")"
+
 echo ""
 echo "Results: $PASS_COUNT passed, $FAIL_COUNT failed"
 [ "$FAIL_COUNT" -eq 0 ]
