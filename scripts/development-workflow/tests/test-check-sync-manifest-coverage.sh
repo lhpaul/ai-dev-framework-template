@@ -268,6 +268,12 @@ status="$(run_checker "$out" --repo-root "$FIX" --manifest "$BAD_REGEX_MANIFEST"
 run_test "invalid_when_pattern_exit_2" "2" "$status"
 run_test "invalid_when_pattern_error" "yes" "$(has_line "$out" "has an invalid when_pattern")"
 
+# A consumer root that does not exist must not pass as "nothing applies".
+out="$TMP_ROOT/missing-consumer.out"
+status="$(run_checker "$out" --repo-root "$FIX" --consumer-root "$TMP_ROOT/no-such-checkout")"
+run_test "missing_consumer_root_exit_2" "2" "$status"
+run_test "missing_consumer_root_error" "yes" "$(has_line "$out" "is not a directory")"
+
 echo ""
 echo "Results: $PASS_COUNT passed, $FAIL_COUNT failed"
 [ "$FAIL_COUNT" -eq 0 ]

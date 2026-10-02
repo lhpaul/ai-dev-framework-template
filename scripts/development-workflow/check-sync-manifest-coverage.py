@@ -228,6 +228,9 @@ def referenced_paths(text: str, tracked: set[str]) -> set[str]:
 
 
 def check_required_additions(additions: list[dict[str, str]], consumer_root: Path) -> tuple[list[str], int]:
+    if not consumer_root.is_dir():
+        # A missing checkout would make every entry "not applicable" and pass.
+        raise InputError(f"consumer root {consumer_root} is not a directory")
     lines: list[str] = []
     missing = 0
     for addition in additions:
