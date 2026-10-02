@@ -193,6 +193,7 @@ Check for known CI/CD configuration mismatches between the template and the proj
 
 4. **Synced-test file coverage and required additions** (#1874): when the template ships `scripts/development-workflow/check-sync-manifest-coverage.py`, run it from the template source against this project:
 
+   <!-- workflow-shell-contract: bash-zsh -->
    ```bash
    python3 "<template_dir>/scripts/development-workflow/check-sync-manifest-coverage.py" \
      --repo-root "<template_dir>" --role "$REPOSITORY_ROLE" --consumer-root .

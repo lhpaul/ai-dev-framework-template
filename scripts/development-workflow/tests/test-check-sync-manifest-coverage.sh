@@ -142,6 +142,7 @@ sync_coverage_exemptions:
 MANIFEST
 for f in .github/workflows/shipped.yml .github/workflows/unshipped.yml .github/workflows/via-var.yml \
   .github/workflows/comment-only.yml .github/workflows/covers-only.yml .github/workflows/json-only.yml \
+  .github/workflows/list-second.yml .github/workflows/py-join.yml \
   docs/runbooks/shipped.md docs/data/named-only.md AGENTS.md .ai-dev-workflow.yaml; do
   printf 'x\n' >"$FIX/$f"
 done
@@ -158,7 +159,13 @@ grep -q x "$WF_DIR/via-var.yml"
 grep -q x docs/runbooks/shipped.md
 grep -q x "$REPO_ROOT/AGENTS.md"
 printf '%s\n' '{"path": ".github/workflows/json-only.yml"}'
+printf '%s\n' '{"files": ["docs/data/named-only.md", ".github/workflows/list-second.yml"]}'
 echo docs/data/named-only.md
+TEST
+  cat >"$FIX/scripts/development-workflow/tests/test_thing.py" <<'TEST'
+from pathlib import Path
+REPO_ROOT = Path(__file__).resolve().parents[3]
+TEXT = (REPO_ROOT / ".github" / "workflows" / "py-join.yml").read_text()
 TEST
 }
 write_fixture_test
@@ -177,9 +184,11 @@ run_test "variable_resolved_read_uncovered" "yes" "$(has_line "$out" "UNCOVERED 
 run_test "covers_header_counts_as_read" "yes" "$(has_line "$out" "UNCOVERED path=.github/workflows/covers-only.yml")"
 run_test "plain_comment_ignored" "no" "$(has_line "$out" "comment-only.yml")"
 run_test "json_data_literal_ignored" "no" "$(has_line "$out" "json-only.yml")"
+run_test "later_list_element_still_counted" "yes" "$(has_line "$out" "UNCOVERED path=.github/workflows/list-second.yml")"
+run_test "python_path_join_read_detected" "yes" "$(has_line "$out" "UNCOVERED path=.github/workflows/py-join.yml read_by=test_thing.py")"
 run_test "project_specific_any_scope_is_project_owned" "yes" "$(has_line "$out" "PROJECT_OWNED path=AGENTS.md entry=AGENTS.md")"
 run_test "exemption_reported_as_exempt" "yes" "$(has_line "$out" "EXEMPT path=docs/data/named-only.md")"
-run_test "uncovered_count" "yes" "$(has_line "$out" "UNCOVERED_COUNT=2")"
+run_test "uncovered_count" "yes" "$(has_line "$out" "UNCOVERED_COUNT=4")"
 
 out="$TMP_ROOT/fixture-show.out"
 run_checker "$out" --repo-root "$FIX" --role single_repo --show-covered >/dev/null
@@ -201,6 +210,8 @@ text = text.replace(
     "  project_specific:\n",
     "    - path: .github/workflows/via-var.yml\n      mode_scope: shared\n"
     "    - path: .github/workflows/covers-only.yml\n      mode_scope: shared\n"
+    "    - path: .github/workflows/list-second.yml\n      mode_scope: shared\n"
+    "    - path: .github/workflows/py-join.yml\n      mode_scope: shared\n"
     "  project_specific:\n",
 )
 path.write_text(text)
@@ -247,6 +258,15 @@ out="$TMP_ROOT/bad.out"
 status="$(run_checker "$out" --repo-root "$FIX" --manifest "$TMP_ROOT/bad-manifest.yaml")"
 run_test "malformed_manifest_exit_2" "2" "$status"
 run_test "malformed_manifest_error" "yes" "$(has_line "$out" "ERROR: manifest is missing mode_scopes")"
+
+# An invalid when_pattern is an input error (exit 2), never "gaps found" (exit 1).
+BAD_REGEX_MANIFEST="$TMP_ROOT/bad-regex-manifest.yaml"
+sed "s/when_pattern: '.*'/when_pattern: '(unclosed'/" "$FIX/sync-manifest.yaml" >"$BAD_REGEX_MANIFEST"
+printf 'guardrails:\n  stop_conditions:\n    - failing_ci\n' >"$CONSUMER/.ai-dev-workflow.yaml"
+out="$TMP_ROOT/bad-regex.out"
+status="$(run_checker "$out" --repo-root "$FIX" --manifest "$BAD_REGEX_MANIFEST" --consumer-root "$CONSUMER")"
+run_test "invalid_when_pattern_exit_2" "2" "$status"
+run_test "invalid_when_pattern_error" "yes" "$(has_line "$out" "has an invalid when_pattern")"
 
 echo ""
 echo "Results: $PASS_COUNT passed, $FAIL_COUNT failed"

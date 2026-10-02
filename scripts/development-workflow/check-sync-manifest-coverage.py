@@ -22,9 +22,11 @@ classifies it:
 * ``UNCOVERED``      - nothing selected for the role covers the file: a gap.
 
 Extraction is deliberately conservative: a path counts when it appears as a
-token in a test line, resolving ``VAR="$REPO_ROOT/dir"`` assignments. Comment
-lines (other than ``# covers:`` declarations) and JSON data literals such as
-``{"path": "..."}`` are skipped because they name a path without reading it.
+token in a test line, resolving ``VAR="$REPO_ROOT/dir"`` assignments and
+Python ``ROOT / "a" / "b"`` joins. Comment lines (other than ``# covers:``
+declarations) and JSON key values such as ``{"path": "..."}`` or the first
+element of ``"files": ["..."]`` are skipped because they name a path without
+reading it.
 
 Consumer mode (``--consumer-root``) evaluates the manifest's
 ``required_additions`` against a downstream checkout and reports each additive
@@ -55,9 +57,14 @@ ASSIGN_RE = re.compile(
 )
 VAR_USE_RE = re.compile(r"\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?/([A-Za-z0-9_.@+/-]+)")
 COVERS_RE = re.compile(r"^\s*#\s*covers:\s*(\S+)")
-# A quoted path that is the value of a JSON key ("path": "x") or an element of
-# a JSON array ("changed_files": ["x"]) is fixture data, not a file read.
-JSON_LITERAL_RE = re.compile(r"""(?:"[A-Za-z_][A-Za-z0-9_]*"\s*:\s*\[?\s*|,\s*)\\?"([^"\\]+)\\?\"""")
+# A quoted path that is the value of a JSON key ("path": "x") or the first
+# element of a JSON array value ("changed_files": ["x"]) is fixture data, not a
+# file read. Later list elements are deliberately not skipped: a plain list of
+# paths is as likely to be a list of files a test reads.
+JSON_LITERAL_RE = re.compile(r""""[A-Za-z_][A-Za-z0-9_]*"\s*:\s*\[?\s*\\?"([^"\\]+)\\?\"""")
+# Python joins path segments with "/" between quoted strings:
+# REPO_ROOT / "scripts" / "x.py" reads scripts/x.py.
+PY_JOIN_RE = re.compile(r"""["']\s*/\s*["']""")
 
 
 class InputError(Exception):
@@ -206,6 +213,7 @@ def referenced_paths(text: str, tracked: set[str]) -> set[str]:
             continue
         if line.lstrip().startswith("#"):
             continue
+        line = PY_JOIN_RE.sub("/", line)
         data_spans = [match.span(1) for match in JSON_LITERAL_RE.finditer(line)]
         for match in VAR_USE_RE.finditer(line):
             base = variables.get(match.group(1))
@@ -234,7 +242,11 @@ def check_required_additions(additions: list[dict[str, str]], consumer_root: Pat
             lines.append(f"REQUIRED_ADDITION_NOT_APPLICABLE {label} reason=file_absent")
             continue
         text = target.read_text(encoding="utf-8", errors="replace")
-        if when_pattern and not re.search(when_pattern, text, re.MULTILINE):
+        try:
+            applies = not when_pattern or re.search(when_pattern, text, re.MULTILINE) is not None
+        except re.error as exc:
+            raise InputError(f"required_additions entry for {path} has an invalid when_pattern: {exc}") from exc
+        if not applies:
             lines.append(f"REQUIRED_ADDITION_NOT_APPLICABLE {label} reason=when_pattern_absent")
             continue
         if must_contain in text:

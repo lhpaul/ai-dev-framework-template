@@ -1030,6 +1030,7 @@ test.
 
 Usage:
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
 # Template: every file a synced suite reads must be shipped, project-owned, or exempt.
 python3 scripts/development-workflow/check-sync-manifest-coverage.py \
@@ -1043,8 +1044,9 @@ python3 <template>/scripts/development-workflow/check-sync-manifest-coverage.py 
 What it does:
 
 - Scans the suites the role receives for repository paths they read, resolving
-  `VAR="$REPO_ROOT/dir"` assignments and counting `# covers:` declarations.
-  Other comment lines and JSON data literals are skipped.
+  `VAR="$REPO_ROOT/dir"` assignments and Python `ROOT / "a" / "b"` joins, and
+  counting `# covers:` declarations. Other comment lines and JSON key values
+  (`"path": "..."`) are skipped.
 - Prints `UNCOVERED`, `PROJECT_OWNED`, and `EXEMPT` lines (`--show-covered`
   adds `COVERED`). Exemptions come from the manifest's
   `sync_coverage_exemptions`, each with a reason.
@@ -1055,6 +1057,7 @@ What it does:
 
 Run focused coverage with:
 
+<!-- workflow-shell-contract: bash -->
 ```bash
 bash scripts/development-workflow/tests/test-check-sync-manifest-coverage.sh
 ```
