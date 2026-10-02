@@ -441,8 +441,9 @@ only narrow after that:
 ### Scan then execute in one quota window
 
 - [ ] **AC1** — On this repository's board with 500 or more items, most of
-  them terminal, a no-target `/run-work` scan started in a quota window with
-  at least 4,500 points remaining finishes with coverage **Full scan**. The
+  them terminal, a no-target `/run-work` scan that uses the default reserve
+  (1,000 points) and starts in a quota window with at least 4,500 points
+  remaining finishes with coverage **Full scan**. The
   scan reports spending no more than 1,000 GraphQL points, and its reported
   points remaining are at least the reserve.
 - [ ] **AC2** — Right after AC1's scan, in the same quota window, running the
