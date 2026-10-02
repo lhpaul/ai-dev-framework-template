@@ -117,8 +117,17 @@ def parse_section_list(manifest: Path, section: str, strip_comment) -> list[dict
         indent = len(line) - len(line.lstrip(" "))
         content = line.strip()
         if indent == 0:
-            in_section = content == f"{section}:"
             list_indent = None
+            key, _, inline = content.partition(":")
+            in_section = key.strip() == section
+            inline = inline.strip()
+            if in_section and inline:
+                if inline == "[]":
+                    in_section = False
+                    continue
+                # An inline value would otherwise read as "no entries" and
+                # switch the section's checks off without a word.
+                raise InputError(f"{section}: inline values are not supported; use a block list (line: {raw.strip()!r})")
             continue
         if not in_section:
             continue

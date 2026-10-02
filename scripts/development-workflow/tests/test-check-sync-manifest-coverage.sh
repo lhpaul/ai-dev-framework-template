@@ -303,6 +303,33 @@ status="$(run_checker "$out" --repo-root "$FIX" --consumer-root "$CONSUMER")"
 run_test "section_as_list_still_checked" "1" "$status"
 run_test "section_as_list_reports_missing" "yes" "$(has_line "$out" "REQUIRED_ADDITION_MISSING path=.ai-dev-workflow.yaml")"
 
+# An inline section value is refused; an explicit empty list is accepted.
+for inline_case in "invalid:2" "[{path: x}]:2" "[]:0"; do
+  inline_value="${inline_case%:*}"
+  inline_expected="${inline_case##*:}"
+  INLINE_MANIFEST="$TMP_ROOT/inline-manifest.yaml"
+  python3 - "$FIX/sync-manifest.yaml" "$INLINE_MANIFEST" "$inline_value" <<'PY'
+import sys
+from pathlib import Path
+text = Path(sys.argv[1]).read_text()
+head, sep, tail = text.partition("required_additions:\n")
+assert sep
+# Drop the block entries up to the next top-level key, keep the rest.
+rest = tail.split("\nsync_coverage_exemptions:", 1)[1]
+Path(sys.argv[2]).write_text(head + f"required_additions: {sys.argv[3]}\n\nsync_coverage_exemptions:" + rest)
+PY
+  out="$TMP_ROOT/inline.out"
+  status="$(run_checker "$out" --repo-root "$FIX" --manifest "$INLINE_MANIFEST" --consumer-root "$CONSUMER")"
+  if [ "$inline_expected" = "0" ]; then
+    # Empty list: nothing to check, and the fixture's coverage gaps are fixed
+    # above, so the run is clean.
+    run_test "inline_section_${inline_value}_accepted" "0" "$status"
+  else
+    run_test "inline_section_${inline_value}_refused" "2" "$status"
+    run_test "inline_section_${inline_value}_error" "yes" "$(has_line "$out" "inline values are not supported")"
+  fi
+done
+
 # A nested list inside an entry is refused rather than split into two entries.
 NESTED_MANIFEST="$TMP_ROOT/nested-manifest.yaml"
 python3 - "$FIX/sync-manifest.yaml" "$NESTED_MANIFEST" <<'PY'
