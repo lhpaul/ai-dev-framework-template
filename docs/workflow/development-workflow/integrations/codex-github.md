@@ -100,7 +100,7 @@ trimming the ends) is the only permitted flexibility.
 wildcard**: the commit SHA (`[0-9a-f]{7,40}`, git's own documented
 abbreviated-to-full SHA-1 hex-length range), and the `<flavor>` slot
 immediately after "Didn't find any major issues. " — a single bounded
-placeholder, ``[^*`[:cntrl:]]{1,40}`` (up to 40 characters, excluding
+placeholder, ``[^*`[:cntrl:]]{1,60}`` (up to 60 characters, excluding
 asterisk, backtick, and control characters), not a fixed word and not an
 enumerated list.
 
@@ -116,9 +116,22 @@ non-convergence failure this classifier's entire design history exists to
 avoid, on a new axis. The bounded placeholder replaced the alternation
 before merge.
 
-**Bound derivation**: the 40-character cap is the longest evidenced token
-(31 characters, "More of your lovely PRs please.") rounded up with modest
-headroom. The excluded characters protect adjacent template structure only:
+**Bound derivation**: the cap is 60 characters (#1878). It was originally
+40: the longest token evidenced at the time (31 characters, "More of your
+lovely PRs please.") rounded up with modest headroom. Live traffic then
+falsified that cap. On a genuinely clean review Codex emitted the
+41-character sentence "Already looking forward to the next diff.", which
+the 40-character slot rejected, so the loop escalated. 60 gives about 50%
+headroom over that observed 41. A wider cap was tried downstream and
+rejected: at 120, a realistic 79-character actionable instruction ("Rename
+the unsafe function immediately before merging this pull request please.")
+would match as approval. At 60, the 79- and 86-character instruction test
+cases, and the same instruction smuggled in as a newline-separated
+paragraph, still fall outside the slot and safe-fail. The cap lives in two
+byte-identical copies of the template, in `codex-github-reviewer.sh` and
+`apply-readiness-labels.sh`. A parity test in `test-pr-review-loop.sh`
+fails if they drift. The excluded characters protect adjacent template
+structure only:
 asterisk protects the `**Reviewed commit:**` marker that follows, backtick
 protects the SHA field's delimiters, and control characters (including
 newline) are excluded as defense in depth even though whitespace
@@ -126,14 +139,14 @@ normalization already prevents them from reaching this point.
 
 **The deliberate, disclosed trade of this design**: a genuinely clean
 response using different wording anywhere in the body — including a
-cosmetic vendor footer rewording, or a flavor phrase exceeding 40 characters
+cosmetic vendor footer rewording, or a flavor phrase exceeding 60 characters
 or containing an excluded character — safe-fails to `NEEDS_REVISION` today
 rather than being approved. This failure direction is always safe (more
 `NEEDS_REVISION`, never a false `APPROVED`). **The flavor placeholder is the
 one exception to "never a false `APPROVED`" stated plainly, not hidden**: a
 false `APPROVED` through this slot requires Codex to emit self-contradictory
 output — a clean verdict immediately followed by an actual directive inside
-the 40-character slot, while still reproducing the complete, exact footer
+the 60-character slot, while still reproducing the complete, exact footer
 afterward. No evidence of this has ever been observed; recovery if it ever
 is, is narrowing the placeholder's bound, never widening it without new live
 evidence. See issue #1491's implementation plan (Decision 2 and its two

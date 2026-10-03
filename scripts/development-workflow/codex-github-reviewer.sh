@@ -794,7 +794,7 @@ codex_normalize_whitespace() {
 # character, which is exactly the kind of unreviewed widening this
 # design forbids.
 #
-# The "flavor" slot's placeholder, `[^*`[:cntrl:]]{1,40}`, and why it
+# The "flavor" slot's placeholder, `[^*`[:cntrl:]]{1,60}`, and why it
 # replaced a 14-token literal alternation (issue #1491's implementation
 # plan, Decision 2 second addendum — supersedes the first addendum's
 # enumeration approach):
@@ -814,11 +814,20 @@ codex_normalize_whitespace() {
 # 14-token alternation shipped briefly, then was replaced by this bounded
 # placeholder before merge, once that pattern became clear.
 #
-# Bound derivation: `{1,40}` — 40 is the longest evidenced token's length
-# (31 characters, "More of your lovely PRs please.") rounded up to the
-# nearest 10 with modest headroom, wide enough to admit a somewhat longer
-# genuine flavor phrase without being large enough to admit multi-sentence
-# injected content. `[^*`[:cntrl:]]` excludes only the characters that
+# Bound derivation: `{1,60}` (issue #1878). The original cap was 40: the
+# longest token evidenced at the time (31 characters, "More of your
+# lovely PRs please.") rounded up to the nearest 10 with modest headroom.
+# Live traffic then falsified that cap — Codex emitted the 41-character
+# sentence "Already looking forward to the next diff." on a genuinely
+# clean review (Grunten/grunten-platform PR #73), which safe-failed and
+# escalated. 60 is about 50% headroom over that 41-character evidence. A
+# wider cap was rejected deliberately: 120 was tried downstream and
+# narrowed back, because a realistic 79-character actionable instruction
+# ("Rename the unsafe function immediately before merging this pull
+# request please.") would then match as approval. 60 keeps every known
+# actionable-instruction test case (79 and 86 characters) outside the
+# slot while admitting the longest evidenced genuine flavor sentence.
+# `[^*`[:cntrl:]]` excludes only the characters that
 # could let this slot swallow adjacent template structure: `*` (protects
 # the literal `**Reviewed commit:**` bold-marker syntax immediately
 # after this slot), backtick (protects the backtick-delimited SHA field
@@ -833,7 +842,7 @@ codex_normalize_whitespace() {
 # Residual risk, stated plainly rather than claimed away: this is now a
 # genuine (bounded) placeholder, not a literal — a false `APPROVED` is
 # possible if Codex ever asserts "Didn't find any major issues." and then
-# places an actual directive inside this 40-character slot while still
+# places an actual directive inside this 60-character slot while still
 # reproducing the exact, complete footer verbatim afterward. This
 # requires self-contradictory vendor output (a clean verdict immediately
 # followed by an instruction, inside one otherwise-genuine response) and
@@ -841,7 +850,7 @@ codex_normalize_whitespace() {
 # addendum and Risks & Mitigations for the full accounting — not a zero-
 # risk claim.
 CODEX_APPROVED_TEMPLATES=(
-  '^Codex Review: Didn'"'"'t find any major issues\. [^*`[:cntrl:]]{1,40} \*\*Reviewed commit:\*\* `[0-9a-f]{7,40}` <details> <summary>ℹ️ About Codex in GitHub</summary> <br/> \[Your team has set up Codex to review pull requests in this repo\]\(https://chatgpt\.com/codex/cloud/settings/general\)\. Reviews are triggered when you - Open a pull request for review - Mark a draft as ready - Comment "@codex review"\. If Codex has suggestions, it will comment; otherwise it will react with 👍\. Codex can also answer questions or update the PR\. Try commenting "@codex address that feedback"\. </details>$'
+  '^Codex Review: Didn'"'"'t find any major issues\. [^*`[:cntrl:]]{1,60} \*\*Reviewed commit:\*\* `[0-9a-f]{7,40}` <details> <summary>ℹ️ About Codex in GitHub</summary> <br/> \[Your team has set up Codex to review pull requests in this repo\]\(https://chatgpt\.com/codex/cloud/settings/general\)\. Reviews are triggered when you - Open a pull request for review - Mark a draft as ready - Comment "@codex review"\. If Codex has suggestions, it will comment; otherwise it will react with 👍\. Codex can also answer questions or update the PR\. Try commenting "@codex address that feedback"\. </details>$'
 )
 
 # `APPROVED` requires the ENTIRE, untruncated response — whitespace-

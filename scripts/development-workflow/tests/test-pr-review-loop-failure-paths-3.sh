@@ -2769,7 +2769,7 @@ unset _codex_footer_near_miss_async_reaction_final_safe_fails_mock_dir _codex_fo
 # — is LLM-generated variety, not a fixed vocabulary, and enumerating it
 # would not converge (issue #1491's original complaint reappearing on a new
 # axis). CODEX_APPROVED_TEMPLATES' flavor slot is now the single bounded
-# placeholder `[^*`[:cntrl:]]{1,40}` — see the production script's own
+# placeholder `[^*`[:cntrl:]]{1,60}` (cap widened from 40 by issue #1878) — see the production script's own
 # comment above CODEX_APPROVED_TEMPLATES and the implementation plan's
 # Decision 2 second addendum for the full derivation of both the length
 # cap and the excluded-character set. codex_e1_real_pr1489_capture_approved
