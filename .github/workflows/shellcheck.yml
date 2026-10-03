@@ -34,6 +34,9 @@ jobs:
   shellcheck:
     name: ShellCheck static analysis
     runs-on: ubuntu-latest
+    # Bound the job (#1876). The whole job normally finishes in a few minutes;
+    # without a cap a stuck step inherits the 6-hour Actions default.
+    timeout-minutes: 30
     permissions:
       contents: read
     steps:
@@ -42,16 +45,29 @@ jobs:
         with:
           fetch-depth: 0
 
+      # One ShellCheck process per file (#1876). Passing every file to a single
+      # process makes its peak memory grow with the whole set; one per file
+      # bounds it by the largest file, and the findings are the same because
+      # nothing here asks ShellCheck to follow sourced files. Peak memory on a
+      # single large file grows much faster than its line count — a 21.6k-line
+      # test suite needed ~17 GB and got smaller private-repo runners shut down
+      # mid-step — which is why test-pr-review-loop.sh's Area 18 caps the size
+      # of every pr-review-loop suite.
       - name: Run ShellCheck
+        timeout-minutes: 20
         run: |
-          mapfile -d '' -t shell_files < <(find scripts/development-workflow -type f -name "*.sh" -print0)
+          set -euo pipefail
+          mapfile -d '' -t shell_files < <(find scripts/development-workflow -type f -name "*.sh" -print0 | sort -z)
           if [ "${#shell_files[@]}" -eq 0 ]; then
             echo "No shell files found under scripts/development-workflow — skipping."
             exit 0
           fi
           echo "Analyzing ${#shell_files[@]} shell file(s):"
           printf '  %s\n' "${shell_files[@]}"
-          shellcheck --severity=warning "${shell_files[@]}"
+          # xargs exits non-zero (123) when any one invocation fails, so a
+          # finding in any file still fails the step.
+          printf '%s\0' "${shell_files[@]}" \
+            | xargs -0 -n 1 -P 2 shellcheck --severity=warning
 
       - name: Run ShellCheck on review doctrine linter
         run: shellcheck --severity=warning scripts/lint/review-doctrine-lint.sh

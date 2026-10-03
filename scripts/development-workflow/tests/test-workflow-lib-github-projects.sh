@@ -11,6 +11,9 @@
 #      distinguishes an unreadable Type field from a clean [] (issue #1400)
 #   6. update_tracker_status_best_effort names the board's valid options for
 #      an unknown Status and fails only in strict mode (issue #1564)
+#   7. When issue.projectItems is empty but the card is on the board (org
+#      project + unlinked personal repository), Status/Type/membership reads
+#      fall back to one per-process cached item-list scan (issue #1801)
 #
 # Usage: bash scripts/development-workflow/tests/test-workflow-lib-github-projects.sh
 # covers: scripts/development-workflow/workflow-lib.sh
@@ -22,10 +25,12 @@ REPO_ROOT="$(CDPATH='' cd -- "$SCRIPT_DIR/../../.." && pwd)"
 
 MOCK_BIN="$(mktemp -d)"
 CALL_LOG="$(mktemp)"
+ITEM_LIST_CACHE_DIR="$(mktemp -d)"
+export WORKFLOW_GH_ITEM_LIST_CACHE_DIR="$ITEM_LIST_CACHE_DIR"
 
 _harness_exit() {
   local status=$?
-  rm -rf "$MOCK_BIN"
+  rm -rf "$MOCK_BIN" "$ITEM_LIST_CACHE_DIR"
   rm -f "$CALL_LOG"
   case "$status" in
     141) exit 0 ;;
@@ -291,6 +296,20 @@ JSON
       cat <<'JSON'
 {"items":[{"content":{"number":824,"repository":"lhpaul/ai-dev-framework-template","type":"Issue","url":"https://github.com/lhpaul/ai-dev-framework-template/issues/824"},"status":"Backlog","priority":"High","title":"Workflow helper issue"}]}
 JSON
+    elif [ "${MOCK_ITEM_LIST_MODE:-default}" = "org_board_unlinked" ]; then
+      # issue #1801: the card is on the board (added with item-add) although
+      # repository.issue.projectItems is empty. A foreign repository's #824
+      # comes first to prove the fallback joins by repository and number.
+      cat <<'JSON'
+{"items":[{"id":"PVTI_foreign_824","content":{"number":824,"repository":"other-org/other-repo","type":"Issue","url":"https://github.com/other-org/other-repo/issues/824"},"status":"Done","priority":"Low","custom Type":"Bug","title":"Foreign 824"},{"id":"PVTI_item_824","content":{"number":824,"repository":"lhpaul/ai-dev-framework-template","type":"Issue","url":"https://github.com/lhpaul/ai-dev-framework-template/issues/824"},"status":"Backlog","priority":"High","size":"S","custom Type":"Feature","title":"Workflow helper issue"}],"totalCount":2}
+JSON
+    elif [ "${MOCK_ITEM_LIST_MODE:-default}" = "foreign_only" ]; then
+      cat <<'JSON'
+{"items":[{"id":"PVTI_foreign_824","content":{"number":824,"repository":"other-org/other-repo","type":"Issue","url":"https://github.com/other-org/other-repo/issues/824"},"status":"Done","priority":"Low","custom Type":"Bug","title":"Foreign 824"}],"totalCount":1}
+JSON
+    elif [ "${MOCK_ITEM_LIST_MODE:-default}" = "fail" ]; then
+      printf 'item-list failed\n' >&2
+      exit 42
     elif [ "${MOCK_ITEM_LIST_MODE:-default}" = "empty_board" ]; then
       # Project board has zero items yet (e.g. open issues not triaged onto
       # the board). This must be a clean "no open Workflow items" result, not
@@ -366,6 +385,7 @@ count_log_matches() {
 
 reset_log() {
   : > "$CALL_LOG"
+  rm -f "$ITEM_LIST_CACHE_DIR"/*.json
 }
 
 echo ""
@@ -481,15 +501,178 @@ run_test "membership_existing_does_not_add" "0" "$(count_log_matches 'project it
 
 reset_log
 export MOCK_PROJECT_ITEM_MODE=missing
+export MOCK_ITEM_LIST_MODE=empty_board
 membership_output="$(ensure_on_project_board 824 "In Development")"
 unset MOCK_PROJECT_ITEM_MODE
+unset MOCK_ITEM_LIST_MODE
 case "$membership_output" in
   *"added to project board"*) membership_result="added" ;;
   *) membership_result="$membership_output" ;;
 esac
 run_test "membership_missing_adds_issue" "added" "$membership_result"
-run_test "membership_missing_avoids_full_board_scan" "" "$(forbidden_project_reads)"
+# One board scan confirms absence; item-add invalidates the cache, so the
+# initial-status update re-reads the board once more (issue #1801).
+run_test "membership_missing_scans_board_before_and_after_add" "2" "$(count_log_matches 'project item-list')"
 run_test "membership_missing_adds_once" "1" "$(count_log_matches 'project item-add')"
+
+echo ""
+echo "=== issue.projectItems empty: item-list fallback (#1801) ==="
+
+reset_log
+export MOCK_PROJECT_ITEM_MODE=missing
+export MOCK_ITEM_LIST_MODE=org_board_unlinked
+fallback_status="$(get_tracker_status_for_issue 824)"
+fallback_type="$(get_tracker_type_for_issue 824)"
+fallback_item="$(workflow_github_project_item_for_issue 824 1 2>/dev/null)"
+unset MOCK_PROJECT_ITEM_MODE
+unset MOCK_ITEM_LIST_MODE
+run_test "fallback_status_read" "Backlog" "$fallback_status"
+run_test "fallback_type_read" "Feature" "$fallback_type"
+run_test "fallback_item_id_is_this_repo_card" "PVTI_item_824" "$(printf '%s' "$fallback_item" | jq -r '.item_id')"
+run_test "fallback_item_carries_project_id" "PVT_project_1" "$(printf '%s' "$fallback_item" | jq -r '.project_id')"
+run_test "fallback_item_carries_priority_and_size" "High/S" "$(printf '%s' "$fallback_item" | jq -r '.priority + "/" + .size')"
+run_test "fallback_board_scanned_once_per_process" "1" "$(count_log_matches 'project item-list')"
+run_test "fallback_tries_graphql_first_each_read" "3" "$(count_log_matches 'projectItems')"
+
+reset_log
+export MOCK_PROJECT_ITEM_MODE=missing
+export MOCK_ITEM_LIST_MODE=org_board_unlinked
+membership_output="$(ensure_on_project_board 824 "In Development")"
+unset MOCK_PROJECT_ITEM_MODE
+unset MOCK_ITEM_LIST_MODE
+case "$membership_output" in
+  *"already on project board"*) membership_result="already-present" ;;
+  *) membership_result="$membership_output" ;;
+esac
+run_test "fallback_membership_detects_card" "already-present" "$membership_result"
+run_test "fallback_membership_does_not_readd" "0" "$(count_log_matches 'project item-add')"
+
+reset_log
+export MOCK_PROJECT_ITEM_MODE=missing
+export MOCK_ITEM_LIST_MODE=org_board_unlinked
+fallback_update_output="$(update_tracker_status_best_effort 824 "In Development")"
+unset MOCK_PROJECT_ITEM_MODE
+unset MOCK_ITEM_LIST_MODE
+case "$fallback_update_output" in
+  *"TRACKER_STATUS_APPLIED issue=824"*) fallback_update_result="applied" ;;
+  *) fallback_update_result="$fallback_update_output" ;;
+esac
+run_test "fallback_status_update_applies" "applied" "$fallback_update_result"
+run_test "fallback_status_update_mutates_fallback_item" "1" "$(count_log_matches 'itemId=PVTI_item_824')"
+
+reset_log
+export MOCK_PROJECT_ITEM_MODE=missing
+export MOCK_ITEM_LIST_MODE=foreign_only
+foreign_status="$(get_tracker_status_for_issue 824)"
+unset MOCK_PROJECT_ITEM_MODE
+unset MOCK_ITEM_LIST_MODE
+run_test "fallback_ignores_same_number_in_other_repo" "" "$foreign_status"
+
+reset_log
+export MOCK_PROJECT_ITEM_MODE=missing
+export MOCK_ITEM_LIST_MODE=fail
+failed_fallback_stderr="$(get_tracker_status_for_issue 824 2>&1 >/dev/null || true)"
+failed_fallback_status="$(get_tracker_status_for_issue 824 2>/dev/null)"
+unset MOCK_PROJECT_ITEM_MODE
+unset MOCK_ITEM_LIST_MODE
+case "$failed_fallback_stderr" in
+  *"item-list fallback failed"*) failed_fallback_result="warned" ;;
+  *) failed_fallback_result="$failed_fallback_stderr" ;;
+esac
+run_test "fallback_failure_warns" "warned" "$failed_fallback_result"
+run_test "fallback_failure_returns_empty" "" "$failed_fallback_status"
+run_test "fallback_failure_is_not_cached" "0" "$(find "$ITEM_LIST_CACHE_DIR" -name '*.json' | wc -l | tr -d ' ')"
+
+reset_log
+export MOCK_PROJECT_ITEM_MODE=missing
+export MOCK_ITEM_LIST_MODE=org_board_unlinked
+export WORKFLOW_GH_ITEM_LIST_FALLBACK=0
+disabled_status="$(get_tracker_status_for_issue 824)"
+unset WORKFLOW_GH_ITEM_LIST_FALLBACK
+unset MOCK_PROJECT_ITEM_MODE
+unset MOCK_ITEM_LIST_MODE
+run_test "fallback_opt_out_returns_empty" "" "$disabled_status"
+run_test "fallback_opt_out_avoids_full_board_scan" "" "$(forbidden_project_reads)"
+
+reset_log
+export MOCK_PROJECT_ITEM_MODE=missing
+export MOCK_ITEM_LIST_MODE=org_board_unlinked
+export WORKFLOW_GH_ITEM_LIST_CACHE_TTL_MINUTES=0
+get_tracker_status_for_issue 824 >/dev/null
+get_tracker_status_for_issue 824 >/dev/null
+unset WORKFLOW_GH_ITEM_LIST_CACHE_TTL_MINUTES
+unset MOCK_PROJECT_ITEM_MODE
+unset MOCK_ITEM_LIST_MODE
+run_test "fallback_zero_ttl_disables_cache_reuse" "2" "$(count_log_matches 'project item-list')"
+
+reset_log
+stale_cache_file="$ITEM_LIST_CACHE_DIR/1-stale-1.json"
+printf '{"items":[]}' > "$stale_cache_file"
+touch -t 200001010000 "$stale_cache_file"
+export MOCK_PROJECT_ITEM_MODE=missing
+export MOCK_ITEM_LIST_MODE=org_board_unlinked
+get_tracker_status_for_issue 824 >/dev/null
+unset MOCK_PROJECT_ITEM_MODE
+unset MOCK_ITEM_LIST_MODE
+run_test "fallback_write_sweeps_hour_old_cache_files" "absent" "$([ -e "$stale_cache_file" ] && echo present || echo absent)"
+
+reset_log
+export MOCK_PROJECT_ITEM_MODE=missing
+export MOCK_ITEM_LIST_MODE=org_board_unlinked
+get_tracker_status_for_issue 824 >/dev/null
+workflow_github_project_item_list_cache_invalidate
+get_tracker_status_for_issue 824 >/dev/null
+unset MOCK_PROJECT_ITEM_MODE
+unset MOCK_ITEM_LIST_MODE
+run_test "fallback_cache_invalidate_forces_rescan" "2" "$(count_log_matches 'project item-list')"
+
+# A successful field write must drop the cached board, or the next fallback
+# read reports the value this process just overwrote. Each case: one read
+# (scan 1), one write whose item lookup reuses the cache, one read (scan 2).
+for fallback_write in status type priority; do
+  reset_log
+  export MOCK_PROJECT_ITEM_MODE=missing
+  export MOCK_ITEM_LIST_MODE=org_board_unlinked
+  get_tracker_status_for_issue 824 >/dev/null
+  case "$fallback_write" in
+    status) update_tracker_status_best_effort 824 "In Development" >/dev/null ;;
+    type) update_tracker_type_best_effort 824 "Bug" >/dev/null ;;
+    priority)
+      export MOCK_STATUS_FIELD_MODE=priority_configured
+      update_tracker_named_field_best_effort 824 "Priority" "High" >/dev/null 2>&1 || true
+      unset MOCK_STATUS_FIELD_MODE
+      ;;
+  esac
+  writes_after="$(count_log_matches 'updateProjectV2ItemFieldValue')"
+  get_tracker_status_for_issue 824 >/dev/null
+  unset MOCK_PROJECT_ITEM_MODE
+  unset MOCK_ITEM_LIST_MODE
+  run_test "fallback_${fallback_write}_write_lands" "1" "$writes_after"
+  run_test "fallback_${fallback_write}_write_invalidates_board_cache" "2" "$(count_log_matches 'project item-list')"
+done
+
+reset_log
+export MOCK_PROJECT_ITEM_MODE=missing
+export MOCK_ITEM_LIST_MODE=org_board_unlinked
+get_tracker_status_for_issue 824 >/dev/null
+export MOCK_STATUS_FIELD_MODE=graphql_fail
+update_tracker_status_best_effort 824 "In Development" >/dev/null 2>&1 || true
+unset MOCK_STATUS_FIELD_MODE
+get_tracker_status_for_issue 824 >/dev/null
+unset MOCK_PROJECT_ITEM_MODE
+unset MOCK_ITEM_LIST_MODE
+run_test "fallback_failed_write_keeps_board_cache" "1" "$(count_log_matches 'project item-list')"
+
+reset_log
+orphan_tmp_file="$ITEM_LIST_CACHE_DIR/.item-list.orphan1"
+printf 'partial' > "$orphan_tmp_file"
+touch -t 200001010000 "$orphan_tmp_file"
+export MOCK_PROJECT_ITEM_MODE=missing
+export MOCK_ITEM_LIST_MODE=org_board_unlinked
+get_tracker_status_for_issue 824 >/dev/null
+unset MOCK_PROJECT_ITEM_MODE
+unset MOCK_ITEM_LIST_MODE
+run_test "fallback_write_sweeps_hour_old_orphan_temp_files" "absent" "$([ -e "$orphan_tmp_file" ] && echo present || echo absent)"
 
 reset_log
 update_output="$(update_tracker_status_best_effort 824 "In Development" "Spec Ready")"

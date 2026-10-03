@@ -7,7 +7,7 @@
 <!-- workflow-shell-contract: bash -->
 
 ```bash
-bash scripts/development-workflow/tests/test-pr-review-loop.sh --area 1656
+bash scripts/development-workflow/tests/test-pr-review-loop-staged-gates.sh --area 1656
 ```
 
 **Demonstrated output** (2026-09-01, current PR head):
@@ -71,7 +71,7 @@ lines). Test-path line numbers refer to
 `scripts/development-workflow/tests/test-pr-review-loop.sh`.
 
 Recorded fail-under-plant on 2026-09-01 against that restored harness
-(`bash scripts/development-workflow/tests/test-pr-review-loop.sh --area 1656`).
+(`bash scripts/development-workflow/tests/test-pr-review-loop-staged-gates.sh --area 1656`).
 Each plant was applied to production, the area-1656 run captured, then the
 file was restored. A proof whose plant cannot change a test's answer is not
 included here as a recorded fail.
