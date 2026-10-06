@@ -162,6 +162,8 @@ if sys.argv[2]=='--prove-plants':
             ('D-6',protocol,'Every dispatched failure is a review failure under either policy.','Every dispatched failure is skipped under warn.'),
             ('D-6',protocol,'Request a read-only review and exactly one','Request a mutating review and exactly one'),
             ('D-6',protocol,'Cross-runner CLI reviewers remain read-only; the parent owns their fixes, commits, pushes, and required review reruns.','Cross-runner CLI reviewers apply fixes directly.'),
+            ('D-1',protocol,'`codex`, `dsh` (local-runtime), and','`codex`, and'),
+            ('D-6',protocol,'DSH_PERMISSION_MODE=read-only dsh --profile headless','dsh --profile web without read-only preset'),
             ('D-7',readme,"driving runner's own stage reviewer",'fixed Claude reviewer'),
             ('D-8',protocol,'install software, or\nsubstitute a reviewer','install software, or\nreplace a reviewer'),
             ('D-9',readme,'The shipped list is `[claude]`','The shipped list is `[claude, cursor]`'),

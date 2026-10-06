@@ -239,8 +239,13 @@ Use a hermetic `PATH` for this step. Do **not** rely on the machine’s real PAT
    set -euo pipefail
    bash scripts/development-workflow/tests/test-resolve-reviewer-availability.sh
    bash scripts/development-workflow/tests/test-step7a-surface-consistency.sh
+   bash scripts/development-workflow/tests/test-step7a-surface-consistency.sh --prove-plants
    bash scripts/development-workflow/tests/test-reviewer-preflight.sh
    ```
+
+   The `--prove-plants` pass must include isolated FAIL/PASS cycles for the DSH
+   D-1 supported-value plant and the D-6 headless read-only command plant (see
+   `test-step7a-surface-consistency.sh` plants list).
 
 2. If implementation touched sync-manifest inputs, run `check-sync-manifest-coverage.py` for this repo role and confirm no new gaps for touched paths.
 3. Confirm `changelog.d/1891.added.dsh-runner-support.md` exists on the implementation PR (not required on the plan PR).

@@ -18,6 +18,7 @@ Re-verify headless and permission-preset wiring after major DSH upgrades.
 1. Install the DeepSeek Harness CLI so the `dsh` binary is on `PATH`.
 2. Confirm the probe used by Step 7a availability:
 
+   <!-- workflow-shell-contract: bash-zsh -->
    ```bash
    dsh --version
    ```
@@ -43,6 +44,7 @@ layers under local overrides). Common shipped profiles:
 
 Examples:
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
 dsh web
 dsh --profile headless "Summarize the open PR"
@@ -91,6 +93,7 @@ and compose the shipped base-bundle **`read-only` permission preset** through
 `DSH_PERMISSION_MODE`. Prompt-only “do not write files” instructions are **not**
 sufficient for Step 7a cross-runner parity with Codex’s read-only sandbox.
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
 DSH_PERMISSION_MODE=read-only dsh --profile headless \
   "Read-only review against REVIEW.md for <stage>. Emit exactly one line: VERDICT: APPROVED or VERDICT: NEEDS REVISION."
