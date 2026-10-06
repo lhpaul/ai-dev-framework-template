@@ -54,6 +54,7 @@ review:
     #   claude        — local-runtime reviewer.
     #   cursor        — local-runtime reviewer.
     #   codex         — local-runtime reviewer.
+    #   dsh           — local-runtime reviewer.
     #   coderabbit    — hosted-service reviewer.
     #   codex-github  — hosted-service reviewer.
     runner:
