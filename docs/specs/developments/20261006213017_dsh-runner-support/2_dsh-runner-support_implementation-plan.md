@@ -119,7 +119,7 @@ Not applicable — no design assets.
 ### Infrastructure / Configuration / Scripts
 
 - [ ] **`scripts/development-workflow/resolve-reviewer-availability.sh`** (AC-1, AC-1a, AC-2): Add `dsh` to `--runner-kind` help + allow-list (`claude|cursor|codex|dsh|unknown`) and to the local-runtime `case` arm beside `claude|cursor|codex`. Rely on existing `probe_local` (binary name = entry → `dsh --version`). Native-driving short-circuit (`entry == runner_kind`) applies unchanged.
-- [ ] **`scripts/development-workflow/reviewer_preflight.py`** (AC-1): Add `"dsh"` to `SUPPORTED_RUNNER` only (not to `SUPPORTED_GITHUB`).
+- [ ] **`scripts/development-workflow/reviewer_preflight.py`** (AC-1): Add `"dsh"` to `SUPPORTED_RUNNER` only (not to `SUPPORTED_GITHUB`). Update the adjacent comment that currently says “three local-runtime driving-session values” so it stays accurate after the addition.
 - [ ] **`.ai-dev-workflow.yaml`** (AC-4, AC-11 / D2): Extend the `on_draft.runner` comment block with `dsh — local-runtime reviewer.` Do **not** add `dsh` to the shipped list body.
 - [ ] **`.ai-dev-workflow.local.example.yaml`** (operator discoverability): Optional comment or example note that `dsh` is a valid local-runtime runner value for opt-in; do not force `dsh` into the example’s active list if that would imply a new machine requirement — prefer a comment. Keep all listed values ⊆ expanded supported set (D-4).
 
@@ -169,12 +169,12 @@ See Testing Strategy.
 **Key scenarios** (indicative; coverage-equivalent substitutions allowed unless marked binding):
 
 1. Configured `dsh` + fake/real `dsh --version` success → `reachable` (AC-1, AC-2).
-2. Configured `dsh` + binary absent → `runtime-absent` with remedy mentioning install or local-override removal (AC-2, BR-4).
+2. Configured `dsh` + binary absent (hermetic PATH, not the machine PATH) → `runtime-absent` with the existing shared local-runtime remedy (“Install the reviewer's runtime … or remove … from … `.ai-dev-workflow.local.yaml`”) — AC-2’s “installing DSH” intent is satisfied by that generic install-or-remove pattern; do not invent a DSH-named remedy string (AC-2, BR-4).
 3. `--runner-kind dsh` accepted; unknown kind still fails closed (AC-1a).
 4. Unknown reviewer token still `value-not-supported`; `coderabbit` / `codex-github` still accepted (AC-1).
 5. Hermetic shipped default (Claude-only) still proceeds under each driving kind including `dsh` when that kind is the driver fallback path — extend T-33-style coverage as needed (AC-11, AC-12).
-6. `test-step7a-surface-consistency.sh` green after D-1/D-6 expectation updates (AC-3, AC-6, AC-12).
-7. Preflight accepts `dsh` in `on_draft.runner` and rejects it in GitHub buckets (AC-1).
+6. `test-step7a-surface-consistency.sh` green after D-1/D-6 expectation updates — expand the `supported` set **and** the D-1 `contains(...)` prose needle so Protocol 91’s “Supported reviewer values are …” sentence includes `` `dsh` `` (AC-3, AC-6, AC-12).
+7. Preflight accepts `dsh` in `on_draft.runner` and rejects it in GitHub buckets; update the “three local-runtime” comment beside `SUPPORTED_RUNNER` when the set grows (AC-1).
 
 **Files to extend** (indicative):
 

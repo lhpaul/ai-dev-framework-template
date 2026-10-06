@@ -13,7 +13,7 @@
 This feature is workflow tooling, not an application. There is no server to start and no database to seed.
 
 - [ ] You are on the implementation branch for #1891 with the change applied.
-- [ ] `python3`, `jq`, `git`, and `bash` are available. Start one dedicated Bash session with `bash --noprofile --norc` from the repository root, then run all snippets in that session.
+- [ ] `python3`, `jq`, `git`, and `bash` are available. Start one dedicated Bash session with `bash --noprofile --norc` from the repository root, then run all snippets in that session. Every mutation fails closed; expected resolver non-zero exits are captured with `smoke_status=0; … || smoke_status=$?` (do not let `set -e` abort the session on an expected block).
 - [ ] Preserve the checkout’s original override before any fixture writes (same restore pattern as the #1495 smoke runbook). On interruption, retain the printed state-directory path for recovery.
 
   <!-- workflow-shell-contract: bash -->
@@ -86,30 +86,102 @@ No design assets exist for this item — it changes no user interface — so thi
 
 **Maps to**: AC-1, AC-2, UC-1
 
-1. Write a local override that sets `review.on_draft.runner` to `[dsh]` (and keep policy `warn` unless you intentionally test fail-closed).
-2. With `dsh` **absent** from `PATH` (or a hermetic PATH without it), run:
+Use a hermetic `PATH` for this step. Do **not** rely on the machine’s real PATH: if `dsh` is already installed (common on this template’s authoring machines), an “absent” probe will falsely report `reachable`.
+
+1. Write a local override that sets `review.on_draft.runner` to `[dsh]` only (keep shipped `warn` policy):
 
    <!-- workflow-shell-contract: bash -->
    ```bash
    set -euo pipefail
-   bash scripts/development-workflow/resolve-reviewer-availability.sh \
-     --repo-root "$(pwd -P)" --owner example --repo test --runner-kind claude
+   printf 'review:\n  on_draft:\n    runner:\n      - dsh\n' > .ai-dev-workflow.local.yaml
    ```
 
-3. Confirm the `dsh` record is `unreachable` with reason `runtime-absent` and a remedy that mentions installing DSH or removing it from the local override.
-4. Put a stub `dsh` on `PATH` that exits 0 for `--version`, re-run the helper, and confirm `dsh` is `reachable`.
-5. Restore / leave PATH as needed for later steps.
+2. Build a hermetic PATH that deliberately omits `dsh`, then run the resolver (capture the expected non-zero exit — sole configured reviewer absent → `zero-reachable`):
 
-**Expected result**: Validation accepts `dsh`; probe distinguishes absent vs present binary.
+   <!-- workflow-shell-contract: bash -->
+   ```bash
+   set -euo pipefail
+   mkdir -p "$SMOKE_TMP/bin"
+   for c in awk bash cat cut date dirname git grep gh head jq mktemp perl printf python3 rm sed sleep sort tr wc; do
+     src="$(type -P "$c")" || { printf 'Missing executable: %s\n' "$c" >&2; exit 1; }
+     ln -sf "$src" "$SMOKE_TMP/bin/$c"
+   done
+   smoke_status=0
+   PATH="$SMOKE_TMP/bin" bash scripts/development-workflow/resolve-reviewer-availability.sh \
+     --repo-root "$(pwd -P)" --owner example --repo test --runner-kind claude \
+     | tee "$SMOKE_TMP/dsh-absent.out" || smoke_status=$?
+   printf 'exit=%s\n' "$smoke_status"
+   [ "$smoke_status" -eq 1 ]
+   ```
+
+3. Confirm the indexed `dsh` record is `STATUS=unreachable` with `REASON=runtime-absent`, a non-empty `REMEDY` that matches the shared local-runtime pattern (install the reviewer’s runtime, or remove the entry from `review.on_draft.runner` in `.ai-dev-workflow.local.yaml` — the shipped remedy text is generic, not a DSH-named string), `OUTCOME=blocked`, and `BLOCK_CAUSE=zero-reachable`.
+
+4. Put a stub `dsh` on that hermetic PATH that exits 0 for `--version`, re-run, and confirm `reachable` with exit `0`:
+
+   <!-- workflow-shell-contract: bash -->
+   ```bash
+   set -euo pipefail
+   printf '#!/bin/sh\necho "dsh 0.0.0-stub"\n' > "$SMOKE_TMP/bin/dsh"
+   chmod +x "$SMOKE_TMP/bin/dsh"
+   smoke_status=0
+   PATH="$SMOKE_TMP/bin" bash scripts/development-workflow/resolve-reviewer-availability.sh \
+     --repo-root "$(pwd -P)" --owner example --repo test --runner-kind claude \
+     | tee "$SMOKE_TMP/dsh-present.out" || smoke_status=$?
+   printf 'exit=%s\n' "$smoke_status"
+   [ "$smoke_status" -eq 0 ]
+   ```
+
+5. Confirm `dsh` is `STATUS=reachable` in `$SMOKE_TMP/dsh-present.out`. Leave the hermetic bin / override in place for Step 3, or recreate them the same way if you reset.
+
+**Expected result**: Validation accepts `dsh`; hermetic probe distinguishes absent (`runtime-absent` + `zero-reachable`) vs present (`reachable`).
 
 ### Step 3: Driving-session kind `dsh` and unknown rejection
 
 **Maps to**: AC-1a, AC-1
 
-1. Run the resolver with `--runner-kind dsh` against a valid config; confirm it does not fail with `unsupported runner-kind`.
-2. Run with an unsupported kind (for example `not-a-runner`) and confirm the helper fails closed as today.
-3. Configure a nonsense reviewer value in the override and confirm `value-not-supported` (not silent drop).
-4. Confirm a hosted value such as `coderabbit` or `codex-github` remains accepted when configured (skip live hosted probes if `gh`/network unavailable; unit suite coverage is enough for hosted probe mechanics).
+1. With a reachable `dsh` override (Step 2 stub still on hermetic PATH, or recreate it), run with `--runner-kind dsh` and confirm exit `0` (no `unsupported runner-kind`):
+
+   <!-- workflow-shell-contract: bash -->
+   ```bash
+   set -euo pipefail
+   smoke_status=0
+   PATH="$SMOKE_TMP/bin" bash scripts/development-workflow/resolve-reviewer-availability.sh \
+     --repo-root "$(pwd -P)" --owner example --repo test --runner-kind dsh \
+     | tee "$SMOKE_TMP/runner-kind-dsh.out" || smoke_status=$?
+   printf 'exit=%s\n' "$smoke_status"
+   [ "$smoke_status" -eq 0 ]
+   ```
+
+2. Run with an unsupported kind and confirm the helper fails closed (message is on stderr):
+
+   <!-- workflow-shell-contract: bash -->
+   ```bash
+   set -euo pipefail
+   smoke_status=0
+   PATH="$SMOKE_TMP/bin" bash scripts/development-workflow/resolve-reviewer-availability.sh \
+     --repo-root "$(pwd -P)" --owner example --repo test --runner-kind not-a-runner \
+     >"$SMOKE_TMP/runner-kind-bad.out" 2>&1 || smoke_status=$?
+   printf 'exit=%s\n' "$smoke_status"
+   [ "$smoke_status" -ne 0 ]
+   grep -q 'unsupported runner-kind' "$SMOKE_TMP/runner-kind-bad.out"
+   ```
+
+3. Configure a nonsense reviewer value in the override and confirm `value-not-supported` (not silent drop); capture the expected non-zero exit:
+
+   <!-- workflow-shell-contract: bash -->
+   ```bash
+   set -euo pipefail
+   printf 'review:\n  on_draft:\n    runner:\n      - not-a-real-reviewer\n' > .ai-dev-workflow.local.yaml
+   smoke_status=0
+   PATH="$SMOKE_TMP/bin" bash scripts/development-workflow/resolve-reviewer-availability.sh \
+     --repo-root "$(pwd -P)" --owner example --repo test --runner-kind claude \
+     | tee "$SMOKE_TMP/value-not-supported.out" || smoke_status=$?
+   printf 'exit=%s\n' "$smoke_status"
+   [ "$smoke_status" -eq 1 ]
+   grep -q 'value-not-supported' "$SMOKE_TMP/value-not-supported.out"
+   ```
+
+4. Confirm a hosted value such as `coderabbit` or `codex-github` remains accepted when configured (skip live hosted probes if `gh`/network unavailable; unit suite coverage is enough for hosted probe mechanics). Restore a sensible override afterward if later steps need `[dsh]`.
 
 **Expected result**: `dsh` is a first-class driving kind; unknown values still reject; hosted values remain in the supported set.
 
@@ -186,7 +258,7 @@ No design assets exist for this item — it changes no user interface — so thi
 ## Validation Checklist
 
 - [ ] AC-1 / AC-1a: `dsh` accepted as draft runner and driving-session kind; unknowns still rejected; hosted values remain
-- [ ] AC-2: reachable vs runtime-absent probe behavior observed
+- [ ] AC-2: reachable vs runtime-absent probe behavior observed under hermetic PATH (not the machine PATH)
 - [ ] AC-3 / AC-3a / AC-4 / AC-5: Protocol 91 + YAML comments + dispatch rows
 - [ ] AC-6: headless read-only composition documented (and exercised when `dsh` installed)
 - [ ] AC-7 / AC-8 / AC-9 / AC-10: matrices, integration guide, model-config, failover
