@@ -25,13 +25,13 @@ Recorded at alignment (issue #1891 open design decisions; human-confirmed in the
 
 Derived from issue #1891 Outcome (and the confirmed open design decisions above):
 
-- **BO-1**: DSH is a supported draft-stage local-runtime reviewer value (`dsh`), with argument validation and a local binary availability probe (`dsh --version` style), on par with Claude / Cursor / Codex.
-- **BO-2**: Protocol 91 Step 7a surfaces (supported values, remedy tables, draft-restriction mapping) and the workflow YAML comment blocks name `dsh` alongside the existing runners.
+- **BO-1**: DSH is a supported draft-stage local-runtime reviewer value (`dsh`), with argument validation and a local binary availability probe (`dsh --version` style), on par with Claude / Cursor / Codex. Where the framework enumerates driving-session local runner kinds as Claude, Cursor, and Codex, `dsh` is accepted so a DSH-driven session is not forced to `unknown` solely for using DSH.
+- **BO-2**: Protocol 91 Step 7a surfaces (supported values, remedy tables, draft-restriction mapping) and the workflow YAML comment blocks name `dsh` alongside the existing local-runtime runners, without removing hosted-service reviewer values already supported today.
 - **BO-3**: The reviewer dispatch map includes DSH rows per branch prefix that dispatch the shared workflow reviewer skills (spec / plan / code) against the canonical review contract.
 - **BO-4**: Cross-runner headless CLI review for DSH is documented: one-shot headless profile invocation that prints the final answer and exits success/failure, with read-only enforcement via a dedicated permission preset composed into the invocation (not prompt-only).
 - **BO-5**: Operator-facing docs add a DSH column to the primary command matrices, a new DSH integration guide (install, profiles, provider routes, subagent model selection, headless mode, and the parent-orchestrated dispatch section), DSH tier mapping and dispatch-time pinning guidance in the agent model-config document, and a DSH row in the provider-contingency runner-failover guide.
-- **BO-6**: Consistency and availability tests cover the expanded supported runner set and probe behavior; the README shipped-list prose remains parseable as Claude-only; sync-manifest entries cover every touched framework file; a changelog fragment records the feature for the eventual implementation PR path.
-- **BO-7**: Shipped default draft-runner list stays Claude-only; DSH is local opt-in.
+- **BO-6**: Consistency and availability tests cover the expanded supported runner set and DSH probe behavior; sync-manifest entries cover every touched framework file; a changelog fragment records the feature for the eventual implementation PR path.
+- **BO-7**: Shipped default draft-runner list stays Claude-only; DSH is local opt-in; the README shipped-list prose remains parseable as Claude-only.
 
 ---
 
@@ -53,7 +53,7 @@ Derived from issue #1891 Outcome (and the confirmed open design decisions above)
 
 **Information shown**:
 
-- Availability classification for the DSH draft-runner entry (reachable / absent / unsupported, using the same categories the gate already exposes for Claude, Cursor, and Codex).
+- Availability classification for the DSH draft-runner entry using the same gate categories already used for other local-runtime reviewers (`reachable` / `runtime-absent` / `value-not-supported`, and related remedy rows).
 - When unavailable under the warn policy, a clear remedy pointing at installing DSH or removing it from the local override.
 
 **Actions available**:
@@ -66,6 +66,7 @@ Derived from issue #1891 Outcome (and the confirmed open design decisions above)
 
 - An unsupported or misspelled value must fail validation the same way other runner values do — it must not be silently dropped.
 - Under the shipped warn availability policy, a configured-but-absent DSH binary degrades gracefully rather than hard-blocking the whole item solely for that absence (existing policy behavior; this feature does not invent a new policy).
+- Adding `dsh` must not remove or redefine hosted-service reviewer values already supported by the gate (for example CodeRabbit or Codex GitHub).
 
 ---
 
@@ -97,6 +98,7 @@ Derived from issue #1891 Outcome (and the confirmed open design decisions above)
 
 - DSH reuses the shared skill surface Codex already uses; it does not require a separate in-repo per-role agent file tree for dispatch (DSH has no Claude-/Cursor-style per-role agent files in-repo).
 - Dispatch under DSH is parent-orchestrated by default: the driving session absorbs item orchestration and hands stage review work to the reviewer skill rather than relying on a separate two-hop native handoff profile document.
+- Like Claude and Codex local-runtime reviewers, DSH does not skip draft pull requests; draft-restriction mapping must record that DSH never requires converting a draft PR solely so DSH can review.
 
 ---
 
@@ -160,7 +162,8 @@ Derived from issue #1891 Outcome (and the confirmed open design decisions above)
 
 ## Business Rules
 
-- **BR-1 First-class parity**: Wherever the framework enumerates supported local-runtime draft reviewers as Claude, Cursor, and Codex, DSH (`dsh`) is included as a fourth supported value with the same validation and probe pattern family.
+- **BR-1 First-class local-runtime parity**: Wherever the framework enumerates supported local-runtime draft reviewers as Claude, Cursor, and Codex, DSH (`dsh`) is included as an additional local-runtime value with the same validation and probe pattern family. Adding `dsh` must not remove or redefine hosted-service reviewer values already supported by the gate.
+- **BR-1a Driving-session kind**: Wherever the framework enumerates driving-session local runner kinds as Claude, Cursor, and Codex, `dsh` is accepted so a DSH-driven session is not classified as `unknown` solely for using DSH.
 - **BR-2 Shipped default unchanged**: The template-shipped draft-stage runner list remains Claude-only. Enabling DSH for Step 7a is a local override concern, not a change to the shipped default.
 - **BR-3 README shipped-list parse contract**: Operator-facing README prose that states the shipped list is `` `[claude]` `` must keep a form the Step 7a surface-consistency test can parse; wording that breaks that parse is a regression even if humans still understand it.
 - **BR-4 Warn degradation**: With the shipped warn availability policy, a locally configured DSH that fails its binary probe is reported with a remedy and does not invent a harder failure mode than other local runners under the same policy.
@@ -169,6 +172,7 @@ Derived from issue #1891 Outcome (and the confirmed open design decisions above)
 - **BR-7 Parent-orchestrated dispatch default**: DSH’s documented default dispatch arrangement is parent-orchestrated. That contract lives as a section of the DSH integration guide; a separate dispatch-profile document is out of scope for this feature.
 - **BR-8 No in-repo per-role agent files required**: Model-tier and pinning guidance for DSH must work without Claude-/Cursor-style per-role agent files; dispatch-time provider/model overrides are the supported pinning path.
 - **BR-9 Template plumbing**: Every framework file this feature changes is reflected in the sync manifest, and the implementation path includes a changelog fragment (spec PRs remain changelog-exempt; the fragment belongs to the later implementation PR).
+- **BR-10 Draft-restriction**: DSH does not skip draft pull requests. Step 7a draft-restriction mapping records that DSH never requires converting a draft PR solely so DSH can review (same class of behavior as Claude and Codex local-runtime reviewers).
 
 ---
 
@@ -185,7 +189,11 @@ Draft-stage local-runtime reviewer values relevant to this feature:
 
 **Valid transitions**: not applicable — these are configuration enumerations, not lifecycle states.
 
-Availability outcomes for a configured draft runner continue to use the existing gate classifications (reachable / runtime-absent / value-not-supported and related remedy rows). This feature extends those tables to cover `dsh`; it does not redefine the classification vocabulary.
+Hosted-service reviewer values already supported by the gate (for example CodeRabbit and Codex GitHub) remain in force; this feature does not rename, remove, or replace them.
+
+Availability outcomes for a configured draft runner continue to use the existing gate classifications (`reachable` / `runtime-absent` / `value-not-supported` and related remedy rows). This feature extends those tables to cover `dsh`; it does not redefine the classification vocabulary.
+
+Draft-restriction mapping for `dsh`: Never — DSH reviews draft pull requests without requiring draft-to-ready conversion solely for DSH eligibility (same class as Claude and Codex local-runtime reviewers).
 
 ---
 
@@ -200,9 +208,11 @@ Availability outcomes for a configured draft runner continue to use the existing
 
 ## Acceptance Criteria
 
-- [ ] **AC-1**: Configuring `dsh` as a draft-stage local-runtime reviewer is accepted by the availability resolver; an unknown runner value is still rejected.
-- [ ] **AC-2**: When DSH is installed, the availability probe that checks the local DSH binary reports the runner reachable; when the binary is missing, the probe reports runtime-absent (or the equivalent existing absent classification) with a remedy that mentions installing DSH or removing it from the local override.
-- [ ] **AC-3**: Protocol 91 Step 7a supported-values, remedy, and draft-restriction surfaces name `dsh` alongside Claude, Cursor, and Codex.
+- [ ] **AC-1**: Configuring `dsh` as a draft-stage local-runtime reviewer is accepted by the availability resolver; an unknown runner value is still rejected; existing hosted-service reviewer values remain accepted.
+- [ ] **AC-1a**: Driving-session local runner-kind (or equivalent session classification) accepts `dsh` alongside Claude, Cursor, and Codex so a DSH-driven session is not forced to `unknown` solely for using DSH.
+- [ ] **AC-2**: When DSH is installed, the availability probe that checks the local DSH binary reports the runner `reachable`; when the binary is missing, the probe reports `runtime-absent` (or the equivalent existing absent classification) with a remedy that mentions installing DSH or removing it from the local override.
+- [ ] **AC-3**: Protocol 91 Step 7a supported-values and remedy surfaces name `dsh` alongside the existing local-runtime runners without dropping hosted-service values from the full supported set.
+- [ ] **AC-3a**: Protocol 91 Step 7a draft-restriction mapping includes `dsh` with Never (DSH does not require converting a draft PR solely so DSH can review).
 - [ ] **AC-4**: Workflow manifest comment blocks that enumerate supported draft runners include `dsh`.
 - [ ] **AC-5**: The reviewer dispatch map includes DSH rows for spec, plan, and implementation branch prefixes that dispatch the shared workflow reviewer skills against `REVIEW.md`.
 - [ ] **AC-6**: Published cross-runner headless guidance documents a DSH headless one-shot invocation that prints the final answer and exits success/failure, and states that read-only enforcement uses a dedicated permission preset composed into that invocation (not prompt-only).
@@ -243,16 +253,16 @@ Availability outcomes for a configured draft runner continue to use the existing
 
 | Brief objective | Mapped to | Notes |
 | --------------- | --------- | ----- |
-| BO-1 Supported `dsh` value + binary probe | AC-1, AC-2, BR-1 | |
-| BO-2 Protocol 91 Step 7a + YAML comment blocks | AC-3, AC-4 | |
+| BO-1 Supported `dsh` value + binary probe + driving-session kind | AC-1, AC-1a, AC-2, BR-1, BR-1a | Hosted-service values remain accepted (AC-1) |
+| BO-2 Protocol 91 Step 7a + YAML comment blocks | AC-3, AC-3a, AC-4, BR-10 | Draft-restriction Never for `dsh` |
 | BO-3 Reviewer dispatch map rows for DSH | AC-5, BR-5, UC-2 | |
 | BO-4 Headless CLI review + read-only preset | AC-6, BR-6, UC-3 | |
 | BO-5 Docs matrices, integration guide, model-config, failover | AC-7, AC-8, AC-9, AC-10, UC-4, BR-7, BR-8 | |
-| BO-6 Tests, sync-manifest, changelog fragment | AC-12, AC-13, AC-14, BR-9 | Changelog fragment is implementation-path; spec PR remains changelog-exempt |
+| BO-6 Tests, sync-manifest, changelog fragment | AC-12, AC-13, AC-14, BR-9 | Changelog fragment is implementation-path; spec PR remains changelog-exempt; README parse lives under BO-7 / AC-11 |
 | BO-7 Shipped default stays Claude-only; DSH local opt-in | AC-11, BR-2, BR-3, BR-4, UC-1; Out of Scope + Deferral Notes | |
 
 ---
 
 ## Complex workflow decision-gate matrix
 
-Not applicable — this feature extends an existing supported-runner enumeration and documentation/dispatch surfaces; it does not add or modify a multi-input workflow decision gate with new outcome classes, next-action branches, or mirrored gate status labels beyond naming `dsh` in the existing Step 7a tables.
+Not applicable — this feature extends an existing supported-runner enumeration, documentation/dispatch surfaces, and the existing draft-restriction mapping with a single Never row for `dsh`. It does not add or modify a multi-input workflow decision gate with new outcome classes, next-action branches, or mirrored gate status labels beyond naming `dsh` in the existing Step 7a tables.
