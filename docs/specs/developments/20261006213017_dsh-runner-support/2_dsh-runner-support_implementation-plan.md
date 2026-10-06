@@ -172,9 +172,10 @@ See Testing Strategy.
 2. Configured `dsh` + binary absent (hermetic PATH, not the machine PATH) → `runtime-absent` with the existing shared local-runtime remedy (“Install the reviewer's runtime … or remove … from … `.ai-dev-workflow.local.yaml`”) — AC-2’s “installing DSH” intent is satisfied by that generic install-or-remove pattern; do not invent a DSH-named remedy string (AC-2, BR-4).
 3. `--runner-kind dsh` accepted; unknown kind still fails closed (AC-1a).
 4. Unknown reviewer token still `value-not-supported`; `coderabbit` / `codex-github` still accepted (AC-1).
-5. Hermetic shipped default (Claude-only) still proceeds under each driving kind including `dsh` when that kind is the driver fallback path — extend T-33-style coverage as needed (AC-11, AC-12).
-6. `test-step7a-surface-consistency.sh` green after D-1/D-6 expectation updates — expand the `supported` set **and** the D-1 `contains(...)` prose needle so Protocol 91’s “Supported reviewer values are …” sentence includes `` `dsh` `` (AC-3, AC-6, AC-12).
-7. Preflight accepts `dsh` in `on_draft.runner` and rejects it in GitHub buckets; update the “three local-runtime” comment beside `SUPPORTED_RUNNER` when the set grows (AC-1).
+5. **Shipped Claude-only default (binding)** — Hermetic shipped `[claude]` config + absent Claude on PATH: driving with native `claude` blocks `zero-reachable` (T-33/T-44). Driving with a non-native kind such as `dsh` also blocks `zero-reachable`; the resolver does **not** substitute another local runtime when the configured list is present and non-empty. Preserves AC-11 / AC-12 without bypassing the zero-reachable gate.
+6. **Absent/empty configured list fallback (separate)** — When the effective runner list is absent or empty (local override `[]` / T-45-style fallback), driving-session fallback may proceed under each kind including `dsh`; extend availability tests for that path only — not under the shipped `[claude]` hermetic fixture.
+7. `test-step7a-surface-consistency.sh` green after D-1/D-6 expectation updates — expand the `supported` set **and** the D-1 `contains(...)` prose needle so Protocol 91’s “Supported reviewer values are …” sentence includes `` `dsh` `` (AC-3, AC-6, AC-12).
+8. Preflight accepts `dsh` in `on_draft.runner` and rejects it in GitHub buckets; update the “three local-runtime” comment beside `SUPPORTED_RUNNER` when the set grows (AC-1).
 
 **Files to extend** (indicative):
 
@@ -246,6 +247,18 @@ review:
       - claude
       - dsh
 ```
+
+---
+
+## Reversal / rollback
+
+If first-class DSH support must be undone after resolver, Protocol 91, YAML comment, or operator-doc changes ship:
+
+1. **Code/docs revert** — Revert the implementation merge (or a single revert commit) that added `dsh` to resolver/preflight allow-lists, Protocol 91 Step 7a surfaces, integration guide, and command matrices. Shipped `review.on_draft.runner` body must remain `[claude]` throughout.
+2. **Local overrides** — Operators who opted in via `.ai-dev-workflow.local.yaml` (`runner: […, dsh]`) must remove `dsh` manually after revert. Once allow-lists no longer recognize `dsh`, a lingering token is `value-not-supported` and Step 7a hard-fails until the override is corrected — document this in the integration guide removal note during revert.
+3. **Tests** — Restore pre-DSH expectations in availability, surface-consistency, and preflight suites as part of the same revert; do not leave tests asserting `dsh` reachable while production code rejects it.
+
+Reversal is unavailable only if downstream repos already depend on `dsh` in committed (non-local) workflow YAML; that case requires a human release note and coordinated config cleanup, not a silent partial revert.
 
 ---
 
