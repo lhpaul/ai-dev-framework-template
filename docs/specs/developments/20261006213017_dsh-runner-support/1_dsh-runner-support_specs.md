@@ -273,7 +273,7 @@ Evaluated in the same order as other local-runtime draft runners: supported-valu
 
 | Supported-value check | Probe / determination | Availability class | Next action (default `warn` policy) |
 | --------------------- | --------------------- | ------------------ | ----------------------------------- |
-| Rejects token (unknown / misspelled) | Not run | `value-not-supported` | Same validation failure as other unsupported runner values — must not silently drop the entry (UC-1, BR-1). |
+| Rejects token (unknown / misspelled) | Not run | `value-not-supported` (unreachable) | Classify the entry unreachable with the standard `value-not-supported` reason and remedy — the entry stays visible in determination output and is not silently dropped (UC-1, BR-1). Then apply the aggregate policy table below (for example, under default `warn`, proceed only when at least one other configured reviewer is reachable; zero reachable still hard-fails). |
 | Accepts `dsh` | Binary responds | `reachable` | Include DSH in the reachable draft-stage reviewer subset for dispatch. |
 | Accepts `dsh` | Binary absent on machine | `runtime-absent` | Remedy: install DSH or remove `dsh` from the local override; classify DSH unreachable for this cycle and apply the aggregate policy table below (BR-4, UC-1). |
 | Accepts `dsh` | Determination incomplete or timed out | `check-inconclusive` (existing equivalent class) | Treat as unreachable for that determination; same reason/remedy pattern as other local runners per Protocol 91 — not `runtime-absent`; then apply the aggregate policy table below. |
@@ -301,7 +301,8 @@ After every configured draft-runner entry (including `dsh`) is validated and pro
 | --------- | ---------------- | ----------- |
 | Step 7a completes on PR HEAD commit **C** | Approved for **C** | Proceed past Step 7a for that run while HEAD remains **C**. |
 | Step 7a completes on **C** | Needs revision or failed for **C** | Fix on a new commit **C′** and re-run Step 7a; verdict on **C** does not carry forward. |
-| PR HEAD moves to **C′** after a verdict on **C** | Verdict bound to **C** only | Re-run Step 7a so approval binds to current HEAD **C′** (UC-2, Operational Visibility). |
+| PR HEAD advances to **C′** after **APPROVED** on **C** | Freshness guard accepts **C** as a strict ancestor of **C′** with `REASON=mechanical_delta_verified` | Retain the existing **APPROVED** verdict — no Step 7a re-run solely because HEAD moved (existing Protocol 91 / readiness freshness behavior). |
+| PR HEAD advances to **C′** after **APPROVED** on **C** | Freshness guard refuses the delta, or **C** is not an accepted ancestor of **C′** | Re-run Step 7a so approval binds to current HEAD **C′** (UC-2, Operational Visibility). |
 
 ---
 
