@@ -252,6 +252,28 @@ Use a hermetic `PATH` for this step. Do **not** rely on the machine’s real PAT
 
 **Expected result**: Suites green; sync coverage clean; changelog fragment present on the implementation path.
 
+#### Planted-violation proofs (DSH D-1 / D-6)
+
+REVIEW.md requires demonstrated FAIL/PASS cycles at concrete locations for new
+Step 7a surface checks. Run on the implementation PR head:
+
+<!-- workflow-shell-contract: bash -->
+
+```bash
+set -euo pipefail
+bash scripts/development-workflow/tests/test-step7a-surface-consistency.sh --prove-plants
+```
+
+**Demonstrated output** (2026-10-06, PR #1894 head `dd076536`; DSH-specific rows):
+
+```text
+PROOF 15 D-1: FAIL at docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md:1693
+PROOF 15 D-1: PASS after repair
+PROOF 16 D-6: FAIL at docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md:2038
+PROOF 16 D-6: PASS after repair
+39 isolated planted violations failed and repaired; source checkout untouched.
+```
+
 ### Last Step: Validate & Shut Down
 
 - Verify the checklist below.
