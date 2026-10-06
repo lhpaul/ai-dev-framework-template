@@ -26,7 +26,7 @@ while [ "$#" -gt 0 ]; do
         --repo) repo=$2 ;; --runner-kind) runner_kind=$2 ;;
       esac
       shift 2 ;;
-    --help) printf 'Usage: %s --repo-root <path> --owner <owner> --repo <repo> [--runner-kind claude|cursor|codex|unknown]\n' "$0"; exit 0 ;;
+    --help) printf 'Usage: %s --repo-root <path> --owner <owner> --repo <repo> [--runner-kind claude|cursor|codex|dsh|unknown]\n' "$0"; exit 0 ;;
     *) fail "unknown argument: $1" ;;
   esac
 done
@@ -35,7 +35,7 @@ done
 case "$owner/$repo" in *[!a-zA-Z0-9_./-]*) fail 'invalid owner or repo' ;; esac
 case "$owner" in */*|.|..) fail 'invalid owner' ;; esac
 case "$repo" in */*|.|..) fail 'invalid repo' ;; esac
-case "$runner_kind" in claude|cursor|codex|unknown) ;; *) fail 'unsupported runner-kind' ;; esac
+case "$runner_kind" in claude|cursor|codex|dsh|unknown) ;; *) fail 'unsupported runner-kind' ;; esac
 SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 export REVIEWER_PREFLIGHT_CODERABBIT_MODULE_DIR="$SCRIPT_DIR"
 # shellcheck source=scripts/development-workflow/workflow-lib.sh
@@ -420,7 +420,7 @@ for ((entry_index=excluded_end; entry_index<${#fields[@]}; entry_index++)); do
   entry=${fields[$entry_index]}
   verdict=unreachable reason=check-inconclusive detail= probe_context=budget
   case "$entry" in
-    claude|cursor|codex)
+    claude|cursor|codex|dsh)
       if [ "$entry" = "$runner_kind" ]; then
         verdict=reachable; reason=; detail='native reviewer in the driving session'
       elif [ "$SECONDS" -ge "$DEADLINE" ]; then detail='availability budget exhausted before this check started'
