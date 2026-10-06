@@ -270,15 +270,16 @@ Reversal is unavailable only if downstream repos already depend on `dsh` in comm
 4. **Operator docs** — Create `integrations/dsh.md` (D4 section included); update AGENTS.md, workflow README (matrix + integrations list; preserve shipped-list prose), `agent-model-config.md`, `provider-contingency-runner-failover.md`, and the claude-code-action note if needed.
 5. **Tests** — Extend availability, surface-consistency (D-1/D-6), and preflight tests per Testing Strategy. Run the three suites; fix until green.
 6. **Sync-manifest check** — Confirm coverage; adjust only if required (AC-13).
-7. **Smoke runbook execution** — Walk `docs/testing/workflow/1891-dsh-runner-support.smoke-test.md` on the implementation branch.
-8. **Documentation Updates** — Already inlined in steps 2–4; re-read Documentation Updates checklist for omissions.
-9. **Changelog fragment** (implementation PR only):
+7. **Changelog fragment** (implementation PR only; smoke Step 7 expects this file on the implementation branch):
 
    ```markdown
    ### Added
 
    - **First-class DSH runner support** (#1891): Add `dsh` as a local-runtime draft reviewer and driving-session kind, with availability probing, Protocol 91 dispatch/draft-restriction surfaces, headless read-only review guidance, and operator docs (integration guide, command matrices, model-config, failover).
    ```
+
+8. **Smoke runbook execution** — Walk `docs/testing/workflow/1891-dsh-runner-support.smoke-test.md` on the implementation branch (after the changelog fragment exists).
+9. **Documentation Updates** — Already inlined in steps 2–4; re-read Documentation Updates checklist for omissions.
 
 ---
 
