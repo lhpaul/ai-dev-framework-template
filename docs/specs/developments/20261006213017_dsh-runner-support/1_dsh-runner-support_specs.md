@@ -263,6 +263,39 @@ Draft-restriction mapping for `dsh`: Never — DSH reviews draft pull requests w
 
 ---
 
+## Reused Step 7a stateful contracts (DSH extension)
+
+This feature does **not** introduce a new multi-input workflow decision gate. It adds `dsh` to existing Step 7a stateful contracts in Protocol 91. The tables below state how DSH participates so availability, draft eligibility, and commit-bound review progression stay aligned with the existing gate — not a parallel DSH-only lifecycle.
+
+### Draft-runner availability (configured `dsh` entry)
+
+Evaluated in the same order as other local-runtime draft runners: supported-value validation before probe; unreachable entries follow the repository's configured `internal_reviewers_unavailable_policy` (shipped default `warn`).
+
+| Supported-value check | Probe / determination | Availability class | Next action (default `warn` policy) |
+| --------------------- | --------------------- | ------------------ | ----------------------------------- |
+| Rejects token (unknown / misspelled) | Not run | `value-not-supported` | Same validation failure as other unsupported runner values — must not silently drop the entry (UC-1, BR-1). |
+| Accepts `dsh` | Binary responds | `reachable` | Include DSH in the reachable draft-stage reviewer subset for dispatch. |
+| Accepts `dsh` | Binary absent on machine | `runtime-absent` | Remedy: install DSH or remove `dsh` from the local override; record `skipped (unreachable)` for DSH and proceed with the reachable subset (BR-4, UC-1). |
+| Accepts `dsh` | Determination incomplete or timed out | `check-inconclusive` (existing equivalent class) | Treat as unreachable for that determination; same reason/remedy pattern as other local runners per Protocol 91 — not `runtime-absent`. |
+
+When `internal_reviewers_unavailable_policy` is `fail-if-any-unavailable`, any unreachable row (including `runtime-absent` or inconclusive for `dsh`) blocks the gate with the existing hard-fail path instead of proceeding with a reduced subset.
+
+### Draft-restriction eligibility
+
+| Runner | Draft-restriction class | Operator action before DSH may review a draft PR |
+| ------ | ----------------------- | ------------------------------------------------ |
+| `dsh` | Never | None — DSH reviews while the PR remains draft (same class as Claude and Codex local-runtime reviewers; BR-10, AC-3a). |
+
+### Commit-bound internal review progression
+
+| Situation | Verdict evidence | Next action |
+| --------- | ---------------- | ----------- |
+| Step 7a completes on PR HEAD commit **C** | Approved for **C** | Proceed past Step 7a for that run while HEAD remains **C**. |
+| Step 7a completes on **C** | Needs revision or failed for **C** | Fix on a new commit **C′** and re-run Step 7a; verdict on **C** does not carry forward. |
+| PR HEAD moves to **C′** after a verdict on **C** | Verdict bound to **C** only | Re-run Step 7a so approval binds to current HEAD **C′** (UC-2, Operational Visibility). |
+
+---
+
 ## Complex workflow decision-gate matrix
 
-Not applicable — this feature extends an existing supported-runner enumeration, documentation/dispatch surfaces, and the existing draft-restriction mapping with a single Never row for `dsh`. It does not add or modify a multi-input workflow decision gate with new outcome classes, next-action branches, or mirrored gate status labels beyond naming `dsh` in the existing Step 7a tables.
+Not applicable — no **new** multi-input workflow decision gate, outcome class, or mirror status label is introduced. Stateful behavior reuses Protocol 91 Step 7a contracts extended for `dsh` in **Reused Step 7a stateful contracts (DSH extension)** above; the complex-gate matrix checklist item applies only when this spec adds or modifies a decision gate with new inputs/branches beyond those reused tables.
