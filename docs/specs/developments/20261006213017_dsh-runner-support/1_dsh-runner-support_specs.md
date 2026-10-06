@@ -275,10 +275,19 @@ Evaluated in the same order as other local-runtime draft runners: supported-valu
 | --------------------- | --------------------- | ------------------ | ----------------------------------- |
 | Rejects token (unknown / misspelled) | Not run | `value-not-supported` | Same validation failure as other unsupported runner values — must not silently drop the entry (UC-1, BR-1). |
 | Accepts `dsh` | Binary responds | `reachable` | Include DSH in the reachable draft-stage reviewer subset for dispatch. |
-| Accepts `dsh` | Binary absent on machine | `runtime-absent` | Remedy: install DSH or remove `dsh` from the local override; record `skipped (unreachable)` for DSH and proceed with the reachable subset (BR-4, UC-1). |
-| Accepts `dsh` | Determination incomplete or timed out | `check-inconclusive` (existing equivalent class) | Treat as unreachable for that determination; same reason/remedy pattern as other local runners per Protocol 91 — not `runtime-absent`. |
+| Accepts `dsh` | Binary absent on machine | `runtime-absent` | Remedy: install DSH or remove `dsh` from the local override; classify DSH unreachable for this cycle and apply the aggregate policy table below (BR-4, UC-1). |
+| Accepts `dsh` | Determination incomplete or timed out | `check-inconclusive` (existing equivalent class) | Treat as unreachable for that determination; same reason/remedy pattern as other local runners per Protocol 91 — not `runtime-absent`; then apply the aggregate policy table below. |
 
-When `internal_reviewers_unavailable_policy` is `fail-if-any-unavailable`, any unreachable row (including `runtime-absent` or inconclusive for `dsh`) blocks the gate with the existing hard-fail path instead of proceeding with a reduced subset.
+### Aggregate availability policy (full configured draft-runner set)
+
+After every configured draft-runner entry (including `dsh`) is validated and probed, Protocol 91 applies one aggregate outcome. DSH does not define a separate policy.
+
+| Reachable reviewers after determination | `internal_reviewers_unavailable_policy` | Next action |
+| --------------------------------------- | --------------------------------------- | ----------- |
+| **Zero** | **Any** (`warn` or `fail-if-any-unavailable`) | **Hard-fail** — `BLOCK_CAUSE=zero-reachable`; dispatch nobody; do not call `gh pr ready`; escalate to human (even when DSH alone was configured and is absent). |
+| One or more reachable, at least one unreachable | `warn` (default) | Post the reduced-coverage warning, record each unreachable entry (including absent `dsh`) as `skipped (unreachable)`, dispatch the reachable subset only. |
+| One or more reachable, at least one unreachable | `fail-if-any-unavailable` | **Hard-fail** — `BLOCK_CAUSE=policy-forbids-reduced-coverage`; dispatch nobody even though some reviewers were reachable. |
+| All configured reviewers reachable | Any | Proceed with normal Step 7a dispatch — no reduced-coverage warning. |
 
 ### Draft-restriction eligibility
 
