@@ -46,6 +46,7 @@ Use the tier names as stable policy and map them to whatever your current runner
 - In Claude Code, map the tier to the model family or explicit model ID configured in `.claude/agents/*.md`.
 - In Cursor, set `.cursor/agents/*.md` to `auto` for ordinary coordination and QA agents, and pin an explicit high-reasoning model for agents that author or deeply review specs, plans, and code. Those `model:` fields are the source of truth for Cursor runs (see "Cursor model source of truth" below).
 - In Codex, keep skills tier-based (`economy`, `balanced`, `premium`) and map the active runner model to the current OpenAI model family.
+- In DSH, keep the same tier intent (`economy` / `balanced` / `premium`) and pin provider/model at **dispatch time** (profile route, CLI/env for that invocation, or local DSH settings). DSH has no in-repo per-role agent files; shared workflow skills (`workflow-*-reviewer`, implementer, etc.) carry the tier recommendation, and the parent-orchestrated session selects the route for the run. See [`integrations/dsh.md`](integrations/dsh.md).
 - In any runner, prefer keeping the tier intent stable even when provider model names change.
 
 ### Claude Code model defaults (template)
