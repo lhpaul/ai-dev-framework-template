@@ -21,8 +21,8 @@ BASH_ONLY = re.compile(r"BASH_SOURCE|<\(|\[\[|\$\{![^}]+\}|\b(?:readarray|mapfil
 BASH4 = re.compile(r"\b(?:declare|local)\s+-A\b|\b(?:readarray|mapfile)\b")
 ARRAY = re.compile(r'"\$\{(?P<name>[A-Za-z_]\w*)\[@\](?P<default>:-)?\}"')
 SAFE_ARRAY = re.compile(r'\$\{([A-Za-z_]\w*)\[@\](?:\+|:\+)"\$\{\1\[@\]\}"\}')
-SET_OPTIONS = re.compile(r'(?:^|[;&|()])\s*set\s+(?P<options>[^;&|()]*)')
-HEREDOC = re.compile(r"(?<!<)<<(?!<)(?P<tabs>-)?[ \t]*(?:(?P<quote>['\"])(?P<quoted>[\w-]+)(?P=quote)|\\(?P<escaped>[\w-]+)|(?P<plain>[\w-]+))")
+SET_OPTIONS = re.compile(r'(?:^|[;&|(){}])\s*(?P<command>set)\s+(?P<options>[^;&|(){}]*)')
+HEREDOC = re.compile(r"(?<!<)<<(?!<)(?P<tabs>-)?[ \t]*(?:(?P<quote>['\"])(?P<quoted>.*?)(?P=quote)|\\(?P<escaped>[^\s;&|<>()]+)|(?P<plain>[^\s;&|<>()]+))")
 
 
 @dataclass
@@ -260,6 +260,7 @@ def array_findings(path: str, lines: list[str], changed: set[int], offset: int =
     """
     findings: list[Finding] = []
     nounset = False
+    subshell_options: list[bool] = []
     quote = ""
     heredoc = None
     for number, row in enumerate(lines, offset + 1):
@@ -306,12 +307,23 @@ def array_findings(path: str, lines: list[str], changed: set[int], offset: int =
         # mistaken for a raw expansion (including multiple arrays per line).
         code = SAFE_ARRAY.sub(lambda match: " " * len(match.group()), code)
         events = sorted(
-            [(match.start(), "set", match) for match in SET_OPTIONS.finditer(command_code)]
+            [(match.start("command"), "set", match) for match in SET_OPTIONS.finditer(command_code)]
             + [(match.start(), "array", match) for match in ARRAY.finditer(code)],
             key=lambda event: event[0],
         )
+        # Option changes in subshells (including command/process substitution)
+        # do not change the parent shell. Interleave boundaries with commands
+        # so same-line and multiline subshells retain the enclosing state.
+        events.extend((match.start(), match.group(), match)
+                      for match in re.finditer(r"[()]", command_code))
+        events.sort(key=lambda event: event[0])
         for _, kind, match in events:
-            if kind == "set":
+            if kind == "(":
+                subshell_options.append(nounset)
+            elif kind == ")":
+                if subshell_options:
+                    nounset = subshell_options.pop()
+            elif kind == "set":
                 options = match.group("options").split()
                 for index, option in enumerate(options):
                     if option == "--":
@@ -330,7 +342,8 @@ def array_findings(path: str, lines: list[str], changed: set[int], offset: int =
                 ))
         if delimiter and command_code[delimiter.start():].startswith("<<"):
             heredoc = (
-                delimiter.group("quoted") or delimiter.group("escaped") or delimiter.group("plain"),
+                delimiter.group("quoted") if delimiter.group("quote") is not None
+                else delimiter.group("escaped") or delimiter.group("plain"),
                 delimiter.group("plain") is not None,
                 delimiter.group("tabs") is not None,
             )
