@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Lint changed executable shell fences on framework-owned guidance surfaces."""
+"""Lint changed shell guidance and Bash 3.2 array expansions in scripts."""
 
 from __future__ import annotations
 
@@ -19,6 +19,11 @@ PORTABLE_FOR = re.compile(r"\bfor\s+\w+\s+in\s+\$[A-Za-z_][A-Za-z0-9_]*\b")
 PORTABLE_SET = re.compile(r"\bset\s+--\s+\$[A-Za-z_][A-Za-z0-9_]*\b")
 BASH_ONLY = re.compile(r"BASH_SOURCE|<\(|\[\[|\$\{![^}]+\}|\b(?:readarray|mapfile)\b|\w+=\(")
 BASH4 = re.compile(r"\b(?:declare|local)\s+-A\b|\b(?:readarray|mapfile)\b")
+ARRAY = re.compile(r'"\$\{(?P<name>[A-Za-z_]\w*)\[@\](?::-)?\}"')
+SAFE_ARRAY = re.compile(r'\$\{([A-Za-z_]\w*)\[@\](?:\+|:\+)"\$\{\1\[@\]\}"\}')
+# Intentional WS007 pattern corpus; production occurrences use the changed-line
+# baseline. Both exemptions are scoped to follow-up #1924, not line numbers.
+WS007_ALLOWLIST = {"scripts/lint/tests/test-workflow-shell-snippet-lint.sh"}
 
 
 @dataclass
@@ -49,6 +54,8 @@ def in_test_fixtures(path: str) -> bool:
 def in_scope(path: str) -> bool:
     if in_test_fixtures(path):
         return False
+    if path.startswith("scripts/") and path.endswith(".sh"):
+        return True
     return any(
         path == root.rstrip("/") or path.startswith(f"{root.rstrip('/')}/")
         for root in ROOTS
@@ -243,12 +250,38 @@ def contract_before(lines: list[str], opener: int) -> str | None:
     return None
 
 
+def array_findings(path: str, lines: list[str], changed: set[int], offset: int = 0) -> list[Finding]:
+    """Report both unguarded patterns without interpreting shell context.
+
+    Luis approved this conservative textual rule: comments, quoted data and
+    disabled nounset may also match. Changed-line mode leaves existing uses
+    and false positives untouched until #1924; the explicit allowlist holds
+    the intentional test corpus. --all checks existing lines too.
+    """
+    if path in WS007_ALLOWLIST:
+        return []
+    findings: list[Finding] = []
+    for number, row in enumerate(lines, offset + 1):
+        if number not in changed:
+            continue
+        # Mask the safe guard so its nested quoted expansion is not reported.
+        code = SAFE_ARRAY.sub(lambda match: " " * len(match.group()), row)
+        for match in ARRAY.finditer(code):
+            name = match.group("name")
+            findings.append(Finding(
+                "WS007", path, number,
+                'Unguarded array expansion; use the Bash 3.2 safe form '
+                + '${' + name + '[@]+"${' + name + '[@]}"}',
+            ))
+    return findings
+
+
 def lint(path: str, changed: set[int]) -> tuple[list[Finding], int]:
     """Return this file's findings and the number of fences the rules evaluated.
 
-    The count is the evidence that the run examined anything: a rule can only
-    fire on a fence that is both changed and executable, so `evaluated == 0`
-    means no WS rule ran on this file no matter what the exit status says.
+    WS001–WS006 evaluate changed executable fences. WS007 also evaluates
+    changed script lines; scripts therefore contribute files but no fences
+    to the existing summary format.
     """
     file_path = Path(path)
     evaluated = 0
@@ -256,6 +289,8 @@ def lint(path: str, changed: set[int]) -> tuple[list[Finding], int]:
         return [], evaluated
     lines = file_path.read_text(encoding="utf-8").splitlines()
     findings: list[Finding] = []
+    if file_path.suffix == ".sh":
+        return array_findings(path, lines, changed), 0
     index = 0
     while index < len(lines):
         opener = FENCE.match(lines[index])
@@ -285,6 +320,7 @@ def lint(path: str, changed: set[int]) -> tuple[list[Finding], int]:
             executable = bool(SHELL_SIGNAL.search(content))
         if changed_here and executable:
             evaluated += 1
+            findings.extend(array_findings(path, fence_lines, changed, index + 1))
             contract = contract_before(lines, index)
             line = index + 1
             if contract is None:
@@ -322,7 +358,7 @@ def emit_summary(files: int, fences: int, changed_line_count: int, source: str, 
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Lint changed executable shell fences on framework-owned guidance surfaces.",
+        description="Lint changed shell fences and script array expansions (WS007, Bash 3.2). Existing script lines are excluded in diff mode; --all includes them.",
     )
     parser.add_argument("--base-ref", default="origin/develop")
     parser.add_argument(
@@ -341,6 +377,7 @@ def main() -> int:
     if args.all:
         source = "all"
         changed = {str(path): set(range(1, len(path.read_text(encoding="utf-8").splitlines()) + 1)) for root in ROOTS for path in markdown_paths(root)}
+        changed.update({str(path): set(range(1, len(path.read_text(encoding="utf-8").splitlines()) + 1)) for path in Path("scripts").rglob("*.sh") if not in_test_fixtures(str(path))})
     else:
         source = "input" if args.input_file else f"base-ref {args.base_ref}"
         try:
