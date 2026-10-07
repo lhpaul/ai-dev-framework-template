@@ -312,8 +312,9 @@ review:
 
 > **Note**: Register `claude-code-action` under `review.on_draft.github` or
 > `review.on_ready.github`, not `review.on_draft.runner` — Protocol 91 Step 7a
-> only accepts `claude`, `cursor`, `codex`, and `coderabbit` as runner
-> reviewers. See Setup §5 for platform configuration.
+> accepts local-runtime `claude`, `cursor`, `codex`, and `dsh`, plus hosted
+> `coderabbit` and `codex-github`, as runner reviewers. See Setup §5 for
+> platform configuration.
 
 ### Exit code semantics
 

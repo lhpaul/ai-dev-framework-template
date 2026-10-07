@@ -64,17 +64,24 @@ Typical timeout thresholds for long agents are documented in [`agent-model-confi
 
 ## Failure mode 3: Runner unavailable
 
-**Symptoms:** Cursor, Codex, or Claude Code cannot run agents (auth failure, extension outage, CI runner offline).
+**Symptoms:** Cursor, Codex, Claude Code, or DSH cannot run agents (auth failure, extension outage, CI runner offline, missing `dsh` binary / provider route).
 
 **Migrate to an alternate runner:**
 
 1. Use the **same repository** and **same PR** — do not fork state into a new PR unless the protocol requires it.
 2. Pull latest on the item branch or integration branch as appropriate.
 3. Run the [Resume checklist](#resume-checklist).
-4. Re-invoke the workflow entrypoint your alternate runner supports (`/run-item-work`, `/run-reviewer-loop`, Codex skills, or Claude Code agents) using the **same PR number**.
+4. Re-invoke the workflow entrypoint your alternate runner supports (`/run-item-work`, `/run-reviewer-loop`, Codex / shared `.agents/skills`, Claude Code agents, or DSH parent-orchestrated protocol path — see [`integrations/dsh.md`](integrations/dsh.md)) using the **same PR number**.
 5. Do **not** manually apply readiness labels; let the item-orchestrator apply them in protocol 91 Steps 7b and 8a after Step 7 (reviewer loop), Step 8 (CI), and Step 8c verification succeed.
 
-Tool-specific agent files (`.cursor/agents/`, `.claude/agents/`, `.codex/skills/`) share the same protocols — only the invocation surface changes.
+| Unavailable runner | Typical alternate entrypoint |
+| ------------------ | ---------------------------- |
+| Claude Code | Cursor `/run-item`, Codex `/run-item` alias / skills, or DSH following Protocol 91 with shared skills |
+| Cursor | Claude Code agents, Codex skills, or DSH parent-orchestrated path |
+| Codex | Claude Code agents, Cursor commands, or DSH with the same shared skills against `REVIEW.md` |
+| DSH | Claude Code agents, Cursor `/run-item`, or Codex `/run-item` / shared skills — remove `dsh` from `.ai-dev-workflow.local.yaml` if Step 7a should stop probing it |
+
+Tool-specific agent files (`.cursor/agents/`, `.claude/agents/`, `.codex/skills/`) and DSH’s shared-skill surface share the same protocols — only the invocation surface changes.
 
 ### Local reviewer overrides across temporary worktrees
 

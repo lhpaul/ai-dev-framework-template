@@ -62,7 +62,7 @@ with tempfile.TemporaryDirectory(prefix='availability-tests-') as tmp:
         path.chmod(0o755)
 
     def reset(runners='[codex]', policy=None):
-        for command in ('claude','cursor-agent','codex','gh','python3'):
+        for command in ('claude','cursor-agent','codex','dsh','gh','python3'):
             (bins / command).unlink(missing_ok=True)
         restore_python()
         local.unlink(missing_ok=True)
@@ -107,6 +107,13 @@ with tempfile.TemporaryDirectory(prefix='availability-tests-') as tmp:
     fake('codex','exit 0');check('T-2 repaired guard', run()['OUTCOME']=='proceeded')
     reset('[claude]');check('T-3 native without CLI', run()['REVIEWER_1_STATUS']=='reachable')
     check('T-4 other runner absent',run('cursor',1)['REVIEWER_1_REASON']=='runtime-absent')
+    reset('[dsh]');d=run('claude',1)
+    check('T-4b dsh runtime absent',d['REVIEWER_1_NAME']=='dsh' and d['REVIEWER_1_REASON']=='runtime-absent' and d['BLOCK_CAUSE']=='zero-reachable' and 'Install the reviewer\'s runtime' in d['REVIEWER_1_REMEDY'])
+    fake('dsh','exit 0');d=run('claude')
+    check('T-4b dsh reachable via probe',d['REVIEWER_1_STATUS']=='reachable' and d['OUTCOME']=='proceeded')
+    check('T-4b dsh native driving kind',run('dsh')['REVIEWER_1_STATUS']=='reachable')
+    bad=subprocess.run([bash,str(helper),'--repo-root',str(repo),'--owner','example','--repo','test','--runner-kind','not-a-runner'],env=env,text=True,capture_output=True)
+    check('T-4b unsupported runner-kind fails closed',bad.returncode!=0 and 'unsupported runner-kind' in bad.stderr)
     reset();fake('codex','exit 1');check('T-5 error is inconclusive',run(expected=1)['REVIEWER_1_REASON']=='check-inconclusive')
     fake('codex','sleep 30');d=run(expected=1,extra_env={'WORKFLOW_REVIEWER_AVAILABILITY_TEST_MODE':'1','WORKFLOW_REVIEWER_AVAILABILITY_BUDGET_SECONDS':'2'})
     check('T-6 probe bound', 'bound' in d['REVIEWER_1_DETAIL'])
@@ -546,7 +553,7 @@ reviews:
     # defect as #1781): commit 7fb67d72 deliberately narrowed the shipped list
     # to [claude], so a driver outside that list has no native entry to match.
     shipped_runner=(((yaml.safe_load(shipped) or {}).get('review') or {}).get('on_draft') or {}).get('runner') or []
-    for driver in ('claude','cursor','codex'):
+    for driver in ('claude','cursor','codex','dsh'):
         reset();cfg.write_text(shipped)
         if driver in shipped_runner:
             d=run(driver)
@@ -556,7 +563,7 @@ reviews:
             # any entry as "native reviewer in the driving session"
             # (resolve-reviewer-availability.sh only takes that path when
             # entry == runner_kind); every configured entry instead falls through
-            # to a probe (probe_local for claude/cursor/codex, probe_hosted for
+            # to a probe (probe_local for claude/cursor/codex/dsh, probe_hosted for
             # coderabbit/codex-github). This hermetic PATH never fakes any of
             # those back in for this block, so no entry can be found reachable.
             # The resolver's documented, intended outcome for that case — not
@@ -569,7 +576,7 @@ reviews:
             # from the resolver's actual per-type contract, not a re-hardcoded
             # assumption of the same class this fix removes.
             d=run(driver,1)
-            local_entries=[n for n in range(1,int(d['REVIEWER_COUNT'])+1) if d[f'REVIEWER_{n}_NAME'] in ('claude','cursor','codex')]
+            local_entries=[n for n in range(1,int(d['REVIEWER_COUNT'])+1) if d[f'REVIEWER_{n}_NAME'] in ('claude','cursor','codex','dsh')]
             check(f'T-33 / T-44 shipped non-native {driver} blocks on absent local runtime',
                   d['OUTCOME']=='blocked' and d['BLOCK_CAUSE']=='zero-reachable' and
                   int(d['REVIEWER_COUNT'])>0 and
@@ -595,14 +602,16 @@ reviews:
     name='bad\tname\nOUTCOME=forged\\tail';payload['effective_runner']=[name]
     payload_file=root/'payload.json';payload_file.write_text(json.dumps(payload));fake('python3',f'cat {str(payload_file)!r}')
     d=run(expected=1);check('T-42 escaped JSON transport',d['REVIEWER_1_NAME']=='bad\\tname\\nOUTCOME=forged\\\\tail' and d['OUTCOME']=='blocked')
-    for driver in ('claude','cursor','codex'):
-        earlier=[x for x in ('claude','cursor','codex') if x!=driver]
+    for driver in ('claude','cursor','codex','dsh'):
+        earlier=[x for x in ('claude','cursor','codex','dsh') if x!=driver]
         reset(json.dumps(earlier+[driver,'not-a-reviewer']))
-        for binary in ('claude','cursor-agent','codex'):fake(binary,'sleep 30')
+        for binary in ('claude','cursor-agent','codex','dsh'):fake(binary,'sleep 30')
         d=run(driver,extra_env={'WORKFLOW_REVIEWER_AVAILABILITY_TEST_MODE':'1','WORKFLOW_REVIEWER_AVAILABILITY_BUDGET_SECONDS':'2'})
-        check(f'T-43 native survives budget {driver}',d['REVIEWER_3_STATUS']=='reachable' and d['REVIEWER_4_REASON']=='value-not-supported' and d['OUTCOME']=='proceeded-reduced')
+        check(f'T-43 native survives budget {driver}',d['REVIEWER_4_STATUS']=='reachable' and d['REVIEWER_5_REASON']=='value-not-supported' and d['OUTCOME']=='proceeded-reduced')
     reset('[claude,cursor,codex]');local.write_text('review:\n  on_draft:\n    runner: []\n');d=run('codex')
     check('T-45 empty override fallback',d['REVIEWER_COUNT']=='3' and d['OVERRIDE_EXCLUDED']=='claude,cursor,codex' and d['FALLBACK_APPLIED']=='true' and not d['UNREACHABLE'])
+    reset('[claude,cursor,codex,dsh]');local.write_text('review:\n  on_draft:\n    runner: []\n');d=run('dsh')
+    check('T-45b dsh empty override fallback',d['FALLBACK_APPLIED']=='true' and d['OUTCOME']=='proceeded' and 'dsh' in d['OVERRIDE_EXCLUDED'].split(','))
     for engine in ('fallback', 'timeout-leader-exit'):
         if engine == 'timeout-leader-exit':
             # Mimic GNU timeout's owned group and immediate return when the
@@ -804,7 +813,7 @@ exec perl -e 'setpgrp(0,0) or die; my $bound=shift; $SIG{TERM}="IGNORE"; my $pid
         for n in range(1,int(d['REVIEWER_COUNT'])+1):
             name=d[f'REVIEWER_{n}_NAME'];status=d[f'REVIEWER_{n}_STATUS'];reason=d[f'REVIEWER_{n}_REASON'];remedy=d[f'REVIEWER_{n}_REMEDY']
             assert not(name in ('coderabbit','codex-github') and reason=='runtime-absent')
-            assert not(name in ('claude','cursor','codex') and reason=='prerequisite-missing')
+            assert not(name in ('claude','cursor','codex','dsh') and reason=='prerequisite-missing')
             if status=='unreachable':assert reason in ('runtime-absent','prerequisite-missing','check-inconclusive','value-not-supported') and remedy
             else:assert reason==remedy==''
             assert d['RUNNER_KIND'] not in d[f'REVIEWER_{n}_DETAIL'], d

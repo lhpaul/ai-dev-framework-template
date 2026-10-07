@@ -19,7 +19,7 @@ cg = 'docs/workflow/development-workflow/integrations/codex-github.md'
 readme = 'docs/workflow/development-workflow/README.md'
 helper = 'scripts/development-workflow/resolve-reviewer-availability.sh'
 header = 'scripts/development-workflow/codex-github-reviewer.sh'
-supported = {'claude','cursor','codex','coderabbit','codex-github'}
+supported = {'claude','cursor','codex','dsh','coderabbit','codex-github'}
 start = '<!-- step7a-codex-github-availability:start -->'
 end = '<!-- step7a-codex-github-availability:end -->'
 
@@ -69,7 +69,7 @@ def checks(base):
     summary=gate.split('#### Step 7a summary comment (mandatory)',1)[-1]
     out={}
     declared=section(entry,'Supported reviewer values are ','. If no list')
-    out['D-1']=set(re.findall(r'`([^`]+)`',declared))==supported and contains(entry,'Supported reviewer values are `claude`, `cursor`, `codex` (local-runtime), and','`coderabbit`, `codex-github` (hosted-service)')
+    out['D-1']=set(re.findall(r'`([^`]+)`',declared))==supported and contains(entry,'Supported reviewer values are `claude`, `cursor`, `codex`, `dsh` (local-runtime), and','`coderabbit`, `codex-github` (hosted-service)')
     out['D-2']=not any(x in gate.lower() for x in ('runner identity is a sufficient proxy','reachability classification table'))
     grep=subprocess.run(['git','-C',str(base),'grep','-n','-i','-F','universally reachable','--','*.md','*.sh','*.yaml','*.yml','*.mdc',':(exclude)CHANGELOG.md',':(exclude)docs/specs/developments/**',':(exclude)docs/testing/**',':(exclude)scripts/**/tests/**'],capture_output=True)
     out['D-3']=grep.returncode==1 # search errors must never count as an empty result
@@ -85,7 +85,7 @@ def checks(base):
     fixed=reasons-{'check-inconclusive'}
     out['D-5']=set(doc)==reasons|contexts and set(code)==fixed|contexts and all(doc[key]==code[key] for key in code)
     out['D-5']=out['D-5'] and contains(runtime,'explicit internal probe context','four reason values and output keys stay unchanged')
-    out['D-6']=contains(dispatch,'Every dispatched failure is a review failure under either policy.','claude -p --output-format text','cursor-agent --print --output-format text','codex exec --sandbox read-only','Request a read-only review and exactly one `VERDICT: APPROVED` or `VERDICT: NEEDS REVISION`','The parent applies deterministic fixes, commits and pushes them','never add permission-bypass flags','approval requires exit `0` and exactly one valid terminal verdict','non-zero CLI exit, timeout, permission denial, or missing/ambiguous verdict')
+    out['D-6']=contains(dispatch,'Every dispatched failure is a review failure under either policy.','claude -p --output-format text','cursor-agent --print --output-format text','codex exec --sandbox read-only','DSH_PERMISSION_MODE=read-only dsh --profile headless','Request a read-only review and exactly one `VERDICT: APPROVED` or `VERDICT: NEEDS REVISION`','The parent applies deterministic fixes, commits and pushes them','never add permission-bypass flags','approval requires exit `0` and exactly one valid terminal verdict','non-zero CLI exit, timeout, permission denial, or missing/ambiguous verdict')
     out['D-6']=out['D-6'] and contains(gate,'Cross-runner CLI reviewers remain read-only; the parent owns their fixes, commits, pushes, and required review reruns.')
     out['D-7']=all("driving runner's own stage reviewer" in normalized(x) for x in (entry,read(readme))) and 'stage-appropriate `claude` reviewer' not in entry
     out['D-8']=contains(runtime,'is read-only: do not review, post a comment, alter the PR, install software, or substitute a reviewer','Do not provision services or write tracked files.')
@@ -162,6 +162,8 @@ if sys.argv[2]=='--prove-plants':
             ('D-6',protocol,'Every dispatched failure is a review failure under either policy.','Every dispatched failure is skipped under warn.'),
             ('D-6',protocol,'Request a read-only review and exactly one','Request a mutating review and exactly one'),
             ('D-6',protocol,'Cross-runner CLI reviewers remain read-only; the parent owns their fixes, commits, pushes, and required review reruns.','Cross-runner CLI reviewers apply fixes directly.'),
+            ('D-1',protocol,'`codex`, `dsh` (local-runtime), and','`codex`, and'),
+            ('D-6',protocol,'DSH_PERMISSION_MODE=read-only dsh --profile headless','dsh --profile web without read-only preset'),
             ('D-7',readme,"driving runner's own stage reviewer",'fixed Claude reviewer'),
             ('D-8',protocol,'install software, or\nsubstitute a reviewer','install software, or\nreplace a reviewer'),
             ('D-9',readme,'The shipped list is `[claude]`','The shipped list is `[claude, cursor]`'),

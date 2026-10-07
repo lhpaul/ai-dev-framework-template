@@ -34,6 +34,9 @@ product_repos:
 #   machine, for example PR Agent during draft and Codex GitHub after ready
 # - keep `internal_reviewers_unavailable_policy: warn` unless you explicitly
 #   want unavailable local reviewers to hard-fail the gate
+# - `dsh` is a valid local-runtime draft reviewer (opt-in). Add it under
+#   `review.on_draft.runner` only when the `dsh` binary is installed on this
+#   machine; do not treat the example list below as requiring DSH.
 # - if this override was only a former gate workaround, remove the runner key;
 #   Before retiring a file in a downstream project, ensure the exact backup
 #   name `.ai-dev-workflow.local.yaml.retired` is covered by its .gitignore.

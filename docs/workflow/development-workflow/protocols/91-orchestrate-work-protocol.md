@@ -1652,7 +1652,7 @@ Run this step immediately after opening a draft PR, and again after any push tha
 
 The only configuration resolution for Step 7a is the bounded availability
 helper. Run it on every cycle, before dispatch, passing the actual driving
-session kind (`claude`, `cursor`, `codex`, or `unknown`), never a value inferred
+session kind (`claude`, `cursor`, `codex`, `dsh`, or `unknown`), never a value inferred
 from PATH, the reviewer list, or `WORKFLOW_RUNNER_KIND`. There is no independent `review-effective` or `review-overrides` call before this helper. Its bounded entry includes configuration parsing; never prepend an unbounded parser invocation. A stalled parser is verified by smoke Step 16.
 
 The strict `review-effective` reader requires PyYAML (CI pin `6.0.2`) in the gate's
@@ -1690,7 +1690,7 @@ bash scripts/development-workflow/resolve-reviewer-availability.sh \
   --runner-kind <actual-driving-session-kind>
 ```
 
-Supported reviewer values are `claude`, `cursor`, `codex` (local-runtime), and
+Supported reviewer values are `claude`, `cursor`, `codex`, `dsh` (local-runtime), and
 `coderabbit`, `codex-github` (hosted-service). If no list is defined, the
 helper falls back to the driving runner's own stage reviewer. Consume reviewer
 names only from its indexed `REVIEWER_N_*` fields; aggregate lists are
@@ -1926,6 +1926,7 @@ internal review gate would silently pass with reduced coverage.
 | `coderabbit` | `.coderabbit.yaml` has `reviews.auto_review.drafts: false` (the default)    |
 | `claude`     | Never — Claude Code agents always review regardless of draft state          |
 | `codex`      | Never — Codex skill reviewers always review regardless of draft state       |
+| `dsh`        | Never — DSH skill reviewers always review regardless of draft state         |
 
 Read `.coderabbit.yaml` as YAML and select only the root
 `reviews.auto_review.drafts` field; similarly named keys or instruction text do
@@ -2016,6 +2017,9 @@ For each indexed Reachable reviewer selected by the proceed verdict, dispatch th
 | `codex`      | `spec/*`                                          | `workflow-spec-reviewer` Codex skill against `REVIEW.md`                                                               |
 | `codex`      | `implementation-plan/*`                           | `workflow-plan-reviewer` Codex skill against `REVIEW.md`                                                               |
 | `codex`      | `feature/*` / `refactor/*` / `fix/*` / `hotfix/*` | `workflow-code-reviewer` Codex skill against `REVIEW.md`                                                               |
+| `dsh`        | `spec/*`                                          | `workflow-spec-reviewer` skill against `REVIEW.md`                                                                     |
+| `dsh`        | `implementation-plan/*`                           | `workflow-plan-reviewer` skill against `REVIEW.md`                                                                     |
+| `dsh`        | `feature/*` / `refactor/*` / `fix/*` / `hotfix/*` | `workflow-code-reviewer` skill against `REVIEW.md`                                                                     |
 | `coderabbit` | `spec/*`                                          | Trigger CodeRabbit via push (auto-review); poll for `coderabbitai[bot]` response — see `coderabbit.md` Step 7a section |
 | `coderabbit` | `implementation-plan/*`                           | Trigger CodeRabbit via push (auto-review); poll for `coderabbitai[bot]` response — see `coderabbit.md` Step 7a section |
 | `coderabbit` | `feature/*` / `refactor/*` / `fix/*` / `hotfix/*` | Trigger CodeRabbit via push (auto-review); poll for `coderabbitai[bot]` response — see `coderabbit.md` Step 7a section |
@@ -2030,14 +2034,17 @@ the re-audit itself is performed by the loop runner, not the dispatched fixer.
 
 When a local-runtime reviewer does not match the driving runner, invoke its
 installed CLI from the artifact root: `claude -p --output-format text`,
-`cursor-agent --print --output-format text`, or `codex exec --sandbox read-only`.
+`cursor-agent --print --output-format text`, `codex exec --sandbox read-only`,
+or `DSH_PERMISSION_MODE=read-only dsh --profile headless`.
 The prompt names the stage protocol, `REVIEW.md`, spec/brief and plan paths,
 reviewed base/head, and active pass. Request a read-only review and exactly one
 `VERDICT: APPROVED` or `VERDICT: NEEDS REVISION`. The parent applies deterministic
 fixes, commits and pushes them, and re-runs the required reviewers after the push.
 Preserve existing CLI permission controls; never add permission-bypass flags or
 substitute another runtime. The read-only prompt is an instruction; the Codex
-command additionally enforces a read-only sandbox. Capture the exit status and
+command additionally enforces a read-only sandbox, and the DSH form composes the
+shipped base-bundle `read-only` permission preset via `DSH_PERMISSION_MODE`
+(not prompt-only instructions). Capture the exit status and
 complete response; approval requires exit `0` and exactly one valid terminal verdict.
 For `codex-github`, exit `0` approves, `1` enters revision, `2` and `3` are
 review failures, and `4` waits for the reviewer. A non-zero CLI exit, timeout,
