@@ -195,7 +195,7 @@ or delete branches. It is an additional pre-merge gate and does not replace the
 reviewer loop, CI loop, unresolved-thread checks, merge-state checks, readiness
 labels, or repository merge protocol.
 
-Delegated decision runs also record audit comments with:
+Pre-stage decisions record audit comments with:
 
 ```bash
 ./scripts/development-workflow/run-epic-audit-trail.sh render-pr-disposition --input <file>
@@ -205,6 +205,10 @@ Delegated decision runs also record audit comments with:
 ```
 
 Audit comments are evidence records only; they do not grant merge authority.
+For merge-operation decisions, use the admitted session route in
+[Protocol 94 section 3.6](94-batch-merge-protocol.md#36-merge-session-admission-and-recovery),
+including `--operation merge --merge-session "$MERGE_SESSION"` and the frozen
+`--merge-step` for each disposition or ledger write.
 
 Before an authorized merge decision, run the delegated gate with the current
 candidate PR, resolver policy, reviewer, CI, risk, scope, and audit evidence:

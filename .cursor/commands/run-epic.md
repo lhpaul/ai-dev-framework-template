@@ -109,7 +109,7 @@ set -euo pipefail
 ./scripts/development-workflow/run-epic-delegated-gate.sh --merge-session "$MERGE_SESSION" --input <file> [--policy <file>]
 ```
 
-Use the audit helper after delegated decisions:
+Use the audit helper for pre-stage delegated decisions:
 
 ```bash
 ./scripts/development-workflow/run-epic-audit-trail.sh render-pr-disposition --input <file>
@@ -117,6 +117,9 @@ Use the audit helper after delegated decisions:
 ./scripts/development-workflow/run-epic-audit-trail.sh render-epic-ledger --input <file>
 ./scripts/development-workflow/run-epic-audit-trail.sh apply-epic-ledger --input <file> --epic <issue-number>
 ```
+
+Merge-operation audit writes use `--operation merge --merge-session "$MERGE_SESSION"`
+and the frozen `--merge-step`, following Protocol 94 section 3.6.
 
 ---
 
@@ -133,4 +136,3 @@ named stop conditions and their human unblocking actions, and the
 invalid-declaration boundaries are defined once, normatively, in
 `docs/workflow/development-workflow/integrations/cursor-dispatch-profiles.md`.
 Follow that document; this surface deliberately does not restate it.
-

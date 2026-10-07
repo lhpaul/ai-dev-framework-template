@@ -58,6 +58,9 @@ This is the Codex command-style alias for Claude Code `/run-epic`.
    - `apply-pr-disposition --input <file> --pr <pr-number>`
    - `render-epic-ledger --input <file>`
    - `apply-epic-ledger --input <file> --epic <issue-number>`
+   For merge-operation writes, supply `--operation merge`, the admitted
+   `--merge-session`, and the frozen `--merge-step` through Protocol 94 section
+   3.6. The bare apply examples serve pre-stage decisions.
 8. Before any delegated merge, run
    `./scripts/development-workflow/run-epic-delegated-gate.sh` with current
    scope, reviewer, CI, risk, and audit evidence; pass `--policy <file>` when
@@ -119,4 +122,3 @@ named stop conditions and their human unblocking actions, and the
 invalid-declaration boundaries are defined once, normatively, in
 `docs/workflow/development-workflow/integrations/cursor-dispatch-profiles.md`.
 Follow that document; this surface deliberately does not restate it.
-

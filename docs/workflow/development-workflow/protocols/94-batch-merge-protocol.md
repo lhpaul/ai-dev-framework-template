@@ -250,6 +250,15 @@ Issue closure/comment, tracker status before/after closure, remote/local/worktre
 
 Recovery never blindly repeats an uncertain merge, comment, audit or deletion. It checks live PR state, pushed-base ancestry, stable audit markers, branch/worktree existence and owning tracker/issue state; unavailable evidence preserves historical facts and defers unknown remaining work. A merged PR can resume pending follow-up without its deleted head branch. Offline `report` remains usable with all APIs failing. Report observed aggregate spend only for matching reset/limit windows and nonincreasing balance; otherwise explain why spend is unavailable and retain readable individual samples. Concurrent consumers may contribute to the difference.
 
+When a failed base push is independently verified as outstanding, explicit
+recovery admits its declared `base_push` step. Execute that step through
+`run-step`, pushing the durable intended commit to the frozen approved base
+with an ordinary fast-forward push. Preserve that commit when the current
+checkout has moved; the current HEAD does not replace the recorded intent.
+A divergent remote base defers for reconciliation. Continue through the
+declared merge and verification steps after the frozen push verifies, rather
+than rerunning an already completed local merge.
+
 For a coordinated reversal, stop new operations and resolve active Waiting/Interrupted work before disabling gates. Revert the helper and dependent runtime/guidance/sync consumers together through a reviewed PR, retain journals and a schema-compatible report/recovery reader, and refuse unknown schemas. Never roll back remote merges or delete session history as compensation. A reverted release unable to read a session directs the operator to the retained compatible reader; it does not migrate or replay it automatically.
 
 ---
