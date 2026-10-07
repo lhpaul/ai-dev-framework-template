@@ -48,6 +48,20 @@ mock_sleep_if_requested() {
 }
 
 case "$*" in
+  api\ rate_limit)
+    jq -n --argjson reset "$(($(date +%s) + 3600))" --argjson remaining "${BUDGET_TEST_REMAINING:-5000}" '{resources:{graphql:{remaining:$remaining,limit:5000,reset:$reset}}}'
+    ;;
+  api\ graphql*MergeBudgetPR*)
+    jq -n --argjson n "${BUDGET_TEST_PR:-42}" --arg head "${BUDGET_TEST_HEAD:-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}" \
+      --arg base "${BUDGET_TEST_BASE:-develop}" '{data:{repository:{pullRequest:{number:$n,state:"OPEN",headRefName:"feature/budget-fixture",headRefOid:$head,baseRefName:$base,isInMergeQueue:false,autoMergeRequest:null}}}}'
+    ;;
+  pr\ view*)
+    jq -n --argjson n "${BUDGET_TEST_PR:-42}" --arg head "${BUDGET_TEST_HEAD:-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}" \
+      --arg base "${BUDGET_TEST_BASE:-develop}" '{number:$n,state:"OPEN",headRefName:"feature/budget-fixture",headRefOid:$head,baseRefName:$base,isInMergeQueue:false,autoMergeRequest:null,body:"",closingIssuesReferences:[]}'
+    ;;
+  repo\ view*)
+    printf '{"nameWithOwner":"example/mobile-app"}\n'
+    ;;
   mock-sleep-test)
     mock_sleep_if_requested "${MOCK_GH_SLEEP_VAR_NAME:-}"
     ;;
@@ -139,6 +153,66 @@ chmod +x "$MOCK_BIN/git"
 export REAL_GIT_PATH
 export PATH="$MOCK_BIN:$PATH"
 export MOCK_GH_CALL_LOG="$CALL_LOG"
+
+# Existing gate scenarios exercise the real helper's admission rather than
+# claiming admission through the static evidence DTO. All resources are private.
+BUDGET_ROOT="$TMP_ROOT/budget-owner"
+mkdir -p "$BUDGET_ROOT"
+"$REAL_GIT_PATH" -C "$BUDGET_ROOT" init -q
+"$REAL_GIT_PATH" -C "$BUDGET_ROOT" remote add origin https://github.com/example/mobile-app.git
+printf 'issue_tracker:\n  provider: none\n' > "$BUDGET_ROOT/.ai-dev-workflow.yaml"
+GATE_SCRIPT="$GATE"
+GATE=budget_gate
+budget_gate() (
+  local input="" enriched session declaration identity cache config_root="" config_product=""
+  local original=("$@")
+  while [ "$#" -gt 0 ]; do
+    if [ "$1" = --input ] && [ "$#" -ge 2 ]; then input="$2"; break; fi
+    shift
+  done
+  if [ -z "$input" ] || ! jq -e '.pr.number > 0 and (.pr.headRefName | type)=="string" and (.pr.baseRefName | type)=="string"' "$input" >/dev/null 2>&1; then
+    "$GATE_SCRIPT" ${original[@]+"${original[@]}"}
+    exit "$?"
+  fi
+  enriched="$(mktemp "$TMP_ROOT/enriched.XXXXXX")"
+  jq '.repository //= "example/mobile-app" | .pr.headSha //= "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"' "$input" > "$enriched"
+  local previous="" arg
+  for arg in ${original[@]+"${original[@]}"}; do
+    [ "$previous" != --repo-root ] || config_root="$arg"
+    [ "$previous" != --product-repo ] || config_product="$arg"
+    previous="$arg"
+  done
+  if [ -n "$config_root" ]; then
+    # The legacy CI-policy fixture has no checkout. Resolve its real config
+    # before handing the enriched DTO to the private session owner checkout.
+    source "$REPO_ROOT/scripts/development-workflow/workflow-lib.sh"
+    if workflow_merge_ci_policy_into_json "$(cat "$enriched")" "$config_root" "$config_product" > "$enriched.resolved"; then
+      mv "$enriched.resolved" "$enriched"
+    else
+      rm -f "$enriched.resolved"
+    fi
+  fi
+  BUDGET_TEST_PR="$(jq -r '.pr.number' "$enriched")"
+  BUDGET_TEST_HEAD="$(jq -r '.pr.headSha // .pr.head_sha // .pr.headRefOid' "$enriched")"
+  BUDGET_TEST_BASE="$(jq -r '.pr.baseRefName' "$enriched")"
+  export BUDGET_TEST_PR BUDGET_TEST_HEAD BUDGET_TEST_BASE
+  identity="$(jq -c '[.repository,.pr.number,.pr.headSha,.pr.baseRefName]' "$enriched" | shasum -a 256 | cut -d ' ' -f1)"
+  cache="$TMP_ROOT/session-$identity"
+  cd "$BUDGET_ROOT"
+  if [ ! -f "$cache" ]; then
+    declaration="$(mktemp "$TMP_ROOT/manifest.XXXXXX")"
+    jq --arg root "$BUDGET_ROOT" '{ownerRoot:$root,prs:[{repo:.repository,pr:.pr.number,head:.pr.headSha,base:.pr.baseRefName,root:$root,phases:["merge_api"]}]}' "$enriched" > "$declaration"
+    python3 "$REPO_ROOT/scripts/development-workflow/workflow-merge-budget.py" begin --input "$declaration" --repo-root "$BUDGET_ROOT" | jq -er '.session' > "$cache"
+  fi
+  session="$(cat "$cache")"
+  # Replace only the input argument; ordinary policies/validation stay intact.
+  local replaced=() previous=""
+  for arg in ${original[@]+"${original[@]}"}; do
+    if [ "$previous" = --input ]; then replaced+=("$enriched"); else replaced+=("$arg"); fi
+    previous="$arg"
+  done
+  "$GATE_SCRIPT" ${replaced[@]+"${replaced[@]}"} --merge-session "$session" --repo-root "$BUDGET_ROOT"
+)
 
 PASS_COUNT=0
 FAIL_COUNT=0
@@ -996,8 +1070,8 @@ run_test "reviewer_access_bad_timestamp_authorization_blocks_bypass" "human_requ
 missing_head_sha_fixture="$TMP_ROOT/access-missing-head-sha.json"
 jq 'del(.pr.headSha) | .authorization.headSha = ""' \
   "$exceptional_authorized_fixture" > "$missing_head_sha_fixture"
-run_test "reviewer_access_missing_head_sha_blocks_bypass" "blocked:insufficient_evidence:false" "$(
-  "$GATE" --input "$missing_head_sha_fixture" --json |
+run_test "reviewer_access_missing_head_sha_blocks_bypass" "budget_deferred:insufficient_evidence:false" "$(
+  "$GATE_SCRIPT" --input "$missing_head_sha_fixture" --json |
     jq -r '.decision + ":" + .reviewerAccess.classification + ":" + (.exceptionalAdminMergePermitted|tostring)'
 )"
 
@@ -1577,6 +1651,41 @@ no_binding_fixture="$(write_fixture no-binding 'del(.reviewer.headSha) | del(.ri
 run_test "absent_binding_is_compatible" "$base_decision" "$(decision_for "$no_binding_fixture")"
 
 echo ""
+# A genuine valid session cannot be reused for another reviewed head/repository.
+binding_proof="$(
+  cd "$BUDGET_ROOT"
+  jq '.repository="example/mobile-app" | .pr.headSha="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"' "$base_fixture" > "$TMP_ROOT/binding-proof.json"
+  BUDGET_TEST_PR=42
+  BUDGET_TEST_HEAD=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  BUDGET_TEST_BASE="$(jq -r '.pr.baseRefName' "$base_fixture")"
+  export BUDGET_TEST_PR BUDGET_TEST_HEAD BUDGET_TEST_BASE
+  jq --arg root "$BUDGET_ROOT" '{ownerRoot:$root,prs:[{repo:.repository,pr:.pr.number,head:.pr.headSha,base:.pr.baseRefName,root:$root,phases:["merge_api"]}]}' "$TMP_ROOT/binding-proof.json" > "$TMP_ROOT/binding-manifest.json"
+  python3 "$REPO_ROOT/scripts/development-workflow/workflow-merge-budget.py" begin --input "$TMP_ROOT/binding-manifest.json" --repo-root "$BUDGET_ROOT" > "$TMP_ROOT/binding-created.json"
+  selected_session="$(jq -r '.session' "$TMP_ROOT/binding-created.json")"
+  "$GATE_SCRIPT" --input "$TMP_ROOT/binding-proof.json" --merge-session "$selected_session" --repo-root "$BUDGET_ROOT" --json > "$TMP_ROOT/binding-valid.json"
+  jq '.pr.headSha="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"' "$TMP_ROOT/binding-proof.json" > "$TMP_ROOT/binding-stale.json"
+  "$GATE_SCRIPT" --input "$TMP_ROOT/binding-stale.json" --merge-session "$selected_session" --repo-root "$BUDGET_ROOT" --json > "$TMP_ROOT/binding-stale-result.json"
+  jq '.repository="other/repo"' "$TMP_ROOT/binding-proof.json" > "$TMP_ROOT/binding-foreign.json"
+  "$GATE_SCRIPT" --input "$TMP_ROOT/binding-foreign.json" --merge-session "$selected_session" --repo-root "$BUDGET_ROOT" --json > "$TMP_ROOT/binding-foreign-result.json"
+  export BUDGET_TEST_REMAINING=0
+  python3 "$REPO_ROOT/scripts/development-workflow/workflow-merge-budget.py" begin --input "$TMP_ROOT/binding-manifest.json" --repo-root "$BUDGET_ROOT" > "$TMP_ROOT/binding-unaffordable.json" || :
+  "$GATE_SCRIPT" --input "$TMP_ROOT/binding-proof.json" --merge-session "$(jq -r '.session' "$TMP_ROOT/binding-unaffordable.json")" --repo-root "$BUDGET_ROOT" --json > "$TMP_ROOT/binding-deferred-result.json"
+  jq -n --slurpfile valid "$TMP_ROOT/binding-valid.json" --slurpfile stale "$TMP_ROOT/binding-stale-result.json" --slurpfile foreign "$TMP_ROOT/binding-foreign-result.json" --slurpfile deferred "$TMP_ROOT/binding-deferred-result.json" '{valid:$valid[0].mergePermitted,stale:$stale[0].decision,foreign:$foreign[0].decision,deferred:$deferred[0].decision}'
+)"
+run_test "genuine_session_is_required_for_clean_gate" true "$(printf '%s\n' "$binding_proof" | jq -r '.valid')"
+run_test "stale_session_head_defers" budget_deferred "$(printf '%s\n' "$binding_proof" | jq -r '.stale')"
+run_test "foreign_repository_session_defers" budget_deferred "$(printf '%s\n' "$binding_proof" | jq -r '.foreign')"
+run_test "unaffordable_durable_session_defers" budget_deferred "$(printf '%s\n' "$binding_proof" | jq -r '.deferred')"
+
+run_test "missing_durable_session_defers" "budget_deferred" "$($GATE_SCRIPT --input "$base_fixture" --json | jq -r '.decision')"
+run_test "dto_admission_boolean_cannot_authorize" "false" "$(
+  jq '.mergeBudget={admitted:true} | .budget={admissionValid:true}' "$base_fixture" > "$TMP_ROOT/untrusted-admission.json"
+  "$GATE_SCRIPT" --input "$TMP_ROOT/untrusted-admission.json" --json | jq -r '.mergePermitted'
+)"
+run_test "invalid_session_never_grants_merge" "false" "$(
+  "$GATE_SCRIPT" --input "$base_fixture" --merge-session "$TMP_ROOT/absent-session" --json | jq -r '.mergePermitted'
+)"
+
 echo "=== Summary ==="
 echo "Passed: $PASS_COUNT"
 echo "Failed: $FAIL_COUNT"

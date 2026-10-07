@@ -14,6 +14,7 @@ mkdir -p "$MOCK_BIN"
 : > "$CALL_LOG"
 
 cleanup() {
+  if [ -n "${BUDGET_CHILD_GROUP:-}" ]; then kill -TERM "-$BUDGET_CHILD_GROUP" 2>/dev/null || :; fi
   rm -rf "$TMP_ROOT"
 }
 trap cleanup EXIT
@@ -21,6 +22,28 @@ trap cleanup EXIT
 cat > "$MOCK_BIN/gh" <<'MOCK_GH'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$MOCK_GH_CALL_LOG"
+if [ "${BUDGET_AUDIT_MODE:-}" = merge ]; then
+  case "$*" in
+    api\ rate_limit)
+      jq -n --argjson reset "$(($(date +%s) + 3600))" '{resources:{graphql:{remaining:5000,limit:5000,reset:$reset}}}'; exit 0 ;;
+    api\ graphql*MergeBudgetPR*)
+      printf '{"data":{"repository":{"pullRequest":{"number":10,"state":"OPEN","headRefName":"feature/budget-fixture","headRefOid":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","baseRefName":"develop","isInMergeQueue":false,"autoMergeRequest":null}}}}\n'; exit 0 ;;
+    pr\ view*)
+      printf '{"number":10,"state":"OPEN","headRefName":"feature/budget-fixture","headRefOid":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","baseRefName":"develop","isInMergeQueue":false,"autoMergeRequest":null,"body":"","closingIssuesReferences":[]}\n'; exit 0 ;;
+    api\ --paginate\ --slurp\ repos/lhpaul/ai-dev-framework-template/issues/10/comments\?per_page=100)
+      if [ "${BUDGET_AUDIT_READ_FAIL:-}" = true ]; then exit 1; fi
+      if [ -f "$BUDGET_AUDIT_BODY_FILE" ]; then jq -n --rawfile body "$BUDGET_AUDIT_BODY_FILE" '[[{id:123,body:$body}]]'; else printf '[[]]\n'; fi
+      exit 0 ;;
+    api\ -X\ POST\ repos/lhpaul/ai-dev-framework-template/issues/10/comments\ --input\ *|api\ -X\ PATCH\ repos/lhpaul/ai-dev-framework-template/issues/comments/123\ --input\ *)
+      jq -j '.body' "${!#}" > "$BUDGET_AUDIT_BODY_FILE"
+      if [ -n "${BUDGET_AUDIT_BARRIER_FILE:-}" ]; then
+        printf '%s\n' "$$" > "$BUDGET_AUDIT_BARRIER_FILE"
+        while [ ! -f "$BUDGET_AUDIT_BARRIER_FILE.release" ]; do sleep 0.05; done
+      fi
+      if [ "${BUDGET_AUDIT_WRITE_FAIL:-}" = true ]; then exit 1; fi
+      printf '{"id":123}\n'; exit 0 ;;
+  esac
+fi
 case "$*" in
   auth\ status)
     exit 0
@@ -866,6 +889,72 @@ run_fails_contains "render_pr_disposition_rejects_boolean_checkpoint_policy" \
   "$HELPER" render-pr-disposition --input "$boolean_checkpoint_policy_fixture"
 
 echo ""
+# Real helper-created audit sessions; only gh service responses are fixtures.
+BUDGET_OWNER="$TMP_ROOT/merge-owner"
+mkdir -p "$BUDGET_OWNER"
+git -C "$BUDGET_OWNER" init -q
+git -C "$BUDGET_OWNER" remote add origin https://github.com/lhpaul/ai-dev-framework-template.git
+printf 'issue_tracker:\n  provider: none\n' > "$BUDGET_OWNER/.ai-dev-workflow.yaml"
+export BUDGET_AUDIT_MODE=merge BUDGET_AUDIT_BODY_FILE="$TMP_ROOT/verified-comment-body"
+BUDGET_HELPER="$REPO_ROOT/scripts/development-workflow/workflow-merge-budget.py"
+jq -n --arg root "$BUDGET_OWNER" '{ownerRoot:$root,prs:[{repo:"lhpaul/ai-dev-framework-template",pr:10,head:"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",base:"develop",root:$root,steps:[{id:"disposition-pre",phase:"audit",auditRepo:"lhpaul/ai-dev-framework-template",auditTarget:10,marker:"<!-- run-epic:pr-disposition -->"},{id:"disposition-final",phase:"audit",auditRepo:"lhpaul/ai-dev-framework-template",auditTarget:10,marker:"<!-- run-epic:pr-disposition -->"}]}]}' > "$TMP_ROOT/budget-audit-manifest.json"
+cd "$BUDGET_OWNER"
+budget_session="$(python3 "$BUDGET_HELPER" begin --input "$TMP_ROOT/budget-audit-manifest.json" --repo-root "$BUDGET_OWNER" | jq -er '.session')"
+run_fails_contains "merge_audit_requires_session" "requires --merge-session" \
+  "$HELPER" apply-pr-disposition --input "$pr_fixture" --pr 10 --operation merge
+run_fails_contains "ambiguous_marker_requires_frozen_step" "outside admitted session" \
+  "$HELPER" apply-pr-disposition --input "$pr_fixture" --pr 10 --operation merge --merge-session "$budget_session"
+run_fails_contains "wrong_marker_is_not_authorized" "outside admitted session" \
+  "$HELPER" apply-epic-ledger --input "$ledger_fixture" --epic 900 --operation merge --merge-session "$budget_session"
+run_test "no_write_before_frozen_audit_intent" "no" "$([ -f "$BUDGET_AUDIT_BODY_FILE" ] && echo yes || echo no)"
+"$HELPER" apply-pr-disposition --input "$pr_fixture" --pr 10 --operation merge --merge-session "$budget_session" --merge-step disposition-pre > "$TMP_ROOT/budget-audit-pre.log"
+run_test "audit_intent_then_independent_body_verification" "completed" "$(python3 "$BUDGET_HELPER" report --session "$budget_session" | jq -r '.prs[0].steps["disposition-pre"].status')"
+run_test "final_audit_remains_pending" "pending" "$(python3 "$BUDGET_HELPER" report --session "$budget_session" | jq -r '.prs[0].steps["disposition-final"].status')"
+run_fails_contains "completed_audit_is_not_replayed" "intent refused" \
+  "$HELPER" apply-pr-disposition --input "$pr_fixture" --pr 10 --operation merge --merge-session "$budget_session" --merge-step disposition-pre
+"$HELPER" apply-pr-disposition --input "$pr_fixture" --pr 10 --operation merge --merge-session "$budget_session" --merge-step disposition-final > "$TMP_ROOT/budget-audit-final.log"
+run_test "pre_and_final_same_marker_distinct_steps" "Completed" "$(python3 "$BUDGET_HELPER" report --session "$budget_session" | jq -r '.outcome')"
+# Unavailable post-write read-back must retain uncertainty in the local journal.
+rm -f "$BUDGET_AUDIT_BODY_FILE"
+failed_session="$(python3 "$BUDGET_HELPER" begin --input "$TMP_ROOT/budget-audit-manifest.json" --repo-root "$BUDGET_OWNER" | jq -er '.session')"
+export BUDGET_AUDIT_WRITE_FAIL=true
+# A lost write response is independently verified rather than blindly replayed.
+"$HELPER" apply-pr-disposition --input "$pr_fixture" --pr 10 --operation merge --merge-session "$failed_session" --merge-step disposition-pre > "$TMP_ROOT/lost-response.log" 2>&1
+run_test "lost_write_response_verified_without_replay" "completed" "$(python3 "$BUDGET_HELPER" report --session "$failed_session" | jq -r '.prs[0].steps["disposition-pre"].status')"
+unset BUDGET_AUDIT_WRITE_FAIL
+export BUDGET_AUDIT_READ_FAIL=true
+run_fails_contains "unavailable_audit_keeps_durable_interruption" "Interrupted" \
+  "$HELPER" apply-pr-disposition --input "$pr_fixture" --pr 10 --operation merge --merge-session "$failed_session" --merge-step disposition-final
+unset BUDGET_AUDIT_READ_FAIL
+run_test "failed_audit_retains_pending_work" "Interrupted" "$(python3 "$BUDGET_HELPER" report --session "$failed_session" | jq -r '.outcome')"
+run_fails_contains "inherited_session_cannot_use_legacy_audit_route" "requires --operation merge" \
+  env WORKFLOW_MERGE_BUDGET_SESSION="$failed_session" "$HELPER" apply-pr-disposition --input "$pr_fixture" --pr 10
+# Kill the executor and intermediary Bash while the fixture gh write survives.
+# Recovery must recognize the published process group, never race its write.
+barrier_session="$(python3 "$BUDGET_HELPER" begin --input "$TMP_ROOT/budget-audit-manifest.json" --repo-root "$BUDGET_OWNER" | jq -er '.session')"
+export BUDGET_AUDIT_BARRIER_FILE="$TMP_ROOT/audit-child-ready"
+"$HELPER" apply-pr-disposition --input "$pr_fixture" --pr 10 --operation merge --merge-session "$barrier_session" --merge-step disposition-pre > "$TMP_ROOT/barrier-audit.log" 2>&1 &
+audit_launcher=$!
+attempt=0
+while [ "$attempt" -lt 100 ] && [ ! -f "$BUDGET_AUDIT_BARRIER_FILE" ]; do
+  attempt=$((attempt + 1))
+  sleep 0.05
+done
+[ -f "$BUDGET_AUDIT_BARRIER_FILE" ] || { echo "audit fixture child did not reach barrier" >&2; exit 1; }
+audit_executor="$(jq -r '.active.pid' "$barrier_session")"
+audit_child="$(jq -r '.active.childPid' "$barrier_session")"
+BUDGET_CHILD_GROUP="$(jq -r '.active.childGroup' "$barrier_session")"
+kill -KILL "$audit_executor" "$audit_child"
+wait "$audit_launcher" || :
+writes_before="$(grep -c 'api -X' "$CALL_LOG")"
+run_fails_contains "surviving_gh_descendant_blocks_recovery" "recorded executor still active" \
+  python3 "$BUDGET_HELPER" resume --session "$barrier_session"
+run_test "surviving_audit_write_is_not_replayed" "$writes_before" "$(grep -c 'api -X' "$CALL_LOG")"
+kill -TERM "-$BUDGET_CHILD_GROUP" 2>/dev/null || :
+BUDGET_CHILD_GROUP=""
+unset BUDGET_AUDIT_BARRIER_FILE
+unset BUDGET_AUDIT_MODE BUDGET_AUDIT_BODY_FILE
+
 echo "=== Summary ==="
 echo "Passed: $PASS_COUNT"
 echo "Failed: $FAIL_COUNT"

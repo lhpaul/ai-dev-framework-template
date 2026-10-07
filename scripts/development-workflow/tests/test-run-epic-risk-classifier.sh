@@ -29,6 +29,18 @@ cat > "$MOCK_BIN/gh" <<'MOCK_GH'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$MOCK_GH_CALL_LOG"
 
+if [ "${BUDGET_RISK_MODE:-}" = merge ]; then
+  case "$*" in
+    api\ rate_limit)
+      jq -n --argjson reset "$(($(date +%s) + 3600))" '{resources:{graphql:{remaining:5000,limit:5000,reset:$reset}}}'; exit 0 ;;
+    repo\ view*)
+      printf 'lhpaul/ai-dev-framework-template\n'; exit 0 ;;
+    api\ graphql*MergeBudgetPR*)
+      printf '{"data":{"repository":{"pullRequest":{"number":1,"state":"OPEN","headRefName":"feature/budget-fixture","headRefOid":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","baseRefName":"develop","isInMergeQueue":false,"autoMergeRequest":null}}}}\n'; exit 0 ;;
+    pr\ view\ 1*)
+      printf '{"number":1,"state":"OPEN","headRefName":"feature/budget-fixture","headRefOid":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","baseRefName":"develop","isInMergeQueue":false,"autoMergeRequest":null,"body":"","closingIssuesReferences":[]}\n'; exit 0 ;;
+  esac
+fi
 case "$*" in
   auth\ status)
     if [ "${MOCK_GH_MODE:-ok}" = "auth-fail" ]; then
@@ -839,6 +851,25 @@ run_fails_contains "rejects_missing_why_safe_file" "input file not found" \
   "$CLASSIFIER" --pr 43 --why-safe-file "$TMP_ROOT/missing-why-safe.json" --max-risk medium --json
 run_fails_contains "rejects_flag_as_why_safe_file_value" "--why-safe-file requires a value" \
   "$CLASSIFIER" --pr 43 --why-safe-file --max-risk medium --json
+
+BUDGET_OWNER="$TMP_ROOT/budget-risk-owner"
+mkdir -p "$BUDGET_OWNER"
+git -C "$BUDGET_OWNER" init -q
+git -C "$BUDGET_OWNER" remote add origin https://github.com/lhpaul/ai-dev-framework-template.git
+printf 'issue_tracker:\n  provider: none\n' > "$BUDGET_OWNER/.ai-dev-workflow.yaml"
+export BUDGET_RISK_MODE=merge
+jq '.github_repo="lhpaul/ai-dev-framework-template" | .head_sha="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" | .base="develop"' "$low_fixture" > "$TMP_ROOT/budget-risk.json"
+jq --arg root "$BUDGET_OWNER" '{ownerRoot:$root,prs:[{repo:.github_repo,pr:.pr_number,head:.head_sha,base:.base,root:$root,phases:["merge_api"]}]}' "$TMP_ROOT/budget-risk.json" > "$TMP_ROOT/budget-risk-manifest.json"
+cd "$BUDGET_OWNER"
+budget_result="$(python3 "$REPO_ROOT/scripts/development-workflow/workflow-merge-budget.py" begin --input "$TMP_ROOT/budget-risk-manifest.json" --repo-root "$BUDGET_OWNER")" || { printf '%s\n' "$budget_result" >&2; exit 1; }
+budget_session="$(printf '%s\n' "$budget_result" | jq -er '.session')"
+baseline_risk="$("$CLASSIFIER" --input "$TMP_ROOT/budget-risk.json" --json)"
+bound_risk="$("$CLASSIFIER" --input "$TMP_ROOT/budget-risk.json" --merge-session "$budget_session" --repo-root "$BUDGET_OWNER" --json)"
+run_test "optional_session_attaches_durable_metadata" "true" "$(printf '%s\n' "$bound_risk" | jq -r '.budget.admissionValid')"
+run_test "optional_session_never_changes_risk" "$(printf '%s\n' "$baseline_risk" | jq -c 'del(.budget)')" "$(printf '%s\n' "$bound_risk" | jq -c 'del(.budget)')"
+bad_bound_risk="$("$CLASSIFIER" --input "$TMP_ROOT/budget-risk.json" --merge-session "$TMP_ROOT/missing-session" --repo-root "$BUDGET_OWNER" --json)"
+run_test "unreadable_optional_session_preserves_classification" "$(printf '%s\n' "$baseline_risk" | jq -r '.risk')" "$(printf '%s\n' "$bad_bound_risk" | jq -r '.risk')"
+unset BUDGET_RISK_MODE
 
 run_test "no_mutating_gh_commands" "no" "$(
   grep -Eq '(^issue edit|^pr create|^pr merge|^project item-edit|^project item-add|^pr comment|^pr close|^pr edit|mutation)' "$CALL_LOG" && echo yes || echo no
