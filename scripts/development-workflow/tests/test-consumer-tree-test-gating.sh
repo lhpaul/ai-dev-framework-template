@@ -739,9 +739,19 @@ cp -R "$REPO_ROOT/docs" "$compatibility_root/docs"
 for surface in .claude .cursor .ai-dev-workflow.local.example.yaml; do
   ln -s "$REPO_ROOT/$surface" "$compatibility_root/$surface"
 done
-# Use the shipped reviewer policy, while changing only consumer-owned state.
-sed -e 's/is_template: true/is_template: false/' -e 's/project_number: 1$/project_number: 2/' \
-  "$REPO_ROOT/.ai-dev-workflow.yaml" > "$compatibility_root/.ai-dev-workflow.yaml"
+# Deliberately diverge from template defaults: project 2 and a supported
+# consumer reviewer policy must never leak into framework-mode repair proofs.
+cat > "$compatibility_root/.ai-dev-workflow.yaml" <<'YAML'
+issue_tracker:
+  provider: github_projects
+  project_number: 2
+template:
+  is_template: false
+review:
+  on_draft:
+    runner:
+      - codex
+YAML
 printf '%s\n' 'build/' > "$compatibility_root/.gitignore"
 cat > "$compatibility_root/.github/workflows/consumer-service.yml" <<'YAML'
 name: Consumer service
@@ -796,9 +806,28 @@ compatibility_suite test-workflow-branch-filters.sh 0
 
 # Template mode still rejects both planted violations; repair each without
 # suppressing the check. Ignore policy remains mandatory in the template.
-sed 's/is_template: false/is_template: true/' "$compatibility_root/.ai-dev-workflow.yaml" \
-  > "$TMP_ROOT/template-config.yaml"
-cp "$TMP_ROOT/template-config.yaml" "$compatibility_root/.ai-dev-workflow.yaml"
+# Isolate template-owned inputs before switching modes. A consumer host can
+# have many valid project workflows without develop-**; fixing the planted
+# workflow must not require changing those unrelated workflows or its policy.
+mkdir -p "$TMP_ROOT/framework-workflows"
+cp "$compatibility_root/.github/workflows/consumer-service.yml" "$TMP_ROOT/framework-workflows/"
+mv "$compatibility_root/.github/workflows" "$TMP_ROOT/consumer-workflows"
+mv "$TMP_ROOT/framework-workflows" "$compatibility_root/.github/workflows"
+python3 - "$compatibility_root" <<'FRAMEWORK_POLICY'
+from pathlib import Path
+import re, sys
+root = Path(sys.argv[1])
+readme = (root/'docs/workflow/development-workflow/README.md').read_text()
+match = re.search(r'The shipped list is `\[([^\]]*)\]`', readme)
+if not match:
+    raise SystemExit('FAIL: no documented shipped reviewer list for framework fixture')
+reviewers = [value.strip() for value in match[1].split(',') if value.strip()]
+if not reviewers:
+    raise SystemExit('FAIL: empty documented reviewer list for framework fixture')
+(root/'.ai-dev-workflow.yaml').write_text(
+    'template:\n  is_template: true\nreview:\n  on_draft:\n    runner:\n' +
+    ''.join('      - '+value+'\n' for value in reviewers))
+FRAMEWORK_POLICY
 compatibility_suite test-workflow-branch-filters.sh 1
 sed 's/branches: \[develop, main\]/branches: [develop, develop-**, main]/' \
   "$compatibility_root/.github/workflows/consumer-service.yml" > "$TMP_ROOT/repaired-workflow.yml"
