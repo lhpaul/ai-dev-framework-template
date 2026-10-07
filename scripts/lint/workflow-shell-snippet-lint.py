@@ -262,6 +262,9 @@ def array_findings(path: str, lines: list[str], changed: set[int], offset: int =
     nounset = False
     subshell_options: list[bool] = []
     quote = ""
+    substitution_quotes: list[tuple[str, int]] = []
+    parenthesis_depth = 0
+    command_prefix = ""
     heredoc = None
     for number, row in enumerate(lines, offset + 1):
         expanding_body = False
@@ -280,6 +283,14 @@ def array_findings(path: str, lines: list[str], changed: set[int], offset: int =
         cursor = len(row) if expanding_body else 0
         while cursor < len(row):
             char = row[cursor]
+            if row[cursor:cursor + 2] == "$(" and row[cursor:cursor + 3] != "$((" and quote != "'":
+                substitution_quotes.append((quote, parenthesis_depth))
+                parenthesis_depth += 1
+                quote = ""
+                visible.extend("$(")
+                commands.extend(" (")
+                cursor += 2
+                continue
             if char == "\\" and quote != "'":
                 visible.extend("  ")
                 commands.extend("  ")
@@ -298,6 +309,12 @@ def array_findings(path: str, lines: list[str], changed: set[int], offset: int =
                 break
             else:
                 visible.append(char)
+            if not quote and char == "(":
+                parenthesis_depth += 1
+            elif not quote and char == ")":
+                parenthesis_depth -= 1
+                if substitution_quotes and substitution_quotes[-1][1] == parenthesis_depth:
+                    quote = substitution_quotes.pop()[0]
             cursor += 1
         code = "".join(visible)
         command_code = "".join(commands)
@@ -306,8 +323,20 @@ def array_findings(path: str, lines: list[str], changed: set[int], offset: int =
         # Mask the entire safe guard so its nested quoted expansion is not
         # mistaken for a raw expansion (including multiple arrays per line).
         code = SAFE_ARRAY.sub(lambda match: " " * len(match.group()), code)
+        # Backslash-newline joins command words without changing the physical
+        # location of array diagnostics. Delay only the unfinished set command;
+        # complete commands before a separator still affect this line.
+        continued = (not expanding_body and cursor >= len(row) and quote != "'"
+                     and bool(re.search(r"(?<!\\)(?:\\\\)*\\$", row)))
+        command_text = command_prefix + command_code
+        option_events = [(match.start("command") - len(command_prefix), "set", match)
+                         for match in SET_OPTIONS.finditer(command_text)
+                         if not (continued and match.end() == len(command_text))]
+        command_prefix = ""
+        if continued:
+            command_prefix = re.split(r"[;&|(){}]", command_text)[-1] + " "
         events = sorted(
-            [(match.start("command"), "set", match) for match in SET_OPTIONS.finditer(command_code)]
+            option_events
             + [(match.start(), "array", match) for match in ARRAY.finditer(code)],
             key=lambda event: event[0],
         )

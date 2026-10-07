@@ -651,7 +651,7 @@ root = pathlib.Path(sys.argv[2]) / "array-cases"
 root.mkdir()
 case_count = 0
 
-def case(name, content, expected, changed=None, markdown=False):
+def case(name, content, expected, changed=None, markdown=False, expected_lines=None):
     global case_count
     case_count += 1
     path = "docs/workflow/array.md" if markdown else "scripts/example.sh"
@@ -670,6 +670,9 @@ def case(name, content, expected, changed=None, markdown=False):
                             cwd=root, text=True, capture_output=True)
     assert result.returncode == (1 if expected else 0), (name, result.stdout, result.stderr)
     assert result.stdout.count("WS007:") == expected, (name, result.stdout)
+    if expected_lines is not None:
+        for number in expected_lines:
+            assert f"{path}:{number}: WS007:" in result.stdout, (name, result.stdout)
     if expected:
         assert '${arr[@]+"${arr[@]}"}' in result.stdout, (name, result.stdout)
     print(f"PASS: array_{name}")
@@ -706,6 +709,15 @@ case("subshell_nounset_inside", '(set -u; echo "${arr[@]}"); echo "${arr[@]}"\n'
 case("multiline_subshell", 'set -u\n(\nset +u\n)\necho "${arr[@]}"\n', 1)
 case("nested_subshell", 'set -u; (set +u; (set -u)); echo "${arr[@]}"\n', 1)
 case("parent_group_changes", 'set -u; { set +u; }; echo "${arr[@]}"\n', 0)
+case("substitution_literal", "echo \"$(printf '%s' '\"${arr[@]:-}\"')\"\n", 0)
+case("substitution_expansion", 'echo "$(echo "${arr[@]:-}")"\n', 1)
+case("substitution_nounset_isolated", 'set -u; echo "$(set +u)"; echo "${arr[@]}"\n', 1)
+case("continued_nounset", 'set -e \\\n-u\necho "${arr[@]}"\n', 1, expected_lines=[3])
+case("continued_safe_array", 'set -e \\\n-u\necho ${arr[@]+"${arr[@]}"}\n', 0)
+case("continued_long_nounset", 'set -o \\\nnounset\necho "${arr[@]}"\n', 1)
+case("continued_disable", 'set -u\nset +o \\\nnounset\necho "${arr[@]}"\n', 0)
+case("continued_command_after_set", 'set -u; echo \\\n"${arr[@]}"\n', 1)
+case("comment_backslash", '# comment \\\nset -u\necho "${arr[@]}"\n', 1)
 case("quoted_heredoc", "cat <<'EOF'\nset -u\necho \"${arr[@]:-}\"\nEOF\necho \"${arr[@]}\"\n", 0)
 case("literal_nounset", 'echo "set -u; set -u"\necho "${arr[@]}"\n', 0)
 case("changed_only", 'echo "${arr[@]:-}"\necho changed\n', 0, changed=[2])
