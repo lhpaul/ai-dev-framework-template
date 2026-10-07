@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Lint changed executable shell fences on framework-owned guidance surfaces."""
+"""Lint changed shell guidance and Bash 3.2 array expansions in scripts."""
 
 from __future__ import annotations
 
@@ -19,6 +19,9 @@ PORTABLE_FOR = re.compile(r"\bfor\s+\w+\s+in\s+\$[A-Za-z_][A-Za-z0-9_]*\b")
 PORTABLE_SET = re.compile(r"\bset\s+--\s+\$[A-Za-z_][A-Za-z0-9_]*\b")
 BASH_ONLY = re.compile(r"BASH_SOURCE|<\(|\[\[|\$\{![^}]+\}|\b(?:readarray|mapfile)\b|\w+=\(")
 BASH4 = re.compile(r"\b(?:declare|local)\s+-A\b|\b(?:readarray|mapfile)\b")
+ARRAY = re.compile(r'"\$\{(?P<name>[A-Za-z_]\w*)\[@\](?P<default>:-)?\}"')
+SAFE_ARRAY = re.compile(r'\$\{([A-Za-z_]\w*)\[@\](?:\+|:\+)"\$\{\1\[@\]\}"\}')
+SET_OPTIONS = re.compile(r'(?:^|[;&|()])\s*set\s+(?P<options>[^;&|()]*)')
 
 
 @dataclass
@@ -49,6 +52,8 @@ def in_test_fixtures(path: str) -> bool:
 def in_scope(path: str) -> bool:
     if in_test_fixtures(path):
         return False
+    if path.startswith("scripts/") and path.endswith(".sh"):
+        return True
     return any(
         path == root.rstrip("/") or path.startswith(f"{root.rstrip('/')}/")
         for root in ROOTS
@@ -243,12 +248,89 @@ def contract_before(lines: list[str], opener: int) -> str | None:
     return None
 
 
+def array_findings(path: str, lines: list[str], changed: set[int], offset: int = 0) -> list[Finding]:
+    """A lexical check, not a proof that arrays can be empty at runtime.
+
+    Only added/changed lines are reported: existing occurrences belong to
+    follow-up #1924. Full preceding context still establishes nounset state.
+    Ignore comments, single-quoted literals and quoted heredoc bodies, which
+    do not expand arrays. Recognize the parameter-expansion guard explicitly;
+    other runtime guarantees should use that idiom at the expansion site.
+    """
+    findings: list[Finding] = []
+    nounset = False
+    quote = ""
+    heredoc = None
+    for number, row in enumerate(lines, offset + 1):
+        if heredoc is not None:
+            if row.lstrip("\t") == heredoc:
+                heredoc = None
+            continue
+        # Quoted delimiters disable all expansion in the following body.
+        delimiter = re.search(r"<<-?\s*(['\"])(\w+)\1", row)
+        visible = []
+        commands = []
+        cursor = 0
+        while cursor < len(row):
+            char = row[cursor]
+            if char == "\\" and quote != "'":
+                visible.extend("  ")
+                commands.extend("  ")
+                cursor += 2
+                continue
+            commands.append(char if not quote and char not in "'\"" else " ")
+            if char == "'" and quote != '"':
+                quote = "" if quote == "'" else "'"
+                visible.append(" ")
+            elif quote == "'":
+                visible.append(" ")
+            elif char == '"':
+                quote = "" if quote == '"' else '"'
+                visible.append(char)
+            elif char == "#" and not quote and (cursor == 0 or row[cursor - 1].isspace()):
+                break
+            else:
+                visible.append(char)
+            cursor += 1
+        code = "".join(visible)
+        command_code = "".join(commands)
+        # Mask the entire safe guard so its nested quoted expansion is not
+        # mistaken for a raw expansion (including multiple arrays per line).
+        code = SAFE_ARRAY.sub(lambda match: " " * len(match.group()), code)
+        events = sorted(
+            [(match.start(), "set", match) for match in SET_OPTIONS.finditer(command_code)]
+            + [(match.start(), "array", match) for match in ARRAY.finditer(code)],
+            key=lambda event: event[0],
+        )
+        for _, kind, match in events:
+            if kind == "set":
+                options = match.group("options").split()
+                for index, option in enumerate(options):
+                    if option == "--":
+                        break
+                    if option in ("-o", "+o"):
+                        if index + 1 < len(options) and options[index + 1] == "nounset":
+                            nounset = option[0] == "-"
+                    elif re.fullmatch(r"[-+][a-zA-Z]+", option) and "u" in option:
+                        nounset = option[0] == "-"
+            elif number in changed and (match.group("default") or nounset):
+                name = match.group("name")
+                findings.append(Finding(
+                    "WS007", path, number,
+                    'Bash 3.2 unsafe empty-array expansion; use '
+                    + '${' + name + '[@]+"${' + name + '[@]}"}',
+                ))
+        if delimiter and code[delimiter.start():].startswith("<<"):
+            heredoc = delimiter.group(2)
+    return findings
+
+
 def lint(path: str, changed: set[int]) -> tuple[list[Finding], int]:
     """Return this file's findings and the number of fences the rules evaluated.
 
-    The count is the evidence that the run examined anything: a rule can only
-    fire on a fence that is both changed and executable, so `evaluated == 0`
-    means no WS rule ran on this file no matter what the exit status says.
+    WS001–WS006 evaluate changed executable fences. WS007 also evaluates
+    changed script lines; scripts therefore contribute files but no fences
+    to the existing summary format.
     """
     file_path = Path(path)
     evaluated = 0
@@ -256,6 +338,8 @@ def lint(path: str, changed: set[int]) -> tuple[list[Finding], int]:
         return [], evaluated
     lines = file_path.read_text(encoding="utf-8").splitlines()
     findings: list[Finding] = []
+    if file_path.suffix == ".sh":
+        return array_findings(path, lines, changed), 0
     index = 0
     while index < len(lines):
         opener = FENCE.match(lines[index])
@@ -285,6 +369,7 @@ def lint(path: str, changed: set[int]) -> tuple[list[Finding], int]:
             executable = bool(SHELL_SIGNAL.search(content))
         if changed_here and executable:
             evaluated += 1
+            findings.extend(array_findings(path, fence_lines, changed, index + 1))
             contract = contract_before(lines, index)
             line = index + 1
             if contract is None:
@@ -322,7 +407,7 @@ def emit_summary(files: int, fences: int, changed_line_count: int, source: str, 
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Lint changed executable shell fences on framework-owned guidance surfaces.",
+        description="Lint changed shell fences and script array expansions (WS007, Bash 3.2). Existing script lines are excluded in diff mode; --all includes them.",
     )
     parser.add_argument("--base-ref", default="origin/develop")
     parser.add_argument(
@@ -341,6 +426,7 @@ def main() -> int:
     if args.all:
         source = "all"
         changed = {str(path): set(range(1, len(path.read_text(encoding="utf-8").splitlines()) + 1)) for root in ROOTS for path in markdown_paths(root)}
+        changed.update({str(path): set(range(1, len(path.read_text(encoding="utf-8").splitlines()) + 1)) for path in Path("scripts").rglob("*.sh") if not in_test_fixtures(str(path))})
     else:
         source = "input" if args.input_file else f"base-ref {args.base_ref}"
         try:
