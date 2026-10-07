@@ -117,7 +117,9 @@ if endpoint.endswith('/issues/70/comments?per_page=100'):
  finish([[]])
 if endpoint.endswith('/commits/H1/status'):finish({'state':'success','statuses':[]})
 if endpoint.endswith('/commits/H1/check-runs?per_page=100'):finish([{'check_runs':[]},{'check_runs':[]}])
-if '/pulls?state=closed&head=' in endpoint:finish([[]])
+if '/pulls?state=closed&head=' in endpoint:
+ head=endpoint.split('&head=',1)[1].split('&',1)[0].split(':',1)[1]
+ finish([[{'number':80,'head':{'ref':head},'merged_at':'2026-10-01T00:00:00Z'}]] if head in state.get('mergedHeads',[]) else [[]])
 if '/issues/' in endpoint:
  n=int(endpoint.rsplit('/',1)[-1]);finish({'number':n,'title':state.get('title','Fixture '+str(n)),'state':state.get('state','open')})
 finish(error='Unexpected REST request: '+endpoint)
@@ -510,6 +512,27 @@ class Fixture(unittest.TestCase):
         self.assertEqual(growth[0],growth[1])
         if os.environ.get('WORKFLOW_PORTFOLIO_EVIDENCE_DIR'):
             (Path(os.environ['WORKFLOW_PORTFOLIO_EVIDENCE_DIR'])/'bounded-history-growth.json').write_text(json.dumps({'terminalCounts':[50,1000],'chargedRequests':growth},indent=2))
+
+    def test_merged_implementation_reconciles_stale_backlog(self):
+        development=self.artifact();slug=Path(development).name.split('_',1)[1]
+        for status in ('Backlog','Plan Ready'):
+            for prefix in ('feature','fix','hotfix'):
+                self.reset(active=1,statuses={'1':status},mergedHeads=[prefix+'/'+slug])
+                report=self.scan();row=report['classification'][0]
+                self.assertTrue(report['fullyRead'][0]['implementationMerged'])
+                self.assertEqual(row['category'],'HELD');self.assertEqual(row['action'],'reconcile-tracker')
+                self.assertFalse(report['recommendedCommand']);self.assertEqual(self.ledger()['graphql'],2)
+                closed=[call[-1] for call in self.ledger()['calls'] if 'pulls?state=closed' in call[-1]]
+                self.assertTrue(all('&head=fixture:' in endpoint for endpoint in closed));self.assertLessEqual(len(closed),3)
+        # Active branch/current PR evidence still takes precedence over retained merges.
+        self.env['SCAN_FIXTURE_BRANCH']='fix/1-fixture'
+        self.reset(active=1,mergedHeads=['fix/'+slug]);report=self.scan()
+        self.assertEqual(report['classification'][0]['action'],'run-code-review-and-open-pr')
+        self.assertFalse(any('pulls?state=closed' in call[-1] for call in self.ledger()['calls']))
+        self.env.pop('SCAN_FIXTURE_BRANCH')
+        self.reset(active=1,pr=True,mergedHeads=['fix/'+slug]);report=self.scan()
+        self.assertEqual(report['classification'][0]['action'],'resolve-pr-readiness')
+        self.assertFalse(any('pulls?state=closed' in call[-1] for call in self.ledger()['calls']))
 
     def test_retained_document_branches_and_stale_backlog(self):
         self.env['AI_DEV_WORKFLOW_CONFIG_FILE']=str(self.config)

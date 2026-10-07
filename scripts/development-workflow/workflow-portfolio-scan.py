@@ -218,8 +218,15 @@ def complete_record(client, repo, issue, card, folders, branches, prs):
     if folder.get('plan') and not current_prs and not any(branch.startswith(('feature/', 'fix/', 'refactor/', 'hotfix/')) for branch in record['branches']):
         slug = re.sub(r'^\d{14}_', '', Path(folder['development_path']).name)
         prefix = 'feature' if folder.get('spec') else 'refactor'
-        closed = client.rest(f'repos/{repo}/pulls?state=closed&head={repo.split("/")[0]}:{prefix}/{slug}&per_page=100', paginate=True)
-        record['implementationMerged'] = any(pr.get('merged_at') for pr in closed)
+        record['implementationMerged'] = False
+        # Preserve the canonical feature/refactor head, and reconcile exact
+        # fix/hotfix heads too for plan-backed bug work. No portfolio sweep.
+        for branch_prefix in (prefix, 'fix', 'hotfix'):
+            expected_head = f'{branch_prefix}/{slug}'
+            closed = client.rest(f'repos/{repo}/pulls?state=closed&head={repo.split("/")[0]}:{expected_head}&per_page=100', paginate=True)
+            if any(isinstance(pr, dict) and isinstance(pr.get('head'), dict) and pr['head'].get('ref') == expected_head and isinstance(pr.get('merged_at'), str) and pr['merged_at'] for pr in closed):
+                record['implementationMerged'] = True
+                break
     record['fullyRead'] = True
     return record
 
@@ -258,6 +265,8 @@ def classify(record, snapshot):
         return 'PROPOSED BATCH', 'implement', 'Approved plan ready for implementation'
     if status == 'Backlog':
         if record.get('plan'):
+            if record.get('implementationMerged'):
+                return 'HELD', 'reconcile-tracker', 'Merged implementation evidence conflicts with Backlog'
             return 'PROPOSED BATCH', 'implement', 'Stale Backlog reconciled from existing plan artifacts'
         if record.get('spec'):
             return 'PROPOSED BATCH', 'write-plan', 'Stale Backlog reconciled from existing spec artifacts'
