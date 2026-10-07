@@ -227,6 +227,45 @@ class Fixture(unittest.TestCase):
         self.config.write_text(self.config.read_text()+'portfolio_scan:\n  graphql_reserve: null\n')
         self.assertTrue(any('Invalid' in warning for warning in self.scan()['warnings']))
 
+    def test_effective_project_scope_and_empty_owner(self):
+        self.env['GITHUB_PROJECT_OWNER']=''
+        for override,expected in (('2','2'),('','1')):
+            self.env['GITHUB_PROJECT_NUMBER']=override
+            self.reset(active=1)
+            report=self.scan();self.assertEqual(report['projectNumber'],expected)
+            self.assertEqual(report['projectOwner'],'fixture')
+            self.assertEqual(report['ledger'][0]['variables'],{'owner':'fixture','number':int(expected)})
+            snapshot=self.folder/'scope.json';snapshot.write_text(json.dumps(report))
+            self.env['WORKFLOW_SCAN_INVOCATION_ID']=report['invocation']
+            before=len(self.ledger()['calls'])
+            self.execute('bash',str(SCRIPTS/'workflow-batch-plan.sh'),'--repo-root',str(self.root),'--scan-snapshot',str(snapshot))
+            self.assertEqual(len(self.ledger()['calls']),before)
+            self.env['GITHUB_PROJECT_NUMBER']='3'
+            self.execute('bash',str(SCRIPTS/'workflow-batch-plan.sh'),'--repo-root',str(self.root),'--scan-snapshot',str(snapshot),ok=False)
+            self.assertEqual(len(self.ledger()['calls']),before)
+            self.env['GITHUB_PROJECT_NUMBER']=override
+            self.env['GITHUB_PROJECT_OWNER']='different-owner'
+            self.execute('bash',str(SCRIPTS/'workflow-batch-plan.sh'),'--repo-root',str(self.root),'--scan-snapshot',str(snapshot),ok=False)
+            self.env['GITHUB_PROJECT_OWNER']=''
+            self.assertEqual(len(self.ledger()['calls']),before)
+            status=self.execute('bash','-c','source "$1"; get_tracker_status_for_issue 1','fixture',str(SCRIPTS/'workflow-lib.sh'))
+            self.assertEqual(status.stdout.strip(),'Backlog')
+            queries=[call for call in self.ledger()['calls'][before:] if call[:2]==['api','graphql'] and 'projectV2(number:' in ' '.join(call)]
+            self.assertTrue(queries);self.assertIn('projectNumber='+expected,queries[0])
+
+    def test_local_only_workflow_branch_full_and_partial(self):
+        subprocess.run([self.git,'-C',str(self.root),'-c','user.name=Fixture','-c','user.email=fixture@example.test','commit','--allow-empty','-qm','fixture'],check=True)
+        subprocess.run([self.git,'-C',str(self.root),'branch','fix/1-local-work'],check=True)
+        for remaining,coverage in ((4500,scan.FULL),(1022,scan.PARTIAL)):
+            self.reset(remaining=remaining,nativeType='Workflow')
+            report=self.scan();self.assertEqual(report['coverage'],coverage)
+            row=next(row for row in report['classification'] if row['number']==1)
+            self.assertEqual(row['category'],'ACTIONABLE RESUME')
+            self.assertEqual(row['action'],'run-code-review-and-open-pr')
+            record=next(record for record in report['fullyRead'] if record['number']==1)
+            self.assertTrue(record['inFlight']);self.assertIn('fix/1-local-work',record['branches'])
+            self.assertEqual(report['partialCost'],22)
+
     def test_unreadable_reset_other_consumers(self):
         for failures in ('1','2','both'):
             self.reset(sampleFailures=failures);report=self.scan()

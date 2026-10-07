@@ -58,6 +58,14 @@ def configuration(root):
     return resolver.parse_yaml_subset(path, preserve_empty_values=True)
 
 
+def tracker_scope(config, repo):
+    project = os.environ.get('GITHUB_PROJECT_NUMBER') or (config.get('issue_tracker') or {}).get('project_number', '')
+    owner = os.environ.get('GITHUB_PROJECT_OWNER') or repo.split('/')[0]
+    if not re.fullmatch(r'[1-9][0-9]*', str(project)):
+        raise ReadError('Missing configured project number')
+    return owner, str(project)
+
+
 def reserve_from_config(config, warnings):
     section = config.get('portfolio_scan', {})
     if isinstance(section, dict) and 'graphql_reserve' not in section:
@@ -121,6 +129,11 @@ def current_local_evidence(root):
                                'spec': any(folder.glob('1_*_specs.md')) or any(folder.glob('1_*_specs.doc.md')),
                                'plan': any(folder.glob('2_*_implementation-plan.md')) or any(folder.glob('2_*_implementation-plan.doc.md'))}
     branches = {}
+    local_refs = run(['git', 'for-each-ref', '--format=%(refname:short)', 'refs/heads'], root)
+    for branch in local_refs.splitlines():
+        number = issue_number(branch)
+        if number:
+            branches.setdefault(number, []).append(branch)
     refs = run(['git', 'ls-remote', '--heads', 'origin'], root)
     for line in refs.splitlines():
         parts = line.split('\t')
@@ -129,7 +142,8 @@ def current_local_evidence(root):
         branch = parts[1].removeprefix('refs/heads/')
         number = issue_number(branch)
         if number:
-            branches.setdefault(number, []).append(branch)
+            if branch not in branches.setdefault(number, []):
+                branches[number].append(branch)
     return folders, branches
 
 
@@ -249,8 +263,9 @@ def snapshot_read(path, root):
         raise ReadError('Malformed scan snapshot') from exc
     invocation = os.environ.get('WORKFLOW_SCAN_INVOCATION_ID')
     config = configuration(root)
-    project = str((config.get('issue_tracker') or {}).get('project_number', ''))
-    if not invocation or not isinstance(data, dict) or data.get('invocation') != invocation or data.get('repo', '').lower() != repository(root).lower() or data.get('projectNumber') != project or data.get('coverage') not in (FULL, PARTIAL, DEFERRED) or not isinstance(data.get('fullyRead'), list):
+    repo = repository(root)
+    owner, project = tracker_scope(config, repo)
+    if not invocation or not isinstance(data, dict) or data.get('invocation') != invocation or data.get('repo', '').lower() != repo.lower() or data.get('projectNumber') != project or data.get('projectOwner') != owner or data.get('coverage') not in (FULL, PARTIAL, DEFERRED) or not isinstance(data.get('fullyRead'), list):
         raise ReadError('Scan snapshot repository/project/invocation scope mismatch')
     open_ids = data.get('openIdentities')
     if not isinstance(open_ids, list) or any(type(n) is not int for n in open_ids):
@@ -339,16 +354,13 @@ def scan(args):
     if tracker.get('provider') != 'github_projects':
         raise ReadError('Portfolio coordinator requires github_projects; other providers retain Protocol 90')
     repo = repository(root)
-    owner = os.environ.get('GITHUB_PROJECT_OWNER', repo.split('/')[0])
-    project_number = tracker.get('project_number')
-    if not re.fullmatch(r'[1-9][0-9]*', str(project_number)):
-        raise ReadError('Missing configured project number')
+    owner, project_number = tracker_scope(config, repo)
     client = reader.Client(strict_cost=True)
     warnings = []
     reserve = reserve_from_config(config, warnings)
     before = budget(client)
     coverage, reason = FULL, 'GraphQL budget sufficient'
-    report = {'repo': repo, 'projectNumber': str(project_number), 'invocation': uuid.uuid4().hex,
+    report = {'repo': repo, 'projectOwner': owner, 'projectNumber': project_number, 'invocation': uuid.uuid4().hex,
               'framework': (config.get('template') or {}).get('is_template') is True,
               'fullyRead': [], 'omissions': [], 'openIdentities': [], 'reserve': reserve,
               'projectionCeiling': P, 'targetBound': Q, 'warnings': warnings}
