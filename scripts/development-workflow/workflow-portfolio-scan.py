@@ -142,13 +142,37 @@ def issue_number(branch):
     return int(match[1]) if match else None
 
 
+def artifact_directory(root, value):
+    # Admit paths before any Markdown classifier/document read. Snapshot and
+    # producer evidence share the repository-owned development artifact root.
+    if not isinstance(value, str) or not value or any(ord(c) < 32 for c in value):
+        raise ReadError('Invalid development artifact path')
+    relative = Path(value)
+    if relative.is_absolute() or '..' in relative.parts or relative.parts[:3] != ('docs', 'specs', 'developments') or len(relative.parts) < 4:
+        raise ReadError('Development artifact path is outside approved scope')
+    root = root.resolve()
+    base = (root / 'docs/specs/developments').resolve()
+    directory = root / relative
+    if not base.is_relative_to(root) or not directory.resolve().is_relative_to(base) or not directory.is_dir():
+        raise ReadError('Development artifact path is outside approved scope')
+    # All local classifiers read only immediate Markdown children. Preflight
+    # every candidate so a later symlink cannot supply foreign plan evidence.
+    for document in directory.glob('*.md'):
+        if not document.resolve().is_relative_to(base):
+            raise ReadError('Development artifact document is outside approved scope')
+    return directory
+
+
 def current_local_evidence(root):
     folders = {}
     base = root / 'docs/specs/developments'
+    if not base.resolve().is_relative_to(root.resolve()):
+        raise ReadError('Development artifact root is outside approved scope')
     if base.is_dir():
         for folder in sorted(base.iterdir()):
             if not folder.is_dir():
                 continue
+            artifact_directory(root, str(folder.relative_to(root)))
             # Match workflow-lib's extract_github_issue_number: document first,
             # then numeric slug, including folders with no timestamp prefix.
             number = None
@@ -269,7 +293,7 @@ def complete_record(client, repo, issue, card, folders, branches, prs, root):
     slug_ids = {re.sub(r'^\d{14}_', '', Path(value['development_path']).name): key for key, value in folders.items()}
     dependencies = dependency_references(body, slug_ids)
     if folder.get('development_path'):
-        artifact_root = root / folder['development_path']
+        artifact_root = artifact_directory(root, folder['development_path'])
         try:
             for kind, patterns in (('spec', ('1_*_specs.md', '1_*_specs.doc.md')), ('plan', ('2_*_implementation-plan.md', '2_*_implementation-plan.doc.md'))):
                 documents = [document for pattern in patterns for document in artifact_root.glob(pattern)]
@@ -370,6 +394,8 @@ def snapshot_read(path, root):
                 not isinstance(data.get('projectId'), str) or not data['projectId'] or record['project_id'] != data['projectId'] or
                 'membership' in record):
             raise ReadError('Incomplete or mismatched scan project membership')
+        if 'development_path' in record:
+            artifact_directory(root, record['development_path'])
         if any(not isinstance(record.get(key), str) for key in ('title', 'body', 'due_date', 'priority', 'created_at')) or not record['created_at']:
             raise ReadError('Malformed scan ordering evidence')
         if datetime.fromisoformat(record['created_at'].replace('Z', '+00:00')).tzinfo is None:

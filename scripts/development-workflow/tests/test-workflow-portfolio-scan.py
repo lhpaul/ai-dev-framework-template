@@ -445,6 +445,60 @@ class Fixture(unittest.TestCase):
         self.reset(active=1,pr=True,labels=[{'name':'ready-for-human-review'}]);report=self.scan();self.assertEqual(report['classification'][0]['category'],'INFORMATIONAL')
         self.reset(active=1,pr=True,labels=[{'name':'needs-fixes'}]);self.assertEqual(self.scan()['classification'][0]['category'],'ACTIONABLE RESUME')
 
+    def test_snapshot_artifact_scope_before_reads(self):
+        development=str(self.plan_files(1,['src/app.py']).relative_to(self.root))
+        self.reset(active=1,statuses={'1':'Plan Ready'});report=self.scan()
+        path=self.folder/'artifact-snapshot.json';self.env['WORKFLOW_SCAN_INVOCATION_ID']=report['invocation']
+        foreign=self.folder/'foreign-artifacts';foreign.mkdir()
+        (foreign/'2_1_foreign_implementation-plan.md').write_text('### Files modified\n```text\nforeign/sentinel.py\n```\n')
+        foreign=foreign.resolve()
+        marker=self.folder/'foreign-read-attempts'
+        # Audit Python document opens and native grep reads of synthetic foreign
+        # artifacts. Rejection must occur before either classifier can read.
+        runtime_site=getattr(sys.modules.get('sitecustomize'),'__file__',None)
+        bootstrap='import runpy;runpy.run_path('+repr(runtime_site)+')\n' if runtime_site else ''
+        (self.bin/'sitecustomize.py').write_text(bootstrap+"import os,sys\ndef audit(event,args):\n if event=='open' and isinstance(args[0],(str,bytes)):\n  path=os.path.realpath(os.fsdecode(args[0]))\n  if path=="+repr(str(foreign))+" or path.startswith("+repr(str(foreign)+os.sep)+"):\n   with open("+repr(str(marker))+",'a') as out:out.write(path+'\\n')\n   raise RuntimeError('forbidden synthetic artifact read')\nsys.addaudithook(audit)\n")
+        self.env['PYTHONPATH']=str(self.bin)+os.pathsep+self.env.get('PYTHONPATH','')
+        realgrep=subprocess.check_output(['which','grep'],text=True).strip()
+        (self.bin/'grep').write_text("#!/usr/bin/env python3\nimport os,sys\nfor arg in sys.argv[1:]:\n try:path=os.path.realpath(arg)\n except OSError:continue\n if path=="+repr(str(foreign))+" or path.startswith("+repr(str(foreign)+os.sep)+"):\n  with open("+repr(str(marker))+",'a') as out:out.write(path+'\\n')\n  sys.exit(91)\nos.execv("+repr(realgrep)+",["+repr(realgrep)+",*sys.argv[1:]])\n")
+        (self.bin/'grep').chmod(0o755)
+        self.execute('python3','-c','import yaml')
+        self.execute('python3','-c','open('+repr(str(foreign/'2_1_foreign_implementation-plan.md'))+')',ok=False)
+        self.assertTrue(marker.exists(),'Synthetic foreign-read monitor did not activate')
+        marker.unlink()
+        link=self.root/'docs/specs/developments/escaped-artifact';link.symlink_to(foreign,target_is_directory=True)
+        before=len(self.ledger()['calls'])
+        for invalid in (str(foreign),'../foreign-artifacts',str(link.relative_to(self.root)),None,[],7,'src/foreign',str(self.root/development)):
+            bad=json.loads(json.dumps(report));bad['fullyRead'][0]['development_path']=invalid;path.write_text(json.dumps(bad))
+            for script,target in (('workflow-batch-plan.sh',[]),('workflow-next-action.sh',['--development',development])):
+                result=self.execute('bash',str(SCRIPTS/script),'--repo-root',str(self.root),'--scan-snapshot',str(path),*target,ok=False)
+                self.assertEqual(result.stdout,'');self.assertIn('artifact',result.stderr.lower())
+                self.assertNotIn('Error in sitecustomize',result.stderr)
+                self.assertFalse(marker.exists(),'Consumer attempted a foreign artifact read')
+                self.assertEqual(len(self.ledger()['calls']),before)
+        # Even a valid directory must not admit a foreign Markdown symlink.
+        document=self.root/development/'foreign.md';document.symlink_to(foreign/'2_1_foreign_implementation-plan.md')
+        path.write_text(json.dumps(report))
+        self.execute('bash',str(SCRIPTS/'workflow-batch-plan.sh'),'--repo-root',str(self.root),'--scan-snapshot',str(path),ok=False)
+        self.assertFalse(marker.exists());self.assertEqual(len(self.ledger()['calls']),before)
+        document.unlink()
+        rows=json.loads(self.execute('bash',str(SCRIPTS/'workflow-batch-plan.sh'),'--repo-root',str(self.root),'--scan-snapshot',str(path)).stdout)
+        self.assertEqual(rows[0]['action'],'implement');self.assertEqual(rows[0]['fileSet'],'src/app.py')
+        self.assertIn('NEXT_ACTION=implement',self.execute('bash',str(SCRIPTS/'workflow-next-action.sh'),'--repo-root',str(self.root),'--scan-snapshot',str(path),'--development',development).stdout)
+        self.assertFalse(marker.exists());self.assertEqual(len(self.ledger()['calls']),before)
+        # Producer discovery shares admission, before opening any foreign doc.
+        original=Path.read_text
+        def tracked(document,*args,**kwargs):
+            self.assertFalse(document.resolve().is_relative_to(foreign),'Producer attempted a foreign artifact read')
+            return original(document,*args,**kwargs)
+        with patch.object(Path,'read_text',tracked),patch.object(scan,'run',return_value=''):
+            with self.assertRaisesRegex(scan.ReadError,'approved scope'):scan.current_local_evidence(self.root)
+            link.unlink()
+            document.symlink_to(foreign/'2_1_foreign_implementation-plan.md')
+            with self.assertRaisesRegex(scan.ReadError,'approved scope'):scan.current_local_evidence(self.root)
+            document.unlink()
+            folders,_=scan.current_local_evidence(self.root);self.assertEqual(folders[1]['development_path'],development)
+
     def test_snapshot_repository_ownership(self):
         development=self.artifact(1)
         self.config.write_text(self.config.read_text()+'mode: workflow_hub\nworkflow_hub:\n  product_repos:\n    - name: mobile-app\n      github_repo: fixture/mobile-app\n')
