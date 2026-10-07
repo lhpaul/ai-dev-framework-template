@@ -76,19 +76,23 @@ class Client:
             if value is not None:
                 args += ['-F' if type(value) is int else '-f', f'{key}={value}']
         response = self.call(args)
-        # Failed/partial GraphQL responses never establish absence.
-        if not isinstance(response, dict) or response.get('errors'):
-            raise ReadError(json.dumps(response.get('errors') if isinstance(response, dict) else response), response.get('errors') if isinstance(response, dict) else None)
+        if not isinstance(response, dict):
+            raise ReadError('Malformed GraphQL response')
         data = response.get('data')
-        if not isinstance(data, dict):
-            raise ReadError('Missing GraphQL data')
-        rate = data.get('rateLimit')
+        rate = data.get('rateLimit') if isinstance(data, dict) else None
         if rate is not None and not isinstance(rate, dict):
             raise ReadError('Malformed GraphQL rateLimit evidence')
         cost = (rate or {}).get('cost')
-        if self.strict_cost and (type(cost) is not int or cost != 1):
-            raise ReadError('GraphQL cost contract changed: expected 1, received ' + repr(cost))
         entry['charged'] = cost if type(cost) is int else 1
+        # Partial responses can include cost evidence: validate it before any
+        # NOT_FOUND fallback, while preserving unreadable rate-limit errors.
+        if self.strict_cost and (rate is not None or not response.get('errors')) and (type(cost) is not int or cost != 1):
+            raise ReadError('GraphQL cost contract changed: expected 1, received ' + repr(cost))
+        # Failed/partial GraphQL responses never establish absence.
+        if response.get('errors'):
+            raise ReadError(json.dumps(response['errors']), response['errors'])
+        if not isinstance(data, dict):
+            raise ReadError('Missing GraphQL data')
         return data
 
 
@@ -98,7 +102,7 @@ def connection(value):
     info = value.get('pageInfo')
     if not isinstance(info, dict) or type(info.get('hasNextPage')) is not bool:
         raise ReadError('Missing project pagination evidence')
-    if info['hasNextPage'] and not info.get('endCursor'):
+    if info['hasNextPage'] and (not isinstance(info.get('endCursor'), str) or not info['endCursor']):
         raise ReadError('Missing project pagination cursor')
     if any(not isinstance(item, dict) for item in value['nodes']):
         raise ReadError('Malformed project candidate')
@@ -131,6 +135,15 @@ def selector(repo, issue):
     return f'repo:{repo} is:issue ' + ('is:open ' if issue.get('state') == 'open' else '') + f'"{escaped}"'
 
 
+def valid_cached_result(value, project_id):
+    if not isinstance(value, dict) or value.get('project_id') != project_id:
+        return False
+    if value.get('membership') == 'absent':
+        return set(value) == {'membership', 'project_id'}
+    keys = {'item_id', 'project_id', 'status', 'type', 'priority', 'size', 'depends_on'}
+    return set(value) == keys and all(isinstance(value[key], str) for key in keys) and bool(value['item_id'])
+
+
 def fallback(client, number, project_id, repo, preferred='', cache_dir=None, cache_pid=None, ttl=5):
     issue = client.rest(f'repos/{repo}/issues/{number}')
     if not isinstance(issue, dict) or issue.get('number') != number or 'pull_request' in issue:
@@ -145,7 +158,7 @@ def fallback(client, number, project_id, repo, preferred='', cache_dir=None, cac
             if cache_file.is_file() and not cache_file.is_symlink() and time.time() - cache_file.stat().st_mtime < ttl * 60:
                 try:
                     cached = json.loads(cache_file.read_text())
-                    if isinstance(cached, dict) and cached.get('project_id') == project_id and (cached.get('item_id') or cached.get('membership') == 'absent'):
+                    if valid_cached_result(cached, project_id):
                         return cached
                 except ValueError:
                     pass

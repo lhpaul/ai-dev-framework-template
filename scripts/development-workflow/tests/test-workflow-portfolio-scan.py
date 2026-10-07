@@ -51,6 +51,9 @@ if args[1]=='graphql':
  rate={'rateLimit':{'cost':state.get('cost',1)}}
  if 'projectV2(number:' in query:
   kind='organization' if 'organization(login:' in query else 'user'
+  if kind=='user' and state.get('userNotFound'):
+   rate['rateLimit']['cost']=state.get('partialCost',1)
+   finish({'data':{'user':None,**rate},'errors':[{'type':'NOT_FOUND','path':['user'],'message':'Organization is not a user'}]})
   value=None if kind=='user' and state.get('org') else {'projectV2':{'id':'P1'}}
   finish({'data':{kind:value,**rate}})
  n=int(values.get('issueNumber',state.get('target',1)))
@@ -246,6 +249,27 @@ class Fixture(unittest.TestCase):
         self.reset(missingType=True);self.assertFalse(self.scan()['fullyRead'])
         self.reset(pr=True,prFail=True);self.assertFalse(self.scan(ok=False)['fullyRead'])
         self.reset(cost=2);self.assertIn('cost contract',self.scan(ok=False)['error'])
+        self.reset(active=1,userNotFound=True,partialCost=2)
+        bad=self.scan(ok=False)
+        self.assertIn('cost contract',bad['error']);self.assertEqual(self.ledger()['graphql'],1)
+        self.assertEqual(bad['ledger'][0]['charged'],2)
+        self.reset(active=1,userNotFound=True,partialCost=1)
+        self.assertEqual(self.scan()['projectionSpend'],2);self.assertEqual(self.ledger()['graphql'],3)
+
+    def test_cache_types_and_malformed_cursor(self):
+        cache=self.folder/'cache';cache.mkdir(mode=0o700)
+        args=('python3',str(SCRIPTS/'workflow-project-reader.py'),'--fallback','--repo','fixture/repo','--project-id','P1','--number','1','--cache-dir',str(cache),'--cache-pid','fixture')
+        self.reset(active=1)
+        valid=json.loads(self.execute(*args).stdout)
+        cached=next(cache.glob('fixture-*.json'))
+        self.execute(*args);self.assertEqual(self.ledger()['graphql'],1)
+        for invalid in (dict(valid,item_id=True),dict(valid,status=[]),dict(valid,type=None),dict(valid,depends_on={}),{'membership':'absent','project_id':'P1','item_id':[]},'bad'):
+            cached.write_text(json.dumps(invalid));before=self.ledger()['graphql']
+            self.assertEqual(json.loads(self.execute(*args).stdout),valid)
+            self.assertEqual(self.ledger()['graphql'],before+1)
+        for cursor in (None,[],{},7):
+            with self.assertRaises(scan.ReadError):
+                scan.reader.connection({'nodes':[],'pageInfo':{'hasNextPage':True,'endCursor':cursor}})
 
     def test_fallback_identity_escape_archived_cap(self):
         result=self.target(org=True,title='quote " \\ repo:evil is:closed ☃',atCap=True)
