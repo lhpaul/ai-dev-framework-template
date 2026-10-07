@@ -348,7 +348,35 @@ def link_graph(root: Path, rows: list[dict]):
     return observed
 
 
+def validate_inputs(inputs):
+    expected = {"template_root", "consumer_root", "template_ref", "template_id", "role",
+                "base_ref", "base_source", "selection_file", "decline"}
+    if not isinstance(inputs, dict) or set(inputs) != expected:
+        raise SyncError("invalid preview input schema")
+    if inputs["role"] not in SELECTOR.VALID_ROLES:
+        raise SyncError("invalid preview repository role")
+    if not isinstance(inputs["template_id"], str) or not re.fullmatch(r"[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)+", inputs["template_id"]):
+        raise SyncError("invalid normalized template identity")
+    for key in ("template_root", "consumer_root"):
+        value = inputs[key]
+        if not isinstance(value, str) or not Path(value).is_dir() or str(Path(value).resolve()) != value:
+            raise SyncError(f"{key}: checkout root is missing or changed")
+    for key in ("template_ref", "base_ref"):
+        value = inputs[key]
+        if key == "base_ref" and value is None:
+            continue
+        if not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", value):
+            raise SyncError(f"{key}: exact full commit SHA required")
+    if bool(inputs["base_ref"]) != bool(inputs["base_source"]) or inputs["base_source"] not in {None, "template", "consumer"}:
+        raise SyncError("verified base reference/source must be supplied together")
+    if inputs["selection_file"] is not None and not isinstance(inputs["selection_file"], str):
+        raise SyncError("invalid fallback selection filename")
+    if not isinstance(inputs["decline"], list) or inputs["decline"] != sorted({valid_path(p) for p in inputs["decline"]}):
+        raise SyncError("invalid declined path selection")
+
+
 def build_preview(inputs: dict, lock_owned: bool = False):
+    validate_inputs(inputs)
     root, source = Path(inputs["consumer_root"]), Path(inputs["template_root"])
     objects = Objects()
     incoming_tree = objects.tree(source, inputs["template_ref"])
@@ -433,6 +461,134 @@ def write_private_plan(path: Path, data: bytes, roots):
         stream.write(data)
 
 
+def write_snapshot(root: Path, path: str, snapshot, created: list[Path]):
+    """Atomically replace one validated leaf; never follow a destination link."""
+    safe_ancestors(root, path)
+    target = root / path
+    if snapshot is None:
+        # Apply never removes a consumer file. Rollback removes only new leaves.
+        if os.path.lexists(target):
+            if target.is_dir() and not target.is_symlink():
+                raise SyncError(f"refuse directory removal at {path}")
+            target.unlink()
+        return
+    missing = []
+    parent = target.parent
+    while parent != root and not parent.exists():
+        missing.append(parent)
+        parent = parent.parent
+    for directory in reversed(missing):
+        directory.mkdir()
+        created.append(directory)
+    safe_ancestors(root, path)
+    with tempfile.TemporaryDirectory(prefix=".sync-write-", dir=target.parent) as directory:
+        replacement = Path(directory) / "new"
+        if snapshot["mode"] == "120000":
+            os.symlink(os.fsdecode(decoded(snapshot["data"])), replacement)
+        else:
+            with replacement.open("xb") as stream:
+                stream.write(decoded(snapshot["data"]))
+                stream.flush()
+                os.fchmod(stream.fileno(), snapshot["permissions"])
+                os.fsync(stream.fileno())
+        os.replace(replacement, target)
+
+
+def apply_plan(path: Path, approved_digest: str):
+    raw = path.read_bytes()
+    if not re.fullmatch(r"[0-9a-f]{64}", approved_digest) or digest(raw) != approved_digest:
+        raise SyncError("approval digest mismatch; obtain approval for a fresh preview")
+    preview = read_json(raw)
+    if not isinstance(preview, dict) or preview.get("schema_version") != 1 or not isinstance(preview.get("inputs"), dict):
+        raise SyncError("invalid approved preview schema")
+    if preview.get("result") != "ready":
+        raise SyncError("approved preview contains blockers; resolve/decline and re-preview")
+    inputs = preview["inputs"]
+    validate_inputs(inputs)
+    root = Path(inputs["consumer_root"])
+    lock = root / LOCK_PATH
+    try:
+        lock.mkdir(mode=0o700)
+    except FileExistsError as exc:
+        raise SyncError(f"{LOCK_PATH}: active/interrupted transaction; inspect recovery material") from exc
+    written, created = [], []
+    originals = {}
+    rollback_failed = False
+    try:
+        # Authority is separate from preview bytes; freshness is checked under lock.
+        fresh = build_preview(inputs, lock_owned=True)
+        if json_bytes(fresh) != raw:
+            raise SyncError("stale preview; content, source, selection or baseline changed; re-preview and approve")
+        if fresh["result"] != "ready":
+            raise SyncError("revalidated batch contains blockers")
+        originals = {row["path"]: row["ours"] for row in fresh["rows"]}
+        originals[STATE_PATH] = fresh["state_before"]
+        # Recovery data is durable before the first consumer write.
+        recovery = {"schema_version": 1, "approved_digest": approved_digest, "originals": originals}
+        with (lock / "recovery.json").open("xb") as stream:
+            os.fchmod(stream.fileno(), 0o600)
+            stream.write(json_bytes(recovery))
+            stream.flush()
+            os.fsync(stream.fileno())
+        state = fresh["state"] or {"schema_version": 1, "template_id": inputs["template_id"], "files": {}}
+        objects = Objects()
+        tree = objects.tree(Path(inputs["template_root"]), inputs["template_ref"])
+        for row in fresh["rows"]:
+            rel = row["path"]
+            if local_snapshot(root, rel) != row["ours"]:
+                raise SyncError(f"consumer changed before writing {rel}; obtain fresh approval")
+            if not same(row["ours"], row["output"]):
+                if row["output"] is None:
+                    raise SyncError(f"destructive result refused at {rel}")
+                written.append(rel)
+                write_snapshot(root, rel, row["output"], created)
+            entry = tree.get(rel)
+            state["files"][rel] = {"source": "template", "commit": inputs["template_ref"],
+                                   "blob": entry["blob"] if entry else None,
+                                   "mode": entry["mode"] if entry else None}
+        for row in fresh["rows"]:
+            actual = local_snapshot(root, row["path"])
+            if not same(actual, row["output"]) or (actual and actual.get("permissions") != row["output"].get("permissions")):
+                raise SyncError(f"apply validation failed at {row['path']}")
+        actual_links = link_graph(root, fresh["rows"])
+        if actual_links != fresh["link_evidence"] or any(r["disposition"] in BLOCKING for r in fresh["rows"]):
+            raise SyncError("final symlink graph changed or failed validation")
+        if local_snapshot(root, STATE_PATH) != fresh["state_before"]:
+            raise SyncError(f"{STATE_PATH}: baseline changed during apply")
+        written.append(STATE_PATH)
+        state_output = {"mode": "100644", "data": encoded(json_bytes(state)),
+                        "permissions": fresh["state_before"].get("permissions", 0o644) if fresh["state_before"] else 0o644}
+        write_snapshot(root, STATE_PATH, state_output, created)
+        if local_snapshot(root, STATE_PATH) != state_output:
+            raise SyncError(f"{STATE_PATH}: persistence validation failed")
+    except BaseException as exc:
+        failures = []
+        for rel in reversed(written):
+            try:
+                write_snapshot(root, rel, originals[rel], [])
+            except (OSError, SyncError) as restore_error:
+                failures.append(f"{rel}: {restore_error}")
+        for directory in reversed(created):
+            try:
+                directory.rmdir()
+            except OSError:
+                # Never remove third-party content placed in a created directory.
+                pass
+        if failures:
+            rollback_failed = True
+            raise SyncError(f"rollback incomplete; preserve {LOCK_PATH}/recovery.json and repair named paths: " + "; ".join(failures)) from exc
+        raise
+    finally:
+        if not rollback_failed:
+            recovery_path = lock / "recovery.json"
+            if recovery_path.exists():
+                recovery_path.unlink()
+            lock.rmdir()
+    fresh["result"] = "applied"
+    show(fresh)
+    return 0
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -447,8 +603,13 @@ def main(argv=None):
     preview.add_argument("--selection-file")
     preview.add_argument("--decline", action="append", default=[])
     preview.add_argument("--plan", required=True)
+    apply = sub.add_parser("apply")
+    apply.add_argument("--plan", required=True)
+    apply.add_argument("--approved-digest", required=True)
     args = parser.parse_args(argv)
     try:
+        if args.command == "apply":
+            return apply_plan(Path(args.plan), args.approved_digest)
         if bool(args.base_ref) != bool(args.base_source):
             raise SyncError("verified --base-ref and --base-source must be supplied together")
         if not re.fullmatch(r"[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)+", args.template_id):
