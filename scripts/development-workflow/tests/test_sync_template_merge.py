@@ -170,6 +170,24 @@ class SyncTests(unittest.TestCase):
         self.assertIn(self.base, proc.stdout)
         print("PROOF read-only CLI: source and consumer bytes/modes including Git metadata unchanged; no bytecode written")
 
+    def test_empty_whitespace_state_and_zero_selected_boundary(self):
+        before = self.fingerprint()
+        for content in (b"", b" \t\n"):
+            self.write(self.consumer, merge.STATE_PATH, content)
+            snapshot = self.fingerprint()
+            plan = self.preview()
+            self.assertEqual(plan["result"], "blocked")
+            self.apply(expected=2)
+            self.assertEqual(snapshot, self.fingerprint())
+        (self.consumer / merge.STATE_PATH).unlink()
+        plan = self.preview(declines=("shared/a.md", "shared/b.md"))
+        self.assertEqual(plan["selected_count"], 0)
+        self.assertEqual(plan["counts"], {})
+        self.apply()
+        self.assertEqual(self.state()["files"], {})
+        (self.consumer / merge.STATE_PATH).unlink()
+        self.assertEqual(before, self.fingerprint())
+
     def test_conflict_whole_batch_and_stopped_counts(self):
         self.write(self.consumer, "shared/a.md", TEXT.replace("line 1\n", "local\n"))
         self.write(self.template, "shared/a.md", TEXT.replace("line 1\n", "upstream\n"))
