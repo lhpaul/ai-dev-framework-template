@@ -1,0 +1,3 @@
+# Opt-in task profile: customize, then copy to ~/.codex/review.config.toml.
+model = "REPLACE_WITH_AVAILABLE_BALANCED_MODEL"
+model_reasoning_effort = "high"
