@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.47.0] - 2026-10-07
+
+### Added
+
+- **Opt-in Codex role and model routing** (#1761): task profiles, native reviewer
+  configuration, Responses router requirements, and version-labeled smoke checks.
+
+### Fixed
+
+- **Run synced workflow tests in consumer repositories** (#1914): readiness
+  fixtures respect consumer reviewer policies and local overrides; Markdown
+  trigger and legacy workflow removal checks apply only to template repositories.
+
 ## [0.46.0] - 2026-10-07
 
 ### Added
@@ -3266,7 +3279,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `.claude/settings.json` with pre-approved permissions for common git and fetch operations; `.claude/settings.local.json.example` documenting machine-specific overrides for optional integrations
 - `.gitignore` covering local Claude settings, `.env` files, and common system files
 
-[Unreleased]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.46.0...HEAD
+[Unreleased]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.47.0...HEAD
+[0.47.0]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.46.0...v0.47.0
 [0.46.0]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.45.0...v0.46.0
 [0.45.0]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.44.0...v0.45.0
 [0.44.0]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.43.1...v0.44.0
