@@ -453,6 +453,8 @@ def batch_safety(output, records):
 
 
 def snapshot_routing(record, action, root, selected):
+    if record['status'] in TERMINAL:
+        return None
     # Documentation stages belong to the hub. Implementation must use the
     # canonical ownership classifier, without fetching another repository.
     branches = [pr['branch'] for pr in record['prs']] or record['branches']

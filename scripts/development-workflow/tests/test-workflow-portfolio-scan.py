@@ -474,6 +474,10 @@ class Fixture(unittest.TestCase):
         report=self.scan();path.write_text(json.dumps(report));self.env['WORKFLOW_SCAN_INVOCATION_ID']=report['invocation'];before=len(self.ledger()['calls'])
         result=next_action(['--development',development]);self.assertIn('NEXT_ACTION=implement',result);self.assertIn('ROUTING_OUTCOME_CODE=hub_only',result)
         result=next_action(['--development',development],'mobile-app');self.assertIn('CATEGORY=HELD',result);self.assertIn('ROUTING_OUTCOME_CODE=ambiguous_target',result)
+        # Terminal records stay informational even with retained implementation evidence.
+        self.reset(active=1,pr=True,statuses={'1':'Merged'})
+        terminal=self.scan();self.assertEqual(terminal['classification'][0]['category'],'INFORMATIONAL')
+        self.assertEqual(terminal['classification'][0]['action'],'skip')
         # Planning stays hub-owned; a documentation PR also stays hub-owned.
         self.reset(active=1,statuses={'1':'Spec Ready'})
         report=self.scan();path.write_text(json.dumps(report));self.env['WORKFLOW_SCAN_INVOCATION_ID']=report['invocation'];before=len(self.ledger()['calls'])
