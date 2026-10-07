@@ -37,7 +37,10 @@ refusal/routing assertions retain their existing coverage.
 
 **Maps to**: AC1, AC2, AC3, AC5.
 
-Run Step 1's commands in the committed consumer tree.
+Run Step 1's commands in the committed consumer tree, capturing their output
+into consumer-gating.log, consumer-step7a.log, consumer-backlog.log,
+consumer-routing.log, and consumer-reviewer.log respectively. Each command
+must still exit zero; retain stderr with stdout for the evidence.
 
 **Expected**: Each exits zero; template-only checks report explicit skips.
 Alternate reviewer selection, consumer-owned guidance, absent historical
@@ -48,7 +51,8 @@ Shared routing/refusal and supported-reviewer checks still execute.
 
 **Maps to**: AC4, AC5.
 
-In both trees, run:
+In both trees, run the following; also capture the consumer run output as
+consumer-plants.log:
 
 ```bash
 bash scripts/development-workflow/tests/test-step7a-surface-consistency.sh --prove-plants
@@ -63,6 +67,19 @@ Steps 1-2 is detected and repaired in both modes.
 ## Step 4: Verify restoration and issue coverage
 
 **Maps to**: AC2, AC3, AC5.
+
+In the consumer tree, require the visible skip markers with these read-only
+assertions. A missing marker exits nonzero even if its suite passed:
+
+<!-- workflow-shell-contract: bash -->
+```bash
+bash -euo pipefail <<'BASH'
+grep -q '^SKIP: is_template_live_repo_config' consumer-gating.log
+grep -q '^SKIP: D-9 ' consumer-step7a.log
+grep -q '^SKIP: D-9 plant' consumer-plants.log
+grep -q '^SKIP: template historical runbook checks' consumer-routing.log
+BASH
+```
 
 Compare each tree's config and guidance before and after its suites. Review the
 implementation diff and record disposition for each failing surface listed in

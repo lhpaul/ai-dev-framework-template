@@ -13,7 +13,10 @@ consumer policy remain unchanged.
 
 **Estimated complexity**: S.
 **Rationale**: Bounded test-harness changes within the existing Bash/Python toolchain.
-**Dependencies**: Approved spec PR #1901 must be merged before this plan PR opens.
+**Dependencies**: Spec PR #1901 is MERGED at
+`915b65447cd49d122fe43a922ecc527c12e332da`, verified live on 2026-10-07.
+Before implementation, re-read its merge state and the plan PR state; stop if
+either required prerequisite is not merged.
 **Template fit**: Applicable and passed; the change targets this framework's own
 test toolchain and is independent of consumer application stacks.
 
@@ -69,7 +72,7 @@ shared behavior tests. No additional CI workflow is planned.
 | Absent template history and consumer-owned guidance | Omit historical docs/runbooks; use consumer-owned AGENTS/GEMINI content | AC2 |
 | Framework refusal and routing remain meaningful | Existing exact/lowercase refusal, consumer positive, stop/hold/reclassification assertions run with controlled configs | AC3 |
 | Planted detection survives gating | Step 7a --prove-plants in template and consumer modes; guidance suite clean/plant/repaired assertions | AC4 |
-| Mode and policy boundaries | Existing true/false, missing, empty, whitespace, quoted/case/commented helper cases plus D-4 unsupported-reviewer plant | AC5 |
+| Mode and policy boundaries | Existing true/false, missing, empty, whitespace, quoted/case/commented helper cases plus D-4 unsupported-reviewer plant; runbook Step 4 grep assertions require every consumer skip marker | AC5 |
 
 ### Parser-risk addendum
 
@@ -139,10 +142,12 @@ and their existing EXIT cleanup traps.
 ## Implementation Order
 
 1. Reverify Operational Assumption sources and the current approved base.
-2. Repair live-mode/default checks and framework fixture setup; verify affected
-   suites in both modes and commit a coherent checkpoint.
-3. Repair historical guidance/document dependencies; verify both-mode baselines
-   and plants and commit the completed repair and release fragment.
+2. Repair live-mode/default checks and the backlog framework fixture. Verify
+   consumer-tree gating, Step 7a consistency/plants, and backlog creation in both
+   modes; commit that coherent checkpoint. Routing is deferred to the next step.
+3. Repair the routing framework fixture and historical guidance/document
+   dependencies. Verify all affected suites and plants in both modes, including
+   the runbook skip-output assertions, and commit the repair and release fragment.
 4. Run ShellCheck, shell guard, relevant markdown lint, and git diff --check.
 5. Review the exact PR diff against REVIEW.md; open the draft implementation PR
    with reproduction, repaired outcomes, and planted file/line evidence.
