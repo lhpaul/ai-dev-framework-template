@@ -168,6 +168,14 @@ tracker step and `--evidence <proof.json>`. The proof contains `provider`
 after the journaled intent. Preserve the source responses/request identifiers
 as reviewable evidence; an echoed mutation response is not an independent read.
 
+For recovery, first request explicit `resume` to establish the current recovery
+attempt. If it requires fresh Linear evidence, independently read the owning
+issue and submit the normalized proof for the existing declared intent through
+`record-provider-result`, then request `resume` again. The journal binds that
+proof to the current recovery attempt and permits one continuation. A later
+recovery requires a new read; an earlier successful proof is historical evidence,
+not current verification or permission to repeat a mutation.
+
 Missing or mismatched issue/owner/status/read evidence records Interrupted and
 keeps reconciliation pending. Explicit recovery verifies live state before any
 retry. The best-effort "retry once and continue" rule below applies only outside

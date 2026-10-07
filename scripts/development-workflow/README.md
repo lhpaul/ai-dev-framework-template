@@ -1207,6 +1207,14 @@ Add the required owning ledger targets and route-specific phases before admissio
 
 Public commands are `begin --input <manifest> [--repo-root <owner>] [--reserve <nonnegative integer>]`, `run-step --session <state.json> --repo <owner/repo> --pr <number> --step <declared-id> --phase <phase> -- <argv...>`, `resume --session <state.json>`, and `report --session <state.json> [--final]`. `before-step`/`after-step` serve nested runtime hooks; only declared identities/steps can execute. A direct merge uses the declared `merge_api` step and preserves its existing `gh pr merge` arguments. For an audit, supply `--expected-file` with the exact rendered body so independent live read-back can discharge it. Do not execute a completed or uncertain step again; explicit resume reconciles live evidence first.
 
+The read-only `check --require-merge-scope` used by the delegated gate additionally
+requires frozen merge, merge verification, cleanup and owning follow-up duties.
+An admitted audit-only session can execute its declared audit without granting
+merge authority. Merge routes derive mandatory follow-up during `begin`, even
+when a caller provides only the merge phase. Linear recovery follows the
+[existing bridge](../../docs/workflow/development-workflow/integrations/linear.md#durable-merge-operation-bridge),
+with fresh proof bound to one recovery continuation.
+
 Optional `--final` reporting samples quota without erasing verified progress when the remote read fails; ordinary reporting uses the local record offline. Reports retain each readable sample, component estimate/margin/reserve, verified PR states, uncertain actions, pending follow-up and recovery command. The journal remains under `<owner-git-common-dir>/workflow-merge-budget/<session-id>/state.json`; do not commit or delete it during closeout or a coordinated reversal.
 
 ### `post-merge-cleanup.sh`

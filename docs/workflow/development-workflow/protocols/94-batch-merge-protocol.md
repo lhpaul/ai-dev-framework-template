@@ -229,6 +229,12 @@ path in the handoff; `report --session "$MERGE_SESSION"` is local and
 
 The `begin` assessment is provisional. The first operation-owned mutation hook refreshes quota and commits definitive whole-set admission locally before dispatch. This ordering includes disposition/ledger/bypass audits and hold writes, not only `gh pr merge`. Supply explicit `--operation merge` and the same `--merge-session` to these audit helpers. Keep pre-stage non-merge audits on their existing route. Ordinary readiness must already be complete: readiness/head drift stops and returns to its owning review phase rather than changing labels inside the merge operation. The delegated gate validates durable session/selected-head binding in addition to existing permission, risk, reviewer, CI, ownership and checkpoint gates; missing/unreadable admission is `budget_deferred` and grants no merge authority.
 
+A session containing only audit or hold work cannot authorize a delegated merge.
+The gate also requires the selected PR's frozen merge, independent merge
+verification, cleanup and derived owning follow-up duties. `begin` derives
+required cleanup and tracker/closure duties for merge routes; omitting them from
+a caller's shorthand cannot make a merge cheaper or its completion partial.
+
 Run every direct approved merge command through the unchanged-argv session executor; mutating batch/cleanup entrypoints also journal their actual internal boundaries. Preserve separate local merge, base push, GitHub merge call and independent MERGED verification. Successful queue/auto-merge submission is Waiting when live structured evidence verifies it remains unmerged. Waiting pauses this selected sequence, retains pending merge-dependent follow-up and never resubmits the merge. Unavailable submission evidence is Interrupted/uncertain. Existing authorized admin argv and already-merged state remain intact; budget does not authorize an admin bypass or deletion.
 
 | Session outcome | Required next action |
