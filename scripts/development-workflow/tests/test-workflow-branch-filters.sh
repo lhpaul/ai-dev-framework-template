@@ -305,8 +305,21 @@ for wf in "$WF_DIR"/*.yml "$WF_DIR"/*.yaml; do
   fi
 done
 
-run_test "some_workflows_gate_on_develop" "yes" "$([ "$checked" -gt 0 ] && echo yes || echo no)"
-run_test "develop_gated_workflows_cover_integration_branches" "" "$missing"
+# Consumer workflows and their triggers are project-owned (including shared
+# sync-manifest entries). Keep the coverage diagnosis actionable without making
+# the template's default integration-branch policy a consumer CI requirement.
+# shellcheck source=scripts/development-workflow/workflow-lib.sh
+source "$REPO_ROOT/scripts/development-workflow/workflow-lib.sh"
+IS_TEMPLATE="$(workflow_template_is_template "$REPO_ROOT/.ai-dev-workflow.yaml")"
+if [ "$IS_TEMPLATE" = "true" ]; then
+  run_test "some_workflows_gate_on_develop" "yes" "$([ "$checked" -gt 0 ] && echo yes || echo no)"
+  run_test "develop_gated_workflows_cover_integration_branches" "" "$missing"
+else
+  echo "SKIP: live integration-branch coverage assertions (consumer-owned workflows)"
+  if [ -n "$missing" ]; then
+    echo "ACTION: before using develop-<slug> integration branches, review pull_request filters and add develop-** where checks are required: $missing"
+  fi
+fi
 
 # A hardcoded slug is not coverage: it reads as covered while the current
 # integration branch is absent (the zeki-cl/zeki-platform trap in #1525).
@@ -333,7 +346,11 @@ for wf in "$WF_DIR"/*.yml "$WF_DIR"/*.yaml; do
     esac
   done <<< "$(branches_for_trigger "$wf" pull_request)"
 done
-run_test "no_hardcoded_integration_branch_slugs" "" "$hardcoded"
+if [ "$IS_TEMPLATE" = "true" ]; then
+  run_test "no_hardcoded_integration_branch_slugs" "" "$hardcoded"
+elif [ -n "$hardcoded" ]; then
+  echo "ACTION: replace stale integration-branch slugs with develop-** where appropriate: $hardcoded"
+fi
 
 # A `push:` filter's `branches:` list is a different trigger than
 # `pull_request:` — PR checks are not gated by it. A parser that folds both
