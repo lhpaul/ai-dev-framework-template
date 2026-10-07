@@ -27,13 +27,14 @@ The source-of-truth scope is selected committed paths, not a frozen file count.
 | Check | Command / query | Result |
 | --- | --- | --- |
 | Overwrite consumers | `rg -n 'Copy/overwrite all|Comparison method:|Category 1' .claude/commands/sync-template.md .cursor/commands/sync-template.md .claude/skills/sync-template.md` | Command, Cursor command and Claude skill contain the comparison/apply instructions requiring replacement |
-| Complete routing search | `rg -l 'sync-template\.md\|workflow-sync-template\|Copy/overwrite all' .claude .cursor .codex .agents docs AGENTS.md README.md REVIEW.md --glob '*.md' --glob '*.mdc' --glob '!docs/specs/developments/**'` | Results classified in the consumer table and routing-only paragraph below; historical development artifacts are evidence, not executable entrypoints |
-| Codex routing | `rg -n 'canonical|always-sync|last_synced_version' .codex/skills/workflow-sync-template/SKILL.md .agents/skills/sync-template/SKILL.md` | Canonical Codex wrapper routes to the command; command-style alias routes to the canonical skill |
+| Complete routing search | `rg -l 'sync-template\.md|workflow-sync-template|Copy/overwrite all' .claude .cursor .codex .agents docs AGENTS.md README.md REVIEW.md --glob '*.md' --glob '*.mdc' --glob '!docs/specs/developments/**'` | Results classified in the consumer table and routing-only paragraph below; historical development artifacts are evidence, not executable entrypoints |
+| Codex routing | `rg -n 'canonical|workflow-sync-template|always-sync|last_synced_version' .codex/skills/workflow-sync-template/SKILL.md .agents/skills/sync-template/SKILL.md` | Canonical Codex wrapper routes to the command; command-style alias routes to the canonical skill |
 | Discovery symlinks | `git ls-tree -r HEAD .agents/skills/` | Discovery includes mode `120000` aliases; treating every incoming object as a regular file would break consumers |
 | Existing selection | `rg -n 'ROLE_SCOPE_SELECTION|def parse_manifest' scripts/development-workflow/select-sync-manifest-entries.py` | Role selection and manifest parsing are available for reuse |
 | Exact exclusions | `rg -n 'def entry_matches|Exact project_specific|owned_entries' scripts/development-workflow/check-sync-manifest-coverage.py` | Matcher and cross-scope project-owned precedence are available |
 | Existing sync metadata | `rg -n 'last_synced|template:' .ai-dev-workflow.yaml docs/workflow/development-workflow/README.md .claude/commands/sync-template.md` | Version provenance exists; exact per-path baseline handling must be added |
 | Tests and CI routing | `rg -n 'covers:|BODIES=' scripts/development-workflow/tests/test-sync-template-apply-modes.sh scripts/development-workflow/tests/test-sync-template-mode-scopes.sh`; `rg -n 'select-test-suites|naming convention' .github/workflows/workflow-tests.yml` | Shell suites map changed surfaces through covers headers; add a discovered shell launcher for the Python integration tests |
+| E2E exemption | `rg -n 'placeholder|E2E regression' .github/workflows/e2e-regression.yml` | Job named `E2E regression (placeholder)` supports the test exemption below |
 | Design assets | `rg --files docs/specs/developments/20261007012151_1875-sync-template-three-way-merge`; inspect issue #1875 body | No supplied design assets; smoke tests need no visual-fidelity baseline |
 
 ### Factual claim evidence and scoped obligations
@@ -158,6 +159,10 @@ regular-file permission bits when writing an existing file.
   **Locally modified template files**, with clean merges, retained changes,
   deletions, conflicts and baseline-unavailable paths. Unknown history is not
   claimed as proven local modification. All counts reconcile with selected paths.
+- At approval, capture the SHA-256 digest of the exact preview independently
+  in the parent invocation. Apply requires that digest as `--approved-digest`;
+  it cannot obtain authority from a digest supplied inside the preview. Bind
+  selections, declines, provenance and outputs to the approved bytes.
 - Apply consumes the preview, re-computes selection, evidence, fingerprints and
   prepared outputs, and compares them before mutation. Include content, kind,
   permissions, baseline-state bytes, manifest/selection, identity and source
