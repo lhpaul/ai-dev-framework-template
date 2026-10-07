@@ -232,7 +232,7 @@ The changed existing `workflow-lib.sh` entrypoint is `update_tracker_status_best
 | `scripts/development-workflow/add-backlog-item.sh` | Unchanged backlog creation route outside merge-operation scope; no session means existing best-effort behavior. |
 | `scripts/development-workflow/graduation-closeout.sh` | Unchanged integration graduation route outside this delegated/batch merge operation; no session means existing status behavior. |
 | `scripts/development-workflow/post-merge-cleanup.sh` | Update composed merge follow-up to carry the authoritative session and honor journal failure/pending state. |
-| `scripts/development-workflow/prepare-release-post-merge-cleanup.sh` | Update composed merge follow-up to carry the authoritative session and honor journal failure/pending state. |
+| `scripts/development-workflow/prepare-release-post-merge-cleanup.sh` | Unchanged release closeout outside this delegated/batch merge-operation scope; non-session status behavior remains valid. No release pipeline budget contract is introduced. |
 | `scripts/development-workflow/tracker-status-for.sh` | Unchanged canonical status resolver/marker adapter. It captures helper output, reports TRACKER_STATUS_RESULT=failed/deferred, and can still exit zero for best-effort failure. A supplied-session workflow-lib hook persists Interrupted/pending before returning; run-step inspects authoritative journal plus independent target read-back and fails regardless of this adapter exit. The canonical merge caller never treats its zero exit as completion. |
 | `scripts/development-workflow/workflow-lib.sh` | Update owning function with session-bound intent and independent read-back; preserve existing non-session routing and machine markers. |
 
