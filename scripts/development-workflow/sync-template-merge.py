@@ -15,7 +15,6 @@ import importlib.util
 import json
 import os
 from pathlib import Path, PurePosixPath
-import posixpath
 import re
 import secrets
 import stat
@@ -334,41 +333,50 @@ def link_graph(root: Path, rows: list[dict]):
             return "missing" if value is None else value
         if path in directories:
             return "directory"
-        target = root / path
+        leaf = PurePosixPath(path)
         try:
-            info = target.lstat()
+            with directory_fd(root, str(leaf.parent)) as parent_fd:
+                info = os.stat(leaf.name, dir_fd=parent_fd, follow_symlinks=False)
+                if stat.S_ISLNK(info.st_mode):
+                    value = {"mode": "120000", "data": encoded(os.fsencode(os.readlink(leaf.name, dir_fd=parent_fd)))}
+                    observed[path] = value
+                    return value
         except FileNotFoundError:
             observed[path] = None
             return "missing"
-        if stat.S_ISLNK(info.st_mode):
-            value = {"mode": "120000", "data": encoded(os.fsencode(os.readlink(target)))}
-            observed[path] = value
-            return value
         value = "directory" if stat.S_ISDIR(info.st_mode) else "file"
         observed[path] = {"kind": value, "permissions": stat.S_IMODE(info.st_mode)}
         return value
 
-    def resolve(path, seen):
-        if path == ".":
-            return "directory"
-        parts = path.split("/")
-        for index in range(len(parts)):
-            prefix = "/".join(parts[:index + 1])
+    def resolve(parts, stack=None, hops=0):
+        stack = list(stack or [])
+        value = "directory"
+        for index, component in enumerate(parts):
+            if component in {"", "."}:
+                continue
+            if component == "..":
+                if not stack:
+                    raise SyncError("symlink escapes consumer root through '..'")
+                stack.pop()
+                value = "directory"
+                continue
+            if component == ".git" or "\\" in component:
+                raise SyncError("unsafe symlink target component")
+            prefix = "/".join([*stack, component])
             value = node(prefix)
             if isinstance(value, dict) and value.get("mode") == "120000":
-                if prefix in seen:
-                    raise SyncError(f"symlink cycle at {prefix}")
+                if hops >= 40:
+                    raise SyncError(f"symlink cycle or excessive indirection at {prefix}")
                 target = os.fsdecode(decoded(value["data"]))
                 if not target or target.startswith("/") or "\0" in target:
                     raise SyncError(f"unsafe symlink target at {prefix}")
-                combined = posixpath.normpath(posixpath.join(posixpath.dirname(prefix), target, *parts[index + 1:]))
-                if combined == ".." or combined.startswith("../") or ".git" in combined.split("/"):
-                    raise SyncError(f"symlink escapes consumer root at {prefix}")
-                return resolve(combined, seen | {prefix})
+                # Expand the link before interpreting remaining '..' components.
+                return resolve(target.split("/") + parts[index + 1:], stack, hops + 1)
             if value == "missing":
                 raise SyncError(f"dangling symlink target: {prefix}")
             if index < len(parts) - 1 and value != "directory":
                 raise SyncError(f"non-directory symlink target ancestor: {prefix}")
+            stack.append(component)
         return value
 
     for row in rows:
@@ -377,8 +385,8 @@ def link_graph(root: Path, rows: list[dict]):
         output = row["output"]
         if output and output["mode"] == "120000":
             try:
-                resolve(row["path"], set())
-            except (SyncError, UnicodeError, ValueError) as exc:
+                resolve(row["path"].split("/"))
+            except (SyncError, OSError, UnicodeError, ValueError) as exc:
                 row.update(disposition="blocked", reason=str(exc))
     return observed
 

@@ -272,6 +272,32 @@ class SyncTests(unittest.TestCase):
         self.assertEqual((outside / "a.md").read_text(), "outside secret\n")
         print("PROOF ancestor race: substitution after directory open writes only anchored consumer directory; outside bytes untouched")
 
+    def test_symlink_parent_components_resolve_after_intermediate_links(self):
+        outside = self.root / "outside"
+        (outside / "subdir").mkdir(parents=True)
+        self.write(outside, "victim", "outside\n")
+        self.write(self.consumer, "victim", "consumer\n")
+        os.symlink(outside / "subdir", self.consumer / "jump")
+        os.symlink("../jump/../victim", self.template / "shared/alias")
+        self.incoming = self.save(self.template)
+        before = self.fingerprint()
+        plan = self.preview()
+        self.assertEqual(plan["result"], "blocked", "must resolve jump before '..'; lexical normalization accepts an escaping link")
+        self.apply(expected=2)
+        self.assertEqual(before, self.fingerprint())
+        (self.consumer / "jump").unlink()
+        os.symlink("missing-directory", self.consumer / "jump")
+        self.assertEqual(self.preview()["result"], "blocked", "missing-directory/.. cannot cancel a dangling target")
+        (self.consumer / "jump").unlink()
+        (self.consumer / "real/subdir").mkdir(parents=True)
+        self.write(self.consumer, "real/victim", "correct target\n")
+        os.symlink("real/subdir", self.consumer / "jump")
+        self.assertEqual(self.preview()["result"], "ready")
+        self.apply()
+        self.assertEqual((self.consumer / "shared/alias").read_text(), "correct target\n")
+        self.assertEqual((outside / "victim").read_text(), "outside\n")
+        print("PROOF link '..': absolute intermediate escape and dangling intermediary block; relative in-root graph resolves actual real/victim")
+
     def test_conflict_whole_batch_and_stopped_counts(self):
         self.write(self.consumer, "shared/a.md", TEXT.replace("line 1\n", "local\n"))
         self.write(self.template, "shared/a.md", TEXT.replace("line 1\n", "upstream\n"))
