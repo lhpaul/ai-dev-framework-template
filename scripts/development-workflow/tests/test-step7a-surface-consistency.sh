@@ -57,6 +57,13 @@ def documented_shipped_runner_list(s):
     if not m: return None
     return [x.strip() for x in m.group(1).split(',') if x.strip()]
 
+def template_mode(base):
+    # Keep mode semantics identical to the shell suites and runtime helpers.
+    return subprocess.check_output([
+        'bash', '-c', 'set -euo pipefail; source "$1"; workflow_template_is_template "$2"',
+        'mode-check', str(base/'scripts/development-workflow/workflow-lib.sh'), str(base/shared),
+    ], text=True).strip() == 'true'
+
 def checks(base):
     def read(path): return (base/path).read_text()
     p=read(protocol); gate=section(p,'### Determining which reviewers to run','### Step 7a loop parameters')
@@ -90,7 +97,9 @@ def checks(base):
     out['D-7']=all("driving runner's own stage reviewer" in normalized(x) for x in (entry,read(readme))) and 'stage-appropriate `claude` reviewer' not in entry
     out['D-8']=contains(runtime,'is read-only: do not review, post a comment, alter the PR, install software, or substitute a reviewer','Do not provision services or write tracked files.')
     declared_runner_list=documented_shipped_runner_list(read(readme))
-    out['D-9']=declared_runner_list is not None and lists[0]==[declared_runner_list] and not re.search(r'expected behavio[u]?r.*hard.fail',read(shared),re.I)
+    # D-4 still validates supported reviewers in every repository. Only the
+    # template must match the README's shipped default list.
+    out['D-9']=not template_mode(base) or (declared_runner_list is not None and lists[0]==[declared_runner_list] and not re.search(r'expected behavio[u]?r.*hard.fail',read(shared),re.I))
     c=read(cr)
     out['D-10']=contains(section(c,'### Draft conversion','### Invocation'),'reviews.auto_review.enabled: true','after availability and policy') and 'coderabbitai[bot]' in c and contains(hard,'CodeRabbit draft-eligibility precondition','before its dispatch') and 'Switch to Claude' not in c
     def dispatch_block(s):
@@ -128,8 +137,11 @@ def checks(base):
     return out
 
 def report(result):
-    for name,passed in result.items(): print(('PASS' if passed else 'FAIL')+': '+name,flush=True)
-    print(f'{sum(result.values())} passed; {len(result)-sum(result.values())} failed',flush=True)
+    skipped={'D-9'} if not template_mode(root) else set()
+    for name,passed in result.items():
+        if name in skipped: print('SKIP: '+name+' (consumer-owned reviewer policy)',flush=True)
+        else: print(('PASS' if passed else 'FAIL')+': '+name,flush=True)
+    print(f'{sum(result.values())-len(skipped)} passed; {len(result)-sum(result.values())} failed; {len(skipped)} skipped',flush=True)
 
 baseline=checks(root);report(baseline)
 if not all(baseline.values()): raise SystemExit(1)
@@ -188,6 +200,9 @@ if sys.argv[2]=='--prove-plants':
             ('D-24',protocol,'Where the service is not installed and reachable it is\nunavailable with a named reason.','No source condition applies when the service is absent.'),
             ('D-25','.gitignore','.ai-dev-workflow.local.yaml.retired\n',''),
         ]
+        if not template_mode(fixture):
+            plants=[plant for plant in plants if plant[0]!='D-9']
+            print('SKIP: D-9 plant (consumer-owned reviewer policy)',flush=True)
         for number,(case,files,needle,replacement) in enumerate(plants,1):
             files=[files] if isinstance(files,str) else files
             originals={};evidence=[]
