@@ -53,10 +53,10 @@ Template operators need an explicit way to translate workflow roles and recommen
 
 - [ ] AC1: The maintainer can find a Codex surface audit covering both skill trees, root agent guidance, and workflow model documentation, with an explicit role/tier/model strategy.
 - [ ] AC2: The guide demonstrates verified task-level model selection, reasoning configuration, and supported local profile usage, identifying their scope and installed-version caveats.
-- [ ] AC3: The guide distinguishes skill tier recommendations from native role/model enforcement, documents supported native role capabilities when established, and gives a usable fallback for capabilities not established.
+- [ ] AC3: The adapter distinguishes skill tier recommendations from native role/model enforcement. When native role-specific routing is verified, it supplies usable role-routing configuration and dispatch instructions with smoke validation. For capabilities not established, it supplies a usable task-level fallback.
 - [ ] AC4: Optional local-router guidance preserves provider-agnostic defaults, states protocol and authentication requirements, and does not claim untested live router compatibility.
 - [ ] AC5: Shared role/model documentation links to the adapter, preserves #1760 independence, and does not implement the separate #1895 feature.
-- [ ] AC6: Reproducible smoke checks validate introduced examples/configuration and relative documentation links; evidence identifies any live-network routing not tested.
+- [ ] AC6: Reproducible smoke checks validate the task-level examples, any native role-routing configuration required by AC3, and relative documentation links; evidence identifies any live-network routing not tested.
 
 ## Brief Objective List and Coverage Matrix
 
