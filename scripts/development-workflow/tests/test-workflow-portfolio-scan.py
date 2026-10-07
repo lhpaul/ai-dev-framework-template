@@ -566,6 +566,18 @@ class Fixture(unittest.TestCase):
         if os.environ.get('WORKFLOW_PORTFOLIO_EVIDENCE_DIR'):
             (Path(os.environ['WORKFLOW_PORTFOLIO_EVIDENCE_DIR'])/'bounded-history-growth.json').write_text(json.dumps({'terminalCounts':[50,1000],'chargedRequests':growth},indent=2))
 
+    def test_review_fix_loop_lane_composition(self):
+        self.artifact()
+        for status in ('Spec in Review','Plan in Review','Development in Review'):
+            for labels,expected in (([{'name':'needs-fixes'}],'ACTIONABLE RESUME'),([], 'INFORMATIONAL'),([{'name':'ready-for-human-review'}],'INFORMATIONAL'),([{'name':'needs-fixes'},{'name':'ready-for-human-review'}],'INFORMATIONAL')):
+                self.reset(active=1,pr=True,statuses={'1':status},labels=labels)
+                report=self.scan();row=report['classification'][0]
+                self.assertEqual(row['category'],expected)
+                if expected=='ACTIONABLE RESUME':
+                    self.assertEqual(row['action'],'resume-fix-loop');self.assertEqual(row['dispatch'],'proposed')
+                else:self.assertFalse(report['recommendedCommand'])
+                self.assertEqual(self.ledger()['graphql'],2)
+
     def test_merged_implementation_reconciles_stale_backlog(self):
         development=self.artifact();slug=Path(development).name.split('_',1)[1]
         for status in ('Backlog','Plan Ready'):
