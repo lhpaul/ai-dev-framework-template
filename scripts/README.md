@@ -44,16 +44,20 @@ freshness/backup checks, holds it through validation/persistence/rollback, and
 advances per-path state only after the data batch validates. No conflict-side or
 delete override exists. Symlinks are atomic targets validated within the final
 consumer tree; executable-bit changes are compared independently of text.
+Filesystem reads and writes anchor every ancestor to no-follow directory
+descriptors, preventing a substituted ancestor link from redirecting operations.
 
 Preview prints `RESULT=ready|blocked`, `SELECTED_COUNT`, `COUNTS`, dispositions
-and `PREVIEW_DIGEST`; apply succeeds with `RESULT=applied` and completed
+and exact per-path `BASELINE` provenance plus `PREVIEW_DIGEST`; apply succeeds with `RESULT=applied` and completed
 dispositions. Counts partition the approved selected paths; declined paths are
 listed separately. Preview exits 0 when ready, 1 for classified blockers, or 2
 for invalid/unreadable inputs. Apply exits 0 on success or 2 on refused/failed
 input or transaction. Consumer files and baseline metadata are restored on
 handled failures. The journal stores original bytes privately before writes.
 
-An interrupted process or failed restoration retains the lock/recovery journal.
+Cleanup failures also roll back content and state, retaining the lock/journal
+for inspection. An interrupted process or failed restoration retains recovery
+material.
 Preserve `.ai-dev-workflow.sync-lock/recovery.json`, inspect each named original
 snapshot and repair the consumer/ledger under maintainer supervision before
 clearing the lock. Do not auto-clear a leftover lock or retry an old approval.

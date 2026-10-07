@@ -188,6 +188,83 @@ class SyncTests(unittest.TestCase):
         (self.consumer / merge.STATE_PATH).unlink()
         self.assertEqual(before, self.fingerprint())
 
+    def test_malformed_provenance_types_name_blocker(self):
+        self.preview(); self.apply()
+        original = self.state()
+        for field, value in (("source", []), ("mode", {}), ("commit", []), ("blob", {})):
+            state = json.loads(json.dumps(original))
+            state["files"]["shared/a.md"][field] = value
+            self.write(self.consumer, merge.STATE_PATH, json.dumps(state))
+            before = self.fingerprint()
+            plan = self.preview(known=False)
+            self.assertEqual(plan["result"], "blocked")
+            self.assertIn(merge.STATE_PATH, plan["error"])
+            self.apply(expected=2)
+            self.assertEqual(before, self.fingerprint())
+        self.write(self.consumer, merge.STATE_PATH, json.dumps(original))
+        self.preview(known=False); self.apply()
+
+    def test_cleanup_failures_roll_back_and_preserve_recovery(self):
+        self.write(self.template, "shared/a.md", TEXT + "upstream\n")
+        self.incoming = self.save(self.template)
+        before = self.fingerprint()
+        unlink, rmdir = os.unlink, os.rmdir
+        lock = self.consumer / merge.LOCK_PATH
+        journal = lock / "recovery.json"
+        for operation in ("unlink", "rmdir"):
+            self.preview()
+            def fail_unlink(path, *args, **kwargs):
+                if path == "recovery.json" and operation == "unlink":
+                    raise OSError("planted journal cleanup failure")
+                return unlink(path, *args, **kwargs)
+            def fail_rmdir(path, *args, **kwargs):
+                if path == merge.LOCK_PATH and operation == "rmdir":
+                    raise OSError("planted lock cleanup failure")
+                return rmdir(path, *args, **kwargs)
+            with patch.object(os, "unlink", fail_unlink), patch.object(os, "rmdir", fail_rmdir):
+                output = self.apply(expected=2)
+            self.assertTrue(journal.is_file())
+            self.assertEqual(json.loads(journal.read_text())["originals"][merge.STATE_PATH], None)
+            retained = self.fingerprint()
+            self.assertEqual({k:v for k,v in retained.items() if not k.startswith(merge.LOCK_PATH)}, before)
+            self.assertNotIn("RESULT=applied", output)
+            # Explicit recovery cleanup is confined to this repaired test fixture.
+            journal.unlink(); lock.rmdir()
+        self.preview(); self.apply()
+        self.assertEqual((self.consumer / "shared/a.md").read_text(), TEXT + "upstream\n")
+        self.assertFalse(lock.exists())
+        print("PROOF cleanup: journal unlink and lock rmdir failures restore bytes/state and retain recovery; repaired cleanup passes")
+
+    def test_ancestor_substitution_does_not_redirect_leaf_operations(self):
+        outside = self.root / "outside"
+        outside.mkdir()
+        self.write(outside, "a.md", "outside secret\n")
+        expected = merge.local_snapshot(self.consumer, "shared/a.md")
+        expected["data"] = merge.encoded(b"approved change\n")
+        anchored_open = os.open
+        substituted = False
+        def race_open(path, flags, *args, **kwargs):
+            nonlocal substituted
+            fd = anchored_open(path, flags, *args, **kwargs)
+            if path == "shared" and flags & os.O_DIRECTORY and not substituted:
+                (self.consumer / "shared").rename(self.consumer / "held-shared")
+                os.symlink(outside, self.consumer / "shared")
+                substituted = True
+            return fd
+        with patch.object(os, "open", race_open):
+            merge.write_snapshot(self.consumer, "shared/a.md", expected, [])
+        self.assertEqual((outside / "a.md").read_text(), "outside secret\n")
+        self.assertEqual((self.consumer / "held-shared/a.md").read_text(), "approved change\n")
+        with self.assertRaises(OSError):
+            merge.local_snapshot(self.consumer, "shared/a.md")
+        (self.consumer / "shared").unlink()
+        (self.consumer / "held-shared").rename(self.consumer / "shared")
+        before = self.fingerprint()
+        self.preview(); self.apply()
+        self.assertIn("approved change", (self.consumer / "shared/a.md").read_text())
+        self.assertEqual((outside / "a.md").read_text(), "outside secret\n")
+        print("PROOF ancestor race: substitution after directory open writes only anchored consumer directory; outside bytes untouched")
+
     def test_conflict_whole_batch_and_stopped_counts(self):
         self.write(self.consumer, "shared/a.md", TEXT.replace("line 1\n", "local\n"))
         self.write(self.template, "shared/a.md", TEXT.replace("line 1\n", "upstream\n"))

@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import base64
 from collections import Counter
+from contextlib import contextmanager
 import hashlib
 import importlib.util
 import json
@@ -16,6 +17,7 @@ import os
 from pathlib import Path, PurePosixPath
 import posixpath
 import re
+import secrets
 import stat
 import subprocess
 import sys
@@ -128,7 +130,7 @@ class Objects:
         entry = self.tree(repo, sha).get(path)
         if entry is None:
             return None
-        if entry["mode"] not in MODES or entry["kind"] != "blob":
+        if not isinstance(entry["mode"], str) or entry["mode"] not in MODES or entry["kind"] != "blob":
             raise SyncError(f"unsupported Git kind/mode at {path}")
         return {"mode": entry["mode"], "data": encoded(git(repo, "cat-file", "blob", entry["blob"]))}
 
@@ -150,25 +152,56 @@ def safe_ancestors(root: Path, path: str) -> dict:
     return result
 
 
-def local_snapshot(root: Path, path: str):
-    safe_ancestors(root, path)
-    target = root / path
+@contextmanager
+def directory_fd(root: Path, relative: str = ".", created=None):
+    """Open every ancestor without following links, then anchor leaf operations."""
+    fd = os.open("/", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
     try:
-        info = target.lstat()
+        for component in root.parts[1:]:
+            next_fd = os.open(component, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+            os.close(fd)
+            fd = next_fd
+        prefix = []
+        for component in PurePosixPath(relative).parts:
+            if component == ".":
+                continue
+            prefix.append(component)
+            try:
+                next_fd = os.open(component, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+            except FileNotFoundError:
+                if created is None:
+                    raise
+                try:
+                    os.mkdir(component, dir_fd=fd)
+                    created.append(root.joinpath(*prefix))
+                except FileExistsError:
+                    pass
+                next_fd = os.open(component, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+            os.close(fd)
+            fd = next_fd
+        yield fd
+    finally:
+        os.close(fd)
+
+
+def local_snapshot(root: Path, path: str):
+    leaf = PurePosixPath(valid_path(path))
+    try:
+        with directory_fd(root, str(leaf.parent)) as parent_fd:
+            info = os.stat(leaf.name, dir_fd=parent_fd, follow_symlinks=False)
+            if stat.S_ISLNK(info.st_mode):
+                return {"mode": "120000", "data": encoded(os.fsencode(os.readlink(leaf.name, dir_fd=parent_fd)))}
+            if not stat.S_ISREG(info.st_mode):
+                raise SyncError(f"unsupported consumer kind at {path}")
+            fd = os.open(leaf.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent_fd)
+            with os.fdopen(fd, "rb") as stream:
+                opened = os.fstat(stream.fileno())
+                if not stat.S_ISREG(opened.st_mode):
+                    raise SyncError(f"consumer kind changed while reading: {path}")
+                return {"mode": "100755" if opened.st_mode & 0o111 else "100644",
+                        "data": encoded(stream.read()), "permissions": stat.S_IMODE(opened.st_mode)}
     except FileNotFoundError:
         return None
-    if stat.S_ISLNK(info.st_mode):
-        return {"mode": "120000", "data": encoded(os.fsencode(os.readlink(target)))}
-    if not stat.S_ISREG(info.st_mode):
-        raise SyncError(f"unsupported consumer kind at {path}")
-    # Do not follow a leaf replaced with a symlink between lstat and open.
-    fd = os.open(target, os.O_RDONLY | os.O_NOFOLLOW)
-    with os.fdopen(fd, "rb") as stream:
-        opened = os.fstat(stream.fileno())
-        if not stat.S_ISREG(opened.st_mode):
-            raise SyncError(f"consumer kind changed while reading: {path}")
-        return {"mode": "100755" if opened.st_mode & 0o111 else "100644",
-                "data": encoded(stream.read()), "permissions": stat.S_IMODE(opened.st_mode)}
 
 
 def same(left, right) -> bool:
@@ -247,11 +280,11 @@ def validate_state(snapshot, identity: str):
         valid_path(path)
         if not isinstance(entry, dict) or set(entry) != {"commit", "source", "blob", "mode"}:
             raise SyncError(f"{STATE_PATH}: invalid entry for {path}")
-        if entry["source"] not in {"template", "consumer"} or not isinstance(entry["commit"], str) or not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", entry["commit"]):
+        if entry["source"] not in ("template", "consumer") or not isinstance(entry["commit"], str) or not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", entry["commit"]):
             raise SyncError(f"{STATE_PATH}: invalid provenance for {path}")
         if entry["mode"] is None and entry["blob"] is None:
             continue
-        if entry["mode"] not in MODES or not isinstance(entry["blob"], str) or not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", entry["blob"]):
+        if not isinstance(entry["mode"], str) or entry["mode"] not in MODES or not isinstance(entry["blob"], str) or not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", entry["blob"]):
             raise SyncError(f"{STATE_PATH}: invalid object metadata for {path}")
     return state
 
@@ -355,7 +388,7 @@ def validate_inputs(inputs):
                 "base_ref", "base_source", "selection_file", "decline"}
     if not isinstance(inputs, dict) or set(inputs) != expected:
         raise SyncError("invalid preview input schema")
-    if inputs["role"] not in SELECTOR.VALID_ROLES:
+    if not isinstance(inputs["role"], str) or inputs["role"] not in SELECTOR.VALID_ROLES:
         raise SyncError("invalid preview repository role")
     if not isinstance(inputs["template_id"], str) or not re.fullmatch(r"[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)+", inputs["template_id"]):
         raise SyncError("invalid normalized template identity")
@@ -369,7 +402,7 @@ def validate_inputs(inputs):
             continue
         if not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", value):
             raise SyncError(f"{key}: exact full commit SHA required")
-    if bool(inputs["base_ref"]) != bool(inputs["base_source"]) or inputs["base_source"] not in {None, "template", "consumer"}:
+    if bool(inputs["base_ref"]) != bool(inputs["base_source"]) or inputs["base_source"] not in (None, "template", "consumer"):
         raise SyncError("verified base reference/source must be supplied together")
     if inputs["selection_file"] is not None and not isinstance(inputs["selection_file"], str):
         raise SyncError("invalid fallback selection filename")
@@ -477,36 +510,66 @@ def write_private_plan(path: Path, data: bytes, roots):
 
 
 def write_snapshot(root: Path, path: str, snapshot, created: list[Path]):
-    """Atomically replace one validated leaf; never follow a destination link."""
-    safe_ancestors(root, path)
-    target = root / path
-    if snapshot is None:
-        # Apply never removes a consumer file. Rollback removes only new leaves.
-        if os.path.lexists(target):
-            if target.is_dir() and not target.is_symlink():
-                raise SyncError(f"refuse directory removal at {path}")
-            target.unlink()
-        return
-    missing = []
-    parent = target.parent
-    while parent != root and not parent.exists():
-        missing.append(parent)
-        parent = parent.parent
-    for directory in reversed(missing):
-        directory.mkdir()
-        created.append(directory)
-    safe_ancestors(root, path)
-    with tempfile.TemporaryDirectory(prefix=".sync-write-", dir=target.parent) as directory:
-        replacement = Path(directory) / "new"
-        if snapshot["mode"] == "120000":
-            os.symlink(os.fsdecode(decoded(snapshot["data"])), replacement)
-        else:
-            with replacement.open("xb") as stream:
-                stream.write(decoded(snapshot["data"]))
-                stream.flush()
-                os.fchmod(stream.fileno(), snapshot["permissions"])
-                os.fsync(stream.fileno())
-        os.replace(replacement, target)
+    """Replace one leaf using anchored descriptors; never traverse ancestor links."""
+    leaf = PurePosixPath(valid_path(path))
+    with directory_fd(root, str(leaf.parent), created) as parent_fd:
+        if snapshot is None:
+            try:
+                os.unlink(leaf.name, dir_fd=parent_fd)
+            except FileNotFoundError:
+                pass
+            return
+        replacement = ".sync-write-" + secrets.token_hex(16)
+        made = False
+        try:
+            if snapshot["mode"] == "120000":
+                os.symlink(os.fsdecode(decoded(snapshot["data"])), replacement, dir_fd=parent_fd)
+                made = True
+            else:
+                fd = os.open(replacement, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                             0o600, dir_fd=parent_fd)
+                made = True
+                with os.fdopen(fd, "wb") as stream:
+                    stream.write(decoded(snapshot["data"]))
+                    stream.flush()
+                    os.fchmod(stream.fileno(), snapshot["permissions"])
+                    os.fsync(stream.fileno())
+            os.replace(replacement, leaf.name, src_dir_fd=parent_fd, dst_dir_fd=parent_fd)
+            made = False
+        finally:
+            if made:
+                os.unlink(replacement, dir_fd=parent_fd)
+
+
+def write_recovery(lock: Path, data: bytes):
+    with directory_fd(lock.parent, lock.name) as lock_fd:
+        fd = os.open("recovery.json", os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                     0o600, dir_fd=lock_fd)
+        with os.fdopen(fd, "wb") as stream:
+            stream.write(data)
+            stream.flush()
+            os.fsync(stream.fileno())
+
+
+def release_lock(lock: Path, recovery_data):
+    """Do not lose the recovery journal if releasing the lock fails."""
+    try:
+        with directory_fd(lock.parent, lock.name) as lock_fd:
+            try:
+                os.unlink("recovery.json", dir_fd=lock_fd)
+            except FileNotFoundError:
+                pass
+        with directory_fd(lock.parent) as root_fd:
+            os.rmdir(lock.name, dir_fd=root_fd)
+    except OSError as exc:
+        if recovery_data is not None:
+            try:
+                write_recovery(lock, recovery_data)
+            except FileExistsError:
+                pass
+            except OSError as restore_error:
+                raise SyncError(f"{LOCK_PATH}: cleanup failed and recovery journal restoration failed: {restore_error}") from exc
+        raise SyncError(f"{LOCK_PATH}: cleanup failed; preserve recovery material and inspect before retrying") from exc
 
 
 def apply_plan(path: Path, approved_digest: str):
@@ -523,12 +586,14 @@ def apply_plan(path: Path, approved_digest: str):
     root = Path(inputs["consumer_root"])
     lock = root / LOCK_PATH
     try:
-        lock.mkdir(mode=0o700)
+        with directory_fd(root) as root_fd:
+            os.mkdir(LOCK_PATH, mode=0o700, dir_fd=root_fd)
     except FileExistsError as exc:
         raise SyncError(f"{LOCK_PATH}: active/interrupted transaction; inspect recovery material") from exc
     written, created = [], []
     originals = {}
-    rollback_failed = False
+    recovery_data = None
+    cleanup_failed = False
     try:
         # Authority is separate from preview bytes; freshness is checked under lock.
         fresh = build_preview(inputs, lock_owned=True)
@@ -540,11 +605,8 @@ def apply_plan(path: Path, approved_digest: str):
         originals[STATE_PATH] = fresh["state_before"]
         # Recovery data is durable before the first consumer write.
         recovery = {"schema_version": 1, "approved_digest": approved_digest, "originals": originals}
-        with (lock / "recovery.json").open("xb") as stream:
-            os.fchmod(stream.fileno(), 0o600)
-            stream.write(json_bytes(recovery))
-            stream.flush()
-            os.fsync(stream.fileno())
+        recovery_data = json_bytes(recovery)
+        write_recovery(lock, recovery_data)
         state = fresh["state"] or {"schema_version": 1, "template_id": inputs["template_id"], "files": {}}
         objects = Objects()
         tree = objects.tree(Path(inputs["template_root"]), inputs["template_ref"])
@@ -576,6 +638,11 @@ def apply_plan(path: Path, approved_digest: str):
         write_snapshot(root, STATE_PATH, state_output, created)
         if local_snapshot(root, STATE_PATH) != state_output:
             raise SyncError(f"{STATE_PATH}: persistence validation failed")
+        try:
+            release_lock(lock, recovery_data)
+        except (OSError, SyncError):
+            cleanup_failed = True
+            raise
     except BaseException as exc:
         failures = []
         for rel in reversed(written):
@@ -585,20 +652,18 @@ def apply_plan(path: Path, approved_digest: str):
                 failures.append(f"{rel}: {restore_error}")
         for directory in reversed(created):
             try:
-                directory.rmdir()
+                relative = directory.relative_to(root)
+                with directory_fd(root, str(relative.parent)) as parent_fd:
+                    os.rmdir(relative.name, dir_fd=parent_fd)
             except OSError:
                 # Never remove third-party content placed in a created directory.
                 pass
         if failures:
-            rollback_failed = True
             raise SyncError(f"rollback incomplete; preserve {LOCK_PATH}/recovery.json and repair named paths: " + "; ".join(failures)) from exc
+        if cleanup_failed:
+            raise SyncError(f"rollback complete after cleanup failure; preserve {LOCK_PATH}/recovery.json and inspect before retrying") from exc
+        release_lock(lock, recovery_data)
         raise
-    finally:
-        if not rollback_failed:
-            recovery_path = lock / "recovery.json"
-            if recovery_path.exists():
-                recovery_path.unlink()
-            lock.rmdir()
     fresh["result"] = "applied"
     show(fresh)
     return 0
