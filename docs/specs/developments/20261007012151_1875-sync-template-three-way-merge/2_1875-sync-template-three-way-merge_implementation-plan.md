@@ -163,14 +163,17 @@ regular-file permission bits when writing an existing file.
   in the parent invocation. Apply requires that digest as `--approved-digest`;
   it cannot obtain authority from a digest supplied inside the preview. Bind
   selections, declines, provenance and outputs to the approved bytes.
-- Apply consumes the preview, re-computes selection, evidence, fingerprints and
+- Apply acquires the exclusive consumer lock before freshness recomputation or
+  backup capture, and holds it through validation, ledger persistence or rollback.
+  No prepared result may be applied after releasing that lock.
+- Under that lock, apply consumes the preview, re-computes selection, evidence, fingerprints and
   prepared outputs, and compares them before mutation. Include content, kind,
   permissions, baseline-state bytes, manifest/selection, identity and source
   commit. Reject tampering, moved source HEAD or any stale approved input.
 - Any blocking selected path stops the complete batch, including metadata. No
   approval mode or side-selection flag overrides this. Conflict output remains
   private scratch; never write conflict markers into consumer files.
-- Prepare backups/results and exclusive lock before writes. On a handled write
+- Prepare backups/results under the held lock before writes. On a handled write
   or validation failure restore content, modes, links, prior ledger and created
   paths; retain recovery material and stop if restoration fails. Advance ledger
   only after the data transaction validates; clean equality paths advance too,
@@ -229,6 +232,12 @@ individual fixtures. Avoid testing only internal implementation structure.
   source caches and staged changes never enter the batch.
 - Stale consumer/source/state/selection, invalid metadata and preview tampering;
   apply/validation failure restores the batch and baseline state.
+- Two independently approved previews of the same old consumer state: after the
+  first apply completes, the second must reject its stale preview under the lock,
+  rather than replace the first transaction.
+- Successful dry-run leaves consumer content and ledger byte-identical; completed
+  summary includes every clean-merge path; stopped preview includes exact conflict
+  and unknown-base categories with counts reconciling against selected paths.
 - Real template aliases validate against the planned committed tree; protocol
   parity retains existing approval modes and reviewer/CI instructions.
 
@@ -268,6 +277,16 @@ Project setup placeholders and general AGENTS/review checklists need no changes.
 | Legacy symlink/materialized-directory mismatch | Medium | High | Atomic link semantics and explicit blocker |
 | Text-only comparison loses permissions | Medium | Medium | Kind/mode-aware classifier and tests |
 | Mirror retains overwrite instructions | Medium | High | Residual search and composed-surface tests |
+
+### Reversal and downgrade
+
+Revert helper and entrypoint changes together through a new PR if the feature
+needs rollback; preserve the consumer-owned ledger as evidence rather than
+deleting it. Older overwrite-based sync entrypoints do not understand that state
+and are unsafe for patched consumers. After a downgrade, suspend sync until the
+preservation helper is restored or a maintainer manually verifies every affected
+path and approves an independently reviewed migration. Transaction recovery and
+feature downgrade are distinct operations.
 
 ## Implementation Order
 
