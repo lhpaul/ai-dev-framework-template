@@ -327,6 +327,10 @@ template:
   is_template: true
 EOF
 
+# Ambient framework scenarios below must not inherit the consumer's mode.
+# Keep the untouched master backup for guidance ownership and EXIT cleanup.
+cp "$framework_config" "$REAL_CONFIG"
+
 reset_log
 run_wrapper_in_repo "$framework_config"
 framework_out="$(cat "$TMP_ROOT/wrapper-stdout.log")"
@@ -480,8 +484,8 @@ run_test "framework_type_projection_not_empty_for_custom_field" "no" "$(printf '
 echo ""
 echo "=== list_open_framework_items.sh: --repo-root controls which config framework mode is read from (codex-github finding, #1583) ==="
 
-# Planted-violation proof: this worktree's own ambient .ai-dev-workflow.yaml
-# (unmodified, no swap) has template.is_template: true. --repo-root points
+# Planted-violation proof: the installed ambient framework fixture has
+# template.is_template: true. --repo-root points
 # at a scratch CONSUMER fixture instead. Before the fix,
 # workflow_template_is_template (no args) ignored --repo-root entirely and
 # read the ambient framework-mode config, so the framework branch ran and
@@ -777,6 +781,8 @@ GUIDANCE_PLANT_TARGET=".claude/agents/orchestrator.md"
 if [ "$GUIDANCE_IS_TEMPLATE" = "true" ]; then
   GUIDANCE_AGENT_FILES=(AGENTS.md CLAUDE.md GEMINI.md "${GUIDANCE_AGENT_FILES[@]}")
   GUIDANCE_PLANT_TARGET="AGENTS.md"
+else
+  echo "SKIP: template historical runbook checks and project-owned agent guidance (consumer)"
 fi
 
 guidance_check_all_pass() {
@@ -792,12 +798,15 @@ guidance_check_all_pass() {
   assert_absent 'protocol 91 route-by-brief row' \
     "Route by the brief's concrete path" \
     docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md || return 1
-  assert_absent 'retrospective runbook Workflow expectation' \
-    'with Type `Workflow`' \
-    docs/testing/workflow/retrospective-protocol.smoke-test.md || return 1
-  assert_absent 'tracker-Type runbook Workflow creation step' \
-    'project Type will be set to `Workflow`' \
-    docs/testing/workflow/tracker-type-field-classification.smoke-test.md || return 1
+  # Historical runbooks are not shipped in every consumer sync profile.
+  if [ "$GUIDANCE_IS_TEMPLATE" = "true" ]; then
+    assert_absent 'retrospective runbook Workflow expectation' \
+      'with Type `Workflow`' \
+      docs/testing/workflow/retrospective-protocol.smoke-test.md || return 1
+    assert_absent 'tracker-Type runbook Workflow creation step' \
+      'project Type will be set to `Workflow`' \
+      docs/testing/workflow/tracker-type-field-classification.smoke-test.md || return 1
+  fi
   return 0
 }
 
@@ -816,15 +825,18 @@ fi
 _agents_backup="$TMP_ROOT/guidance-plant-target.bak"
 cp "$REPO_ROOT/$GUIDANCE_PLANT_TARGET" "$_agents_backup"
 printf '\nUse `Workflow` for framework work (planted violation).\n' >> "$REPO_ROOT/$GUIDANCE_PLANT_TARGET"
+_guidance_plant_location="$(grep -n -F 'Use `Workflow` for framework work (planted violation).' "$REPO_ROOT/$GUIDANCE_PLANT_TARGET")"
 if guidance_check_all_pass; then
   run_test "guidance_check_planted_violation_detected" "fail" "pass"
 else
   run_test "guidance_check_planted_violation_detected" "fail" "fail"
+  printf 'PROOF guidance-check-planted-violation: FAIL at %s:%s\n' "$GUIDANCE_PLANT_TARGET" "${_guidance_plant_location%%:*}"
 fi
 cp "$_agents_backup" "$REPO_ROOT/$GUIDANCE_PLANT_TARGET"
 
 if guidance_check_all_pass; then
   run_test "guidance_check_planted_violation_reverted_passes" "pass" "pass"
+  echo "PROOF guidance-check-planted-violation: PASS after repair"
 else
   run_test "guidance_check_planted_violation_reverted_passes" "pass" "fail"
 fi

@@ -2070,8 +2070,10 @@ git -C "$PLAN_REPO" add REVIEW.md
 git -C "$PLAN_REPO" commit -q -m "fixture"
 git -C "$PLAN_REPO" remote add origin "git@github.com:owner/repo.git"
 mkdir -p "$PLAN_REPO/$PLAN_DEV_DIR"
-cp "$REPO_ROOT/$PLAN_DOC" "$PLAN_REPO/$PLAN_DOC"
-cp "$REPO_ROOT/$PLAN_SPEC" "$PLAN_REPO/$PLAN_SPEC"
+cp "$REPO_ROOT/$PLAN_DOC" "$PLAN_REPO/$PLAN_DOC" 2>/dev/null || \
+  printf '# Plan\n\n**Spec**: [spec](./1_1655-strict-plan-review-mode_specs.md)\n' > "$PLAN_REPO/$PLAN_DOC"
+cp "$REPO_ROOT/$PLAN_SPEC" "$PLAN_REPO/$PLAN_SPEC" 2>/dev/null || \
+  printf '# Spec\n\n- [ ] AC-1. Example\n' > "$PLAN_REPO/$PLAN_SPEC"
 git -C "$PLAN_REPO" add "$PLAN_DOC" "$PLAN_SPEC"
 git -C "$PLAN_REPO" commit -q -m "plan-with-spec"
 mkdir -p "$PLAN_REPO/docs/workflow/development-workflow"
