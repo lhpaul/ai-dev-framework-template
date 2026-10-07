@@ -68,6 +68,20 @@ def dependency_references(text, slug_ids=None):
     def atomic(member):
         return re.fullmatch(r'(?:#[1-9][0-9]*(?:\s*\([^\n]*\))?|(?:feature|fix|refactor|hotfix)/[A-Za-z0-9_-]+|[A-Za-z0-9_-]+)', normalized(member))
 
+    def member_parts(member):
+        # Share the same list grammar across continuation detection and final
+        # parsing. Parenthetical prose is not a separator; an atomic member on
+        # either side of a conjunction makes every adjoining member evidence.
+        parts = re.split(r',(?=(?:[^()]*\([^()]*\))*[^()]*$)', member)
+        expanded = []
+        for part in parts:
+            conjunctions = re.split(r'(?i)\s+and\s+(?=(?:[^()]*\([^()]*\))*[^()]*$)', part.strip())
+            if len(conjunctions) > 1 and any(atomic(value) for value in conjunctions):
+                expanded.extend(conjunctions)
+            else:
+                expanded.append(part)
+        return expanded
+
     def standalone_member(line):
         clean = normalized(line)
         return (re.fullmatch(r'#[1-9][0-9]*(?:\s*\([^\n]*\))?', clean)
@@ -96,7 +110,10 @@ def dependency_references(text, slug_ids=None):
                     break
                 continue
             # Explicit list members remain independent of an absence paragraph.
-            if (re.match(r'^\s*(?:[-*]|[0-9]+[.)])\s+', following) or standalone_member(following)) and paragraph:
+            bare_none = len(paragraph) == 1 and re.fullmatch(r'(?i)none\.?', normalized(paragraph[0]))
+            composite = member_parts(normalized(following))
+            independent_none_member = bare_none and len(composite) > 1 and any(atomic(part) for part in composite)
+            if (re.match(r'^\s*(?:[-*]|[0-9]+[.)])\s+', following) or standalone_member(following) or independent_none_member) and paragraph:
                 sources.append('\n'.join(paragraph)); paragraph = []
             paragraph.append(following.strip())
             index += 1
@@ -116,7 +133,9 @@ def dependency_references(text, slug_ids=None):
         pending = []
         for line in source.splitlines():
             line = normalized(line)
-            if pending and (atomic(line) or re.search(r'(?i)(?:,|\band)\s*$', pending[-1])):
+            if pending and (any(atomic(part) for part in member_parts(line))
+                            or all(atomic(part) for part in member_parts(pending[-1]))
+                            or re.search(r'(?i)(?:,|\band)\s*$', pending[-1])):
                 members.append(' '.join(pending)); pending = []
             pending.append(line)
         if pending:
@@ -124,17 +143,7 @@ def dependency_references(text, slug_ids=None):
         for member in members:
             if absence_explanation(member):
                 continue
-            # Parenthetical descriptions are not list separators. Conjunctions
-            # split atomic members, not explanatory phrases like "and merged".
-            parts = re.split(r',(?=(?:[^()]*\([^()]*\))*[^()]*$)', member)
-            expanded = []
-            for part in parts:
-                conjunctions = re.split(r'(?i)\s+and\s+', part.strip())
-                if len(conjunctions) > 1 and atomic(conjunctions[0]):
-                    expanded.extend(conjunctions)
-                else:
-                    expanded.append(part)
-            for part in expanded:
+            for part in member_parts(member):
                 part = normalized(re.sub(r'(?i)(?:,|\band)\s*$', '', part.strip()))
                 if not part or re.fullmatch(r'(?i)none\.?', part) or absence_explanation(part):
                     continue

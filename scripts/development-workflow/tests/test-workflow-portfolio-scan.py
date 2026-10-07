@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Composed fixture proofs; fake gh never forwards a request to GitHub."""
 import importlib.util
+import itertools
 import json
 import os
 import re
@@ -1023,6 +1024,59 @@ class Fixture(unittest.TestCase):
                       '## Dependencies\n- #2\n- unknown-prerequisite\n## Next'):
             with self.assertRaisesRegex(scan.EvidenceIncomplete,'Unresolved dependency'):
                 scan.dependency_references(value,{'3-fixture':3})
+
+    def test_mixed_continuation_member_grammar(self):
+        # Exercise every order and delimiter pair; a numeric member cannot
+        # mask a slug/unknown member on either side of a continuation's "and".
+        proofs=[]
+        for tokens,expected in ((('#2','#3','4-fixture'),{2,3,4}),
+                                (('#2','#3','unknown-prerequisite'),None),
+                                (('#2','#3','unknown prerequisite'),None)):
+            for order in itertools.permutations(tokens):
+                for delimiters in itertools.product((', ',' and ','\n'),repeat=2):
+                    declaration=order[0]+delimiters[0]+order[1]+delimiters[1]+order[2]
+                    if expected is None:
+                        with self.assertRaisesRegex(scan.EvidenceIncomplete,'Unresolved dependency',msg=declaration):
+                            scan.dependency_references('Dependencies: '+declaration,{'4-fixture':4})
+                    else:self.assertEqual(scan.dependency_references('Dependencies: '+declaration,{'4-fixture':4}),expected,declaration)
+                    proofs.append({'declaration':declaration,'dependencies':sorted(expected) if expected else None})
+        self.assertEqual(scan.dependency_references('Dependencies: #2 (foundation and client)\n#3 and 4-fixture',{'4-fixture':4}),{2,3,4})
+        for value in ('None\n#3 and 4-fixture','None\n#3, 4-fixture'):
+            self.assertEqual(scan.dependency_references('Dependencies: '+value,{'4-fixture':4}),{3,4})
+        for value in ('None\n#3 and unknown-prerequisite','None\n#3 and unknown prerequisite'):
+            with self.assertRaisesRegex(scan.EvidenceIncomplete,'Unresolved dependency'):
+                scan.dependency_references('Dependencies: '+value,{'4-fixture':4})
+        self.assertEqual(scan.dependency_references('Dependencies: None. Siblings\n#177, #705 are unrelated.'),set())
+        if os.environ.get('WORKFLOW_PORTFOLIO_EVIDENCE_DIR'):
+            (Path(os.environ['WORKFLOW_PORTFOLIO_EVIDENCE_DIR'])/'mixed-continuation-grammar.json').write_text(json.dumps({'caseCount':len(proofs),'cases':proofs},indent=2))
+
+    def test_mixed_continuation_actual_producers(self):
+        development=self.root/self.artifact()
+        for number in (2,3,4):self.artifact(number)
+        spec=next(development.glob('1_*_specs.md'));plan=next(development.glob('2_*_implementation-plan.md'))
+        forms=('#2\n#3 and 4-fixture','#2\n4-fixture and #3',
+               '#2\n#3, 4-fixture','#2 and #3 and 4-fixture',
+               '#2\n#3 and unknown-prerequisite','#2\n4-fixture and unknown-prerequisite',
+               '#2\nunknown prerequisite and #3','None\n#3 and 4-fixture',
+               'None\n#3, 4-fixture','None\n#3 and unknown-prerequisite')
+        for producer in ('body','spec','plan','dependsOn','dependencies'):
+            for declaration in forms:
+                for status in (('Released',) if 'unknown' in declaration else ('Backlog','Released')):
+                    spec.write_text('fixture\n');plan.write_text('fixture\n');fields={}
+                    if producer=='body':fields['bodies']={'1':'Dependencies: '+declaration}
+                    elif producer in ('spec','plan'):
+                        (spec if producer=='spec' else plan).write_text('**Dependencies**: '+declaration+'\n')
+                    else:fields[producer]=declaration
+                    self.reset(active=4,statuses={'1':'Plan Ready','2':'Merged','3':'Released','4':status},**fields)
+                    report=self.scan();self.assertEqual(self.ledger()['graphql'],5)
+                    if 'unknown' in declaration:
+                        self.assertNotIn(1,[r['number'] for r in report['fullyRead']])
+                        self.assertNotIn(1,[r['number'] for r in report['classification']])
+                        self.assertTrue(any(r['number']==1 and 'Unresolved dependency' in r['reason'] for r in report['omissions']))
+                    else:
+                        record=next(r for r in report['fullyRead'] if r['number']==1)
+                        self.assertEqual(record['dependencies'],[3,4] if declaration.startswith('None') else [2,3,4],declaration)
+                        self.assertEqual(next(r for r in report['classification'] if r['number']==1)['action'],'hold-dependency' if status=='Backlog' else 'implement')
 
     def test_dependency_private_framing_rejection(self):
         development=self.artifact();self.reset(active=1,statuses={'1':'Plan Ready'})
