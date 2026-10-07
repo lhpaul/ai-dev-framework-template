@@ -2589,8 +2589,8 @@ workflow_github_project_item_list_cache_invalidate() {
 # same compact JSON shape for the card whose content is <owner/repo>#<issue>.
 # The join is by (repository, number), never by number alone, using
 # WORKFLOW_PROJECT_ITEM_REPO_JQ_DEFS (#1804): an org board can hold another
-# repository's issue with the same number. Prints nothing when the card is not
-# on the board (membership=absent); unreadable/capped reads print nothing.
+# repository's issue with the same number. Proven absence returns compact JSON
+# with membership=absent; unreadable/capped reads print nothing.
 #
 # Cache files older than an hour are swept on every write, so files left by
 # exited processes do not accumulate; no EXIT trap is needed.
