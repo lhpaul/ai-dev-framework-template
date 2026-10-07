@@ -16,10 +16,10 @@
   complete-record publication, and forbidden mutation attempts.
 - Do not run a live `/run-work`, whole-board listing, real bounded dispatch,
   or actual archival. This invocation authorizes fixture/stub testing only.
-- The proposed automated entrypoint is
+- The delivered automated entrypoint is
   `bash scripts/development-workflow/tests/test-workflow-portfolio-scan.sh`.
-  Implementation may group equivalent cases differently while preserving the
-  assertions below; update this runbook to the delivered command names.
+  The Bash entrypoint runs the composed Python fixture harness and preserves the
+  assertions below.
 - The runner entrypoint is composed: router → canonical scan coordinator →
   snapshot-aware batch/next-action classification → report/proposal. A test
   of just budget arithmetic or a no-argument historical folder sweep is
@@ -176,7 +176,7 @@ bounded-command regression proofs, not mutations performed by a scan.
 
 1. Read Protocol 90's subsection directly beside Step 1a rate-limit guidance.
    Confirm safe Released/Cancelled statuses, Merged/in-flight exclusion,
-   canonical reconciliation of legacy Done, manual/auto-archive options, and
+   canonical reconciliation of legacy Done, manual archival and the built-in auto-archive Status-filter limitation, and
    restoring reopened items.
 2. Confirm the integration performance note links to that subsection and states
    the archived fallback limitation tested in Step 6.

@@ -131,6 +131,15 @@ categories:
     - path: scripts/development-workflow/validate-workflow-config.sh
       mode_scope: product_repo_injection
       note: product-repo runtime helper for non-secret workflow configuration validation
+    - path: scripts/development-workflow/workflow-project-reader.py
+      mode_scope: product_repo_injection
+      note: bounded target project lookup shared by workflow-lib and portfolio scans
+    - path: scripts/development-workflow/workflow-portfolio-scan.py
+      mode_scope: hub_only
+      note: GraphQL budget-aware scan coordinator and invocation snapshot validation
+    - path: scripts/development-workflow/workflow-portfolio-scan.sh
+      mode_scope: hub_only
+      note: canonical no-target GitHub Projects portfolio scan entrypoint
     - path: scripts/development-workflow/workflow-lib.sh
       mode_scope: product_repo_injection
       note: shared shell helpers required by product-repo runtime scripts

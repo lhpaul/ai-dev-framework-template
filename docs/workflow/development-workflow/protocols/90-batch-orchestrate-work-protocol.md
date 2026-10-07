@@ -251,59 +251,112 @@ From the tracker, collect for each open item:
 
 **Exclude** items whose tracker status is already `Done`, `Merged`, `Cancelled`, or equivalent — these are not candidates for advancement.
 
-#### Rate-limit awareness for GitHub Projects pagination (Step 1a)
+#### GraphQL budget-aware discovery (Step 1a)
 
-**Problem**: `gh project item-list --limit 10000` fetches all project board items — including closed and merged ones — in paginated GraphQL requests. Repositories with 300+ board items exhaust the 5 000-point GraphQL rate limit, causing a ~3.5-minute hard pause that grows worse as more items accumulate.
+For a no-target GitHub Projects scan, use the canonical read-only coordinator:
 
-**Recommended approach — query open issues directly**:
-
-Instead of paginating the full project board to discover candidates, first fetch all open issues
-from the repository (which is state-filtered at the GitHub Issues API level and therefore fast),
-then make a single `item-list` call to fetch all project board items and cross-reference them
-against the open-issue list client-side:
-
+<!-- workflow-shell-contract: bash -->
 ```bash
-# Step 1: list all open issues (only open issues are eligible for dispatch or start proposal)
-OPEN_ISSUES=$(gh issue list --state open --limit 1000 --json number,title,labels,createdAt)
-
-# Step 2: fetch all project board items once and filter to only open-issue candidates
-gh project item-list "$PROJECT_NUMBER" --owner "$PROJECT_OWNER" --limit 10000 --format json \
-  | jq --argjson open "$OPEN_ISSUES" \
-    '[.items[] | . as $item | ($open[] | select(.number == $item.content.number)) // empty | {number: .number, title: .title, status: $item.status}]'
+bash scripts/development-workflow/workflow-portfolio-scan.sh
+# Structured report for runner integration:
+bash scripts/development-workflow/workflow-portfolio-scan.sh --json
 ```
 
-This pattern avoids the need to call `item-list` once per open issue. A single `item-list` fetch
-is unavoidable (GitHub Projects v2 has no server-side open-issue filter on the items node), but
-by pre-filtering the candidate set to open GitHub Issues first, the downstream processing only
-touches relevant items and the orchestrator does not spend query points scoring closed board entries.
+Read the report once and build the portfolio summary solely from its complete
+invocation evidence. Do not follow it with a board listing, a no-argument
+historical-folder sweep, or live tracker/PR inspection during classification.
+The coordinator's `--scan-snapshot` path in batch/next-action classification
+requires the same repository, project and invocation; it has no live-read
+fallback. A later `/run-item`, `/run-items` or `/run-epic` uses fresh bounded
+reads and pre-mutation checks, never a prior scan snapshot.
 
-**Alternative — client-side post-filter when item-list is unavoidable**:
+The coordinator samples `.resources.graphql` from `gh api rate_limit` immediately
+before projection and after scanning. REST quota cannot substitute for that
+budget. It derives current identities from complete paginated REST open issues
+and PRs, plus folders and current remote workflow branches. Full coverage reads
+all current open issues; partial coverage intersects those identities with
+in-flight evidence. Closed historical folders/branches do not trigger reads.
+Each target uses an archived-aware issue membership connection and, when needed,
+one filtered organization-project candidate page joined by exact repository and
+issue number. It never enumerates the board to discover targets.
 
-If a full `item-list` call is unavoidable (e.g., to obtain project-specific field values not available from `gh issue list`), add a client-side filter to exclude terminal-status items immediately after fetching:
+The optional `portfolio_scan.graphql_reserve` defaults to 1000. Only whole-number
+scalars in 0..5000 are valid; malformed, empty/null, boolean or collection values
+warn and use the default. The concrete projection ceiling is **P=2** points
+(scalar user/org project-ID queries); a target costs at most **Q=21** points
+(20 membership pages and one filtered candidate page). Both projected costs
+include the entire projection spend E: `C_full=E+21*N_full`,
+`C_partial=min(C_full,E+21*N_partial)`. Each request reserves one point before
+sending; a server cost inconsistent with the fixed query contract stops reads
+as tracker failure. No historical average or old board size supplies a bound.
 
-```bash
-# Fetch all items but filter out terminal statuses client-side
-gh project item-list "$PROJECT_NUMBER" --owner "$PROJECT_OWNER" --limit 10000 --format json \
-  | jq '[.items[] | select(.status != null and (.status | IN("Done","Merged","Released","Cancelled")) | not)]'
-```
+Apply these ordered coverage decisions:
 
-This does not reduce the number of GraphQL pages fetched, but it reduces the size of the result set that downstream processing operates on. Prefer the open-issue query approach (above) to avoid the page-count problem entirely.
+| Evidence | Coverage / reason | Next action |
+| --- | --- | --- |
+| Before budget unreadable | Full scan; GraphQL budget could not be read | Attempt full coverage; no reserve guarantee |
+| R < P+reserve, before projection | Scan deferred (budget too low); GraphQL budget too low to scan | No projection, board reads or proposal; report reset |
+| R >= C_full+reserve | Full scan; GraphQL budget sufficient | Complete Backlog discovery |
+| C_partial+reserve <= R < C_full+reserve | Partial scan (budget-limited); GraphQL budget too low for a full scan | In-flight only; skip Backlog discovery |
+| Neither cost fits, or no conservative bound is available | Scan deferred (budget too low); GraphQL budget too low to scan | No board read or proposal; report reset |
+| Rate-limit rejection after any fully read item | Partial scan (budget-limited); GraphQL budget ran out during the scan | Stop immediately; only fully read eligible work; remove all new Backlog starts |
+| Rate-limit rejection before a fully read item, including projection | Scan deferred (budget too low); GraphQL budget ran out during the scan | Stop immediately; no proposal |
 
-**Rate-limit check**: Before and after any large pagination operation, check remaining GraphQL quota:
+Other API failures retain tracker-unavailable handling. A missing required
+Status/Type/dependency input is HELD; incomplete PR/API evidence cannot produce
+an actionable resume or proposed record. No retry, waiting, dispatch, tracker
+update, PR comment, branch creation or archival occurs inside discovery.
 
-```bash
-gh api rate_limit --jq '.resources.graphql | {limit, remaining, used, reset: (.reset | todate)}'
-```
+Every report carries **Scan coverage**, its reason, **GraphQL points spent by
+this scan**, **GraphQL points remaining**, and **GraphQL budget resets at**.
+After-scan remaining/reset always use the newer sample. When before is unreadable,
+spent is Unavailable; when after is unreadable, all three spend fields are
+Unavailable and the warning **GraphQL budget could not be read** appears while
+coverage stands. If remaining rises or reset changes, spent reads
+**Unavailable (budget reset during scan)**. Observed spend may include other
+consumers on the same account. Full/Partial coverage with no rejection and an
+after sample below reserve keeps its coverage and shows **GraphQL budget below
+reserve after scan**, identifying possible concurrent spend. Deferred coverage
+omits that warning.
 
-If `remaining` falls below 1 000 points after Step 1a, warn the human before dispatching Work Item Runners:
+Render the distinct Protocol 90 categories from complete evidence:
+`INFORMATIONAL - not actionable in this proposal`,
+`ACTIONABLE RESUME - can advance now`, `PROPOSED BATCH - your decision`, and
+`HELD - not included in proposed batch`. Name skipped identities and reasons.
+Partial coverage never proposes a not-yet-started Backlog item. Recommend the
+explicit bounded command only for proposed-batch records; scan approval does
+not authorize informational or held records.
 
-```text
-WARNING: GraphQL rate limit low after portfolio discovery — <N> points remaining (limit: 5000).
-Further GraphQL calls (tracker updates, PR queries) may hit the limit and block for up to <reset-time>.
-Consider waiting until the rate limit resets before dispatching the batch.
-```
+Existing dispatch safeguards remain: warn below 1000 remaining; below 200,
+pause dispatch and report the reset time. These are post-discovery execution
+checks, not a waiting loop added to the read-only scan.
 
-The rate limit resets once per hour. When `remaining` is critically low (< 200 points), pause dispatch and report the reset time to the human.
+#### Terminal-item archival hygiene (beside Step 1a)
+
+The operator may archive **Released** and **Cancelled** cards after reconciling
+their linked issue and canonical tracker status. **Merged** is awaiting release
+and is not safe to archive until Released; no in-flight status is safe. A legacy
+**Done** label/status is not an archival decision: reconcile it to the canonical
+Released/Cancelled vocabulary before acting. Closing an issue alone does not
+make an unreleased Merged card safe to archive.
+
+Use the project's UI to archive selected reconciled Released/Cancelled cards
+manually. GitHub Projects' [built-in auto-archive filters](https://github.com/github/docs/blob/main/content/issues/planning-and-tracking-with-projects/automating-your-project/archiving-items-automatically.md)
+support issue/PR state, reason and updated time, not custom Status values.
+They cannot enforce this Released/Cancelled safety rule. Do not enable an
+`is:closed` or `is:merged` rule as a substitute while Merged work awaits release.
+A separate operator-controlled reconciliation would be needed before such a
+rule is safe; custom archival automation is outside this workflow's scope.
+Restore an archived card when reopening its work, then reconcile the issue and
+current tracker state before a bounded run.
+
+Single-item primary reads explicitly include archived cards. An archived
+organization-project card invisible to that connection is readable only when
+the host supports the archived-aware filtered fallback and the exact card lies
+within its single 100-candidate response. Unsupported schemas, truncation without
+an exact match, and conflicting identities leave membership unknown; the operator
+must restore/reconcile the card. No command automatically archives, restores or
+deletes it, and unknown membership cannot cause a board-add or guessed update.
 
 #### Linear provider (Step 1a)
 
