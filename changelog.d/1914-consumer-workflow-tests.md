@@ -1,0 +1,3 @@
+### Fixed
+
+- Make synced readiness-label fixtures independent of consumer reviewer policy and local overrides; scope template Markdown trigger and legacy workflow removal assertions to template repositories, with consumer-shaped regression coverage (#1914).
