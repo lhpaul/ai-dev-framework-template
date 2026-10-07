@@ -29,6 +29,7 @@ ere_escape() {
 branch_name=""
 pr_number=""
 development_path=""
+scan_snapshot=""
 target_repo=""
 repo_root="$(workflow_repo_root)"
 
@@ -43,6 +44,11 @@ require_option_value() {
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
+    --scan-snapshot)
+      require_option_value "$@"
+      scan_snapshot="$2"
+      shift 2
+      ;;
     --branch)
       require_option_value "$@"
       branch_name="$2"
@@ -90,6 +96,13 @@ if [ "$targets" -ne 1 ]; then
 fi
 
 cd "$repo_root"
+if [ -n "$scan_snapshot" ]; then
+  snapshot_args=(--repo-root "$repo_root" --scan-snapshot "$scan_snapshot" --mode next)
+  [ -n "$development_path" ] && snapshot_args+=(--development "$development_path")
+  [ -n "$branch_name" ] && snapshot_args+=(--branch "$branch_name")
+  [ -n "$pr_number" ] && snapshot_args+=(--pr "$pr_number")
+  exec python3 "$SCRIPT_DIR/workflow-portfolio-scan.py" "${snapshot_args[@]}"
+fi
 
 mode_context="$(workflow_repository_mode "$repo_root")"
 workflow_mode="$(workflow_context_value WORKFLOW_MODE "$mode_context")"

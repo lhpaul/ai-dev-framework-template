@@ -2283,6 +2283,7 @@ workflow_github_project_item_for_issue() {
   local project_number="$2"
   local project_owner project_id repo_owner repo_name response
   local cursor page_state item_json has_next end_cursor page_count line missing_fields type_field_name
+  local seen_cursors="|"
   local graphql_exhausted="false"
   local -a graphql_args
 
@@ -2393,6 +2394,11 @@ if not isinstance(project_items.get('pageInfo'), dict) or type(project_items['pa
     sys.exit(2)
 if any(not isinstance(item, dict) for item in project_items['nodes']):
     sys.exit(2)
+if project_items['pageInfo']['hasNextPage'] and not project_items['pageInfo'].get('endCursor'):
+    sys.exit(2)
+project_matches = [item for item in project_items['nodes'] if isinstance(item.get('project'), dict) and item['project'].get('id') == project_id]
+if len(project_matches) > 1 and any(item != project_matches[0] for item in project_matches[1:]):
+    sys.exit(2)
 match = ''
 missing_fields = ''
 for item in project_items.get('nodes') or []:
@@ -2493,6 +2499,13 @@ EOF
       echo "Warning: project item lookup exceeded pagination limit for issue #${issue_number}; tracker status not read." >&2
       break
     fi
+    case "$seen_cursors" in
+      *"|${end_cursor}|"*)
+        echo "Warning: repeated project membership cursor for issue #${issue_number}; tracker status not read." >&2
+        break
+        ;;
+    esac
+    seen_cursors="${seen_cursors}${end_cursor}|"
     cursor="$end_cursor"
   done
 
@@ -2555,7 +2568,7 @@ _workflow_github_project_item_list_cache_dir() {
 
 # workflow_github_project_item_list_cache_invalidate
 #
-# Drops every board scan cached by this process. Called after a successful
+# Drops every target/project candidate result cached by this process. Called after a successful
 # `gh project item-add` (so the next lookup sees the new card) and after every
 # successful project field mutation (Status, Type, Priority, Size), so a
 # fallback read never reports a value this process has just overwritten.
@@ -3018,7 +3031,7 @@ ensure_on_project_board() {
 
   echo "Board membership check: issue #${issue_number} added to project board."
 
-  # The membership read above may have cached a board scan that predates this
+  # The membership read above may have cached a target read that predates this
   # card (issue #1801); drop it so the status update below can find the item.
   workflow_github_project_item_list_cache_invalidate
 

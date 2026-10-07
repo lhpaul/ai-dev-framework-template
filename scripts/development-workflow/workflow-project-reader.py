@@ -12,6 +12,8 @@ import time
 
 FIELDS = '''id
   content { ... on Issue { number url repository { nameWithOwner } issueType { name } } }
+  dependsOn: fieldValueByName(name:"DependsOn") { ... on ProjectV2ItemFieldTextValue { text } }
+  dependencies: fieldValueByName(name:"Dependencies") { ... on ProjectV2ItemFieldTextValue { text } }
   status: fieldValueByName(name:"Status") { ... on ProjectV2ItemFieldSingleSelectValue { name } }
   configuredType: fieldValueByName(name:$typeFieldName) { ... on ProjectV2ItemFieldSingleSelectValue { name } }
   customType: fieldValueByName(name:"Custom Type") { ... on ProjectV2ItemFieldSingleSelectValue { name } }
@@ -23,13 +25,15 @@ PRIMARY = '''query($owner:String!,$repo:String!,$issueNumber:Int!,$typeFieldName
  repository(owner:$owner,name:$repo) { issue(number:$issueNumber) {
  projectItems(first:100,after:$after,includeArchived:true) { nodes { project { id number } %s }
  pageInfo { hasNextPage endCursor } } } } rateLimit { cost } }''' % FIELDS
-FALLBACK = '''query($projectId:ID!,$query:String!,$typeFieldName:String!) {
- node(id:$projectId) { ... on ProjectV2 { items(first:100,query:$query,archivedStates:[ARCHIVED,NOT_ARCHIVED]) {
+FALLBACK = '''query($projectId:ID!,$selector:String!,$typeFieldName:String!) {
+ node(id:$projectId) { ... on ProjectV2 { items(first:100,query:$selector,archivedStates:[ARCHIVED,NOT_ARCHIVED]) {
  nodes { %s } pageInfo { hasNextPage endCursor } } } } rateLimit { cost } }''' % FIELDS
 
 
 class ReadError(RuntimeError):
-    pass
+    def __init__(self, message, errors=None):
+        super().__init__(message)
+        self.errors = errors or []
 
 
 class Client:
@@ -65,6 +69,8 @@ class Client:
             raise ReadError('GraphQL query reservation exceeded')
         entry = {'query': query_text, 'variables': variables, 'reserved': 1}
         self.ledger.append(entry)
+        # Reserve every attempted request, including partial/error responses.
+        self.spent += 1
         args = ['api', 'graphql', '-f', 'query=' + query_text]
         for key, value in variables.items():
             if value is not None:
@@ -72,14 +78,16 @@ class Client:
         response = self.call(args)
         # Failed/partial GraphQL responses never establish absence.
         if not isinstance(response, dict) or response.get('errors'):
-            raise ReadError(json.dumps(response.get('errors') if isinstance(response, dict) else response))
+            raise ReadError(json.dumps(response.get('errors') if isinstance(response, dict) else response), response.get('errors') if isinstance(response, dict) else None)
         data = response.get('data')
         if not isinstance(data, dict):
             raise ReadError('Missing GraphQL data')
-        cost = (data.get('rateLimit') or {}).get('cost')
+        rate = data.get('rateLimit')
+        if rate is not None and not isinstance(rate, dict):
+            raise ReadError('Malformed GraphQL rateLimit evidence')
+        cost = (rate or {}).get('cost')
         if self.strict_cost and (type(cost) is not int or cost != 1):
             raise ReadError('GraphQL cost contract changed: expected 1, received ' + repr(cost))
-        self.spent += 1
         entry['charged'] = cost if type(cost) is int else 1
         return data
 
@@ -105,11 +113,14 @@ def compact(item, project_id, preferred):
         (content or {}).get('issueType'), item.get('customType'),
         item.get('compactCustomType'), item.get('type')]
     def name(value):
-        return value.get('name', '') if isinstance(value, dict) else ''
-    return {'item_id': item.get('id') or '', 'project_id': project_id,
+        return value.get('name', '') if isinstance(value, dict) and isinstance(value.get('name', ''), str) else ''
+    if not isinstance(item.get('id'), str) or not item['id']:
+        raise ReadError('Missing project item identity')
+    return {'item_id': item['id'], 'project_id': project_id,
             'status': name(item.get('status') or item.get('fieldValueByName')),
             'type': next((name(c) for c in candidates if name(c)), ''),
-            'priority': name(item.get('priority')), 'size': name(item.get('size'))}
+            'priority': name(item.get('priority')), 'size': name(item.get('size')),
+            'depends_on': ' '.join(value.get('text', '') for value in (item.get('dependsOn'), item.get('dependencies')) if isinstance(value, dict) and isinstance(value.get('text', ''), str))}
 
 
 def selector(repo, issue):
@@ -128,7 +139,7 @@ def fallback(client, number, project_id, repo, preferred='', cache_dir=None, cac
     cache_file = None
     if cache_dir and cache_pid and ttl > 0:
         folder = Path(cache_dir)
-        if folder.is_dir() and not folder.is_symlink() and folder.stat().st_uid == os.getuid():
+        if folder.is_dir() and not folder.is_symlink() and folder.stat().st_uid == os.getuid() and folder.stat().st_mode & 0o077 == 0:
             key = hashlib.sha256(json.dumps([repo.lower(), project_id, number, preferred, query, 'both-archived']).encode()).hexdigest()
             cache_file = folder / f'{cache_pid}-{key}.json'
             if cache_file.is_file() and not cache_file.is_symlink() and time.time() - cache_file.stat().st_mtime < ttl * 60:
@@ -138,14 +149,19 @@ def fallback(client, number, project_id, repo, preferred='', cache_dir=None, cac
                         return cached
                 except ValueError:
                     pass
-    data = client.graphql(FALLBACK, projectId=project_id, query=query, typeFieldName=preferred)
-    nodes, info = connection((data.get('node') or {}).get('items'))
+    data = client.graphql(FALLBACK, projectId=project_id, selector=query, typeFieldName=preferred)
+    node = data.get('node')
+    if not isinstance(node, dict):
+        raise ReadError('Missing project node')
+    nodes, info = connection(node.get('items'))
     matches = []
     for item in nodes:
         content = item.get('content') or {}
         if not isinstance(content, dict) or (content.get('repository') is not None and not isinstance(content.get('repository'), dict)):
             raise ReadError('Malformed project content identity')
         identity = (content.get('repository') or {}).get('nameWithOwner')
+        if type(content.get('number')) is not int or not isinstance(identity, str) or not identity:
+            raise ReadError('Missing project content identity; membership unknown')
         if content.get('number') == number and isinstance(identity, str) and identity.lower() == repo.lower():
             matches.append(compact(item, project_id, preferred))
     if len(matches) > 1 and any(item != matches[0] for item in matches[1:]):
@@ -178,11 +194,14 @@ def target(client, number, project_id, repo, preferred=''):
     seen = set()
     for _ in range(20):
         data = client.graphql(PRIMARY, owner=owner, repo=name, issueNumber=number, typeFieldName=preferred, after=cursor)
-        issue = (data.get('repository') or {}).get('issue')
+        repository_value = data.get('repository')
+        if not isinstance(repository_value, dict):
+            raise ReadError('Missing repository evidence')
+        issue = repository_value.get('issue')
         if not isinstance(issue, dict):
             raise ReadError('Target issue unavailable')
         nodes, info = connection(issue.get('projectItems'))
-        matches = [compact(item, project_id, preferred) for item in nodes if (item.get('project') or {}).get('id') == project_id]
+        matches = [compact(item, project_id, preferred) for item in nodes if isinstance(item.get('project'), dict) and item['project'].get('id') == project_id]
         if matches:
             if any(item != matches[0] for item in matches[1:]):
                 raise ReadError('Conflicting exact project-card identities')
@@ -211,7 +230,7 @@ def main():
         result = fallback(Client(), args.number, args.project_id, args.repo, args.type_field,
                           args.cache_dir, args.cache_pid, args.ttl)
         print(json.dumps(result, separators=(',', ':')))
-    except (ReadError, OSError, ValueError) as exc:
+    except (ReadError, OSError, ValueError, TypeError, AttributeError) as exc:
         print('Warning: bounded item-list fallback failed; tracker status not read: ' + str(exc), file=sys.stderr)
         return 1
     return 0

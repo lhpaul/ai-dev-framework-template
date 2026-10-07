@@ -13,7 +13,7 @@
 #      an unknown Status and fails only in strict mode (issue #1564)
 #   7. When issue.projectItems is empty but the card is on the board (org
 #      project + unlinked personal repository), Status/Type/membership reads
-#      fall back to one per-process cached item-list scan (issue #1801)
+#      fall back to one per-target cached filtered candidate page (issue #1801)
 #
 # Usage: bash scripts/development-workflow/tests/test-workflow-lib-github-projects.sh
 # covers: scripts/development-workflow/workflow-lib.sh
@@ -529,8 +529,8 @@ case "$membership_output" in
   *) membership_result="$membership_output" ;;
 esac
 run_test "membership_missing_adds_issue" "added" "$membership_result"
-# One board scan confirms absence; item-add invalidates the cache, so the
-# initial-status update re-reads the board once more (issue #1801).
+# One bounded candidate read confirms absence; item-add invalidates the cache, so the
+# initial-status update re-reads the target once more (issue #1801).
 run_test "membership_missing_scans_board_before_and_after_add" "2" "$(count_log_matches 'items[(]first:100,query:')"
 run_test "membership_missing_adds_once" "1" "$(count_log_matches 'project item-add')"
 
@@ -550,7 +550,7 @@ run_test "fallback_type_read" "Feature" "$fallback_type"
 run_test "fallback_item_id_is_this_repo_card" "PVTI_item_824" "$(printf '%s' "$fallback_item" | jq -r '.item_id')"
 run_test "fallback_item_carries_project_id" "PVT_project_1" "$(printf '%s' "$fallback_item" | jq -r '.project_id')"
 run_test "fallback_item_carries_priority_and_size" "High/S" "$(printf '%s' "$fallback_item" | jq -r '.priority + "/" + .size')"
-run_test "fallback_board_scanned_once_per_process" "1" "$(count_log_matches 'items[(]first:100,query:')"
+run_test "fallback_target_read_once_per_process" "1" "$(count_log_matches 'items[(]first:100,query:')"
 run_test "fallback_tries_graphql_first_each_read" "3" "$(count_log_matches 'projectItems')"
 
 reset_log
@@ -645,7 +645,7 @@ unset MOCK_PROJECT_ITEM_MODE
 unset MOCK_ITEM_LIST_MODE
 run_test "fallback_cache_invalidate_forces_rescan" "2" "$(count_log_matches 'items[(]first:100,query:')"
 
-# A successful field write must drop the cached board, or the next fallback
+# A successful field write must drop the cached target, or the next fallback
 # read reports the value this process just overwrote. Each case: one read
 # (scan 1), one write whose item lookup reuses the cache, one read (scan 2).
 for fallback_write in status type priority; do

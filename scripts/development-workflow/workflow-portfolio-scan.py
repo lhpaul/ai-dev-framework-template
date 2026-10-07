@@ -1,0 +1,513 @@
+#!/usr/bin/env python3
+"""Read-only, invocation-scoped GitHub Projects portfolio coordination."""
+import argparse
+from datetime import datetime, timezone
+import importlib.util
+import json
+import os
+from pathlib import Path
+import re
+import subprocess
+import sys
+import tempfile
+import uuid
+
+sys.dont_write_bytecode = True
+SCRIPT_DIR = Path(__file__).resolve().parent
+
+def load_module(name, path):
+    spec = importlib.util.spec_from_file_location(name, path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+reader = load_module('workflow_project_reader', SCRIPT_DIR / 'workflow-project-reader.py')
+resolver = load_module('workflow_config_resolver', SCRIPT_DIR / 'workflow-config-resolver.py')
+ReadError = reader.ReadError
+FULL = 'Full scan'
+PARTIAL = 'Partial scan (budget-limited)'
+DEFERRED = 'Scan deferred (budget too low)'
+TERMINAL = {'Merged', 'Released', 'Cancelled'}
+P, Q = 2, 21
+
+
+class EvidenceIncomplete(ReadError):
+    """A successfully read item cannot advance until bounded reconciliation."""
+
+
+
+def run(args, root):
+    result = subprocess.run(args, cwd=root, text=True, capture_output=True)
+    if result.returncode:
+        raise ReadError(result.stderr.strip() or 'Local evidence read failed')
+    return result.stdout
+
+
+def repository(root):
+    remote = run(['git', 'remote', 'get-url', 'origin'], root).strip()
+    match = re.fullmatch(r'(?:https://(?:[^/@]+@)?github\.com/|git@github\.com:|ssh://git@github\.com/)([A-Za-z0-9-]+/[A-Za-z0-9_.-]+?)(?:\.git)?', remote)
+    if not match:
+        raise ReadError('Cannot resolve GitHub repository from origin')
+    return match[1]
+
+
+def configuration(root):
+    path = Path(os.environ.get('AI_DEV_WORKFLOW_CONFIG_FILE', str(root / '.ai-dev-workflow.yaml')))
+    if not path.is_file():
+        path = root / '.ai-dev-workflow.yaml'
+    return resolver.parse_yaml_subset(path, preserve_empty_values=True)
+
+
+def reserve_from_config(config, warnings):
+    section = config.get('portfolio_scan', {})
+    if isinstance(section, dict) and 'graphql_reserve' not in section:
+        return 1000
+    value = section.get('graphql_reserve') if isinstance(section, dict) else None
+    if type(value) is int and 0 <= value <= 5000:
+        return value
+    if isinstance(value, str) and re.fullmatch(r'[0-9]+', value) and int(value) <= 5000:
+        return int(value)
+    warnings.append('Invalid portfolio_scan.graphql_reserve; using 1000')
+    return 1000
+
+
+def budget(client):
+    try:
+        value = client.rest('rate_limit')['resources']['graphql']
+        if not isinstance(value, dict) or any(type(value.get(k)) is not int or value[k] < 0 for k in ('remaining', 'reset')):
+            return None
+        return value
+    except (ReadError, KeyError, TypeError):
+        return None
+
+
+def rate_limited(error):
+    # Same rate-limit vocabulary as run-work-router.sh/#1503. Unknown errors fail.
+    if any(isinstance(item, dict) and item.get('type') == 'RATE_LIMITED' for item in getattr(error, 'errors', [])):
+        return True
+    text = str(error).lower()
+    return any(value in text for value in ('api rate limit', 'rate limit exceeded', 'secondary rate limit'))
+
+
+def issue_number(branch):
+    match = re.match(r'^(?:spec|implementation-plan|feature|fix|refactor|hotfix)/(?:[A-Z][A-Z0-9]*-)?([1-9][0-9]*)(?:-|$)', branch)
+    return int(match[1]) if match else None
+
+
+def current_local_evidence(root):
+    folders = {}
+    base = root / 'docs/specs/developments'
+    if base.is_dir():
+        for folder in sorted(base.iterdir()):
+            if not folder.is_dir():
+                continue
+            # Match workflow-lib's extract_github_issue_number: document first,
+            # then numeric slug, including folders with no timestamp prefix.
+            number = None
+            for document in sorted(folder.glob('*.md')):
+                match = re.search(r'^\*\*Issue\*\*:\s*\[?#([0-9]+)', document.read_text(), re.MULTILINE)
+                if match:
+                    number = int(match[1])
+                    break
+            if number is None:
+                slug = re.sub(r'^\d{14}_', '', folder.name)
+                match = re.match(r'^([1-9][0-9]*)-', slug)
+                if not match:
+                    continue
+                number = int(match[1])
+            if number in folders:
+                raise ReadError(f'Duplicate development folders for #{number}')
+            folders[number] = {'development_path': str(folder.relative_to(root)),
+                               'spec': any(folder.glob('1_*_specs.md')) or any(folder.glob('1_*_specs.doc.md')),
+                               'plan': any(folder.glob('2_*_implementation-plan.md')) or any(folder.glob('2_*_implementation-plan.doc.md'))}
+    branches = {}
+    refs = run(['git', 'ls-remote', '--heads', 'origin'], root)
+    for line in refs.splitlines():
+        parts = line.split('\t')
+        if len(parts) != 2:
+            raise ReadError('Malformed remote branch evidence')
+        branch = parts[1].removeprefix('refs/heads/')
+        number = issue_number(branch)
+        if number:
+            branches.setdefault(number, []).append(branch)
+    return folders, branches
+
+
+def project_id(client, owner, number):
+    for kind in ('user', 'organization'):
+        query = 'query($owner:String!,$number:Int!) { %s(login:$owner) { projectV2(number:$number) { id } } rateLimit { cost } }' % kind
+        try:
+            data = client.graphql(query, owner=owner, number=number)
+        except ReadError as exc:
+            if kind == 'user' and exc.errors and all(isinstance(error, dict) and error.get('type') == 'NOT_FOUND' and error.get('path', [])[:1] == ['user'] for error in exc.errors):
+                continue
+            raise
+        value = (data.get(kind) or {}).get('projectV2')
+        if isinstance(value, dict) and isinstance(value.get('id'), str) and value['id']:
+            return value['id']
+    raise ReadError('Configured project unavailable')
+
+
+def complete_pr(client, repo, pr):
+    number = pr.get('number')
+    if type(number) is not int:
+        raise ReadError('Missing open PR identity')
+    detail = client.rest(f'repos/{repo}/pulls/{number}')
+    head = detail.get('head') if isinstance(detail, dict) else None
+    if not isinstance(head, dict) or not head.get('sha') or head.get('ref') != (pr.get('head') or {}).get('ref') or not isinstance(detail.get('draft'), bool) or not isinstance(detail.get('labels'), list):
+        raise ReadError('Incomplete PR evidence')
+    comments = client.rest(f'repos/{repo}/issues/{number}/comments?per_page=100', paginate=True)
+    status = client.rest(f'repos/{repo}/commits/{head["sha"]}/status')
+    check_pages = client.call(['api', '--paginate', '--slurp', f'repos/{repo}/commits/{head["sha"]}/check-runs?per_page=100'])
+    if not isinstance(check_pages, list) or any(not isinstance(page, dict) or not isinstance(page.get('check_runs'), list) for page in check_pages):
+        raise ReadError('Incomplete PR check pagination')
+    checks = {'check_runs': [check for page in check_pages for check in page['check_runs']]}
+    if not isinstance(status, dict) or not isinstance(checks, dict) or not isinstance(checks.get('check_runs'), list):
+        raise ReadError('Incomplete PR status evidence')
+    return {'number': number, 'branch': head['ref'], 'sha': head['sha'], 'draft': detail['draft'],
+            'labels': [label['name'] for label in detail['labels'] if isinstance(label, dict) and isinstance(label.get('name'), str)],
+            'comments': comments, 'status': status, 'checks': checks}
+
+
+def complete_record(client, repo, issue, card, folders, branches, prs):
+    number = issue['number']
+    if not card.get('item_id') or not card.get('status') or not card.get('type'):
+        raise EvidenceIncomplete('Incomplete Status/Type/project membership')
+    folder = folders.get(number, {})
+    current_prs = [complete_pr(client, repo, pr) for pr in prs if issue_number((pr.get('head') or {}).get('ref', '')) == number]
+    body = issue.get('body') or ''
+    if not isinstance(body, str):
+        raise EvidenceIncomplete('Incomplete dependency evidence')
+    if card.get('depends_on'):
+        body += '\nDependsOn: ' + card['depends_on']
+    dependency_lines = [line.strip().strip('|').replace('**', '') for line in body.splitlines() if re.match(r'(?i)^\s*(?:[-*|]\s*)?(?:\*\*)?(?:dependson|depends on|blocked by|dependency|dependencies)\b', line)]
+    dependencies = sorted({int(n) for line in dependency_lines for n in re.findall(r'#([1-9][0-9]*)\b', line)})
+    # Unknown dependency prose is held, never interpreted as an empty dependency set.
+    if dependency_lines and any(not re.search(r'#([1-9][0-9]*)', line) for line in dependency_lines):
+        raise EvidenceIncomplete('Unresolved dependency declaration')
+    dependency_states = {}
+    record = {'number': number, 'title': issue['title'], 'body': body, **card, **folder,
+              'branches': branches.get(number, []), 'prs': current_prs, 'dependencies': dependencies,
+              'inFlight': bool(folder or branches.get(number) or current_prs), 'dependencyStates': dependency_states}
+    # Bounded REST lookup for the expected active implementation branch only.
+    if folder.get('plan') and not current_prs and not any(branch.startswith(('feature/', 'fix/', 'refactor/', 'hotfix/')) for branch in record['branches']):
+        slug = re.sub(r'^\d{14}_', '', Path(folder['development_path']).name)
+        prefix = 'feature' if folder.get('spec') else 'refactor'
+        closed = client.rest(f'repos/{repo}/pulls?state=closed&head={repo.split("/")[0]}:{prefix}/{slug}&per_page=100', paginate=True)
+        record['implementationMerged'] = any(pr.get('merged_at') for pr in closed)
+    record['fullyRead'] = True
+    return record
+
+
+def classify(record, snapshot):
+    if not record.get('fullyRead'):
+        return 'HELD', 'hold-unreadable', 'Item was not fully read'
+    status = record['status']
+    if status in TERMINAL:
+        return 'INFORMATIONAL', 'skip', 'Terminal tracker status'
+    if status == 'Backlog' and snapshot['framework'] and record['type'] == 'Workflow' and not (record.get('spec') or record.get('plan') or record['branches'] or record['prs']):
+        return 'HELD', 'hold-misclassified-type', 'Framework Backlog Type Workflow requires reclassification'
+    if any(record['dependencyStates'].get(str(n)) not in ('Merged', 'Released') for n in record['dependencies']):
+        return 'HELD', 'hold-dependency', 'Dependency readiness requires bounded reconciliation'
+    if record['prs']:
+        pr = record['prs'][0]
+        if 'ready-for-human-review' in pr['labels']:
+            return 'INFORMATIONAL', 'wait-human-review', 'Current PR awaits human/delegated gate'
+        return 'ACTIONABLE RESUME', 'resume-fix-loop' if 'needs-fixes' in pr['labels'] else 'resolve-pr-readiness', 'Current PR can resume bounded review'
+    expected_prefixes = ('spec/',) if status in ('Writing Spec', 'Spec in Review') else ('implementation-plan/',) if status in ('Writing Plan', 'Plan in Review') else ('feature/', 'fix/', 'refactor/', 'hotfix/') if status in ('In Development', 'Development in Review', 'Plan Ready') else ()
+    active_branches = [branch for branch in record['branches'] if branch.startswith(expected_prefixes)]
+    if active_branches:
+        prefix = active_branches[0].split('/')[0]
+        action = 'run-spec-review-and-open-pr' if prefix == 'spec' else 'run-plan-review-and-open-pr' if prefix == 'implementation-plan' else 'run-code-review-and-open-pr'
+        return 'ACTIONABLE RESUME', action, 'Current workflow branch exists'
+    if status == 'Spec Ready' and record.get('spec'):
+        return 'PROPOSED BATCH', 'write-plan', 'Approved spec ready for planning'
+    if status == 'Plan Ready' and record.get('plan'):
+        if record.get('implementationMerged'):
+            return 'HELD', 'reconcile-tracker', 'Merged implementation evidence conflicts with Plan Ready'
+        return 'PROPOSED BATCH', 'implement', 'Approved plan ready for implementation'
+    if status == 'Backlog':
+        if record.get('plan'):
+            return 'PROPOSED BATCH', 'implement', 'Stale Backlog reconciled from existing plan artifacts'
+        if record.get('spec'):
+            return 'PROPOSED BATCH', 'write-plan', 'Stale Backlog reconciled from existing spec artifacts'
+        if snapshot['coverage'] == PARTIAL:
+            return 'HELD', 'skip-backlog-discovery', 'Partial scan skips new Backlog starts'
+        return 'PROPOSED BATCH', ('implement' if record['type'] == 'Bug' else 'write-plan' if record['type'] == 'Refactor' else 'write-spec'), 'Current Backlog work'
+    return 'HELD', 'reconcile-stage', 'Tracker/artifact evidence needs bounded reconciliation'
+
+
+def snapshot_read(path, root):
+    try:
+        data = json.loads(Path(path).read_text())
+    except (OSError, ValueError) as exc:
+        raise ReadError('Malformed scan snapshot') from exc
+    invocation = os.environ.get('WORKFLOW_SCAN_INVOCATION_ID')
+    config = configuration(root)
+    project = str((config.get('issue_tracker') or {}).get('project_number', ''))
+    if not invocation or not isinstance(data, dict) or data.get('invocation') != invocation or data.get('repo', '').lower() != repository(root).lower() or data.get('projectNumber') != project or data.get('coverage') not in (FULL, PARTIAL, DEFERRED) or not isinstance(data.get('fullyRead'), list):
+        raise ReadError('Scan snapshot repository/project/invocation scope mismatch')
+    open_ids = data.get('openIdentities')
+    if not isinstance(open_ids, list) or any(type(n) is not int for n in open_ids):
+        raise ReadError('Invalid open identity evidence')
+    seen = set()
+    for record in data['fullyRead']:
+        if not isinstance(record, dict) or record.get('fullyRead') is not True or type(record.get('number')) is not int or record['number'] not in open_ids or record['number'] in seen or not record.get('status') or not record.get('type') or any(key not in record for key in ('prs', 'branches', 'dependencies', 'dependencyStates', 'inFlight')):
+            raise ReadError('Incomplete or duplicate scan record')
+        if not isinstance(record['prs'], list) or not isinstance(record['branches'], list) or any(not isinstance(branch, str) for branch in record['branches']) or not isinstance(record['dependencies'], list) or any(type(n) is not int for n in record['dependencies']) or not isinstance(record['dependencyStates'], dict) or type(record['inFlight']) is not bool:
+            raise ReadError('Malformed scan evidence types')
+        for pr in record['prs']:
+            if not isinstance(pr, dict) or not isinstance(pr.get('labels'), list) or any(not isinstance(label, str) for label in pr['labels']):
+                raise ReadError('Malformed scan PR evidence')
+        seen.add(record['number'])
+    return data
+
+
+def snapshot_classify(args):
+    root = Path(args.repo_root).resolve()
+    snapshot = snapshot_read(args.scan_snapshot, root)
+    if args.mode == 'validate':
+        return
+    metadata = {}
+    if os.environ.get('WORKFLOW_SCAN_LOCAL_METADATA_FILE'):
+        path = Path(os.environ['WORKFLOW_SCAN_LOCAL_METADATA_FILE'])
+        for line in path.read_text().splitlines():
+            item = json.loads(line)
+            if not isinstance(item, dict) or type(item.get('number')) is not int:
+                raise ReadError('Malformed local classification metadata')
+            metadata[item['number']] = item
+    output = []
+    blocks = []
+    for record in snapshot['fullyRead']:
+        if args.development and record.get('development_path') != args.development:
+            continue
+        if args.branch and args.branch not in record['branches']:
+            continue
+        if args.pr and not any(pr['number'] == args.pr for pr in record['prs']):
+            continue
+        category, action, reason = classify(record, snapshot)
+        output.append({'number': record['number'], 'category': category, 'action': action, 'reason': reason, **metadata.get(record['number'], {})})
+        if action in ('write-plan', 'run-spec-review-and-open-pr', 'run-plan-review-and-open-pr') and output[-1].get('toolFix') == 'unknown':
+            output[-1]['toolFix'] = 'no'
+        if args.mode == 'next':
+            print(f'TARGET=issue:{record["number"]}\nSTATUS={record["status"]}\nNEXT_ACTION={action}\nCATEGORY={category}')
+        elif category != 'HELD':
+            # Preserve canonical lane caps and portfolio report categorization.
+            status = record['status']
+            if status == 'Backlog' and (record.get('spec') or record.get('plan')):
+                status = 'Plan Ready' if record.get('plan') else 'Spec Ready'
+            labels = ','.join(label for pr in record['prs'] for label in pr['labels'])
+            if any(c in labels for c in '\r\n'):
+                raise ReadError('Malformed PR label evidence')
+            local_runtime = metadata.get(record['number'], {}).get('localRuntime', 'none')
+            if local_runtime not in ('none', 'exclusive'):
+                raise ReadError('Malformed local runtime classification')
+            blocks.append(f'SLUG={record["number"]}\nSTATUS={status}\nNEXT_ACTION={action}\nLABELS={labels}\nLOCAL_RUNTIME={local_runtime}\n')
+    if args.mode == 'next' and len(output) != 1:
+        raise ReadError('Target has no unique fully read scan record')
+    if args.mode == 'batch':
+        if blocks:
+            result = subprocess.run(['bash', str(SCRIPT_DIR / 'workflow-batch-lanes.sh'), '--repo-root', str(root)],
+                                    input='\n'.join(blocks), text=True, capture_output=True)
+            if result.returncode:
+                raise ReadError(result.stderr.strip() or 'Snapshot lane classification failed')
+            by_number = {row['number']: row for row in output}
+            for block in result.stdout.split('\n\n'):
+                values = dict(line.split('=', 1) for line in block.splitlines() if '=' in line)
+                if values.get('SLUG', '').isdigit() and 'REPORT_LABEL' in values:
+                    row = by_number[int(values['SLUG'])]
+                    row['category'] = values['REPORT_LABEL'].split(' - ')[0]
+                    row['reportLabel'] = values['REPORT_LABEL']
+                    row['dispatch'] = values.get('DISPATCH', '')
+                    row['stageLane'] = values.get('STAGE_LANE', '')
+                    if row['category'] == 'HELD':
+                        row['reason'] = values.get('HOLD_REASON') or row['reason']
+        print(json.dumps(output))
+
+
+def scan(args):
+    root = Path(args.repo_root).resolve()
+    config = configuration(root)
+    tracker = config.get('issue_tracker') or {}
+    if tracker.get('provider') != 'github_projects':
+        raise ReadError('Portfolio coordinator requires github_projects; other providers retain Protocol 90')
+    repo = repository(root)
+    owner = os.environ.get('GITHUB_PROJECT_OWNER', repo.split('/')[0])
+    project_number = tracker.get('project_number')
+    if not re.fullmatch(r'[1-9][0-9]*', str(project_number)):
+        raise ReadError('Missing configured project number')
+    client = reader.Client(strict_cost=True)
+    warnings = []
+    reserve = reserve_from_config(config, warnings)
+    before = budget(client)
+    coverage, reason = FULL, 'GraphQL budget sufficient'
+    report = {'repo': repo, 'projectNumber': str(project_number), 'invocation': uuid.uuid4().hex,
+              'framework': (config.get('template') or {}).get('is_template') is True,
+              'fullyRead': [], 'omissions': [], 'openIdentities': [], 'reserve': reserve,
+              'projectionCeiling': P, 'targetBound': Q, 'warnings': warnings}
+    rejection = False
+    error = None
+    pending = []
+    tracker_evidence = {}
+
+    def publish_dependencies():
+        for record in pending:
+            if all(n in tracker_evidence for n in record['dependencies']):
+                record['dependencyStates'] = {str(n): tracker_evidence[n] for n in record['dependencies']}
+                report['fullyRead'].append(record)
+            else:
+                report['omissions'].append({'number': record['number'], 'reason': 'Dependency tracker state unreadable in this invocation; bounded reconciliation required'})
+        pending.clear()
+    if before is None:
+        warnings.append('GraphQL budget could not be read')
+        reason = 'GraphQL budget could not be read'
+    if before is not None and before['remaining'] < P + reserve:
+        coverage, reason = DEFERRED, 'GraphQL budget too low to scan'
+    else:
+        try:
+            client.allowance = P
+            project = project_id(client, owner, int(project_number))
+            report['projectId'] = project
+            issues = client.rest(f'repos/{repo}/issues?state=open&per_page=100', paginate=True)
+            prs = client.rest(f'repos/{repo}/pulls?state=open&per_page=100', paginate=True)
+            identities = {}
+            for issue in issues:
+                if not isinstance(issue, dict) or type(issue.get('number')) is not int or not isinstance(issue.get('title'), str) or issue.get('state') != 'open':
+                    raise ReadError('Incomplete current issue enumeration')
+                if 'pull_request' not in issue:
+                    identities[issue['number']] = issue
+            folders, branches = current_local_evidence(root)
+            for pr in prs:
+                if not isinstance(pr, dict) or not isinstance(pr.get('head'), dict):
+                    raise ReadError('Incomplete current PR enumeration')
+            full = sorted(identities)
+            inflight = set(folders) | set(branches) | {issue_number(pr['head'].get('ref', '')) for pr in prs}
+            partial = [n for n in full if n in inflight]
+            report['openIdentities'] = full
+            full_cost, partial_cost = client.spent + Q * len(full), client.spent + Q * len(partial)
+            report['projectionSpend'] = client.spent
+            report['fullCost'], report['partialCost'] = full_cost, min(full_cost, partial_cost)
+            if before is not None:
+                if before['remaining'] >= full_cost + reserve:
+                    coverage = FULL
+                elif before['remaining'] >= partial_cost + reserve:
+                    coverage, reason = PARTIAL, 'GraphQL budget too low for a full scan'
+                else:
+                    coverage, reason = DEFERRED, 'GraphQL budget too low to scan'
+                client.allowance = before['remaining'] - reserve
+            else:
+                client.allowance = None
+            selected = full if coverage == FULL else partial if coverage == PARTIAL else []
+            report['omissions'] = [{'number': n, 'reason': 'Backlog discovery skipped (budget-limited)'} for n in full if n not in selected]
+            type_field = (tracker.get('custom_fields') or {}).get('type_field', '')
+            for index, number in enumerate(selected):
+                try:
+                    start = client.spent
+                    card = reader.target(client, number, project, repo, type_field)
+                    if client.spent - start > Q:
+                        raise ReadError('Target query reservation exceeded')
+                    if card.get('status') and card.get('type'):
+                        tracker_evidence[number] = card['status']
+                    record = complete_record(client, repo, identities[number], card, folders, branches, prs)
+                    # Publication occurs only after tracker and required REST evidence complete.
+                    if record['dependencies']:
+                        pending.append(record)
+                    else:
+                        report['fullyRead'].append(record)
+                except ReadError as exc:
+                    report['omissions'].append({'number': number, 'reason': str(exc)})
+                    if isinstance(exc, EvidenceIncomplete):
+                        continue
+                    if rate_limited(exc):
+                        report['omissions'] += [{'number': n, 'reason': 'Not read after rate-limit rejection'} for n in selected[index + 1:]]
+                        raise
+                    raise
+            publish_dependencies()
+        except ReadError as exc:
+            publish_dependencies()
+            if rate_limited(exc):
+                rejection = True
+                coverage = PARTIAL if report['fullyRead'] else DEFERRED
+                reason = 'GraphQL budget ran out during the scan'
+            else:
+                error = str(exc)
+    report['coverage'], report['reason'] = coverage, reason
+    report['ledger'] = client.ledger
+    report['scanOwnedSpend'] = client.spent
+    after = budget(client)
+    spent = 'Unavailable'
+    remaining, reset = 'Unavailable', 'Unavailable'
+    if after is not None:
+        remaining = after['remaining']
+        reset = datetime.fromtimestamp(after['reset'], timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')
+        if before is not None:
+            spent = 'Unavailable (budget reset during scan)' if after['reset'] != before['reset'] or after['remaining'] > before['remaining'] else before['remaining'] - after['remaining']
+        if coverage != DEFERRED and not rejection and after['remaining'] < reserve:
+            warnings.append('GraphQL budget below reserve after scan; other consumers on the same account may have spent budget during the scan')
+    else:
+        if 'GraphQL budget could not be read' not in warnings:
+            warnings.append('GraphQL budget could not be read')
+    report['spend'] = {'GraphQL points spent by this scan': spent, 'GraphQL points remaining': remaining, 'GraphQL budget resets at': reset}
+    report['spendNote'] = 'Observed spend may include spending by other consumers on the same account.'
+    report['skipped'] = 'Backlog discovery skipped' if coverage == PARTIAL else 'No proposal' if coverage == DEFERRED else ''
+    report['classification'] = []
+    if error:
+        report['error'] = error
+    elif coverage != DEFERRED:
+        with tempfile.TemporaryDirectory(prefix='workflow-scan-') as directory:
+            path = Path(directory) / 'snapshot.json'
+            path.write_text(json.dumps(report))
+            env = os.environ.copy()
+            env['WORKFLOW_SCAN_INVOCATION_ID'] = report['invocation']
+            paths = [record['development_path'] for record in report['fullyRead'] if record.get('development_path')]
+            result = subprocess.run(['bash', str(SCRIPT_DIR / 'workflow-batch-plan.sh'), '--repo-root', str(root), '--scan-snapshot', str(path), *paths], env=env, text=True, capture_output=True)
+            if result.returncode:
+                raise ReadError(result.stderr.strip() or 'Scan classifier failed')
+            report['classification'] = json.loads(result.stdout)
+    proposed = [row['number'] for row in report['classification'] if row['category'] == 'PROPOSED BATCH']
+    report['recommendedCommand'] = ('/run-items ' + ' '.join(map(str, proposed))) if len(proposed) >= 2 else ('/run-item ' + str(proposed[0])) if proposed else ''
+    if args.json:
+        print(json.dumps(report))
+    else:
+        print(f'Scan coverage: {coverage}\nReason: {reason}')
+        for label, value in report['spend'].items():
+            print(f'{label}: {value}')
+        print(report['spendNote'])
+        for warning in warnings:
+            print('WARNING: ' + warning)
+        if report['skipped']:
+            print(report['skipped'])
+        for row in report['classification']:
+            print(f'{row["category"]}: #{row["number"]} — {row["action"]} — {row["reason"]}')
+        for omission in report['omissions']:
+            print(f'HELD: #{omission["number"]} — {omission["reason"]}')
+        if report['recommendedCommand']:
+            print('Recommended command: ' + report['recommendedCommand'])
+        if error:
+            print('Tracker unavailable: ' + error, file=sys.stderr)
+    return 1 if error else 0
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--repo-root', default=str(SCRIPT_DIR.parent.parent))
+    parser.add_argument('--json', action='store_true')
+    parser.add_argument('--scan-snapshot')
+    parser.add_argument('--mode', choices=('batch', 'next', 'validate'), default='batch')
+    parser.add_argument('--development')
+    parser.add_argument('--branch')
+    parser.add_argument('--pr', type=int)
+    parser.add_argument('paths', nargs='*')
+    args = parser.parse_args()
+    try:
+        if args.scan_snapshot:
+            snapshot_classify(args)
+            return 0
+        return scan(args)
+    except (ReadError, resolver.ConfigError, OSError, ValueError, TypeError, AttributeError, KeyError) as exc:
+        print('Tracker unavailable: ' + str(exc), file=sys.stderr)
+        return 1
+
+
+if __name__ == '__main__':
+    sys.exit(main())

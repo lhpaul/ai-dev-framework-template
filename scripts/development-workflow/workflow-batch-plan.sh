@@ -9,7 +9,7 @@ source "$SCRIPT_DIR/workflow-lib.sh"
 usage() {
   cat <<'EOF'
 Usage:
-  ./scripts/development-workflow/workflow-batch-plan.sh [--repo <name>] [--repo-root <path>] [development-path ...]
+  ./scripts/development-workflow/workflow-batch-plan.sh [--repo <name>] [--repo-root <path>] [--scan-snapshot <invocation-file>] [development-path ...]
 
 Classifies development folders into batch-planning candidates for the batch
 orchestrator. If no paths are given, scans docs/specs/developments/*.
@@ -456,6 +456,7 @@ open_implementation_pr_metadata() {
   done <<< "$pr_rows"
 }
 
+scan_snapshot=""
 target_repo=""
 repo_root="$(workflow_repo_root)"
 development_paths=()
@@ -473,6 +474,12 @@ option_value_or_exit() {
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
+    --scan-snapshot)
+      option="$1"
+      shift
+      scan_snapshot="$(option_value_or_exit "$option" "${1:-}")"
+      shift
+      ;;
     --repo)
       option="$1"
       shift
@@ -497,6 +504,28 @@ while [ "$#" -gt 0 ]; do
 done
 
 cd "$repo_root" || exit 1
+if [ -n "$scan_snapshot" ]; then
+  python3 "$SCRIPT_DIR/workflow-portfolio-scan.py" --repo-root "$repo_root" \
+    --scan-snapshot "$scan_snapshot" --mode validate
+  snapshot_local="$(mktemp)"
+  trap 'rm -f "$snapshot_local"' EXIT
+  # Reuse the existing local tool/file/runtime classifiers, without live reads.
+  for development_path in "${development_paths[@]}"; do
+    [ -d "$development_path" ] || continue
+    snapshot_number="$(extract_github_issue_number "$development_path")"
+    [ -n "$snapshot_number" ] || continue
+    tool_fix_output="$(classify_tool_fix "$development_path")"
+    tool_fix="$(printf '%s\n' "$tool_fix_output" | head -1)"
+    file_set="$(extract_file_set "$development_path")"
+    local_runtime="$(classify_local_runtime "$development_path")"
+    jq -nc --argjson number "$snapshot_number" --arg path "$development_path" \
+      --arg tool "$tool_fix" --arg files "$file_set" --arg runtime "$local_runtime" \
+      '{number:$number,developmentPath:$path,toolFix:$tool,fileSet:$files,localRuntime:$runtime}' >> "$snapshot_local"
+  done
+  WORKFLOW_SCAN_LOCAL_METADATA_FILE="$snapshot_local" python3 "$SCRIPT_DIR/workflow-portfolio-scan.py" \
+    --repo-root "$repo_root" --scan-snapshot "$scan_snapshot" --mode batch "${development_paths[@]}"
+  exit 0
+fi
 
 if [ "${#development_paths[@]}" -eq 0 ]; then
   if [ -d "docs/specs/developments" ]; then
