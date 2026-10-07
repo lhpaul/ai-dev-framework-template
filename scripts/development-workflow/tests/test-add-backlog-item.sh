@@ -801,11 +801,21 @@ run_test "creation_refusal_no_bypass_linear_no_tracker_action_required" "no-bypa
 echo ""
 echo "=== create (#1583): framework-creation-valid-types-preserved ==="
 
+cat > "$_config_file" <<'FRAMEWORK_CONFIG'
+schema_version: 2
+issue_tracker:
+  provider: github_projects
+  project_number: 1
+template:
+  is_template: true
+FRAMEWORK_CONFIG
+
 for _valid_type in Feature Bug Refactor; do
   run_create "ok" --title "Test" --body "body" --type "$_valid_type"
   run_test "framework_creation_valid_types_preserved_${_valid_type}_exits_zero" "0" "$(get_exit)"
   run_test "framework_creation_valid_types_preserved_${_valid_type}_creates_issue" "1" "$(count_log_matches 'issue create')"
 done
+cp "$_config_backup" "$_config_file"
 
 echo ""
 echo "=== create (#1583): consumer-creation-all-classes-unchanged ==="
