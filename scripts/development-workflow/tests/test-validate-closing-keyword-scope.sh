@@ -1177,6 +1177,52 @@ check "planted-violation: the two inputs differ only on line 3" "Refs #97" \
 check "planted-violation: and are otherwise identical" "" \
   "$(diff <(sed '3d' "$PLANTED_DESCRIPTION") <(sed '3s/^Closes #97$/Refs #97/' "$PLANTED_DESCRIPTION" | sed '3d') || true)"
 
+# Run the shipped resolver, including set -euo pipefail and output-file writes.
+# GitHub rejects an unkeyed second line even when the shell exits successfully.
+awk '
+  /^        run: \|/ { in_run=1; next }
+  in_run && /^  validate:/ { exit }
+  in_run && /^          / { sub(/^          /, ""); print }
+' "$WORKFLOW" > "$TMP_DIR/resolve-targets.sh"
+mkdir -p "$TMP_DIR/resolver-bin"
+cat > "$TMP_DIR/resolver-bin/gh" <<'STUB'
+#!/usr/bin/env bash
+if [ "${RESOLVER_API_FAIL:-false}" = "true" ]; then exit 1; fi
+printf '%s\n' "${RESOLVER_PRS:-}"
+STUB
+chmod +x "$TMP_DIR/resolver-bin/gh"
+
+resolver_case() {
+  local name="$1" state="$2" branch="$3" action="$4" siblings="$5"
+  local api_fail="$6" expected="$7" unreadable="$8"
+  local rc=0 actual
+  : > "$TMP_DIR/resolver-output"
+  PATH="$TMP_DIR/resolver-bin:$PATH" REPO=owner/repo PR_NUMBER=42 \
+    PR_STATE="$state" PR_BRANCH="$branch" ACTION="$action" \
+    RESOLVER_PRS="$siblings" RESOLVER_API_FAIL="$api_fail" \
+    GITHUB_OUTPUT="$TMP_DIR/resolver-output" \
+    bash "$TMP_DIR/resolve-targets.sh" > "$TMP_DIR/resolver-log" 2>&1 || rc=$?
+  check "$name exits green" "0" "$rc"
+  actual="$(cat "$TMP_DIR/resolver-output")"
+  check "$name emits exactly two keyed output lines" \
+    "$(printf 'prs=%s\nsibling_list_unreadable=%s' "$expected" "$unreadable")" "$actual"
+  check "$name emits parseable JSON" "yes" \
+    "$(sed -n 's/^prs=//p' "$TMP_DIR/resolver-output" | jq -e 'type == "array"' >/dev/null 2>&1 && echo yes || echo no)"
+}
+resolver_case "closed PR without siblings" closed fix/97-slug closed '' false '[]' false
+resolver_case "closed non-implementation PR" closed spec/97-slug closed '' false '[]' false
+resolver_case "open PR without siblings" open fix/97-slug opened '' false '["42"]' false
+resolver_case "closed PR with siblings" closed fix/97-slug closed \
+  '{"number":101,"body":"Closes #97"}
+{"number":103,"body":"Fixes #97"}' false '["101","103"]' false
+resolver_case "open PR deduplicates and sorts siblings" open fix/97-slug opened \
+  '{"number":103,"body":"Closes #97"}
+{"number":101,"body":"Fixes #97"}
+{"number":101,"body":"Closes #97"}' false '["42","101","103"]' false
+resolver_case "closed PR with unreadable listing" closed fix/97-slug closed '' true '[]' true
+check_contains "unreadable closed listing retains warning annotation" '::warning title=Closing-keyword scope did not run::' "$(cat "$TMP_DIR/resolver-log")"
+resolver_case "open PR with unreadable listing" open fix/97-slug opened '' true '["42"]' true
+
 # --- The workflow's own routing contract -----------------------------------
 
 # The fan-out's selection program is EXTRACTED from the workflow and executed,
