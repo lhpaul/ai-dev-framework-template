@@ -144,12 +144,20 @@ def compact(item, project_id, preferred):
             date.fromisoformat(due_date)
         except ValueError as exc:
             raise ReadError('Malformed Due date evidence') from exc
+    dependencies = []
+    for field in ('dependsOn', 'dependencies'):
+        value = item.get(field)
+        if value is None:
+            continue
+        if not isinstance(value, dict) or not isinstance(value.get('text'), str):
+            raise ReadError('Malformed dependency field evidence')
+        dependencies.append(value['text'])
     return {'item_id': item['id'], 'project_id': project_id,
             'status': name(item.get('status') or item.get('fieldValueByName')),
             'type': next((name(c) for c in candidates if name(c)), ''),
             'priority': name(item.get('priority')), 'size': name(item.get('size')),
             'due_date': due_date,
-            'depends_on': ' '.join(value.get('text', '') for value in (item.get('dependsOn'), item.get('dependencies')) if isinstance(value, dict) and isinstance(value.get('text', ''), str))}
+            'depends_on': ' '.join(dependencies)}
 
 
 def selector(repo, issue):

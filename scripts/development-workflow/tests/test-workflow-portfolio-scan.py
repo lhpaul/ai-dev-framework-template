@@ -67,6 +67,7 @@ if args[1]=='graphql':
  card={'id':'I'+str(n),'project':{'id':'P1'},'content':{'number':n,'repository':{'nameWithOwner':state['repo']},'issueType':{'name':state.get('nativeType','Bug')}},'status':{'name':state.get('statuses',{}).get(str(n),'Backlog')},'type':{'name':'Feature'},'customType':{'name':state.get('customType','Refactor')},'configuredType':{'name':state.get('configuredType','Feature')}}
  for alias in ('dependsOn','dependencies'):
   if alias in state:card[alias]={'text':state[alias]}
+  if alias in state.get('dependencyRaw',{}):card[alias]=state['dependencyRaw'][alias]
  card['priority']={'name':state.get('priorities',{}).get(str(n),'Normal')}
  card['dueDate']={'date':state.get('dueDates',{}).get(str(n))}
  if state.get('missingType'): card.pop('type');card.pop('customType');card.pop('configuredType');card['content'].pop('issueType')
@@ -111,9 +112,9 @@ if endpoint.endswith('issues?state=open&per_page=100'):
  finish([issues[:20],issues[20:]])
 if 'pulls?state=all&base=' in endpoint:finish([[]])
 if endpoint.endswith('pulls?state=open&per_page=100'):
- prs=[{'number':70,'head':{'ref':'fix/1-fixture'}}] if state.get('pr') else []
+ prs=[{'number':70,'head':{'ref':state.get('prBranch','fix/1-fixture')}}] if state.get('pr') else []
  finish([prs])
-if endpoint.endswith('/pulls/70'):finish({'number':70,'head':{'ref':'fix/1-fixture','sha':'H1'},'draft':True,'labels':state.get('labels',[])})
+if endpoint.endswith('/pulls/70'):finish({'number':70,'head':{'ref':state.get('prBranch','fix/1-fixture'),'sha':'H1'},'draft':True,'labels':state.get('labels',[])})
 if endpoint.endswith('/issues/70/comments?per_page=100'):
  if state.get('prFail'):finish(error='PR evidence unavailable')
  finish([state.get('prComments',[])])
@@ -653,11 +654,25 @@ class Fixture(unittest.TestCase):
                     row=next(row for row in report['classification'] if row['number']==1)
                     self.assertEqual(row['action'],action)
 
+    def test_malformed_dependency_field_atomicity(self):
+        self.artifact()
+        for field in ('dependsOn','dependencies'):
+            for value in ('unknown',[],7,{}, {'text':None},{'text':[]},{'text':7}):
+                self.reset(active=1,statuses={'1':'Plan Ready'},dependencyRaw={field:value})
+                report=self.scan(ok=False)
+                self.assertEqual(report['fullyRead'],[]);self.assertEqual(report['classification'],[])
+                self.assertEqual(report['recommendedCommand'],'');self.assertEqual(self.ledger()['graphql'],2)
+                self.assertIn('Malformed dependency field evidence',report['error'])
+            for value in (None,{'text':''},{'text':'None'}):
+                self.reset(active=1,statuses={'1':'Plan Ready'},dependencyRaw={field:value})
+                report=self.scan();self.assertEqual(report['fullyRead'][0]['dependencies'],[])
+                self.assertEqual(report['classification'][0]['action'],'implement');self.assertEqual(self.ledger()['graphql'],2)
+
     def test_review_fix_loop_lane_composition(self):
         self.artifact()
         for status in ('Spec in Review','Plan in Review','Development in Review'):
             for labels,expected in (([{'name':'needs-fixes'}],'ACTIONABLE RESUME'),([], 'INFORMATIONAL'),([{'name':'ready-for-human-review'}],'INFORMATIONAL'),([{'name':'needs-fixes'},{'name':'ready-for-human-review'}],'INFORMATIONAL')):
-                self.reset(active=1,pr=True,statuses={'1':status},labels=labels)
+                self.reset(active=1,pr=True,statuses={'1':status},labels=labels,prBranch={'Spec in Review':'spec/1-fixture','Plan in Review':'implementation-plan/1-fixture','Development in Review':'fix/1-fixture'}[status])
                 report=self.scan();row=report['classification'][0]
                 self.assertEqual(row['category'],expected)
                 if expected=='ACTIONABLE RESUME':
