@@ -44,9 +44,20 @@ class Client:
         self.spent = 0
         self.ledger = []
 
-    def call(self, args):
+    def call(self, args, graphql_errors=False):
         result = subprocess.run(['gh', *args], text=True, capture_output=True)
         if result.returncode:
+            # gh exits 1 for GraphQL errors while still emitting the typed
+            # payload needed to distinguish a user-owner NOT_FOUND or quota
+            # rejection. REST/transport/auth failures never enter this path.
+            if graphql_errors:
+                try:
+                    payload = json.loads(result.stdout)
+                    errors = payload.get('errors') if isinstance(payload, dict) else None
+                    if isinstance(errors, list) and errors and all(isinstance(error, dict) for error in errors):
+                        return payload
+                except (ValueError, TypeError):
+                    pass
             raise ReadError(result.stderr.strip() or 'GitHub read failed')
         try:
             return json.loads(result.stdout)
@@ -75,7 +86,7 @@ class Client:
         for key, value in variables.items():
             if value is not None:
                 args += ['-F' if type(value) is int else '-f', f'{key}={value}']
-        response = self.call(args)
+        response = self.call(args, graphql_errors=True)
         if not isinstance(response, dict):
             raise ReadError('Malformed GraphQL response')
         data = response.get('data')
@@ -84,6 +95,8 @@ class Client:
             raise ReadError('Malformed GraphQL rateLimit evidence')
         cost = (rate or {}).get('cost')
         entry['charged'] = cost if type(cost) is int else 1
+        if any(isinstance(error, dict) and error.get('type') == 'RATE_LIMITED' for error in response.get('errors') or []):
+            raise ReadError(json.dumps(response['errors']), response['errors'])
         # Partial responses can include cost evidence: validate it before any
         # NOT_FOUND fallback, while preserving unreadable rate-limit errors.
         if self.strict_cost and (rate is not None or not response.get('errors')) and (type(cost) is not int or cost != 1):

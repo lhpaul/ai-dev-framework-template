@@ -20,8 +20,9 @@ import json,os,sys
 from pathlib import Path
 p=Path(os.environ['SCAN_FIXTURE_STATE']); state=json.loads(p.read_text()); args=sys.argv[1:]
 state['calls'].append(args)
-def finish(data=None,error=None):
+def finish(data=None,error=None,exit_json=False):
  p.write_text(json.dumps(state))
+ if exit_json: print(json.dumps(data));print(error or 'GraphQL errors',file=sys.stderr);sys.exit(1)
  if error: print(error,file=sys.stderr);sys.exit(1)
  print(json.dumps(data));sys.exit(0)
 def raw(value):
@@ -45,6 +46,8 @@ if args[1]=='graphql':
  values={args[i+1].split('=',1)[0]:args[i+1].split('=',1)[1] for i in range(2,len(args),2)}
  query=values['query']; state['graphql']+=1
  if state.get('reject')==state['graphql']: finish(error='API rate limit exceeded')
+ if state.get('partialRate')==state['graphql']:
+  finish({'data':{'rateLimit':{'cost':state.get('partialCost',0)}},'errors':[{'type':'RATE_LIMITED','message':'API rate limit exceeded'}]},exit_json=state.get('partialRateExit',False))
  if state.get('nonrate')==state['graphql']: finish(error='Bad credentials')
  if state['remaining']<=0: finish(error='API rate limit exceeded')
  state['remaining']-=state.get('cost',1)
@@ -53,7 +56,7 @@ if args[1]=='graphql':
   kind='organization' if 'organization(login:' in query else 'user'
   if kind=='user' and state.get('userNotFound'):
    rate['rateLimit']['cost']=state.get('partialCost',1)
-   finish({'data':{'user':None,**rate},'errors':[{'type':'NOT_FOUND','path':['user'],'message':'Organization is not a user'}]})
+   finish({'data':{'user':None,**rate},'errors':[{'type':'NOT_FOUND','path':['user'],'message':'Organization is not a user'}]},exit_json=state.get('userNotFoundExit',False))
   value=None if kind=='user' and state.get('org') else {'projectV2':{'id':'P1'}}
   finish({'data':{kind:value,**rate}})
  n=int(values.get('issueNumber',state.get('target',1)))
@@ -249,12 +252,20 @@ class Fixture(unittest.TestCase):
         self.reset(missingType=True);self.assertFalse(self.scan()['fullyRead'])
         self.reset(pr=True,prFail=True);self.assertFalse(self.scan(ok=False)['fullyRead'])
         self.reset(cost=2);self.assertIn('cost contract',self.scan(ok=False)['error'])
-        self.reset(active=1,userNotFound=True,partialCost=2)
-        bad=self.scan(ok=False)
-        self.assertIn('cost contract',bad['error']);self.assertEqual(self.ledger()['graphql'],1)
-        self.assertEqual(bad['ledger'][0]['charged'],2)
-        self.reset(active=1,userNotFound=True,partialCost=1)
-        self.assertEqual(self.scan()['projectionSpend'],2);self.assertEqual(self.ledger()['graphql'],3)
+        for cli_exit in (False,True):
+            self.reset(active=1,userNotFound=True,userNotFoundExit=cli_exit,partialCost=2)
+            bad=self.scan(ok=False)
+            self.assertIn('cost contract',bad['error']);self.assertEqual(self.ledger()['graphql'],1)
+            self.assertEqual(bad['ledger'][0]['charged'],2)
+            self.reset(active=1,userNotFound=True,userNotFoundExit=cli_exit,partialCost=1)
+            self.assertEqual(self.scan()['projectionSpend'],2);self.assertEqual(self.ledger()['graphql'],3)
+        for cost in (0,2):
+            for rejected,size,coverage in ((1,0,scan.DEFERRED),(3,1,scan.PARTIAL)):
+                self.reset(partialRate=rejected,partialCost=cost,partialRateExit=True)
+                report=self.scan();self.assertEqual(report['coverage'],coverage)
+                self.assertEqual(len(report['fullyRead']),size);self.assertEqual(self.ledger()['graphql'],rejected)
+                self.assertEqual(report['ledger'][-1]['charged'],cost)
+                self.assertEqual(report['reason'],'GraphQL budget ran out during the scan')
 
     def test_cache_types_and_malformed_cursor(self):
         cache=self.folder/'cache';cache.mkdir(mode=0o700)
