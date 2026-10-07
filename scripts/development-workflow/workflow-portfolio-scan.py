@@ -66,7 +66,12 @@ def dependency_references(text, slug_ids=None):
         return re.match(r'(?i)^none(?:\.\s+\S|\s+\(|\s+[—–]\s*\S|\s+(?:beyond|blocking|for|outstanding)\b|\s+that\s+block\b)', member)
 
     def atomic(member):
-        return re.fullmatch(r'(?:#[1-9][0-9]*(?:\s*\([^\n]*\))?|(?:feature|fix|refactor|hotfix)/[A-Za-z0-9_-]+|[A-Za-z0-9_-]+)', normalized(member))
+        clean = normalized(member)
+        # Plain narrative words do not establish list boundaries. References,
+        # known slugs and explicit kebab/branch identifiers do; unknown members
+        # adjoining those identifiers still pass through the fail-closed parser.
+        return (clean in (slug_ids or {}) or
+                re.fullmatch(r'(?:#[1-9][0-9]*(?:\s*\([^\n]*\))?|(?:feature|fix|refactor|hotfix)/[A-Za-z0-9_-]+|[A-Za-z0-9_]+(?:-[A-Za-z0-9_]+)+)', clean))
 
     def member_parts(member):
         # Share the same list grammar across continuation detection and final

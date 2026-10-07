@@ -1025,6 +1025,137 @@ class Fixture(unittest.TestCase):
             with self.assertRaisesRegex(scan.EvidenceIncomplete,'Unresolved dependency'):
                 scan.dependency_references(value,{'3-fixture':3})
 
+    def test_committed_non_none_declaration_compatibility(self):
+        # Frozen normalized results from the pre-regression parser over every
+        # full canonical paragraph, not an alternate copy of the new grammar.
+        golden = {
+            '563-pr-review-loop-comparison-metrics:2:16': [458],
+            '708-claude-code-action-config:2:16': [705, 706, 707],
+            'copilot-review-backstop:2:30': [705, 708],
+            'tracker-type-field-classification:2:25': [824],
+            '875-shared-local-workflow-config:1:3': [874],
+            '875-shared-local-workflow-config:2:24': [874, 875],
+            '876-workflow-hub-template-skeletons:1:3': [874],
+            '876-workflow-hub-template-skeletons:2:25': [874, 876],
+            '877-workflow-hub-product-repo-sync-status-scripts:1:3': [875],
+            '877-workflow-hub-product-repo-sync-status-scripts:2:23': [875],
+            '878-workflow-orchestration-product-repo-aware:1:3': [875],
+            '878-workflow-orchestration-product-repo-aware:2:23': [875, 877],
+            '879-workflow-agents-product-repo-aware:1:3': [874, 875],
+            '880-cross-repo-pr-auth-support:1:3': [875],
+            '880-cross-repo-pr-auth-support:2:26': [875, 878],
+            '883-workflow-hub-smoke-fixtures:1:3': [875, 876, 877, 878, 880],
+            '883-workflow-hub-smoke-fixtures:2:25': [875, 876, 877, 878, 880, 883],
+            '881-sync-template-workflow-hub-scopes:1:3': [875, 876, 877, 883],
+            '881-sync-template-workflow-hub-scopes:2:23': [875, 876, 877, 883],
+            '882-workflow-hub-docs:1:3': [874, 875, 876, 877, 878, 879, 880, 881, 883],
+            '882-workflow-hub-docs:2:23': [874, 875, 876, 877, 878, 879, 880, 881, 883],
+            '919-pr-risk-classification:1:3': [917],
+            '919-pr-risk-classification:2:27': [917],
+            '920-autonomous-epic-audit-trail:1:3': [917],
+            '920-autonomous-epic-audit-trail:2:25': [917, 919],
+            '918-delegated-review-merge-loop:1:3': [917, 919, 920],
+            '918-delegated-review-merge-loop:2:26': [917, 919, 920],
+            '980-enforce-guardrails-delegated-run-work:2:79': [978, 979],
+            '978-run-work-adaptive-entrypoint:2:36': [],
+            '1020-human-checkpoint-policy-model:1:4': [919, 949, 977],
+            '1020-human-checkpoint-policy-model:2:25': [919, 949, 977, 980],
+            '1048-orchestration-command-refactor:1:4': [978, 1020],
+            '1075-orchestration-command-finalization:1:5': [1047],
+            '1077-run-items-command:1:4': [1048],
+            '1077-run-items-command:2:28': [1083],
+            '1096-explicit-pr-agent-trigger:2:36': [1100],
+            '1190-deprecate-direct-item-orchestrator-cursor-runs:2:24': [1195],
+            '1200-prevent-unsanctioned-nested-agent-prs:2:23': [1200],
+            '1284-sync-template-decide-vs-accept:2:26': [1281, 1282, 1291],
+            '1283-post-merge-qa:2:25': [1282, 1283],
+            '1285-checkpoint-resume-worktree-isolation:1:3': [1174],
+            '1285-checkpoint-resume-worktree-isolation:2:25': [1174],
+            '1372-epic-continuation-gate:2:14': [1373],
+            '1353-artifact-ownership-product-release-contract:2:26': [1353, 1354, 1356, 1357, 1358, 1359, 1399],
+            '1354-one-product-repository-per-implementation-item:2:26': [1353, 1354, 1404],
+            '1356-route-component-releases-to-selected-product-repository:2:26': [1353, 1354, 1356, 1409],
+            '1357-delivery-bundle-issue-manifest-workflow:2:25': [1353, 1356, 1358, 1359],
+            '1358-component-milestones-release-statuses:2:27': [1353, 1354, 1356, 1357, 1359],
+            '1359-multi-repository-release-adoption-assurance:2:26': [1353, 1354, 1356, 1357, 1358],
+            '1651-missed-findings-telemetry:1:3': [1648],
+            '1652-small-finding-terminal-policy:2:41': [1648],
+            '1654-codex-patterns-to-local-doctrine:1:3': [1653],
+            '1650-strict-spec-contract-review:1:3': [1653],
+            '1655-strict-plan-review-mode:1:3': [1650, 1653],
+            '1657-reviewer-effectiveness-report:1:3': [1648, 1651],
+            '1561-reviewer-preflight:2:19': [1733],
+            '1515-architecture-decision-axes:2:31': [1735],
+            '1583-template-mode-type-routing:2:36': [1584, 1734],
+            '1757-resolved-codex-findings:2:52': [1758],
+        }
+        slugs = {}
+        for directory in (ROOT/'docs/specs/developments').iterdir():
+            slug = re.sub(r'^\d{14}_', '', directory.name)
+            match = re.match(r'([1-9][0-9]*)-', slug)
+            if match: slugs[slug] = int(match[1])
+        proofs = []
+        for document in sorted((ROOT/'docs/specs/developments').rglob('*.md')):
+            if '_implementation-plan' not in document.name and '_specs' not in document.name:
+                continue
+            lines = document.read_text().splitlines()
+            for index, line in enumerate(lines):
+                clean = line.strip().strip('|').replace('**', '')
+                match = re.match(r'(?i)^(?:[-*]\s*)?(dependson|depends on|dependencies)\b\s*:\s*(.*)$', clean)
+                if not match or (match[2].strip().startswith('<!--') and not re.sub(r'<!--.*?-->', '', match[2]).strip()) or re.match(r'(?i)^none\b', match[2].strip()): continue
+                paragraph = [match[2].strip().strip('|').strip()]
+                for following in lines[index+1:]:
+                    if not following.strip() or re.match(r'^\s*(?:#{1,6}\s|\*\*[^*]+\*\*\s*:|---|\|)', following): break
+                    paragraph.append(following.strip())
+                identity = str(document.relative_to(ROOT))+':'+str(index+1)
+                key = document.parent.name.split('_',1)[-1]+':'+document.name.split('_',1)[0]+':'+str(index+1)
+                declaration = '\n'.join(paragraph)
+                try: current = {'dependencies': sorted(scan.dependency_references('Dependencies: '+declaration, slugs))}
+                except scan.EvidenceIncomplete as error: current = {'error': str(error)}
+                if key in golden:
+                    self.assertEqual(current, {'dependencies': golden[key]}, identity)
+                proofs.append({'source': identity, 'paragraph': declaration, 'current': current,
+                               'baseline': {'dependencies': golden[key]} if key in golden else None})
+        # These remain meaningful in consumer hubs without the template archive.
+        for value in ('#2 must be implemented and merged',
+                      '#2 provides scope\nresolution, #3 provides risk classification, and #4 provides audit trail\ncomments.',
+                      '#2 merged. #3 remains downstream\nadoption and assurance work.',
+                      'Spec PR #2 (merged). Bulk re-classification (#3) is out of\nscope and must not be bundled.'):
+            self.assertEqual(scan.dependency_references('Dependencies: '+value),
+                             {int(number) for number in re.findall(r'#([1-9][0-9]*)', value)})
+        if os.environ.get('WORKFLOW_PORTFOLIO_EVIDENCE_DIR'):
+            (Path(os.environ['WORKFLOW_PORTFOLIO_EVIDENCE_DIR'])/'committed-non-none-corpus.json').write_text(json.dumps(
+                {'declarationCount': len(proofs), 'baselineValidMatched': sum(p['baseline'] is not None for p in proofs),
+                 'wrappedCount': sum('\n' in p['paragraph'] for p in proofs), 'cases': proofs}, indent=2))
+
+    def test_descriptive_dependencies_actual_producers(self):
+        development = self.root/self.artifact()
+        for number in (2,3,4): self.artifact(number)
+        spec = next(development.glob('1_*_specs.md')); plan = next(development.glob('2_*_implementation-plan.md'))
+        forms = ('#2 must be implemented and merged',
+                 '#2, #3, and #4 are merged. #2 provides scope\nresolution, #3 provides risk classification, and #4 provides audit trail\ncomments.',
+                 '#2, #3 are merged through\nimplementation. #4 remains downstream\nadoption and assurance work.',
+                 'Spec PR #2 (merged). Bulk re-classification (#3) is out of\nscope and must not be bundled.')
+        proofs = []
+        for producer in ('body','spec','plan','dependsOn','dependencies'):
+            for declaration in forms:
+                expected = sorted({int(n) for n in re.findall(r'#([1-9][0-9]*)', declaration)})
+                for status in ('Backlog','Released'):
+                    spec.write_text('fixture\n'); plan.write_text('fixture\n'); fields = {}
+                    if producer == 'body': fields['bodies'] = {'1': 'Dependencies: '+declaration}
+                    elif producer in ('spec','plan'): (spec if producer == 'spec' else plan).write_text('**Dependencies**: '+declaration+'\n')
+                    else: fields[producer] = declaration
+                    self.reset(active=4, statuses={'1':'Plan Ready','2':'Merged','3':status,'4':status}, **fields)
+                    report = self.scan(); self.assertEqual(self.ledger()['graphql'], 5)
+                    record = next(r for r in report['fullyRead'] if r['number'] == 1)
+                    self.assertEqual(record['dependencies'], expected)
+                    action = next(r for r in report['classification'] if r['number'] == 1)['action']
+                    self.assertEqual(action, 'hold-dependency' if status == 'Backlog' and len(expected)>1 else 'implement')
+                    proofs.append({'producer':producer, 'declaration':declaration, 'prerequisiteStatus':status,
+                                   'dependencies':record['dependencies'], 'action':action, 'graphql':self.ledger()['graphql']})
+        if os.environ.get('WORKFLOW_PORTFOLIO_EVIDENCE_DIR'):
+            (Path(os.environ['WORKFLOW_PORTFOLIO_EVIDENCE_DIR'])/'descriptive-producer-proof.json').write_text(json.dumps({'caseCount':len(proofs),'cases':proofs},indent=2))
+
     def test_mixed_continuation_member_grammar(self):
         # Exercise every order and delimiter pair; a numeric member cannot
         # mask a slug/unknown member on either side of a continuation's "and".
