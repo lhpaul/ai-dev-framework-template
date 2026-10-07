@@ -194,6 +194,9 @@ categories:
     - path: sync-manifest.yaml
       mode_scope: shared
       note: this manifest file itself; must be synced so downstream projects receive manifest updates
+    - path: docs/testing/workflow/codex-model-routing.smoke-test.md
+      mode_scope: hub_only
+      note: Codex adapter configuration and capability smoke evidence (#1761)
     - path: docs/testing/workflow/retrospective-protocol.smoke-test.md
       mode_scope: hub_only
       note: protocol-level runbook that test-framework-mode-type-routing.sh asserts on (#1874)

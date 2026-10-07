@@ -44,7 +44,7 @@ The delivered TOML was parsed and inspected against these contracts; CLI help wa
 
 For any stage, select a model available to the active provider and an effort it supports. These example commands perform review work when run; replace the model token before executing them.
 
-<!-- workflow-shell-contract: bash -->
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
 codex -m AVAILABLE_MODEL -c 'model_reasoning_effort="high"'
 codex exec -m AVAILABLE_MODEL -c 'model_reasoning_effort="high"'   'Read REVIEW.md and review the explicitly selected artifact; report findings without editing.'
@@ -58,7 +58,7 @@ The observed operator wrapper `codex-review-high` delegates to `codex -c model_r
 
 Customize [review.config.toml](examples/codex-model-routing/review.config.toml), then install it as `~/.codex/review.config.toml` (or under your existing `CODEX_HOME`). Preserve your existing user settings when installing any example.
 
-<!-- workflow-shell-contract: bash -->
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
 codex --profile review
 codex exec --profile review 'Read REVIEW.md and review the selected artifact without editing.'
@@ -89,7 +89,7 @@ If native configuration is unsupported, disabled or not observed in your client,
 
 Customize [router.config.toml](examples/codex-model-routing/router.config.toml) and install it as a user profile at `~/.codex/router.config.toml`. Select a real endpoint, its supported model ID and a supported effort. The example references an environment variable for authentication and contains no credential value; supply that variable through your existing secure environment.
 
-<!-- workflow-shell-contract: bash -->
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
 codex --profile router
 ```

@@ -7,6 +7,7 @@ Use this guide when primary subscription quotas are exhausted during long `/run-
 Related:
 
 - [`../agent-model-config.md`](../agent-model-config.md) — tier definitions and Cursor default model pins
+- [Codex model routing](codex-model-routing.md) — opt-in task/native-role examples and verified Responses requirements
 - [`../provider-contingency-runner-failover.md`](../provider-contingency-runner-failover.md) — PR-level resume when a session aborts mid-turn
 
 ---
@@ -27,7 +28,7 @@ Related:
    - **Secondary:** paid low-cost API model (e.g. GLM, DeepSeek, MiniMax — vendor-neutral examples)
    - **Stop:** do not chain to unstable “free forever” proxies for client or production code
 
-3. Point Cursor, Claude Code, or Codex at a **local OpenAI-compatible base URL** served by your router (product-specific; not bundled here).
+3. Configure the selected runner through its supported provider surface and verify the protocol that runner actually uses. For Codex, follow [Codex model routing](codex-model-routing.md): a generic OpenAI-compatible base URL does not prove Responses, streaming or tool-call support.
 
 4. Align router model IDs with pinned values in `.cursor/agents/*.md` and `.claude/agents/*.md` so subagents stay on the intended tier when the router selects a fallback.
 
@@ -39,9 +40,9 @@ Related:
 | ------ | --------------------- |
 | Cursor | `.cursor/agents/<agent>.md` `model` field + Cursor settings for custom OpenAI-compatible endpoints |
 | Claude Code | `.claude/agents/*.md` model IDs + Claude Code provider / base URL settings |
-| Codex | Provider and model settings for the Codex CLI or IDE integration |
+| Codex | User-level provider/profile settings, explicit task model/effort and optional named native agents; see [Codex adapter](codex-model-routing.md). Requires Responses; live router compatibility is untested here |
 
-Keep **tier intent** stable in agent files; change router combo mappings when you add or remove fallback models.
+Keep **tier intent** stable in agent files; change router combo mappings when you add or remove fallback models. Runner surfaces are not interchangeable: verify the actual client/version before activation. #1760 remains the independent OpenCode per-agent router adapter track; this guide does not claim Codex parity from endpoint syntax alone.
 
 ---
 
