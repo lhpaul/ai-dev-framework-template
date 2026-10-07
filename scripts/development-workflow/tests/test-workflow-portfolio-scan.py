@@ -646,6 +646,37 @@ class Fixture(unittest.TestCase):
                 row=next(row for row in report['classification'] if row['number']==1)
                 self.assertEqual(row['action'],'hold-dependency' if '#2' in body else 'implement')
 
+    def test_mixed_dependency_members_preserved(self):
+        development=self.root/self.artifact();self.artifact(2);self.artifact(3)
+        for pattern,label in (('1_*_specs.md','**Depends on**'),('2_*_implementation-plan.md','**Dependencies**')):
+            document=next(development.glob(pattern))
+            for declaration in ('#2, 3-fixture','2-fixture, #3','[#2, 3-fixture]'):
+                document.write_text(label+': '+declaration+'\n')
+                for state,action in (('Backlog','hold-dependency'),('Cancelled','hold-dependency'),('Released','implement')):
+                    self.reset(active=3,statuses={'1':'Plan Ready','2':'Merged','3':state})
+                    report=self.scan();row=next(row for row in report['classification'] if row['number']==1)
+                    self.assertEqual(row['action'],action,declaration)
+                    record=next(record for record in report['fullyRead'] if record['number']==1)
+                    self.assertEqual(record['dependencies'],[2,3]);self.assertEqual(self.ledger()['graphql'],4)
+            for declaration in ('#2, unknown-prerequisite','unknown-prerequisite, #2'):
+                document.write_text(label+': '+declaration+'\n')
+                self.reset(active=3,statuses={'1':'Plan Ready','2':'Merged','3':'Released'})
+                report=self.scan();self.assertNotIn(1,[record['number'] for record in report['fullyRead']])
+                self.assertNotIn(1,[row['number'] for row in report['classification']])
+                self.assertTrue(any(entry['number']==1 and 'Unresolved dependency' in entry['reason'] for entry in report['omissions']))
+                self.assertEqual(self.ledger()['graphql'],4)
+            document.write_text('fixture\n')
+        # Real tracker fields have the same complete-member contract.
+        for declaration in ('#2, 3-fixture','#2, unknown-prerequisite'):
+            self.reset(active=3,statuses={'1':'Plan Ready','2':'Merged','3':'Backlog'},dependsOn=declaration)
+            report=self.scan()
+            if 'unknown' in declaration:self.assertNotIn(1,[record['number'] for record in report['fullyRead']])
+            else:
+                row=next(row for row in report['classification'] if row['number']==1)
+                self.assertEqual(row['action'],'hold-dependency')
+                self.assertEqual(next(record for record in report['fullyRead'] if record['number']==1)['dependencies'],[2,3])
+            self.assertEqual(self.ledger()['graphql'],4)
+
     def test_tracker_dependency_field_absence_and_unknown(self):
         self.artifact()
         for field in ('dependsOn','dependencies'):
