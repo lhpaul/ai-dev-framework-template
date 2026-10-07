@@ -828,6 +828,18 @@ if not reviewers:
     'template:\n  is_template: true\nreview:\n  on_draft:\n    runner:\n' +
     ''.join('      - '+value+'\n' for value in reviewers))
 FRAMEWORK_POLICY
+# The local example is project-customizable as well. Use a fixed framework
+# example for its literal documentation check, without writing through the
+# read-only symlink to the consumer host's example.
+mv "$compatibility_root/.ai-dev-workflow.local.example.yaml" "$TMP_ROOT/consumer-local-example.yaml"
+cat > "$compatibility_root/.ai-dev-workflow.local.example.yaml" <<'YAML'
+# Before retiring a file in a downstream project, ensure its backup is
+# covered by its .gitignore.
+review:
+  on_draft:
+    runner:
+      - codex
+YAML
 compatibility_suite test-workflow-branch-filters.sh 1
 sed 's/branches: \[develop, main\]/branches: [develop, develop-**, main]/' \
   "$compatibility_root/.github/workflows/consumer-service.yml" > "$TMP_ROOT/repaired-workflow.yml"

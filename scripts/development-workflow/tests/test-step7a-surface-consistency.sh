@@ -135,9 +135,11 @@ def checks(base):
         normal=subprocess.run(['git','-C',str(isolated),'-c','core.excludesFile=/dev/null','check-ignore','--no-index','.ai-dev-workflow.local.example.yaml'],capture_output=True)
         # .gitignore is shared/project-owned in sync-manifest.yaml. The shipped
         # template rule is mandatory here; consumers must add it before the
-        # retirement operation, not merely to run the framework's tests.
-        out['D-25']=(not template_mode(base) or (ignored.returncode==0 and normal.returncode==1)) and contains(read(local),'Before retiring a file in a downstream project','covered by its .gitignore')
-        if base == root and not template_mode(base) and ignored.returncode != 0:
+        # retirement operation, not merely to run the framework's tests. The
+        # local example is customizable too; its exact template prose is not
+        # a consumer contract. Emit the retirement instructions below instead.
+        out['D-25']=not template_mode(base) or (ignored.returncode==0 and normal.returncode==1 and contains(read(local),'Before retiring a file in a downstream project','covered by its .gitignore'))
+        if base == root and not template_mode(base) and (ignored.returncode != 0 or normal.returncode != 1):
             print('ACTION: before retiring local configuration, add .ai-dev-workflow.local.yaml.retired to your .gitignore and verify .ai-dev-workflow.local.example.yaml remains trackable.',flush=True)
     return out
 
