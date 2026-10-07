@@ -97,16 +97,20 @@ progress must remain possible when the remote API is unavailable.
 
 1. Sample the GraphQL budget before the first workflow mutation, including
    remote audit or readiness changes made by the merge operation itself.
-2. Admission requires readable budget evidence and a bounded projection for the
-   whole selected sequence plus a valid nonnegative reserve. Missing, malformed,
+2. Admission requires readable budget evidence and a conservative heuristic
+   projection for the whole selected sequence, including an explicit estimation
+   margin, plus a valid nonnegative reserve. Missing, malformed,
    or negative resolved reserve values defer without mutations. Configuration
    defaults may supply an omitted setting; a valid resolved reserve is still
    required. Cost estimation and configuration mechanics belong in the plan.
 3. Insufficient or unknown budget defers the complete outstanding selected work
    before any new merge or follow-up mutation. A batch must not admit an
    affordable prefix of an unaffordable set.
-4. The initial sample is not an exclusive reservation: concurrent consumers can
-   spend points. Reports must not claim guaranteed atomicity across remote merges.
+4. The projection estimates current `gh` calls; it is not a proven upper bound.
+   Reports identify the estimate and margin and never claim sufficient quota is
+   guaranteed. The initial sample is not an exclusive reservation: concurrent
+   consumers can spend points. Reports must not claim guaranteed atomicity across
+   remote merges.
 5. Once work starts, keep durable progress evidence across merge and follow-up
    boundaries. Stop starting additional merges on an interruption; report all
    unfinished work rather than silently dropping cleanup or reconciliation.
@@ -115,11 +119,19 @@ progress must remain possible when the remote API is unavailable.
    outstanding work defers; no deferral changes previously recorded PR states.
 7. Preserve existing permissions, risk classification, review freshness,
    readiness checks, checkpoint policy, and tracker ownership in consumers.
+   Preserve current `gh` merge queue, admin and already-merged behavior; do not
+   require an audited or pinned `gh` version to use this feature.
 
 ## Operational Visibility
 
-Budget outcomes are **Admitted**, **Deferred**, **Completed**, and **Interrupted**.
-Admitted work can become Completed or Interrupted. Deferred work starts no
+Reports label projected cost as a heuristic and show its conservative margin.
+Budget outcomes are **Admitted**, **Deferred**, **Waiting**, **Completed**, and **Interrupted**.
+Admitted work can become Waiting, Completed or Interrupted. Waiting means a
+successful queue/auto-merge submission with the PR still verifiably unmerged;
+retain submission evidence and pending follow-up, pause further selected merges
+in this budget-aware sequence, and resume explicitly after checking live state.
+Do not repeat the submission or run merge-dependent cleanup before verified
+MERGED. This sequencing rule preserves the underlying `gh` submission behavior. Deferred work starts no
 mutations. An explicit retry re-assesses budget and existing gates; it does not
 reuse old admission evidence. Interrupted work retains a recovery record.
 
@@ -138,7 +150,7 @@ No new notification channel or analytics system is required.
 Evaluate rows 1–3 once for initial admission, before the first mutation. Only
 one of those rows can match. A recovery attempt uses the same admission rows for
 outstanding work while preserving its recorded PR and follow-up states. After
-admission, evaluate rows 4–6 for execution
+admission, evaluate rows 4–7 for execution
 outcomes; the initial budget rows do not reclassify completed or interrupted
 work. Existing readiness stops also apply to admitted work.
 
@@ -149,7 +161,8 @@ work. Existing readiness stops also apply to admitted work.
 | 3 | Before admission; readable evidence, valid reserve, and remaining points at least projection plus reserve | Admitted | Apply existing gates and record progress before execution |
 | 4 | Admitted; existing readiness gate denies execution | Existing policy stop | Report the existing stop and actual PR state; no unauthorized merge |
 | 5 | Admitted; execution and follow-up complete | Completed | Report verified merge and reconciliation outcomes |
-| 6 | Admitted; execution fails or outcome becomes uncertain | Interrupted | Record completed, uncertain, and pending steps; no additional merges; report recovery |
+| 6 | Admitted; queue/auto-merge submission succeeds and PR remains verifiably unmerged | Waiting | Record submission and pending follow-up; no further selected merge; explicitly resume after live verification without duplicate submission |
+| 7 | Admitted; execution fails or outcome becomes uncertain | Interrupted | Record completed, uncertain, and pending steps; no additional merges; report recovery |
 
 Example budget values are illustrative: remaining 1,200, cost 200, and reserve
 1,000 admit the operation; remaining 1,199 defers the entire set. An admitted
@@ -169,8 +182,9 @@ coverage. Portfolio scan behavior is outside this feature.
   produces Deferred and reset time with zero new workflow mutation calls. Fresh
   admission reports every selected PR unmerged; recovery deferral preserves
   already merged, unmerged, uncertain, and pending follow-up states.
-- [ ] AC3: Exact equality admits; projected cost covers the complete bounded
-  sequence including gate, merge, cleanup, audit, and tracker reconciliation.
+- [ ] AC3: Exact equality admits; heuristic projected cost with margin covers the complete selected
+  sequence including gate, merge, cleanup, audit, and tracker reconciliation;
+  admission is an estimate, not a guarantee that execution will fit the quota.
 - [ ] AC4: Unreadable quota or unknown projection defers with an explicit reason
   and no mutations; missing, malformed, or negative resolved reserves also defer;
   REST budget cannot substitute for GraphQL evidence.
@@ -184,7 +198,10 @@ coverage. Portfolio scan behavior is outside this feature.
   evidence and concurrent consumption are visible. A reset, changed limit, or
   increased remaining balance shows samples and unavailable spend with a reason.
 - [ ] AC8: Mocked coverage exercises delegated single-item/epic and batch paths,
-  preserving current risk, review, CI, audit, and tracker gates.
+  preserving current risk, review, CI, audit, and tracker gates, and existing
+  merge queue, admin and already-merged semantics without CLI-version pinning.
+  Successful queue/auto-merge submission retains verified unmerged state and
+  pending follow-up as Waiting; recovery does not duplicate the submission.
 
 ## Out of Scope (MVP)
 
@@ -206,4 +223,15 @@ coverage. Portfolio scan behavior is outside this feature.
 | Mocked rate-limit suite | AC1–AC8 | In scope |
 | Reuse available #1505 budget-reading approach | AC7; Out of Scope boundary | Conventions reused; scan implementation excluded |
 
-**Deferral Notes**: None of #1890's brief objectives are deferred.
+## Approved Amendment
+
+Luis approved option C on 2026-10-07: use a conservative heuristic projection
+of current `gh` calls, retain durable interruption/recovery evidence, preserve
+merge queue/admin/already-merged semantics, and avoid CLI-version coupling.
+This replaces the original proven bounded-projection requirement. Unknown or
+unassessable selected work still defers; ordinary CLI-version differences alone
+do not make the estimate unknown. The plan defines the estimator and margin.
+
+**Deferral Notes**: None of #1890's brief objectives are deferred. The stronger
+proven-upper-bound guarantee is withdrawn by the explicit approved amendment;
+quota underestimation remains possible and is handled as recorded interruption.
