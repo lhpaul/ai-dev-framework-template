@@ -8,12 +8,14 @@
 
 **Approach**: Replace the affected text assertions without changing their match
 expectations. Extend the existing diff-based shell guard with SH006 for
-premature-exit grep in printf-fed test pipelines, using the existing diagnostics
+premature-exit grep in pipe-fed test assertions, using the existing diagnostics
 and suppression mechanism. No new service, workflow lifecycle rule or shell parser.
 
 **Estimated complexity**: S. The implementation is a mechanical test sweep and a
 bounded heuristic lint extension; its file count exceeds Fast Track eligibility.
-**Dependencies**: None remaining; PR #1896 and spec PR #1897 are merged.
+**Dependencies**: PR #1896 and spec PR #1897 are merged. Before file edits, verify
+  both merge commits are ancestors of the implementation base. If absent, update
+  develop and recheck; if still absent or reverted, stop without implementing.
 **Template fit**: Pass — shell tests and lint belong to the template's own
 Bash/Python toolchain and benefit consumers independent of their application stack.
 
@@ -24,6 +26,7 @@ Evidence revision: `e1ca032561a9b6c8fcfb88f9cf2776fb2f2e3986`.
 | Check | Reproducible command or query | Result |
 | --- | --- | --- |
 | Test-tree candidates | `rg -n 'printf.*\|.*grep\s+-[A-Za-z]*q' scripts/development-workflow/tests scripts/lint/tests` | 130 candidate lines in 32 files; file enumeration below. This is a line inventory, not a frozen count of edits. |
+| Equivalent producers | `rg -n '\|[[:space:]]*grep[[:space:]]+(-[[:alpha:]]*q|--quiet|--silent)' scripts --glob '**/tests/**/*.sh'` | 190 candidate lines across 39 files at the same revision, including printf matches, echo/command/filter producers, comments, intentional race reproducers and `||` lookalikes. Classify every candidate; not an executable assertion count. |
 | Existing guard | `rg -n 'CHECKED_PATH|def lint_logical_line|def logical_lines|SUPPRESSION_DIRECTIVE' scripts/lint/workflow-shell-guard-lint.py` | Diff-based rules SH001–SH005 and logical continuation joining already exist. |
 | Lint integration | `rg -n 'workflow-shell-guard-lint' .github/workflows/shellcheck.yml scripts/lint/tests/test-workflow-shell-guard-lint.sh scripts/lint/README.md` | CI invokes the existing linter and its unit suite; no job or invocation change is needed. |
 | Help regression target | `rg -n 'help_documents_skip_reason|_1574_help' scripts/development-workflow/tests` | Reported check now lives in test-pr-review-loop-pr-agent-coderabbit.sh after suite splitting. |
@@ -31,7 +34,10 @@ Evidence revision: `e1ca032561a9b6c8fcfb88f9cf2776fb2f2e3986`.
 | Consumer enumeration | `rg -n 'workflow-shell-guard-lint' .github scripts docs .agents/skills .codex/skills .claude .cursor AGENTS.md REVIEW.md` | Literal-name references; alias calls and composed outcomes are enumerated in the consumer table below. |
 
 The implementation reruns the candidate query over all shell tests before editing
-and before readiness, also checking continuations and long quiet-option spellings.
+and before readiness, also checking all pipe-fed quiet greps, continuations and long quiet-option spellings.
+The broader producer query includes false positives and intentional SIGPIPE
+reproduction in test-batch-merge-changelog-race.sh; preserve those reproductions
+with same-line SH006 suppressions and reasoned residual evidence.
 The current inventory is indicative and may grow when equivalent variants are found.
 
 ## Existing Consumer Paths and Composed Outcomes
@@ -75,7 +81,9 @@ For every candidate below, preserve assertion names, expected values and grep
 matching options. Direct single-string printf inputs use a here-string on grep.
 Filtered or multi-stage pipelines use a grep that consumes its entire input with
 output redirected to /dev/null, retaining pipefail's genuine upstream failures.
-Executable mocks and shared helpers receive the same correction. Do not add exit
+Echo-fed strings use here-strings too. Other command producers (including
+awk, jq, head, helper functions and Git output) use consuming grep with redirected
+stdout. Executable mocks and shared helpers receive the same correction. Do not add exit
 141 forgiveness or suppress failed assertions.
 
 Files to modify, based on the live candidate inventory:
@@ -118,14 +126,32 @@ matching and absent-text cases using captured real help plus at least 1 MiB of
 padding. Assert the safe read succeeds for a match near the beginning and rejects
 an absent token. Keep the existing help checks intact.
 
+Additional files from the equivalent-producer audit:
+
+- `scripts/development-workflow/tests/test-batch-merge-changelog-race.sh`
+- `scripts/development-workflow/tests/test-check-sync-manifest-coverage.sh`
+- `scripts/development-workflow/tests/test-consumer-tree-test-gating.sh`
+- `scripts/development-workflow/tests/test-haystack-reviewer.sh`
+- `scripts/development-workflow/tests/test-local-codex-review-command.sh`
+- `scripts/development-workflow/tests/test-post-merge-cleanup.sh`
+- `scripts/development-workflow/tests/test-tracker-status-mapping.sh`
+
 ### Existing shell guard — AC3, AC5
 
 - `scripts/lint/workflow-shell-guard-lint.py`: Add SH006 for added shell-test lines
-  containing a printf-fed pipeline ending in quiet grep. Scan test directories
+  containing pipe-fed quiet grep, regardless of producer. Scan test directories
   under scripts, including shared helpers; keep SH001–SH005 scoped as before.
   Widen diff collection/line selection only enough to examine these test paths.
   Recognize short-option clusters containing q, --quiet and --silent before the
-  grep pattern, including filtered pipelines and existing continuation joining.
+  grep pattern, including filtered pipelines and backslash continuations.
+  Reconstruct continued logical commands from added and surrounding unchanged
+  lines: git-diff mode requests full-file context for changed script files;
+  --diff-file mode uses provided context. Keep context tagged as unchanged and
+  emit SH006 only when the reconstructed command contains an added line, at its
+  first added line. SH001–SH005 still inspect only added workflow lines, using
+  their existing joining behavior. Context-only unsafe commands never fail.
+  Test partial edits where producer or pipe is unchanged and only a continued
+  grep option changes, through both diff-file and fixture Git CLI modes.
   Stop option interpretation at -- or a positional pattern, and skip arguments
   to -e/-f/--regexp/--file so pattern text is not mistaken for a quiet flag.
   Do not flag production non-test paths, file/here-string reads or consuming grep.
@@ -148,16 +174,17 @@ is indicative; coverage classes must remain even if case tables are consolidated
 
 | Input class | Expected result / unit coverage |
 | --- | --- |
-| Direct printf to grep -q | SH006; diagnostic path and line asserted |
+| Direct printf or echo to grep -q, other command producers | SH006; diagnostic path and line asserted |
 | Short clusters -Fq, -qiE and separated flags | SH006 for each flag shape |
 | Long --quiet / --silent | SH006 |
 | printf through jq or consuming grep to quiet grep | SH006 |
-| Backslash continuation | SH006 at the joined command's first added line |
+| Backslash continuation, including partial edits | SH006 at the joined command's first added line; supplied-context and Git modes both exercised |
 | Two unsafe assertions on one line | Report the line, without losing either recognition path |
 | Here-string, file input, consuming grep redirected to /dev/null | Pass |
 | -q as grep pattern after --, -e or --regexp | Pass |
 | Comment, non-test production path and intentional fixture data | Pass or explicit fixture-only suppression |
 | Existing SH001–SH005 and multiple suppressions | Existing behavior retained; only named rules suppressed |
+| Unchanged unsafe continuation next to safe additions | Pass; context alone does not trigger a rule |
 | Large output with early match and absent text | Correct yes/no result under pipefail |
 
 **Suppression semantics**: `# workflow-shell-guard: allow SH006 - <reason>` on
@@ -224,6 +251,15 @@ validation mechanism, without changing reviewer or implementation policy checkli
 | Heuristic false positives on fixture text | Materialized fixture placeholders or local reasoned exception; negative cases. |
 | Scanner silently misses quiet-option variants | Unit cases cover option clusters, long names, intermediate filters and continuations. |
 | Consumer compatibility | Bash 3.2 checks, unchanged CLI and existing sync directories; no app-specific changes. |
+
+## Reversal
+
+An ordinary revert PR can remove SH006, its fixtures and README entry and restore
+prior diff collection/context parsing. Keep the assertion fixes and large-output
+regression when reverting lint alone; separate implementation commits permit this
+without reviving the flaky assertions. Consumers can revert the synchronized lint
+change through their normal PR path. No data migration or irreversible state is
+introduced.
 
 ## Implementation Order
 
