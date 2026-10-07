@@ -102,8 +102,9 @@ progress must remain possible when the remote API is unavailable.
    or negative resolved reserve values defer without mutations. Configuration
    defaults may supply an omitted setting; a valid resolved reserve is still
    required. Cost estimation and configuration mechanics belong in the plan.
-3. Insufficient or unknown budget defers the complete selected set before any
-   merge. A batch must not admit an affordable prefix of an unaffordable set.
+3. Insufficient or unknown budget defers the complete outstanding selected work
+   before any new merge or follow-up mutation. A batch must not admit an
+   affordable prefix of an unaffordable set.
 4. The initial sample is not an exclusive reservation: concurrent consumers can
    spend points. Reports must not claim guaranteed atomicity across remote merges.
 5. Once work starts, keep durable progress evidence across merge and follow-up
