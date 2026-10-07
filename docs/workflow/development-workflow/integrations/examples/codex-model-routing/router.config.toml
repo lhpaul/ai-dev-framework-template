@@ -1,0 +1,11 @@
+# Opt-in user profile: customize, then copy to ~/.codex/router.config.toml.
+# Neither the endpoint nor the model below is a working default.
+model = "REPLACE_WITH_ROUTER_MODEL_ID"
+model_reasoning_effort = "high"
+model_provider = "workflow_router"
+
+[model_providers.workflow_router]
+name = "Operator-managed Responses router"
+base_url = "https://router.example.invalid/v1"
+env_key = "WORKFLOW_ROUTER_API_KEY"
+wire_api = "responses"
