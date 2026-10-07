@@ -328,13 +328,15 @@ def array_findings(path: str, lines: list[str], changed: set[int], offset: int =
         # complete commands before a separator still affect this line.
         continued = (not expanding_body and cursor >= len(row) and quote != "'"
                      and bool(re.search(r"(?<!\\)(?:\\\\)*\\$", row)))
+        if continued:
+            command_code = command_code[:-2]
         command_text = command_prefix + command_code
         option_events = [(match.start("command") - len(command_prefix), "set", match)
                          for match in SET_OPTIONS.finditer(command_text)
                          if not (continued and match.end() == len(command_text))]
         command_prefix = ""
         if continued:
-            command_prefix = re.split(r"[;&|(){}]", command_text)[-1] + " "
+            command_prefix = re.split(r"[;&|(){}]", command_text)[-1]
         events = sorted(
             option_events
             + [(match.start(), "array", match) for match in ARRAY.finditer(code)],
