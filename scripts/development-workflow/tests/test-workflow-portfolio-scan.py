@@ -9,6 +9,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[3]
 SCRIPTS = ROOT / 'scripts/development-workflow'
@@ -657,16 +658,38 @@ class Fixture(unittest.TestCase):
     def test_malformed_dependency_field_atomicity(self):
         self.artifact()
         for field in ('dependsOn','dependencies'):
-            for value in ('unknown',[],7,{}, {'text':None},{'text':[]},{'text':7}):
+            for value in ('unknown',[],7,{}, {'text':[]},{'text':7}):
                 self.reset(active=1,statuses={'1':'Plan Ready'},dependencyRaw={field:value})
                 report=self.scan(ok=False)
                 self.assertEqual(report['fullyRead'],[]);self.assertEqual(report['classification'],[])
                 self.assertEqual(report['recommendedCommand'],'');self.assertEqual(self.ledger()['graphql'],2)
-                self.assertIn('Malformed dependency field evidence',report['error'])
-            for value in (None,{'text':''},{'text':'None'}):
+                self.assertIn('Unknown dependency field type' if value=={} else 'Malformed dependency field evidence',report['error'])
+            for value in (None,{'text':None},{'text':''},{'text':'None'}):
                 self.reset(active=1,statuses={'1':'Plan Ready'},dependencyRaw={field:value})
                 report=self.scan();self.assertEqual(report['fullyRead'][0]['dependencies'],[])
                 self.assertEqual(report['classification'][0]['action'],'implement');self.assertEqual(self.ledger()['graphql'],2)
+
+    def test_bounded_dependency_field_consumer_compatibility(self):
+        with patch.dict(os.environ,self.env):
+            for field in ('dependsOn','dependencies'):
+                for value in ({},{'text':None}):
+                    for fallback in (False,True):
+                        client=scan.reader.Client()
+                        self.reset(active=1,dependencyRaw={field:value})
+                        card=(scan.reader.fallback if fallback else scan.reader.target)(client,1,'P1','fixture/repo')
+                        self.assertEqual(card['item_id'],'I1');self.assertEqual(card['status'],'Backlog')
+                        self.assertEqual(card['type'],'Bug');self.assertEqual(card['depends_on'],'')
+                        self.assertEqual(self.ledger()['graphql'],1)
+                    # Strict fallback must not borrow a permissive cached empty fragment.
+                    cache=self.folder/('dependency-cache-'+field+('-unknown' if value=={} else '-nullable'));cache.mkdir(mode=0o700,exist_ok=True)
+                    self.reset(active=1,dependencyRaw={field:value});client=scan.reader.Client()
+                    args=(client,1,'P1','fixture/repo','',str(cache),'fixture',5)
+                    scan.reader.fallback(*args)
+                    if value=={}:
+                        with self.assertRaisesRegex(scan.ReadError,'Unknown dependency field type'):
+                            scan.reader.fallback(*args,strict_dependencies=True)
+                    else:self.assertEqual(scan.reader.fallback(*args,strict_dependencies=True)['item_id'],'I1')
+                    self.assertEqual(self.ledger()['graphql'],2)
 
     def test_review_fix_loop_lane_composition(self):
         self.artifact()

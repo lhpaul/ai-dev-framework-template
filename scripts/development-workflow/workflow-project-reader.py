@@ -124,7 +124,7 @@ def connection(value):
     return value['nodes'], info
 
 
-def compact(item, project_id, preferred):
+def compact(item, project_id, preferred, strict_dependencies=False):
     content = item.get('content')
     if content is not None and not isinstance(content, dict):
         raise ReadError('Malformed project content identity')
@@ -149,9 +149,14 @@ def compact(item, project_id, preferred):
         value = item.get(field)
         if value is None:
             continue
-        if not isinstance(value, dict) or not isinstance(value.get('text'), str):
+        if not isinstance(value, dict) or ('text' in value and value['text'] is not None and not isinstance(value['text'], str)):
             raise ReadError('Malformed dependency field evidence')
-        dependencies.append(value['text'])
+        # A nullable Text value is empty. A different configured field type
+        # produces an empty fragment: membership callers may still read it,
+        # but a scan cannot claim complete dependency evidence from it.
+        if 'text' not in value and strict_dependencies:
+            raise ReadError('Unknown dependency field type')
+        dependencies.append(value.get('text') or '')
     return {'item_id': item['id'], 'project_id': project_id,
             'status': name(item.get('status') or item.get('fieldValueByName')),
             'type': next((name(c) for c in candidates if name(c)), ''),
@@ -184,7 +189,7 @@ def valid_cached_result(value, project_id):
     return True
 
 
-def fallback(client, number, project_id, repo, preferred='', cache_dir=None, cache_pid=None, ttl=5):
+def fallback(client, number, project_id, repo, preferred='', cache_dir=None, cache_pid=None, ttl=5, strict_dependencies=False):
     issue = client.rest(f'repos/{repo}/issues/{number}')
     if not isinstance(issue, dict) or issue.get('number') != number or 'pull_request' in issue:
         raise ReadError('Fresh target issue identity unavailable')
@@ -193,7 +198,7 @@ def fallback(client, number, project_id, repo, preferred='', cache_dir=None, cac
     if cache_dir and cache_pid and ttl > 0:
         folder = Path(cache_dir)
         if folder.is_dir() and not folder.is_symlink() and folder.stat().st_uid == os.getuid() and folder.stat().st_mode & 0o077 == 0:
-            key = hashlib.sha256(json.dumps([repo.lower(), project_id, number, preferred, query, 'both-archived']).encode()).hexdigest()
+            key = hashlib.sha256(json.dumps([repo.lower(), project_id, number, preferred, query, 'both-archived', strict_dependencies]).encode()).hexdigest()
             cache_file = folder / f'{cache_pid}-{key}.json'
             if cache_file.is_file() and not cache_file.is_symlink() and time.time() - cache_file.stat().st_mtime < ttl * 60:
                 try:
@@ -216,7 +221,7 @@ def fallback(client, number, project_id, repo, preferred='', cache_dir=None, cac
         if type(content.get('number')) is not int or not isinstance(identity, str) or not identity:
             raise ReadError('Missing project content identity; membership unknown')
         if content.get('number') == number and isinstance(identity, str) and identity.lower() == repo.lower():
-            matches.append(compact(item, project_id, preferred))
+            matches.append(compact(item, project_id, preferred, strict_dependencies))
     if len(matches) > 1 and any(item != matches[0] for item in matches[1:]):
         raise ReadError('Conflicting exact project-card identities')
     if matches:
@@ -241,7 +246,7 @@ def fallback(client, number, project_id, repo, preferred='', cache_dir=None, cac
     return result
 
 
-def target(client, number, project_id, repo, preferred=''):
+def target(client, number, project_id, repo, preferred='', strict_dependencies=False):
     owner, name = repo.split('/')
     cursor = None
     seen = set()
@@ -254,13 +259,13 @@ def target(client, number, project_id, repo, preferred=''):
         if not isinstance(issue, dict):
             raise ReadError('Target issue unavailable')
         nodes, info = connection(issue.get('projectItems'))
-        matches = [compact(item, project_id, preferred) for item in nodes if isinstance(item.get('project'), dict) and item['project'].get('id') == project_id]
+        matches = [compact(item, project_id, preferred, strict_dependencies) for item in nodes if isinstance(item.get('project'), dict) and item['project'].get('id') == project_id]
         if matches:
             if any(item != matches[0] for item in matches[1:]):
                 raise ReadError('Conflicting exact project-card identities')
             return matches[0]
         if not info['hasNextPage']:
-            return fallback(client, number, project_id, repo, preferred)
+            return fallback(client, number, project_id, repo, preferred, strict_dependencies=strict_dependencies)
         cursor = info['endCursor']
         if cursor in seen:
             raise ReadError('Repeated project pagination cursor')

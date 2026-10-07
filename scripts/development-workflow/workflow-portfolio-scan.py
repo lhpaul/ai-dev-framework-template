@@ -636,7 +636,7 @@ def scan(args):
             for index, number in enumerate(selected):
                 try:
                     start = client.spent
-                    card = reader.target(client, number, project, repo, type_field)
+                    card = reader.target(client, number, project, repo, type_field, strict_dependencies=True)
                     if client.spent - start > Q:
                         raise ReadError('Target query reservation exceeded')
                     if card.get('status') and card.get('type'):
