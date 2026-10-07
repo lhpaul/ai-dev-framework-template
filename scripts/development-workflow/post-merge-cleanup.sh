@@ -53,6 +53,8 @@ base_branch_override=""
 merged_pr_number=""
 cleanup_repo_root_override=""
 repo_root_explicit=0
+inspect_targets=0
+merge_session="${WORKFLOW_MERGE_BUDGET_SESSION:-}"
 
 require_option_value() {
   local option="$1"
@@ -65,6 +67,8 @@ require_option_value() {
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
+    --inspect-targets) inspect_targets=1; shift ;;
+    --merge-session) require_option_value "$@"; merge_session="$2"; shift 2 ;;
     --repo)
       require_option_value "$@"
       target_repo="$2"
@@ -139,7 +143,7 @@ CALLER_WORKTREE_ROOT=""
 # On the base-worktree re-entry below, this process's directory is wherever the
 # first pass had moved to, not the caller's. The first pass hands the caller's
 # worktrees over in POST_MERGE_CLEANUP_CALLER_WORKTREES instead.
-if [ -n "$CALLER_PWD" ] && [ "${POST_MERGE_CLEANUP_REENTERED:-}" != "1" ]; then
+if [ -n "$CALLER_PWD" ] && [ "${POST_MERGE_CLEANUP_REENTERED:-}" != "1" ] && [ "${POST_MERGE_CLEANUP_BUDGET_ENTERED:-}" != 1 ] && [ "$inspect_targets" -eq 0 ]; then
   CALLER_WORKTREE_ROOT="$(physical_worktree_root "$CALLER_PWD" || true)"
 fi
 
@@ -175,8 +179,8 @@ add_caller_worktree() {
   fi
   return 0
 }
-add_caller_worktree "$CALLER_WORKTREE_ROOT"
-if [ "$repo_root_explicit" -eq 1 ] && [ "${POST_MERGE_CLEANUP_REENTERED:-}" != "1" ]; then
+[ "$inspect_targets" -eq 1 ] || add_caller_worktree "$CALLER_WORKTREE_ROOT"
+if [ "$repo_root_explicit" -eq 1 ] && [ "${POST_MERGE_CLEANUP_REENTERED:-}" != "1" ] && [ "${POST_MERGE_CLEANUP_BUDGET_ENTERED:-}" != 1 ] && [ "$inspect_targets" -eq 0 ]; then
   add_caller_worktree "$repo_root"
 fi
 export POST_MERGE_CLEANUP_CALLER_WORKTREES="$CALLER_WORKTREES"
@@ -364,6 +368,58 @@ case "$TO_DELETE" in
     ;;
 esac
 
+cleanup_skip_local=0
+cleanup_skip_remote=0
+if [ "$inspect_targets" -eq 0 ]; then
+  cleanup_budget_repo="$TARGET_GITHUB_REPO"
+  [ -n "$cleanup_budget_repo" ] || cleanup_budget_repo="$(repo_slug)"
+  [ -n "$merged_pr_number" ] || merged_pr_number="$(gh pr list --repo "$cleanup_budget_repo" --state merged --head "$TO_DELETE" --limit 1 --json number --jq '.[0].number // empty')"
+  [ -n "$merged_pr_number" ] || { echo "Cleanup requires an owned merged PR" >&2; exit 2; }
+  cleanup_budget_head="$(gh pr view "$merged_pr_number" --repo "$cleanup_budget_repo" --json headRefOid --jq '.headRefOid')"
+  if [ -z "$merge_session" ]; then
+    cleanup_admission="$(workflow_merge_budget_helper begin --followup-only --repo-root "$HUB_REPO_ROOT" --target-root "$CLEANUP_REPO_ROOT" \
+      --repo "$cleanup_budget_repo" --pr "$merged_pr_number" --head "$cleanup_budget_head" --base "$DEVELOP_BRANCH" --branch "$TO_DELETE")" || {
+        printf '%s\n' "$cleanup_admission" >&2; exit 2;
+      }
+    merge_session="$(printf '%s' "$cleanup_admission" | jq -er '.session')"
+  fi
+  export WORKFLOW_MERGE_BUDGET_SESSION="$merge_session"
+  export WORKFLOW_MERGE_BUDGET_REPO="$cleanup_budget_repo"
+  export WORKFLOW_MERGE_BUDGET_PR="$merged_pr_number"
+  cleanup_binding="$(workflow_merge_budget_helper check --session "$merge_session" --repo "$cleanup_budget_repo" --pr "$merged_pr_number" --head "$cleanup_budget_head" --base "$DEVELOP_BRANCH" --branch "$TO_DELETE")" || exit 2
+  cleanup_skip_local="$(printf '%s' "$cleanup_binding" | jq -r --arg repo "$cleanup_budget_repo" --argjson pr "$merged_pr_number" '[.prs[] | select(.repo==$repo and .pr==$pr) | .policySkipped[]? | select(.=="local_cleanup")] | length')"
+  cleanup_skip_remote="$(printf '%s' "$cleanup_binding" | jq -r --arg repo "$cleanup_budget_repo" --argjson pr "$merged_pr_number" '[.prs[] | select(.repo==$repo and .pr==$pr) | .policySkipped[]? | select(.=="remote_delete")] | length')"
+  cleanup_execution="$(workflow_merge_budget_helper check --session "$merge_session" --repo "$cleanup_budget_repo" \
+    --pr "$merged_pr_number" --phase cleanup --executor-pid "$$")" || exit 2
+  if [ "$(printf '%s' "$cleanup_execution" | jq -r '.nestedExecutionAuthorized')" != true ]; then
+    cleanup_target_args=()
+    [ -z "$target_repo" ] || cleanup_target_args+=(--repo "$target_repo")
+    exec python3 "$SCRIPT_DIR/workflow-merge-budget.py" run-step --session "$merge_session" \
+      --repo "$cleanup_budget_repo" --pr "$merged_pr_number" --phase cleanup --step cleanup -- \
+      env POST_MERGE_CLEANUP_BUDGET_ENTERED=1 bash "$SCRIPT_DIR/post-merge-cleanup.sh" --merge-session "$merge_session" --repo-root "$HUB_REPO_ROOT" \
+      --cleanup-repo-root "$CLEANUP_REPO_ROOT" ${cleanup_target_args[@]+"${cleanup_target_args[@]}"} --base "$DEVELOP_BRANCH" --pr "$merged_pr_number" "$TO_DELETE"
+  fi
+  cleanup_local_complete="$(printf '%s' "$cleanup_binding" | jq -r --arg repo "$cleanup_budget_repo" --argjson pr "$merged_pr_number" '.prs[] | select(.repo==$repo and .pr==$pr) | .steps.local_cleanup.status // "pending"')"
+  cleanup_reentry_args=()
+  [ "${POST_MERGE_CLEANUP_REENTERED:-}" != 1 ] || cleanup_reentry_args+=(--continue-intent)
+  if [ "$cleanup_skip_local" -eq 1 ]; then
+    [ "$cleanup_skip_remote" -eq 1 ] || { echo "Local cleanup skipped while remote cleanup pending; explicit separate remote step required" >&2; exit 2; }
+    for cleanup_skipped in remote_delete local_cleanup; do
+      cleanup_skipped_state="$(printf '%s' "$cleanup_binding" | jq -r --arg repo "$cleanup_budget_repo" --argjson pr "$merged_pr_number" --arg step "$cleanup_skipped" '.prs[] | select(.repo==$repo and .pr==$pr) | .steps[$step].status // "pending"')"
+      [ "$cleanup_skipped_state" = completed ] || [ "$cleanup_skipped_state" = skipped_by_policy ] || {
+      workflow_merge_budget_before policy_skip "$cleanup_skipped" || exit 2
+      workflow_merge_budget_after policy_skip "$cleanup_skipped" 0 >/dev/null || exit 2
+      }
+    done
+    echo "Branch cleanup skipped by declared policy; retained resources independently verified."
+  elif [ "$cleanup_local_complete" = completed ] || [ "$cleanup_local_complete" = skipped_by_policy ]; then
+    cleanup_skip_local=2
+  else
+    workflow_merge_budget_before local_cleanup local_cleanup ${cleanup_reentry_args[@]+"${cleanup_reentry_args[@]}"} || exit 2
+  fi
+fi
+
+if [ "$inspect_targets" -eq 0 ] && [ "$cleanup_skip_local" -eq 0 ]; then
 print_kv ACTION_REPOSITORY_KIND "$ACTION_REPOSITORY_KIND"
 print_kv ACTION_REPOSITORY "$ACTION_REPOSITORY"
 [ -n "$TARGET_GITHUB_REPO" ] && print_kv TARGET_GITHUB_REPO "$TARGET_GITHUB_REPO"
@@ -702,7 +758,19 @@ echo "Pulling $DEVELOP_BRANCH..."
 git pull --ff-only origin "$DEVELOP_BRANCH"
 fi
 
-cleanup_remote_implementation_branch "$TO_DELETE"
+if [ "$branch_owner_kind" != implementation ] || [ "$(printf '%s' "$cleanup_binding" | jq -r --arg repo "$cleanup_budget_repo" --argjson pr "$merged_pr_number" '.prs[] | select(.repo==$repo and .pr==$pr) | .remoteCleanup')" = false ]; then
+  cleanup_remote_implementation_branch "$TO_DELETE"
+elif [ "$cleanup_skip_remote" -eq 1 ]; then
+  workflow_merge_budget_before policy_skip remote_delete || exit 2
+  workflow_merge_budget_after policy_skip remote_delete 0 >/dev/null || exit 2
+elif [ "$(workflow_merge_budget_helper check --session "$merge_session" --repo "$cleanup_budget_repo" --pr "$merged_pr_number" --phase remote_delete | jq -r '.stepStatus')" = completed ]; then
+  print_kv REMOTE_DELETE_RESULT already_verified
+else
+  workflow_merge_budget_before remote_delete remote_delete || exit 2
+  cleanup_remote_status=0
+  cleanup_remote_implementation_branch "$TO_DELETE" || cleanup_remote_status=$?
+  workflow_merge_budget_after remote_delete remote_delete "$cleanup_remote_status" >/dev/null || exit 2
+fi
 
 SKIP_LOCAL_DELETE=0
 if [ "$LOCAL_BRANCH_MISSING" -eq 1 ]; then
@@ -775,6 +843,14 @@ if [ "$SKIP_LOCAL_DELETE" -eq 0 ]; then
   git branch -D "$TO_DELETE"
   print_kv LOCAL_DELETE_RESULT "deleted"
 fi
+fi
+
+fi
+
+if [ "$inspect_targets" -eq 0 ] && [ "$cleanup_skip_local" -eq 0 ]; then
+  cleanup_local_proof=()
+  [ "${SKIP_LOCAL_DELETE:-0}" -eq 0 ] || cleanup_local_proof+=(--policy-skip caller_worktree_detach_failed)
+  workflow_merge_budget_after local_cleanup local_cleanup 0 ${cleanup_local_proof[@]+"${cleanup_local_proof[@]}"} >/dev/null || exit 2
 fi
 
 # --- Update tracker status and close associated GitHub issue (if any) ---
@@ -963,6 +1039,14 @@ fetch_hub_tracker_closing_issues() {
   esac
 }
 
+cleanup_close_issue() {
+  local issue="$1" comment="$2" status=0
+  workflow_merge_budget_before issue_close "issue_close:$issue" --issue "$issue" --status Merged || return 1
+  gh issue close "$issue" --comment "$comment" || status=$?
+  workflow_merge_budget_after issue_close "issue_close:$issue" "$status" --issue "$issue" --status Merged >/dev/null || return 1
+  return "$status"
+}
+
 # close_issues_from_pr <pr_number> <issue_numbers_newline_list> [<pr_repo>]
 # For each issue number in the list, updates the tracker status to Merged,
 # closes the issue if it is still open (commenting with the closing PR
@@ -973,8 +1057,8 @@ fetch_hub_tracker_closing_issues() {
 # must treat that as fatal (`close_issues_from_pr ... || exit 1`), matching
 # the aggregate fatal-on-view-failure behavior this replaces at both call
 # sites. This is distinct from a `gh issue close` failure, which remains a
-# warning-only, non-fatal condition (cleanup continues for the remaining
-# issues in the list either way). The issue-numbers list may be empty (a
+# legacy warning-only condition; an admitted session records Interrupted and
+# stops dispatching further mutations until explicit verified recovery. The issue-numbers list may be empty (a
 # no-op loop), but <pr_number> must be a non-empty numeric PR number so an
 # invalid caller cannot produce a close comment like "Closed by PR #.".
 # When the optional <pr_repo> is a different repository than the hub tracker's
@@ -999,13 +1083,15 @@ close_issues_from_pr() {
       continue
     fi
     update_tracker_status_best_effort "$issue_num" "Merged"
+    workflow_merge_budget_helper check --session "$WORKFLOW_MERGE_BUDGET_SESSION" --repo "$WORKFLOW_MERGE_BUDGET_REPO" --pr "$WORKFLOW_MERGE_BUDGET_PR" >/dev/null || return 2
     if [ "$issue_state" = "OPEN" ]; then
       echo "Closing issue #${issue_num}..."
-      if gh issue close "$issue_num" --comment "Closed by ${close_pr_label}."; then
+      if cleanup_close_issue "$issue_num" "Closed by ${close_pr_label}."; then
         echo "Reasserting issue #${issue_num} tracker status as Merged after close..."
         update_tracker_status_best_effort "$issue_num" "Merged" "" "allow-backward"
       else
-        echo "Warning: could not close issue #${issue_num}; continuing cleanup." >&2
+        echo "Warning: could not close issue #${issue_num}; session interrupted." >&2
+        return 2
       fi
     else
       echo "Issue #${issue_num} is already ${issue_state}, skipping close."
@@ -1101,6 +1187,48 @@ elif [[ "$TO_DELETE" =~ ^(implementation-plan)/([a-zA-Z]{2,6}-([0-9]+))($|-) ]];
   BRANCH_TYPE="plan"
 fi
 
+# The same closing-keyword parser and branch precedence used below supplies
+# the budget projection. This path never fetches/checks out/deletes or writes.
+if [ "$inspect_targets" -eq 1 ]; then
+  inspection_repo="$TARGET_GITHUB_REPO"
+  [ -n "$inspection_repo" ] || inspection_repo="$(repo_slug)"
+  inspection_owner="$(hub_github_repo_slug)" || exit 1
+  inspection_cross="$(gh pr view "$merged_pr_number" --repo "$inspection_repo" --json isCrossRepository --jq ' .isCrossRepository')" || exit 1
+  case "$inspection_cross" in true|false) ;; *) echo "Unknown PR branch ownership" >&2; exit 1 ;; esac
+  inspection_provider="$(workflow_normalize_issue_tracker_provider "$(workflow_config_provider issue_tracker "$HUB_REPO_ROOT/.ai-dev-workflow.yaml")")"
+  case "$inspection_provider" in '') inspection_provider=none ;; github_projects|github_issues|linear|none) ;; *) echo "Unknown tracker provider" >&2; exit 1 ;; esac
+  inspection_status="Merged"
+  inspection_refs=""
+  case "$BRANCH_TYPE" in
+    spec) inspection_status="Spec Ready"; inspection_refs="$ISSUE_NUMBER" ;;
+    plan) inspection_status="Plan Ready"; inspection_refs="$ISSUE_NUMBER" ;;
+    *)
+      if [ "$branch_owner_kind" = implementation ]; then
+      inspection_refs="$(fetch_hub_tracker_closing_issues "$inspection_repo" "$merged_pr_number")" || exit 1
+      if [ -n "$ISSUE_NUMBER" ] && { [ "$ISSUE_ID_TYPE" = numeric ] || [ -z "$inspection_refs" ]; }; then
+        inspection_refs="$(printf '%s\n%s\n' "$ISSUE_NUMBER" "$inspection_refs" | sed '/^$/d' | sort -un)"
+      fi
+      fi ;;
+  esac
+  if [ "$inspection_provider" = linear ] && [ -n "$inspection_refs" ]; then
+    # Existing Linear ownership needs a native identifier; a numeric GitHub
+    # reference cannot authorize an unrelated Linear mutation.
+    [ "$ISSUE_ID_TYPE" = team-prefixed ] || { echo "Unknown native Linear issue ownership" >&2; exit 1; }
+    inspection_refs="$ISSUE_IDENTIFIER"
+  fi
+  inspection_worktrees="$(git -C "$CLEANUP_REPO_ROOT" worktree list --porcelain | awk -v branch="branch refs/heads/$TO_DELETE" '
+    /^worktree / { path=substr($0,10) }
+    $0==branch { print path }
+  ' | jq -Rsc --arg callers "$CALLER_WORKTREES" 'split("\n") | map(select(length>0) | . as $root | {root:$root,caller:($callers|split("\n")|index($root)!=null)})')"
+  inspection_participants="$(git -C "$CLEANUP_REPO_ROOT" worktree list --porcelain | awk -v base="branch refs/heads/$DEVELOP_BRANCH" -v branch="branch refs/heads/$TO_DELETE" '
+    /^worktree / { path=substr($0,10) }
+    $0==base || $0==branch { print path }
+  ' | jq -Rsc 'split("\n") | map(select(length>0))')"
+  inspection_close_comment="Closed by $(pr_close_label "$inspection_repo" "$merged_pr_number")."
+  printf '%s\n' "$inspection_refs" | jq -Rsc --argjson cross "$inspection_cross" --argjson worktrees "$inspection_worktrees" --arg remote "$branch_owner_kind" --argjson participants "$inspection_participants" --arg comment "$inspection_close_comment" --arg provider "$inspection_provider" --arg repo "$inspection_owner" --arg status "$inspection_status"     '{worktrees:$worktrees,remoteCleanup:($remote=="implementation" and ($cross|not)),participants:$participants,issues:(split("\n") | map(select(length>0) | {id:.,provider:$provider,repo:$repo,status:$status,statusPolicy:(if $provider=="github_projects" and $status!="Merged" then "at_least" else "exact" end),close:($status=="Merged" and $provider!="linear"),tracker:($provider=="github_projects" or $provider=="linear"),closeComment:$comment}))}'
+  exit 0
+fi
+
 if [ -n "$ISSUE_IDENTIFIER" ]; then
   cd "$HUB_REPO_ROOT"
   # For team-prefixed identifiers, log the extraction result.
@@ -1192,11 +1320,12 @@ if [ -n "$ISSUE_IDENTIFIER" ]; then
         fi
         if [ -n "$MERGED_PR" ]; then
           echo "Closing issue #$ISSUE_NUMBER..."
-          if gh issue close "$ISSUE_NUMBER" --comment "$CLOSE_COMMENT"; then
+          if cleanup_close_issue "$ISSUE_NUMBER" "$CLOSE_COMMENT"; then
             echo "Reasserting issue #$ISSUE_NUMBER tracker status as Merged after close..."
             update_tracker_status_best_effort "$ISSUE_NUMBER" "Merged" "" "allow-backward"
           else
-            echo "Warning: could not close issue #$ISSUE_NUMBER; continuing cleanup." >&2
+            echo "Warning: could not close issue #$ISSUE_NUMBER; session interrupted." >&2
+            exit 2
           fi
         else
           echo "No merged PR found for branch '$TO_DELETE'; leaving issue #$ISSUE_NUMBER open."
@@ -1276,6 +1405,24 @@ else
 fi
 
 echo ""
+# Already satisfied duties use their own durable intent and independent proof.
+# This never masks an uncertain adapter mutation or supplies caller success.
+cleanup_pending="$(workflow_merge_budget_helper report --session "$merge_session" | jq -r --arg repo "$cleanup_budget_repo" --argjson pr "$merged_pr_number" '
+  .prs[] | select(.repo==$repo and .pr==$pr) | .steps | to_entries[]
+  | select(.value.status=="pending" and (.value.phase=="tracker" or .value.phase=="issue_close"))
+  | [.key,.value.phase,.value.issue] | @tsv')"
+while IFS=$'\t' read -r cleanup_step cleanup_phase cleanup_issue; do
+  [ -n "$cleanup_step" ] || continue
+  cleanup_expected="$(workflow_merge_budget_helper report --session "$merge_session" | jq -r --arg repo "$cleanup_budget_repo" --argjson pr "$merged_pr_number" --arg issue "$cleanup_issue" '.prs[] | select(.repo==$repo and .pr==$pr) | .issues[] | select((.id|tostring)==$issue) | .status')"
+  workflow_merge_budget_before "$cleanup_phase" "$cleanup_step" --issue "$cleanup_issue" --status "$cleanup_expected" || exit 2
+  workflow_merge_budget_after "$cleanup_phase" "$cleanup_step" 0 --issue "$cleanup_issue" --status "$cleanup_expected" --no-op >/dev/null || exit 2
+done <<< "$cleanup_pending"
+
+if [ "$cleanup_skip_local" -eq 1 ]; then
+  echo "Done. Owned follow-up verified; branch resources retained by policy."
+  exit 0
+fi
+
 FINAL_REF_AFTER_CLEANUP="$DEVELOP_BRANCH"
 if [ "$BASE_CHECKED_OUT" -eq 1 ] && [ -n "$ORIGINAL_REF" ]; then
   if [ "$ORIGINAL_REF_KIND" = "branch" ] && [ "$ORIGINAL_REF" != "$TO_DELETE" ] \

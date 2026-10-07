@@ -1,0 +1,89 @@
+#!/usr/bin/env python3
+"""Synthetic #1890 provider; every unknown command fails, never forwards."""
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+
+args = sys.argv[1:]
+path = Path(os.environ['MERGE_BUDGET_FIXTURE'])
+state = json.loads(path.read_text())
+state.setdefault('events', []).append(args[:2])
+path.write_text(json.dumps(state))
+
+def save():
+    path.write_text(json.dumps(state))
+
+def emit(value):
+    if '--jq' in args:
+        result = subprocess.run(['jq', '-r', args[args.index('--jq')+1]], input=json.dumps(value), text=True, capture_output=True)
+        print(result.stdout, end='')
+        sys.exit(result.returncode)
+    print(json.dumps(value))
+    sys.exit(0)
+
+if args[:2] == ['api', 'rate_limit']:
+    if state.get('quotaOutage'):
+        sys.exit(1)
+    emit({'resources': {'graphql': state['quota']}})
+if args[:2] == ['repo', 'view']:
+    emit({'nameWithOwner': state['repo'], 'owner': {'login': state['repo'].split('/')[0]}, 'name': state['repo'].split('/')[1]})
+if args[:2] == ['api', 'graphql']:
+    query = next((a[6:] for a in args if a.startswith('query=')), '')
+    if 'MergeBudgetPR' in query:
+        if state.get('prOutage'):
+            sys.exit(1)
+        number = int(next(a[7:] for a in args if a.startswith('number=')))
+        emit({'data': {'repository': {'pullRequest': state['prs'][str(number)]}}})
+    if 'updateProjectV2ItemFieldValue' in query:
+        if state.get('trackerFailure'):
+            sys.exit(1)
+        state['trackerStatus'] = 'Merged'
+        save()
+        emit({'data': {'updateProjectV2ItemFieldValue': {'projectV2Item': {'id': 'item'}}}})
+    if 'projectItems(' in query:
+        number = int(next(a.split('=', 1)[1] for a in args if a.startswith('issueNumber=')))
+        emit({'data': {'repository': {'issue': {'projectItems': {
+            'nodes': [{'id': 'item', 'project': {'id': 'project', 'number': 1},
+                       'content': {'number': number, 'url': 'https://github.com/'+state['repo']+'/issues/'+str(number), 'repository': {'nameWithOwner': state['repo']}},
+                       'status': {'name': state.get('trackerStatus', 'Plan Ready')}}],
+            'pageInfo': {'hasNextPage': False, 'endCursor': None}}}}, 'rateLimit': {'cost': 1}}})
+    if 'fields(' in query:
+        emit({'data': {'node': {'fields': {'nodes': [{'id': 'field', 'name': 'Status', 'options': [{'id': 'merged', 'name': 'Merged'}, {'id': 'plan', 'name': 'Plan Ready'}]}], 'pageInfo': {'hasNextPage': False, 'endCursor': None}}}}})
+    if 'projectV2(' in query:
+        emit({'data': {'user': {'projectV2': {'id': 'project'}}, 'organization': {'projectV2': {'id': 'project'}}}})
+    sys.exit(1)
+if args[:2] == ['pr', 'view']:
+    value = dict(state['prs'][str(args[2])])
+    value.update(body=state.get('body', ''), title=state.get('title', ''), commits=[],
+                 isCrossRepository=state.get('fork', False), labels=[], isDraft=False)
+    emit(value)
+if args[:2] == ['pr', 'merge']:
+    state.setdefault('mergeArgv',[]).append(args)
+    value = state['prs'][str(args[2])]
+    if state.get('queue'):
+        value['isInMergeQueue'] = True
+    else:
+        value['state'] = 'MERGED'
+    save()
+    sys.exit(0)
+if args[:2] == ['issue', 'view']:
+    emit({'number': int(args[2]), 'state': state.get('issueState', 'CLOSED')})
+if args[:2] == ['issue', 'close']:
+    state['issueState'] = 'CLOSED'
+    state.setdefault('comments', []).append({'id': 1, 'body': args[args.index('--comment')+1]})
+    save()
+    sys.exit(0)
+if args[:1] == ['api'] and any('/comments' in a for a in args):
+    comments = state.get('comments', [])
+    if '-X' in args and args[args.index('-X')+1] in {'POST','PATCH'}:
+        if state.get('auditFailure'):
+            sys.exit(1)
+        body = next(a[5:] for a in args if a.startswith('body='))
+        comments.append({'id':len(comments)+1,'body':body}); state['comments'] = comments; save()
+        emit(comments[-1])
+    emit([comments] if '--slurp' in args else comments)
+if args[:2] == ['auth', 'status']:
+    sys.exit(0)
+sys.exit(1)

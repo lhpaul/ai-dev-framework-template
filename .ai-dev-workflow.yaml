@@ -343,3 +343,7 @@ guardrails:
 # Invalid/empty values warn and fall back to 1000 (Protocol 90 Step 1a).
 portfolio_scan:
   graphql_reserve: 1000
+
+# Merge-session heuristic headroom; quota is observed, never reserved.
+merge_budget:
+  graphql_reserve: 1000

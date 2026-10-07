@@ -1,0 +1,737 @@
+#!/usr/bin/env python3
+"""#1890 durable admission proofs; no remote requests or user-resource cleanup."""
+import argparse
+import importlib.util
+import json
+import os
+import shutil
+import subprocess
+from pathlib import Path
+import sys
+import tempfile
+import time
+import unittest
+from unittest.mock import patch
+
+sys.dont_write_bytecode = True
+SPEC = importlib.util.spec_from_file_location('merge_budget', Path(__file__).resolve().parents[1] / 'workflow-merge-budget.py')
+budget = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(budget)
+RAW_GH = budget.gh
+RAW_RESERVE = budget.reserve
+RAW_PR_READ = budget.pr_read
+
+
+class Admission(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(prefix='1890-merge-budget-')
+        self.addCleanup(self.temp.cleanup)
+        self.owner = Path(self.temp.name).resolve()
+        self.common = self.owner / '.git'
+        self.common.mkdir()
+        self.live = {'number': 12, 'state': 'OPEN', 'headRefName': 'feature/12-item',
+                     'headRefOid': 'a' * 40, 'baseRefName': 'develop',
+                     'isInMergeQueue': False, 'autoMergeRequest': None}
+        self.sample = {'remaining': 5000, 'reset': int(time.time()) + 3600, 'limit': 5000}
+        self.manifest = self.owner / '1890-manifest.json'
+        self.manifest.write_text(json.dumps({'ownerRoot': str(self.owner), 'prs': [{
+            'repo': 'org/repo', 'pr': 12, 'head': 'a'*40, 'base': 'develop',
+            'root': str(self.owner), 'phases': ['merge_api', 'cleanup']}]}))
+        for name, replacement in [('root', lambda p: self.owner), ('common', lambda p: self.common),
+                                  ('checkout_repo', lambda p: 'org/repo'), ('reserve', lambda p, v: 1000), ('pr_read', lambda p: dict(self.live)),
+                                  ('inspect', lambda p, o: {'issues': []}),
+                                  ('gh', lambda *a, **k: {'resources': {'graphql': dict(self.sample)}})]:
+            mock = patch.object(budget, name, replacement)
+            mock.start()
+            self.addCleanup(mock.stop)
+        self.args = argparse.Namespace(input=str(self.manifest), repo_root=str(self.owner), reserve=None,
+            session=None, repo='org/repo', pr=12, phase='merge_api', step='merge_api', issue=None,
+            status=None, executor_pid=os.getpid(), expected_file=None, exit_code=0)
+
+    def begin(self):
+        value = budget.begin(self.args)
+        self.args.session = value['session']
+        return value
+
+    def test_projection_derivation_and_equality(self):
+        self.sample['remaining'] = 1125  # raw 25+50, margin50, reserve1000
+        result = self.begin()
+        self.assertEqual(result['estimate']['projectedCost'], 125)
+        self.assertEqual(result['outcome'], 'Admitted')
+        budget.before(self.args)
+        self.assertTrue(budget.snapshot(self.args.session)['started'])
+
+    def test_one_below_defers_before_intent(self):
+        self.sample['remaining'] = 1124
+        result = self.begin()
+        self.assertEqual(result['outcome'], 'Deferred')
+        with self.assertRaises(budget.Stop):
+            budget.before(self.args)
+        state = budget.snapshot(self.args.session)
+        self.assertFalse(state['started'])
+        self.assertEqual(state['prs'][0]['steps']['merge_api']['status'], 'pending')
+
+    def test_provisional_balance_is_refreshed(self):
+        self.begin()
+        self.sample['remaining'] = 1124
+        with self.assertRaises(budget.Stop):
+            budget.before(self.args)
+        self.assertEqual(budget.snapshot(self.args.session)['outcome'], 'Deferred')
+
+    def test_malformed_quota_no_core_substitution(self):
+        for value in [True, '5000', None, -1, 5001]:
+            with self.subTest(value=value):
+                self.sample['remaining'] = value
+                with self.assertRaises(budget.Stop):
+                    budget.budget()
+
+    def test_quota_field_types_and_window_fail_closed(self):
+        original = dict(self.sample)
+        for field,value in [('remaining',False),('remaining','5000'),('reset',True),('reset','1'),
+                            ('reset',int(time.time())-1),('limit',0),('limit',True),('limit','5000')]:
+            with self.subTest(field=field,value=value):
+                self.sample.clear(); self.sample.update(original); self.sample[field] = value
+                with self.assertRaises(budget.Stop):
+                    budget.budget()
+        self.sample.clear(); self.sample.update(original)
+        for absent in ('remaining','reset','limit'):
+            self.sample.clear(); self.sample.update(original); del self.sample[absent]
+            with self.assertRaises(budget.Stop):
+                budget.budget()
+
+    def test_unknown_step_rejected_without_admission(self):
+        self.begin()
+        self.args.step = 'invented'
+        with self.assertRaises(budget.Stop):
+            budget.before(self.args)
+        self.assertFalse(budget.snapshot(self.args.session)['started'])
+
+    def test_waiting_stops_next_action(self):
+        self.begin()
+        budget.before(self.args)
+        self.live['isInMergeQueue'] = True
+        with self.assertRaises(budget.Stop):
+            budget.after(self.args)
+        state = budget.snapshot(self.args.session)
+        self.assertEqual(state['outcome'], 'Waiting')
+        with self.assertRaises(budget.Stop):
+            budget.before(self.args)
+        self.live['isInMergeQueue'] = False
+        self.live['state'] = 'MERGED'
+        result = budget.resume(self.args)
+        self.assertEqual(result['prs'][0]['verifiedState'], 'merged')
+        self.assertEqual(result['prs'][0]['steps']['merge_api']['status'], 'completed')
+
+    def test_outage_preserves_intent_and_offline_report(self):
+        self.begin()
+        budget.before(self.args)
+        with patch.object(budget, 'pr_read', side_effect=budget.Stop('offline')):
+            with self.assertRaises(budget.Stop):
+                budget.after(self.args)
+        state = budget.snapshot(self.args.session)
+        self.assertEqual(state['outcome'], 'Interrupted')
+        self.assertEqual(state['prs'][0]['steps']['merge_api']['status'], 'uncertain')
+        with patch.object(budget, 'budget', side_effect=budget.Stop('offline')):
+            self.assertEqual(budget.summary(state, True)['outcome'], 'Interrupted')
+            self.assertIsNone(budget.summary(state, True)['observedSpend'])
+        self.live['state'] = 'MERGED'
+        result = budget.resume(self.args)
+        self.assertEqual(result['prs'][0]['steps']['merge_api']['status'], 'completed')
+        with self.assertRaises(budget.Stop):
+            budget.before(self.args)
+
+    def test_surviving_child_blocks_recovery(self):
+        self.begin()
+        with budget.journal(self.args.session) as state:
+            state['active'] = {'pid': 99999999, 'childPid': os.getpid(), 'token': 'claim'}
+        with self.assertRaises(budget.Stop):
+            budget.resume(self.args)
+
+    def test_remote_reads_do_not_hold_journal_lock(self):
+        self.begin()
+        def read(p):
+            # A second exclusive lock can be acquired while this live read runs.
+            with budget.journal(self.args.session, write=False):
+                pass
+            return dict(self.live)
+        with patch.object(budget, 'pr_read', read):
+            budget.before(self.args)
+            self.live['state'] = 'MERGED'
+            budget.after(self.args)
+
+    def test_partial_response_and_duplicate_keys(self):
+        with self.assertRaises(budget.Stop):
+            budget.decode('{"remaining":1,"remaining":2}')
+        with patch.object(budget.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0, '{"errors":[{"message":"quota"}],"data":{}}', '')):
+            with self.assertRaises(budget.Stop):
+                # bypass setUp gh mock to exercise raw evidence parser
+                RAW_GH('api', 'graphql')
+
+    def test_final_window_comparability(self):
+        state = self.begin()
+        self.sample['remaining'] -= 30
+        self.assertEqual(budget.summary(state, True)['observedSpend'], 30)
+        self.sample['reset'] += 1
+        self.assertIsNone(budget.summary(state, True)['observedSpend'])
+        self.assertEqual(budget.summary(state, True)['spendReason'], 'quota window reset')
+
+    def test_reserve_resolution(self):
+        self.assertEqual(RAW_RESERVE(self.owner, None), 1000)
+        shared = self.owner / '.ai-dev-workflow.yaml'
+        local = self.owner / '.ai-dev-workflow.local.yaml'
+        shared.write_text('merge_budget:\n  graphql_reserve: 123\n')
+        local.write_text('merge_budget:\n  graphql_reserve: 456\n')
+        self.assertEqual(RAW_RESERVE(self.owner, None), 456)
+        self.assertEqual(RAW_RESERVE(self.owner, '789'), 789)
+        for literal in ['null', '""', '-1', '+1', '1.5', 'true', '[]', '{}']:
+            with self.subTest(literal=literal):
+                local.write_text('merge_budget:\n  graphql_reserve: ' + literal + '\n')
+                with self.assertRaises(budget.Stop):
+                    RAW_RESERVE(self.owner, None)
+        local.write_text('merge_budget:\n  graphql_reserve: null\n')
+        self.assertEqual(RAW_RESERVE(self.owner, '0'), 0)
+
+    def test_repeated_issue_executions_and_full_batch_boundary(self):
+        declaration = json.loads(self.manifest.read_text())
+        declaration['prs'].append(dict(declaration['prs'][0], pr=13))
+        self.manifest.write_text(json.dumps(declaration))
+        issue = {'id': '99', 'provider': 'github_projects', 'repo': 'org/repo',
+                 'status': 'Merged', 'tracker': True, 'close': True, 'closeComment': 'Closed by PR #12.'}
+        with patch.object(budget, 'inspect', return_value={'issues': [issue]}):
+            self.sample['remaining'] = 2695
+            value = self.begin()
+            self.assertEqual(value['estimate']['rawCost'], 1130)
+            self.assertEqual(value['estimate']['projectedCost'], 1695)
+            self.assertEqual(value['outcome'], 'Admitted')
+            self.args.pr = 13
+            with self.assertRaisesRegex(budget.Stop, 'preceding selected'):
+                budget.before(self.args)
+            self.args.pr = 12
+            self.sample['remaining'] = 2694
+            with self.assertRaises(budget.Stop):
+                budget.before(self.args)
+            self.assertFalse(budget.snapshot(self.args.session)['started'])
+
+    def test_partial_projection_retains_full_selected_set(self):
+        declaration = json.loads(self.manifest.read_text())
+        declaration['prs'][0]['head'] = 'bad'
+        declaration['prs'].append(dict(declaration['prs'][0], pr=13, head='b'*40))
+        self.manifest.write_text(json.dumps(declaration))
+        value = self.begin()
+        self.assertEqual(value['outcome'], 'Deferred')
+        self.assertEqual(len(value['selectedSet']), 2)
+        self.assertFalse(value['projectionComplete'])
+
+    def test_manifest_identity(self):
+        original = json.loads(self.manifest.read_text())
+        for identity in ['#12', '12x', 0, True]:
+            declaration = json.loads(json.dumps(original))
+            declaration['prs'][0]['pr'] = identity
+            self.manifest.write_text(json.dumps(declaration))
+            self.assertEqual(self.begin()['outcome'], 'Deferred')
+        declaration = json.loads(json.dumps(original))
+        declaration['prs'].append(declaration['prs'][0])
+        self.manifest.write_text(json.dumps(declaration))
+        self.assertEqual(self.begin()['outcome'], 'Deferred')
+        self.manifest.write_text(json.dumps(original))
+        with patch.object(budget, 'checkout_repo', return_value='foreign/repo'):
+            self.assertEqual(self.begin()['outcome'], 'Deferred')
+
+    def test_live_pr_structured_contract(self):
+        target = {'repo': 'org/repo', 'pr': 12, 'base': 'develop', 'head': 'a'*40}
+        response = {'data': {'repository': {'pullRequest': dict(self.live)}}}
+        with patch.object(budget, 'gh', return_value=response):
+            self.assertEqual(RAW_PR_READ(target)['state'], 'OPEN')
+            response['data']['repository']['pullRequest']['headRefOid'] = 'b'*40
+            with self.assertRaises(budget.Stop):
+                RAW_PR_READ(target)
+            response['data']['repository']['pullRequest']['state'] = 'MERGED'
+            self.assertEqual(RAW_PR_READ(target)['state'], 'MERGED')
+        with patch.object(budget, 'gh', return_value={'data': {'repository': None}}):
+            with self.assertRaises(budget.Stop):
+                RAW_PR_READ(target)
+
+    def test_completion_identity_and_redacted_report(self):
+        self.begin()
+        budget.before(self.args)
+        self.live['state'] = 'MERGED'
+        self.args.phase = 'cleanup'
+        with self.assertRaises(budget.Stop):
+            budget.after(self.args)
+        self.args.phase = 'merge_api'
+        self.args.execution_token = 'foreign-executor'
+        with self.assertRaises(budget.Stop):
+            budget.after(self.args)
+        report = budget.summary(budget.snapshot(self.args.session))
+        self.assertNotIn('token', report['prs'][0]['steps']['merge_api'])
+
+    def test_timestamp_contract(self):
+        from datetime import timedelta, timezone, datetime
+        earlier = datetime.now(timezone.utc) - timedelta(seconds=2)
+        observed = earlier + timedelta(seconds=1)
+        self.assertTrue(budget.newer(observed.isoformat(), earlier.isoformat()))
+        for value in ['zzz', '2026-01-01', '2030-01-01T00:00:00+00:00', True, None]:
+            with self.subTest(value=value):
+                self.assertFalse(budget.newer(value, earlier.isoformat()))
+
+    def test_nested_completion_retains_outer_claim_and_competitor_refused(self):
+        issue = {'id':'99','provider':'github_projects','repo':'org/repo','status':'Merged','tracker':True,'close':False}
+        patcher = patch.object(budget,'inspect',return_value={'issues':[issue]})
+        patcher.start(); self.addCleanup(patcher.stop)
+        self.begin()
+        intent = budget.before(self.args)
+        self.live['state'] = 'MERGED'
+        self.args.phase,self.args.step,self.args.issue,self.args.status = 'tracker','tracker:99:pre','99','Merged'
+        with patch.dict(os.environ,{'WORKFLOW_MERGE_BUDGET_TOKEN':intent['token']}):
+            budget.before(self.args)
+            with patch.object(budget,'tracker_read',return_value=True):
+                budget.after(self.args)
+        self.assertIsNotNone(budget.snapshot(self.args.session)['active'])
+        self.args.phase,self.args.step,self.args.issue,self.args.status = 'merge_verify','merge_verify',None,None
+        with patch.dict(os.environ,{'WORKFLOW_MERGE_BUDGET_TOKEN':'1890-foreign'}):
+            with self.assertRaises(budget.Stop):
+                budget.before(self.args)
+        self.args.phase,self.args.step = 'merge_api','merge_api'
+        self.args.execution_token = intent['token']
+        budget.after(self.args)
+        with self.assertRaises(budget.Stop):
+            budget.after(self.args)  # duplicate completion has no in-flight intent
+
+    def test_atomic_failure_and_storage_refusal(self):
+        self.begin()
+        path = Path(self.args.session)
+        original = path.read_bytes()
+        with patch.object(budget.os,'replace',side_effect=OSError('fixture publish failed')):
+            with self.assertRaises(OSError):
+                budget.publish(path,{'torn':True})
+        self.assertEqual(path.read_bytes(),original)
+        with patch.object(budget.os,'fsync',side_effect=OSError('fixture fsync failed')):
+            with self.assertRaises(OSError):
+                budget.publish(path,{'torn':True})
+        self.assertEqual(path.read_bytes(),original)
+        for bad in [path.parent/'..'/'state.json', self.owner/'foreign.json']:
+            with self.assertRaises(budget.Stop):
+                budget.snapshot(bad)
+        link = self.owner/'1890-link'
+        link.symlink_to(path.parent)
+        with self.assertRaises(budget.Stop):
+            budget.snapshot(link/'state.json')
+        with budget.journal(path) as state:
+            state['ownerCommonDir'] = str(self.owner/'foreign-common')
+        with self.assertRaises(budget.Stop):
+            budget.snapshot(path)
+
+    def test_linear_recovery_generation_and_single_continuation(self):
+        issue = {'id':'ENG-12','provider':'linear','repo':'org/repo','status':'Merged','tracker':True,'close':False}
+        with patch.object(budget,'inspect',return_value={'issues':[issue]}):
+            self.begin()
+        patcher = patch.object(budget,'inspect',return_value={'issues':[issue]})
+        patcher.start(); self.addCleanup(patcher.stop)
+        self.live['state'] = 'MERGED'
+        self.args.phase,self.args.step,self.args.issue,self.args.status = 'tracker','tracker:ENG-12:pre','ENG-12','Merged'
+        budget.before(self.args)
+        with self.assertRaises(budget.Stop):
+            budget.after(self.args)
+        result = budget.resume(self.args)
+        self.assertEqual(result['outcome'],'Deferred')
+        first = budget.snapshot(self.args.session)
+        self.args.evidence = str(self.owner/'1890-provider-proof.json')
+        proof = {'provider':'linear','repo':'org/repo','issue':'ENG-12','statusName':'Merged',
+                 'statusId':'merged','mutationRequestId':'1890-mutation','readRequestId':'1890-read','observedAt':budget.now()}
+        Path(self.args.evidence).write_text(json.dumps(proof))
+        budget.provider(self.args)
+        result = budget.resume(self.args)
+        self.assertEqual(result['outcome'],'Admitted')
+        continued = budget.snapshot(self.args.session)
+        self.assertEqual(continued['recoveryGeneration'],first['recoveryGeneration'])
+        self.assertFalse(continued['recoveryAwaitingProvider'])
+        result = budget.resume(self.args)
+        self.assertEqual(result['outcome'],'Deferred')
+        self.assertGreater(budget.snapshot(self.args.session)['recoveryGeneration'],continued['recoveryGeneration'])
+        with self.assertRaises(budget.Stop):
+            budget.provider(self.args)  # prior read timestamp cannot authorize a later recovery
+
+    def test_python_query_literal_uses_existing_linter(self):
+        source = Path(__file__).resolve().parents[1]/'workflow-merge-budget.py'
+        import ast
+        module = ast.parse(source.read_text())
+        literal = next(node.value.value for node in module.body if isinstance(node,ast.Assign)
+                       and any(isinstance(target,ast.Name) and target.id == 'PR_QUERY' for target in node.targets))
+        query = self.owner/'1890-query-literal.sh'
+        query.write_text("gh api graphql -f query='"+literal+"'\n")
+        linter = source.parents[1]/'lint'/'lint-graphql-query-literals.py'
+        result = subprocess.run([sys.executable,str(linter),str(query)],text=True,capture_output=True)
+        self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+
+    def test_schema_and_private_storage(self):
+        self.begin()
+        path = Path(self.args.session)
+        self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+        with budget.journal(path) as state:
+            state['schemaVersion'] = 999
+        with self.assertRaises(budget.Stop):
+            budget.snapshot(path)
+
+
+class Composed(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(prefix='1890-composed-')
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name).resolve()
+        self.repo = self.root / 'repo'
+        self.repo.mkdir()
+        self.source = Path(__file__).resolve().parents[1]
+        self.scripts = self.repo / 'scripts/development-workflow'
+        self.scripts.mkdir(parents=True)
+        for name in ['workflow-merge-budget.py', 'workflow-lib.sh', 'workflow-config-resolver.py',
+                     'workflow-project-reader.py', 'post-merge-cleanup.sh', 'batch-merge.sh', 'closing-keyword-lib.sh']:
+            shutil.copyfile(self.source / name, self.scripts / name)
+        self.command(['git', 'init', '-q', '-b', 'develop'])
+        self.command(['git', 'config', 'user.name', 'Fixture'])
+        self.command(['git', 'config', 'user.email', 'fixture@example.invalid'])
+        (self.repo / '.ai-dev-workflow.yaml').write_text('issue_tracker:\n  provider: none\n')
+        (self.repo / 'base.txt').write_text('base\n')
+        self.command(['git', 'add', 'base.txt', '.ai-dev-workflow.yaml'])
+        self.command(['git', 'commit', '-qm', 'fixture base'])
+        self.origin = self.root / 'origin.git'
+        subprocess.run(['git', 'init', '-q', '--bare', '-b', 'develop', str(self.origin)], check=True)
+        self.command(['git', 'remote', 'add', 'origin', str(self.origin)])
+        self.command(['git', 'push', '-q', 'origin', 'develop'])
+        self.command(['git', 'checkout', '-qb', 'feature/12-item'])
+        (self.repo / 'feature.txt').write_text('feature\n')
+        self.command(['git', 'add', 'feature.txt'])
+        self.command(['git', 'commit', '-qm', 'fixture feature'])
+        self.head = self.command(['git', 'rev-parse', 'HEAD']).stdout.strip()
+        self.command(['git', 'push', '-q', 'origin', 'feature/12-item'])
+        self.command(['git', 'push', '-q', 'origin', 'feature/12-item:refs/pull/12/head'])
+        self.bin = self.root / 'bin'
+        self.bin.mkdir()
+        shutil.copyfile(self.source / 'tests/fixtures/workflow-merge-budget/fake-gh.py', self.bin/'gh')
+        (self.bin/'gh').chmod(0o700)
+        self.fixture = self.root / '1890-provider.json'
+        self.data = {'repo': 'org/repo', 'prs': {'12': {'number': 12, 'state': 'OPEN',
+            'headRefName': 'feature/12-item', 'headRefOid': self.head, 'baseRefName': 'develop',
+            'isInMergeQueue': False, 'autoMergeRequest': None}},
+            'quota': {'remaining': 5000, 'limit': 5000, 'reset': int(time.time())+3600}}
+        self.fixture.write_text(json.dumps(self.data))
+        self.env = dict(os.environ, PATH=str(self.bin)+os.pathsep+os.environ['PATH'], MERGE_BUDGET_FIXTURE=str(self.fixture),
+                        WORKFLOW_GH_ITEM_LIST_CACHE_DIR=str(self.root/'1890-cache'))
+        for name in ['WORKFLOW_MERGE_BUDGET_SESSION', 'WORKFLOW_MERGE_BUDGET_TOKEN', 'WORKFLOW_MERGE_BUDGET_PR',
+                     'WORKFLOW_MERGE_BUDGET_REPO', 'GH_REPO', 'POST_MERGE_CLEANUP_CALLER_WORKTREES']:
+            self.env.pop(name, None)
+
+    def tearDown(self):
+        destination = Path('/tmp/dev-adf-5070-1890-implementation/1890-composed-evidence.json')
+        if not destination.parent.is_dir():
+            return
+        records = json.loads(destination.read_text()) if destination.exists() else {}
+        records[self.id()] = {'events':json.loads(self.fixture.read_text()).get('events',[]),
+                             'sessions':[]}
+        for journal in self.repo.glob('.git/workflow-merge-budget/*/state.json'):
+            state = json.loads(journal.read_text())
+            records[self.id()]['sessions'].append({'outcome':state['outcome'],'reason':state['reason'],
+                'projectionComplete':state['projectionComplete'],'estimate':state.get('estimate'),
+                'prs':[{'repo':target['repo'],'pr':target['pr'],'verifiedState':target['verifiedState'],
+                        'steps':{key:{field:entry.get(field) for field in ('phase','status','exitCode','commit','verifiedRemoteCommit')}
+                                 for key,entry in target['steps'].items()}} for target in state['prs']]})
+        destination.write_text(json.dumps(records,indent=2)+'\n')
+
+    def command(self, argv, env=None):
+        result = subprocess.run(argv, cwd=self.repo, env=env, text=True, capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        return result
+
+    def helper(self, *argv, success=True):
+        result = subprocess.run([sys.executable, str(self.scripts/'workflow-merge-budget.py'), *map(str,argv)],
+                                cwd=self.repo, env=self.env, text=True, capture_output=True)
+        if success:
+            self.assertEqual(result.returncode, 0, result.stderr)
+        return result
+
+    def begin(self, skipped=True):
+        path = self.root / '1890-manifest.json'
+        path.write_text(json.dumps({'ownerRoot': str(self.repo), 'prs': [{'repo': 'org/repo', 'pr': 12,
+            'head': self.head, 'base': 'develop', 'root': str(self.repo),
+            'phases': ['local_merge','base_push','merge_api','cleanup'],
+            'policySkipped': ['remote_delete','local_cleanup'] if skipped else []}]}))
+        result = self.helper('begin','--input',path)
+        return json.loads(result.stdout)['session']
+
+    def test_actual_merge_cleanup_no_deletion_composition(self):
+        session = self.begin()
+        result = self.command(['bash',str(self.scripts/'batch-merge.sh'),'--merge-session',session,
+                               'merge','--pr','12','--expected-head-sha',self.head], self.env)
+        self.assertIn('MERGE_RESULT=clean', result.stdout)
+        state = json.loads(self.helper('report','--session',session).stdout)
+        self.assertEqual(state['prs'][0]['verifiedState'], 'merged')
+        self.assertEqual(state['outcome'], 'Admitted')
+        result = self.command(['bash',str(self.scripts/'post-merge-cleanup.sh'),'--merge-session',session,
+                               '--repo-root',str(self.repo),'--base','develop','--pr','12','feature/12-item'], self.env)
+        self.assertIn('retained by policy', result.stdout)
+        state = json.loads(self.helper('report','--session',session,'--final').stdout)
+        self.assertEqual(state['outcome'], 'Completed')
+        self.assertTrue(self.command(['git','branch','--list','feature/12-item']).stdout.strip())
+        self.assertTrue(self.command(['git','ls-remote','--heads','origin','feature/12-item']).stdout.strip())
+        events = json.loads(self.fixture.read_text())['events']
+        self.assertEqual(events.count(['pr','merge']), 1)
+
+    def test_actual_queue_waiting_no_cleanup_or_resubmission(self):
+        self.data['queue'] = True
+        self.fixture.write_text(json.dumps(self.data))
+        session = self.begin()
+        result = subprocess.run(['bash',str(self.scripts/'batch-merge.sh'),'--merge-session',session,
+                                'merge','--pr','12','--expected-head-sha',self.head], cwd=self.repo,
+                                env=self.env,text=True,capture_output=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('MERGE_RESULT=waiting',result.stdout)
+        state = json.loads(self.helper('report','--session',session,success=False).stdout)
+        self.assertEqual(state['outcome'],'Waiting')
+        self.helper('resume','--session',session,success=False)
+        events = json.loads(self.fixture.read_text())['events']
+        self.assertEqual(events.count(['pr','merge']), 1)
+        self.assertNotIn(['issue','close'], events)
+
+    def two_pr_manifest(self):
+        value = dict(self.data['prs']['12'], number=13, headRefName='feature/13-item')
+        self.data['prs']['13'] = value
+        self.fixture.write_text(json.dumps(self.data))
+        self.command(['git','branch','feature/13-item',self.head])
+        self.command(['git','push','-q','origin','feature/13-item'])
+        path = self.root/'1890-batch.json'
+        path.write_text(json.dumps({'ownerRoot':str(self.repo), 'prs': [
+            {'repo':'org/repo','pr':n,'head':self.head,'base':'develop','root':str(self.repo),
+             'phases':['local_merge','base_push','merge_api','cleanup'],
+             'policySkipped':['remote_delete','local_cleanup']} for n in (12,13)]}))
+        return path
+
+    def test_actual_full_batch_refuses_affordable_prefix_and_no_fallback(self):
+        self.data['quota']['remaining'] = 1150  # single125+reserve fits; whole195+reserve does not
+        path = self.two_pr_manifest()
+        result = self.helper('begin','--input',path,success=False)
+        self.assertNotEqual(result.returncode,0)
+        response = json.loads(result.stdout)
+        self.assertEqual(response['outcome'],'Deferred')
+        session = response['session']
+        result = subprocess.run(['bash',str(self.scripts/'batch-merge.sh'),'--merge-session',session,
+                                'merge','--pr','12','--expected-head-sha',self.head],cwd=self.repo,env=self.env,
+                                text=True,capture_output=True)
+        self.assertNotEqual(result.returncode,0)
+        self.assertNotIn(['pr','merge'],json.loads(self.fixture.read_text())['events'])
+        self.assertEqual(self.command(['git','rev-parse','HEAD']).stdout.strip(),self.head)
+
+    def test_actual_outage_after_verified_merge_offline_resume_no_duplicate(self):
+        path = self.two_pr_manifest()
+        session = json.loads(self.helper('begin','--input',path).stdout)['session']
+        self.command(['bash',str(self.scripts/'batch-merge.sh'),'--merge-session',session,
+                      'merge','--pr','12','--expected-head-sha',self.head],self.env)
+        data = json.loads(self.fixture.read_text())
+        data.update(prOutage=True,quotaOutage=True)
+        self.fixture.write_text(json.dumps(data))
+        result = subprocess.run(['bash',str(self.scripts/'post-merge-cleanup.sh'),'--merge-session',session,
+                     '--repo-root',str(self.repo),'--base','develop','--pr','12','feature/12-item'],
+                     cwd=self.repo,env=self.env,text=True,capture_output=True)
+        self.assertNotEqual(result.returncode,0)
+        report = json.loads(self.helper('report','--session',session,'--final').stdout)
+        self.assertEqual(report['outcome'],'Interrupted')
+        self.assertEqual(report['prs'][0]['verifiedState'],'merged')
+        self.assertIsNone(report['observedSpend'])
+        resumed = self.helper('resume','--session',session,success=False)
+        self.assertEqual(json.loads(resumed.stdout)['outcome'],'Deferred')
+        # Even with historical started=true, Deferred never grants pending dispatch.
+        direct = self.helper('run-step','--session',session,'--repo','org/repo','--pr','13',
+                             '--step','merge_api','--phase','merge_api','--','gh','pr','merge','13',
+                             '--merge','--match-head-commit',self.head,success=False)
+        self.assertNotEqual(direct.returncode,0)
+        result = subprocess.run(['bash',str(self.scripts/'batch-merge.sh'),'--merge-session',session,
+                                'merge','--pr','13','--expected-head-sha',self.head],cwd=self.repo,env=self.env,
+                                text=True,capture_output=True)
+        self.assertNotEqual(result.returncode,0)
+        data = json.loads(self.fixture.read_text())
+        self.assertEqual(data['events'].count(['pr','merge']),1)
+        data.update(prOutage=False,quotaOutage=False)
+        self.fixture.write_text(json.dumps(data))
+        report = json.loads(self.helper('resume','--session',session).stdout)
+        self.assertEqual(report['prs'][0]['verifiedState'],'merged')
+        self.command(['bash',str(self.scripts/'post-merge-cleanup.sh'),'--merge-session',session,
+                      '--repo-root',str(self.repo),'--base','develop','--pr','12','feature/12-item'],self.env)
+        self.assertEqual(json.loads(self.fixture.read_text())['events'].count(['pr','merge']),1)
+        report = json.loads(self.helper('report','--session',session).stdout)
+        self.assertTrue(all(s['status'] in {'completed','skipped_by_policy'} for s in report['prs'][0]['steps'].values()))
+
+    def test_actual_failed_tracker_zero_exit_requires_recovery(self):
+        (self.repo/'.ai-dev-workflow.yaml').write_text('issue_tracker:\n  provider: github_projects\n  project_number: 1\n')
+        self.data.update(trackerFailure=True,trackerStatus='Plan Ready')
+        self.fixture.write_text(json.dumps(self.data))
+        session = self.begin()
+        self.command(['bash',str(self.scripts/'batch-merge.sh'),'--merge-session',session,
+                      'merge','--pr','12','--expected-head-sha',self.head],self.env)
+        result = subprocess.run(['bash',str(self.scripts/'post-merge-cleanup.sh'),'--merge-session',session,
+                      '--repo-root',str(self.repo),'--base','develop','--pr','12','feature/12-item'],
+                      cwd=self.repo,env=self.env,text=True,capture_output=True)
+        self.assertNotEqual(result.returncode,0)
+        report = json.loads(self.helper('report','--session',session).stdout)
+        self.assertEqual(report['outcome'],'Interrupted')
+        self.assertEqual(report['prs'][0]['verifiedState'],'merged')
+        data = json.loads(self.fixture.read_text())
+        data['trackerFailure'] = False
+        self.fixture.write_text(json.dumps(data))
+        self.helper('resume','--session',session)
+        result = self.command(['bash',str(self.scripts/'post-merge-cleanup.sh'),'--merge-session',session,
+                      '--repo-root',str(self.repo),'--base','develop','--pr','12','feature/12-item'],self.env)
+        self.assertEqual(json.loads(self.helper('report','--session',session).stdout)['outcome'],'Completed')
+        self.assertEqual(json.loads(self.fixture.read_text())['events'].count(['pr','merge']),1)
+
+    def test_actual_failed_push_retries_frozen_commit_after_checkout_change(self):
+        session = self.begin()
+        self.command(['git','checkout','develop'])
+        self.helper('run-step','--session',session,'--repo','org/repo','--pr','12',
+                    '--step','local_merge','--phase','local_merge','--',
+                    'git','merge','--no-ff','--no-edit',self.head)
+        result = self.helper('run-step','--session',session,'--repo','org/repo','--pr','12',
+                             '--step','base_push','--phase','base_push','--','false',success=False)
+        self.assertNotEqual(result.returncode,0)
+        intended = json.loads(self.helper('report','--session',session).stdout)['prs'][0]['steps']['base_push']['expectedCommit']
+        self.command(['git','checkout','-b','1890-other-checkout',self.head])
+        self.helper('resume','--session',session)
+        self.helper('run-step','--session',session,'--repo','org/repo','--pr','12',
+                    '--step','base_push','--phase','base_push','--',
+                    'git','push','origin',intended+':refs/heads/develop')
+        report = json.loads(self.helper('report','--session',session).stdout)
+        self.assertEqual(report['prs'][0]['steps']['base_push']['commit'],intended)
+        self.assertTrue(self.command(['git','ls-remote','origin','refs/heads/develop']).stdout.startswith(intended))
+        self.assertNotEqual(self.command(['git','rev-parse','HEAD']).stdout.strip(),intended)
+        self.assertNotIn(['pr','merge'],json.loads(self.fixture.read_text())['events'])
+
+    def test_actual_advanced_base_recovery_preserves_pushed_commit(self):
+        session = self.begin()
+        self.command(['bash',str(self.scripts/'batch-merge.sh'),'--merge-session',session,
+                      'merge','--pr','12','--expected-head-sha',self.head],self.env)
+        old = json.loads(self.helper('report','--session',session).stdout)['prs'][0]['steps']['base_push']['commit']
+        (self.repo/'1890-advance').write_text('later base commit')
+        self.command(['git','add','1890-advance'])
+        self.command(['git','commit','-m','test: advance fixture base'])
+        advanced = self.command(['git','rev-parse','HEAD']).stdout.strip()
+        self.command(['git','push','origin','develop'])
+        self.command(['git','checkout','-b','1890-operator-context',self.head])
+        self.helper('resume','--session',session)
+        step = json.loads(self.helper('report','--session',session).stdout)['prs'][0]['steps']['base_push']
+        self.assertEqual(step['commit'],old)
+        self.assertEqual(step['verifiedRemoteCommit'],advanced)
+        self.assertEqual(json.loads(self.fixture.read_text())['events'].count(['pr','merge']),1)
+
+    def test_actual_first_audit_refresh_and_malformed_manifests(self):
+        path = self.root/'1890-audit-manifest.json'
+        selected = {'repo':'org/repo','pr':12,'head':self.head,'base':'develop','root':str(self.repo),
+                    'steps':[{'id':'audit:pre','phase':'audit','auditRepo':'org/repo',
+                              'auditTarget':12,'marker':'<!-- 1890-fixture -->'}]}
+        path.write_text(json.dumps({'ownerRoot':str(self.repo),'prs':[selected]}))
+        session = json.loads(self.helper('begin','--input',path).stdout)['session']
+        data = json.loads(self.fixture.read_text()); data['quota']['remaining'] = 1
+        self.fixture.write_text(json.dumps(data))
+        body = self.root/'1890-audit-body'; body.write_text('<!-- 1890-fixture --> fixture')
+        result = self.helper('run-step','--session',session,'--repo','org/repo','--pr','12',
+                             '--step','audit:pre','--phase','audit','--expected-file',body,
+                             '--','gh','api','repos/org/repo/issues/12/comments','-X','POST',
+                             '-f','body='+body.read_text(),success=False)
+        self.assertNotEqual(result.returncode,0)
+        events = json.loads(self.fixture.read_text())['events']
+        self.assertNotIn(['api','repos/org/repo/issues/12/comments'],events)
+        for declaration in [[], {'prs':None}, {'prs':[None]},
+                            {'prs':[dict(selected,phases=None)]},
+                            {'prs':[dict(selected,steps=[None])]}, {'prs':[dict(selected,steps=None)]}, {'prs':[dict(selected,steps=[{'id':'bad','phase':[]}])]}, {'prs':[dict(selected,policySkipped=None)]}, {'prs':[dict(selected,root=[])]}, {'ownerRoot':[], 'prs':[selected]}]:
+            path.write_text(json.dumps(declaration))
+            result = self.helper('begin','--input',path,success=False)
+            self.assertEqual(result.returncode,2)
+            self.assertEqual(json.loads(result.stdout)['outcome'],'Deferred')
+            self.assertNotIn('Traceback',result.stderr)
+
+    def test_actual_failed_audit_readable_absence_retries_exact_intent(self):
+        path = self.root/'1890-audit-retry-manifest.json'
+        path.write_text(json.dumps({'ownerRoot':str(self.repo),'prs':[{'repo':'org/repo','pr':12,
+            'head':self.head,'base':'develop','root':str(self.repo),'steps':[{'id':'audit:pre','phase':'audit',
+            'auditRepo':'org/repo','auditTarget':12,'marker':'<!-- 1890-fixture -->'}]}]}))
+        session = json.loads(self.helper('begin','--input',path).stdout)['session']
+        body = self.root/'1890-audit-body'; body.write_text('<!-- 1890-fixture --> exact fixture')
+        args = ['run-step','--session',session,'--repo','org/repo','--pr','12','--step','audit:pre',
+                '--phase','audit','--expected-file',body,'--','gh','api',
+                'repos/org/repo/issues/12/comments','-X','POST','-f','body='+body.read_text()]
+        data = json.loads(self.fixture.read_text()); data['auditFailure'] = True
+        self.fixture.write_text(json.dumps(data))
+        self.assertNotEqual(self.helper(*args,success=False).returncode,0)
+        data = json.loads(self.fixture.read_text()); data['auditFailure'] = False
+        self.fixture.write_text(json.dumps(data))
+        self.helper('resume','--session',session)
+        self.helper(*args)
+        self.assertEqual(json.loads(self.helper('report','--session',session).stdout)['outcome'],'Completed')
+        self.assertEqual(json.loads(self.fixture.read_text())['comments'][0]['body'],body.read_text())
+
+    def test_actual_authorized_admin_argv_is_preserved(self):
+        session = self.begin()
+        argv = ['gh','pr','merge','12','--merge','--admin','--match-head-commit',self.head]
+        self.helper('run-step','--session',session,'--repo','org/repo','--pr','12',
+                    '--step','merge_api','--phase','merge_api','--',*argv)
+        data = json.loads(self.fixture.read_text())
+        self.assertEqual(data['mergeArgv'],[argv[1:]])
+        report = json.loads(self.helper('report','--session',session).stdout)
+        self.assertEqual(report['outcome'],'Admitted')
+        self.assertEqual(report['prs'][0]['steps']['cleanup']['status'],'pending')
+        self.assertEqual(report['prs'][0]['steps']['merge_verify']['status'],'pending')
+
+    def test_actual_already_merged_never_replays_api(self):
+        self.data['prs']['12']['state'] = 'MERGED'
+        self.fixture.write_text(json.dumps(self.data))
+        result = self.command(['bash',str(self.scripts/'batch-merge.sh'),'merge','--pr','12',
+                               '--expected-head-sha',self.head],self.env)
+        self.assertIn('MERGE_API_RESULT=already_merged',result.stdout)
+        self.assertNotIn(['pr','merge'],json.loads(self.fixture.read_text())['events'])
+
+    def test_planted_admission_violation_is_detected_and_restored(self):
+        helper = self.scripts/'workflow-merge-budget.py'
+        original = helper.read_text()
+        predicate = 'if sample["remaining"] < state["estimate"]["projectedCost"] + state["reserve"]:'
+        self.assertEqual(original.count(predicate),1)
+        line = original[:original.index(predicate)].count('\n')+1
+        self.data['quota']['remaining'] = 1
+        self.fixture.write_text(json.dumps(self.data))
+        argv = ['bash',str(self.scripts/'batch-merge.sh'),'merge','--pr','12','--expected-head-sha',self.head]
+        green = subprocess.run(argv,cwd=self.repo,env=self.env,text=True,capture_output=True)
+        self.assertNotEqual(green.returncode,0)
+        self.assertNotIn(['pr','merge'],json.loads(self.fixture.read_text())['events'])
+        try:
+            helper.write_text(original.replace(predicate,'if False and sample["remaining"] < state["estimate"]["projectedCost"] + state["reserve"]:'))
+            red = subprocess.run(argv,cwd=self.repo,env=self.env,text=True,capture_output=True)
+            red_events = json.loads(self.fixture.read_text())['events']
+            with self.assertRaises(AssertionError):
+                self.assertNotIn(['pr','merge'],red_events)
+            self.assertIn(['pr','merge'],red_events)
+        finally:
+            helper.write_text(original)
+        self.assertEqual(helper.read_text(),original)
+        data = json.loads(self.fixture.read_text()); data['prs']['12']['state'] = 'OPEN'; data['events'] = []
+        self.fixture.write_text(json.dumps(data))
+        restored = subprocess.run(argv,cwd=self.repo,env=self.env,text=True,capture_output=True)
+        self.assertNotEqual(restored.returncode,0)
+        self.assertNotIn(['pr','merge'],json.loads(self.fixture.read_text())['events'])
+        evidence = Path('/tmp/dev-adf-5070-1890-implementation/1890-planted-admission-proof.json')
+        if evidence.parent.is_dir():
+            revision = subprocess.run(['git','rev-parse','HEAD'],cwd=self.source,text=True,capture_output=True,check=True).stdout.strip()
+            evidence.write_text(json.dumps({'source':'scripts/development-workflow/workflow-merge-budget.py',
+                'line':line,'revision':revision,'fixtureOnly':True,'predicate':predicate,
+                'sourceDigest':__import__('hashlib').sha256(original.encode()).hexdigest(),
+                'baseline':'green, zero merge dispatch','planted':'red, forbidden fixture merge detected',
+                'restored':'green, zero merge dispatch'},indent=2)+'\n')
+
+    def test_actual_insufficient_session_has_zero_mutations(self):
+        self.data['quota']['remaining'] = 1
+        self.fixture.write_text(json.dumps(self.data))
+        result = subprocess.run(['bash',str(self.scripts/'batch-merge.sh'),'merge','--pr','12',
+                                 '--expected-head-sha',self.head], cwd=self.repo,env=self.env,text=True,capture_output=True)
+        self.assertNotEqual(result.returncode,0)
+        self.assertIn('MERGE_RESULT=deferred',result.stdout)
+        self.assertNotIn(['pr','merge'],json.loads(self.fixture.read_text())['events'])
+        self.assertEqual(self.command(['git','rev-parse','HEAD']).stdout.strip(),self.head)
+
+
+
+if __name__ == '__main__':
+    unittest.main()
