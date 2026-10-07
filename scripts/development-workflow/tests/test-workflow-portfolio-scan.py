@@ -677,6 +677,41 @@ class Fixture(unittest.TestCase):
                 self.assertEqual(next(record for record in report['fullyRead'] if record['number']==1)['dependencies'],[2,3])
             self.assertEqual(self.ledger()['graphql'],4)
 
+    def test_dependency_producer_boundaries(self):
+        development=self.root/self.artifact();self.artifact(2);self.artifact(3)
+        plan=next(development.glob('2_*_implementation-plan.md'))
+        sources=[({'dependsOn':'#2','dependencies':'3-fixture'},None,[2,3]),
+                 ({'dependsOn':'#2','dependencies':'unknown-prerequisite'},None,None),
+                 ({'dependsOn':'None.','dependencies':'#3'},None,[3]),
+                 ({'dependsOn':'None. No prerequisites.','dependencies':'#3'},None,[3]),
+                 ({},'- None. No prerequisites.\n- #3',[3]),
+                 ({},'- #2\n- 3-fixture',[2,3]),
+                 ({},'- #2\n- unknown-prerequisite',None)]
+        for fields,section,expected in sources:
+            plan.write_text('## Dependencies\n'+section+'\n## Implementation\nfixture\n' if section else 'fixture\n')
+            for state in ('Backlog','Released'):
+                self.reset(active=3,statuses={'1':'Plan Ready','2':'Merged','3':state},**fields)
+                report=self.scan();self.assertEqual(self.ledger()['graphql'],4)
+                if expected is None:
+                    self.assertNotIn(1,[record['number'] for record in report['fullyRead']])
+                    self.assertNotIn(1,[row['number'] for row in report['classification']])
+                    self.assertTrue(any(entry['number']==1 and 'Unresolved dependency' in entry['reason'] for entry in report['omissions']))
+                else:
+                    record=next(record for record in report['fullyRead'] if record['number']==1)
+                    self.assertEqual(record['dependencies'],expected)
+                    row=next(row for row in report['classification'] if row['number']==1)
+                    self.assertEqual(row['action'],'hold-dependency' if state=='Backlog' else 'implement')
+        # Ordinary descriptions and independent explicit None members survive.
+        for fields,section,expected in (({'dependsOn':'#2 (foundation)','dependencies':'None.'},None,[2]),
+                                        ({'dependsOn':'None.','dependencies':'None'},None,[]),
+                                        ({},'- None.\n- #2 (foundation)',[2])):
+            plan.write_text('## Dependencies\n'+section+'\n## Implementation\nfixture\n' if section else 'fixture\n')
+            self.reset(active=3,statuses={'1':'Plan Ready','2':'Merged','3':'Released'},**fields)
+            report=self.scan();record=next(record for record in report['fullyRead'] if record['number']==1)
+            self.assertEqual(record['dependencies'],expected)
+            self.assertEqual(next(row for row in report['classification'] if row['number']==1)['action'],'implement')
+            self.assertEqual(self.ledger()['graphql'],4)
+
     def test_tracker_dependency_field_absence_and_unknown(self):
         self.artifact()
         for field in ('dependsOn','dependencies'):

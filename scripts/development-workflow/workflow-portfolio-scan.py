@@ -57,17 +57,18 @@ def dependency_references(text, slug_ids=None):
                     break
                 if following.strip():
                     section.append(following.strip())
-            value = ' '.join(section)
-        if re.fullmatch(r'(?i)none\.?', value) or re.match(r'(?i)^none\.\s+', value):
-            continue
+            value = ', '.join(section)
         # Each comma-delimited member is evidence in its own right. A #ref
         # must not mask a supported slug or an unresolved neighbouring member.
         for member in value.split(','):
+            member = re.sub(r'^[-*]\s+', '', member.strip()).strip('[]`').strip()
             found = re.findall(r'#([1-9][0-9]*)\b', member)
             if found:
                 references.update(int(n) for n in found)
                 continue
-            slug = re.sub(r'^(?:feature|fix|refactor|hotfix)/', '', member.strip().strip('[]`'))
+            if re.fullmatch(r'(?i)none\.?', member) or re.match(r'(?i)^none\.\s+', member):
+                continue
+            slug = re.sub(r'^(?:feature|fix|refactor|hotfix)/', '', member)
             if slug not in (slug_ids or {}):
                 raise EvidenceIncomplete('Unresolved dependency declaration')
             references.add(slug_ids[slug])
