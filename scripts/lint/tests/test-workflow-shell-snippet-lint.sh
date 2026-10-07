@@ -649,8 +649,11 @@ import sys
 linter = pathlib.Path(sys.argv[1])
 root = pathlib.Path(sys.argv[2]) / "array-cases"
 root.mkdir()
+case_count = 0
 
 def case(name, content, expected, changed=None, markdown=False):
+    global case_count
+    case_count += 1
     path = "docs/workflow/array.md" if markdown else "scripts/example.sh"
     target = root / path
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -686,6 +689,14 @@ case("safe_adjacent_unsafe", 'set -u\necho ${arr[@]+"${arr[@]}"} "${arr[@]}"\n',
 case("safe_colon_guard", 'set -u\necho ${arr[@]:+"${arr[@]}"}\n', 0)
 case("two_arrays", 'echo "${arr[@]:-}" "${other[@]:-}"\n', 2)
 case("literals", "# set -u; echo \"${arr[@]:-}\"\necho '\"${arr[@]:-}\"'\n", 0)
+case("literal_heredoc_text", "echo \"foo <<'EOF'\"\necho \"${arr[@]:-}\"\n", 1)
+case("expanding_heredoc", "cat <<EOF\n'\"${arr[@]:-}\"'\nEOF\n", 1)
+case("heredoc_body_not_command", 'cat <<EOF\nset -u\nEOF\necho "${arr[@]}"\n', 0)
+case("heredoc_nounset", 'set -u\ncat <<EOF\n# "${arr[@]}"\nEOF\n', 1)
+case("escaped_heredoc", 'cat <<\\EOF\necho "${arr[@]:-}"\nEOF\n', 0)
+case("here_string", "cat <<<'EOF'\necho \"${arr[@]:-}\"\n", 1)
+case("literal_then_real_heredoc", "echo \"foo <<'FAKE'\"; cat <<'REAL'\n\"${arr[@]:-}\"\nREAL\n", 0)
+case("hyphen_heredoc", "cat <<'END-DOC'\n\"${arr[@]:-}\"\nEND-DOC\n", 0)
 case("quoted_heredoc", "cat <<'EOF'\nset -u\necho \"${arr[@]:-}\"\nEOF\necho \"${arr[@]}\"\n", 0)
 case("literal_nounset", 'echo "set -u; set -u"\necho "${arr[@]}"\n', 0)
 case("changed_only", 'echo "${arr[@]:-}"\necho changed\n', 0, changed=[2])
@@ -698,6 +709,7 @@ case("markdown_old_line", '<!-- workflow-shell-contract: bash -->\n```bash\n#!/u
 result = subprocess.run([sys.executable, str(linter), "--all"], cwd=root, text=True, capture_output=True)
 assert result.returncode == 1 and "scripts/example.sh:" in result.stdout, result.stdout
 print("PASS: array_all_includes_scripts")
+print(f"{case_count + 1} WS007 cases passed")
 PYARRAY
 
 if ! command -v zsh >/dev/null; then

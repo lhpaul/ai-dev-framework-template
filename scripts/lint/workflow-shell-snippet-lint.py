@@ -22,6 +22,7 @@ BASH4 = re.compile(r"\b(?:declare|local)\s+-A\b|\b(?:readarray|mapfile)\b")
 ARRAY = re.compile(r'"\$\{(?P<name>[A-Za-z_]\w*)\[@\](?P<default>:-)?\}"')
 SAFE_ARRAY = re.compile(r'\$\{([A-Za-z_]\w*)\[@\](?:\+|:\+)"\$\{\1\[@\]\}"\}')
 SET_OPTIONS = re.compile(r'(?:^|[;&|()])\s*set\s+(?P<options>[^;&|()]*)')
+HEREDOC = re.compile(r"(?<!<)<<(?!<)(?P<tabs>-)?[ \t]*(?:(?P<quote>['\"])(?P<quoted>[\w-]+)(?P=quote)|\\(?P<escaped>[\w-]+)|(?P<plain>[\w-]+))")
 
 
 @dataclass
@@ -262,15 +263,20 @@ def array_findings(path: str, lines: list[str], changed: set[int], offset: int =
     quote = ""
     heredoc = None
     for number, row in enumerate(lines, offset + 1):
+        expanding_body = False
         if heredoc is not None:
-            if row.lstrip("\t") == heredoc:
+            delimiter, expands, strip_tabs = heredoc
+            if (row.lstrip("\t") if strip_tabs else row) == delimiter:
                 heredoc = None
-            continue
-        # Quoted delimiters disable all expansion in the following body.
-        delimiter = re.search(r"<<-?\s*(['\"])(\w+)\1", row)
-        visible = []
+                continue
+            if not expands:
+                continue
+            # Unquoted heredocs expand parameters even in apparent comments
+            # and single-quoted text; body text cannot change nounset state.
+            expanding_body = True
+        visible = list(row) if expanding_body else []
         commands = []
-        cursor = 0
+        cursor = len(row) if expanding_body else 0
         while cursor < len(row):
             char = row[cursor]
             if char == "\\" and quote != "'":
@@ -294,6 +300,8 @@ def array_findings(path: str, lines: list[str], changed: set[int], offset: int =
             cursor += 1
         code = "".join(visible)
         command_code = "".join(commands)
+        delimiter = next((match for match in HEREDOC.finditer(row)
+                          if command_code[match.start():].startswith("<<")), None)
         # Mask the entire safe guard so its nested quoted expansion is not
         # mistaken for a raw expansion (including multiple arrays per line).
         code = SAFE_ARRAY.sub(lambda match: " " * len(match.group()), code)
@@ -320,8 +328,12 @@ def array_findings(path: str, lines: list[str], changed: set[int], offset: int =
                     'Bash 3.2 unsafe empty-array expansion; use '
                     + '${' + name + '[@]+"${' + name + '[@]}"}',
                 ))
-        if delimiter and code[delimiter.start():].startswith("<<"):
-            heredoc = delimiter.group(2)
+        if delimiter and command_code[delimiter.start():].startswith("<<"):
+            heredoc = (
+                delimiter.group("quoted") or delimiter.group("escaped") or delimiter.group("plain"),
+                delimiter.group("plain") is not None,
+                delimiter.group("tabs") is not None,
+            )
     return findings
 
 
