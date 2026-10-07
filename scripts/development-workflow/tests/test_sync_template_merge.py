@@ -241,18 +241,25 @@ class SyncTests(unittest.TestCase):
         self.write(outside, "a.md", "outside secret\n")
         expected = merge.local_snapshot(self.consumer, "shared/a.md")
         expected["data"] = merge.encoded(b"approved change\n")
-        anchored_open = os.open
+        anchored_open, mkdir = os.open, os.mkdir
         substituted = False
-        def race_open(path, flags, *args, **kwargs):
+        def substitute():
             nonlocal substituted
-            fd = anchored_open(path, flags, *args, **kwargs)
-            if path == "shared" and flags & os.O_DIRECTORY and not substituted:
+            if not substituted:
                 (self.consumer / "shared").rename(self.consumer / "held-shared")
                 os.symlink(outside, self.consumer / "shared")
                 substituted = True
-            return fd
-        with patch.object(os, "open", race_open):
+        def race_open(path, flags, *args, **kwargs):
+            if str(path).startswith(".sync-write-") and flags & os.O_CREAT:
+                substitute()
+            return anchored_open(path, flags, *args, **kwargs)
+        def race_mkdir(path, *args, **kwargs):
+            if ".sync-write-" in str(path):
+                substitute()
+            return mkdir(path, *args, **kwargs)
+        with patch.object(os, "open", race_open), patch.object(os, "mkdir", race_mkdir):
             merge.write_snapshot(self.consumer, "shared/a.md", expected, [])
+        self.assertTrue(substituted, "ancestor substitution must actually be planted")
         self.assertEqual((outside / "a.md").read_text(), "outside secret\n")
         self.assertEqual((self.consumer / "held-shared/a.md").read_text(), "approved change\n")
         with self.assertRaises(OSError):
