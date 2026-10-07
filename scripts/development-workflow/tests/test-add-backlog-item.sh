@@ -34,6 +34,7 @@
 #      warning honours issue_tracker.custom_fields.type_field.
 #
 # Usage: bash scripts/development-workflow/tests/test-add-backlog-item.sh
+# covers: scripts/development-workflow/workflow-project-reader.py
 
 set -euo pipefail
 
@@ -158,6 +159,13 @@ case "$*" in
   "repo view --json name --jq .name")
     printf 'test-repo\n'
     ;;
+  "api repos/lhpaul/test-repo/issues/123")
+    case "${MOCK_REST_ISSUE_MODE:-ok}" in
+      fail) printf 'fresh REST identity unavailable\n' >&2; exit 1 ;;
+      mismatch) printf '{"number":124,"title":"Test","state":"open"}\n' ;;
+      *) printf '{"number":123,"title":"Test","state":"open"}\n' ;;
+    esac
+    ;;
   issue\ create\ *)
     case "${MOCK_GH_ISSUE_CREATE_MODE:-ok}" in
       malformed)   printf 'not-a-url\n' ;;
@@ -191,6 +199,16 @@ case "$*" in
           printf '{"data":{"repository":{"issue":{"projectItems":{"nodes":[],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}}\n'
         else
           printf '{"data":{"repository":{"issue":{"projectItems":{"nodes":[{"id":"PVTI_item_123","project":{"id":"PVT_project_1","number":1},"status":{"name":"%s"},"configuredType":{"name":"%s"},"customType":null,"compactCustomType":null,"type":{"name":"%s"},"priority":{"name":"%s"},"size":{"name":"%s"}}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}}\n' \
+            "$ITEM_STATUS" "$ITEM_TYPE" "$ITEM_TYPE" "$ITEM_PRIORITY" "$ITEM_SIZE"
+        fi
+        ;;
+      *"items(first:100,query:"*)
+        # Preserve the primary read-after-write lag in this exact-identity
+        # fallback too; the second route must not bypass the lag tests.
+        if [ "$ON_BOARD" != "yes" ] || { [ -n "${MOCK_LOOKUP_MISSING_UNTIL:-}" ] && [ "$LOOKUP_COUNT" -le "$MOCK_LOOKUP_MISSING_UNTIL" ]; }; then
+          printf '{"data":{"node":{"items":{"nodes":[],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}\n'
+        else
+          printf '{"data":{"node":{"items":{"nodes":[{"id":"PVTI_item_123","project":{"id":"PVT_project_1"},"content":{"number":123,"repository":{"nameWithOwner":"lhpaul/test-repo"}},"status":{"name":"%s"},"configuredType":{"name":"%s"},"type":{"name":"%s"},"priority":{"name":"%s"},"size":{"name":"%s"}}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}\n' \
             "$ITEM_STATUS" "$ITEM_TYPE" "$ITEM_TYPE" "$ITEM_PRIORITY" "$ITEM_SIZE"
         fi
         ;;
@@ -378,6 +396,8 @@ run_test "happy_path_prints_issue_url" "yes" "$url_in_output"
 board_check_count="$(count_log_matches 'projectItems')"
 run_test "happy_path_checks_board_membership" "yes" "$([ "$board_check_count" -ge 1 ] && echo yes || echo no)"
 run_test "happy_path_adds_item_to_board" "1" "$(count_log_matches 'project item-add ')"
+run_test "happy_path_fallback_requires_fresh_rest_identity" "yes" "$([ "$(count_log_matches 'api repos/lhpaul/test-repo/issues/123')" -ge 1 ] && echo yes || echo no)"
+run_test "happy_path_fallback_uses_filtered_page" "yes" "$([ "$(count_log_matches 'items\\(first:100,query:')" -ge 1 ] && echo yes || echo no)"
 run_test "happy_path_sets_status_backlog" "1" "$(count_log_matches 'optionId=OPT_status_backlog')"
 run_test "happy_path_updates_priority" "1" "$(count_log_matches 'fieldId=PVTSSF_priority')"
 # Regression for issue #1501: the requested (defaulted) priority must
@@ -385,6 +405,17 @@ run_test "happy_path_updates_priority" "1" "$(count_log_matches 'fieldId=PVTSSF_
 # sent with the Medium option ID, not the non-existent "Normal" option.
 run_test "happy_path_default_priority_is_medium" "1" "$(count_log_matches 'optionId=OPT_medium')"
 run_test "happy_path_skips_size_update" "0" "$(count_log_matches 'fieldId=PVTSSF_size')"
+
+echo ""
+echo "=== create: unreadable or mismatched REST identity never establishes absence ==="
+for identity_mode in fail mismatch; do
+  export MOCK_REST_ISSUE_MODE="$identity_mode"
+  run_create "ok" --title "Test" --body "body"
+  unset MOCK_REST_ISSUE_MODE
+  run_test "rest_identity_${identity_mode}_fails_creation_verification" "yes" "$([ "$(get_exit)" -ne 0 ] && echo yes || echo no)"
+  run_test "rest_identity_${identity_mode}_never_adds_board_item" "0" "$(count_log_matches 'project item-add ')"
+  run_test "rest_identity_${identity_mode}_never_writes_fields" "0" "$(count_log_matches 'updateProjectV2ItemFieldValue')"
+done
 
 echo ""
 echo "=== create: --priority flag overrides Medium default ==="

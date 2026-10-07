@@ -295,7 +295,9 @@ create_cmd() {
         priority_mismatch=""
         size_mismatch=""
         verify_json="$(workflow_github_project_item_for_issue "$issue_number" "$project_number")"
-        if [ -z "$verify_json" ]; then
+        # A successful bounded lookup can prove absence with a nonempty
+        # membership record. Only a valid card identity proves item presence.
+        if [ -z "$verify_json" ] || ! printf '%s' "$verify_json" | jq -e '.item_id | type == "string" and length > 0' >/dev/null 2>&1; then
           item_missing="yes"
         else
           item_missing="no"
