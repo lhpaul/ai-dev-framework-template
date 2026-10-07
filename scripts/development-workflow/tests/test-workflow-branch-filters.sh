@@ -180,7 +180,7 @@ bf_glob_matches() {
     esac
     i=$((i+1))
   done
-  printf '%s' "$sample" | grep -qE "^${re}\$"
+  grep -qE "^${re}\$" <<< "$sample"
 }
 
 # Is <sample> included by a positive `branches:` list?
@@ -288,7 +288,7 @@ for wf in "$WF_DIR"/*.yml "$WF_DIR"/*.yaml; do
   [ -n "$block" ] || continue
   # Only workflows that gate on `develop` are in scope; a main-only workflow
   # (release tagging) legitimately never runs on an integration branch.
-  printf '%s\n' "$block" | grep -qx "develop" || continue
+  grep -qx "develop" <<< "$block" || continue
   # update-tracker-on-merge.yml is deliberately out of scope: it closes issues
   # and writes tracker status on merge, so extending it to integration branches
   # is a tracker-lifecycle decision (does a sub-item merged into develop-<slug>
@@ -542,10 +542,10 @@ run_test "pull_request_target_branches_are_trigger_scoped" "$(printf 'develop\nd
 # Planted violation: the flattened view is what used to be checked, and it
 # contains develop-**, so the old logic passed this workflow.
 run_test "flattened_view_would_have_passed_this" "yes" \
-  "$(branch_filter_block "$FIXTURE_DIR/pr-vs-pr-target.yml" | grep -qx 'develop-\*\*' && echo yes || echo no)"
+  "$(branch_filter_block "$FIXTURE_DIR/pr-vs-pr-target.yml" | grep -x 'develop-\*\*' > /dev/null && echo yes || echo no)"
 # Trigger-scoped, the pull_request filter is correctly seen as missing it.
 run_test "trigger_scoped_view_catches_the_gap" "no" \
-  "$(branches_for_trigger "$FIXTURE_DIR/pr-vs-pr-target.yml" pull_request | grep -qx 'develop-\*\*' && echo yes || echo no)"
+  "$(branches_for_trigger "$FIXTURE_DIR/pr-vs-pr-target.yml" pull_request | grep -x 'develop-\*\*' > /dev/null && echo yes || echo no)"
 
 # Argument validation: a missing or unreadable file must be a reported error,
 # not a shell failure or a Python traceback, and must not read as "no filter".

@@ -1492,7 +1492,7 @@ PATH="$_codex_stale_root_review_comment_mock_dir:$PATH" \
   >"$_codex_stale_root_review_comment_mock_dir/output.txt" 2>&1 || _codex_stale_root_review_comment_exit=$?
 _codex_stale_root_review_comment_output="$(cat "$_codex_stale_root_review_comment_mock_dir/output.txt")"
 run_test "codex_stale_root_review_comment_exit_waiting" "4" "$_codex_stale_root_review_comment_exit"
-if printf '%s\n' "$_codex_stale_root_review_comment_output" | grep -q "^VERDICT: APPROVED"; then
+if grep -q "^VERDICT: APPROVED" <<< "$_codex_stale_root_review_comment_output"; then
   _codex_stale_root_review_comment_approved="yes"
 else
   _codex_stale_root_review_comment_approved="no"
@@ -1860,7 +1860,7 @@ run_test "codex_async_root_fetch_failure_exit_unavailable" "2" "$_codex_async_ro
 run_test "codex_async_root_fetch_failure_verdict" \
   "VERDICT: TIMED_OUT — failed to fetch Codex root comments during async grace period (treated as unavailable)" \
   "$(printf '%s\n' "$_codex_async_root_fetch_failure_output" | grep "^VERDICT:")"
-if printf '%s\n' "$_codex_async_root_fetch_failure_output" | grep -q "^VERDICT: APPROVED"; then
+if grep -q "^VERDICT: APPROVED" <<< "$_codex_async_root_fetch_failure_output"; then
   _codex_async_root_fetch_failure_approved="yes"
 else
   _codex_async_root_fetch_failure_approved="no"

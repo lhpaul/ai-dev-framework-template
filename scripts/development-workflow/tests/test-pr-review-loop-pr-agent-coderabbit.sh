@@ -594,7 +594,7 @@ run_test "cr_skip_banner_re_matches_html_marker_alone" "yes" \
 # ERE). A pattern valid in only one engine would silently stop matching at one of
 # the two call sites, so the engines are asserted to agree.
 _cr_grep_matches_1531() {
-  if printf '%s' "$1" | grep -qiE "$CODERABBIT_SKIP_BANNER_RE"; then echo yes; else echo no; fi
+  if grep -qiE "$CODERABBIT_SKIP_BANNER_RE" <<< "$1"; then echo yes; else echo no; fi
 }
 run_test "cr_skip_banner_re_grep_agrees_on_banner" "yes" \
   "$(_cr_grep_matches_1531 '> ## Review skipped')"
@@ -1197,7 +1197,22 @@ for _reason in not_clean compare_mode skip_env no_thread_posting_platforms no_pr
     "$(grep -q "POST_CLEAN_RECHECK_SKIP_REASON $_reason" "$_1574_loop" && echo yes || echo no)"
 done
 run_test "help_documents_skip_reason" "yes" \
-  "$(printf '%s\n' "$_1574_help" | grep -q 'POST_CLEAN_RECHECK_SKIP_REASON=' && echo yes || echo no)"
+  "$(grep -q 'POST_CLEAN_RECHECK_SKIP_REASON=' <<< "$_1574_help" && echo yes || echo no)"
+
+# Captured help with trailing data larger than a pipe buffer must keep both
+# matching and absent-text assertions reliable under pipefail (#1877).
+_1877_padding="$(printf '%*s' 1048576 '')"
+_1877_large_help="$_1574_help
+$_1877_padding"
+run_test "help_large_output_early_match" "yes" \
+  "$(grep -Fq 'POST_CLEAN_RECHECK_SKIP_REASON=' <<< "$_1877_large_help" && echo yes || echo no)"
+run_test "help_large_output_absent_text" "no" \
+  "$(grep -Fq '__1877_ABSENT_HELP_TOKEN__' <<< "$_1877_large_help" && echo yes || echo no)"
+run_test "help_large_output_window_default" "$_1574_cw" \
+  "$(grep -oE 'Maximum total time to spend settling \(default: [0-9]+' <<< "$_1877_large_help" | grep -oE '[0-9]+$')"
+run_test "help_large_output_quiet_default" "$_1574_cq" \
+  "$(grep -oE 'Defaults per platform: [0-9]+ for coderabbit' <<< "$_1877_large_help" | grep -oE '[0-9]+')"
+unset _1877_padding _1877_large_help
 
 # Protocol 91 must defer to the loop's settle fields rather than carry a wait
 # of its own (AC-2), and Protocols 91/92 must describe one contract (AC-3).

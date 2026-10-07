@@ -513,7 +513,7 @@ set -e
 
 run_test "poll_interval_zero_exit_code" "3" "$ec"
 # Error message should appear in stderr (captured via 2>&1 here).
-if echo "$output" | grep -q "HAYSTACK_POLL_INTERVAL"; then
+if grep -q "HAYSTACK_POLL_INTERVAL" <<< "$output"; then
   run_test "poll_interval_zero_error_message" "yes" "yes"
 else
   run_test "poll_interval_zero_error_message" "yes" "no"

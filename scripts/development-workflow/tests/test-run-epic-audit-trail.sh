@@ -467,7 +467,7 @@ run_test "renders_security_advisory_pending_status" "yes" "$(grep -Fq '| sec-one
 
 no_security_advisories_output="$("$HELPER" render-pr-disposition --input "$pr_fixture")"
 run_test "renders_security_advisory_section_none_when_absent" "yes" "$(
-  awk '/### Security-Sensitive Advisory Findings/,/### Verification Evidence/' <<< "$no_security_advisories_output" | grep -q '^None.$' && echo yes || echo no
+  awk '/### Security-Sensitive Advisory Findings/,/### Verification Evidence/' <<< "$no_security_advisories_output" | grep '^None.$' > /dev/null && echo yes || echo no
 )"
 
 security_advisories_pending_stderr="$("$HELPER" render-pr-disposition --input "$security_advisories_fixture" 2>&1 >/dev/null)"
@@ -476,7 +476,7 @@ run_test "warns_on_pending_security_advisory" "yes" "$(
 )"
 
 run_test "securityAdvisories_not_flagged_as_unknown_key" "no" "$(
-  "$HELPER" render-pr-disposition --input "$security_advisories_fixture" 2>&1 >/dev/null | grep -q 'securityAdvisories' && echo yes || echo no
+  "$HELPER" render-pr-disposition --input "$security_advisories_fixture" 2>&1 >/dev/null | grep 'securityAdvisories' > /dev/null && echo yes || echo no
 )"
 
 # AC10: seven status-specific required-field validation failures, each a
@@ -530,7 +530,7 @@ run_test "legacy_pr_disposition_policy_optional" "yes" "$(grep -q 'Not recorded'
 
 missing_why_output="$("$HELPER" render-pr-disposition --input "$missing_why_safe_to_merge_fixture")"
 run_test "why_safe_to_merge_optional_when_absent" "yes" "$(
-  awk '/### Why Safe to Merge/,/### Invocation Policy/' <<< "$missing_why_output" | grep -q 'Not recorded.' && echo yes || echo no
+  awk '/### Why Safe to Merge/,/### Invocation Policy/' <<< "$missing_why_output" | grep 'Not recorded.' > /dev/null && echo yes || echo no
 )"
 
 unknown_key_stderr="$("$HELPER" render-pr-disposition --input "$unknown_key_fixture" 2>&1 >/dev/null)"
@@ -653,7 +653,7 @@ run_test "warns_on_bulk_acceptance_rationale" "yes" \
 
 no_advisory_stderr="$("$HELPER" render-pr-disposition --input "$no_advisory_fixture" 2>&1 >/dev/null)"
 run_test "no_warn_when_advisory_count_zero" "yes" \
-  "$(printf '%s' "$no_advisory_stderr" | wc -c | tr -d ' ' | grep -qx '0' && echo yes || echo no)"
+  "$(printf '%s' "$no_advisory_stderr" | wc -c | tr -d ' ' | grep -x '0' > /dev/null && echo yes || echo no)"
 
 echo ""
 echo "=== Planted-violation regression: apply-* required-field guard must not be inert (#1430) ==="

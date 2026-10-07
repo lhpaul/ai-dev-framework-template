@@ -88,7 +88,7 @@ if [ "$(workflow_template_is_template "$REPO_ROOT/.ai-dev-workflow.yaml")" = "tr
     docs/testing/workflow/retrospective-protocol.smoke-test.md \
     docs/testing/workflow/tracker-type-field-classification.smoke-test.md; do
     run_test "manifest_ships_${path##*/}" "yes" \
-      "$(python3 "$SELECTOR" --manifest "$REPO_ROOT/sync-manifest.yaml" --role single_repo | grep -Fq " path=$path " && echo yes || echo no)"
+      "$(python3 "$SELECTOR" --manifest "$REPO_ROOT/sync-manifest.yaml" --role single_repo | grep -F " path=$path " > /dev/null && echo yes || echo no)"
   done
 else
   echo "SKIP: template manifest coverage (consumer repository; template.is_template is not true)"

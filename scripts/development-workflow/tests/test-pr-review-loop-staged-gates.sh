@@ -1115,7 +1115,7 @@ rm -f "$_1651_out_file"
 run_test "1651_s11_append_safe_0" "0" "${reviewer_loop_history_last_append_safe}"
 run_contains "1651_s11_preserves_malformed" '{not-json' "$_1651_out"
 # Ensure stub with entries:[] is NOT written over it
-if printf '%s\n' "$_1651_out" | grep -Fq '"entries": []'; then
+if grep -Fq '"entries": []' <<< "$_1651_out"; then
   run_contains "1651_s11_malformed_still_present" '{not-json' "$_1651_out"
 else
   run_test "1651_s11_no_empty_stub" "1" "1"

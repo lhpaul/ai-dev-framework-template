@@ -106,7 +106,7 @@ case "$*" in
     if [ "${MOCK_DROP_LABEL:-0}" != "1" ] && [ -n "${MOCK_LABEL_STATE:-}" ] && [ -n "$added" ]; then
       printf '%s\n' "$added" >>"$MOCK_LABEL_STATE"
     fi
-    if printf '%s\n' "$*" | grep -q -- "--remove-label"; then
+    if grep -q -- "--remove-label" <<< "$*"; then
       exit "${MOCK_REMOVE_LABEL_EXIT:-0}"
     fi
     exit "${MOCK_GH_EDIT_EXIT:-0}"

@@ -176,7 +176,7 @@ run_test "held_waiting_review_stays_informational" "informational" "$(block_valu
 run_test "held_waiting_review_uses_wait_reason" "Waiting on human review or merge outside the current run-work proposal." "$(block_value "$review_cap_output" "waiting-review-b" "REPORT_REASON")"
 
 scan_no_paths_output="$("$LANES" --repo-root "$fixture_repo" --scan 2>&1)"
-run_test "scan_mode_no_paths_returns_none" "yes" "$(printf '%s\n' "$scan_no_paths_output" | grep -q '^(none)$' && echo yes || echo no)"
+run_test "scan_mode_no_paths_returns_none" "yes" "$(grep -q '^(none)$' <<< "$scan_no_paths_output" && echo yes || echo no)"
 
 high_parallel_repo="$TMP_ROOT/high-parallel"
 mkdir -p "$high_parallel_repo/docs/specs/developments"
@@ -370,7 +370,7 @@ skip_output="$("$LANES" --repo-root "$fixture_repo" < "$skip_file")"
 run_test "skip_action_not_proposed" "skip" "$(block_value "$skip_output" "skip-item" "DISPATCH")"
 
 whitespace_output="$(printf ' \n\t\n\n' | "$LANES" --repo-root "$fixture_repo")"
-run_test "whitespace_input_returns_none" "yes" "$(printf '%s\n' "$whitespace_output" | grep -q '^(none)$' && echo yes || echo no)"
+run_test "whitespace_input_returns_none" "yes" "$(grep -q '^(none)$' <<< "$whitespace_output" && echo yes || echo no)"
 
 echo ""
 echo "Results: $PASS_COUNT passed, $FAIL_COUNT failed"

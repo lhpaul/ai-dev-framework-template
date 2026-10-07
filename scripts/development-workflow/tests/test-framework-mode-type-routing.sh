@@ -311,7 +311,7 @@ run_wrapper_in_repo "$consumer_config"
 consumer_out="$(cat "$TMP_ROOT/wrapper-stdout.log")"
 run_test "consumer_status_ok" "ok" "$(kv FRAMEWORK_ITEMS_LOOKUP_STATUS "$consumer_out")"
 run_test "consumer_reason_empty" "" "$(kv FRAMEWORK_ITEMS_LOOKUP_REASON "$consumer_out")"
-run_test "consumer_json_present" "yes" "$(printf '%s\n' "$consumer_out" | grep -q '^FRAMEWORK_ITEMS_JSON=' && echo yes || echo no)"
+run_test "consumer_json_present" "yes" "$(grep -q '^FRAMEWORK_ITEMS_JSON=' <<< "$consumer_out" && echo yes || echo no)"
 run_test "consumer_delegates_to_issue_list" "1" "$(grep -c 'issue list --repo' "$CALL_LOG")"
 
 echo ""
@@ -474,8 +474,8 @@ EOF
 reset_log
 MOCK_ITEM_LIST_MODE=custom_type_field run_wrapper_in_repo "$custom_type_config"
 custom_type_out="$(cat "$TMP_ROOT/wrapper-stdout.log")"
-run_test "framework_type_projection_resolves_custom_field" "yes" "$(printf '%s\n' "$custom_type_out" | grep 'FRAMEWORK_ITEMS_JSON=' | grep -q '"type":"Feature"' && echo yes || echo no)"
-run_test "framework_type_projection_not_empty_for_custom_field" "no" "$(printf '%s\n' "$custom_type_out" | grep 'FRAMEWORK_ITEMS_JSON=' | grep -q '"type":""' && echo yes || echo no)"
+run_test "framework_type_projection_resolves_custom_field" "yes" "$(printf '%s\n' "$custom_type_out" | grep 'FRAMEWORK_ITEMS_JSON=' | grep '"type":"Feature"' > /dev/null && echo yes || echo no)"
+run_test "framework_type_projection_not_empty_for_custom_field" "no" "$(printf '%s\n' "$custom_type_out" | grep 'FRAMEWORK_ITEMS_JSON=' | grep '"type":""' > /dev/null && echo yes || echo no)"
 
 echo ""
 echo "=== list_open_framework_items.sh: --repo-root controls which config framework mode is read from (codex-github finding, #1583) ==="
@@ -497,7 +497,7 @@ set +e
 "$WRAPPER" --repo-root "$repo_root_consumer_fixture" >"$TMP_ROOT/repo-root-stdout.log" 2>"$TMP_ROOT/repo-root-stderr.log"
 set -e
 repo_root_out="$(cat "$TMP_ROOT/repo-root-stdout.log")"
-run_test "repo_root_overrides_ambient_framework_mode" "no" "$(printf '%s\n' "$repo_root_out" | grep 'FRAMEWORK_ITEMS_JSON=' | grep -q '"number":900' && echo yes || echo no)"
+run_test "repo_root_overrides_ambient_framework_mode" "no" "$(printf '%s\n' "$repo_root_out" | grep 'FRAMEWORK_ITEMS_JSON=' | grep '"number":900' > /dev/null && echo yes || echo no)"
 run_test "repo_root_overrides_ambient_framework_mode_status_ok" "ok" "$(kv FRAMEWORK_ITEMS_LOOKUP_STATUS "$repo_root_out")"
 
 echo ""
@@ -605,7 +605,7 @@ gate_usage_case() {
   set -e
   err="$(cat "$TMP_ROOT/gate-stderr.log")"
   run_test "${name}_exit64" "64" "$rc"
-  run_test "${name}_no_result_line" "no" "$(printf '%s\n' "$out" | grep -q '^RESULT=' && echo yes || echo no)"
+  run_test "${name}_no_result_line" "no" "$(grep -q '^RESULT=' <<< "$out" && echo yes || echo no)"
   run_test "${name}_stderr_nonempty" "yes" "$([ -n "$err" ] && echo yes || echo no)"
 }
 
@@ -632,7 +632,7 @@ echo "=== framework-mode-backlog-type-gate.sh: empty status/artifact-stage are a
 
 empty_values_out="$("$GATE" --issue 1 --status '' --artifact-stage '' --branch-pr-evidence none --caller single --type Feature)"
 run_test "gate_empty_status_and_artifact_stage_accepted_exit0" "0" "$?"
-run_test "gate_empty_status_and_artifact_stage_result_present" "yes" "$(printf '%s\n' "$empty_values_out" | grep -q '^RESULT=' && echo yes || echo no)"
+run_test "gate_empty_status_and_artifact_stage_result_present" "yes" "$(grep -q '^RESULT=' <<< "$empty_values_out" && echo yes || echo no)"
 
 echo ""
 echo "=== framework-mode-backlog-type-gate.sh: routing decision matrix ==="
@@ -727,7 +727,7 @@ esac
 
 backlog_no_folder_no_branch_hold_out="$("$GATE" --repo-root "$REPO_ROOT" --issue 1583 --status Backlog --artifact-stage '' --branch-pr-evidence none --caller scan --type Workflow)"
 run_test "scan_backlog_no_artifacts_held_result" "hold" "$(kv RESULT "$backlog_no_folder_no_branch_hold_out")"
-run_test "scan_backlog_no_artifacts_held_no_stop_condition" "no" "$(printf '%s\n' "$backlog_no_folder_no_branch_hold_out" | grep -q '^STOP_CONDITION=' && echo yes || echo no)"
+run_test "scan_backlog_no_artifacts_held_no_stop_condition" "no" "$(grep -q '^STOP_CONDITION=' <<< "$backlog_no_folder_no_branch_hold_out" && echo yes || echo no)"
 run_test "scan_backlog_no_artifacts_held_item" "#1583" "$(kv ITEM "$backlog_no_folder_no_branch_hold_out")"
 
 echo ""
@@ -1031,7 +1031,7 @@ run_test "e2e_scan_backlog_no_artifacts_held_dispatch" "held" "$(kv DISPATCH "$e
 # open_implementation_pr_metadata only lists --state open, so this fails
 # unless the scan also runs the merged-PR probe. ---
 e2e_merged_out="$(MOCK_E2E_ITEM_MODE=found MOCK_E2E_PR_MODE=merged run_e2e_scan)"
-run_test "e2e_scan_merged_implementation_pr_continues_not_held" "no" "$(printf '%s\n' "$e2e_merged_out" | grep -q '^NEXT_ACTION=hold-misclassified-type' && echo yes || echo no)"
+run_test "e2e_scan_merged_implementation_pr_continues_not_held" "no" "$(grep -q '^NEXT_ACTION=hold-misclassified-type' <<< "$e2e_merged_out" && echo yes || echo no)"
 run_test "e2e_scan_merged_implementation_pr_continues_check" "applied" "$(kv MISCLASSIFIED_TYPE_CHECK "$e2e_merged_out")"
 e2e_merged_lanes_out="$(printf '%s\n' "$e2e_merged_out" | "$REPO_ROOT/scripts/development-workflow/workflow-batch-lanes.sh" --repo-root "$E2E_ROOT")"
 run_test "e2e_scan_merged_implementation_pr_continues_not_dispatch_held" "no" "$([ "$(kv DISPATCH "$e2e_merged_lanes_out")" = "held" ] && echo yes || echo no)"
@@ -1042,7 +1042,7 @@ run_test "e2e_scan_merged_implementation_pr_continues_not_dispatch_held" "no" "$
 # workflow-batch-plan.sh fix landed alongside this test: any empty status
 # read is "unreadable" for MISCLASSIFIED_TYPE_CHECK, not only Linear's. ---
 e2e_unreadable_out="$(MOCK_E2E_ITEM_MODE=missing MOCK_E2E_PR_MODE=empty run_e2e_scan)"
-run_test "e2e_scan_status_unreadable_defers_not_held" "no" "$(printf '%s\n' "$e2e_unreadable_out" | grep -q '^NEXT_ACTION=hold-misclassified-type' && echo yes || echo no)"
+run_test "e2e_scan_status_unreadable_defers_not_held" "no" "$(grep -q '^NEXT_ACTION=hold-misclassified-type' <<< "$e2e_unreadable_out" && echo yes || echo no)"
 run_test "e2e_scan_status_unreadable_defers_check" "deferred" "$(kv MISCLASSIFIED_TYPE_CHECK "$e2e_unreadable_out")"
 
 # --- consumer-batch-plan-workflow-unchanged: the identical empty-folder
@@ -1073,8 +1073,8 @@ cp "$REPO_ROOT/.ai-dev-workflow.yaml" "$_consumer_e2e_backup"
 cp "$consumer_config" "$REPO_ROOT/.ai-dev-workflow.yaml"
 consumer_e2e_out="$(MOCK_E2E_ITEM_MODE=found MOCK_E2E_PR_MODE=empty PATH="$E2E_BIN:$PATH" WORKFLOW_SKIP_FETCH=1 "$REPO_ROOT/scripts/development-workflow/workflow-batch-plan.sh" --repo-root "$CONSUMER_E2E_ROOT")"
 cp "$_consumer_e2e_backup" "$REPO_ROOT/.ai-dev-workflow.yaml"
-run_test "consumer_batch_plan_workflow_unchanged_no_next_action_hold" "no" "$(printf '%s\n' "$consumer_e2e_out" | grep -q '^NEXT_ACTION=hold-misclassified-type' && echo yes || echo no)"
-run_test "consumer_batch_plan_workflow_unchanged_no_misclassified_key" "no" "$(printf '%s\n' "$consumer_e2e_out" | grep -q '^MISCLASSIFIED_TYPE' && echo yes || echo no)"
+run_test "consumer_batch_plan_workflow_unchanged_no_next_action_hold" "no" "$(grep -q '^NEXT_ACTION=hold-misclassified-type' <<< "$consumer_e2e_out" && echo yes || echo no)"
+run_test "consumer_batch_plan_workflow_unchanged_no_misclassified_key" "no" "$(grep -q '^MISCLASSIFIED_TYPE' <<< "$consumer_e2e_out" && echo yes || echo no)"
 
 # ===========================================================================
 # Single-item folder resolution (#1583, prelude-issue-*): the same

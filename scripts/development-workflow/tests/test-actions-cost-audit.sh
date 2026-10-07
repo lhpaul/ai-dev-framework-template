@@ -21,7 +21,7 @@ assert_contains() {
   local pattern="$2"
   local message="$3"
 
-  printf '%s\n' "$text" | grep -Eq "$pattern" || fail "$message"
+  grep -Eq "$pattern" <<< "$text" || fail "$message"
 }
 
 assert_not_contains() {
@@ -29,7 +29,7 @@ assert_not_contains() {
   local pattern="$2"
   local message="$3"
 
-  if printf '%s\n' "$text" | grep -Eq "$pattern"; then
+  if grep -Eq "$pattern" <<< "$text"; then
     fail "$message"
   fi
 }

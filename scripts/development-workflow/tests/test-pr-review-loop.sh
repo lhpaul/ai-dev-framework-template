@@ -110,7 +110,7 @@ run_test "project_advisory_missing_script_empty" "" "$_missing_advisory_output"
 _marker_output="$(MARKER_FILE="$_marker_file" run_project_advisory_checks 42 "$_marker_script")"
 run_test "project_advisory_marker_invoked_once" "1" "$(wc -l < "$_marker_file" | tr -d ' ')"
 run_test "project_advisory_multiline_preserved" "yes" "$(
-  if printf '%s\n' "$_marker_output" | grep -q 'marker ran for PR 42'; then
+  if grep -q 'marker ran for PR 42' <<< "$_marker_output"; then
     printf 'yes'
   else
     printf 'no'
@@ -131,7 +131,7 @@ _failing_advisory_status=$?
 set -e
 run_test "project_advisory_failure_returns_zero" "0" "$_failing_advisory_status"
 run_test "project_advisory_failure_preserves_stdout" "yes" "$(
-  if printf '%s\n' "$_failing_advisory_output" | grep -q 'diagnostic preserved'; then
+  if grep -q 'diagnostic preserved' <<< "$_failing_advisory_output"; then
     printf 'yes'
   else
     printf 'no'
@@ -2042,8 +2042,8 @@ run_test "history_read_failure_reason" "comment_read_failed" \
   "$(printf '%s\n' "$_history_read_failed_payload" | jq -r '.history_unavailable_reason')"
 
 _history_rendered_section="$(reviewer_loop_history_render_section "$_history_payload_2")"
-if printf '%s\n' "$_history_rendered_section" | grep -qF "$REVIEWER_LOOP_HISTORY_MARKER" \
-    && printf '%s\n' "$_history_rendered_section" | grep -qF "Reviewer-loop history (2 iterations)"; then
+if grep -qF "$REVIEWER_LOOP_HISTORY_MARKER" <<< "$_history_rendered_section" \
+    && grep -qF "Reviewer-loop history (2 iterations)" <<< "$_history_rendered_section"; then
   _history_rendered_ok="yes"
 else
   _history_rendered_ok="no"
@@ -2081,15 +2081,15 @@ run_test "area_filter_list_areas_lists_this_area" "yes" \
 
 _1562_filtered="$(env -u TEST_PR_REVIEW_LOOP_SNAPSHOT PATH="$TEST_PR_REVIEW_LOOP_REAL_PATH" bash "$_1562_suite" --area 1 2>/dev/null || true)"
 run_test "area_filter_runs_selected_area" "yes" \
-  "$(printf '%s\n' "$_1562_filtered" | grep -q 'normalize_platform_verdict' && echo yes || echo no)"
+  "$(grep -q 'normalize_platform_verdict' <<< "$_1562_filtered" && echo yes || echo no)"
 # The point of the filter: other areas of the same suite must be absent. Area 0
 # lives in this suite, so its absence proves the filter dropped it (Area 13,
 # the slow one, now lives in the failure-paths suites — #1876).
 run_test "area_filter_excludes_other_areas" "yes" \
-  "$(printf '%s\n' "$_1562_filtered" | grep -q 'draft/ready lifecycle config parsing' && echo no || echo yes)"
+  "$(grep -q 'draft/ready lifecycle config parsing' <<< "$_1562_filtered" && echo no || echo yes)"
 # The summary footer carries the exit status and must survive every filter.
 run_test "area_filter_keeps_summary_footer" "yes" \
-  "$(printf '%s\n' "$_1562_filtered" | grep -q '^Tests: ' && echo yes || echo no)"
+  "$(grep -q '^Tests: ' <<< "$_1562_filtered" && echo yes || echo no)"
 
 run_test "area_filter_unknown_area_exits_2" "2" \
   "$(env -u TEST_PR_REVIEW_LOOP_SNAPSHOT PATH="$TEST_PR_REVIEW_LOOP_REAL_PATH" bash "$_1562_suite" --area definitely-not-an-area >/dev/null 2>&1; echo $?)"
@@ -2100,7 +2100,7 @@ run_test "area_filter_unknown_flag_exits_2" "2" \
 # A bare number selects that area exactly, not every area containing the digit:
 # --area 1 must not drag in Area 10 or 10b, which share this suite.
 run_test "area_filter_bare_number_is_exact" "yes" \
-  "$(printf '%s\n' "$_1562_filtered" | grep -Eq 'per-platform result tokens|reviewer-loop history payload' && echo no || echo yes)"
+  "$(grep -Eq 'per-platform result tokens|reviewer-loop history payload' <<< "$_1562_filtered" && echo no || echo yes)"
 
 # --- AC-2: a mid-run edit cannot silently alter the result -------------------
 run_test "suite_reexecs_from_snapshot" "yes" \
@@ -2125,7 +2125,7 @@ cat "$_1562_suite" > "$_1562_copy"
 run_test "out_of_tree_copy_resolves_repo_root" "yes" \
   "$(env -u TEST_PR_REVIEW_LOOP_SNAPSHOT PATH="$TEST_PR_REVIEW_LOOP_REAL_PATH" \
       TEST_PR_REVIEW_LOOP_ORIGIN="$_1562_suite" \
-      bash "$_1562_copy" --area 1 2>/dev/null | grep -q '^Tests: ' && echo yes || echo no)"
+      bash "$_1562_copy" --area 1 2>/dev/null | grep '^Tests: ' > /dev/null && echo yes || echo no)"
 run_test "out_of_tree_copy_bad_origin_exits_2" "2" \
   "$(env -u TEST_PR_REVIEW_LOOP_SNAPSHOT PATH="$TEST_PR_REVIEW_LOOP_REAL_PATH" \
       TEST_PR_REVIEW_LOOP_ORIGIN=/nonexistent/suite.sh \
@@ -2287,8 +2287,8 @@ for _1876_suite in "$_1876_tests_dir"/test-pr-review-loop.sh "$_1876_tests_dir"/
     _1876_unshared="${_1876_unshared} ${_1876_name}"
   fi
   # Each suite must be selected when pr-review-loop.sh or the library changes.
-  if ! head -n 60 "$_1876_suite" | grep -q '^# covers: scripts/development-workflow/pr-review-loop.sh$' \
-     || ! head -n 60 "$_1876_suite" | grep -q '^# covers: scripts/development-workflow/tests/lib/pr-review-loop-harness.sh$'; then
+  if ! head -n 60 "$_1876_suite" | grep '^# covers: scripts/development-workflow/pr-review-loop.sh$' > /dev/null \
+     || ! head -n 60 "$_1876_suite" | grep '^# covers: scripts/development-workflow/tests/lib/pr-review-loop-harness.sh$' > /dev/null; then
     _1876_uncovered="${_1876_uncovered} ${_1876_name}"
   fi
 done
@@ -2310,7 +2310,7 @@ run_test "1876_harness_refuses_direct_execution" "2" \
 _1876_fp2="$_1876_tests_dir/test-pr-review-loop-failure-paths-2.sh"
 run_test "1876_list_areas_reads_calling_suite" "yes" \
   "$(env -u TEST_PR_REVIEW_LOOP_SNAPSHOT -u TEST_PR_REVIEW_LOOP_ORIGIN \
-      PATH="$TEST_PR_REVIEW_LOOP_REAL_PATH" bash "$_1876_fp2" --list-areas 2>/dev/null | grep -q 'Area 13: .*part 2 of 4' && echo yes || echo no)"
+      PATH="$TEST_PR_REVIEW_LOOP_REAL_PATH" bash "$_1876_fp2" --list-areas 2>/dev/null | grep 'Area 13: .*part 2 of 4' > /dev/null && echo yes || echo no)"
 run_test "1876_area_filter_is_per_suite" "2" \
   "$(env -u TEST_PR_REVIEW_LOOP_SNAPSHOT -u TEST_PR_REVIEW_LOOP_ORIGIN \
       PATH="$TEST_PR_REVIEW_LOOP_REAL_PATH" bash "$_1876_fp2" --area 0a >/dev/null 2>&1; echo $?)"

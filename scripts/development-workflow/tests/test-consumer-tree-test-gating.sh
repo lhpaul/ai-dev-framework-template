@@ -563,7 +563,7 @@ echo "=== Area 5: PyYAML provisioning planted-violation proof ==="
 branch_filters_suite="$REPO_ROOT/scripts/development-workflow/tests/test-workflow-branch-filters.sh"
 
 run_test "pyyaml_gate_line_is_where_expected" "yes" \
-  "$(if sed -n '245p' "$branch_filters_suite" | grep -Fq "python3 -c 'import yaml'"; then printf 'yes\n'; else printf 'no\n'; fi)"
+  "$(if sed -n '245p' "$branch_filters_suite" | grep -F "python3 -c 'import yaml'" > /dev/null; then printf 'yes\n'; else printf 'no\n'; fi)"
 
 # Negative direction — PyYAML unavailable.
 blocked_pythonpath="$TMP_ROOT/no-pyyaml"

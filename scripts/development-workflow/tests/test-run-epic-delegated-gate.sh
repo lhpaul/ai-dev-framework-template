@@ -1311,14 +1311,14 @@ run_test "bulk_advisory_gate_blocks_merge" "fix_required" \
 no_advisory_gate_fixture="$(write_fixture no-advisory-gate '.reviewer.advisoryCount = 0 | .advisories = []')"
 no_advisory_gate_stderr="$("$GATE" --input "$no_advisory_gate_fixture" --json 2>&1 >/dev/null)"
 run_test "no_bulk_advisory_warn_when_count_zero" "yes" \
-  "$(printf '%s' "$no_advisory_gate_stderr" | wc -c | tr -d ' ' | grep -qx '0' && echo yes || echo no)"
+  "$(printf '%s' "$no_advisory_gate_stderr" | wc -c | tr -d ' ' | grep -x '0' > /dev/null && echo yes || echo no)"
 
 # Fixture: advisory_count=2 with two entries — no warning (each finding has its own entry)
 per_finding_gate_fixture="$(write_fixture per-finding-gate \
   '.reviewer.advisoryCount = 2 | .advisories = [{"source": "haystack", "category": "Minor", "decision": "accepted", "rationale": "reason A"}, {"source": "haystack", "category": "Advisory", "decision": "fixed", "rationale": ""}]')"
 per_finding_gate_stderr="$("$GATE" --input "$per_finding_gate_fixture" --json 2>&1 >/dev/null)"
 run_test "no_bulk_advisory_warn_when_one_entry_per_finding" "yes" \
-  "$(printf '%s' "$per_finding_gate_stderr" | wc -c | tr -d ' ' | grep -qx '0' && echo yes || echo no)"
+  "$(printf '%s' "$per_finding_gate_stderr" | wc -c | tr -d ' ' | grep -x '0' > /dev/null && echo yes || echo no)"
 
 # --- Security-sensitive advisory human decision requirement (issue #1432) ---
 
@@ -1536,7 +1536,7 @@ run_test "ac7_stop_condition_distinct_from_checkpoint_condition" "yes" \
   "$([ "security_sensitive_advisory_pending" != "human_checkpoint_required" ] && echo yes || echo no)"
 run_test "ac7_reason_text_does_not_contain_checkpoint_condition" "no" "$(
   "$GATE" --input "$security_advisory_pending_fixture" --json |
-    jq -r '.reasons[]' | grep -q 'human_checkpoint_required' && echo yes || echo no
+    jq -r '.reasons[]' | grep 'human_checkpoint_required' > /dev/null && echo yes || echo no
 )"
 
 # AC8/AC9/BR8/BR9: absent/true .pr.inScope still evaluates and blocks;
@@ -1562,14 +1562,14 @@ run_test "verdict_heads_matching_pr_head_do_not_change_decision" "$base_decision
 reviewer_stale_fixture="$(write_fixture reviewer-head-stale '.reviewer.headSha = "1111111111111111111111111111111111111111"')"
 run_test "stale_reviewer_head_is_fix_required" "fix_required" "$(decision_for "$reviewer_stale_fixture")"
 run_test "stale_reviewer_head_reason" "yes" \
-  "$("$GATE" --input "$reviewer_stale_fixture" --json | jq -r '.reasons[]' | grep -q '^stale_verdict_head: reviewer-loop verdict' && echo yes || echo no)"
+  "$("$GATE" --input "$reviewer_stale_fixture" --json | jq -r '.reasons[]' | grep '^stale_verdict_head: reviewer-loop verdict' > /dev/null && echo yes || echo no)"
 run_test "stale_reviewer_head_denies_merge" "false" "$("$GATE" --input "$reviewer_stale_fixture" --json | jq -r '.mergePermitted')"
 run_test "stale_reviewer_head_next_action_reverifies" "yes" \
-  "$("$GATE" --input "$reviewer_stale_fixture" --json | jq -r '.nextAction' | grep -q 'at the current head' && echo yes || echo no)"
+  "$("$GATE" --input "$reviewer_stale_fixture" --json | jq -r '.nextAction' | grep 'at the current head' > /dev/null && echo yes || echo no)"
 risk_stale_fixture="$(write_fixture risk-head-stale '.risk.headSha = "2222222222222222222222222222222222222222"')"
 run_test "stale_risk_head_is_fix_required" "fix_required" "$(decision_for "$risk_stale_fixture")"
 run_test "stale_risk_head_reason" "yes" \
-  "$("$GATE" --input "$risk_stale_fixture" --json | jq -r '.reasons[]' | grep -q '^stale_verdict_head: risk classification' && echo yes || echo no)"
+  "$("$GATE" --input "$risk_stale_fixture" --json | jq -r '.reasons[]' | grep '^stale_verdict_head: risk classification' > /dev/null && echo yes || echo no)"
 risk_stale_snake_fixture="$(write_fixture risk-head-stale-snake '.risk.head_sha = "2222222222222222222222222222222222222222"')"
 run_test "stale_risk_head_snake_case_accepted" "fix_required" "$(decision_for "$risk_stale_snake_fixture")"
 # Absent binding fields keep pre-#1558 evidence files working unchanged.

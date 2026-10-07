@@ -30,7 +30,7 @@ run_test() {
 
 run_contains() {
   local name="$1" needle="$2" haystack="$3"
-  if printf '%s\n' "$haystack" | grep -Fq -- "$needle"; then
+  if grep -Fq -- "$needle" <<< "$haystack"; then
     echo "PASS: $name"
     PASS_COUNT=$((PASS_COUNT + 1))
   else
