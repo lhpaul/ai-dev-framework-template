@@ -22,12 +22,15 @@
 
 Run the affected suites from the fixture root:
 
+<!-- workflow-shell-contract: bash -->
 ```bash
+bash -euo pipefail <<'BASH'
 bash scripts/development-workflow/tests/test-consumer-tree-test-gating.sh
 bash scripts/development-workflow/tests/test-step7a-surface-consistency.sh
 bash scripts/development-workflow/tests/test-add-backlog-item.sh
 bash scripts/development-workflow/tests/test-framework-mode-type-routing.sh
 bash scripts/development-workflow/tests/test-local-ai-reviewer.sh
+BASH
 ```
 
 **Expected**: Each exits zero. Template defaults are checked, and framework
@@ -54,6 +57,7 @@ Shared routing/refusal and supported-reviewer checks still execute.
 In both trees, run the following; also capture the consumer run output as
 consumer-plants.log:
 
+<!-- workflow-shell-contract: bash -->
 ```bash
 bash scripts/development-workflow/tests/test-step7a-surface-consistency.sh --prove-plants
 ```
