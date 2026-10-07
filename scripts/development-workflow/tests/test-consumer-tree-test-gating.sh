@@ -15,6 +15,9 @@
 # covers: scripts/development-workflow/tests/test-apply-readiness-labels.sh
 # covers: scripts/development-workflow/tests/test-review-doctrine-lint.sh
 # covers: scripts/development-workflow/tests/test-reviewer-loop-guard-workflow.sh
+# covers: scripts/development-workflow/tests/test-workflow-branch-filters.sh
+# covers: scripts/development-workflow/tests/test-step7a-surface-consistency.sh
+# covers: scripts/development-workflow/tests/test-workflow-portfolio-scan.py
 # covers: scripts/development-workflow/workflow-lib.sh
 # covers: scripts/development-workflow/tests/test-reviewer-loop-guard-workflow.sh
 # covers: scripts/development-workflow/tests/test-placeholder-workflows-opt-in.sh
@@ -721,7 +724,90 @@ p.write_text(s)
 PLANT_READINESS
 run_consumer_suite test-apply-readiness-labels.sh 1
 
+# ---------------------------------------------------------------------------
+# Area 7: #1920 — project-owned workflows, ignore rules and historical plans.
+# Each root is private to this run; no source checkout or consumer is edited.
+# ---------------------------------------------------------------------------
 echo ""
+echo "=== Area 7: remaining consumer-sync regression ==="
+
+compatibility_root="$TMP_ROOT/consumer with spaces [1920]"
+build_fake_root "$compatibility_root" false
+cp -R "$REPO_ROOT/scripts/." "$compatibility_root/scripts/"
+cp -R "$REPO_ROOT/.github/." "$compatibility_root/.github/"
+cp -R "$REPO_ROOT/docs" "$compatibility_root/docs"
+for surface in .claude .cursor .ai-dev-workflow.local.example.yaml; do
+  ln -s "$REPO_ROOT/$surface" "$compatibility_root/$surface"
+done
+# Use the shipped reviewer policy, while changing only consumer-owned state.
+sed -e 's/is_template: true/is_template: false/' -e 's/project_number: 1$/project_number: 2/' \
+  "$REPO_ROOT/.ai-dev-workflow.yaml" > "$compatibility_root/.ai-dev-workflow.yaml"
+printf '%s\n' 'build/' > "$compatibility_root/.gitignore"
+cat > "$compatibility_root/.github/workflows/consumer-service.yml" <<'YAML'
+name: Consumer service
+on:
+  pull_request:
+    branches: [develop, main]
+YAML
+mkdir -p "$compatibility_root/docs/specs/developments/consumer-history"
+cat > "$compatibility_root/docs/specs/developments/consumer-history/2_consumer_implementation-plan.md" <<'PLAN'
+## Dependencies
+None before implementation of #294. #246 depends on this item and must not resume validation until this baseline lands.
+PLAN
+git -C "$compatibility_root" init -q
+
+compatibility_suite() {
+  local suite="$1" expected="$2" output rc=0
+  output="$(cd "$compatibility_root" && bash "scripts/development-workflow/tests/$suite" 2>&1)" || rc=$?
+  run_test "$suite compatibility exit" "$expected" "$rc"
+  if [ "$rc" != "$expected" ]; then printf '%s\n' "$output"; fi
+  COMPATIBILITY_OUTPUT="$output"
+}
+compatibility_suite test-workflow-branch-filters.sh 0
+run_test "consumer_branch_gap_has_actionable_guidance" "yes" \
+  "$(output_contains "$COMPATIBILITY_OUTPUT" 'consumer-service.yml:pull_request')"
+run_test "consumer_branch_gap_names_remedy" "yes" \
+  "$(output_contains "$COMPATIBILITY_OUTPUT" 'ACTION: before using develop-<slug> integration branches')"
+compatibility_suite test-step7a-surface-consistency.sh 0
+run_test "consumer_ignore_gap_has_actionable_guidance" "yes" \
+  "$(output_contains "$COMPATIBILITY_OUTPUT" 'ACTION: before retiring local configuration, add .ai-dev-workflow.local.yaml.retired')"
+
+# Run the actual portfolio tests against the consumer-shaped host. Their gh
+# shim never forwards remote calls; project 2 and the historical plan must not
+# leak into the fixture's project 1 or its fixed absence grammar expectations.
+portfolio_rc=0
+portfolio_output="$(cd "$compatibility_root" && python3 \
+  scripts/development-workflow/tests/test-workflow-portfolio-scan.py \
+  Fixture.test_effective_project_scope_and_empty_owner \
+  Fixture.test_committed_none_declaration_compatibility \
+  Fixture.test_committed_non_none_declaration_compatibility 2>&1)" || portfolio_rc=$?
+run_test "portfolio_consumer_config_and_archive_are_isolated" "0" "$portfolio_rc"
+if [ "$portfolio_rc" -ne 0 ]; then printf '%s\n' "$portfolio_output"; fi
+
+# Plant the exact regressions in fixture copies, prove failure, then repair.
+branch_copy="$compatibility_root/scripts/development-workflow/tests/test-workflow-branch-filters.sh"
+cp "$branch_copy" "$TMP_ROOT/branch-original.sh"
+sed 's/if \[ "$IS_TEMPLATE" = "true" \]; then/if true; then/' \
+  "$branch_copy" > "$TMP_ROOT/branch-planted.sh"
+cp "$TMP_ROOT/branch-planted.sh" "$branch_copy"
+compatibility_suite test-workflow-branch-filters.sh 1
+cp "$TMP_ROOT/branch-original.sh" "$branch_copy"
+compatibility_suite test-workflow-branch-filters.sh 0
+
+# Template mode still rejects both planted violations; repair each without
+# suppressing the check. Ignore policy remains mandatory in the template.
+sed 's/is_template: false/is_template: true/' "$compatibility_root/.ai-dev-workflow.yaml" \
+  > "$TMP_ROOT/template-config.yaml"
+cp "$TMP_ROOT/template-config.yaml" "$compatibility_root/.ai-dev-workflow.yaml"
+compatibility_suite test-workflow-branch-filters.sh 1
+sed 's/branches: \[develop, main\]/branches: [develop, develop-**, main]/' \
+  "$compatibility_root/.github/workflows/consumer-service.yml" > "$TMP_ROOT/repaired-workflow.yml"
+cp "$TMP_ROOT/repaired-workflow.yml" "$compatibility_root/.github/workflows/consumer-service.yml"
+compatibility_suite test-workflow-branch-filters.sh 0
+compatibility_suite test-step7a-surface-consistency.sh 1
+printf '%s\n' '.ai-dev-workflow.local.yaml.retired' >> "$compatibility_root/.gitignore"
+compatibility_suite test-step7a-surface-consistency.sh 0
+
 echo "=== Summary ==="
 echo "Passed: $PASS_COUNT"
 echo "Failed: $FAIL_COUNT"
