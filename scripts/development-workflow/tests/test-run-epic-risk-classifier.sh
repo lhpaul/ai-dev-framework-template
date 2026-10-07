@@ -33,10 +33,14 @@ if [ "${BUDGET_RISK_MODE:-}" = merge ]; then
   case "$*" in
     api\ rate_limit)
       jq -n --argjson reset "$(($(date +%s) + 3600))" '{resources:{graphql:{remaining:5000,limit:5000,reset:$reset}}}'; exit 0 ;;
+    repo\ view\ --json\ nameWithOwner)
+      printf '{"nameWithOwner":"lhpaul/ai-dev-framework-template"}\n'; exit 0 ;;
     repo\ view*)
       printf 'lhpaul/ai-dev-framework-template\n'; exit 0 ;;
     api\ graphql*MergeBudgetPR*)
       printf '{"data":{"repository":{"pullRequest":{"number":1,"state":"OPEN","headRefName":"feature/budget-fixture","headRefOid":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","baseRefName":"develop","isInMergeQueue":false,"autoMergeRequest":null}}}}\n'; exit 0 ;;
+    pr\ view*--json\ isCrossRepository\ --jq*)
+      printf 'false\n'; exit 0 ;;
     pr\ view\ 1*)
       printf '{"number":1,"state":"OPEN","headRefName":"feature/budget-fixture","headRefOid":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","baseRefName":"develop","isInMergeQueue":false,"autoMergeRequest":null,"body":"","closingIssuesReferences":[]}\n'; exit 0 ;;
   esac

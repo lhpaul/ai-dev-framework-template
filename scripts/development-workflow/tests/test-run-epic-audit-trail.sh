@@ -24,10 +24,14 @@ cat > "$MOCK_BIN/gh" <<'MOCK_GH'
 printf '%s\n' "$*" >> "$MOCK_GH_CALL_LOG"
 if [ "${BUDGET_AUDIT_MODE:-}" = merge ]; then
   case "$*" in
+    repo\ view\ --json\ nameWithOwner)
+      printf '{"nameWithOwner":"lhpaul/ai-dev-framework-template"}\n'; exit 0 ;;
     api\ rate_limit)
       jq -n --argjson reset "$(($(date +%s) + 3600))" '{resources:{graphql:{remaining:5000,limit:5000,reset:$reset}}}'; exit 0 ;;
     api\ graphql*MergeBudgetPR*)
       printf '{"data":{"repository":{"pullRequest":{"number":10,"state":"OPEN","headRefName":"feature/budget-fixture","headRefOid":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","baseRefName":"develop","isInMergeQueue":false,"autoMergeRequest":null}}}}\n'; exit 0 ;;
+    pr\ view*--json\ isCrossRepository\ --jq*)
+      printf 'false\n'; exit 0 ;;
     pr\ view*)
       printf '{"number":10,"state":"OPEN","headRefName":"feature/budget-fixture","headRefOid":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","baseRefName":"develop","isInMergeQueue":false,"autoMergeRequest":null,"body":"","closingIssuesReferences":[]}\n'; exit 0 ;;
     api\ --paginate\ --slurp\ repos/lhpaul/ai-dev-framework-template/issues/10/comments\?per_page=100)

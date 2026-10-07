@@ -55,6 +55,8 @@ case "$*" in
     jq -n --argjson n "${BUDGET_TEST_PR:-42}" --arg head "${BUDGET_TEST_HEAD:-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}" \
       --arg base "${BUDGET_TEST_BASE:-develop}" '{data:{repository:{pullRequest:{number:$n,state:"OPEN",headRefName:"feature/budget-fixture",headRefOid:$head,baseRefName:$base,isInMergeQueue:false,autoMergeRequest:null}}}}'
     ;;
+  pr\ view*--json\ isCrossRepository\ --jq*)
+    printf 'false\n'; ;;
   pr\ view*)
     jq -n --argjson n "${BUDGET_TEST_PR:-42}" --arg head "${BUDGET_TEST_HEAD:-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}" \
       --arg base "${BUDGET_TEST_BASE:-develop}" '{number:$n,state:"OPEN",headRefName:"feature/budget-fixture",headRefOid:$head,baseRefName:$base,isInMergeQueue:false,autoMergeRequest:null,body:"",closingIssuesReferences:[]}'
