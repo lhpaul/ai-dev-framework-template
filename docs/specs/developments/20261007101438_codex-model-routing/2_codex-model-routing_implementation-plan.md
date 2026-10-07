@@ -68,7 +68,7 @@ Use the linked runbook for AC6. Validate actual TOML examples with Python's exis
 | `AGENTS.md` | Template-owned Codex routing discovery pointer; AC1, AC5 |
 | `sync-manifest.yaml` | Explicit shipping entry for the runbook; examples and guide are covered by the existing workflow-docs glob; AC6 |
 | `docs/testing/workflow/codex-model-routing.smoke-test.md` | Runbook and implementation evidence; AC6 |
-| `changelog.d/1761-codex-model-routing.md` | Feature release note |
+| `changelog.d/1761.added.codex-model-routing.md` | Feature release note |
 
 No application, database, credentials, local configuration, reviewer effort plumbing, or workflow runtime scripts need changes. New TOML files live under documentation, not the auto-loaded `.codex/agents/` directory.
 
