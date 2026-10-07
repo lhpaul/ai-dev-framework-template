@@ -26,6 +26,13 @@ HELPER="$REPO_ROOT/scripts/development-workflow/apply-readiness-labels.sh"
 TMP_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
 
+# Fixtures own reviewer policy. An empty root prevents consumer or main-clone
+# machine-local overrides from replacing the mocked base policy (#1914).
+ISOLATED_OVERRIDE_ROOT="$TMP_ROOT/no-local-overrides"
+mkdir -p "$ISOLATED_OVERRIDE_ROOT"
+export WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT="$ISOLATED_OVERRIDE_ROOT"
+unset AI_DEV_WORKFLOW_CONFIG_FILE
+
 pass=0
 fail=0
 
@@ -951,7 +958,7 @@ run_helper_no_local_config() {
   set +e
   out="$(
     PATH="$_BIN:$PATH" \
-    WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT="${MOCK_LOCAL_OVERRIDE_ROOT:-}" \
+    WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT="${MOCK_LOCAL_OVERRIDE_ROOT:-$ISOLATED_OVERRIDE_ROOT}" \
     MOCK_GH_LOG="$_LABEL_LOG" \
     MOCK_CALL_LOG="$_CALL_LOG" \
     MOCK_LABEL_STATE="$_LABEL_STATE" \
@@ -1769,7 +1776,7 @@ run_helper_platform() {
   set +e
   out="$(
     PATH="$_BIN:$PATH" \
-    WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT="" \
+    WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT="$ISOLATED_OVERRIDE_ROOT" \
     MOCK_GH_LOG="$_LABEL_LOG" \
     MOCK_CALL_LOG="$_CALL_LOG" \
     MOCK_LABEL_STATE="$_LABEL_STATE" \
