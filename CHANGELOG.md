@@ -7,6 +7,56 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.46.0] - 2026-10-07
+
+### Added
+
+- **Preserve local template patches during sync** (#1875): verified upstream
+  baselines enable three-way merges and previews that stop on conflicts or
+  unknown history. Approved batches preserve symlinks and executable modes,
+  reject stale previews, and restore files and metadata if apply fails.
+- **First-class DSH runner support** (#1891): use `dsh` as a local-runtime
+  draft reviewer or driving session, with availability checks, Protocol 91
+  dispatch, read-only review guidance, and operator documentation.
+
+### Fixed
+
+- **Preserve GraphQL budget after portfolio scans** (#1505): discovery focuses
+  on current open work, bounded targets avoid full-board reads, and scan reports
+  show budget-aware coverage and spend with terminal-item archival guidance.
+- **Wait for reviewers without reporting false failures** (#1789): configurable
+  per-platform budgets distinguish a missing verdict from a failed review. The
+  loop accepts verdicts only for the current revision, avoids duplicate requests,
+  tracks latency, and keeps failure labels aligned with actual run and read errors.
+- **Find org-project cards for unlinked personal repositories** (#1801): tracker
+  Status and Type reads fall back to a repository-scoped, cached board lookup
+  when issue-level project links are missing, and invalidate it after writes.
+- **Complete repository-scoped framework-item reads** (#1804): paginate open
+  issues and project items up to 64,000 records, report truncation beyond that
+  bound, and match shared-board items by repository and issue number.
+- **Present the legacy test workflow migration during sync** (#1834): consumers
+  adopting `workflow-tests.yml` must preserve project behavior and approve
+  removal of `test-pr-review-loop.yml`, avoiding duplicate check names that can
+  hide failures. Deferred or excluded migrations retain the existing workflow.
+- **Make synced workflow tests portable to consumers** (#1873): template-only
+  assumptions use explicit framework fixtures or report skips; shared checks
+  and planted-violation coverage remain active.
+- **Ship the files synced tests need** (#1874): expand the sync manifest's
+  special handling and runbooks, declare required additions to project-owned
+  files, and detect missing coverage in CI and sync pre-flight diagnostics.
+- **Bound ShellCheck memory use** (#1876): split the reviewer-loop test harness
+  into ten shared-library suites, lint one file per process with a timeout, and
+  cap suite size so smaller consumer runners can validate the tests.
+- **Stabilize shell-test text assertions** (#1877): avoid premature quiet-grep
+  pipe closure, cover oversized help output, and add SH006 to prevent recurrence.
+- **Recognize longer Codex clean-review flavor text** (#1878): accept up to 60
+  characters in the approval template while rejecting instruction-like text,
+  with parity checks across the reviewer and readiness-label helpers.
+- **Unblock the expensive-reviewer gate after a failed review** (#1879, #1884):
+  exclude the loop's completion guard and its exact `PR policy` CheckRun from
+  baseline checks. Other failures still block, and final CI continues to enforce
+  the guard and policy check.
+
 ## [0.45.0] - 2026-09-30
 
 ### Added
@@ -3216,7 +3266,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `.claude/settings.json` with pre-approved permissions for common git and fetch operations; `.claude/settings.local.json.example` documenting machine-specific overrides for optional integrations
 - `.gitignore` covering local Claude settings, `.env` files, and common system files
 
-[Unreleased]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.45.0...HEAD
+[Unreleased]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.46.0...HEAD
+[0.46.0]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.45.0...v0.46.0
 [0.45.0]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.44.0...v0.45.0
 [0.44.0]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.43.1...v0.44.0
 [0.43.1]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.43.0...v0.43.1
