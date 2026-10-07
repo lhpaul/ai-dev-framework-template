@@ -113,8 +113,8 @@ _max_bytes_literal="\$REVIEW_DOCTRINE_MAX_BYTES"
 run_test "s15_linter_uses_constant" "yes" "$(grep -Fq "$_max_bytes_literal" "$LINTER" && echo yes || echo no)"
 run_test "s15_linter_no_literal_gt" "no" "$(grep -Eq -- '-gt[[:space:]]+[1-9][0-9]{2,}' "$LINTER" && echo yes || echo no)"
 _reviewer_supply_fn="$(sed -n '/^reviewer_doctrine_supply(/,/^}/p' "$REPO_ROOT/scripts/development-workflow/local-ai-reviewer.sh")"
-run_test "s15_reviewer_uses_constant" "yes" "$(printf '%s\n' "$_reviewer_supply_fn" | grep -Fq "$_max_bytes_literal" && echo yes || echo no)"
-run_test "s15_reviewer_no_literal_gt" "no" "$(printf '%s\n' "$_reviewer_supply_fn" | grep -Eq -- '-gt[[:space:]]+[1-9][0-9]{2,}' && echo yes || echo no)"
+run_test "s15_reviewer_uses_constant" "yes" "$(grep -Fq "$_max_bytes_literal" <<< "$_reviewer_supply_fn" && echo yes || echo no)"
+run_test "s15_reviewer_no_literal_gt" "no" "$(grep -Eq -- '-gt[[:space:]]+[1-9][0-9]{2,}' <<< "$_reviewer_supply_fn" && echo yes || echo no)"
 
 # Scenario 16: shipped catalogue
 run_test "s16_shipped_passes_linter" "0" "$(lint_exit "$CATALOGUE")"
@@ -130,9 +130,9 @@ run_test "s16a_review_generality" "yes" "$(grep -Fq 'read generally' "$REPO_ROOT
 # Scenario 17: CI path filters (paths: block only — not run: steps)
 _markdown_paths_section="$(awk '/^on:/{on=1} on && /^  pull_request:/{pr=1} pr && /^    paths:/{paths=1;next} paths && /^      -/{print;next} paths && /^[^ ]/{exit}' "$REPO_ROOT/.github/workflows/markdown-lint.yml")"
 _shellcheck_paths_section="$(awk '/^on:/{on=1} on && /^  pull_request:/{pr=1} pr && /^    paths:/{paths=1;next} paths && /^      -/{print;next} paths && /^[^ ]/{exit}' "$REPO_ROOT/.github/workflows/shellcheck.yml")"
-run_test "s17_markdown_paths_catalogue" "yes" "$(printf '%s\n' "$_markdown_paths_section" | grep -Fq 'docs/workflow/development-workflow/review-doctrine.md' && echo yes || echo no)"
-run_test "s17_markdown_paths_linter" "yes" "$(printf '%s\n' "$_markdown_paths_section" | grep -Fq 'scripts/lint/review-doctrine-lint.sh' && echo yes || echo no)"
-run_test "s17_shellcheck_paths_linter" "yes" "$(printf '%s\n' "$_shellcheck_paths_section" | grep -Fq 'scripts/lint/review-doctrine-lint.sh' && echo yes || echo no)"
+run_test "s17_markdown_paths_catalogue" "yes" "$(grep -Fq 'docs/workflow/development-workflow/review-doctrine.md' <<< "$_markdown_paths_section" && echo yes || echo no)"
+run_test "s17_markdown_paths_linter" "yes" "$(grep -Fq 'scripts/lint/review-doctrine-lint.sh' <<< "$_markdown_paths_section" && echo yes || echo no)"
+run_test "s17_shellcheck_paths_linter" "yes" "$(grep -Fq 'scripts/lint/review-doctrine-lint.sh' <<< "$_shellcheck_paths_section" && echo yes || echo no)"
 
 if [ "$FAIL_COUNT" -ne 0 ]; then
   echo "FAIL: $FAIL_COUNT test(s) failed"

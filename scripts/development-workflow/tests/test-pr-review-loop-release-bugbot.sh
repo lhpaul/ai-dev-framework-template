@@ -1756,7 +1756,7 @@ run_test "bugbot_neutral_findings_first_path" "BLOCKING_1_PATH=src/tenant.ts" \
 run_test "bugbot_neutral_findings_first_line" "BLOCKING_1_LINE=42" \
   "$(printf '%s\n' "$actual_output" | grep "^BLOCKING_1_LINE=")"
 run_test "bugbot_neutral_findings_first_body_kept" "yes" \
-  "$(printf '%s\n' "$actual_output" | grep -q "tenant ownership is never verified" && printf 'yes' || printf 'no')"
+  "$(grep -q "tenant ownership is never verified" <<< "$actual_output" && printf 'yes' || printf 'no')"
 run_test "bugbot_neutral_findings_exit_code" "1" "$actual_exit"
 rm -rf "$_bugbot_mock_dir_169b"
 unset _bugbot_mock_dir_169b actual_output actual_exit

@@ -186,7 +186,7 @@ diff_error_fixture="$(write_fixture diff-error '{
   "diff_error": true
 }')"
 diff_error_output="$(run_checker_expect_status 10 "$CHECKER" --input "$diff_error_fixture" --json || true)"
-run_test "diff_read_failure_exits_infrastructure_error" "true" "$(printf '%s\n' "$diff_error_output" | grep -Fq 'fixture indicates changed-file read failure' && echo true || echo false)"
+run_test "diff_read_failure_exits_infrastructure_error" "true" "$(grep -Fq 'fixture indicates changed-file read failure' <<< "$diff_error_output" && echo true || echo false)"
 
 run_test "warning_comment_uses_stable_marker" "<!-- documentation-stage-alignment -->" "$(printf '%s\n' "$plan_bad_output" | jq -r '.warning_marker')"
 
@@ -239,7 +239,7 @@ export PATH="$MOCK_PATH_ORIGINAL"
 unset WORKFLOW_TARGET_GITHUB_REPO
 run_test "warning_comment_updates_existing_marker" "true" "$(grep -Fq 'api -X PATCH repos/example/repo/issues/comments/99 -f body=' "$CALL_LOG" && echo true || echo false)"
 run_test "live_mode_reports_mismatch" "mismatch" "$(printf '%s\n' "$live_output" | jq -r '.result')"
-run_test "warning_body_avoids_shell_backticks" "false" "$(grep -F 'api -X PATCH repos/example/repo/issues/comments/99 -f body=' "$CALL_LOG" | grep -Fq '`' && echo true || echo false)"
+run_test "warning_body_avoids_shell_backticks" "false" "$(grep -F 'api -X PATCH repos/example/repo/issues/comments/99 -f body=' "$CALL_LOG" | grep -F '`' > /dev/null && echo true || echo false)"
 run_test "live_mode_uses_explicit_repo" "true" "$(grep -Fq 'pr view 42 --repo example/repo' "$CALL_LOG" && grep -Fq 'pr diff 42 --repo example/repo' "$CALL_LOG" && echo true || echo false)"
 
 : > "$CALL_LOG"
@@ -250,7 +250,7 @@ auth_fail_output="$(run_checker_expect_status 10 "$CHECKER" --pr 42 --json || tr
 unset MOCK_GH_MODE
 unset WORKFLOW_TARGET_GITHUB_REPO
 export PATH="$MOCK_PATH_ORIGINAL"
-run_test "live_auth_failure_exits_infrastructure_error" "true" "$(printf '%s\n' "$auth_fail_output" | grep -Fq 'GitHub CLI authentication is required' && echo true || echo false)"
+run_test "live_auth_failure_exits_infrastructure_error" "true" "$(grep -Fq 'GitHub CLI authentication is required' <<< "$auth_fail_output" && echo true || echo false)"
 
 echo ""
 echo "Passed: $PASS_COUNT"

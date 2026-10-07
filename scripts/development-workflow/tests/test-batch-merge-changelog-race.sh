@@ -110,7 +110,7 @@ _race_mechanism_producer() {
 #   if gh pr diff --name-only "$pr_num" 2>/dev/null | grep -q '^CHANGELOG\.md$'; then
 _buggy_pattern_matches() {
   set -o pipefail
-  _race_mechanism_producer | grep -q '^CHANGELOG\.md$'
+  _race_mechanism_producer | grep -q '^CHANGELOG\.md$' # workflow-shell-guard: allow SH006 - intentional SIGPIPE control checked for failure
 }
 
 # Mirrors the shipped fix's helper (duplicated here, deliberately, so this
@@ -243,7 +243,7 @@ echo "=== Part 2: PR_HAS_CHANGELOG via the real gh mock (PR #9001) ==="
 _control_buggy_diff_check() {
   local pr_num="9001"
   set -o pipefail
-  gh pr diff --name-only "$pr_num" 2>/dev/null | grep -q '^CHANGELOG\.md$'
+  gh pr diff --name-only "$pr_num" 2>/dev/null | grep -q '^CHANGELOG\.md$' # workflow-shell-guard: allow SH006 - intentional adversarial control checked for failure
 }
 
 control_false_negatives=0
@@ -278,7 +278,7 @@ _control_buggy_label_check() {
   set -o pipefail
   gh pr view 9003 --json number,title,headRefName,headRefOid,baseRefName,labels,createdAt,isDraft 2>/dev/null \
     | jq -r '.labels[].name' \
-    | grep -q '^ready-for-human-review$'
+    | grep -q '^ready-for-human-review$' # workflow-shell-guard: allow SH006 - intentional label control checked for failure
 }
 
 control_label_false_negatives=0

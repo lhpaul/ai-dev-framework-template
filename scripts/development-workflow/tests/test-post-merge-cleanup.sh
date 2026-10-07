@@ -370,7 +370,7 @@ run_test "caller_cwd_worktree_survives" "yes" "$(
 run_contains "caller_cwd_worktree_detached" "CALLER_WORKTREE_ACTION=detached" "$caller_cwd_output"
 run_contains "caller_cwd_local_delete_reported" "LOCAL_DELETE_RESULT=deleted" "$caller_cwd_output"
 run_test "caller_cwd_worktree_still_registered" "yes" "$(
-  if "$REAL_GIT" -C "$caller_cwd_repo" worktree list --porcelain | grep -Fqx "worktree $(cd "$caller_cwd_worktree" && pwd -P)"; then
+  if "$REAL_GIT" -C "$caller_cwd_repo" worktree list --porcelain | grep -Fx "worktree $(cd "$caller_cwd_worktree" && pwd -P)" > /dev/null; then
     printf 'yes'
   else
     printf 'no'
@@ -621,7 +621,7 @@ run_fails_contains \
     PATH="$stub_bin:$PATH" \
     "$HELPER" --repo-root "$unmerged_repo" --base develop "$unmerged_branch"
 run_test "unmerged_remote_ref_still_exists" "yes" "$(
-  if "$REAL_GIT" -C "$unmerged_repo" ls-remote --heads origin "$unmerged_branch" | grep -q .; then
+  if "$REAL_GIT" -C "$unmerged_repo" ls-remote --heads origin "$unmerged_branch" | grep . > /dev/null; then
     printf 'yes'
   else
     printf 'no'
@@ -671,7 +671,7 @@ run_contains "fork_remote_delete_skipped" "REMOTE_DELETE_RESULT=skipped" "$fork_
 run_contains "fork_remote_delete_reason" "REMOTE_DELETE_REASON=cross_repository_pr" "$fork_output"
 run_contains "fork_remote_delete_records_pr" "REMOTE_DELETE_PR_NUMBER=81" "$fork_output"
 run_test "fork_remote_ref_remains" "yes" "$(
-  if "$REAL_GIT" -C "$fork_repo" ls-remote --heads origin "$fork_branch" | grep -q .; then
+  if "$REAL_GIT" -C "$fork_repo" ls-remote --heads origin "$fork_branch" | grep . > /dev/null; then
     printf 'yes'
   else
     printf 'no'
@@ -687,7 +687,7 @@ spec_output="$(
 )"
 run_contains "spec_branch_expected_persistent" "BRANCH_LIFECYCLE=expected_persistent" "$spec_output"
 run_test "spec_remote_ref_remains" "yes" "$(
-  if "$REAL_GIT" -C "$spec_repo" ls-remote --heads origin "$spec_branch" | grep -q .; then
+  if "$REAL_GIT" -C "$spec_repo" ls-remote --heads origin "$spec_branch" | grep . > /dev/null; then
     printf 'yes'
   else
     printf 'no'
@@ -794,7 +794,7 @@ run_fails_contains \
     PATH="$stub_bin:$PATH" \
     "$HELPER" --repo-root "$quoted_repo" --base develop --pr 83 "$quoted_branch"
 run_test "quoted_branch_remote_ref_remains" "yes" "$(
-  if "$REAL_GIT" -C "$quoted_repo" ls-remote --heads origin "$quoted_branch" | grep -q .; then
+  if "$REAL_GIT" -C "$quoted_repo" ls-remote --heads origin "$quoted_branch" | grep . > /dev/null; then
     printf 'yes'
   else
     printf 'no'

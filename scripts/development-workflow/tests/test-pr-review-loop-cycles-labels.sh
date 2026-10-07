@@ -340,7 +340,7 @@ run_test "1652_s7d_tab_path" "no" \
 run_test "1652_s7d_tab_path_intact_fields" "contract_surface" \
   "$(printf '%s\n' "$(_sf_finding "$_sf_tab_path" x "decision matrix wrong")" | reviewer_loop_small_findings_content_analysis | jq -r '.blocked_by')"
 run_test "1652_s7d_tab_path_has_tab" "yes" \
-  "$(printf '%s' "$(_sf_finding "$_sf_tab_path" x "x")" | jq -r '.path' | grep -Fq $'\t' && echo yes || echo no)"
+  "$(printf '%s' "$(_sf_finding "$_sf_tab_path" x "x")" | jq -r '.path' | grep -F $'\t' > /dev/null && echo yes || echo no)"
 run_test "1652_s7d_tab_body" "decision_gates_and_matrices" \
   "$(reviewer_loop_finding_touches_contract_surface "$(reviewer_loop_normalize_finding_body_for_match "$_sf_tab_body")")"
 run_test "1652_s7d_quote_body" "decision_gates_and_matrices" \
@@ -779,7 +779,7 @@ run_test "cycles_resolve_max_invalid_config_warns" "yes" "$(
   # Capture stderr into a variable first, then grep the variable — piping
   # directly into `grep -q` risks a SIGPIPE false-negative under pipefail.
   _mc_warn_stderr="$(reviewer_loop_resolve_max_cycles "not-a-number" 2>&1 >/dev/null)"
-  if printf '%s\n' "$_mc_warn_stderr" | grep -q "WARN.*not a positive integer"; then
+  if grep -q "WARN.*not a positive integer" <<< "$_mc_warn_stderr"; then
     echo yes
   else
     echo no
@@ -807,7 +807,7 @@ run_test "total_cycles_resolve_max_invalid_config_defaults" "25" \
   "$(reviewer_loop_resolve_max_total_cycles "not-a-number" 2>/dev/null)"
 run_test "total_cycles_resolve_max_invalid_config_warns" "yes" "$(
   _mc_warn_stderr="$(reviewer_loop_resolve_max_total_cycles "not-a-number" 2>&1 >/dev/null)"
-  if printf '%s\n' "$_mc_warn_stderr" | grep -q "WARN.*not a positive integer"; then
+  if grep -q "WARN.*not a positive integer" <<< "$_mc_warn_stderr"; then
     echo yes
   else
     echo no
@@ -854,7 +854,7 @@ run_test "codex_cap_invalid_per_run_keeps_lifetime_warns" "yes" "$(
   unset PR_REVIEW_LOOP_MAX_CYCLES PR_REVIEW_LOOP_MAX_TOTAL_CYCLES
   _mc_warn_stderr="$(reviewer_loop_resolve_max_cycles "not-a-number" 2>&1 >/dev/null)"
   reviewer_loop_resolve_max_total_cycles "40" >/dev/null 2>/dev/null
-  if printf '%s\n' "$_mc_warn_stderr" | grep -q "WARN.*not a positive integer"; then
+  if grep -q "WARN.*not a positive integer" <<< "$_mc_warn_stderr"; then
     echo yes
   else
     echo no
@@ -870,7 +870,7 @@ run_test "codex_cap_invalid_lifetime_keeps_per_run_warns" "yes" "$(
   unset PR_REVIEW_LOOP_MAX_CYCLES PR_REVIEW_LOOP_MAX_TOTAL_CYCLES
   reviewer_loop_resolve_max_cycles "7" >/dev/null 2>/dev/null
   _mtc_warn_stderr="$(reviewer_loop_resolve_max_total_cycles "not-a-number" 2>&1 >/dev/null)"
-  if printf '%s\n' "$_mtc_warn_stderr" | grep -q "WARN.*not a positive integer"; then
+  if grep -q "WARN.*not a positive integer" <<< "$_mtc_warn_stderr"; then
     echo yes
   else
     echo no
@@ -1102,7 +1102,7 @@ run_test "cycles_resolve_counts_api_failure_retries_before_giving_up" "yes" "$(
   # `set -o pipefail` if grep exits after its first match while the
   # function is still writing a later WARN line.
   _mc_retry_stderr="$(reviewer_loop_resolve_cycle_counts "42" "run-x" 2>&1 >/dev/null)"
-  if printf '%s\n' "$_mc_retry_stderr" | grep -q "retrying"; then
+  if grep -q "retrying" <<< "$_mc_retry_stderr"; then
     echo yes
   else
     echo no
@@ -1192,7 +1192,7 @@ run_test "cycles_head_sha_fallback_on_lookup_failure_has_prefix" "yes" "$(
 run_test "cycles_head_sha_fallback_warns" "yes" "$(
   _stderr="$(reviewer_loop_history_current_head_sha 2>&1 >/dev/null)"
   if printf '%s
-' "$_stderr" | grep -q "WARN.*could not resolve current HEAD SHA"; then
+' "$_stderr" | grep "WARN.*could not resolve current HEAD SHA" > /dev/null; then
     echo yes
   else
     echo no
@@ -1546,14 +1546,14 @@ _warn_output="$(restore_regression_label_if_missing "42" "fix/42-comments-fail" 
 _edit_calls="$(grep -c -- '--add-label' "$_call_log_11" 2>/dev/null)" || _edit_calls="0"
 run_test "restore_label_comments_api_fail_failopen_calls_gh_edit" "1" "$_edit_calls"
 # Verify WARN is emitted (not silent).
-if printf '%s\n' "$_warn_output" | grep -q "WARN"; then
+if grep -q "WARN" <<< "$_warn_output"; then
   _warn_emitted="yes"
 else
   _warn_emitted="no"
 fi
 run_test "restore_label_comments_api_fail_warn_emitted" "yes" "$_warn_emitted"
-if printf '%s\n' "$_warn_output" | grep -q "summary-comment lookup failed; fail-open restore" \
-    && ! printf '%s\n' "$_warn_output" | grep -q "current-head clean reviewer-loop summary found"; then
+if grep -q "summary-comment lookup failed; fail-open restore" <<< "$_warn_output" \
+    && ! grep -q "current-head clean reviewer-loop summary found" <<< "$_warn_output"; then
   _failopen_reason_ok="yes"
 else
   _failopen_reason_ok="no"
@@ -1613,7 +1613,7 @@ run_test "step8a_check4_has_no_label_present_skip" "0" \
   "$(printf '%s\n' "$_check4" | grep -c 'Skipping re-application' || true)"
 run_test "step8a_check4_runs_helper_unconditionally" "1" \
   "$([ "$(printf '%s\n' "$_check4" | grep -c 'apply-readiness-labels.sh' || true)" -ge 1 ] \
-      && printf '%s\n' "$_check4" | grep -q 'if ! \./scripts/development-workflow/apply-readiness-labels.sh' \
+      && grep -q 'if ! \./scripts/development-workflow/apply-readiness-labels.sh' <<< "$_check4" \
       && echo 1 || echo 0)"
 # Test 11.15 (PR #1818 F1 round 10): the restore path's label-present branch
 # must also invoke the helper (no skip when 'ready-for-regression' is already
@@ -1669,7 +1669,7 @@ _waiting_case_source="$(awk '
   capture {print}
   /^  esac$/ && capture {exit}
 ' "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh")"
-if printf '%s\n' "$_waiting_case_source" | grep -q 'needs_fixes|waiting_on_reviewer|escalate'; then
+if grep -q 'needs_fixes|waiting_on_reviewer|escalate' <<< "$_waiting_case_source"; then
   _waiting_folded_into_blocker="yes"
 else
   _waiting_folded_into_blocker="no"
@@ -1751,7 +1751,7 @@ _warn_output="$(sync_reviewer_failed_label "42" "1" 2>&1)" || _sync_exit=$?
 _add_calls="$(grep -c -- 'pr edit 42 --add-label reviewer-failed' "$_call_log_12" 2>/dev/null)" || _add_calls="0"
 run_test "reviewer_failed_create_failure_returns_0" "0" "$_sync_exit"
 run_test "reviewer_failed_create_failure_still_attempts_add" "1" "$_add_calls"
-if printf '%s\n' "$_warn_output" | grep -q "WARN"; then
+if grep -q "WARN" <<< "$_warn_output"; then
   _warn_emitted="yes"
 else
   _warn_emitted="no"

@@ -730,7 +730,7 @@ run_test "s13d_shipped_ids_match_spec" "$(printf '%s\n' "$EXPECTED_IDS" | jq -c 
 run_test "s9d_no_strict_timeout_name" "yes" \
   "$(grep -Eq 'LOCAL_AI_REVIEWER_STRICT_TIMEOUT|STRICT_SPEC_TIMEOUT' "$REVIEWER" >/dev/null && echo no || echo yes)"
 run_test "s9d_help_no_second_timeout_knob" "yes" \
-  "$(bash "$REVIEWER" --help 2>&1 | grep -Eq 'LOCAL_AI_REVIEWER_STRICT_TIMEOUT|STRICT_SPEC_TIMEOUT' && echo no || echo yes)"
+  "$(bash "$REVIEWER" --help 2>&1 | grep -E 'LOCAL_AI_REVIEWER_STRICT_TIMEOUT|STRICT_SPEC_TIMEOUT' > /dev/null && echo no || echo yes)"
 # #1789 (plan D4): the GNU timeout branch is removed; the process-group
 # watchdog runs on every host.
 run_test "1789_no_gnu_timeout_branch" "no" \
@@ -2258,7 +2258,7 @@ for _entry in "${_planted_checks[@]}"; do
   _pass_json='{"mode":"strict_plan_checks","findings":[]}'
   run_planted_plan_fixture_review "$_check" pass "$_pass_json"
   _checks_line="$(line_for STRICT_PLAN_CHECKS 2>/dev/null || true)"
-  if printf '%s' "$_checks_line" | grep -q "$_check"; then
+  if grep -q "$_check" <<< "$_checks_line"; then
     _has_check=yes
   else
     _has_check=no

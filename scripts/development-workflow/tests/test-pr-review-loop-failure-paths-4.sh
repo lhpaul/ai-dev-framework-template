@@ -978,7 +978,7 @@ printf '%s\n' "pr-review-loop.sh" > "$_unlock_lock_dir/cmd"
 _unlock_exit=0
 _unlock_output="$("$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh" unlock "$_unlock_pr" --repo "$_unlock_repo" 2>&1)" || _unlock_exit=$?
 run_test "unlock_unreadable_pid_exits_1" "1" "$_unlock_exit"
-if printf '%s\n' "$_unlock_output" | grep -q "could not read lock PID"; then
+if grep -q "could not read lock PID" <<< "$_unlock_output"; then
   _unlock_error_seen="yes"
 else
   _unlock_error_seen="no"
@@ -995,7 +995,7 @@ printf '%s\n' "999999" > "$_unlock_lock_dir/pid"
 _unlock_exit=0
 _unlock_output="$("$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh" unlock "$_unlock_pr" --repo "$_unlock_repo" 2>&1)" || _unlock_exit=$?
 run_test "unlock_unreadable_cmd_exits_1" "1" "$_unlock_exit"
-if printf '%s\n' "$_unlock_output" | grep -q "could not read lock cmd"; then
+if grep -q "could not read lock cmd" <<< "$_unlock_output"; then
   _unlock_error_seen="yes"
 else
   _unlock_error_seen="no"
@@ -1050,7 +1050,7 @@ run_test "lock_same_repo_same_pr_lock_dir" "LOCK_DIR=$_lockkey_dir_a" \
   "$(printf '%s\n' "$_lockkey_same_output" | grep '^LOCK_DIR=' | head -1)"
 # The recovery hint must name the repository, or following it would remove
 # another repository's lock.
-if printf '%s\n' "$_lockkey_same_output" | grep -q -- "unlock ${_lockkey_pr} --repo \"${_lockkey_repo_a}\""; then
+if grep -q -- "unlock ${_lockkey_pr} --repo \"${_lockkey_repo_a}\"" <<< "$_lockkey_same_output"; then
   _lockkey_hint_seen="yes"
 else
   _lockkey_hint_seen="no"
@@ -1072,7 +1072,7 @@ printf '%s\n' "pr-review-loop.sh" > "$_lockenv_dir/cmd"
 _lockenv_exit=0
 _lockenv_output="$(WORKFLOW_TARGET_GITHUB_REPO="$_lockenv_repo" "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh" "$_lockenv_pr" 2>&1)" || _lockenv_exit=$?
 run_test "lock_env_repo_same_pr_contends_exit_75" "75" "$_lockenv_exit"
-if printf '%s\n' "$_lockenv_output" | grep -q -- "unlock ${_lockenv_pr} --repo \"${_lockenv_repo}\""; then
+if grep -q -- "unlock ${_lockenv_pr} --repo \"${_lockenv_repo}\"" <<< "$_lockenv_output"; then
   _lockenv_hint_seen="yes"
 else
   _lockenv_hint_seen="no"
@@ -1088,7 +1088,7 @@ unset _lockenv_pr _lockenv_repo _lockenv_dir _lockenv_live_pid _lockenv_exit _lo
 # lock_contention, and it must not have taken repo A's lock dir.
 _lockkey_other_exit=0
 _lockkey_other_output="$(PATH="$_lockkey_mock_dir:$PATH" "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh" "$_lockkey_pr" --repo "$_lockkey_repo_b" 2>&1)" || _lockkey_other_exit=$?
-if printf '%s\n' "$_lockkey_other_output" | grep -q "REASON=lock_contention"; then
+if grep -q "REASON=lock_contention" <<< "$_lockkey_other_output"; then
   _lockkey_other_contended="yes"
 else
   _lockkey_other_contended="no"
@@ -1735,7 +1735,7 @@ _codex_marker_freshness_fails_output="$(cat "$_codex_marker_freshness_fails_mock
 # and waits (codex-github-review-pending, exit 4), it does not escalate.
 run_test "codex_marker_freshness_fails_not_escalated_exit" "4" "$_codex_marker_freshness_fails_exit"
 run_test "codex_marker_freshness_fails_not_malformed" "no" \
-  "$(printf '%s\n' "$_codex_marker_freshness_fails_output" | grep -q 'codex_current_verdict_malformed_revision_marker' && echo yes || echo no)"
+  "$(grep -q 'codex_current_verdict_malformed_revision_marker' <<< "$_codex_marker_freshness_fails_output" && echo yes || echo no)"
 rm -rf "$_codex_marker_freshness_fails_mock_dir"
 unset _codex_marker_freshness_fails_mock_dir _codex_marker_freshness_fails_output _codex_marker_freshness_fails_exit
 

@@ -266,7 +266,7 @@ run_test "wave2_all_pairs_parallel_eligible" "6" "$(pair_value "$wave2" '[.pairs
 # AC-5: "suspected" explanations must name the specific triggering signal, not a
 # generic identical string for every pair.
 related_explanation="$(pair_value "$parent_route" '.pairs[0].explanation')"
-run_test "related_explanation_names_routes" "yes" "$(printf '%s' "$related_explanation" | grep -q "/api/users" && echo yes || echo no)"
+run_test "related_explanation_names_routes" "yes" "$(grep -q "/api/users" <<< "$related_explanation" && echo yes || echo no)"
 
 two_sided_mismatch="$TMP_ROOT/two-sided-mismatch.json"
 write_items "$two_sided_mismatch" \
@@ -274,7 +274,7 @@ write_items "$two_sided_mismatch" \
   "$(item_json tsm-b "B" "resolveBeta() has a bug." "b.ts")"
 run_test "two_sided_mismatch_is_suspected" "suspected" "$(class_for "$two_sided_mismatch")"
 mismatch_explanation="$(pair_value "$two_sided_mismatch" '.pairs[0].explanation')"
-run_test "mismatch_explanation_names_signals" "yes" "$(printf '%s' "$mismatch_explanation" | grep -q "resolvealpha" && printf '%s' "$mismatch_explanation" | grep -q "resolvebeta" && echo yes || echo no)"
+run_test "mismatch_explanation_names_signals" "yes" "$(grep -q "resolvealpha" <<< "$mismatch_explanation" && grep -q "resolvebeta" <<< "$mismatch_explanation" && echo yes || echo no)"
 
 # Defect 2 regression: one side having signals while the other has none (with
 # shared_files already ruled out) must fall through to no_actionable_overlap

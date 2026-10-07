@@ -2353,7 +2353,7 @@ _1789_t221_payload="$(_1789_ledger \
 # --- T2.21
 run_test "1789_T2.21_two_runs_waiting_and_clean_both_listed" "9501,9502" "$(_1789_refs "$_1789_t221_payload" "$_1789_H" greptile)"
 run_test "1789_T2.21_wait_start_empty_other_head_other_platform_not_listed" "no" \
-  "$(_1789_refs "$_1789_t221_payload" "$_1789_H" greptile | grep -qE '9503|9504|9505|(^|,)(,|$)' && echo yes || echo no)"
+  "$(_1789_refs "$_1789_t221_payload" "$_1789_H" greptile | grep -E '9503|9504|9505|(^|,)(,|$)' > /dev/null && echo yes || echo no)"
 run_test "1789_T2.21_other_platform_listed_for_itself" "9505" "$(_1789_refs "$_1789_t221_payload" "$_1789_H" pr-agent)"
 run_test "1789_T2.21_other_head_lists_its_own" "9504" "$(_1789_refs "$_1789_t221_payload" "$_1789_OLD" greptile)"
 run_test "1789_T2.21_head_case_insensitive" "9501,9502" \
@@ -2755,7 +2755,7 @@ _1789_rd_rc=0
 _1789_rd_warn="$(reviewer_loop_gh_read_denied "$_1789_rd_file" 2>&1 >/dev/null)" || _1789_rd_rc=$?
 run_test "1789_RD_rate_limit_file_not_denied" "1" "$_1789_rd_rc"
 run_test "1789_RD_rate_limit_file_warns" "yes" \
-  "$(printf '%s\n' "$_1789_rd_warn" | grep -q 'transient, still polling.*secondary rate limit' && echo yes || echo no)"
+  "$(grep -q 'transient, still polling.*secondary rate limit' <<< "$_1789_rd_warn" && echo yes || echo no)"
 run_test "1789_RD_rate_limit_file_emptied" "0" "$(wc -c < "$_1789_rd_file" | tr -d ' ')"
 _1789_rd_rc=0
 reviewer_loop_gh_read_denied "$_1789_dir/no-such-file" >/dev/null 2>&1 || _1789_rd_rc=$?

@@ -74,12 +74,12 @@ case "$*" in
     ;;
   api\ graphql*)
     # GraphQL mutations that contain "mutation" keyword
-    if printf '%s\n' "$*" | grep -qi 'mutation'; then
+    if grep -qi 'mutation' <<< "$*"; then
       printf 'MUTATION DETECTED (GraphQL): gh %s\n' "$*" >&2
       exit 99
     fi
     # For subIssues check
-    if printf '%s\n' "$*" | grep -q 'subIssues'; then
+    if grep -q 'subIssues' <<< "$*"; then
       # Return empty subIssues (non-epic by default)
       cat <<'JSON'
 {"data":{"repository":{"issue":{"subIssues":{"nodes":[]}}}}}
@@ -319,7 +319,7 @@ run_test() {
 
 run_test_contains() {
   local name="$1" pattern="$2" actual="$3"
-  if printf '%s\n' "$actual" | grep -q "$pattern"; then
+  if grep -q "$pattern" <<< "$actual"; then
     printf 'PASS: %s\n' "$name"
     PASS_COUNT=$((PASS_COUNT + 1))
   else
@@ -336,7 +336,7 @@ run_fails_contains() {
   output="$("$@" 2>&1)"
   status=$?
   set -e
-  if [ "$status" -ne 0 ] && printf '%s\n' "$output" | grep -q "$expected_pattern"; then
+  if [ "$status" -ne 0 ] && grep -q "$expected_pattern" <<< "$output"; then
     printf 'PASS: %s\n' "$name"
     PASS_COUNT=$((PASS_COUNT + 1))
   else
@@ -660,7 +660,7 @@ run_test "happy_path_probe_regression" "redirect_item" \
 required_fields="MODE MODE_LABEL RAW_TARGET RESOLVED_SCOPE HELD_BACK OUT_OF_SCOPE GUARDRAILS_SECTION GUARDRAILS_MODE GUARDRAILS_BACKLOG_START"
 for field in $required_fields; do
   run_test "record_has_field_${field}" "yes" \
-    "$(printf '%s\n' "$output_no_target" | grep -q "^${field}=" && echo yes || echo no)"
+    "$(grep -q "^${field}=" <<< "$output_no_target" && echo yes || echo no)"
 done
 
 # --- JSON output (--json flag, AC10) ----------------------------------------
@@ -722,7 +722,7 @@ _epic_missing_output="$(PATH="$MOCK_BIN:$PATH" "$ROUTER" "--epic" 2>&1)"
 _epic_missing_status=$?
 set -e
 
-if [ "$_epic_missing_status" -ne 0 ] && printf '%s\n' "$_epic_missing_output" | grep -qF -- "--epic requires an issue number"; then
+if [ "$_epic_missing_status" -ne 0 ] && grep -qF -- "--epic requires an issue number" <<< "$_epic_missing_output"; then
   printf 'PASS: epic_flag_missing_value\n'
   PASS_COUNT=$((PASS_COUNT + 1))
 else

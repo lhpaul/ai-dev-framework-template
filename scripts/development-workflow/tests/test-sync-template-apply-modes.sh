@@ -45,15 +45,15 @@ assert_primary_modes() {
     fail "$name (missing Ready-to-apply confirmation block)"
     return
   fi
-  if printf '%s\n' "$block" | grep -q 'Decide with me' \
-    && printf '%s\n' "$block" | grep -q 'Accept recommendations'; then
+  if grep -q 'Decide with me' <<< "$block" \
+    && grep -q 'Accept recommendations' <<< "$block"; then
     pass "$name primary modes Decide with me / Accept recommendations"
   else
     fail "$name missing Decide with me / Accept recommendations in confirmation block"
   fi
   # Old coverage options must not appear as quoted primary bullets in this block.
-  if printf '%s\n' "$block" | grep -qE '^\s*>\s*-\s*\*\*"apply all"\*\*' \
-    || printf '%s\n' "$block" | grep -qE '^\s*>\s*-\s*\*\*"apply always-sync only"\*\*'; then
+  if grep -qE '^\s*>\s*-\s*\*\*"apply all"\*\*' <<< "$block" \
+    || grep -qE '^\s*>\s*-\s*\*\*"apply always-sync only"\*\*' <<< "$block"; then
     fail "$name still lists old options as primary peer bullets"
   else
     pass "$name does not list old options as primary peer bullets"
@@ -80,7 +80,7 @@ for f in "${BODIES[@]}"; do
   assert_file_contains "$f" 'other configured reviewers, CI,' "$base preserves other review and CI gates"
   assert_file_contains "$f" 'unresolved-thread, regression, and readiness gates remain mandatory' "$base preserves terminal gates"
   assert_primary_modes "$f" "$base"
-  if awk '/Requires manual review \(you decide\)/,/^### /' "$f" | grep -q '\.claude/settings\.json'; then
+  if awk '/Requires manual review \(you decide\)/,/^### /' "$f" | grep '\.claude/settings\.json' > /dev/null; then
     fail "$base lists .claude/settings.json under Requires manual review (you decide)"
   else
     pass "$base does not list settings.json under discretionary you-decide heading"

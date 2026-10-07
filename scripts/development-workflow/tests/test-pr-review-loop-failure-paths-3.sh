@@ -737,7 +737,7 @@ PATH="$_codex_stale_review_mock_dir:$PATH" \
   >"$_codex_stale_review_mock_dir/output.txt" 2>&1 || _codex_stale_review_exit=$?
 _codex_stale_review_output="$(cat "$_codex_stale_review_mock_dir/output.txt")"
 run_test "codex_stale_review_exit_waiting" "4" "$_codex_stale_review_exit"
-if printf '%s\n' "$_codex_stale_review_output" | grep -q "^VERDICT: APPROVED"; then
+if grep -q "^VERDICT: APPROVED" <<< "$_codex_stale_review_output"; then
   _codex_stale_review_approved="yes"
 else
   _codex_stale_review_approved="no"
@@ -783,7 +783,7 @@ PATH="$_codex_stale_inline_mock_dir:$PATH" \
   >"$_codex_stale_inline_mock_dir/output.txt" 2>&1 || _codex_stale_inline_exit=$?
 _codex_stale_inline_output="$(cat "$_codex_stale_inline_mock_dir/output.txt")"
 run_test "codex_stale_inline_exit_waiting" "4" "$_codex_stale_inline_exit"
-if printf '%s\n' "$_codex_stale_inline_output" | grep -q "^VERDICT: NEEDS_REVISION"; then
+if grep -q "^VERDICT: NEEDS_REVISION" <<< "$_codex_stale_inline_output"; then
   _codex_stale_inline_needs_revision="yes"
 else
   _codex_stale_inline_needs_revision="no"
@@ -982,7 +982,7 @@ PATH="$_codex_environment_then_clean_comment_mock_dir:$PATH" \
   >"$_codex_environment_then_clean_comment_mock_dir/output.txt" 2>&1 || _codex_environment_then_clean_comment_exit=$?
 _codex_environment_then_clean_comment_output="$(cat "$_codex_environment_then_clean_comment_mock_dir/output.txt")"
 run_test "codex_environment_then_clean_comment_exit_unavailable" "2" "$_codex_environment_then_clean_comment_exit"
-if printf '%s\n' "$_codex_environment_then_clean_comment_output" | grep -q "^VERDICT: APPROVED"; then
+if grep -q "^VERDICT: APPROVED" <<< "$_codex_environment_then_clean_comment_output"; then
   _codex_environment_then_clean_comment_approved="yes"
 else
   _codex_environment_then_clean_comment_approved="no"
@@ -1163,7 +1163,7 @@ PATH="$_codex_final_ack_clean_comment_mock_dir:$PATH" \
   >"$_codex_final_ack_clean_comment_mock_dir/output.txt" 2>&1 || _codex_final_ack_clean_comment_exit=$?
 _codex_final_ack_clean_comment_output="$(cat "$_codex_final_ack_clean_comment_mock_dir/output.txt")"
 run_test "codex_final_ack_clean_comment_exit_waiting" "4" "$_codex_final_ack_clean_comment_exit"
-if printf '%s\n' "$_codex_final_ack_clean_comment_output" | grep -q "^VERDICT: APPROVED"; then
+if grep -q "^VERDICT: APPROVED" <<< "$_codex_final_ack_clean_comment_output"; then
   _codex_final_ack_clean_comment_approved="yes"
 else
   _codex_final_ack_clean_comment_approved="no"
@@ -2540,7 +2540,7 @@ _codex_footer_near_miss_main_loop_safe_fails_output="$(cat "$_codex_footer_near_
 run_test "codex_footer_near_miss_main_loop_safe_fails_exit_needs_revision" "2" "$_codex_footer_near_miss_main_loop_safe_fails_exit"
 run_test "codex_footer_near_miss_main_loop_safe_fails_verdict" "VERDICT: ESCALATE — Codex terminal verdict matches neither an approved clean template nor the documented blocking markers" \
   "$(printf '%s\n' "$_codex_footer_near_miss_main_loop_safe_fails_output" | grep "^VERDICT:")"
-if printf '%s\n' "$_codex_footer_near_miss_main_loop_safe_fails_output" | grep -q "^INFO: bot response detected"; then
+if grep -q "^INFO: bot response detected" <<< "$_codex_footer_near_miss_main_loop_safe_fails_output"; then
   _codex_footer_near_miss_main_loop_safe_fails_site="main_loop"
 else
   _codex_footer_near_miss_main_loop_safe_fails_site="other"
@@ -2611,7 +2611,7 @@ _codex_footer_near_miss_async_arrival_safe_fails_output="$(cat "$_codex_footer_n
 run_test "codex_footer_near_miss_async_arrival_safe_fails_exit_needs_revision" "2" "$_codex_footer_near_miss_async_arrival_safe_fails_exit"
 run_test "codex_footer_near_miss_async_arrival_safe_fails_verdict" "VERDICT: ESCALATE — Codex terminal verdict matches neither an approved clean template nor the documented blocking markers" \
   "$(printf '%s\n' "$_codex_footer_near_miss_async_arrival_safe_fails_output" | grep "^VERDICT:")"
-if printf '%s\n' "$_codex_footer_near_miss_async_arrival_safe_fails_output" | grep -q "^INFO: async-arrival bot response detected during grace period"; then
+if grep -q "^INFO: async-arrival bot response detected during grace period" <<< "$_codex_footer_near_miss_async_arrival_safe_fails_output"; then
   _codex_footer_near_miss_async_arrival_safe_fails_site="async_arrival"
 else
   _codex_footer_near_miss_async_arrival_safe_fails_site="other"
@@ -2685,7 +2685,7 @@ _codex_footer_near_miss_async_final_safe_fails_output="$(cat "$_codex_footer_nea
 run_test "codex_footer_near_miss_async_final_safe_fails_exit_needs_revision" "2" "$_codex_footer_near_miss_async_final_safe_fails_exit"
 run_test "codex_footer_near_miss_async_final_safe_fails_verdict" "VERDICT: ESCALATE — Codex terminal verdict matches neither an approved clean template nor the documented blocking markers" \
   "$(printf '%s\n' "$_codex_footer_near_miss_async_final_safe_fails_output" | grep "^VERDICT:")"
-if printf '%s\n' "$_codex_footer_near_miss_async_final_safe_fails_output" | grep -q "^INFO: final async bot response detected after acknowledgement wait"; then
+if grep -q "^INFO: final async bot response detected after acknowledgement wait" <<< "$_codex_footer_near_miss_async_final_safe_fails_output"; then
   _codex_footer_near_miss_async_final_safe_fails_site="async_final"
 else
   _codex_footer_near_miss_async_final_safe_fails_site="other"
@@ -2751,7 +2751,7 @@ _codex_footer_near_miss_async_reaction_final_safe_fails_output="$(cat "$_codex_f
 run_test "codex_footer_near_miss_async_reaction_final_safe_fails_exit_needs_revision" "2" "$_codex_footer_near_miss_async_reaction_final_safe_fails_exit"
 run_test "codex_footer_near_miss_async_reaction_final_safe_fails_verdict" "VERDICT: ESCALATE — Codex terminal verdict matches neither an approved clean template nor the documented blocking markers" \
   "$(printf '%s\n' "$_codex_footer_near_miss_async_reaction_final_safe_fails_output" | grep "^VERDICT:")"
-if printf '%s\n' "$_codex_footer_near_miss_async_reaction_final_safe_fails_output" | grep -q "^INFO: final async reaction bot response detected via PR reviews endpoint"; then
+if grep -q "^INFO: final async reaction bot response detected via PR reviews endpoint" <<< "$_codex_footer_near_miss_async_reaction_final_safe_fails_output"; then
   _codex_footer_near_miss_async_reaction_final_safe_fails_site="async_reaction_final"
 else
   _codex_footer_near_miss_async_reaction_final_safe_fails_site="other"

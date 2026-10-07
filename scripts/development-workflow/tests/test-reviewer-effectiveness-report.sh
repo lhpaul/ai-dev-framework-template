@@ -35,12 +35,12 @@ assert_jq() {
 
 assert_contains() {
   local text="$1" pattern="$2" msg="$3"
-  printf '%s\n' "$text" | grep -Fq "$pattern" || fail "$msg"
+  grep -Fq "$pattern" <<< "$text" || fail "$msg"
 }
 
 assert_not_contains() {
   local text="$1" pattern="$2" msg="$3"
-  if printf '%s\n' "$text" | grep -Fq "$pattern"; then
+  if grep -Fq "$pattern" <<< "$text"; then
     fail "$msg"
   fi
 }

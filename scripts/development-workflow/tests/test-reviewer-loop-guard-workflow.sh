@@ -192,7 +192,7 @@ GUARD_FUNCTIONS="$(
   extract_workflow_function reviewer_loop_guard_verdict
 )"
 run_test "guard_functions_extractable" "yes" \
-  "$(printf '%s\n' "$GUARD_FUNCTIONS" | grep -c '() {' | grep -qx 2 && echo yes || echo no)"
+  "$(printf '%s\n' "$GUARD_FUNCTIONS" | grep -c '() {' | grep -x 2 > /dev/null && echo yes || echo no)"
 eval "$GUARD_FUNCTIONS"
 
 LIVE_HEAD="1111111111111111111111111111111111111111"
