@@ -102,6 +102,10 @@ Any execution error, signal, quota loss, uncertain response, or required follow-
 
 `report` is usable with every remote call failing. It distinguishes Admitted, Deferred, Waiting, Completed, Interrupted, and the underlying policy stop; prints per-PR verified/uncertain state, completed/pending duties, reset/readability and an explicit recovery command. Observed spend is available only for matching limit/reset windows and nonincreasing remaining; it is an aggregate sample difference possibly including concurrent consumers. Increased balance, reset, changed limit, or unavailable final evidence yields an explicit unavailable-spend reason while preserving readable samples.
 
+### Coordinated reversal policy
+
+A deployment reversal reverts the helper, dependent runtime consumers, configuration/sync entry and session-aware guidance together through the normal reviewed PR path. Do not remove a gate while a dependent consumer still assumes it. Before disabling the new execution path, stop new merge operations and resolve active Waiting/Interrupted sessions through live verification and authorized follow-up; retain all journals and recovery/report evidence. Reversal does not roll back remote merges or delete branches, worktrees or session history. Preserve a schema-compatible report/recovery reader for existing sessions; if a reverted release cannot read their schema, it must refuse execution and direct the operator to the retained compatible reader rather than migrate, discard or replay state. New schema versions require explicit compatible-reader/recovery validation before rollout. Test coordinated consumer shipment and unknown-schema refusal; manually verify the retained reader reports a pre-reversal Interrupted fixture without replay.
+
 ### Concurrency safety checklist
 
 | Required item | Decision |
@@ -152,7 +156,7 @@ List these paths for implementation updates; this plan does not perform the upda
 - `.claude/commands/run-epic.md`, `.cursor/commands/run-epic.md`, `.agents/skills/run-epic/SKILL.md`
 - `.claude/commands/run-items.md`, `.cursor/commands/run-items.md`, `.agents/skills/run-items/SKILL.md`
 - `.claude/commands/batch-merge.md`, `.cursor/commands/batch-merge.md`, `.codex/skills/batch-merge/SKILL.md`, `.agents/skills/batch-merge/SKILL.md`
-- `.claude/commands/post-merge-cleanup.md`, `.cursor/commands/post-merge-cleanup.md`, `.codex/skills/post-merge-cleanup/SKILL.md`, `.agents/skills/post-merge-cleanup/SKILL.md`
+- `.claude/skills/post-merge-cleanup.md`, `.claude/commands/post-merge-cleanup.md`, `.cursor/commands/post-merge-cleanup.md`, `.codex/skills/post-merge-cleanup/SKILL.md`, `.agents/skills/post-merge-cleanup/SKILL.md`
 - `.claude/agents/item-orchestrator.md`, `.cursor/agents/item-orchestrator.md`, `.codex/skills/workflow-item-orchestrator/SKILL.md`, `.agents/skills/workflow-item-orchestrator/SKILL.md`
 - `.claude/agents/orchestrator.md`, `.cursor/agents/orchestrator.md`, `.codex/skills/workflow-orchestrator/SKILL.md`, `.agents/skills/workflow-orchestrator/SKILL.md`
 - `.codex/skills/workflow-implementer/SKILL.md`, `.agents/skills/workflow-implementer/SKILL.md`
@@ -165,23 +169,33 @@ At Protocol 91/95, readiness -> frozen manifest -> admission -> operation-owned 
 
 Population: runtime helpers and active command/skill/protocol surfaces that name the affected executable helpers; historical development artifacts and executable test fixtures are excluded from this runtime population and covered separately by Testing Strategy. At the Verification Log snapshot, the following exact query produced the complete classified result below (proposed parallel guidance mirrors are listed separately above):
 
-`rg -l 'run-epic-delegated-gate\.sh|run-epic-risk-classifier\.sh|batch-merge\.sh' .agents/skills .codex/skills .claude .cursor docs/workflow/development-workflow/protocols scripts/development-workflow --glob '!**/tests/**' | sort`
+`rg -l '(^|[^[:alnum:]_-])(run-epic-delegated-gate|run-epic-risk-classifier|batch-merge|post-merge-cleanup|run-epic-audit-trail)\.sh' .agents/skills .codex/skills .claude .cursor docs/workflow/development-workflow/protocols scripts/development-workflow --glob '!**/tests/**' | sort`
 
 | Matching consumer | Required observable disposition |
 | --- | --- |
 | `.agents/skills/run-epic/SKILL.md` | Update merge execution/handoff guidance to the canonical session-before-audit route and durable outcomes. |
+| `.agents/skills/run-item/SKILL.md` | Update merge execution/handoff guidance to the canonical session-before-audit route and durable outcomes. |
 | `.agents/skills/run-items/SKILL.md` | Update merge execution/handoff guidance to the canonical session-before-audit route and durable outcomes. |
 | `.agents/skills/run-items/agents/openai.yaml` | Unchanged UI metadata; no executable merge operation or admission authority. |
+| `.claude/agents/item-orchestrator.md` | Update merge execution/handoff guidance to the canonical session-before-audit route and durable outcomes. |
 | `.claude/agents/orchestrator.md` | Update merge execution/handoff guidance to the canonical session-before-audit route and durable outcomes. |
 | `.claude/commands/batch-merge.md` | Update merge execution/handoff guidance to the canonical session-before-audit route and durable outcomes. |
+| `.claude/commands/post-merge-cleanup.md` | Update cleanup and subsequent CLI/MCP tracker reconciliation to remain in the same session; independent live bridge read-back precedes completion. |
 | `.claude/commands/run-epic.md` | Update merge execution/handoff guidance to the canonical session-before-audit route and durable outcomes. |
+| `.claude/commands/run-item.md` | Update merge execution/handoff guidance to the canonical session-before-audit route and durable outcomes. |
 | `.claude/commands/run-items.md` | Update merge execution/handoff guidance to the canonical session-before-audit route and durable outcomes. |
+| `.claude/skills/post-merge-cleanup.md` | Update cleanup and subsequent CLI/MCP tracker reconciliation to remain in the same session; independent live bridge read-back precedes completion. |
 | `.codex/skills/batch-merge/SKILL.md` | Update merge execution/handoff guidance to the canonical session-before-audit route and durable outcomes. |
+| `.codex/skills/post-merge-cleanup/SKILL.md` | Update cleanup and subsequent CLI/MCP tracker reconciliation to remain in the same session; independent live bridge read-back precedes completion. |
+| `.codex/skills/workflow-item-orchestrator/SKILL.md` | Update merge execution/handoff guidance to the canonical session-before-audit route and durable outcomes. |
 | `.codex/skills/workflow-orchestrator/SKILL.md` | Update merge execution/handoff guidance to the canonical session-before-audit route and durable outcomes. |
 | `.codex/skills/workflow-orchestrator/agents/openai.yaml` | Unchanged UI metadata; no executable merge operation or admission authority. |
+| `.cursor/agents/item-orchestrator.md` | Update merge execution/handoff guidance to the canonical session-before-audit route and durable outcomes. |
 | `.cursor/agents/orchestrator.md` | Update merge execution/handoff guidance to the canonical session-before-audit route and durable outcomes. |
 | `.cursor/commands/batch-merge.md` | Update merge execution/handoff guidance to the canonical session-before-audit route and durable outcomes. |
+| `.cursor/commands/post-merge-cleanup.md` | Update cleanup and subsequent CLI/MCP tracker reconciliation to remain in the same session; independent live bridge read-back precedes completion. |
 | `.cursor/commands/run-epic.md` | Update merge execution/handoff guidance to the canonical session-before-audit route and durable outcomes. |
+| `.cursor/commands/run-item.md` | Update merge execution/handoff guidance to the canonical session-before-audit route and durable outcomes. |
 | `.cursor/commands/run-items.md` | Update merge execution/handoff guidance to the canonical session-before-audit route and durable outcomes. |
 | `docs/workflow/development-workflow/protocols/03-implement-development-protocol.md` | Update merge execution/handoff guidance to the canonical session-before-audit route and durable outcomes. |
 | `docs/workflow/development-workflow/protocols/90-batch-orchestrate-work-protocol.md` | Update merge execution/handoff guidance to the canonical session-before-audit route and durable outcomes. |
@@ -192,10 +206,14 @@ Population: runtime helpers and active command/skill/protocol surfaces that name
 | `scripts/development-workflow/README.md` | Update merge execution/handoff guidance to the canonical session-before-audit route and durable outcomes. |
 | `scripts/development-workflow/apply-readiness-labels.sh` | Unchanged pre-stage readiness/risk consumer; completes before the merge session. |
 | `scripts/development-workflow/batch-merge.sh` | Update mutating boundaries to journal and honor selected whole-set admission; Interrupted/Waiting stop additional merges. |
+| `scripts/development-workflow/closing-keyword-lib.sh` | Unchanged ownership/closing-reference parser; comment-only cleanup references, no mutation entrypoint. |
+| `scripts/development-workflow/post-merge-cleanup.sh` | Update inspection/reentry and all cleanup mutations to the authoritative session; verify owned tracker outcomes before completion. |
+| `scripts/development-workflow/run-epic-audit-trail.sh` | Update explicit merge-operation audit mutations to require admission and journal intent/read-back; pre-stage audit route remains separate. |
 | `scripts/development-workflow/run-epic-delegated-gate.sh` | Update actual merge decision: require durable admission plus unchanged readiness/risk gates. |
 | `scripts/development-workflow/run-epic-risk-classifier.sh` | Update optional session binding/metadata; ordinary classification stays read-only. |
 | `scripts/development-workflow/security-advisory-classifier.sh` | Unchanged read-only security evidence/classification; existing gate still enforces its result. |
 | `scripts/development-workflow/select-test-suites.sh` | Unchanged test registry/selection consumer; new suite self-declares runtime coverage. |
+| `scripts/development-workflow/validate-workflow-hub-skeletons.py` | Unchanged required-runtime inventory validation; helper path remains shipped, no merge authority. |
 | `scripts/development-workflow/workflow-batch-plan.sh` | Unchanged read-only batch planning; execution handoff admits the selected full set. |
 
 ## Testing Strategy
@@ -219,6 +237,7 @@ Update existing integration suites `test-run-epic-delegated-gate.sh`, `test-run-
 | Resume with live merged/unmerged/uncertain evidence | Verified merge is not duplicated; unavailable reads preserve old states; projection covers verified remaining work only. | AC2, AC6 |
 | Final samples | Reset/limit/increase/unavailable cases retain individual samples and explain unavailable spend/concurrent consumption. | AC7 |
 | Policy and CLI behavior | Existing risk/head/CI/checkpoint/ownership stops persist; mock argv confirms merge/queue/admin route unchanged; budget adds no authority. | AC8 |
+| Queue/auto-merge submission and explicit recovery (`test_composed_queue_waiting_recovery`) | Actual batch/delegated composition records Waiting, verified unmerged state and pending follow-up after one submission; no next selected merge starts. Explicit resume verifies live MERGED before follow-up/next PR and never resubmits the queued merge. Unavailable queue evidence is Interrupted/uncertain. | AC5, AC6, AC8 |
 | Journal restart/race/signal | Parallel executors, nested hooks, torn-write simulation, stale intent, kill/restart and root/path mismatch stop safely with retained local evidence. | AC5, AC6 |
 
 ### Parser-risk edge cases and unit mapping
