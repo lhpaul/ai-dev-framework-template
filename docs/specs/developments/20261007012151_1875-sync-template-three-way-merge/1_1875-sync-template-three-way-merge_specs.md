@@ -136,26 +136,27 @@ approve safe additions, decline named paths and re-preview, or cancel.
 
 ## Decision-Gate Consistency Matrix
 
-Rows are evaluated in order for each selected path using current preview
-evidence. Apply revalidates that evidence before any batch write.
+At apply, evidence freshness is a batch prerequisite: any changed evidence
+stops apply before path classification or writes. During preview, content rows
+below are evaluated in order for each selected path.
 
 | Gate inputs | Outcome | Required next action | Mirror surfaces | Example |
 | --- | --- | --- | --- | --- |
+| Apply prerequisite: evidence changes after approval | Stale preview | Stop without applying; generate fresh preview and obtain approval | All sync entrypoints | Patch edited after preview |
 | Unsupported or unreadable content/evidence | Hard stop | Name path and repair before fresh preview | All sync entrypoints | Unreadable selected file |
 | Consumer equals incoming content | No change | Preserve content; record verified evidence only after successful sync | All sync entrypoints | Already updated file |
 | No baseline and existing differing consumer file | Baseline unavailable | Name path; obtain evidence or decline explicitly and re-preview | All sync entrypoints | Legacy consumer patch |
 | No baseline and absent consumer file | Baseline unavailable | Distinguish a new upstream file from a consumer deletion using verified history; otherwise stop | All sync entrypoints | Missing legacy workflow |
 | Baseline proves path new and consumer absent | Add | Apply only after normal approval | All sync entrypoints | Newly introduced helper |
+| Previously synchronized file absent in consumer | Local deletion | Name path; preserve deletion if upstream unchanged, otherwise stop for resolution | All sync entrypoints | Intentionally removed helper |
 | Baseline available and consumer equals baseline | Direct update | Apply incoming content after normal approval | All sync entrypoints | Untouched protocol |
 | Baseline available; consumer changed; incoming equals baseline | Local change retained | Name path and preserve consumer content | All sync entrypoints | Consumer-only fix |
 | Baseline available; both changed; combination clean | Clean merge | Name path and apply reviewed combination after normal approval | All sync entrypoints | Independent edits |
 | Baseline available; both changed; combination conflicts | Hard stop | Name path and resolve before fresh preview | All sync entrypoints | Same lines edited |
-| Previously synchronized file absent in consumer | Local deletion | Name path; preserve deletion if upstream unchanged, otherwise stop for resolution | All sync entrypoints | Intentionally removed helper |
-| Evidence changes after approval | Stale preview | Stop without applying; generate fresh preview and obtain approval | All sync entrypoints | Patch edited after preview |
 
 Content equality takes precedence over other content rows; unsupported evidence
-never reaches an apply row. The local-deletion row specializes the consumer
-changed rows. Baseline-unavailable cases always stop unless the path is explicitly
+never reaches an apply row. The local-deletion row precedes the consumer changed
+rows it specializes. Baseline-unavailable cases always stop unless the path is explicitly
 declined and a fresh approved set is previewed; no approval mode bypasses them.
 
 ## Operational Visibility
