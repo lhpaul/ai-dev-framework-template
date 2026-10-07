@@ -50,28 +50,39 @@ def dependency_references(text, slug_ids=None):
         if not match:
             continue
         value = match[2].strip().strip('|').strip()
+        sources = [value] if value else []
         if not value:
-            section = []
             for following in lines[index + 1:]:
                 if re.match(r'^\s*#{1,6}\s', following):
                     break
                 if following.strip():
-                    section.append(following.strip())
-            value = ', '.join(section)
-        # Each comma-delimited member is evidence in its own right. A #ref
-        # must not mask a supported slug or an unresolved neighbouring member.
-        for member in value.split(','):
-            member = re.sub(r'^[-*]\s+', '', member.strip()).strip('[]`').strip()
-            found = re.findall(r'#([1-9][0-9]*)\b', member)
-            if found:
-                references.update(int(n) for n in found)
+                    sources.append(following.strip())
+        # Keep each field/Markdown line separate. An explicit None explanation
+        # may contain commas and incidental issue refs, but cannot erase the
+        # dependency on another line or field. Bare "None, #3" is still mixed.
+        def normalized(member):
+            return re.sub(r'^[-*]\s+', '', member.strip()).strip('[]`').strip()
+
+        def absence_explanation(member):
+            return re.match(r'(?i)^none(?:\.\s+\S|\s+\(|\s+[—–]\s*\S|\s+(?:beyond|blocking|for|outstanding)\b|\s+that\s+block\b)', member)
+
+        for source in sources:
+            source = normalized(source)
+            if absence_explanation(source):
                 continue
-            if re.fullmatch(r'(?i)none\.?', member) or re.match(r'(?i)^none\.\s+', member):
-                continue
-            slug = re.sub(r'^(?:feature|fix|refactor|hotfix)/', '', member)
-            if slug not in (slug_ids or {}):
-                raise EvidenceIncomplete('Unresolved dependency declaration')
-            references.add(slug_ids[slug])
+            # A #ref must not mask a supported slug or unknown adjacent member.
+            for member in source.split(','):
+                member = normalized(member)
+                if re.fullmatch(r'(?i)none\.?', member) or absence_explanation(member):
+                    continue
+                found = re.findall(r'#([1-9][0-9]*)\b', member)
+                if found:
+                    references.update(int(n) for n in found)
+                    continue
+                slug = re.sub(r'^(?:feature|fix|refactor|hotfix)/', '', member)
+                if slug not in (slug_ids or {}):
+                    raise EvidenceIncomplete('Unresolved dependency declaration')
+                references.add(slug_ids[slug])
     return references
 
 
@@ -289,7 +300,8 @@ def complete_record(client, repo, issue, card, folders, branches, prs, root):
     if not isinstance(body, str):
         raise EvidenceIncomplete('Incomplete dependency evidence')
     if card.get('depends_on'):
-        body += '\nDependsOn: ' + card['depends_on']
+        for declaration in card['depends_on'].splitlines():
+            body += '\nDependsOn: ' + declaration
     slug_ids = {re.sub(r'^\d{14}_', '', Path(value['development_path']).name): key for key, value in folders.items()}
     dependencies = dependency_references(body, slug_ids)
     if folder.get('development_path'):

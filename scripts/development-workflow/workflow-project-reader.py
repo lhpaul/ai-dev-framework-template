@@ -162,7 +162,9 @@ def compact(item, project_id, preferred, strict_dependencies=False):
             'type': next((name(c) for c in candidates if name(c)), ''),
             'priority': name(item.get('priority')), 'size': name(item.get('size')),
             'due_date': due_date,
-            'depends_on': ', '.join(line.strip() for value in dependencies for line in value.splitlines() if line.strip())}
+            # Preserve independent field/line declarations in the existing
+            # string schema; commas may belong to a None explanation.
+            'depends_on': '\n'.join(line.strip() for value in dependencies for line in value.splitlines() if line.strip())}
 
 
 def selector(repo, issue):
@@ -198,7 +200,7 @@ def fallback(client, number, project_id, repo, preferred='', cache_dir=None, cac
     if cache_dir and cache_pid and ttl > 0:
         folder = Path(cache_dir)
         if folder.is_dir() and not folder.is_symlink() and folder.stat().st_uid == os.getuid() and folder.stat().st_mode & 0o077 == 0:
-            key = hashlib.sha256(json.dumps([repo.lower(), project_id, number, preferred, query, 'both-archived', strict_dependencies, 'dependency-members-v2']).encode()).hexdigest()
+            key = hashlib.sha256(json.dumps([repo.lower(), project_id, number, preferred, query, 'both-archived', strict_dependencies, 'dependency-members-v3']).encode()).hexdigest()
             cache_file = folder / f'{cache_pid}-{key}.json'
             if cache_file.is_file() and not cache_file.is_symlink() and time.time() - cache_file.stat().st_mtime < ttl * 60:
                 try:

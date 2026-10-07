@@ -3,6 +3,7 @@
 import importlib.util
 import json
 import os
+import re
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
 import subprocess
@@ -813,6 +814,83 @@ class Fixture(unittest.TestCase):
             self.assertEqual(next(row for row in report['classification'] if row['number']==1)['action'],'implement')
             self.assertEqual(self.ledger()['graphql'],4)
 
+    def test_committed_none_declaration_compatibility(self):
+        # Exercise the canonical producers themselves, including explanatory
+        # commas and refs, rather than replacing their wording with bare None.
+        declarations = []
+        for document in sorted((ROOT/'docs/specs/developments').rglob('*.md')):
+            if '_implementation-plan' not in document.name and '_specs' not in document.name:
+                continue
+            for line in document.read_text().splitlines():
+                clean = line.strip().strip('|').replace('**','')
+                match = re.match(r'(?i)^(?:[-*]\s*)?(dependson|depends on|dependencies)\b\s*:\s*(none\b.*)$',clean)
+                if match:
+                    declarations.append((document,match[2].strip().strip('|').strip()))
+        # Consumer hubs do not carry this template's historical developments.
+        # Keep each observed grammar family covered even without that archive.
+        for declaration in ('None','none.','None (matches spec `Depends on`).',
+                            'None — spec PR #475 is merged.',
+                            'None. (The #177 plan is unrelated.)',
+                            'None. Siblings #705, #707, #708 are unrelated.',
+                            'None beyond the existing toolchain.',
+                            'None blocking. #1537 is independent.',
+                            'None for this item. The spec is merged.',
+                            'none outstanding. #1702 merged.',
+                            'none that block. This is the first item.'):
+            self.assertEqual(scan.dependency_references('Dependencies: '+declaration),set())
+        for document,declaration in declarations:
+            with self.subTest(document=str(document.relative_to(ROOT)),declaration=declaration):
+                self.assertEqual(scan.dependency_references('Dependencies: '+declaration),set())
+        # Actual mixed members are not explanatory suffixes. Unknown remains
+        # unknown; incidental refs inside explicit absence prose are ignored.
+        for declaration in ('None, #3','None., #3','none, 3-fixture'):
+            self.assertEqual(scan.dependency_references('Dependencies: '+declaration,{'3-fixture':3}),{3})
+        for declaration in ('Nonefoo','None, unknown-prerequisite','Nonefoo, #3'):
+            with self.assertRaisesRegex(scan.EvidenceIncomplete,'Unresolved dependency'):
+                scan.dependency_references('Dependencies: '+declaration)
+        self.assertEqual(scan.dependency_references('Dependencies: #2 (foundation)'),{2})
+        if os.environ.get('WORKFLOW_PORTFOLIO_EVIDENCE_DIR'):
+            (Path(os.environ['WORKFLOW_PORTFOLIO_EVIDENCE_DIR'])/'committed-none-corpus.json').write_text(json.dumps(
+                {'declarationCount':len(declarations),'forms':sorted({value for _,value in declarations}),
+                 'sourceFiles':[str(document.relative_to(ROOT)) for document,_ in declarations]},indent=2))
+
+    def test_none_explanations_preserve_other_sources(self):
+        development=self.root/self.artifact();self.artifact(3)
+        plan=next(development.glob('2_*_implementation-plan.md'))
+        prose=('None (matches spec `Depends on`).','None — spec PR #475 is merged.',
+               'None. (The #177 plan is unrelated.)',
+               'None. Issues #705, #707, and #708 are siblings, but no upstream dependency.')
+        # Each absence source ignores its own prose, never the next source.
+        cases=[({'dependsOn':value,'dependencies':'#3'},None,[3]) for value in prose]
+        cases += [({'dependsOn':'None, #3'},None,[3]),
+                  ({'dependsOn':prose[-1]+'\n#3'},None,[3]),
+                  ({},'- '+prose[-1]+'\n- #3',[3]),
+                  ({'dependsOn':prose[-1],'dependencies':'unknown-prerequisite'},None,None),
+                  ({},'- '+prose[2]+'\n- unknown-prerequisite',None)]
+        for fields,section,expected in cases:
+            plan.write_text('## Dependencies\n'+section+'\n## Implementation\nfixture\n' if section else 'fixture\n')
+            for state in ('Backlog','Released'):
+                self.reset(active=3,statuses={'1':'Plan Ready','3':state},**fields)
+                report=self.scan();self.assertEqual(self.ledger()['graphql'],4)
+                if expected is None:
+                    self.assertNotIn(1,[record['number'] for record in report['fullyRead']])
+                    self.assertNotIn(1,[row['number'] for row in report['classification']])
+                    self.assertTrue(any(entry['number']==1 and 'Unresolved dependency' in entry['reason'] for entry in report['omissions']))
+                else:
+                    record=next(record for record in report['fullyRead'] if record['number']==1)
+                    self.assertEqual(record['dependencies'],expected)
+                    row=next(row for row in report['classification'] if row['number']==1)
+                    self.assertEqual(row['action'],'hold-dependency' if state=='Backlog' else 'implement')
+                    if fields.get('dependencies'):
+                        self.assertEqual(record['depends_on'],fields['dependsOn']+'\n#3')
+        # Corrected no-dependency field and local artifact producers stand alone.
+        for value in prose:
+            plan.write_text('**Dependencies**: '+value+'\n')
+            self.reset(active=1,statuses={'1':'Plan Ready'},dependsOn=value,dependencies='None')
+            report=self.scan();self.assertEqual(report['fullyRead'][0]['dependencies'],[])
+            self.assertEqual(report['classification'][0]['action'],'implement')
+            self.assertEqual(self.ledger()['graphql'],2)
+
     def test_tracker_dependency_field_absence_and_unknown(self):
         self.artifact()
         for field in ('dependsOn','dependencies'):
@@ -861,6 +939,31 @@ class Fixture(unittest.TestCase):
                             scan.reader.fallback(*args,strict_dependencies=True)
                     else:self.assertEqual(scan.reader.fallback(*args,strict_dependencies=True)['item_id'],'I1')
                     self.assertEqual(self.ledger()['graphql'],2)
+
+    def test_dependency_field_framing_cache_epoch(self):
+        explanation='None. Issues #705, #707 are siblings, no prerequisite.'
+        expected=explanation+'\n#3'
+        with patch.dict(os.environ,self.env):
+            for strict in (False,True):
+                for fallback in (False,True):
+                    self.reset(active=1,dependsOn=explanation,dependencies='#3')
+                    client=scan.reader.Client()
+                    if fallback:
+                        cache=self.folder/('old-dependency-cache-'+str(strict));cache.mkdir(mode=0o700)
+                        query=scan.reader.selector('fixture/repo',{'title':'Fixture 1','state':'open'})
+                        old_key=scan.reader.hashlib.sha256(json.dumps(['fixture/repo','P1',1,'',query,'both-archived',strict,'dependency-members-v2']).encode()).hexdigest()
+                        stale={'item_id':'I1','project_id':'P1','status':'Backlog','type':'Bug','priority':'Normal','size':'','due_date':'','depends_on':explanation+', #3'}
+                        (cache/('fixture-'+old_key+'.json')).write_text(json.dumps(stale))
+                        args=(client,1,'P1','fixture/repo','',str(cache),'fixture',5)
+                        card=scan.reader.fallback(*args,strict_dependencies=strict)
+                        self.assertEqual(card['depends_on'],expected)
+                        self.assertEqual(self.ledger()['graphql'],1) # v2 cannot be reused.
+                        self.assertEqual(scan.reader.fallback(*args,strict_dependencies=strict),card)
+                        self.assertEqual(self.ledger()['graphql'],1) # v3 still caches.
+                    else:
+                        card=scan.reader.target(client,1,'P1','fixture/repo',strict_dependencies=strict)
+                        self.assertEqual(card['depends_on'],expected)
+                        self.assertEqual(self.ledger()['graphql'],1)
 
     def test_review_fix_loop_lane_composition(self):
         self.artifact()
