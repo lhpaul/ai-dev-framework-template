@@ -1,5 +1,11 @@
 # Protocol: Run Epic
 
+## Merge-session admission and recovery
+
+After ordinary review/CI/readiness and before any merge-operation audit, hold, bypass, merge or follow-up mutation, follow [Protocol 94 section 3.6](94-batch-merge-protocol.md#36-merge-session-admission-and-recovery). Freeze the entire selected ordered set in one authoritative owner-bound session; an unaffordable set admits no prefix. Supply the same `--merge-session` to mutating merge/cleanup helpers, and `--operation merge` to operation-owned audit calls. Direct authorized `gh pr merge` commands run through `workflow-merge-budget.py run-step` with their existing argv unchanged. Read-only risk classification remains separate; delegated merge requires the durable session plus all existing gates.
+
+Deferred reports quota/reset, recorded PR states and pending follow-up without operation-owned remote writes; fresh selected PRs stay unmerged, while recovery deferral retains historical merged/uncertain facts. Waiting records a verified queue/auto-merge submission, stops subsequent selected merges and leaves merge-dependent follow-up pending. Interrupted retains completed/uncertain/pending work locally even if every API fails; stop further selected merges and use explicit verified recovery without duplicate submission or uncertain mutation replay. Completed requires all owned planned follow-up independently verified, including tracker and audit. Budget admission grants no risk, checkpoint, admin or deletion authority. Report the session recovery command together with the existing Ground-Truth Completion Verification before claiming a workflow terminal outcome.
+
 **Agent role**: Epic Runner (`run-epic`)
 **Purpose**: Convert a native GitHub epic into a bounded execution set, then
 run an explicitly authorized delegated review and merge loop with pre-merge
@@ -203,8 +209,10 @@ Audit comments are evidence records only; they do not grant merge authority.
 Before an authorized merge decision, run the delegated gate with the current
 candidate PR, resolver policy, reviewer, CI, risk, scope, and audit evidence:
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
-./scripts/development-workflow/run-epic-delegated-gate.sh --input <file> [--policy <file>] [--repo-root <path>] [--product-repo <name>]
+set -euo pipefail
+./scripts/development-workflow/run-epic-delegated-gate.sh --merge-session "$MERGE_SESSION" --input <file> [--policy <file>] [--repo-root <path>] [--product-repo <name>]
 ```
 
 Bind each verdict to the head it was produced at: set `reviewer.headSha` to
@@ -485,7 +493,7 @@ Before an autonomous merge decision:
 
    <!-- workflow-shell-contract: bash-zsh -->
    ```bash
-   ./scripts/development-workflow/batch-merge.sh annotate-hold --pr <pr-number> --reason risk_guardrail_hold --held-by "run-epic risk classifier (<risk> > --max-risk <max>)"
+   ./scripts/development-workflow/batch-merge.sh --merge-session "$MERGE_SESSION" annotate-hold --pr <pr-number> --reason risk_guardrail_hold --held-by "run-epic risk classifier (<risk> > --max-risk <max>)"
    ```
 
    A held PR stays in every subsequent `recheck-remaining --prs` list and
@@ -802,7 +810,7 @@ When all gates permit merge:
 
    <!-- workflow-shell-contract: bash-zsh -->
    ```bash
-   ./scripts/development-workflow/post-merge-cleanup.sh [--repo <product-repo>] --base <base-branch> --pr <merged-pr-number> <merged-branch>
+   ./scripts/development-workflow/post-merge-cleanup.sh --merge-session "$MERGE_SESSION" [--repo <product-repo>] --base <base-branch> --pr <merged-pr-number> <merged-branch>
    ```
 
    For scoped batch merges, follow Protocol 94 so every merged PR runs its

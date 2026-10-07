@@ -1,5 +1,11 @@
 # Protocol: Run One Workflow Item
 
+## Merge-session admission and recovery
+
+After ordinary review/CI/readiness and before any merge-operation audit, hold, bypass, merge or follow-up mutation, follow [Protocol 94 section 3.6](94-batch-merge-protocol.md#36-merge-session-admission-and-recovery). Freeze the entire selected ordered set in one authoritative owner-bound session; an unaffordable set admits no prefix. Supply the same `--merge-session` to mutating merge/cleanup helpers, and `--operation merge` to operation-owned audit calls. Direct authorized `gh pr merge` commands run through `workflow-merge-budget.py run-step` with their existing argv unchanged. Read-only risk classification remains separate; delegated merge requires the durable session plus all existing gates.
+
+Deferred reports quota/reset, recorded PR states and pending follow-up without operation-owned remote writes; fresh selected PRs stay unmerged, while recovery deferral retains historical merged/uncertain facts. Waiting records a verified queue/auto-merge submission, stops subsequent selected merges and leaves merge-dependent follow-up pending. Interrupted retains completed/uncertain/pending work locally even if every API fails; stop further selected merges and use explicit verified recovery without duplicate submission or uncertain mutation replay. Completed requires all owned planned follow-up independently verified, including tracker and audit. Budget admission grants no risk, checkpoint, admin or deletion authority. Report the session recovery command together with the existing Ground-Truth Completion Verification before claiming a workflow terminal outcome.
+
 **Agent role**: Work Item Runner (`item-orchestrator`)
 **Purpose**: Advance one workflow item, execute the next deterministic action, and keep that item moving until it reaches a real terminal condition
 
@@ -2714,11 +2720,13 @@ checks complete (Step 8a), before merging, apply the delegated merge gate from
 `guardrails-enforcement.md` section 3 Gate 5. When `stages.<stage>.may_merge_pr`
 is `true` in the effective guardrails, assemble the evidence object and run:
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
+set -euo pipefail
 ./scripts/development-workflow/run-epic-risk-classifier.sh \
   --pr <pr-number> --max-risk <stages.<stage>.max_merge_risk>
 
-./scripts/development-workflow/run-epic-delegated-gate.sh --input <evidence-file>
+./scripts/development-workflow/run-epic-delegated-gate.sh --merge-session "$MERGE_SESSION" --input <evidence-file>
 ```
 
 **Security-sensitive advisory evidence (BR8, BR9, AC8, AC9)**: the assembled
@@ -3838,7 +3846,8 @@ non-closing — recorded in the item report.
 
 <!-- workflow-shell-contract: bash-zsh -->
 ```bash
-./scripts/development-workflow/post-merge-cleanup.sh [--repo <product-repo>] --base <base-branch> --pr <merged-pr-number> <merged-branch>
+set -euo pipefail
+./scripts/development-workflow/post-merge-cleanup.sh --merge-session "$MERGE_SESSION" [--repo <product-repo>] --base <base-branch> --pr <merged-pr-number> <merged-branch>
 ```
 
 - Cleanup never removes the caller's own worktree (#1386). When the merged

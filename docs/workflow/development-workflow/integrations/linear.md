@@ -1,5 +1,11 @@
 # Integration: Linear (Tracker Work Items)
 
+## Merge-session admission and recovery
+
+After ordinary review/CI/readiness and before any merge-operation audit, hold, bypass, merge or follow-up mutation, follow [Protocol 94 section 3.6](../protocols/94-batch-merge-protocol.md#36-merge-session-admission-and-recovery). Freeze the entire selected ordered set in one authoritative owner-bound session; an unaffordable set admits no prefix. Supply the same `--merge-session` to mutating merge/cleanup helpers, and `--operation merge` to operation-owned audit calls. Direct authorized `gh pr merge` commands run through `workflow-merge-budget.py run-step` with their existing argv unchanged. Read-only risk classification remains separate; delegated merge requires the durable session plus all existing gates.
+
+Deferred reports quota/reset, recorded PR states and pending follow-up without operation-owned remote writes; fresh selected PRs stay unmerged, while recovery deferral retains historical merged/uncertain facts. Waiting records a verified queue/auto-merge submission, stops subsequent selected merges and leaves merge-dependent follow-up pending. Interrupted retains completed/uncertain/pending work locally even if every API fails; stop further selected merges and use explicit verified recovery without duplicate submission or uncertain mutation replay. Completed requires all owned planned follow-up independently verified, including tracker and audit. Budget admission grants no risk, checkpoint, admin or deletion authority. Report the session recovery command together with the existing Ground-Truth Completion Verification before claiming a workflow terminal outcome.
+
 This document describes how to connect the AI development workflow with [Linear](https://linear.app) as the tracker system for workflow work items.
 
 Linear is **optional**. The workflow functions without it — the **Portfolio Orchestrator** simply requires human input to determine what to work on next.
@@ -144,6 +150,31 @@ The `TRACKER_UPDATE_REQUIRED:` format (used in protocol 91 Step 8b) is a
 complementary signal emitted by the agent-level summary when a tracker update
 could not be performed inline. Both formats must be collected and applied.
 
+### Durable merge-operation bridge
+
+During an admitted merge session, emitting a deferred action is pending work,
+not successful reconciliation. Before an authorized Linear MCP mutation,
+record its declared tracker step through `before-step` with the same session,
+selected repository/PR, issue and expected status. Retain the executor token
+and durable intent timestamp. Do not continue to another selected merge while
+this bridge is outstanding. A dead executor never authorizes replay of an
+uncertain mutation.
+
+After mutation, make an independent MCP issue read against the owning tracker.
+Supply normalized proof to `record-provider-result` with the same declared
+tracker step and `--evidence <proof.json>`. The proof contains `provider`
+(`linear`), `issue`, `repo` (owning tracker repository), `statusName`,
+`statusId`, distinct `mutationRequestId` and `readRequestId`, and `observedAt`
+after the journaled intent. Preserve the source responses/request identifiers
+as reviewable evidence; an echoed mutation response is not an independent read.
+
+Missing or mismatched issue/owner/status/read evidence records Interrupted and
+keeps reconciliation pending. Explicit recovery verifies live state before any
+retry. The best-effort "retry once and continue" rule below applies only outside
+merge sessions; merge sessions cannot become Completed or advance another
+selected merge without verified bridge discharge. No new Linear API client is
+introduced.
+
 ### Priority Drift Detection
 
 The Linear API can return a stale or drifted priority value when an item is
@@ -170,7 +201,7 @@ Do **not** silently accept the drifted value. Do **not** automatically restore
 the original priority — a concurrent human edit is a valid reason for the
 change. The warning surfaces the discrepancy for human review.
 
-**Post-write re-read (optional but recommended)**: After applying any
+**Outside a merge session, post-write re-read (optional but recommended)**: After applying any
 `set_status` mutation, issue a follow-up `issue(id:)` query to confirm the
 write was reflected. If the returned status does not match the target status,
 emit:

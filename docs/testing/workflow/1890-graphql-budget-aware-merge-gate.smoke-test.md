@@ -4,7 +4,7 @@
 **Spec**: [Approved spec](../../specs/developments/20261007181932_1890-graphql-budget-aware-merge-gate/1_1890-graphql-budget-aware-merge-gate_specs.md)
 **Plan**: [Implementation plan](../../specs/developments/20261007181932_1890-graphql-budget-aware-merge-gate/2_1890-graphql-budget-aware-merge-gate_implementation-plan.md)
 **Created in**: Plan Ready stage
-**Updated in**: In Development stage, when the mocked harness commands are implemented
+**Updated in**: In Development stage
 
 ## Prerequisites
 
@@ -12,8 +12,8 @@
 - Run the composed delegated and batch consumers, replacing only remote service/process boundaries with recording fixtures. Arithmetic-only testing does not satisfy this runbook.
 - Maintain a command/event ledger recording quota reads, selected identities, audit writes, base pushes, merge calls, state verification, deletion, cleanup and tracker actions. Capture session journals separately from remote mutation counts.
 - Scope all fake Git branches, worktrees, subprocesses and files to the fixture root. No live merge, issue/board write, portfolio scan, whole-board read or deletion of user resources is authorized by this runbook.
-- The implementation supplies `bash scripts/development-workflow/tests/test-workflow-merge-budget.sh`, which runs the composed Python harness. Before implementation, these instructions describe coverage intent; they do not claim that an unimplemented scenario flag is available.
-- Read the amended spec's Waiting/merge-queue contract and use the final plan's state names. This draft expects Waiting for verified pending/queued merge behavior, distinct from uncertain/error interruption.
+- The implementation supplies `bash scripts/development-workflow/tests/test-workflow-merge-budget.sh`, which runs the composed Python harness. The suite is the entrypoint; the steps below describe assertions rather than public scenario-selector flags.
+- Read the amended spec's Waiting/merge-queue contract and use the final plan's state names. The amended contract requires Waiting for verified pending/queued merge behavior, distinct from uncertain/error interruption.
 - The item has no supplied graphical design reference. No login, application server, production seed data or visual-fidelity baseline is required.
 
 ## Test Data
@@ -146,6 +146,23 @@ Use synthetic identities and deterministic timestamps. Load them through the com
 - Save fixture event logs, session records and failure reasons as implementation evidence. Record simulated verification explicitly; do not claim live merges or quota behavior were measured.
 - Stop fixture subprocesses and release handles. Remove only harness-owned temporary resources; preserve durable evidence needed to inspect failed/recovery scenarios.
 
+## Read-only query validation evidence
+
+The implementation's `MergeBudgetPR` literal was extracted from
+`workflow-merge-budget.py` with Python AST and sent unchanged through
+`gh api graphql` against this repository's already merged plan PR #1929.
+The response independently included number 1929, state MERGED, reviewed head
+`e4c56d272194e25af7424a6aa2bce6700b1f6d9d`, base `develop`,
+`isInMergeQueue: false`, and `autoMergeRequest: null`. The exact extracted query
+passed `lint-graphql-query-literals.py` as a shell query literal with one query
+and zero findings; the repository-wide shell scan also passed. This is query
+compatibility evidence, not a live merge or quota-cost guarantee.
+
+The installed `gh pr view --json` does not expose `isInMergeQueue`; the explicit
+read query avoids that unsupported projection without changing merge argv or
+pinning a CLI version. Read-only evidence is retained with this devsession's
+validation artifacts and referenced by the implementation PR.
+
 ## Assertions Checklist
 
 - [ ] AC1: Sufficient quota precedes the first composed mutation in delegated single-item and epic paths.
@@ -178,4 +195,4 @@ Use synthetic identities and deterministic timestamps. Load them through the com
 
 ## Known Limitations
 
-The runbook verifies mocked composed behavior, not live GitHub quota guarantees or real merges. The conservative estimate is heuristic; remote pagination, CLI internals, concurrency and service behavior can exceed it. The feature supplies durable interruption/recovery rather than a global quota reservation or atomic rollback. Scenario selectors/fixture commands are finalized during implementation and recorded with actual evidence. No graphical reference was supplied.
+The runbook verifies mocked composed behavior, not live GitHub quota guarantees or real merges. The conservative estimate is heuristic; remote pagination, CLI internals, concurrency and service behavior can exceed it. The feature supplies durable interruption/recovery rather than a global quota reservation or atomic rollback. Fixture commands and execution evidence are recorded during implementation; the runbook does not introduce production scenario-selector flags. No graphical reference was supplied.

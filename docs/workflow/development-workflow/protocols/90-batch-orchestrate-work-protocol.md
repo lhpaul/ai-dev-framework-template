@@ -1,5 +1,11 @@
 # Protocol: Orchestrate Portfolio Work
 
+## Merge-session admission and recovery
+
+After ordinary review/CI/readiness and before any merge-operation audit, hold, bypass, merge or follow-up mutation, follow [Protocol 94 section 3.6](94-batch-merge-protocol.md#36-merge-session-admission-and-recovery). Freeze the entire selected ordered set in one authoritative owner-bound session; an unaffordable set admits no prefix. Supply the same `--merge-session` to mutating merge/cleanup helpers, and `--operation merge` to operation-owned audit calls. Direct authorized `gh pr merge` commands run through `workflow-merge-budget.py run-step` with their existing argv unchanged. Read-only risk classification remains separate; delegated merge requires the durable session plus all existing gates.
+
+Deferred reports quota/reset, recorded PR states and pending follow-up without operation-owned remote writes; fresh selected PRs stay unmerged, while recovery deferral retains historical merged/uncertain facts. Waiting records a verified queue/auto-merge submission, stops subsequent selected merges and leaves merge-dependent follow-up pending. Interrupted retains completed/uncertain/pending work locally even if every API fails; stop further selected merges and use explicit verified recovery without duplicate submission or uncertain mutation replay. Completed requires all owned planned follow-up independently verified, including tracker and audit. Budget admission grants no risk, checkpoint, admin or deletion authority. Report the session recovery command together with the existing Ground-Truth Completion Verification before claiming a workflow terminal outcome.
+
 **Agent role**: Portfolio Orchestrator (`orchestrator`)
 **Purpose**: Discover what can advance or be started across the portfolio, propose the largest safe batch that fits current priority and parallelization constraints, dispatch deterministic in-flight work through one Work Item Runner (`item-orchestrator`) per item, and supervise dispatched work until each item reaches a real terminal condition
 
@@ -1498,7 +1504,7 @@ gh pr list --state all --head <branch> --json number,state --jq '.[0] | .number'
    git branch -D <branch>
 
    # Category A — remote implementation branch still present after merge:
-   ./scripts/development-workflow/post-merge-cleanup.sh --base <base> --pr <merged-pr-number> <branch>
+   ./scripts/development-workflow/post-merge-cleanup.sh --merge-session "$MERGE_SESSION" --base <base> --pr <merged-pr-number> <branch>
 
    # Category B — orphaned worktree-agent branch (no remote, no PR):
    git branch -D <branch>
@@ -2136,7 +2142,7 @@ If any PR is still in progress or labeled `needs-fixes`, continue supervising (S
    ```bash
    set -euo pipefail
    ./scripts/development-workflow/pr-ownership-guard.sh --pr <number> --expected-branch <branch_name> || exit $?
-   ./scripts/development-workflow/batch-merge.sh annotate-hold --pr <number> --reason risk_guardrail_hold --held-by "<who decided>"
+   ./scripts/development-workflow/batch-merge.sh --merge-session "$MERGE_SESSION" annotate-hold --pr <number> --reason risk_guardrail_hold --held-by "<who decided>"
    ```
 
    Then keep it in the frozen recheck list. A held PR that goes `DIRTY` gets the same conflict-resolution redispatch as an active one; its verdicts are re-run at whatever head it has when the hold lifts. A hold whose reason lives only in a chat transcript rots until someone does archaeology on it (PR #1536 on the 2026-08-20/21 run).
@@ -2155,8 +2161,14 @@ state in the stable `reviewer-access-bypass` audit marker.
 | Merge scenario                         | Required tool                  |
 | -------------------------------------- | ------------------------------ |
 | Parallel implementation batch (2+ PRs) | `batch-merge.sh` + Protocol 94 |
-| Single implementation PR               | `gh pr merge` is acceptable    |
-| Spec or plan PR (any count)            | `gh pr merge` is acceptable    |
+| Single implementation PR               | Existing `gh pr merge` argv through the admitted session executor |
+| Spec or plan PR (any count)            | Existing `gh pr merge` argv through the admitted session executor |
+
+All these routes require the whole selected session before operation-owned
+audit or merge mutations. Direct `gh` routes preserve their authorized argv,
+including admin exceptions, through a declared `run-step --phase merge_api`.
+A zero command exit with structured queue evidence remains Waiting and pauses
+the selection; resume verifies state without resubmitting.
 
 Run `pr-ownership-guard.sh` for the item's branch before a `gh pr merge` by number (issue #1444).
 
