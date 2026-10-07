@@ -114,9 +114,9 @@ if endpoint.endswith('pulls?state=open&per_page=100'):
 if endpoint.endswith('/pulls/70'):finish({'number':70,'head':{'ref':'fix/1-fixture','sha':'H1'},'draft':True,'labels':state.get('labels',[])})
 if endpoint.endswith('/issues/70/comments?per_page=100'):
  if state.get('prFail'):finish(error='PR evidence unavailable')
- finish([[]])
-if endpoint.endswith('/commits/H1/status'):finish({'state':'success','statuses':[]})
-if endpoint.endswith('/commits/H1/check-runs?per_page=100'):finish([{'check_runs':[]},{'check_runs':[]}])
+ finish([state.get('prComments',[])])
+if endpoint.endswith('/commits/H1/status'):finish(state.get('prStatus',{'state':'success','sha':'H1','statuses':[]}))
+if endpoint.endswith('/commits/H1/check-runs?per_page=100'):finish([{'check_runs':state.get('prChecks',[])},{'check_runs':[]}])
 if '/pulls?state=closed&head=' in endpoint:
  head=endpoint.split('&head=',1)[1].split('&',1)[0].split(':',1)[1]
  finish([[{'number':80,'head':{'ref':head},'merged_at':'2026-10-01T00:00:00Z'}]] if head in state.get('mergedHeads',[]) else [[]])
@@ -457,6 +457,59 @@ class Fixture(unittest.TestCase):
             path.write_text(json.dumps(dict(report,**replacement)))
             self.execute('bash',str(SCRIPTS/'workflow-batch-plan.sh'),'--repo-root',str(self.root),'--scan-snapshot',str(path),ok=False)
         path.write_text('not json');self.execute('bash',str(SCRIPTS/'workflow-batch-plan.sh'),'--repo-root',str(self.root),'--scan-snapshot',str(path),ok=False)
+
+    def test_snapshot_membership_and_pr_completeness(self):
+        development=self.artifact();self.reset(active=1,statuses={'1':'Plan Ready'})
+        report=self.scan();path=self.folder/'complete-snapshot.json'
+        self.env['WORKFLOW_SCAN_INVOCATION_ID']=report['invocation']
+        before=len(self.ledger()['calls'])
+
+        def check_snapshot(snapshot, ok, target):
+            path.write_text(json.dumps(snapshot))
+            batch=self.execute('bash',str(SCRIPTS/'workflow-batch-plan.sh'),'--repo-root',str(self.root),'--scan-snapshot',str(path),ok=ok)
+            next_action=self.execute('bash',str(SCRIPTS/'workflow-next-action.sh'),'--repo-root',str(self.root),*target,'--scan-snapshot',str(path),ok=ok)
+            self.assertEqual(len(self.ledger()['calls']),before)
+            if not ok:
+                self.assertFalse(batch.stdout.strip());self.assertFalse(next_action.stdout.strip())
+            return next_action
+
+        def altered(snapshot, target, key, value, remove=False):
+            copy=json.loads(json.dumps(snapshot));entry=copy['fullyRead'][0]
+            if target=='pr':entry=entry['prs'][0]
+            if remove:entry.pop(key,None)
+            else:entry[key]=value
+            return copy
+
+        target=('--development',development)
+        for key in ('item_id','project_id','implementationMerged'):
+            check_snapshot(altered(report,'record',key,None,remove=True),False,target)
+        for key,value in (('item_id',''),('item_id',True),('project_id',[]),('project_id','foreign-project'),('status',[]),('type',True),('membership','absent'),('implementationMerged','false'),('branches',['fix/2-other'])):
+            check_snapshot(altered(report,'record',key,value),False,target)
+        check_snapshot(dict(report,projectId=''),False,target)
+        corrected=check_snapshot(report,True,target);self.assertIn('NEXT_ACTION=implement',corrected.stdout)
+        # Empty Deferred reports legitimately never acquired a project identity.
+        self.reset(active=1,remaining=900);deferred=self.scan()
+        self.env['WORKFLOW_SCAN_INVOCATION_ID']=deferred['invocation'];before=len(self.ledger()['calls'])
+        path.write_text(json.dumps(deferred))
+        self.execute('bash',str(SCRIPTS/'workflow-batch-plan.sh'),'--repo-root',str(self.root),'--scan-snapshot',str(path))
+        self.assertNotIn('projectId',deferred);self.assertEqual(len(self.ledger()['calls']),before)
+
+        for ci_state,conclusion in (('pending',None),('failure','failure')):
+            self.reset(active=1,pr=True,prComments=[{'body':'review evidence'}],
+                       prStatus={'state':ci_state,'sha':'H1','statuses':[{'state':ci_state}]},
+                       prChecks=[{'status':'in_progress' if conclusion is None else 'completed','conclusion':conclusion,'head_sha':'H1'}])
+            report=self.scan();self.assertEqual(len(report['fullyRead']),1)
+            self.env['WORKFLOW_SCAN_INVOCATION_ID']=report['invocation'];before=len(self.ledger()['calls'])
+            target=('--pr','70')
+            for key in ('number','branch','sha','draft','labels','comments','status','checks'):
+                check_snapshot(altered(report,'pr',key,None,remove=True),False,target)
+            for key,value in (('number',True),('number',0),('branch','fix/2-other'),('sha',''),('sha',[]),('draft','false'),('labels',{}),('comments',None),('comments',[{}]),('status',[]),('status',{'state':ci_state}),('status',{'state':ci_state,'sha':'foreign-sha','statuses':[]}),('checks',{}),('checks',{'check_runs':'bad'}),('checks',{'check_runs':[{}]}),('checks',{'check_runs':[{'status':'completed','conclusion':'failure','head_sha':'foreign-sha'}]})):
+                check_snapshot(altered(report,'pr',key,value),False,target)
+            corrected=check_snapshot(report,True,target)
+            self.assertIn('NEXT_ACTION=resolve-pr-readiness',corrected.stdout)
+        # The same validation runs before REST evidence becomes atomic fullyRead.
+        for bad in ({'prComments':[{}]},{'prStatus':{'state':'pending'}},{'prChecks':[{'status':'completed'}]}):
+            self.reset(active=1,pr=True,**bad);self.assertFalse(self.scan(ok=False)['fullyRead'])
 
     def test_same_window_bounded_start_and_epic(self):
         # Real resolvers/prelude/guards use the same fake gh ledger; only dispatch is mocked.

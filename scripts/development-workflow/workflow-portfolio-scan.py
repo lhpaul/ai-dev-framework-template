@@ -164,13 +164,34 @@ def project_id(client, owner, number):
     raise ReadError('Configured project unavailable')
 
 
-def complete_pr(client, repo, pr):
+def validate_pr_evidence(pr, expected_issue):
+    if (not isinstance(pr, dict) or type(pr.get('number')) is not int or pr['number'] <= 0 or
+            any(not isinstance(pr.get(key), str) or not pr[key] for key in ('branch', 'sha')) or
+            issue_number(pr['branch']) != expected_issue or type(pr.get('draft')) is not bool or
+            not isinstance(pr.get('labels'), list) or any(not isinstance(label, str) for label in pr['labels']) or
+            not isinstance(pr.get('comments'), list) or any(not isinstance(comment, dict) or not isinstance(comment.get('body'), str) for comment in pr['comments'])):
+        raise ReadError('Incomplete PR identity/comment evidence')
+    status, checks = pr.get('status'), pr.get('checks')
+    if (not isinstance(status, dict) or not isinstance(status.get('state'), str) or not status['state'] or
+            not isinstance(status.get('statuses'), list) or
+            any(not isinstance(entry, dict) or not isinstance(entry.get('state'), str) or not entry['state'] for entry in status['statuses']) or
+            ('sha' in status and status['sha'] != pr['sha']) or
+            not isinstance(checks, dict) or not isinstance(checks.get('check_runs'), list)):
+        raise ReadError('Incomplete PR status/check evidence')
+    for check in checks['check_runs']:
+        if (not isinstance(check, dict) or not isinstance(check.get('status'), str) or not check['status'] or
+                'conclusion' not in check or (check['conclusion'] is not None and not isinstance(check['conclusion'], str)) or
+                ('head_sha' in check and check['head_sha'] != pr['sha'])):
+            raise ReadError('Incomplete PR check evidence')
+
+
+def complete_pr(client, repo, pr, expected_issue):
     number = pr.get('number')
     if type(number) is not int:
         raise ReadError('Missing open PR identity')
     detail = client.rest(f'repos/{repo}/pulls/{number}')
     head = detail.get('head') if isinstance(detail, dict) else None
-    if not isinstance(head, dict) or not head.get('sha') or head.get('ref') != (pr.get('head') or {}).get('ref') or not isinstance(detail.get('draft'), bool) or not isinstance(detail.get('labels'), list):
+    if not isinstance(head, dict) or detail.get('number') != number or not head.get('sha') or head.get('ref') != (pr.get('head') or {}).get('ref') or not isinstance(detail.get('draft'), bool) or not isinstance(detail.get('labels'), list) or any(not isinstance(label, dict) or not isinstance(label.get('name'), str) for label in detail['labels']):
         raise ReadError('Incomplete PR evidence')
     comments = client.rest(f'repos/{repo}/issues/{number}/comments?per_page=100', paginate=True)
     status = client.rest(f'repos/{repo}/commits/{head["sha"]}/status')
@@ -180,14 +201,16 @@ def complete_pr(client, repo, pr):
     checks = {'check_runs': [check for page in check_pages for check in page['check_runs']]}
     if not isinstance(status, dict) or not isinstance(checks, dict) or not isinstance(checks.get('check_runs'), list):
         raise ReadError('Incomplete PR status evidence')
-    return {'number': number, 'branch': head['ref'], 'sha': head['sha'], 'draft': detail['draft'],
+    result = {'number': number, 'branch': head['ref'], 'sha': head['sha'], 'draft': detail['draft'],
             'labels': [label['name'] for label in detail['labels'] if isinstance(label, dict) and isinstance(label.get('name'), str)],
             'comments': comments, 'status': status, 'checks': checks}
+    validate_pr_evidence(result, expected_issue)
+    return result
 
 
 def complete_record(client, repo, issue, card, folders, branches, prs):
     number = issue['number']
-    if not card.get('item_id') or not card.get('status') or not card.get('type'):
+    if any(not isinstance(card.get(key), str) or not card[key] for key in ('item_id', 'project_id', 'status', 'type')):
         raise EvidenceIncomplete('Incomplete Status/Type/project membership')
     try:
         if not isinstance(issue.get('created_at'), str) or not issue['created_at']:
@@ -199,7 +222,7 @@ def complete_record(client, repo, issue, card, folders, branches, prs):
     except (ValueError, TypeError):
         raise EvidenceIncomplete('Incomplete Due date/creation evidence')
     folder = folders.get(number, {})
-    current_prs = [complete_pr(client, repo, pr) for pr in prs if issue_number((pr.get('head') or {}).get('ref', '')) == number]
+    current_prs = [complete_pr(client, repo, pr, number) for pr in prs if issue_number((pr.get('head') or {}).get('ref', '')) == number]
     body = issue.get('body') or ''
     if not isinstance(body, str):
         raise EvidenceIncomplete('Incomplete dependency evidence')
@@ -224,6 +247,8 @@ def complete_record(client, repo, issue, card, folders, branches, prs):
         for branch_prefix in (prefix, 'fix', 'hotfix'):
             expected_head = f'{branch_prefix}/{slug}'
             closed = client.rest(f'repos/{repo}/pulls?state=closed&head={repo.split("/")[0]}:{expected_head}&per_page=100', paginate=True)
+            if any(not isinstance(pr, dict) or not isinstance(pr.get('head'), dict) or pr['head'].get('ref') != expected_head or 'merged_at' not in pr or (pr['merged_at'] is not None and not isinstance(pr['merged_at'], str)) for pr in closed):
+                raise EvidenceIncomplete('Incomplete merged implementation evidence')
             if any(isinstance(pr, dict) and isinstance(pr.get('head'), dict) and pr['head'].get('ref') == expected_head and isinstance(pr.get('merged_at'), str) and pr['merged_at'] for pr in closed):
                 record['implementationMerged'] = True
                 break
@@ -294,6 +319,10 @@ def snapshot_read(path, root):
     for record in data['fullyRead']:
         if not isinstance(record, dict) or record.get('fullyRead') is not True or type(record.get('number')) is not int or record['number'] not in open_ids or record['number'] in seen or not record.get('status') or not record.get('type') or any(key not in record for key in ('prs', 'branches', 'dependencies', 'dependencyStates', 'inFlight', 'due_date', 'priority', 'created_at')):
             raise ReadError('Incomplete or duplicate scan record')
+        if (any(not isinstance(record.get(key), str) or not record[key] for key in ('item_id', 'project_id', 'status', 'type')) or
+                not isinstance(data.get('projectId'), str) or not data['projectId'] or record['project_id'] != data['projectId'] or
+                'membership' in record):
+            raise ReadError('Incomplete or mismatched scan project membership')
         if any(not isinstance(record.get(key), str) for key in ('title', 'body', 'due_date', 'priority', 'created_at')) or not record['created_at']:
             raise ReadError('Malformed scan ordering evidence')
         if datetime.fromisoformat(record['created_at'].replace('Z', '+00:00')).tzinfo is None:
@@ -302,9 +331,14 @@ def snapshot_read(path, root):
             date.fromisoformat(record['due_date'])
         if not isinstance(record['prs'], list) or not isinstance(record['branches'], list) or any(not isinstance(branch, str) for branch in record['branches']) or not isinstance(record['dependencies'], list) or any(type(n) is not int for n in record['dependencies']) or not isinstance(record['dependencyStates'], dict) or type(record['inFlight']) is not bool:
             raise ReadError('Malformed scan evidence types')
+        if (any(issue_number(branch) != record['number'] for branch in record['branches']) or
+                any(not isinstance(record['dependencyStates'].get(str(n)), str) or not record['dependencyStates'][str(n)] for n in record['dependencies']) or
+                any(key in record and type(record[key]) is not bool for key in ('spec', 'plan', 'implementationMerged'))):
+            raise ReadError('Incomplete scan branch/dependency evidence')
         for pr in record['prs']:
-            if not isinstance(pr, dict) or not isinstance(pr.get('labels'), list) or any(not isinstance(label, str) for label in pr['labels']):
-                raise ReadError('Malformed scan PR evidence')
+            validate_pr_evidence(pr, record['number'])
+        if record.get('plan') and not record['prs'] and not any(branch.startswith(('feature/', 'fix/', 'refactor/', 'hotfix/')) for branch in record['branches']) and 'implementationMerged' not in record:
+            raise ReadError('Incomplete merged implementation evidence')
         seen.add(record['number'])
     return data
 
