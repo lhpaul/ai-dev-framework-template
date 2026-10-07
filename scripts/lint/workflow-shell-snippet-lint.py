@@ -21,7 +21,7 @@ BASH_ONLY = re.compile(r"BASH_SOURCE|<\(|\[\[|\$\{![^}]+\}|\b(?:readarray|mapfil
 BASH4 = re.compile(r"\b(?:declare|local)\s+-A\b|\b(?:readarray|mapfile)\b")
 ARRAY = re.compile(r'"\$\{(?P<name>[A-Za-z_]\w*)\[@\](?P<default>:-)?\}"')
 SAFE_ARRAY = re.compile(r'\$\{([A-Za-z_]\w*)\[@\](?:\+|:\+)"\$\{\1\[@\]\}"\}')
-SET_OPTIONS = re.compile(r'(?:^|[;&|(){}])\s*(?P<command>set)\s+(?P<options>[^;&|(){}]*)')
+SET_OPTIONS = re.compile(r'(?:^|[;&|(){}])\s*(?:(?:then|do|else)\s+)?(?P<command>set)\s+(?P<options>[^;&|(){}]*)')
 HEREDOC = re.compile(r"(?<!<)<<(?!<)(?P<tabs>-)?[ \t]*(?:(?P<quote>['\"])(?P<quoted>.*?)(?P=quote)|\\(?P<escaped>[^\s;&|<>()]+)|(?P<plain>[^\s;&|<>()]+))")
 
 
@@ -261,6 +261,9 @@ def array_findings(path: str, lines: list[str], changed: set[int], offset: int =
     findings: list[Finding] = []
     nounset = False
     subshell_options: list[bool] = []
+    brace_options: list[bool | None] = []
+    pipeline_continues = False
+    pending_function = False
     quote = ""
     substitution_quotes: list[tuple[str, int]] = []
     parenthesis_depth = 0
@@ -305,7 +308,7 @@ def array_findings(path: str, lines: list[str], changed: set[int], offset: int =
             elif char == '"':
                 quote = "" if quote == '"' else '"'
                 visible.append(char)
-            elif char == "#" and not quote and (cursor == 0 or row[cursor - 1].isspace()):
+            elif char == "#" and not quote and (cursor == 0 or row[cursor - 1].isspace() or row[cursor - 1] in ";&|(){}"):
                 break
             else:
                 visible.append(char)
@@ -346,15 +349,44 @@ def array_findings(path: str, lines: list[str], changed: set[int], offset: int =
         # do not change the parent shell. Interleave boundaries with commands
         # so same-line and multiline subshells retain the enclosing state.
         events.extend((match.start(), match.group(), match)
-                      for match in re.finditer(r"[()]", command_code))
+                      for match in re.finditer(r"[(){}]", command_code))
+        function_braces = {match.end() - 1 for match in re.finditer(
+            r"(?:\b\w+\s*\(\s*\)|\bfunction\s+\w+(?:\s*\(\s*\))?)\s*\{",
+            command_code,
+        )}
+        if pending_function:
+            opening = re.search(r"\{", command_code)
+            if opening:
+                function_braces.add(opening.start())
+                pending_function = False
+        if re.search(r"(?:\b\w+\s*\(\s*\)|\bfunction\s+\w+(?:\s*\(\s*\))?)\s*$", command_code):
+            pending_function = True
+        # A pipeline executes its commands in separate shells. Its set flags
+        # must not alter the parent state (including a continued pipeline).
+        pipeline_sets = set()
+        for position, _, _ in option_events:
+            clause_start = max((match.end() for match in re.finditer(r";|&&|\|\|", command_code[:max(position, 0)])), default=0)
+            clause_end = next((position + match.start() for match in re.finditer(r";|&&|\|\|", command_code[max(position, 0):])), len(command_code))
+            if re.search(r"(?<!\|)\|(?!\|)", command_code[clause_start:clause_end]) or (pipeline_continues and clause_start == 0):
+                pipeline_sets.add(position)
+        pipeline_continues = bool(re.search(r"(?<!\|)\|\s*$", command_code))
         events.sort(key=lambda event: event[0])
-        for _, kind, match in events:
+        for position, kind, match in events:
             if kind == "(":
                 subshell_options.append(nounset)
             elif kind == ")":
                 if subshell_options:
                     nounset = subshell_options.pop()
+            elif kind == "{":
+                brace_options.append(nounset if position in function_braces else None)
+            elif kind == "}":
+                if brace_options:
+                    enclosing = brace_options.pop()
+                    if enclosing is not None:
+                        nounset = enclosing
             elif kind == "set":
+                if position in pipeline_sets:
+                    continue
                 options = match.group("options").split()
                 for index, option in enumerate(options):
                     if option == "--":
