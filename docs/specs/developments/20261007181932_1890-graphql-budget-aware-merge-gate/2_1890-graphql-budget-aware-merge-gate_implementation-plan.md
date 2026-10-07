@@ -216,6 +216,28 @@ Population: runtime helpers and active command/skill/protocol surfaces that name
 | `scripts/development-workflow/validate-workflow-hub-skeletons.py` | Unchanged required-runtime inventory validation; helper path remains shipped, no merge authority. |
 | `scripts/development-workflow/workflow-batch-plan.sh` | Unchanged read-only batch planning; execution handoff admits the selected full set. |
 
+### Shared tracker-helper consumer enumeration
+
+The changed existing `workflow-lib.sh` entrypoint is `update_tracker_status_best_effort`; newly introduced session wrappers have no pre-existing callers. Independently reproduce its existing caller population with:
+
+`rg -l 'update_tracker_status_best_effort' .agents .codex .claude .cursor docs/workflow scripts/development-workflow --glob '!**/tests/**' | sort`
+
+| Matching consumer | Required observable disposition |
+| --- | --- |
+| `docs/workflow/development-workflow/integrations/github-projects.md` | Unchanged provider/status reference; existing helper markers and canonical event vocabulary remain valid. Merge-operation lifecycle requirements reside in updated owning protocols. |
+| `docs/workflow/development-workflow/integrations/linear.md` | Update existing owning protocol/provider guidance to carry session and independently verify pending tracker work before completion. |
+| `docs/workflow/development-workflow/protocols/90-batch-orchestrate-work-protocol.md` | Update existing owning protocol/provider guidance to carry session and independently verify pending tracker work before completion. |
+| `docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md` | Update existing owning protocol/provider guidance to carry session and independently verify pending tracker work before completion. |
+| `docs/workflow/development-workflow/tracker-status-mapping.md` | Unchanged provider/status reference; existing helper markers and canonical event vocabulary remain valid. Merge-operation lifecycle requirements reside in updated owning protocols. |
+| `scripts/development-workflow/add-backlog-item.sh` | Unchanged backlog creation route outside merge-operation scope; no session means existing best-effort behavior. |
+| `scripts/development-workflow/graduation-closeout.sh` | Unchanged integration graduation route outside this delegated/batch merge operation; no session means existing status behavior. |
+| `scripts/development-workflow/post-merge-cleanup.sh` | Update composed merge follow-up to carry the authoritative session and honor journal failure/pending state. |
+| `scripts/development-workflow/prepare-release-post-merge-cleanup.sh` | Update composed merge follow-up to carry the authoritative session and honor journal failure/pending state. |
+| `scripts/development-workflow/tracker-status-for.sh` | Unchanged canonical status resolver/marker adapter. It captures helper output, reports TRACKER_STATUS_RESULT=failed/deferred, and can still exit zero for best-effort failure. A supplied-session workflow-lib hook persists Interrupted/pending before returning; run-step inspects authoritative journal plus independent target read-back and fails regardless of this adapter exit. The canonical merge caller never treats its zero exit as completion. |
+| `scripts/development-workflow/workflow-lib.sh` | Update owning function with session-bound intent and independent read-back; preserve existing non-session routing and machine markers. |
+
+Session-bound failure propagation is journal-first: inability to persist intent prevents a tracker mutation; unavailable/mismatched read-back records Interrupted/pending before emitting the existing failure/deferred markers. A surrounding `run-step` returns nonzero for journal failure/pending even when `tracker-status-for.sh` preserves its best-effort zero exit. Test the actual adapter composition with mutation failure, skipped update and unavailable read-back, asserting durable pending reconciliation and no subsequent selected merge. Non-session backlog/graduation/release callers keep their existing contracts.
+
 ## Testing Strategy
 
 Use mocked Python unit tests and shell integration tests against real helper composition, with fake `gh` and private temporary Git repositories. No real merges, destructive user worktree operations, tracker writes, or portfolio scans. Test case enumerations below express coverage intent, not binding fixture counts.
