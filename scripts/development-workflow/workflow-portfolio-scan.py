@@ -478,9 +478,10 @@ def scan(args):
         if report['skipped']:
             print(report['skipped'])
         for row in report['classification']:
-            print(f'{row["category"]}: #{row["number"]} — {row["action"]} — {row["reason"]}')
+            labels = {'INFORMATIONAL': 'INFORMATIONAL - not actionable in this proposal', 'ACTIONABLE RESUME': 'ACTIONABLE RESUME - can advance now', 'PROPOSED BATCH': 'PROPOSED BATCH - your decision', 'HELD': 'HELD - not included in proposed batch'}
+            print(f'{row.get("reportLabel", labels[row["category"]])}: #{row["number"]} — {row["action"]} — {row["reason"]}')
         for omission in report['omissions']:
-            print(f'HELD: #{omission["number"]} — {omission["reason"]}')
+            print(f'HELD - not included in proposed batch: #{omission["number"]} — {omission["reason"]}')
         if report['recommendedCommand']:
             print('Recommended command: ' + report['recommendedCommand'])
         if error:

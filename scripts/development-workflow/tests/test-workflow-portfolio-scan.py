@@ -330,6 +330,8 @@ class Fixture(unittest.TestCase):
         self.assertEqual([item['number'] for item in json.loads(epic.stdout)['items']],[1,2])
         single=self.execute('bash',str(runtime/'run-item-scope-resolver.sh'),'--issue','1','--base','develop','--may-start-backlog','true','--json')
         self.assertEqual(json.loads(single.stdout)['items'][0]['type'],'Bug')
+        if os.environ.get('WORKFLOW_PORTFOLIO_EVIDENCE_DIR'):
+            (Path(os.environ['WORKFLOW_PORTFOLIO_EVIDENCE_DIR'])/'same-window-bounded-start.json').write_text(json.dumps({'afterScanRemaining':after_scan,'freshPrelude':scope,'dispatch':json.loads(dispatch.read_text()),'epic':json.loads(epic.stdout),'single':json.loads(single.stdout),'ledger':self.ledger()},indent=2))
 
     def test_retained_document_branches_and_stale_backlog(self):
         self.env['AI_DEV_WORKFLOW_CONFIG_FILE']=str(self.config)

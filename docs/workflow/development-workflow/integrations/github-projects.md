@@ -198,30 +198,30 @@ targeted lookup alone would report every such issue as "not on the board", so
 Status and Type reads would come back empty and `/run-epic` would classify each
 child as `ambiguous` (#1801).
 
-When the targeted lookup succeeds but finds no item for the configured project,
-`workflow_github_project_item_for_issue` falls back to the board's
-`gh project item-list` result. The fallback:
+When the successful primary lookup exhausts membership without the configured
+card, `workflow_github_project_item_for_issue` makes one filtered
+`ProjectV2.items(first:100, query:...)` candidate request. A fresh REST issue title
+is safely escaped with repository/type/open-state filters. Title matching is
+only a selector: the exact repository and issue number establish identity.
+Foreign same-number cards cannot match; conflicting exact cards are unreadable.
+No exact match with another page is unknown, never absence, and there is no
+unfiltered retry or extra candidate page. Unsupported schemas and failed reads
+warn and retain unknown membership; `ensure_on_project_board` skips board-add.
 
-- matches the card by repository and issue number, never by number alone, so
-  another repository's issue with the same number on the same board is ignored;
-- reads the board once per process and caches it in a private file under
-  `${TMPDIR:-/tmp}/workflow-gh-item-list-<uid>/` (override with
-  `WORKFLOW_GH_ITEM_LIST_CACHE_DIR`), so `status="$(get_tracker_status_for_issue N)"`
-  callers and multi-item epic resolution share one board scan;
-- reuses that cache for `WORKFLOW_GH_ITEM_LIST_CACHE_TTL_MINUTES` (default `5`;
-  `0` disables reuse) and removes cache files older than an hour when it writes;
-- is invalidated after a successful `gh project item-add` in
-  `ensure_on_project_board` and after every successful Status, Type,
-  Priority, or Size write, so a later read never returns a value the same
-  process has just overwritten;
-- reports an empty result with a warning when the board cannot be read
-  completely, as before.
+Private per-process cache entries are keyed by repository, project, target,
+selector and archival mode under `${TMPDIR:-/tmp}/workflow-gh-item-list-<uid>/`
+(override `WORKFLOW_GH_ITEM_LIST_CACHE_DIR`).
+`WORKFLOW_GH_ITEM_LIST_CACHE_TTL_MINUTES` defaults to 5; 0 disables reuse.
+Successful Status/Type/Priority/Size updates and item-add invalidate this
+process's target caches; failures do not. Old private entries are swept after
+an hour. Type precedence remains configured field, native Issue Type,
+Custom Type, CustomType, then Type. Set `WORKFLOW_GH_ITEM_LIST_FALLBACK=0` to
+skip fallback; an empty primary then remains unknown rather than proving absence.
 
-The board's native Issue Type is not part of `gh project item-list` output, so
-fallback Type reads use the configured, `Custom Type`, `CustomType`, or `Type`
-project field. Set `WORKFLOW_GH_ITEM_LIST_FALLBACK=0` to disable the fallback
-for boards where every repository is linked and a missing card should never
-cost a board scan.
+Archived primary membership is explicit. For an archived org-project card
+invisible there, the host must support archived-aware filtered candidates and
+return its exact identity within the 100-candidate cap. Otherwise restore or
+reconcile it manually before advancement; no automatic restoration occurs.
 
 <!-- workflow-shell-contract: bash-zsh -->
 ```bash
@@ -340,46 +340,23 @@ When the **Portfolio Orchestrator** has `gh` CLI access, it should:
 
 ### Reading Project Items
 
-**Performance note**: `gh project item-list` paginates all board items, including closed and merged
-ones. On boards with 300+ items this exhausts the 5 000-point GraphQL rate limit, causing a
-~3.5-minute pause that grows as more items accumulate. Prefer the open-issue approach below.
+**Performance note**: No-target discovery uses current open-issue identities,
+bounded target reads and invocation-only classification, so retained terminal
+history does not determine board-read cost. Use
+`bash scripts/development-workflow/workflow-portfolio-scan.sh` rather than
+cross-referencing an unrestricted board listing. Its report includes coverage,
+reason, observed GraphQL spend/remaining/reset, skipped work and the usual
+portfolio categories. The reserve defaults to 1000 via
+`portfolio_scan.graphql_reserve`; partial/deferred outcomes preserve bounded
+command capacity when the before budget is readable and no other consumer spends.
 
-**Recommended: query open issues first, then cross-reference with a single item-list call**
-
-GitHub Projects v2 has no server-side open-issue filter on the items node, so a full `item-list`
-fetch is unavoidable. The key optimisation is to fetch open issues from the GitHub Issues API
-(which supports state filtering) and then cross-reference them against the project board items
-client-side — this ensures downstream processing only touches open candidates:
-
-```bash
-# Step 1: list open issues only (the only candidates for orchestrator advancement)
-OPEN_ISSUES=$(gh issue list --state open --limit 1000 --json number,title,labels,createdAt)
-
-# Step 2: fetch all project board items once and filter to only open-issue candidates
-gh project item-list <PROJECT_NUMBER> --owner <OWNER> --limit 10000 --format json \
-  | jq --argjson open "$OPEN_ISSUES" \
-    '[.items[] | . as $item | ($open[] | select(.number == $item.content.number)) // empty | {number: .number, title: .title, status: $item.status}]'
-```
-
-**Alternative: client-side terminal-status filter (simpler, same single item-list call)**
-
-When you want a simpler filter without loading the open-issue list separately, fetch all items
-and immediately discard terminal-status entries client-side:
-
-```bash
-# Fetch all items and filter out terminal statuses client-side
-gh project item-list <PROJECT_NUMBER> --owner <OWNER> --limit 10000 --format json \
-  | jq '[.items[] | select(.status != null and (.status | IN("Done","Merged","Released","Cancelled")) | not)]'
-```
-
-**Rate-limit check**: check remaining GraphQL quota before and after large pagination:
-
-```bash
-gh api rate_limit --jq '.resources.graphql | {limit, remaining, used, reset: (.reset | todate)}'
-```
-
-Warn the human when `remaining` falls below 1 000 points. Pause dispatch when below 200 points
-and report the reset time. See Protocol 90 Step 1a for the full rate-limit guidance.
+See [Protocol 90 Step 1a and adjacent terminal-item archival hygiene](../protocols/90-batch-orchestrate-work-protocol.md#terminal-item-archival-hygiene-beside-step-1a)
+for the ordered budget matrix, unavailable/reset/concurrent-spend behavior,
+safe Released/Cancelled archival, Merged/in-flight exclusions and restoration
+of reopened cards. Archived org cards invisible to primary membership remain
+unreadable on unsupported hosts or when outside the capped fallback response;
+restore/reconcile manually. Exhaustive release/retrospective readers retain
+their separate complete-board contract and are not portfolio scan entrypoints.
 
 ### Updating Status via GraphQL
 

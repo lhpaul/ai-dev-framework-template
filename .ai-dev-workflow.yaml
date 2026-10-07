@@ -338,3 +338,8 @@ guardrails:
   audit:
     pr_disposition_record: required
     work_item_ledger_record: required
+
+# No-target GitHub Projects scan reserve; whole numbers 0..5000 only.
+# Invalid/empty values warn and fall back to 1000 (Protocol 90 Step 1a).
+portfolio_scan:
+  graphql_reserve: 1000
