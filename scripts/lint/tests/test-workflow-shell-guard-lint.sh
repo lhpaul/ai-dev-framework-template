@@ -426,6 +426,123 @@ dedup_output="$(run_linter_output "$TMP_DIR/multi-dedup.diff" || true)"
 run_test "dedup_reports_only_sh002" "1" "$(printf '%s\n' "$dedup_output" | grep -c 'SH002')"
 run_test "dedup_reports_no_sh003" "0" "$(printf '%s\n' "$dedup_output" | grep -c 'SH003')"
 
+# SH006 fixtures use a runtime token so examples cannot trip their own guard.
+write_quiet_diff() {
+  local name="$1" content="$2" path="${3:-scripts/development-workflow/tests/example.sh}"
+  local count
+  count=$(awk 'END { print NR }' <<< "$content")
+  printf 'diff --git a/%s b/%s\n--- a/%s\n+++ b/%s\n@@ -0,0 +1,%s @@\n' \
+    "$path" "$path" "$path" "$path" "$count" > "$TMP_DIR/$name.diff"
+  while IFS= read -r fixture_line; do
+    printf '+%s\n' "$fixture_line"
+  done <<< "$content" >> "$TMP_DIR/$name.diff"
+  perl -pi -e 's/__QUIET_GREP__/grep/g' "$TMP_DIR/$name.diff"
+}
+
+for quiet_flags in '-q' '-Fq' '-qiE' '-i -q -F' '--quiet' '--silent'; do
+  write_quiet_diff quiet "printf '%s\\n' \"\$input\" | __QUIET_GREP__ $quiet_flags token"
+  run_test "sh006_flags_${quiet_flags}" fail "$(run_linter "$TMP_DIR/quiet.diff")"
+done
+for producer in 'echo "$input"' 'cat input.txt' "jq -r '.name' input.json" 'custom_helper'; do
+  write_quiet_diff producer "$producer | __QUIET_GREP__ -q token"
+  run_test "sh006_producer_${producer}" fail "$(run_linter "$TMP_DIR/producer.diff")"
+done
+write_quiet_diff filtered 'printf "%s\n" "$input" | jq -r ".name" | __QUIET_GREP__ -Fq token'
+run_test sh006_filtered fail "$(run_linter "$TMP_DIR/filtered.diff")"
+write_quiet_diff multiple 'printf "%s\n" "$input" | grep token; echo "$input" | __QUIET_GREP__ -q token; printf "%s" "$input" | __QUIET_GREP__ -q absent'
+run_test sh006_later_pipeline_not_lost fail "$(run_linter "$TMP_DIR/multiple.diff")"
+write_quiet_diff continuation $'printf "%s\\n" "$input" | \\\n  __QUIET_GREP__ -Fq token'
+run_test sh006_continuation fail "$(run_linter "$TMP_DIR/continuation.diff")"
+write_quiet_diff suppressed $'printf "%s\\n" "$input" | \\\n  __QUIET_GREP__ -q token # workflow-shell-guard: allow SH006 - intentional fixture'
+run_test sh006_continued_suppression pass "$(run_linter "$TMP_DIR/suppressed.diff")"
+write_quiet_diff prior_suppression $'# workflow-shell-guard: allow SH006 - previous line does not suppress\nprintf "%s\\n" "$input" | __QUIET_GREP__ -q token'
+run_test sh006_previous_line_not_suppression fail "$(run_linter "$TMP_DIR/prior_suppression.diff")"
+write_quiet_diff multi_suppression 'gh api example | __QUIET_GREP__ -q token __BEST_EFFORT_SUPPRESSION__ # workflow-shell-guard: allow SH001 - fixture # workflow-shell-guard: allow SH006 - intentional race'
+materialize_best_effort_suppression "$TMP_DIR/multi_suppression.diff"
+run_test sh006_multiple_local_suppressions pass "$(run_linter "$TMP_DIR/multi_suppression.diff")"
+
+for safe_command in \
+  'grep -Fq token <<< "$input"' \
+  'grep -q token input.txt' \
+  'printf "%s\n" "$input" | grep -F token > /dev/null' \
+  'printf "%s\n" "$input" | grep -- -q' \
+  'printf "%s\n" "$input" | grep -e -q' \
+  'printf "%s\n" "$input" | grep --regexp -q' \
+  'printf "%s\n" "$input" | grep --regexp=-q' \
+  'printf "%s\n" "$input" | grep -f -q' \
+  'printf "%s\n" "$input" | grep -eq' \
+  'printf "%s\n" "$input" | grep -m1 token' \
+  'false || grep -q token input.txt' \
+  '# printf "%s\n" "$input" | __QUIET_GREP__ -q token' \
+  '' '  '; do
+  write_quiet_diff safe "$safe_command"
+  run_test "sh006_safe_${safe_command}" pass "$(run_linter "$TMP_DIR/safe.diff")"
+done
+write_quiet_diff production 'printf "%s\n" "$input" | __QUIET_GREP__ -q token' scripts/development-workflow/production.sh
+run_test sh006_non_test_path pass "$(run_linter "$TMP_DIR/production.diff")"
+write_quiet_diff lint_test 'printf "%s\n" "$input" | __QUIET_GREP__ -q token' scripts/lint/tests/example.sh
+run_test sh006_lint_test_path fail "$(run_linter "$TMP_DIR/lint_test.diff")"
+write_quiet_diff old_scope 'local RESULT=$(gh api example __BEST_EFFORT_SUPPRESSION__); declare -A seen' scripts/lint/tests/example.sh
+materialize_best_effort_suppression "$TMP_DIR/old_scope.diff"
+run_test sh006_widening_preserves_old_rule_scope pass "$(run_linter "$TMP_DIR/old_scope.diff")"
+
+cat > "$TMP_DIR/partial.diff" <<'DIFF'
+diff --git a/scripts/lint/tests/partial.sh b/scripts/lint/tests/partial.sh
+--- a/scripts/lint/tests/partial.sh
++++ b/scripts/lint/tests/partial.sh
+@@ -1,2 +1,2 @@
+ printf '%s\n' "$input" | \
+-grep -F token > /dev/null
++__QUIET_GREP__ -Fq token
+DIFF
+perl -pi -e 's/__QUIET_GREP__/grep/g' "$TMP_DIR/partial.diff"
+partial_status=0
+partial_output=$(run_linter_output "$TMP_DIR/partial.diff") || partial_status=$?
+run_test sh006_partial_edit_exit 1 "$partial_status"
+run_test sh006_partial_edit_location yes "$(grep -Fq 'scripts/lint/tests/partial.sh:2: SH006' <<< "$partial_output" && echo yes || echo no)"
+run_test sh006_corrective_diagnostic yes "$(grep -Fq 'here-string/file input or consuming grep' <<< "$partial_output" && echo yes || echo no)"
+perl -pi -e 's/^\+grep -Fq token/+grep -F token > \/dev\/null/' "$TMP_DIR/partial.diff"
+run_test sh006_same_diff_assertion_corrected pass "$(run_linter "$TMP_DIR/partial.diff")"
+cat > "$TMP_DIR/context-quiet.diff" <<'DIFF'
+diff --git a/scripts/lint/tests/context.sh b/scripts/lint/tests/context.sh
+--- a/scripts/lint/tests/context.sh
++++ b/scripts/lint/tests/context.sh
+@@ -1,2 +1,3 @@
+ printf '%s\n' "$input" | \
+ __QUIET_GREP__ -q token
++echo safe
+DIFF
+perl -pi -e 's/__QUIET_GREP__/grep/g' "$TMP_DIR/context-quiet.diff"
+run_test sh006_context_only_unsafe_not_new pass "$(run_linter "$TMP_DIR/context-quiet.diff")"
+
+quiet_repo="$TMP_DIR/quiet-git-repo"
+mkdir -p "$quiet_repo/scripts/lint/tests"
+(
+  cd "$quiet_repo"
+  git init -q -b main
+  git config user.email test@example.com
+  git config user.name 'Test User'
+  printf '%s\n' 'printf "%s\n" "$input" | \' 'grep -F baseline > /dev/null' > scripts/lint/tests/partial.sh
+  git add scripts/lint/tests/partial.sh
+  git commit -q -m 'test: seed continued command'
+  git checkout -q -b feature
+  printf '%s\n' 'printf "%s\n" "$input" | \' '__QUIET_GREP__ -Fq token' > scripts/lint/tests/partial.sh
+  perl -pi -e 's/__QUIET_GREP__/grep/g' scripts/lint/tests/partial.sh
+  git add scripts/lint/tests/partial.sh
+  git commit -q -m 'test: plant quiet option'
+)
+quiet_git_status=0
+quiet_git_output=$(cd "$quiet_repo" && python3 "$LINTER" --base-ref main 2>&1) || quiet_git_status=$?
+run_test sh006_git_partial_edit_exit 1 "$quiet_git_status"
+run_test sh006_git_partial_edit_location yes "$(grep -Fq 'scripts/lint/tests/partial.sh:2: SH006' <<< "$quiet_git_output" && echo yes || echo no)"
+(
+  cd "$quiet_repo"
+  printf '%s\n' 'printf "%s\n" "$input" | \' 'grep -F token > /dev/null' > scripts/lint/tests/partial.sh
+  git add scripts/lint/tests/partial.sh
+  git commit -q -m 'test: correct the same assertion'
+)
+run_test sh006_git_same_assertion_corrected pass "$(run_git_linter "$quiet_repo")"
+
 echo ""
 echo "Summary: ${PASS_COUNT} passed, ${FAIL_COUNT} failed"
 

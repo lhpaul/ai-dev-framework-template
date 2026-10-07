@@ -19,6 +19,7 @@ from typing import Iterable
 
 
 CHECKED_PATH = re.compile(r"^scripts/development-workflow/.*\.sh$")
+TEST_PATH = re.compile(r"^scripts/(?:.*/)?tests/.*\.sh$")
 SUPPRESSION_DIRECTIVE = re.compile(
     r"\bworkflow-shell-guard:\s*allow\s+(SH\d{3})\b"
 )
@@ -34,6 +35,8 @@ class AddedLine:
     path: str
     line: int
     content: str
+    is_added: bool = True
+    first_added_line: int | None = None
 
 
 @dataclass
@@ -50,10 +53,10 @@ def run_git_diff(base_ref: str) -> str:
         [
             "git",
             "diff",
-            "--unified=0",
+            "--unified=2147483647",
             f"{base_ref}...HEAD",
             "--",
-            "scripts/development-workflow",
+            "scripts",
         ],
         check=False,
         text=True,
@@ -83,25 +86,51 @@ def parse_added_lines(diff_text: str) -> list[AddedLine]:
 
         if raw_line.startswith("+") and not raw_line.startswith("+++"):
             new_line += 1
-            if current_path and CHECKED_PATH.match(current_path):
+            if current_path and (CHECKED_PATH.match(current_path) or TEST_PATH.match(current_path)):
                 added.append(AddedLine(current_path, new_line, raw_line[1:]))
             continue
 
         if raw_line.startswith(" ") or raw_line == "":
             new_line += 1
+            if raw_line.startswith(" ") and TEST_PATH.match(current_path):
+                added.append(AddedLine(current_path, new_line, raw_line[1:], is_added=False))
 
     return added
 
 
 def lint_added_lines(lines: Iterable[AddedLine]) -> list[Finding]:
+    lines = list(lines)
     findings: list[Finding] = []
 
-    for line in logical_lines(lines):
+    # Existing rules retain their added-workflow-line scope and joining behavior.
+    workflow_additions = [
+        line for line in lines if line.is_added and CHECKED_PATH.match(line.path)
+    ]
+    for line in logical_lines(workflow_additions):
         stripped = line.content.strip()
-        if not stripped or stripped.startswith("#"):
-            continue
-        findings.extend(lint_logical_line(line))
+        if stripped and not stripped.startswith("#"):
+            findings.extend(lint_logical_line(line))
 
+    # Only SH006 sees unchanged context, to reconstruct partially edited commands.
+    for line in logical_lines(lines):
+        if not line.is_added or not TEST_PATH.match(line.path):
+            continue
+        if not line.content.strip() or line.content.lstrip().startswith("#"):
+            continue
+        if not has_suppression(line, "SH006") and has_pipe_quiet_grep(line.content):
+            findings.append(
+                Finding(
+                    rule="SH006",
+                    path=line.path,
+                    line=line.first_added_line or line.line,
+                    message=(
+                        "pipe-fed quiet grep can cause SIGPIPE under pipefail; "
+                        "use a here-string/file input or consuming grep with "
+                        "stdout redirected to /dev/null"
+                    ),
+                    content=line.content,
+                )
+            )
     return findings
 
 
@@ -189,6 +218,49 @@ def lint_logical_line(line: AddedLine) -> list[Finding]:
         )
 
     return findings
+
+
+def grep_has_quiet_option(arguments: str) -> bool:
+    """Read only grep's option prefix, not pattern text or later commands."""
+    lexer = shlex.shlex(arguments, posix=True, punctuation_chars="|;&()<>")
+    lexer.whitespace_split = True
+    short_arguments = set("efmABCDd")
+    long_arguments = {
+        "--regexp", "--file", "--max-count", "--after-context",
+        "--before-context", "--context", "--devices", "--directories",
+        "--label", "--include", "--exclude", "--exclude-from", "--exclude-dir",
+        "--binary-files",
+    }
+    try:
+        for token in lexer:
+            if token == "--" or not token.startswith("-") or token == "-":
+                break
+            if token in {"--quiet", "--silent"}:
+                return True
+            if token in long_arguments:
+                next(lexer, "")
+            elif token.startswith("--"):
+                continue
+            else:
+                for index, flag in enumerate(token[1:], 1):
+                    if flag == "q":
+                        return True
+                    if flag in short_arguments:
+                        if index == len(token) - 1:
+                            next(lexer, "")
+                        break
+    except ValueError:
+        # Added lines may be fragments of shell/fixture text. Do not crash.
+        pass
+    return False
+
+
+def has_pipe_quiet_grep(content: str) -> bool:
+    """Recognize pipe-fed quiet grep without claiming a full shell parse."""
+    for consumer in re.finditer(r"(?<!\|)\|(?!\|)\s*grep\b", content):
+        if grep_has_quiet_option(content[consumer.end():]):
+            return True
+    return False
 
 
 def is_unguarded_jq_r_assignment(content: str) -> bool:
@@ -363,10 +435,17 @@ def logical_lines(lines: Iterable[AddedLine]) -> list[AddedLine]:
             same_file = pending.path == line.path
             consecutive = line.line == pending_end_line + 1
             if previous_continues and same_file and consecutive:
+                first_added = pending.first_added_line
+                if first_added is None and pending.is_added:
+                    first_added = pending.line
+                if first_added is None and line.is_added:
+                    first_added = line.line
                 pending = AddedLine(
                     pending.path,
                     pending.line,
                     f"{pending.content.rstrip()[:-1]} {line.content.strip()}",
+                    is_added=pending.is_added or line.is_added,
+                    first_added_line=first_added,
                 )
                 pending_end_line = line.line
             else:
@@ -402,7 +481,7 @@ def format_findings(findings: list[Finding]) -> str:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Lint risky added shell lines in workflow scripts."
+        description="Lint risky added workflow lines and pipe-fed quiet grep in shell tests."
     )
     parser.add_argument(
         "--base-ref",
