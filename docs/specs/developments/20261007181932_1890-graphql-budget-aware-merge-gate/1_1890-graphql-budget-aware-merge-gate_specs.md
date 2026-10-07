@@ -125,8 +125,13 @@ progress must remain possible when the remote API is unavailable.
 ## Operational Visibility
 
 Reports label projected cost as a heuristic and show its conservative margin.
-Budget outcomes are **Admitted**, **Deferred**, **Completed**, and **Interrupted**.
-Admitted work can become Completed or Interrupted. Deferred work starts no
+Budget outcomes are **Admitted**, **Deferred**, **Waiting**, **Completed**, and **Interrupted**.
+Admitted work can become Waiting, Completed or Interrupted. Waiting means a
+successful queue/auto-merge submission with the PR still verifiably unmerged;
+retain submission evidence and pending follow-up, pause further selected merges
+in this budget-aware sequence, and resume explicitly after checking live state.
+Do not repeat the submission or run merge-dependent cleanup before verified
+MERGED. This sequencing rule preserves the underlying `gh` submission behavior. Deferred work starts no
 mutations. An explicit retry re-assesses budget and existing gates; it does not
 reuse old admission evidence. Interrupted work retains a recovery record.
 
@@ -145,7 +150,7 @@ No new notification channel or analytics system is required.
 Evaluate rows 1–3 once for initial admission, before the first mutation. Only
 one of those rows can match. A recovery attempt uses the same admission rows for
 outstanding work while preserving its recorded PR and follow-up states. After
-admission, evaluate rows 4–6 for execution
+admission, evaluate rows 4–7 for execution
 outcomes; the initial budget rows do not reclassify completed or interrupted
 work. Existing readiness stops also apply to admitted work.
 
@@ -156,7 +161,8 @@ work. Existing readiness stops also apply to admitted work.
 | 3 | Before admission; readable evidence, valid reserve, and remaining points at least projection plus reserve | Admitted | Apply existing gates and record progress before execution |
 | 4 | Admitted; existing readiness gate denies execution | Existing policy stop | Report the existing stop and actual PR state; no unauthorized merge |
 | 5 | Admitted; execution and follow-up complete | Completed | Report verified merge and reconciliation outcomes |
-| 6 | Admitted; execution fails or outcome becomes uncertain | Interrupted | Record completed, uncertain, and pending steps; no additional merges; report recovery |
+| 6 | Admitted; queue/auto-merge submission succeeds and PR remains verifiably unmerged | Waiting | Record submission and pending follow-up; no further selected merge; explicitly resume after live verification without duplicate submission |
+| 7 | Admitted; execution fails or outcome becomes uncertain | Interrupted | Record completed, uncertain, and pending steps; no additional merges; report recovery |
 
 Example budget values are illustrative: remaining 1,200, cost 200, and reserve
 1,000 admit the operation; remaining 1,199 defers the entire set. An admitted
@@ -194,6 +200,8 @@ coverage. Portfolio scan behavior is outside this feature.
 - [ ] AC8: Mocked coverage exercises delegated single-item/epic and batch paths,
   preserving current risk, review, CI, audit, and tracker gates, and existing
   merge queue, admin and already-merged semantics without CLI-version pinning.
+  Successful queue/auto-merge submission retains verified unmerged state and
+  pending follow-up as Waiting; recovery does not duplicate the submission.
 
 ## Out of Scope (MVP)
 
