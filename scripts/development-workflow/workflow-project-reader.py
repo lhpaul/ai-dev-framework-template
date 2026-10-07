@@ -124,6 +124,23 @@ def connection(value):
     return value['nodes'], info
 
 
+DEPENDENCY_FRAME = 'dependency-fields-v4:'
+
+
+def dependency_fields(value):
+    if not isinstance(value, str):
+        raise ReadError('Malformed dependency field evidence')
+    if not value.startswith(DEPENDENCY_FRAME):
+        return [value] if value else []
+    try:
+        fields = json.loads(value[len(DEPENDENCY_FRAME):])
+    except ValueError as exc:
+        raise ReadError('Malformed dependency field framing') from exc
+    if not isinstance(fields, list) or any(not isinstance(field, str) for field in fields):
+        raise ReadError('Malformed dependency field framing')
+    return fields
+
+
 def compact(item, project_id, preferred, strict_dependencies=False):
     content = item.get('content')
     if content is not None and not isinstance(content, dict):
@@ -162,9 +179,9 @@ def compact(item, project_id, preferred, strict_dependencies=False):
             'type': next((name(c) for c in candidates if name(c)), ''),
             'priority': name(item.get('priority')), 'size': name(item.get('size')),
             'due_date': due_date,
-            # Preserve independent field/line declarations in the existing
-            # string schema; commas may belong to a None explanation.
-            'depends_on': '\n'.join(line.strip() for value in dependencies for line in value.splitlines() if line.strip())}
+            # Keep complete field paragraphs losslessly inside the existing
+            # string schema: wrapped None prose must not swallow another field.
+            'depends_on': DEPENDENCY_FRAME + json.dumps(dependencies) if any(dependencies) else ''}
 
 
 def selector(repo, issue):
@@ -186,7 +203,8 @@ def valid_cached_result(value, project_id):
     try:
         if value['due_date']:
             date.fromisoformat(value['due_date'])
-    except ValueError:
+        dependency_fields(value['depends_on'])
+    except (ValueError, ReadError):
         return False
     return True
 
@@ -200,7 +218,7 @@ def fallback(client, number, project_id, repo, preferred='', cache_dir=None, cac
     if cache_dir and cache_pid and ttl > 0:
         folder = Path(cache_dir)
         if folder.is_dir() and not folder.is_symlink() and folder.stat().st_uid == os.getuid() and folder.stat().st_mode & 0o077 == 0:
-            key = hashlib.sha256(json.dumps([repo.lower(), project_id, number, preferred, query, 'both-archived', strict_dependencies, 'dependency-members-v3']).encode()).hexdigest()
+            key = hashlib.sha256(json.dumps([repo.lower(), project_id, number, preferred, query, 'both-archived', strict_dependencies, 'dependency-members-v4']).encode()).hexdigest()
             cache_file = folder / f'{cache_pid}-{key}.json'
             if cache_file.is_file() and not cache_file.is_symlink() and time.time() - cache_file.stat().st_mtime < ttl * 60:
                 try:

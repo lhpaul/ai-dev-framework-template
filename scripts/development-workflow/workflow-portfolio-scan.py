@@ -39,47 +39,110 @@ class EvidenceIncomplete(ReadError):
 
 
 def dependency_references(text, slug_ids=None):
-    # Canonical spec Depends on and plan Dependencies fields, including
-    # Markdown formatting and the plan template's explicit None vocabulary.
+    # Canonical spec/plan fields are paragraphs, not just their first line.
     text = re.sub(r'<!--.*?-->', '', text, flags=re.S)
     lines = text.splitlines()
-    references = set()
-    for index, line in enumerate(lines):
-        clean = line.strip().strip('|').replace('**', '')
-        match = re.match(r'(?i)^(?:[-*]\s*|#{1,6}\s*)?(dependson|depends on|blocked by|dependency|dependencies)\b\s*:?(.*)$', clean)
-        if not match:
+    names = r'(?:dependson|depends on|blocked by|dependency|dependencies)'
+
+    def declaration(line):
+        clean = line.strip().strip('|').replace('**', '').strip()
+        field = re.match(r'(?i)^(?:[-*]\s*)?' + names + r'\s*[:|]\s*(.*)$', clean)
+        heading = re.match(r'(?i)^#{1,6}\s+' + names + r'\b\s*:?(.*)$', clean)
+        # Preserve the existing brief form "Depends on #2" without treating
+        # ordinary prose beginning with "dependencies" as a metadata field.
+        brief = re.match(r'(?i)^(?:[-*]\s*)?' + names + r'\s+(#[1-9][0-9]*\b.*)$', clean)
+        match = field or heading or brief
+        return (match[1] or '').strip().strip('|').strip() if match else None
+
+    def boundary(line):
+        clean = line.strip()
+        return (re.match(r'^#{1,6}\s|^(?:---+|\*\*\*+)\s*$', clean)
+                or re.match(r'^(?:[-*]\s*)?(?:\*\*[^*]+\*\*|[A-Za-z][A-Za-z0-9 _/-]{0,60})\s*[:|](?:\s|$)', clean))
+
+    def normalized(member):
+        return re.sub(r'^(?:[-*]|[0-9]+[.)])\s+', '', member.strip()).strip('[]`').strip()
+
+    def absence_explanation(member):
+        return re.match(r'(?i)^none(?:\.\s+\S|\s+\(|\s+[—–]\s*\S|\s+(?:beyond|blocking|for|outstanding)\b|\s+that\s+block\b)', member)
+
+    def atomic(member):
+        return re.fullmatch(r'(?:#[1-9][0-9]*(?:\s*\([^\n]*\))?|(?:feature|fix|refactor|hotfix)/[A-Za-z0-9_-]+|[A-Za-z0-9_-]+)', normalized(member))
+
+    def standalone_member(line):
+        clean = normalized(line)
+        return (re.fullmatch(r'#[1-9][0-9]*(?:\s*\([^\n]*\))?', clean)
+                or re.fullmatch(r'(?:feature|fix|refactor|hotfix)/[A-Za-z0-9_-]+|[A-Za-z0-9_]+(?:-[A-Za-z0-9_]+)+', clean)
+                or clean in (slug_ids or {}))
+
+    sources = []
+    index = 0
+    while index < len(lines):
+        value = declaration(lines[index])
+        if value is None:
+            index += 1
             continue
-        value = match[2].strip().strip('|').strip()
-        sources = [value] if value else []
-        if not value:
-            for following in lines[index + 1:]:
-                if re.match(r'^\s*#{1,6}\s', following):
+        section = not value
+        paragraph = [value] if value else []
+        index += 1
+        while index < len(lines):
+            following = lines[index]
+            if declaration(following) is not None or boundary(following):
+                break
+            if not following.strip():
+                if paragraph:
+                    sources.append('\n'.join(paragraph)); paragraph = []
+                index += 1
+                if not section:
                     break
-                if following.strip():
-                    sources.append(following.strip())
-        # Keep each field/Markdown line separate. An explicit None explanation
-        # may contain commas and incidental issue refs, but cannot erase the
-        # dependency on another line or field. Bare "None, #3" is still mixed.
-        def normalized(member):
-            return re.sub(r'^[-*]\s+', '', member.strip()).strip('[]`').strip()
-
-        def absence_explanation(member):
-            return re.match(r'(?i)^none(?:\.\s+\S|\s+\(|\s+[—–]\s*\S|\s+(?:beyond|blocking|for|outstanding)\b|\s+that\s+block\b)', member)
-
-        for source in sources:
-            source = normalized(source)
-            if absence_explanation(source):
                 continue
-            # A #ref must not mask a supported slug or unknown adjacent member.
-            for member in source.split(','):
-                member = normalized(member)
-                if re.fullmatch(r'(?i)none\.?', member) or absence_explanation(member):
+            # Explicit list members remain independent of an absence paragraph.
+            if (re.match(r'^\s*(?:[-*]|[0-9]+[.)])\s+', following) or standalone_member(following)) and paragraph:
+                sources.append('\n'.join(paragraph)); paragraph = []
+            paragraph.append(following.strip())
+            index += 1
+        if paragraph:
+            sources.append('\n'.join(paragraph))
+
+    references = set()
+    for source in sources:
+        # Explicit absence governs the whole wrapped explanatory paragraph.
+        # Independent bullets, atomic lines and fields were separated above.
+        if (absence_explanation(' '.join(normalized(line) for line in source.splitlines()))
+                or re.fullmatch(r'(?i)none\.?', normalized(source.splitlines()[0]))):
+            continue
+        # A bare ref/slug on a continuation line is another member. Natural
+        # wrapped prose stays with its source (including None explanations).
+        members = []
+        pending = []
+        for line in source.splitlines():
+            line = normalized(line)
+            if pending and (atomic(line) or re.search(r'(?i)(?:,|\band)\s*$', pending[-1])):
+                members.append(' '.join(pending)); pending = []
+            pending.append(line)
+        if pending:
+            members.append(' '.join(pending))
+        for member in members:
+            if absence_explanation(member):
+                continue
+            # Parenthetical descriptions are not list separators. Conjunctions
+            # split atomic members, not explanatory phrases like "and merged".
+            parts = re.split(r',(?=(?:[^()]*\([^()]*\))*[^()]*$)', member)
+            expanded = []
+            for part in parts:
+                conjunctions = re.split(r'(?i)\s+and\s+', part.strip())
+                if len(conjunctions) > 1 and atomic(conjunctions[0]):
+                    expanded.extend(conjunctions)
+                else:
+                    expanded.append(part)
+            for part in expanded:
+                part = normalized(re.sub(r'(?i)(?:,|\band)\s*$', '', part.strip()))
+                if not part or re.fullmatch(r'(?i)none\.?', part) or absence_explanation(part):
                     continue
-                found = re.findall(r'#([1-9][0-9]*)\b', member)
+                found = re.findall(r'#([1-9][0-9]*)\b', part)
                 if found:
                     references.update(int(n) for n in found)
                     continue
-                slug = re.sub(r'^(?:feature|fix|refactor|hotfix)/', '', member)
+                slug = re.sub(r'^(?:feature|fix|refactor|hotfix)/', '', part)
                 if slug not in (slug_ids or {}):
                     raise EvidenceIncomplete('Unresolved dependency declaration')
                 references.add(slug_ids[slug])
@@ -299,11 +362,11 @@ def complete_record(client, repo, issue, card, folders, branches, prs, root):
     body = issue.get('body') or ''
     if not isinstance(body, str):
         raise EvidenceIncomplete('Incomplete dependency evidence')
-    if card.get('depends_on'):
-        for declaration in card['depends_on'].splitlines():
-            body += '\nDependsOn: ' + declaration
+    tracker_dependencies = reader.dependency_fields(card.get('depends_on', ''))
     slug_ids = {re.sub(r'^\d{14}_', '', Path(value['development_path']).name): key for key, value in folders.items()}
     dependencies = dependency_references(body, slug_ids)
+    for declaration in tracker_dependencies:
+        dependencies.update(dependency_references('DependsOn: ' + declaration, slug_ids))
     if folder.get('development_path'):
         artifact_root = artifact_directory(root, folder['development_path'])
         try:
@@ -317,6 +380,7 @@ def complete_record(client, repo, issue, card, folders, branches, prs, root):
             raise EvidenceIncomplete('Artifact dependency evidence unreadable') from exc
     dependencies = sorted(dependencies)
     dependency_states = {}
+    body += ''.join('\nDependsOn: ' + declaration for declaration in tracker_dependencies)
     record = {'number': number, 'title': issue['title'], 'body': body, 'created_at': issue['created_at'], **card, **folder,
               'branches': branches.get(number, []), 'prs': current_prs, 'dependencies': dependencies,
               'inFlight': bool(folder or branches.get(number) or current_prs), 'dependencyStates': dependency_states}
@@ -406,6 +470,7 @@ def snapshot_read(path, root):
                 not isinstance(data.get('projectId'), str) or not data['projectId'] or record['project_id'] != data['projectId'] or
                 'membership' in record):
             raise ReadError('Incomplete or mismatched scan project membership')
+        reader.dependency_fields(record.get('depends_on', ''))
         if 'development_path' in record:
             artifact_directory(root, record['development_path'])
         if any(not isinstance(record.get(key), str) for key in ('title', 'body', 'due_date', 'priority', 'created_at')) or not record['created_at']:

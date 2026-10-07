@@ -821,11 +821,17 @@ class Fixture(unittest.TestCase):
         for document in sorted((ROOT/'docs/specs/developments').rglob('*.md')):
             if '_implementation-plan' not in document.name and '_specs' not in document.name:
                 continue
-            for line in document.read_text().splitlines():
+            lines=document.read_text().splitlines()
+            for index,line in enumerate(lines):
                 clean = line.strip().strip('|').replace('**','')
                 match = re.match(r'(?i)^(?:[-*]\s*)?(dependson|depends on|dependencies)\b\s*:\s*(none\b.*)$',clean)
                 if match:
-                    declarations.append((document,match[2].strip().strip('|').strip()))
+                    paragraph=[match[2].strip().strip('|').strip()]
+                    for following in lines[index+1:]:
+                        if not following.strip() or re.match(r'^\s*(?:#{1,6}\s|\*\*[^*]+\*\*\s*:|---|\|)',following):
+                            break
+                        paragraph.append(following.strip())
+                    declarations.append((document,'\n'.join(paragraph)))
         # Consumer hubs do not carry this template's historical developments.
         # Keep each observed grammar family covered even without that archive.
         for declaration in ('None','none.','None (matches spec `Depends on`).',
@@ -882,7 +888,7 @@ class Fixture(unittest.TestCase):
                     row=next(row for row in report['classification'] if row['number']==1)
                     self.assertEqual(row['action'],'hold-dependency' if state=='Backlog' else 'implement')
                     if fields.get('dependencies'):
-                        self.assertEqual(record['depends_on'],fields['dependsOn']+'\n#3')
+                        self.assertEqual(scan.reader.dependency_fields(record['depends_on']),[fields['dependsOn'],'#3'])
         # Corrected no-dependency field and local artifact producers stand alone.
         for value in prose:
             plan.write_text('**Dependencies**: '+value+'\n')
@@ -942,7 +948,7 @@ class Fixture(unittest.TestCase):
 
     def test_dependency_field_framing_cache_epoch(self):
         explanation='None. Issues #705, #707 are siblings, no prerequisite.'
-        expected=explanation+'\n#3'
+        expected=scan.reader.DEPENDENCY_FRAME+json.dumps([explanation,'#3'])
         with patch.dict(os.environ,self.env):
             for strict in (False,True):
                 for fallback in (False,True):
@@ -951,19 +957,100 @@ class Fixture(unittest.TestCase):
                     if fallback:
                         cache=self.folder/('old-dependency-cache-'+str(strict));cache.mkdir(mode=0o700)
                         query=scan.reader.selector('fixture/repo',{'title':'Fixture 1','state':'open'})
-                        old_key=scan.reader.hashlib.sha256(json.dumps(['fixture/repo','P1',1,'',query,'both-archived',strict,'dependency-members-v2']).encode()).hexdigest()
-                        stale={'item_id':'I1','project_id':'P1','status':'Backlog','type':'Bug','priority':'Normal','size':'','due_date':'','depends_on':explanation+', #3'}
+                        old_key=scan.reader.hashlib.sha256(json.dumps(['fixture/repo','P1',1,'',query,'both-archived',strict,'dependency-members-v3']).encode()).hexdigest()
+                        stale={'item_id':'I1','project_id':'P1','status':'Backlog','type':'Bug','priority':'Normal','size':'','due_date':'','depends_on':explanation+'\n#3'}
                         (cache/('fixture-'+old_key+'.json')).write_text(json.dumps(stale))
                         args=(client,1,'P1','fixture/repo','',str(cache),'fixture',5)
                         card=scan.reader.fallback(*args,strict_dependencies=strict)
                         self.assertEqual(card['depends_on'],expected)
-                        self.assertEqual(self.ledger()['graphql'],1) # v2 cannot be reused.
+                        self.assertEqual(self.ledger()['graphql'],1) # v3 cannot be reused.
                         self.assertEqual(scan.reader.fallback(*args,strict_dependencies=strict),card)
-                        self.assertEqual(self.ledger()['graphql'],1) # v3 still caches.
+                        self.assertEqual(self.ledger()['graphql'],1) # v4 still caches.
                     else:
                         card=scan.reader.target(client,1,'P1','fixture/repo',strict_dependencies=strict)
                         self.assertEqual(card['depends_on'],expected)
                         self.assertEqual(self.ledger()['graphql'],1)
+
+    def test_wrapped_dependency_source_completeness(self):
+        development=self.root/self.artifact();self.artifact(2);self.artifact(3)
+        spec=next(development.glob('1_*_specs.md'));plan=next(development.glob('2_*_implementation-plan.md'))
+        for producer in ('body','spec','plan','dependsOn','dependencies'):
+            for declaration in ('#2 and\n#3','#2,\n3-fixture','#2 and\nunknown-prerequisite'):
+                for status in ('Backlog','Released'):
+                    spec.write_text('fixture\n');plan.write_text('fixture\n')
+                    fields={}
+                    if producer=='body':fields['bodies']={'1':'**Dependencies**: '+declaration}
+                    elif producer in ('spec','plan'):
+                        (spec if producer=='spec' else plan).write_text('**Depends on**: '+declaration+'\n')
+                    else:fields[producer]=declaration
+                    self.reset(active=3,statuses={'1':'Plan Ready','2':'Merged','3':status},**fields)
+                    report=self.scan();self.assertEqual(self.ledger()['graphql'],4)
+                    if 'unknown' in declaration:
+                        self.assertNotIn(1,[r['number'] for r in report['fullyRead']])
+                        self.assertNotIn(1,[r['number'] for r in report['classification']])
+                        self.assertTrue(any(r['number']==1 and 'Unresolved dependency' in r['reason'] for r in report['omissions']))
+                    else:
+                        record=next(r for r in report['fullyRead'] if r['number']==1)
+                        self.assertEqual(record['dependencies'],[2,3])
+                        self.assertEqual(next(r for r in report['classification'] if r['number']==1)['action'],'hold-dependency' if status=='Backlog' else 'implement')
+        spec.write_text('fixture\n');plan.write_text('fixture\n')
+        # Preserve a wrapped absence paragraph, but never another tracker field.
+        for absence in ('None. Siblings\n#177, #705 and #708 are unrelated.',
+                        'None (matches\nspec #177, which is already merged).',
+                        'None blocking. The shared\n#177 helper is merged.'):
+            for absent_field,required_field in (('dependsOn','dependencies'),('dependencies','dependsOn')):
+                for status in ('Backlog','Released'):
+                    self.reset(active=3,statuses={'1':'Plan Ready','3':status},**{absent_field:absence,required_field:'#3'})
+                    report=self.scan();record=next(r for r in report['fullyRead'] if r['number']==1)
+                    self.assertEqual(record['dependencies'],[3]);self.assertEqual(self.ledger()['graphql'],4)
+                    self.assertIn(absence,record['body']);self.assertNotIn(scan.reader.DEPENDENCY_FRAME,record['body'])
+                    self.assertEqual(next(r for r in report['classification'] if r['number']==1)['action'],'hold-dependency' if status=='Backlog' else 'implement')
+
+    def test_dependency_paragraph_boundaries_and_existing_wraps(self):
+        cases=[('**Dependencies**: #2 and\n#3\n**Priority**: #99',{2,3}),
+               ('Dependencies: #2\n\nUnrelated prose about #99.',{2}),
+               ('Dependencies: #2\n## Next heading\n#99',{2}),
+               ('## Dependencies\n\n- #2 (foundation)\n- 3-fixture\n\n## Implementation\n#99',{2,3}),
+               ('Dependencies: None. Siblings\n#177, #705 are already merged.\n**Depends on**: #3',{3}),
+               ('## Dependencies\n- None. Siblings\n  #177 and #705 are unrelated.\n- #3\n## Next\n#99',{3}),
+               ('Dependencies: #824 must remain merged because this refactor depends on\ntargeted GitHub Projects lookups rather than repeated full-board scans.',{824}),
+               ('Dependencies: #874 and #875 must be merged into `develop`\nbefore implementation. #878 should be merged first.',{874,875,878}),
+               ('Dependencies: #917 must be merged for resolved scope. #919 is\nalso expected to be merged before implementation.',{917,919})]
+        for value,expected in cases:
+            self.assertEqual(scan.dependency_references(value,{'3-fixture':3}),expected,value)
+        for value in ('Dependencies: #2\nunknown-prerequisite',
+                      'Dependencies: #2 and\nunknown prerequisite',
+                      '## Dependencies\n- #2\n- unknown-prerequisite\n## Next'):
+            with self.assertRaisesRegex(scan.EvidenceIncomplete,'Unresolved dependency'):
+                scan.dependency_references(value,{'3-fixture':3})
+
+    def test_dependency_private_framing_rejection(self):
+        development=self.artifact();self.reset(active=1,statuses={'1':'Plan Ready'})
+        report=self.scan();snapshot=self.folder/'framing-snapshot.json'
+        self.env['WORKFLOW_SCAN_INVOCATION_ID']=report['invocation']
+        initial=self.ledger()['graphql']
+        for malformed in ('not-json','null','{}','[null]','[7]'):
+            frame=scan.reader.DEPENDENCY_FRAME+malformed
+            with self.assertRaisesRegex(scan.ReadError,'Malformed dependency field framing'):
+                scan.reader.dependency_fields(frame)
+            mutated=json.loads(json.dumps(report));mutated['fullyRead'][0]['depends_on']=frame;snapshot.write_text(json.dumps(mutated))
+            result=self.execute('bash',str(SCRIPTS/'workflow-next-action.sh'),'--repo-root',str(self.root),'--development',development,'--scan-snapshot',str(snapshot),ok=False)
+            self.assertIn('Malformed dependency field framing',result.stderr)
+            self.assertNotIn('NEXT_ACTION=implement',result.stdout)
+            self.assertEqual(self.ledger()['graphql'],initial)
+        snapshot.write_text(json.dumps(report))
+        result=self.execute('bash',str(SCRIPTS/'workflow-next-action.sh'),'--repo-root',str(self.root),'--development',development,'--scan-snapshot',str(snapshot))
+        self.assertIn('NEXT_ACTION=implement',result.stdout);self.assertEqual(self.ledger()['graphql'],initial)
+        # Malformed v4 cache must refresh, never fall back to absence.
+        with patch.dict(os.environ,self.env):
+            self.reset(active=1,dependsOn='#3');client=scan.reader.Client()
+            cache=self.folder/'framing-cache';cache.mkdir(mode=0o700)
+            args=(client,1,'P1','fixture/repo','',str(cache),'fixture',5)
+            valid=scan.reader.fallback(*args,strict_dependencies=True)
+            cache_file=next(cache.glob('*.json'))
+            bad=dict(valid,depends_on=scan.reader.DEPENDENCY_FRAME+'{}');cache_file.write_text(json.dumps(bad))
+            self.assertEqual(scan.reader.fallback(*args,strict_dependencies=True),valid)
+            self.assertEqual(self.ledger()['graphql'],2)
 
     def test_review_fix_loop_lane_composition(self):
         self.artifact()
