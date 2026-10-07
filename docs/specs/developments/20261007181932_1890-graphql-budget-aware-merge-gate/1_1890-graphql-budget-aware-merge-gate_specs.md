@@ -43,19 +43,23 @@ the budget check. Passing this check alone never permits a merge.
 ### Use Case 2: Defer an unaffordable or unreadable operation
 
 **Actor**: Authorized workflow operator.
-**Preconditions**: Work has not reached its first mutating step.
+**Preconditions**: This attempt has not reached its first mutating step. A fresh
+sequence contains unmerged PRs; recovery can include already merged PRs.
 
 **Steps**:
 
 1. Start the delegated merge workflow.
 2. Receive a deferred result because the quota is insufficient or cannot be
    assessed reliably.
-3. Inspect the complete set of PRs left unmerged and the reason.
+3. Inspect the reason and every PR's known state, including PRs left unmerged.
 4. Retry explicitly after the reported reset, or after resolving unreadable
    budget evidence.
 
-**Postconditions**: No selected PR was merged and no workflow mutation occurred
-before admission. The workflow does not poll or retry until the reset.
+**Postconditions**: No new merge or workflow mutation occurred in this attempt.
+Fresh deferral leaves all selected PRs unmerged. Recovery deferral preserves
+previously verified merged, unmerged, uncertain, and pending follow-up states;
+unavailable live reads are marked as unavailable rather than overwriting them.
+The workflow does not poll or retry until the reset.
 
 **Information shown**: Remaining points and reset time when available; otherwise
 an explicit unavailable indication, reason, and operator recovery action.
@@ -94,8 +98,10 @@ progress must remain possible when the remote API is unavailable.
 1. Sample the GraphQL budget before the first workflow mutation, including
    remote audit or readiness changes made by the merge operation itself.
 2. Admission requires readable budget evidence and a bounded projection for the
-   whole selected sequence plus a nonnegative reserve. Cost estimation and
-   configuration mechanics belong in the implementation plan.
+   whole selected sequence plus a valid nonnegative reserve. Missing, malformed,
+   or negative resolved reserve values defer without mutations. Configuration
+   defaults may supply an omitted setting; a valid resolved reserve is still
+   required. Cost estimation and configuration mechanics belong in the plan.
 3. Insufficient or unknown budget defers the complete selected set before any
    merge. A batch must not admit an affordable prefix of an unaffordable set.
 4. The initial sample is not an exclusive reservation: concurrent consumers can
@@ -104,6 +110,8 @@ progress must remain possible when the remote API is unavailable.
    boundaries. Stop starting additional merges on an interruption; report all
    unfinished work rather than silently dropping cleanup or reconciliation.
 6. Recovery verifies live state before repeating a potentially completed action.
+   Its admission projection covers only verified outstanding work. Unknown
+   outstanding work defers; no deferral changes previously recorded PR states.
 7. Preserve existing permissions, risk classification, review freshness,
    readiness checks, checkpoint policy, and tracker ownership in consumers.
 
@@ -115,23 +123,29 @@ mutations. An explicit retry re-assesses budget and existing gates; it does not
 reuse old admission evidence. Interrupted work retains a recovery record.
 
 Reports distinguish verified merged PRs, verified unmerged PRs, and uncertain
-outcomes. Report points spent as an observed sample difference when both samples
-are comparable; concurrent consumption must not be attributed solely to this run.
+outcomes. Report points spent as an observed sample difference only when both
+samples are readable, describe the same quota window and limit, and final
+remaining points do not exceed the initial value. A reset, changed limit, or
+increased balance makes spend unavailable; show the individual readable samples
+and the reason instead. Concurrent consumption must not be attributed solely
+to this run.
 An unavailable final sample is visible and does not erase recorded progress.
 No new notification channel or analytics system is required.
 
 ## Decision Matrix
 
 Evaluate rows 1–3 once for initial admission, before the first mutation. Only
-one of those rows can match. After admission, evaluate rows 4–6 for execution
+one of those rows can match. A recovery attempt uses the same admission rows for
+outstanding work while preserving its recorded PR and follow-up states. After
+admission, evaluate rows 4–6 for execution
 outcomes; the initial budget rows do not reclassify completed or interrupted
 work. Existing readiness stops also apply to admitted work.
 
 | Row | Budget / execution input | Outcome | Required next action |
 | --- | --- | --- | --- |
-| 1 | Before admission; initial evidence or whole-sequence projection unreadable | Deferred | Report unavailable fields, all selected PRs unmerged, and recovery action; no mutation |
-| 2 | Before admission; readable evidence and remaining points below projection plus reserve | Deferred | Report budget, reset, and all selected PRs unmerged; no mutation |
-| 3 | Before admission; readable evidence and remaining points at least projection plus reserve | Admitted | Apply existing gates and record progress before execution |
+| 1 | Before admission; initial evidence or work projection unreadable, or resolved reserve invalid | Deferred | Report reason and recovery action; no new mutation; fresh PRs stay unmerged, recovery retains recorded states |
+| 2 | Before admission; readable evidence, valid reserve, and remaining points below projection plus reserve | Deferred | Report budget, reset, and PR states; no new mutation; fresh PRs stay unmerged, recovery retains recorded states |
+| 3 | Before admission; readable evidence, valid reserve, and remaining points at least projection plus reserve | Admitted | Apply existing gates and record progress before execution |
 | 4 | Admitted; existing readiness gate denies execution | Existing policy stop | Report the existing stop and actual PR state; no unauthorized merge |
 | 5 | Admitted; execution and follow-up complete | Completed | Report verified merge and reconciliation outcomes |
 | 6 | Admitted; execution fails or outcome becomes uncertain | Interrupted | Record completed, uncertain, and pending steps; no additional merges; report recovery |
@@ -151,12 +165,14 @@ coverage. Portfolio scan behavior is outside this feature.
 - [ ] AC1: Mocked sufficient quota permits the existing gates to proceed only
   after budget evidence is sampled and before the first mutation.
 - [ ] AC2: Mocked insufficient quota, including one point below the boundary,
-  produces Deferred, reset time, and every selected PR unmerged, with zero
-  workflow mutation calls.
+  produces Deferred and reset time with zero new workflow mutation calls. Fresh
+  admission reports every selected PR unmerged; recovery deferral preserves
+  already merged, unmerged, uncertain, and pending follow-up states.
 - [ ] AC3: Exact equality admits; projected cost covers the complete bounded
   sequence including gate, merge, cleanup, audit, and tracker reconciliation.
 - [ ] AC4: Unreadable quota or unknown projection defers with an explicit reason
-  and no mutations; REST budget cannot substitute for GraphQL evidence.
+  and no mutations; missing, malformed, or negative resolved reserves also defer;
+  REST budget cannot substitute for GraphQL evidence.
 - [ ] AC5: Mocked interruption after a merge preserves durable completed,
   uncertain, and pending step evidence even when all remote calls fail.
 - [ ] AC6: Interrupted work starts no additional merges, reports pending
@@ -164,7 +180,8 @@ coverage. Portfolio scan behavior is outside this feature.
   a completed merge.
 - [ ] AC7: Reports show projected cost, reserve, initial remaining points, reset
   time when available, and final points/spend when comparable; unavailable final
-  evidence and concurrent consumption are visible.
+  evidence and concurrent consumption are visible. A reset, changed limit, or
+  increased remaining balance shows samples and unavailable spend with a reason.
 - [ ] AC8: Mocked coverage exercises delegated single-item/epic and batch paths,
   preserving current risk, review, CI, audit, and tracker gates.
 
