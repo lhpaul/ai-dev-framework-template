@@ -229,7 +229,10 @@ def inspect(target, owner):
         if len(matches) != 1:
             raise Stop("selected checkout has no unique owning hub product route")
         argv += ["--repo", matches[0]]
-    response = decode(call([*argv, "--pr", str(target["pr"]), "--base", target["base"], target["branch"]]))
+    environment = dict(os.environ)
+    environment.pop("GH_REPO", None)
+    environment.pop("WORKFLOW_TARGET_GITHUB_REPO", None)
+    response = decode(call([*argv, "--pr", str(target["pr"]), "--base", target["base"], target["branch"]], env=environment))
     if not isinstance(response, dict) or not isinstance(response.get("issues"), list):
         raise Stop("owned cleanup target projection unavailable")
     return response
@@ -303,7 +306,7 @@ def journal(path, write=True):
             raise Stop("lock storage is foreign-owned or not private")
         fcntl.flock(fd, fcntl.LOCK_EX)
         state = decode(path.read_text())
-        if state.get("schemaVersion") != SCHEMA:
+        if not isinstance(state, dict) or type(state.get("schemaVersion")) is not int or state.get("schemaVersion") != SCHEMA:
             raise Stop("unknown session schema; use retained compatible recovery reader")
         if str(path) != state.get("session") or path.parent.parent.parent != Path(state["ownerCommonDir"]):
             raise Stop("session owner binding mismatch")
@@ -390,16 +393,23 @@ def admission(state):
         state["initialSample"] = sample
         if sample["remaining"] < state["estimate"]["projectedCost"] + state["reserve"]:
             raise Stop("insufficient GraphQL quota for entire outstanding selection")
-    except Stop as exc:
+    except (Stop, OSError) as exc:
         state["outcome"], state["reason"] = "Deferred", str(exc)
-        state["quotaEvidence"] = exc.evidence
+        state["quotaEvidence"] = getattr(exc, "evidence", None)
         return False
     state["outcome"], state["reason"] = "Admitted", ""
     return True
 
 
 def begin(args):
-    declaration = decode(Path(args.input).read_text()) if args.input else {
+    declaration_error = None
+    if args.input:
+        try:
+            declaration = decode(Path(args.input).read_text())
+        except (Stop, OSError) as exc:
+            declaration, declaration_error = {"prs": None}, str(exc)
+    else:
+        declaration = {
         "ownerRoot": args.repo_root or str(Path.cwd()), "prs": [{
             "repo": args.repo, "pr": args.pr, "head": args.head, "base": args.base, "branch": getattr(args, "branch", None),
             "root": getattr(args, "target_root", None) or args.repo_root or str(Path.cwd()),
@@ -427,6 +437,8 @@ def begin(args):
     state["session"] = str(path)
     seen = set()
     try:
+        if declaration_error:
+            raise Stop(declaration_error)
         if malformed_owner or not isinstance(declaration.get("policy", {}), dict):
             raise Stop("malformed owner or policy declaration")
         state["reserve"] = reserve(owner, args.reserve)
@@ -504,7 +516,14 @@ def begin(args):
                     continue
                 if not isinstance(phase, str) or phase not in PHASES or not isinstance(key, str) or not re.fullmatch(r"[A-Za-z0-9_.:-]+", key) or key in target["steps"]:
                     raise Stop("unknown or duplicate planned phase/step")
+                if set(definition) - {"id", "phase", "auditTarget", "auditRepo", "marker", "issue"}:
+                    raise Stop("unsupported planned step fields; proof is journal-owned")
                 entry = dict(definition, status="pending")
+                if phase == "issue_close":
+                    owned = [issue for issue in target["issues"] if str(issue["id"]) == str(entry.get("issue")) and issue.get("close")]
+                    if len(owned) != 1:
+                        raise Stop("closure step has no exact frozen owning issue")
+                    entry["expectedComment"] = owned[0]["closeComment"]
                 if target["verifiedState"] == "merged" and phase in {"local_merge", "base_push", "merge_api", "merge_verify"}:
                     entry.update(status="completed", verifiedAt=now(), existingMerge=True)
                 if phase in {"audit", "hold"}:
@@ -531,7 +550,7 @@ def begin(args):
         state["manifestFingerprint"] = hashlib.sha256(json.dumps(declaration, sort_keys=True).encode()).hexdigest()
         state["projectionComplete"] = True
         admission(state)
-    except Stop as exc:
+    except (Stop, OSError) as exc:
         state["outcome"], state["reason"] = "Deferred", str(exc)
     publish(path, state)
     return summary(state)
@@ -621,6 +640,12 @@ def before(args):
                 raise Stop("retry content differs from independently outstanding frozen audit intent")
             if not expected or not old.get("marker") or old["marker"] not in expected:
                 raise Stop("audit content lacks frozen stable marker")
+        if args.phase == "issue_close":
+            owned_issue = next(issue for issue in target["issues"] if str(issue["id"]) == str(args.issue))
+            current_issue = issue_read(owned_issue)
+            old.setdefault("issueStateBefore", current_issue["state"])
+            old.setdefault("commentRequired", old["issueStateBefore"] == "OPEN")
+            closure_read(owned_issue, old, current_issue)
         if args.phase in {"local_merge", "base_push"}:
             old["expectedCommit"] = old.get("expectedCommit") if old.get("retryVerifiedAt") and args.phase == "base_push" else call(["git", "-C", current_root, "rev-parse", "HEAD"])
     except (Stop, OSError) as exc:
@@ -661,10 +686,33 @@ def before(args):
 
 def issue_read(issue):
     value = gh("issue", "view", issue["id"], "--repo", issue["repo"], "--json", "number,state")
-    if not isinstance(value, dict) or value.get("number") != int(issue["id"]):
+    if not isinstance(value, dict) or type(value.get("number")) is not int or value.get("number") != int(issue["id"]) or value.get("state") not in {"OPEN", "CLOSED"}:
         raise Stop("owned issue state unavailable")
     return value
 
+
+
+def comments_read(endpoint):
+    pages = gh("api", "--paginate", "--slurp", endpoint)
+    if not isinstance(pages, list) or any(not isinstance(page, list) for page in pages):
+        raise Stop("comment pages evidence malformed")
+    comments = [comment for page in pages for comment in page]
+    if any(not isinstance(comment, dict) or not isinstance(comment.get("body"), str) for comment in comments):
+        raise Stop("comment content evidence malformed")
+    return comments
+
+
+def closure_read(issue, entry, live=None):
+    live = live or issue_read(issue)
+    required = entry.get("commentRequired", entry.get("issueStateBefore") != "CLOSED")
+    entry["commentRequired"] = required
+    entry["currentIssueState"] = live["state"]
+    comment = "not_required"
+    if required:
+        comments = comments_read("repos/%s/issues/%s/comments?per_page=100" % (issue["repo"], issue["id"]))
+        comment = "completed" if any(item["body"] == entry.get("expectedComment") for item in comments) else "pending"
+    entry["effects"] = {"closure": "completed" if live["state"] == "CLOSED" else "pending", "comment": comment}
+    return entry["effects"]["closure"] == "completed" and comment in {"completed", "not_required"}
 
 
 def proof_root(state, expected_common, preferred):
@@ -691,8 +739,9 @@ def tracker_read(state, issue):
     owner = proof_root(state, state["ownerCommonDir"], state["ownerRoot"])
     environment = dict(os.environ, WORKFLOW_MERGE_BUDGET_SESSION=state["session"], WORKFLOW_MERGE_BUDGET_OWNER_ROOT=owner,
                        WORKFLOW_TARGET_GITHUB_REPO=issue["repo"])
+    environment.pop("GH_REPO", None)
     value = call(["bash", "-c", script, "budget-read", str(SCRIPT), owner, str(issue["id"]), issue["status"]], env=environment).splitlines()
-    if len(value) != 3:
+    if len(value) != 3 or not value[0] or any(re.fullmatch(r"[0-9]+", rank) is None for rank in value[1:]):
         raise Stop("tracker read-back/order evidence unavailable")
     if value[0] == issue["status"]:
         return True
@@ -702,9 +751,6 @@ def tracker_read(state, issue):
 def verify(state, target, entry):
     phase = entry["phase"]
     git_root = proof_root(state, target["commonDir"], target["root"]) if phase in {"local_merge", "base_push", "remote_delete", "local_cleanup", "policy_skip"} else target["root"]
-    if entry.get("verifiedNoOp") and phase == "issue_close":
-        issue = next(i for i in target["issues"] if str(i["id"]) == str(entry["issue"]))
-        return issue_read(issue)["state"] == "CLOSED"
     if entry.get("supersededBy"):
         return verify(state, target, target["steps"][entry["supersededBy"]])
     if phase in {"merge_api", "merge_verify", "cleanup", "remote_delete", "local_cleanup", "issue_close", "tracker", "policy_skip"}:
@@ -714,11 +760,11 @@ def verify(state, target, entry):
         if phase in {"merge_api", "merge_verify"}:
             if live["state"] == "MERGED":
                 return True
-            if live.get("isInMergeQueue") is True or isinstance(live.get("autoMergeRequest"), dict):
+            if live["state"] == "OPEN" and (live.get("isInMergeQueue") is True or isinstance(live.get("autoMergeRequest"), dict)):
                 state["outcome"], state["reason"] = "Waiting", "verified queued/auto-merge submission; resume after live MERGED"
                 entry["submission"] = {"observedAt": now(), "state": live["state"], "head": live["headRefOid"]}
                 return False
-            if entry.get("exitCode") is not None and entry["exitCode"] != 0:
+            if live["state"] == "OPEN" and entry.get("exitCode") is not None and entry["exitCode"] != 0:
                 raise Stop("failed merge API remains independently OPEN without submission", {"knownOutstanding": True})
             raise Stop("merge outcome not verified")
         if live["state"] != "MERGED":
@@ -758,12 +804,7 @@ def verify(state, target, entry):
         return True
     if phase in {"audit", "hold"}:
         endpoint = "repos/%s/issues/%s/comments?per_page=100" % (entry.get("auditRepo", target["repo"]), entry.get("auditTarget", target["pr"]))
-        pages = gh("api", "--paginate", "--slurp", endpoint)
-        if not isinstance(pages, list) or any(not isinstance(page, list) for page in pages):
-            raise Stop("audit comments evidence malformed")
-        comments = [c for page in pages for c in page]
-        if any(not isinstance(c, dict) or not isinstance(c.get("body"), str) for c in comments):
-            raise Stop("audit comment identity/content evidence malformed")
+        comments = comments_read(endpoint)
         expected = entry.get("expectedBody")
         if not expected or not any(c["body"] == expected for c in comments):
             raise Stop("audit body not independently verified", {"knownOutstanding": True})
@@ -805,13 +846,7 @@ def verify(state, target, entry):
                     raise Stop("current owning Linear bridge read-back required")
                 return True
             return tracker_read(state, matches[0])
-        if issue_read(matches[0])["state"] != "CLOSED":
-            return False
-        if entry.get("verifiedNoOp"):
-            return True
-        pages = gh("api", "--paginate", "--slurp", "repos/%s/issues/%s/comments?per_page=100" % (matches[0]["repo"], matches[0]["id"]))
-        return any(isinstance(c, dict) and c.get("body") == entry.get("expectedComment")
-                   for page in pages for c in page)
+        return closure_read(matches[0], entry)
     if phase == "cleanup":
         for issue in target["issues"]:
             if issue.get("tracker") and not tracker_read(state, issue):
@@ -852,7 +887,7 @@ def after(args):
     if getattr(args, "no_op", False):
         if args.phase not in {"tracker", "issue_close"}:
             raise Stop("no-op verification unavailable for this phase")
-        entry["verifiedNoOp"] = True
+        entry["verifiedNoOp"] = args.phase != "issue_close" or entry.get("issueStateBefore") == "CLOSED"
     failure = None
     try:
         completed = verify(image, target, entry)
@@ -862,7 +897,7 @@ def after(args):
             raise Stop("required follow-up pending or mismatched")
         entry["status"] = ("skipped_by_policy" if entry.get("skippedPhase") or entry.get("policySkip") else "completed") if completed else "pending"
         entry["verifiedAt"] = now()
-    except Stop as exc:
+    except (Stop, OSError) as exc:
         entry["status"] = "uncertain"
         image["outcome"], image["reason"] = "Interrupted", str(exc)
         failure = str(exc)
@@ -912,7 +947,7 @@ def resume(args):
             live = pr_read(target)
             target["verifiedState"] = "merged" if live["state"] == "MERGED" else "unmerged"
             target["lastVerifiedAt"] = now()
-            if live["state"] != "MERGED" and (live.get("isInMergeQueue") is True or isinstance(live.get("autoMergeRequest"), dict)):
+            if live["state"] == "OPEN" and (live.get("isInMergeQueue") is True or isinstance(live.get("autoMergeRequest"), dict)):
                 image["outcome"], image["reason"] = "Waiting", "submission remains queued; do not repeat"
                 break
             for entry in target["steps"].values():
@@ -935,7 +970,7 @@ def resume(args):
             image["attempt"] += 1
             admission(image)
             complete_if_ready(image)
-    except Stop as exc:
+    except (Stop, OSError) as exc:
         image["outcome"], image["reason"] = "Deferred", "unknown outstanding work: " + str(exc)
         image["recoveryAwaitingProvider"] = bool(linear_entries)
     with journal(args.session) as state:
@@ -975,9 +1010,9 @@ def summary(state, final=False):
             else:
                 result["observedSpend"] = first["remaining"] - last["remaining"]
                 result["spendReason"] = None
-        except Stop as exc:
+        except (Stop, OSError) as exc:
             result["finalSample"] = None
-            result["finalEvidence"] = exc.evidence
+            result["finalEvidence"] = getattr(exc, "evidence", None)
             result["spendReason"] = str(exc)
     return result
 
@@ -996,6 +1031,9 @@ def provider(args):
                 or entry.get("expectedStatus") != issue["status"]
                 or entry.get("status") not in {"in_flight", "uncertain", "completed"}):
             raise Stop("provider proof has no declared intent/owner")
+        active = state.get("active") or {}
+        if any(alive(child["pid"]) or group_alive(child["group"]) for child in active.get("children", [])):
+            raise Stop("recorded mutating child still active; provider proof cannot release execution claim")
         valid = (evidence.get("provider") == "linear" and evidence.get("issue") == issue["id"] and
                  evidence.get("repo") == issue["repo"] and evidence.get("statusName") == issue["status"] and
                  all(isinstance(evidence.get(field), str) and evidence[field] for field in ("statusId", "mutationRequestId", "readRequestId")) and
@@ -1134,6 +1172,13 @@ def main():
                 intent = before(args)
                 env = dict(os.environ, WORKFLOW_MERGE_BUDGET_SESSION=args.session,
                            WORKFLOW_MERGE_BUDGET_TOKEN=intent["token"])
+                env.pop("GH_REPO", None)
+                env.pop("WORKFLOW_TARGET_GITHUB_REPO", None)
+                if args.phase in {"tracker", "issue_close"}:
+                    selected = target_for(snapshot(args.session), args)
+                    owning_issue = next(issue for issue in selected["issues"] if str(issue["id"]) == str(args.issue))
+                    env["GH_REPO"] = owning_issue["repo"]
+                    env["WORKFLOW_TARGET_GITHUB_REPO"] = owning_issue["repo"]
                 read_fd, write_fd = os.pipe()
                 owner_binding = snapshot(args.session)
                 env["WORKFLOW_MERGE_BUDGET_OWNER_ROOT"] = proof_root(owner_binding, owner_binding["ownerCommonDir"], owner_binding["ownerRoot"])
@@ -1142,8 +1187,21 @@ def main():
                 gate = ('import os,sys; fd=int(sys.argv[1]); permission=os.read(fd,1); '
                         'os.close(fd); '
                         'sys.exit(2) if permission != b"1" else os.execvpe(sys.argv[2],sys.argv[2:],os.environ)')
-                child = subprocess.Popen([sys.executable, "-c", gate, str(read_fd), *argv],
-                                         env=env, pass_fds=(read_fd,), start_new_session=True)
+                try:
+                    child = subprocess.Popen([sys.executable, "-c", gate, str(read_fd), *argv],
+                                             env=env, pass_fds=(read_fd,), start_new_session=True)
+                except OSError as exc:
+                    os.close(read_fd)
+                    os.close(write_fd)
+                    with journal(args.session) as state:
+                        entry = target_for(state, args)["steps"][step_key(args)]
+                        if entry.get("token") != intent["token"] or entry["status"] != "in_flight":
+                            raise Stop("execution intent changed during failed launch")
+                        entry["status"] = "uncertain"
+                        state["outcome"], state["reason"] = "Interrupted", "mutation child could not launch: " + str(exc)
+                        if not any(step["status"] == "in_flight" for target in state["prs"] for step in target["steps"].values()):
+                            state["active"] = None
+                    raise Stop("mutation child could not launch") from exc
                 os.close(read_fd)
                 try:
                     with journal(args.session) as state:

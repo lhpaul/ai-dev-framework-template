@@ -28,7 +28,8 @@ if args[:2] == ['api', 'rate_limit']:
         sys.exit(1)
     emit({'resources': {'graphql': state['quota']}})
 if args[:2] == ['repo', 'view']:
-    emit({'nameWithOwner': state['repo'], 'owner': {'login': state['repo'].split('/')[0]}, 'name': state['repo'].split('/')[1]})
+    repository = os.environ.get('GH_REPO',state['repo'])
+    emit({'nameWithOwner': repository, 'owner': {'login': state['repo'].split('/')[0]}, 'name': state['repo'].split('/')[1]})
 if args[:2] == ['api', 'graphql']:
     query = next((a[6:] for a in args if a.startswith('query=')), '')
     if 'MergeBudgetPR' in query:
@@ -39,6 +40,8 @@ if args[:2] == ['api', 'graphql']:
     if 'updateProjectV2ItemFieldValue' in query:
         if state.get('trackerFailure'):
             sys.exit(1)
+        state.setdefault('trackerMutationRepos',[]).append(os.environ.get('GH_REPO',state['repo']))
+        state['trackerMutationCount'] = state.get('trackerMutationCount',0)+1
         state['trackerStatus'] = 'Merged'
         save()
         emit({'data': {'updateProjectV2ItemFieldValue': {'projectV2Item': {'id': 'item'}}}})
@@ -71,8 +74,17 @@ if args[:2] == ['pr', 'merge']:
 if args[:2] == ['issue', 'view']:
     emit({'number': int(args[2]), 'state': state.get('issueState', 'CLOSED')})
 if args[:2] == ['issue', 'close']:
+    state.setdefault('issueMutationRepos',[]).append(os.environ.get('GH_REPO',state['repo']))
+    if '--comment' in args and not state.get('omitCloseComment'):
+        state.setdefault('comments', []).append({'id': len(state.get('comments',[]))+1, 'body': args[args.index('--comment')+1]})
+    if state.get('closeFailure'):
+        save()
+        sys.exit(1)
     state['issueState'] = 'CLOSED'
-    state.setdefault('comments', []).append({'id': 1, 'body': args[args.index('--comment')+1]})
+    save()
+    sys.exit(0)
+if args[:2] == ['issue','comment']:
+    state.setdefault('comments',[]).append({'id':len(state.get('comments',[]))+1,'body':args[args.index('--body')+1]})
     save()
     sys.exit(0)
 if args[:1] == ['api'] and any('/comments' in a for a in args):

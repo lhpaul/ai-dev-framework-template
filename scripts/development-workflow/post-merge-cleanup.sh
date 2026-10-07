@@ -1040,9 +1040,19 @@ fetch_hub_tracker_closing_issues() {
 }
 
 cleanup_close_issue() {
-  local issue="$1" comment="$2" status=0
+  local issue="$1" comment="$2" status=0 binding closure_effect comment_effect
   workflow_merge_budget_before issue_close "issue_close:$issue" --issue "$issue" --status Merged || return 1
-  gh issue close "$issue" --comment "$comment" || status=$?
+  binding="$(workflow_merge_budget_helper check --session "$WORKFLOW_MERGE_BUDGET_SESSION" --repo "$WORKFLOW_MERGE_BUDGET_REPO" --pr "$WORKFLOW_MERGE_BUDGET_PR" --step "issue_close:$issue" --phase issue_close --issue "$issue")" || return 1
+  printf '%s' "$binding" | jq -e --arg repo "$WORKFLOW_MERGE_BUDGET_REPO" --argjson pr "$WORKFLOW_MERGE_BUDGET_PR" --arg key "issue_close:$issue" --arg comment "$comment" '.prs[] | select(.repo==$repo and .pr==$pr) | .steps[$key].expectedComment == $comment' >/dev/null || return 1
+  closure_effect="$(printf '%s' "$binding" | jq -r --arg repo "$WORKFLOW_MERGE_BUDGET_REPO" --argjson pr "$WORKFLOW_MERGE_BUDGET_PR" --arg key "issue_close:$issue" '.prs[] | select(.repo==$repo and .pr==$pr) | .steps[$key].effects.closure')"
+  comment_effect="$(printf '%s' "$binding" | jq -r --arg repo "$WORKFLOW_MERGE_BUDGET_REPO" --argjson pr "$WORKFLOW_MERGE_BUDGET_PR" --arg key "issue_close:$issue" '.prs[] | select(.repo==$repo and .pr==$pr) | .steps[$key].effects.comment')"
+  if [ "$closure_effect" = pending ] && [ "$comment_effect" = pending ]; then
+    gh issue close "$issue" --comment "$comment" || status=$?
+  elif [ "$closure_effect" = pending ]; then
+    gh issue close "$issue" || status=$?
+  elif [ "$comment_effect" = pending ]; then
+    gh issue comment "$issue" --body "$comment" || status=$?
+  fi
   workflow_merge_budget_after issue_close "issue_close:$issue" "$status" --issue "$issue" --status Merged >/dev/null || return 1
   return "$status"
 }
@@ -1225,7 +1235,7 @@ if [ "$inspect_targets" -eq 1 ]; then
     $0==base || $0==branch { print path }
   ' | jq -Rsc 'split("\n") | map(select(length>0))')"
   inspection_close_comment="Closed by $(pr_close_label "$inspection_repo" "$merged_pr_number")."
-  printf '%s\n' "$inspection_refs" | jq -Rsc --argjson cross "$inspection_cross" --argjson worktrees "$inspection_worktrees" --arg remote "$branch_owner_kind" --argjson participants "$inspection_participants" --arg comment "$inspection_close_comment" --arg provider "$inspection_provider" --arg repo "$inspection_owner" --arg status "$inspection_status"     '{worktrees:$worktrees,remoteCleanup:($remote=="implementation" and ($cross|not)),participants:$participants,issues:(split("\n") | map(select(length>0) | {id:.,provider:$provider,repo:$repo,status:$status,statusPolicy:(if $provider=="github_projects" and $status!="Merged" then "at_least" else "exact" end),close:($status=="Merged" and $provider!="linear"),tracker:($provider=="github_projects" or $provider=="linear"),closeComment:$comment}))}'
+  printf '%s\n' "$inspection_refs" | jq -Rsc --argjson cross "$inspection_cross" --argjson worktrees "$inspection_worktrees" --arg remote "$branch_owner_kind" --argjson participants "$inspection_participants" --arg comment "$inspection_close_comment" --arg provider "$inspection_provider" --arg repo "$inspection_owner" --arg status "$inspection_status"     '{worktrees:$worktrees,remoteCleanup:($remote=="implementation" and ($cross|not)),participants:$participants,issues:(split("\n") | map(select(length>0) | {id:.,provider:$provider,repo:$repo,status:$status,statusPolicy:(if $provider=="github_projects" then "at_least" else "exact" end),close:($status=="Merged" and $provider!="linear"),tracker:($provider=="github_projects" or $provider=="linear"),closeComment:$comment}))}'
   exit 0
 fi
 
@@ -1414,6 +1424,11 @@ cleanup_pending="$(workflow_merge_budget_helper report --session "$merge_session
 while IFS=$'\t' read -r cleanup_step cleanup_phase cleanup_issue; do
   [ -n "$cleanup_step" ] || continue
   cleanup_expected="$(workflow_merge_budget_helper report --session "$merge_session" | jq -r --arg repo "$cleanup_budget_repo" --argjson pr "$merged_pr_number" --arg issue "$cleanup_issue" '.prs[] | select(.repo==$repo and .pr==$pr) | .issues[] | select((.id|tostring)==$issue) | .status')"
+  if [ "$cleanup_phase" = issue_close ]; then
+    cleanup_comment="$(workflow_merge_budget_helper report --session "$merge_session" | jq -r --arg repo "$cleanup_budget_repo" --argjson pr "$merged_pr_number" --arg step "$cleanup_step" '.prs[] | select(.repo==$repo and .pr==$pr) | .steps[$step].expectedComment')"
+    cleanup_close_issue "$cleanup_issue" "$cleanup_comment" || exit 2
+    continue
+  fi
   workflow_merge_budget_before "$cleanup_phase" "$cleanup_step" --issue "$cleanup_issue" --status "$cleanup_expected" || exit 2
   workflow_merge_budget_after "$cleanup_phase" "$cleanup_step" 0 --issue "$cleanup_issue" --status "$cleanup_expected" --no-op >/dev/null || exit 2
 done <<< "$cleanup_pending"

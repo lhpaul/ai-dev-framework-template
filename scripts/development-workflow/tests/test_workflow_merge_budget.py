@@ -265,6 +265,90 @@ class Admission(unittest.TestCase):
         report = budget.summary(budget.snapshot(self.args.session))
         self.assertNotIn('token', report['prs'][0]['steps']['merge_api'])
 
+    def test_live_verification_oserror_is_durably_interrupted(self):
+        self.begin()
+        budget.before(self.args)
+        with patch.object(budget,'pr_read',side_effect=FileNotFoundError('fixture executable missing')):
+            with self.assertRaises(budget.Stop):
+                budget.after(self.args)
+        state = budget.snapshot(self.args.session)
+        self.assertEqual(state['outcome'],'Interrupted')
+        self.assertEqual(state['prs'][0]['steps']['merge_api']['status'],'uncertain')
+        self.assertEqual(state['prs'][0]['steps']['merge_api']['exitCode'],0)
+
+    def test_unavailable_final_sample_and_admission_preserve_known_facts(self):
+        self.begin()
+        state = budget.snapshot(self.args.session)
+        state['outcome'] = 'Completed'; state['prs'][0]['verifiedState'] = 'merged'
+        with patch.object(budget,'budget',side_effect=FileNotFoundError('fixture gh unavailable')):
+            report = budget.summary(state,True)
+            self.assertEqual(report['outcome'],'Completed')
+            self.assertEqual(report['prs'][0]['verifiedState'],'merged')
+            self.assertIsNone(report['observedSpend'])
+            self.assertFalse(budget.admission(state))
+            self.assertEqual(state['outcome'],'Deferred')
+            self.assertEqual(state['prs'][0]['verifiedState'],'merged')
+            result = budget.resume(self.args)
+            self.assertEqual(result['outcome'],'Deferred')
+
+    def test_malformed_issue_and_comment_pages_are_unknown(self):
+        issue = {'repo':'org/repo','id':'1'}
+        for value in [{'number':True,'state':'CLOSED'}, {'number':1,'state':'UNKNOWN'}, {'number':1}]:
+            with patch.object(budget,'gh',return_value=value):
+                with self.assertRaises(budget.Stop) as raised:
+                    budget.issue_read(issue)
+                self.assertFalse((raised.exception.evidence or {}).get('knownOutstanding'))
+        for value in [{}, [None], [[{}]], [[{'body':None}]], [[{'body':True}]]]:
+            with patch.object(budget,'gh',return_value=value):
+                with self.assertRaises(budget.Stop) as raised:
+                    budget.comments_read('fixture/comments')
+                self.assertFalse((raised.exception.evidence or {}).get('knownOutstanding'))
+        with patch.object(budget,'gh',return_value=[]):
+            self.assertEqual(budget.comments_read('fixture/comments'),[])
+
+    def test_empty_best_effort_tracker_read_is_unknown(self):
+        self.begin()
+        state = budget.snapshot(self.args.session)
+        issue = {'id':'99','repo':'org/repo','provider':'github_projects','status':'Merged'}
+        for result in ['\n-1\n9', 'Unrecognized\n-1\n9', 'Plan Ready\n6\n-1']:
+            with patch.object(budget,'proof_root',return_value=str(self.owner)), patch.object(budget,'call',return_value=result):
+                with self.assertRaises(budget.Stop):
+                    budget.tracker_read(state,issue)
+        with patch.object(budget,'proof_root',return_value=str(self.owner)), patch.object(budget,'call',return_value='Plan Ready\n6\n9'):
+            self.assertFalse(budget.tracker_read(state,issue))
+
+    def test_closed_queue_is_unknown_and_merged_queue_remains_merged(self):
+        self.begin()
+        budget.before(self.args)
+        self.live.update(state='CLOSED',isInMergeQueue=True)
+        with self.assertRaises(budget.Stop):
+            budget.after(self.args)
+        self.assertEqual(budget.snapshot(self.args.session)['outcome'],'Interrupted')
+        result = budget.resume(self.args)
+        self.assertEqual(result['outcome'],'Deferred')
+        self.live['state'] = 'MERGED'
+        result = budget.resume(self.args)
+        self.assertEqual(result['outcome'],'Admitted')
+        self.assertEqual(result['prs'][0]['verifiedState'],'merged')
+
+    def test_noop_closure_requires_independent_closed_state_before_intent(self):
+        issue = {'id':'99','provider':'none','repo':'org/repo','status':'Merged','tracker':False,
+                 'close':True,'closeComment':'Closed by PR #12.'}
+        patcher = patch.object(budget,'inspect',return_value={'issues':[issue]})
+        patcher.start(); self.addCleanup(patcher.stop)
+        self.begin(); self.live['state'] = 'MERGED'
+        self.args.phase,self.args.step,self.args.issue,self.args.status = 'issue_close','issue_close:99','99','Merged'
+        with patch.object(budget,'issue_read',return_value={'number':99,'state':'OPEN'}), patch.object(budget,'comments_read',return_value=[]):
+            budget.before(self.args)
+        self.args.no_op = True
+        with patch.object(budget,'issue_read',return_value={'number':99,'state':'CLOSED'}), patch.object(budget,'comments_read',return_value=[]):
+            with self.assertRaises(budget.Stop):
+                budget.after(self.args)
+        state = budget.snapshot(self.args.session)
+        self.assertEqual(state['outcome'],'Interrupted')
+        self.assertFalse(state['prs'][0]['steps']['issue_close:99']['verifiedNoOp'])
+        self.assertEqual(state['prs'][0]['steps']['issue_close:99']['issueStateBefore'],'OPEN')
+
     def test_timestamp_contract(self):
         from datetime import timedelta, timezone, datetime
         earlier = datetime.now(timezone.utc) - timedelta(seconds=2)
@@ -351,6 +435,24 @@ class Admission(unittest.TestCase):
         with self.assertRaises(budget.Stop):
             budget.provider(self.args)  # prior read timestamp cannot authorize a later recovery
 
+    def test_provider_proof_cannot_release_surviving_mutating_child(self):
+        issue = {'id':'ENG-12','provider':'linear','repo':'org/repo','status':'Merged','tracker':True,'close':False}
+        patcher = patch.object(budget,'inspect',return_value={'issues':[issue]})
+        patcher.start(); self.addCleanup(patcher.stop)
+        self.begin(); self.live['state'] = 'MERGED'
+        self.args.phase,self.args.step,self.args.issue,self.args.status = 'tracker','tracker:ENG-12:pre','ENG-12','Merged'
+        intent = budget.before(self.args)
+        with budget.journal(self.args.session) as state:
+            state['active']['children'] = [{'pid':os.getpid(),'group':os.getpgrp(),'step':self.args.step,'repo':'org/repo','pr':12}]
+        self.args.evidence = str(self.owner/'1890-provider-live-proof.json')
+        Path(self.args.evidence).write_text(json.dumps({'provider':'linear','repo':'org/repo','issue':'ENG-12',
+            'statusName':'Merged','statusId':'merged','mutationRequestId':'1890-mutation','readRequestId':'1890-read','observedAt':budget.now()}))
+        with self.assertRaises(budget.Stop):
+            budget.provider(self.args)
+        state = budget.snapshot(self.args.session)
+        self.assertEqual(state['active']['token'],intent['token'])
+        self.assertEqual(state['prs'][0]['steps'][self.args.step]['status'],'in_flight')
+
     def test_python_query_literal_uses_existing_linter(self):
         source = Path(__file__).resolve().parents[1]/'workflow-merge-budget.py'
         import ast
@@ -367,8 +469,12 @@ class Admission(unittest.TestCase):
         self.begin()
         path = Path(self.args.session)
         self.assertEqual(path.stat().st_mode & 0o777, 0o600)
-        with budget.journal(path) as state:
-            state['schemaVersion'] = 999
+        original = json.loads(path.read_text())
+        for version in [999, True, '1']:
+            altered = dict(original,schemaVersion=version); path.write_text(json.dumps(altered))
+            with self.assertRaises(budget.Stop):
+                budget.snapshot(path)
+        path.write_text('[]')
         with self.assertRaises(budget.Stop):
             budget.snapshot(path)
 
@@ -421,15 +527,17 @@ class Composed(unittest.TestCase):
             self.env.pop(name, None)
 
     def tearDown(self):
-        destination = Path('/tmp/dev-adf-5070-1890-implementation/1890-composed-evidence.json')
-        if not destination.parent.is_dir():
-            return
+        directory = Path(os.environ.get('WORKFLOW_MERGE_BUDGET_TEST_EVIDENCE_DIR',str(self.root)))
+        if not directory.is_dir():
+            raise AssertionError('caller-owned evidence directory must exist')
+        destination = directory/'1890-composed-evidence.json'
         records = json.loads(destination.read_text()) if destination.exists() else {}
-        records[self.id()] = {'events':json.loads(self.fixture.read_text()).get('events',[]),
+        record_id = self.id()+('.'+self.evidence_case if hasattr(self,'evidence_case') else '')
+        records[record_id] = {'events':json.loads(self.fixture.read_text()).get('events',[]),
                              'sessions':[]}
         for journal in self.repo.glob('.git/workflow-merge-budget/*/state.json'):
             state = json.loads(journal.read_text())
-            records[self.id()]['sessions'].append({'outcome':state['outcome'],'reason':state['reason'],
+            records[record_id]['sessions'].append({'outcome':state['outcome'],'reason':state['reason'],
                 'projectionComplete':state['projectionComplete'],'estimate':state.get('estimate'),
                 'prs':[{'repo':target['repo'],'pr':target['pr'],'verifiedState':target['verifiedState'],
                         'steps':{key:{field:entry.get(field) for field in ('phase','status','exitCode','commit','verifiedRemoteCommit')}
@@ -558,6 +666,55 @@ class Composed(unittest.TestCase):
         report = json.loads(self.helper('report','--session',session).stdout)
         self.assertTrue(all(s['status'] in {'completed','skipped_by_policy'} for s in report['prs'][0]['steps'].values()))
 
+    def test_actual_partial_close_effects_recover_without_replaying_success(self):
+        for failure in ('closeFailure','omitCloseComment'):
+            with self.subTest(failure=failure):
+                if failure == 'omitCloseComment':
+                    # A separate fixture resets all Git, quota and journal identities.
+                    self.tearDown(); self.doCleanups(); self.setUp()
+                self.evidence_case = failure
+                self.data.update(issueState='OPEN',**{failure:True})
+                self.fixture.write_text(json.dumps(self.data))
+                session = self.begin()
+                self.command(['bash',str(self.scripts/'batch-merge.sh'),'--merge-session',session,
+                              'merge','--pr','12','--expected-head-sha',self.head],self.env)
+                argv = ['bash',str(self.scripts/'post-merge-cleanup.sh'),'--merge-session',session,
+                        '--repo-root',str(self.repo),'--base','develop','--pr','12','feature/12-item']
+                result = subprocess.run(argv,cwd=self.repo,env=self.env,text=True,capture_output=True)
+                self.assertNotEqual(result.returncode,0)
+                report = json.loads(self.helper('report','--session',session).stdout)
+                step = report['prs'][0]['steps']['issue_close:12']
+                self.assertEqual(step['issueStateBefore'],'OPEN')
+                self.assertTrue(step['commentRequired'])
+                expected = {'closure':'pending','comment':'completed'} if failure == 'closeFailure' else {'closure':'completed','comment':'pending'}
+                self.assertEqual(step['effects'],expected)
+                data = json.loads(self.fixture.read_text()); data[failure] = False
+                self.fixture.write_text(json.dumps(data))
+                self.helper('resume','--session',session)
+                self.command(argv,self.env)
+                data = json.loads(self.fixture.read_text())
+                self.assertEqual(len(data['comments']),1)
+                self.assertEqual(data['issueState'],'CLOSED')
+                self.assertEqual(data['events'].count(['issue','comment']),0 if failure == 'closeFailure' else 1)
+                self.assertEqual(data['events'].count(['issue','close']),2 if failure == 'closeFailure' else 1)
+                self.assertEqual(json.loads(self.helper('report','--session',session).stdout)['outcome'],'Completed')
+
+    def test_actual_closed_released_tracker_preserves_forward_progress(self):
+        (self.repo/'.ai-dev-workflow.yaml').write_text('issue_tracker:\n  provider: github_projects\n  project_number: 1\n')
+        self.data.update(trackerStatus='Released',issueState='CLOSED')
+        self.fixture.write_text(json.dumps(self.data))
+        session = self.begin()
+        self.command(['bash',str(self.scripts/'batch-merge.sh'),'--merge-session',session,
+                      'merge','--pr','12','--expected-head-sha',self.head],self.env)
+        self.command(['bash',str(self.scripts/'post-merge-cleanup.sh'),'--merge-session',session,
+                      '--repo-root',str(self.repo),'--base','develop','--pr','12','feature/12-item'],self.env)
+        report = json.loads(self.helper('report','--session',session).stdout)
+        self.assertEqual(report['outcome'],'Completed')
+        data = json.loads(self.fixture.read_text())
+        self.assertEqual(data['trackerStatus'],'Released')
+        self.assertEqual(data.get('trackerMutationCount',0),0)
+        self.assertNotIn(['issue','close'],data['events'])
+
     def test_actual_failed_tracker_zero_exit_requires_recovery(self):
         (self.repo/'.ai-dev-workflow.yaml').write_text('issue_tracker:\n  provider: github_projects\n  project_number: 1\n')
         self.data.update(trackerFailure=True,trackerStatus='Plan Ready')
@@ -645,6 +802,19 @@ class Composed(unittest.TestCase):
             self.assertEqual(json.loads(result.stdout)['outcome'],'Deferred')
             self.assertNotIn('Traceback',result.stderr)
 
+    def test_actual_invalid_json_retains_durable_deferred_report(self):
+        path = self.root/'1890-invalid-manifest.json'
+        for raw in ['{"prs":[],"prs":[]}', '{"prs":NaN}', '{not-json', '{"prs":Infinity}']:
+            path.write_text(raw)
+            result = self.helper('begin','--input',path,success=False)
+            self.assertEqual(result.returncode,2)
+            report = json.loads(result.stdout)
+            self.assertEqual(report['outcome'],'Deferred')
+            self.assertFalse(report['projectionComplete'])
+            self.assertTrue(Path(report['session']).is_file())
+            self.assertEqual(json.loads(self.helper('report','--session',report['session']).stdout)['outcome'],'Deferred')
+            self.assertNotIn('Traceback',result.stderr)
+
     def test_actual_failed_audit_readable_absence_retries_exact_intent(self):
         path = self.root/'1890-audit-retry-manifest.json'
         path.write_text(json.dumps({'ownerRoot':str(self.repo),'prs':[{'repo':'org/repo','pr':12,
@@ -664,6 +834,30 @@ class Composed(unittest.TestCase):
         self.helper(*args)
         self.assertEqual(json.loads(self.helper('report','--session',session).stdout)['outcome'],'Completed')
         self.assertEqual(json.loads(self.fixture.read_text())['comments'][0]['body'],body.read_text())
+
+    def test_session_dispatch_clears_foreign_github_repo_override(self):
+        (self.repo/'.ai-dev-workflow.yaml').write_text('issue_tracker:\n  provider: github_projects\n  project_number: 1\n')
+        self.data['trackerStatus'] = 'Plan Ready'
+        self.data['issueState'] = 'OPEN'; self.fixture.write_text(json.dumps(self.data))
+        self.env['GH_REPO'] = 'foreign/same-number'
+        self.env['WORKFLOW_TARGET_GITHUB_REPO'] = 'foreign/same-number'
+        session = self.begin()
+        # Initial explicit helper inspection and gated actual child use physical ownership.
+        self.helper('run-step','--session',session,'--repo','org/repo','--pr','12',
+                    '--step','merge_api','--phase','merge_api','--',
+                    'gh','pr','merge','12','--merge','--match-head-commit',self.head)
+        self.helper('run-step','--session',session,'--repo','org/repo','--pr','12',
+                    '--step','tracker:12:pre','--phase','tracker','--issue','12','--status','Merged',
+                    '--','bash','-c','source "$1/workflow-lib.sh"; update_tracker_status_best_effort 12 Merged',
+                    '1890-owned-tracker',self.scripts)
+        self.helper('run-step','--session',session,'--repo','org/repo','--pr','12',
+                    '--step','issue_close:12','--phase','issue_close','--issue','12','--status','Merged',
+                    '--','gh','issue','close','12','--comment','Closed by PR #12.')
+        data = json.loads(self.fixture.read_text())
+        self.assertEqual(data['issueMutationRepos'],['org/repo'])
+        self.assertEqual(data['trackerMutationRepos'],['org/repo'])
+        self.assertEqual(data['issueState'],'CLOSED')
+        self.assertEqual(json.loads(self.helper('report','--session',session).stdout)['prs'][0]['issues'][0]['repo'],'org/repo')
 
     def test_actual_authorized_admin_argv_is_preserved(self):
         session = self.begin()
@@ -712,7 +906,7 @@ class Composed(unittest.TestCase):
         restored = subprocess.run(argv,cwd=self.repo,env=self.env,text=True,capture_output=True)
         self.assertNotEqual(restored.returncode,0)
         self.assertNotIn(['pr','merge'],json.loads(self.fixture.read_text())['events'])
-        evidence = Path('/tmp/dev-adf-5070-1890-implementation/1890-planted-admission-proof.json')
+        evidence = Path(os.environ.get('WORKFLOW_MERGE_BUDGET_TEST_EVIDENCE_DIR',str(self.root)))/'1890-planted-admission-proof.json'
         if evidence.parent.is_dir():
             revision = subprocess.run(['git','rev-parse','HEAD'],cwd=self.source,text=True,capture_output=True,check=True).stdout.strip()
             evidence.write_text(json.dumps({'source':'scripts/development-workflow/workflow-merge-budget.py',
