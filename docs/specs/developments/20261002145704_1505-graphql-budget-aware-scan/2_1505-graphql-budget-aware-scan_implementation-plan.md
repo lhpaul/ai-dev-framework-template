@@ -433,6 +433,53 @@ mutation into any command.
 | Account concurrency or reset distorts delta | Spec warning/reset semantics; report observed delta, never claim exclusive accounting |
 | Retained folders or missing fields become actionable | Open-identity intersection and atomic complete-record publication |
 
+## Reversal Procedure
+
+This procedure applies when an implementation of D1–D4 has landed and a
+regression requires restoring the prior workflow. It does not authorize a
+rollback during this plan-stage invocation. The rollback owner opens a new
+`fix/1505-revert-budget-aware-scan` PR from the current `develop`, identifies the
+implementation merge and any later dependent commits, and uses new compensating
+commits (`git revert` where the diff is clean). Preserve shared history and all
+branches; never reset, force-push, or restore entire old files over unrelated
+changes. For a downstream repository, use its normal PR path and current
+integration base, with that repository's owner coordinating the rollback.
+
+The rollback PR restores the shared targeted-reader/fallback behavior and its
+consumer error handling from before this implementation. In the same coherent
+change, revert the coordinator integration, scan-snapshot CLI paths in batch
+and next-action helpers, Protocol 90 guidance, integration guidance, and every
+scan mirror in Documentation Updates. Restore sync-manifest and suite-selection
+entries alongside the matching runtime/tests, preserving unrelated additions.
+Keep any regression assertions still meaningful under the restored contract;
+revise or remove only assertions specific to the reverted feature. Document the
+rollback in a release-note fragment through the normal implementation PR path.
+
+Remove `portfolio_scan.graphql_reserve` from template configuration when
+restoring its prior configuration. Existing downstream optional values need no
+data migration: the restored older runtime does not consume that new key, so a
+consumer may remove it in its coordinated rollback PR or leave it inert until
+resync. Code and guidance must describe the same installed version; do not
+leave new reserve/snapshot instructions pointing to a restored older helper.
+Coordinate consumers that already synced the feature using a paired runtime
+and guidance rollback or a follow-up template sync, recording the installed
+version and preserved local customizations in their rollback PRs.
+
+No tracker schema or persisted portfolio data is introduced by this feature.
+Invocation snapshots are ephemeral and need no migration; let active scans
+finish or stop before replacing their executable helpers, and discard only
+that invocation's temporary files through its existing cleanup. Do not delete
+board items, repository data, user branches, local environment configuration,
+or checkpoint files as part of reversal.
+
+Validate the rollback with isolated fixtures and the shared-reader, router,
+classification, sync-coverage and documentation gates. Verify bounded commands
+follow the restored prior target-read and pre-mutation contracts, including the
+prior org-project fallback. Returning to the older costly discovery path
+removes this plan's reserve guarantee: do not run a real portfolio scan to test
+rollback, and state the restored cost limitation in the PR. Complete normal
+current-head review/CI and merge authorization before shipping the rollback.
+
 ## Implementation Order
 
 1. Implement and fixture-test D3 and the consumer error/absence distinctions.
