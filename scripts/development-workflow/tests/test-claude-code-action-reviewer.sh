@@ -1,14 +1,15 @@
 #!/usr/bin/env bash
-# test-claude-code-action-reviewer.sh — Unit tests for the run-poll jq filter
-# logic in claude-code-action-reviewer.sh.
+# test-claude-code-action-reviewer.sh — Tests for claude-code-action-reviewer.sh.
 #
-# Tests verify that the run-name PR-scoped filter (post-#806/#808 fix) selects
-# the correct run from the GitHub Actions Runs API response. Area 3 verifies
-# that inputs.pr_number (always null in the API) is not referenced. Areas 5+
-# verify the run-name PR-scoping mechanism required for concurrent dispatch:
-# under parallel batches, two PRs may dispatch claude-code-review.yml within
-# the same poll window; the run-name filter ensures only the run for THIS PR
-# is selected, not the most-recent run regardless of which PR triggered it.
+# Area 1 covers the dispatch-response parser that binds a run to its own
+# dispatch by workflow_run_id (#1789, plan D15 Claude dispatch rule); Area 2
+# (T2.23) runs the whole companion against a mock gh and proves it polls only
+# the returned run id and never searches the run list, so an older run for the
+# same PR can never answer this request (this replaces the #806/#808 run-list
+# filter tests: the fresh path no longer has that filter). Area 3 (T4.5) covers
+# re-wait adoption of a recorded run. Areas 6-8 cover the
+# date fallback, the Actions log verification, and the workflow prompt; Area 9
+# covers the exit codes for a run that never completes (4) or fails (2).
 #
 # Usage: bash scripts/development-workflow/tests/test-claude-code-action-reviewer.sh
 # Requires: bash, jq
@@ -43,266 +44,395 @@ source "$REVIEWER_SCRIPT"
 unset CLAUDE_CODE_ACTION_REVIEWER_LIBRARY_MODE
 
 # ---------------------------------------------------------------------------
-# The run-poll jq filter (extracted verbatim from claude-code-action-reviewer.sh)
-# Arguments: $wf (workflow filename suffix), $poll_after (ISO8601 timestamp),
-#            $pr (PR number string for run-name scoping)
+# Area 1 (#1789, plan D15 Claude dispatch rule): the dispatch-response parser.
+# The run is bound to this request only by the integer workflow_run_id GitHub
+# returns for a dispatch sent with return_run_details=true. Every other body —
+# empty (HTTP 204), not JSON, not an object, a string or fractional id, zero,
+# negative, or several JSON values — yields nothing, which the companion turns
+# into exit 3 (unavailable).
+#
+# This replaces the former Areas 1-5, which copied the run-list jq filter
+# (POLL_AFTER_TIME window, "PR #<n>" run-name scoping, newest created_at). The
+# fresh path no longer has that filter: it never reads the run list.
 # ---------------------------------------------------------------------------
-RUN_POLL_FILTER='# Candidate set: workflow-file + timestamp match
-         [.[] | .workflow_runs[]?] as $all |
-         [$all[] | select((.path | endswith($wf)) and .created_at >= $poll_after)] as $candidates |
-         # PR-scoping via run-name (#808): if any candidate has a "PR #N"-style name
-         # (indicating the workflow uses run-name), require name match for THIS PR to
-         # prevent selecting the wrong PR'\''s run under concurrent/parallel dispatch.
-         # Fall back to all candidates when no run has the "PR #N" pattern — backward
-         # compat with pre-#808 deployments where the workflow has no run-name yet.
-         ([$candidates[] | select((.name // "") | capture("PR #(?<pr>[0-9]+)(?:[^0-9]|$)")?)] | length > 0) as $name_scoped |
-         ($candidates | if $name_scoped then
-           [.[] | select(((.name // "") | capture("PR #(?<pr>[0-9]+)(?:[^0-9]|$)")? | .pr) == $pr)]
-         else . end) |
-         sort_by(.created_at) | reverse | first |
-         {status: .status, conclusion: .conclusion, html_url: .html_url, id: .id}'
+echo ""
+echo "=== Area 1: dispatch response workflow_run_id (#1789 D15) ==="
 
-run_filter() {
-  local json="$1" wf="$2" poll_after="$3" pr="${4:-808}"
-  printf '%s\n' "$json" | jq -r \
-    --slurp \
-    --arg wf "$wf" \
-    --arg poll_after "$poll_after" \
-    --arg pr "$pr" \
-    "$RUN_POLL_FILTER"
+_resp_tmp="$(mktemp)" || { echo "ERROR: mktemp failed" >&2; exit 1; }
+_parse_resp() {
+  printf '%s' "$1" > "$_resp_tmp"
+  claude_code_action_dispatch_run_id "$_resp_tmp"
+}
+run_test "dispatch_run_id_integer" "777" \
+  "$(_parse_resp '{"workflow_run_id":777,"run_url":"https://api.github.com/repos/o/r/actions/runs/777","html_url":"https://github.com/o/r/actions/runs/777"}')"
+run_test "dispatch_run_id_large_integer" "23456789012" "$(_parse_resp '{"workflow_run_id":23456789012}')"
+run_test "dispatch_run_id_empty_204_body" "" "$(_parse_resp '')"
+run_test "dispatch_run_id_missing_key" "" "$(_parse_resp '{"run_url":"https://x"}')"
+run_test "dispatch_run_id_null" "" "$(_parse_resp '{"workflow_run_id":null}')"
+run_test "dispatch_run_id_string_rejected" "" "$(_parse_resp '{"workflow_run_id":"777"}')"
+run_test "dispatch_run_id_fraction_rejected" "" "$(_parse_resp '{"workflow_run_id":7.5}')"
+run_test "dispatch_run_id_zero_rejected" "" "$(_parse_resp '{"workflow_run_id":0}')"
+run_test "dispatch_run_id_negative_rejected" "" "$(_parse_resp '{"workflow_run_id":-3}')"
+run_test "dispatch_run_id_not_json" "" "$(_parse_resp 'HTTP/2.0 204 No Content')"
+run_test "dispatch_run_id_array_body" "" "$(_parse_resp '[{"workflow_run_id":777}]')"
+run_test "dispatch_run_id_two_values_rejected" "" "$(_parse_resp '{"workflow_run_id":1}{"workflow_run_id":2}')"
+run_test "dispatch_run_id_missing_file" "" "$(claude_code_action_dispatch_run_id "$_resp_tmp.absent")"
+rm -f "$_resp_tmp"
+unset _resp_tmp
+unset -f _parse_resp
+
+# ---------------------------------------------------------------------------
+# Area 2 (#1789, T2.23): regression — an older completed Claude run inside the
+# old dispatch window. The runs list holds a completed success run for this PR
+# created 5 s before the dispatch (inside the removed 10 s window) and no
+# blocking review; the dispatch response returns workflow_run_id 777, a
+# different run that stays in_progress. The companion polls only run 777, never
+# reads the run list, and exits 4 at the budget, never 0. Variants: run 777
+# completes success → exit 0; an empty 204 dispatch body → exit 3 with the D15
+# message and no polling; a dispatch the API rejects → exit 3, no polling.
+# ---------------------------------------------------------------------------
+echo ""
+echo "=== Area 2: dispatch-response run binding (#1789 T2.23) ==="
+
+_t223_dir="$(mktemp -d)" || { echo "ERROR: mktemp -d failed" >&2; exit 1; }
+cat > "$_t223_dir/gh" <<'MOCK_GH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$MOCK_T223_LOG"
+case "$*" in
+  "auth status"*) exit 0 ;;
+  *"pr view"*"baseRefName"*) echo "develop"; exit 0 ;;
+  *"repo view"*"defaultBranchRef"*) echo "main"; exit 0 ;;
+  *"/dispatches"*)
+    case "${MOCK_T223_DISPATCH:-id}" in
+      id) printf '{"workflow_run_id":777,"run_url":"https://api.github.com/repos/owner/repo/actions/runs/777","html_url":"https://github.com/owner/repo/actions/runs/777"}\n' ;;
+      empty) : ;;
+      string_id) printf '{"workflow_run_id":"777"}\n' ;;
+      rejected) echo "gh: Unprocessable Entity (HTTP 422)" >&2; exit 1 ;;
+      not_found) echo "gh: Not Found (HTTP 404)" >&2; exit 1 ;;
+    esac
+    exit 0
+    ;;
+  *"actions/runs?event="*)
+    # The older completed success run for this PR, created 5 s before the
+    # dispatch: the old time-window search would have selected it.
+    _created="$(date -u -r "$(( $(date -u +%s) - 5 ))" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d "@$(( $(date -u +%s) - 5 ))" +%Y-%m-%dT%H:%M:%SZ)"
+    printf '{"workflow_runs":[{"id":555,"name":"Claude Code Review — PR #42","path":".github/workflows/claude-code-review.yml","created_at":"%s","status":"completed","conclusion":"success","html_url":"https://example.invalid/runs/555"}]}\n' "$_created"
+    exit 0
+    ;;
+  *"actions/runs/777"*)
+    _concl=null
+    [ -n "${MOCK_T223_RUN_CONCLUSION:-}" ] && _concl="\"${MOCK_T223_RUN_CONCLUSION}\""
+    printf '{"id":777,"name":"Claude Code Review — PR #42","path":".github/workflows/claude-code-review.yml","status":"%s","conclusion":%s,"html_url":"https://example.invalid/runs/777"}\n' \
+      "${MOCK_T223_RUN_STATUS:-in_progress}" "$_concl"
+    exit 0
+    ;;
+  "run view 777 "*"--log"*)
+    echo 'Claude Code Action review	UNKNOWN STEP	Context prompt: /code-review:code-review owner/repo/pull/42'
+    echo 'Claude Code Action review	UNKNOWN STEP	Trigger result: true'
+    exit 0
+    ;;
+  "run view 555 "*)
+    echo 'Claude Code Action review	UNKNOWN STEP	Trigger result: true'
+    exit 0
+    ;;
+  *"pulls/42/reviews"*) echo '[]'; exit 0 ;;
+  *) echo "unexpected gh call: $*" >&2; exit 1 ;;
+esac
+MOCK_GH
+chmod +x "$_t223_dir/gh"
+MOCK_T223_LOG="$_t223_dir/calls.log"
+export MOCK_T223_LOG
+
+# _t223_run <dispatch-mode> <run-status> [run-conclusion]: prints the exit code.
+_t223_run() {
+  local status=0
+  : > "$MOCK_T223_LOG"
+  MOCK_T223_DISPATCH="$1" MOCK_T223_RUN_STATUS="$2" MOCK_T223_RUN_CONCLUSION="${3:-}" \
+    PATH="$_t223_dir:$PATH" bash "$REVIEWER_SCRIPT" 42 owner repo \
+    --max-wait 2 --poll-interval 1 >"$_t223_dir/out" 2>"$_t223_dir/err" || status=$?
+  printf '%s\n' "$status"
+}
+_t223_calls() { grep -c -- "$1" "$MOCK_T223_LOG" || true; }
+
+# In-progress dispatched run, older completed success run in the list → exit 4.
+run_test "1789_T2.23_in_progress_run_exit_4" "4" "$(_t223_run id in_progress)"
+run_test "1789_T2.23_in_progress_verdict_no_verdict_yet" "1" \
+  "$(grep -c '^VERDICT: NO_VERDICT_YET' "$_t223_dir/out" || true)"
+run_test "1789_T2.23_run_list_never_read" "0" "$(_t223_calls 'actions/runs?event=')"
+run_test "1789_T2.23_older_run_never_read" "0" "$(_t223_calls 'actions/runs/555\|run view 555')"
+run_test "1789_T2.23_polls_returned_id" "yes" \
+  "$( [ "$(_t223_calls 'actions/runs/777')" -ge 1 ] && echo yes || echo no)"
+# Every "found run" line names the bound id (smoke runbook Step 8 reads these).
+run_test "1789_T2.23_found_run_lines_name_bound_id" "yes" \
+  "$( [ "$(grep -c 'found run — id=' "$_t223_dir/out" || true)" -ge 1 ] \
+      && [ "$(grep 'found run — id=' "$_t223_dir/out" | grep -vc 'found run — id=777 ' || true)" -eq 0 ] \
+      && echo yes || echo no)"
+run_test "1789_T2.23_dispatch_requests_run_details" "1" \
+  "$(grep '/dispatches' "$MOCK_T223_LOG" | grep -c -- '--field return_run_details=true' || true)"
+run_test "1789_T2.23_dispatch_result_accepted" "1" "$(grep -c '^DISPATCH_RESULT=accepted$' "$_t223_dir/out" || true)"
+run_test "1789_T2.23_dispatch_run_id_printed" "1" "$(grep -c '^DISPATCH_WORKFLOW_RUN_ID=777$' "$_t223_dir/out" || true)"
+run_test "1789_T2.23_no_poll_after_time" "0" "$(grep -c 'POLL_AFTER_TIME\|poll filter time' "$REVIEWER_SCRIPT" "$_t223_dir/out" | awk -F: '{s+=$NF} END{print s+0}')"
+# D12 request record: the bound run id and the dispatch time.
+run_test "1789_D12_fresh_request_ref_is_bound_run" "1" "$(grep -c '^REVIEW_REQUEST_REF=777$' "$_t223_dir/out" || true)"
+run_test "1789_D12_fresh_requested_at_is_dispatch_time" "yes" \
+  "$( [ "$(grep '^REVIEW_REQUESTED_AT=' "$_t223_dir/out" | cut -d= -f2)" = "$(grep '^INFO: dispatch time (pre-dispatch): ' "$_t223_dir/out" | sed 's/^INFO: dispatch time (pre-dispatch): //')" ] && echo yes || echo no)"
+
+# Variant: the returned run completes success → exit 0.
+run_test "1789_T2.23_returned_run_success_exit_0" "0" "$(_t223_run id completed success)"
+run_test "1789_T2.23_returned_run_success_verdict" "1" \
+  "$(grep -c '^VERDICT: APPROVED' "$_t223_dir/out" || true)"
+run_test "1789_T2.23_returned_run_success_log_of_bound_run" "1" "$(_t223_calls 'run view 777 ')"
+run_test "1789_T2.23_returned_run_success_no_list_read" "0" "$(_t223_calls 'actions/runs?event=')"
+
+# Variant: the returned run completes failure → exit 2 (failure, never clean).
+run_test "1789_T2.23_returned_run_failure_exit_2" "2" "$(_t223_run id completed failure)"
+
+# Variant: an empty 204 dispatch body → exit 3 with the D15 message, no polling.
+run_test "1789_T2.23_empty_204_exit_3" "3" "$(_t223_run empty completed success)"
+run_test "1789_T2.23_empty_204_d15_message" "1" \
+  "$(grep -c '^VERDICT: UNAVAILABLE — dispatch response carried no workflow_run_id; the run cannot be bound to this request$' "$_t223_dir/out" || true)"
+run_test "1789_T2.23_empty_204_dispatch_result" "1" "$(grep -c '^DISPATCH_RESULT=no_workflow_run_id$' "$_t223_dir/out" || true)"
+run_test "1789_T2.23_empty_204_no_polling" "0" "$(_t223_calls 'actions/runs')"
+
+# Variant: a 2xx body whose workflow_run_id is not an integer → exit 3, no polling.
+run_test "1789_T2.23_string_id_exit_3" "3" "$(_t223_run string_id completed success)"
+run_test "1789_T2.23_string_id_no_polling" "0" "$(_t223_calls 'actions/runs')"
+
+# Variant (deferred note d): a dispatch the API rejects → exit 3 unavailable
+# with a rejected / workflow_not_found reason, no polling, never a pass.
+run_test "1789_T2.23_dispatch_rejected_exit_3" "3" "$(_t223_run rejected completed success)"
+run_test "1789_T2.23_dispatch_rejected_result" "1" "$(grep -c '^DISPATCH_RESULT=rejected$' "$_t223_dir/out" || true)"
+run_test "1789_T2.23_dispatch_rejected_verdict" "1" \
+  "$(grep -c '^VERDICT: UNAVAILABLE — workflow dispatch failed: .*Unprocessable Entity (HTTP 422)$' "$_t223_dir/out" || true)"
+run_test "1789_T2.23_dispatch_rejected_no_polling" "0" "$(_t223_calls 'actions/runs')"
+run_test "1789_T2.23_dispatch_not_found_exit_3" "3" "$(_t223_run not_found completed success)"
+run_test "1789_T2.23_dispatch_not_found_result" "1" "$(grep -c '^DISPATCH_RESULT=workflow_not_found$' "$_t223_dir/out" || true)"
+run_test "1789_T2.23_dispatch_not_found_no_polling" "0" "$(_t223_calls 'actions/runs')"
+
+rm -rf "$_t223_dir"
+unset _t223_dir MOCK_T223_LOG
+unset -f _t223_run _t223_calls
+
+# ---------------------------------------------------------------------------
+# Area 3 (#1789, T4.5): re-wait adoption with --adopt-run-id /
+# --adopt-requested-at (plan D11 Claude row). The recorded run 888 is polled
+# and nothing is dispatched; a bot review submitted before the recorded
+# requested_at is not counted (the review boundary is kept); a completed
+# success run 555 for this PR that is not the recorded run (an older-head run)
+# is never read, so the result follows run 888 (still running → exit 4, never
+# clean); a recorded run whose path or "PR #<n>" does not match, or that
+# cannot be read, is not adopted and the companion dispatches.
+# ---------------------------------------------------------------------------
+echo ""
+echo "=== Area 3: re-wait adoption of the recorded run (#1789 T4.5) ==="
+
+_t45_dir="$(mktemp -d)" || { echo "ERROR: mktemp -d failed" >&2; exit 1; }
+cat > "$_t45_dir/gh" <<'MOCK_GH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$MOCK_T45_LOG"
+case "$*" in
+  "auth status"*) exit 0 ;;
+  *"pr view"*"baseRefName"*) echo "develop"; exit 0 ;;
+  *"repo view"*"defaultBranchRef"*) echo "main"; exit 0 ;;
+  *"/dispatches"*)
+    printf '{"workflow_run_id":777}\n'
+    exit 0
+    ;;
+  *"actions/runs?"*|*"actions/runs/555"*|"run view 555 "*)
+    printf '{"id":555,"name":"Claude Code Review — PR #42","path":".github/workflows/claude-code-review.yml","status":"completed","conclusion":"success"}\n'
+    exit 0
+    ;;
+  *"actions/runs/888"*)
+    [ "${MOCK_T45_888_READ:-ok}" = "fail" ] && { echo "gh: Not Found (HTTP 404)" >&2; exit 1; }
+    _concl=null
+    [ -n "${MOCK_T45_888_CONCLUSION:-}" ] && _concl="\"${MOCK_T45_888_CONCLUSION}\""
+    # MOCK_T45_888_DISPLAY_TITLE adds GitHub's display_title field (the
+    # PR-specific run title) when set; by default the field is absent.
+    _title=""
+    [ -n "${MOCK_T45_888_DISPLAY_TITLE:-}" ] && _title="\"display_title\":\"${MOCK_T45_888_DISPLAY_TITLE}\","
+    printf '{"id":888,%s"name":"%s","path":"%s","status":"%s","conclusion":%s,"html_url":"https://example.invalid/runs/888"}\n' \
+      "$_title" \
+      "${MOCK_T45_888_NAME:-Claude Code Review — PR #42}" \
+      "${MOCK_T45_888_PATH:-.github/workflows/claude-code-review.yml}" \
+      "${MOCK_T45_888_STATUS:-in_progress}" "$_concl"
+    exit 0
+    ;;
+  *"actions/runs/777"*)
+    printf '{"id":777,"name":"Claude Code Review — PR #42","path":".github/workflows/claude-code-review.yml","status":"in_progress","conclusion":null}\n'
+    exit 0
+    ;;
+  "run view 888 "*"--log"*)
+    echo 'Claude Code Action review	UNKNOWN STEP	Trigger result: true'
+    exit 0
+    ;;
+  *"pulls/42/reviews"*)
+    # A CHANGES_REQUESTED bot review at MOCK_T45_REVIEW_AT.
+    printf '[{"user":{"login":"claude[bot]"},"state":"CHANGES_REQUESTED","submitted_at":"%s"}]\n' "${MOCK_T45_REVIEW_AT:-2026-01-01T00:00:05Z}"
+    exit 0
+    ;;
+  *) echo "unexpected gh call: $*" >&2; exit 1 ;;
+esac
+MOCK_GH
+chmod +x "$_t45_dir/gh"
+MOCK_T45_LOG="$_t45_dir/calls.log"
+export MOCK_T45_LOG
+
+# _t45_run [extra args...]: runs the companion with the given adoption args;
+# prints the exit code. MOCK_T45_* in the caller's environment shape the mock.
+_t45_run() {
+  local status=0
+  : > "$MOCK_T45_LOG"
+  PATH="$_t45_dir:$PATH" bash "$REVIEWER_SCRIPT" 42 owner repo \
+    --max-wait 2 --poll-interval 1 "$@" >"$_t45_dir/out" 2>"$_t45_dir/err" || status=$?
+  printf '%s\n' "$status"
+}
+_t45_calls() { grep -c -- "$1" "$MOCK_T45_LOG" || true; }
+_t45_adopt=(--adopt-run-id 888 --adopt-requested-at 2026-01-01T00:00:10Z)
+
+# The recorded run is still running → exit 4; nothing dispatched; only run 888
+# polled; the other completed run 555 and the run list are never read.
+run_test "1789_T4.5_adopted_running_exit_4" "4" "$(_t45_run "${_t45_adopt[@]}")"
+run_test "1789_T4.5_adopted_no_dispatch" "0" "$(_t45_calls '/dispatches')"
+run_test "1789_T4.5_adopted_polls_recorded_run" "yes" \
+  "$( [ "$(_t45_calls 'actions/runs/888')" -ge 2 ] && echo yes || echo no)"
+run_test "1789_T4.5_adopted_other_run_never_read" "0" "$(_t45_calls 'actions/runs?\|actions/runs/555\|run view 555\|actions/runs/777')"
+run_test "1789_T4.5_adopted_dispatch_result" "1" "$(grep -c '^DISPATCH_RESULT=adopted$' "$_t45_dir/out" || true)"
+run_test "1789_T4.5_adopted_request_keys_carried_forward" "REVIEW_REQUESTED_AT=2026-01-01T00:00:10Z|REVIEW_REQUEST_REF=888" \
+  "$(grep '^REVIEW_REQUESTED_AT=' "$_t45_dir/out")|$(grep '^REVIEW_REQUEST_REF=' "$_t45_dir/out")"
+
+# The recorded run completed success; the only CHANGES_REQUESTED bot review was
+# submitted before the recorded requested_at → not counted → exit 0.
+run_test "1789_T4.5_boundary_kept_review_before_request_not_counted" "0" \
+  "$(MOCK_T45_888_STATUS=completed MOCK_T45_888_CONCLUSION=success MOCK_T45_REVIEW_AT=2026-01-01T00:00:05Z _t45_run "${_t45_adopt[@]}")"
+run_test "1789_T4.5_boundary_kept_no_dispatch" "0" "$(_t45_calls '/dispatches')"
+# The same review submitted after the recorded requested_at counts → exit 1.
+run_test "1789_T4.5_review_after_request_counted" "1" \
+  "$(MOCK_T45_888_STATUS=completed MOCK_T45_888_CONCLUSION=success MOCK_T45_REVIEW_AT=2026-01-01T00:00:20Z _t45_run "${_t45_adopt[@]}")"
+
+# A recorded run from another workflow file is not adopted: WARN, dispatch.
+run_test "1789_T4.5_path_mismatch_dispatches_exit_4" "4" \
+  "$(MOCK_T45_888_PATH=.github/workflows/other.yml _t45_run "${_t45_adopt[@]}")"
+run_test "1789_T4.5_path_mismatch_dispatched" "1" "$(_t45_calls '/dispatches')"
+run_test "1789_T4.5_path_mismatch_warns" "1" "$(grep -c "^WARN: recorded Claude Code Action run 888 is not a 'claude-code-review.yml' run" "$_t45_dir/err" || true)"
+run_test "1789_T4.5_path_mismatch_binds_new_run" "1" "$(grep -c '^REVIEW_REQUEST_REF=777$' "$_t45_dir/out" || true)"
+# GitHub may return a ref-qualified path (<file>@<ref>): still the same
+# workflow file, so it is adopted without a duplicate dispatch.
+for _t45_ref in '@main' '@refs/heads/main'; do
+  _t45_tag="${_t45_ref//[^a-z]/_}"
+  run_test "1789_T4.5_path_ref_${_t45_tag}_adopted_exit_4" "4" \
+    "$(MOCK_T45_888_PATH=".github/workflows/claude-code-review.yml${_t45_ref}" _t45_run "${_t45_adopt[@]}")"
+  run_test "1789_T4.5_path_ref_${_t45_tag}_no_dispatch" "0" "$(_t45_calls '/dispatches')"
+  run_test "1789_T4.5_path_ref_${_t45_tag}_dispatch_result" "1" "$(grep -c '^DISPATCH_RESULT=adopted$' "$_t45_dir/out" || true)"
+done
+# A ref-qualified path of another workflow file, or a lookalike file name, is
+# not adopted.
+run_test "1789_T4.5_path_other_ref_dispatches_exit_4" "4" \
+  "$(MOCK_T45_888_PATH=.github/workflows/other.yml@main _t45_run "${_t45_adopt[@]}")"
+run_test "1789_T4.5_path_other_ref_dispatched" "1" "$(_t45_calls '/dispatches')"
+run_test "1789_T4.5_path_bak_dispatches_exit_4" "4" \
+  "$(MOCK_T45_888_PATH=.github/workflows/claude-code-review.yml.bak _t45_run "${_t45_adopt[@]}")"
+run_test "1789_T4.5_path_bak_dispatched" "1" "$(_t45_calls '/dispatches')"
+unset _t45_ref _t45_tag
+# A recorded run named for another PR is not adopted.
+run_test "1789_T4.5_pr_mismatch_dispatches_exit_4" "4" \
+  "$(MOCK_T45_888_NAME='Claude Code Review — PR #421' _t45_run "${_t45_adopt[@]}")"
+run_test "1789_T4.5_pr_mismatch_dispatched" "1" "$(_t45_calls '/dispatches')"
+run_test "1789_T4.5_pr_mismatch_warns" "1" "$(grep -c '^WARN: recorded Claude Code Action run 888 is not named for PR #42' "$_t45_dir/err" || true)"
+# GitHub's run response can carry only the workflow name in `name` and the
+# PR-specific run title in `display_title`: the run is still adopted.
+run_test "1789_T4.5_display_title_pr_adopted_exit_4" "4" \
+  "$(MOCK_T45_888_NAME='Claude Code Review' MOCK_T45_888_DISPLAY_TITLE='Claude Code Review — PR #42' _t45_run "${_t45_adopt[@]}")"
+run_test "1789_T4.5_display_title_pr_no_dispatch" "0" "$(_t45_calls '/dispatches')"
+run_test "1789_T4.5_display_title_pr_dispatch_result" "1" "$(grep -c '^DISPATCH_RESULT=adopted$' "$_t45_dir/out" || true)"
+# A display_title naming another PR (with a plain workflow name) is not adopted.
+run_test "1789_T4.5_display_title_other_pr_dispatches_exit_4" "4" \
+  "$(MOCK_T45_888_NAME='Claude Code Review' MOCK_T45_888_DISPLAY_TITLE='Claude Code Review — PR #421' _t45_run "${_t45_adopt[@]}")"
+run_test "1789_T4.5_display_title_other_pr_dispatched" "1" "$(_t45_calls '/dispatches')"
+# Neither field names a PR: not adopted.
+run_test "1789_T4.5_no_pr_in_either_field_dispatched_exit_4" "4" \
+  "$(MOCK_T45_888_NAME='Claude Code Review' MOCK_T45_888_DISPLAY_TITLE='Claude Code Review' _t45_run "${_t45_adopt[@]}")"
+run_test "1789_T4.5_no_pr_in_either_field_dispatched" "1" "$(_t45_calls '/dispatches')"
+# A recorded run that cannot be read is not adopted.
+run_test "1789_T4.5_unreadable_dispatches_exit_4" "4" "$(MOCK_T45_888_READ=fail _t45_run "${_t45_adopt[@]}")"
+run_test "1789_T4.5_unreadable_dispatched" "1" "$(_t45_calls '/dispatches')"
+# The two flags come together; malformed values are argument errors (exit 2).
+run_test "1789_T4.5_run_id_alone_exit_2" "2" "$(_t45_run --adopt-run-id 888)"
+run_test "1789_T4.5_requested_at_alone_exit_2" "2" "$(_t45_run --adopt-requested-at 2026-01-01T00:00:10Z)"
+run_test "1789_T4.5_bad_run_id_exit_2" "2" "$(_t45_run --adopt-run-id abc --adopt-requested-at 2026-01-01T00:00:10Z)"
+run_test "1789_T4.5_bad_requested_at_exit_2" "2" "$(_t45_run --adopt-run-id 888 --adopt-requested-at yesterday)"
+run_test "1789_T4.5_argument_errors_call_nothing" "0" "$(_t45_calls '.')"
+
+rm -rf "$_t45_dir"
+unset _t45_dir MOCK_T45_LOG _t45_adopt
+unset -f _t45_run _t45_calls
+
+# ---------------------------------------------------------------------------
+# Area 4 (#1789, T2.19): --head-sha binds counted reviews to the loop head
+# (plan D15 claude-code-action row). The bound run completes success; the only
+# bot review is a CHANGES_REQUESTED review submitted after DISPATCH_TIME. With
+# --head-sha H1 it counts only when its commit_id is H1 (GitHub fixes a
+# review's commit_id at submission); a review on H0 is another revision's
+# verdict and is not counted, so the run is clean. Without --head-sha today's
+# time-bounded count is kept.
+# ---------------------------------------------------------------------------
+echo ""
+echo "=== Area 4: --head-sha review binding (#1789 T2.19) ==="
+
+_t219_h1="1789abcdef000000000000000000000000000001"
+_t219_h0="1789abcdef000000000000000000000000000000"
+_t219_dir="$(mktemp -d)" || { echo "ERROR: mktemp -d failed" >&2; exit 1; }
+cat > "$_t219_dir/gh" <<'MOCK_GH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$MOCK_T219_LOG"
+case "$*" in
+  "auth status"*) exit 0 ;;
+  *"pr view"*"baseRefName"*) echo "develop"; exit 0 ;;
+  *"repo view"*"defaultBranchRef"*) echo "main"; exit 0 ;;
+  *"actions/runs/888"*)
+    printf '{"id":888,"name":"Claude Code Review — PR #42","path":".github/workflows/claude-code-review.yml","status":"completed","conclusion":"success","html_url":"https://example.invalid/runs/888"}\n'
+    exit 0
+    ;;
+  "run view 888 "*"--log"*)
+    echo 'Claude Code Action review	UNKNOWN STEP	Trigger result: true'
+    exit 0
+    ;;
+  *"pulls/42/reviews"*)
+    printf '[{"user":{"login":"claude[bot]"},"state":"CHANGES_REQUESTED","submitted_at":"2026-01-01T00:00:20Z","commit_id":"%s"}]\n' "$MOCK_T219_REVIEW_COMMIT"
+    exit 0
+    ;;
+  *) echo "unexpected gh call: $*" >&2; exit 1 ;;
+esac
+MOCK_GH
+chmod +x "$_t219_dir/gh"
+MOCK_T219_LOG="$_t219_dir/calls.log"
+export MOCK_T219_LOG
+
+# _t219_run <review_commit_id> [extra args...]: prints the exit code.
+_t219_run() {
+  local status=0 commit="$1"
+  shift
+  : > "$MOCK_T219_LOG"
+  MOCK_T219_REVIEW_COMMIT="$commit" PATH="$_t219_dir:$PATH" bash "$REVIEWER_SCRIPT" 42 owner repo \
+    --max-wait 2 --poll-interval 1 --adopt-run-id 888 --adopt-requested-at 2026-01-01T00:00:10Z \
+    "$@" >"$_t219_dir/out" 2>"$_t219_dir/err" || status=$?
+  printf '%s\n' "$status"
 }
 
-# ---------------------------------------------------------------------------
-# Area 1: Basic timestamp filtering
-# Run objects include "name" matching the dispatched PR (808) so they pass the
-# run-name PR-scoping filter added in #808.
-# ---------------------------------------------------------------------------
-echo ""
-echo "=== Area 1: timestamp filtering ==="
+run_test "1789_T2.19_other_revision_review_not_counted_clean" "0" "$(_t219_run "$_t219_h0" --head-sha "$_t219_h1")"
+run_test "1789_T2.19_other_revision_review_verdict_approved" "1" "$(grep -c '^VERDICT: APPROVED' "$_t219_dir/out" || true)"
+run_test "1789_T2.19_bound_review_counted_needs_revision" "1" "$(_t219_run "$_t219_h1" --head-sha "$_t219_h1")"
+run_test "1789_T2.19_bound_review_case_insensitive" "1" \
+  "$(_t219_run "$_t219_h1" --head-sha "$(printf '%s' "$_t219_h1" | tr 'a-f' 'A-F')")"
+run_test "1789_T2.19_without_head_sha_keeps_time_count" "1" "$(_t219_run "$_t219_h0")"
+run_test "1789_T2.19_review_without_commit_id_not_counted" "0" "$(_t219_run "" --head-sha "$_t219_h1")"
+run_test "1789_T2.19_short_head_sha_exit_2" "2" "$(_t219_run "$_t219_h1" --head-sha 1789abc)"
+run_test "1789_T2.19_short_head_sha_calls_nothing" "0" "$(grep -c . "$MOCK_T219_LOG" || true)"
+run_test "1789_T2.19_head_sha_requires_value_exit_2" "2" "$(_t219_run "$_t219_h1" --head-sha)"
+run_test "1789_T2.19_usage_names_head_sha" "1" "$(grep -c '\[--head-sha <sha>\]' "$REVIEWER_SCRIPT" || true)"
 
-# Test 1.1: A single matching run is selected
-_json='{"workflow_runs":[{"path":".github/workflows/claude-code-review.yml","name":"Claude Code Review — PR #808","created_at":"2026-06-02T16:00:00Z","status":"completed","conclusion":"success","html_url":"https://github.com/owner/repo/actions/runs/100","id":100}]}'
-_result=$(run_filter "$_json" "claude-code-review.yml" "2026-06-02T15:59:00Z" "808")
-_id=$(printf '%s\n' "$_result" | jq -r '.id')
-run_test "single_match_selected" "100" "$_id"
-unset _json _result _id
-
-# Test 1.2: A run before poll_after is excluded — filter returns object with null id
-# When the filtered array is empty, jq `first` on [] returns null; piping through
-# `| {id: .id}` yields {"id":null}. The script treats this as "no match found"
-# via the `RUN_STATUS=$(... '.status // empty')` guard (empty string → loop continues).
-_json='{"workflow_runs":[{"path":".github/workflows/claude-code-review.yml","name":"Claude Code Review — PR #808","created_at":"2026-06-02T15:58:00Z","status":"completed","conclusion":"success","html_url":"https://github.com/owner/repo/actions/runs/99","id":99}]}'
-_result=$(run_filter "$_json" "claude-code-review.yml" "2026-06-02T15:59:00Z" "808")
-_id=$(printf '%s\n' "$_result" | jq -r '.id // "null"')
-run_test "old_run_excluded_null_id" "null" "$_id"
-unset _json _result _id
-
-# Test 1.3: Multiple runs for same PR — most recent is selected
-_json='{"workflow_runs":[{"path":".github/workflows/claude-code-review.yml","name":"Claude Code Review — PR #808","created_at":"2026-06-02T16:01:00Z","status":"completed","conclusion":"success","html_url":"https://a","id":200},{"path":".github/workflows/claude-code-review.yml","name":"Claude Code Review — PR #808","created_at":"2026-06-02T16:00:00Z","status":"completed","conclusion":"success","html_url":"https://b","id":100}]}'
-_result=$(run_filter "$_json" "claude-code-review.yml" "2026-06-02T15:59:00Z" "808")
-_id=$(printf '%s\n' "$_result" | jq -r '.id')
-run_test "most_recent_selected" "200" "$_id"
-unset _json _result _id
-
-# Test 1.4: Empty workflow_runs → no match (id field is null)
-_json='{"workflow_runs":[]}'
-_result=$(run_filter "$_json" "claude-code-review.yml" "2026-06-02T15:59:00Z" "808")
-_id=$(printf '%s\n' "$_result" | jq -r '.id // "null"')
-run_test "empty_list_null_id" "null" "$_id"
-unset _json _result _id
-
-# ---------------------------------------------------------------------------
-# Area 2: Workflow file path matching
-# ---------------------------------------------------------------------------
-echo ""
-echo "=== Area 2: workflow file path matching ==="
-
-# Test 2.1: A run with a different workflow file is excluded (id field is null)
-_json='{"workflow_runs":[{"path":".github/workflows/other-workflow.yml","name":"Claude Code Review — PR #808","created_at":"2026-06-02T16:00:00Z","status":"completed","conclusion":"success","html_url":"https://a","id":300}]}'
-_result=$(run_filter "$_json" "claude-code-review.yml" "2026-06-02T15:59:00Z" "808")
-_id=$(printf '%s\n' "$_result" | jq -r '.id // "null"')
-run_test "different_workflow_excluded_null_id" "null" "$_id"
-unset _json _result _id
-
-# Test 2.2: Mixed runs — only the matching workflow file is selected
-_json='{"workflow_runs":[{"path":".github/workflows/other-workflow.yml","name":"Claude Code Review — PR #808","created_at":"2026-06-02T16:01:00Z","status":"completed","conclusion":"success","html_url":"https://a","id":400},{"path":".github/workflows/claude-code-review.yml","name":"Claude Code Review — PR #808","created_at":"2026-06-02T16:00:00Z","status":"completed","conclusion":"success","html_url":"https://b","id":401}]}'
-_result=$(run_filter "$_json" "claude-code-review.yml" "2026-06-02T15:59:00Z" "808")
-_id=$(printf '%s\n' "$_result" | jq -r '.id')
-run_test "correct_workflow_selected_from_mixed" "401" "$_id"
-unset _json _result _id
-
-# ---------------------------------------------------------------------------
-# Area 3: inputs.pr_number is absent (the bug that prompted #806)
-# The filter must work correctly even when the API returns inputs: null
-# on the workflow_runs objects. This test verifies the fix: the filter no
-# longer references .inputs at all, so null inputs do not block selection.
-# ---------------------------------------------------------------------------
-echo ""
-echo "=== Area 3: inputs.pr_number absent (API returns null) ==="
-
-# Test 3.1: Run with inputs: null is still selected (no inputs check needed)
-_json='{"workflow_runs":[{"path":".github/workflows/claude-code-review.yml","name":"Claude Code Review — PR #808","created_at":"2026-06-02T16:00:00Z","status":"completed","conclusion":"success","html_url":"https://a","id":500,"inputs":null}]}'
-_result=$(run_filter "$_json" "claude-code-review.yml" "2026-06-02T15:59:00Z" "808")
-_id=$(printf '%s\n' "$_result" | jq -r '.id')
-run_test "null_inputs_run_selected" "500" "$_id"
-unset _json _result _id
-
-# Test 3.2: Run without inputs field at all is still selected
-_json='{"workflow_runs":[{"path":".github/workflows/claude-code-review.yml","name":"Claude Code Review — PR #808","created_at":"2026-06-02T16:00:00Z","status":"in_progress","conclusion":null,"html_url":"https://a","id":501}]}'
-_result=$(run_filter "$_json" "claude-code-review.yml" "2026-06-02T15:59:00Z" "808")
-_id=$(printf '%s\n' "$_result" | jq -r '.id')
-run_test "missing_inputs_field_run_selected" "501" "$_id"
-unset _json _result _id
-
-# Test 3.3: Filter does NOT reference .inputs in the select clause
-# This verifies structurally that the filter removed the inputs dependency.
-if printf '%s\n' "$RUN_POLL_FILTER" | grep -q '\.inputs'; then
-  _has_inputs=1
-else
-  _has_inputs=0
-fi
-run_test "filter_has_no_inputs_reference" "0" "$_has_inputs"
-unset _has_inputs
-
-# ---------------------------------------------------------------------------
-# Area 4: in-progress run is not broken by the filter (status handling)
-# ---------------------------------------------------------------------------
-echo ""
-echo "=== Area 4: in-progress run status passthrough ==="
-
-# Test 4.1: in_progress run is returned (status field preserved)
-_json='{"workflow_runs":[{"path":".github/workflows/claude-code-review.yml","name":"Claude Code Review — PR #808","created_at":"2026-06-02T16:00:00Z","status":"in_progress","conclusion":null,"html_url":"https://a","id":600}]}'
-_result=$(run_filter "$_json" "claude-code-review.yml" "2026-06-02T15:59:00Z" "808")
-_status=$(printf '%s\n' "$_result" | jq -r '.status')
-run_test "in_progress_status_returned" "in_progress" "$_status"
-unset _json _result _status
-
-# Test 4.2: queued run is returned (status field preserved)
-_json='{"workflow_runs":[{"path":".github/workflows/claude-code-review.yml","name":"Claude Code Review — PR #808","created_at":"2026-06-02T16:00:00Z","status":"queued","conclusion":null,"html_url":"https://a","id":700}]}'
-_result=$(run_filter "$_json" "claude-code-review.yml" "2026-06-02T15:59:00Z" "808")
-_status=$(printf '%s\n' "$_result" | jq -r '.status')
-run_test "queued_status_returned" "queued" "$_status"
-unset _json _result _status
-
-# ---------------------------------------------------------------------------
-# Area 5: Run-name PR scoping — concurrent dispatch correctness (#808)
-#
-# These are the critical behavioral tests for the fix: given a workflow_runs
-# payload containing runs for TWO different PRs (same workflow-file and
-# timestamp window), assert the filter selects the run whose name matches THIS
-# PR — not merely the newest run regardless of PR.
-#
-# The scenario mirrors a parallel batch where PR #808 and PR #999 both dispatch
-# claude-code-review.yml within the same poll window. Without the name filter,
-# sort_by(.created_at) | reverse | first would select PR #999's run (newest).
-# With the name filter, only PR #808's run matches.
-# ---------------------------------------------------------------------------
-echo ""
-echo "=== Area 5: run-name PR scoping (concurrent dispatch) ==="
-
-# Test 5.1: Two PRs dispatched; most-recent is other PR — filter selects THIS PR's run
-# PR #808 run (id=810) was dispatched at 16:00; PR #999 run (id=999) dispatched at 16:01.
-# Without name filter: id=999 would be selected (newest). With name filter: id=810 selected.
-_json='{"workflow_runs":[
-  {"path":".github/workflows/claude-code-review.yml","name":"Claude Code Review — PR #999","created_at":"2026-06-02T16:01:00Z","status":"completed","conclusion":"success","html_url":"https://a","id":999},
-  {"path":".github/workflows/claude-code-review.yml","name":"Claude Code Review — PR #808","created_at":"2026-06-02T16:00:00Z","status":"completed","conclusion":"success","html_url":"https://b","id":810}
-]}'
-_result=$(run_filter "$_json" "claude-code-review.yml" "2026-06-02T15:59:00Z" "808")
-_id=$(printf '%s\n' "$_result" | jq -r '.id')
-run_test "concurrent_other_pr_newest_selects_this_pr" "810" "$_id"
-unset _json _result _id
-
-# Test 5.2: Only this PR's run is present — selected
-_json='{"workflow_runs":[
-  {"path":".github/workflows/claude-code-review.yml","name":"Claude Code Review — PR #808","created_at":"2026-06-02T16:00:00Z","status":"completed","conclusion":"success","html_url":"https://a","id":820}
-]}'
-_result=$(run_filter "$_json" "claude-code-review.yml" "2026-06-02T15:59:00Z" "808")
-_id=$(printf '%s\n' "$_result" | jq -r '.id')
-run_test "only_this_pr_run_selected" "820" "$_id"
-unset _json _result _id
-
-# Test 5.3: Only the other PR's run is present — no match (id is null)
-# When the poll window has only a run for PR #999 but not #808, the filter
-# returns null (loop continues polling until THIS PR's run appears).
-_json='{"workflow_runs":[
-  {"path":".github/workflows/claude-code-review.yml","name":"Claude Code Review — PR #999","created_at":"2026-06-02T16:00:00Z","status":"completed","conclusion":"success","html_url":"https://a","id":999}
-]}'
-_result=$(run_filter "$_json" "claude-code-review.yml" "2026-06-02T15:59:00Z" "808")
-_id=$(printf '%s\n' "$_result" | jq -r '.id // "null"')
-run_test "only_other_pr_run_returns_null" "null" "$_id"
-unset _json _result _id
-
-# Test 5.4: Filter requires run-name to contain the PR number token
-# A run with name "Claude Code Review — PR #8080" must NOT match PR #808
-# (word-boundary check: \b prevents "808" from matching "8080").
-_json='{"workflow_runs":[
-  {"path":".github/workflows/claude-code-review.yml","name":"Claude Code Review — PR #8080","created_at":"2026-06-02T16:00:00Z","status":"completed","conclusion":"success","html_url":"https://a","id":8080}
-]}'
-_result=$(run_filter "$_json" "claude-code-review.yml" "2026-06-02T15:59:00Z" "808")
-_id=$(printf '%s\n' "$_result" | jq -r '.id // "null"')
-run_test "pr_number_word_boundary_no_false_match" "null" "$_id"
-unset _json _result _id
-
-# Test 5.4b: Dynamic PR input is compared as data, not interpolated as regex.
-_json='{"workflow_runs":[
-  {"path":".github/workflows/claude-code-review.yml","name":"Claude Code Review — PR #999","created_at":"2026-06-02T16:01:00Z","status":"completed","conclusion":"success","html_url":"https://a","id":999},
-  {"path":".github/workflows/claude-code-review.yml","name":"Claude Code Review — PR #808","created_at":"2026-06-02T16:00:00Z","status":"completed","conclusion":"success","html_url":"https://b","id":808}
-]}'
-_result=$(run_filter "$_json" "claude-code-review.yml" "2026-06-02T15:59:00Z" "808|999")
-_id=$(printf '%s\n' "$_result" | jq -r '.id // "null"')
-run_test "pr_input_regex_metacharacters_are_literal" "null" "$_id"
-unset _json _result _id
-
-# Test 5.5: Two runs for THIS PR in the same window — most recent selected
-# (regression guard: name filter must not break multi-run deduplication)
-_json='{"workflow_runs":[
-  {"path":".github/workflows/claude-code-review.yml","name":"Claude Code Review — PR #808","created_at":"2026-06-02T16:02:00Z","status":"completed","conclusion":"success","html_url":"https://b","id":830},
-  {"path":".github/workflows/claude-code-review.yml","name":"Claude Code Review — PR #808","created_at":"2026-06-02T16:00:00Z","status":"completed","conclusion":"success","html_url":"https://a","id":808}
-]}'
-_result=$(run_filter "$_json" "claude-code-review.yml" "2026-06-02T15:59:00Z" "808")
-_id=$(printf '%s\n' "$_result" | jq -r '.id')
-run_test "two_runs_same_pr_most_recent_selected" "830" "$_id"
-unset _json _result _id
-
-# Test 5.6: Runs can arrive out of timestamp order — newest created_at wins
-# This fails without `sort_by(.created_at) | reverse | first` because the first
-# input item is intentionally older than the later candidate for the same PR.
-_json='{"workflow_runs":[
-  {"path":".github/workflows/claude-code-review.yml","name":"Claude Code Review — PR #808","created_at":"2026-06-02T16:00:00Z","status":"completed","conclusion":"success","html_url":"https://a","id":840},
-  {"path":".github/workflows/claude-code-review.yml","name":"Claude Code Review — PR #808","created_at":"2026-06-02T16:03:00Z","status":"completed","conclusion":"success","html_url":"https://b","id":843},
-  {"path":".github/workflows/claude-code-review.yml","name":"Claude Code Review — PR #808","created_at":"2026-06-02T16:01:00Z","status":"completed","conclusion":"success","html_url":"https://c","id":841}
-]}'
-_result=$(run_filter "$_json" "claude-code-review.yml" "2026-06-02T15:59:00Z" "808")
-_id=$(printf '%s\n' "$_result" | jq -r '.id')
-run_test "out_of_order_runs_newest_created_at_selected" "843" "$_id"
-unset _json _result _id
-
-# Test 5.7: Paginated workflow-run responses are flattened before selection
-# The production poller uses `gh api --paginate` and slurps all page objects
-# before applying the same filter. This guards against selecting only page 1.
-_json='{"workflow_runs":[
-  {"path":".github/workflows/claude-code-review.yml","name":"Claude Code Review — PR #808","created_at":"2026-06-02T16:00:00Z","status":"completed","conclusion":"failure","html_url":"https://page1","id":850}
-]}
-{"workflow_runs":[
-  {"path":".github/workflows/claude-code-review.yml","name":"Claude Code Review — PR #808","created_at":"2026-06-02T16:04:00Z","status":"completed","conclusion":"success","html_url":"https://page2","id":854}
-]}'
-_result=$(run_filter "$_json" "claude-code-review.yml" "2026-06-02T15:59:00Z" "808")
-_id=$(printf '%s\n' "$_result" | jq -r '.id')
-run_test "paginated_runs_flattened_newest_selected" "854" "$_id"
-unset _json _result _id
-
-# Test 5.8: Backward compat — old workflow (no run-name, generic names) falls back
-# to timestamp-only selection. When no candidate has a "PR #N"-style name, the
-# filter uses all candidates. The most recent one is selected regardless of name.
-# This covers the transition period before the new workflow is deployed to main.
-_json='{"workflow_runs":[
-  {"path":".github/workflows/claude-code-review.yml","name":"Claude Code Action PR Review","created_at":"2026-06-02T16:01:00Z","status":"completed","conclusion":"success","html_url":"https://a","id":901},
-  {"path":".github/workflows/claude-code-review.yml","name":"Claude Code Action PR Review","created_at":"2026-06-02T16:00:00Z","status":"completed","conclusion":"success","html_url":"https://b","id":900}
-]}'
-_result=$(run_filter "$_json" "claude-code-review.yml" "2026-06-02T15:59:00Z" "808")
-_id=$(printf '%s\n' "$_result" | jq -r '.id')
-run_test "backward_compat_generic_name_falls_back_to_newest" "901" "$_id"
-unset _json _result _id
+rm -rf "$_t219_dir"
+unset _t219_dir MOCK_T219_LOG _t219_h0 _t219_h1
+unset -f _t219_run
 
 # ---------------------------------------------------------------------------
 # Area 6: epoch→ISO8601 conversion fallback
@@ -508,6 +638,163 @@ else
   echo "INFO: optional Claude Code Action workflow not present; skipping workflow prompt assertions"
 fi
 unset _workflow_file _has_prompt _has_plugin
+
+# ---------------------------------------------------------------------------
+# Area 9 (#1789, plan D8 Claude row, T2.8): companion exit codes for a run
+# that never completes within the budget (exit 4, No verdict yet) and a run
+# that completed with a non-success conclusion (exit 2, failure).
+# ---------------------------------------------------------------------------
+echo ""
+echo "=== Area 9: no verdict yet vs failed run exit codes (#1789) ==="
+
+_cca_mock_dir="$(mktemp -d)" || { echo "ERROR: mktemp -d failed" >&2; exit 1; }
+cat > "$_cca_mock_dir/gh" <<'MOCK_GH'
+#!/usr/bin/env bash
+case "$*" in
+  "auth status"*) exit 0 ;;
+  *"pr view"*"baseRefName"*) echo "develop"; exit 0 ;;
+  *"repo view"*"defaultBranchRef"*) echo "main"; exit 0 ;;
+  # #1789 D15: every mock dispatch returns a workflow_run_id body.
+  *"/dispatches"*) printf '{"workflow_run_id":901}\n'; exit 0 ;;
+  *"actions/runs/901"*)
+    conclusion_json=null
+    [ -n "${MOCK_CCA_RUN_CONCLUSION:-}" ] && conclusion_json="\"${MOCK_CCA_RUN_CONCLUSION}\""
+    printf '{"id":901,"name":"Claude Code Review — PR #42","path":".github/workflows/claude-code-review.yml","created_at":"2999-01-01T00:00:00Z","status":"%s","conclusion":%s,"html_url":"https://example.invalid/runs/901"}\n' \
+      "${MOCK_CCA_RUN_STATUS:-in_progress}" "$conclusion_json"
+    exit 0
+    ;;
+  *) echo "unexpected gh call: $*" >&2; exit 1 ;;
+esac
+MOCK_GH
+chmod +x "$_cca_mock_dir/gh"
+
+_cca_run() {
+  local status=0
+  PATH="$_cca_mock_dir:$PATH" bash "$REVIEWER_SCRIPT" 42 owner repo \
+    --max-wait 2 --poll-interval 1 >"$_cca_mock_dir/out" 2>"$_cca_mock_dir/err" || status=$?
+  printf '%s\n' "$status"
+}
+
+MOCK_CCA_RUN_STATUS=in_progress MOCK_CCA_RUN_CONCLUSION=""
+export MOCK_CCA_RUN_STATUS MOCK_CCA_RUN_CONCLUSION
+run_test "1789_run_not_completed_exit_4" "4" "$(_cca_run)"
+run_test "1789_run_not_completed_verdict" "1" \
+  "$(grep -c '^VERDICT: NO_VERDICT_YET' "$_cca_mock_dir/out" || true)"
+
+MOCK_CCA_RUN_STATUS=completed MOCK_CCA_RUN_CONCLUSION=failure
+export MOCK_CCA_RUN_STATUS MOCK_CCA_RUN_CONCLUSION
+run_test "1789_run_completed_failure_exit_2" "2" "$(_cca_run)"
+run_test "1789_run_completed_failure_verdict" "1" \
+  "$(grep -c "^VERDICT: FAILED — run completed with conclusion 'failure'" "$_cca_mock_dir/out" || true)"
+
+MOCK_CCA_RUN_STATUS=completed MOCK_CCA_RUN_CONCLUSION=timed_out
+export MOCK_CCA_RUN_STATUS MOCK_CCA_RUN_CONCLUSION
+run_test "1789_run_completed_timed_out_exit_2" "2" "$(_cca_run)"
+
+MOCK_CCA_RUN_STATUS=completed MOCK_CCA_RUN_CONCLUSION=""
+export MOCK_CCA_RUN_STATUS MOCK_CCA_RUN_CONCLUSION
+run_test "1789_run_completed_without_conclusion_exit_2" "2" "$(_cca_run)"
+
+_cca_usage="$(sed -n '1,/^set -euo pipefail$/p' "$REVIEWER_SCRIPT")"
+run_test "1789_header_documents_exit_4" "1" \
+  "$(grep -c '^#   4 — NO_VERDICT_YET' <<<"$_cca_usage" || true)"
+
+unset MOCK_CCA_RUN_STATUS MOCK_CCA_RUN_CONCLUSION _cca_usage
+rm -rf "$_cca_mock_dir"
+unset _cca_mock_dir
+
+# ---------------------------------------------------------------------------
+# Area 10 (#1789, spec BR 2): a failed read of the bound run during polling.
+# Only positive evidence makes a reviewer failed: a 401/403 permission refusal
+# or a 404 for the bound run id is exit 3 (UNAVAILABLE), never exit 4; a rate
+# limit (also HTTP 403) and a transient 5xx keep polling; a run that could not
+# be read on any poll within the budget fails closed (exit 3); a transient 502
+# followed by a completed run gives the normal verdict.
+# ---------------------------------------------------------------------------
+echo ""
+echo "=== Area 10: polling read failures are not No verdict yet (#1789 BR 2) ==="
+
+_pf_dir="$(mktemp -d)" || { echo "ERROR: mktemp -d failed" >&2; exit 1; }
+cat > "$_pf_dir/gh" <<'MOCK_GH'
+#!/usr/bin/env bash
+case "$*" in
+  "auth status"*) exit 0 ;;
+  *"pr view"*"baseRefName"*) echo "develop"; exit 0 ;;
+  *"repo view"*"defaultBranchRef"*) echo "main"; exit 0 ;;
+  *"/dispatches"*) printf '{"workflow_run_id":931}\n'; exit 0 ;;
+  *"actions/runs/931"*)
+    _n=0
+    [ -f "$MOCK_PF_COUNT" ] && _n="$(cat "$MOCK_PF_COUNT")"
+    _n=$((_n + 1)); printf '%s' "$_n" > "$MOCK_PF_COUNT"
+    _ok='{"id":931,"name":"Claude Code Review — PR #42","path":".github/workflows/claude-code-review.yml","status":"completed","conclusion":"success","html_url":"https://example.invalid/runs/931"}'
+    case "$MOCK_PF_MODE" in
+      denied403) echo "gh: Resource not accessible by integration (HTTP 403)" >&2; exit 1 ;;
+      denied401) echo "gh: Bad credentials (HTTP 401)" >&2; exit 1 ;;
+      notfound) echo "gh: Not Found (HTTP 404)" >&2; exit 1 ;;
+      ratelimit) echo "gh: API rate limit exceeded for user (HTTP 403)" >&2; exit 1 ;;
+      always502) echo "gh: Bad Gateway (HTTP 502)" >&2; exit 1 ;;
+      flaky)
+        if [ "$_n" -eq 1 ]; then echo "gh: Bad Gateway (HTTP 502)" >&2; exit 1; fi
+        printf '%s\n' "$_ok"; exit 0 ;;
+      ratelimit_then_inprogress)
+        if [ "$_n" -eq 1 ]; then echo "gh: API rate limit exceeded (HTTP 403)" >&2; exit 1; fi
+        printf '{"id":931,"status":"in_progress","conclusion":null,"html_url":"https://example.invalid/runs/931"}\n'; exit 0 ;;
+    esac
+    ;;
+  "run view 931 "*"--log"*)
+    echo 'Claude Code Action review	UNKNOWN STEP	Context prompt: /code-review:code-review owner/repo/pull/42'
+    echo 'Claude Code Action review	UNKNOWN STEP	Trigger result: true'
+    exit 0
+    ;;
+  *"pulls/42/reviews"*) echo '[]'; exit 0 ;;
+  *) echo "unexpected gh call: $*" >&2; exit 1 ;;
+esac
+MOCK_GH
+chmod +x "$_pf_dir/gh"
+MOCK_PF_COUNT="$_pf_dir/count"
+export MOCK_PF_COUNT
+
+_pf_run() {
+  local status=0
+  rm -f "$MOCK_PF_COUNT"
+  MOCK_PF_MODE="$1" PATH="$_pf_dir:$PATH" bash "$REVIEWER_SCRIPT" 42 owner repo \
+    --max-wait 3 --poll-interval 1 >"$_pf_dir/out" 2>"$_pf_dir/err" || status=$?
+  printf '%s\n' "$status"
+}
+_pf_out() { grep -c -- "$1" "$_pf_dir/out" || true; }
+
+run_test "1789_poll_403_exit_3" "3" "$(_pf_run denied403)"
+run_test "1789_poll_403_verdict_unavailable" "1" "$(_pf_out '^VERDICT: UNAVAILABLE')"
+run_test "1789_poll_403_no_no_verdict_yet" "0" "$(_pf_out '^VERDICT: NO_VERDICT_YET')"
+run_test "1789_poll_403_stops_at_first_read" "1" "$(cat "$MOCK_PF_COUNT")"
+run_test "1789_poll_401_exit_3" "3" "$(_pf_run denied401)"
+run_test "1789_poll_401_verdict_unavailable" "1" "$(_pf_out '^VERDICT: UNAVAILABLE')"
+run_test "1789_poll_404_bound_run_exit_3" "3" "$(_pf_run notfound)"
+run_test "1789_poll_404_result_run_not_found" "1" "$(_pf_out '^POLL_RESULT=run_not_found')"
+run_test "1789_poll_always_502_fails_closed_exit_3" "3" "$(_pf_run always502)"
+run_test "1789_poll_always_502_result_run_unreadable" "1" "$(_pf_out '^POLL_RESULT=run_unreadable')"
+run_test "1789_poll_always_502_no_no_verdict_yet" "0" "$(_pf_out '^VERDICT: NO_VERDICT_YET')"
+run_test "1789_poll_always_rate_limit_fails_closed_exit_3" "3" "$(_pf_run ratelimit)"
+run_test "1789_poll_rate_limit_keeps_polling" "yes" \
+  "$([ "$(cat "$MOCK_PF_COUNT")" -gt 1 ] && echo yes || echo no)"
+run_test "1789_poll_rate_limit_then_in_progress_exit_4" "4" "$(_pf_run ratelimit_then_inprogress)"
+run_test "1789_poll_transient_502_then_success_exit_0" "0" "$(_pf_run flaky)"
+run_test "1789_poll_transient_502_then_success_verdict" "1" "$(_pf_out '^VERDICT: APPROVED')"
+
+# The classifier itself.
+run_test "1789_classify_403_denied" "denied" "$(claude_code_action_classify_poll_error 'gh: Forbidden (HTTP 403)')"
+run_test "1789_classify_401_denied" "denied" "$(claude_code_action_classify_poll_error 'gh: Unauthorized (HTTP 401)')"
+run_test "1789_classify_404_gone" "gone" "$(claude_code_action_classify_poll_error 'gh: Not Found (HTTP 404)')"
+run_test "1789_classify_403_rate_limit_transient" "transient" \
+  "$(claude_code_action_classify_poll_error 'gh: API rate limit exceeded (HTTP 403)')"
+run_test "1789_classify_secondary_rate_limit_transient" "transient" \
+  "$(claude_code_action_classify_poll_error 'You have exceeded a secondary rate limit (HTTP 403)')"
+run_test "1789_classify_502_transient" "transient" "$(claude_code_action_classify_poll_error 'gh: Bad Gateway (HTTP 502)')"
+run_test "1789_classify_empty_transient" "transient" "$(claude_code_action_classify_poll_error '')"
+
+unset MOCK_PF_COUNT
+rm -rf "$_pf_dir"
+unset _pf_dir
 
 # ---------------------------------------------------------------------------
 # Summary

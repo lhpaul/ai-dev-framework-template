@@ -193,7 +193,7 @@ the loop, not in branch protection.
 
 If you do make Bugbot a required check, also verify what happens when Bugbot is
 unavailable (GitHub App outage, connectivity issue): a stuck or missing check run
-can block all merges if the check is required and no timeout policy is in place.
+can block all merges if the check is required and no wait-budget policy is in place.
 
 ---
 
@@ -230,14 +230,42 @@ findings with severity and location context in the loop summary.
 Supported outcome values emitted by the loop:
 
 ```
-RESULT=clean          # Verdict affirmatively no-issues, no blocking cursor[bot] findings
-RESULT=needs_fixes    # Bugbot reported blocking findings (any conclusion)
-RESULT=escalate       # Verdict not established — never a clean pass
+RESULT=clean                # Verdict affirmatively no-issues, no blocking cursor[bot] findings
+RESULT=needs_fixes          # Bugbot reported blocking findings (any conclusion)
+RESULT=waiting_on_reviewer  # No verdict yet: the wait budget ran out before Bugbot finished
+RESULT=escalate             # Reviewer failed or verdict not established — never a clean pass
 ```
 
-`RESULT=unavailable` and `RESULT=timeout` are reported through
-`REASON=` values on `RESULT=escalate` (`REASON=unavailable`,
-`REASON=timeout`), not as standalone `RESULT=` values.
+**Wait budget (#1789).** Bugbot waits for its own budget: 2400 s by default
+on every branch, including `spec/*` and `implementation-plan/*` (Bugbot
+reviews documentation branches), configurable as
+`review.wait_budgets.bugbot`. The budget bounds the whole wait, including the
+#1390 one-shot re-trigger, which fires at
+`budget - min(600, floor(budget / 2))` seconds — 1800 s for the default — so a
+Bugbot run that answers within 25 minutes of the request is always observed
+before any re-trigger can replace it.
+
+**No verdict yet.** When the budget ends before a Bugbot check run on the
+current head completes, the loop reports `RESULT=waiting_on_reviewer`,
+`REASON=reviewer-no-verdict-yet`, with `WAIT_EXPIRED_DETAIL=check_not_completed`
+(a run appeared but did not complete) or `check_not_started` (no run ever
+appeared), exit 4. This is not a failure: no `reviewer-failed` label and no
+escalation. A completed run on another commit is not this head's verdict and
+also leads to No verdict yet.
+
+**Reviewer failed.** A Bugbot check run that itself concluded `timed_out` is
+`RESULT=escalate`, `REASON=bugbot-run-timed-out` (formerly reported as
+`timeout`), and applies `reviewer-failed`. The disabled, usage-limit,
+fetch-failed, trigger-failed, and head-unavailable outcomes keep their
+existing reasons. A failed check-run or issue-comment read, including an
+HTTP 401 or 403 refusal, is `fetch-failed` and never No verdict yet.
+
+**Request record and re-wait.** The loop records the `bugbot run` comment as
+`REVIEW_REQUESTED_AT` / `REVIEW_REQUEST_REF` (`PLATFORM_<n>_REQUEST_REF`).
+When the runner re-waits once on the same revision (Protocol 91 Step 7,
+`NO_VERDICT_REWAIT=available`), Bugbot adopts that recorded request: it posts
+no new `bugbot run` comment and skips the #1390 re-trigger. Outside a re-wait
+it posts its own trigger as before.
 
 How the loop decides, per conclusion:
 
@@ -259,13 +287,21 @@ How the loop decides, per conclusion:
 
   A usage/spend-limit or unavailable issue comment posted for the head takes
   precedence and escalates instead (`REASON=bugbot-usage-limit`, …).
-- **`timed_out`** and any unrecognised conclusion → `RESULT=escalate`.
+- **`timed_out`** → `RESULT=escalate`, `REASON=bugbot-run-timed-out`; any
+  unrecognised conclusion → `RESULT=escalate`
+  (`REASON=unknown-conclusion-<value>`).
 
-Timeout and unavailable states are surfaced explicitly and are never treated as a
-clean pass. Before declaring a timeout, the loop re-posts the trigger comment
-once: an unfinished Bugbot run is a timeout, not a finding, and re-triggering has
-been observed to recover it. Bugbot's review threads are included in the standard
-platform thread auditing pass.
+No verdict yet and unavailable states are surfaced explicitly and are never
+treated as a clean pass. An unfinished Bugbot run is No verdict yet, not a
+finding and not a failure; the one re-trigger inside the budget has been
+observed to recover it. Bugbot findings are read from `cursor[bot]` review
+comments whose `original_commit_id` is the current head (GitHub moves a
+comment's `commit_id` to the newest head while the commented line is
+unchanged, so `commit_id` alone could carry an older revision's finding
+forward), and from reviews whose `commit_id` is the current head. Bugbot's
+review threads are included in the standard platform thread auditing pass.
+See "Reviewer wait budgets and outcome classes" in
+[`../protocols/93-automated-reviewer-loop-protocol.md`](../protocols/93-automated-reviewer-loop-protocol.md#reviewer-wait-budgets-and-outcome-classes-1789).
 
 See [`integrations/pr-review-platform.md`](pr-review-platform.md) for the full
 multi-platform loop contract and aggregation rules.

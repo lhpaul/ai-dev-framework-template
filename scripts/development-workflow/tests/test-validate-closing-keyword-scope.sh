@@ -934,7 +934,7 @@ check "the listing does not carry titles or bodies into the snapshot" "0" \
 # event that would re-validate this pull request, so a review comment could
 # otherwise silently suppress the warning it was commenting on.
 check "the existing-report input selects only this validator's marked comments" "yes" \
-  "$(awk '/^gh_existing_report\(\)/,/^}/' "$VALIDATOR" | grep -q 'startswith' && echo yes || echo no)"
+  "$(awk '/^gh_existing_report\(\)/,/^}/' "$VALIDATOR" | grep 'startswith' > /dev/null && echo yes || echo no)"
 F="$(writable_fixtures snapshot_unrelated_comment)"
 printf '0\n[]\n' > "$F/comments"
 out="$(CHANGE_AFTER=comments CHANGE_TO='[]' publish_env "$F")"
@@ -1002,7 +1002,7 @@ assert_job_carries_fork_guard() {
     inif && /^      / {print; next}
     inif {inif=0}
   ' "$1" \
-    | grep -qE "head\.repo\.full_name ==[[:space:]]*github\.repository"
+    | grep -E "head\.repo\.full_name ==[[:space:]]*github\.repository" > /dev/null
 }
 
 # A privileged pull_request_target job must execute only code the pull request
@@ -1042,7 +1042,7 @@ check "the resolving job carries one too" "yes" \
 # edit.
 assert_validate_step_carries_fork_guard() {
   awk '/^      - name: Validate$/{f=1} f && /^      - name: /{n++} f' "$1" \
-    | head -6 | grep -qE "^        if: github\.event\.pull_request\.head\.repo\.full_name == github\.repository$"
+    | head -6 | grep -E "^        if: github\.event\.pull_request\.head\.repo\.full_name == github\.repository$" > /dev/null
 }
 check "the writing step carries the fork guard too" "yes" \
   "$(assert_validate_step_carries_fork_guard "$WORKFLOW" && echo yes || echo no)"
@@ -1185,7 +1185,7 @@ check "planted-violation: and are otherwise identical" "" \
 # applies to the protocol recipes.
 FANOUT_JQ="$(python3 "$SCRIPT_DIR/fixtures/extract-fanout-jq.py" "$WORKFLOW")"
 check "the fan-out selection program was found in the workflow" "yes" \
-  "$(printf '%s' "$FANOUT_JQ" | grep -q 'select(.body | test(' && echo yes || echo no)"
+  "$(grep -q 'select(.body | test(' <<< "$FANOUT_JQ" && echo yes || echo no)"
 
 fanout_select() {
   printf '%s' "$1" \
@@ -1313,7 +1313,7 @@ check "the fan-out never line-splits a pull request body in the shell" "0" \
 check "an unreportable unreadable listing is annotated" "yes" \
   "$(grep -q 'if \[ "$unreadable" = "true" \] && \[ "$json" = "\[\]" \]; then' "$WORKFLOW" && echo yes || echo no)"
 check "that path emits a workflow warning annotation" "yes" \
-  "$(awk '/unreadable.*=.*true.*json.*\[\]/,/^          fi/' "$WORKFLOW" | grep -q '::warning' && echo yes || echo no)"
+  "$(awk '/unreadable.*=.*true.*json.*\[\]/,/^          fi/' "$WORKFLOW" | grep '::warning' > /dev/null && echo yes || echo no)"
 check "and does not fail the job — this gate never blocks" "0" \
   "$(awk '/unreadable.*=.*true.*json.*\[\]/,/^          fi/' "$WORKFLOW" | grep -c 'exit 1' || true)"
 check "a readable listing with no targets still exits green" "yes" \
@@ -1326,7 +1326,7 @@ check "nothing_to_validate_emits_an_empty_array_not_an_unset_output" "yes" \
 check "resolve-targets writes nothing" "read" \
   "$(awk '/^  resolve-targets:/,/^  validate:/' "$WORKFLOW" | grep -oE 'pull-requests: (read|write)' | head -1 | awk '{print $2}')"
 check "the validate job has the write permissions it needs" "yes" \
-  "$(awk '/^  validate:/{f=1} f' "$WORKFLOW" | grep -q 'checks: write' && echo yes || echo no)"
+  "$(awk '/^  validate:/{f=1} f' "$WORKFLOW" | grep 'checks: write' > /dev/null && echo yes || echo no)"
 check "a closed source pull request is dropped from its own target list" "yes" \
   "$(grep -q 'if \[ "$PR_STATE" = "open" \]; then' "$WORKFLOW" && echo yes || echo no)"
 check "the fan-out fires on the three lifecycle actions the spec names" "yes" \

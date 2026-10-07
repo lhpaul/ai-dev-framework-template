@@ -1350,6 +1350,145 @@ workflow_config_review_max_total_cycles() {
   _workflow_config_review_scalar "$config_file" max_total_cycles
 }
 
+# Internal helper shared by workflow_config_review_wait_budget and
+# workflow_config_review_wait_budget_keys (#1789). Scans the block mapping
+# review.wait_budgets in .ai-dev-workflow.yaml:
+#
+#   review:
+#     wait_budgets:
+#       bugbot: 2700
+#       local-ai-reviewer: 1500
+#
+# Scope rules:
+#   - only the top-level `review:` section is read; any other top-level key
+#     ends it;
+#   - `wait_budgets:` must sit at the indentation of review's direct children
+#     (the first non-comment line under `review:` fixes that indentation), so
+#     a `wait_budgets:` nested under review.on_ready or a top-level one is
+#     ignored;
+#   - the keys are the lines one level deeper than `wait_budgets:` (the first
+#     non-comment child fixes that indentation); the scope ends at the first
+#     non-comment line indented at or above `wait_budgets:`;
+#   - blank and comment-only lines are skipped everywhere, so `# bugbot: 1800`
+#     never matches;
+#   - the first `wait_budgets:` block and the first occurrence of a key win.
+#
+# mode=value prints the trimmed raw value of key <platform> (surrounding
+# quotes and a trailing `# comment` removed) and exits, or prints nothing.
+# mode=keys prints every key once, in file order.
+# In both modes a `wait_budgets:` line that itself carries a non-comment value
+# (for example a flow mapping `{bugbot: 1800}`) prints the literal `__flow__`
+# and nothing else. Values are never validated here; callers do that.
+_workflow_config_review_wait_budgets_scan() {
+  local config_file="$1"
+  local mode="$2"
+  local want="${3:-}"
+
+  [ -f "$config_file" ] || return 0
+
+  awk -v mode="$mode" -v want="$want" '
+    function indent_of(s) {
+      match(s, /^ */)
+      return RLENGTH
+    }
+    function clean(v) {
+      sub(/^[[:space:]]+/, "", v)
+      if (v ~ /^#/) return ""
+      sub(/[[:space:]]+#.*$/, "", v)
+      sub(/[[:space:]]+$/, "", v)
+      if (length(v) >= 2 && (v ~ /^".*"$/ || v ~ /^'"'"'.*'"'"'$/)) {
+        v = substr(v, 2, length(v) - 2)
+      }
+      return v
+    }
+
+    { sub(/\r$/, "") }
+    /^[[:space:]]*$/ { next }
+    /^[[:space:]]*#/ { next }
+
+    /^review:[[:space:]]*(#.*)?$/ {
+      in_review = 1
+      child_ind = -1
+      next
+    }
+    /^[^ ]/ {
+      in_review = 0
+      in_wb = 0
+      next
+    }
+    !in_review { next }
+
+    {
+      ind = indent_of($0)
+      if (in_wb) {
+        if (ind <= wb_ind) {
+          in_wb = 0
+          wb_done = 1
+        } else {
+          if (key_ind < 0) key_ind = ind
+          if (ind == key_ind && $0 ~ /^ +[A-Za-z0-9_.-]+:([[:space:]]|$)/) {
+            line = $0
+            sub(/^ +/, "", line)
+            key = line
+            sub(/:.*$/, "", key)
+            rest = line
+            sub(/^[^:]*:/, "", rest)
+            if (mode == "keys") {
+              if (!(key in seen)) {
+                seen[key] = 1
+                print key
+              }
+            } else if (key == want) {
+              print clean(rest)
+              exit
+            }
+          }
+          next
+        }
+      }
+      if (child_ind < 0) child_ind = ind
+      if (!wb_done && ind == child_ind && $0 ~ /^ +wait_budgets:([[:space:]]|$)/) {
+        rest = $0
+        sub(/^ +wait_budgets:/, "", rest)
+        if (clean(rest) != "") {
+          print "__flow__"
+          exit
+        }
+        in_wb = 1
+        wb_ind = ind
+        key_ind = -1
+      }
+    }
+  ' "$config_file"
+}
+
+# workflow_config_review_wait_budget <platform> [config_file]
+#
+# Reads review.wait_budgets.<platform> (#1789, plan D6) and prints the raw
+# value (trimmed, quotes and trailing comment removed), `__flow__` when
+# `wait_budgets:` is not a block mapping, or nothing when the file, section,
+# block, or key is absent. Callers validate the value
+# (pr-review-loop.sh reviewer_wait_budget_configured).
+workflow_config_review_wait_budget() {
+  local platform="${1:-}"
+  local config_file="${2:-$(workflow_config_file)}"
+
+  [ -n "$platform" ] || return 0
+  _workflow_config_review_wait_budgets_scan "$config_file" value "$platform"
+}
+
+# workflow_config_review_wait_budget_keys [config_file]
+#
+# Prints every key under review.wait_budgets, one per line in file order (or
+# `__flow__` when `wait_budgets:` is not a block mapping). Used for the
+# unsupported-key warning (#1789, plan D6) and to tell a key that is present
+# with an empty value from a missing key.
+workflow_config_review_wait_budget_keys() {
+  local config_file="${1:-$(workflow_config_file)}"
+
+  _workflow_config_review_wait_budgets_scan "$config_file" keys
+}
+
 workflow_config_review_phase_after_clean_platforms() {
   local config_file="${1:-$(workflow_config_file)}"
 
@@ -2127,14 +2266,25 @@ print(project.get('id') or '', end='')
 # resolves the same literal names). Used by add-backlog-item.sh's
 # post-creation field verification (issue #1778) as well as status/type reads.
 #
-# This intentionally uses repository.issue(...).projectItems instead of
-# `gh project item-list` so single-item status reads/updates do not paginate the
-# entire board and drain the GraphQL budget.
+# The primary lookup is repository.issue(...).projectItems, not
+# `gh project item-list`, so single-item status reads/updates do not paginate
+# the entire board and drain the GraphQL budget (issue #824).
+#
+# That connection can be empty although the card exists: an organization
+# project whose cards were added with `gh project item-add` for issues in a
+# personal repository (which cannot be linked to the org project) is not
+# reported through issue.projectItems. When the GraphQL read succeeds but finds
+# no item for the configured project, this falls back once to the board's
+# filtered candidate result, shared per target through a short-lived file
+# cache (see workflow_github_project_item_from_item_list, issue #1801). Set
+# WORKFLOW_GH_ITEM_LIST_FALLBACK=0 to disable the fallback.
 workflow_github_project_item_for_issue() {
   local issue_number="$1"
   local project_number="$2"
   local project_owner project_id repo_owner repo_name response
   local cursor page_state item_json has_next end_cursor page_count line missing_fields type_field_name
+  local seen_cursors="|"
+  local graphql_exhausted="false"
   local -a graphql_args
 
   case "$issue_number" in
@@ -2181,7 +2331,7 @@ workflow_github_project_item_for_issue() {
         query($owner: String!, $repo: String!, $issueNumber: Int!, $typeFieldName: String!, $after: String) {
           repository(owner: $owner, name: $repo) {
             issue(number: $issueNumber) {
-              projectItems(first: 100, after: $after) {
+              projectItems(first: 100, after: $after, includeArchived: true) {
                 nodes {
                   id
                   project { id number }
@@ -2234,12 +2384,27 @@ try:
     data = json.loads(sys.stdin.read(), strict=False)
 except Exception:
     sys.exit(2)
+if data.get('errors'):
+    sys.exit(2)
 issue = (((data.get('data') or {}).get('repository') or {}).get('issue') or {})
 project_items = issue.get('projectItems') or {}
+if not isinstance(project_items, dict) or not isinstance(project_items.get('nodes'), list):
+    sys.exit(2)
+if not isinstance(project_items.get('pageInfo'), dict) or type(project_items['pageInfo'].get('hasNextPage')) is not bool:
+    sys.exit(2)
+if any(not isinstance(item, dict) for item in project_items['nodes']):
+    sys.exit(2)
+if project_items['pageInfo']['hasNextPage'] and not project_items['pageInfo'].get('endCursor'):
+    sys.exit(2)
+project_matches = [item for item in project_items['nodes'] if isinstance(item.get('project'), dict) and item['project'].get('id') == project_id]
+if len(project_matches) > 1 and any(item != project_matches[0] for item in project_matches[1:]):
+    sys.exit(2)
 match = ''
 missing_fields = ''
 for item in project_items.get('nodes') or []:
     project = item.get('project') or {}
+    if not isinstance(project, dict):
+        sys.exit(2)
     if project.get('id') == project_id:
         status_value = item.get('status') or item.get('fieldValueByName') or {}
         content = item.get('content') or {}
@@ -2326,6 +2491,7 @@ EOF
       return 0
     fi
     if [ "$has_next" != "true" ] || [ -z "$end_cursor" ]; then
+      graphql_exhausted="true"
       break
     fi
     page_count=$((page_count + 1))
@@ -2333,10 +2499,119 @@ EOF
       echo "Warning: project item lookup exceeded pagination limit for issue #${issue_number}; tracker status not read." >&2
       break
     fi
+    case "$seen_cursors" in
+      *"|${end_cursor}|"*)
+        echo "Warning: repeated project membership cursor for issue #${issue_number}; tracker status not read." >&2
+        break
+        ;;
+    esac
+    seen_cursors="${seen_cursors}${end_cursor}|"
     cursor="$end_cursor"
   done
 
+  # issue #1801: the GraphQL read completed without an item for the configured
+  # project. That is not proof the card is absent (org project + unlinked
+  # personal repository), so consult the board itself before reporting "not
+  # on board".
+  if [ "$graphql_exhausted" = "true" ] && [ "${WORKFLOW_GH_ITEM_LIST_FALLBACK:-1}" != "0" ]; then
+    workflow_github_project_item_from_item_list \
+      "$issue_number" "$project_number" "$project_owner" "$project_id" \
+      "${repo_owner}/${repo_name}" "$type_field_name"
+    return 0
+  fi
+
   printf ''
+}
+
+# workflow_github_project_item_list_cache_file <project_owner> <project_number>
+#
+# Prints the per-process cache file path for one board's
+# `gh project item-list` result, creating the private cache directory when
+# needed. Prints nothing (caching disabled, never an error) when the
+# directory cannot be created or is not a real directory owned by this user.
+#
+# The file name carries $$, which bash keeps equal to the top-level script's
+# PID inside command substitutions, so `status="$(get_tracker_status_for_issue
+# N)"` callers — whose in-memory globals are discarded with the subshell —
+# still share one board scan per process. Directory override:
+# WORKFLOW_GH_ITEM_LIST_CACHE_DIR (default ${TMPDIR:-/tmp}/workflow-gh-item-list-<uid>).
+workflow_github_project_item_list_cache_file() {
+  local project_owner="$1"
+  local project_number="$2"
+  local cache_dir safe_owner
+
+  cache_dir="$(_workflow_github_project_item_list_cache_dir)"
+  if [ -z "$cache_dir" ]; then
+    return 0
+  fi
+  safe_owner="$(printf '%s' "$project_owner" | tr -c 'A-Za-z0-9-' '_')"
+  printf '%s/%s-%s-%s.json' "$cache_dir" "$$" "$safe_owner" "$project_number"
+}
+
+# _workflow_github_project_item_list_cache_dir
+#
+# Prints the private item-list cache directory, creating it when needed, or
+# nothing when it cannot be created or is not a real directory owned by this
+# user (caching is then disabled).
+_workflow_github_project_item_list_cache_dir() {
+  local cache_dir
+  cache_dir="${WORKFLOW_GH_ITEM_LIST_CACHE_DIR:-${TMPDIR:-/tmp}/workflow-gh-item-list-$(id -u 2>/dev/null || echo user)}"
+  cache_dir="${cache_dir%/}"
+  if [ ! -d "$cache_dir" ]; then
+    (umask 077 && mkdir -p "$cache_dir") 2>/dev/null || return 0
+  fi
+  if [ -L "$cache_dir" ] || [ ! -d "$cache_dir" ] || [ ! -O "$cache_dir" ]; then
+    return 0
+  fi
+  printf '%s' "$cache_dir"
+}
+
+# workflow_github_project_item_list_cache_invalidate
+#
+# Drops every target/project candidate result cached by this process. Called after a successful
+# `gh project item-add` (so the next lookup sees the new card) and after every
+# successful project field mutation (Status, Type, Priority, Size), so a
+# fallback read never reports a value this process has just overwritten.
+workflow_github_project_item_list_cache_invalidate() {
+  local cache_dir
+  cache_dir="$(_workflow_github_project_item_list_cache_dir)"
+  if [ -n "$cache_dir" ]; then
+    rm -f "$cache_dir/$$-"*.json 2>/dev/null || true
+  fi
+  return 0
+}
+
+# workflow_github_project_item_from_item_list <issue_number> <project_number> <project_owner> <project_id> <owner/repo> <type_field_name>
+#
+# Fallback for workflow_github_project_item_for_issue (issue #1801). Reads the
+# project with one filtered GraphQL page per target/project/selector, cached
+# within WORKFLOW_GH_ITEM_LIST_CACHE_TTL_MINUTES (default 5), and prints the
+# same compact JSON shape for the card whose content is <owner/repo>#<issue>.
+# The join is by (repository, number), never by number alone, using
+# WORKFLOW_PROJECT_ITEM_REPO_JQ_DEFS (#1804): an org board can hold another
+# repository's issue with the same number. Proven absence returns compact JSON
+# with membership=absent; unreadable/capped reads print nothing.
+#
+# Cache files older than an hour are swept on every write, so files left by
+# exited processes do not accumulate; no EXIT trap is needed.
+workflow_github_project_item_from_item_list() {
+  local issue_number="$1"
+  local project_number="$2"
+  local project_owner="$3"
+  local project_id="$4"
+  local repo_slug="$5"
+  local type_field_name="$6"
+  local cache_dir ttl
+  cache_dir="$(_workflow_github_project_item_list_cache_dir)"
+  ttl="${WORKFLOW_GH_ITEM_LIST_CACHE_TTL_MINUTES:-5}"
+  case "$ttl" in ''|*[!0-9]*) ttl=5 ;; esac
+  # A failed bounded lookup is unknown; preserve existing empty-read warnings.
+  if ! python3 "$(workflow_script_dir)/workflow-project-reader.py" --fallback \
+    --number "$issue_number" --project-id "$project_id" --repo "$repo_slug" \
+    --type-field "$type_field_name" --cache-dir "$cache_dir" --cache-pid "$$" --ttl "$ttl"; then
+    printf ''
+  fi
+  return 0
 }
 
 workflow_github_project_status_field_json() {
@@ -2725,12 +3000,17 @@ ensure_on_project_board() {
     return 0
   fi
   item_json="$(workflow_github_project_item_for_issue "$issue_number" "$project_number")"
-  if [ -n "$item_json" ]; then
+  if [ -n "$item_json" ] && [ "$(printf '%s' "$item_json" | jq -r '.item_id // empty')" != "" ]; then
     echo "Board membership check: issue #${issue_number} already on project board."
     return 0
   fi
 
-  # Issue is not on the board — add it.
+  if [ -z "$item_json" ] || [ "$(printf '%s' "$item_json" | jq -r '.membership // empty')" != "absent" ]; then
+    echo "Warning: issue #${issue_number} board membership is unknown; skipping board-add."
+    return 0
+  fi
+
+  # Proven absent on the configured board — use the existing add path.
   repo_owner="$(workflow_resolve_github_repo_owner)"
   repo_name="$(workflow_resolve_github_repo_name)"
   if [ -z "$repo_owner" ] || [ -z "$repo_name" ]; then
@@ -2750,6 +3030,10 @@ ensure_on_project_board() {
   fi
 
   echo "Board membership check: issue #${issue_number} added to project board."
+
+  # The membership read above may have cached a target read that predates this
+  # card (issue #1801); drop it so the status update below can find the item.
+  workflow_github_project_item_list_cache_invalidate
 
   # Set initial status for the newly added item.
   update_tracker_status_best_effort "$issue_number" "$initial_status"
@@ -2922,6 +3206,7 @@ print(item.get('status') or '', end='')
         }
       }
     '; then
+    workflow_github_project_item_list_cache_invalidate
     printf '%s' "$__workflow_last_gh_stdout"
     printf '\nTRACKER_STATUS_APPLIED issue=%s status=%s\n' "$issue_number" "'${status_label}'"
   else
@@ -3266,6 +3551,7 @@ print((data.get('options') or {}).get(sys.argv[1]) or '', end='')
         }
       }
     '; then
+    workflow_github_project_item_list_cache_invalidate
     printf '%s' "$__workflow_last_gh_stdout"
   else
     if [ "$required" = "required" ]; then
@@ -3691,6 +3977,7 @@ print((data.get('options') or {}).get(sys.argv[1]) or '', end='')
         }
       }
     '; then
+    workflow_github_project_item_list_cache_invalidate
     printf '%s' "$__workflow_last_gh_stdout"
   else
     if [ "$required" = "required" ]; then
@@ -3735,6 +4022,191 @@ update_tracker_size_best_effort() {
   local issue_number="$1"
   local size_value="$2"
   update_tracker_named_field_best_effort "$issue_number" "Size" "$size_value" "required"
+}
+
+# --- Exhaustive open-issue / project-item reads (#1804) ---------------------
+#
+# `gh issue list --limit N` and `gh project item-list --limit N` are fetch
+# caps, not exhaustive queries: gh paginates internally only up to N records
+# and silently drops the rest. The two helpers below re-issue the read with a
+# larger cap until the result is provably complete, up to a deliberately
+# chosen hard bound (WORKFLOW_GH_LIST_MAX_RECORDS). Past that bound they
+# refuse to return a partial list (exit 3) rather than silently truncating.
+#
+# The first request always uses the historical 1000-record cap, so a
+# repository or board below that size still costs exactly one request.
+WORKFLOW_GH_LIST_INITIAL_RECORDS=1000
+WORKFLOW_GH_LIST_MAX_RECORDS=64000
+
+# _workflow_gh_list_next_limit <current-limit> [<reported-total>]
+#
+# Prints the next fetch cap: double the current cap, or the reported total
+# when that is known and larger — always clamped to
+# WORKFLOW_GH_LIST_MAX_RECORDS.
+_workflow_gh_list_next_limit() {
+  local current="$1" total="${2:-}" next
+  next=$((current * 2))
+  case "$total" in
+    ''|*[!0-9]*) ;;
+    *) [ "$total" -gt "$next" ] && next="$total" ;;
+  esac
+  [ "$next" -gt "$WORKFLOW_GH_LIST_MAX_RECORDS" ] && next="$WORKFLOW_GH_LIST_MAX_RECORDS"
+  printf '%s\n' "$next"
+}
+
+# workflow_gh_list_open_issues_exhaustive <owner/repo>
+#
+# Prints every open issue of <owner/repo> as the JSON array produced by
+# `gh issue list --json number,title,labels,createdAt,url`.
+#
+# Completeness rule: a response shorter than the requested cap is complete
+# (gh stopped because the repository ran out of open issues). A response
+# exactly as long as the cap may be truncated, so the read is repeated with a
+# doubled cap.
+#
+# Exit codes:
+#   0 — complete; stdout is gh's response (may be blank — callers that must
+#       distinguish blank from "no open issues" validate it themselves)
+#   1 — gh failed
+#   2 — the response is not blank and not a JSON array
+#   3 — still possibly truncated at WORKFLOW_GH_LIST_MAX_RECORDS; nothing printed
+workflow_gh_list_open_issues_exhaustive() {
+  local repo_slug="$1"
+  local limit="$WORKFLOW_GH_LIST_INITIAL_RECORDS" out count
+
+  while :; do
+    if ! out="$(gh issue list --repo "$repo_slug" --state open --limit "$limit" --json number,title,labels,createdAt,url 2>/dev/null)"; then
+      return 1
+    fi
+    if [ -z "$out" ]; then
+      return 0
+    fi
+    if ! count="$(printf '%s' "$out" | jq -er 'if type == "array" then length else error("not an array") end' 2>/dev/null)"; then
+      return 2
+    fi
+    if [ "$count" -lt "$limit" ]; then
+      printf '%s\n' "$out"
+      return 0
+    fi
+    if [ "$limit" -ge "$WORKFLOW_GH_LIST_MAX_RECORDS" ]; then
+      return 3
+    fi
+    limit="$(_workflow_gh_list_next_limit "$limit")"
+  done
+}
+
+# workflow_gh_project_items_exhaustive <project-number> <owner> [<query>]
+#
+# Prints every item of a GitHub Project as the JSON object produced by
+# `gh project item-list --format json` (optionally filtered by <query>).
+#
+# Completeness rule: gh reports the (query-filtered) board size as the
+# top-level `totalCount` — verified against a live
+# `gh project item-list --format json` call for #1804 (a full fetch returned
+# exactly totalCount items, filtered and unfiltered). When totalCount is
+# present it alone decides completeness: the response is complete once it
+# holds totalCount items, and a response shorter than both the cap and
+# totalCount is incomplete (exit 3), never accepted. Only when totalCount is
+# absent does the issue read's shorter-than-cap rule apply.
+#
+# Exit codes:
+#   0 — complete; stdout is gh's response
+#   1 — gh failed
+#   2 — the response is not a JSON object with an `items` array
+#   3 — incomplete: still truncated at WORKFLOW_GH_LIST_MAX_RECORDS, or gh
+#       returned fewer items than its own totalCount; nothing printed
+workflow_gh_project_items_exhaustive() {
+  local project_number="$1" owner="$2" query="${3:-}"
+  local limit="$WORKFLOW_GH_LIST_INITIAL_RECORDS" out counts count total
+  local -a query_args=()
+
+  if [ -n "$query" ]; then
+    query_args=(--query "$query")
+  fi
+
+  while :; do
+    if ! out="$(gh project item-list "$project_number" --owner "$owner" --limit "$limit" --format json ${query_args[@]+"${query_args[@]}"} 2>/dev/null)"; then
+      return 1
+    fi
+    if ! counts="$(printf '%s' "$out" | jq -er 'if type == "object" and (.items | type) == "array" then "\(.items | length) \(.totalCount // "")" else error("not an item list") end' 2>/dev/null)"; then
+      return 2
+    fi
+    count="${counts%% *}"
+    total="${counts#* }"
+    case "$total" in
+      ''|*[!0-9]*) total="" ;;
+    esac
+    if [ -n "$total" ]; then
+      # gh reported the board size: that alone decides completeness.
+      if [ "$count" -ge "$total" ]; then
+        printf '%s\n' "$out"
+        return 0
+      fi
+      # gh stopped short of its own reported total although the cap
+      # allowed more — a larger cap cannot help; refuse the partial list.
+      if [ "$count" -lt "$limit" ]; then
+        return 3
+      fi
+    elif [ "$count" -lt "$limit" ]; then
+      printf '%s\n' "$out"
+      return 0
+    fi
+    if [ "$limit" -ge "$WORKFLOW_GH_LIST_MAX_RECORDS" ]; then
+      return 3
+    fi
+    limit="$(_workflow_gh_list_next_limit "$limit" "$total")"
+  done
+}
+
+# jq definitions shared by every project-item -> open-issue join (#1804).
+#
+# Issue numbers are unique only within one repository; an organization-owned
+# project can span several repositories, so a join by .content.number alone
+# can attach a foreign repository's board item to this repository's open
+# issue of the same number. item_repo_slug($item) resolves the item's own
+# repository from the live `gh project item-list --format json` content
+# schema — `content.repository` is "owner/repo" (verified live for #1804) —
+# falling back to the owner/repo segment of `content.url`, and lowercases it
+# (GitHub owner/repo names are case-insensitive). A legacy URL-form
+# `content.repository` is also accepted. It yields "" when neither field
+# identifies a repository (for example a draft issue); callers must treat ""
+# as NOT this repository — the join fails closed.
+# shellcheck disable=SC2016  # jq program text, not shell expansion
+WORKFLOW_PROJECT_ITEM_REPO_JQ_DEFS='
+  def item_repo_slug($item):
+    ( ($item.content.repository // "") | if type == "string" then . else "" end
+      | sub("^https?://[^/]+/"; "") | sub("/+$"; "") ) as $repo
+    | ( ($item.content.url // "") | if type == "string" then . else "" end ) as $url
+    | ( if $repo != "" then $repo
+        else (( $url | capture("^https?://[^/]+/(?<slug>[^/]+/[^/]+)/") | .slug ) // "")
+        end )
+    | ascii_downcase;
+
+  def same_repo_item($item; $repoSlug):
+    item_repo_slug($item) as $slug
+    | $slug != "" and $slug == ($repoSlug | ascii_downcase);
+
+  # Open issues keyed by number, so the join is one lookup per board item
+  # rather than a scan of every open issue.
+  def issue_index:
+    map(select(.number != null) | {key: (.number | tostring), value: .})
+    | from_entries;
+'
+
+# workflow_json_to_tmpfile <json> — writes <json> to a new temp file and
+# prints its path. Large JSON (tens of thousands of open issues) must reach
+# jq through a file (--slurpfile), never as a single --argjson argument:
+# one argument that large exceeds the OS argument-size limit and jq fails
+# with "Argument list too long" (#1804). printf is a shell builtin, so it
+# is not subject to that limit. The caller removes the file.
+workflow_json_to_tmpfile() {
+  local json="$1" tmp
+  tmp="$(mktemp "${TMPDIR:-/tmp}/workflow-json.XXXXXX")" || return 1
+  if ! printf '%s' "$json" > "$tmp"; then
+    rm -f "$tmp"
+    return 1
+  fi
+  printf '%s\n' "$tmp"
 }
 
 # list_open_workflow_type_issues
@@ -3803,26 +4275,62 @@ list_open_workflow_type_issues() {
   fi
   repo_slug="${repo_owner}/${repo_name}"
 
-  if ! open_issues="$(gh issue list --repo "$repo_slug" --state open --limit 1000 --json number,title,labels,createdAt,url 2>/dev/null)"; then
-    echo "Warning: failed to list open GitHub issues; cannot discover Workflow Type issues." >&2
-    printf '[]\n'
-    return 0
-  fi
+  local _lowti_read_rc=0
+  open_issues="$(workflow_gh_list_open_issues_exhaustive "$repo_slug")" || _lowti_read_rc=$?
+  case "$_lowti_read_rc" in
+    0) ;;
+    3)
+      echo "Warning: more than ${WORKFLOW_GH_LIST_MAX_RECORDS} open GitHub issues; refusing a truncated list, cannot discover Workflow Type issues." >&2
+      printf '[]\n'
+      return 0
+      ;;
+    *)
+      echo "Warning: failed to list open GitHub issues; cannot discover Workflow Type issues." >&2
+      printf '[]\n'
+      return 0
+      ;;
+  esac
   if [ -z "$open_issues" ]; then
     printf '[]\n'
     return 0
   fi
 
-  if ! project_items="$(gh project item-list "$project_number" --owner "$owner" --limit 1000 --format json 2>/dev/null)"; then
-    echo "Warning: failed to list GitHub Project items; cannot discover Workflow Type issues." >&2
-    printf '[]\n'
-    return 0
-  fi
+  _lowti_read_rc=0
+  project_items="$(workflow_gh_project_items_exhaustive "$project_number" "$owner")" || _lowti_read_rc=$?
+  case "$_lowti_read_rc" in
+    0) ;;
+    2)
+      echo "Warning: failed to parse GitHub Project items while discovering Workflow Type issues." >&2
+      printf '[]\n'
+      return 0
+      ;;
+    3)
+      echo "Warning: GitHub Project ${project_number} item list is incomplete (more than ${WORKFLOW_GH_LIST_MAX_RECORDS} items, or fewer items than its reported totalCount); refusing a truncated list, cannot discover Workflow Type issues." >&2
+      printf '[]\n'
+      return 0
+      ;;
+    *)
+      echo "Warning: failed to list GitHub Project items; cannot discover Workflow Type issues." >&2
+      printf '[]\n'
+      return 0
+      ;;
+  esac
 
   _lowti_preferred_field="$(workflow_issue_tracker_custom_field type_field "$(workflow_effective_config_file || true)")"
   _lowti_candidate_keys_json="$(_workflow_lowti_candidate_keys_json "$_lowti_preferred_field")"
 
-  if ! _lowti_result_json="$(printf '%s' "$project_items" | jq --argjson open "$open_issues" --argjson candidate_keys "$_lowti_candidate_keys_json" '
+  # Open issues reach jq through a file, never one --argjson argument, which
+  # would exceed the OS argument-size limit for large repositories (#1804).
+  local _lowti_open_file _lowti_join_rc=0
+  if ! _lowti_open_file="$(workflow_json_to_tmpfile "$open_issues")"; then
+    echo "Warning: could not stage open GitHub issues for the project join; cannot discover Workflow Type issues." >&2
+    printf '[]\n'
+    return 0
+  fi
+
+  # Join by (repository, number), never by number alone — see
+  # WORKFLOW_PROJECT_ITEM_REPO_JQ_DEFS (#1804).
+  _lowti_result_json="$(printf '%s' "$project_items" | jq --slurpfile openDocs "$_lowti_open_file" --argjson candidate_keys "$_lowti_candidate_keys_json" --arg repoSlug "$repo_slug" "$WORKFLOW_PROJECT_ITEM_REPO_JQ_DEFS"'
     def terminal($status):
       ($status // "") as $s
       | ($s == "Done" or $s == "Merged" or $s == "Released" or $s == "Cancelled");
@@ -3830,7 +4338,8 @@ list_open_workflow_type_issues() {
     def item_type($item):
       ( [ $candidate_keys[] as $k | ($item[$k] // "") ] | map(select(. != "")) | first ) // "";
 
-    ( [ .items[] | keys[] ] | unique ) as $item_keys
+    ($openDocs[0] | issue_index) as $openByNumber
+    | ( [ .items[] | keys[] ] | unique ) as $item_keys
     | ( [ $candidate_keys[] | select(. as $k | $item_keys | index($k) != null) ] ) as $matched_keys
     | {
         matched_keys: $matched_keys,
@@ -3839,7 +4348,8 @@ list_open_workflow_type_issues() {
         results: [ .items[]
           | select(item_type(.) == "Workflow")
           | . as $item
-          | ($open[] | select(.number == $item.content.number)) as $issue
+          | select(same_repo_item($item; $repoSlug))
+          | ($openByNumber[($item.content.number | tostring)] // empty) as $issue
           | select(terminal($item.status) | not)
           | {
               number: $issue.number,
@@ -3852,7 +4362,9 @@ list_open_workflow_type_issues() {
             }
         ]
       }
-  ' 2>/dev/null)"; then
+  ' 2>/dev/null)" || _lowti_join_rc=$?
+  rm -f "$_lowti_open_file"
+  if [ "$_lowti_join_rc" -ne 0 ]; then
     echo "Warning: failed to parse GitHub Project items while discovering Workflow Type issues." >&2
     printf '[]\n'
     return 0

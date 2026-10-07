@@ -93,9 +93,21 @@ CODEX_REVIEWER_SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")"
 source "$CODEX_REVIEWER_SCRIPT_DIR/codex-github-evidence-lib.sh"
 
 # #1651: emit the commit this companion filtered reviews against.
+# #1789 (plan D12): also emit the request this run answers, the current-head
+# trigger's server time, when one is known.
 emit_reviewed_head_if_known() {
+  emit_review_requested_at_if_known
   [ -n "${CURRENT_SHA_FULL:-}" ] || return 0
   printf 'REVIEWED_HEAD=%s\n' "$CURRENT_SHA_FULL"
+}
+
+# #1789 (plan D12): REVIEW_REQUESTED_AT=<TRIGGER_TIME> once a current-head
+# trigger was posted or found; nothing before that.
+emit_review_requested_at_if_known() {
+  if [ -n "${TRIGGER_TIME:-}" ]; then
+    printf 'REVIEW_REQUESTED_AT=%s\n' "$TRIGGER_TIME"
+  fi
+  return 0
 }
 
 # ── Argument parsing ──────────────────────────────────────────────────────────
@@ -264,7 +276,9 @@ BOT_LOGIN_PLAIN="${BOT_LOGIN%\[bot\]}"
 echo "INFO: Bot login (plain, for PR-comment matching): $BOT_LOGIN_PLAIN"
 
 TRIGGER_COMMENT_ID=""
+TRIGGER_TIME=""
 FORCE_RETRIGGER_AFTER_CLEARED_FINDINGS=0
+CLEARED_FINDINGS_REVIEW_TIME=""
 
 codex_trigger_approval_reaction_count() {
   local comment_id="$1"
@@ -285,6 +299,12 @@ codex_trigger_approval_reaction_count() {
   rm -f "$reaction_tmpfile"
 }
 
+# codex_inline_review_comment_count_since <trigger_time>
+# Counts Codex inline review comments created at or after the trigger and
+# bound to the current head. #1789 (plan D15): a review comment is bound by
+# original_commit_id (the revision it was written against), never by
+# commit_id, which GitHub moves to the newest head while the commented line is
+# unchanged — so an older head's comment is not counted for this head.
 codex_inline_review_comment_count_since() {
   local trigger_time="$1"
   [ -z "$trigger_time" ] && { printf '0\n'; return 0; }
@@ -293,7 +313,7 @@ codex_inline_review_comment_count_since() {
   review_comment_tmpfile=$(mktemp)
   if gh api "repos/$OWNER/$REPO/pulls/$PR_NUMBER/comments" --paginate \
     | jq -sr --arg bot "$BOT_LOGIN" --arg bot_plain "$BOT_LOGIN_PLAIN" --arg trigger_time "$trigger_time" --arg sha "$CURRENT_SHA_FULL" \
-      '(add // []) | [.[] | select((.user.login == $bot or .user.login == $bot_plain) and .created_at >= $trigger_time and ((.commit_id // "") == $sha))] | length' \
+      '(add // []) | [.[] | select((.user.login == $bot or .user.login == $bot_plain) and .created_at >= $trigger_time and ((.original_commit_id // "") == $sha))] | length' \
     > "$review_comment_tmpfile"; then
     cat "$review_comment_tmpfile"
   else
@@ -774,7 +794,7 @@ codex_normalize_whitespace() {
 # character, which is exactly the kind of unreviewed widening this
 # design forbids.
 #
-# The "flavor" slot's placeholder, `[^*`[:cntrl:]]{1,40}`, and why it
+# The "flavor" slot's placeholder, `[^*`[:cntrl:]]{1,60}`, and why it
 # replaced a 14-token literal alternation (issue #1491's implementation
 # plan, Decision 2 second addendum — supersedes the first addendum's
 # enumeration approach):
@@ -794,11 +814,20 @@ codex_normalize_whitespace() {
 # 14-token alternation shipped briefly, then was replaced by this bounded
 # placeholder before merge, once that pattern became clear.
 #
-# Bound derivation: `{1,40}` — 40 is the longest evidenced token's length
-# (31 characters, "More of your lovely PRs please.") rounded up to the
-# nearest 10 with modest headroom, wide enough to admit a somewhat longer
-# genuine flavor phrase without being large enough to admit multi-sentence
-# injected content. `[^*`[:cntrl:]]` excludes only the characters that
+# Bound derivation: `{1,60}` (issue #1878). The original cap was 40: the
+# longest token evidenced at the time (31 characters, "More of your
+# lovely PRs please.") rounded up to the nearest 10 with modest headroom.
+# Live traffic then falsified that cap — Codex emitted the 41-character
+# sentence "Already looking forward to the next diff." on a genuinely
+# clean review (Grunten/grunten-platform PR #73), which safe-failed and
+# escalated. 60 is about 50% headroom over that 41-character evidence. A
+# wider cap was rejected deliberately: 120 was tried downstream and
+# narrowed back, because a realistic 79-character actionable instruction
+# ("Rename the unsafe function immediately before merging this pull
+# request please.") would then match as approval. 60 keeps every known
+# actionable-instruction test case (79 and 86 characters) outside the
+# slot while admitting the longest evidenced genuine flavor sentence.
+# `[^*`[:cntrl:]]` excludes only the characters that
 # could let this slot swallow adjacent template structure: `*` (protects
 # the literal `**Reviewed commit:**` bold-marker syntax immediately
 # after this slot), backtick (protects the backtick-delimited SHA field
@@ -813,7 +842,7 @@ codex_normalize_whitespace() {
 # Residual risk, stated plainly rather than claimed away: this is now a
 # genuine (bounded) placeholder, not a literal — a false `APPROVED` is
 # possible if Codex ever asserts "Didn't find any major issues." and then
-# places an actual directive inside this 40-character slot while still
+# places an actual directive inside this 60-character slot while still
 # reproducing the exact, complete footer verbatim afterward. This
 # requires self-contradictory vendor output (a clean verdict immediately
 # followed by an instruction, inside one otherwise-genuine response) and
@@ -821,7 +850,7 @@ codex_normalize_whitespace() {
 # addendum and Risks & Mitigations for the full accounting — not a zero-
 # risk claim.
 CODEX_APPROVED_TEMPLATES=(
-  '^Codex Review: Didn'"'"'t find any major issues\. [^*`[:cntrl:]]{1,40} \*\*Reviewed commit:\*\* `[0-9a-f]{7,40}` <details> <summary>ℹ️ About Codex in GitHub</summary> <br/> \[Your team has set up Codex to review pull requests in this repo\]\(https://chatgpt\.com/codex/cloud/settings/general\)\. Reviews are triggered when you - Open a pull request for review - Mark a draft as ready - Comment "@codex review"\. If Codex has suggestions, it will comment; otherwise it will react with 👍\. Codex can also answer questions or update the PR\. Try commenting "@codex address that feedback"\. </details>$'
+  '^Codex Review: Didn'"'"'t find any major issues\. [^*`[:cntrl:]]{1,60} \*\*Reviewed commit:\*\* `[0-9a-f]{7,40}` <details> <summary>ℹ️ About Codex in GitHub</summary> <br/> \[Your team has set up Codex to review pull requests in this repo\]\(https://chatgpt\.com/codex/cloud/settings/general\)\. Reviews are triggered when you - Open a pull request for review - Mark a draft as ready - Comment "@codex review"\. If Codex has suggestions, it will comment; otherwise it will react with 👍\. Codex can also answer questions or update the PR\. Try commenting "@codex address that feedback"\. </details>$'
 )
 
 # `APPROVED` requires the ENTIRE, untruncated response — whitespace-
@@ -1537,6 +1566,7 @@ codex_return_reaction_without_review() {
   # RESULT=waiting_on_reviewer instead of RESULT=escalate.
   echo "VERDICT: WAITING_ON_REVIEWER — Codex thumbs-up reaction is not SHA-pinned review evidence; awaiting a submitted verdict"
   echo "REASON=codex-github-reaction-without-review"
+  emit_review_requested_at_if_known
   echo "COMMENT_COUNT=0"
   echo "BLOCKING_COUNT=0"
   echo "SUGGESTION_COUNT=0"
@@ -1945,8 +1975,12 @@ emit_reviewed_head_if_known
     [ "$EXISTING_BOT_RESPONSE_REVIEW_STATE" != "CHANGES_REQUESTED" ] && \
     codex_response_is_inline_review_summary "$EXISTING_BOT_RESPONSE" && \
     ! codex_response_is_blocking "$EXISTING_BOT_RESPONSE"; then
-    echo "INFO: existing Codex inline-review summary has only cleared thread findings; posting a fresh trigger"
+    echo "INFO: existing Codex inline-review summary has only cleared thread findings; a fresh trigger is needed unless a newer one is outstanding"
     FORCE_RETRIGGER_AFTER_CLEARED_FINDINGS=1
+    # #1789 (plan D11 Codex row, V36): remember when the cleared review was
+    # submitted, so the trigger guard below drops only a trigger that review
+    # answered and keeps a newer, still-unanswered one.
+    CLEARED_FINDINGS_REVIEW_TIME="$EXISTING_BOT_RESPONSE_TIME"
     return 1
   fi
   echo "INFO: existing current-head Codex evidence detected; no trigger comment will be posted"
@@ -2068,9 +2102,18 @@ if [ -n "$TRIGGER_COMMENT_INFO" ]; then
 	fi
 	if [ -n "$TRIGGER_TIME" ]; then
 	  if [ "$FORCE_RETRIGGER_AFTER_CLEARED_FINDINGS" -eq 1 ]; then
-	    echo "INFO: existing trigger for commit $CURRENT_SHA already produced only cleared Codex findings — posting a fresh trigger"
-	    TRIGGER_TIME=""
-	    TRIGGER_COMMENT_ID=""
+	    # #1789 (plan D11 Codex row, V36): the cleared review answered only a
+	    # trigger created at or before it (same second counts as answered). A
+	    # trigger created strictly later is the outstanding replacement: keep
+	    # it and poll it instead of posting a duplicate. Both values are GitHub
+	    # ISO-8601 UTC strings, so a string comparison orders them.
+	    if [ -n "$CLEARED_FINDINGS_REVIEW_TIME" ] && [[ "$TRIGGER_TIME" > "$CLEARED_FINDINGS_REVIEW_TIME" ]]; then
+	      echo "INFO: trigger for commit $CURRENT_SHA posted after the cleared Codex review is still outstanding — not posting a duplicate"
+	    else
+	      echo "INFO: existing trigger for commit $CURRENT_SHA already produced only cleared Codex findings — posting a fresh trigger"
+	      TRIGGER_TIME=""
+	      TRIGGER_COMMENT_ID=""
+	    fi
 	  fi
 	fi
 	if [ -n "$TRIGGER_TIME" ]; then
@@ -2919,5 +2962,6 @@ echo "PENDING_REVIEWER=codex-github"
 echo "PENDING_REVIEW_HEAD_SHA=$CURRENT_SHA_FULL"
 echo "PENDING_REVIEW_TRIGGER_COMMENT_ID=$TRIGGER_COMMENT_ID"
 echo "PENDING_REVIEW_TRIGGER_TIME=$TRIGGER_TIME"
+emit_review_requested_at_if_known
 echo "INFO: no duplicate trigger needed; the existing current-head trigger is still pending."
 exit 4

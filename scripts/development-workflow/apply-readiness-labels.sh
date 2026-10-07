@@ -559,8 +559,12 @@ codex_response_is_blocking() {
   grep -qiE "$CODEX_BLOCKING_PATTERN" <<< "$normalized_body"
 }
 
+# Must stay byte-identical to codex-github-reviewer.sh's
+# CODEX_APPROVED_TEMPLATES (flavor-slot cap 60 since issue #1878; see that
+# script's comment block for the bound derivation). A parity test in
+# test-pr-review-loop.sh fails if the two copies drift.
 CODEX_APPROVED_TEMPLATES=(
-  '^Codex Review: Didn'"'"'t find any major issues\. [^*`[:cntrl:]]{1,40} \*\*Reviewed commit:\*\* `[0-9a-f]{7,40}` <details> <summary>ℹ️ About Codex in GitHub</summary> <br/> \[Your team has set up Codex to review pull requests in this repo\]\(https://chatgpt\.com/codex/cloud/settings/general\)\. Reviews are triggered when you - Open a pull request for review - Mark a draft as ready - Comment "@codex review"\. If Codex has suggestions, it will comment; otherwise it will react with 👍\. Codex can also answer questions or update the PR\. Try commenting "@codex address that feedback"\. </details>$'
+  '^Codex Review: Didn'"'"'t find any major issues\. [^*`[:cntrl:]]{1,60} \*\*Reviewed commit:\*\* `[0-9a-f]{7,40}` <details> <summary>ℹ️ About Codex in GitHub</summary> <br/> \[Your team has set up Codex to review pull requests in this repo\]\(https://chatgpt\.com/codex/cloud/settings/general\)\. Reviews are triggered when you - Open a pull request for review - Mark a draft as ready - Comment "@codex review"\. If Codex has suggestions, it will comment; otherwise it will react with 👍\. Codex can also answer questions or update the PR\. Try commenting "@codex address that feedback"\. </details>$'
 )
 
 codex_response_is_approved() {
@@ -756,7 +760,9 @@ coderabbit_cli_local_ai_ledger_verdict() {
   verdict_head="$(printf '%s\n' "$verdict" | jq -r '.head_sha // ""' 2>/dev/null)"
   case "$outcome" in
     clean) ;;
-    not_yet_run|unknown) _adapter_refusal_reason="reviewer-check-absent"; return ;;
+    # #1789: no_verdict_yet (a waiting record or a kept expired-wait skip) is
+    # an absent verdict, never a pass.
+    not_yet_run|unknown|no_verdict_yet) _adapter_refusal_reason="reviewer-check-absent"; return ;;
     *) _adapter_refusal_reason="reviewer-evidence-unreadable"; return ;;
   esac
   if [ -z "$verdict_head" ] || [ "$verdict_head" != "$head_sha" ]; then

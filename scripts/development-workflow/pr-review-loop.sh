@@ -677,8 +677,11 @@ Usage: ./scripts/development-workflow/pr-review-loop.sh <pr-number> [--branch na
 Runs the automated PR review loop for one or more platforms in sequence. Before
 triggering a new review, each platform checks for existing blocking findings. If
 any platform reports blocking findings, the script stops immediately and exits 1.
-If a platform times out or escalates, the script exits 2. If all configured
-platforms are clean or skipped, the script exits 0. If a second instance is
+If a platform's wait budget runs out with no verdict and no failure evidence
+(No verdict yet), the script stops with RESULT=waiting_on_reviewer and exits 4;
+that is not a failure. If a platform reports failure evidence or escalates
+(Reviewer failed), the script exits 2. If all configured platforms are clean or
+skipped, the script exits 0. If a second instance is
 detected for the same PR number in the same repository, the script emits
 RESULT=escalate with REASON=lock_contention and exits 75 (EX_TEMPFAIL).
 
@@ -714,9 +717,12 @@ Subcommands:
 --compare:
   Run all configured platforms to completion regardless of individual verdicts
   (disables the short-circuit on the first blocking platform). After all platforms
-  run, the overall exit code and RESULT are identical to what normal mode would
-  produce: the first platform that would have blocked in config order governs.
-  Per-platform verdicts are emitted as COMPARE_VERDICT_<n>_PLATFORM /
+  run, the overall exit code and RESULT follow the cross-platform precedence:
+  a failed reviewer (escalate) first, then findings (needs_fixes/needs_rerun),
+  then No verdict yet (waiting_on_reviewer), then clean or skipped; ties go to
+  the earliest platform in evaluation order, whose output becomes the overall
+  output. Loop-level escalations (cycle caps, ledger persistence, thread audit)
+  still apply afterwards. Per-platform verdicts are emitted as COMPARE_VERDICT_<n>_PLATFORM /
   COMPARE_VERDICT_<n>_RESULT key=value lines, and one row is appended to
   docs/workflow/retro-metrics-platforms.md. Intended for platform evaluation only —
   not for normal orchestration where early exit is desired.
@@ -746,28 +752,82 @@ Platform selection (in priority order):
      at the repo root
   3. Legacy review.platforms / review.phase_after_clean compatibility mapping
 
+Per-platform wait budgets:
+  Each platform waits for its own budget, resolved in this order:
+    1. --max-wait <seconds> — one-run override for every platform; must be a
+       whole number of seconds from 1 to 999999, otherwise the run is refused
+       (exit 64) before any review request is posted.
+    2. review.wait_budgets.<platform> in .ai-dev-workflow.yaml (whole seconds,
+       1-999999; an invalid value warns and falls back to the default). For
+       codex-github, CODEX_GITHUB_MAX_WAIT takes precedence over the YAML value.
+       A claude-code-action value above 3600 warns and falls back to the
+       default (the companion's own maximum).
+    3. The built-in default: bugbot 2400 s, codex-github 1800 s, every other
+       platform 1200 s.
+  The resolved budgets are printed once as
+  PLATFORM_WAIT_BUDGETS=<platform>:<seconds>:<source>[:<adjustment>],…
+  with source override|configured|default and adjustment
+  documentation_branch|large_diff. Platforms run one after another, so a run's
+  worst-case wait is the sum of its platforms' budgets (plus one automatic
+  re-wait by the runner). The canonical statement of budgets, outcome classes,
+  precedence, the re-wait, and the reviewer-failed label rule is "Reviewer wait
+  budgets and outcome classes" in
+  docs/workflow/development-workflow/protocols/93-automated-reviewer-loop-protocol.md.
+
+Outcome classes (issue #1789):
+  Verdict received  clean, needs_fixes, needs_rerun.
+  No verdict yet    the budget ran out with no verdict and no failure evidence:
+                    RESULT=waiting_on_reviewer REASON=reviewer-no-verdict-yet
+                    (exit 4), or Codex GitHub's codex-github-review-pending /
+                    codex-github-reaction-without-review. Never applies
+                    reviewer-failed. Four expired waits stay non-blocking kept
+                    skips with NO_VERDICT_YET=1: devin no_check_run, coderabbit
+                    no_review, coderabbit-cli timeout, pr-agent no_review.
+  Reviewer failed   RESULT=escalate, including a reviewer's own failed or
+                    timed-out run (bugbot-run-timed-out,
+                    claude_code_action_run_failed, devin_run_failed,
+                    coderabbit_status_failed, pr_agent_run_failed).
+  Precedence across platforms (--compare): Reviewer failed, then findings, then
+  No verdict yet, then clean/skipped; ties go to the earliest platform.
+  reviewer-failed is reconciled after every run that evaluated reviewers: added
+  when any platform in this run carries failure evidence (an escalate other
+  than rate_limited, or a skip with reason unavailable, thread-check-failed,
+  forbidden, unauthorized, no_output, invalid_json, ambiguous_output, or
+  cli_failed), removed otherwise — including runs that replay a recorded clean
+  verdict.
+  Evidence counts for the current head only when it is bound to it: check runs
+  and statuses read from commits/<head>, reviews with commit_id == head, review
+  comments with original_commit_id == head, issue comments that answer a
+  request recorded for the head (PR-Agent: its head marker or binding run).
+
 Branch-type-aware default timeout:
   On spec/* and implementation-plan/* branches, Devin has no trigger condition and
-  exits immediately with REASON=no_check_run. To avoid wasting the full 20-minute
-  default wait budget on these branches, the script automatically reduces
-  --max-wait to PR_REVIEW_LOOP_DOC_MAX_WAIT seconds (default: 180) and
-  --poll-interval to 30 s when the branch matches spec/* or
-  implementation-plan/* and the caller did not pass the respective flag
-  explicitly. poll_interval is also reduced when needed so it stays below
-  max_wait — the per-loop timeout check requires elapsed >= max_wait, which can
-  only fire after at least one poll_interval has elapsed. Pass --max-wait and/or
-  --poll-interval explicitly to override either value.
+  exits immediately with REASON=no_check_run. Devin is the only platform that does
+  not review these branches, so only Devin's built-in default is reduced to
+  PR_REVIEW_LOOP_DOC_MAX_WAIT seconds (default: 180) there; a configured Devin
+  value or --max-wait is never reduced, and every other platform keeps its own
+  budget on these branches.
+
+Poll interval:
+  --poll-interval when given; otherwise CODEX_GITHUB_POLL_INTERVAL (default
+  60 s) for codex-github only, 30 s for other platforms on spec/* and
+  implementation-plan/* branches, and 120 s elsewhere. The interval is reduced
+  when needed so it stays below the platform's budget — the per-loop timeout
+  check requires elapsed >= budget, which can only fire after at least one poll
+  interval has elapsed.
 
 Large-diff poll-window extension:
   CodeRabbit takes significantly longer to post its review on PRs with a large
   number of changed files (e.g., release PRs or sync-template PRs). When the
-  caller did not pass --max-wait explicitly, the script fetches the PR's changed-
-  files count and extends max_wait when it exceeds a threshold.
+  caller did not pass --max-wait explicitly and the branch is not spec/* or
+  implementation-plan/*, the script fetches the PR's changed-files count and,
+  when it exceeds a threshold, lengthens every platform budget below
+  LARGE_DIFF_MAX_WAIT to that value (it never shortens a budget).
 
   Environment variables (both optional):
     LARGE_DIFF_THRESHOLD  — changed-files count above which the extension applies
                             (default: 50; must be a positive integer)
-    LARGE_DIFF_MAX_WAIT   — extended max_wait in seconds for large-diff PRs
+    LARGE_DIFF_MAX_WAIT   — extended wait budget in seconds for large-diff PRs
                             (default: 2400, i.e. 40 minutes; must be a positive integer)
 
   The extension is suppressed when --max-wait is passed explicitly. The emitted
@@ -811,7 +871,37 @@ Outputs stable key=value lines including:
     or GH_REPO count as explicit. Origins are compared, not checkouts: pass
     --repo-root so local work also runs in the item checkout.
   CHANGED_FILES_COUNT=<n> (PR's changed-files count, or -1 when the fetch failed)
-  LARGE_DIFF_EXTENDED=1 (present and set to 1 when max_wait was extended for a large-diff PR)
+  LARGE_DIFF_EXTENDED=1 (present and set to 1 when at least one platform budget was extended for a large-diff PR)
+  PLATFORM_WAIT_BUDGETS=<platform>:<seconds>:<source>[:<adjustment>],… (per-platform wait budgets)
+  Per dispatched platform <n> (issue #1789):
+    PLATFORM_<n>_OUTCOME_CLASS=verdict_received|no_verdict_yet|reviewer_failed|existing_handling|skipped_failure_evidence|skipped
+    PLATFORM_<n>_WAIT_BUDGET_SECONDS / _WAIT_BUDGET_SOURCE (override|configured|default)
+      / _WAIT_BUDGET_ADJUSTMENT (none|documentation_branch|large_diff)
+    PLATFORM_<n>_REQUESTED_AT=<iso8601> / PLATFORM_<n>_REQUESTED_AT_SOURCE=request|wait_start
+    PLATFORM_<n>_REQUEST_REF=<comment or workflow run id> (only when the platform recorded one)
+    PLATFORM_<n>_LATENCY_SECONDS (verdict, failure, existing handling)
+      | PLATFORM_<n>_WAITED_SECONDS (No verdict yet) | PLATFORM_<n>_ELAPSED_SECONDS (skip)
+    PLATFORM_<n>_VERDICT_REUSED=1 (a #1692 replay; no budget, request, or seconds key)
+    The summary comment's "Reviewer timing" section and the ledger's
+    platform_results[] records carry the same values (additive keys).
+  RESULT=waiting_on_reviewer REASON=reviewer-no-verdict-yet (exit 4; No verdict yet)
+    NO_VERDICT_YET=1 and WAIT_EXPIRED_DETAIL=<detail> in the platform output
+      (kept skips print NO_VERDICT_YET=1 and
+      DISPLAY_RESULT=no verdict yet (non-blocking skip: <reason>) instead)
+    With a waiting result whose reason is reviewer-no-verdict-yet,
+    codex-github-review-pending, or codex-github-reaction-without-review:
+    NO_VERDICT_REWAIT=available|used|untracked (available: the runner may re-run
+      the loop once, immediately, with the same PR_REVIEW_LOOP_RUN_ID; used: that
+      re-wait already ran; untracked: no stable run id, unknown head, unreadable
+      ledger, or the summary could not be persisted — stop without re-waiting)
+    PENDING_REVIEWER=<platform>  PENDING_REVIEW_HEAD_SHA=<sha>
+    PENDING_REVIEW_REQUESTED_AT=<iso8601> / PENDING_REVIEW_WAITED_SECONDS=<n> (when recorded)
+    NO_FAILURE_DETECTED=1|0 (0 when any platform in this run carried failure
+      evidence; reviewer-failed is then applied)
+    FAILED_PEER_PLATFORMS=<comma-separated platforms> (only when NO_FAILURE_DETECTED=0
+      and the platforms can be named)
+    A re-wait run adopts the request the earlier run recorded for the same run id
+    and head and posts no duplicate review request.
   REASON=late_review_threads (when post-clean recheck finds new unresolved threads)
   COMPARE_MODE=1 (when --compare is active)
   COMPARE_VERDICT_<n>_PLATFORM / COMPARE_VERDICT_<n>_RESULT (when --compare is active)
@@ -1566,6 +1656,17 @@ expensive_gate_unresolved_threads_status() {
 # Does NOT call pr-ci-loop.sh. Collapses statusCheckRollup duplicates to the
 # latest entry per check key (normalize_status_check_rollup, workflow-lib.sh) before
 # excluding reviewer-owned names and classifying.
+#
+# Also excludes the `Reviewer-loop completion guard (#<pr>)` commit status
+# (posted by .github/workflows/pr-policy.yml) by prefix (issue #1879). That
+# status reports THIS loop's own last summary result: it stays `failure` until
+# a clean summary is posted, and a clean summary needs this gate to pass
+# first. Counting it as a baseline check deadlocks the expensive reviewer
+# after any non-clean run, so it is not a baseline check here.
+# The `policy` CheckRun from the `PR policy` workflow posts that status and
+# fails with it, so exclude it for the same reason (#1884). pr-ci-loop.sh
+# still counts both when enforcing final CI readiness.
+EXPENSIVE_GATE_COMPLETION_GUARD_PREFIX='Reviewer-loop completion guard (#'
 expensive_gate_baseline_checks_status() {
   local pr_number_arg="$1"
   local payload=""
@@ -1598,12 +1699,20 @@ expensive_gate_baseline_checks_status() {
   fi
 
   if ! baseline_json="$(
-    printf '%s\n' "$normalized_json" | jq --argjson reviewer_names "$reviewer_names" '
+    printf '%s\n' "$normalized_json" | jq \
+      --argjson reviewer_names "$reviewer_names" \
+      --arg guard_prefix "$EXPENSIVE_GATE_COMPLETION_GUARD_PREFIX" '
       [
         .[]
         | select(
             (.name // .context // .workflowName // "unknown") as $check_name
             | ($reviewer_names | index($check_name) | not)
+              and ($check_name | startswith($guard_prefix) | not)
+              and (
+                ((.__typename // "") == "CheckRun"
+                  and ($check_name == "policy")
+                  and ((.workflowName // "") == "PR policy")) | not
+              )
           )
       ]
     ' 2>/dev/null
@@ -1966,7 +2075,7 @@ run_greptile_review() {
   local repo
   local review_comment_id=""
   local review_window_start=""
-  local recent_trigger_comment
+  local recent_trigger_comment=""
   local existing_thumbs_up
   local head_sha=""
   local since_iso=""
@@ -1988,8 +2097,9 @@ run_greptile_review() {
   local comment_count=0
   local index=1
   local blocking_json=""
+  local greptile_read_err_file=""
 
-  trap 'rm -f "${existing_blocking_file:-}" "${blocking_lines_file:-}"' RETURN
+  trap 'rm -f "${existing_blocking_file:-}" "${blocking_lines_file:-}" "${greptile_read_err_file:-}"' RETURN
 
   require_gh
   cd_workflow_repo_root
@@ -1999,22 +2109,77 @@ run_greptile_review() {
     trigger_author_login="$(gh api user --jq '.login')"
   fi
 
-  recent_trigger_comment="$(
-    gh api "repos/$repo/issues/$pr_number/comments" --paginate \
-      | jq --arg author "$trigger_author_login" \
-          --arg trigger "$trigger_comment" \
-          --argjson max_wait "$max_wait" \
-          '
-            .[]
-            | select(
-                .user.login == $author and
-                .body == $trigger and
-                ((now - (.created_at | fromdateiso8601)) <= $max_wait)
-              )
-            | {id, created_at}
-          ' \
-      | jq -s 'sort_by(.created_at) | last // empty'
-  )"
+  # #1789 (plan D15 greptile row): the head every piece of evidence is bound
+  # to — the loop head, or the PR head read here (as before) when the loop has
+  # none. With neither, nothing can be bound: escalate before posting.
+  head_sha="${loop_head_sha:-}"
+  if reviewer_loop_head_is_unknown_or_invalid "$head_sha"; then
+    if ! head_sha="$(gh api "repos/$repo/pulls/$pr_number" --jq '.head.sha' 2>/dev/null)"; then
+      # A failed read leaves no head to bind to: the escalation below.
+      head_sha=""
+    fi
+  fi
+  if [ -z "$head_sha" ] || [ "$head_sha" = "null" ]; then
+    print_kv RESULT escalate
+    print_kv REASON head-sha-unavailable
+    print_kv PLATFORM "$platform"
+    print_kv PR_NUMBER "$pr_number"
+    print_kv BRANCH "$branch_name"
+    print_kv REVIEW_COMMENT_ID ""
+    print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+    return 2
+  fi
+
+  # #1789 (plan D11 Greptile row): in re-wait mode, reuse the recorded trigger
+  # comment regardless of the reuse window when its reactions can be read; a
+  # bot thumbs-up on it is that request's answer. An empty ref or an
+  # unreadable comment is no observable outstanding request: post as fresh.
+  local greptile_adopted=0
+  if reviewer_loop_rewait_adopts_recorded_request; then
+    local _gr_reactions=""
+    if [ -n "$reviewer_loop_recorded_request_ref" ] \
+        && _gr_reactions="$(gh api "repos/$repo/issues/comments/$reviewer_loop_recorded_request_ref/reactions" 2>/dev/null)" \
+        && printf '%s' "$_gr_reactions" | jq -e 'type == "array"' >/dev/null 2>&1; then
+      greptile_adopted=1
+      review_comment_id="$reviewer_loop_recorded_request_ref"
+      review_window_start="${reviewer_loop_recorded_requested_at:-$(date -u +"%Y-%m-%dT%H:%M:%SZ")}"
+      echo "INFO: re-wait: adopting the recorded greptile request ${review_comment_id}; not posting a new trigger" >&2
+      print_review_request_keys "$reviewer_loop_recorded_requested_at" "$reviewer_loop_recorded_request_ref"
+    else
+      echo "WARN: recorded greptile request ${reviewer_loop_recorded_request_ref:-<empty>} on ${loop_head_sha:-the current head} is not readable; requesting a review" >&2
+    fi
+  else
+    reviewer_loop_rewait_log_no_recorded_request "$platform" "${loop_head_sha:-}"
+  fi
+
+  # #1789 (plan D15 greptile row): outside re-wait mode an age-window trigger
+  # is reused only when its id is a request recorded for this head
+  # (reviewer_loop_head_request_refs, from reviewer_loop_head_recorded_request_refs).
+  # A trigger posted while a previous head was the PR head is never reused, so
+  # its late thumbs-up and comments cannot become this head's verdict.
+  if [ "$greptile_adopted" -eq 0 ]; then
+    local _gr_head_refs_json="[]"
+    _gr_head_refs_json="$(printf '%s\n' "${reviewer_loop_head_request_refs:-}" | jq -R 'select(. != "")' | jq -sc '.' 2>/dev/null)" || _gr_head_refs_json="[]"
+    [ -n "$_gr_head_refs_json" ] || _gr_head_refs_json="[]"
+    recent_trigger_comment="$(
+      gh api "repos/$repo/issues/$pr_number/comments" --paginate \
+        | jq --arg author "$trigger_author_login" \
+            --arg trigger "$trigger_comment" \
+            --argjson max_wait "$max_wait" \
+            --argjson head_refs "$_gr_head_refs_json" \
+            '
+              .[]
+              | select(
+                  .user.login == $author and
+                  .body == $trigger and
+                  ((now - (.created_at | fromdateiso8601)) <= $max_wait) and
+                  ((.id | tostring) as $id | any($head_refs[]; . == $id))
+                )
+              | {id, created_at}
+            ' \
+        | jq -s 'sort_by(.created_at) | last // empty'
+    )"
+  fi
 
   if [ -n "$recent_trigger_comment" ]; then
     review_comment_id="$(printf '%s\n' "$recent_trigger_comment" | jq -r '.id')"
@@ -2026,34 +2191,40 @@ run_greptile_review() {
     if [ "$existing_thumbs_up" -gt 0 ]; then
       review_comment_id=""
       review_window_start=""
+    else
+      # #1789 (plan D12/D15): a reused trigger recorded for this head is this
+      # invocation's request — record its server time and id.
+      echo "INFO: reusing the greptile trigger ${review_comment_id} recorded for ${head_sha}; not posting a new trigger" >&2
+      print_review_request_keys "$review_window_start" "$review_comment_id"
     fi
   fi
 
   if [ -z "$review_comment_id" ]; then
-    head_sha="$(gh api "repos/$repo/pulls/$pr_number" --jq '.head.sha')"
-    if [ -n "$head_sha" ]; then
-      since_iso="$(gh api "repos/$repo/commits/$head_sha" --jq '.commit.committer.date // empty')"
-    fi
+    since_iso="$(gh api "repos/$repo/commits/$head_sha" --jq '.commit.committer.date // empty')"
     if [ -z "$since_iso" ]; then
       since_iso="$(date -u -v-24H +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date -u -d '24 hours ago' +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || echo '1970-01-01T00:00:00Z')"
     fi
 
+    # #1789 (plan D15 greptile row): pre-trigger findings must also be bound
+    # to the head — review comments by original_commit_id, reviews by
+    # commit_id — not only created after the head commit's committer time.
     existing_comments="$(
       gh api "repos/$repo/pulls/$pr_number/comments" --paginate \
-        | jq -r --arg bot "$bot_login" --arg since "$since_iso" '
+        | jq -r --arg bot "$bot_login" --arg since "$since_iso" --arg head "$head_sha" "$REVIEWER_LOOP_HEAD_BINDING_JQ"'
             .[]
-            | select(.user.login == $bot and .created_at > $since)
+            | select(.user.login == $bot and .created_at > $since and bound_review_comment($head))
             | { path, line: (.line // .original_line // 0), body: (.body // ""), commit_id: (.commit_id // "") }
             | @json
           '
     )"
     existing_reviews="$(
       gh api "repos/$repo/pulls/$pr_number/reviews" --paginate \
-        | jq -r --arg bot "$bot_login" --arg since "$since_iso" '
+        | jq -r --arg bot "$bot_login" --arg since "$since_iso" --arg head "$head_sha" "$REVIEWER_LOOP_HEAD_BINDING_JQ"'
             .[]
             | select(
                 .user.login == $bot and
                 .submitted_at > $since and
+                bound_review($head) and
                 .state == "CHANGES_REQUESTED"
               )
             | { path: "", line: 0, body: (.body // "CHANGES_REQUESTED review without body"), commit_id: (.commit_id // .commitId // "") }
@@ -2107,7 +2278,16 @@ run_greptile_review() {
 
     rm -f "$existing_blocking_file"
     review_window_start="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
-    review_comment_id="$(gh api "repos/$repo/issues/$pr_number/comments" --method POST --raw-field body="$trigger_comment" --jq '.id')"
+    local _gr_post_json=""
+    _gr_post_json="$(gh api "repos/$repo/issues/$pr_number/comments" --method POST --raw-field body="$trigger_comment")" || _gr_post_json=""
+    review_comment_id="$(printf '%s' "$_gr_post_json" | jq -r 'if type == "object" then (.id // empty | tostring) else empty end' 2>/dev/null)" || review_comment_id=""
+    if [ -n "$review_comment_id" ]; then
+      # #1789 (plan D12): the request this invocation posted — the trigger
+      # comment's server created_at and id.
+      print_review_request_keys \
+        "$(printf '%s' "$_gr_post_json" | jq -r '.created_at // empty' 2>/dev/null || true)" \
+        "$review_comment_id"
+    fi
   fi
 
   if [ -z "$review_comment_id" ]; then
@@ -2116,12 +2296,23 @@ run_greptile_review() {
   fi
 
   blocking_lines_file="$(mktemp)"
+  # #1789 (spec BR 2): the reactions poll read's stderr is captured so a
+  # 401/403 refusal ends the wait as greptile-read-denied instead of No
+  # verdict yet. Removed by the RETURN trap above.
+  local greptile_read_denied_detail=""
+  greptile_read_err_file="$(reviewer_loop_gh_read_err_file)"
 
   while :; do
     thumbs_up="$(
-      gh api "repos/$repo/issues/comments/$review_comment_id/reactions" \
+      gh api "repos/$repo/issues/comments/$review_comment_id/reactions" 2>"${greptile_read_err_file:-/dev/null}" \
         | jq --arg bot "$bot_login" '[.[] | select(.content == "+1" and .user.login == $bot)] | length'
     )"
+    if greptile_read_denied_detail="$(reviewer_loop_gh_read_denied "$greptile_read_err_file")"; then
+      rm -f "$blocking_lines_file"
+      print_reviewer_read_denied "$platform" "$pr_number" "$branch_name" "$greptile_read_denied_detail"
+      print_kv REVIEW_COMMENT_ID "$review_comment_id"
+      return 2
+    fi
 
     if [ "$thumbs_up" -gt 0 ]; then
       break
@@ -2129,25 +2320,28 @@ run_greptile_review() {
 
     if [ "$elapsed" -ge "$max_wait" ]; then
       rm -f "$blocking_lines_file"
-      print_kv RESULT escalate
-      print_kv REASON timeout
+      # #1789 (plan D8 Greptile row): no bot thumbs-up by budget end is
+      # neither a verdict nor failure evidence — No verdict yet.
+      print_no_verdict_yet "$platform" no_acknowledgement "$head_sha" ""
       print_kv PLATFORM "$platform"
       print_kv PR_NUMBER "$pr_number"
       print_kv BRANCH "$branch_name"
       print_kv REVIEW_COMMENT_ID "$review_comment_id"
       print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
-      return 2
+      return 4
     fi
 
     _interruptible_sleep "$poll_interval"
     elapsed=$((elapsed + poll_interval))
   done
 
+  # #1789 (plan D15 greptile row): findings after the thumbs-up count only when
+  # bound to the head, in addition to the request-time filter.
   comments="$(
     gh api "repos/$repo/pulls/$pr_number/comments" --paginate \
-      | jq -r --arg bot "$bot_login" --arg since "$review_window_start" '
+      | jq -r --arg bot "$bot_login" --arg since "$review_window_start" --arg head "$head_sha" "$REVIEWER_LOOP_HEAD_BINDING_JQ"'
         .[]
-        | select(.user.login == $bot and .created_at > $since)
+        | select(.user.login == $bot and .created_at > $since and bound_review_comment($head))
         | {
             path,
             line: (.line // .original_line // 0),
@@ -2160,11 +2354,12 @@ run_greptile_review() {
 
   blocking_reviews="$(
     gh api "repos/$repo/pulls/$pr_number/reviews" --paginate \
-      | jq -r --arg bot "$bot_login" --arg since "$review_window_start" '
+      | jq -r --arg bot "$bot_login" --arg since "$review_window_start" --arg head "$head_sha" "$REVIEWER_LOOP_HEAD_BINDING_JQ"'
         .[]
         | select(
             .user.login == $bot and
             .submitted_at > $since and
+            bound_review($head) and
             .state == "CHANGES_REQUESTED"
           )
         | {
@@ -2319,6 +2514,12 @@ EOF
   case "$max_retriggers" in
     ''|*[!0-9]*) max_retriggers=1 ;;
   esac
+  # #1789 (plan D5, D11): in re-wait mode the companion must not post any new
+  # trigger — --max-retriggers 0 also disables its async-arrival trigger, and
+  # its own duplicate guard keeps the outstanding current-head trigger.
+  if [ "${reviewer_loop_rewait_mode:-0}" -eq 1 ]; then
+    max_retriggers=0
+  fi
 
   # Keep polling interval bounded by the wait budget to avoid zero-poll attempts
   # when a caller provides poll_interval > max_wait.
@@ -2341,6 +2542,9 @@ EOF
   script_output="$("$reviewer_script" "${reviewer_args[@]}" 2>&1)"
   script_exit=$?
   set -e
+  # #1789 (plan D12): forward the companion's request time (its TRIGGER_TIME)
+  # on every arm.
+  print_review_request_keys "$(kv_value REVIEW_REQUESTED_AT "$script_output")" ""
 
   case "$script_exit" in
     0)
@@ -2575,13 +2779,44 @@ run_claude_code_action_review() {
   if [ "$effective_poll_interval" -gt "$max_wait" ]; then
     effective_poll_interval="$max_wait"
   fi
+  local claude_args=(
+    "$pr_number" "$owner" "$repo_name"
+    --bot-login "$bot_login"
+    --poll-interval "$effective_poll_interval"
+    --max-wait "$max_wait"
+  )
+  # #1789 (plan D11 Claude row): in re-wait mode, hand the recorded run to the
+  # companion to adopt. An accepted fresh dispatch always yields a run id, so a
+  # recorded requested_at with an empty request_ref is not an outstanding run:
+  # pass neither flag and let the companion dispatch.
+  if reviewer_loop_rewait_adopts_recorded_request \
+      && [ -n "$reviewer_loop_recorded_request_ref" ] \
+      && [ -n "$reviewer_loop_recorded_requested_at" ]; then
+    claude_args+=(
+      --adopt-run-id "$reviewer_loop_recorded_request_ref"
+      --adopt-requested-at "$reviewer_loop_recorded_requested_at"
+    )
+  else
+    reviewer_loop_rewait_log_no_recorded_request "$platform" "${loop_head_sha:-}"
+  fi
+  # #1789 (plan D15 claude-code-action row): bind counted reviews to the loop
+  # head — the companion then counts a bot review only when its commit_id is
+  # that head. With no valid loop head the flag is omitted and the companion
+  # keeps its time-bounded count (it rejects a malformed --head-sha).
+  if ! reviewer_loop_head_is_unknown_or_invalid "${loop_head_sha:-}"; then
+    claude_args+=(--head-sha "$loop_head_sha")
+  fi
+  # #1789 (plan D12): capture the companion's stdout (stderr stays discarded)
+  # so its REVIEW_REQUESTED_AT / REVIEW_REQUEST_REF reach the ledger; without
+  # them no Claude request is recorded and every re-wait would re-dispatch.
+  local script_output=""
   set +e
-  "$reviewer_script" "$pr_number" "$owner" "$repo_name" \
-    --bot-login "$bot_login" \
-    --poll-interval "$effective_poll_interval" \
-    --max-wait "$max_wait" >/dev/null 2>&1
+  script_output="$("$reviewer_script" "${claude_args[@]}" 2>/dev/null)"
   script_exit=$?
   set -e
+  print_review_request_keys \
+    "$(kv_value REVIEW_REQUESTED_AT "$script_output")" \
+    "$(kv_value REVIEW_REQUEST_REF "$script_output")"
 
   case "$script_exit" in
     0)
@@ -2621,13 +2856,25 @@ run_claude_code_action_review() {
       return 1
       ;;
     2)
+      # #1789 (plan D8 Claude row): the companion exits 2 for a completed run
+      # whose conclusion is not success (and for argument validation), never
+      # for an expired wait. Failure evidence.
       print_kv RESULT escalate
-      print_kv REASON timeout
+      print_kv REASON claude_code_action_run_failed
       print_kv PLATFORM "$platform"
       print_kv PR_NUMBER "$pr_number"
       print_kv BRANCH "$branch_name"
       print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
       return 2
+      ;;
+    4)
+      # #1789 (plan D8 Claude row): no run completed within the budget.
+      print_no_verdict_yet "$platform" run_not_completed "${loop_head_sha:-}" ""
+      print_kv PLATFORM "$platform"
+      print_kv PR_NUMBER "$pr_number"
+      print_kv BRANCH "$branch_name"
+      print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+      return 4
       ;;
     *)
       print_kv RESULT escalate
@@ -2647,7 +2894,9 @@ run_copilot_review() {
   # review state to the standard exit-code contract:
   #   0 → RESULT=clean      (APPROVED or COMMENTED only)
   #   1 → RESULT=needs_fixes (CHANGES_REQUESTED)
-  #   2 → RESULT=escalate   (timeout or Copilot feature unavailable)
+  #   2 → RESULT=escalate   (Copilot feature unavailable, head SHA unavailable)
+  #   4 → RESULT=waiting_on_reviewer (no review on the head within the budget;
+  #       REASON=reviewer-no-verdict-yet, #1789)
   #
   # Env var override:
   #   COPILOT_BOT_LOGIN  — override the default bot login
@@ -2690,6 +2939,8 @@ run_copilot_review() {
 
   # Step 1: Request Copilot as a reviewer (idempotent — GitHub silently
   # deduplicates reviewer requests if Copilot is already requested).
+  local copilot_requested_at
+  copilot_requested_at="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
   set +e
   gh api "repos/$owner/$repo_name/pulls/$pr_number/requested_reviewers" \
     --method POST \
@@ -2707,6 +2958,9 @@ run_copilot_review() {
     print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
     return 2
   fi
+  # #1789 (plan D12): the time of the reviewer request (the request API
+  # returns no comment, so no request ref).
+  print_review_request_keys "$copilot_requested_at" ""
 
   # Step 2: Poll the pull-request reviews endpoint until Copilot posts a review.
   local effective_poll_interval="$poll_interval"
@@ -2714,6 +2968,12 @@ run_copilot_review() {
     effective_poll_interval="$max_wait"
   fi
   [ "$effective_poll_interval" -le 0 ] && effective_poll_interval=1
+
+  # #1789 (spec BR 2): the reviews poll read's stderr is captured so a 401/403
+  # refusal ends the wait as copilot-read-denied instead of No verdict yet.
+  local copilot_read_err_file="" copilot_read_denied_detail=""
+  copilot_read_err_file="$(reviewer_loop_gh_read_err_file)"
+  trap 'rm -f "${copilot_read_err_file:-}"' RETURN
 
   while [ "$elapsed" -lt "$max_wait" ]; do
     # Re-fetch the HEAD SHA on each iteration so that if a new commit is pushed
@@ -2729,10 +2989,14 @@ run_copilot_review() {
     fi
     unset _sha_rc
     set +e
-    review_state="$(gh api --paginate "repos/$owner/$repo_name/pulls/$pr_number/reviews" 2>/dev/null \
+    review_state="$(gh api --paginate "repos/$owner/$repo_name/pulls/$pr_number/reviews" 2>"${copilot_read_err_file:-/dev/null}" \
       | jq -rs --arg login "$bot_login" --arg sha "$current_sha" \
         '[ .[] | .[] | select(.user.login == $login and .commit_id == $sha) ] | last | .state // empty')"
     set -e
+    if copilot_read_denied_detail="$(reviewer_loop_gh_read_denied "$copilot_read_err_file")"; then
+      print_reviewer_read_denied "$platform" "$pr_number" "$branch_name" "$copilot_read_denied_detail"
+      return 2
+    fi
 
     case "$review_state" in
       APPROVED)
@@ -2807,14 +3071,14 @@ run_copilot_review() {
     elapsed=$(( elapsed + effective_poll_interval ))
   done
 
-  # Timeout — no review posted within max_wait.
-  print_kv RESULT escalate
-  print_kv REASON timeout
+  # #1789 (plan D8 Copilot row): no review bound to the head within the
+  # budget — No verdict yet, never a failure.
+  print_no_verdict_yet "$platform" review_not_submitted "${current_sha:-$head_sha}" ""
   print_kv PLATFORM "$platform"
   print_kv PR_NUMBER "$pr_number"
   print_kv BRANCH "$branch_name"
   print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
-  return 2
+  return 4
 }
 
 run_ronda_review() {
@@ -2853,8 +3117,10 @@ run_ronda_review() {
   #   2 → RESULT=escalate    (conclusion=success with a missing, duplicated,
   #                           or unparseable severity line; conclusion=failure
   #                           — a pass failure, not a code finding; any other
-  #                           terminal conclusion; timeout;
+  #                           terminal conclusion;
   #                           head-sha-unavailable; fetch-failed)
+  #   4 → RESULT=waiting_on_reviewer (no completed check run within the budget;
+  #                           REASON=reviewer-no-verdict-yet, #1789)
   #
   # Env var overrides:
   #   RONDA_CHECK_NAME  — override check-run name (default: "Ronda review")
@@ -3066,14 +3332,14 @@ run_ronda_review() {
     esac
   done
 
-  # Timeout — no completed check run observed within max_wait.
-  print_kv RESULT escalate
-  print_kv REASON timeout
+  # #1789 (plan D8 Ronda row): no completed check run on the head within the
+  # budget — No verdict yet. A completed failure keeps ronda_pass_failed above.
+  print_no_verdict_yet "$platform" check_not_completed "${current_sha:-$head_sha}" ""
   print_kv PLATFORM "$platform"
   print_kv PR_NUMBER "$pr_number"
   print_kv BRANCH "$branch_name"
   print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
-  return 2
+  return 4
 }
 
 bugbot_return_disabled() {
@@ -3364,10 +3630,16 @@ run_bugbot_review() {
   #   1 → RESULT=needs_fixes (conclusion=failure/action_required, neutral with
   #                           retrievable findings, or existing blocking
   #                           cursor[bot] findings on current head)
-  #   2 → RESULT=escalate   (timeout, unavailable, head-sha-unavailable, or a
-  #                           neutral conclusion whose verdict could not be
-  #                           established — see REASON=bugbot-unverified-verdict
-  #                           and REASON=bugbot-findings-not-retrievable)
+  #   2 → RESULT=escalate   (Bugbot's own timed_out run as
+  #                           REASON=bugbot-run-timed-out, head-sha-unavailable,
+  #                           fetch/trigger failures, or a neutral conclusion
+  #                           whose verdict could not be established — see
+  #                           REASON=bugbot-unverified-verdict and
+  #                           REASON=bugbot-findings-not-retrievable)
+  #   4 → RESULT=waiting_on_reviewer (#1789: the budget ran out with no
+  #                           completed run on the head; REASON=
+  #                           reviewer-no-verdict-yet, WAIT_EXPIRED_DETAIL
+  #                           check_not_completed or check_not_started)
   #
   # Env var overrides:
   #   BUGBOT_BOT_LOGIN        — override bot login (default: "cursor[bot]")
@@ -3448,6 +3720,9 @@ run_bugbot_review() {
   # --- Phase 1: Check for existing blocking cursor[bot] findings on current HEAD ---
   # If blocking findings already exist (e.g. from a previous trigger in the same
   # review cycle) return needs_fixes immediately without re-triggering.
+  # #1789 (plan D15 bugbot row): this and the three later review-comment
+  # filters bind a comment by original_commit_id; GitHub moves commit_id to the
+  # newest head while the commented line is unchanged. Reviews keep commit_id.
   set +e
   local _existing_comments_rc=0
   local _existing_reviews_rc=0
@@ -3455,7 +3730,7 @@ run_bugbot_review() {
     gh api "repos/$repo/pulls/$pr_number/comments" --paginate 2>/dev/null \
       | jq -r --arg bot "$bot_login" --arg since "$since_iso" --arg sha "$head_sha" '
           .[]
-          | select((.user.login == $bot or .user.login == ($bot + "[bot]")) and .created_at > $since and .commit_id == $sha and .in_reply_to_id == null)
+          | select((.user.login == $bot or .user.login == ($bot + "[bot]")) and .created_at > $since and .original_commit_id == $sha and .in_reply_to_id == null)
           | { path, line: (.line // .original_line // 0), body: (.body // ""), commit_id: (.commit_id // "") }
           | @json
         ' 2>/dev/null
@@ -3656,6 +3931,19 @@ run_bugbot_review() {
   fi
   _bb_run_count="${_bb_run_count:-0}"
 
+  # #1789 (plan D11 Bugbot row): in re-wait mode the recorded request is the
+  # outstanding one, whether or not its ref is empty or the comment still
+  # exists — the verdict is read from current-head check runs, not from the
+  # trigger comment. Do not post; carry the recorded request forward (D12).
+  local bugbot_adopted=0
+  if reviewer_loop_rewait_adopts_recorded_request; then
+    bugbot_adopted=1
+    echo "INFO: re-wait: adopting the recorded bugbot request ${reviewer_loop_recorded_request_ref:-<no ref>} (requested ${reviewer_loop_recorded_requested_at:-at an unknown time}); not posting a new trigger" >&2
+    print_review_request_keys "$reviewer_loop_recorded_requested_at" "$reviewer_loop_recorded_request_ref"
+  else
+    reviewer_loop_rewait_log_no_recorded_request "$platform" "$head_sha"
+  fi
+
   if [ "$_bb_run_count" -eq 0 ]; then
     set +e
     bugbot_escalate_if_disabled_without_check_run \
@@ -3668,12 +3956,22 @@ run_bugbot_review() {
     if [ "$_bb_disabled_rc" -eq "$BUGBOT_HANDLED_SKIP_RC" ]; then
       return 0
     fi
-    # No Cursor Bugbot check run for this head — post the trigger comment.
-    set +e
-    gh api "repos/$repo/issues/$pr_number/comments" --method POST \
-      --raw-field body="$trigger_comment" > /dev/null 2>&1
-    local _bb_trigger_rc=$?
-    set -e
+    # No Cursor Bugbot check run for this head — post the trigger comment,
+    # unless re-wait mode adopted the recorded one above.
+    local _bb_trigger_rc=0 _bb_trigger_json=""
+    if [ "$bugbot_adopted" -eq 0 ]; then
+      set +e
+      _bb_trigger_json="$(gh api "repos/$repo/issues/$pr_number/comments" --method POST \
+        --raw-field body="$trigger_comment" 2>/dev/null)"
+      _bb_trigger_rc=$?
+      set -e
+      if [ "$_bb_trigger_rc" -eq 0 ]; then
+        # #1789 (plan D12): the trigger comment's server created_at and id.
+        print_review_request_keys \
+          "$(printf '%s' "$_bb_trigger_json" | jq -r 'if type == "object" then (.created_at // empty) else empty end' 2>/dev/null || true)" \
+          "$(printf '%s' "$_bb_trigger_json" | jq -r 'if type == "object" then (.id // empty | tostring) else empty end' 2>/dev/null || true)"
+      fi
+    fi
     if [ "$_bb_trigger_rc" -ne 0 ]; then
       echo "WARN: run_bugbot_review: trigger comment post failed for PR #$pr_number" >&2
       print_kv RESULT escalate
@@ -3690,13 +3988,47 @@ run_bugbot_review() {
   fi
 
   # --- Phase 3: Poll the "Cursor Bugbot" check run on the current head SHA ---
-  # Wrapped in a one-shot retry (issue #1390): Bugbot intermittently leaves its
-  # check run unfinished, and a single re-trigger with the trigger comment has
-  # been observed to recover it every time. A timeout is not a finding, so
-  # retry once before declaring the reviewer unavailable.
+  # One-shot re-trigger (issue #1390): Bugbot intermittently leaves its check
+  # run unfinished, and a single re-trigger with the trigger comment has been
+  # observed to recover it every time. #1789 (plan D3): the budget bounds the
+  # whole wait, both attempts included, and the re-trigger fires once the
+  # elapsed counter reaches budget - min(600, floor(budget / 2)) (1800 s for
+  # the 2400 s default), so a verdict arriving up to 1500 s after the request
+  # is always observed before any re-trigger.
   local bugbot_retry_attempted=0
-  while :; do
+  local bugbot_retrigger_margin bugbot_retrigger_at
+  bugbot_retrigger_margin=$(( max_wait / 2 ))
+  [ "$bugbot_retrigger_margin" -gt 600 ] && bugbot_retrigger_margin=600
+  bugbot_retrigger_at=$(( max_wait - bugbot_retrigger_margin ))
+  # #1789 (plan D3, D11): the #1390 re-trigger is skipped in re-wait mode — the
+  # re-wait never posts a new request while one is outstanding.
+  if [ "${reviewer_loop_rewait_mode:-0}" -eq 1 ]; then
+    bugbot_retry_attempted=1
+  fi
   while [ "$elapsed" -lt "$max_wait" ]; do
+    if [ "$bugbot_retry_attempted" -eq 0 ] && [ "$elapsed" -gt 0 ] \
+        && [ "$elapsed" -ge "$bugbot_retrigger_at" ]; then
+      bugbot_retry_attempted=1
+      echo "INFO: run_bugbot_review: Bugbot produced no completed check run within ${elapsed}s of a ${max_wait}s budget for PR #$pr_number — re-triggering once" >&2
+      set +e
+      gh api "repos/$repo/issues/$pr_number/comments" --method POST \
+        --raw-field body="$trigger_comment" > /dev/null 2>&1
+      local _bb_retry_rc=$?
+      set -e
+      if [ "$_bb_retry_rc" -ne 0 ]; then
+        echo "WARN: run_bugbot_review: retry trigger comment post failed for PR #$pr_number" >&2
+        print_kv RESULT escalate
+        print_kv REASON trigger-failed
+        print_kv PLATFORM "$platform"
+        print_kv PR_NUMBER "$pr_number"
+        print_kv BRANCH "$branch_name"
+        print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+        print_kv COMMENT_COUNT 0
+        print_kv BLOCKING_COUNT 0
+        print_kv SUGGESTION_COUNT 0
+        return 2
+      fi
+    fi
     # Re-resolve head SHA each iteration so a mid-review push retargets the filter.
     set +e
     local _current_sha
@@ -3798,7 +4130,7 @@ run_bugbot_review() {
 	            gh api "repos/$repo/pulls/$pr_number/comments" --paginate 2>/dev/null \
 	              | jq -r --arg bot "$bot_login" --arg since "$_current_since_iso" --arg sha "$_current_sha" '
 	                  .[]
-	                  | select((.user.login == $bot or .user.login == ($bot + "[bot]")) and .created_at > $since and .commit_id == $sha and .in_reply_to_id == null)
+	                  | select((.user.login == $bot or .user.login == ($bot + "[bot]")) and .created_at > $since and .original_commit_id == $sha and .in_reply_to_id == null)
 	                  | { path, line: (.line // .original_line // 0), body: (.body // ""), commit_id: (.commit_id // "") }
                   | @json
                 ' 2>/dev/null
@@ -3889,7 +4221,7 @@ run_bugbot_review() {
 	            gh api "repos/$repo/pulls/$pr_number/comments" --paginate 2>/dev/null \
 	              | jq -r --arg bot "$bot_login" --arg since "$_current_since_iso" --arg sha "$_current_sha" '
 	                  .[]
-	                  | select((.user.login == $bot or .user.login == ($bot + "[bot]")) and .created_at > $since and .commit_id == $sha and .in_reply_to_id == null)
+	                  | select((.user.login == $bot or .user.login == ($bot + "[bot]")) and .created_at > $since and .original_commit_id == $sha and .in_reply_to_id == null)
 	                  | { path, line: (.line // .original_line // 0), body: (.body // ""), commit_id: (.commit_id // "") }
                   | @json
                 ' 2>/dev/null
@@ -4067,7 +4399,7 @@ run_bugbot_review() {
             gh api "repos/$repo/pulls/$pr_number/comments" --paginate 2>/dev/null \
               | jq -r --arg bot "$bot_login" --arg since "$_current_since_iso" --arg sha "$_current_sha" '
                   .[]
-                  | select((.user.login == $bot or .user.login == ($bot + "[bot]")) and .created_at > $since and .commit_id == $sha and .in_reply_to_id == null)
+                  | select((.user.login == $bot or .user.login == ($bot + "[bot]")) and .created_at > $since and .original_commit_id == $sha and .in_reply_to_id == null)
                   | { path, line: (.line // .original_line // 0), body: (.body // ""), commit_id: (.commit_id // "") }
                   | @json
                 ' 2>/dev/null
@@ -4235,9 +4567,10 @@ run_bugbot_review() {
           ;;
 
         timed_out)
-          # Bugbot's own internal timeout.
+          # Bugbot's own run reported it timed out: failure evidence for the
+          # head (#1789, plan D8), distinct from the loop's own wait budget.
           print_kv RESULT escalate
-          print_kv REASON timeout
+          print_kv REASON bugbot-run-timed-out
           print_kv PLATFORM "$platform"
           print_kv PR_NUMBER "$pr_number"
           print_kv BRANCH "$branch_name"
@@ -4278,66 +4611,19 @@ run_bugbot_review() {
     elapsed=$(( elapsed + poll_interval ))
   done
 
-    # Poll budget exhausted for this attempt. Retry once with the trigger comment
-    # before declaring the reviewer failed (issue #1390): an unfinished Bugbot run
-    # is a timeout, not a finding, and the stale reviewer-failed label it produces
-    # reads like one.
-    if [ "$bugbot_retry_attempted" -eq 0 ]; then
-      bugbot_retry_attempted=1
-      echo "INFO: run_bugbot_review: Bugbot produced no completed check run within ${max_wait}s for PR #$pr_number — re-triggering once" >&2
-      set +e
-      gh api "repos/$repo/issues/$pr_number/comments" --method POST \
-        --raw-field body="$trigger_comment" > /dev/null 2>&1
-      local _bb_retry_rc=$?
-      set -e
-      if [ "$_bb_retry_rc" -ne 0 ]; then
-        echo "WARN: run_bugbot_review: retry trigger comment post failed for PR #$pr_number" >&2
-        print_kv RESULT escalate
-        print_kv REASON trigger-failed
-        print_kv PLATFORM "$platform"
-        print_kv PR_NUMBER "$pr_number"
-        print_kv BRANCH "$branch_name"
-        print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
-        print_kv COMMENT_COUNT 0
-        print_kv BLOCKING_COUNT 0
-        print_kv SUGGESTION_COUNT 0
-        return 2
-      fi
-      elapsed=0
-      check_appeared=0
-      status_val=""
-      conclusion=""
-      continue
-    fi
-    break
-  done
-
-  # Poll budget exhausted across both attempts.  Distinguish timeout (run
-  # appeared) from unavailable (no Cursor Bugbot check run ever appeared —
-  # Cursor app likely not installed). Either way, never report as clean (AC-5).
-  if [ "$check_appeared" -eq 0 ]; then
-    print_kv RESULT escalate
-    print_kv REASON unavailable
-    print_kv PLATFORM "$platform"
-    print_kv PR_NUMBER "$pr_number"
-    print_kv BRANCH "$branch_name"
-    print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
-    print_kv COMMENT_COUNT 0
-    print_kv BLOCKING_COUNT 0
-    print_kv SUGGESTION_COUNT 0
-    return 2
-  fi
-
-  print_kv RESULT escalate
-  print_kv REASON timeout
+  # #1789 (plan D8 Bugbot row): the budget ran out across both attempts with
+  # no completed run on the head. Neither a verdict nor failure evidence, so
+  # never clean (AC-5) and never a failed reviewer: No verdict yet, with the
+  # detail telling a run that appeared but never completed from no run ever
+  # appearing. Bugbot's own failure-type conclusions are handled above.
+  local _bb_wait_detail=check_not_completed
+  [ "$check_appeared" -eq 0 ] && _bb_wait_detail=check_not_started
+  print_no_verdict_yet "$platform" "$_bb_wait_detail" "${_current_sha:-$head_sha}" ""
   print_kv PLATFORM "$platform"
   print_kv PR_NUMBER "$pr_number"
   print_kv BRANCH "$branch_name"
   print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
-  print_kv COMMENT_COUNT 0
-  print_kv BLOCKING_COUNT 0
-  print_kv SUGGESTION_COUNT 0
-  return 2
+  return 4
 }
 
 run_haystack_review() {
@@ -4350,9 +4636,13 @@ run_haystack_review() {
   # Exit code mapping from haystack-reviewer.sh:
   #   0 → RESULT=clean    (no blocking findings)
   #   1 → RESULT=needs_fixes (one or more blocking findings)
-  #   2 → RESULT=escalate; REASON forwarded from companion script:
-  #         REASON=timeout         — per-call OS timeout exhausted budget
-  #         REASON=pending_timeout — analysis stayed pending past timeout budget
+  #   2 → REASON forwarded from companion script (#1789, plan D8):
+  #         REASON=timeout, REASON=pending_timeout, or REASON=pending_check_run
+  #           with HAYSTACK_BUDGET_EXPIRED=1 — the wait budget ran out with no
+  #           verdict: RESULT=waiting_on_reviewer / reviewer-no-verdict-yet
+  #           (WAIT_EXPIRED_DETAIL = the companion reason), return 4
+  #         REASON=check_run_<conclusion>, or pending_check_run without the
+  #           key — RESULT=escalate (failure evidence), return 2
   #   3 → RESULT=skipped; REASON and DISPLAY_RESULT forwarded
   #         (unavailable, unauthorized, forbidden,
   #          analysis_skipped_file_limit, …)
@@ -4481,8 +4771,40 @@ run_haystack_review() {
     2)
       # Forward the REASON from the companion script (timeout or pending_timeout).
       local haystack_reason
+      local haystack_reported_reason
       haystack_reason="$(printf '%s\n' "$script_output" | grep '^REASON=' | cut -d= -f2 | head -n 1)"
+      haystack_reported_reason="$haystack_reason"
       haystack_reason="${haystack_reason:-timeout}"  # default to timeout if missing
+      # #1789 (plan D8 Haystack row): the companion's budget-expiry reasons
+      # are No verdict yet, with the companion reason as detail. A pending
+      # check run counts only when the companion marked it as observed after
+      # the budget ran out (HAYSTACK_BUDGET_EXPIRED=1). check_run_<conclusion>
+      # (the platform's own run timed out, was cancelled, ...) and a
+      # pending_check_run without the key stay escalate. A missing REASON is
+      # not a reported budget expiry and keeps escalate.
+      local haystack_no_verdict=0
+      case "$haystack_reported_reason" in
+        timeout|pending_timeout)
+          haystack_no_verdict=1
+          ;;
+        pending_check_run)
+          if [ "$(kv_value_default HAYSTACK_BUDGET_EXPIRED "$script_output" 0)" = "1" ]; then
+            haystack_no_verdict=1
+          fi
+          ;;
+      esac
+      if [ "$haystack_no_verdict" -eq 1 ]; then
+        local haystack_pending_head
+        haystack_pending_head="$(kv_value_default REVIEWED_HEAD "$script_output" "")"
+        [ -n "$haystack_pending_head" ] || haystack_pending_head="${loop_head_sha:-}"
+        print_no_verdict_yet "$platform" "$haystack_reported_reason" "$haystack_pending_head" ""
+        print_kv PLATFORM "$platform"
+        print_kv PR_NUMBER "$pr_number"
+        print_kv BRANCH "$branch_name"
+        print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+        print_kv REVIEWED_HEAD "$(kv_value_default REVIEWED_HEAD "$script_output" "")"
+        return 4
+      fi
       print_kv RESULT escalate
       print_kv REASON "$haystack_reason"
       print_kv PLATFORM "$platform"
@@ -4631,7 +4953,15 @@ run_coderabbit_cli_review() {
       coderabbit_cli_display_result="$(kv_value_default DISPLAY_RESULT "$script_output" "")"
       print_kv RESULT skipped
       print_kv REASON "$coderabbit_cli_reason"
-      [ -n "$coderabbit_cli_display_result" ] && print_kv DISPLAY_RESULT "$coderabbit_cli_display_result"
+      if [ "$coderabbit_cli_reason" = "timeout" ]; then
+        # #1789 (plan D8): the companion emits `timeout` only when its
+        # watchdog stopped a CLI still running at the budget. That expired
+        # wait stays a non-blocking skip but is reported as No verdict yet,
+        # never as failure evidence.
+        print_no_verdict_yet_kept_skip_keys "$coderabbit_cli_reason"
+      elif [ -n "$coderabbit_cli_display_result" ]; then
+        print_kv DISPLAY_RESULT "$coderabbit_cli_display_result"
+      fi
       print_kv PLATFORM "$platform"
       print_kv PR_NUMBER "$pr_number"
       print_kv BRANCH "$branch_name"
@@ -4886,6 +5216,24 @@ run_local_ai_reviewer_review() {
       emit_local_ai_review_doctrine_keys "$script_output"
       return 2
       ;;
+    4)
+      # #1789 (plan D4/D8): the companion's watchdog stopped a reviewer that
+      # was still running at the budget. No verdict yet, not a failure.
+      local local_ai_pending_head
+      local_ai_pending_head="$(kv_value_default REVIEWED_HEAD "$script_output" "")"
+      [ -n "$local_ai_pending_head" ] || local_ai_pending_head="${loop_head_sha:-}"
+      print_no_verdict_yet "$platform" stopped_at_budget "$local_ai_pending_head" ""
+      print_kv PLATFORM "$platform"
+      print_kv PR_NUMBER "$pr_number"
+      print_kv BRANCH "$branch_name"
+      print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+      print_kv REVIEWED_HEAD "$(kv_value_default REVIEWED_HEAD "$script_output" "")"
+      print_kv GRAPH_CONTEXT "$(kv_value_default GRAPH_CONTEXT "$script_output" "")"
+      emit_local_ai_strict_spec_keys "$script_output"
+      emit_local_ai_review_stage_keys "$script_output"
+      emit_local_ai_review_doctrine_keys "$script_output"
+      return 4
+      ;;
     *)
       local local_ai_reason
       local local_ai_display_result
@@ -4941,8 +5289,9 @@ run_devin_review() {
   local index=1
   local blocking_json=""
   local stale_file=""
+  local devin_read_err_file=""
 
-  trap 'rm -f "${existing_blocking_file:-}" "${blocking_lines_file:-}" "${stale_file:-}"' RETURN
+  trap 'rm -f "${existing_blocking_file:-}" "${blocking_lines_file:-}" "${stale_file:-}" "${devin_read_err_file:-}"' RETURN
 
   require_gh
   cd_workflow_repo_root
@@ -4970,22 +5319,26 @@ run_devin_review() {
   unset _now_iso
 
   # --- Phase 1: Check for existing blocking findings on the current HEAD ---
+  # #1789 (plan D15 devin row): findings count only when bound to the head —
+  # review comments by original_commit_id, reviews by commit_id — in addition
+  # to the time filter.
   existing_comments="$(
     gh api "repos/$repo/pulls/$pr_number/comments" --paginate \
-      | jq -r --arg bot "$bot_login" --arg since "$since_iso" '
+      | jq -r --arg bot "$bot_login" --arg since "$since_iso" --arg head "$head_sha" "$REVIEWER_LOOP_HEAD_BINDING_JQ"'
           .[]
-          | select(.user.login == $bot and .created_at > $since and .in_reply_to_id == null)
+          | select(.user.login == $bot and .created_at > $since and .in_reply_to_id == null and bound_review_comment($head))
           | { path, line: (.line // .original_line // 0), body: (.body // ""), commit_id: (.commit_id // "") }
           | @json
         '
   )"
   existing_reviews="$(
     gh api "repos/$repo/pulls/$pr_number/reviews" --paginate \
-      | jq -r --arg bot "$bot_login" --arg since "$since_iso" '
+      | jq -r --arg bot "$bot_login" --arg since "$since_iso" --arg head "$head_sha" "$REVIEWER_LOOP_HEAD_BINDING_JQ"'
           .[]
           | select(
               .user.login == $bot and
               .submitted_at > $since and
+              bound_review($head) and
               (
                 .state == "CHANGES_REQUESTED" or
                 .state == "COMMENTED"
@@ -5075,41 +5428,84 @@ run_devin_review() {
   local since_check_completed=0
   local devin_status_count=0
   local devin_completed_status_count=0
+  # #1789 (plan D8 failure-type completion signals): whether the newest Devin
+  # check run or status on the head reports Devin's own run as failed or timed
+  # out (re-read every poll), and whether the wait ended on a check-or-status
+  # completion rather than on a completion review.
+  local devin_check_run_count=0
+  local devin_check_completed_count=0
+  local devin_failed_check_count=0
+  local devin_failed_status_count=0
+  local devin_failure_signal=0
+  local devin_ended_on_check=0
+  # #1789 (spec BR 2): the three poll reads (reviews, check runs, statuses)
+  # capture gh's stderr so a 401/403 refusal ends the wait as
+  # devin-read-denied instead of No verdict yet or the no_check_run kept skip.
+  local devin_read_denied_detail=""
+  devin_read_err_file="$(reviewer_loop_gh_read_err_file)"
 
   while :; do
-    # Check for any Devin completion review every iteration (so "No Issues Found" is detected)
+    # Check for any Devin completion review every iteration (so "No Issues Found" is detected).
+    # #1789 (plan D15 devin row): only a completion review bound to the head
+    # (commit_id == head) ends the wait; an older head's summary submitted
+    # after the committer time does not.
     devin_summary_count="$(
-      gh api "repos/$repo/pulls/$pr_number/reviews" --paginate \
-        | jq --arg bot "$bot_login" --arg since "$since_iso" '
+      gh api "repos/$repo/pulls/$pr_number/reviews" --paginate 2>"${devin_read_err_file:-/dev/null}" \
+        | jq --arg bot "$bot_login" --arg since "$since_iso" --arg head "$head_sha" "$REVIEWER_LOOP_HEAD_BINDING_JQ"'
             [.[]
              | select(
                  .user.login == $bot and
                  .submitted_at > $since and
+                 bound_review($head) and
                  (.body // "" | test("\\*\\*Devin Review\\*\\*|Devin Review has completed|No Issues Found"; "i"))
                )
             ] | length
           '
     )"
+    if devin_read_denied_detail="$(reviewer_loop_gh_read_denied "$devin_read_err_file")"; then
+      print_reviewer_read_denied "$platform" "$pr_number" "$branch_name" "$devin_read_denied_detail"
+      print_kv REVIEW_COMMENT_ID ""
+      return 2
+    fi
     devin_summary_count="${devin_summary_count:-0}"
     if [ "$devin_summary_count" -gt 0 ]; then
       # Summary or "No Issues Found" review — Devin is done
       break
     fi
 
-    read -r devin_any_check_count check_completed < <(
-      gh api "repos/$repo/commits/$head_sha/check-runs" --paginate \
-        | jq -s -r "$STATUS_CHECK_ROLLUP_DEDUPE_JQ"'
-            ([.[].check_runs[] | select(
-              (.app.slug == "devin-ai-integration") or
-              (.name | test("devin"; "i"))
-            )] | dedupe_status_check_rollup) as $runs
-            | ($runs | length),
-              ($runs | map(select(.status == "completed")) | length)
-            | tostring
-          ' | tr '\n' ' '; echo
-    )
-    devin_any_check_count="${devin_any_check_count:-0}"
-    check_completed="${check_completed:-0}"
+    # #1789 (plan D8 failure-type completion signals): each endpoint keeps its
+    # last SUCCESSFUL read in force. A failed read (gh exit non-zero or no
+    # output) leaves the previous check-run / status counts untouched, so an
+    # observed failure signal or a once-seen check never regresses to "no
+    # check ever seen" because of a later transient error; only a successful
+    # read supersedes it.
+    local _dv_raw="" _dv_a="" _dv_b="" _dv_c=""
+    if _dv_raw="$(gh api "repos/$repo/commits/$head_sha/check-runs" --paginate 2>"${devin_read_err_file:-/dev/null}")" \
+        && [ -n "$_dv_raw" ]; then
+      read -r _dv_a _dv_b _dv_c <<< "$(
+        printf '%s\n' "$_dv_raw" \
+          | jq -s -r "$STATUS_CHECK_ROLLUP_DEDUPE_JQ$REVIEWER_FAILED_COMPLETION_JQ"'
+              ([.[] | (if type == "object" then (.check_runs // []) else [] end)[] | select(
+                (.app.slug == "devin-ai-integration") or
+                (.name | test("devin"; "i"))
+              )] | dedupe_status_check_rollup) as $runs
+              | ($runs | length),
+                ($runs | map(select(.status == "completed")) | length),
+                ($runs | map(select(reviewer_failed_completion)) | length)
+              | tostring
+            ' 2>/dev/null | tr '\n' ' '
+      )" || true
+      if [ -n "$_dv_a" ] && [ -n "$_dv_b" ] && [ -n "$_dv_c" ]; then
+        devin_check_run_count="$_dv_a"
+        devin_check_completed_count="$_dv_b"
+        devin_failed_check_count="$_dv_c"
+      fi
+    fi
+    if devin_read_denied_detail="$(reviewer_loop_gh_read_denied "$devin_read_err_file")"; then
+      print_reviewer_read_denied "$platform" "$pr_number" "$branch_name" "$devin_read_denied_detail"
+      print_kv REVIEW_COMMENT_ID ""
+      return 2
+    fi
 
     # Also count Devin status contexts (Devin sometimes signals via a GitHub Status
     # Context on the commit rather than a Check Run — both mean Devin has completed).
@@ -5121,28 +5517,38 @@ run_devin_review() {
     # when the same context transitions through multiple states (e.g. pending → success).
     # Shared dedupe (workflow-lib.sh, #1559); the REST list is newest-first, so it
     # is reversed first and a same-second tie resolves to the newer status.
-    read -r devin_status_count devin_completed_status_count < <(
-      gh api "repos/$repo/commits/$head_sha/statuses" --paginate \
-        | jq -s -r "$STATUS_CHECK_ROLLUP_DEDUPE_JQ"'
-            ( [.[].[] | select(.context | test("devin"; "i"))]
-              | reverse | dedupe_status_check_rollup | length ),
-            ( [.[].[] | select(.context | test("devin"; "i"))]
-              | reverse | dedupe_status_check_rollup
-              | map(select(.state == "success" or .state == "failure" or .state == "error"))
-              | length )
-            | tostring
-          ' | tr '\n' ' '; echo
-    )
-    devin_status_count="${devin_status_count:-0}"
-    devin_completed_status_count="${devin_completed_status_count:-0}"
-    if [ "$devin_status_count" -gt 0 ]; then
-      devin_any_check_count=$(( devin_any_check_count + devin_status_count ))
+    _dv_raw="" _dv_a="" _dv_b="" _dv_c=""
+    if _dv_raw="$(gh api "repos/$repo/commits/$head_sha/statuses" --paginate 2>"${devin_read_err_file:-/dev/null}")" \
+        && [ -n "$_dv_raw" ]; then
+      read -r _dv_a _dv_b _dv_c <<< "$(
+        printf '%s\n' "$_dv_raw" \
+          | jq -s -r "$STATUS_CHECK_ROLLUP_DEDUPE_JQ$REVIEWER_FAILED_COMPLETION_JQ"'
+              ( [.[] | (if type == "array" then . else [] end)[] | select(.context | test("devin"; "i"))]
+                | reverse | dedupe_status_check_rollup ) as $sts
+              | ($sts | length),
+                ($sts | map(select(.state == "success" or .state == "failure" or .state == "error")) | length),
+                ($sts | map(select(reviewer_failed_completion)) | length)
+              | tostring
+            ' 2>/dev/null | tr '\n' ' '
+      )" || true
+      if [ -n "$_dv_a" ] && [ -n "$_dv_b" ] && [ -n "$_dv_c" ]; then
+        devin_status_count="$_dv_a"
+        devin_completed_status_count="$_dv_b"
+        devin_failed_status_count="$_dv_c"
+      fi
     fi
-
-    # Only count status contexts in terminal states toward check_completed.
-    if [ "$devin_completed_status_count" -gt 0 ]; then
-      check_completed=$(( check_completed + devin_completed_status_count ))
+    if devin_read_denied_detail="$(reviewer_loop_gh_read_denied "$devin_read_err_file")"; then
+      print_reviewer_read_denied "$platform" "$pr_number" "$branch_name" "$devin_read_denied_detail"
+      print_kv REVIEW_COMMENT_ID ""
+      return 2
     fi
+    devin_failure_signal=0
+    if [ "$devin_failed_check_count" -gt 0 ] || [ "$devin_failed_status_count" -gt 0 ]; then
+      devin_failure_signal=1
+    fi
+    # Only terminal-state status contexts count toward check_completed.
+    devin_any_check_count=$(( devin_check_run_count + devin_status_count ))
+    check_completed=$(( devin_check_completed_count + devin_completed_status_count ))
 
     if [ "$check_completed" -gt 0 ]; then
       if [ "$check_completed_at" -eq -1 ]; then
@@ -5150,11 +5556,20 @@ run_devin_review() {
       fi
       since_check_completed=$(( elapsed - check_completed_at ))
       if [ "$since_check_completed" -ge "$devin_post_check_grace" ]; then
+        devin_ended_on_check=1
         break
       fi
     fi
 
     if [ "$elapsed" -ge "$max_wait" ]; then
+      if [ "$check_completed" -gt 0 ] && [ "$devin_failure_signal" -eq 1 ]; then
+        # #1789 (plan D8 Devin row): the budget ended inside the post-check
+        # grace after Devin's own run reported failure. Collect results as if
+        # the grace had ended, so Phase 3 applies the failure rule instead of
+        # reporting No verdict yet for a reviewer that already failed.
+        devin_ended_on_check=1
+        break
+      fi
       if [ "$devin_any_check_count" -eq 0 ]; then
         # Devin didn't review this HEAD (common after merging the base branch
         # when the diff didn't change). Before reporting "skipped", scan the
@@ -5222,8 +5637,10 @@ run_devin_review() {
         fi
         rm -f "$stale_file"
 
+        # #1789 (plan D8): kept expired-wait skip, reported as No verdict yet.
         print_kv RESULT skipped
         print_kv REASON no_check_run
+        print_no_verdict_yet_kept_skip_keys no_check_run
         print_kv PLATFORM "$platform"
         print_kv PR_NUMBER "$pr_number"
         print_kv BRANCH "$branch_name"
@@ -5234,14 +5651,15 @@ run_devin_review() {
         print_kv SUGGESTION_COUNT 0
         return 0
       fi
-      print_kv RESULT escalate
-      print_kv REASON timeout
+      # #1789 (plan D8 Devin row): a Devin check or status was seen but no
+      # completion and no failure-type signal by budget end — No verdict yet.
+      print_no_verdict_yet "$platform" check_not_completed "$head_sha" ""
       print_kv PLATFORM "$platform"
       print_kv PR_NUMBER "$pr_number"
       print_kv BRANCH "$branch_name"
       print_kv REVIEW_COMMENT_ID ""
       print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
-      return 2
+      return 4
     fi
 
     _interruptible_sleep "$poll_interval"
@@ -5249,13 +5667,14 @@ run_devin_review() {
   done
 
   # --- Phase 3: Collect results after completion ---
+  # #1789 (plan D15 devin row): findings bound to the head only.
   blocking_lines_file="$(mktemp)"
 
   comments="$(
     gh api "repos/$repo/pulls/$pr_number/comments" --paginate \
-      | jq -r --arg bot "$bot_login" --arg since "$since_iso" '
+      | jq -r --arg bot "$bot_login" --arg since "$since_iso" --arg head "$head_sha" "$REVIEWER_LOOP_HEAD_BINDING_JQ"'
         .[]
-        | select(.user.login == $bot and .created_at > $since and .in_reply_to_id == null)
+        | select(.user.login == $bot and .created_at > $since and .in_reply_to_id == null and bound_review_comment($head))
         | {
             path,
             line: (.line // .original_line // 0),
@@ -5268,11 +5687,12 @@ run_devin_review() {
 
   blocking_reviews="$(
     gh api "repos/$repo/pulls/$pr_number/reviews" --paginate \
-      | jq -r --arg bot "$bot_login" --arg since "$since_iso" '
+      | jq -r --arg bot "$bot_login" --arg since "$since_iso" --arg head "$head_sha" "$REVIEWER_LOOP_HEAD_BINDING_JQ"'
         .[]
         | select(
             .user.login == $bot and
             .submitted_at > $since and
+            bound_review($head) and
             (
               .state == "CHANGES_REQUESTED" or
               .state == "COMMENTED"
@@ -5354,6 +5774,24 @@ run_devin_review() {
   fi
 
   rm -f "$blocking_lines_file"
+  if [ "$devin_ended_on_check" -eq 1 ] && [ "$devin_failure_signal" -eq 1 ]; then
+    # #1789 (plan D8 failure-type completion signals): the wait ended on a
+    # Devin check run or status on the head that reports Devin's own run as
+    # failed or timed out, with no completion review and no finding. That is
+    # failure evidence, never a clean verdict.
+    echo "WARN: run_devin_review: Devin's own run on $head_sha reported failure (check run or status) with no review — escalating as devin_run_failed" >&2
+    print_kv RESULT escalate
+    print_kv REASON devin_run_failed
+    print_kv PLATFORM "$platform"
+    print_kv PR_NUMBER "$pr_number"
+    print_kv BRANCH "$branch_name"
+    print_kv REVIEW_COMMENT_ID ""
+    print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+    print_kv COMMENT_COUNT 0
+    print_kv BLOCKING_COUNT 0
+    print_kv SUGGESTION_COUNT 0
+    return 2
+  fi
   print_kv RESULT clean
     {
       [ -n "${comments:-}" ] && printf '%s\n' "$comments"
@@ -5405,12 +5843,27 @@ run_pr_agent_review() {
   local elapsed=0
   local comment_body=""
   local trigger_body="/review"
+  # #1789 (plan D8 failure-type completion signals, PR-Agent row). An
+  # outstanding request is one this invocation posted, a recent /review
+  # trigger it reused, or the recorded request it adopted in re-wait mode
+  # (D11); it stays 0 when posting was skipped only because a PR-Agent review
+  # run on the head was already active.
+  local pr_agent_outstanding_request=0
+  # Conclusion of the newest PR-Agent review run on the head when it is
+  # completed and failure-type; empty otherwise. A failed read keeps the last
+  # successful read's value.
+  local pr_agent_failed_conclusion=""
 
   require_gh
   cd_workflow_repo_root
   repo="$(repo_slug)"
 
-  head_sha="$(gh api "repos/$repo/pulls/$pr_number" --jq '.head.sha')"
+  # #1789 (plan D15): bind to the loop head handed over by the loop, or read the
+  # PR head as before when the loop has none.
+  head_sha="${loop_head_sha:-}"
+  if reviewer_loop_head_is_unknown_or_invalid "$head_sha"; then
+    head_sha="$(gh api "repos/$repo/pulls/$pr_number" --jq '.head.sha')"
+  fi
   if [ -z "$head_sha" ]; then
     print_kv RESULT escalate
     print_kv REASON "head-sha-unavailable"
@@ -5432,38 +5885,166 @@ run_pr_agent_review() {
   [ "$since_iso" \> "$_now_iso" ] && since_iso="$_now_iso"
   unset _now_iso
 
-  # Common helper: fetch the matching PR-Agent comment and return one of its fields.
-  # Parameters: field (e.g. "body" or "html_url"), match_mode (optional, default "strict_sha").
-  # Returns the empty string when no matching comment is found.
-  _pr_agent_latest_comment_field() {
-    local field="$1"
-    local match_mode="${2:-strict_sha}"
-    gh api "repos/$repo/issues/$pr_number/comments" --paginate \
-      | jq -rs --arg bot "$bot_login" --arg sha "$head_sha" --arg since "$since_iso" \
-               --arg mode "$match_mode" --arg field "$field" '
-          add // []
-          | [.[]
-             | select(
-                 .user.login == $bot and
-                 (
-                   ($mode == "strict_sha" and ((.body // "") | contains($sha))) or
-                   ($mode == "recent_or_sha" and (((.body // "") | contains($sha)) or .updated_at > $since))
-                 ) and
-                 ((.body // "") | test("PR Reviewer Guide"; "i"))
-               )
-            ]
-          | sort_by(.updated_at)
-          | last
-          | .[$field] // ""
-        '
+  # #1789 (plan D15 PR-Agent summary rules). A PR-Agent summary comment counts
+  # for the head only by rule (a) — its visible marker line names the head —
+  # or, in Phase 2 only, by rule (b) for an unedited marker-free first
+  # summary (_pr_agent_first_summary_bound_to_head). No rule accepts a
+  # comment because its time follows a request or the head commit's committer
+  # time (the removed recent_or_sha mode), and a SHA anywhere else in the
+  # body (for example inside the hidden review-state block) never binds it.
+  # _pr_agent_bound_summary sets these for the poll that found a bound summary.
+  local pr_agent_bound_body=""
+  local pr_agent_bound_url=""
+  # The PR's issue comments as read by the current _pr_agent_bound_summary
+  # call; rule (b) condition 4 reads the /review comments from it.
+  local pr_agent_issue_comments_json=""
+
+  # _pr_agent_first_summary_bound_to_head <comment_id> <created_at> <updated_at>
+  #
+  # D15 rule (b): true only when every condition holds; any failed API read
+  # or failed condition means the comment is not bound to the head.
+  #   1. never edited (updated_at == created_at);
+  #   2. a "PR-Agent review" check run read from commits/<head>/check-runs is
+  #      completed with conclusion success (D8: a run that ended any other way
+  #      did not finish its review) and started_at <= created_at <= completed_at;
+  #   3. no "PR-Agent review" check run on the head is queued or in progress;
+  #   4. no other revision's run could have posted it: the binding run's
+  #      workflow (actions/runs?check_suite_id → workflow_id) has no
+  #      pull_request run on the PR's head branch, fully paginated, with
+  #      head_sha != head that was in progress at created_at
+  #      (run_started_at <= created_at, and status != completed or
+  #      updated_at >= created_at; a missing time counts as in progress), and
+  #      no /review comment on the PR was created at or before created_at.
+  _pr_agent_first_summary_bound_to_head() {
+    local comment_id="${1:-}" created_at="${2:-}" updated_at="${3:-}"
+    local check_runs_json="" binding="" workflow_id="" head_ref="" branch_runs="" verdict=""
+
+    [ -n "$comment_id" ] && [ -n "$created_at" ] || return 1
+    # 1. Never edited.
+    [ "$updated_at" = "$created_at" ] || return 1
+    # 2 and 3. The PR-Agent review check runs on the head.
+    if ! check_runs_json="$(gh api "repos/$repo/commits/$head_sha/check-runs" --paginate 2>/dev/null)" \
+        || [ -z "$check_runs_json" ]; then
+      return 1
+    fi
+    if ! binding="$(printf '%s\n' "$check_runs_json" | jq -rs --arg at "$created_at" '
+        [ .[] | (if type == "object" then (.check_runs // []) else [] end)[]
+          | select(type == "object" and .name == "PR-Agent review") ] as $runs
+        | if ($runs | any(.status == "queued" or .status == "in_progress" or .status == "waiting"
+                          or .status == "requested" or .status == "pending"))
+          then "active"
+          else
+            ([ $runs[]
+               | select(.status == "completed" and .conclusion == "success"
+                        and ((.started_at // "") != "") and ((.completed_at // "") != "")
+                        and (.started_at <= $at) and ($at <= .completed_at)) ]
+             | sort_by(.started_at) | last
+             | if . == null then "none" else ((.check_suite.id // "") | tostring) end)
+          end' 2>/dev/null)"; then
+      return 1
+    fi
+    case "$binding" in
+      ''|*[!0-9]*) return 1 ;;
+    esac
+    # 4. The binding run's workflow, then its pull_request runs on the branch.
+    if ! workflow_id="$(gh api "repos/$repo/actions/runs?check_suite_id=$binding" 2>/dev/null \
+        | jq -r '[.workflow_runs[]? | .workflow_id | select(type == "number")] | first // empty' 2>/dev/null)"; then
+      return 1
+    fi
+    case "$workflow_id" in
+      ''|*[!0-9]*) return 1 ;;
+    esac
+    if ! head_ref="$(gh api "repos/$repo/pulls/$pr_number" --jq '.head.ref // empty' 2>/dev/null)" \
+        || [ -z "$head_ref" ]; then
+      return 1
+    fi
+    if ! branch_runs="$(gh api -X GET "repos/$repo/actions/workflows/$workflow_id/runs" \
+          -f event=pull_request -f branch="$head_ref" --paginate 2>/dev/null)" \
+        || [ -z "$branch_runs" ]; then
+      return 1
+    fi
+    if ! verdict="$(printf '%s\n' "$branch_runs" | jq -rs --arg at "$created_at" --arg head "$head_sha" '
+        [ .[] | (if type == "object" then (.workflow_runs // []) else [] end)[] | select(type == "object") ]
+        | [ .[]
+            | select(((.head_sha // "") | ascii_downcase) != ($head | ascii_downcase))
+            | select(((.run_started_at // .created_at // "") as $s | ($s == "" or $s <= $at))
+                     and ((.status // "") != "completed"
+                          or ((.updated_at // "") == "")
+                          or (.updated_at >= $at))) ]
+        | if length > 0 then "overlap" else "clear" end' 2>/dev/null)"; then
+      return 1
+    fi
+    [ "$verdict" = "clear" ] || return 1
+    if ! verdict="$(printf '%s' "${pr_agent_issue_comments_json:-}" | jq -r --arg at "$created_at" '
+        if type != "array" then "unreadable"
+        else
+          [ .[] | select(type == "object"
+                         and ((.body // "") | test("^\\s*/review(\\s|$)"))
+                         and ((.created_at // "") <= $at)) ]
+          | if length > 0 then "review_before" else "clear" end
+        end' 2>/dev/null)"; then
+      return 1
+    fi
+    [ "$verdict" = "clear" ] || return 1
+    return 0
   }
 
-  _pr_agent_latest_comment() {
-    _pr_agent_latest_comment_field "body" "${1:-strict_sha}"
-  }
+  # _pr_agent_bound_summary <phase1|phase2>
+  #
+  # Reads the PR's issue comments once and looks for a PR-Agent summary
+  # ("PR Reviewer Guide") bound to the head: rule (a) first (the newest by
+  # updated_at whose visible marker names the head), then — in phase2 only —
+  # rule (b) over the marker-free summaries, newest first. Sets
+  # pr_agent_bound_body / _url and returns 0 when one is bound;
+  # returns 1 (nothing bound, keep polling) otherwise, including on a failed
+  # read.
+  _pr_agent_bound_summary() {
+    local phase="${1:-phase2}"
+    local summaries="" match="" candidates=""
+    local cand_id="" cand_created="" cand_updated=""
 
-  _pr_agent_latest_comment_url() {
-    _pr_agent_latest_comment_field "html_url" "${1:-strict_sha}"
+    pr_agent_bound_body=""
+    pr_agent_bound_url=""
+    pr_agent_issue_comments_json=""
+    if ! pr_agent_issue_comments_json="$(gh api "repos/$repo/issues/$pr_number/comments" --paginate 2>/dev/null \
+        | jq -cs 'add // [] | if type == "array" then . else error("not an array") end' 2>/dev/null)" \
+        || [ -z "$pr_agent_issue_comments_json" ]; then
+      pr_agent_issue_comments_json=""
+      return 1
+    fi
+    if ! summaries="$(printf '%s' "$pr_agent_issue_comments_json" | jq -c --arg bot "$bot_login" '
+        [ .[] | select(type == "object" and (.user.login // "") == $bot
+                       and ((.body // "") | test("PR Reviewer Guide"; "i"))) ]' 2>/dev/null)"; then
+      return 1
+    fi
+    match="$(printf '%s' "$summaries" | jq -c --arg head "$head_sha" "$REVIEWER_LOOP_PR_AGENT_MARKER_JQ"'
+        [ .[] | select((.body // "") | pr_agent_has_head_marker($head)) ]
+        | sort_by(.updated_at // .created_at // "") | last // empty' 2>/dev/null)" || match=""
+    if [ -n "$match" ]; then
+      pr_agent_bound_body="$(printf '%s' "$match" | jq -r '.body // ""')"
+      pr_agent_bound_url="$(printf '%s' "$match" | jq -r '.html_url // ""')"
+      return 0
+    fi
+    [ "$phase" = "phase2" ] || return 1
+    candidates="$(printf '%s' "$summaries" | jq -r "$REVIEWER_LOOP_PR_AGENT_MARKER_JQ"'
+        [ .[] | select(((.body // "") | pr_agent_has_any_marker) | not) ]
+        | sort_by(.created_at // "") | reverse | .[]
+        | [((.id // "") | tostring), (.created_at // ""), (.updated_at // "")] | @tsv' 2>/dev/null)" || candidates=""
+    while IFS=$'\t' read -r cand_id cand_created cand_updated; do
+      [ -n "$cand_id" ] || continue
+      if _pr_agent_first_summary_bound_to_head "$cand_id" "$cand_created" "$cand_updated"; then
+        match="$(printf '%s' "$summaries" | jq -c --arg id "$cand_id" \
+          '[ .[] | select(((.id // "") | tostring) == $id) ] | first // empty' 2>/dev/null)" || match=""
+        [ -n "$match" ] || continue
+        pr_agent_bound_body="$(printf '%s' "$match" | jq -r '.body // ""')"
+        pr_agent_bound_url="$(printf '%s' "$match" | jq -r '.html_url // ""')"
+        echo "INFO: run_pr_agent_review: first summary ${cand_id} is bound to $head_sha by its PR-Agent review run (D15 rule b)" >&2
+        return 0
+      fi
+    done <<_PR_AGENT_RULE_B_CANDIDATES_
+$candidates
+_PR_AGENT_RULE_B_CANDIDATES_
+    return 1
   }
 
   _pr_agent_active_review_check_count() {
@@ -5473,17 +6054,27 @@ run_pr_agent_review() {
       || printf '0'
   }
 
-  _pr_agent_recent_trigger_comment_created_at() {
+  # _pr_agent_recent_trigger_comment
+  # Prints "<created_at> <id>" for the newest /review trigger inside the reuse
+  # window that is a request recorded for the head (#1789, plan D15:
+  # reviewer_loop_head_request_refs); prints nothing otherwise. A trigger an
+  # earlier invocation posted for a previous head never suppresses this
+  # head's request.
+  _pr_agent_recent_trigger_comment() {
     local trigger_reuse_window="${PR_AGENT_TRIGGER_REUSE_WINDOW_SECONDS:-$max_wait}"
+    local head_refs_json="[]"
 
     case "$trigger_reuse_window" in
       ''|*[!0-9]*)
         trigger_reuse_window="$max_wait"
         ;;
     esac
+    head_refs_json="$(printf '%s\n' "${reviewer_loop_head_request_refs:-}" | jq -R 'select(. != "")' | jq -sc '.' 2>/dev/null)" || head_refs_json="[]"
+    [ -n "$head_refs_json" ] || head_refs_json="[]"
 
     gh api "repos/$repo/issues/$pr_number/comments" --paginate \
-      | jq -rs --arg body "$trigger_body" --arg since "$since_iso" --argjson reuse_window "$trigger_reuse_window" '
+      | jq -rs --arg body "$trigger_body" --arg since "$since_iso" --argjson reuse_window "$trigger_reuse_window" \
+               --argjson head_refs "$head_refs_json" '
           add // []
           | [.[]
              | . as $comment
@@ -5492,18 +6083,34 @@ run_pr_agent_review() {
                  ((.body // "") == $body) and
                  ((.created_at // .updated_at // "") > $since) and
                  ($trigger_time != null) and
-                 ((now - $trigger_time) <= $reuse_window)
+                 ((now - $trigger_time) <= $reuse_window) and
+                 (((.id // "") | tostring) as $id | any($head_refs[]; . == $id))
                )
             ]
           | sort_by(.created_at // .updated_at)
           | last
-          | .created_at // .updated_at // ""
+          | if . == null then empty
+            else "\(.created_at // .updated_at // "") \((.id // "") | tostring)" end
         '
   }
 
   _pr_agent_trigger_already_pending() {
     local active_check_count
     local recent_trigger_created_at
+
+    # #1789 (plan D11 PR-Agent row): in re-wait mode the recorded request is
+    # already pending — adopt it instead of the reuse-window search, even with
+    # an empty ref (the pending check needs no comment id). It is this
+    # invocation's outstanding request even when a run on the head is also
+    # active, so a failed run is reported only at budget end (D8 path (2)).
+    if reviewer_loop_rewait_adopts_recorded_request; then
+      print_kv PR_AGENT_TRIGGER_SKIPPED recorded_request_adopted
+      print_review_request_keys "$reviewer_loop_recorded_requested_at" "$reviewer_loop_recorded_request_ref"
+      echo "INFO: re-wait: adopting the recorded pr-agent request ${reviewer_loop_recorded_request_ref:-<no ref>}; not posting /review" >&2
+      pr_agent_outstanding_request=1
+      return 0
+    fi
+    reviewer_loop_rewait_log_no_recorded_request "$platform" "$head_sha"
 
     active_check_count="$(_pr_agent_active_review_check_count)"
     if [ "${active_check_count:-0}" -gt 0 ] 2>/dev/null; then
@@ -5512,14 +6119,54 @@ run_pr_agent_review() {
       return 0
     fi
 
-    recent_trigger_created_at="$(_pr_agent_recent_trigger_comment_created_at)"
+    local recent_trigger="" recent_trigger_id=""
+    recent_trigger="$(_pr_agent_recent_trigger_comment)"
+    recent_trigger_created_at="${recent_trigger%% *}"
+    recent_trigger_id=""
+    case "$recent_trigger" in
+      *" "*) recent_trigger_id="${recent_trigger#* }" ;;
+    esac
     if [ -n "$recent_trigger_created_at" ]; then
       print_kv PR_AGENT_TRIGGER_SKIPPED recent_review_trigger
       print_kv PR_AGENT_TRIGGER_COMMENT_CREATED_AT "$recent_trigger_created_at"
+      # #1789 (plan D12/D15): the reused trigger is recorded for this head, so
+      # it is this invocation's request.
+      print_review_request_keys "$recent_trigger_created_at" "$recent_trigger_id"
+      pr_agent_outstanding_request=1
       return 0
     fi
 
     return 1
+  }
+
+  # #1789 (plan D8 failure-type completion signals): reads the "PR-Agent
+  # review" check runs on the head, keeps the newest with
+  # dedupe_status_check_rollup (latest started_at, then highest id), and prints
+  # its conclusion when it is completed and failure-type
+  # (REVIEWER_LOOP_FAILED_CHECK_CONCLUSIONS); prints nothing otherwise.
+  # Returns non-zero when the check runs could not be read, so the caller can
+  # keep the last successful read in force.
+  _pr_agent_failed_review_check_conclusion() {
+    local check_runs_json=""
+    local failed_conclusion=""
+    if ! check_runs_json="$(gh api "repos/$repo/commits/$head_sha/check-runs" --paginate 2>/dev/null)"; then
+      return 1
+    fi
+    [ -n "$check_runs_json" ] || return 1
+    if ! failed_conclusion="$(
+      printf '%s\n' "$check_runs_json" \
+        | jq -rs "$STATUS_CHECK_ROLLUP_DEDUPE_JQ$REVIEWER_FAILED_COMPLETION_JQ"'
+            [.[] | (if type == "object" then (.check_runs // []) else [] end)[]
+                 | select(type == "object" and .name == "PR-Agent review")]
+            | dedupe_status_check_rollup
+            | map(select(reviewer_failed_completion))
+            | (.[0].conclusion // "")
+          ' 2>/dev/null
+    )"; then
+      return 1
+    fi
+    printf '%s' "$failed_conclusion"
+    return 0
   }
 
   _pr_agent_trigger_review() {
@@ -5529,13 +6176,17 @@ run_pr_agent_review() {
       return 1
     fi
     if [ -n "$trigger_response" ]; then
-      local trigger_created_at
+      local trigger_created_at trigger_comment_id
       trigger_created_at="$(printf '%s\n' "$trigger_response" | jq -r '.created_at // empty' 2>/dev/null || true)"
       if [ -n "$trigger_created_at" ]; then
         print_kv PR_AGENT_TRIGGER_COMMENT_CREATED_AT "$trigger_created_at"
       fi
+      trigger_comment_id="$(printf '%s\n' "$trigger_response" | jq -r 'if type == "object" then (.id // empty | tostring) else empty end' 2>/dev/null || true)"
+      # #1789 (plan D12): the request this invocation posted.
+      print_review_request_keys "$trigger_created_at" "$trigger_comment_id"
     fi
     print_kv PR_AGENT_TRIGGER_COMMENT "$trigger_body"
+    pr_agent_outstanding_request=1
     return 0
   }
 
@@ -5703,7 +6354,12 @@ _PR_AGENT_LABELS_
   }
 
   # --- Phase 1: Check for an existing PR-Agent summary comment on this HEAD ---
-  comment_body="$(_pr_agent_latest_comment strict_sha)"
+  # #1789 (plan D15): Phase 1 accepts a summary only by rule (a), its visible
+  # marker line naming the head.
+  comment_body=""
+  if _pr_agent_bound_summary phase1; then
+    comment_body="$pr_agent_bound_body"
+  fi
   local verdict
   verdict="$(_pr_agent_classify "$comment_body")"
 
@@ -5712,7 +6368,7 @@ _PR_AGENT_LABELS_
       local _advisory_labels _comment_url _advisory_entry _eval_status
       _advisory_labels="$(_pr_agent_extract_advisory_labels "$comment_body")"
       if [ -n "$_advisory_labels" ]; then
-        _comment_url="$(_pr_agent_latest_comment_url strict_sha)"
+        _comment_url="$pr_agent_bound_url"
         _advisory_entry="${_advisory_labels}@@@${_comment_url}"
       else
         _advisory_entry=""
@@ -5791,16 +6447,51 @@ _PR_AGENT_LABELS_
 
   # --- Phase 2: Poll until PR-Agent posts its summary comment ---
   while :; do
-    comment_body="$(_pr_agent_latest_comment recent_or_sha)"
+    # #1789 (plan D15): Phase 2 accepts a summary only by rule (a) or rule (b).
+    comment_body=""
+    if _pr_agent_bound_summary phase2; then
+      comment_body="$pr_agent_bound_body"
+    fi
     verdict="$(_pr_agent_classify "$comment_body")"
 
     if [ "$verdict" != "none" ]; then
       break
     fi
 
+    # #1789 (plan D8 failure-type completion signals): this poll bound no
+    # summary, so read whether the newest PR-Agent review run on the head
+    # failed. A failed read leaves the last successful read in force.
+    local _pr_agent_read_conclusion=""
+    if _pr_agent_read_conclusion="$(_pr_agent_failed_review_check_conclusion)"; then
+      pr_agent_failed_conclusion="$_pr_agent_read_conclusion"
+    fi
+    if [ -n "$pr_agent_failed_conclusion" ] \
+        && { [ "$pr_agent_outstanding_request" -eq 0 ] || [ "$elapsed" -ge "$max_wait" ]; }; then
+      # No outstanding request: the run that was active when posting was
+      # skipped has failed, and nothing else can answer — failure now. With an
+      # outstanding request, its answer can still supersede the failed run
+      # (a bound summary or a newer run on the head), so the failure is
+      # reported only at budget end, in place of the no_review kept skip.
+      echo "WARN: run_pr_agent_review: the newest PR-Agent review run on $head_sha concluded '$pr_agent_failed_conclusion' with no summary bound to the head — escalating as pr_agent_run_failed" >&2
+      print_kv RESULT escalate
+      print_kv REASON pr_agent_run_failed
+      print_kv PR_AGENT_RUN_CONCLUSION "$pr_agent_failed_conclusion"
+      print_kv PLATFORM "$platform"
+      print_kv PR_NUMBER "$pr_number"
+      print_kv BRANCH "$branch_name"
+      print_kv REVIEW_COMMENT_ID ""
+      print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+      print_kv COMMENT_COUNT 0
+      print_kv BLOCKING_COUNT 0
+      print_kv SUGGESTION_COUNT 0
+      return 2
+    fi
+
     if [ "$elapsed" -ge "$max_wait" ]; then
+      # #1789 (plan D8): kept expired-wait skip, reported as No verdict yet.
       print_kv RESULT skipped
       print_kv REASON no_review
+      print_no_verdict_yet_kept_skip_keys no_review
       print_kv PLATFORM "$platform"
       print_kv PR_NUMBER "$pr_number"
       print_kv BRANCH "$branch_name"
@@ -5822,7 +6513,7 @@ _PR_AGENT_LABELS_
       local _advisory_labels _comment_url _advisory_entry _eval_status
       _advisory_labels="$(_pr_agent_extract_advisory_labels "$comment_body")"
       if [ -n "$_advisory_labels" ]; then
-        _comment_url="$(_pr_agent_latest_comment_url recent_or_sha)"
+        _comment_url="$pr_agent_bound_url"
         _advisory_entry="${_advisory_labels}@@@${_comment_url}"
       else
         _advisory_entry=""
@@ -6472,7 +7163,7 @@ coderabbit_thread_gate_clean() {
 # first and a same-second tie resolves to the newer status) before checking
 # state/description, so a superseded status is not counted.
 coderabbit_success_status_count() {
-  local repo="$1" head_sha="$2"
+  local repo="$1" head_sha="$2" read_err_file="${3:-}"
   # Validate arguments before the API call: a missing repo or head_sha would
   # otherwise build an invalid endpoint and fail inside the pipeline with an
   # unstructured shell error. Print "0" and return 0 (rather than a nonzero
@@ -6487,7 +7178,10 @@ coderabbit_success_status_count() {
     printf '%s\n' 0
     return 0
   fi
-  gh api "repos/$repo/commits/$head_sha/statuses" --paginate \
+  # #1789: optional <read_err_file> captures gh's stderr for the poll loop's
+  # read-refusal check (reviewer_loop_gh_read_denied); without it stderr is
+  # left as before.
+  reviewer_loop_gh_capture_stderr "$read_err_file" api "repos/$repo/commits/$head_sha/statuses" --paginate \
     | jq -s "$STATUS_CHECK_ROLLUP_DEDUPE_JQ"'[.[].[] | select(
               (.context // "" | ascii_downcase | test("coderabbit"))
             )]
@@ -6499,6 +7193,51 @@ coderabbit_success_status_count() {
                      | not)
               ))
             | length'
+}
+
+# coderabbit_failed_status_count <repo> <head_sha> [read_err_file]
+#
+# #1789 (plan D8 failure-type completion signals): the count of CodeRabbit
+# commit statuses on <head_sha> whose newest state per context is `failure` or
+# `error` (the shared reviewer_failed_completion predicate). Same context
+# match, dedupe, and #1437 description guard as
+# coderabbit_success_status_count: a failure status whose description matches
+# the rate/review-limit pattern is not counted, so the rate-limit handling keeps
+# its outcome (AC-13). Always prints an integer and returns 0 (callers assign
+# it under `set -e`); an unreadable status list counts as 0.
+coderabbit_failed_status_count() {
+  local repo="$1" head_sha="$2" read_err_file="${3:-}"
+  local statuses_json="" count=""
+  if [ -z "$repo" ] || [ -z "$head_sha" ]; then
+    printf '%s\n' 0
+    return 0
+  fi
+  # #1789: optional <read_err_file> captures gh's stderr for the poll loop's
+  # read-refusal check; without it stderr is discarded as before.
+  if ! statuses_json="$(gh api "repos/$repo/commits/$head_sha/statuses" --paginate 2>>"${read_err_file:-/dev/null}")"; then
+    printf '%s\n' 0
+    return 0
+  fi
+  count="$(
+    printf '%s\n' "$statuses_json" \
+      | jq -s "$STATUS_CHECK_ROLLUP_DEDUPE_JQ$REVIEWER_FAILED_COMPLETION_JQ"'
+          [.[] | (if type == "array" then .[] else empty end)
+               | select(type == "object"
+                        and (.context // "" | ascii_downcase | test("coderabbit")))]
+          | reverse | dedupe_status_check_rollup
+          | map(select(
+              reviewer_failed_completion
+              and ((.description // "")
+                   | test("rate.?limit|review limit|next review available"; "i")
+                   | not)
+            ))
+          | length' 2>/dev/null
+  )" || count=0
+  case "$count" in
+    ''|*[!0-9]*) count=0 ;;
+  esac
+  printf '%s\n' "$count"
+  return 0
 }
 
 # coderabbit_no_trigger_timeout_default <max_wait>
@@ -7043,8 +7782,9 @@ run_coderabbit_review() {
   local blocking_json=""
   local stale_file=""
   local coderabbit_trigger_attempts=0
+  local coderabbit_read_err_file=""
 
-  trap 'rm -f "${existing_blocking_file:-}" "${blocking_lines_file:-}" "${stale_file:-}"' RETURN
+  trap 'rm -f "${existing_blocking_file:-}" "${blocking_lines_file:-}" "${stale_file:-}" "${coderabbit_read_err_file:-}"' RETURN
 
   require_gh
   cd_workflow_repo_root
@@ -7074,22 +7814,26 @@ run_coderabbit_review() {
   unset _now_iso
 
   # --- Phase 1: Check for existing blocking findings on the current HEAD ---
+  # #1789 (plan D15 coderabbit row): findings count only when bound to the
+  # head — review comments by original_commit_id, reviews by commit_id — in
+  # addition to the time filter.
   existing_comments="$(
     gh api "repos/$repo/pulls/$pr_number/comments" --paginate \
-      | jq -r --arg bot "$bot_login" --arg since "$since_iso" '
+      | jq -r --arg bot "$bot_login" --arg since "$since_iso" --arg head "$head_sha" "$REVIEWER_LOOP_HEAD_BINDING_JQ"'
           .[]
-          | select(.user.login == $bot and .created_at > $since and .in_reply_to_id == null)
+          | select(.user.login == $bot and .created_at > $since and .in_reply_to_id == null and bound_review_comment($head))
           | { path, line: (.line // .original_line // 0), body: (.body // ""), commit_id: (.commit_id // "") }
           | @json
         '
   )"
   existing_reviews="$(
     gh api "repos/$repo/pulls/$pr_number/reviews" --paginate \
-      | jq -r --arg bot "$bot_login" --arg since "$since_iso" '
+      | jq -r --arg bot "$bot_login" --arg since "$since_iso" --arg head "$head_sha" "$REVIEWER_LOOP_HEAD_BINDING_JQ"'
           .[]
           | select(
               .user.login == $bot and
               .submitted_at > $since and
+              bound_review($head) and
               .state == "CHANGES_REQUESTED"
             )
           | { path: "", line: 0, body: (.body // "CHANGES_REQUESTED review without body"), commit_id: (.commit_id // .commitId // "") }
@@ -7215,6 +7959,9 @@ run_coderabbit_review() {
   #
   local coderabbit_review_count=0
   local coderabbit_any_activity=0
+  local coderabbit_status_failed_seen=0
+  # #1789 (plan D15): the wait ended on a CodeRabbit success status on the head.
+  local coderabbit_status_success_seen=0
   # Initialize retrigger flag from Phase 0 so Phase 2 does not double-post a resume.
   local coderabbit_retrigger_attempted=$coderabbit_phase0_retrigger
   local coderabbit_rate_limit_retries=0
@@ -7239,6 +7986,19 @@ run_coderabbit_review() {
   local coderabbit_no_trigger_timeout
   coderabbit_no_trigger_timeout="$(coderabbit_resolve_no_trigger_timeout "$max_wait")"
   local coderabbit_no_trigger_retriggers=0
+  # #1789 (plan D11 CodeRabbit row): in re-wait mode with a recorded request,
+  # the conditional `@coderabbitai review` re-trigger is not posted; the
+  # recorded request is carried forward (D12). coderabbit_request_recorded
+  # makes REVIEW_REQUESTED_AT print once, for the first request this run
+  # posts or adopts.
+  local coderabbit_rewait_adopted=0
+  local coderabbit_request_recorded=0
+  if reviewer_loop_rewait_adopts_recorded_request; then
+    coderabbit_rewait_adopted=1
+    echo "INFO: re-wait: a recorded coderabbit request exists; not posting the conditional @coderabbitai review re-trigger" >&2
+    print_review_request_keys "$reviewer_loop_recorded_requested_at" "$reviewer_loop_recorded_request_ref"
+    coderabbit_request_recorded=1
+  fi
   if ! [[ "$coderabbit_rate_limit_max_retries" =~ ^[0-9]+$ ]]; then
     echo "WARN: CODERABBIT_RATE_LIMIT_MAX_RETRIES must be a non-negative integer; defaulting to 4" >&2
     coderabbit_rate_limit_max_retries=4
@@ -7248,23 +8008,70 @@ run_coderabbit_review() {
     coderabbit_rate_limit_wait=900
   fi
 
+  # #1789 (spec BR 2): the poll reads that decide whether a verdict exists
+  # (bound reviews, the failure and success status counts, the activity probe)
+  # capture gh's stderr so a 401/403 refusal ends the wait as
+  # coderabbit-read-denied instead of No verdict yet or the no_review kept
+  # skip. Rate-limit text stays transient (reviewer_loop_gh_read_error_class).
+  local coderabbit_read_denied_detail=""
+  coderabbit_read_err_file="$(reviewer_loop_gh_read_err_file)"
+
   while :; do
-    # Check for any CodeRabbit review submitted after the HEAD commit
+    # Check for any CodeRabbit review submitted after the HEAD commit.
+    # #1789 (plan D15 coderabbit row): only a review bound to the head
+    # (commit_id == head) ends the wait; an older head's review does not.
     coderabbit_review_count="$(
-      gh api "repos/$repo/pulls/$pr_number/reviews" --paginate \
-        | jq --arg bot "$bot_login" --arg since "$since_iso" '
+      gh api "repos/$repo/pulls/$pr_number/reviews" --paginate 2>"${coderabbit_read_err_file:-/dev/null}" \
+        | jq --arg bot "$bot_login" --arg since "$since_iso" --arg head "$head_sha" "$REVIEWER_LOOP_HEAD_BINDING_JQ"'
             [.[]
              | select(
                  .user.login == $bot and
-                 .submitted_at > $since
+                 .submitted_at > $since and
+                 bound_review($head)
                )
             ] | length
           '
     )"
+    if coderabbit_read_denied_detail="$(reviewer_loop_gh_read_denied "$coderabbit_read_err_file")"; then
+      print_reviewer_read_denied "$platform" "$pr_number" "$branch_name" "$coderabbit_read_denied_detail"
+      return 2
+    fi
     coderabbit_review_count="${coderabbit_review_count:-0}"
 
     if [ "$coderabbit_review_count" -gt 0 ]; then
       coderabbit_any_activity=1
+      break
+    fi
+
+    # #1789 (plan D8 failure-type completion signals): a CodeRabbit commit
+    # status on the head in `failure` or `error` (outside the #1437
+    # rate/review-limit wording) reports CodeRabbit's own run as failed. It
+    # ends the wait like a success status; Phase 3 decides between a bound
+    # verdict and coderabbit_status_failed.
+    local coderabbit_failed_status_poll_count
+    coderabbit_failed_status_poll_count="$(coderabbit_failed_status_count "$repo" "$head_sha" "$coderabbit_read_err_file")"
+    if coderabbit_read_denied_detail="$(reviewer_loop_gh_read_denied "$coderabbit_read_err_file")"; then
+      print_reviewer_read_denied "$platform" "$pr_number" "$branch_name" "$coderabbit_read_denied_detail"
+      return 2
+    fi
+    if [ "${coderabbit_failed_status_poll_count:-0}" -gt 0 ]; then
+      coderabbit_status_failed_seen=1
+      break
+    fi
+
+    # #1789 (plan D15 coderabbit row): a genuine CodeRabbit success status on
+    # the head (coderabbit_success_status_count: state success, description
+    # outside the #1437 rate/review-limit wording) is bound to the head by its
+    # commits/<head>/statuses endpoint and ends the wait. Phase 3 then reads
+    # bound findings and the thread gate as for a bound review.
+    local coderabbit_success_status_poll_count
+    coderabbit_success_status_poll_count="$(coderabbit_success_status_count "$repo" "$head_sha" "$coderabbit_read_err_file")"
+    if coderabbit_read_denied_detail="$(reviewer_loop_gh_read_denied "$coderabbit_read_err_file")"; then
+      print_reviewer_read_denied "$platform" "$pr_number" "$branch_name" "$coderabbit_read_denied_detail"
+      return 2
+    fi
+    if [ "${coderabbit_success_status_poll_count:-0}" -gt 0 ]; then
+      coderabbit_status_success_seen=1
       break
     fi
 
@@ -7286,7 +8093,7 @@ run_coderabbit_review() {
     if [ "$coderabbit_any_activity" -eq 0 ]; then
       local activity_count
       activity_count="$(
-        gh api "repos/$repo/issues/$pr_number/comments" --paginate \
+        gh api "repos/$repo/issues/$pr_number/comments" --paginate 2>"${coderabbit_read_err_file:-/dev/null}" \
           | jq -s --arg bot "$bot_login" --arg since "$since_iso" \
                --arg skip_re "$CODERABBIT_SKIP_BANNER_RE" '
               [.[].[] | select(
@@ -7299,11 +8106,20 @@ run_coderabbit_review() {
               )] | length
             '
       )"
+      if coderabbit_read_denied_detail="$(reviewer_loop_gh_read_denied "$coderabbit_read_err_file")"; then
+        print_reviewer_read_denied "$platform" "$pr_number" "$branch_name" "$coderabbit_read_denied_detail"
+        return 2
+      fi
       if [ "${activity_count:-0}" -gt 0 ]; then
+        # #1789 (plan D15 coderabbit row): a walkthrough or summary issue
+        # comment carries no commit field, and its created_at/updated_at
+        # cannot show which revision it answers (an older head's walkthrough
+        # edited after this head's committer time looks the same). It records
+        # that CodeRabbit is active — so budget expiry is the D8 No verdict
+        # yet, not the no_review kept skip — but it no longer ends the wait:
+        # only a review bound to the head or a CodeRabbit status on the head
+        # does.
         coderabbit_any_activity=1
-        # Issue-comment activity means CodeRabbit finished this HEAD cycle, but unlike
-        # a formal PR review it does not hit the `break` above — continue to Phase 3.
-        break
       fi
     fi
 
@@ -7355,6 +8171,7 @@ run_coderabbit_review() {
     # cap so callers have a single knob for total retrigger attempts across
     # both mechanisms.
     if [ "$coderabbit_any_activity" -eq 0 ] \
+        && [ "$coderabbit_rewait_adopted" -eq 0 ] \
         && [ "$coderabbit_retrigger_attempted" -eq 0 ] \
         && [ "$coderabbit_rate_limit_hold_seen" -eq 0 ] \
         && [ "$coderabbit_no_trigger_retriggers" -lt "$coderabbit_rate_limit_max_retries" ] \
@@ -7406,6 +8223,10 @@ run_coderabbit_review() {
           coderabbit_rate_limit_hold_seen=0
           coderabbit_trigger_attempts=$((coderabbit_trigger_attempts + 1))
           coderabbit_last_trigger_iso="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+          if [ "$coderabbit_request_recorded" -eq 0 ]; then
+            print_review_request_keys "$coderabbit_last_trigger_iso" ""
+            coderabbit_request_recorded=1
+          fi
           echo "INFO: @coderabbitai review trigger posted" >&2
         else
           echo "WARN: failed to post @coderabbitai review trigger for silent non-trigger" >&2
@@ -7467,6 +8288,10 @@ run_coderabbit_review() {
               coderabbit_rate_limit_retries=$((coderabbit_rate_limit_retries + 1))
               coderabbit_trigger_attempts=$((coderabbit_trigger_attempts + 1))
               coderabbit_last_trigger_iso="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+              if [ "$coderabbit_request_recorded" -eq 0 ]; then
+                print_review_request_keys "$coderabbit_last_trigger_iso" ""
+                coderabbit_request_recorded=1
+              fi
               echo "INFO: posted @coderabbitai review after rate-limit window elapsed" >&2
             else
               echo "WARN: failed to post @coderabbitai review after rate-limit window elapsed" >&2
@@ -7581,6 +8406,10 @@ run_coderabbit_review() {
             coderabbit_rate_limit_retries=$((coderabbit_rate_limit_retries + 1))
             coderabbit_trigger_attempts=$((coderabbit_trigger_attempts + 1))
             coderabbit_last_trigger_iso="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+            if [ "$coderabbit_request_recorded" -eq 0 ]; then
+              print_review_request_keys "$coderabbit_last_trigger_iso" ""
+              coderabbit_request_recorded=1
+            fi
             echo "INFO: posted @coderabbitai review after rate-limit wait" >&2
           else
             echo "WARN: failed to post @coderabbitai review after rate-limit wait" >&2
@@ -7829,8 +8658,10 @@ run_coderabbit_review() {
           return 2
         fi
 
+        # #1789 (plan D8): kept expired-wait skip, reported as No verdict yet.
         print_kv RESULT skipped
         print_kv REASON no_review
+        print_no_verdict_yet_kept_skip_keys no_review
         print_kv PLATFORM "$platform"
         print_kv PR_NUMBER "$pr_number"
         print_kv BRANCH "$branch_name"
@@ -7843,8 +8674,9 @@ run_coderabbit_review() {
         print_kv CODERABBIT_REVIEWS_RECEIVED "$coderabbit_review_count"
         return 0
       fi
-      print_kv RESULT escalate
-      print_kv REASON timeout
+      # #1789 (plan D8 CodeRabbit row): CodeRabbit activity was seen but no
+      # review was submitted by budget end — No verdict yet, not a failure.
+      print_no_verdict_yet "$platform" review_not_submitted "$head_sha" ""
       print_kv PLATFORM "$platform"
       print_kv PR_NUMBER "$pr_number"
       print_kv BRANCH "$branch_name"
@@ -7852,7 +8684,7 @@ run_coderabbit_review() {
       print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
       print_kv CODERABBIT_TRIGGER_ATTEMPTS "$coderabbit_trigger_attempts"
       print_kv CODERABBIT_REVIEWS_RECEIVED "$coderabbit_review_count"
-      return 2
+      return 4
     fi
 
     _interruptible_sleep "$poll_interval"
@@ -7860,13 +8692,24 @@ run_coderabbit_review() {
   done
 
   # --- Phase 3: Collect results after completion ---
+  # #1789 (plan D15 coderabbit row): when a success status on the head ended
+  # the wait, give asynchronously posted inline threads time to arrive before
+  # collecting (the coderabbit_status_success_fallback settle wait), then read
+  # only findings bound to the head.
+  if [ "$coderabbit_status_success_seen" -eq 1 ]; then
+    local cr_status_success_settle_wait="${FALLBACK_THREAD_SETTLE_WAIT:-60}"
+    if [ "$cr_status_success_settle_wait" -gt 0 ] 2>/dev/null; then
+      echo "INFO: CodeRabbit success status on $head_sha ended the wait — waiting ${cr_status_success_settle_wait}s for async threads to settle before collecting findings" >&2
+      _interruptible_sleep "$cr_status_success_settle_wait"
+    fi
+  fi
   blocking_lines_file="$(mktemp)"
 
   comments="$(
     gh api "repos/$repo/pulls/$pr_number/comments" --paginate \
-      | jq -r --arg bot "$bot_login" --arg since "$since_iso" '
+      | jq -r --arg bot "$bot_login" --arg since "$since_iso" --arg head "$head_sha" "$REVIEWER_LOOP_HEAD_BINDING_JQ"'
         .[]
-        | select(.user.login == $bot and .created_at > $since and .in_reply_to_id == null)
+        | select(.user.login == $bot and .created_at > $since and .in_reply_to_id == null and bound_review_comment($head))
         | {
             path,
             line: (.line // .original_line // 0),
@@ -7879,11 +8722,12 @@ run_coderabbit_review() {
 
   blocking_reviews="$(
     gh api "repos/$repo/pulls/$pr_number/reviews" --paginate \
-      | jq -r --arg bot "$bot_login" --arg since "$since_iso" '
+      | jq -r --arg bot "$bot_login" --arg since "$since_iso" --arg head "$head_sha" "$REVIEWER_LOOP_HEAD_BINDING_JQ"'
         .[]
         | select(
             .user.login == $bot and
             .submitted_at > $since and
+            bound_review($head) and
             .state == "CHANGES_REQUESTED"
           )
         | {
@@ -7943,12 +8787,50 @@ run_coderabbit_review() {
   fi
 
   rm -f "$blocking_lines_file"
+  if [ "$coderabbit_status_failed_seen" -eq 1 ]; then
+    # #1789 (plan D8 failure-type completion signals): the wait ended on a
+    # failed CodeRabbit status on the head. Findings were handled above; a
+    # CodeRabbit review bound to the head (commit_id == head) keeps today's
+    # verdict; with neither, the failed status is failure evidence.
+    local coderabbit_bound_review_count=0
+    coderabbit_bound_review_count="$(
+      gh api "repos/$repo/pulls/$pr_number/reviews" --paginate 2>/dev/null \
+        | jq -s --arg bot "$bot_login" --arg sha "$head_sha" '
+            [.[] | (if type == "array" then .[] else empty end)
+             | select(type == "object" and .user.login == $bot
+                      and ((.commit_id // .commitId // "") == $sha))]
+            | length
+          ' 2>/dev/null
+    )" || coderabbit_bound_review_count=0
+    case "$coderabbit_bound_review_count" in
+      ''|*[!0-9]*) coderabbit_bound_review_count=0 ;;
+    esac
+    if [ "$coderabbit_bound_review_count" -eq 0 ]; then
+      echo "WARN: run_coderabbit_review: CodeRabbit reported a failed status on $head_sha with no review bound to the head — escalating as coderabbit_status_failed" >&2
+      print_kv RESULT escalate
+      print_kv REASON coderabbit_status_failed
+      print_kv PLATFORM "$platform"
+      print_kv PR_NUMBER "$pr_number"
+      print_kv BRANCH "$branch_name"
+      print_kv REVIEW_COMMENT_ID ""
+      print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+      print_kv COMMENT_COUNT "$comment_count"
+      print_kv BLOCKING_COUNT 0
+      print_kv SUGGESTION_COUNT "$suggestion_count"
+      print_kv CODERABBIT_TRIGGER_ATTEMPTS "$coderabbit_trigger_attempts"
+      print_kv CODERABBIT_REVIEWS_RECEIVED "$coderabbit_review_count"
+      return 2
+    fi
+  fi
   coderabbit_thread_gate_clean "$pr_number" "$repo" "$bot_login" "$branch_name"
   cr_phase3_gate_rc=$?
   if [ "$cr_phase3_gate_rc" -ne 0 ]; then
     return "$cr_phase3_gate_rc"
   fi
   print_kv RESULT clean
+  if [ "$coderabbit_status_success_seen" -eq 1 ] && [ "${coderabbit_review_count:-0}" -eq 0 ]; then
+    print_kv REASON coderabbit_status_success_fallback
+  fi
       {
         [ -n "${comments:-}" ] && printf '%s\n' "$comments"
         [ -n "${existing_comments:-}" ] && printf '%s\n' "$existing_comments"
@@ -8346,6 +9228,364 @@ run_project_advisory_checks() {
   return 0
 }
 
+# --- Reviewer outcome classes (#1789, plan D8) ---
+# Defined before the harness return point so the test harness can call them.
+
+# Escalate reasons that report the platform's own availability (usage, spend,
+# account, rate limit). A reporting label only: these outcomes keep their
+# result, reason, exit code, and label behavior unchanged (AC-13).
+REVIEWER_LOOP_AVAILABILITY_REASONS=(
+  rate_limited
+  rate_limit_max_retries
+  codex-github-usage-limit
+  codex-github-account-not-connected
+  bugbot-usage-limit
+  quota_exhausted
+)
+
+# Non-blocking skips whose reason is failure evidence (BR 11). They keep
+# RESULT=skipped and their progression, but require reviewer-failed (D9). The
+# expired-wait kept skips (CodeRabbit CLI `timeout` among them) are never here.
+REVIEWER_LOOP_FAILURE_SKIP_REASONS=(
+  unavailable
+  thread-check-failed
+  forbidden
+  unauthorized
+  no_output
+  invalid_json
+  ambiguous_output
+  cli_failed
+)
+
+# waiting_on_reviewer reasons in the No verdict yet class (D5, D11). Read by
+# the re-wait state and waiting-output keys (plan D11/D12).
+# shellcheck disable=SC2034
+REVIEWER_LOOP_NO_VERDICT_REASONS=(
+  reviewer-no-verdict-yet
+  codex-github-review-pending
+  codex-github-reaction-without-review
+)
+
+# Check-run conclusions that report a reviewer's own run as failed or timed
+# out (D8 failure-type completion signals).
+REVIEWER_LOOP_FAILED_CHECK_CONCLUSIONS=(
+  failure
+  timed_out
+  cancelled
+  action_required
+  startup_failure
+  stale
+)
+
+# reviewer_loop_reason_in_list <reason> <list...>
+# Returns 0 when <reason> is a non-empty exact member of the list.
+reviewer_loop_reason_in_list() {
+  local needle="${1:-}"
+  shift
+  local item
+  [ -n "$needle" ] || return 1
+  for item in "$@"; do
+    [ "$item" = "$needle" ] && return 0
+  done
+  return 1
+}
+
+# REVIEWER_FAILED_COMPLETION_JQ defines `reviewer_failed_completion`, a jq
+# predicate over one check run or commit status entry (REST or GraphQL
+# shape). True for a check run whose status is completed and whose conclusion
+# is in REVIEWER_LOOP_FAILED_CHECK_CONCLUSIONS, or for a commit status whose
+# state is failure or error. Prepend it like STATUS_CHECK_ROLLUP_DEDUPE_JQ and
+# apply it to the newest entry per check key after dedupe_status_check_rollup.
+reviewer_loop_build_failed_completion_jq() {
+  local conclusions_json="" item
+  for item in "${REVIEWER_LOOP_FAILED_CHECK_CONCLUSIONS[@]}"; do
+    conclusions_json="${conclusions_json:+${conclusions_json},}\"${item}\""
+  done
+  printf '%s\n' "
+def reviewer_failed_completion:
+  if type != \"object\" then false
+  elif (has(\"state\") and ((has(\"conclusion\") or has(\"status\")) | not)) then
+    ((.state // \"\") | tostring | ascii_downcase) as \$s
+    | (\$s == \"failure\" or \$s == \"error\")
+  else
+    (((.status // \"\") | tostring | ascii_downcase) == \"completed\")
+    and (((.conclusion // \"\") | tostring | ascii_downcase) as \$c
+         | [${conclusions_json}] | any(. == \$c))
+  end;
+"
+}
+# Prepended to handler jq programs that read Devin and CodeRabbit completion
+# signals (plan D8 failure-type completion signals).
+# shellcheck disable=SC2034
+REVIEWER_FAILED_COMPLETION_JQ="$(reviewer_loop_build_failed_completion_jq)"
+
+# REVIEWER_LOOP_HEAD_BINDING_JQ (#1789, plan D15) defines the per-object
+# current-revision bindings handlers add to their existing filters:
+#   bound_review($head)         — a pull request review, bound by commit_id,
+#                                 which GitHub fixes at submission (V29);
+#   bound_review_comment($head) — a pull request review comment, bound by
+#                                 original_commit_id, never commit_id, which
+#                                 GitHub moves to the newest head while the
+#                                 commented line is unchanged (V29).
+# Both compare case-insensitively and never bind to an empty head, so a
+# missing field or an unknown head binds nothing (fail closed).
+# shellcheck disable=SC2034
+REVIEWER_LOOP_HEAD_BINDING_JQ='
+def reviewer_loop_head_eq($a; $b):
+  (($a // "") | tostring | ascii_downcase) as $x
+  | (($b // "") | tostring | ascii_downcase) as $y
+  | ($y != "") and ($x == $y);
+def bound_review($head):
+  type == "object" and reviewer_loop_head_eq((.commit_id // .commitId); $head);
+def bound_review_comment($head):
+  type == "object" and reviewer_loop_head_eq(.original_commit_id; $head);
+'
+
+# REVIEWER_LOOP_PR_AGENT_MARKER_JQ (#1789, plan D15 PR-Agent summary rule (a))
+# defines, over a comment body string:
+#   pr_agent_visible_body        — the body with every hidden
+#                                  `<!-- pr-agent-review-state:v1 … -->` block
+#                                  removed; null when a block opener has no
+#                                  `-->` terminator (unterminated: the visible
+#                                  part cannot be told apart, fail closed);
+#   pr_agent_has_head_marker($h) — the visible body carries the marker line
+#                                  `Review updated until commit
+#                                  https://<host>/<owner>/<repo>/commit/<h>)`.
+#                                  <owner>/<repo> (and the host, so a GitHub
+#                                  Enterprise host matches too) are any single
+#                                  path segments, never this repository's
+#                                  name; <h> must be a full 40-hex SHA and is
+#                                  matched case-insensitively. A SHA anywhere
+#                                  else — including the review-state block's
+#                                  head_sha or last_seen_head_sha — never
+#                                  satisfies rule (a);
+#   pr_agent_has_any_marker      — the visible body carries a marker line for
+#                                  any commit, or is unterminated (null). A
+#                                  body for which this is false is a
+#                                  marker-free first summary, the only shape
+#                                  rule (b) may consider.
+# shellcheck disable=SC2034
+REVIEWER_LOOP_PR_AGENT_MARKER_JQ='
+def pr_agent_visible_body:
+  ((. // "") | tostring)
+  | gsub("<!--\\s*pr-agent-review-state:v1[\\s\\S]*?-->"; "")
+  | if test("<!--\\s*pr-agent-review-state:v1") then null else . end;
+def pr_agent_has_head_marker($head):
+  (($head // "") | tostring | ascii_downcase) as $h
+  | ($h | test("^[0-9a-f]{40}$"))
+    and (pr_agent_visible_body as $v
+         | ($v != null)
+           and ($v | test("Review updated until commit https://[^/\\s()]+/[^/\\s()]+/[^/\\s()]+/commit/" + $h + "\\)"; "i")));
+def pr_agent_has_any_marker:
+  pr_agent_visible_body as $v
+  | ($v == null) or ($v | test("Review updated until commit"; "i"));
+'
+
+# pr_agent_summary_marker_names_head <body> <head_sha>
+# True when the PR-Agent summary body satisfies D15 rule (a) for <head_sha>
+# (REVIEWER_LOOP_PR_AGENT_MARKER_JQ pr_agent_has_head_marker).
+pr_agent_summary_marker_names_head() {
+  local body="${1:-}" head="${2:-}"
+  [ -n "$body" ] && [ -n "$head" ] || return 1
+  jq -en --arg body "$body" --arg head "$head" "$REVIEWER_LOOP_PR_AGENT_MARKER_JQ"'
+    $body | pr_agent_has_head_marker($head)' >/dev/null 2>&1
+}
+
+# print_no_verdict_yet <platform> <detail> <head_sha> <requested_at>
+#
+# Prints the standard No verdict yet block (D8): the platform's wait ran out
+# with neither a verdict nor failure evidence. REVIEW_REQUESTED_AT is omitted
+# when unknown. The caller adds PLATFORM/PR_NUMBER/BRANCH/FIX_AGENT and
+# returns 4.
+print_no_verdict_yet() {
+  local platform="${1:-}"
+  local detail="${2:-}"
+  local head_sha="${3:-}"
+  local requested_at="${4:-}"
+
+  print_kv RESULT waiting_on_reviewer
+  print_kv REASON reviewer-no-verdict-yet
+  print_kv NO_VERDICT_YET 1
+  print_kv WAIT_EXPIRED_DETAIL "$detail"
+  print_kv PENDING_REVIEWER "$platform"
+  print_kv PENDING_REVIEW_HEAD_SHA "$head_sha"
+  [ -n "$requested_at" ] && print_kv REVIEW_REQUESTED_AT "$requested_at"
+  print_kv COMMENT_COUNT 0
+  print_kv BLOCKING_COUNT 0
+  print_kv SUGGESTION_COUNT 0
+  return 0
+}
+
+# print_review_request_keys <requested_at> <request_ref>
+#
+# #1789 (plan D12): a handler that posted, or adopted in re-wait mode, a review
+# request prints REVIEW_REQUESTED_AT (and REVIEW_REQUEST_REF when it has the
+# request's comment or run id) once, right after the request, so every later
+# output arm carries it. Empty values are omitted.
+print_review_request_keys() {
+  local requested_at="${1:-}"
+  local request_ref="${2:-}"
+  if [ -n "$requested_at" ]; then
+    print_kv REVIEW_REQUESTED_AT "$requested_at"
+  fi
+  if [ -n "$request_ref" ]; then
+    print_kv REVIEW_REQUEST_REF "$request_ref"
+  fi
+  return 0
+}
+
+# print_no_verdict_yet_kept_skip_keys <reason>
+#
+# Extra keys for a kept expired-wait skip (BR 4 exception): RESULT=skipped and
+# its REASON stay as they are; the skip is reported as No verdict yet.
+print_no_verdict_yet_kept_skip_keys() {
+  local reason="${1:-}"
+  print_kv NO_VERDICT_YET 1
+  print_kv DISPLAY_RESULT "no verdict yet (non-blocking skip: ${reason})"
+}
+
+# reviewer_loop_platform_outcome_class <result> <reason> <no_verdict_flag>
+# Prints the D8 reporting class of one platform outcome.
+reviewer_loop_platform_outcome_class() {
+  local result="${1:-}"
+  local reason="${2:-}"
+  local no_verdict_flag="${3:-0}"
+
+  case "$result" in
+    clean|needs_fixes|needs_rerun)
+      printf 'verdict_received\n'
+      ;;
+    waiting_on_reviewer)
+      printf 'no_verdict_yet\n'
+      ;;
+    skipped)
+      if [ "$no_verdict_flag" = "1" ]; then
+        printf 'no_verdict_yet\n'
+      elif reviewer_loop_reason_in_list "$reason" "${REVIEWER_LOOP_FAILURE_SKIP_REASONS[@]}"; then
+        printf 'skipped_failure_evidence\n'
+      else
+        printf 'skipped\n'
+      fi
+      ;;
+    escalate)
+      if reviewer_loop_reason_in_list "$reason" "${REVIEWER_LOOP_AVAILABILITY_REASONS[@]}"; then
+        printf 'existing_handling\n'
+      else
+        printf 'reviewer_failed\n'
+      fi
+      ;;
+    *)
+      printf 'reviewer_failed\n'
+      ;;
+  esac
+}
+
+# --- Polling-read refusals (#1789, spec BR 2 / BR 3) ---
+# A handler's polling read that GitHub refuses with an authorization or
+# permission error is positive failure evidence, not "no verdict yet". The
+# polling reads of copilot, greptile, devin, and coderabbit capture gh's
+# stderr in a file (reviewer_loop_gh_read_err_file) and check it after each
+# read (reviewer_loop_gh_read_denied); a denied read ends the handler at once
+# with RESULT=escalate and REASON=<platform>-read-denied
+# (print_reviewer_read_denied). Every other read failure keeps the handler's
+# existing behavior (keep polling; budget expiry stays No verdict yet or the
+# kept skip). Ronda and Bugbot already escalate fetch-failed on any failed
+# check-run read; PR-Agent keeps plan D8 (a failed read leaves the last
+# successful read in force).
+
+# reviewer_loop_gh_read_error_class <gh-stderr-text>
+# Prints `denied` for a 401/403 authorization or permission refusal and
+# `transient` for everything else. Rate-limit text (primary or secondary,
+# including an HTTP 403 rate limit) is checked first and is transient, so the
+# existing rate-limit handling keeps its outcome. Same vocabulary as
+# claude_code_action_classify_poll_error in claude-code-action-reviewer.sh.
+# Always returns 0.
+reviewer_loop_gh_read_error_class() {
+  local err="${1:-}"
+  local lower=""
+  # Bash regex on a lower-cased copy (bash 3.2 has no ${var,,}); no
+  # `printf | grep -q` pipeline, so no SIGPIPE status under pipefail.
+  local rate_re='rate limit|abuse detection|retry-after'
+  local denied_re='http 40[13]|forbidden|unauthorized|bad credentials|resource not accessible|requires authentication'
+  lower="$(printf '%s' "$err" | tr '[:upper:]' '[:lower:]')" || lower=""
+  if [[ "$lower" =~ $rate_re ]]; then
+    printf 'transient\n'
+  elif [[ "$lower" =~ $denied_re ]]; then
+    printf 'denied\n'
+  else
+    printf 'transient\n'
+  fi
+  return 0
+}
+
+# reviewer_loop_gh_read_err_file
+# Prints the path of a new empty file for one handler's polling-read stderr,
+# or nothing when mktemp fails. Callers redirect with
+# `2>"${file:-/dev/null}"` (a failed mktemp keeps the old discard behavior)
+# and remove the file with `rm -f "${file:-}"`, never a /dev/null fallback.
+reviewer_loop_gh_read_err_file() {
+  mktemp 2>/dev/null || true
+  return 0
+}
+
+# reviewer_loop_gh_read_denied <stderr-file>
+# Returns 0 and prints the refusal text (first non-empty line, one line,
+# capped at 200 characters) when the captured stderr classifies `denied`.
+# Otherwise returns 1 and replays any captured text on stderr as a WARN so a
+# transient read failure stays visible. Empties the file either way so the
+# next read starts clean. A missing or empty path returns 1.
+reviewer_loop_gh_read_denied() {
+  local err_file="${1:-}"
+  local err_text="" detail=""
+  [ -n "$err_file" ] && [ -f "$err_file" ] || return 1
+  err_text="$(cat "$err_file" 2>/dev/null)" || err_text=""
+  : > "$err_file" 2>/dev/null || true
+  [ -n "$err_text" ] || return 1
+  if [ "$(reviewer_loop_gh_read_error_class "$err_text")" = "denied" ]; then
+    # awk reads all input (no early exit), so no SIGPIPE under pipefail.
+    detail="$(printf '%s\n' "$err_text" | awk 'NF && !d { print; d = 1 }' | tr -d '\r' | cut -c1-200)" || detail=""
+    printf '%s\n' "${detail:-authorization or permission refused}"
+    return 0
+  fi
+  printf 'WARN: polling read failed (transient, still polling): %s\n' \
+    "$(printf '%s' "$err_text" | tr '\r\n' '  ' | cut -c1-300)" >&2
+  return 1
+}
+
+# reviewer_loop_gh_capture_stderr <stderr-file> <gh args...>
+# Runs `gh <args>` with stdout unchanged and stderr appended to <stderr-file>,
+# or left on stderr when <stderr-file> is empty (the caller's previous
+# behavior). Returns gh's exit status.
+reviewer_loop_gh_capture_stderr() {
+  local err_file="${1:-}"
+  shift
+  if [ -n "$err_file" ]; then
+    gh "$@" 2>>"$err_file"
+  else
+    gh "$@"
+  fi
+}
+
+# print_reviewer_read_denied <platform> <pr> <branch> <detail>
+# The standard block for a denied polling read: RESULT=escalate,
+# REASON=<platform>-read-denied (class reviewer_failed, reviewer-failed label
+# required). The caller returns 2.
+print_reviewer_read_denied() {
+  local platform="${1:-}" pr_number="${2:-}" branch_name="${3:-}" detail="${4:-}"
+  echo "WARN: ${platform} polling read refused (authorization or permission): ${detail}" >&2
+  print_kv RESULT escalate
+  print_kv REASON "${platform}-read-denied"
+  print_kv READ_DENIED_DETAIL "$detail"
+  print_kv PLATFORM "$platform"
+  print_kv PR_NUMBER "$pr_number"
+  print_kv BRANCH "$branch_name"
+  print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+  print_kv COMMENT_COUNT 0
+  print_kv BLOCKING_COUNT 0
+  print_kv SUGGESTION_COUNT 0
+  return 0
+}
+
 # --- Compare-mode helpers ---
 # These functions are defined here (before the main execution block) so that
 # the test harness can load them via HARNESS_MODE=1 sourcing without executing
@@ -8374,7 +9614,7 @@ normalize_platform_verdict() {
     escalate)
       # Distinguish timeout from service-unavailable via REASON.
       case "$reason" in
-        timeout|timed_out|max_wait_exceeded|no_response|rate_limit_max_retries|pending_timeout)
+        timeout|timed_out|max_wait_exceeded|no_response|rate_limit_max_retries|pending_timeout|bugbot-run-timed-out)
           printf 'timed out' ;;
         *)
           printf 'unavailable' ;;
@@ -8406,11 +9646,12 @@ reviewer_failed_label_required_for_result() {
       return 0
       ;;
     skipped)
-      case "$reason" in
-        unavailable|timeout|thread-check-failed|pending_timeout|forbidden|unauthorized)
-          return 0
-          ;;
-      esac
+      # #1789 (plan D8/D9): only skips whose reason is failure evidence
+      # require the label. An expired wait (timeout, pending_timeout, or any
+      # kept skip carrying NO_VERDICT_YET=1) is No verdict yet, not a failure.
+      if reviewer_loop_reason_in_list "$reason" "${REVIEWER_LOOP_FAILURE_SKIP_REASONS[@]}"; then
+        return 0
+      fi
       ;;
   esac
 
@@ -8469,6 +9710,169 @@ sync_reviewer_failed_label() {
     fi
   fi
 
+  return 0
+}
+
+# reviewer_loop_reconcile_reviewer_failed_label <pr> <aggregate_result> <aggregate_reason>
+#
+# #1789 (plan D9): bring the reviewer-failed label in step with THIS run's
+# reviewer evidence. The label is required when any platform evaluated in this
+# invocation recorded failure evidence (reviewer_failed_required, reset per
+# invocation and set per platform by reviewer_loop_process_platform_output —
+# including platforms replayed from the ledger under #1692 staging) or when the
+# final aggregate itself requires it. Otherwise the label is removed, so a run
+# that re-reviews (or replays) clean, needs-fixes, or No verdict yet evidence
+# clears a stale label. A failed add or remove is reported by
+# sync_reviewer_failed_label's WARN lines and never changes the result.
+#
+# Called once, from the main post-loop path. The not-configured and
+# release-guard exits keep their own sync_reviewer_failed_label "$pr" 0;
+# ownership refusals, lock contention, truncated_run, and
+# execution_budget_misconfigured exits never reach either call.
+reviewer_loop_reconcile_reviewer_failed_label() {
+  local pr_number_arg="${1:-}"
+  local agg_result="${2:-}"
+  local agg_reason="${3:-}"
+  local required=0
+
+  if [ "${reviewer_failed_required:-0}" = "1" ]; then
+    required=1
+  fi
+  if reviewer_failed_label_required_for_result "$agg_result" "$agg_reason"; then
+    required=1
+  fi
+  reviewer_failed_required="$required"
+  sync_reviewer_failed_label "$pr_number_arg" "$required"
+  return 0
+}
+
+# reviewer_loop_precedence_rank <result>
+#
+# #1789 (plan D10) cross-platform precedence: 1 = escalate or any unrecognized
+# result (Reviewer failed), 2 = needs_fixes / needs_rerun (findings),
+# 3 = waiting_on_reviewer (No verdict yet), 4 = clean / skipped (kept skips are
+# skipped and therefore rank 4). Lower is stronger.
+reviewer_loop_precedence_rank() {
+  case "${1:-}" in
+    needs_fixes|needs_rerun) printf '2\n' ;;
+    waiting_on_reviewer) printf '3\n' ;;
+    clean|skipped) printf '4\n' ;;
+    *) printf '1\n' ;;
+  esac
+}
+
+# reviewer_loop_precedence_select [entry ...]
+#
+# #1789 (plan D10): pick the governing outcome among recorded platform outcomes.
+# Each entry is "platform|result|reason" (the platform_peer_evidence shape);
+# with no arguments the current platform_peer_evidence array is read. Entries
+# are in evaluation order: the best (lowest) rank wins and a tie goes to the
+# earliest entry. Prints "<rank>|<platform>|<result>|<reason>" for the winner,
+# or nothing (return 1) when there is no non-empty entry.
+# shellcheck disable=SC2120  # arguments are optional; the loop reads the array
+reviewer_loop_precedence_select() {
+  local entry platform result reason rank
+  local best_rank=5 best_line=""
+  local -a entries=()
+
+  if [ "$#" -gt 0 ]; then
+    entries=("$@")
+  elif declare -p platform_peer_evidence >/dev/null 2>&1 \
+      && [ "${#platform_peer_evidence[@]}" -gt 0 ]; then
+    entries=("${platform_peer_evidence[@]}")
+  fi
+
+  for entry in "${entries[@]+"${entries[@]}"}"; do
+    [ -n "$entry" ] || continue
+    platform="${entry%%|*}"
+    result="${entry#*|}"
+    reason=""
+    case "$result" in
+      *"|"*)
+        reason="${result#*|}"
+        result="${result%%|*}"
+        ;;
+    esac
+    rank="$(reviewer_loop_precedence_rank "$result")"
+    if [ "$rank" -lt "$best_rank" ]; then
+      best_rank="$rank"
+      best_line="${rank}|${platform}|${result}|${reason}"
+    fi
+  done
+
+  [ -n "$best_line" ] || return 1
+  printf '%s\n' "$best_line"
+}
+
+# reviewer_loop_compare_restore_aggregate
+#
+# --compare runs evaluate every platform, so later outcomes may have
+# overwritten aggregate_*. When at least one platform recorded a blocking
+# outcome (compare_first_blocking_result is set), the overall result is chosen
+# by the D10 precedence over every recorded platform outcome (rank 1 Reviewer
+# failed, 2 findings, 3 No verdict yet, 4 clean/skipped; ties to the earliest
+# platform), and that platform's recorded output becomes aggregate_output.
+# This replaces the earlier "first blocking platform governs" rule (#1789).
+# When nothing blocked, the aggregate is left as the loop computed it, so
+# loop-level outcomes (for example a #1656 second-pass refusal) stay intact.
+reviewer_loop_compare_restore_aggregate() {
+  local selection rank platform result reason entry output="" status
+
+  [ "${compare_mode:-0}" -eq 1 ] || return 0
+  [ -n "${compare_first_blocking_result:-}" ] || return 0
+
+  # BR 5 / D10: a loop-level gate escalation recorded during the platform loop
+  # is never replaced by a platform-precedence result.
+  [ "${reviewer_loop_gate_break_result:-}" = "escalate" ] && return 0
+
+  if ! selection="$(reviewer_loop_precedence_select)" || [ -z "$selection" ]; then
+    selection=""
+  fi
+  IFS='|' read -r rank platform result reason <<<"$selection"
+  # A gate needs_fixes deferral outranks No verdict yet / clean platform rows.
+  if [ "${reviewer_loop_gate_break_result:-}" = "needs_fixes" ] \
+      && { [ -z "$selection" ] || [ "${rank:-5}" -ge 3 ]; }; then
+    return 0
+  fi
+  if [ -z "$selection" ] || ! [ "${rank:-5}" -le 3 ] 2>/dev/null; then
+    # Defensive: a blocking outcome was seen but the recorded evidence holds no
+    # rank 1-3 entry. Fall back to the first blocking outcome (fail closed:
+    # never report clean when a platform blocked).
+    aggregate_result="$compare_first_blocking_result"
+    aggregate_reason="$compare_first_blocking_reason"
+    aggregate_output="$compare_first_blocking_output"
+    aggregate_status=$compare_first_blocking_status
+    return 0
+  fi
+
+  if declare -p platform_blocking_outputs >/dev/null 2>&1 \
+      && [ "${#platform_blocking_outputs[@]}" -gt 0 ]; then
+    for entry in "${platform_blocking_outputs[@]}"; do
+      if [ "${entry%%$'\036'*}" = "$platform" ]; then
+        output="${entry#*$'\036'}"
+        break
+      fi
+    done
+  fi
+
+  case "$result" in
+    escalate) status=2 ;;
+    needs_fixes) status=1 ;;
+    needs_rerun)
+      status=3
+      reason=""
+      ;;
+    waiting_on_reviewer) status=4 ;;
+    *)
+      result="escalate"
+      reason="unknown-platform-result"
+      status=2
+      ;;
+  esac
+  aggregate_result="$result"
+  aggregate_reason="$reason"
+  aggregate_output="$output"
+  aggregate_status=$status
   return 0
 }
 
@@ -8765,16 +10169,6 @@ doc_branch_default_max_wait() {
   printf '%s\n' "$configured"
 }
 
-doc_branch_default_poll_interval() {
-  local max_wait="$1"
-  local interval=30
-  if [ "$interval" -ge "$max_wait" ]; then
-    interval=$((max_wait / 2))
-    [ "$interval" -lt 1 ] && interval=1
-  fi
-  printf '%s\n' "$interval"
-}
-
 codex_github_default_max_wait() {
   local configured="${CODEX_GITHUB_MAX_WAIT:-1800}"
   if ! [[ "$configured" =~ ^[1-9][0-9]*$ ]]; then
@@ -8798,8 +10192,247 @@ codex_github_default_poll_interval() {
   printf '%s\n' "$configured"
 }
 
-codex_github_defaults_should_apply() {
-  array_contains_value "codex-github" "${platforms[@]:-}"
+# --- Per-platform reviewer wait budgets and poll intervals (#1789) ---
+# Each platform waits for its own budget, resolved in this order (plan D7):
+#   1. --max-wait (max_wait_override) — applies to every platform, never
+#      adjusted;
+#   2. a valid configured value: review.wait_budgets.<platform> in the PR-base
+#      .ai-dev-workflow.yaml snapshot (config_file); for codex-github,
+#      CODEX_GITHUB_MAX_WAIT first (plan D6);
+#   3. the built-in default (plan D2).
+# Adjustments after step 2 or 3: `documentation_branch` (built-in default of a
+# platform that does not review spec/* or implementation-plan/* branches, on
+# those branches) and `large_diff` (non-documentation branch whose
+# changed-files count exceeds LARGE_DIFF_THRESHOLD; lengthens only).
+
+REVIEWER_LOOP_SUPPORTED_PLATFORMS="greptile devin coderabbit coderabbit-cli local-ai-reviewer pr-agent codex-github claude-code-action copilot haystack bugbot ronda"
+# The Claude Code Action companion rejects --max-wait above this value
+# (claude-code-action-reviewer.sh argument validation).
+REVIEWER_LOOP_CLAUDE_CODE_ACTION_MAX_WAIT=3600
+
+reviewer_loop_is_supported_platform() {
+  local candidate="${1:-}" known
+  [ -n "$candidate" ] || return 1
+  for known in $REVIEWER_LOOP_SUPPORTED_PLATFORMS; do
+    [ "$candidate" = "$known" ] && return 0
+  done
+  return 1
+}
+
+reviewer_wait_branch_is_documentation() {
+  case "${1:-}" in
+    spec/*|implementation-plan/*) return 0 ;;
+  esac
+  return 1
+}
+
+# A whole number of seconds in 1-999999 (plan D13 / D6). The upper bound keeps
+# every budget inside bash integer tests and arithmetic in the wait loops.
+reviewer_wait_seconds_is_valid() {
+  [[ "${1:-}" =~ ^[1-9][0-9]{0,5}$ ]]
+}
+
+# reviewer_platform_reviews_documentation_branches <platform>
+# Plan D1: the set of platforms that do not review spec/* or
+# implementation-plan/* branches is exactly {devin}. Add a platform here, and
+# only here, to give it the shortened documentation-branch default.
+reviewer_platform_reviews_documentation_branches() {
+  case "${1:-}" in
+    devin) return 1 ;;
+  esac
+  return 0
+}
+
+# reviewer_wait_budget_builtin_default <platform>
+# Plan D2 built-in defaults (implementation-branch values; the documentation-
+# branch shortening is an adjustment applied by reviewer_wait_budget_resolve).
+reviewer_wait_budget_builtin_default() {
+  case "${1:-}" in
+    bugbot) printf '2400\n' ;;
+    # Unchanged prior codex_github_default_max_wait default. The
+    # CODEX_GITHUB_MAX_WAIT override is a configured value, read by
+    # reviewer_wait_budget_configured.
+    codex-github) printf '1800\n' ;;
+    *) printf '1200\n' ;;
+  esac
+}
+
+# reviewer_wait_budget_config_warnings
+# Prints, once per run, the configuration-shape warnings that are not tied to
+# one platform's value (plan D6): a non-block `wait_budgets:` value and each
+# key that is not a supported platform.
+reviewer_wait_budget_config_warnings() {
+  local cfg key
+  cfg="${config_file:-$(workflow_config_file)}"
+  [ -f "$cfg" ] || return 0
+  while IFS= read -r key; do
+    [ -n "$key" ] || continue
+    if [ "$key" = "__flow__" ]; then
+      echo "WARN: review.wait_budgets must be a block mapping; ignored" >&2
+      continue
+    fi
+    if ! reviewer_loop_is_supported_platform "$key"; then
+      echo "WARN: review.wait_budgets.${key} is not a supported platform; ignored" >&2
+    fi
+  done < <(workflow_config_review_wait_budget_keys "$cfg" 2>/dev/null || true)
+  return 0
+}
+
+# reviewer_wait_budget_configured <platform>
+# Prints the platform's valid configured budget, or nothing (plan D6).
+# Invalid values print a WARN to stderr and print nothing, so the caller falls
+# back to the built-in default.
+reviewer_wait_budget_configured() {
+  local platform="${1:-}" cfg value key present=0
+  [ -n "$platform" ] || return 0
+
+  if [ "$platform" = "codex-github" ] && [ -n "${CODEX_GITHUB_MAX_WAIT:-}" ]; then
+    if reviewer_wait_seconds_is_valid "$CODEX_GITHUB_MAX_WAIT"; then
+      printf '%s\n' "$CODEX_GITHUB_MAX_WAIT"
+      return 0
+    fi
+    if [[ "$CODEX_GITHUB_MAX_WAIT" =~ ^[1-9][0-9]*$ ]]; then
+      echo "WARN: CODEX_GITHUB_MAX_WAIT value '${CODEX_GITHUB_MAX_WAIT}' is not a positive whole number of seconds (1-999999); ignored" >&2
+    else
+      # Existing warning, emitted by the unchanged value source.
+      codex_github_default_max_wait >/dev/null
+    fi
+  fi
+
+  cfg="${config_file:-$(workflow_config_file)}"
+  [ -f "$cfg" ] || return 0
+  value="$(workflow_config_review_wait_budget "$platform" "$cfg" 2>/dev/null || true)"
+  # A non-block wait_budgets value is reported once by
+  # reviewer_wait_budget_config_warnings; every platform uses its default.
+  [ "$value" = "__flow__" ] && return 0
+  if [ -z "$value" ]; then
+    # Tell a key present with an empty value (invalid) from a missing key.
+    while IFS= read -r key; do
+      [ "$key" = "$platform" ] && present=1
+    done < <(workflow_config_review_wait_budget_keys "$cfg" 2>/dev/null || true)
+    [ "$present" -eq 1 ] || return 0
+  fi
+  if ! reviewer_wait_seconds_is_valid "$value"; then
+    echo "WARN: review.wait_budgets.${platform} value '${value}' is not a positive whole number of seconds (1-999999); using the built-in default" >&2
+    return 0
+  fi
+  if [ "$platform" = "claude-code-action" ] && [ "$value" -gt "$REVIEWER_LOOP_CLAUDE_CODE_ACTION_MAX_WAIT" ]; then
+    echo "WARN: review.wait_budgets.claude-code-action value '${value}' exceeds the companion's ${REVIEWER_LOOP_CLAUDE_CODE_ACTION_MAX_WAIT}-second maximum; using the built-in default" >&2
+    return 0
+  fi
+  printf '%s\n' "$value"
+}
+
+# reviewer_wait_budget_resolve <platform>
+# Prints "<seconds> <source> <adjustment>" (plan D7):
+#   source     override | configured | default
+#   adjustment none | documentation_branch | large_diff
+# Reads the globals max_wait_override, branch_name, config_file,
+# changed_files_count, large_diff_threshold, and large_diff_max_wait.
+reviewer_wait_budget_resolve() {
+  local platform="${1:-}" value budget_source adjustment="none"
+  local threshold="${large_diff_threshold:-50}"
+  local large_wait="${large_diff_max_wait:-2400}"
+  local changed="${changed_files_count:--1}"
+
+  if [ -n "${max_wait_override:-}" ]; then
+    printf '%s override none\n' "$max_wait_override"
+    return 0
+  fi
+
+  value="$(reviewer_wait_budget_configured "$platform")"
+  if [ -n "$value" ]; then
+    budget_source="configured"
+  else
+    value="$(reviewer_wait_budget_builtin_default "$platform")"
+    budget_source="default"
+    if reviewer_wait_branch_is_documentation "${branch_name:-}" \
+        && ! reviewer_platform_reviews_documentation_branches "$platform"; then
+      value="$(doc_branch_default_max_wait)"
+      adjustment="documentation_branch"
+    fi
+  fi
+
+  if ! reviewer_wait_branch_is_documentation "${branch_name:-}" \
+      && [[ "$changed" =~ ^[0-9]+$ ]] && [[ "$threshold" =~ ^[0-9]+$ ]] \
+      && reviewer_wait_seconds_is_valid "$large_wait" \
+      && [ "$changed" -gt "$threshold" ] && [ "$large_wait" -gt "$value" ]; then
+    value="$large_wait"
+    adjustment="large_diff"
+  fi
+
+  printf '%s %s %s\n' "$value" "$budget_source" "$adjustment"
+}
+
+# reviewer_poll_interval_resolve <platform> <budget>
+# Plan D14: --poll-interval (poll_interval_override) when given; else the
+# Codex GitHub default for codex-github only; else 30 on documentation
+# branches; else 120. The result is clamped below the budget
+# (max(1, floor(budget / 2)) when it is not smaller).
+reviewer_poll_interval_resolve() {
+  local platform="${1:-}" budget="${2:-}" interval
+  if [ -n "${poll_interval_override:-}" ]; then
+    interval="$poll_interval_override"
+  elif [ "$platform" = "codex-github" ]; then
+    interval="$(codex_github_default_poll_interval "${budget:-1800}")"
+  elif reviewer_wait_branch_is_documentation "${branch_name:-}"; then
+    interval=30
+  else
+    interval=120
+  fi
+  if [[ "$interval" =~ ^[0-9]+$ ]] && [[ "$budget" =~ ^[0-9]+$ ]] \
+      && [ "$interval" -ge "$budget" ]; then
+    interval=$((budget / 2))
+    [ "$interval" -lt 1 ] && interval=1
+  fi
+  printf '%s\n' "$interval"
+}
+
+# Per-run cache of resolved budgets, filled once before the platform loop so
+# configuration warnings print once and every dispatch site (including the
+# second local pass) uses the same value. Parallel indexed arrays (bash 3.2).
+reviewer_wait_budget_cache_platforms=()
+reviewer_wait_budget_cache_values=()
+
+reviewer_wait_budget_cache_fill() {
+  local platform resolved
+  for platform in "$@"; do
+    [ -n "$platform" ] || continue
+    array_contains_value "$platform" "${reviewer_wait_budget_cache_platforms[@]:-}" && continue
+    resolved="$(reviewer_wait_budget_resolve "$platform")"
+    reviewer_wait_budget_cache_platforms+=("$platform")
+    reviewer_wait_budget_cache_values+=("$resolved")
+  done
+}
+
+# reviewer_wait_budget_for_platform <platform>
+# Prints the cached "<seconds> <source> <adjustment>"; on a miss (a platform
+# outside this run's platform list) it resolves the budget without caching.
+reviewer_wait_budget_for_platform() {
+  local platform="${1:-}" i=0 count="${#reviewer_wait_budget_cache_platforms[@]}"
+  while [ "$i" -lt "$count" ]; do
+    if [ "${reviewer_wait_budget_cache_platforms[$i]}" = "$platform" ]; then
+      printf '%s\n' "${reviewer_wait_budget_cache_values[$i]}"
+      return 0
+    fi
+    i=$((i + 1))
+  done
+  reviewer_wait_budget_resolve "$platform"
+}
+
+# reviewer_wait_budgets_summary <platform>...
+# Prints the PLATFORM_WAIT_BUDGETS value:
+# <platform>:<seconds>:<source>[:<adjustment>],… (adjustment omitted when none).
+reviewer_wait_budgets_summary() {
+  local platform seconds budget_source adjustment entry out=""
+  for platform in "$@"; do
+    [ -n "$platform" ] || continue
+    read -r seconds budget_source adjustment < <(reviewer_wait_budget_for_platform "$platform")
+    entry="${platform}:${seconds}:${budget_source}"
+    [ "${adjustment:-none}" != "none" ] && entry="${entry}:${adjustment}"
+    out="${out}${out:+,}${entry}"
+  done
+  printf '%s\n' "$out"
 }
 
 reviewer_loop_history_platforms_json() {
@@ -8978,15 +10611,27 @@ reviewer_loop_commit_ancestry() {
 }
 
 # Normalize a companion-script RESULT/REASON pair into the stored platform_results
-# outcome. Prints: clean|needs_fixes|unavailable|not_configured|skipped|unknown
+# outcome. Prints: clean|needs_fixes|unavailable|not_configured|skipped|
+# no_verdict_yet|unknown
+#
+# #1789 (plan Rule 5 normalizer row): waiting_on_reviewer and a kept
+# expired-wait skip (optional third argument, the platform's NO_VERDICT_YET
+# flag) normalize to no_verdict_yet. The kept skip is recognized from the
+# flag, never from its reason.
 reviewer_loop_normalize_platform_outcome() {
   local raw_result="${1:-}"
   local raw_reason="${2:-}"
+  local no_verdict_flag="${3:-0}"
 
   case "$raw_result" in
     clean) printf 'clean\n' ;;
     needs_fixes) printf 'needs_fixes\n' ;;
+    waiting_on_reviewer) printf 'no_verdict_yet\n' ;;
     skipped)
+      if [ "$no_verdict_flag" = "1" ]; then
+        printf 'no_verdict_yet\n'
+        return 0
+      fi
       case "$raw_reason" in
         unavailable) printf 'unavailable\n' ;;
         not_configured) printf 'not_configured\n' ;;
@@ -8999,19 +10644,32 @@ reviewer_loop_normalize_platform_outcome() {
 }
 
 # Build one compact platform_results JSON object from raw RESULT/REASON.
+# Optional fourth argument: the platform output's NO_VERDICT_YET flag (#1789).
+# Optional fifth argument: a JSON object of D12 additive ledger keys
+# (outcome_class, wait_budget_seconds, wait_budget_source,
+# wait_budget_adjustment, requested_at, requested_at_source, request_ref,
+# elapsed_seconds, elapsed_kind, reused; #1789 plan D12) merged into the record.
+# Anything that is not a JSON object is ignored. The schema string is unchanged.
 reviewer_loop_platform_result_record_json() {
   local platform="${1:-}"
   local raw_result="${2:-}"
   local raw_reason="${3:-}"
+  local no_verdict_flag="${4:-0}"
+  local extra_json="${5:-}"
   local normalized
 
-  normalized="$(reviewer_loop_normalize_platform_outcome "$raw_result" "$raw_reason")"
+  if [ -z "$extra_json" ] \
+      || ! printf '%s' "$extra_json" | jq -e 'type == "object"' >/dev/null 2>&1; then
+    extra_json='{}'
+  fi
+  normalized="$(reviewer_loop_normalize_platform_outcome "$raw_result" "$raw_reason" "$no_verdict_flag")"
   jq -nc \
     --arg platform "$platform" \
     --arg result "$normalized" \
     --arg raw_result "$raw_result" \
     --arg raw_reason "$raw_reason" \
-    '{platform: $platform, result: $result, raw_result: $raw_result, raw_reason: $raw_reason}'
+    --argjson extra "$extra_json" \
+    '{platform: $platform, result: $result, raw_result: $raw_result, raw_reason: $raw_reason} + $extra'
 }
 
 # reviewer_loop_replace_current_round_platform_record <platform_name>
@@ -9044,6 +10702,18 @@ reviewer_loop_replace_current_round_platform_record() {
       fi
     done
     platform_result_records=("${kept_records[@]+"${kept_records[@]}"}")
+  fi
+
+  # #1789 (plan D12): a second local pass replaces the first pass's timing.
+  if declare -p platform_timing_records >/dev/null 2>&1 \
+      && [ "${#platform_timing_records[@]}" -gt 0 ]; then
+    local kept_timing=()
+    for record in "${platform_timing_records[@]}"; do
+      if [ "$(printf '%s' "$record" | jq -r '.platform // ""')" != "$platform_name" ]; then
+        kept_timing+=("$record")
+      fi
+    done
+    platform_timing_records=("${kept_timing[@]+"${kept_timing[@]}"}")
   fi
 
   if declare -p platform_peer_evidence >/dev/null 2>&1 \
@@ -9360,7 +11030,9 @@ reviewer_loop_local_pass_required() {
 
   case "$outcome" in
     not_configured) printf 'no_local_reviewer\n'; return 0 ;;
-    not_yet_run|unknown) printf 'no_evidence\n'; return 0 ;;
+    # #1789: a local reviewer with no verdict yet left no evidence; a fresh
+    # local pass runs (not prior_findings).
+    not_yet_run|unknown|no_verdict_yet) printf 'no_evidence\n'; return 0 ;;
     clean) ;;
     *) printf 'prior_findings\n'; return 0 ;;
   esac
@@ -9516,6 +11188,7 @@ reviewer_loop_platform_pre_dispatch() {
         platform_result_tokens+=("${platform_name}:deferred (${expensive_gate_last_reason:-unknown})")
       fi
       reviewer_loop_pre_dispatch_action="break"
+      reviewer_loop_gate_break_result="$aggregate_result"
       return 0
     fi
     stage_skip_gate_state="passed"
@@ -9658,6 +11331,9 @@ reviewer_loop_second_local_pass_gate_result() {
     clean) printf 'proceed\t\n' ;;
     needs_fixes) printf 'needs_fixes\t%s\n' "${pass_reason:-}" ;;
     escalate) printf 'escalate\t%s\n' "${pass_reason:-}" ;;
+    # #1789 (plan Rule 5): a second pass with no verdict yet is waiting, not
+    # local_pass_unavailable, and is not recorded as failed for the head.
+    waiting_on_reviewer) printf 'waiting_on_reviewer\treviewer-no-verdict-yet\n' ;;
     skipped|needs_rerun|*)
       printf 'escalate\tlocal_pass_unavailable\n' ;;
   esac
@@ -9754,10 +11430,20 @@ reviewer_loop_second_local_pass_before_ready_gate() {
   fi
 
   local_second_pass=1
+  # Per-platform budget and poll interval (#1789, plan D7/D14): the second
+  # pass waits with local-ai-reviewer's own budget, never another platform's.
+  local _sl_max_wait _sl_poll_interval _sl_budget_source _sl_budget_adjustment
+  read -r _sl_max_wait _sl_budget_source _sl_budget_adjustment < <(reviewer_wait_budget_for_platform "local-ai-reviewer")
+  _sl_poll_interval="$(reviewer_poll_interval_resolve "local-ai-reviewer" "$_sl_max_wait")"
+  reviewer_loop_rewait_prepare_platform "local-ai-reviewer"
+  # Wait start/end around the second pass's own dispatch (D12); its record
+  # replaces the first pass's (reviewer_loop_replace_current_round_platform_record).
+  reviewer_loop_timing_begin "$_sl_max_wait" "$_sl_budget_source" "$_sl_budget_adjustment"
   set +e
-  _sl_output="$(run_platform_review "local-ai-reviewer" "$pr_number_arg" "$branch_name" "$poll_interval" "$max_wait")"
+  _sl_output="$(run_platform_review "local-ai-reviewer" "$pr_number_arg" "$branch_name" "$_sl_poll_interval" "$_sl_max_wait")"
   _sl_status=$?
   set -e
+  reviewer_loop_timing_end
   _sl_platform_index=$((${#platforms[@]} + 1))
   reviewer_loop_platform_loop_should_break=0
   reviewer_loop_process_platform_output "local-ai-reviewer" "$_sl_platform_index" "$_sl_output" "$_sl_status" 0
@@ -9791,6 +11477,14 @@ reviewer_loop_second_local_pass_before_ready_gate() {
   aggregate_reason="$_sl_gate_reason"
   if [ "$_sl_gate_result" = "escalate" ]; then
     local_second_pass_reason="local_pass_unavailable"
+  fi
+  if [ "$_sl_gate_result" = "waiting_on_reviewer" ]; then
+    # #1789: no failed-for-head record, so the next run on this head runs a
+    # fresh local pass instead of being refused as failed_for_head.
+    aggregate_output="$_sl_pass_output"
+    aggregate_status="$_sl_pass_status"
+    last_platform="local-ai-reviewer"
+    return 1
   fi
   local_second_pass_failed_head_record="$loop_head_sha"
   if [ "$_sl_gate_result" = "needs_fixes" ]; then
@@ -9891,7 +11585,10 @@ reviewer_loop_process_platform_output() {
   _reviewed_head="$(kv_value_default REVIEWED_HEAD "$platform_output" "")"
   platform_reviewed_heads+=("${platform_name}:${_reviewed_head}")
   unset _reviewed_head
-  platform_result_records+=("$(reviewer_loop_platform_result_record_json "$platform_name" "$platform_result" "$platform_reason")")
+  # #1789 (plan D12): budget, request, and latency for this outcome (or the
+  # #1692 reused marker), printed and carried into the ledger record.
+  reviewer_loop_record_platform_timing "$platform_name" "$platform_index" "$platform_output" "$platform_result" "$platform_reason"
+  platform_result_records+=("$(reviewer_loop_platform_result_record_json "$platform_name" "$platform_result" "$platform_reason" "$(kv_value_default NO_VERDICT_YET "$platform_output" 0)" "$reviewer_loop_last_timing_json")")
   platform_blocking_outputs+=("${platform_name}"$'\036'"${platform_output}")
 
   _policy_status_available="$(kv_value_default POLICY_STATUS_AVAILABLE "$platform_output" 0)"
@@ -10038,6 +11735,7 @@ reviewer_loop_local_evidence_state() {
     unavailable) printf 'unavailable\n' ;;
     not_yet_run) printf 'not_yet_run\n' ;;
     not_configured) printf 'not_configured\n' ;;
+    no_verdict_yet) printf 'no_verdict_yet\n' ;;
     *) printf 'unknown\n' ;;
   esac
 }
@@ -10063,6 +11761,7 @@ reviewer_loop_local_evidence_state_label() {
     unavailable) printf 'Unavailable\n' ;;
     not_yet_run) printf 'Not yet run\n' ;;
     not_configured) printf 'Not configured\n' ;;
+    no_verdict_yet) printf 'No verdict yet\n' ;;
     *) printf 'Unknown\n' ;;
   esac
 }
@@ -11889,6 +13588,632 @@ reviewer_loop_history_entries_count() {
   printf '%s %s %s\n' "$lifetime_count" "$run_count" available
 }
 
+# --- Automatic re-wait state and recorded requests (#1789, plan D11) ---
+#
+# REVIEWER_LOOP_INVOCATION_HEAD_JQ defines `invocation_head_matches($head)`
+# over one ledger entry. An entry's invocation head is its classification_head
+# (the loop head that invocation read before dispatching any platform), never
+# its persistence-time head_sha (V39). The match is case-insensitive and an
+# entry whose classification_head is missing or not a full SHA never matches
+# (the reviewer_loop_head_is_unknown_or_invalid rule, in jq).
+REVIEWER_LOOP_INVOCATION_HEAD_JQ='
+def invocation_head_matches($head):
+  ((.classification_head // "") | if type == "string" then . else "" end) as $ch
+  | ($ch | test("^[0-9a-fA-F]{40}$"))
+    and (($ch | ascii_downcase) == ($head | ascii_downcase));
+'
+
+# reviewer_loop_rewait_payload_usable <history_payload>
+# True when the payload is a readable reviewer_loop_history.v1 ledger.
+reviewer_loop_rewait_payload_usable() {
+  local payload="${1:-}"
+  [ -n "$payload" ] || return 1
+  printf '%s' "$payload" | jq -e --arg schema "$REVIEWER_LOOP_HISTORY_SCHEMA" '
+      .schema == $schema
+      and ((.entries | type) == "array")
+      and ((.history_status // "available") == "available")
+    ' >/dev/null 2>&1
+}
+
+# reviewer_loop_no_verdict_rewait_state <history_payload> <head_sha>
+#
+# Prints fresh, rewait, or untracked (plan D11):
+#   untracked — PR_REVIEW_LOOP_RUN_ID is unset (the run id is a per-invocation
+#               auto-… id), the loop head is unknown or not a full SHA, or the
+#               ledger is unavailable or unreadable;
+#   rewait    — the ledger holds an entry with this run_id, an invocation head
+#               equal to the loop head, result waiting_on_reviewer, and a reason
+#               in REVIEWER_LOOP_NO_VERDICT_REASONS;
+#   fresh     — otherwise.
+reviewer_loop_no_verdict_rewait_state() {
+  local payload="${1:-}"
+  local head="${2:-}"
+  local run_id="${PR_REVIEW_LOOP_RUN_ID:-}"
+  local reasons_json count
+
+  if [ -z "$run_id" ] || reviewer_loop_head_is_unknown_or_invalid "$head" \
+      || ! reviewer_loop_rewait_payload_usable "$payload"; then
+    printf 'untracked\n'
+    return 0
+  fi
+  reasons_json="$(printf '%s\n' "${REVIEWER_LOOP_NO_VERDICT_REASONS[@]}" | jq -R . | jq -sc .)" || reasons_json='[]'
+  if ! count="$(printf '%s' "$payload" | jq -r --arg rid "$run_id" --arg head "$head" \
+      --argjson reasons "$reasons_json" "$REVIEWER_LOOP_INVOCATION_HEAD_JQ"'
+        [ (.entries // [])[]
+          | select(type == "object")
+          | select((.run_id // "") == $rid)
+          | select(invocation_head_matches($head))
+          | select((.result // "") == "waiting_on_reviewer")
+          | select((.reason // "") as $r | any($reasons[]; . == $r))
+        ] | length' 2>/dev/null)" || ! [[ "$count" =~ ^[0-9]+$ ]]; then
+    printf 'untracked\n'
+    return 0
+  fi
+  if [ "$count" -gt 0 ]; then
+    printf 'rewait\n'
+  else
+    printf 'fresh\n'
+  fi
+}
+
+# reviewer_loop_rewait_recorded_request <history_payload> <head_sha> <platform>
+#
+# The outstanding request this loop recorded for <platform> (plan D11): the
+# platform's platform_results[] record, with requested_at_source "request", in
+# the newest ledger entry that makes the state rewait (same run_id, invocation
+# head equal to <head_sha>, waiting_on_reviewer with a No verdict yet reason).
+# Prints two key lines, RECORDED_REQUEST_REF=<ref> and
+# RECORDED_REQUESTED_AT=<time> (either value may be empty), or nothing. Key
+# lines, not a space-separated pair, so an empty ref cannot shift the time.
+reviewer_loop_rewait_recorded_request() {
+  local payload="${1:-}"
+  local head="${2:-}"
+  local platform="${3:-}"
+  local run_id="${PR_REVIEW_LOOP_RUN_ID:-}"
+  local reasons_json out=""
+
+  [ -n "$run_id" ] && [ -n "$platform" ] || return 0
+  reviewer_loop_head_is_unknown_or_invalid "$head" && return 0
+  reviewer_loop_rewait_payload_usable "$payload" || return 0
+  reasons_json="$(printf '%s\n' "${REVIEWER_LOOP_NO_VERDICT_REASONS[@]}" | jq -R . | jq -sc .)" || return 0
+  out="$(printf '%s' "$payload" | jq -r --arg rid "$run_id" --arg head "$head" \
+      --arg platform "$platform" --argjson reasons "$reasons_json" "$REVIEWER_LOOP_INVOCATION_HEAD_JQ"'
+        def oneline: (. // "") | tostring | gsub("[\r\n]"; "");
+        [ (.entries // [])[]
+          | select(type == "object")
+          | select((.run_id // "") == $rid)
+          | select(invocation_head_matches($head))
+          | select((.result // "") == "waiting_on_reviewer")
+          | select((.reason // "") as $r | any($reasons[]; . == $r))
+        ]
+        | last
+        | if . == null then empty else
+            [ (.platform_results // [])[]
+              | select(type == "object" and .platform == $platform
+                       and (.requested_at_source // "") == "request") ]
+            | last
+            | if . == null then empty else
+                "RECORDED_REQUEST_REF=\(.request_ref | oneline)\nRECORDED_REQUESTED_AT=\(.requested_at | oneline)"
+              end
+          end' 2>/dev/null)" || out=""
+  [ -n "$out" ] && printf '%s\n' "$out"
+  return 0
+}
+
+# reviewer_loop_head_recorded_request_refs <history_payload> <head_sha> <platform>
+#
+# Fresh-mode reuse (#1789, plan D15): the requests recorded for <head_sha>.
+# Prints, one per line, every non-empty request_ref held by a <platform>
+# platform_results[] record with requested_at_source "request", in any ledger
+# entry whose invocation head (classification_head, D11) is <head_sha> —
+# whatever the entry's run_id or result. Such a request was posted by an
+# invocation that had already read <head_sha> as its loop head, so its answer
+# belongs to that revision. Prints nothing when the ledger is unavailable or
+# unreadable, or the head is unknown. Re-wait adoption keeps
+# reviewer_loop_rewait_recorded_request (D11).
+reviewer_loop_head_recorded_request_refs() {
+  local payload="${1:-}"
+  local head="${2:-}"
+  local platform="${3:-}"
+  local out=""
+
+  [ -n "$platform" ] || return 0
+  reviewer_loop_head_is_unknown_or_invalid "$head" && return 0
+  reviewer_loop_rewait_payload_usable "$payload" || return 0
+  out="$(printf '%s' "$payload" | jq -r --arg head "$head" --arg platform "$platform" \
+      "$REVIEWER_LOOP_INVOCATION_HEAD_JQ"'
+        [ (.entries // [])[]
+          | select(type == "object")
+          | select(invocation_head_matches($head))
+          | (.platform_results // [])[]
+          | select(type == "object" and .platform == $platform
+                   and (.requested_at_source // "") == "request")
+          | (.request_ref // "")
+          | if type == "string" or type == "number" then tostring else "" end
+          | gsub("[\r\n]"; "")
+          | select(. != "")
+        ] | unique | .[]' 2>/dev/null)" || out=""
+  [ -n "$out" ] && printf '%s\n' "$out"
+  return 0
+}
+
+# reviewer_loop_head_refs_prepare_platform <platform> <pr_number>
+#
+# Called immediately before each dispatch (plan D15). For greptile and
+# pr-agent, loads reviewer_loop_head_request_refs — the request refs recorded
+# for the loop head — for the handler's fresh-mode trigger reuse; clears it
+# for every other platform. The ledger is read at most once per invocation,
+# reusing a payload the stage-skip or re-wait resolution already loaded.
+reviewer_loop_head_refs_payload=""
+reviewer_loop_head_refs_payload_loaded=0
+reviewer_loop_head_request_refs=""
+reviewer_loop_head_refs_prepare_platform() {
+  local platform="${1:-}"
+  local pr_number_arg="${2:-}"
+
+  reviewer_loop_head_request_refs=""
+  case "$platform" in
+    greptile|pr-agent) ;;
+    *) return 0 ;;
+  esac
+  reviewer_loop_head_is_unknown_or_invalid "${loop_head_sha:-}" && return 0
+  if [ "${reviewer_loop_head_refs_payload_loaded:-0}" -ne 1 ]; then
+    if [ -n "${reviewer_loop_rewait_history_payload:-}" ]; then
+      reviewer_loop_head_refs_payload="$reviewer_loop_rewait_history_payload"
+    elif [ "${stage_skip_enabled:-0}" -eq 1 ] && [ -n "${stage_skip_history_payload:-}" ]; then
+      reviewer_loop_head_refs_payload="$stage_skip_history_payload"
+    elif [ -n "$pr_number_arg" ]; then
+      reviewer_loop_head_refs_payload="$(reviewer_loop_prior_history_payload_from_pr "$pr_number_arg")"
+    else
+      reviewer_loop_head_refs_payload=""
+    fi
+    reviewer_loop_head_refs_payload_loaded=1
+  fi
+  reviewer_loop_head_request_refs="$(reviewer_loop_head_recorded_request_refs "$reviewer_loop_head_refs_payload" "$loop_head_sha" "$platform")"
+  return 0
+}
+
+# reviewer_loop_head_request_ref_listed <ref>
+# True when <ref> is one of the request refs recorded for the loop head
+# (reviewer_loop_head_request_refs, plan D15).
+reviewer_loop_head_request_ref_listed() {
+  local ref="${1:-}" line
+  [ -n "$ref" ] || return 1
+  while IFS= read -r line; do
+    [ -n "$line" ] && [ "$line" = "$ref" ] && return 0
+  done <<_HEAD_REQUEST_REFS_
+${reviewer_loop_head_request_refs:-}
+_HEAD_REQUEST_REFS_
+  return 1
+}
+
+# reviewer_loop_no_verdict_rewait_value <state> <post_summary_status>
+#
+# The NO_VERDICT_REWAIT value for a waiting_on_reviewer result with a No
+# verdict yet reason (plan D11): `used` in re-wait state; `available` only in
+# fresh state when this invocation's _post_review_summary returned 0 (the
+# waiting entry the next invocation needs to see state rewait was written);
+# `untracked` otherwise, so a ledger that can be read but not written never
+# turns the single re-wait into an unbounded series.
+reviewer_loop_no_verdict_rewait_value() {
+  local state="${1:-untracked}"
+  local post_status="${2:-1}"
+  case "$state" in
+    rewait) printf 'used\n' ;;
+    fresh)
+      if [ "$post_status" = "0" ]; then
+        printf 'available\n'
+      else
+        printf 'untracked\n'
+      fi
+      ;;
+    *) printf 'untracked\n' ;;
+  esac
+}
+
+# reviewer_loop_rewait_resolve <pr_number>
+#
+# Runs once per invocation after loop_head_sha is read (plan D11). Sets
+# reviewer_loop_rewait_state (fresh|rewait|untracked), reviewer_loop_rewait_mode
+# (1 only for rewait), and reviewer_loop_rewait_history_payload (the ledger the
+# handlers' recorded-request lookups read). The ledger is read only when the
+# state could be anything but untracked.
+reviewer_loop_rewait_resolve() {
+  local pr_number_arg="${1:-}"
+
+  reviewer_loop_rewait_state="untracked"
+  reviewer_loop_rewait_mode=0
+  reviewer_loop_rewait_history_payload=""
+  if [ -z "${PR_REVIEW_LOOP_RUN_ID:-}" ] || [ -z "$pr_number_arg" ] \
+      || reviewer_loop_head_is_unknown_or_invalid "${loop_head_sha:-}"; then
+    return 0
+  fi
+  if [ "${stage_skip_enabled:-0}" -eq 1 ] && [ -n "${stage_skip_history_payload:-}" ]; then
+    reviewer_loop_rewait_history_payload="$stage_skip_history_payload"
+  else
+    reviewer_loop_rewait_history_payload="$(reviewer_loop_prior_history_payload_from_pr "$pr_number_arg")"
+  fi
+  reviewer_loop_rewait_state="$(reviewer_loop_no_verdict_rewait_state "$reviewer_loop_rewait_history_payload" "$loop_head_sha")"
+  if [ "$reviewer_loop_rewait_state" = "rewait" ]; then
+    reviewer_loop_rewait_mode=1
+    echo "INFO: re-wait mode — this run id already waited on ${loop_head_sha} with no verdict; recorded outstanding requests are adopted, not re-posted" >&2
+  fi
+  return 0
+}
+
+# reviewer_loop_rewait_prepare_platform <platform>
+#
+# Called immediately before each dispatch. In re-wait mode, loads the
+# platform's recorded outstanding request into
+# reviewer_loop_recorded_request_found / _ref / reviewer_loop_recorded_requested_at
+# for the handler (plan D11 adoption table); clears them otherwise.
+reviewer_loop_rewait_prepare_platform() {
+  local platform="${1:-}"
+  local recorded=""
+
+  reviewer_loop_recorded_request_found=0
+  reviewer_loop_recorded_request_ref=""
+  reviewer_loop_recorded_requested_at=""
+  [ "${reviewer_loop_rewait_mode:-0}" -eq 1 ] || return 0
+  recorded="$(reviewer_loop_rewait_recorded_request "${reviewer_loop_rewait_history_payload:-}" "${loop_head_sha:-}" "$platform")"
+  [ -n "$recorded" ] || return 0
+  reviewer_loop_recorded_request_found=1
+  reviewer_loop_recorded_request_ref="$(kv_value RECORDED_REQUEST_REF "$recorded")"
+  reviewer_loop_recorded_requested_at="$(kv_value RECORDED_REQUESTED_AT "$recorded")"
+  return 0
+}
+
+# reviewer_loop_rewait_adopts_recorded_request
+# True in re-wait mode when a recorded request was loaded for this dispatch.
+reviewer_loop_rewait_adopts_recorded_request() {
+  [ "${reviewer_loop_rewait_mode:-0}" -eq 1 ] \
+    && [ "${reviewer_loop_recorded_request_found:-0}" -eq 1 ]
+}
+
+# reviewer_loop_rewait_log_no_recorded_request <platform> <head>
+# In re-wait mode with nothing recorded, the handler requests a review as in a
+# fresh run and says so (plan D11).
+reviewer_loop_rewait_log_no_recorded_request() {
+  local platform="${1:-}" head="${2:-}"
+  if [ "${reviewer_loop_rewait_mode:-0}" -eq 1 ] \
+      && [ "${reviewer_loop_recorded_request_found:-0}" -ne 1 ]; then
+    echo "INFO: no recorded outstanding request for ${platform} on ${head:-the current head}; requesting a review" >&2
+  fi
+  return 0
+}
+
+# --- Reviewer timing and the waiting-result keys (#1789, plan D12) ---
+#
+# Around each dispatch the loop records the wait start immediately before
+# run_platform_review and the end immediately after
+# (reviewer_loop_timing_begin / reviewer_loop_timing_end); the next
+# reviewer_loop_process_platform_output call consumes that context in
+# reviewer_loop_record_platform_timing, which prints the PLATFORM_<n>_* timing
+# keys, appends one JSON object to platform_timing_records (for the summary's
+# Reviewer timing section and the waiting keys), and leaves the D12 additive
+# ledger keys in reviewer_loop_last_timing_json for the platform_results[]
+# record. A #1692 replay (STAGE_SKIP=1) records only that the verdict was
+# reused.
+reviewer_loop_timing_pending=0
+reviewer_loop_timing_start_epoch=""
+reviewer_loop_timing_end_epoch=""
+reviewer_loop_timing_budget=""
+reviewer_loop_timing_budget_source=""
+reviewer_loop_timing_budget_adjustment=""
+reviewer_loop_last_timing_json=""
+
+# reviewer_loop_epoch_to_iso <epoch>: ISO-8601 UTC (BSD date, GNU date).
+reviewer_loop_epoch_to_iso() {
+  local epoch="${1:-}"
+  [[ "$epoch" =~ ^[0-9]+$ ]] || return 1
+  date -u -r "$epoch" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null && return 0
+  date -u -d "@$epoch" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null && return 0
+  return 1
+}
+
+# reviewer_loop_timing_begin <budget_seconds> <budget_source> <budget_adjustment>
+reviewer_loop_timing_begin() {
+  reviewer_loop_timing_budget="${1:-}"
+  reviewer_loop_timing_budget_source="${2:-}"
+  reviewer_loop_timing_budget_adjustment="${3:-none}"
+  reviewer_loop_timing_start_epoch="$(date -u +%s)"
+  reviewer_loop_timing_end_epoch=""
+  reviewer_loop_timing_pending=1
+}
+
+# reviewer_loop_timing_end
+reviewer_loop_timing_end() {
+  reviewer_loop_timing_end_epoch="$(date -u +%s)"
+}
+
+# reviewer_loop_record_platform_timing <platform> <index> <output> <result> <reason>
+#
+# Prints the D12 PLATFORM_<n>_* keys for one platform outcome and records it.
+# Called from reviewer_loop_process_platform_output (never in a subshell: it
+# appends to platform_timing_records). Without a pending timing context and
+# without STAGE_SKIP=1 it records nothing.
+reviewer_loop_record_platform_timing() {
+  local platform="${1:-}" index="${2:-}" output="${3:-}" result="${4:-}" reason="${5:-}"
+  local no_verdict class requested_at requested_source request_ref
+  local start_epoch end_epoch requested_epoch seconds kind start_iso
+
+  reviewer_loop_last_timing_json=""
+  no_verdict="$(kv_value_default NO_VERDICT_YET "$output" 0)"
+  class="$(reviewer_loop_platform_outcome_class "$result" "$reason" "$no_verdict")"
+
+  if [ "$(kv_value STAGE_SKIP "$output")" = "1" ]; then
+    # #1692 replay: no budget, requested-at, or seconds key (D12).
+    reviewer_loop_timing_pending=0
+    print_kv "PLATFORM_${index}_OUTCOME_CLASS" "$class"
+    print_kv "PLATFORM_${index}_VERDICT_REUSED" 1
+    reviewer_loop_last_timing_json="$(jq -nc --arg class "$class" '{outcome_class: $class, reused: true}')"
+    platform_timing_records+=("$(jq -nc --arg p "$platform" --arg class "$class" --arg r "$result" --arg why "$reason" \
+      '{platform: $p, outcome_class: $class, result: $r, reason: $why, reused: true}')")
+    return 0
+  fi
+  [ "${reviewer_loop_timing_pending:-0}" -eq 1 ] || return 0
+  reviewer_loop_timing_pending=0
+
+  start_epoch="${reviewer_loop_timing_start_epoch:-}"
+  end_epoch="${reviewer_loop_timing_end_epoch:-}"
+  [[ "$start_epoch" =~ ^[0-9]+$ ]] || start_epoch="$(date -u +%s)"
+  [[ "$end_epoch" =~ ^[0-9]+$ ]] || end_epoch="$(date -u +%s)"
+  start_iso="$(reviewer_loop_epoch_to_iso "$start_epoch")" || start_iso=""
+
+  # The handler's own request record (it posted or adopted a request), else
+  # the wait start. An unparsable request time is not trusted.
+  requested_at="$(kv_value REVIEW_REQUESTED_AT "$output")"
+  requested_source="request"
+  requested_epoch=""
+  if [[ "$requested_at" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]]; then
+    requested_epoch="$(_iso8601_to_epoch "$requested_at")" || requested_epoch=""
+  fi
+  if ! [[ "$requested_epoch" =~ ^[0-9]+$ ]]; then
+    requested_at="$start_iso"
+    requested_source="wait_start"
+    requested_epoch="$start_epoch"
+  fi
+  request_ref="$(kv_value REVIEW_REQUEST_REF "$output")"
+
+  seconds=$(( end_epoch - requested_epoch ))
+  [ "$seconds" -ge 0 ] || seconds=0
+  case "$class" in
+    verdict_received|reviewer_failed|existing_handling) kind="latency" ;;
+    no_verdict_yet) kind="waited" ;;
+    *) kind="elapsed" ;;
+  esac
+
+  print_kv "PLATFORM_${index}_OUTCOME_CLASS" "$class"
+  print_kv "PLATFORM_${index}_WAIT_BUDGET_SECONDS" "$reviewer_loop_timing_budget"
+  print_kv "PLATFORM_${index}_WAIT_BUDGET_SOURCE" "$reviewer_loop_timing_budget_source"
+  print_kv "PLATFORM_${index}_WAIT_BUDGET_ADJUSTMENT" "${reviewer_loop_timing_budget_adjustment:-none}"
+  print_kv "PLATFORM_${index}_REQUESTED_AT" "$requested_at"
+  print_kv "PLATFORM_${index}_REQUESTED_AT_SOURCE" "$requested_source"
+  [ -n "$request_ref" ] && print_kv "PLATFORM_${index}_REQUEST_REF" "$request_ref"
+  case "$kind" in
+    latency) print_kv "PLATFORM_${index}_LATENCY_SECONDS" "$seconds" ;;
+    waited) print_kv "PLATFORM_${index}_WAITED_SECONDS" "$seconds" ;;
+    *) print_kv "PLATFORM_${index}_ELAPSED_SECONDS" "$seconds" ;;
+  esac
+
+  reviewer_loop_last_timing_json="$(jq -nc \
+    --arg class "$class" \
+    --arg budget "$reviewer_loop_timing_budget" \
+    --arg source "$reviewer_loop_timing_budget_source" \
+    --arg adjustment "${reviewer_loop_timing_budget_adjustment:-none}" \
+    --arg at "$requested_at" \
+    --arg at_source "$requested_source" \
+    --arg ref "$request_ref" \
+    --argjson seconds "$seconds" \
+    --arg kind "$kind" '
+      {
+        outcome_class: $class,
+        wait_budget_seconds: ($budget | tonumber? // null),
+        wait_budget_source: $source,
+        wait_budget_adjustment: $adjustment,
+        requested_at: $at,
+        requested_at_source: $at_source
+      }
+      + (if ($ref | length) > 0 then {request_ref: $ref} else {} end)
+      + {elapsed_seconds: $seconds, elapsed_kind: $kind, reused: false}')" || reviewer_loop_last_timing_json=""
+  if [ -n "$reviewer_loop_last_timing_json" ]; then
+    platform_timing_records+=("$(printf '%s' "$reviewer_loop_last_timing_json" \
+      | jq -c --arg p "$platform" --arg r "$result" --arg why "$reason" '. + {platform: $p, result: $r, reason: $why}')")
+  fi
+  return 0
+}
+
+# reviewer_loop_timing_summary_section
+#
+# The summary comment's "Reviewer timing" section (plan D12): one line per
+# recorded platform, at most 200 characters each, plus a one-time note that
+# latency is measured to the observing poll. Empty when nothing was recorded.
+reviewer_loop_timing_summary_section() {
+  local timing_lines=""
+  if ! declare -p platform_timing_records >/dev/null 2>&1 \
+      || [ "${#platform_timing_records[@]}" -eq 0 ]; then
+    return 0
+  fi
+  timing_lines="$(printf '%s\n' "${platform_timing_records[@]}" | jq -r '
+      def source_label:
+        if . == "default" then "built-in default"
+        elif . == "configured" then "configured"
+        elif . == "override" then "one-run override"
+        else (. // "unknown") end;
+      def adjustment_label:
+        if . == "documentation_branch" then ", documentation branch"
+        elif . == "large_diff" then ", large diff"
+        else "" end;
+      def class_label:
+        (.reason // "") as $why
+        | if .outcome_class == "verdict_received" then "verdict received (\(.result))"
+          elif .outcome_class == "no_verdict_yet" then
+            (if .result == "skipped" then "no verdict yet (non-blocking skip: \($why))" else "no verdict yet" end)
+          elif .outcome_class == "reviewer_failed" then "reviewer failed (\(if $why == "" then .result else $why end))"
+          elif .outcome_class == "existing_handling" then "\(.result) (\($why))"
+          elif .outcome_class == "skipped_failure_evidence" then "skipped with failure evidence (\($why))"
+          else "skipped (\(if $why == "" then "no reason" else $why end))" end;
+      select(type == "object")
+      | (if .reused == true then
+           "- \(.platform): verdict reused from an earlier run on this revision"
+         else
+           "- \(.platform): \(class_label) — budget \(.wait_budget_seconds // "?")s (\(.wait_budget_source | source_label)\(.wait_budget_adjustment | adjustment_label)); requested \(.requested_at // "unknown")\(if .requested_at_source == "wait_start" then " (wait start)" else "" end); \(.elapsed_kind // "elapsed") \(.elapsed_seconds // 0)s"
+         end)
+      | if length > 200 then .[0:197] + "..." else . end
+    ' 2>/dev/null)" || timing_lines=""
+  [ -n "$timing_lines" ] || return 0
+  printf '\n\n**Reviewer timing:**\n%s\n_Latency is measured to the poll that observed the verdict, so it can overstate the platform'"'"'s own latency by up to one poll interval._' "$timing_lines"
+}
+
+# reviewer_loop_failed_peer_platforms
+#
+# One `<platform>|<reason>` line, in evaluation order, per platform_peer_evidence
+# entry that satisfies reviewer_failed_label_required_for_result (the entries
+# D9's reviewer_failed_required is set from). Feeds FAILED_PEER_PLATFORMS and
+# the summary's failure-evidence clause (plan D12).
+reviewer_loop_failed_peer_platforms() {
+  local entry peer_platform peer_result peer_reason
+  declare -p platform_peer_evidence >/dev/null 2>&1 || return 0
+  for entry in "${platform_peer_evidence[@]:-}"; do
+    [ -n "$entry" ] || continue
+    peer_platform="${entry%%|*}"
+    peer_result="${entry#*|}"
+    peer_reason="${peer_result#*|}"
+    peer_result="${peer_result%%|*}"
+    if reviewer_failed_label_required_for_result "$peer_result" "$peer_reason"; then
+      printf '%s|%s\n' "$peer_platform" "$peer_reason"
+    fi
+  done
+  return 0
+}
+
+# reviewer_loop_pending_review_fields
+#
+# For a waiting_on_reviewer aggregate with a No verdict yet reason, sets:
+#   pending_review_platform, pending_review_head_sha — from the aggregate
+#     output's PENDING_REVIEWER / PENDING_REVIEW_HEAD_SHA (else the last
+#     platform and the loop head);
+#   pending_review_requested_at, pending_review_waited_seconds,
+#   pending_review_budget, pending_review_budget_source — from that platform's
+#     newest timing record (empty when none was recorded);
+#   pending_no_failure_detected — 1 when no failure evidence was recorded in
+#     this run, else 0;
+#   pending_failed_peer_platforms — comma-separated failure-evidence peers;
+#   pending_failed_peer_clause — "<peer> (<reason>)[, …]".
+#
+# NO_FAILURE_DETECTED follows this invocation's D9 label decision. It is 0
+# when any peer carries failure evidence and also, defensively, when
+# reviewer_failed_required is set with no such peer listed — a state the
+# per-platform recording does not produce today (reviewer_failed_required is
+# set from the same peer entries). It fails closed: the loop never claims "no
+# failure detected" while the label decision says the label is required.
+reviewer_loop_pending_review_fields() {
+  local peers line peer reason
+  pending_review_platform="$(kv_value_default PENDING_REVIEWER "${aggregate_output:-}" "${last_platform:-}")"
+  pending_review_head_sha="$(kv_value_default PENDING_REVIEW_HEAD_SHA "${aggregate_output:-}" "${loop_head_sha:-}")"
+  pending_review_requested_at=""
+  pending_review_waited_seconds=""
+  pending_review_budget=""
+  pending_review_budget_source=""
+  if [ -n "$pending_review_platform" ] && declare -p platform_timing_records >/dev/null 2>&1 \
+      && [ "${#platform_timing_records[@]}" -gt 0 ]; then
+    local rec=""
+    rec="$(printf '%s\n' "${platform_timing_records[@]}" | jq -sc --arg p "$pending_review_platform" \
+      '[.[] | select(type == "object" and .platform == $p and (.reused // false) == false)] | last // empty' 2>/dev/null)" || rec=""
+    if [ -n "$rec" ]; then
+      pending_review_requested_at="$(printf '%s' "$rec" | jq -r '.requested_at // empty')"
+      pending_review_waited_seconds="$(printf '%s' "$rec" | jq -r '.elapsed_seconds // empty')"
+      pending_review_budget="$(printf '%s' "$rec" | jq -r '.wait_budget_seconds // empty')"
+      pending_review_budget_source="$(printf '%s' "$rec" | jq -r '.wait_budget_source // empty')"
+    fi
+  fi
+
+  pending_failed_peer_platforms=""
+  pending_failed_peer_clause=""
+  peers="$(reviewer_loop_failed_peer_platforms)"
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    peer="${line%%|*}"
+    reason="${line#*|}"
+    pending_failed_peer_platforms="${pending_failed_peer_platforms:+${pending_failed_peer_platforms},}${peer}"
+    pending_failed_peer_clause="${pending_failed_peer_clause:+${pending_failed_peer_clause}, }${peer} (${reason:-unknown})"
+  done <<< "$peers"
+  if [ -n "$pending_failed_peer_platforms" ] || [ "${reviewer_failed_required:-0}" -eq 1 ]; then
+    pending_no_failure_detected=0
+  else
+    pending_no_failure_detected=1
+  fi
+  return 0
+}
+
+# reviewer_loop_failure_evidence_clause
+# The D12 summary clause after the waiting statement, from the fields above.
+reviewer_loop_failure_evidence_clause() {
+  if [ "${pending_no_failure_detected:-0}" = "1" ]; then
+    printf '; no reviewer failure was detected'
+  elif [ -n "${pending_failed_peer_clause:-}" ]; then
+    printf '; failure evidence from %s — reviewer-failed applied' "$pending_failed_peer_clause"
+  else
+    printf '; reviewer-failed applied'
+  fi
+}
+
+# reviewer_loop_no_verdict_result_line <reason>
+#
+# The summary result line for a waiting_on_reviewer aggregate with a No
+# verdict yet reason (plan D12). reviewer-no-verdict-yet:
+#   waiting_on_reviewer (reviewer-no-verdict-yet) — <platform> has not returned
+#   a verdict for <head> after <seconds>s (budget <budget>s, <source>); no
+#   reviewer failure was detected
+# with the last clause replaced by the failure-evidence clause when failure
+# evidence was recorded. The Codex wait reasons keep their existing line, with
+# the failure-evidence clause appended only when failure evidence exists.
+reviewer_loop_no_verdict_result_line() {
+  local reason="${1:-}"
+  local wait_clause budget_clause
+  reviewer_loop_pending_review_fields
+  if [ "$reason" = "reviewer-no-verdict-yet" ]; then
+    if [ -n "$pending_review_waited_seconds" ]; then
+      wait_clause="after ${pending_review_waited_seconds}s"
+    else
+      wait_clause="within its wait budget"
+    fi
+    budget_clause=""
+    if [ -n "$pending_review_budget" ]; then
+      budget_clause=" (budget ${pending_review_budget}s, ${pending_review_budget_source:-unknown})"
+    fi
+    printf 'waiting_on_reviewer (reviewer-no-verdict-yet) — %s has not returned a verdict for %s %s%s%s\n' \
+      "${pending_review_platform:-a reviewer}" "${pending_review_head_sha:-the current head}" \
+      "$wait_clause" "$budget_clause" "$(reviewer_loop_failure_evidence_clause)"
+    return 0
+  fi
+  if [ "${pending_no_failure_detected:-0}" = "1" ]; then
+    printf 'waiting_on_reviewer (%s) — current-head review trigger posted; reviewer has not returned terminal evidence yet\n' \
+      "${reason:-codex-github-review-pending}"
+  else
+    printf 'waiting_on_reviewer (%s) — current-head review trigger posted; reviewer has not returned terminal evidence yet%s\n' \
+      "${reason:-codex-github-review-pending}" "$(reviewer_loop_failure_evidence_clause)"
+  fi
+}
+
+# reviewer_loop_emit_waiting_keys
+#
+# The D12 keys printed with a waiting_on_reviewer result whose reason is in
+# REVIEWER_LOOP_NO_VERDICT_REASONS: PENDING_REVIEWER, PENDING_REVIEW_HEAD_SHA,
+# PENDING_REVIEW_REQUESTED_AT and PENDING_REVIEW_WAITED_SECONDS (when
+# recorded), NO_FAILURE_DETECTED, and FAILED_PEER_PLATFORMS (only when
+# non-empty).
+reviewer_loop_emit_waiting_keys() {
+  reviewer_loop_pending_review_fields
+  print_kv PENDING_REVIEWER "$pending_review_platform"
+  print_kv PENDING_REVIEW_HEAD_SHA "$pending_review_head_sha"
+  [ -n "$pending_review_requested_at" ] && print_kv PENDING_REVIEW_REQUESTED_AT "$pending_review_requested_at"
+  [ -n "$pending_review_waited_seconds" ] && print_kv PENDING_REVIEW_WAITED_SECONDS "$pending_review_waited_seconds"
+  print_kv NO_FAILURE_DETECTED "$pending_no_failure_detected"
+  [ -n "$pending_failed_peer_platforms" ] && print_kv FAILED_PEER_PLATFORMS "$pending_failed_peer_platforms"
+  return 0
+}
+
 # reviewer_loop_resolve_max_cycles <config_value>
 #
 # Resolves the effective PER-RUN cap (Protocol 91:1719's `max_cycles`).
@@ -12527,10 +14852,11 @@ repo_root="$(workflow_repo_root)"
 repo_root_explicit=0
 local_review_override_root=""
 review_policy_source="shared"
-poll_interval=120
-poll_interval_explicit=0
-max_wait=1200
-max_wait_explicit=0
+# One-run overrides (#1789): set only by --poll-interval / --max-wait. Without
+# them every platform waits with its own resolved budget and poll interval
+# (reviewer_wait_budget_resolve / reviewer_poll_interval_resolve).
+poll_interval_override=""
+max_wait_override=""
 codex_github_pre_trigger_wait=""
 post_final_summary=0
 compare_mode=0
@@ -12599,14 +14925,12 @@ while [ "$#" -gt 0 ]; do
       ;;
     --poll-interval)
       require_option_value "$@"
-      poll_interval="$2"
-      poll_interval_explicit=1
+      poll_interval_override="$2"
       shift 2
       ;;
     --max-wait)
       require_option_value "$@"
-      max_wait="$2"
-      max_wait_explicit=1
+      max_wait_override="$2"
       shift 2
       ;;
     --pre-trigger-wait)
@@ -12640,6 +14964,15 @@ while [ "$#" -gt 0 ]; do
       ;;
   esac
 done
+
+# --max-wait validation (#1789, plan D13): refuse an invalid one-run override
+# before any gh call, so no review request is posted for a run that could
+# never wait correctly. 1-999999 keeps the budget inside bash integer tests.
+if [ -n "$max_wait_override" ] && ! reviewer_wait_seconds_is_valid "$max_wait_override"; then
+  echo "--max-wait must be a positive whole number of seconds (1-999999) (got '${max_wait_override}')." >&2
+  usage >&2
+  exit 64
+fi
 
 if ! local_review_override_root="$(resolve_local_review_override_root "$repo_root")"; then
   echo "ERROR: could not resolve the initiating checkout's local reviewer policy." >&2
@@ -13034,81 +15367,65 @@ if [ "${#platforms[@]}" -gt 0 ]; then
   fi
 fi
 
-# Branch-type-aware timeout: spec/* and implementation-plan/* branches produce
-# REASON=no_check_run immediately when Devin has no trigger condition (non-implementation
-# branches). Waiting the full 1200-second default wastes orchestrator budget.
-# Apply a bounded doc-branch max_wait / poll_interval=30 default when the caller
-# did not pass --max-wait / --poll-interval explicitly. poll_interval must be
-# less than max_wait so the per-loop timeout check can fire within the budget.
-if [ "$max_wait_explicit" -eq 0 ]; then
-  case "$branch_name" in
-    spec/*|implementation-plan/*)
-      max_wait="$(doc_branch_default_max_wait)"
-      if [ "$poll_interval_explicit" -eq 0 ]; then
-        poll_interval="$(doc_branch_default_poll_interval "$max_wait")"
-      fi
-      ;;
-  esac
-fi
-
-if codex_github_defaults_should_apply; then
-  if [ "$max_wait_explicit" -eq 0 ]; then
-    max_wait="$(codex_github_default_max_wait)"
-  fi
-  if [ "$poll_interval_explicit" -eq 0 ]; then
-    poll_interval="$(codex_github_default_poll_interval "$max_wait")"
-  fi
-fi
-
+# --- Per-platform wait budgets (#1789, plan D1/D2/D6/D7/D14) ---
+# Every platform waits for its own budget: --max-wait when given (applies to
+# all platforms, never adjusted), else review.wait_budgets.<platform> from the
+# PR-base config snapshot, else the platform's built-in default. Only Devin's
+# built-in default is shortened to PR_REVIEW_LOOP_DOC_MAX_WAIT on spec/* and
+# implementation-plan/* branches (the only platform that does not review
+# them); every other platform, local-ai-reviewer included, keeps its own
+# budget there. Poll intervals are resolved per platform at each dispatch
+# (reviewer_poll_interval_resolve).
+#
 # Large-diff poll-window extension.
 # CodeRabbit takes significantly longer to post its review on large-diff PRs
-# (e.g. release PRs with hundreds of changed files). The default max_wait=1200 s
-# was calibrated for typical feature PRs and is too short for large release diffs:
-# during release v0.27.0 (PR #665, 185-file diff), the loop returned RESULT=clean
-# before CodeRabbit finished posting 16 findings.
-#
-# When the caller did not pass --max-wait explicitly, fetch the PR's changed-files
-# count and extend max_wait to LARGE_DIFF_MAX_WAIT (default 2400 s) when the count
-# exceeds LARGE_DIFF_THRESHOLD (default 50 files). A case guard excludes spec/* and
-# implementation-plan/* branches — those are already handled by the branch-type-aware
-# timeout block above and must not have their bounded doc-branch budget overridden.
+# (e.g. release PRs with hundreds of changed files): during release v0.27.0
+# (PR #665, 185-file diff), the loop returned RESULT=clean before CodeRabbit
+# finished posting 16 findings. When the caller did not pass --max-wait and the
+# branch is not spec/* or implementation-plan/*, fetch the PR's changed-files
+# count; a platform whose budget is below LARGE_DIFF_MAX_WAIT (default 2400 s)
+# is lengthened to it when the count exceeds LARGE_DIFF_THRESHOLD (default 50
+# files). The extension never shortens a budget.
 large_diff_threshold="${LARGE_DIFF_THRESHOLD:-50}"
 large_diff_max_wait="${LARGE_DIFF_MAX_WAIT:-2400}"
 if ! [[ "$large_diff_threshold" =~ ^[1-9][0-9]*$ ]]; then
   echo "WARN: LARGE_DIFF_THRESHOLD must be a positive integer; defaulting to 50" >&2
   large_diff_threshold=50
 fi
-if ! [[ "$large_diff_max_wait" =~ ^[1-9][0-9]*$ ]]; then
+if ! reviewer_wait_seconds_is_valid "$large_diff_max_wait"; then
   echo "WARN: LARGE_DIFF_MAX_WAIT must be a positive integer; defaulting to 2400" >&2
   large_diff_max_wait=2400
 fi
 changed_files_count=-1
 large_diff_extended=0
-if [ "$max_wait_explicit" -eq 0 ]; then
-  case "$branch_name" in
-    spec/*|implementation-plan/*)
-      # Already handled by the branch-type rule above — do not extend.
-      ;;
-    *)
-      if [ -n "$pr_number" ] && [ "${#platforms[@]}" -gt 0 ]; then
-        set +e
-        changed_files_count="$(gh api "repos/$(repo_slug)/pulls/$pr_number" \
-          --jq '.changed_files // -1' 2>/dev/null)"
-        set -e
-        if ! [[ "${changed_files_count:-}" =~ ^-?[0-9]+$ ]]; then
-          echo "WARN: failed to fetch changed_files count for PR #$pr_number — skipping large-diff extension" >&2
-          changed_files_count=-1
-        fi
-        if [ "$changed_files_count" -ge 0 ] && [ "$changed_files_count" -gt "$large_diff_threshold" ]; then
-          if [ "$large_diff_max_wait" -gt "$max_wait" ]; then
-            echo "INFO: PR #$pr_number has ${changed_files_count} changed files (threshold: ${large_diff_threshold}) — extending max_wait from ${max_wait}s to ${large_diff_max_wait}s for large-diff poll window" >&2
-            max_wait="$large_diff_max_wait"
-            large_diff_extended=1
-          fi
-        fi
-      fi
-      ;;
-  esac
+if [ -z "$max_wait_override" ] && ! reviewer_wait_branch_is_documentation "$branch_name"; then
+  if [ -n "$pr_number" ] && [ "${#platforms[@]}" -gt 0 ]; then
+    set +e
+    changed_files_count="$(gh api "repos/$(repo_slug)/pulls/$pr_number" \
+      --jq '.changed_files // -1' 2>/dev/null)"
+    set -e
+    if ! [[ "${changed_files_count:-}" =~ ^-?[0-9]+$ ]]; then
+      echo "WARN: failed to fetch changed_files count for PR #$pr_number — skipping large-diff extension" >&2
+      changed_files_count=-1
+    fi
+  fi
+fi
+
+platform_wait_budgets_summary=""
+if [ "${#platforms[@]}" -gt 0 ]; then
+  reviewer_wait_budget_config_warnings
+  reviewer_wait_budget_cache_fill "${platforms[@]}"
+  _wb_index=0
+  while [ "$_wb_index" -lt "${#reviewer_wait_budget_cache_platforms[@]}" ]; do
+    read -r _wb_seconds _wb_source _wb_adjustment <<< "${reviewer_wait_budget_cache_values[$_wb_index]}"
+    if [ "$_wb_adjustment" = "large_diff" ]; then
+      large_diff_extended=1
+      echo "INFO: PR #$pr_number has ${changed_files_count} changed files (threshold: ${large_diff_threshold}) — extending the ${reviewer_wait_budget_cache_platforms[$_wb_index]} wait budget to ${_wb_seconds}s for large-diff poll window" >&2
+    fi
+    _wb_index=$((_wb_index + 1))
+  done
+  unset _wb_index _wb_seconds _wb_source _wb_adjustment
+  platform_wait_budgets_summary="$(reviewer_wait_budgets_summary "${platforms[@]}")"
 fi
 
 # Step 7b regression-label auto-restore (implementation PRs only).
@@ -13189,6 +15506,11 @@ declare -a platform_result_tokens=()
 declare -a platform_reviewed_heads=()
 # Per-platform raw outcomes for missed-finding telemetry (issue #1651).
 declare -a platform_result_records=()
+# Per-platform budget, request, and latency records (#1789, plan D12): one
+# JSON object per evaluated platform, for the summary's Reviewer timing
+# section and the waiting-result keys.
+declare -a platform_timing_records=()
+reviewer_loop_timing_pending=0
 # Parallel platform outputs for path extraction when building missed_findings.
 declare -a platform_blocking_outputs=()
 missed_findings_json='[]'
@@ -13203,12 +15525,19 @@ expensive_gate_last_head=""
 # Per-platform review-policy status notes for the PR summary comment. Haystack
 # emits these from `pr-status`; other platforms normally leave this empty.
 declare -a platform_policy_status_notes=()
-# Compare-mode: track the first blocking platform seen so later clean platforms
-# do not overwrite the aggregate. These variables are set once and never reset.
+# Compare-mode: track the first blocking platform seen. These variables are set
+# once and never reset; they gate the #1656 second pass in compare mode, mark
+# that some platform blocked (so reviewer_loop_compare_restore_aggregate applies
+# the #1789 D10 precedence), and are its defensive fallback.
 compare_first_blocking_result=""
 compare_first_blocking_reason=""
 compare_first_blocking_output=""
 compare_first_blocking_status=0
+# Loop-level gate outcome (#1789, BR 5 / plan D10): set to the aggregate_result a
+# gate (pre-dispatch expensive gate, #1656 second pass, ready-phase preflight,
+# ensure_pr_ready) produced when it broke the platform loop. A gate escalation
+# keeps precedence over every platform row in the compare restore.
+reviewer_loop_gate_break_result=""
 phase_after_clean_enabled=0
 phase_after_clean_started=0
 phase_after_clean_net_new_blocker=0
@@ -13249,6 +15578,9 @@ print_kv PHASE_AFTER_CLEAN_ENABLED "$phase_after_clean_enabled"
   print_kv PHASE_AFTER_CLEAN_PLATFORM_LIST "$(IFS=,; printf '%s' "${phase_after_clean_platforms[*]}")"
 print_kv CHANGED_FILES_COUNT "${changed_files_count:--1}"
 [ "$large_diff_extended" -eq 1 ] && print_kv LARGE_DIFF_EXTENDED 1
+# Per-platform wait budgets (#1789, plan D7):
+# <platform>:<seconds>:<source>[:<adjustment>],…
+[ -n "$platform_wait_budgets_summary" ] && print_kv PLATFORM_WAIT_BUDGETS "$platform_wait_budgets_summary"
 # Reviewer cycle cap telemetry (#1502, dual-cap): CYCLE_COUNT is the number
 # of fixer dispatches already issued THIS ORCHESTRATION RUN (resets to 0 at
 # each run boundary — see RUN_ID above); TOTAL_CYCLE_COUNT is the same
@@ -13278,6 +15610,16 @@ reviewer_loop_stage_skip_resolve "$pr_number"
 print_kv STAGE_SKIP_ENABLED "$stage_skip_enabled"
 [ -n "$stage_skip_disabled_reason" ] && print_kv STAGE_SKIP_DISABLED_REASON "$stage_skip_disabled_reason"
 
+# --- Automatic re-wait state (#1789, plan D11) ---
+# Once per invocation, after loop_head_sha is read: fresh, rewait (this run id
+# already waited on this head with no verdict), or untracked. In rewait mode
+# the handlers adopt the request this loop recorded instead of posting a new
+# one (reviewer_loop_rewait_prepare_platform runs before each dispatch).
+reviewer_loop_recorded_request_found=0
+reviewer_loop_recorded_request_ref=""
+reviewer_loop_recorded_requested_at=""
+reviewer_loop_rewait_resolve "$pr_number"
+
 for index in "${!platforms[@]}"; do
   platform_index=$((index + 1))
   platform_name="${platforms[$index]}"
@@ -13290,6 +15632,7 @@ for index in "${!platforms[@]}"; do
       if reviewer_loop_second_local_pass_before_ready_gate "$pr_number"; then
         :
       else
+        reviewer_loop_gate_break_result="$aggregate_result"
         break
       fi
       # Issue #1649: preflight expensive ready-phase gates BEFORE gh pr ready.
@@ -13358,6 +15701,7 @@ for index in "${!platforms[@]}"; do
       unset _eg_i _eg_plat
       if [ "$_eg_ready_preflight_failed" -eq 1 ]; then
         unset _eg_ready_preflight_failed
+        reviewer_loop_gate_break_result="$aggregate_result"
         break
       fi
       unset _eg_ready_preflight_failed
@@ -13388,6 +15732,7 @@ for index in "${!platforms[@]}"; do
           aggregate_output="$(printf 'RESULT=escalate\nREASON=ready_for_review_failed\nCOMMENT_COUNT=0\nBLOCKING_COUNT=0\nSUGGESTION_COUNT=0\n')"
         fi
         aggregate_status=2
+        reviewer_loop_gate_break_result="escalate"
         break
       fi
       unset ready_status
@@ -13402,10 +15747,19 @@ for index in "${!platforms[@]}"; do
     replay) continue ;;
   esac
 
+  # Per-platform budget and poll interval (#1789, plan D7/D14).
+  read -r platform_max_wait platform_budget_source platform_budget_adjustment < <(reviewer_wait_budget_for_platform "$platform_name")
+  platform_poll_interval="$(reviewer_poll_interval_resolve "$platform_name" "$platform_max_wait")"
+  reviewer_loop_rewait_prepare_platform "$platform_name"
+  # Fresh-mode trigger reuse reads the requests recorded for the loop head (D15).
+  reviewer_loop_head_refs_prepare_platform "$platform_name" "$pr_number"
+  # Wait start immediately before the dispatch, end immediately after (D12).
+  reviewer_loop_timing_begin "$platform_max_wait" "$platform_budget_source" "$platform_budget_adjustment"
   set +e
-  platform_output="$(run_platform_review "$platform_name" "$pr_number" "$branch_name" "$poll_interval" "$max_wait")"
+  platform_output="$(run_platform_review "$platform_name" "$pr_number" "$branch_name" "$platform_poll_interval" "$platform_max_wait")"
   platform_status=$?
   set -e
+  reviewer_loop_timing_end
 
   reviewer_loop_platform_loop_should_break=0
   reviewer_loop_process_platform_output "$platform_name" "$platform_index" "$platform_output" "$platform_status" 1
@@ -13475,7 +15829,13 @@ _post_review_summary() {
       result_line="escalated (${reason:-unknown})"
       ;;
     waiting_on_reviewer)
-      result_line="waiting_on_reviewer (${reason:-codex-github-review-pending}) — current-head review trigger posted; reviewer has not returned terminal evidence yet"
+      if reviewer_loop_reason_in_list "$reason" "${REVIEWER_LOOP_NO_VERDICT_REASONS[@]}"; then
+        # #1789 (plan D12): waited seconds, budget and source, and either "no
+        # reviewer failure was detected" or the failure-evidence clause.
+        result_line="$(reviewer_loop_no_verdict_result_line "$reason")"
+      else
+        result_line="waiting_on_reviewer (${reason:-codex-github-review-pending}) — current-head review trigger posted; reviewer has not returned terminal evidence yet"
+      fi
       ;;
     skipped)
       result_line="skipped — no GitHub reviewers configured in review.on_draft.github or review.on_ready.github"
@@ -13600,6 +15960,10 @@ Protocol 91 Step 7b requires this label on all \`${branch_name%%/*}/*\` PRs afte
 
 $(reviewer_loop_head_evidence_render "${loop_head_sha:-}" "${platform_reviewed_heads[@]}")"
   fi
+
+  # #1789 (plan D12): per-platform budget, source, request time, and latency.
+  local reviewer_timing_section=""
+  reviewer_timing_section="$(reviewer_loop_timing_summary_section)"
 
   local expensive_gate_section=""
   if [ -n "${expensive_gate_last_result:-}" ]; then
@@ -13877,7 +16241,7 @@ ${_attr_line}"
 **Result:** ${result_line}
 **Platforms:** ${platform_list:-none}${policy_status_section}
 **Findings:** ${blocking} blocking, ${suggestions} suggestions
-${small_findings_section}${missed_findings_section}${attribution_section}${missed_finding_telemetry_section}${head_evidence_section}${expensive_gate_section}${second_local_pass_section}${phase_section}${compare_section}${advisory_section}${advisory_checks_section}${strict_spec_summary_section}${strict_plan_summary_section}${regression_label_section}
+${small_findings_section}${missed_findings_section}${attribution_section}${missed_finding_telemetry_section}${head_evidence_section}${reviewer_timing_section}${expensive_gate_section}${second_local_pass_section}${phase_section}${compare_section}${advisory_section}${advisory_checks_section}${strict_spec_summary_section}${strict_plan_summary_section}${regression_label_section}
 
 *Posted automatically by \`pr-review-loop.sh\`.*
 EOF
@@ -13964,22 +16328,16 @@ if [ -z "$last_platform" ]; then
   exit 0
 fi
 
-# --- Compare mode: restore first-blocking aggregate, emit output, write metrics ---
-# When compare mode is active, all platforms ran to completion. Later clean platforms
-# may have overwritten aggregate_result after the first blocking platform set it.
-# Restore the first-blocking state now to ensure the overall result is identical to
-# what normal mode would have produced (BR-1: first blocking platform in config order
-# governs).
+# --- Compare mode: select the governing aggregate, emit output, write metrics ---
+# When compare mode is active, all platforms ran to completion, so later
+# platforms may have overwritten aggregate_result. The overall result is now
+# chosen by the cross-platform precedence (#1789, plan D10): Reviewer failed,
+# then findings, then No verdict yet, then clean/skipped, ties to the earliest
+# platform in evaluation order (reviewer_loop_compare_restore_aggregate).
 if [ "$compare_mode" -eq 1 ] && [ "${#compare_verdicts[@]}" -gt 0 ]; then
-  # Restore aggregate from the first blocking platform, if any.
-  if [ -n "$compare_first_blocking_result" ]; then
-    aggregate_result="$compare_first_blocking_result"
-    aggregate_reason="$compare_first_blocking_reason"
-    aggregate_output="$compare_first_blocking_output"
-    aggregate_status=$compare_first_blocking_status
-  fi
-  # aggregate_result is now clean/skipped (if no platform blocked) or the result
-  # of the first blocking platform in config order.
+  reviewer_loop_compare_restore_aggregate
+  # aggregate_result is now clean/skipped (if no platform blocked) or the
+  # highest-precedence platform outcome.
 
   # Emit compare-mode key=value output lines.
   print_kv COMPARE_MODE 1
@@ -14394,10 +16752,10 @@ fi
 # reached. A "clean" result is never overridden. An already-"escalate"
 # result keeps its own (more specific) reason rather than being relabeled.
 # This MUST run before the persistence step, compare-mode metrics-row
-# append, and the single RESULT= print below: --compare mode's own
-# contract is "the overall exit code and RESULT are identical to what
-# normal mode would produce" (see the script's usage doc), and these
-# overrides are unconditional (they also apply in --compare mode) — so the
+# append, and the single RESULT= print below: --compare mode's overall
+# exit code and RESULT follow the cross-platform precedence and then the
+# loop-level escalations (see the script's usage doc, #1789 plan D10), and
+# these overrides are unconditional (they also apply in --compare mode) — so the
 # metrics row and the printed RESULT must reflect the post-override
 # result, not a stale pre-cap value.
 #
@@ -14509,10 +16867,11 @@ if [ "$compare_mode" -eq 1 ] && [ "${#compare_verdicts[@]}" -gt 0 ]; then
   set -e
 fi
 
-if reviewer_failed_label_required_for_result "$aggregate_result" "$aggregate_reason"; then
-  reviewer_failed_required=1
-fi
-sync_reviewer_failed_label "$pr_number" "$reviewer_failed_required"
+# #1789 (plan D9): reconcile reviewer-failed from this run's per-platform
+# failure evidence and the final aggregate — every platform-evaluating run
+# reaches this point, including one whose platforms were all replayed from the
+# ledger (#1692), so a stale label is removed once the evidence is clean.
+reviewer_loop_reconcile_reviewer_failed_label "$pr_number" "$aggregate_result" "$aggregate_reason"
 
 print_kv LOCAL_SECOND_PASS "${local_second_pass:-0}"
 print_kv LOCAL_SECOND_PASS_REASON "${local_second_pass_reason:-not_required}"
@@ -14527,6 +16886,17 @@ print_kv PLATFORM "$last_platform"
 print_kv COMMENT_COUNT "$total_comment_count"
 print_kv BLOCKING_COUNT "$total_blocking_count"
 print_kv SUGGESTION_COUNT "$total_suggestion_count"
+# #1789 (plan D11): whether the runner may re-run Step 7 once, immediately,
+# for this No verdict yet result (available), already did (used), or cannot
+# bound the re-wait (untracked).
+if [ "$aggregate_result" = "waiting_on_reviewer" ] \
+    && reviewer_loop_reason_in_list "$aggregate_reason" "${REVIEWER_LOOP_NO_VERDICT_REASONS[@]}"; then
+  print_kv NO_VERDICT_REWAIT "$(reviewer_loop_no_verdict_rewait_value "${reviewer_loop_rewait_state:-untracked}" "${_post_summary_exit:-1}")"
+  # #1789 (plan D12): who is pending, since when, for how long, and whether
+  # this run recorded failure evidence (NO_FAILURE_DETECTED /
+  # FAILED_PEER_PLATFORMS follow this run's reviewer-failed decision).
+  reviewer_loop_emit_waiting_keys
+fi
 
 if [ -n "$aggregate_output" ]; then
   review_comment_id="$(kv_value REVIEW_COMMENT_ID "$aggregate_output")"

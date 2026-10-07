@@ -338,9 +338,9 @@ export MOCK_MODEL_CONTENT
 run_test "http_empty_content_exits" "yes" "$(grep -q 'empty message content' "$STDERR_FILE" && echo yes || echo no)"
 unset MOCK_MODEL_CONTENT
 
-run_test "wrapper_help_mentions_evidence_file" "yes" "$("$WRAPPER" --help 2>&1 | grep -q -- '--evidence-file' && echo yes || echo no)"
-run_test "wrapper_help_mentions_model" "yes" "$("$WRAPPER" --help 2>&1 | grep -q 'LOCAL_AI_REVIEWER_MODEL' && echo yes || echo no)"
-run_test "wrapper_help_mentions_http_timeout" "yes" "$("$WRAPPER" --help 2>&1 | grep -q 'LOCAL_AI_REVIEWER_HTTP_TIMEOUT' && echo yes || echo no)"
+run_test "wrapper_help_mentions_evidence_file" "yes" "$("$WRAPPER" --help 2>&1 | grep -- '--evidence-file' > /dev/null && echo yes || echo no)"
+run_test "wrapper_help_mentions_model" "yes" "$("$WRAPPER" --help 2>&1 | grep 'LOCAL_AI_REVIEWER_MODEL' > /dev/null && echo yes || echo no)"
+run_test "wrapper_help_mentions_http_timeout" "yes" "$("$WRAPPER" --help 2>&1 | grep 'LOCAL_AI_REVIEWER_HTTP_TIMEOUT' > /dev/null && echo yes || echo no)"
 
 MOCK_GIT_FAIL=1
 export MOCK_GIT_FAIL
@@ -419,7 +419,7 @@ export LOCAL_AI_REVIEWER_BACKEND
 HARNESS_MODE=1 source "$REVIEWER"
 resolve_stderr="$(mktemp)"
 resolve_local_ai_reviewer_command 2>"$resolve_stderr"
-run_test "backend_defaults_to_http_preset" "yes" "$(printf '%s' "$LOCAL_AI_REVIEWER_COMMAND" | grep -q 'local-http-review-command.sh' && echo yes || echo no)"
+run_test "backend_defaults_to_http_preset" "yes" "$(grep -q 'local-http-review-command.sh' <<< "$LOCAL_AI_REVIEWER_COMMAND" && echo yes || echo no)"
 run_test "backend_info_mentions_http_preset" "yes" "$(grep -q 'bundled HTTP preset' "$resolve_stderr" && echo yes || echo no)"
 rm -f "$resolve_stderr"
 unset LOCAL_AI_REVIEWER_COMMAND
@@ -428,7 +428,7 @@ LOCAL_AI_REVIEWER_BACKEND=openai_compat
 export LOCAL_AI_REVIEWER_BACKEND
 resolve_stderr="$(mktemp)"
 resolve_local_ai_reviewer_command 2>"$resolve_stderr"
-run_test "backend_openai_compat_alias_still_works" "yes" "$(printf '%s' "$LOCAL_AI_REVIEWER_COMMAND" | grep -q 'local-http-review-command.sh' && echo yes || echo no)"
+run_test "backend_openai_compat_alias_still_works" "yes" "$(grep -q 'local-http-review-command.sh' <<< "$LOCAL_AI_REVIEWER_COMMAND" && echo yes || echo no)"
 rm -f "$resolve_stderr"
 unset LOCAL_AI_REVIEWER_COMMAND
 LOCAL_AI_REVIEWER_BACKEND=openai

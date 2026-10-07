@@ -46,6 +46,7 @@ Use the tier names as stable policy and map them to whatever your current runner
 - In Claude Code, map the tier to the model family or explicit model ID configured in `.claude/agents/*.md`.
 - In Cursor, set `.cursor/agents/*.md` to `auto` for ordinary coordination and QA agents, and pin an explicit high-reasoning model for agents that author or deeply review specs, plans, and code. Those `model:` fields are the source of truth for Cursor runs (see "Cursor model source of truth" below).
 - In Codex, keep skills tier-based (`economy`, `balanced`, `premium`) and map the active runner model to the current OpenAI model family.
+- In DSH, keep the same tier intent (`economy` / `balanced` / `premium`) and pin provider/model at **dispatch time** (profile route, CLI/env for that invocation, or local DSH settings). DSH has no in-repo per-role agent files; shared workflow skills (`workflow-*-reviewer`, implementer, etc.) carry the tier recommendation, and the parent-orchestrated session selects the route for the run. See [`integrations/dsh.md`](integrations/dsh.md).
 - In any runner, prefer keeping the tier intent stable even when provider model names change.
 
 ### Claude Code model defaults (template)
@@ -289,9 +290,11 @@ The table below shows the typical and maximum expected wall-clock duration for t
 | Agent                     | Typical run | Consider timed out if no progress after |
 | ------------------------- | ----------- | --------------------------------------- |
 | `item-orchestrator`       | 5–15 min    | ~25 min                                 |
-| `automated-reviewer-loop` | 2–10 min    | ~20 min                                 |
+| `automated-reviewer-loop` | 2–10 min    | the sum of the configured reviewers' wait budgets, twice (see note) |
 
 These estimates assume a single development item with a normal review-fix cycle. Runs that encounter multiple fixer cycles, slow CI, or rate-limited external reviewers can exceed the typical range — escalate to human only when the maximum threshold is crossed with no visible progress.
+
+The `automated-reviewer-loop` threshold is no longer a single 20-minute wait. Each reviewer waits for its own budget (2400 s for Bugbot, 1800 s for Codex GitHub, 1200 s for the others, configurable under `review.wait_budgets`), the reviewers run one after another, and a No verdict yet result gets one automatic re-wait per revision. A loop is therefore still in progress until the sum of its reviewers' budgets has elapsed twice; for this repository's default reviewers (PR-Agent and `local-ai-reviewer`) that is about 80 minutes. See "Reviewer wait budgets and outcome classes" in [`protocols/93-automated-reviewer-loop-protocol.md`](protocols/93-automated-reviewer-loop-protocol.md#reviewer-wait-budgets-and-outcome-classes-1789).
 
 ---
 

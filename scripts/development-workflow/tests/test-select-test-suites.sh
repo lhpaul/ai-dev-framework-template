@@ -281,7 +281,7 @@ else
   run_test "unreadable_suite_map_exit_2" "2" "$ec_map"
   run_test "unreadable_suite_changed_exit_2" "2" "$ec_changed"
   run_test "unreadable_suite_reports_error" "yes" \
-    "$(printf '%s' "$err_text" | grep -q 'cannot read test suite' && echo yes || echo no)"
+    "$(grep -q 'cannot read test suite' <<< "$err_text" && echo yes || echo no)"
 fi
 
 cleanup_unreadable
@@ -548,7 +548,7 @@ run_test "shards_rejects_layout_over_timeout_cap" \
   "$(printf '%s\n' "$oversized_expectations" | cut -d' ' -f1)" "$shards_too_large_ec"
 run_test "shards_rejects_layout_over_timeout_cap_message" \
   "$(printf '%s\n' "$oversized_expectations" | cut -d' ' -f2)" \
-  "$(printf '%s' "$shards_too_large_out" | grep -q 'exceeding GitHub Actions 360m job timeout cap' && echo yes || echo no)"
+  "$(grep -q 'exceeding GitHub Actions 360m job timeout cap' <<< "$shards_too_large_out" && echo yes || echo no)"
 
 # A padded-but-positive shard count must still WORK, not just avoid the octal
 # error — the fix normalises rather than rejects, so '08' means 8.
@@ -571,7 +571,7 @@ printf '#!/usr/bin/env bash\n# covers: scripts/development-workflow/zzz-default-
 default_duration_out="$(printf '%s\n' scripts/development-workflow/zzz-default-duration-probe.sh \
   | bash "$SELECTOR" --changed-files - --shards 1 2>/dev/null)"
 run_test "shards_default_duration_applies" "yes" \
-  "$(printf '%s' "$default_duration_out" | grep -q 'test-zzz-default-duration-probe.sh' && echo yes || echo no)"
+  "$(grep -q 'test-zzz-default-duration-probe.sh' <<< "$default_duration_out" && echo yes || echo no)"
 cleanup_default_duration_probe
 trap - EXIT
 
@@ -602,9 +602,9 @@ for pad in 08 09 007 00 0; do
   set -e
   run_test "duration_zero_padded_${pad}_exit_0" "0" "$probe_ec"
   run_test "duration_zero_padded_${pad}_no_base_error" "no" \
-    "$(printf '%s' "$probe_out" | grep -q 'value too great for base' && echo yes || echo no)"
+    "$(grep -q 'value too great for base' <<< "$probe_out" && echo yes || echo no)"
   run_test "duration_zero_padded_${pad}_suite_present" "yes" \
-    "$(printf '%s' "$probe_out" | grep -q 'test-zzz-duration-probe.sh' && echo yes || echo no)"
+    "$(grep -q 'test-zzz-duration-probe.sh' <<< "$probe_out" && echo yes || echo no)"
 done
 cleanup_duration_probe
 trap - EXIT
@@ -669,7 +669,7 @@ SHARD_PROBE_TIMEOUT=""
 SHARD_PROBE_TIMEOUT_ABS=""
 for candidate in timeout gtimeout; do
   if command -v "$candidate" >/dev/null 2>&1 \
-    && "$candidate" --help 2>&1 | grep -q -- '--kill-after'; then
+    && "$candidate" --help 2>&1 | grep -- '--kill-after' > /dev/null; then
     SHARD_PROBE_TIMEOUT="$candidate"
     # Absolute path, so neither the shim below nor anything else on PATH can
     # shadow it back onto itself.
@@ -741,21 +741,21 @@ LEAK
   # Hang isolation: the hung suite is bounded and labelled as a TIMEOUT, not
   # folded into a generic failure.
   run_test "shard_loop_reports_timeout" "yes" \
-    "$(printf '%s' "$shard_summary" | grep -q 's_hang.sh.*TIMEOUT' && echo yes || echo no)"
+    "$(grep -q 's_hang.sh.*TIMEOUT' <<< "$shard_summary" && echo yes || echo no)"
 
   # ...and the suites AFTER the hang still ran. This is the property a
   # shard-level timeout-minutes cannot provide.
   run_test "shard_loop_runs_suites_after_hang" "yes" \
-    "$(printf '%s' "$shard_summary" | grep -q 's_pass.sh.*pass' && echo yes || echo no)"
+    "$(grep -q 's_pass.sh.*pass' <<< "$shard_summary" && echo yes || echo no)"
 
   # Failure isolation: a failing suite is labelled FAIL and does not abort the
   # loop, which is what GitHub's inherited 'bash -e' would otherwise do.
   run_test "shard_loop_reports_fail" "yes" \
-    "$(printf '%s' "$shard_summary" | grep -q 's_fail.sh.*FAIL' && echo yes || echo no)"
+    "$(grep -q 's_fail.sh.*FAIL' <<< "$shard_summary" && echo yes || echo no)"
   run_test "shard_loop_reports_sigkill_as_fail" "yes" \
-    "$(printf '%s' "$shard_summary" | grep -q 's_kill.sh.*FAIL' && echo yes || echo no)"
+    "$(grep -q 's_kill.sh.*FAIL' <<< "$shard_summary" && echo yes || echo no)"
   run_test "shard_loop_reports_command_124_as_fail" "yes" \
-    "$(printf '%s' "$shard_summary" | grep -q 's_124.sh.*FAIL' && echo yes || echo no)"
+    "$(grep -q 's_124.sh.*FAIL' <<< "$shard_summary" && echo yes || echo no)"
   run_test "shard_loop_runs_all_six_suites" "6" \
     "$(printf '%s' "$shard_summary" | grep -c '^| `s_' || true)"
   if [ -s "$SHARD_PROBE_DIR/leak-child.pid" ]; then
@@ -775,9 +775,9 @@ LEAK
 
   shard_output="$(cat "$SHARD_PROBE_DIR/out.txt" 2>/dev/null || true)"
   run_test "shard_loop_stderr_names_timeout_suite" "yes" \
-    "$(printf '%s' "$shard_output" | grep -q 's_hang.sh: \*\*TIMEOUT\*\*' && echo yes || echo no)"
+    "$(grep -q 's_hang.sh: \*\*TIMEOUT\*\*' <<< "$shard_output" && echo yes || echo no)"
   run_test "shard_loop_stderr_names_failed_suite" "yes" \
-    "$(printf '%s' "$shard_output" | grep -q 's_fail.sh: \*\*FAIL\*\*' && echo yes || echo no)"
+    "$(grep -q 's_fail.sh: \*\*FAIL\*\*' <<< "$shard_output" && echo yes || echo no)"
 else
   FAIL_COUNT=$((FAIL_COUNT + 1))
   echo "FAIL: shard_loop_step_extractable — could not read the 'Run shard' step from $WORKFLOW_FILE"

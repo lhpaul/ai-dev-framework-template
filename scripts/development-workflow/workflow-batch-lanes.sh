@@ -86,6 +86,13 @@ report_category_for_item() {
       ;;
   esac
 
+  # A concrete fix request is actionable even while the stage awaits review.
+  # Preserve human-ready precedence and cap-held disposition.
+  if [ "$next_action" = "resume-fix-loop" ] && [[ ",$labels," = *,needs-fixes,* ]] && [[ ",$labels," != *,ready-for-human-review,* ]]; then
+    if [ "$dispatch" = "held" ]; then printf 'held\n'; else printf 'actionable_resume\n'; fi
+    return 0
+  fi
+
   case "$status" in
     "spec in review"|"plan in review"|"development in review")
       printf 'informational\n'

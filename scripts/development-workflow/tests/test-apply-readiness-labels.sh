@@ -106,7 +106,7 @@ case "$*" in
     if [ "${MOCK_DROP_LABEL:-0}" != "1" ] && [ -n "${MOCK_LABEL_STATE:-}" ] && [ -n "$added" ]; then
       printf '%s\n' "$added" >>"$MOCK_LABEL_STATE"
     fi
-    if printf '%s\n' "$*" | grep -q -- "--remove-label"; then
+    if grep -q -- "--remove-label" <<< "$*"; then
       exit "${MOCK_REMOVE_LABEL_EXIT:-0}"
     fi
     exit "${MOCK_GH_EDIT_EXIT:-0}"
@@ -2466,6 +2466,25 @@ MOCK_BASE_CONFIG='review:
 MOCK_ISSUE_COMMENTS="$(_ledger_comment loop-runner OWNER 933 "$(_ledger_entry clean "$HEAD" 3)")"
 result="$(run_helper_platform "$_codex_config")"
 run_test "local_ai_reviewer_current_head_ledger_labels_result" "labeled" "$(field "$result" RESULT)"
+# #1789 (T2.10): a current-head no_verdict_yet record (the reviewer's wait ran
+# out with no verdict) is an absent verdict — refuses reviewer-check-absent,
+# never a label and never reviewer-evidence-unreadable.
+MOCK_ISSUE_COMMENTS="$(_ledger_comment loop-runner OWNER 939 "$(_ledger_entry no_verdict_yet "$HEAD" 3)")"
+result="$(run_helper_platform "$_codex_config")"
+run_test "1789_local_ai_reviewer_no_verdict_yet_ledger_refuses_reason" "reviewer-check-absent" "$(field "$result" REASON)"
+run_test "1789_local_ai_reviewer_no_verdict_yet_ledger_no_label" "0" "$(grep -c 'add-label ready-for-human-review' "$_LABEL_LOG" || true)"
+_ledger_platform='coderabbit-cli'
+MOCK_HEAD_CONFIG='review:
+  on_ready:
+    github:
+      - coderabbit-cli'
+MOCK_BASE_CONFIG='review:
+  on_ready:
+    github:
+      - coderabbit-cli'
+MOCK_ISSUE_COMMENTS="$(_ledger_comment loop-runner OWNER 940 "$(_ledger_entry no_verdict_yet "$HEAD" 3)")"
+result="$(run_helper_platform "$_codex_config")"
+run_test "1789_coderabbit_cli_no_verdict_yet_ledger_refuses_reason" "reviewer-check-absent" "$(field "$result" REASON)"
 MOCK_ISSUE_COMMENTS='[]'
 MOCK_GH_USER=''
 MOCK_PERMS=''

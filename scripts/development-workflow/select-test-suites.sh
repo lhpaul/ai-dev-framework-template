@@ -166,6 +166,7 @@ GITHUB_JOB_TIMEOUT_LIMIT_MINUTES=360
 # selected subset. Deliberately conservative: the cost of over-running is wall
 # clock, the cost of under-running is a green check that proves nothing.
 FULL_RUN_TRIGGER_PATTERNS="$SCRIPTS_DIR/workflow-lib.sh
+$SCRIPTS_DIR/workflow-project-reader.py
 $SCRIPTS_DIR/select-test-suites.sh
 $TESTS_DIR/fixtures/**
 .github/workflows/workflow-tests.yml"

@@ -47,6 +47,10 @@
 # NOTE: If a new framework file is added to the template, add a corresponding entry here.
 # Files absent from this manifest will not be included in always-sync batches.
 # (CI-enforced manifest completeness is out of scope for this iteration — see issue #252.)
+# One slice is enforced: every file a synced test suite reads must be shipped here,
+# be project-owned, or be listed in sync_coverage_exemptions with a reason.
+# scripts/development-workflow/tests/test-check-sync-manifest-coverage.sh fails
+# otherwise (#1874).
 
 schema_version: 1
 
@@ -127,6 +131,15 @@ categories:
     - path: scripts/development-workflow/validate-workflow-config.sh
       mode_scope: product_repo_injection
       note: product-repo runtime helper for non-secret workflow configuration validation
+    - path: scripts/development-workflow/workflow-project-reader.py
+      mode_scope: product_repo_injection
+      note: bounded target project lookup shared by workflow-lib and portfolio scans
+    - path: scripts/development-workflow/workflow-portfolio-scan.py
+      mode_scope: hub_only
+      note: GraphQL budget-aware scan coordinator and invocation snapshot validation
+    - path: scripts/development-workflow/workflow-portfolio-scan.sh
+      mode_scope: hub_only
+      note: canonical no-target GitHub Projects portfolio scan entrypoint
     - path: scripts/development-workflow/workflow-lib.sh
       mode_scope: product_repo_injection
       note: shared shell helpers required by product-repo runtime scripts
@@ -181,6 +194,12 @@ categories:
     - path: sync-manifest.yaml
       mode_scope: shared
       note: this manifest file itself; must be synced so downstream projects receive manifest updates
+    - path: docs/testing/workflow/retrospective-protocol.smoke-test.md
+      mode_scope: hub_only
+      note: protocol-level runbook that test-framework-mode-type-routing.sh asserts on (#1874)
+    - path: docs/testing/workflow/tracker-type-field-classification.smoke-test.md
+      mode_scope: hub_only
+      note: protocol-level runbook that test-framework-mode-type-routing.sh asserts on (#1874)
 
   special_handling:
     - path: .claude/settings.json
@@ -208,8 +227,40 @@ categories:
     - path: .cursor/BUGBOT.md
       mode_scope: hub_only
       note: project-specific Cursor Bugbot review rules; customize when enabling Bugbot
+    - path: .github/workflows/pr-policy.yml
+      mode_scope: shared
+      note: framework PR policy checks (readiness labels, reviewer-loop guard); synced suites assert on its jobs (#1874)
+    - path: .github/workflows/shellcheck.yml
+      mode_scope: hub_only
+      note: framework shell lint workflow for scripts/development-workflow and scripts/lint; synced suites assert on its path filters (#1874)
+    - path: .github/workflows/workflow-tests.yml
+      mode_scope: hub_only
+      note: >
+        runs the workflow test suites chosen by select-test-suites.sh; replaces the
+        legacy test-pr-review-loop.yml, which a consumer adopting this file should delete (#1537, #1834, #1874)
+    - path: .github/workflows/markdown-lint.yml
+      mode_scope: hub_only
+      note: >
+        framework markdown and changelog-fragment lint; consumers often customise the
+        package-manager setup (for example pnpm), so merge rather than overwrite (#1874)
+    - path: .github/workflows/closing-keyword-scope.yml
+      mode_scope: hub_only
+      note: advisory closing-keyword scope check run by validate-closing-keyword-scope.sh (#1874)
+    - path: .github/workflows/pr-agent.yml
+      mode_scope: shared
+      note: PR-Agent reviewer workflow; adopt only when pr-agent is a configured reviewer (#1874)
+    - path: .github/workflows/claude-code-review.yml
+      mode_scope: shared
+      note: Claude Code Action reviewer workflow dispatched by claude-code-action-reviewer.sh; adopt only when that reviewer is configured (#1874)
+    - path: hooks/
+      glob: "**/*"
+      mode_scope: shared
+      note: optional Haystack agent commit hooks; test-haystack-commit-msg-hook.sh asserts on hooks/commit-msg (#1874)
 
   project_specific:
+    - path: .ai-dev-workflow.sync-state.json
+      mode_scope: shared
+      note: consumer-owned exact per-path upstream baselines; never copy template state
     - path: AGENTS.md
       mixed_content: true
       annotation_scheme: html_comments
@@ -247,6 +298,9 @@ categories:
     - path: .gitignore
       mode_scope: shared
       note: project-specific ignore rules
+    - path: LLM_RULES.md
+      mode_scope: shared
+      note: agent commit rules read by the optional Haystack hooks; each project customises its own rules
     - path: CLAUDE.md
       mode_scope: hub_only
       note: symlink to AGENTS.md; project-specific
@@ -284,6 +338,24 @@ categories:
 #   applies_if_syncing_from_before - show this note when last_synced_version < this value
 #   manual_steps                  - ordered list of shell commands or instructions the maintainer must run
 migration_notes:
+  - version: "0.45.1"
+    title: "Replace the legacy workflow test harness before adopting workflow-tests.yml"
+    description: >
+      workflow-tests.yml replaced .github/workflows/test-pr-review-loop.yml (#1537).
+      The replacement is offered through special_handling for single_repo and
+      workflow_hub consumers (#1874), but syncing does not delete the legacy file.
+      Both workflows and their aggregate jobs use the name "workflow test harnesses".
+      If both remain enabled, pr-ci-loop.sh can collapse their same-named checks
+      and report a false green when the legacy workflow succeeds after the new
+      workflow fails (#1834). Retire the legacy workflow when adopting the replacement;
+      the special_handling note alone is not the pre-sync migration checklist.
+    applies_if_syncing_from_before: "0.45.1"
+    manual_steps:
+      - "Inspect .github/workflows/test-pr-review-loop.yml and .github/workflows/workflow-tests.yml in the consumer. If the legacy file is absent, there is no cleanup to perform."
+      - "Confirm that workflow-tests.yml is selected for this repository role and that the maintainer approves adopting it. If it is not selected (for example product_repo), or adoption is deferred, retain the legacy workflow and do not add the replacement alongside it."
+      - "Before retiring an existing legacy file, compare it with the template replacement and preserve any project-specific test steps, permissions, branch/path filters, and required-check expectations in the planned replacement. Ask the maintainer to explicitly approve removal of .github/workflows/test-pr-review-loop.yml; sync must never delete it automatically."
+      - "For approved adoption from an existing legacy workflow, install the reviewed .github/workflows/workflow-tests.yml with the preserved project-specific behavior, remove .github/workflows/test-pr-review-loop.yml with the maintainer's explicit approval, and commit both changes as the local migration before continuing the sync. This prepares the replacement before the later special_handling comparison; do not wait for the sync diff to perform this required pre-sync migration."
+      - "Before acknowledging an applicable migration, verify locally that .github/workflows/workflow-tests.yml exists and .github/workflows/test-pr-review-loop.yml is absent, or that adoption was deferred with only the legacy workflow retained. If the legacy file was already absent, record cleanup as not applicable and let special_handling offer the replacement normally. All applicable migration changes must already be committed. The subsequent sync PR follows the existing reviewer and CI readiness gates; its future CI results are not a prerequisite to finish this pre-sync checklist."
   - version: "0.23.0"
     title: "docs/ai/ renamed to docs/workflow/"
     description: >
@@ -340,3 +412,52 @@ rename_detections:
     description: >
       docs/ai/ was renamed to docs/workflow/ in template v0.23.0. The stale docs/ai/
       directory still exists in the project alongside the new docs/workflow/ tree.
+
+# required_additions: additive updates a project-owned file needs before the synced
+# tests and protocols that depend on it can pass (#1874).
+#
+# project_specific files are never overwritten, so a new key the template adds
+# outside a TEMPLATE-OWNED block never reaches a consumer on its own. Each entry
+# names one such addition. Sync-template Step 0.5 evaluates every entry against
+# the project with:
+#
+#   python3 <template>/scripts/development-workflow/check-sync-manifest-coverage.py \
+#     --repo-root <template> --role <role> --consumer-root .
+#
+# and Step 3 lists each REQUIRED_ADDITION_MISSING line under "Required additive
+# updates". The maintainer applies them by hand, preserving all project content.
+#
+# Fields:
+#   path          - project-owned file the addition belongs in
+#   when_pattern  - Python regex (multiline); the addition applies only when the file
+#                   matches it (for example, only when the project declares the list)
+#   must_contain  - literal text the file must contain once the addition is made
+#   introduced_in - template version that introduced the requirement
+#   read_by       - synced test or protocol that fails without it
+#   description   - what to add and why
+required_additions:
+  - path: .ai-dev-workflow.yaml
+    when_pattern: '^\s*stop_conditions:'
+    must_contain: push_verification_failed
+    introduced_in: "0.45.0"
+    read_by: scripts/development-workflow/tests/test-worktree-recipe.sh
+    description: >
+      guardrails.stop_conditions gained push_verification_failed in v0.45.0 (#1700). The
+      baseline stop conditions are additive and never removable, so a project that
+      declares its own stop_conditions list must add "- push_verification_failed" to it.
+
+# sync_coverage_exemptions: tracked paths a synced test names without reading them,
+# so check-sync-manifest-coverage.py does not report them as manifest gaps. Every
+# entry needs a reason. Do not use this list to silence a real dependency: ship the
+# file in categories instead, or gate the assertion with workflow_template_is_template.
+sync_coverage_exemptions:
+  - path: .coderabbit.yaml
+    reason: repository-local CodeRabbit config (see its header); tests write their own fixture copies
+  - path: docs/README.md
+    reason: test-run-epic-risk-classifier.sh uses the name only as a changed-file data value
+  - path: docs/specs/developments/20260714165420_1206-block-implementation-code-in-plan-prs/1_1206-block-implementation-code-in-plan-prs_specs.md
+    reason: test-check-documentation-stage-alignment.sh uses the name only inside mocked PR file lists
+  - path: docs/specs/developments/20260714165420_1206-block-implementation-code-in-plan-prs/2_1206-block-implementation-code-in-plan-prs_implementation-plan.md
+    reason: test-check-documentation-stage-alignment.sh uses the name only inside mocked PR file lists
+  - path: docs/testing/workflow/1655-strict-plan-review-mode.smoke-test.md
+    reason: test-local-ai-reviewer.sh passes the name only to a gh mock as a changed-file value

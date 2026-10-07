@@ -76,8 +76,9 @@ HARNESS_MODE=1 source "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh
 #                                 carried, no synthesized findings, exit 2
 #   3.4  action_required       -> outside Ronda's contract -> RESULT=escalate
 #                                 REASON=ronda_unexpected_conclusion, exit 2
-#   3.5  timeout                -> max_wait=0, no completed run observed
-#                                 -> RESULT=escalate REASON=timeout, exit 2
+#   3.5  budget expiry          -> max_wait=0, no completed run observed
+#                                 -> RESULT=waiting_on_reviewer
+#                                    REASON=reviewer-no-verdict-yet, exit 4 (#1789)
 #   3.6  fetch-failed           -> check-runs API call fails
 #                                 -> RESULT=escalate REASON=fetch-failed, exit 2
 #   3.7  unexpected conclusion  -> conclusion=neutral
@@ -260,7 +261,10 @@ run_test "ronda_action_required_exit_code" "2" "$actual_exit"
 rm -rf "$_ronda_mock_34"
 unset _ronda_mock_34 actual_output actual_exit
 
-# --- Test 3.5: escalate (timeout) — max_wait=0, no completed run observed ---
+# --- Test 3.5: No verdict yet — max_wait=0, no completed run observed ---
+# #1789 (plan D8 Ronda row): an expired wait is waiting_on_reviewer /
+# reviewer-no-verdict-yet with detail check_not_completed, exit 4 (was
+# escalate/timeout, exit 2).
 _ronda_mock_35="$(mktemp -d)"
 cat > "$_ronda_mock_35/gh" <<'RONDA_GH_35'
 #!/usr/bin/env bash
@@ -283,11 +287,15 @@ actual_output="$(
   printf 'EXIT=%s\n' "$_ec"
 )"
 actual_exit="$(printf '%s\n' "$actual_output" | grep "^EXIT=" | cut -d= -f2)"
-run_test "ronda_timeout_result" "RESULT=escalate" \
+run_test "ronda_timeout_result" "RESULT=waiting_on_reviewer" \
   "$(printf '%s\n' "$actual_output" | grep "^RESULT=")"
-run_test "ronda_timeout_reason" "REASON=timeout" \
+run_test "ronda_timeout_reason" "REASON=reviewer-no-verdict-yet" \
   "$(printf '%s\n' "$actual_output" | grep "^REASON=")"
-run_test "ronda_timeout_exit_code" "2" "$actual_exit"
+run_test "ronda_timeout_detail" "WAIT_EXPIRED_DETAIL=check_not_completed" \
+  "$(printf '%s\n' "$actual_output" | grep "^WAIT_EXPIRED_DETAIL=")"
+run_test "ronda_timeout_pending_head" "PENDING_REVIEW_HEAD_SHA=abc35sha" \
+  "$(printf '%s\n' "$actual_output" | grep "^PENDING_REVIEW_HEAD_SHA=")"
+run_test "ronda_timeout_exit_code" "4" "$actual_exit"
 rm -rf "$_ronda_mock_35"
 unset _ronda_mock_35 actual_output actual_exit
 

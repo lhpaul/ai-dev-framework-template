@@ -1652,7 +1652,7 @@ Run this step immediately after opening a draft PR, and again after any push tha
 
 The only configuration resolution for Step 7a is the bounded availability
 helper. Run it on every cycle, before dispatch, passing the actual driving
-session kind (`claude`, `cursor`, `codex`, or `unknown`), never a value inferred
+session kind (`claude`, `cursor`, `codex`, `dsh`, or `unknown`), never a value inferred
 from PATH, the reviewer list, or `WORKFLOW_RUNNER_KIND`. There is no independent `review-effective` or `review-overrides` call before this helper. Its bounded entry includes configuration parsing; never prepend an unbounded parser invocation. A stalled parser is verified by smoke Step 16.
 
 The strict `review-effective` reader requires PyYAML (CI pin `6.0.2`) in the gate's
@@ -1690,7 +1690,7 @@ bash scripts/development-workflow/resolve-reviewer-availability.sh \
   --runner-kind <actual-driving-session-kind>
 ```
 
-Supported reviewer values are `claude`, `cursor`, `codex` (local-runtime), and
+Supported reviewer values are `claude`, `cursor`, `codex`, `dsh` (local-runtime), and
 `coderabbit`, `codex-github` (hosted-service). If no list is defined, the
 helper falls back to the driving runner's own stage reviewer. Consume reviewer
 names only from its indexed `REVIEWER_N_*` fields; aggregate lists are
@@ -1926,6 +1926,7 @@ internal review gate would silently pass with reduced coverage.
 | `coderabbit` | `.coderabbit.yaml` has `reviews.auto_review.drafts: false` (the default)    |
 | `claude`     | Never — Claude Code agents always review regardless of draft state          |
 | `codex`      | Never — Codex skill reviewers always review regardless of draft state       |
+| `dsh`        | Never — DSH skill reviewers always review regardless of draft state         |
 
 Read `.coderabbit.yaml` as YAML and select only the root
 `reviews.auto_review.drafts` field; similarly named keys or instruction text do
@@ -2016,6 +2017,9 @@ For each indexed Reachable reviewer selected by the proceed verdict, dispatch th
 | `codex`      | `spec/*`                                          | `workflow-spec-reviewer` Codex skill against `REVIEW.md`                                                               |
 | `codex`      | `implementation-plan/*`                           | `workflow-plan-reviewer` Codex skill against `REVIEW.md`                                                               |
 | `codex`      | `feature/*` / `refactor/*` / `fix/*` / `hotfix/*` | `workflow-code-reviewer` Codex skill against `REVIEW.md`                                                               |
+| `dsh`        | `spec/*`                                          | `workflow-spec-reviewer` skill against `REVIEW.md`                                                                     |
+| `dsh`        | `implementation-plan/*`                           | `workflow-plan-reviewer` skill against `REVIEW.md`                                                                     |
+| `dsh`        | `feature/*` / `refactor/*` / `fix/*` / `hotfix/*` | `workflow-code-reviewer` skill against `REVIEW.md`                                                                     |
 | `coderabbit` | `spec/*`                                          | Trigger CodeRabbit via push (auto-review); poll for `coderabbitai[bot]` response — see `coderabbit.md` Step 7a section |
 | `coderabbit` | `implementation-plan/*`                           | Trigger CodeRabbit via push (auto-review); poll for `coderabbitai[bot]` response — see `coderabbit.md` Step 7a section |
 | `coderabbit` | `feature/*` / `refactor/*` / `fix/*` / `hotfix/*` | Trigger CodeRabbit via push (auto-review); poll for `coderabbitai[bot]` response — see `coderabbit.md` Step 7a section |
@@ -2030,14 +2034,17 @@ the re-audit itself is performed by the loop runner, not the dispatched fixer.
 
 When a local-runtime reviewer does not match the driving runner, invoke its
 installed CLI from the artifact root: `claude -p --output-format text`,
-`cursor-agent --print --output-format text`, or `codex exec --sandbox read-only`.
+`cursor-agent --print --output-format text`, `codex exec --sandbox read-only`,
+or `DSH_PERMISSION_MODE=read-only dsh --profile headless`.
 The prompt names the stage protocol, `REVIEW.md`, spec/brief and plan paths,
 reviewed base/head, and active pass. Request a read-only review and exactly one
 `VERDICT: APPROVED` or `VERDICT: NEEDS REVISION`. The parent applies deterministic
 fixes, commits and pushes them, and re-runs the required reviewers after the push.
 Preserve existing CLI permission controls; never add permission-bypass flags or
 substitute another runtime. The read-only prompt is an instruction; the Codex
-command additionally enforces a read-only sandbox. Capture the exit status and
+command additionally enforces a read-only sandbox, and the DSH form composes the
+shipped base-bundle `read-only` permission preset via `DSH_PERMISSION_MODE`
+(not prompt-only instructions). Capture the exit status and
 complete response; approval requires exit `0` and exactly one valid terminal verdict.
 For `codex-github`, exit `0` approves, `1` enters revision, `2` and `3` are
 review failures, and `4` waits for the reviewer. A non-zero CLI exit, timeout,
@@ -2408,6 +2415,10 @@ loop_status=0
 cat "$loop_out"
 if [ "$loop_status" -ne 0 ]; then
   echo "Reviewer loop exited ${loop_status}: act on its RESULT=/REASON= lines (needs_fixes, escalate, ...). Do not enter Step 8a on this run."
+  if [ "$loop_status" -eq 4 ]; then
+    rewait="$(grep -E '^NO_VERDICT_REWAIT=' "$loop_out" | tail -n 1 | cut -d= -f2- || true)"
+    echo "waiting_on_reviewer: NO_VERDICT_REWAIT=${rewait:-<absent>}. Re-run Step 7 once, immediately, with the same PR_REVIEW_LOOP_RUN_ID only when it is 'available'; otherwise stop as Waiting on reviewer."
+  fi
 else
   settle_kv="$(mktemp)"
   grep -E '^(POST_CLEAN|LOCAL_AI)_[A-Z_]+=[A-Za-z0-9:_-]*$' "$loop_out" > "$settle_kv" || true
@@ -2433,9 +2444,36 @@ Interpret the result as follows:
 | `needs_fixes` and `cycle < max_cycles`  | Summary comment posted or updated automatically by the script. Increment `cycle`, dispatch the matching fixer agent, wait for a push, then run Step 7 again                                                                                                                                                                                                                                |
 | `needs_fixes` and `cycle >= max_cycles` | Summary comment posted or updated automatically by the script. Escalate to human                                                                                                                                                                                                                                                                                                          |
 | `needs_rerun` (exit code 3)             | (Reserved — not currently emitted.) Treat as `escalate` if encountered unexpectedly.                                                                                                                                                                                                                                                                                                      |
-| `waiting_on_reviewer` (exit code 4)     | Summary comment posted automatically by the script. Stop this local runner as waiting on the named reviewer; do not dispatch fixes, post duplicate triggers, apply readiness labels, enter CI readiness gates, or merge. Re-run Step 7 after the reviewer posts current-head terminal evidence or the human explicitly asks to poll again.                                                                                                                 |
+| `waiting_on_reviewer` (exit code 4) with `NO_VERDICT_REWAIT=available` | No verdict yet (#1789): a reviewer's wait budget ran out with no verdict and no failure evidence. Re-run Step 7 **once, immediately**, with the same `PR_REVIEW_LOOP_RUN_ID`. Do not dispatch a fixer, do not increment `cycle`, and do not apply a readiness label. The re-run adopts the request the first run recorded and posts no duplicate review request. |
+| `waiting_on_reviewer` (exit code 4) with `NO_VERDICT_REWAIT=used` | The automatic re-wait for this revision already ran. Stop this local runner as **Waiting on reviewer**: name `PENDING_REVIEWER`, `PENDING_REVIEW_HEAD_SHA`, the request time (`PENDING_REVIEW_REQUESTED_AT`), and the waited seconds (`PENDING_REVIEW_WAITED_SECONDS`), plus the failure statement below. Human action: re-run the reviewer loop later on the same revision, or investigate the platform if it still has not answered. Do not dispatch fixes, post duplicate triggers, apply readiness labels, enter CI readiness gates, or merge. This is not an escalation. |
+| `waiting_on_reviewer` (exit code 4) with `NO_VERDICT_REWAIT=untracked` | Stop as **Waiting on reviewer** exactly as for `used`, without the automatic re-wait: the once-per-revision bound cannot be enforced without a stable `PR_REVIEW_LOOP_RUN_ID` or a persisted waiting entry. |
+| `waiting_on_reviewer` (exit code 4) with `NO_VERDICT_REWAIT` absent or any other value | Treat as `untracked`: stop as **Waiting on reviewer** without the automatic re-wait. This fails closed, so a result the runner cannot place within the once-per-revision bound never re-runs Step 7 automatically. |
+| Result of the automatic re-wait run | Act on it with its own row in this table (`clean`, `needs_fixes`, `escalate`, or a `waiting_on_reviewer` row). |
 | `escalate` with `REASON=pr_ownership_branch_required`, `REASON=pr_ownership_mismatch`, or `REASON=pr_ownership_unverified` | The loop stopped before any side effect: the PR number passed to it is not verified as the PR of `--branch` (or, without `--branch`, of the workflow branch checked out where it ran), issue #1444. For `pr_ownership_branch_required`, re-run with `--branch <branch_name>`. No summary comment was posted and nothing on the PR changed. Do not dispatch a fixer. Re-resolve this item's PR with `gh pr view --json number` on the item branch and re-run Step 7 with that number; if the PR cannot be resolved, stop with `pr_ownership_refused` (`guardrails-enforcement.md` section 4) and include the `PR_OWNERSHIP_*` lines. |
 | `escalate`                              | Summary comment posted automatically by the script. Escalate to human                                                                                                                                                                                                                                                                                                                      |
+
+**Failure statement in a Waiting on reviewer stop (#1789).** Read it from the
+waiting run's own output, never from an earlier run:
+
+- `NO_FAILURE_DETECTED=1`: state that no reviewer failure was detected.
+- `NO_FAILURE_DETECTED=0` with a non-empty `FAILED_PEER_PLATFORMS`: do not say
+  that no failure was detected. Name each listed platform as carrying failure
+  evidence with `reviewer-failed` applied, and add the human action "fix the
+  failed peer's problem and re-run the loop". The pending platform is still
+  reported as Waiting on reviewer, and the `available` re-wait row still
+  applies.
+- `NO_FAILURE_DETECTED=0` with `FAILED_PEER_PLATFORMS` absent or empty: state
+  that `reviewer-failed` was applied, without naming a peer.
+- `NO_FAILURE_DETECTED` absent or any other value: make no failure statement
+  either way. This fails closed: an unknown value never becomes "no failure
+  was detected".
+
+The re-wait does not count toward `max_cycles`: the loop counts only
+`needs_fixes` / `needs_rerun` entries, and the runner increments `cycle` only
+when it dispatches a fixer. See "Reviewer wait budgets and outcome classes" in
+[`93-automated-reviewer-loop-protocol.md`](93-automated-reviewer-loop-protocol.md#reviewer-wait-budgets-and-outcome-classes-1789)
+for the outcome classes, budgets, precedence, and the `reviewer-failed` label
+rule.
 
 ### PR-Agent "Possible Issue" advisory labels
 
@@ -2614,8 +2652,8 @@ discarded when the orchestration session ends.
 
 | Parameter       | Value  | Description                                                        |
 | --------------- | ------ | ------------------------------------------------------------------ |
-| `poll_interval` | 2 min  | Time to wait between review status checks                          |
-| `max_wait`      | 20 min | Max wait **per fix cycle** for the reviewer to respond             |
+| `poll_interval` | 2 min  | Time to wait between review status checks (30 s on documentation branches; 60 s for Codex GitHub) |
+| `max_wait`      | per platform | Each reviewer's own wait budget: 2400 s for Bugbot, 1800 s for Codex GitHub, 1200 s for the others, configurable under `review.wait_budgets` (Protocol 93); a wait that runs out is No verdict yet, re-waited once per revision |
 | `max_cycles`    | 10     | Max number of times a fixing agent is dispatched before escalating |
 
 ---

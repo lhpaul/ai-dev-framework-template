@@ -11,6 +11,9 @@
 #      distinguishes an unreadable Type field from a clean [] (issue #1400)
 #   6. update_tracker_status_best_effort names the board's valid options for
 #      an unknown Status and fails only in strict mode (issue #1564)
+#   7. When issue.projectItems is empty but the card is on the board (org
+#      project + unlinked personal repository), Status/Type/membership reads
+#      fall back to one per-target cached filtered candidate page (issue #1801)
 #
 # Usage: bash scripts/development-workflow/tests/test-workflow-lib-github-projects.sh
 # covers: scripts/development-workflow/workflow-lib.sh
@@ -22,10 +25,12 @@ REPO_ROOT="$(CDPATH='' cd -- "$SCRIPT_DIR/../../.." && pwd)"
 
 MOCK_BIN="$(mktemp -d)"
 CALL_LOG="$(mktemp)"
+ITEM_LIST_CACHE_DIR="$(mktemp -d)"
+export WORKFLOW_GH_ITEM_LIST_CACHE_DIR="$ITEM_LIST_CACHE_DIR"
 
 _harness_exit() {
   local status=$?
-  rm -rf "$MOCK_BIN"
+  rm -rf "$MOCK_BIN" "$ITEM_LIST_CACHE_DIR"
   rm -f "$CALL_LOG"
   case "$status" in
     141) exit 0 ;;
@@ -88,8 +93,27 @@ JSON
     fi
     printf '{"number":824,"milestone":{"number":7}}\n'
     ;;
+  "api repos/lhpaul/ai-dev-framework-template/issues/824")
+    printf '{"number":824,"title":"Workflow helper issue","state":"open"}\n'
+    ;;
   *"api graphql"* )
     case "$*" in
+      *"items(first:100,query:"*)
+        # Bounded-reader response is independent of exhaustive CLI semantics.
+        if [ "${MOCK_ITEM_LIST_MODE:-default}" = "fail" ]; then
+          printf 'candidate lookup failed\n' >&2
+          exit 42
+        fi
+        if [ "${MOCK_ITEM_LIST_MODE:-default}" = "empty_board" ]; then
+          printf '{"data":{"node":{"items":{"nodes":[],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}\n'
+        elif [ "${MOCK_ITEM_LIST_MODE:-default}" = "foreign_only" ]; then
+          printf '{"data":{"node":{"items":{"nodes":[{"id":"foreign","content":{"number":824,"repository":{"nameWithOwner":"other/repo"}}}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}\n'
+        else
+          cat <<'JSON'
+{"data":{"node":{"items":{"nodes":[{"id":"PVTI_foreign_824","content":{"number":824,"repository":{"nameWithOwner":"other-org/other-repo"}},"status":{"name":"Done"},"type":{"name":"Bug"}},{"id":"PVTI_item_824","content":{"number":824,"repository":{"nameWithOwner":"lhpaul/ai-dev-framework-template"}},"status":{"name":"Backlog"},"customType":{"name":"Feature"},"priority":{"name":"High"},"size":{"name":"S"}}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}
+JSON
+        fi
+        ;;
       *"projectV2(number:"*)
         cat <<'JSON'
 {"data":{"user":{"projectV2":{"id":"PVT_project_1"}},"organization":null}}
@@ -230,31 +254,81 @@ JSON
         ;;
     esac
     ;;
-  "issue list --repo lhpaul/ai-dev-framework-template --state open --limit 1000 --json number,title,labels,createdAt,url")
+  "issue list --repo lhpaul/ai-dev-framework-template --state open --limit "*" --json number,title,labels,createdAt,url")
+    if [ "${MOCK_ISSUE_LIST_MODE:-default}" = "paged" ]; then
+      # MOCK_ISSUE_TOTAL open issues numbered 1..N, honouring --limit ($8).
+      jq -cn --argjson limit "$8" --argjson total "${MOCK_ISSUE_TOTAL:-1500}" '
+        [ range(1; ([$limit, $total] | min) + 1)
+          | {number: ., title: "Issue \(.)", labels: [], createdAt: "2026-06-04T00:00:00Z",
+             url: "https://github.com/lhpaul/ai-dev-framework-template/issues/\(.)"} ]'
+      exit 0
+    fi
     cat <<'JSON'
 [{"number":824,"title":"Workflow helper issue","labels":[],"createdAt":"2026-06-04T00:00:00Z","url":"https://github.com/lhpaul/ai-dev-framework-template/issues/824"},{"number":825,"title":"Bug helper issue","labels":[],"createdAt":"2026-06-04T01:00:00Z","url":"https://github.com/lhpaul/ai-dev-framework-template/issues/825"},{"number":826,"title":"Done workflow helper issue","labels":[],"createdAt":"2026-06-04T02:00:00Z","url":"https://github.com/lhpaul/ai-dev-framework-template/issues/826"},{"number":827,"title":"Merged workflow helper issue","labels":[],"createdAt":"2026-06-04T03:00:00Z","url":"https://github.com/lhpaul/ai-dev-framework-template/issues/827"},{"number":828,"title":"Released workflow helper issue","labels":[],"createdAt":"2026-06-04T04:00:00Z","url":"https://github.com/lhpaul/ai-dev-framework-template/issues/828"},{"number":829,"title":"Cancelled workflow helper issue","labels":[],"createdAt":"2026-06-04T05:00:00Z","url":"https://github.com/lhpaul/ai-dev-framework-template/issues/829"}]
 JSON
     ;;
-  "project item-list 1 --owner lhpaul --limit 1000 --format json")
+  "project item-list 1 --owner lhpaul --limit "*" --format json")
     # Real `gh project item-list --format json` derives each item's field
     # key from the field's display name, lowercasing only the first
     # character. "Type" is a reserved GitHub Projects field name, so no
     # conforming board can name its classification field "Type" — the
     # fixture below uses "custom Type" (from a field literally named
     # "Custom Type"), the key a real board actually emits (issue #1400).
-    if [ "${MOCK_ITEM_LIST_MODE:-default}" = "configured_field" ]; then
+    # Content objects follow the live-verified schema (#1804):
+    # content.repository is "owner/repo", content.url the full issue URL.
+    # The --limit value is the 7th argument.
+    mock_limit="$7"
+    if [ "${MOCK_ITEM_LIST_MODE:-default}" = "cross_repo_collision" ]; then
+      # A foreign repository's Workflow item #824 on the same org board, a
+      # foreign item identified only by URL, and an item with no repository
+      # identity: none may join this repository's open issue #824 (#1804).
+      cat <<'JSON'
+{"items":[{"content":{"number":824,"repository":"lhpaul/some-other-repo","type":"Issue","url":"https://github.com/lhpaul/some-other-repo/issues/824"},"status":"Backlog","priority":"High","custom Type":"Workflow","title":"Foreign 824"},{"content":{"number":824,"type":"Issue","url":"https://github.com/lhpaul/some-other-repo/issues/824"},"status":"Backlog","priority":"High","custom Type":"Workflow","title":"Foreign 824 by URL"},{"content":{"number":824},"status":"Backlog","priority":"High","custom Type":"Workflow","title":"Unidentified 824"}],"totalCount":3}
+JSON
+    elif [ "${MOCK_ITEM_LIST_MODE:-default}" = "short_of_total" ]; then
+      # Fewer items than both the cap and gh's own totalCount (#1804).
+      printf '{"items":[],"totalCount":1500}\n'
+    elif [ "${MOCK_ITEM_LIST_MODE:-default}" = "large_issue_join" ]; then
+      # Workflow item for open issue #11500 of a 12,000-issue list (#1804).
+      cat <<'JSON'
+{"items":[{"content":{"number":11500,"repository":"lhpaul/ai-dev-framework-template","type":"Issue","url":"https://github.com/lhpaul/ai-dev-framework-template/issues/11500"},"status":"Backlog","priority":"High","custom Type":"Workflow","title":"Issue 11500"}],"totalCount":1}
+JSON
+    elif [ "${MOCK_ITEM_LIST_MODE:-default}" = "paged" ]; then
+      # MOCK_ITEM_TOTAL board items; Workflow item #824 is record 1200.
+      jq -cn --argjson limit "$mock_limit" --argjson total "${MOCK_ITEM_TOTAL:-1500}" '
+        { items: [ range(1; ([$limit, $total] | min) + 1) as $i
+            | (if $i == 1200 then 824 else 100000 + $i end) as $n
+            | {content: {number: $n, repository: "lhpaul/ai-dev-framework-template", type: "Issue",
+                         url: "https://github.com/lhpaul/ai-dev-framework-template/issues/\($n)"},
+               status: "Backlog", priority: "High", "custom Type": "Workflow", title: "Item \($n)"} ],
+          totalCount: $total }'
+    elif [ "${MOCK_ITEM_LIST_MODE:-default}" = "configured_field" ]; then
       # Board configured with issue_tracker.custom_fields.type_field:
       # "Classification" — key is "classification".
       cat <<'JSON'
-{"items":[{"content":{"number":824},"status":"Backlog","priority":"High","classification":"Workflow","custom Type":"Bug","title":"Workflow helper issue"}]}
+{"items":[{"content":{"number":824,"repository":"lhpaul/ai-dev-framework-template","type":"Issue","url":"https://github.com/lhpaul/ai-dev-framework-template/issues/824"},"status":"Backlog","priority":"High","classification":"Workflow","custom Type":"Bug","title":"Workflow helper issue"}]}
 JSON
     elif [ "${MOCK_ITEM_LIST_MODE:-default}" = "unreadable" ]; then
       # No key matching any candidate (preferred/"Custom Type"/"CustomType"/
       # "Type") is present anywhere in the payload — simulates a
       # misconfigured or unreadable Type field.
       cat <<'JSON'
-{"items":[{"content":{"number":824},"status":"Backlog","priority":"High","title":"Workflow helper issue"}]}
+{"items":[{"content":{"number":824,"repository":"lhpaul/ai-dev-framework-template","type":"Issue","url":"https://github.com/lhpaul/ai-dev-framework-template/issues/824"},"status":"Backlog","priority":"High","title":"Workflow helper issue"}]}
 JSON
+    elif [ "${MOCK_ITEM_LIST_MODE:-default}" = "org_board_unlinked" ]; then
+      # issue #1801: the card is on the board (added with item-add) although
+      # repository.issue.projectItems is empty. A foreign repository's #824
+      # comes first to prove the fallback joins by repository and number.
+      cat <<'JSON'
+{"items":[{"id":"PVTI_foreign_824","content":{"number":824,"repository":"other-org/other-repo","type":"Issue","url":"https://github.com/other-org/other-repo/issues/824"},"status":"Done","priority":"Low","custom Type":"Bug","title":"Foreign 824"},{"id":"PVTI_item_824","content":{"number":824,"repository":"lhpaul/ai-dev-framework-template","type":"Issue","url":"https://github.com/lhpaul/ai-dev-framework-template/issues/824"},"status":"Backlog","priority":"High","size":"S","custom Type":"Feature","title":"Workflow helper issue"}],"totalCount":2}
+JSON
+    elif [ "${MOCK_ITEM_LIST_MODE:-default}" = "foreign_only" ]; then
+      cat <<'JSON'
+{"items":[{"id":"PVTI_foreign_824","content":{"number":824,"repository":"other-org/other-repo","type":"Issue","url":"https://github.com/other-org/other-repo/issues/824"},"status":"Done","priority":"Low","custom Type":"Bug","title":"Foreign 824"}],"totalCount":1}
+JSON
+    elif [ "${MOCK_ITEM_LIST_MODE:-default}" = "fail" ]; then
+      printf 'item-list failed\n' >&2
+      exit 42
     elif [ "${MOCK_ITEM_LIST_MODE:-default}" = "empty_board" ]; then
       # Project board has zero items yet (e.g. open issues not triaged onto
       # the board). This must be a clean "no open Workflow items" result, not
@@ -265,7 +339,7 @@ JSON
 JSON
     else
       cat <<'JSON'
-{"items":[{"content":{"number":824},"status":"Backlog","priority":"High","custom Type":"Workflow","title":"Workflow helper issue"},{"content":{"number":825},"status":"Backlog","priority":"High","custom Type":"Bug","title":"Bug helper issue"},{"content":{"number":826},"status":"Done","priority":"High","custom Type":"Workflow","title":"Done workflow helper issue"},{"content":{"number":827},"status":"Merged","priority":"High","custom Type":"Workflow","title":"Merged workflow helper issue"},{"content":{"number":828},"status":"Released","priority":"High","custom Type":"Workflow","title":"Released workflow helper issue"},{"content":{"number":829},"status":"Cancelled","priority":"High","custom Type":"Workflow","title":"Cancelled workflow helper issue"}]}
+{"items":[{"content":{"number":824,"repository":"lhpaul/ai-dev-framework-template","type":"Issue","url":"https://github.com/lhpaul/ai-dev-framework-template/issues/824"},"status":"Backlog","priority":"High","custom Type":"Workflow","title":"Workflow helper issue"},{"content":{"number":825,"repository":"lhpaul/ai-dev-framework-template","type":"Issue","url":"https://github.com/lhpaul/ai-dev-framework-template/issues/825"},"status":"Backlog","priority":"High","custom Type":"Bug","title":"Bug helper issue"},{"content":{"number":826,"repository":"lhpaul/ai-dev-framework-template","type":"Issue","url":"https://github.com/lhpaul/ai-dev-framework-template/issues/826"},"status":"Done","priority":"High","custom Type":"Workflow","title":"Done workflow helper issue"},{"content":{"number":827,"repository":"lhpaul/ai-dev-framework-template","type":"Issue","url":"https://github.com/lhpaul/ai-dev-framework-template/issues/827"},"status":"Merged","priority":"High","custom Type":"Workflow","title":"Merged workflow helper issue"},{"content":{"number":828,"repository":"lhpaul/ai-dev-framework-template","type":"Issue","url":"https://github.com/lhpaul/ai-dev-framework-template/issues/828"},"status":"Released","priority":"High","custom Type":"Workflow","title":"Released workflow helper issue"},{"content":{"number":829,"repository":"lhpaul/ai-dev-framework-template","type":"Issue","url":"https://github.com/lhpaul/ai-dev-framework-template/issues/829"},"status":"Cancelled","priority":"High","custom Type":"Workflow","title":"Cancelled workflow helper issue"}]}
 JSON
     fi
     ;;
@@ -330,6 +404,7 @@ count_log_matches() {
 
 reset_log() {
   : > "$CALL_LOG"
+  rm -f "$ITEM_LIST_CACHE_DIR"/*.json
 }
 
 echo ""
@@ -445,15 +520,178 @@ run_test "membership_existing_does_not_add" "0" "$(count_log_matches 'project it
 
 reset_log
 export MOCK_PROJECT_ITEM_MODE=missing
+export MOCK_ITEM_LIST_MODE=empty_board
 membership_output="$(ensure_on_project_board 824 "In Development")"
 unset MOCK_PROJECT_ITEM_MODE
+unset MOCK_ITEM_LIST_MODE
 case "$membership_output" in
   *"added to project board"*) membership_result="added" ;;
   *) membership_result="$membership_output" ;;
 esac
 run_test "membership_missing_adds_issue" "added" "$membership_result"
-run_test "membership_missing_avoids_full_board_scan" "" "$(forbidden_project_reads)"
+# One bounded candidate read confirms absence; item-add invalidates the cache, so the
+# initial-status update re-reads the target once more (issue #1801).
+run_test "membership_missing_scans_board_before_and_after_add" "2" "$(count_log_matches 'items[(]first:100,query:')"
 run_test "membership_missing_adds_once" "1" "$(count_log_matches 'project item-add')"
+
+echo ""
+echo "=== issue.projectItems empty: item-list fallback (#1801) ==="
+
+reset_log
+export MOCK_PROJECT_ITEM_MODE=missing
+export MOCK_ITEM_LIST_MODE=org_board_unlinked
+fallback_status="$(get_tracker_status_for_issue 824)"
+fallback_type="$(get_tracker_type_for_issue 824)"
+fallback_item="$(workflow_github_project_item_for_issue 824 1 2>/dev/null)"
+unset MOCK_PROJECT_ITEM_MODE
+unset MOCK_ITEM_LIST_MODE
+run_test "fallback_status_read" "Backlog" "$fallback_status"
+run_test "fallback_type_read" "Feature" "$fallback_type"
+run_test "fallback_item_id_is_this_repo_card" "PVTI_item_824" "$(printf '%s' "$fallback_item" | jq -r '.item_id')"
+run_test "fallback_item_carries_project_id" "PVT_project_1" "$(printf '%s' "$fallback_item" | jq -r '.project_id')"
+run_test "fallback_item_carries_priority_and_size" "High/S" "$(printf '%s' "$fallback_item" | jq -r '.priority + "/" + .size')"
+run_test "fallback_target_read_once_per_process" "1" "$(count_log_matches 'items[(]first:100,query:')"
+run_test "fallback_tries_graphql_first_each_read" "3" "$(count_log_matches 'projectItems')"
+
+reset_log
+export MOCK_PROJECT_ITEM_MODE=missing
+export MOCK_ITEM_LIST_MODE=org_board_unlinked
+membership_output="$(ensure_on_project_board 824 "In Development")"
+unset MOCK_PROJECT_ITEM_MODE
+unset MOCK_ITEM_LIST_MODE
+case "$membership_output" in
+  *"already on project board"*) membership_result="already-present" ;;
+  *) membership_result="$membership_output" ;;
+esac
+run_test "fallback_membership_detects_card" "already-present" "$membership_result"
+run_test "fallback_membership_does_not_readd" "0" "$(count_log_matches 'project item-add')"
+
+reset_log
+export MOCK_PROJECT_ITEM_MODE=missing
+export MOCK_ITEM_LIST_MODE=org_board_unlinked
+fallback_update_output="$(update_tracker_status_best_effort 824 "In Development")"
+unset MOCK_PROJECT_ITEM_MODE
+unset MOCK_ITEM_LIST_MODE
+case "$fallback_update_output" in
+  *"TRACKER_STATUS_APPLIED issue=824"*) fallback_update_result="applied" ;;
+  *) fallback_update_result="$fallback_update_output" ;;
+esac
+run_test "fallback_status_update_applies" "applied" "$fallback_update_result"
+run_test "fallback_status_update_mutates_fallback_item" "1" "$(count_log_matches 'itemId=PVTI_item_824')"
+
+reset_log
+export MOCK_PROJECT_ITEM_MODE=missing
+export MOCK_ITEM_LIST_MODE=foreign_only
+foreign_status="$(get_tracker_status_for_issue 824)"
+unset MOCK_PROJECT_ITEM_MODE
+unset MOCK_ITEM_LIST_MODE
+run_test "fallback_ignores_same_number_in_other_repo" "" "$foreign_status"
+
+reset_log
+export MOCK_PROJECT_ITEM_MODE=missing
+export MOCK_ITEM_LIST_MODE=fail
+failed_fallback_stderr="$(get_tracker_status_for_issue 824 2>&1 >/dev/null || true)"
+failed_fallback_status="$(get_tracker_status_for_issue 824 2>/dev/null)"
+unset MOCK_PROJECT_ITEM_MODE
+unset MOCK_ITEM_LIST_MODE
+case "$failed_fallback_stderr" in
+  *"item-list fallback failed"*) failed_fallback_result="warned" ;;
+  *) failed_fallback_result="$failed_fallback_stderr" ;;
+esac
+run_test "fallback_failure_warns" "warned" "$failed_fallback_result"
+run_test "fallback_failure_returns_empty" "" "$failed_fallback_status"
+run_test "fallback_failure_is_not_cached" "0" "$(find "$ITEM_LIST_CACHE_DIR" -name '*.json' | wc -l | tr -d ' ')"
+
+reset_log
+export MOCK_PROJECT_ITEM_MODE=missing
+export MOCK_ITEM_LIST_MODE=org_board_unlinked
+export WORKFLOW_GH_ITEM_LIST_FALLBACK=0
+disabled_status="$(get_tracker_status_for_issue 824)"
+unset WORKFLOW_GH_ITEM_LIST_FALLBACK
+unset MOCK_PROJECT_ITEM_MODE
+unset MOCK_ITEM_LIST_MODE
+run_test "fallback_opt_out_returns_empty" "" "$disabled_status"
+run_test "fallback_opt_out_avoids_full_board_scan" "" "$(forbidden_project_reads)"
+
+reset_log
+export MOCK_PROJECT_ITEM_MODE=missing
+export MOCK_ITEM_LIST_MODE=org_board_unlinked
+export WORKFLOW_GH_ITEM_LIST_CACHE_TTL_MINUTES=0
+get_tracker_status_for_issue 824 >/dev/null
+get_tracker_status_for_issue 824 >/dev/null
+unset WORKFLOW_GH_ITEM_LIST_CACHE_TTL_MINUTES
+unset MOCK_PROJECT_ITEM_MODE
+unset MOCK_ITEM_LIST_MODE
+run_test "fallback_zero_ttl_disables_cache_reuse" "2" "$(count_log_matches 'items[(]first:100,query:')"
+
+reset_log
+stale_cache_file="$ITEM_LIST_CACHE_DIR/1-stale-1.json"
+printf '{"items":[]}' > "$stale_cache_file"
+touch -t 200001010000 "$stale_cache_file"
+export MOCK_PROJECT_ITEM_MODE=missing
+export MOCK_ITEM_LIST_MODE=org_board_unlinked
+get_tracker_status_for_issue 824 >/dev/null
+unset MOCK_PROJECT_ITEM_MODE
+unset MOCK_ITEM_LIST_MODE
+run_test "fallback_write_sweeps_hour_old_cache_files" "absent" "$([ -e "$stale_cache_file" ] && echo present || echo absent)"
+
+reset_log
+export MOCK_PROJECT_ITEM_MODE=missing
+export MOCK_ITEM_LIST_MODE=org_board_unlinked
+get_tracker_status_for_issue 824 >/dev/null
+workflow_github_project_item_list_cache_invalidate
+get_tracker_status_for_issue 824 >/dev/null
+unset MOCK_PROJECT_ITEM_MODE
+unset MOCK_ITEM_LIST_MODE
+run_test "fallback_cache_invalidate_forces_rescan" "2" "$(count_log_matches 'items[(]first:100,query:')"
+
+# A successful field write must drop the cached target, or the next fallback
+# read reports the value this process just overwrote. Each case: one read
+# (scan 1), one write whose item lookup reuses the cache, one read (scan 2).
+for fallback_write in status type priority; do
+  reset_log
+  export MOCK_PROJECT_ITEM_MODE=missing
+  export MOCK_ITEM_LIST_MODE=org_board_unlinked
+  get_tracker_status_for_issue 824 >/dev/null
+  case "$fallback_write" in
+    status) update_tracker_status_best_effort 824 "In Development" >/dev/null ;;
+    type) update_tracker_type_best_effort 824 "Bug" >/dev/null ;;
+    priority)
+      export MOCK_STATUS_FIELD_MODE=priority_configured
+      update_tracker_named_field_best_effort 824 "Priority" "High" >/dev/null 2>&1 || true
+      unset MOCK_STATUS_FIELD_MODE
+      ;;
+  esac
+  writes_after="$(count_log_matches 'updateProjectV2ItemFieldValue')"
+  get_tracker_status_for_issue 824 >/dev/null
+  unset MOCK_PROJECT_ITEM_MODE
+  unset MOCK_ITEM_LIST_MODE
+  run_test "fallback_${fallback_write}_write_lands" "1" "$writes_after"
+  run_test "fallback_${fallback_write}_write_invalidates_board_cache" "2" "$(count_log_matches 'items[(]first:100,query:')"
+done
+
+reset_log
+export MOCK_PROJECT_ITEM_MODE=missing
+export MOCK_ITEM_LIST_MODE=org_board_unlinked
+get_tracker_status_for_issue 824 >/dev/null
+export MOCK_STATUS_FIELD_MODE=graphql_fail
+update_tracker_status_best_effort 824 "In Development" >/dev/null 2>&1 || true
+unset MOCK_STATUS_FIELD_MODE
+get_tracker_status_for_issue 824 >/dev/null
+unset MOCK_PROJECT_ITEM_MODE
+unset MOCK_ITEM_LIST_MODE
+run_test "fallback_failed_write_keeps_board_cache" "1" "$(count_log_matches 'items[(]first:100,query:')"
+
+reset_log
+orphan_tmp_file="$ITEM_LIST_CACHE_DIR/.item-list.orphan1"
+printf 'partial' > "$orphan_tmp_file"
+touch -t 200001010000 "$orphan_tmp_file"
+export MOCK_PROJECT_ITEM_MODE=missing
+export MOCK_ITEM_LIST_MODE=org_board_unlinked
+get_tracker_status_for_issue 824 >/dev/null
+unset MOCK_PROJECT_ITEM_MODE
+unset MOCK_ITEM_LIST_MODE
+run_test "fallback_write_sweeps_hour_old_orphan_temp_files" "absent" "$([ -e "$orphan_tmp_file" ] && echo present || echo absent)"
 
 reset_log
 update_output="$(update_tracker_status_best_effort 824 "In Development" "Spec Ready")"
@@ -712,6 +950,67 @@ case "$workflow_issues_empty_board_stderr" in
   *) empty_board_warning_result="no-warning" ;;
 esac
 run_test "workflow_type_discovery_empty_board_no_false_warning" "no-warning" "$empty_board_warning_result"
+
+# Regression (issue #1804): the project item -> open issue join is by
+# (repository, number). A foreign repository's Workflow item #824 on the same
+# org-owned board — identified by content.repository or only by
+# content.url — and an item carrying no repository identity at all must not
+# attach to this repository's open issue #824.
+reset_log
+export MOCK_ITEM_LIST_MODE=cross_repo_collision
+workflow_issues_cross_repo="$(list_open_workflow_type_issues 2>/dev/null)"
+unset MOCK_ITEM_LIST_MODE
+run_test "workflow_type_discovery_excludes_cross_repo_collision" "[]" "$(printf '%s' "$workflow_issues_cross_repo" | jq -c '.')"
+
+# Regression (issue #1804): both reads are exhaustive, not capped at 1000.
+reset_log
+export MOCK_ITEM_LIST_MODE=paged MOCK_ITEM_TOTAL=1500
+workflow_issues_paged_items="$(list_open_workflow_type_issues 2>/dev/null)"
+unset MOCK_ITEM_LIST_MODE MOCK_ITEM_TOTAL
+run_test "workflow_type_discovery_paginates_item_list" "824" "$(printf '%s' "$workflow_issues_paged_items" | jq -r '.[].number' | tr '\n' ' ' | sed 's/ $//')"
+run_test "workflow_type_discovery_item_list_rereads_with_larger_cap" "1" "$(count_log_matches 'project item-list 1 --owner lhpaul --limit 2000 ')"
+
+reset_log
+export MOCK_ISSUE_LIST_MODE=paged MOCK_ISSUE_TOTAL=1500
+workflow_issues_paged_issues="$(list_open_workflow_type_issues 2>/dev/null)"
+unset MOCK_ISSUE_LIST_MODE MOCK_ISSUE_TOTAL
+run_test "workflow_type_discovery_paginates_issue_list" "824" "$(printf '%s' "$workflow_issues_paged_issues" | jq -r '.[].number' | tr '\n' ' ' | sed 's/ $//')"
+run_test "workflow_type_discovery_issue_list_rereads_with_larger_cap" "1" "$(count_log_matches 'issue list .* --limit 2000 ')"
+
+# A large, successfully fetched issue list must survive the final join; as
+# one jq --argjson argument it exceeds the OS argument-size limit
+# (local-ai-reviewer finding, #1804).
+reset_log
+export MOCK_ISSUE_LIST_MODE=paged MOCK_ISSUE_TOTAL=12000 MOCK_ITEM_LIST_MODE=large_issue_join
+workflow_issues_large="$(list_open_workflow_type_issues 2>/dev/null)"
+unset MOCK_ISSUE_LIST_MODE MOCK_ISSUE_TOTAL MOCK_ITEM_LIST_MODE
+run_test "workflow_type_discovery_large_issue_list_join" "11500" "$(printf '%s' "$workflow_issues_large" | jq -r '.[].number' | tr '\n' ' ' | sed 's/ $//')"
+
+# A response shorter than gh's own reported totalCount is incomplete: the
+# primitive refuses it rather than treating the board as empty
+# (local-ai-reviewer finding, #1804).
+reset_log
+export MOCK_ITEM_LIST_MODE=short_of_total
+workflow_issues_short_stderr="$(list_open_workflow_type_issues 2>&1 >/dev/null)"
+unset MOCK_ITEM_LIST_MODE
+case "$workflow_issues_short_stderr" in
+  *"refusing a truncated list"*) short_warning_result="warned" ;;
+  *) short_warning_result="$workflow_issues_short_stderr" ;;
+esac
+run_test "workflow_type_discovery_short_of_total_count_warns" "warned" "$short_warning_result"
+
+# Past the hard bound the primitive refuses a partial list and warns.
+reset_log
+export MOCK_ITEM_LIST_MODE=paged MOCK_ITEM_TOTAL=100000
+workflow_issues_truncated_stderr="$(list_open_workflow_type_issues 2>&1 >/dev/null)"
+workflow_issues_truncated="$(list_open_workflow_type_issues 2>/dev/null)"
+unset MOCK_ITEM_LIST_MODE MOCK_ITEM_TOTAL
+run_test "workflow_type_discovery_truncated_returns_empty" "[]" "$(printf '%s' "$workflow_issues_truncated" | jq -c '.')"
+case "$workflow_issues_truncated_stderr" in
+  *"refusing a truncated list"*) truncated_warning_result="warned" ;;
+  *) truncated_warning_result="$workflow_issues_truncated_stderr" ;;
+esac
+run_test "workflow_type_discovery_truncated_warns" "warned" "$truncated_warning_result"
 
 reset_log
 export MOCK_TRACKER_PROVIDER=linear

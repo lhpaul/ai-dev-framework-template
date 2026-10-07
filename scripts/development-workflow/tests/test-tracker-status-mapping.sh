@@ -100,7 +100,7 @@ for event in dispatch ready-for-human-review merged released; do
   for stage in "${stages[@]}"; do
     status="$(workflow_tracker_status_for_event "$event" "$stage" 2>/dev/null)" || continue
     [ -n "$status" ] || continue
-    workflow_canonical_tracker_statuses | grep -qxF "$status" || unknown_emitted="${unknown_emitted}${status}; "
+    workflow_canonical_tracker_statuses | grep -xF "$status" > /dev/null || unknown_emitted="${unknown_emitted}${status}; "
   done
 done
 run_test "mapping_emits_only_canonical_statuses" "" "$unknown_emitted"

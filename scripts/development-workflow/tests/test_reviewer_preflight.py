@@ -157,10 +157,33 @@ class OutcomeMatrixTests(unittest.TestCase):
         self.assertEqual(entry["reasons"], ["value-not-supported"])
         self.assertIn("on_ready.github", entry["setting"])
 
+    def test_dsh_supported_in_runner_bucket_not_github(self):
+        # dsh is a local-runtime on_draft.runner value; GitHub buckets reject it.
+        payload = base_payload(
+            remaining_stages=["on_draft_runner"],
+            pr_state={"on_draft_runner": "draft"},
+            shared={"on_draft_runner": ["dsh"]},
+            resolved={"on_draft_runner": ["dsh"]},
+        )
+        payload["platform_configs"] = {}
+        result = rp.classify(payload)
+        entry = platform(result, "dsh")
+        self.assertNotIn("value-not-supported", entry["reasons"])
+        github_payload = base_payload(
+            remaining_stages=["on_draft_github"],
+            pr_state={"on_draft_github": "draft"},
+            shared={"on_draft_github": ["dsh"]},
+            resolved={"on_draft_github": ["dsh"]},
+        )
+        github_payload["platform_configs"] = {}
+        github_result = rp.classify(github_payload)
+        github_entry = platform(github_result, "dsh")
+        self.assertEqual(github_entry["reasons"], ["value-not-supported"])
+
     def test_hosted_reviewers_supported_in_runner_bucket(self):
         # resolve-reviewer-availability.sh (Step 7a) accepts coderabbit and
         # codex-github in review.on_draft.runner (probe_hosted, entry case
-        # coderabbit|codex-github) alongside the three local-runtime driving-
+        # coderabbit|codex-github) alongside the four local-runtime driving-
         # session values; the preflight must not reject an existing valid
         # configuration as value-not-supported.
         payload = base_payload(

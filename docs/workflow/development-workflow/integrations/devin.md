@@ -69,14 +69,36 @@ The helper script:
 | Any Devin review with "**Devin Review**", "Devin Review has completed", or "No Issues Found" | Review complete — proceed to Step 7.3                              |
 | `check_completed > 0` and grace period (120s) elapsed                                        | Assume complete — proceed to Step 7.3                              |
 | No completion review yet and `elapsed < max_wait`                                            | Not finished yet — wait another `poll_interval` and poll again     |
-| `elapsed >= max_wait` and no Devin check run was ever seen                                   | Stale findings recovery, then skip as `no_check_run` if none found |
-| `elapsed >= max_wait` and a Devin check run was seen                                         | Timeout — escalate to human                                        |
+| `elapsed >= max_wait` and no Devin check run was ever seen                                   | Stale findings recovery, then the kept skip `no_check_run` if none found (`NO_VERDICT_YET=1`, `DISPLAY_RESULT=no verdict yet (non-blocking skip: no_check_run)`; no `reviewer-failed` label) |
+| `elapsed >= max_wait` and a Devin check run was seen but has not completed                   | **No verdict yet** — `RESULT=waiting_on_reviewer`, `REASON=reviewer-no-verdict-yet`, `WAIT_EXPIRED_DETAIL=check_not_completed`, exit 4; not an escalation |
+| A Devin check run on the head completed `failure`, `timed_out`, `cancelled`, `action_required`, `startup_failure`, or `stale`, or a Devin status is `failure` or `error`, and no finding or completion review is bound to the head | **Reviewer failed** — `RESULT=escalate`, `REASON=devin_run_failed`, `reviewer-failed` applied (also when the budget ends inside the 120 s grace) |
+| A reviews, check-runs, or statuses poll read is refused with HTTP 401 or 403 (not a rate limit) | **Reviewer failed** — `RESULT=escalate`, `REASON=devin-read-denied`, `READ_DENIED_DETAIL=<gh error>`, exit 2, `reviewer-failed` applied; never No verdict yet or the `no_check_run` kept skip. A rate-limit 403 or another failed read keeps polling, and each endpoint's last successful read stays in force (an observed `timed_out` check or `error` status still ends as `devin_run_failed`, and a once-seen check is not reported as `no_check_run`) |
+
+`max_wait` is Devin's own wait budget (#1789): 1200 s by default on
+implementation branches. Devin is the only platform that does not review
+`spec/*` and `implementation-plan/*` branches, so only Devin's built-in default
+is shortened there, to `PR_REVIEW_LOOP_DOC_MAX_WAIT` (default 180 s); a
+configured `review.wait_budgets.devin` value or a one-run `--max-wait` is never
+shortened. See "Reviewer wait budgets and outcome classes" in
+[`../protocols/93-automated-reviewer-loop-protocol.md`](../protocols/93-automated-reviewer-loop-protocol.md#reviewer-wait-budgets-and-outcome-classes-1789).
+
+A failure-type Devin check or status does not override a verdict bound to the
+head: bound findings still give `needs_fixes`, and a bound completion review
+(for example "No Issues Found") keeps its verdict.
+
+**Current-revision binding.** The completion review counts only when its
+`commit_id` is the current head, so an older revision's summary submitted after
+the push does not end the wait. Findings count only from review comments whose
+`original_commit_id` is the current head (GitHub moves `commit_id` forward
+while the commented line is unchanged). Check runs and statuses are read from
+the current head's commit, so they are already bound.
 
 ### Step 7.3 — Fetch inline comments
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
 gh api repos/{owner}/{repo}/pulls/{pr_number}/comments \
-  --jq "[.[] | select(.user.login == \"devin-ai-integration[bot]\" and .created_at > \"$since_iso\" and .in_reply_to_id == null) | {path, line, body}]"
+  --jq "[.[] | select(.user.login == \"devin-ai-integration[bot]\" and .created_at > \"$since_iso\" and .original_commit_id == \"$head_sha\" and .in_reply_to_id == null) | {path, line, body}]"
 ```
 
 **Stale findings recovery:** When Devin does not review the current HEAD (no check run within `max_wait`), the helper scans the full PR history for unresolved Devin inline comments before reporting `skipped`. If unresolved findings exist from a prior review cycle (e.g. before a merge of the base branch), the helper reports `needs_fixes` with reason `stale_findings` so the agent dispatches a fixer. Devin's `✅ **Resolved**` confirmations and "No Issues Found" comments are excluded from this scan.

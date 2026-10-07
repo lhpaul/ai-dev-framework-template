@@ -46,6 +46,11 @@ cleanup() {
   if [ -f "$REAL_AGENTS_BACKUP" ]; then
     cp "$REAL_AGENTS_BACKUP" "$REAL_AGENTS"
   fi
+  # The guidance plant may target a synced orchestrator mirror instead of
+  # AGENTS.md (consumer mode); restore it too if the run stops mid-plant.
+  if [ -n "${GUIDANCE_PLANT_TARGET:-}" ] && [ -f "${_agents_backup:-}" ]; then
+    cp "$_agents_backup" "$REPO_ROOT/$GUIDANCE_PLANT_TARGET"
+  fi
   rm -rf "$TMP_ROOT"
 }
 trap cleanup EXIT
@@ -84,11 +89,22 @@ case "$*" in
     [ "${MOCK_OWNER_MODE:-ok}" = "fail" ] && exit 42
     printf 'ai-dev-framework-template\n'
     ;;
-  "issue list --repo lhpaul/ai-dev-framework-template --state open --limit 1000 --json number,title,labels,createdAt,url")
+  "issue list --repo lhpaul/ai-dev-framework-template --state open --limit "*" --json number,title,labels,createdAt,url")
+    # The --limit value is the 8th argument; paged modes honour it the way
+    # the real gh CLI does (return at most <limit> records) (#1804).
+    mock_limit="$8"
     case "${MOCK_ISSUE_LIST_MODE:-ok}" in
       fail) exit 42 ;;
       blank) printf '' ;;
       malformed) printf 'not json at all' ;;
+      paged)
+        # MOCK_ISSUE_TOTAL open issues numbered 1..N; #900 and #1400 are
+        # real issues this repository's board items refer to.
+        jq -cn --argjson limit "$mock_limit" --argjson total "${MOCK_ISSUE_TOTAL:-1500}" '
+          [ range(1; ([$limit, $total] | min) + 1)
+            | {number: ., title: "Issue \(.)", labels: [], createdAt: "2026-01-01T00:00:00Z",
+               url: "https://github.com/lhpaul/ai-dev-framework-template/issues/\(.)"} ]'
+        ;;
       *)
         cat <<'JSON'
 [{"number":900,"title":"Feature helper issue","labels":[],"createdAt":"2026-01-01T00:00:00Z","url":"https://github.com/lhpaul/ai-dev-framework-template/issues/900"},{"number":901,"title":"Done bug helper issue","labels":[],"createdAt":"2026-01-01T00:00:00Z","url":"https://github.com/lhpaul/ai-dev-framework-template/issues/901"}]
@@ -96,23 +112,100 @@ JSON
         ;;
     esac
     ;;
-  "project item-list 1 --owner lhpaul --limit 1000 --format json --query is:issue")
+  "project item-list 1 --owner lhpaul --limit "*" --format json --query is:issue")
+    # Fixtures use the live `gh project item-list --format json` content
+    # schema, verified for #1804: content.repository is "owner/repo" and
+    # content.url is the full issue URL; totalCount is top-level. The
+    # --limit value is the 7th argument.
+    mock_limit="$7"
     case "${MOCK_ITEM_LIST_MODE:-ok}" in
       fail) exit 42 ;;
       unparseable) printf 'not json' ;;
-      empty) printf '{"items":[]}\n' ;;
+      empty) printf '{"items":[],"totalCount":0}\n' ;;
+      paged)
+        # MOCK_ITEM_TOTAL board items; the only one referring to a real
+        # open issue (#900) sits past the first 1000-record page.
+        jq -cn --argjson limit "$mock_limit" --argjson total "${MOCK_ITEM_TOTAL:-1500}" '
+          { items: [ range(1; ([$limit, $total] | min) + 1) as $i
+              | (if $i == 1200 then 900 else 100000 + $i end) as $n
+              | {content: {number: $n, repository: "lhpaul/ai-dev-framework-template", type: "Issue",
+                           url: "https://github.com/lhpaul/ai-dev-framework-template/issues/\($n)"},
+                 status: "Backlog", priority: "High", type: "Feature", title: "Item \($n)"} ],
+            totalCount: $total }'
+        ;;
+      paged_no_total)
+        # Same board without the top-level totalCount: completeness falls
+        # back to the shorter-than-cap rule.
+        jq -cn --argjson limit "$mock_limit" --argjson total "${MOCK_ITEM_TOTAL:-1500}" '
+          { items: [ range(1; ([$limit, $total] | min) + 1) as $i
+              | (if $i == 1200 then 900 else 100000 + $i end) as $n
+              | {content: {number: $n, repository: "lhpaul/ai-dev-framework-template",
+                           url: "https://github.com/lhpaul/ai-dev-framework-template/issues/\($n)"},
+                 status: "Backlog", priority: "High", type: "Feature", title: "Item \($n)"} ] }'
+        ;;
+      paged_issue_join)
+        # Board item for open issue #1400, which is only visible once the
+        # open-issue read pages past its first 1000 records.
+        cat <<'JSON'
+{"items":[{"content":{"number":1400,"repository":"lhpaul/ai-dev-framework-template","type":"Issue","url":"https://github.com/lhpaul/ai-dev-framework-template/issues/1400"},"status":"Backlog","priority":"High","type":"Feature","title":"Issue 1400"}],"totalCount":1}
+JSON
+        ;;
+      short_of_total)
+        # gh returns fewer items than both the cap and its own reported
+        # totalCount: incomplete, never "empty" (local-ai-reviewer, #1804).
+        printf '{"items":[],"totalCount":1500}\n'
+        ;;
+      large_issue_join)
+        # Board item for open issue #11500 — joinable only when a
+        # 12,000-issue list survives the whole pipeline into jq (#1804).
+        cat <<'JSON'
+{"items":[{"content":{"number":11500,"repository":"lhpaul/ai-dev-framework-template","type":"Issue","url":"https://github.com/lhpaul/ai-dev-framework-template/issues/11500"},"status":"Backlog","priority":"High","type":"Feature","title":"Issue 11500"}],"totalCount":1}
+JSON
+        ;;
       renamed_type_field)
         cat <<'JSON'
-{"items":[{"content":{"number":900},"status":"Backlog","priority":"High","title":"Feature helper issue"}]}
+{"items":[{"content":{"number":900,"repository":"lhpaul/ai-dev-framework-template","type":"Issue","url":"https://github.com/lhpaul/ai-dev-framework-template/issues/900"},"status":"Backlog","priority":"High","title":"Feature helper issue"}],"totalCount":1}
 JSON
         ;;
       cross_repo_collision)
         # A different repository's issue #900, sharing this repo's project
         # board, must not be joined to this repo's open issue #900
         # (codex-github finding, #1583: issue numbers are not globally
-        # unique across repositories in one org-owned project).
+        # unique across repositories in one org-owned project). Legacy
+        # URL-form repository value.
         cat <<'JSON'
 {"items":[{"content":{"number":900,"repository":"https://github.com/lhpaul/some-other-repo"},"status":"Backlog","priority":"High","type":"Feature","title":"Foreign repo's issue 900"}]}
+JSON
+        ;;
+      cross_repo_collision_live_schema)
+        # Same collision in the live-verified schema (#1804):
+        # content.repository is a bare "owner/repo" string.
+        cat <<'JSON'
+{"items":[{"content":{"number":900,"repository":"lhpaul/some-other-repo","type":"Issue","url":"https://github.com/lhpaul/some-other-repo/issues/900"},"status":"Backlog","priority":"High","type":"Feature","title":"Foreign repo's issue 900"}],"totalCount":1}
+JSON
+        ;;
+      cross_repo_collision_url_only)
+        # No content.repository: the item's repository comes from
+        # content.url, and a foreign URL must not join (#1804).
+        cat <<'JSON'
+{"items":[{"content":{"number":900,"type":"Issue","url":"https://github.com/lhpaul/some-other-repo/issues/900"},"status":"Backlog","priority":"High","type":"Feature","title":"Foreign repo's issue 900"}],"totalCount":1}
+JSON
+        ;;
+      same_repo_url_only)
+        cat <<'JSON'
+{"items":[{"content":{"number":900,"type":"Issue","url":"https://github.com/lhpaul/ai-dev-framework-template/issues/900"},"status":"Backlog","priority":"High","type":"Feature","title":"Feature helper issue"}],"totalCount":1}
+JSON
+        ;;
+      same_repo_mixed_case)
+        cat <<'JSON'
+{"items":[{"content":{"number":900,"repository":"LHPaul/AI-Dev-Framework-Template","type":"Issue","url":"https://github.com/LHPaul/AI-Dev-Framework-Template/issues/900"},"status":"Backlog","priority":"High","type":"Feature","title":"Feature helper issue"}],"totalCount":1}
+JSON
+        ;;
+      no_repo_identity)
+        # Neither content.repository nor content.url: the join fails
+        # closed instead of matching by number alone (#1804).
+        cat <<'JSON'
+{"items":[{"content":{"number":900},"status":"Backlog","priority":"High","type":"Feature","title":"Unidentified item 900"}],"totalCount":1}
 JSON
         ;;
       custom_type_field)
@@ -121,12 +214,12 @@ JSON
         # exposes it under the "custom Type" key, never plain "type"
         # (codex-github finding, #1583).
         cat <<'JSON'
-{"items":[{"content":{"number":900},"status":"Backlog","priority":"High","custom Type":"Feature","title":"Feature helper issue"}]}
+{"items":[{"content":{"number":900,"repository":"lhpaul/ai-dev-framework-template","type":"Issue","url":"https://github.com/lhpaul/ai-dev-framework-template/issues/900"},"status":"Backlog","priority":"High","custom Type":"Feature","title":"Feature helper issue"}],"totalCount":1}
 JSON
         ;;
       *)
         cat <<'JSON'
-{"items":[{"content":{"number":900},"status":"Backlog","priority":"High","type":"Feature","title":"Feature helper issue"},{"content":{"number":901},"status":"Done","priority":"High","type":"Bug","title":"Done bug helper issue"}]}
+{"items":[{"content":{"number":900,"repository":"lhpaul/ai-dev-framework-template","type":"Issue","url":"https://github.com/lhpaul/ai-dev-framework-template/issues/900"},"status":"Backlog","priority":"High","type":"Feature","title":"Feature helper issue"},{"content":{"number":901,"repository":"lhpaul/ai-dev-framework-template","type":"Issue","url":"https://github.com/lhpaul/ai-dev-framework-template/issues/901"},"status":"Done","priority":"High","type":"Bug","title":"Done bug helper issue"}],"totalCount":2}
 JSON
         ;;
     esac
@@ -218,7 +311,7 @@ run_wrapper_in_repo "$consumer_config"
 consumer_out="$(cat "$TMP_ROOT/wrapper-stdout.log")"
 run_test "consumer_status_ok" "ok" "$(kv FRAMEWORK_ITEMS_LOOKUP_STATUS "$consumer_out")"
 run_test "consumer_reason_empty" "" "$(kv FRAMEWORK_ITEMS_LOOKUP_REASON "$consumer_out")"
-run_test "consumer_json_present" "yes" "$(printf '%s\n' "$consumer_out" | grep -q '^FRAMEWORK_ITEMS_JSON=' && echo yes || echo no)"
+run_test "consumer_json_present" "yes" "$(grep -q '^FRAMEWORK_ITEMS_JSON=' <<< "$consumer_out" && echo yes || echo no)"
 run_test "consumer_delegates_to_issue_list" "1" "$(grep -c 'issue list --repo' "$CALL_LOG")"
 
 echo ""
@@ -233,6 +326,10 @@ issue_tracker:
 template:
   is_template: true
 EOF
+
+# Ambient framework scenarios below must not inherit the consumer's mode.
+# Keep the untouched master backup for guidance ownership and EXIT cleanup.
+cp "$framework_config" "$REAL_CONFIG"
 
 reset_log
 run_wrapper_in_repo "$framework_config"
@@ -279,6 +376,92 @@ run_test "cross_repo_collision_excluded_status" "empty" "$(kv FRAMEWORK_ITEMS_LO
 run_test "cross_repo_collision_excluded_json_empty" "FRAMEWORK_ITEMS_JSON=[]" "$(printf '%s\n' "$cross_repo_out" | grep '^FRAMEWORK_ITEMS_JSON=')"
 
 echo ""
+echo "=== list_open_framework_items.sh: repository-identity join uses the live content schema (#1804) ==="
+
+# Each mode below places a board item numbered 900 next to this
+# repository's open issue #900; only a same-repository item may join.
+repo_join_case() {
+  # repo_join_case <name> <item-list-mode> <expected-status> <expected-900-count>
+  local name="$1" mode="$2" want_status="$3" want_count="$4" out
+  reset_log
+  MOCK_ITEM_LIST_MODE="$mode" run_wrapper_in_repo "$framework_config"
+  out="$(cat "$TMP_ROOT/wrapper-stdout.log")"
+  run_test "${name}_status" "$want_status" "$(kv FRAMEWORK_ITEMS_LOOKUP_STATUS "$out")"
+  run_test "${name}_joined_count" "$want_count" "$(printf '%s\n' "$out" | grep '^FRAMEWORK_ITEMS_JSON=' | grep -o '"number":900' | wc -l | tr -d ' ')"
+}
+repo_join_case "cross_repo_collision_live_schema_excluded" cross_repo_collision_live_schema empty 0
+repo_join_case "cross_repo_collision_url_only_excluded" cross_repo_collision_url_only empty 0
+repo_join_case "no_repo_identity_fails_closed" no_repo_identity empty 0
+repo_join_case "same_repo_url_only_joined" same_repo_url_only ok 1
+repo_join_case "same_repo_mixed_case_joined" same_repo_mixed_case ok 1
+
+echo ""
+echo "=== list_open_framework_items.sh: exhaustive pagination past the 1000-record cap (#1804) ==="
+
+# Project item-list: the only item for open issue #900 is record 1200 of
+# 1500, so it is visible only after re-reading with a larger cap
+# (gh reports totalCount=1500).
+reset_log
+MOCK_ITEM_LIST_MODE=paged MOCK_ITEM_TOTAL=1500 run_wrapper_in_repo "$framework_config"
+paged_items_out="$(cat "$TMP_ROOT/wrapper-stdout.log")"
+run_test "item_list_paginates_status_ok" "ok" "$(kv FRAMEWORK_ITEMS_LOOKUP_STATUS "$paged_items_out")"
+run_test "item_list_paginates_finds_item_past_first_page" "1" "$(printf '%s\n' "$paged_items_out" | grep '^FRAMEWORK_ITEMS_JSON=' | grep -o '"number":900' | wc -l | tr -d ' ')"
+run_test "item_list_paginates_rereads_with_larger_cap" "1" "$(grep -c 'project item-list 1 --owner lhpaul --limit 2000 --format json --query is:issue' "$CALL_LOG")"
+
+# Same board without totalCount: the shorter-than-cap rule still pages.
+reset_log
+MOCK_ITEM_LIST_MODE=paged_no_total MOCK_ITEM_TOTAL=1500 run_wrapper_in_repo "$framework_config"
+paged_no_total_out="$(cat "$TMP_ROOT/wrapper-stdout.log")"
+run_test "item_list_paginates_without_total_count" "1" "$(printf '%s\n' "$paged_no_total_out" | grep '^FRAMEWORK_ITEMS_JSON=' | grep -o '"number":900' | wc -l | tr -d ' ')"
+
+# A board that fits the first page costs exactly one request.
+reset_log
+run_wrapper_in_repo "$framework_config"
+run_test "item_list_single_request_when_complete" "1" "$(grep -c 'project item-list' "$CALL_LOG")"
+run_test "issue_list_single_request_when_complete" "1" "$(grep -c 'issue list --repo' "$CALL_LOG")"
+
+# Open-issue list: #1400 is beyond the first 1000 open issues.
+reset_log
+MOCK_ISSUE_LIST_MODE=paged MOCK_ISSUE_TOTAL=1500 MOCK_ITEM_LIST_MODE=paged_issue_join run_wrapper_in_repo "$framework_config"
+paged_issues_out="$(cat "$TMP_ROOT/wrapper-stdout.log")"
+run_test "issue_list_paginates_status_ok" "ok" "$(kv FRAMEWORK_ITEMS_LOOKUP_STATUS "$paged_issues_out")"
+run_test "issue_list_paginates_joins_issue_past_first_page" "1" "$(printf '%s\n' "$paged_issues_out" | grep '^FRAMEWORK_ITEMS_JSON=' | grep -o '"number":1400' | wc -l | tr -d ' ')"
+run_test "issue_list_paginates_rereads_with_larger_cap" "1" "$(grep -c 'issue list --repo lhpaul/ai-dev-framework-template --state open --limit 2000 ' "$CALL_LOG")"
+
+# A large, successfully fetched issue list must reach the final join: as a
+# single jq --argjson argument, 12,000 issues exceed the OS argument-size
+# limit and the join fails (local-ai-reviewer finding, #1804).
+reset_log
+MOCK_ISSUE_LIST_MODE=paged MOCK_ISSUE_TOTAL=12000 MOCK_ITEM_LIST_MODE=large_issue_join run_wrapper_in_repo "$framework_config"
+large_issues_out="$(cat "$TMP_ROOT/wrapper-stdout.log")"
+run_test "large_issue_list_join_status_ok" "ok" "$(kv FRAMEWORK_ITEMS_LOOKUP_STATUS "$large_issues_out")"
+run_test "large_issue_list_join_finds_item" "1" "$(printf '%s\n' "$large_issues_out" | grep '^FRAMEWORK_ITEMS_JSON=' | grep -o '"number":11500' | wc -l | tr -d ' ')"
+
+echo ""
+echo "=== list_open_framework_items.sh: truncation past the hard bound is unavailable, never partial (#1804) ==="
+
+reset_log
+MOCK_ITEM_LIST_MODE=paged MOCK_ITEM_TOTAL=100000 run_wrapper_in_repo "$framework_config"
+truncated_items_out="$(cat "$TMP_ROOT/wrapper-stdout.log")"
+run_test "lookup-unavailable-item-list-truncated_status" "unavailable" "$(kv FRAMEWORK_ITEMS_LOOKUP_STATUS "$truncated_items_out")"
+run_test "lookup-unavailable-item-list-truncated_reason" "item_list_truncated" "$(kv FRAMEWORK_ITEMS_LOOKUP_REASON "$truncated_items_out")"
+run_test "lookup-unavailable-item-list-truncated_json" "FRAMEWORK_ITEMS_JSON=[]" "$(printf '%s\n' "$truncated_items_out" | grep '^FRAMEWORK_ITEMS_JSON=')"
+run_test "item_list_truncation_stops_at_hard_bound" "1" "$(grep -c 'project item-list 1 --owner lhpaul --limit 64000 ' "$CALL_LOG")"
+
+reset_log
+MOCK_ITEM_LIST_MODE=short_of_total run_wrapper_in_repo "$framework_config"
+short_of_total_out="$(cat "$TMP_ROOT/wrapper-stdout.log")"
+run_test "item_list_short_of_total_count_status" "unavailable" "$(kv FRAMEWORK_ITEMS_LOOKUP_STATUS "$short_of_total_out")"
+run_test "item_list_short_of_total_count_reason" "item_list_truncated" "$(kv FRAMEWORK_ITEMS_LOOKUP_REASON "$short_of_total_out")"
+
+reset_log
+MOCK_ISSUE_LIST_MODE=paged MOCK_ISSUE_TOTAL=100000 run_wrapper_in_repo "$framework_config"
+truncated_issues_out="$(cat "$TMP_ROOT/wrapper-stdout.log")"
+run_test "lookup-unavailable-issue-list-truncated_status" "unavailable" "$(kv FRAMEWORK_ITEMS_LOOKUP_STATUS "$truncated_issues_out")"
+run_test "lookup-unavailable-issue-list-truncated_reason" "issue_list_truncated" "$(kv FRAMEWORK_ITEMS_LOOKUP_REASON "$truncated_issues_out")"
+run_test "issue_list_truncation_skips_item_list" "0" "$(grep -c 'project item-list' "$CALL_LOG")"
+
+echo ""
 echo "=== list_open_framework_items.sh: type projection resolves the configured custom field key (codex-github finding, #1583) ==="
 
 custom_type_config="$TMP_ROOT/custom-type.yaml"
@@ -295,14 +478,14 @@ EOF
 reset_log
 MOCK_ITEM_LIST_MODE=custom_type_field run_wrapper_in_repo "$custom_type_config"
 custom_type_out="$(cat "$TMP_ROOT/wrapper-stdout.log")"
-run_test "framework_type_projection_resolves_custom_field" "yes" "$(printf '%s\n' "$custom_type_out" | grep 'FRAMEWORK_ITEMS_JSON=' | grep -q '"type":"Feature"' && echo yes || echo no)"
-run_test "framework_type_projection_not_empty_for_custom_field" "no" "$(printf '%s\n' "$custom_type_out" | grep 'FRAMEWORK_ITEMS_JSON=' | grep -q '"type":""' && echo yes || echo no)"
+run_test "framework_type_projection_resolves_custom_field" "yes" "$(printf '%s\n' "$custom_type_out" | grep 'FRAMEWORK_ITEMS_JSON=' | grep '"type":"Feature"' > /dev/null && echo yes || echo no)"
+run_test "framework_type_projection_not_empty_for_custom_field" "no" "$(printf '%s\n' "$custom_type_out" | grep 'FRAMEWORK_ITEMS_JSON=' | grep '"type":""' > /dev/null && echo yes || echo no)"
 
 echo ""
 echo "=== list_open_framework_items.sh: --repo-root controls which config framework mode is read from (codex-github finding, #1583) ==="
 
-# Planted-violation proof: this worktree's own ambient .ai-dev-workflow.yaml
-# (unmodified, no swap) has template.is_template: true. --repo-root points
+# Planted-violation proof: the installed ambient framework fixture has
+# template.is_template: true. --repo-root points
 # at a scratch CONSUMER fixture instead. Before the fix,
 # workflow_template_is_template (no args) ignored --repo-root entirely and
 # read the ambient framework-mode config, so the framework branch ran and
@@ -318,7 +501,7 @@ set +e
 "$WRAPPER" --repo-root "$repo_root_consumer_fixture" >"$TMP_ROOT/repo-root-stdout.log" 2>"$TMP_ROOT/repo-root-stderr.log"
 set -e
 repo_root_out="$(cat "$TMP_ROOT/repo-root-stdout.log")"
-run_test "repo_root_overrides_ambient_framework_mode" "no" "$(printf '%s\n' "$repo_root_out" | grep 'FRAMEWORK_ITEMS_JSON=' | grep -q '"number":900' && echo yes || echo no)"
+run_test "repo_root_overrides_ambient_framework_mode" "no" "$(printf '%s\n' "$repo_root_out" | grep 'FRAMEWORK_ITEMS_JSON=' | grep '"number":900' > /dev/null && echo yes || echo no)"
 run_test "repo_root_overrides_ambient_framework_mode_status_ok" "ok" "$(kv FRAMEWORK_ITEMS_LOOKUP_STATUS "$repo_root_out")"
 
 echo ""
@@ -426,7 +609,7 @@ gate_usage_case() {
   set -e
   err="$(cat "$TMP_ROOT/gate-stderr.log")"
   run_test "${name}_exit64" "64" "$rc"
-  run_test "${name}_no_result_line" "no" "$(printf '%s\n' "$out" | grep -q '^RESULT=' && echo yes || echo no)"
+  run_test "${name}_no_result_line" "no" "$(grep -q '^RESULT=' <<< "$out" && echo yes || echo no)"
   run_test "${name}_stderr_nonempty" "yes" "$([ -n "$err" ] && echo yes || echo no)"
 }
 
@@ -453,7 +636,7 @@ echo "=== framework-mode-backlog-type-gate.sh: empty status/artifact-stage are a
 
 empty_values_out="$("$GATE" --issue 1 --status '' --artifact-stage '' --branch-pr-evidence none --caller single --type Feature)"
 run_test "gate_empty_status_and_artifact_stage_accepted_exit0" "0" "$?"
-run_test "gate_empty_status_and_artifact_stage_result_present" "yes" "$(printf '%s\n' "$empty_values_out" | grep -q '^RESULT=' && echo yes || echo no)"
+run_test "gate_empty_status_and_artifact_stage_result_present" "yes" "$(grep -q '^RESULT=' <<< "$empty_values_out" && echo yes || echo no)"
 
 echo ""
 echo "=== framework-mode-backlog-type-gate.sh: routing decision matrix ==="
@@ -548,7 +731,7 @@ esac
 
 backlog_no_folder_no_branch_hold_out="$("$GATE" --repo-root "$REPO_ROOT" --issue 1583 --status Backlog --artifact-stage '' --branch-pr-evidence none --caller scan --type Workflow)"
 run_test "scan_backlog_no_artifacts_held_result" "hold" "$(kv RESULT "$backlog_no_folder_no_branch_hold_out")"
-run_test "scan_backlog_no_artifacts_held_no_stop_condition" "no" "$(printf '%s\n' "$backlog_no_folder_no_branch_hold_out" | grep -q '^STOP_CONDITION=' && echo yes || echo no)"
+run_test "scan_backlog_no_artifacts_held_no_stop_condition" "no" "$(grep -q '^STOP_CONDITION=' <<< "$backlog_no_folder_no_branch_hold_out" && echo yes || echo no)"
 run_test "scan_backlog_no_artifacts_held_item" "#1583" "$(kv ITEM "$backlog_no_folder_no_branch_hold_out")"
 
 echo ""
@@ -586,10 +769,25 @@ assert_absent() {
   esac
 }
 
+# AGENTS.md, CLAUDE.md, and GEMINI.md are project-owned in sync-manifest.yaml:
+# sync never overwrites them, and a consumer repository is told to classify
+# framework items as `Workflow`, so its own guidance may legitimately say so.
+# Only the template asserts on their wording (#1874); the synced orchestrator
+# mirrors are checked everywhere. Read the mode from the untouched config
+# backup, since earlier scenarios swap the live file.
+GUIDANCE_IS_TEMPLATE="$(workflow_template_is_template "$REAL_CONFIG_BACKUP")"
+GUIDANCE_AGENT_FILES=(.cursor/agents/orchestrator.md .claude/agents/orchestrator.md)
+GUIDANCE_PLANT_TARGET=".claude/agents/orchestrator.md"
+if [ "$GUIDANCE_IS_TEMPLATE" = "true" ]; then
+  GUIDANCE_AGENT_FILES=(AGENTS.md CLAUDE.md GEMINI.md "${GUIDANCE_AGENT_FILES[@]}")
+  GUIDANCE_PLANT_TARGET="AGENTS.md"
+else
+  echo "SKIP: template historical runbook checks and project-owned agent guidance (consumer)"
+fi
+
 guidance_check_all_pass() {
   assert_absent 'agent-guidance Workflow recommendation' \
-    'Use `Workflow` for' AGENTS.md CLAUDE.md GEMINI.md \
-    .cursor/agents/orchestrator.md .claude/agents/orchestrator.md || return 1
+    'Use `Workflow` for' "${GUIDANCE_AGENT_FILES[@]}" || return 1
   assert_absent 'retrospective create assigns Workflow' \
     'update_tracker_type_best_effort "\$ISSUE_NUMBER" "Workflow"' \
     docs/workflow/development-workflow/protocols/06-retrospective-protocol.md \
@@ -600,12 +798,15 @@ guidance_check_all_pass() {
   assert_absent 'protocol 91 route-by-brief row' \
     "Route by the brief's concrete path" \
     docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md || return 1
-  assert_absent 'retrospective runbook Workflow expectation' \
-    'with Type `Workflow`' \
-    docs/testing/workflow/retrospective-protocol.smoke-test.md || return 1
-  assert_absent 'tracker-Type runbook Workflow creation step' \
-    'project Type will be set to `Workflow`' \
-    docs/testing/workflow/tracker-type-field-classification.smoke-test.md || return 1
+  # Historical runbooks are not shipped in every consumer sync profile.
+  if [ "$GUIDANCE_IS_TEMPLATE" = "true" ]; then
+    assert_absent 'retrospective runbook Workflow expectation' \
+      'with Type `Workflow`' \
+      docs/testing/workflow/retrospective-protocol.smoke-test.md || return 1
+    assert_absent 'tracker-Type runbook Workflow creation step' \
+      'project Type will be set to `Workflow`' \
+      docs/testing/workflow/tracker-type-field-classification.smoke-test.md || return 1
+  fi
   return 0
 }
 
@@ -619,18 +820,23 @@ fi
 # guidance-check-planted-violation: re-introduce one pre-change string and
 # assert the check now fails; revert and assert it passes again. A guard
 # that has never failed is not known to work.
-_agents_backup="$TMP_ROOT/AGENTS.md.bak"
-cp "$REPO_ROOT/AGENTS.md" "$_agents_backup"
-printf '\nUse `Workflow` for framework work (planted violation).\n' >> "$REPO_ROOT/AGENTS.md"
+# The plant goes in AGENTS.md in the template and in a synced orchestrator
+# mirror in a consumer, where AGENTS.md is not asserted on.
+_agents_backup="$TMP_ROOT/guidance-plant-target.bak"
+cp "$REPO_ROOT/$GUIDANCE_PLANT_TARGET" "$_agents_backup"
+printf '\nUse `Workflow` for framework work (planted violation).\n' >> "$REPO_ROOT/$GUIDANCE_PLANT_TARGET"
+_guidance_plant_location="$(grep -n -F 'Use `Workflow` for framework work (planted violation).' "$REPO_ROOT/$GUIDANCE_PLANT_TARGET")"
 if guidance_check_all_pass; then
   run_test "guidance_check_planted_violation_detected" "fail" "pass"
 else
   run_test "guidance_check_planted_violation_detected" "fail" "fail"
+  printf 'PROOF guidance-check-planted-violation: FAIL at %s:%s\n' "$GUIDANCE_PLANT_TARGET" "${_guidance_plant_location%%:*}"
 fi
-cp "$_agents_backup" "$REPO_ROOT/AGENTS.md"
+cp "$_agents_backup" "$REPO_ROOT/$GUIDANCE_PLANT_TARGET"
 
 if guidance_check_all_pass; then
   run_test "guidance_check_planted_violation_reverted_passes" "pass" "pass"
+  echo "PROOF guidance-check-planted-violation: PASS after repair"
 else
   run_test "guidance_check_planted_violation_reverted_passes" "pass" "fail"
 fi
@@ -837,7 +1043,7 @@ run_test "e2e_scan_backlog_no_artifacts_held_dispatch" "held" "$(kv DISPATCH "$e
 # open_implementation_pr_metadata only lists --state open, so this fails
 # unless the scan also runs the merged-PR probe. ---
 e2e_merged_out="$(MOCK_E2E_ITEM_MODE=found MOCK_E2E_PR_MODE=merged run_e2e_scan)"
-run_test "e2e_scan_merged_implementation_pr_continues_not_held" "no" "$(printf '%s\n' "$e2e_merged_out" | grep -q '^NEXT_ACTION=hold-misclassified-type' && echo yes || echo no)"
+run_test "e2e_scan_merged_implementation_pr_continues_not_held" "no" "$(grep -q '^NEXT_ACTION=hold-misclassified-type' <<< "$e2e_merged_out" && echo yes || echo no)"
 run_test "e2e_scan_merged_implementation_pr_continues_check" "applied" "$(kv MISCLASSIFIED_TYPE_CHECK "$e2e_merged_out")"
 e2e_merged_lanes_out="$(printf '%s\n' "$e2e_merged_out" | "$REPO_ROOT/scripts/development-workflow/workflow-batch-lanes.sh" --repo-root "$E2E_ROOT")"
 run_test "e2e_scan_merged_implementation_pr_continues_not_dispatch_held" "no" "$([ "$(kv DISPATCH "$e2e_merged_lanes_out")" = "held" ] && echo yes || echo no)"
@@ -848,7 +1054,7 @@ run_test "e2e_scan_merged_implementation_pr_continues_not_dispatch_held" "no" "$
 # workflow-batch-plan.sh fix landed alongside this test: any empty status
 # read is "unreadable" for MISCLASSIFIED_TYPE_CHECK, not only Linear's. ---
 e2e_unreadable_out="$(MOCK_E2E_ITEM_MODE=missing MOCK_E2E_PR_MODE=empty run_e2e_scan)"
-run_test "e2e_scan_status_unreadable_defers_not_held" "no" "$(printf '%s\n' "$e2e_unreadable_out" | grep -q '^NEXT_ACTION=hold-misclassified-type' && echo yes || echo no)"
+run_test "e2e_scan_status_unreadable_defers_not_held" "no" "$(grep -q '^NEXT_ACTION=hold-misclassified-type' <<< "$e2e_unreadable_out" && echo yes || echo no)"
 run_test "e2e_scan_status_unreadable_defers_check" "deferred" "$(kv MISCLASSIFIED_TYPE_CHECK "$e2e_unreadable_out")"
 
 # --- consumer-batch-plan-workflow-unchanged: the identical empty-folder
@@ -879,8 +1085,8 @@ cp "$REPO_ROOT/.ai-dev-workflow.yaml" "$_consumer_e2e_backup"
 cp "$consumer_config" "$REPO_ROOT/.ai-dev-workflow.yaml"
 consumer_e2e_out="$(MOCK_E2E_ITEM_MODE=found MOCK_E2E_PR_MODE=empty PATH="$E2E_BIN:$PATH" WORKFLOW_SKIP_FETCH=1 "$REPO_ROOT/scripts/development-workflow/workflow-batch-plan.sh" --repo-root "$CONSUMER_E2E_ROOT")"
 cp "$_consumer_e2e_backup" "$REPO_ROOT/.ai-dev-workflow.yaml"
-run_test "consumer_batch_plan_workflow_unchanged_no_next_action_hold" "no" "$(printf '%s\n' "$consumer_e2e_out" | grep -q '^NEXT_ACTION=hold-misclassified-type' && echo yes || echo no)"
-run_test "consumer_batch_plan_workflow_unchanged_no_misclassified_key" "no" "$(printf '%s\n' "$consumer_e2e_out" | grep -q '^MISCLASSIFIED_TYPE' && echo yes || echo no)"
+run_test "consumer_batch_plan_workflow_unchanged_no_next_action_hold" "no" "$(grep -q '^NEXT_ACTION=hold-misclassified-type' <<< "$consumer_e2e_out" && echo yes || echo no)"
+run_test "consumer_batch_plan_workflow_unchanged_no_misclassified_key" "no" "$(grep -q '^MISCLASSIFIED_TYPE' <<< "$consumer_e2e_out" && echo yes || echo no)"
 
 # ===========================================================================
 # Single-item folder resolution (#1583, prelude-issue-*): the same

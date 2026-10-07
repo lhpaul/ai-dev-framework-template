@@ -88,7 +88,7 @@ run_test "codex_command_result" "clean" "$(jq -r '.result' "$OUTPUT_FILE")"
 run_test "codex_command_reviewed_head" "abc123" "$(jq -r '.reviewed_head' "$OUTPUT_FILE")"
 run_test "codex_prompt_mentions_context" "yes" "$(grep -q '/tmp/context.json' "$PROMPT_LOG" && echo yes || echo no)"
 run_test "codex_prompt_mentions_base_diff" "yes" "$(grep -q 'origin/develop...HEAD' "$PROMPT_LOG" && echo yes || echo no)"
-run_test "wrapper_help_mentions_evidence_file" "yes" "$("$WRAPPER" --help 2>&1 | grep -q -- '--evidence-file' && echo yes || echo no)"
+run_test "wrapper_help_mentions_evidence_file" "yes" "$("$WRAPPER" --help 2>&1 | grep -- '--evidence-file' > /dev/null && echo yes || echo no)"
 
 # Scenario 11: default stage (no REVIEW_CHECKLISTS) is byte-identical to fixture
 run_test "1653_s11_default_prompt" "$DEFAULT_PROMPT_WITHOUT_STAGE" "$(cat "$PROMPT_LOG")"

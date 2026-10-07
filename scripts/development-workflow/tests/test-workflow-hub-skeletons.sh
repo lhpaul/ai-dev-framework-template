@@ -5,6 +5,8 @@
 # covers: scripts/development-workflow/validate-workflow-hub-skeletons.py
 # covers: scripts/development-workflow/workflow-config-resolver.py
 # covers: sync-manifest.yaml
+# covers: scripts/development-workflow/workflow-project-reader.py
+# covers: scripts/development-workflow/select-sync-manifest-entries.py
 
 set -euo pipefail
 
@@ -180,6 +182,43 @@ run_fails_contains \
   --sync-manifest "$runtime_drift_sync_manifest" \
   --skeleton-manifest "$REPO_ROOT/template/workflow-hub/skeleton-manifest.yaml" \
   --skeleton-manifest "$REPO_ROOT/template/product-repo-injection/skeleton-manifest.yaml"
+
+# A consumer ships workflow-lib plus its bounded reader as one dependency set.
+# Start from the corrected real manifests and plant one missing dependency,
+# then an unexpected executable; exact-set validation must reject both.
+python3 - "$REPO_ROOT" "$TMP_ROOT" <<'PY'
+from pathlib import Path
+import re, sys
+root, tmp = map(Path, sys.argv[1:])
+reader = 'scripts/development-workflow/workflow-project-reader.py'
+skeleton = (root / 'template/product-repo-injection/skeleton-manifest.yaml').read_text()
+sync = (root / 'sync-manifest.yaml').read_text()
+skeleton_blocks = re.split(r'(?=^  - group:)', skeleton, flags=re.M)
+sync_blocks = re.split(r'(?=^    - path:)', sync, flags=re.M)
+(tmp / 'missing-reader-skeleton.yaml').write_text(''.join(block for block in skeleton_blocks if 'path: ' + reader not in block))
+(tmp / 'missing-reader-sync.yaml').write_text(''.join(block for block in sync_blocks if 'path: ' + reader not in block))
+(tmp / 'extra-runtime-skeleton.yaml').write_text(skeleton + '\n  - group: unexpected runtime\n    path: scripts/development-workflow/workflow-portfolio-scan.py\n    mode_scope: product_repo_injection\n    required_for_product_repo: true\n')
+(tmp / 'extra-runtime-sync.yaml').write_text(sync.replace('    - path: scripts/development-workflow/workflow-portfolio-scan.py\n      mode_scope: hub_only', '    - path: scripts/development-workflow/workflow-portfolio-scan.py\n      mode_scope: product_repo_injection'))
+PY
+run_fails_contains "product_missing_reader_dependency_fails" \
+  "missing required product release runtime entries: scripts/development-workflow/workflow-project-reader.py" \
+  validate_skeleton_manifest "$TMP_ROOT/missing-reader-skeleton.yaml" "$REPO_ROOT"
+run_fails_contains "sync_missing_reader_dependency_fails" \
+  "missing: scripts/development-workflow/workflow-project-reader.py" \
+  python3 "$REPO_ROOT/scripts/development-workflow/validate-workflow-hub-skeletons.py" \
+  --repo-root "$REPO_ROOT" --sync-manifest "$TMP_ROOT/missing-reader-sync.yaml"
+run_fails_contains "product_extra_runtime_still_fails" \
+  "unexpected required_for_product_repo entries: scripts/development-workflow/workflow-portfolio-scan.py" \
+  validate_skeleton_manifest "$TMP_ROOT/extra-runtime-skeleton.yaml" "$REPO_ROOT"
+run_fails_contains "sync_extra_runtime_still_fails" \
+  "unexpected: scripts/development-workflow/workflow-portfolio-scan.py" \
+  python3 "$REPO_ROOT/scripts/development-workflow/validate-workflow-hub-skeletons.py" \
+  --repo-root "$REPO_ROOT" --sync-manifest "$TMP_ROOT/extra-runtime-sync.yaml"
+product_entries="$(python3 "$REPO_ROOT/scripts/development-workflow/select-sync-manifest-entries.py" --manifest "$REPO_ROOT/sync-manifest.yaml" --role product_repo)"
+run_contains "consumer_selects_required_bounded_reader" \
+  "SELECTED category=always_sync mode_scope=product_repo_injection path=scripts/development-workflow/workflow-project-reader.py" "$product_entries"
+run_contains "consumer_skips_hub_scan_coordinator" \
+  "SKIPPED category=always_sync mode_scope=hub_only path=scripts/development-workflow/workflow-portfolio-scan.py" "$product_entries"
 
 echo ""
 echo "=== Area 3: fixture validation edge cases ==="

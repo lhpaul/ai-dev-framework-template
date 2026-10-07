@@ -48,11 +48,19 @@ filtering, unchanged).
 
 Framework-mode repositories (template.is_template: true) return every
 open, non-terminal board item regardless of Type. STATUS=unavailable when
-the lookup could not be performed, with one of nine closed-list REASON
+the lookup could not be performed, with one of eleven closed-list REASON
 values: provider_unsupported, project_number_missing,
 project_number_invalid, project_owner_unresolvable, repo_unresolvable,
-issue_list_failed, issue_list_blank_or_malformed, item_list_failed,
-item_list_unparseable.
+issue_list_failed, issue_list_blank_or_malformed, issue_list_truncated,
+item_list_failed, item_list_unparseable, item_list_truncated.
+
+Both reads are exhaustive: the open-issue list and the project item list
+are re-read with a larger fetch cap until complete. A repository or board
+still larger than the hard bound (64000 records) is reported as
+issue_list_truncated / item_list_truncated rather than a partial list; so
+is a project item list that returns fewer items than its own totalCount.
+Board items join open issues by repository AND number; an item from another
+repository, or one that identifies no repository, is never matched.
 
 Exit codes: 0 for every lookup outcome (ok / empty / unavailable). Non-zero
 only for a usage error (bad arguments).
@@ -150,10 +158,26 @@ if [ -z "$fm_repo_owner" ] || [ -z "$fm_repo_name" ]; then
 fi
 fm_repo_slug="${fm_repo_owner}/${fm_repo_name}"
 
-if ! fm_open_issues="$(gh issue list --repo "$fm_repo_slug" --state open --limit 1000 --json number,title,labels,createdAt,url 2>/dev/null)"; then
-  _emit_unavailable "issue_list_failed"
-  exit 0
-fi
+# Exhaustive read (#1804): --limit is a fetch cap, so the helper repeats the
+# read with a larger cap until the result is provably complete, and refuses
+# a still-truncated list past WORKFLOW_GH_LIST_MAX_RECORDS.
+fm_read_rc=0
+fm_open_issues="$(workflow_gh_list_open_issues_exhaustive "$fm_repo_slug")" || fm_read_rc=$?
+case "$fm_read_rc" in
+  0) ;;
+  2)
+    _emit_unavailable "issue_list_blank_or_malformed"
+    exit 0
+    ;;
+  3)
+    _emit_unavailable "issue_list_truncated"
+    exit 0
+    ;;
+  *)
+    _emit_unavailable "issue_list_failed"
+    exit 0
+    ;;
+esac
 # A blank result is checked for emptiness only by list_open_workflow_type_issues
 # and returned as [] — indistinguishable there from "no open issues" (see
 # workflow-lib.sh:list_open_workflow_type_issues). This wrapper validates the
@@ -173,10 +197,23 @@ fi
 # .content.number alone (below) could otherwise accept a PR item whose
 # number happens to match an open issue's number, and emit that issue with
 # the PR's status/priority/type (codex-github finding, #1583).
-if ! fm_project_items="$(gh project item-list "$fm_project_number" --owner "$fm_owner" --limit 1000 --format json --query "is:issue" 2>/dev/null)"; then
-  _emit_unavailable "item_list_failed"
-  exit 0
-fi
+fm_read_rc=0
+fm_project_items="$(workflow_gh_project_items_exhaustive "$fm_project_number" "$fm_owner" "is:issue")" || fm_read_rc=$?
+case "$fm_read_rc" in
+  0) ;;
+  2)
+    _emit_unavailable "item_list_unparseable"
+    exit 0
+    ;;
+  3)
+    _emit_unavailable "item_list_truncated"
+    exit 0
+    ;;
+  *)
+    _emit_unavailable "item_list_failed"
+    exit 0
+    ;;
+esac
 
 # Framework mode never reads Type for FILTERING (that is the whole point of
 # this wrapper — see framework-lookup-ignores-type-field), but the output
@@ -192,12 +229,20 @@ fm_type_candidate_keys_json="$(_workflow_lowti_candidate_keys_json "$fm_type_pre
 # Join by issue number is only safe within one repository: an
 # organization-owned project can span multiple repositories, and issue
 # numbers are not globally unique across them (codex-github finding,
-# #1583). gh project item-list's content object carries a "repository"
-# field (owner/repo) when the item is an Issue/PR; require it to match this
-# repository's slug when present, and accept the match unfiltered only when
-# the field is absent (older gh CLI output shape) — narrowing false
-# positives without introducing a new false negative on older gh versions.
-if ! fm_result_json="$(printf '%s' "$fm_project_items" | jq -c --argjson open "$fm_open_issues" --arg repoSlug "$fm_repo_slug" --argjson candidateKeys "$fm_type_candidate_keys_json" '
+# #1583). Join by (repository, number): the item's repository comes from
+# the live-verified content.repository ("owner/repo") or, failing that,
+# content.url; an item that identifies no repository is never joined
+# (fails closed, #1804). See WORKFLOW_PROJECT_ITEM_REPO_JQ_DEFS.
+#
+# The open issues reach jq through a file (--slurpfile), never as one
+# --argjson argument: a large repository's issue list would exceed the OS
+# argument-size limit and fail the join (#1804).
+if ! fm_open_file="$(workflow_json_to_tmpfile "$fm_open_issues")"; then
+  _emit_unavailable "issue_list_failed"
+  exit 0
+fi
+trap 'rm -f "$fm_open_file"' EXIT
+if ! fm_result_json="$(printf '%s' "$fm_project_items" | jq -c --slurpfile openDocs "$fm_open_file" --arg repoSlug "$fm_repo_slug" --argjson candidateKeys "$fm_type_candidate_keys_json" "$WORKFLOW_PROJECT_ITEM_REPO_JQ_DEFS"'
   def terminal($status):
     ($status // "") as $s
     | ($s == "Done" or $s == "Merged" or $s == "Released" or $s == "Cancelled");
@@ -205,11 +250,11 @@ if ! fm_result_json="$(printf '%s' "$fm_project_items" | jq -c --argjson open "$
   def item_type($item):
     ( [ $candidateKeys[] as $k | ($item[$k] // "") ] | map(select(. != "")) | first ) // "";
 
-  [ .items[]
+  ($openDocs[0] | issue_index) as $openByNumber
+  | [ .items[]
     | . as $item
-    | (($item.content.repository // "") | ltrimstr("https://github.com/")) as $item_repo
-    | select($item_repo == "" or $item_repo == $repoSlug)
-    | ($open[] | select(.number == $item.content.number)) as $issue
+    | select(same_repo_item($item; $repoSlug))
+    | ($openByNumber[($item.content.number | tostring)] // empty) as $issue
     | select(terminal($item.status) | not)
     | {
         number: $issue.number,

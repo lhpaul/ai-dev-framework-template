@@ -521,29 +521,43 @@ LOCAL_AI_REVIEWER_TIMEOUT=1
 MOCK_LOCAL_REVIEWER_SLEEP=2
 export LOCAL_AI_REVIEWER_COMMAND LOCAL_AI_REVIEWER_TIMEOUT MOCK_LOCAL_REVIEWER_SLEEP
 run_reviewer "$MOCK_BIN:$PATH"
-run_test "timeout_result" "RESULT=escalate" "$(line_for RESULT)"
-run_test "timeout_reason" "REASON=timeout" "$(line_for REASON)"
+# #1789 (plan D4, T2.7): a reviewer still running at the budget is stopped and
+# reported as No verdict yet (exit 4), never escalate/timeout.
+run_test "timeout_result" "RESULT=waiting_on_reviewer" "$(line_for RESULT)"
+run_test "timeout_reason" "REASON=reviewer-no-verdict-yet" "$(line_for REASON)"
+run_test "timeout_no_verdict_yet" "NO_VERDICT_YET=1" "$(line_for NO_VERDICT_YET)"
+run_test "timeout_wait_expired_detail" "WAIT_EXPIRED_DETAIL=stopped_at_budget" "$(line_for WAIT_EXPIRED_DETAIL)"
+run_test "timeout_blocking_count" "BLOCKING_COUNT=0" "$(line_for BLOCKING_COUNT)"
+run_test "timeout_exit" "4" "$(exit_code)"
 
+# #1789 (plan D4, T2.7): a command that itself exits 1, 124, or 137 before the
+# budget is a reviewer failure. The watchdog flag stays 0, so the companion
+# reaches its ordinary non-zero handling (malformed_output here) and never
+# exits 4. A GNU `timeout` on PATH is no longer consulted.
+for _early_exit in 1 124 137; do
+  reset_mocks
+  LOCAL_AI_REVIEWER_COMMAND=local-reviewer-mock
+  LOCAL_AI_REVIEWER_TIMEOUT=30
+  MOCK_LOCAL_REVIEWER_EXIT="$_early_exit"
+  export LOCAL_AI_REVIEWER_COMMAND LOCAL_AI_REVIEWER_TIMEOUT MOCK_LOCAL_REVIEWER_EXIT
+  run_reviewer "$MOCK_BIN:$PATH"
+  run_test "1789_early_exit_${_early_exit}_result" "RESULT=escalate" "$(line_for RESULT)"
+  run_test "1789_early_exit_${_early_exit}_reason" "REASON=malformed_output" "$(line_for REASON)"
+  run_test "1789_early_exit_${_early_exit}_exit" "2" "$(exit_code)"
+  run_test "1789_early_exit_${_early_exit}_no_flag" "" "$(line_for NO_VERDICT_YET)"
+done
+unset _early_exit
+
+# Unreadable (non-verdict) output from an early exit 124 stays a failure.
 reset_mocks
-_timeout_bin="$(mktemp -d)"
-cat > "$_timeout_bin/timeout" <<'EOF'
-#!/usr/bin/env bash
-if [ "${1:-}" = "--help" ]; then
-  echo "Usage: timeout [--kill-after=DURATION] DURATION COMMAND"
-  exit 0
-fi
-printf '%s\n' '{"result":"needs_fixes","findings":[{"severity":"suggestion","path":"README.md","line":1,"body":"advisory"}]}'
-exit 137
-EOF
-chmod +x "$_timeout_bin/timeout"
 LOCAL_AI_REVIEWER_COMMAND=local-reviewer-mock
-LOCAL_AI_REVIEWER_TIMEOUT=1
-export LOCAL_AI_REVIEWER_COMMAND LOCAL_AI_REVIEWER_TIMEOUT
-run_reviewer "$_timeout_bin:$MOCK_BIN:$PATH"
-run_test "timeout_kill_after_137_result" "RESULT=escalate" "$(line_for RESULT)"
-run_test "timeout_kill_after_137_reason" "REASON=timeout" "$(line_for REASON)"
-rm -rf "$_timeout_bin"
-unset _timeout_bin
+LOCAL_AI_REVIEWER_TIMEOUT=30
+MOCK_LOCAL_REVIEWER_EXIT=124
+set_mock_stdout 'not a verdict'
+export LOCAL_AI_REVIEWER_COMMAND LOCAL_AI_REVIEWER_TIMEOUT MOCK_LOCAL_REVIEWER_EXIT MOCK_LOCAL_REVIEWER_STDOUT
+run_reviewer "$MOCK_BIN:$PATH"
+run_test "1789_early_exit_124_unreadable_result" "RESULT=escalate" "$(line_for RESULT)"
+run_test "1789_early_exit_124_unreadable_exit" "2" "$(exit_code)"
 
 reset_mocks
 LOCAL_AI_REVIEWER_COMMAND=local-reviewer-mock
@@ -551,8 +565,8 @@ LOCAL_AI_REVIEWER_TIMEOUT=1
 MOCK_LOCAL_REVIEWER_GRANDCHILD_PIDFILE="$(mktemp)"
 export LOCAL_AI_REVIEWER_COMMAND LOCAL_AI_REVIEWER_TIMEOUT MOCK_LOCAL_REVIEWER_GRANDCHILD_PIDFILE
 run_reviewer "$MOCK_BIN:$FALLBACK_BIN"
-run_test "fallback_timeout_result" "RESULT=escalate" "$(line_for RESULT)"
-run_test "fallback_timeout_reason" "REASON=timeout" "$(line_for REASON)"
+run_test "fallback_timeout_result" "RESULT=waiting_on_reviewer" "$(line_for RESULT)"
+run_test "fallback_timeout_reason" "REASON=reviewer-no-verdict-yet" "$(line_for REASON)"
 _grandchild_pid=""
 if [ -s "$MOCK_LOCAL_REVIEWER_GRANDCHILD_PIDFILE" ]; then
   _grandchild_pid="$(cat "$MOCK_LOCAL_REVIEWER_GRANDCHILD_PIDFILE")"
@@ -580,7 +594,7 @@ MOCK_LOCAL_REVIEWER_GRANDCHILD_IGNORE_TERM=1
 export LOCAL_AI_REVIEWER_COMMAND LOCAL_AI_REVIEWER_TIMEOUT
 export MOCK_LOCAL_REVIEWER_GRANDCHILD_PIDFILE MOCK_LOCAL_REVIEWER_GRANDCHILD_IGNORE_TERM
 run_reviewer "$MOCK_BIN:$FALLBACK_BIN"
-run_test "fallback_timeout_kills_orphan_grandchild_result" "RESULT=escalate" "$(line_for RESULT)"
+run_test "fallback_timeout_kills_orphan_grandchild_result" "RESULT=waiting_on_reviewer" "$(line_for RESULT)"
 _grandchild_pid=""
 if [ -s "$MOCK_LOCAL_REVIEWER_GRANDCHILD_PIDFILE" ]; then
   _grandchild_pid="$(cat "$MOCK_LOCAL_REVIEWER_GRANDCHILD_PIDFILE")"
@@ -610,8 +624,8 @@ export LOCAL_AI_REVIEWER_COMMAND LOCAL_AI_REVIEWER_TIMEOUT MOCK_LOCAL_REVIEWER_I
 SECONDS=0
 run_reviewer "$MOCK_BIN:$FALLBACK_BIN"
 _ignore_term_elapsed=$SECONDS
-run_test "fallback_timeout_ignores_term_result" "RESULT=escalate" "$(line_for RESULT)"
-run_test "fallback_timeout_ignores_term_reason" "REASON=timeout" "$(line_for REASON)"
+run_test "fallback_timeout_ignores_term_result" "RESULT=waiting_on_reviewer" "$(line_for RESULT)"
+run_test "fallback_timeout_ignores_term_reason" "REASON=reviewer-no-verdict-yet" "$(line_for REASON)"
 run_test "fallback_timeout_ignores_term_bounded" "yes" "$([ "$_ignore_term_elapsed" -le 6 ] && echo yes || echo no)"
 unset _ignore_term_elapsed
 
@@ -716,9 +730,38 @@ run_test "s13d_shipped_ids_match_spec" "$(printf '%s\n' "$EXPECTED_IDS" | jq -c 
 run_test "s9d_no_strict_timeout_name" "yes" \
   "$(grep -Eq 'LOCAL_AI_REVIEWER_STRICT_TIMEOUT|STRICT_SPEC_TIMEOUT' "$REVIEWER" >/dev/null && echo no || echo yes)"
 run_test "s9d_help_no_second_timeout_knob" "yes" \
-  "$(bash "$REVIEWER" --help 2>&1 | grep -Eq 'LOCAL_AI_REVIEWER_STRICT_TIMEOUT|STRICT_SPEC_TIMEOUT' && echo no || echo yes)"
-run_test "s9d_gnu_timeout_has_kill_after" "yes" \
-  "$(grep -Fq 'timeout --kill-after=2s "$timeout_seconds"' "$REVIEWER" && echo yes || echo no)"
+  "$(bash "$REVIEWER" --help 2>&1 | grep -E 'LOCAL_AI_REVIEWER_STRICT_TIMEOUT|STRICT_SPEC_TIMEOUT' > /dev/null && echo no || echo yes)"
+# #1789 (plan D4): the GNU timeout branch is removed; the process-group
+# watchdog runs on every host.
+run_test "1789_no_gnu_timeout_branch" "no" \
+  "$(grep -Eq '^[[:space:]]*timeout (--kill-after|"\$timeout_seconds")' "$REVIEWER" && echo yes || echo no)"
+_usage_text="$(bash "$REVIEWER" --help 2>&1 || true)"
+run_test "1789_usage_lists_exit_4" "yes" \
+  "$(grep -Eq '^  4  RESULT=waiting_on_reviewer' <<<"$_usage_text" && echo yes || echo no)"
+unset _usage_text
+
+# #1789 (plan D4, T2.13): run_with_timeout watchdog contract unit cases.
+# Prints "<status> <RUN_WITH_TIMEOUT_EXPIRED>".
+rwt_probe() {
+  HARNESS_MODE=1 bash -c '
+    source "$1"
+    shift
+    rwt_budget="$1"
+    shift
+    rwt_out="$(mktemp)"
+    rwt_err="$(mktemp)"
+    set +e
+    run_with_timeout "$rwt_budget" "$rwt_out" "$rwt_err" "$@"
+    rwt_status=$?
+    rm -f "$rwt_out" "$rwt_err"
+    printf "%s %s\n" "$rwt_status" "$RUN_WITH_TIMEOUT_EXPIRED"
+  ' _ "$REVIEWER" "$@" 2>/dev/null
+}
+run_test "1789_rwt_early_exit_124" "124 0" "$(rwt_probe 30 sh -c 'exit 124')"
+run_test "1789_rwt_early_exit_137" "137 0" "$(rwt_probe 30 sh -c 'exit 137')"
+run_test "1789_rwt_exit_0" "0 0" "$(rwt_probe 30 sh -c 'exit 0')"
+run_test "1789_rwt_sleeps_past_budget" "124 1" "$(rwt_probe 1 sleep 10)"
+run_test "1789_rwt_finishes_in_final_poll_second" "5 0" "$(rwt_probe 2 sh -c 'sleep 1.5; exit 5')"
 
 # --- Matrix rows via full runs ---
 install_recording_two_pass_mock
@@ -2027,8 +2070,10 @@ git -C "$PLAN_REPO" add REVIEW.md
 git -C "$PLAN_REPO" commit -q -m "fixture"
 git -C "$PLAN_REPO" remote add origin "git@github.com:owner/repo.git"
 mkdir -p "$PLAN_REPO/$PLAN_DEV_DIR"
-cp "$REPO_ROOT/$PLAN_DOC" "$PLAN_REPO/$PLAN_DOC"
-cp "$REPO_ROOT/$PLAN_SPEC" "$PLAN_REPO/$PLAN_SPEC"
+cp "$REPO_ROOT/$PLAN_DOC" "$PLAN_REPO/$PLAN_DOC" 2>/dev/null || \
+  printf '# Plan\n\n**Spec**: [spec](./1_1655-strict-plan-review-mode_specs.md)\n' > "$PLAN_REPO/$PLAN_DOC"
+cp "$REPO_ROOT/$PLAN_SPEC" "$PLAN_REPO/$PLAN_SPEC" 2>/dev/null || \
+  printf '# Spec\n\n- [ ] AC-1. Example\n' > "$PLAN_REPO/$PLAN_SPEC"
 git -C "$PLAN_REPO" add "$PLAN_DOC" "$PLAN_SPEC"
 git -C "$PLAN_REPO" commit -q -m "plan-with-spec"
 mkdir -p "$PLAN_REPO/docs/workflow/development-workflow"
@@ -2215,7 +2260,7 @@ for _entry in "${_planted_checks[@]}"; do
   _pass_json='{"mode":"strict_plan_checks","findings":[]}'
   run_planted_plan_fixture_review "$_check" pass "$_pass_json"
   _checks_line="$(line_for STRICT_PLAN_CHECKS 2>/dev/null || true)"
-  if printf '%s' "$_checks_line" | grep -q "$_check"; then
+  if grep -q "$_check" <<< "$_checks_line"; then
     _has_check=yes
   else
     _has_check=no

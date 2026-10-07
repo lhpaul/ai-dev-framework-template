@@ -71,7 +71,7 @@ If the repository creates implementation PRs as drafts, prefer
 draft-compatible platforms clear first, marks the PR ready, and then runs
 Haystack. Haystack triage may remain `pending` indefinitely while a PR is still
 draft, so running it before `gh pr ready` can produce avoidable
-`pending_timeout` escalations.
+`pending_timeout` waiting stops (No verdict yet).
 
 ---
 
@@ -224,6 +224,14 @@ HAYSTACK_REVIEWER_TIMEOUT=180 HAYSTACK_POLL_INTERVAL=20 \
 
 If a single `haystack triage` call hangs (e.g., network issue), the script enforces a per-call timeout of `floor(remaining_budget / 2)` seconds (minimum 1 second) and retries as long as the overall budget allows. When the budget is finally exhausted due to a hung call, the script exits with `REASON=timeout` (exit code 2).
 
+When `pr-review-loop.sh` runs Haystack, it passes Haystack's own wait budget
+as `--timeout`, which takes precedence over `HAYSTACK_REVIEWER_TIMEOUT`: 1200 s
+by default, configurable as `review.wait_budgets.haystack` (see "Reviewer wait
+budgets and outcome classes" in
+[`../protocols/93-automated-reviewer-loop-protocol.md`](../protocols/93-automated-reviewer-loop-protocol.md#reviewer-wait-budgets-and-outcome-classes-1789)).
+`HAYSTACK_REVIEWER_TIMEOUT` applies to standalone runs of
+`haystack-reviewer.sh`.
+
 ---
 
 ## Graceful Degradation
@@ -282,15 +290,29 @@ SUGGESTION_COUNT=0
 COMMENT_COUNT=0
 ```
 
-In all four cases, `pr-review-loop.sh` continues with the remaining platforms.
-Only the file-limit outcome is a healthy skip; the other three are reviewer
-health failures.
+How `pr-review-loop.sh` treats these outcomes (#1789):
 
-When any of the three Haystack reviewer-health failures occur,
-`pr-review-loop.sh` applies the `reviewer-failed` label to the PR so the failure
-is visible from the PR list or project board. The label is self-healing: a later
-loop run that reaches healthy reviewer output (`clean`, `needs_fixes`,
-`needs_rerun`, `skipped/not_configured`, or
+- `analysis_skipped_file_limit` is a healthy skip; the loop continues with the
+  remaining platforms.
+- `unavailable` (exit 3) is a reviewer-health failure: the skip stays
+  non-blocking, the loop continues, and `reviewer-failed` is applied.
+- `timeout` and `pending_timeout` (exit 2) mean Haystack's wait budget ran out
+  before it produced a result. They are **No verdict yet**, not failures: the
+  loop stops as `RESULT=waiting_on_reviewer`, `REASON=reviewer-no-verdict-yet`,
+  `WAIT_EXPIRED_DETAIL=timeout` or `pending_timeout`, exit 4, with no
+  `reviewer-failed` label. The runner then re-waits once on the same revision
+  (Protocol 91 Step 7). The same applies when the check-run fallback that runs
+  after those budget-expiry paths finds the `Haystack / Review` check run
+  still pending: the companion then prints `REASON=pending_check_run` with
+  `HAYSTACK_BUDGET_EXPIRED=1`.
+- A `Haystack / Review` check run that itself concluded `timed_out`,
+  `cancelled`, `stale`, or with an empty conclusion (`REASON=check_run_<conclusion>`,
+  exit 2) stays **Reviewer failed**: the loop escalates and applies
+  `reviewer-failed`. So does `pending_check_run` without
+  `HAYSTACK_BUDGET_EXPIRED=1` (the CLI-missing path).
+
+The label is self-healing: a later loop run that reaches healthy reviewer
+output (`clean`, `needs_fixes`, `needs_rerun`, `skipped/not_configured`, or
 `skipped/analysis_skipped_file_limit`) removes `reviewer-failed`.
 
 ---
@@ -301,8 +323,10 @@ loop run that reaches healthy reviewer output (`clean`, `needs_fixes`,
 | --------- | ------- | -------------- | -------------- |
 | `0` | APPROVED — no blocking findings | `clean` | — |
 | `1` | NEEDS_REVISION — one or more blocking findings | `needs_fixes` | — |
-| `2` | TIMED_OUT — per-call OS timeout exhausted the overall budget | `skipped` (→ `escalate` via `pr-review-loop.sh`) | `timeout` |
-| `2` | PENDING_TIMEOUT — analysis stayed `pending` until the overall budget expired | `skipped` (→ `escalate` via `pr-review-loop.sh`) | `pending_timeout` |
+| `2` | TIMED_OUT — per-call OS timeout exhausted the overall budget | `skipped` (→ `waiting_on_reviewer` / `reviewer-no-verdict-yet` via `pr-review-loop.sh`) | `timeout` |
+| `2` | PENDING_TIMEOUT — analysis stayed `pending` until the overall budget expired | `skipped` (→ `waiting_on_reviewer` / `reviewer-no-verdict-yet` via `pr-review-loop.sh`) | `pending_timeout` |
+| `2` | Check-run fallback after the budget ran out found the check run still pending | `skipped` with `HAYSTACK_BUDGET_EXPIRED=1` (→ `waiting_on_reviewer` / `reviewer-no-verdict-yet`) | `pending_check_run` |
+| `2` | The `Haystack / Review` check run itself concluded `timed_out`, `cancelled`, `stale`, or empty | `skipped` (→ `escalate`, `reviewer-failed` applied) | `check_run_<conclusion>` |
 | `3` | UNAVAILABLE — CLI not installed, authentication failed, `status=none` | `skipped` | `unavailable` |
 | `3` | ANALYSIS_SKIPPED_FILE_LIMIT — completed current-head check explicitly declines an oversized PR | `skipped` | `analysis_skipped_file_limit` |
 
@@ -383,11 +407,11 @@ RESULT=skipped
 REASON=pending_timeout
 ```
 
-**When you see `REASON=pending_timeout`**: The review loop will treat the reviewer as unavailable for this run, apply `reviewer-failed`, and continue with the remaining platforms. This is distinct from `REASON=unavailable` (CLI not installed or authentication failed) and `REASON=timeout` (a single call hung). A later clean Haystack run removes `reviewer-failed`.
+**When you see `REASON=pending_timeout`**: Haystack has not produced a result within its wait budget. The review loop reports this as **No verdict yet** (`RESULT=waiting_on_reviewer`, `REASON=reviewer-no-verdict-yet`, exit 4): it stops as waiting on Haystack, does not apply `reviewer-failed`, and does not escalate; the runner re-waits once on the same revision (#1789). This is distinct from `REASON=unavailable` (CLI not installed or authentication failed), which applies `reviewer-failed`.
 
 **Recovery options**:
 
-1. **Increase the timeout**: Set `HAYSTACK_REVIEWER_TIMEOUT=300` to give Haystack more time to complete analysis.
+1. **Increase the budget**: Set `review.wait_budgets.haystack` in `.ai-dev-workflow.yaml` (or `HAYSTACK_REVIEWER_TIMEOUT=300` for standalone `haystack-reviewer.sh` runs) to give Haystack more time to complete analysis.
 2. **Re-run the review loop manually** after a few minutes: `./scripts/development-workflow/pr-review-loop.sh <pr_number> --branch <branch_name>`.
 3. **Run haystack triage directly** if you need an immediate result:
 
@@ -395,7 +419,7 @@ REASON=pending_timeout
    haystack triage <pr_number>
    ```
 
-> **Protocol guard (when Haystack is listed in `review.on_ready.github` and the loop returns `skipped/pending_timeout`)**: Before applying `ready-for-human-review`, agents must verify that `REASON=pending_timeout` is not masking real findings. Check whether the Haystack GitHub App has posted a "Haystack Code Reviewer: PR Analysis Ready!" comment on the PR:
+> **Protocol guard (when Haystack is listed in `review.on_ready.github` and the companion returned `pending_timeout`)**: A waiting stop never reaches `ready-for-human-review`. Before applying it after a later run, agents must verify that an earlier `REASON=pending_timeout` is not masking real findings. Check whether the Haystack GitHub App has posted a "Haystack Code Reviewer: PR Analysis Ready!" comment on the PR:
 >
 > ```bash
 > gh pr view <pr_number> --json comments \
@@ -408,11 +432,15 @@ REASON=pending_timeout
 
 ```text
 INFO: haystack triage timed out after 120s
-RESULT=escalate
+RESULT=skipped
 REASON=timeout
 ```
 
-**Remediation**: Increase `HAYSTACK_REVIEWER_TIMEOUT` or check network connectivity to the Haystack service.
+The reviewer loop reports this as No verdict yet (`RESULT=waiting_on_reviewer`,
+`REASON=reviewer-no-verdict-yet`, `WAIT_EXPIRED_DETAIL=timeout`), not as an
+escalation.
+
+**Remediation**: Raise `review.wait_budgets.haystack` (or `HAYSTACK_REVIEWER_TIMEOUT` for standalone runs) or check network connectivity to the Haystack service.
 
 ### "Rules violation" finding for CHANGELOG structure
 

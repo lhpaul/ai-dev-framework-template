@@ -47,7 +47,9 @@ find docs/specs/developments docs/testing/workflow -name "*.md" -print0 \
 
 ## workflow-shell-guard-lint.py
 
-Diff-based guard for newly added lines in `scripts/development-workflow/**/*.sh`.
+Diff-based guard for newly added workflow shell lines and pipe-fed quiet grep
+in shell tests under `scripts/**/tests/**/*.sh`. SH001–SH005 retain their
+`scripts/development-workflow/**/*.sh` scope.
 
 **Checks implemented:**
 
@@ -61,6 +63,30 @@ Diff-based guard for newly added lines in `scripts/development-workflow/**/*.sh`
   can match substrings such as `hotfix/` instead of a true branch prefix.
 - **SH005** - Bash 4 associative arrays: flags `local -A` and `declare -A` in
   workflow scripts because the repo supports macOS bash 3.2.
+
+- **SH006** - Pipe-fed quiet grep in shell tests: detects `grep -q`, quiet short
+  clusters, `--quiet` and `--silent` with any pipeline producer. Early grep exit
+  can SIGPIPE that producer and fail a matching assertion under pipefail. Feed
+  captured text with a here-string, or use consuming grep with redirected output:
+
+<!-- workflow-shell-contract: bash -->
+```bash
+grep -Fq -- "$needle" <<< "$output"
+printf '%s\n' "$output" | jq -r '.name' | grep -F -- "$needle" > /dev/null
+```
+
+SH006 reconstructs backslash-continued commands using unchanged diff context,
+including edits to only the continued grep. Git mode requests full-file context;
+`--diff-file` mode uses the context supplied. It reports the first added line in
+an affected logical command and ignores entirely unchanged commands. Earlier
+rules continue to inspect only added workflow lines.
+
+This is a logical-line heuristic, not a shell parser. Dynamic command construction
+and arbitrary multiline commands without backslash continuations are outside its
+detection guarantee. Literal command examples in tests should use materialized
+fixture placeholders or a same-line `workflow-shell-guard: allow SH006 - <reason>`
+exception. Deliberate SIGPIPE controls must check the failing pipeline status.
+Grep patterns after `--`, `-e`/`--regexp` or `-f`/`--file` are not quiet flags.
 
 Use explicit control flow instead of blanket suppression. If a best-effort
 failure is intentional, keep the suppression local and add a rationale:

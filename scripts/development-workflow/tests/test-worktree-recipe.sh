@@ -65,7 +65,7 @@ for covered in \
     .ai-dev-workflow.yaml; do
   printf '%s\n' "$covered" > "$COVERAGE_TMP/changed.txt"
   if bash "$REPO_ROOT/scripts/development-workflow/select-test-suites.sh" \
-      --changed-files "$COVERAGE_TMP/changed.txt" | grep -Fq "$SELF_PATH"; then
+      --changed-files "$COVERAGE_TMP/changed.txt" | grep -F "$SELF_PATH" > /dev/null; then
     check "ci_selects_this_suite_for_$(basename "$covered")" yes yes
   else
     check "ci_selects_this_suite_for_$(basename "$covered")" yes "not selected for $covered"
@@ -520,15 +520,15 @@ check_push_step() {
     check "push_shell_options_first_${name}" yes "first line is: $block_first_line"
   fi
   # The ls-remote must name THIS branch, inside THIS block.
-  if printf '%s\n' "$block" | grep -Fq "git ls-remote origin \"refs/heads/${branch}\""; then
+  if grep -Fq "git ls-remote origin \"refs/heads/${branch}\"" <<< "$block"; then
     check "push_verified_${name}" yes yes
   else
     check "push_verified_${name}" yes "no remote-head comparison for ${branch} in its own block"
   fi
   # ...and the comparison must be a gate, in THIS block, not merely present
   # somewhere else in the same file.
-  if printf '%s\n' "$block" | grep -Fq 'if [ "$LOCAL_SHA" != "$REMOTE_SHA" ]; then' &&
-      printf '%s\n' "$block" | grep -Eq '^[[:space:]]*exit 1[[:space:]]*$'; then
+  if grep -Fq 'if [ "$LOCAL_SHA" != "$REMOTE_SHA" ]; then' <<< "$block" &&
+      grep -Eq '^[[:space:]]*exit 1[[:space:]]*$' <<< "$block"; then
     check "push_exit_gate_${name}" yes yes
   else
     check "push_exit_gate_${name}" yes "comparison is not a gate for ${branch}"

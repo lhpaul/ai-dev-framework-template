@@ -51,7 +51,8 @@ evaluated in order and stopping at the first unmet one:
    confirmed by `reviewer_failed_label_required_for_result` returning false
 3. Zero unresolved, non-outdated review threads on the same head
 4. Non-reviewer baseline checks are non-empty and all green on the same head
-   (empty set → `baseline_checks_unobserved`; reviewer-owned checks excluded)
+   (empty set → `baseline_checks_unobserved`; reviewer-owned checks and the
+   loop's own `Reviewer-loop completion guard (#<pr>)` status excluded)
 
 Expensive reviewers are reordered last **within their own phase bucket** so
 those peers can run first; the reorder never moves a draft-configured
@@ -99,7 +100,7 @@ trimming the ends) is the only permitted flexibility.
 wildcard**: the commit SHA (`[0-9a-f]{7,40}`, git's own documented
 abbreviated-to-full SHA-1 hex-length range), and the `<flavor>` slot
 immediately after "Didn't find any major issues. " — a single bounded
-placeholder, ``[^*`[:cntrl:]]{1,40}`` (up to 40 characters, excluding
+placeholder, ``[^*`[:cntrl:]]{1,60}`` (up to 60 characters, excluding
 asterisk, backtick, and control characters), not a fixed word and not an
 enumerated list.
 
@@ -115,9 +116,22 @@ non-convergence failure this classifier's entire design history exists to
 avoid, on a new axis. The bounded placeholder replaced the alternation
 before merge.
 
-**Bound derivation**: the 40-character cap is the longest evidenced token
-(31 characters, "More of your lovely PRs please.") rounded up with modest
-headroom. The excluded characters protect adjacent template structure only:
+**Bound derivation**: the cap is 60 characters (#1878). It was originally
+40: the longest token evidenced at the time (31 characters, "More of your
+lovely PRs please.") rounded up with modest headroom. Live traffic then
+falsified that cap. On a genuinely clean review Codex emitted the
+41-character sentence "Already looking forward to the next diff.", which
+the 40-character slot rejected, so the loop escalated. 60 gives about 50%
+headroom over that observed 41. A wider cap was tried downstream and
+rejected: at 120, a realistic 79-character actionable instruction ("Rename
+the unsafe function immediately before merging this pull request please.")
+would match as approval. At 60, the 79- and 86-character instruction test
+cases, and the same instruction smuggled in as a newline-separated
+paragraph, still fall outside the slot and safe-fail. The cap lives in two
+byte-identical copies of the template, in `codex-github-reviewer.sh` and
+`apply-readiness-labels.sh`. A parity test in `test-pr-review-loop.sh`
+fails if they drift. The excluded characters protect adjacent template
+structure only:
 asterisk protects the `**Reviewed commit:**` marker that follows, backtick
 protects the SHA field's delimiters, and control characters (including
 newline) are excluded as defense in depth even though whitespace
@@ -125,14 +139,14 @@ normalization already prevents them from reaching this point.
 
 **The deliberate, disclosed trade of this design**: a genuinely clean
 response using different wording anywhere in the body — including a
-cosmetic vendor footer rewording, or a flavor phrase exceeding 40 characters
+cosmetic vendor footer rewording, or a flavor phrase exceeding 60 characters
 or containing an excluded character — safe-fails to `NEEDS_REVISION` today
 rather than being approved. This failure direction is always safe (more
 `NEEDS_REVISION`, never a false `APPROVED`). **The flavor placeholder is the
 one exception to "never a false `APPROVED`" stated plainly, not hidden**: a
 false `APPROVED` through this slot requires Codex to emit self-contradictory
 output — a clean verdict immediately followed by an actual directive inside
-the 40-character slot, while still reproducing the complete, exact footer
+the 60-character slot, while still reproducing the complete, exact footer
 afterward. No evidence of this has ever been observed; recovery if it ever
 is, is narrowing the placeholder's bound, never widening it without new live
 evidence. See issue #1491's implementation plan (Decision 2 and its two
@@ -328,6 +342,42 @@ a `waiting_on_reviewer` aggregate result the same as `needs_fixes` /
 review cycle — including a cleared-findings retrigger. A `clean` result is
 never overridden by an exhausted allowance.
 
+## Wait budget, No verdict yet, and the automatic re-wait (#1789)
+
+**Budget.** Codex GitHub waits for its own budget: 1800 s by default. Its
+configured value is `CODEX_GITHUB_MAX_WAIT` when that variable is set to a
+valid value (whole seconds, 1-999999), else `review.wait_budgets.codex-github`
+in `.ai-dev-workflow.yaml`; an invalid `CODEX_GITHUB_MAX_WAIT` warns and falls
+through to the YAML value or the default. A one-run `--max-wait` overrides
+both. `CODEX_GITHUB_POLL_INTERVAL` (default 60 s) now applies to Codex GitHub
+only; other platforms in the same run keep their own poll interval. See
+"Reviewer wait budgets and outcome classes" in
+[`../protocols/93-automated-reviewer-loop-protocol.md`](../protocols/93-automated-reviewer-loop-protocol.md#reviewer-wait-budgets-and-outcome-classes-1789).
+
+**No verdict yet.** Both Codex wait reasons, `codex-github-review-pending` and
+`codex-github-reaction-without-review` (exit `4`), are in the No verdict yet
+class: they keep their names and meaning, never apply `reviewer-failed`, and
+print the waiting keys (`NO_VERDICT_REWAIT`, `PENDING_REVIEWER`,
+`NO_FAILURE_DETECTED`, …).
+
+**Automatic re-wait.** When the runner re-runs Step 7 once on the same
+revision (Protocol 91 Step 7, `NO_VERDICT_REWAIT=available`), the loop runs the
+companion with `--max-retriggers 0`, which also disables the async-arrival
+trigger, and the companion's existing guard skips a new trigger while a
+current-head trigger is pending. On the cleared-findings path the companion
+records the cleared review's `submitted_at` and drops the newest current-head
+trigger only when that trigger is not later than the review (the review
+answered it); a strictly later trigger is still outstanding, so the companion
+logs `INFO: trigger for commit <sha> posted after the cleared Codex review is still outstanding — not posting a duplicate`
+and polls it. The companion prints its trigger time as
+`REVIEW_REQUESTED_AT`, which the loop records as the request time.
+
+**Current-revision binding.** Inline review comments count as current-head
+findings only when their `original_commit_id` is the current head (GitHub moves
+`commit_id` to the newest head while the commented line is unchanged), so an
+older revision's inline comment never returns `NEEDS_REVISION` for the current
+head.
+
 ## Step 7a runner reviewer
 
 `codex-github` is an opt-in Step 7a runner reviewer value; it is not in the
@@ -473,8 +523,8 @@ is exhausted.
 
 | Symptom | Likely cause | Action |
 | --- | --- | --- |
-| The loop waits until timeout after posting `@codex review` | Codex GitHub is not installed, not enabled for the repository, or the account cannot run reviews | Install/enable the integration, confirm account access, then rerun the loop |
-| Codex leaves only a thumbs-up reaction on the trigger comment | Codex acknowledged the trigger but did not publish SHA-pinned review evidence | Treat the run as unavailable; do not mark the PR clean from the reaction alone |
+| The loop reports `waiting_on_reviewer` / `codex-github-review-pending` after posting `@codex review`, even after the automatic re-wait | Codex GitHub has not answered within its budget; repeated on every run, it can mean Codex GitHub is not installed, not enabled for the repository, or the account cannot run reviews | Re-run the loop later on the same revision; if Codex never answers, install/enable the integration and confirm account access |
+| Codex leaves only a thumbs-up reaction on the trigger comment | Codex acknowledged the trigger but did not publish SHA-pinned review evidence (`codex-github-reaction-without-review`, No verdict yet) | Do not mark the PR clean from the reaction alone; wait for or re-run review on the current head |
 | Codex says to create an environment for this repo | Manual trigger path is missing a Codex cloud environment | Create the environment or remove `codex-github` from the reviewer list until it is available |
 | Codex review threads remain open after a fix commit | GitHub did not auto-resolve a fixed thread | Verify the current head addresses the finding, then resolve the thread or rerun review if unsure |
 | Codex submitted a review for an older commit | Review arrived for a stale head SHA | Push or retrigger only if needed, then wait for a submitted review whose `commit_id` matches the current head |

@@ -65,6 +65,11 @@ entries:
     mode_scope: product_repo_injection
     required_for_product_repo: true
     note: shell helpers used by product-repo validation and PR readiness scripts
+  - group: bounded project card reader
+    path: scripts/development-workflow/workflow-project-reader.py
+    mode_scope: product_repo_injection
+    required_for_product_repo: true
+    note: bounded organization-project lookup dependency of workflow-lib.sh
   - group: shared Codex evidence helpers
     path: scripts/development-workflow/codex-github-evidence-lib.sh
     mode_scope: product_repo_injection

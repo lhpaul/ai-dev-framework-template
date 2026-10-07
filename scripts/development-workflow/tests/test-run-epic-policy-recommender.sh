@@ -144,17 +144,17 @@ run_test "recommends_delegated_review" "true" "$(printf '%s\n' "$backlog_output"
 run_test "recommends_merge_when_scope_safe" "true" "$(printf '%s\n' "$backlog_output" | jq -r '.recommendedPolicy.mayMerge')"
 run_test "workflow_scope_recommends_medium" "medium" "$(printf '%s\n' "$backlog_output" | jq -r '.recommendedPolicy.maxRisk')"
 run_test "missing_values_require_confirmation" "true" "$(printf '%s\n' "$backlog_output" | jq -r '.requiresConfirmation')"
-run_test "copy_paste_contains_effective_flags" "yes" "$(printf '%s\n' "$backlog_output" | jq -r '.copyPasteCommand' | grep -Fq -- '--may-start-backlog true --max-risk medium --base develop' && echo yes || echo no)"
+run_test "copy_paste_contains_effective_flags" "yes" "$(printf '%s\n' "$backlog_output" | jq -r '.copyPasteCommand' | grep -F -- '--may-start-backlog true --max-risk medium --base develop' > /dev/null && echo yes || echo no)"
 
 blocked_fixture="$(write_fixture blocked "$(jq '.groups.blocked = [.groups.eligible[0] | .dependencies.state = "blocked"] | .groups.eligible = [] | .items[0].dependencies.state = "blocked"' "$backlog_fixture")")"
 blocked_output="$(recommend_json "$blocked_fixture" "\$run-epic --items 949")"
 run_test "blocked_backlog_recommends_no_start" "false" "$(printf '%s\n' "$blocked_output" | jq -r '.recommendedPolicy.mayStartBacklog')"
-run_test "blocked_backlog_explains_reason" "yes" "$(printf '%s\n' "$blocked_output" | jq -r '.rationale.mayStartBacklog' | grep -q 'blocked or ambiguous' && echo yes || echo no)"
+run_test "blocked_backlog_explains_reason" "yes" "$(printf '%s\n' "$blocked_output" | jq -r '.rationale.mayStartBacklog' | grep 'blocked or ambiguous' > /dev/null && echo yes || echo no)"
 
 ambiguous_fixture="$(write_fixture ambiguous "$(jq '.baseBranch = null | .baseAmbiguous = true | .baseReason = "conflicting integration labels"' "$backlog_fixture")")"
 ambiguous_output="$(recommend_json "$ambiguous_fixture" "\$run-epic --items 949")"
 run_test "ambiguous_base_requires_confirmation" "true" "$(printf '%s\n' "$ambiguous_output" | jq -r '.requiresConfirmation')"
-run_test "ambiguous_base_omits_copy_paste_base" "yes" "$(printf '%s\n' "$ambiguous_output" | jq -r '.copyPasteCommand' | grep -Fq -- '--base' && echo no || echo yes)"
+run_test "ambiguous_base_omits_copy_paste_base" "yes" "$(printf '%s\n' "$ambiguous_output" | jq -r '.copyPasteCommand' | grep -F -- '--base' > /dev/null && echo no || echo yes)"
 
 explicit_output="$("$HELPER" \
   --scope "$backlog_fixture" \
@@ -182,7 +182,7 @@ disabled_output="$("$HELPER" \
 run_test "explicit_delegate_disable_preserved" "false" "$(printf '%s\n' "$disabled_output" | jq -r '.effectivePolicy.delegateReview')"
 run_test "explicit_merge_disable_preserved" "false" "$(printf '%s\n' "$disabled_output" | jq -r '.effectivePolicy.mayMerge')"
 run_test "disabled_sources_recorded" "explicit" "$(printf '%s\n' "$disabled_output" | jq -r '.fieldSources.delegateReview')"
-run_test "disabled_copy_paste_omits_positive_flags" "yes" "$(printf '%s\n' "$disabled_output" | jq -r '.copyPasteCommand' | grep -Eq -- '--delegate-review|--may-merge' && echo no || echo yes)"
+run_test "disabled_copy_paste_omits_positive_flags" "yes" "$(printf '%s\n' "$disabled_output" | jq -r '.copyPasteCommand' | grep -E -- '--delegate-review|--may-merge' > /dev/null && echo no || echo yes)"
 
 assignment_output="$("$HELPER" \
   --scope "$backlog_fixture" \
@@ -254,7 +254,7 @@ run_test "run_items_copy_paste_uses_run_items" "yes" "$(
 items_list_fixture="$(write_fixture items-list "$(jq '.itemInput = "949,950"' "$backlog_fixture")")"
 items_list_output="$("$HELPER" --scope "$items_list_fixture" --original-command "/run-items 949 950" --json)"
 run_test "run_items_copy_paste_space_separates_items" "yes" "$(
-  printf '%s\n' "$items_list_output" | jq -r '.copyPasteCommand' | grep -Fq -- '/run-items 949 950' && echo yes || echo no
+  printf '%s\n' "$items_list_output" | jq -r '.copyPasteCommand' | grep -F -- '/run-items 949 950' > /dev/null && echo yes || echo no
 )"
 
 PATH="$MOCK_BIN:$PATH" "$HELPER" --scope "$backlog_fixture" --original-command "\$run-epic issues 949" --json >/dev/null
@@ -283,8 +283,8 @@ schema_output="$(recommend_json "$schema_fixture" "\$run-epic --items 200")"
 run_test "schema_scope_recommends_plan_checkpoint" "plan:technical" "$(printf '%s\n' "$schema_output" | jq -r '.recommendedPolicy.checkpoints[0] | .stage + ":" + .domain')"
 run_test "schema_checkpoint_pending" "pending" "$(printf '%s\n' "$schema_output" | jq -r '.recommendedPolicy.checkpoints[0].satisfaction_state')"
 run_test "schema_checkpoint_requires_confirmation" "true" "$(printf '%s\n' "$schema_output" | jq -r '.requiresConfirmation')"
-run_test "schema_copy_paste_includes_checkpoint_file" "yes" "$(printf '%s\n' "$schema_output" | jq -r '.copyPasteCommand' | grep -Fq -- '--checkpoints-file checkpoint-policy.json' && echo yes || echo no)"
-run_test "schema_checkpoint_reason_names_title_signal" "yes" "$(printf '%s\n' "$schema_output" | jq -r '.recommendedPolicy.checkpoints[0].reason' | grep -Fq "title phrase 'database migration'" && echo yes || echo no)"
+run_test "schema_copy_paste_includes_checkpoint_file" "yes" "$(printf '%s\n' "$schema_output" | jq -r '.copyPasteCommand' | grep -F -- '--checkpoints-file checkpoint-policy.json' > /dev/null && echo yes || echo no)"
+run_test "schema_checkpoint_reason_names_title_signal" "yes" "$(printf '%s\n' "$schema_output" | jq -r '.recommendedPolicy.checkpoints[0].reason' | grep -F "title phrase 'database migration'" > /dev/null && echo yes || echo no)"
 
 generic_data_body_fixture="$(write_fixture generic-data-body '{
   "scopeSource": "items",
@@ -335,7 +335,7 @@ label_signal_fixture="$(write_fixture label-signal "$(jq '
   | .items[0] = .groups.eligible[0]
 ' "$generic_data_body_fixture")")"
 label_signal_output="$(recommend_json "$label_signal_fixture" "\$run-epic --items 204")"
-run_test "explicit_migration_labels_checkpoint_with_exact_reason" "yes" "$(printf '%s\n' "$label_signal_output" | jq -r '.recommendedPolicy.checkpoints[] | select(.stage == "plan" and .domain == "technical") | .reason' | grep -Fq "label 'Database Migration'; label 'schema-change'" && echo yes || echo no)"
+run_test "explicit_migration_labels_checkpoint_with_exact_reason" "yes" "$(printf '%s\n' "$label_signal_output" | jq -r '.recommendedPolicy.checkpoints[] | select(.stage == "plan" and .domain == "technical") | .reason' | grep -F "label 'Database Migration'; label 'schema-change'" > /dev/null && echo yes || echo no)"
 
 action_title_fixture="$(write_fixture action-title "$(jq '
   .groups.eligible[0].number = 205
@@ -345,7 +345,7 @@ action_title_fixture="$(write_fixture action-title "$(jq '
   | .items[0] = .groups.eligible[0]
 ' "$generic_data_body_fixture")")"
 action_title_output="$(recommend_json "$action_title_fixture" "\$run-epic --items 205")"
-run_test "action_oriented_schema_title_checkpoints" "yes" "$(printf '%s\n' "$action_title_output" | jq -r '.recommendedPolicy.checkpoints[] | select(.stage == "plan" and .domain == "technical") | .reason' | grep -Fq "title phrase 'Add customer schema column'" && echo yes || echo no)"
+run_test "action_oriented_schema_title_checkpoints" "yes" "$(printf '%s\n' "$action_title_output" | jq -r '.recommendedPolicy.checkpoints[] | select(.stage == "plan" and .domain == "technical") | .reason' | grep -F "title phrase 'Add customer schema column'" > /dev/null && echo yes || echo no)"
 
 false_signal_title_fixture="$(write_fixture false-signal-title "$(jq '
   .groups.eligible[0].number = 206
@@ -363,7 +363,7 @@ migration_title_fixture="$(write_fixture migration-title "$(jq '
   | .items[0] = .groups.eligible[0]
 ' "$generic_data_body_fixture")")"
 migration_title_output="$(recommend_json "$migration_title_fixture" "\$run-epic --items 207")"
-run_test "migration_title_phrases_checkpoint" "yes" "$(printf '%s\n' "$migration_title_output" | jq -r '.recommendedPolicy.checkpoints[] | select(.stage == "plan" and .domain == "technical") | .reason' | grep -Fq "title phrase 'database migration'" && echo yes || echo no)"
+run_test "migration_title_phrases_checkpoint" "yes" "$(printf '%s\n' "$migration_title_output" | jq -r '.recommendedPolicy.checkpoints[] | select(.stage == "plan" and .domain == "technical") | .reason' | grep -F "title phrase 'database migration'" > /dev/null && echo yes || echo no)"
 
 body_phrase_fixture="$(write_fixture body-phrase "$(jq '
   .groups.eligible[0].number = 208
@@ -372,7 +372,7 @@ body_phrase_fixture="$(write_fixture body-phrase "$(jq '
   | .items[0] = .groups.eligible[0]
 ' "$generic_data_body_fixture")")"
 body_phrase_output="$(recommend_json "$body_phrase_fixture" "\$run-epic --items 208")"
-run_test "migration_body_phrases_checkpoint_with_exact_reason" "yes" "$(printf '%s\n' "$body_phrase_output" | jq -r '.recommendedPolicy.checkpoints[] | select(.stage == "plan" and .domain == "technical") | .reason' | grep -Fq "body phrase 'CREATE TABLE'; body phrase 'ALTER TABLE'; body phrase 'new column'; body phrase 'database migration'" && echo yes || echo no)"
+run_test "migration_body_phrases_checkpoint_with_exact_reason" "yes" "$(printf '%s\n' "$body_phrase_output" | jq -r '.recommendedPolicy.checkpoints[] | select(.stage == "plan" and .domain == "technical") | .reason' | grep -F "body phrase 'CREATE TABLE'; body phrase 'ALTER TABLE'; body phrase 'new column'; body phrase 'database migration'" > /dev/null && echo yes || echo no)"
 
 lookalike_migration_fixture="$(write_fixture lookalike-migration "$(jq '
   .groups.eligible[0].number = 209
@@ -513,7 +513,7 @@ run_test "secret_word_still_checkpoints" "1" "$(security_case_checkpoint_count "
 
 credential_fixture="$(security_case_fixture credential-tp 327 "Store credential in vault" "The credential should be stored in a secrets vault.")"
 run_test "credential_word_still_checkpoints" "1" "$(security_case_checkpoint_count "$credential_fixture" 327)"
-run_test "security_checkpoint_reason_names_matched_term_and_line" "yes" "$(security_case_checkpoint_reason "$credential_fixture" 327 | grep -Fq "keyword 'credential' in line: \"The credential should be stored in a secrets vault.\"" && echo yes || echo no)"
+run_test "security_checkpoint_reason_names_matched_term_and_line" "yes" "$(security_case_checkpoint_reason "$credential_fixture" 327 | grep -F "keyword 'credential' in line: \"The credential should be stored in a secrets vault.\"" > /dev/null && echo yes || echo no)"
 
 # "un-" negated auth terms are real security vocabulary ("unauthorized access",
 # "unauthenticated request") that the pre-fix bare-substring regex also matched

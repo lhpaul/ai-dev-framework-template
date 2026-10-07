@@ -35,9 +35,9 @@ YAML
 
 missing_output="$(run_with_workflow "$TMP_DIR/missing-update-tracker-on-merge.yml" "$linear_config")" \
   || fail "missing workflow should be skipped successfully for non-GitHub providers"
-printf '%s\n' "$missing_output" | grep -q '^SKIP: workflow file not found:' \
+grep -q '^SKIP: workflow file not found:' <<< "$missing_output" \
   || fail "missing workflow output should explain the skip"
-printf '%s\n' "$missing_output" | grep -q 'Non-GitHub tracker providers intentionally omit update-tracker-on-merge.yml' \
+grep -q 'Non-GitHub tracker providers intentionally omit update-tracker-on-merge.yml' <<< "$missing_output" \
   || fail "missing workflow output should identify non-GitHub tracker providers"
 
 github_config="$TMP_DIR/github-projects.yaml"
@@ -52,7 +52,7 @@ github_missing_output="$(run_with_workflow "$TMP_DIR/missing-update-tracker-on-m
   || github_missing_exit=$?
 [ "$github_missing_exit" -eq 1 ] \
   || fail "missing workflow should fail closed for GitHub-based tracker providers"
-printf '%s\n' "$github_missing_output" | grep -q "GitHub-based tracker provider 'github_projects' requires update-tracker-on-merge.yml" \
+grep -q "GitHub-based tracker provider 'github_projects' requires update-tracker-on-merge.yml" <<< "$github_missing_output" \
   || fail "missing GitHub workflow output should explain the required workflow"
 
 github_hyphen_config="$TMP_DIR/github-projects-hyphen.yaml"
@@ -67,7 +67,7 @@ github_hyphen_missing_output="$(run_with_workflow "$TMP_DIR/missing-update-track
   || github_hyphen_missing_exit=$?
 [ "$github_hyphen_missing_exit" -eq 1 ] \
   || fail "missing workflow should fail closed for hyphenated GitHub tracker providers"
-printf '%s\n' "$github_hyphen_missing_output" | grep -q "GitHub-based tracker provider 'github_projects' requires update-tracker-on-merge.yml" \
+grep -q "GitHub-based tracker provider 'github_projects' requires update-tracker-on-merge.yml" <<< "$github_hyphen_missing_output" \
   || fail "hyphenated GitHub workflow output should identify the normalized provider"
 
 valid_workflow="$TMP_DIR/update-tracker-on-merge.yml"
@@ -107,11 +107,11 @@ YAML
 
 valid_output="$(run_with_workflow "$valid_workflow")" \
   || fail "valid workflow mappings should pass"
-printf '%s\n' "$valid_output" | grep -q 'All 6 mappings correct (+ graduation closeout fallback)\.' \
+grep -q 'All 6 mappings correct (+ graduation closeout fallback)\.' <<< "$valid_output" \
   || fail "valid workflow output should confirm all mappings and graduation fallback"
-printf '%s\n' "$valid_output" | grep -q "OK: branch 'develop-\*' → graduation closeout fallback" \
+grep -q "OK: branch 'develop-\*' → graduation closeout fallback" <<< "$valid_output" \
   || fail "valid workflow output should acknowledge graduation closeout fallback"
-printf '%s\n' "$valid_output" | grep -q 'OK: actions/checkout present with contents: read' \
+grep -q 'OK: actions/checkout present with contents: read' <<< "$valid_output" \
   || fail "valid workflow output should confirm contents: read for checkout"
 
 missing_contents_workflow="$TMP_DIR/update-tracker-missing-contents.yml"
@@ -152,7 +152,7 @@ missing_contents_output="$(run_with_workflow "$missing_contents_workflow" 2>&1)"
   || missing_contents_exit=$?
 [ "$missing_contents_exit" -eq 1 ] \
   || fail "workflow with checkout but no contents: read should fail"
-printf '%s\n' "$missing_contents_output" | grep -q 'permissions lack contents: read' \
+grep -q 'permissions lack contents: read' <<< "$missing_contents_output" \
   || fail "missing contents: read should explain the checkout permission requirement"
 
 missing_graduation_workflow="$TMP_DIR/update-tracker-missing-graduation.yml"
@@ -183,7 +183,7 @@ missing_graduation_output="$(run_with_workflow "$missing_graduation_workflow" 2>
   || missing_graduation_exit=$?
 [ "$missing_graduation_exit" -eq 1 ] \
   || fail "workflow without graduation fallback should fail"
-printf '%s\n' "$missing_graduation_output" | grep -q 'expected graduation closeout fallback wiring' \
+grep -q 'expected graduation closeout fallback wiring' <<< "$missing_graduation_output" \
   || fail "missing graduation fallback should explain the required wiring"
 
 # ---------------------------------------------------------------------------
@@ -260,9 +260,9 @@ gated_workflow="$TMP_DIR/update-tracker-gated.yml"
 write_gate_workflow "$gated_workflow" gated
 gated_output="$(run_with_workflow "$gated_workflow")" \
   || fail "workflow with the configuration gate wired should pass"
-printf '%s\n' "$gated_output" | grep -q 'OK: tracker-configuration gate step is present' \
+grep -q 'OK: tracker-configuration gate step is present' <<< "$gated_output" \
   || fail "gated workflow output should confirm the gate step"
-printf '%s\n' "$gated_output" | grep -q 'OK: every step consuming GH_PROJECT_TOKEN is gated on the configuration check' \
+grep -q 'OK: every step consuming GH_PROJECT_TOKEN is gated on the configuration check' <<< "$gated_output" \
   || fail "gated workflow output should confirm every token consumer is gated"
 
 # Direction 2 — plant the violation by removing the gate from the consuming
@@ -273,7 +273,7 @@ ungated_exit=0
 ungated_output="$(run_with_workflow "$ungated_workflow" 2>&1)" || ungated_exit=$?
 [ "$ungated_exit" -eq 1 ] \
   || fail "workflow with an ungated GH_PROJECT_TOKEN consumer should fail"
-printf '%s\n' "$ungated_output" | grep -q "step 'Run graduation closeout fallback' consumes secrets.GH_PROJECT_TOKEN without gating" \
+grep -q "step 'Run graduation closeout fallback' consumes secrets.GH_PROJECT_TOKEN without gating" <<< "$ungated_output" \
   || fail "ungated workflow output should name the offending step"
 
 # Direction 2b — plant the violation by deleting the gate step entirely while
@@ -284,7 +284,7 @@ no_gate_exit=0
 no_gate_output="$(run_with_workflow "$no_gate_workflow" 2>&1)" || no_gate_exit=$?
 [ "$no_gate_exit" -eq 1 ] \
   || fail "workflow using GH_PROJECT_TOKEN without a gate step should fail"
-printf '%s\n' "$no_gate_output" | grep -q "no 'id: config' gate step emitting configured=true/false" \
+grep -q "no 'id: config' gate step emitting configured=true/false" <<< "$no_gate_output" \
   || fail "missing gate step should explain the required gate"
 
 # Fail-closed check: a workflow that never references the secret reports the
@@ -293,7 +293,7 @@ no_token_workflow="$TMP_DIR/update-tracker-no-token.yml"
 write_gate_workflow "$no_token_workflow" no-token
 no_token_output="$(run_with_workflow "$no_token_workflow")" \
   || fail "workflow without GH_PROJECT_TOKEN should still pass"
-printf '%s\n' "$no_token_output" | grep -q 'configuration gate not applicable' \
+grep -q 'configuration gate not applicable' <<< "$no_token_output" \
   || fail "workflow without GH_PROJECT_TOKEN should say the gate is not applicable"
 
 printf 'check tracker merge mapping tests passed\n'

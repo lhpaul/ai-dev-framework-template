@@ -188,6 +188,41 @@ The function is **fail-open**: if the issue is already on the board it returns 0
 
 Use the shared helper when a stage completes and the tracker status must advance. It performs a targeted `repository.issue(...).projectItems` lookup for the single issue and avoids `gh project item-list`, which paginates the whole board and can drain the GraphQL rate-limit bucket.
 
+#### Organization project with an unlinked personal repository
+
+An organization-owned project cannot be linked to a repository in a personal
+account. Cards for that repository's issues can still be added with
+`gh project item-add`, and `gh project item-list` shows their Status and Type,
+but `repository.issue(...).projectItems` returns no nodes for them. The
+targeted lookup alone would report every such issue as "not on the board", so
+Status and Type reads would come back empty and `/run-epic` would classify each
+child as `ambiguous` (#1801).
+
+When the successful primary lookup exhausts membership without the configured
+card, `workflow_github_project_item_for_issue` makes one filtered
+`ProjectV2.items(first:100, query:...)` candidate request. A fresh REST issue title
+is safely escaped with repository/type/open-state filters. Title matching is
+only a selector: the exact repository and issue number establish identity.
+Foreign same-number cards cannot match; conflicting exact cards are unreadable.
+No exact match with another page is unknown, never absence, and there is no
+unfiltered retry or extra candidate page. Unsupported schemas and failed reads
+warn and retain unknown membership; `ensure_on_project_board` skips board-add.
+
+Private per-process cache entries are keyed by repository, project, target,
+selector and archival mode under `${TMPDIR:-/tmp}/workflow-gh-item-list-<uid>/`
+(override `WORKFLOW_GH_ITEM_LIST_CACHE_DIR`).
+`WORKFLOW_GH_ITEM_LIST_CACHE_TTL_MINUTES` defaults to 5; 0 disables reuse.
+Successful Status/Type/Priority/Size updates and item-add invalidate this
+process's target caches; failures do not. Old private entries are swept after
+an hour. Type precedence remains configured field, native Issue Type,
+Custom Type, CustomType, then Type. Set `WORKFLOW_GH_ITEM_LIST_FALLBACK=0` to
+skip fallback; an empty primary then remains unknown rather than proving absence.
+
+Archived primary membership is explicit. For an archived org-project card
+invisible there, the host must support archived-aware filtered candidates and
+return its exact identity within the 100-candidate cap. Otherwise restore or
+reconcile it manually before advancement; no automatic restoration occurs.
+
 <!-- workflow-shell-contract: bash-zsh -->
 ```bash
 # Source workflow-lib.sh to get the targeted GitHub Projects helpers.
@@ -248,6 +283,24 @@ wrapper that returns every open item regardless of Type in a framework-mode
 repository (see `05-prepare-release-protocol.md` and
 `06-retrospective-protocol.md`).
 
+Both reads are exhaustive (#1804). `gh issue list --limit` and
+`gh project item-list --limit` are fetch caps, not complete queries, so the
+shared helpers `workflow_gh_list_open_issues_exhaustive` and
+`workflow_gh_project_items_exhaustive` repeat the read with a larger cap until
+the result is complete. The project read uses the top-level `totalCount` that
+`gh project item-list --format json` reports. That count reflects `--query`,
+and a full fetch returns exactly that many items. When `totalCount` is
+present, only it decides completeness: a response with fewer items than
+`totalCount` is never accepted as complete. The hard bound is 64,000 records.
+Past it, or when gh returns fewer items than its own `totalCount`, the wrapper
+reports `issue_list_truncated` or `item_list_truncated`, and
+`list_open_workflow_type_issues` warns and returns `[]`. Neither returns a
+partial list. Board items join open issues by
+repository and number, never by number alone. The item's repository comes
+from `content.repository` (`owner/repo` in the live output), then from
+`content.url`. An item from another repository on a shared organization
+board never matches, and neither does an item that names no repository.
+
 ### Status values by workflow stage (Step 8b targets)
 
 Do not type a target Status by hand. The canonical mapping in
@@ -287,46 +340,23 @@ When the **Portfolio Orchestrator** has `gh` CLI access, it should:
 
 ### Reading Project Items
 
-**Performance note**: `gh project item-list` paginates all board items, including closed and merged
-ones. On boards with 300+ items this exhausts the 5 000-point GraphQL rate limit, causing a
-~3.5-minute pause that grows as more items accumulate. Prefer the open-issue approach below.
+**Performance note**: No-target discovery uses current open-issue identities,
+bounded target reads and invocation-only classification, so retained terminal
+history does not determine board-read cost. Use
+`bash scripts/development-workflow/workflow-portfolio-scan.sh` rather than
+cross-referencing an unrestricted board listing. Its report includes coverage,
+reason, observed GraphQL spend/remaining/reset, skipped work and the usual
+portfolio categories. The reserve defaults to 1000 via
+`portfolio_scan.graphql_reserve`; partial/deferred outcomes preserve bounded
+command capacity when the before budget is readable and no other consumer spends.
 
-**Recommended: query open issues first, then cross-reference with a single item-list call**
-
-GitHub Projects v2 has no server-side open-issue filter on the items node, so a full `item-list`
-fetch is unavoidable. The key optimisation is to fetch open issues from the GitHub Issues API
-(which supports state filtering) and then cross-reference them against the project board items
-client-side — this ensures downstream processing only touches open candidates:
-
-```bash
-# Step 1: list open issues only (the only candidates for orchestrator advancement)
-OPEN_ISSUES=$(gh issue list --state open --limit 1000 --json number,title,labels,createdAt)
-
-# Step 2: fetch all project board items once and filter to only open-issue candidates
-gh project item-list <PROJECT_NUMBER> --owner <OWNER> --limit 10000 --format json \
-  | jq --argjson open "$OPEN_ISSUES" \
-    '[.items[] | . as $item | ($open[] | select(.number == $item.content.number)) // empty | {number: .number, title: .title, status: $item.status}]'
-```
-
-**Alternative: client-side terminal-status filter (simpler, same single item-list call)**
-
-When you want a simpler filter without loading the open-issue list separately, fetch all items
-and immediately discard terminal-status entries client-side:
-
-```bash
-# Fetch all items and filter out terminal statuses client-side
-gh project item-list <PROJECT_NUMBER> --owner <OWNER> --limit 10000 --format json \
-  | jq '[.items[] | select(.status != null and (.status | IN("Done","Merged","Released","Cancelled")) | not)]'
-```
-
-**Rate-limit check**: check remaining GraphQL quota before and after large pagination:
-
-```bash
-gh api rate_limit --jq '.resources.graphql | {limit, remaining, used, reset: (.reset | todate)}'
-```
-
-Warn the human when `remaining` falls below 1 000 points. Pause dispatch when below 200 points
-and report the reset time. See Protocol 90 Step 1a for the full rate-limit guidance.
+See [Protocol 90 Step 1a and adjacent terminal-item archival hygiene](../protocols/90-batch-orchestrate-work-protocol.md#terminal-item-archival-hygiene-beside-step-1a)
+for the ordered budget matrix, unavailable/reset/concurrent-spend behavior,
+safe Released/Cancelled archival, Merged/in-flight exclusions and restoration
+of reopened cards. Archived org cards invisible to primary membership remain
+unreadable on unsupported hosts or when outside the capped fallback response;
+restore/reconcile manually. Exhaustive release/retrospective readers retain
+their separate complete-board contract and are not portfolio scan entrypoints.
 
 ### Updating Status via GraphQL
 
