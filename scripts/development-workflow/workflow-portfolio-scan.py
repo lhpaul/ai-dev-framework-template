@@ -23,6 +23,7 @@ def load_module(name, path):
 
 reader = load_module('workflow_project_reader', SCRIPT_DIR / 'workflow-project-reader.py')
 resolver = load_module('workflow_config_resolver', SCRIPT_DIR / 'workflow-config-resolver.py')
+routing = load_module('work_item_repository_routing', SCRIPT_DIR / 'work-item-repository-routing.py')
 ReadError = reader.ReadError
 FULL = 'Full scan'
 PARTIAL = 'Partial scan (budget-limited)'
@@ -451,6 +452,26 @@ def batch_safety(output, records):
                 row['reason'] = f'Overlap serialization with #{group["keepItemId"]}; held until prior item merges into approved base'
 
 
+def snapshot_routing(record, action, root, selected):
+    # Documentation stages belong to the hub. Implementation must use the
+    # canonical ownership classifier, without fetching another repository.
+    branches = [pr['branch'] for pr in record['prs']] or record['branches']
+    implementation = ('feature/', 'fix/', 'refactor/', 'hotfix/')
+    documentation = ('spec/', 'implementation-plan/')
+    if record['prs'] and record['prs'][0]['branch'].startswith(documentation):
+        return None
+    if not (action in ('implement', 'run-code-review-and-open-pr', 'resolve-development-pr') or
+            any(branch.startswith(implementation) for branch in branches)):
+        return None
+    config = configuration(root)
+    mode = resolver.mode_from_shared(config, root / '.ai-dev-workflow.yaml')
+    if mode != 'workflow_hub':
+        return None
+    return routing.classify(mode, 'implementation', str(record['number']),
+                            routing.configured_keys_from_config(config),
+                            [selected] if selected else [], record['type'] == 'Workflow')
+
+
 def snapshot_classify(args):
     root = Path(args.repo_root).resolve()
     snapshot = snapshot_read(args.scan_snapshot, root)
@@ -475,6 +496,11 @@ def snapshot_classify(args):
         if args.pr and not any(pr['number'] == args.pr for pr in record['prs']):
             continue
         category, action, reason = classify(record, snapshot)
+        ownership = snapshot_routing(record, action, root, args.selected_repo)
+        if ownership and (not ownership['continue_allowed'] or ownership['artifact_owner'] == 'selected_product_repository'):
+            category = 'HELD'
+            action = 'resolve-repository-selection' if not ownership['continue_allowed'] else 'hold-unreadable'
+            reason = ownership['stop_reason'] or 'Product-owned implementation requires a bounded fresh read in the selected repository; hub snapshot evidence cannot authorize it'
         local_keys = ('toolFix', 'toolFixFiles', 'fileSet', 'localRuntime', 'developmentPath')
         local = {'toolFix': 'unknown', 'fileSet': 'unknown', 'localRuntime': 'none',
                  **{key: value for key, value in metadata.get(record['number'], {}).items() if key in local_keys}}
@@ -485,7 +511,10 @@ def snapshot_classify(args):
         if (action in ('write-plan', 'run-spec-review-and-open-pr', 'run-plan-review-and-open-pr') or record['status'] in ('Writing Spec', 'Writing Plan')) and output[-1]['toolFix'] == 'unknown':
             output[-1]['toolFix'] = 'no'
         if args.mode == 'next':
-            print(f'TARGET=issue:{record["number"]}\nSTATUS={record["status"]}\nNEXT_ACTION={action}\nCATEGORY={category}')
+            if ownership:
+                for key in ('outcome_code', 'display_label', 'continue_allowed', 'artifact_owner', 'selected_product_repo_key'):
+                    print(f'ROUTING_{key.upper()}={str(ownership[key]).lower() if isinstance(ownership[key], bool) else ownership[key] or ""}')
+            print(f'TARGET=issue:{record["number"]}\nSTATUS={record["status"]}\nNEXT_ACTION={action}\nCATEGORY={category}\nREASON={reason}')
     if args.mode == 'next' and len(output) != 1:
         raise ReadError('Target has no unique fully read scan record')
     if args.mode == 'batch':
@@ -700,6 +729,7 @@ def main():
     parser.add_argument('--json', action='store_true')
     parser.add_argument('--scan-snapshot')
     parser.add_argument('--mode', choices=('batch', 'next', 'validate'), default='batch')
+    parser.add_argument('--repo', dest='selected_repo')
     parser.add_argument('--development')
     parser.add_argument('--branch')
     parser.add_argument('--pr', type=int)

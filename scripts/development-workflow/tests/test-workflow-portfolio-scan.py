@@ -65,6 +65,8 @@ if args[1]=='graphql':
   finish({'data':{kind:value,**rate}})
  n=int(values.get('issueNumber',state.get('target',1)))
  card={'id':'I'+str(n),'project':{'id':'P1'},'content':{'number':n,'repository':{'nameWithOwner':state['repo']},'issueType':{'name':state.get('nativeType','Bug')}},'status':{'name':state.get('statuses',{}).get(str(n),'Backlog')},'type':{'name':'Feature'},'customType':{'name':state.get('customType','Refactor')},'configuredType':{'name':state.get('configuredType','Feature')}}
+ for alias in ('dependsOn','dependencies'):
+  if alias in state:card[alias]={'text':state[alias]}
  card['priority']={'name':state.get('priorities',{}).get(str(n),'Normal')}
  card['dueDate']={'date':state.get('dueDates',{}).get(str(n))}
  if state.get('missingType'): card.pop('type');card.pop('customType');card.pop('configuredType');card['content'].pop('issueType')
@@ -441,6 +443,44 @@ class Fixture(unittest.TestCase):
         self.reset(active=1,pr=True,labels=[{'name':'ready-for-human-review'}]);report=self.scan();self.assertEqual(report['classification'][0]['category'],'INFORMATIONAL')
         self.reset(active=1,pr=True,labels=[{'name':'needs-fixes'}]);self.assertEqual(self.scan()['classification'][0]['category'],'ACTIONABLE RESUME')
 
+    def test_snapshot_repository_ownership(self):
+        development=self.artifact(1)
+        self.config.write_text(self.config.read_text()+'mode: workflow_hub\nworkflow_hub:\n  product_repos:\n    - name: mobile-app\n      github_repo: fixture/mobile-app\n')
+        self.reset(active=1,statuses={'1':'Plan Ready'})
+        report=self.scan();self.assertEqual(report['classification'][0]['action'],'resolve-repository-selection')
+        self.assertEqual(report['classification'][0]['category'],'HELD');self.assertEqual(report['recommendedCommand'],'')
+        path=self.folder/'ownership.json';path.write_text(json.dumps(report));self.env['WORKFLOW_SCAN_INVOCATION_ID']=report['invocation']
+        before=len(self.ledger()['calls'])
+        def next_action(target, selected=None):
+            args=['bash',str(SCRIPTS/'workflow-next-action.sh'),'--repo-root',str(self.root),*target,'--scan-snapshot',str(path)]
+            if selected:args+=['--repo',selected]
+            result=self.execute(*args)
+            self.assertEqual(len(self.ledger()['calls']),before)
+            return result.stdout
+        for selected, outcome in ((None,'missing_target'),('mobile-app','product_owned'),('foreign/slug','ambiguous_target'),('foreign-key','ambiguous_target')):
+            result=next_action(['--development',development],selected)
+            self.assertIn('CATEGORY=HELD',result);self.assertIn('NEXT_ACTION='+('hold-unreadable' if outcome=='product_owned' else 'resolve-repository-selection'),result)
+            self.assertIn('ROUTING_OUTCOME_CODE='+outcome,result);self.assertNotIn('NEXT_ACTION=implement',result)
+        # Hub PR and branch evidence cannot authorize the selected product.
+        self.reset(active=1,pr=True,labels=[{'name':'needs-fixes'}],statuses={'1':'Development in Review'})
+        report=self.scan();path.write_text(json.dumps(report));self.env['WORKFLOW_SCAN_INVOCATION_ID']=report['invocation'];before=len(self.ledger()['calls'])
+        result=next_action(['--pr','70'],'mobile-app');self.assertIn('CATEGORY=HELD',result);self.assertNotIn('NEXT_ACTION=resume-fix-loop',result)
+        report['fullyRead'][0]['branches']=['spec/1-fixture','fix/1-fixture'];path.write_text(json.dumps(report))
+        self.assertIn('CATEGORY=HELD',next_action(['--branch','fix/1-fixture'],'mobile-app'))
+        # Fresh, complete Type Workflow evidence admits hub-only implementation.
+        self.reset(active=1,nativeType='Workflow',statuses={'1':'Plan Ready'})
+        report=self.scan();path.write_text(json.dumps(report));self.env['WORKFLOW_SCAN_INVOCATION_ID']=report['invocation'];before=len(self.ledger()['calls'])
+        result=next_action(['--development',development]);self.assertIn('NEXT_ACTION=implement',result);self.assertIn('ROUTING_OUTCOME_CODE=hub_only',result)
+        result=next_action(['--development',development],'mobile-app');self.assertIn('CATEGORY=HELD',result);self.assertIn('ROUTING_OUTCOME_CODE=ambiguous_target',result)
+        # Planning stays hub-owned; a documentation PR also stays hub-owned.
+        self.reset(active=1,statuses={'1':'Spec Ready'})
+        report=self.scan();path.write_text(json.dumps(report));self.env['WORKFLOW_SCAN_INVOCATION_ID']=report['invocation'];before=len(self.ledger()['calls'])
+        self.assertIn('NEXT_ACTION=write-plan',next_action(['--development',development]))
+        self.reset(active=1,pr=True,labels=[{'name':'needs-fixes'}],statuses={'1':'Spec in Review'})
+        report=self.scan();report['fullyRead'][0]['prs'][0]['branch']='spec/1-fixture'
+        path.write_text(json.dumps(report));self.env['WORKFLOW_SCAN_INVOCATION_ID']=report['invocation'];before=len(self.ledger()['calls'])
+        self.assertIn('NEXT_ACTION=resume-fix-loop',next_action(['--pr','70']))
+
     def test_snapshot_planted_scope_violation(self):
         development=self.artifact();self.reset(active=1,statuses={'1':'Plan Ready'})
         report=self.scan();path=self.folder/'snapshot.json';path.write_text(json.dumps(report))
@@ -599,6 +639,19 @@ class Fixture(unittest.TestCase):
             else:
                 row=next(row for row in report['classification'] if row['number']==1)
                 self.assertEqual(row['action'],'hold-dependency' if '#2' in body else 'implement')
+
+    def test_tracker_dependency_field_absence_and_unknown(self):
+        self.artifact()
+        for field in ('dependsOn','dependencies'):
+            for value, action in (('None','implement'),('none.','implement'),('#2','hold-dependency'),('unknown prerequisite',None)):
+                self.reset(active=2,statuses={'1':'Plan Ready','2':'Backlog'},**{field:value})
+                report=self.scan();self.assertEqual(self.ledger()['graphql'],3)
+                if action is None:
+                    self.assertNotIn(1,[record['number'] for record in report['fullyRead']])
+                    self.assertTrue(any('Unresolved dependency' in entry['reason'] for entry in report['omissions']))
+                else:
+                    row=next(row for row in report['classification'] if row['number']==1)
+                    self.assertEqual(row['action'],action)
 
     def test_review_fix_loop_lane_composition(self):
         self.artifact()

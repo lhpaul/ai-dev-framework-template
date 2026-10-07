@@ -102,6 +102,7 @@ fi
 cd "$repo_root"
 if [ -n "$scan_snapshot" ]; then
   snapshot_args=(--repo-root "$repo_root" --scan-snapshot "$scan_snapshot" --mode next)
+  [ -n "$target_repo" ] && snapshot_args+=(--repo "$target_repo")
   [ -n "$development_path" ] && snapshot_args+=(--development "$development_path")
   [ -n "$branch_name" ] && snapshot_args+=(--branch "$branch_name")
   [ -n "$pr_number" ] && snapshot_args+=(--pr "$pr_number")
