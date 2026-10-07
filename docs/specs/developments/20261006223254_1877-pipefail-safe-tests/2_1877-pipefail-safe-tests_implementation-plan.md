@@ -28,11 +28,34 @@ Evidence revision: `e1ca032561a9b6c8fcfb88f9cf2776fb2f2e3986`.
 | Lint integration | `rg -n 'workflow-shell-guard-lint' .github/workflows/shellcheck.yml scripts/lint/tests/test-workflow-shell-guard-lint.sh scripts/lint/README.md` | CI invokes the existing linter and its unit suite; no job or invocation change is needed. |
 | Help regression target | `rg -n 'help_documents_skip_reason|_1574_help' scripts/development-workflow/tests` | Reported check now lives in test-pr-review-loop-pr-agent-coderabbit.sh after suite splitting. |
 | Synchronization | `rg -n 'scripts/lint/|scripts/development-workflow/' sync-manifest.yaml` | Existing directory sync surfaces carry lint and workflow tests. |
-| Consumer enumeration | `rg -n 'workflow-shell-guard-lint' .github scripts docs .agents/skills .codex/skills .claude .cursor AGENTS.md REVIEW.md` | Runtime CI: shellcheck.yml lint-test step then lint step. Developer protocol paths and mirrored developer instructions invoke the same CLI; README and runbooks reference it. CLI shape and SH001–SH005 behavior remain unchanged. |
+| Consumer enumeration | `rg -n 'workflow-shell-guard-lint' .github scripts docs .agents/skills .codex/skills .claude .cursor AGENTS.md REVIEW.md` | Literal-name references; alias calls and composed outcomes are enumerated in the consumer table below. |
 
 The implementation reruns the candidate query over all shell tests before editing
 and before readiness, also checking continuations and long quiet-option spellings.
 The current inventory is indicative and may grow when equivalent variants are found.
+
+## Existing Consumer Paths and Composed Outcomes
+
+The literal-name query above locates the linter assignment but not its aliased
+calls. Reproduce those calls with `rg -n '\$LINTER' scripts/lint/tests/test-workflow-shell-guard-lint.sh`.
+Locators below refer to the evidence revision; the public CLI remains unchanged.
+
+| Current consumer locator | Invocation path and observable outcome |
+| --- | --- |
+| `.github/workflows/shellcheck.yml:82` | Earlier ShellCheck and GraphQL checks can fail the job first; when reached, the lint harness must report passing assertion totals and exit 0. A failed assertion fails this step. |
+| `.github/workflows/shellcheck.yml:143` | Prior checks, base validation and fetch must succeed before the guard runs. Added unsafe test pipelines return 1 with SH006; safe, suppressed or non-test input returns 0 when no other rule fails. |
+| `scripts/lint/tests/test-workflow-shell-guard-lint.sh:44` | `run_linter` invokes `$LINTER --diff-file`; maps exit 0 to pass and nonzero to fail. |
+| Same harness `:53` | `run_linter_output` retains diagnostic text and exit status for positive/negative assertions. |
+| Same harness `:58` | `run_git_linter` invokes `$LINTER --base-ref main` inside a fixture repository and maps exit status identically. Its diff path collection must reach `scripts/lint/tests` after widening. |
+| `docs/workflow/development-workflow/protocols/03-implement-development-protocol.md:264` | Mandatory cleanup checklist prescribes guard execution for workflow shell changes; a finding requires correction before submission. |
+| Same protocol `:901`, `:1336`, `:1626`, `:1959` | Each path checks nonempty `CHANGED_SH`, runs ShellCheck, then the guard. Empty changes skip invocation; ShellCheck failure can stop first. Once reached, a guard finding blocks the commit path. |
+| `.claude/agents/developer.md:118`, `:120`; `.cursor/agents/developer.md:118`, `:120` | Mirrored developer instructions prescribe ShellCheck then guard and the same shell checklist. Execution has the preceding-failure and changed-shell conditions above; no mirror text changes are needed. Claude is not invoked in this session. |
+| `docs/best-practices/1-general.md:118`; `REVIEW.md:442`; `scripts/lint/README.md:81`, `:161` | Current guidance prescribes direct guard/unit execution. Nonzero output requires correction; missing guard evidence is a review finding. |
+| `docs/testing/workflow/1877-pipefail-safe-tests.smoke-test.md:34`, `:35` | This item's runbook executes harness then direct guard under fail-fast semantics. A harness failure stops first; otherwise diagnostics and status discharge the recurrence proof. |
+
+Other matches under older development specs, plans and runbooks are historical
+references, not additional runtime callers. No new CI step or lifecycle policy is
+introduced; SH001–SH005 retain their existing path scope.
 
 ## Cross-Cutting Operational Assumption Check
 
@@ -186,10 +209,9 @@ validation mechanism, without changing reviewer or implementation policy checkli
 - Rule 3: Satisfied — candidate-line/file counts derive from the Verification Log
   query and the file list is enumerated above.
 - Rule 4: Satisfied — each existing-component assertion carries its direct search.
-- Rule 5: Satisfied — existing CLI consumers are enumerated by the recorded search;
-  the ShellCheck CI job runs unit tests then the extended guard, whose nonzero
-  finding exit fails that step. Developer CLI calls receive the same new SH006
-  diagnostic; documentation references retain the unchanged command.
+- Rule 5: Satisfied — literal-name and alias-call searches enumerate current CLI
+  consumers in the table above, including prior failures, conditional invocation,
+  harness exit mapping and historical-reference exclusions.
 - Rule 6: Satisfied — SH006 binds only to added shell-test logical lines; regression
   and residual obligations bind to this implementation PR and are discharged
   before readiness by the tests and scope gate above.
