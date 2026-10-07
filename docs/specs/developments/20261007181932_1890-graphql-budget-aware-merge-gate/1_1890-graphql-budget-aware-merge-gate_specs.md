@@ -122,14 +122,16 @@ No new notification channel or analytics system is required.
 
 ## Decision Matrix
 
-Rows apply in order; rows 1–3 precede every mutation. Existing readiness stops
-also apply to admitted work.
+Evaluate rows 1–3 once for initial admission, before the first mutation. Only
+one of those rows can match. After admission, evaluate rows 4–6 for execution
+outcomes; the initial budget rows do not reclassify completed or interrupted
+work. Existing readiness stops also apply to admitted work.
 
 | Row | Budget / execution input | Outcome | Required next action |
 | --- | --- | --- | --- |
-| 1 | Initial evidence or whole-sequence projection unreadable | Deferred | Report unavailable fields, all selected PRs unmerged, and recovery action; no mutation |
-| 2 | Remaining points below projection plus reserve | Deferred | Report budget, reset, and all selected PRs unmerged; no mutation |
-| 3 | Remaining points at least projection plus reserve | Admitted | Apply existing gates and record progress before execution |
+| 1 | Before admission; initial evidence or whole-sequence projection unreadable | Deferred | Report unavailable fields, all selected PRs unmerged, and recovery action; no mutation |
+| 2 | Before admission; readable evidence and remaining points below projection plus reserve | Deferred | Report budget, reset, and all selected PRs unmerged; no mutation |
+| 3 | Before admission; readable evidence and remaining points at least projection plus reserve | Admitted | Apply existing gates and record progress before execution |
 | 4 | Admitted; existing readiness gate denies execution | Existing policy stop | Report the existing stop and actual PR state; no unauthorized merge |
 | 5 | Admitted; execution and follow-up complete | Completed | Report verified merge and reconciliation outcomes |
 | 6 | Admitted; execution fails or outcome becomes uncertain | Interrupted | Record completed, uncertain, and pending steps; no additional merges; report recovery |
