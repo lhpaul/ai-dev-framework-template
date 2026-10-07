@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.47.1] - 2026-10-07
+
+### Fixed
+
+- **Closing-keyword checks with no targets** (#1909): closed pull requests
+  without validation targets now emit valid empty JSON.
+- **Consumer workflow-test portability** (#1920): synced tests respect
+  consumer branch filters, ignore rules, tracker configuration and plans.
+
 ## [0.47.0] - 2026-10-07
 
 ### Added
@@ -3279,7 +3288,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `.claude/settings.json` with pre-approved permissions for common git and fetch operations; `.claude/settings.local.json.example` documenting machine-specific overrides for optional integrations
 - `.gitignore` covering local Claude settings, `.env` files, and common system files
 
-[Unreleased]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.47.0...HEAD
+[Unreleased]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.47.1...HEAD
+[0.47.1]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.47.0...v0.47.1
 [0.47.0]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.46.0...v0.47.0
 [0.46.0]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.45.0...v0.46.0
 [0.45.0]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.44.0...v0.45.0
