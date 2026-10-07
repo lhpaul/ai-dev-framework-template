@@ -31,6 +31,7 @@ absent token is rejected; existing help assertions still pass.
 
 <!-- workflow-shell-contract: bash -->
 ```bash
+set -euo pipefail
 bash scripts/lint/tests/test-workflow-shell-guard-lint.sh
 python3 scripts/lint/workflow-shell-guard-lint.py --base-ref origin/develop
 ```

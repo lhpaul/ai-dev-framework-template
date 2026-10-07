@@ -51,7 +51,7 @@ Locators below refer to the evidence revision; the public CLI remains unchanged.
 | Same protocol `:901`, `:1336`, `:1626`, `:1959` | Each path checks nonempty `CHANGED_SH`, runs ShellCheck, then the guard. Empty changes skip invocation; ShellCheck failure can stop first. Once reached, a guard finding blocks the commit path. |
 | `.claude/agents/developer.md:118`, `:120`; `.cursor/agents/developer.md:118`, `:120` | Mirrored developer instructions prescribe ShellCheck then guard and the same shell checklist. Execution has the preceding-failure and changed-shell conditions above; no mirror text changes are needed. Claude is not invoked in this session. |
 | `docs/best-practices/1-general.md:118`; `REVIEW.md:442`; `scripts/lint/README.md:81`, `:161` | Current guidance prescribes direct guard/unit execution. Nonzero output requires correction; missing guard evidence is a review finding. |
-| `docs/testing/workflow/1877-pipefail-safe-tests.smoke-test.md:34`, `:35` | This item's runbook executes harness then direct guard under fail-fast semantics. A harness failure stops first; otherwise diagnostics and status discharge the recurrence proof. |
+| `docs/testing/workflow/1877-pipefail-safe-tests.smoke-test.md:35`, `:36` | This item's runbook executes harness then direct guard under fail-fast semantics. A harness failure stops first; otherwise diagnostics and status discharge the recurrence proof. |
 
 Other matches under older development specs, plans and runbooks are historical
 references, not additional runtime callers. No new CI step or lifecycle policy is
