@@ -363,10 +363,12 @@ def array_findings(path: str, lines: list[str], changed: set[int], offset: int =
             pending_function = True
         # A pipeline executes its commands in separate shells. Its set flags
         # must not alter the parent state (including a continued pipeline).
+        # Explicit subshell boundaries separate inner commands from an outer
+        # pipe: their option changes are local and restored by the stack.
         pipeline_sets = set()
         for position, _, _ in option_events:
-            clause_start = max((match.end() for match in re.finditer(r";|&&|\|\|", command_code[:max(position, 0)])), default=0)
-            clause_end = next((position + match.start() for match in re.finditer(r";|&&|\|\|", command_code[max(position, 0):])), len(command_code))
+            clause_start = max((match.end() for match in re.finditer(r";|&&|\|\||[()]", command_code[:max(position, 0)])), default=0)
+            clause_end = next((position + match.start() for match in re.finditer(r";|&&|\|\||[()]", command_code[max(position, 0):])), len(command_code))
             if re.search(r"(?<!\|)\|(?!\|)", command_code[clause_start:clause_end]) or (pipeline_continues and clause_start == 0):
                 pipeline_sets.add(position)
         pipeline_continues = bool(re.search(r"(?<!\|)\|\s*$", command_code))
