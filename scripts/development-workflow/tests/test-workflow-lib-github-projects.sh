@@ -93,8 +93,27 @@ JSON
     fi
     printf '{"number":824,"milestone":{"number":7}}\n'
     ;;
+  "api repos/lhpaul/ai-dev-framework-template/issues/824")
+    printf '{"number":824,"title":"Workflow helper issue","state":"open"}\n'
+    ;;
   *"api graphql"* )
     case "$*" in
+      *"items(first:100,query:"*)
+        # Bounded-reader response is independent of exhaustive CLI semantics.
+        if [ "${MOCK_ITEM_LIST_MODE:-default}" = "fail" ]; then
+          printf 'candidate lookup failed\n' >&2
+          exit 42
+        fi
+        if [ "${MOCK_ITEM_LIST_MODE:-default}" = "empty_board" ]; then
+          printf '{"data":{"node":{"items":{"nodes":[],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}\n'
+        elif [ "${MOCK_ITEM_LIST_MODE:-default}" = "foreign_only" ]; then
+          printf '{"data":{"node":{"items":{"nodes":[{"id":"foreign","content":{"number":824,"repository":{"nameWithOwner":"other/repo"}}}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}\n'
+        else
+          cat <<'JSON'
+{"data":{"node":{"items":{"nodes":[{"id":"PVTI_foreign_824","content":{"number":824,"repository":{"nameWithOwner":"other-org/other-repo"}},"status":{"name":"Done"},"type":{"name":"Bug"}},{"id":"PVTI_item_824","content":{"number":824,"repository":{"nameWithOwner":"lhpaul/ai-dev-framework-template"}},"status":{"name":"Backlog"},"customType":{"name":"Feature"},"priority":{"name":"High"},"size":{"name":"S"}}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}
+JSON
+        fi
+        ;;
       *"projectV2(number:"*)
         cat <<'JSON'
 {"data":{"user":{"projectV2":{"id":"PVT_project_1"}},"organization":null}}
@@ -512,7 +531,7 @@ esac
 run_test "membership_missing_adds_issue" "added" "$membership_result"
 # One board scan confirms absence; item-add invalidates the cache, so the
 # initial-status update re-reads the board once more (issue #1801).
-run_test "membership_missing_scans_board_before_and_after_add" "2" "$(count_log_matches 'project item-list')"
+run_test "membership_missing_scans_board_before_and_after_add" "2" "$(count_log_matches 'items[(]first:100,query:')"
 run_test "membership_missing_adds_once" "1" "$(count_log_matches 'project item-add')"
 
 echo ""
@@ -531,7 +550,7 @@ run_test "fallback_type_read" "Feature" "$fallback_type"
 run_test "fallback_item_id_is_this_repo_card" "PVTI_item_824" "$(printf '%s' "$fallback_item" | jq -r '.item_id')"
 run_test "fallback_item_carries_project_id" "PVT_project_1" "$(printf '%s' "$fallback_item" | jq -r '.project_id')"
 run_test "fallback_item_carries_priority_and_size" "High/S" "$(printf '%s' "$fallback_item" | jq -r '.priority + "/" + .size')"
-run_test "fallback_board_scanned_once_per_process" "1" "$(count_log_matches 'project item-list')"
+run_test "fallback_board_scanned_once_per_process" "1" "$(count_log_matches 'items[(]first:100,query:')"
 run_test "fallback_tries_graphql_first_each_read" "3" "$(count_log_matches 'projectItems')"
 
 reset_log
@@ -603,7 +622,7 @@ get_tracker_status_for_issue 824 >/dev/null
 unset WORKFLOW_GH_ITEM_LIST_CACHE_TTL_MINUTES
 unset MOCK_PROJECT_ITEM_MODE
 unset MOCK_ITEM_LIST_MODE
-run_test "fallback_zero_ttl_disables_cache_reuse" "2" "$(count_log_matches 'project item-list')"
+run_test "fallback_zero_ttl_disables_cache_reuse" "2" "$(count_log_matches 'items[(]first:100,query:')"
 
 reset_log
 stale_cache_file="$ITEM_LIST_CACHE_DIR/1-stale-1.json"
@@ -624,7 +643,7 @@ workflow_github_project_item_list_cache_invalidate
 get_tracker_status_for_issue 824 >/dev/null
 unset MOCK_PROJECT_ITEM_MODE
 unset MOCK_ITEM_LIST_MODE
-run_test "fallback_cache_invalidate_forces_rescan" "2" "$(count_log_matches 'project item-list')"
+run_test "fallback_cache_invalidate_forces_rescan" "2" "$(count_log_matches 'items[(]first:100,query:')"
 
 # A successful field write must drop the cached board, or the next fallback
 # read reports the value this process just overwrote. Each case: one read
@@ -648,7 +667,7 @@ for fallback_write in status type priority; do
   unset MOCK_PROJECT_ITEM_MODE
   unset MOCK_ITEM_LIST_MODE
   run_test "fallback_${fallback_write}_write_lands" "1" "$writes_after"
-  run_test "fallback_${fallback_write}_write_invalidates_board_cache" "2" "$(count_log_matches 'project item-list')"
+  run_test "fallback_${fallback_write}_write_invalidates_board_cache" "2" "$(count_log_matches 'items[(]first:100,query:')"
 done
 
 reset_log
@@ -661,7 +680,7 @@ unset MOCK_STATUS_FIELD_MODE
 get_tracker_status_for_issue 824 >/dev/null
 unset MOCK_PROJECT_ITEM_MODE
 unset MOCK_ITEM_LIST_MODE
-run_test "fallback_failed_write_keeps_board_cache" "1" "$(count_log_matches 'project item-list')"
+run_test "fallback_failed_write_keeps_board_cache" "1" "$(count_log_matches 'items[(]first:100,query:')"
 
 reset_log
 orphan_tmp_file="$ITEM_LIST_CACHE_DIR/.item-list.orphan1"
