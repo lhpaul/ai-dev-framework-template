@@ -314,10 +314,13 @@ Conditions are evaluated in order and stop at the first unmet one:
    empty set defers with `baseline_checks_unobserved` (vacuous-green is not
    green). Reviewer-owned check names from
    `configured_reviewer_check_names_json` are excluded, and so is any status
-   whose name starts with `Reviewer-loop completion guard (#` (#1879). That
+   whose name starts with `Reviewer-loop completion guard (#` (#1879), and
+   the CheckRun named `policy` whose `workflowName` is exactly `PR policy`
+   (#1884). That workflow job posts the guard and fails with it. The
    guard reports this loop's own last summary and turns green only after a
    clean summary, which needs this gate to pass first, so counting it would
-   deadlock the gate after any non-clean run.
+   deadlock the gate after any non-clean run. `pr-ci-loop.sh` still counts
+   both the guard status and its policy CheckRun for final CI readiness.
 
 Fail-closed on unreadable inputs (`evidence_unavailable_head`,
 `evidence_unavailable_review_threads`, `evidence_unavailable_checks`).
