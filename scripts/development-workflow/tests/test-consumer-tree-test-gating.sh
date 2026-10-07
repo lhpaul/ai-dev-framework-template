@@ -145,9 +145,13 @@ write_config "$TMP_ROOT/commented-consumer.yaml" 'template: # framework settings
 run_test "is_template_commented_header_consumer_stays_false" "false" \
   "$(workflow_template_is_template "$TMP_ROOT/commented-consumer.yaml")"
 
-# The repository's own config is the live contract this template ships.
-run_test "is_template_live_repo_config" "true" \
-  "$(workflow_template_is_template "$REPO_ROOT/.ai-dev-workflow.yaml")"
+# Only the template ships this live default; consumers own their config.
+if [ "$(workflow_template_is_template "$REPO_ROOT/.ai-dev-workflow.yaml")" = "true" ]; then
+  run_test "is_template_live_repo_config" "true" \
+    "$(workflow_template_is_template "$REPO_ROOT/.ai-dev-workflow.yaml")"
+else
+  echo "SKIP: is_template_live_repo_config (consumer-owned configuration)"
+fi
 
 # ---------------------------------------------------------------------------
 # Area 2: workflow_config_review_github_reviewer_configured

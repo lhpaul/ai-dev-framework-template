@@ -48,7 +48,7 @@ STATE_FILE="$TMP_ROOT/state.env"
 mkdir -p "$MOCK_BIN"
 : > "$CALL_LOG"
 
-# _config_backup is set before the linear/custom-type-field test sections
+# _config_backup is set before the fixture-config test sections
 # overwrite .ai-dev-workflow.yaml; cleanup restores it on any exit
 # (including set -e).
 _config_backup=""
@@ -729,8 +729,18 @@ run_test "linear_create_item_stderr_guidance" "has-guidance" "$linear_guidance_r
 
 echo ""
 echo "=== create (#1583): framework-mode Workflow refusal ==="
-echo "    This repository's own .ai-dev-workflow.yaml sets template.is_template: true,"
-echo "    so these run against real framework-mode config — no config swap needed."
+echo "    Use an explicit framework-mode fixture in both template and consumer repositories."
+
+_config_backup="$TMP_ROOT/ai-dev-workflow.yaml.bak"
+cp "$_config_file" "$_config_backup"
+cat > "$_config_file" <<'FRAMEWORK_CONFIG'
+schema_version: 2
+issue_tracker:
+  provider: github_projects
+  project_number: 1
+template:
+  is_template: true
+FRAMEWORK_CONFIG
 
 # framework-creation-type-exact-match: exact, case-sensitive comparison.
 # "Workflow" is refused; "workflow" (lowercase) is NOT newly rejected and
@@ -759,6 +769,7 @@ case "$_lowercase_workflow_stderr" in
   *) _lowercase_workflow_result="not-refused" ;;
 esac
 run_test "framework_creation_type_exact_match_lowercase_not_refused" "not-refused" "$_lowercase_workflow_result"
+cp "$_config_backup" "$_config_file"
 
 echo ""
 echo "=== create (#1583): creation-refusal-no-bypass ==="
