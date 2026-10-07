@@ -11,7 +11,14 @@ HELPER="$REPO_ROOT/scripts/development-workflow/batch-merge.sh"
 TMP_ROOT="$(mktemp -d)"
 MOCK_BIN="$TMP_ROOT/bin"
 CALL_LOG="$TMP_ROOT/gh-calls.log"
-mkdir -p "$MOCK_BIN"
+mkdir -p "$MOCK_BIN" "$TMP_ROOT/.git"
+export MOCK_BUDGET_ROOT="$TMP_ROOT"
+cat > "$TMP_ROOT/.ai-dev-workflow.yaml" <<'YAML'
+issue_tracker:
+  provider: none
+merge_budget:
+  graphql_reserve: 1000
+YAML
 : > "$CALL_LOG"
 
 cleanup() {
@@ -23,6 +30,26 @@ cat > "$MOCK_BIN/gh" <<'MOCK_GH'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$MOCK_GH_CALL_LOG"
 case "$*" in
+  api\ rate_limit)
+    printf '{"resources":{"graphql":{"remaining":5000,"limit":5000,"reset":%s}}}\n' "$(( $(date +%s) + 3600 ))"
+    ;;
+  api\ graphql*)
+    state=OPEN
+    [ ! -f "$MOCK_BUDGET_ROOT/merged-43" ] || state=MERGED
+    printf '{"data":{"repository":{"pullRequest":{"number":43,"state":"%s","headRefName":"feature/43-clean","headRefOid":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","baseRefName":"develop","isInMergeQueue":false,"autoMergeRequest":null}}}}\n' "$state"
+    ;;
+  repo\ view\ --json\ nameWithOwner)
+    printf '{"nameWithOwner":"org/fixture"}\n'
+    ;;
+  repo\ view\ --json\ nameWithOwner\ --jq\ .nameWithOwner)
+    printf 'org/fixture\n'
+    ;;
+  pr\ view\ 43\ --repo\ org/fixture\ --json\ isCrossRepository\ --jq*)
+    printf 'false\n'
+    ;;
+  pr\ view\ 43\ --repo\ org/fixture\ --json\ body,title\ --jq*|pr\ view\ 43\ --repo\ org/fixture\ --json\ commits\ --jq*|pr\ view\ 43\ --repo\ org/fixture\ --json\ title\ --jq*)
+    printf '\n'
+    ;;
   auth\ status)
     exit 0
     ;;
@@ -64,9 +91,10 @@ JSON
 JSON
     ;;
   pr\ merge\ 43\ --merge\ --match-head-commit\ aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa)
+    : > "$MOCK_BUDGET_ROOT/merged-43"
     exit 0
     ;;
-  pr\ diff\ 42\ --name-only|pr\ diff\ 43\ --name-only)
+  pr\ diff\ 42\ --name-only|pr\ diff\ 43\ --name-only|pr\ diff\ --name-only\ 42|pr\ diff\ --name-only\ 43)
     printf 'scripts/example.sh\n'
     ;;
   *)
@@ -80,7 +108,32 @@ chmod +x "$MOCK_BIN/gh"
 cat > "$MOCK_BIN/git" <<'MOCK_GIT'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$MOCK_GIT_CALL_LOG"
+if [ "${1:-}" = -C ]; then shift 2; fi
 case "$*" in
+  rev-parse\ --show-toplevel)
+    printf '%s\n' "$MOCK_BUDGET_ROOT"
+    ;;
+  rev-parse\ --git-common-dir|rev-parse\ --absolute-git-dir)
+    printf '%s/.git\n' "$MOCK_BUDGET_ROOT"
+    ;;
+  remote\ get-url\ origin|config\ --get\ remote.origin.url)
+    printf 'https://github.com/org/fixture.git\n'
+    ;;
+  worktree\ list\ --porcelain)
+    printf 'worktree %s\nHEAD aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\nbranch refs/heads/develop\n\n' "$MOCK_BUDGET_ROOT"
+    ;;
+  branch\ --show-current)
+    printf 'develop\n'
+    ;;
+  rev-parse\ HEAD)
+    printf 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n'
+    ;;
+  merge-base\ --is-ancestor\ aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\ HEAD)
+    exit 0
+    ;;
+  ls-remote\ origin\ refs/heads/develop)
+    printf 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\trefs/heads/develop\n'
+    ;;
   status\ --porcelain)
     exit 0
     ;;
