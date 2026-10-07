@@ -650,6 +650,23 @@ run_consumer_suite test-apply-readiness-labels.sh 0
 run_consumer_suite test-review-doctrine-lint.sh 0
 run_consumer_suite test-reviewer-loop-guard-workflow.sh 0
 
+if [ -f "$portable_root/.github/workflows/pr-policy.yml" ]; then
+  mv "$portable_root/.github/workflows/pr-policy.yml" "$portable_root/pr-policy.yml"
+  run_consumer_suite test-reviewer-loop-guard-workflow.sh 0
+  # Exercise the readiness suite through its static producer assertions without
+  # repeating its later reviewer matrix. It still invokes the real helper.
+  python3 - "$portable_root/scripts/development-workflow/tests" <<'NO_POLICY'
+from pathlib import Path
+import sys
+root = Path(sys.argv[1])
+s = (root / "test-apply-readiness-labels.sh").read_text()
+s = s.split('echo "=== Area 5:', 1)[0] + '\n[ "$fail" -eq 0 ]\n'
+(root / "readiness-no-policy-smoke.sh").write_text(s)
+NO_POLICY
+  run_consumer_suite readiness-no-policy-smoke.sh 0
+  mv "$portable_root/pr-policy.yml" "$portable_root/.github/workflows/pr-policy.yml"
+fi
+
 # Those same states remain regressions in template mode.
 sed 's/is_template: false/is_template: true/' "$portable_root/.ai-dev-workflow.yaml" \
   > "$portable_root/template.yaml"
@@ -665,15 +682,23 @@ mv "$portable_root/consumer.yaml" "$portable_root/.ai-dev-workflow.yaml"
 # state is gated. Existing missing-check/failed-check readiness cases likewise
 # remain real negative tests, rather than skipping its reviewer gate.
 for suite in test-review-doctrine-lint.sh test-reviewer-loop-guard-workflow.sh; do
+  if [ "$suite" = "test-reviewer-loop-guard-workflow.sh" ] && \
+      [ ! -f "$portable_root/.github/workflows/pr-policy.yml" ]; then
+    echo "SKIP: legacy-removal planted proof - consumer has no consolidated PR policy workflow"
+    continue
+  fi
   suite_path="$portable_root/scripts/development-workflow/tests/$suite"
   python3 - "$suite_path" <<'UNWRAP'
 from pathlib import Path
 import sys
 p = Path(sys.argv[1])
 s = p.read_text()
-start = s.index('if [ "$(workflow_template_is_template "$REPO_ROOT/.ai-dev-workflow.yaml")" = "true" ]; then', s.index('PASS_COUNT=0'))
-end = s.index('\nfi\n', start) + len('\nfi\n')
-body = s[start:end].split('\n', 1)[1].split('\nelse\n', 1)[0]
+try:
+    start = s.index('if [ "$(workflow_template_is_template "$REPO_ROOT/.ai-dev-workflow.yaml")" = "true" ]; then', s.index('PASS_COUNT=0'))
+    end = s.index('\nfi\n', start) + len('\nfi\n')
+    body, _ = s[start:end].split('\n', 1)[1].split('\nelse\n', 1)
+except ValueError:
+    raise SystemExit("FAIL: planted template guard shape changed in " + p.name)
 p.write_text(s[:start] + body + '\n' + s[end:])
 UNWRAP
   run_consumer_suite "$suite" 1
