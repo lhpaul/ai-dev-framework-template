@@ -566,6 +566,40 @@ class Fixture(unittest.TestCase):
         if os.environ.get('WORKFLOW_PORTFOLIO_EVIDENCE_DIR'):
             (Path(os.environ['WORKFLOW_PORTFOLIO_EVIDENCE_DIR'])/'bounded-history-growth.json').write_text(json.dumps({'terminalCounts':[50,1000],'chargedRequests':growth},indent=2))
 
+    def test_local_and_tracker_dependency_contract(self):
+        development=self.root/self.artifact();self.artifact(2)
+        spec=next(development.glob('1_*_specs.md'));plan=next(development.glob('2_*_implementation-plan.md'))
+        for document,label in ((spec,'**Depends on**'),(plan,'**Dependencies**')):
+            for declaration in ('#2','2-fixture'):
+                document.write_text(label+': '+declaration+'\n')
+                for status,action in (('Backlog','hold-dependency'),('Cancelled','hold-dependency'),('Merged','implement'),('Released','implement')):
+                    self.reset(active=2,statuses={'1':'Plan Ready','2':status});report=self.scan()
+                    row=next(row for row in report['classification'] if row['number']==1)
+                    self.assertEqual(row['action'],action)
+                    record=next(record for record in report['fullyRead'] if record['number']==1)
+                    self.assertEqual(record['dependencies'],[2]);self.assertEqual(self.ledger()['graphql'],3)
+            document.write_text(label+': unknown-prerequisite\n')
+            self.reset(active=2,statuses={'1':'Plan Ready'})
+            report=self.scan();self.assertNotIn(1,[record['number'] for record in report['fullyRead']])
+            self.assertTrue(any(entry['number']==1 and 'Unresolved dependency' in entry['reason'] for entry in report['omissions']))
+            for absence in ('None','none.','None. No prerequisites.'):
+                document.write_text(label+': '+absence+'\n')
+                self.reset(active=1,statuses={'1':'Plan Ready'},body='DependsOn: none')
+                report=self.scan();self.assertEqual(report['classification'][0]['action'],'implement')
+                self.assertEqual(report['fullyRead'][0]['dependencies'],[])
+            document.write_text('fixture\n')
+        plan.write_text('## Dependencies\n\n- #2\n\n## Implementation\nNo other dependency.\n')
+        self.reset(active=1,statuses={'1':'Plan Ready'});report=self.scan()
+        self.assertFalse(report['fullyRead']);self.assertIn('Dependency tracker state unreadable',report['omissions'][0]['reason'])
+        plan.write_text('**Dependencies**: None\n')
+        for body in ('Dependencies: None','**Depends on**: none','| Dependencies | None |','Dependencies: unknown','DependsOn: #2'):
+            self.reset(active=2,statuses={'1':'Plan Ready','2':'Backlog'},bodies={'1':body})
+            report=self.scan()
+            if 'unknown' in body:self.assertNotIn(1,[record['number'] for record in report['fullyRead']])
+            else:
+                row=next(row for row in report['classification'] if row['number']==1)
+                self.assertEqual(row['action'],'hold-dependency' if '#2' in body else 'implement')
+
     def test_review_fix_loop_lane_composition(self):
         self.artifact()
         for status in ('Spec in Review','Plan in Review','Development in Review'):

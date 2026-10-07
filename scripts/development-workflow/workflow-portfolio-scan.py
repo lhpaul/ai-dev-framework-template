@@ -37,6 +37,39 @@ class EvidenceIncomplete(ReadError):
     """A successfully read item cannot advance until bounded reconciliation."""
 
 
+def dependency_references(text, slug_ids=None):
+    # Canonical spec Depends on and plan Dependencies fields, including
+    # Markdown formatting and the plan template's explicit None vocabulary.
+    text = re.sub(r'<!--.*?-->', '', text, flags=re.S)
+    lines = text.splitlines()
+    references = set()
+    for index, line in enumerate(lines):
+        clean = line.strip().strip('|').replace('**', '')
+        match = re.match(r'(?i)^(?:[-*]\s*|#{1,6}\s*)?(dependson|depends on|blocked by|dependency|dependencies)\b\s*:?(.*)$', clean)
+        if not match:
+            continue
+        value = match[2].strip().strip('|').strip()
+        if not value:
+            section = []
+            for following in lines[index + 1:]:
+                if re.match(r'^\s*#{1,6}\s', following):
+                    break
+                if following.strip():
+                    section.append(following.strip())
+            value = ' '.join(section)
+        if re.fullmatch(r'(?i)none\.?', value) or re.match(r'(?i)^none\.\s+', value):
+            continue
+        found = re.findall(r'#([1-9][0-9]*)\b', value)
+        if not found:
+            slugs = [re.sub(r'^(?:feature|fix|refactor|hotfix)/', '', part.strip().strip('[]`')) for part in value.split(',')]
+            if not slugs or any(slug not in (slug_ids or {}) for slug in slugs):
+                raise EvidenceIncomplete('Unresolved dependency declaration')
+            references.update(slug_ids[slug] for slug in slugs)
+        else:
+            references.update(int(n) for n in found)
+    return references
+
+
 
 def run(args, root):
     result = subprocess.run(args, cwd=root, text=True, capture_output=True)
@@ -208,7 +241,7 @@ def complete_pr(client, repo, pr, expected_issue):
     return result
 
 
-def complete_record(client, repo, issue, card, folders, branches, prs):
+def complete_record(client, repo, issue, card, folders, branches, prs, root):
     number = issue['number']
     if any(not isinstance(card.get(key), str) or not card[key] for key in ('item_id', 'project_id', 'status', 'type')):
         raise EvidenceIncomplete('Incomplete Status/Type/project membership')
@@ -228,11 +261,20 @@ def complete_record(client, repo, issue, card, folders, branches, prs):
         raise EvidenceIncomplete('Incomplete dependency evidence')
     if card.get('depends_on'):
         body += '\nDependsOn: ' + card['depends_on']
-    dependency_lines = [line.strip().strip('|').replace('**', '') for line in body.splitlines() if re.match(r'(?i)^\s*(?:[-*|]\s*)?(?:\*\*)?(?:dependson|depends on|blocked by|dependency|dependencies)\b', line)]
-    dependencies = sorted({int(n) for line in dependency_lines for n in re.findall(r'#([1-9][0-9]*)\b', line)})
-    # Unknown dependency prose is held, never interpreted as an empty dependency set.
-    if dependency_lines and any(not re.search(r'#([1-9][0-9]*)', line) for line in dependency_lines):
-        raise EvidenceIncomplete('Unresolved dependency declaration')
+    slug_ids = {re.sub(r'^\d{14}_', '', Path(value['development_path']).name): key for key, value in folders.items()}
+    dependencies = dependency_references(body, slug_ids)
+    if folder.get('development_path'):
+        artifact_root = root / folder['development_path']
+        try:
+            for kind, patterns in (('spec', ('1_*_specs.md', '1_*_specs.doc.md')), ('plan', ('2_*_implementation-plan.md', '2_*_implementation-plan.doc.md'))):
+                documents = [document for pattern in patterns for document in artifact_root.glob(pattern)]
+                if folder.get(kind) and not documents:
+                    raise EvidenceIncomplete('Artifact dependency evidence disappeared')
+                for document in documents:
+                    dependencies.update(dependency_references(document.read_text(), slug_ids))
+        except OSError as exc:
+            raise EvidenceIncomplete('Artifact dependency evidence unreadable') from exc
+    dependencies = sorted(dependencies)
     dependency_states = {}
     record = {'number': number, 'title': issue['title'], 'body': body, 'created_at': issue['created_at'], **card, **folder,
               'branches': branches.get(number, []), 'prs': current_prs, 'dependencies': dependencies,
@@ -570,7 +612,7 @@ def scan(args):
                         raise ReadError('Target query reservation exceeded')
                     if card.get('status') and card.get('type'):
                         tracker_evidence[number] = card['status']
-                    record = complete_record(client, repo, identities[number], card, folders, branches, prs)
+                    record = complete_record(client, repo, identities[number], card, folders, branches, prs, root)
                     # Publication occurs only after tracker and required REST evidence complete.
                     if record['dependencies']:
                         pending.append(record)
