@@ -99,6 +99,8 @@ def load_module(name: str, filename: str):
     return module
 
 
+# Dynamic helper imports must not write into either checkout during preview.
+sys.dont_write_bytecode = True
 SELECTOR = load_module("sync_merge_selector", "select-sync-manifest-entries.py")
 COVERAGE = load_module("sync_merge_coverage", "check-sync-manifest-coverage.py")
 
@@ -391,6 +393,9 @@ def build_preview(inputs: dict, lock_owned: bool = False):
     if not lock_owned and os.path.lexists(root / LOCK_PATH):
         error = f"{LOCK_PATH}: active or interrupted transaction; inspect recovery material before retrying"
     candidates = set(incoming_tree) | (set(state["files"]) if state else set())
+    if inputs["base_ref"]:
+        base_root = source if inputs["base_source"] == "template" else root
+        candidates.update(objects.tree(base_root, inputs["base_ref"]))
     paths = sorted(p for p in candidates if p not in owned and matches(p))
     declines = set(inputs["decline"])
     if not declines.issubset(paths):
@@ -399,7 +404,7 @@ def build_preview(inputs: dict, lock_owned: bool = False):
     for path in paths:
         if path in declines:
             continue
-        ours = incoming = base = None
+        ours = incoming = base = provenance = None
         known, reason, disposition = False, error, "blocked"
         try:
             ancestors.update(safe_ancestors(root, path))
@@ -414,17 +419,22 @@ def build_preview(inputs: dict, lock_owned: bool = False):
                 tree_entry = objects.tree(base_root, entry["commit"]).get(path)
                 if (tree_entry["mode"] if tree_entry else None, tree_entry["blob"] if tree_entry else None) != (entry["mode"], entry["blob"]):
                     raise SyncError("baseline commit disagrees with stored object metadata")
+                provenance = dict(entry)
                 known = True
             elif inputs.get("base_ref"):
                 base_root = source if inputs["base_source"] == "template" else root
                 base = objects.snapshot(base_root, inputs["base_ref"], path)
+                tree_entry = objects.tree(base_root, inputs["base_ref"]).get(path)
+                provenance = {"commit": inputs["base_ref"], "source": inputs["base_source"],
+                              "blob": tree_entry["blob"] if tree_entry else None,
+                              "mode": tree_entry["mode"] if tree_entry else None}
                 known = True
             disposition, output, reason = classify(ours, base, incoming, known)
         except (SyncError, OSError, UnicodeError, ValueError, SELECTOR.ManifestError) as exc:
             output, reason = ours, str(exc)
         rows.append({"path": path, "disposition": disposition, "reason": reason,
                      "ours": ours, "incoming": incoming, "output": output,
-                     "baseline_known": known})
+                     "baseline_known": known, "baseline": provenance})
     link_evidence = link_graph(root, rows)
     counts = dict(sorted(Counter(r["disposition"] for r in rows).items()))
     return {"schema_version": 1, "inputs": inputs, "source_head": source_head,
@@ -440,9 +450,14 @@ def show(preview, approved_digest: str = ""):
     print("RESULT=" + preview["result"])
     print("SELECTED_COUNT=" + str(preview["selected_count"]))
     print("COUNTS=" + json.dumps(preview["counts"], sort_keys=True))
-    print("Locally modified template files")
-    for row in preview["rows"]:
-        print(f"{row['disposition']}\t{row['path']}" + (f"\t{row['reason']}" if row["reason"] else ""))
+    local_cases = {"clean_merge", "local_retained", "local_deletion", "conflict", "baseline_unavailable", "blocked"}
+    for title, local in (("Locally modified template files", True), ("Other selected template files", False)):
+        print(title)
+        for row in preview["rows"]:
+            if (row["disposition"] in local_cases) != local:
+                continue
+            print(f"{row['disposition']}\t{row['path']}" + (f"\t{row['reason']}" if row["reason"] else ""))
+            print("BASELINE\t" + row["path"] + "\t" + json.dumps(row["baseline"], sort_keys=True))
     for path in preview["declined"]:
         print("declined\t" + path)
     if preview["error"]:

@@ -128,6 +128,48 @@ class SyncTests(unittest.TestCase):
         self.assertIn("local 1", (self.consumer / "shared/a.md").read_text())
         self.assertIn("next 8", (self.consumer / "shared/a.md").read_text())
 
+    def test_legacy_removed_upstream_is_not_omitted(self):
+        self.write(self.consumer, "shared/a.md", TEXT + "legacy patch\n")
+        (self.template / "shared/a.md").unlink()
+        self.incoming = self.save(self.template)
+        before = self.fingerprint()
+        plan = self.preview()
+        row = next(r for r in plan["rows"] if r["path"] == "shared/a.md")
+        self.assertEqual(row["disposition"], "conflict")
+        self.assertEqual(row["baseline"]["commit"], self.base)
+        self.assertEqual(row["baseline"]["source"], "template")
+        self.apply(expected=2)
+        self.assertEqual(before, self.fingerprint())
+        output = io.StringIO()
+        with redirect_stdout(output):
+            merge.show(plan)
+        self.assertIn('BASELINE\tshared/a.md\t', output.getvalue())
+        self.assertIn(self.base, output.getvalue())
+        self.preview(declines=("shared/a.md",)); self.apply()
+        self.assertIn("legacy patch", (self.consumer / "shared/a.md").read_text())
+        self.assertNotIn("shared/a.md", self.state()["files"])
+        print("PROOF legacy upstream removal: shared/a.md absent incoming without ledger blocks; explicit decline passes")
+
+    def test_cli_preview_does_not_write_bytecode_or_checkout_content(self):
+        tooling = self.template / "tools"
+        tooling.mkdir()
+        for filename in ("sync-template-merge.py", "select-sync-manifest-entries.py", "check-sync-manifest-coverage.py"):
+            shutil.copy(HELPER.with_name(filename), tooling / filename)
+        def fingerprint(root):
+            return {str(p.relative_to(root)): (os.readlink(p) if p.is_symlink() else p.read_bytes(), p.lstat().st_mode)
+                    for p in root.rglob("*") if p.is_file() or p.is_symlink()}
+        before = fingerprint(self.template), fingerprint(self.consumer)
+        proc = subprocess.run([sys.executable, str(tooling / HELPER.name), "preview",
+                               "--template-root", str(self.template), "--consumer-root", str(self.consumer),
+                               "--template-ref", self.incoming, "--template-id", "fixture/template",
+                               "--role", "single_repo", "--base-ref", self.base, "--base-source", "template",
+                               "--plan", str(self.plan)], capture_output=True, text=True)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(before, (fingerprint(self.template), fingerprint(self.consumer)))
+        self.assertFalse((tooling / "__pycache__").exists())
+        self.assertIn(self.base, proc.stdout)
+        print("PROOF read-only CLI: source and consumer bytes/modes including Git metadata unchanged; no bytecode written")
+
     def test_conflict_whole_batch_and_stopped_counts(self):
         self.write(self.consumer, "shared/a.md", TEXT.replace("line 1\n", "local\n"))
         self.write(self.template, "shared/a.md", TEXT.replace("line 1\n", "upstream\n"))

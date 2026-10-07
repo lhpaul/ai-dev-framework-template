@@ -66,6 +66,7 @@ When `SYNC_MANIFEST` is loaded, materialize its committed bytes into private
 `SYNC_COMMITTED_MANIFEST`, then build the selected manifest entry set before
 Step 0.5 using the selector helper from the resolved template source:
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
 python3 "<template_source>/scripts/development-workflow/select-sync-manifest-entries.py" \
   --manifest "$SYNC_COMMITTED_MANIFEST" \
@@ -129,8 +130,11 @@ selector/coverage dependencies; `TEMPLATE_ID` is the normalized repository name
 (e.g. `lhpaul/ai-dev-framework-template`), never a credential URL. Add verified
 base arguments only after the provenance check above. Preview returns zero for
 `RESULT=ready`, one for a classified blocked batch, and two for invalid input.
-Retain its report on either nonzero result, show all named problems, and stop
-before mutation. Do not suppress the failure or treat it as approval.
+Retain its report on either nonzero result. A classified blocked batch still
+continues through read-only Step 0.5 diagnostics and the comprehensive Step 3
+report, showing every named problem and baseline provenance; stop before any
+mutation or apply approval. Invalid input requires correction and a fresh
+preview first. Do not suppress the failure or treat it as approval.
 
 When the source manifest is absent, first enumerate the embedded fallback from
 the pinned Git tree, never `find` over the source filesystem. Provide a private
@@ -863,6 +867,7 @@ This check is **advisory for the project-specific category** (e.g., `.github/wor
 1. Read `.ai-dev-workflow.yaml` from the project root.
 2. Capture the existing `template.last_synced_version` value into `PREV_LAST_VERSION` **before** writing the new value (this is used in Step 5.4 to bound the CHANGELOG extraction to changes since the previous sync):
 
+   <!-- workflow-shell-contract: bash-zsh -->
    ```bash
    PREV_LAST_VERSION=$(grep -E 'last_synced_version:' .ai-dev-workflow.yaml | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' | head -1 || echo "")
    ```
@@ -874,6 +879,7 @@ This check is **advisory for the project-specific category** (e.g., `.github/wor
 
 Execute:
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
 git checkout -b feature/sync-template-v{TEMPLATE_VERSION}
 ```
