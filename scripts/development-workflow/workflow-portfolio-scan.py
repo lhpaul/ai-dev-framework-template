@@ -215,6 +215,11 @@ def classify(record, snapshot):
             return 'INFORMATIONAL', 'wait-human-review', 'Current PR awaits human/delegated gate'
         return 'ACTIONABLE RESUME', 'resume-fix-loop' if 'needs-fixes' in pr['labels'] else 'resolve-pr-readiness', 'Current PR can resume bounded review'
     expected_prefixes = ('spec/',) if status in ('Writing Spec', 'Spec in Review') else ('implementation-plan/',) if status in ('Writing Plan', 'Plan in Review') else ('feature/', 'fix/', 'refactor/', 'hotfix/') if status in ('In Development', 'Development in Review', 'Plan Ready') else ()
+    if status == 'Backlog':
+        if record.get('plan'):
+            expected_prefixes = ('feature/', 'fix/', 'refactor/', 'hotfix/')
+        elif not record.get('spec'):
+            expected_prefixes = ('spec/', 'implementation-plan/', 'feature/', 'fix/', 'refactor/', 'hotfix/')
     active_branches = [branch for branch in record['branches'] if branch.startswith(expected_prefixes)]
     if active_branches:
         prefix = active_branches[0].split('/')[0]
@@ -294,7 +299,9 @@ def snapshot_classify(args):
         elif category != 'HELD':
             # Preserve canonical lane caps and portfolio report categorization.
             status = record['status']
-            if status == 'Backlog' and (record.get('spec') or record.get('plan')):
+            if status == 'Backlog' and category == 'ACTIONABLE RESUME':
+                status = 'Writing Spec' if action == 'run-spec-review-and-open-pr' else 'Writing Plan' if action == 'run-plan-review-and-open-pr' else 'In Development'
+            elif status == 'Backlog' and (record.get('spec') or record.get('plan')):
                 status = 'Plan Ready' if record.get('plan') else 'Spec Ready'
             labels = ','.join(label for pr in record['prs'] for label in pr['labels'])
             if any(c in labels for c in '\r\n'):

@@ -32,7 +32,8 @@ if args[:2]==['auth','status']:
 if args[:2]==['repo','view']:
  field=args[args.index('--json')+1]
  raw({'owner':'fixture','name':'repo','nameWithOwner':'fixture/repo'}[field])
-if args[:2]==['pr','list']:raw('[]')
+if args[:2]==['pr','list']:
+ raw('' if '--jq' in args and '.[0].number' in args[args.index('--jq')+1] else '[]')
 if args[:2]==['pr','view']:finish(error='Could not resolve to a PullRequest')
 if args[:2]==['issue','view']:
  n=int(args[2]);fields=args[args.index('--json')+1]
@@ -396,6 +397,23 @@ class Fixture(unittest.TestCase):
             current=self.execute('bash',str(SCRIPTS/'workflow-next-action.sh'),'--repo-root',str(self.root),'--development',development)
             self.assertIn('NEXT_ACTION='+action,current.stdout)
         self.reset(active=1,statuses={'1':'Plan Ready'});self.assertEqual(self.scan()['classification'][0]['action'],'implement')
+        self.env['SCAN_FIXTURE_BRANCH']='fix/1-fixture'
+        self.reset(active=1,statuses={'1':'Backlog'},nativeType='Workflow')
+        row=self.scan()['classification'][0]
+        self.assertEqual(row['action'],'run-code-review-and-open-pr');self.assertEqual(row['category'],'ACTIONABLE RESUME')
+        current=self.execute('bash',str(SCRIPTS/'workflow-next-action.sh'),'--repo-root',str(self.root),'--branch','fix/1-fixture')
+        self.assertIn('NEXT_ACTION=run-code-review-and-open-pr',current.stdout)
+        # Branch-only stale Backlog also resumes its actual stage.
+        import shutil
+        shutil.rmtree(self.root/'docs/specs/developments')
+        for prefix,action in (('spec','run-spec-review-and-open-pr'),('implementation-plan','run-plan-review-and-open-pr'),('fix','run-code-review-and-open-pr')):
+            self.env['SCAN_FIXTURE_BRANCH']=prefix+'/1-fixture'
+            self.reset(active=1,nativeType='Workflow')
+            row=self.scan()['classification'][0]
+            self.assertEqual(row['action'],action);self.assertEqual(row['category'],'ACTIONABLE RESUME')
+            current=self.execute('bash',str(SCRIPTS/'workflow-next-action.sh'),'--repo-root',str(self.root),'--branch',prefix+'/1-fixture')
+            self.assertIn('NEXT_ACTION='+action,current.stdout)
+        self.artifact()
         self.env.pop('SCAN_FIXTURE_BRANCH')
         # Closed issue alone does not prove Merged/Released dependency readiness.
         self.reset(active=1,statuses={'1':'Plan Ready'},body='Depends on #2',state='closed')
