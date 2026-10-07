@@ -550,8 +550,10 @@ if [ -n "$scan_snapshot" ]; then
       --arg tool "$tool_fix" --arg toolFiles "$tool_fix_files" --arg files "$file_set" --arg runtime "$local_runtime" \
       '{number:$number,developmentPath:$path,toolFix:$tool,toolFixFiles:$toolFiles,fileSet:$files,localRuntime:$runtime}' >> "$snapshot_local"
   done < "$snapshot_metadata_dir/records.jsonl"
+  snapshot_args=(--repo-root "$repo_root" --scan-snapshot "$scan_snapshot" --mode batch)
+  [ -n "$target_repo" ] && snapshot_args+=(--repo "$target_repo")
   WORKFLOW_SCAN_LOCAL_METADATA_FILE="$snapshot_local" python3 "$SCRIPT_DIR/workflow-portfolio-scan.py" \
-    --repo-root "$repo_root" --scan-snapshot "$scan_snapshot" --mode batch "${development_paths[@]}"
+    "${snapshot_args[@]}" "${development_paths[@]}"
   exit 0
 fi
 

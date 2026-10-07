@@ -541,6 +541,53 @@ class Fixture(unittest.TestCase):
         path.write_text(json.dumps(report));self.env['WORKFLOW_SCAN_INVOCATION_ID']=report['invocation'];before=len(self.ledger()['calls'])
         self.assertIn('NEXT_ACTION=resume-fix-loop',next_action(['--pr','70']))
 
+    def test_snapshot_batch_repo_selection_and_doc_stage(self):
+        development=self.artifact()
+        self.config.write_text(self.config.read_text()+'mode: workflow_hub\nworkflow_hub:\n  product_repos:\n    - name: mobile-app\n      github_repo: fixture/mobile-app\n')
+        self.reset(active=1,statuses={'1':'Plan Ready'});report=self.scan()
+        path=self.folder/'batch-repository.json';path.write_text(json.dumps(report));self.env['WORKFLOW_SCAN_INVOCATION_ID']=report['invocation']
+        before=len(self.ledger()['calls'])
+        def batch(selected=None):
+            args=['bash',str(SCRIPTS/'workflow-batch-plan.sh'),'--repo-root',str(self.root),'--scan-snapshot',str(path)]
+            if selected:args+=['--repo',selected]
+            rows=json.loads(self.execute(*args).stdout)
+            self.assertEqual(len(self.ledger()['calls']),before)
+            return rows[0]
+        for selected,action,reason in ((None,'resolve-repository-selection','no selected product'),
+                                       ('mobile-app','hold-unreadable','selected repository'),
+                                       ('foreign-key','resolve-repository-selection','not configured')):
+            row=batch(selected);self.assertEqual(row['category'],'HELD');self.assertEqual(row['action'],action)
+            self.assertIn(reason,row['reason'])
+        # A selected documentation action owns the hub, despite retained fix refs.
+        self.env['SCAN_FIXTURE_BRANCH']='fix/1-fixture'
+        next((self.root/development).glob('2_*_implementation-plan.md')).unlink()
+        for status in ('Spec Ready','Backlog'):
+            self.reset(active=1,statuses={'1':status});report=self.scan()
+            path.write_text(json.dumps(report));self.env['WORKFLOW_SCAN_INVOCATION_ID']=report['invocation'];before=len(self.ledger()['calls'])
+            for selected in (None,'mobile-app'):
+                row=batch(selected);self.assertEqual(row['action'],'write-plan')
+                self.assertEqual(row['category'],'ACTIONABLE RESUME')
+                self.assertEqual(row['dispatch'],'proposed')
+                args=['bash',str(SCRIPTS/'workflow-next-action.sh'),'--repo-root',str(self.root),'--development',development,'--scan-snapshot',str(path)]
+                if selected:args+=['--repo',selected]
+                result=self.execute(*args);self.assertIn('NEXT_ACTION=write-plan',result.stdout)
+                self.assertNotIn('ROUTING_OUTCOME_CODE',result.stdout);self.assertEqual(len(self.ledger()['calls']),before)
+        # Current doc review PRs preserve ownership even with retained fix refs.
+        for status,branch in (('Spec in Review','spec/1-fixture'),('Plan in Review','implementation-plan/1-fixture')):
+            self.reset(active=1,statuses={'1':status},pr=True,prBranch=branch,labels=[{'name':'needs-fixes'}])
+            report=self.scan();path.write_text(json.dumps(report));self.env['WORKFLOW_SCAN_INVOCATION_ID']=report['invocation'];before=len(self.ledger()['calls'])
+            row=batch('mobile-app');self.assertEqual(row['action'],'resume-fix-loop');self.assertEqual(row['category'],'ACTIONABLE RESUME')
+        # Current implementation evidence still requires selected-product fresh reads.
+        self.reset(active=1,statuses={'1':'Development in Review'},pr=True,labels=[{'name':'needs-fixes'}])
+        report=self.scan();path.write_text(json.dumps(report));self.env['WORKFLOW_SCAN_INVOCATION_ID']=report['invocation'];before=len(self.ledger()['calls'])
+        row=batch('mobile-app');self.assertEqual(row['action'],'hold-unreadable');self.assertEqual(row['category'],'HELD')
+        # Complete Type Workflow is the corrected hub-only implementation positive.
+        self.env.pop('SCAN_FIXTURE_BRANCH')
+        self.artifact()
+        self.reset(active=1,statuses={'1':'Plan Ready'},nativeType='Workflow')
+        report=self.scan();path.write_text(json.dumps(report));self.env['WORKFLOW_SCAN_INVOCATION_ID']=report['invocation'];before=len(self.ledger()['calls'])
+        self.assertEqual(batch()['action'],'implement');self.assertEqual(batch('mobile-app')['action'],'resolve-repository-selection')
+
     def test_snapshot_planted_scope_violation(self):
         development=self.artifact();self.reset(active=1,statuses={'1':'Plan Ready'})
         report=self.scan();path=self.folder/'snapshot.json';path.write_text(json.dumps(report))

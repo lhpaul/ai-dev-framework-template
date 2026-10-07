@@ -487,13 +487,13 @@ def snapshot_routing(record, action, root, selected):
         return None
     # Documentation stages belong to the hub. Implementation must use the
     # canonical ownership classifier, without fetching another repository.
-    branches = [pr['branch'] for pr in record['prs']] or record['branches']
-    implementation = ('feature/', 'fix/', 'refactor/', 'hotfix/')
-    documentation = ('spec/', 'implementation-plan/')
-    if record['prs'] and record['prs'][0]['branch'].startswith(documentation):
+    if action in ('write-spec', 'write-plan', 'run-spec-review-and-open-pr', 'run-plan-review-and-open-pr'):
         return None
-    if not (action in ('implement', 'run-code-review-and-open-pr', 'resolve-development-pr') or
-            any(branch.startswith(implementation) for branch in branches)):
+    implementation = ('feature/', 'fix/', 'refactor/', 'hotfix/')
+    resume_branch = record['prs'][0]['branch'] if record['prs'] else branch_identity(record)
+    applicable = action in ('implement', 'run-code-review-and-open-pr', 'resolve-development-pr') or (
+        action in ('resume-fix-loop', 'resolve-pr-readiness', 'wait-human-review') and resume_branch.startswith(implementation))
+    if not applicable:
         return None
     config = configuration(root)
     mode = resolver.mode_from_shared(config, root / '.ai-dev-workflow.yaml')
