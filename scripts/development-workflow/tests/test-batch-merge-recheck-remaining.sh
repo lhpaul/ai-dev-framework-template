@@ -93,7 +93,7 @@ case "$*" in
     ;;
   api\ --paginate\ --slurp\ repos/org/fixture/issues/102/comments?per_page=100)
     if [ -f "$MOCK_GH_STATE_DIR/hold-body-102" ]; then
-      sed 's/^.*-f body=//' "$MOCK_GH_STATE_DIR/hold-body-102" | jq -Rs '[[{id:777,body:.}]]'
+      jq -Rs '[[{id:777,body:.}]]' < "$MOCK_GH_STATE_DIR/hold-body-102"
     else
       printf '[[]]\n'
     fi
@@ -215,20 +215,24 @@ case "$*" in
     ;;
   api\ repos/\{owner\}/\{repo\}/issues/102/comments\ -f\ body=*)
     : > "$MOCK_GH_STATE_DIR/hold-comment-102"
-    printf '%s\n' "$*" > "$MOCK_GH_STATE_DIR/hold-body-102"
+    for arg in "$@"; do
+      case "$arg" in body=*) printf '%s' "${arg#body=}" > "$MOCK_GH_STATE_DIR/hold-body-102" ;; esac
+    done
     printf '{"id":777}\n'
     ;;
   api\ repos/\{owner\}/\{repo\}/issues/comments/777\ --jq\ .body)
     # Body read for the hold-lifted update: the marker plus whatever the last
-    # create/patch stored (the stored line is the whole argv, so take the tail).
+    # create/patch stored. Preserve the exact remote body without adding a newline.
     if [ -f "$MOCK_GH_STATE_DIR/hold-body-102" ]; then
-      sed 's/^.*-f body=//' "$MOCK_GH_STATE_DIR/hold-body-102"
+      cat "$MOCK_GH_STATE_DIR/hold-body-102"
     else
       printf '<!-- batch-merge-hold:v1 -->\nBatch merge hold\n'
     fi
     ;;
   api\ repos/\{owner\}/\{repo\}/issues/comments/777\ -X\ PATCH\ -f\ body=*)
-    printf '%s\n' "$*" > "$MOCK_GH_STATE_DIR/hold-body-102"
+    for arg in "$@"; do
+      case "$arg" in body=*) printf '%s' "${arg#body=}" > "$MOCK_GH_STATE_DIR/hold-body-102" ;; esac
+    done
     printf '{"id":777}\n'
     ;;
   pr\ view\ 102\ --json\ headRefOid,mergeStateStatus,statusCheckRollup)

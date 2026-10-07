@@ -163,16 +163,50 @@ read query avoids that unsupported projection without changing merge argv or
 pinning a CLI version. Read-only evidence is retained with this devsession's
 validation artifacts and referenced by the implementation PR.
 
+## Executed fixture verification
+
+The implementation validation executed the committed shell entrypoint and its
+Python unit/composed cases. Each composed case uses the real helper and consumer
+scripts with private Git roots and a recording fake `gh`; service responses are
+simulated. Relevant existing delegated, batch, cleanup, tracker, selector and
+sync suites also passed. The implementation PR records exact final counts and
+reviewed source identity.
+
+| Acceptance criteria | Executed cases / observable proof |
+| --- | --- |
+| AC1, AC3 | `test_projection_derivation_and_equality`, `test_provisional_balance_is_refreshed`, `test_actual_merge_cleanup_no_deletion_composition`, `test_actual_first_audit_refresh_and_malformed_manifests`; quota precedes dispatch, equality admits, component/margin/reserve reports are explicit. |
+| AC2, AC4 | `test_one_below_defers_before_intent`, `test_actual_full_batch_refuses_affordable_prefix_and_no_fallback`, `test_actual_insufficient_session_has_zero_mutations`, quota/reserve/manifest/duplicate-JSON validation cases; zero mutation and no prefix/fallback. |
+| AC5, AC6 | `test_actual_outage_after_verified_merge_offline_resume_no_duplicate`, `test_actual_failed_tracker_zero_exit_requires_recovery`, `test_actual_failed_audit_readable_absence_retries_exact_intent`, `test_actual_partial_close_effects_recover_without_replaying_success`; facts survive interruption and comment/closure effects are retried separately. |
+| AC5, AC6 | `test_surviving_child_blocks_recovery`, `test_provider_proof_cannot_release_surviving_mutating_child`, nested/competing executor, atomic-write/storage and remote-read-outside-lock cases; surviving children retain authority and journal failure blocks dispatch. The audit suite also exercises a surviving child after executor SIGKILL. |
+| AC6, AC8 | `test_actual_queue_waiting_no_cleanup_or_resubmission`, `test_actual_authorized_admin_argv_is_preserved`, `test_actual_already_merged_never_replays_api`; queued work remains Waiting and no merge is resubmitted. |
+| AC5, AC6 | `test_actual_advanced_base_recovery_preserves_pushed_commit`, `test_actual_failed_push_retries_frozen_commit_after_checkout_change`; pushed-base facts persist and retry uses the frozen commit. |
+| AC7 | `test_final_window_comparability`, `test_unavailable_final_sample_and_admission_preserve_known_facts`; reset/limit/increase/unavailable samples do not invent spend or erase verified facts. |
+| AC8 | Delegated gate/risk/audit and batch regression suites; `test_session_dispatch_clears_foreign_github_repo_override`, `test_actual_closed_released_tracker_preserves_forward_progress`, Linear recovery-generation proof and cleanup hub/product/worktree cases; ordinary gates and owned provider routing remain effective. |
+
+`test_planted_admission_violation_is_detected_and_restored` temporarily replaces
+the definitive insufficient-budget predicate in a private runtime copy. The
+ordinary composed low-budget test passes before the plant, fails with forbidden
+fixture merge dispatch after the plant, and passes after restoration. The proof
+records `workflow-merge-budget.py`, its concrete predicate line, source digest
+and revision; the plant is never committed or used against GitHub.
+
+The private validation artifacts contain the composed event/session ledger,
+planted red/green proof, suite logs, source digest and residual inventory. They
+are supporting execution evidence; the committed harness regenerates fixture
+proofs with `WORKFLOW_MERGE_BUDGET_TEST_EVIDENCE_DIR` when requested. Individual
+case records may deliberately end Waiting, Deferred or with outstanding steps
+because that case tests a stop, rather than claiming a complete workflow.
+
 ## Assertions Checklist
 
-- [ ] AC1: Sufficient quota precedes the first composed mutation in delegated single-item and epic paths.
-- [ ] AC2: One below/full-batch deferral makes zero mutations and recovery deferral preserves historical state.
-- [ ] AC3: Equality admits and the heuristic includes all selected gates/merge/follow-up, explicit margin and reserve.
-- [ ] AC4: Malformed/unavailable evidence, unknown projection and invalid resolved reserve defer; core quota is not a substitute.
-- [ ] AC5: Completed/uncertain/pending local evidence survives outage and restart.
-- [ ] AC6: Interruption/Waiting starts no additional merge; explicit live-verified resume avoids duplicate completed/uncertain actions.
-- [ ] AC7: Reports show estimate/margin/reserve/samples and comparable aggregate spend or explicit unavailable reason.
-- [ ] AC8: Delegated/batch paths retain existing readiness, risk, CI, ownership, checkpoint, audit, queue/admin/already-merged behavior.
+- [x] AC1: Sufficient quota precedes the first composed mutation in delegated single-item and epic paths.
+- [x] AC2: One below/full-batch deferral makes zero mutations and recovery deferral preserves historical state.
+- [x] AC3: Equality admits and the heuristic includes all selected gates/merge/follow-up, explicit margin and reserve.
+- [x] AC4: Malformed/unavailable evidence, unknown projection and invalid resolved reserve defer; core quota is not a substitute.
+- [x] AC5: Completed/uncertain/pending local evidence survives outage and restart.
+- [x] AC6: Interruption/Waiting starts no additional merge; explicit live-verified resume avoids duplicate completed/uncertain actions.
+- [x] AC7: Reports show estimate/margin/reserve/samples and comparable aggregate spend or explicit unavailable reason.
+- [x] AC8: Delegated/batch paths retain existing readiness, risk, CI, ownership, checkpoint, audit, queue/admin/already-merged behavior.
 
 ## Seed Data Reference
 
