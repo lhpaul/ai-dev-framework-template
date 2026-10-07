@@ -1663,6 +1663,9 @@ expensive_gate_unresolved_threads_status() {
 # a clean summary is posted, and a clean summary needs this gate to pass
 # first. Counting it as a baseline check deadlocks the expensive reviewer
 # after any non-clean run, so it is not a baseline check here.
+# The `policy` CheckRun from the `PR policy` workflow posts that status and
+# fails with it, so exclude it for the same reason (#1884). pr-ci-loop.sh
+# still counts both when enforcing final CI readiness.
 EXPENSIVE_GATE_COMPLETION_GUARD_PREFIX='Reviewer-loop completion guard (#'
 expensive_gate_baseline_checks_status() {
   local pr_number_arg="$1"
@@ -1705,6 +1708,11 @@ expensive_gate_baseline_checks_status() {
             (.name // .context // .workflowName // "unknown") as $check_name
             | ($reviewer_names | index($check_name) | not)
               and ($check_name | startswith($guard_prefix) | not)
+              and (
+                ((.__typename // "") == "CheckRun"
+                  and ($check_name == "policy")
+                  and ((.workflowName // "") == "PR policy")) | not
+              )
           )
       ]
     ' 2>/dev/null

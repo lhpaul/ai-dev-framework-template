@@ -380,6 +380,33 @@ run_test "1879_lookalike_status_still_failed" "failed $_1649_head" \
 _1879_guard_only_rollup='{"statusCheckRollup":[{"__typename":"StatusContext","context":"Reviewer-loop completion guard (#42)","state":"SUCCESS"}],"headRefOid":"'"$_1649_head"'"}'
 run_test "1879_guard_only_empty" "empty $_1649_head" \
   "$(_1649_baseline_helper_row "$_1879_guard_only_rollup")"
+# #1884: only the policy CheckRun from PR policy is review-owned. Real
+# failures beside it and policy checks from other workflows still hold the gate.
+_1884_rollup='{"statusCheckRollup":[{"name":"ShellCheck","status":"COMPLETED","conclusion":"SUCCESS"},{"__typename":"CheckRun","name":"policy","workflowName":"PR policy","status":"COMPLETED","conclusion":"FAILURE"},{"__typename":"StatusContext","context":"Reviewer-loop completion guard (#42)","state":"FAILURE"}],"headRefOid":"'"$_1649_head"'"}'
+run_test "1884_policy_failure_excluded_green" "green $_1649_head" \
+  "$(_1649_baseline_helper_row "$_1884_rollup")"
+_1884_rollup='{"statusCheckRollup":[{"name":"ShellCheck","status":"COMPLETED","conclusion":"SUCCESS"},{"__typename":"CheckRun","name":"policy","workflowName":"PR policy","status":"IN_PROGRESS","conclusion":null}],"headRefOid":"'"$_1649_head"'"}'
+run_test "1884_policy_pending_excluded_green" "green $_1649_head" \
+  "$(_1649_baseline_helper_row "$_1884_rollup")"
+_1884_rollup='{"statusCheckRollup":[{"__typename":"CheckRun","name":"policy","workflowName":"Other","status":"COMPLETED","conclusion":"FAILURE"}],"headRefOid":"'"$_1649_head"'"}'
+run_test "1884_policy_other_workflow_still_failed" "failed $_1649_head" \
+  "$(_1649_baseline_helper_row "$_1884_rollup")"
+_1884_rollup='{"statusCheckRollup":[{"__typename":"CheckRun","name":"policy","status":"COMPLETED","conclusion":"FAILURE"}],"headRefOid":"'"$_1649_head"'"}'
+run_test "1884_policy_missing_workflow_still_failed" "failed $_1649_head" \
+  "$(_1649_baseline_helper_row "$_1884_rollup")"
+_1884_rollup='{"statusCheckRollup":[{"__typename":"StatusContext","context":"policy","workflowName":"PR policy","state":"FAILURE"}],"headRefOid":"'"$_1649_head"'"}'
+run_test "1884_policy_status_context_still_failed" "failed $_1649_head" \
+  "$(_1649_baseline_helper_row "$_1884_rollup")"
+_1884_rollup='{"statusCheckRollup":[{"name":"ShellCheck","status":"COMPLETED","conclusion":"FAILURE"},{"__typename":"CheckRun","name":"policy","workflowName":"PR policy","status":"COMPLETED","conclusion":"FAILURE"}],"headRefOid":"'"$_1649_head"'"}'
+run_test "1884_planted_real_failure_still_failed" "failed $_1649_head" \
+  "$(_1649_baseline_helper_row "$_1884_rollup")"
+_1884_rollup='{"statusCheckRollup":[{"name":"ShellCheck","status":"COMPLETED","conclusion":"SUCCESS"},{"__typename":"CheckRun","name":"policy","workflowName":"PR policy","status":"COMPLETED","conclusion":"FAILURE"}],"headRefOid":"'"$_1649_head"'"}'
+run_test "1884_planted_real_failure_removed_green" "green $_1649_head" \
+  "$(_1649_baseline_helper_row "$_1884_rollup")"
+_1884_rollup='{"statusCheckRollup":[{"__typename":"CheckRun","name":"policy","workflowName":"PR policy","status":"COMPLETED","conclusion":"FAILURE"}],"headRefOid":"'"$_1649_head"'"}'
+run_test "1884_policy_only_empty" "empty $_1649_head" \
+  "$(_1649_baseline_helper_row "$_1884_rollup")"
+unset _1884_rollup
 unset _1879_guard_fail_rollup _1879_guard_pending_rollup _1879_planted_rollup \
   _1879_lookalike_rollup _1879_guard_only_rollup
 export MOCK_GH_EXIT=1
