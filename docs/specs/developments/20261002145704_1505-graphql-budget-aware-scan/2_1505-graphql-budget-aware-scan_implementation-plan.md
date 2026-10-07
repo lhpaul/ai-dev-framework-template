@@ -456,14 +456,18 @@ revise or remove only assertions specific to the reverted feature. Document the
 rollback in a release-note fragment through the normal implementation PR path.
 
 Remove `portfolio_scan.graphql_reserve` from template configuration when
-restoring its prior configuration. Existing downstream optional values need no
-data migration: the restored older runtime does not consume that new key, so a
-consumer may remove it in its coordinated rollback PR or leave it inert until
-resync. Code and guidance must describe the same installed version; do not
-leave new reserve/snapshot instructions pointing to a restored older helper.
-Coordinate consumers that already synced the feature using a paired runtime
-and guidance rollback or a follow-up template sync, recording the installed
-version and preserved local customizations in their rollback PRs.
+restoring its prior configuration. Downstream compatibility with an unknown
+key is unverified: a consumer's coordinated rollback PR must remove the key
+from its versioned configuration before using the restored runtime, or record
+fixture validation that its exact restored runtime/configuration pair tolerates
+the retained key. Do not assume that every older or customized parser ignores
+it. This validation belongs to the affected consumer's rollback PR, not this
+plan invocation. Code and guidance must describe the same installed version;
+do not leave new reserve/snapshot instructions pointing to a restored older
+helper. Coordinate consumers that already synced the feature using a paired
+runtime and guidance rollback or a follow-up template sync, recording the
+installed version, configuration decision and preserved local customizations
+in their rollback PRs.
 
 No tracker schema or persisted portfolio data is introduced by this feature.
 Invocation snapshots are ephemeral and need no migration; let active scans
