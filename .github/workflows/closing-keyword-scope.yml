@@ -125,7 +125,12 @@ jobs:
               ;;
           esac
 
-          json="$(printf '%s' "$targets" | tr ' ' '\n' | grep -E '^[0-9]+$' | sort -un | jq -R . | jq -sc . || printf '[]')"
+          # No matches is normal: sed exits successfully on empty input.
+          # Assign the fallback separately so partial pipeline output cannot
+          # concatenate with [] and create an invalid multi-line step output.
+          if ! json="$(printf '%s' "$targets" | tr ' ' '\n' | sed -nE '/^[0-9]+$/p' | sort -un | jq -R . | jq -sc .)"; then
+            json="[]"
+          fi
           [ -n "$json" ] || json="[]"
           echo "prs=${json}" >> "$GITHUB_OUTPUT"
           echo "sibling_list_unreadable=${unreadable}" >> "$GITHUB_OUTPUT"

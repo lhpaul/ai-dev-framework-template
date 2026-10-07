@@ -133,7 +133,14 @@ def checks(base):
         (isolated/'.gitignore').write_text(read('.gitignore'))
         ignored=subprocess.run(['git','-C',str(isolated),'-c','core.excludesFile=/dev/null','check-ignore','--no-index','.ai-dev-workflow.local.yaml.retired'],capture_output=True)
         normal=subprocess.run(['git','-C',str(isolated),'-c','core.excludesFile=/dev/null','check-ignore','--no-index','.ai-dev-workflow.local.example.yaml'],capture_output=True)
-        out['D-25']=ignored.returncode==0 and normal.returncode==1 and contains(read(local),'Before retiring a file in a downstream project','covered by its .gitignore')
+        # .gitignore is shared/project-owned in sync-manifest.yaml. The shipped
+        # template rule is mandatory here; consumers must add it before the
+        # retirement operation, not merely to run the framework's tests. The
+        # local example is customizable too; its exact template prose is not
+        # a consumer contract. Emit the retirement instructions below instead.
+        out['D-25']=not template_mode(base) or (ignored.returncode==0 and normal.returncode==1 and contains(read(local),'Before retiring a file in a downstream project','covered by its .gitignore'))
+        if base == root and not template_mode(base) and (ignored.returncode != 0 or normal.returncode != 1):
+            print('ACTION: before retiring local configuration, add .ai-dev-workflow.local.yaml.retired to your .gitignore and verify .ai-dev-workflow.local.example.yaml remains trackable.',flush=True)
     return out
 
 def report(result):
@@ -201,8 +208,8 @@ if sys.argv[2]=='--prove-plants':
             ('D-25','.gitignore','.ai-dev-workflow.local.yaml.retired\n',''),
         ]
         if not template_mode(fixture):
-            plants=[plant for plant in plants if plant[0]!='D-9']
-            print('SKIP: D-9 plant (consumer-owned reviewer policy)',flush=True)
+            plants=[plant for plant in plants if plant[0] not in {'D-9','D-25'}]
+            print('SKIP: D-9/D-25 plants (consumer-owned reviewer policy and ignore rules)',flush=True)
         for number,(case,files,needle,replacement) in enumerate(plants,1):
             files=[files] if isinstance(files,str) else files
             originals={};evidence=[]

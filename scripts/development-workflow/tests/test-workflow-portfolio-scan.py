@@ -19,6 +19,16 @@ sys.dont_write_bytecode = True
 spec = importlib.util.spec_from_file_location('scan', SCRIPTS / 'workflow-portfolio-scan.py')
 scan = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(scan)
+def committed_template_documents():
+    # Historical producer assertions belong to the template archive, never to
+    # consumer plans. Fixed grammar fixtures below still run in every tree.
+    declared = subprocess.check_output([
+        'bash', '-c', 'source "$1"; workflow_template_is_template "$2"',
+        'template-mode', str(SCRIPTS/'workflow-lib.sh'), str(ROOT/'.ai-dev-workflow.yaml'),
+    ], text=True).strip()
+    return sorted((ROOT/'docs/specs/developments').rglob('*.md')) if declared == 'true' else []
+
+
 FAKE_GH = r'''#!/usr/bin/env python3
 import json,os,sys
 from pathlib import Path
@@ -252,6 +262,12 @@ class Fixture(unittest.TestCase):
         self.assertTrue(any('Invalid' in warning for warning in self.scan()['warnings']))
 
     def test_effective_project_scope_and_empty_owner(self):
+        # workflow-lib.sh resolves tracker config from its own repository.
+        # Source a fixture-local copy so shell reads and Python reads share the
+        # same fixture; no consumer project_number can leak into assertions.
+        self.workflow_lib = self.root/'scripts/development-workflow/workflow-lib.sh'
+        self.workflow_lib.parent.mkdir(parents=True)
+        self.workflow_lib.write_text((SCRIPTS/'workflow-lib.sh').read_text())
         self.env['GITHUB_PROJECT_OWNER']=''
         for override,expected in (('2','2'),('','1')):
             self.env['GITHUB_PROJECT_NUMBER']=override
@@ -272,7 +288,7 @@ class Fixture(unittest.TestCase):
             self.execute('bash',str(SCRIPTS/'workflow-batch-plan.sh'),'--repo-root',str(self.root),'--scan-snapshot',str(snapshot),ok=False)
             self.env['GITHUB_PROJECT_OWNER']=''
             self.assertEqual(len(self.ledger()['calls']),before)
-            status=self.execute('bash','-c','source "$1"; get_tracker_status_for_issue 1','fixture',str(SCRIPTS/'workflow-lib.sh'))
+            status=self.execute('bash','-c','source "$1"; get_tracker_status_for_issue 1','fixture',str(self.workflow_lib))
             self.assertEqual(status.stdout.strip(),'Backlog')
             queries=[call for call in self.ledger()['calls'][before:] if call[:2]==['api','graphql'] and 'projectV2(number:' in ' '.join(call)]
             self.assertTrue(queries);self.assertIn('projectNumber='+expected,queries[0])
@@ -819,7 +835,7 @@ class Fixture(unittest.TestCase):
         # Exercise the canonical producers themselves, including explanatory
         # commas and refs, rather than replacing their wording with bare None.
         declarations = []
-        for document in sorted((ROOT/'docs/specs/developments').rglob('*.md')):
+        for document in committed_template_documents():
             if '_implementation-plan' not in document.name and '_specs' not in document.name:
                 continue
             lines=document.read_text().splitlines()
@@ -856,6 +872,12 @@ class Fixture(unittest.TestCase):
             with self.assertRaisesRegex(scan.EvidenceIncomplete,'Unresolved dependency'):
                 scan.dependency_references('Dependencies: '+declaration)
         self.assertEqual(scan.dependency_references('Dependencies: #2 (foundation)'),{2})
+        # A consumer plan's 'None before implementation' is not one of the
+        # template's explicit absence forms. Preserve the conservative parser
+        # result rather than assuming every historical 'None' means no refs.
+        consumer_plan = ('None before implementation of #294. #246 depends on this item '
+                         'and must not resume validation until this baseline lands.')
+        self.assertEqual(scan.dependency_references('Dependencies: '+consumer_plan),{294,246})
         if os.environ.get('WORKFLOW_PORTFOLIO_EVIDENCE_DIR'):
             (Path(os.environ['WORKFLOW_PORTFOLIO_EVIDENCE_DIR'])/'committed-none-corpus.json').write_text(json.dumps(
                 {'declarationCount':len(declarations),'forms':sorted({value for _,value in declarations}),
@@ -1090,12 +1112,12 @@ class Fixture(unittest.TestCase):
             '1757-resolved-codex-findings:2:52': [1758],
         }
         slugs = {}
-        for directory in (ROOT/'docs/specs/developments').iterdir():
+        for directory in {document.parent for document in committed_template_documents()}:
             slug = re.sub(r'^\d{14}_', '', directory.name)
             match = re.match(r'([1-9][0-9]*)-', slug)
             if match: slugs[slug] = int(match[1])
         proofs = []
-        for document in sorted((ROOT/'docs/specs/developments').rglob('*.md')):
+        for document in committed_template_documents():
             if '_implementation-plan' not in document.name and '_specs' not in document.name:
                 continue
             lines = document.read_text().splitlines()
