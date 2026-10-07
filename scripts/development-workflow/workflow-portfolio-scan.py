@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Read-only, invocation-scoped GitHub Projects portfolio coordination."""
 import argparse
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 import importlib.util
 import json
 import os
@@ -29,6 +29,8 @@ PARTIAL = 'Partial scan (budget-limited)'
 DEFERRED = 'Scan deferred (budget too low)'
 TERMINAL = {'Merged', 'Released', 'Cancelled'}
 P, Q = 2, 21
+# Same routine-tier ordering as workflow-batch-overlap.sh's PRIORITY_RANK.
+PRIORITY_RANK = {'urgent': 0, 'high': 1, 'normal': 2, 'medium': 2, 'low': 3}
 
 
 class EvidenceIncomplete(ReadError):
@@ -187,6 +189,15 @@ def complete_record(client, repo, issue, card, folders, branches, prs):
     number = issue['number']
     if not card.get('item_id') or not card.get('status') or not card.get('type'):
         raise EvidenceIncomplete('Incomplete Status/Type/project membership')
+    try:
+        if not isinstance(issue.get('created_at'), str) or not issue['created_at']:
+            raise ValueError('Missing creation timestamp')
+        if datetime.fromisoformat(issue['created_at'].replace('Z', '+00:00')).tzinfo is None:
+            raise ValueError('Missing creation timestamp timezone')
+        if card.get('due_date'):
+            date.fromisoformat(card['due_date'])
+    except (ValueError, TypeError):
+        raise EvidenceIncomplete('Incomplete Due date/creation evidence')
     folder = folders.get(number, {})
     current_prs = [complete_pr(client, repo, pr) for pr in prs if issue_number((pr.get('head') or {}).get('ref', '')) == number]
     body = issue.get('body') or ''
@@ -200,7 +211,7 @@ def complete_record(client, repo, issue, card, folders, branches, prs):
     if dependency_lines and any(not re.search(r'#([1-9][0-9]*)', line) for line in dependency_lines):
         raise EvidenceIncomplete('Unresolved dependency declaration')
     dependency_states = {}
-    record = {'number': number, 'title': issue['title'], 'body': body, **card, **folder,
+    record = {'number': number, 'title': issue['title'], 'body': body, 'created_at': issue['created_at'], **card, **folder,
               'branches': branches.get(number, []), 'prs': current_prs, 'dependencies': dependencies,
               'inFlight': bool(folder or branches.get(number) or current_prs), 'dependencyStates': dependency_states}
     # Bounded REST lookup for the expected active implementation branch only.
@@ -272,8 +283,14 @@ def snapshot_read(path, root):
         raise ReadError('Invalid open identity evidence')
     seen = set()
     for record in data['fullyRead']:
-        if not isinstance(record, dict) or record.get('fullyRead') is not True or type(record.get('number')) is not int or record['number'] not in open_ids or record['number'] in seen or not record.get('status') or not record.get('type') or any(key not in record for key in ('prs', 'branches', 'dependencies', 'dependencyStates', 'inFlight')):
+        if not isinstance(record, dict) or record.get('fullyRead') is not True or type(record.get('number')) is not int or record['number'] not in open_ids or record['number'] in seen or not record.get('status') or not record.get('type') or any(key not in record for key in ('prs', 'branches', 'dependencies', 'dependencyStates', 'inFlight', 'due_date', 'priority', 'created_at')):
             raise ReadError('Incomplete or duplicate scan record')
+        if any(not isinstance(record.get(key), str) for key in ('title', 'body', 'due_date', 'priority', 'created_at')) or not record['created_at']:
+            raise ReadError('Malformed scan ordering evidence')
+        if datetime.fromisoformat(record['created_at'].replace('Z', '+00:00')).tzinfo is None:
+            raise ReadError('Missing creation timestamp timezone')
+        if record['due_date']:
+            date.fromisoformat(record['due_date'])
         if not isinstance(record['prs'], list) or not isinstance(record['branches'], list) or any(not isinstance(branch, str) for branch in record['branches']) or not isinstance(record['dependencies'], list) or any(type(n) is not int for n in record['dependencies']) or not isinstance(record['dependencyStates'], dict) or type(record['inFlight']) is not bool:
             raise ReadError('Malformed scan evidence types')
         for pr in record['prs']:
@@ -281,6 +298,72 @@ def snapshot_read(path, root):
                 raise ReadError('Malformed scan PR evidence')
         seen.add(record['number'])
     return data
+
+
+def branch_identity(record):
+    implementation = ('feature/', 'fix/', 'refactor/', 'hotfix/')
+    branches = [pr['branch'] for pr in record['prs'] if isinstance(pr.get('branch'), str)] + record['branches']
+    return next((branch for branch in branches if branch.startswith(implementation)), str(record['number']))
+
+
+def portfolio_sort_key(record, today):
+    due = date.fromisoformat(record['due_date']) if record['due_date'] else None
+    near_due = due is not None and due <= today + timedelta(days=14)
+    created = datetime.fromisoformat(record['created_at'].replace('Z', '+00:00'))
+    if created.tzinfo is None:
+        raise ReadError('Missing creation timestamp timezone')
+    return (0 if near_due else 1, due if near_due else date.max,
+            PRIORITY_RANK.get(record['priority'].lower(), 2), created,
+            branch_identity(record), record['number'])
+
+
+def implementation_candidate(row, record):
+    if row['action'] in ('implement', 'resolve-development-pr', 'run-code-review-and-open-pr'):
+        return True
+    return row['action'] in ('resume-fix-loop', 'resolve-pr-readiness') and branch_identity(record).startswith(('feature/', 'fix/', 'refactor/', 'hotfix/'))
+
+
+def batch_safety(output, records):
+    eligible = [row for row in output if row['category'] in ('PROPOSED BATCH', 'ACTIONABLE RESUME')]
+    hazards = [row for row in output if row['toolFix'] in ('yes', 'unknown') and
+               (row in eligible or row['action'] == 'wait-human-review' or records[row['number']]['status'] in ('Spec in Review', 'Plan in Review', 'Development in Review'))]
+    pending = [row for row in hazards if row not in eligible]
+    if hazards:
+        first = (pending or hazards)[0]
+        for row in eligible:
+            if pending or row is not first:
+                row['category'], row['dispatch'] = 'HELD', 'held'
+                row['reason'] = f'Pending tool-fix merge for #{first["number"]} (TOOL_FIX={first["toolFix"]}); serialize tool fixes before consumers'
+    overlap_items = []
+    for row in output:
+        record = records[row['number']]
+        if row['category'] not in ('PROPOSED BATCH', 'ACTIONABLE RESUME') or not implementation_candidate(row, record):
+            continue
+        overlap_items.append({'id': str(row['number']), 'title': record['title'], 'brief': record['body'],
+                              'fileSet': row['fileSet'], 'priority': record['priority'],
+                              'createdAt': record['created_at'], 'branch': branch_identity(record),
+                              'nextAction': 'implement' if row['action'] == 'implement' else 'resolve-development-pr'})
+    if not overlap_items:
+        return
+    # Reuse the canonical plan/brief overlap classifier before lane allocation,
+    # so a serialized loser cannot consume a cap and hide a feasible winner.
+    with tempfile.TemporaryDirectory(prefix='workflow-scan-overlap-') as directory:
+        path = Path(directory) / 'items.json'
+        path.write_text(json.dumps({'items': overlap_items}))
+        result = subprocess.run(['bash', str(SCRIPT_DIR / 'workflow-batch-overlap.sh'), '--input', str(path), '--json'],
+                                text=True, capture_output=True)
+        if result.returncode:
+            raise ReadError(result.stderr.strip() or 'Snapshot overlap classification failed')
+        overlap = json.loads(result.stdout)
+    by_number = {row['number']: row for row in output}
+    for group in overlap['serialGroups']:
+        pairs = [pair for pair in overlap['pairs'] if pair['pairId'] in group['pairs']]
+        for identity in group['itemIds']:
+            row = by_number[int(identity)]
+            row['overlapGroup'], row['overlapEvidence'] = group['groupId'], pairs
+            if identity in group['heldItemIds']:
+                row['category'], row['dispatch'] = 'HELD', 'held'
+                row['reason'] = f'Overlap serialization with #{group["keepItemId"]}; held until prior item merges into approved base'
 
 
 def snapshot_classify(args):
@@ -297,8 +380,9 @@ def snapshot_classify(args):
                 raise ReadError('Malformed local classification metadata')
             metadata[item['number']] = item
     output = []
-    blocks = []
-    for record in snapshot['fullyRead']:
+    records = {record['number']: record for record in snapshot['fullyRead']}
+    today = datetime.now(timezone.utc).date()
+    for record in sorted(snapshot['fullyRead'], key=lambda record: portfolio_sort_key(record, today)):
         if args.development and record.get('development_path') != args.development:
             continue
         if args.branch and args.branch not in record['branches']:
@@ -306,12 +390,31 @@ def snapshot_classify(args):
         if args.pr and not any(pr['number'] == args.pr for pr in record['prs']):
             continue
         category, action, reason = classify(record, snapshot)
-        output.append({'number': record['number'], 'category': category, 'action': action, 'reason': reason, **metadata.get(record['number'], {})})
-        if action in ('write-plan', 'run-spec-review-and-open-pr', 'run-plan-review-and-open-pr') and output[-1].get('toolFix') == 'unknown':
+        local_keys = ('toolFix', 'toolFixFiles', 'fileSet', 'localRuntime', 'developmentPath')
+        local = {'toolFix': 'unknown', 'fileSet': 'unknown', 'localRuntime': 'none',
+                 **{key: value for key, value in metadata.get(record['number'], {}).items() if key in local_keys}}
+        if local['toolFix'] not in ('yes', 'no', 'unknown') or not isinstance(local['fileSet'], str):
+            raise ReadError('Malformed local safety classification')
+        output.append({'number': record['number'], 'category': category, 'action': action, 'reason': reason,
+                       'priority': record['priority'], 'dueDate': record['due_date'], 'createdAt': record['created_at'], **local})
+        if (action in ('write-plan', 'run-spec-review-and-open-pr', 'run-plan-review-and-open-pr') or record['status'] in ('Writing Spec', 'Writing Plan')) and output[-1]['toolFix'] == 'unknown':
             output[-1]['toolFix'] = 'no'
         if args.mode == 'next':
             print(f'TARGET=issue:{record["number"]}\nSTATUS={record["status"]}\nNEXT_ACTION={action}\nCATEGORY={category}')
-        elif category != 'HELD':
+    if args.mode == 'next' and len(output) != 1:
+        raise ReadError('Target has no unique fully read scan record')
+    if args.mode == 'batch':
+        eligible = [row for row in output if row['category'] in ('PROPOSED BATCH', 'ACTIONABLE RESUME')]
+        for index, row in enumerate(eligible):
+            if row['dueDate'] and date.fromisoformat(row['dueDate']) <= today + timedelta(days=14) and any(PRIORITY_RANK.get(other['priority'].lower(), 2) < PRIORITY_RANK.get(row['priority'].lower(), 2) for other in eligible[index + 1:]):
+                row['priorityWarning'] = f'Due date for #{row["number"]} conflicts with abstract Priority order; human attention required'
+        batch_safety(output, records)
+        blocks = []
+        for row in output:
+            if row['category'] not in ('PROPOSED BATCH', 'ACTIONABLE RESUME'):
+                continue
+            record = records[row['number']]
+            category, action = row['category'], row['action']
             # Preserve canonical lane caps and portfolio report categorization.
             status = record['status']
             if status == 'Backlog' and category == 'ACTIONABLE RESUME':
@@ -321,13 +424,10 @@ def snapshot_classify(args):
             labels = ','.join(label for pr in record['prs'] for label in pr['labels'])
             if any(c in labels for c in '\r\n'):
                 raise ReadError('Malformed PR label evidence')
-            local_runtime = metadata.get(record['number'], {}).get('localRuntime', 'none')
+            local_runtime = row['localRuntime']
             if local_runtime not in ('none', 'exclusive'):
                 raise ReadError('Malformed local runtime classification')
             blocks.append(f'SLUG={record["number"]}\nSTATUS={status}\nNEXT_ACTION={action}\nLABELS={labels}\nLOCAL_RUNTIME={local_runtime}\n')
-    if args.mode == 'next' and len(output) != 1:
-        raise ReadError('Target has no unique fully read scan record')
-    if args.mode == 'batch':
         if blocks:
             result = subprocess.run(['bash', str(SCRIPT_DIR / 'workflow-batch-lanes.sh'), '--repo-root', str(root)],
                                     input='\n'.join(blocks), text=True, capture_output=True)
@@ -483,6 +583,7 @@ def scan(args):
             if result.returncode:
                 raise ReadError(result.stderr.strip() or 'Scan classifier failed')
             report['classification'] = json.loads(result.stdout)
+            warnings.extend(row['priorityWarning'] for row in report['classification'] if row.get('priorityWarning'))
     proposed = [row['number'] for row in report['classification'] if row['category'] == 'PROPOSED BATCH']
     report['recommendedCommand'] = ('/run-items ' + ' '.join(map(str, proposed))) if len(proposed) >= 2 else ('/run-item ' + str(proposed[0])) if proposed else ''
     if args.json:

@@ -4,6 +4,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+from datetime import datetime, timedelta, timezone
 import subprocess
 import sys
 import tempfile
@@ -64,6 +65,8 @@ if args[1]=='graphql':
   finish({'data':{kind:value,**rate}})
  n=int(values.get('issueNumber',state.get('target',1)))
  card={'id':'I'+str(n),'project':{'id':'P1'},'content':{'number':n,'repository':{'nameWithOwner':state['repo']},'issueType':{'name':state.get('nativeType','Bug')}},'status':{'name':state.get('statuses',{}).get(str(n),'Backlog')},'type':{'name':'Feature'},'customType':{'name':state.get('customType','Refactor')},'configuredType':{'name':state.get('configuredType','Feature')}}
+ card['priority']={'name':state.get('priorities',{}).get(str(n),'Normal')}
+ card['dueDate']={'date':state.get('dueDates',{}).get(str(n))}
  if state.get('missingType'): card.pop('type');card.pop('customType');card.pop('configuredType');card['content'].pop('issueType')
  if state.get('missingStatus'):card.pop('status')
  if 'subIssues(first:' in query:
@@ -102,7 +105,7 @@ if endpoint=='rate_limit':
  finish({'resources':{'graphql':{'remaining':state['remaining'],'reset':state['reset']},'core':{'remaining':4999}}})
 if endpoint.endswith('issues?state=open&per_page=100'):
  if state.get('restFail'):finish(error='Incomplete REST page')
- issues=[{'number':i,'title':'Fixture '+str(i),'body':state.get('bodies',{}).get(str(i),state.get('body','')),'state':'open'} for i in range(1,state.get('active',41)+1)]
+ issues=[{'number':i,'title':'Fixture '+str(i),'body':state.get('bodies',{}).get(str(i),state.get('body','')),'state':'open','created_at':state.get('created',{}).get(str(i),'2026-01-01T00:00:00Z')} for i in range(1,state.get('active',41)+1)]
  finish([issues[:20],issues[20:]])
 if 'pulls?state=all&base=' in endpoint:finish([[]])
 if endpoint.endswith('pulls?state=open&per_page=100'):
@@ -131,6 +134,8 @@ class Fixture(unittest.TestCase):
         self.bin.mkdir()
         self.state = self.folder / 'state.json'
         self.env = os.environ.copy()
+        for key in ('GITHUB_PROJECT_NUMBER','GITHUB_PROJECT_OWNER','GITHUB_REPO','WORKFLOW_SCAN_INVOCATION_ID','WORKFLOW_SCAN_LOCAL_METADATA_FILE'):
+            self.env.pop(key,None)
         self.env.update(PATH=str(self.bin)+os.pathsep+self.env['PATH'], SCAN_FIXTURE_STATE=str(self.state))
         # Local git operations use real git. Remote reads are fixture-only.
         self.git = subprocess.check_output(['which','git'],text=True).strip()
@@ -176,6 +181,17 @@ class Fixture(unittest.TestCase):
         if plan:(p/f'2_{number}_fixture_implementation-plan.md').write_text('fixture\n')
         return str(p.relative_to(self.root))
 
+    def brief_artifact(self,number):
+        p=self.root/'docs/specs/developments'/f'{number}-fixture'
+        p.mkdir(parents=True,exist_ok=True)
+        (p/'brief.md').write_text(f'**Issue**: #{number}\nSimple application change.\n')
+        return p
+
+    def plan_files(self,number,files):
+        p=self.root/self.artifact(number)
+        (p/f'2_{number}_fixture_implementation-plan.md').write_text('### Files modified\n\n```text\n'+'\n'.join(files)+'\n```\n')
+        return p
+
     def target(self,**overrides):
         self.reset(**overrides)
         return self.execute('python3',str(SCRIPTS/'workflow-project-reader.py'),'--fallback','--repo','fixture/repo','--project-id','P1','--number','1',ok=not overrides.get('fails',False))
@@ -189,7 +205,7 @@ class Fixture(unittest.TestCase):
         self.assertEqual(len(report['fullyRead']),41)
         self.assertLessEqual(report['scanOwnedSpend'],1000)
         self.assertGreaterEqual(report['spend']['GraphQL points remaining'],1000)
-        self.assertEqual(report['recommendedCommand'].split()[0],'/run-items')
+        self.assertIn(report['recommendedCommand'].split()[0],('/run-item','/run-items'))
         ledger=self.ledger();self.assertEqual(ledger['graphql'],42)
         self.assertTrue(all(call[0]=='api' for call in ledger['calls']))
         self.assertFalse(any('project item-list' in ' '.join(call) for call in ledger['calls']))
@@ -266,6 +282,74 @@ class Fixture(unittest.TestCase):
             self.assertTrue(record['inFlight']);self.assertIn('fix/1-local-work',record['branches'])
             self.assertEqual(report['partialCost'],22)
 
+    def test_priority_due_date_creation_and_ordering_guards(self):
+        self.brief_artifact(1);self.brief_artifact(2)
+        today=datetime.now(timezone.utc).date()
+        scenarios=[({'priorities':{'1':'Low','2':'Urgent'}},2,False),
+                   ({'priorities':{'1':'Low','2':'Urgent'},'dueDates':{'1':str(today+timedelta(days=5))}},1,True),
+                   ({'priorities':{'1':'Low','2':'Urgent'},'dueDates':{'1':str(today+timedelta(days=14))}},1,True),
+                   ({'priorities':{'1':'Low','2':'Urgent'},'dueDates':{'1':str(today+timedelta(days=15))}},2,False),
+                   ({'dueDates':{'1':str(today+timedelta(days=10)),'2':str(today+timedelta(days=3))}},2,False),
+                   ({'priorities':{'1':'Low','2':'High'},'dueDates':{'1':str(today+timedelta(days=20))}},2,False),
+                   ({'priorities':{'1':'Normal','2':'Medium'},'created':{'1':'2026-02-01T00:00:00Z','2':'2026-01-01T00:00:00Z'}},2,False)]
+        for overrides,winner,warned in scenarios:
+            self.reset(active=2,**overrides);report=self.scan()
+            self.assertEqual(report['recommendedCommand'],'/run-item '+str(winner))
+            self.assertEqual(report['classification'][0]['number'],winner)
+            self.assertEqual(self.ledger()['graphql'],3)
+            self.assertEqual(any('conflicts with abstract Priority' in warning for warning in report['warnings']),warned)
+            self.assertIn('fieldValueByName(name:"Due date")',report['ledger'][1]['query'])
+        self.reset(active=1,created={'1':None});self.assertFalse(self.scan()['fullyRead'])
+        self.reset(active=1,dueDates={'1':'bad-date'});self.assertFalse(self.scan(ok=False)['fullyRead'])
+        self.reset(active=1);report=self.scan();snapshot=self.folder/'ordering.json'
+        self.env['WORKFLOW_SCAN_INVOCATION_ID']=report['invocation'];before=len(self.ledger()['calls'])
+        for bad in ({'created_at':None},{'created_at':'bad'},{'due_date':[]},{'due_date':'bad'}):
+            invalid=dict(report,fullyRead=[dict(report['fullyRead'][0],**bad)])
+            snapshot.write_text(json.dumps(invalid))
+            self.execute('bash',str(SCRIPTS/'workflow-batch-plan.sh'),'--repo-root',str(self.root),'--scan-snapshot',str(snapshot),ok=False)
+            self.assertEqual(len(self.ledger()['calls']),before)
+
+    def test_tool_fix_and_overlap_gates_before_lane_caps(self):
+        self.config.write_text(self.config.read_text()+'guardrails:\n  parallelism:\n    max_concurrent_by_stage:\n      implementation: 2\n')
+        self.plan_files(1,['src/shared.py']);self.plan_files(2,['src/shared.py'])
+        self.reset(active=2,statuses={'1':'Plan Ready','2':'Plan Ready'},priorities={'1':'Low','2':'Urgent'})
+        report=self.scan();rows={row['number']:row for row in report['classification']}
+        self.assertEqual(rows[2]['category'],'ACTIONABLE RESUME');self.assertEqual(rows[2]['dispatch'],'proposed')
+        self.assertEqual(rows[1]['category'],'HELD');self.assertIn('Overlap serialization',rows[1]['reason'])
+        self.assertEqual(rows[1]['overlapEvidence'][0]['signals']['sharedFiles'],['src/shared.py'])
+        self.assertEqual(self.ledger()['graphql'],3)
+        self.config.write_text(self.config.read_text().replace('implementation: 2','implementation: 1'))
+        self.reset(active=2,statuses={'1':'Plan Ready','2':'Plan Ready'},priorities={'1':'Low','2':'Urgent'})
+        rows={row['number']:row for row in self.scan()['classification']}
+        self.assertEqual(rows[2]['dispatch'],'proposed');self.assertEqual(rows[1]['category'],'HELD')
+        # Actual implementation-branch resumes pass the same concrete file gate.
+        self.env['SCAN_FIXTURE_BRANCH']='fix/1-fixture'
+        self.reset(active=2,statuses={'1':'In Development','2':'Plan Ready'},priorities={'1':'Low','2':'Urgent'})
+        rows={row['number']:row for row in self.scan()['classification']}
+        self.assertEqual(rows[1]['action'],'run-code-review-and-open-pr');self.assertEqual(rows[1]['category'],'HELD')
+        self.env.pop('SCAN_FIXTURE_BRANCH')
+        self.plan_files(1,['scripts/development-workflow/pr-review-loop.sh']);self.plan_files(2,['src/consumer.py'])
+        self.reset(active=2,statuses={'1':'Plan Ready','2':'Plan Ready'},priorities={'1':'Low','2':'Urgent'})
+        rows={row['number']:row for row in self.scan()['classification']}
+        self.assertEqual(rows[1]['dispatch'],'proposed');self.assertEqual(rows[1]['toolFix'],'yes')
+        self.assertEqual(rows[2]['category'],'HELD');self.assertIn('tool-fix merge for #1',rows[2]['reason'])
+        # A waiting tool fix blocks consumers without redispatching itself.
+        self.reset(active=2,pr=True,labels=[{'name':'ready-for-human-review'}],statuses={'1':'Development in Review','2':'Plan Ready'})
+        rows={row['number']:row for row in self.scan()['classification']}
+        self.assertEqual(rows[1]['category'],'INFORMATIONAL');self.assertEqual(rows[2]['category'],'HELD')
+        self.assertIn('tool-fix merge for #1',rows[2]['reason'])
+        # Tracker canonical references strengthen a local no classification.
+        self.plan_files(1,['src/app.py'])
+        self.reset(active=2,statuses={'1':'Plan Ready','2':'Plan Ready'},bodies={'1':'Change scripts/development-workflow/pr-ci-loop.sh'})
+        rows={row['number']:row for row in self.scan()['classification']}
+        self.assertEqual(rows[1]['toolFix'],'yes');self.assertEqual(rows[2]['category'],'HELD')
+        # Keep the original unclassified planless pair as a conservative negative.
+        import shutil
+        shutil.rmtree(self.root/'docs/specs/developments')
+        self.reset(active=2);report=self.scan();rows={row['number']:row for row in report['classification']}
+        self.assertEqual(rows[1]['toolFix'],'unknown');self.assertEqual(rows[2]['category'],'HELD')
+        self.assertIn('TOOL_FIX=unknown',rows[2]['reason']);self.assertEqual(report['recommendedCommand'],'/run-item 1')
+
     def test_unreadable_reset_other_consumers(self):
         for failures in ('1','2','both'):
             self.reset(sampleFailures=failures);report=self.scan()
@@ -316,7 +400,7 @@ class Fixture(unittest.TestCase):
         valid=json.loads(self.execute(*args).stdout)
         cached=next(cache.glob('fixture-*.json'))
         self.execute(*args);self.assertEqual(self.ledger()['graphql'],1)
-        for invalid in (dict(valid,item_id=True),dict(valid,status=[]),dict(valid,type=None),dict(valid,depends_on={}),{'membership':'absent','project_id':'P1','item_id':[]},'bad'):
+        for invalid in (dict(valid,item_id=True),dict(valid,status=[]),dict(valid,type=None),dict(valid,depends_on={}),dict(valid,due_date=[]),dict(valid,due_date='bad-date'),{'membership':'absent','project_id':'P1','item_id':[]},'bad'):
             cached.write_text(json.dumps(invalid));before=self.ledger()['graphql']
             self.assertEqual(json.loads(self.execute(*args).stdout),valid)
             self.assertEqual(self.ledger()['graphql'],before+1)
@@ -325,8 +409,9 @@ class Fixture(unittest.TestCase):
                 scan.reader.connection({'nodes':[],'pageInfo':{'hasNextPage':True,'endCursor':cursor}})
 
     def test_fallback_identity_escape_archived_cap(self):
-        result=self.target(org=True,title='quote " \\ repo:evil is:closed ☃',atCap=True)
+        result=self.target(org=True,title='quote " \\ repo:evil is:closed ☃',atCap=True,dueDates={'1':'2026-10-15'})
         item=json.loads(result.stdout);self.assertEqual(item['item_id'],'I1')
+        self.assertEqual(item['due_date'],'2026-10-15')
         args=self.ledger()['calls'][-1];query=' '.join(args)
         self.assertIn('archivedStates:[ARCHIVED,NOT_ARCHIVED]',query)
         self.assertIn('repo:fixture/repo is:issue is:open "quote \\"',query)
@@ -379,6 +464,8 @@ class Fixture(unittest.TestCase):
                 (runtime/source.name).symlink_to(source)
         statuses={str(n):'Released' for n in range(3,42)}
         statuses.update({'1':'Backlog','2':'Backlog'})
+        # Explicit local brief evidence makes this a known non-tool-fix pair.
+        self.brief_artifact(1);self.brief_artifact(2)
         self.config.write_text(self.config.read_text()+'guardrails:\n  parallelism:\n    max_concurrent_by_stage:\n      implementation: 2\n')
         self.reset(statuses=statuses)
         report=self.scan();self.assertEqual(report['recommendedCommand'],'/run-items 1 2')

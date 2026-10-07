@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Bounded project-card queries shared by target commands and portfolio scans."""
 import argparse
+from datetime import date
 import hashlib
 import json
 import os
@@ -20,6 +21,7 @@ FIELDS = '''id
   compactCustomType: fieldValueByName(name:"CustomType") { ... on ProjectV2ItemFieldSingleSelectValue { name } }
   type: fieldValueByName(name:"Type") { ... on ProjectV2ItemFieldSingleSelectValue { name } }
   priority: fieldValueByName(name:"Priority") { ... on ProjectV2ItemFieldSingleSelectValue { name } }
+  dueDate: fieldValueByName(name:"Due date") { ... on ProjectV2ItemFieldDateValue { date } }
   size: fieldValueByName(name:"Size") { ... on ProjectV2ItemFieldSingleSelectValue { name } }'''
 PRIMARY = '''query($owner:String!,$repo:String!,$issueNumber:Int!,$typeFieldName:String!,$after:String) {
  repository(owner:$owner,name:$repo) { issue(number:$issueNumber) {
@@ -133,10 +135,20 @@ def compact(item, project_id, preferred):
         return value.get('name', '') if isinstance(value, dict) and isinstance(value.get('name', ''), str) else ''
     if not isinstance(item.get('id'), str) or not item['id']:
         raise ReadError('Missing project item identity')
+    due = item.get('dueDate')
+    if due is not None and (not isinstance(due, dict) or (due.get('date') is not None and not isinstance(due['date'], str))):
+        raise ReadError('Malformed Due date evidence')
+    due_date = (due or {}).get('date') or ''
+    if due_date:
+        try:
+            date.fromisoformat(due_date)
+        except ValueError as exc:
+            raise ReadError('Malformed Due date evidence') from exc
     return {'item_id': item['id'], 'project_id': project_id,
             'status': name(item.get('status') or item.get('fieldValueByName')),
             'type': next((name(c) for c in candidates if name(c)), ''),
             'priority': name(item.get('priority')), 'size': name(item.get('size')),
+            'due_date': due_date,
             'depends_on': ' '.join(value.get('text', '') for value in (item.get('dependsOn'), item.get('dependencies')) if isinstance(value, dict) and isinstance(value.get('text', ''), str))}
 
 
@@ -153,8 +165,15 @@ def valid_cached_result(value, project_id):
         return False
     if value.get('membership') == 'absent':
         return set(value) == {'membership', 'project_id'}
-    keys = {'item_id', 'project_id', 'status', 'type', 'priority', 'size', 'depends_on'}
-    return set(value) == keys and all(isinstance(value[key], str) for key in keys) and bool(value['item_id'])
+    keys = {'item_id', 'project_id', 'status', 'type', 'priority', 'size', 'due_date', 'depends_on'}
+    if set(value) != keys or any(not isinstance(value[key], str) for key in keys) or not value['item_id']:
+        return False
+    try:
+        if value['due_date']:
+            date.fromisoformat(value['due_date'])
+    except ValueError:
+        return False
+    return True
 
 
 def fallback(client, number, project_id, repo, preferred='', cache_dir=None, cache_pid=None, ttl=5):

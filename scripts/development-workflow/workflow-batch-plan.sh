@@ -12,7 +12,11 @@ Usage:
   ./scripts/development-workflow/workflow-batch-plan.sh [--repo <name>] [--repo-root <path>] [--scan-snapshot <invocation-file>] [development-path ...]
 
 Classifies development folders into batch-planning candidates for the batch
-orchestrator. If no paths are given, scans docs/specs/developments/*.
+orchestrator. Without --scan-snapshot, no paths means docs/specs/developments/*.
+Snapshot mode requires WORKFLOW_SCAN_INVOCATION_ID and matching repository,
+effective project owner/number and complete current records. It inspects only
+those records' local artifacts, never fetches or reads live tracker/PR evidence,
+and refuses invalid snapshots without a live-read fallback.
 EOF
 }
 
@@ -507,21 +511,45 @@ cd "$repo_root" || exit 1
 if [ -n "$scan_snapshot" ]; then
   python3 "$SCRIPT_DIR/workflow-portfolio-scan.py" --repo-root "$repo_root" \
     --scan-snapshot "$scan_snapshot" --mode validate
-  snapshot_local="$(mktemp)"
-  trap 'rm -f "$snapshot_local"' EXIT
+  snapshot_metadata_dir="$(mktemp -d)"
+  snapshot_local="$snapshot_metadata_dir/metadata.jsonl"
+  trap 'rm -rf "$snapshot_metadata_dir"' EXIT
+  : > "$snapshot_local"
+  # Records without local artifacts or possible canonical tracker references
+  # retain the coordinator's conservative unknown default without a sweep.
+  jq -c '.fullyRead[] | select(has("development_path") or
+    ((.title + "\n" + .body) | contains("scripts/development-workflow/") or
+      contains("docs/workflow/development-workflow/protocols/") or contains(".ai-dev-workflow.yaml")))' \
+    "$scan_snapshot" > "$snapshot_metadata_dir/records.jsonl"
   # Reuse the existing local tool/file/runtime classifiers, without live reads.
-  for development_path in "${development_paths[@]}"; do
-    [ -d "$development_path" ] || continue
-    snapshot_number="$(extract_github_issue_number "$development_path")"
-    [ -n "$snapshot_number" ] || continue
-    tool_fix_output="$(classify_tool_fix "$development_path")"
-    tool_fix="$(printf '%s\n' "$tool_fix_output" | head -1)"
-    file_set="$(extract_file_set "$development_path")"
-    local_runtime="$(classify_local_runtime "$development_path")"
+  while IFS= read -r snapshot_record; do
+    snapshot_number="$(printf '%s' "$snapshot_record" | jq -er '.number')"
+    development_path="$(printf '%s' "$snapshot_record" | jq -r '.development_path // empty')"
+    tool_fix="unknown"
+    tool_fix_files=""
+    file_set="unknown"
+    local_runtime="none"
+    if [ -n "$development_path" ] && [ -d "$development_path" ]; then
+      tool_fix_output="$(classify_tool_fix "$development_path")"
+      tool_fix="$(printf '%s\n' "$tool_fix_output" | head -1)"
+      tool_fix_files="$(printf '%s\n' "$tool_fix_output" | sed -n '2p')"
+      file_set="$(extract_file_set "$development_path")"
+      local_runtime="$(classify_local_runtime "$development_path")"
+    fi
+    # Tracker references can strengthen a no/unknown local classification.
+    tracker_brief_dir="$snapshot_metadata_dir/brief-$snapshot_number"
+    mkdir "$tracker_brief_dir"
+    printf '%s' "$snapshot_record" | jq -r '.title, .body' > "$tracker_brief_dir/brief.md"
+    tracker_tool_output="$(classify_tool_fix "$tracker_brief_dir")"
+    if [ "$(printf '%s\n' "$tracker_tool_output" | head -1)" = "yes" ]; then
+      tool_fix="yes"
+      tracker_tool_files="$(printf '%s\n' "$tracker_tool_output" | sed -n '2p')"
+      tool_fix_files="${tool_fix_files}${tool_fix_files:+,}${tracker_tool_files}"
+    fi
     jq -nc --argjson number "$snapshot_number" --arg path "$development_path" \
-      --arg tool "$tool_fix" --arg files "$file_set" --arg runtime "$local_runtime" \
-      '{number:$number,developmentPath:$path,toolFix:$tool,fileSet:$files,localRuntime:$runtime}' >> "$snapshot_local"
-  done
+      --arg tool "$tool_fix" --arg toolFiles "$tool_fix_files" --arg files "$file_set" --arg runtime "$local_runtime" \
+      '{number:$number,developmentPath:$path,toolFix:$tool,toolFixFiles:$toolFiles,fileSet:$files,localRuntime:$runtime}' >> "$snapshot_local"
+  done < "$snapshot_metadata_dir/records.jsonl"
   WORKFLOW_SCAN_LOCAL_METADATA_FILE="$snapshot_local" python3 "$SCRIPT_DIR/workflow-portfolio-scan.py" \
     --repo-root "$repo_root" --scan-snapshot "$scan_snapshot" --mode batch "${development_paths[@]}"
   exit 0

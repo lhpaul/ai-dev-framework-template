@@ -15,8 +15,12 @@ Usage:
 
 Classifies the next deterministic workflow action and prints stable key=value lines.
 
-For --development, the script runs 'git fetch --prune origin' unless WORKFLOW_SKIP_FETCH
-is set (e.g. run one fetch before looping over many development folders).
+Any target accepts --scan-snapshot <invocation-file>. That mode requires
+WORKFLOW_SCAN_INVOCATION_ID and matching repository/effective project owner and
+number. It uses one complete current record, makes no live tracker/PR reads or
+fetch, and refuses stale/incomplete snapshots without a live-read fallback.
+Outside snapshot mode, --development runs 'git fetch --prune origin' unless
+WORKFLOW_SKIP_FETCH is set (e.g. one fetch before looping over development folders).
 EOF
 }
 
