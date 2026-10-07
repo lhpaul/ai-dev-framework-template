@@ -47,6 +47,7 @@ if args[1]=='graphql':
  query=values['query']; state['graphql']+=1
  if state.get('reject')==state['graphql']: finish(error='API rate limit exceeded')
  if state.get('partialRate')==state['graphql']:
+  state['remaining']-=state.get('partialCost',0)
   finish({'data':{'rateLimit':{'cost':state.get('partialCost',0)}},'errors':[{'type':'RATE_LIMITED','message':'API rate limit exceeded'}]},exit_json=state.get('partialRateExit',False))
  if state.get('nonrate')==state['graphql']: finish(error='Bad credentials')
  if state['remaining']<=0: finish(error='API rate limit exceeded')
@@ -56,6 +57,7 @@ if args[1]=='graphql':
   kind='organization' if 'organization(login:' in query else 'user'
   if kind=='user' and state.get('userNotFound'):
    rate['rateLimit']['cost']=state.get('partialCost',1)
+   state['remaining']-=state.get('partialCost',1)-state.get('cost',1)
    finish({'data':{'user':None,**rate},'errors':[{'type':'NOT_FOUND','path':['user'],'message':'Organization is not a user'}]},exit_json=state.get('userNotFoundExit',False))
   value=None if kind=='user' and state.get('org') else {'projectV2':{'id':'P1'}}
   finish({'data':{kind:value,**rate}})
@@ -367,6 +369,20 @@ class Fixture(unittest.TestCase):
         self.assertEqual(json.loads(single.stdout)['items'][0]['type'],'Bug')
         if os.environ.get('WORKFLOW_PORTFOLIO_EVIDENCE_DIR'):
             (Path(os.environ['WORKFLOW_PORTFOLIO_EVIDENCE_DIR'])/'same-window-bounded-start.json').write_text(json.dumps({'afterScanRemaining':after_scan,'freshPrelude':scope,'dispatch':json.loads(dispatch.read_text()),'epic':json.loads(epic.stdout),'single':json.loads(single.stdout),'ledger':self.ledger()},indent=2))
+        growth=[]
+        for history in (50,1000):
+            self.reset(history=history)
+            results=[self.execute('bash',str(runtime/'run-item-scope-resolver.sh'),'--issue','1','--base','develop','--may-start-backlog','true','--json'),
+                     self.execute('bash',str(runtime/'run-bounded-prelude.sh'),'--original-command','/run-items 1 2','--items','1,2','--base','develop','--delegate-review','--may-merge','--may-start-backlog','true','--max-risk','high','--json'),
+                     self.execute('bash',str(runtime/'run-epic-scope-resolver.sh'),'--epic','10','--base','develop','--may-start-backlog','true','--json')]
+            for result in results:
+                value=json.loads(result.stdout)
+                items=value.get('items') or value.get('scope',value.get('scopePayload',{})).get('items',[])
+                self.assertTrue(items);self.assertTrue(all(item['status']=='Backlog' and item['type']=='Bug' for item in items))
+            growth.append(self.ledger()['graphql'])
+        self.assertEqual(growth[0],growth[1])
+        if os.environ.get('WORKFLOW_PORTFOLIO_EVIDENCE_DIR'):
+            (Path(os.environ['WORKFLOW_PORTFOLIO_EVIDENCE_DIR'])/'bounded-history-growth.json').write_text(json.dumps({'terminalCounts':[50,1000],'chargedRequests':growth},indent=2))
 
     def test_retained_document_branches_and_stale_backlog(self):
         self.env['AI_DEV_WORKFLOW_CONFIG_FILE']=str(self.config)
