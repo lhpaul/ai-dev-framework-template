@@ -50,9 +50,9 @@ git clone --depth=1 --branch=<ref> <url> "$TEMPLATE_TEMP_DIR"
 Store the exact path in `TEMPLATE_TEMP_DIR` — you must clean up this specific directory at the end (never use a wildcard).
 If `--ref` is not specified for a remote source, use the default branch (`main`).
 
-Once the template source is resolved, read its `CHANGELOG.md` and extract the latest version number (first `[X.Y.Z]` entry after `[Unreleased]` if present, otherwise the first versioned entry). Store it as `TEMPLATE_VERSION`.
+Once the template source is resolved, capture its full `git rev-parse HEAD` as `TEMPLATE_COMMIT`, read `CHANGELOG.md` from that committed tree, and extract the latest version number (first `[X.Y.Z]` entry after `[Unreleased]` if present, otherwise the first versioned entry). Store it as `TEMPLATE_VERSION`.
 
-**Manifest check**: After resolving the template source, check for `sync-manifest.yaml` at the template root.
+**Manifest check**: After resolving the template source, check for committed `sync-manifest.yaml` in the pinned source commit. Use a private committed copy for manifest selection; source working-tree edits do not change the approved file set.
 
 - If found: read it and store its contents as `SYNC_MANIFEST`. The manifest is the authoritative file list (BR-1).
 - If absent: set `SYNC_MANIFEST=absent`. The graceful fallback (BR-4 / AC-4) activates in Step 2 — the embedded lists below are used and a warning is shown.
@@ -63,12 +63,14 @@ top-level `mode` value. If the file or field is absent, set
 `workflow_hub`, and `product_repo`; any other value is a configuration error and
 must stop the sync before file comparison.
 
-When `SYNC_MANIFEST` is loaded, build the selected manifest entry set before
+When `SYNC_MANIFEST` is loaded, materialize its committed bytes into private
+`SYNC_COMMITTED_MANIFEST`, then build the selected manifest entry set before
 Step 0.5 using the selector helper from the resolved template source:
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
 python3 "<template_source>/scripts/development-workflow/select-sync-manifest-entries.py" \
-  --manifest "<template_source>/sync-manifest.yaml" \
+  --manifest "$SYNC_COMMITTED_MANIFEST" \
   --role "$REPOSITORY_ROLE"
 ```
 
@@ -90,6 +92,64 @@ Unknown roles, missing `mode_scope` values, unknown `mode_scope` values, or a
 missing selector helper for a non-`single_repo` role must fail closed before any
 file changes are applied. If the manifest is absent, use fallback mode and make
 the lack of role-aware filtering explicit in the diagnostic report.
+
+### Exact source and per-path baseline preparation
+
+Pin the incoming source to its full committed SHA as `TEMPLATE_COMMIT`; read the
+manifest and version from that commit, rather than uncommitted source files.
+Run `sync-template-merge.py` from a trusted framework tool checkout. If the helper
+or its selector/coverage dependencies are unavailable, stop and obtain the
+updated tooling; never fall back to blind overwrite.
+
+The consumer-owned `.ai-dev-workflow.sync-state.json` records each applied path's
+exact upstream commit, source, blob and Git mode. Consumer patches are not base
+content. Resolve recorded commits in the template source (or consumer Git history
+for verified bootstrap entries). If a temporary remote clone lacks an object,
+fetch that exact recorded SHA into that temporary clone before preview. For a
+user-owned local source, prepare a private clone with the required history rather
+than modifying the user's checkout. Unavailable history is a named hard stop.
+
+For legacy consumers, obtain explicit maintainer verification of the exact
+previous-sync/bootstrap commit before passing `--base-ref` with `--base-source`
+(`template` or `consumer`). A version, similarity or latest global sync SHA alone
+is not evidence. Existing per-path entries remain authoritative; missing entries
+stay unknown unless verified history is supplied. Identical consumer/incoming
+files are safe without a base; differing or uncertain missing paths block.
+
+Prepare a private `SYNC_PLAN` outside both checkouts and preview before Step 0.5:
+
+<!-- workflow-shell-contract: bash-zsh -->
+```bash
+python3 "$SYNC_TOOL_ROOT/sync-template-merge.py" preview \
+  --template-root "$TEMPLATE_SOURCE" --consumer-root "$PROJECT_ROOT" \
+  --template-ref "$TEMPLATE_COMMIT" --template-id "$TEMPLATE_ID" \
+  --role "$REPOSITORY_ROLE" --plan "$SYNC_PLAN"
+```
+
+`SYNC_TOOL_ROOT` is the directory containing the trusted helper and its
+selector/coverage dependencies; `TEMPLATE_ID` is the normalized repository name
+(e.g. `lhpaul/ai-dev-framework-template`), never a credential URL. Add verified
+base arguments only after the provenance check above. Preview returns zero for
+`RESULT=ready`, one for a classified blocked batch, and two for invalid input.
+Retain its report on either nonzero result. A classified blocked batch still
+continues through read-only Step 0.5 diagnostics and the comprehensive Step 3
+report, showing every named problem and baseline provenance; stop before any
+mutation or apply approval. Invalid input requires correction and a fresh
+preview first. Do not suppress the failure or treat it as approval.
+
+When the source manifest is absent, first enumerate the embedded fallback from
+the pinned Git tree, never `find` over the source filesystem. Provide a private
+`--selection-file` JSON with `role`, exact `paths`, and exact `project_specific`
+exclusions. Make the existing lack of role-aware fallback filtering explicit;
+the selection is bound to preview/approval and cannot be silently rebuilt.
+
+A declined path requires explicit naming, `--decline <path>`, and a fresh preview
+of the remaining set. Declines never advance baseline evidence. Corrupt state,
+conflicts, unsafe links/types and unknown history block the entire selected
+always-sync batch before writes in every approval mode. Retain local-only edits
+and deletions when upstream is unchanged. A changed/deleted upstream path with
+incompatible consumer content requires resolution, or explicit decline and a
+new preview; this helper never chooses a conflict side or deletes consumer files.
 
 **Migration notes check**: If `SYNC_MANIFEST` is loaded, read `migration_notes` from it. Read `template.last_synced_version` from the project's `.ai-dev-workflow.yaml` (if the file or field is absent, treat it as unknown — show all notes).
 
@@ -146,19 +206,17 @@ Dry-run complete. No changes were applied. Re-run without --dry-run to apply cha
 
 ### Category 1 — File-level merge conflicts (always-sync files)
 
-For each selected file listed in `categories.always_sync` (or the embedded fallback list when `SYNC_MANIFEST=absent`):
+Use the shared preview result prepared in Step 0. It compares the incoming Git
+objects with consumer content and each verified base, including kind and
+executable bit. List exact paths and counts for `add`, `direct_update`,
+`no_change`, `clean_merge`, `local_retained`, `local_deletion`, `conflict`,
+`baseline_unavailable` and `blocked`. Show baseline provenance and named reasons.
+Never infer a safe update from a superset or a two-way diff.
 
-1. Enumerate all files using `find` (same method as Step 2).
-2. For files that exist in both the template and the project, run a diff:
-   ```bash
-   diff -u "<project_file>" "<template_file>"
-   ```
-3. Classify files as:
-   - **No conflict** — identical or template is a clean superset of project (no project-local content would be overwritten)
-   - **Conflict risk** — the project has local modifications not present in the template (overwriting will discard them)
-   - **New file** — present in template but not in project
-
-Report all `Conflict risk` files with a one-line summary of what differs. This preview tells the agent which always-sync files will require human attention during Step 4, rather than discovering them one at a time.
+Even when `--dry-run` ends here, include **Locally modified template files** and
+reconciled counts. Dry-run never creates the consumer ledger or lock and never
+writes consumer content. A blocked preview remains diagnostic evidence, not an
+approved plan. Preview artifacts contain prepared bytes and must remain private.
 
 ### Category 2 — CI configuration issues
 
@@ -275,10 +333,12 @@ Repository role: [single_repo / workflow_hub / product_repo]
 Selected manifest entries: [N selected / M skipped by mode_scope]
 
 ### Category 1 — File-level conflicts
-  No conflict:    N files (will be updated cleanly)
-  Conflict risk:  N files (listed below — project-local content will be overwritten)
-  New files:      N files (will be added)
-  [List conflict-risk files with one-line diff summary]
+  Selected always-sync paths: N (sum of disposition counts; declined paths separate)
+  Locally modified template files:
+    Clean merges: N | Local changes retained: N | Local deletions retained: N
+    Conflicts: N | Baseline unavailable: N (unknown history, not proven local edits)
+  Direct updates: N | Adds: N | No change: N | Other blockers: N
+  [Exact paths, disposition, reason and baseline provenance from shared preview]
 
 ### Category 2 — CI configuration
   Workflow files missing from project: [list or "none"]
@@ -380,14 +440,18 @@ docs/best-practices/2-version-control.md
 docs/best-practices/3-testing.md
 ```
 
-**Comparison method:** For each path in the always-sync list, enumerate files with `find` (or equivalent) and compare each path to the template using `cmp` or `diff -q`, applying the precedence exclusion above. Do not rely on ad-hoc agent inspection alone — a missed directory is a silent sync gap.
+**Comparison method:** Consume the Step 0 helper's committed-tree preview for
+this exact selected set. A filesystem enumeration, two-way diff or superset
+heuristic cannot authorize an overwrite. The shared helper implements per-path
+three-way classification, preserves symlinks/modes, and retains project-only
+files. Verify the selected counts against the manifest/fallback and exclusions.
 
-For each file in these paths:
+Classify by the helper dispositions shown in Category 1. A clean merge is not
+an ordinary update. Previously recorded paths absent upstream remain visible;
+upstream removal requires explicit resolution and a new preview. If anything
+changed since the preview, generate a new preview and obtain approval again.
 
-- **Exists in template, not in project** → classify as **Add**
-- **Exists in both, content differs** → classify as **Update** (prepare a concise diff summary)
-- **Exists in both, content identical** → classify as **No change** (list but don't highlight)
-- **Exists in project, not in template** → **ignore** (never delete project-only files)
+---
 
 ### Rename cleanup detection
 
@@ -484,12 +548,21 @@ Template version: v0.4.0  |  Project branch: develop
 Manifest: loaded from sync-manifest.yaml  (or: "not found — using embedded fallback list")
 Repository role: workflow_hub  (selected: N entries, skipped by mode_scope: M)
 
-### Always-sync files: N total (A to add, U to update, C up-to-date)
+### Always-sync files: N selected (all disposition counts reconcile to N)
+
+### Locally modified template files
+  Clean merges: M [exact paths]
+  Local changes retained: L [exact paths]
+  Local deletions retained: D [exact paths]
+  Conflicts: X [exact paths and reasons — hard stop]
+  Baseline unavailable: B [exact paths — unknown history, hard stop]
+  Other blockers: K [exact paths and reasons — hard stop]
+  Declined: S [excluded from N; prior baseline preserved]
 
 #### New files (will be added): A
   .claude/skills/sync-template.md
 
-#### Modified files (will be updated): U
+#### Direct updates (consumer equals verified base): U
   .claude/agents/developer.md
     Line 3: model: claude-sonnet-4-5 -> model: claude-sonnet-4-6
 
@@ -576,7 +649,32 @@ Apply approved changes according to the selected mode.
 
 ### Shared always-sync batch
 
-Copy/overwrite all **Add** and **Update** files from the always-sync section when the selected mode authorizes that batch:
+Apply only a ready shared preview, after the selected mode authorizes its exact
+set. At approval, capture its `PREVIEW_DIGEST` independently as
+`APPROVED_PREVIEW_DIGEST` in the parent invocation; never derive approval from a
+digest stored inside the plan. A changed selection, decline or output requires
+a new preview and approval. Do not reconstruct/copy results independently.
+
+<!-- workflow-shell-contract: bash-zsh -->
+```bash
+python3 "$SYNC_TOOL_ROOT/sync-template-merge.py" apply \
+  --plan "$SYNC_PLAN" --approved-digest "$APPROVED_PREVIEW_DIGEST" || exit 1
+```
+
+Apply takes the exclusive consumer lock before rechecking freshness or capturing
+backups, holds it through validation/persistence/rollback, and rejects blockers,
+tampering or stale evidence before writes. Handled failures restore the batch
+and ledger. An interrupted transaction or incomplete rollback retains recovery
+material under `.ai-dev-workflow.sync-lock`; stop, preserve it, and repair before
+retrying. Never automatically clear that lock. The successful apply boundary
+records incoming upstream objects for synchronized paths, including equality;
+declined paths keep prior/unknown evidence. Later PR/CI failures use the existing
+workflow rather than replaying an old preview.
+
+Include the helper's completed dispositions (especially every clean-merge path)
+in the completed summary and PR, along with exact baseline provenance.
+
+The existing modes still determine approval timing:
 
 - **Decide with me** — apply always-sync immediately after mode selection, before the discretionary walkthrough.
 - **Accept recommendations** — apply always-sync only after the maintainer confirms the planned disposition table (plan confirmation authorizes always-sync + listed discretionary dispositions).
@@ -770,45 +868,34 @@ This check is **advisory for the project-specific category** (e.g., `.github/wor
 1. Read `.ai-dev-workflow.yaml` from the project root.
 2. Capture the existing `template.last_synced_version` value into `PREV_LAST_VERSION` **before** writing the new value (this is used in Step 5.4 to bound the CHANGELOG extraction to changes since the previous sync):
 
+   <!-- workflow-shell-contract: bash-zsh -->
    ```bash
    PREV_LAST_VERSION=$(grep -E 'last_synced_version:' .ai-dev-workflow.yaml | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' | head -1 || echo "")
    ```
 
-3. Set (or update) `template.last_synced_version` to `v{TEMPLATE_VERSION}` under the `template:` key. If the `template:` key does not exist yet, append the section after the `browser_automation:` block.
+3. After successful apply, set (or update) `template.last_synced_version` to `v{TEMPLATE_VERSION}` and `template.last_synced_commit` to `TEMPLATE_COMMIT` under `template:`. The commit is batch provenance, not a substitute for the per-path ledger; never assign it to declined or unknown entries. If `template:` is absent, append the section after `browser_automation:`. Do not advance these fields on a blocked or failed apply.
 4. Print: `Recorded last-synced template version: v{TEMPLATE_VERSION}`
 
 ### 5.2 — Create sync branch
 
 Execute:
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
 git checkout -b feature/sync-template-v{TEMPLATE_VERSION}
 ```
 
 ### 5.3 — Stage and commit
 
-Stage only approved paths — avoid `git add .` so unapproved files never enter the commit:
+Stage only exact approved paths from the successful `SYNC_PLAN` rows, plus
+`.ai-dev-workflow.sync-state.json` and the updated `.ai-dev-workflow.yaml`.
+For a retained local deletion, stage it only if Git tracks that path; do not
+attempt to add an absent untracked file. Never use broad directory staging or
+`git add .`, which can include declined/unapproved consumer patches. Include
+`sync-manifest.yaml` only when it is an approved synchronized path.
 
-```bash
-git add REVIEW.md docs/workflow/ .claude/agents/ .claude/commands/ .claude/skills/ .codex/skills/ .agents/skills/ \
-  .cursor/commands/ .cursor/agents/ .cursor/rules/ \
-  scripts/development-workflow/ scripts/README.md \
-  docs/best-practices/1-general.md \
-  docs/best-practices/2-version-control.md \
-  docs/best-practices/3-testing.md
-```
-
-If `sync-manifest.yaml` was updated, stage it as well:
-
-```bash
-git add sync-manifest.yaml
-```
-
-Stage the updated `last_synced_version` field:
-
-```bash
-git add .ai-dev-workflow.yaml
-```
+The ledger contains upstream commit/blob/mode provenance, without consumer
+patches or machine paths. Do not stage the private preview, lock or recovery data.
 
 If the user explicitly approved additional paths in Step 4 (via the manual-review, optional-additive, or rename-cleanup sections), stage them now. Track approved additional paths in an `APPROVED_ADDITIONAL_PATHS` list during Step 4 as each item is approved, then apply them here:
 
@@ -906,7 +993,7 @@ The sync-template PR is a `feature/*` branch, so the two-pass code review proced
 - No project-specific content was accidentally overwritten by the sync.
 - Always-sync files match what was approved in Step 3.
 - Changelog fragment (if any) is correctly formatted under `changelog.d/`.
-- `.ai-dev-workflow.yaml` was updated with `last_synced_version`.
+- `.ai-dev-workflow.yaml` records successful batch version/commit; the consumer-owned per-path ledger was staged and preserves declined evidence. Clean merges/local changes are named in the completed summary. No conflict markers or recovery artifacts were committed.
 
 Apply any blocking fixes, commit, and push before proceeding. Continue until all configured internal reviewers have approved (or are unavailable under the configured policy).
 

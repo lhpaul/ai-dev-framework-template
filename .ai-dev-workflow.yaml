@@ -276,6 +276,10 @@ template:
   # Used by the retrospective cross-reference step to identify "already fixed upstream" findings.
   last_synced_version: ""
 
+  # Optional batch provenance; per-path bases live in .ai-dev-workflow.sync-state.json.
+  # Never use this SHA to fill declined/unknown entries in an existing ledger.
+  last_synced_commit: ""
+
 # guardrails — declares how much authority AI agents have when advancing work through the
 # development workflow. This section is OPTIONAL. When omitted, all values resolve to the
 # documented safe defaults below, preserving today's conservative, human-reviewed behavior
