@@ -249,6 +249,9 @@ categories:
       note: optional Haystack agent commit hooks; test-haystack-commit-msg-hook.sh asserts on hooks/commit-msg (#1874)
 
   project_specific:
+    - path: .ai-dev-workflow.sync-state.json
+      mode_scope: shared
+      note: consumer-owned exact per-path upstream baselines; never copy template state
     - path: AGENTS.md
       mixed_content: true
       annotation_scheme: html_comments

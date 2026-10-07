@@ -322,10 +322,50 @@ class SyncTests(unittest.TestCase):
         self.preview(); self.apply()
         print("PROOF rollback: metadata persistence failure restores shared/a.md and created shared/new.md; corrected writer passes")
 
+    def test_composed_entrypoints_share_preservation_and_approval_contract(self):
+        bodies = [ROOT / path for path in (".claude/commands/sync-template.md", ".cursor/commands/sync-template.md", ".claude/skills/sync-template.md")]
+        sections = []
+        for body in bodies:
+            text = body.read_text()
+            for token in ("sync-template-merge.py", "--approved-digest", "Locally modified template files", "baseline_unavailable", ".ai-dev-workflow.sync-state.json", "Decide with me", "Accept recommendations"):
+                self.assertIn(token, text, str(body))
+            self.assertNotIn("Copy/overwrite all", text)
+            self.assertNotIn("template is a clean superset", text)
+            sections.append(text[text.index("### Exact source and per-path"):text.index("**Migration notes check**")])
+        self.assertTrue(all(section == sections[0] for section in sections))
+
+    def test_real_committed_template_aliases_and_role_selection(self):
+        source = ROOT.resolve(); sha = git(source, "rev-parse", "HEAD")
+        inputs = dict(template_root=str(source), consumer_root=str(self.consumer),
+                      template_ref=sha, template_id="fixture/real-template", role="single_repo",
+                      base_ref=None, base_source=None, selection_file=None, decline=[])
+        objects = merge.Objects(); matches, owned, _ = merge.selection(inputs, objects)
+        selected = [path for path in objects.tree(source, sha) if path not in owned and matches(path)]
+        self.assertTrue(selected)
+        link_count = 0
+        for path in selected:
+            snapshot = objects.snapshot(source, sha, path)
+            target = self.consumer / path; target.parent.mkdir(parents=True, exist_ok=True)
+            if snapshot["mode"] == "120000":
+                os.symlink(os.fsdecode(merge.decoded(snapshot["data"])), target); link_count += 1
+            else:
+                target.write_bytes(merge.decoded(snapshot["data"]))
+                target.chmod(0o755 if snapshot["mode"] == "100755" else 0o644)
+        self.assertGreater(link_count, 0, "real shipped alias coverage missing")
+        plan = merge.build_preview(inputs)
+        self.assertEqual(plan["result"], "ready")
+        self.assertEqual(plan["counts"], {"no_change": len(selected)})
+        self.plan.write_bytes(merge.json_bytes(plan)); self.apply()
+        self.assertNotIn("docs/workflow/retro-metrics.md", self.state()["files"])
+        print(f"REAL_TEMPLATE revision={sha} selected={len(selected)} symlinks={link_count} all ready")
+
     def test_leftover_lock_blocks_and_preview_cannot_write_consumer(self):
-        lock = self.consumer / merge.LOCK_PATH; lock.mkdir()
+        lock = self.consumer / merge.LOCK_PATH
+        self.preview(); lock.mkdir()
+        self.apply(expected=2)
         self.assertEqual(self.preview()["result"], "blocked")
-        lock.rmdir()
+        lock.rmdir(); self.preview(); self.apply()
+        print("PROOF lock: .ai-dev-workflow.sync-lock blocks a ready apply; cleared fixture lock and fresh preview pass")
         args = ["preview", "--template-root", str(self.template), "--consumer-root", str(self.consumer), "--template-ref", self.incoming, "--template-id", "fixture/template", "--role", "single_repo", "--plan", str(self.consumer / "shared/a.md")]
         before = self.fingerprint(); self.assertEqual(merge.main(args), 2); self.assertEqual(before, self.fingerprint())
         for path in ("../outside", "/absolute", "a/../b", ".git/config"):
