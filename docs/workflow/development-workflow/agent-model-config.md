@@ -45,7 +45,7 @@ Use the tier names as stable policy and map them to whatever your current runner
 
 - In Claude Code, map the tier to the model family or explicit model ID configured in `.claude/agents/*.md`.
 - In Cursor, set `.cursor/agents/*.md` to `auto` for ordinary coordination and QA agents, and pin an explicit high-reasoning model for agents that author or deeply review specs, plans, and code. Those `model:` fields are the source of truth for Cursor runs (see "Cursor model source of truth" below).
-- In Codex, keep skills tier-based (`economy`, `balanced`, `premium`) and map the active runner model to the current OpenAI model family.
+- In Codex, keep skills tier-based (`economy`, `balanced`, `premium`) and explicitly select a supported task model/effort or dispatch a configured native role. Skill prose does not enforce a model. See [Codex model routing](integrations/codex-model-routing.md).
 - In DSH, keep the same tier intent (`economy` / `balanced` / `premium`) and pin provider/model at **dispatch time** (profile route, CLI/env for that invocation, or local DSH settings). DSH has no in-repo per-role agent files; shared workflow skills (`workflow-*-reviewer`, implementer, etc.) carry the tier recommendation, and the parent-orchestrated session selects the route for the run. See [`integrations/dsh.md`](integrations/dsh.md).
 - In any runner, prefer keeping the tier intent stable even when provider model names change.
 
@@ -59,15 +59,13 @@ Claude Code agents pin concrete model IDs in `.claude/agents/*.md`.
 | `balanced` | `claude-sonnet-5` | Implementation, review, setup, QA, smoke testing, item orchestration, and retrospectives |
 | `premium` | `claude-opus-5` | Spec writing and technical planning |
 
-### Codex / OpenAI model mapping (template)
+### Codex model selection
 
-Codex skills intentionally store recommended tiers rather than concrete model IDs. Map those tiers to the current OpenAI family in the Codex runner or model picker:
+Codex skills store recommended tiers rather than model pins. Map each tier to models available in your active account/provider catalog; select effort separately according to the model and task. The Agent Assignments table above remains the role policy.
 
-| Tier | OpenAI model mapping | Used for |
-| ---- | -------------------- | -------- |
-| `economy` | `gpt-5.6-luna` | Mechanical coordination and high-volume checklist work |
-| `balanced` | `gpt-5.6-terra` | Implementation, review, setup, QA, item orchestration, and retrospectives |
-| `premium` | `gpt-5.6-sol` | Spec writing and technical planning |
+Use [Codex role and model routing](integrations/codex-model-routing.md) for the audited skill surfaces, task/profile examples, opt-in native reviewer configuration, explicit dispatch and optional Responses router requirements. A task invocation selects its own model; a custom-agent file applies only to the named spawned role. These are separate from skill metadata.
+
+The adapter's version-labeled smoke evidence does not establish live router or cross-provider role parity. #1760 remains an independent OpenCode adapter track; the separate reviewer-effort variable in #1895 is outside the Codex guidance change.
 
 ### Cursor model source of truth
 

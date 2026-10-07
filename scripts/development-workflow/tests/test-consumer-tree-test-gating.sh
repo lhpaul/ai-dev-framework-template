@@ -12,6 +12,9 @@
 # downstream sync.
 #
 # Usage: bash scripts/development-workflow/tests/test-consumer-tree-test-gating.sh
+# covers: scripts/development-workflow/tests/test-apply-readiness-labels.sh
+# covers: scripts/development-workflow/tests/test-review-doctrine-lint.sh
+# covers: scripts/development-workflow/tests/test-reviewer-loop-guard-workflow.sh
 # covers: scripts/development-workflow/workflow-lib.sh
 # covers: scripts/development-workflow/tests/test-reviewer-loop-guard-workflow.sh
 # covers: scripts/development-workflow/tests/test-placeholder-workflows-opt-in.sh
@@ -597,6 +600,126 @@ if python3 -c 'import yaml' 2>/dev/null; then
 else
   echo "SKIP: branch_filters_passes_with_pyyaml - this interpreter has no PyYAML; the CI 'Provision PyYAML' step supplies it on the runner"
 fi
+
+# ---------------------------------------------------------------------------
+# Area 6: #1914 consumer-shaped regression, including machine-local policy.
+# Run the real suites in a standalone consumer tree. Copies keep all fixture
+# writes away from the source checkout; documents are read-only symlinks.
+# ---------------------------------------------------------------------------
+echo ""
+echo "=== Area 6: consumer-owned reviewer/trigger/legacy state ==="
+
+portable_root="$TMP_ROOT/portable-consumer"
+build_fake_root "$portable_root" false
+cp -R "$REPO_ROOT/scripts/." "$portable_root/scripts/"
+cp -R "$REPO_ROOT/.github/." "$portable_root/.github/"
+for surface in docs .claude .cursor template sync-manifest.yaml REVIEW.md; do
+  ln -s "$REPO_ROOT/$surface" "$portable_root/$surface"
+done
+git -C "$portable_root" init -q
+cat > "$portable_root/.ai-dev-workflow.yaml" <<'YAML'
+template:
+  is_template: false
+review:
+  on_ready:
+    github:
+      - pr-agent
+YAML
+cat > "$portable_root/.ai-dev-workflow.local.yaml" <<'YAML'
+review:
+  on_ready:
+    github:
+      - local-ai-reviewer
+YAML
+printf '%s\n' 'name: Consumer Markdown' 'on:' '  workflow_dispatch:' \
+  > "$portable_root/.github/workflows/markdown-lint.yml"
+for legacy in apply-regression-label remove-regression-label-on-push reviewer-loop-guard; do
+  printf '%s\n' 'name: Consumer legacy policy' 'on:' '  workflow_dispatch:' \
+    > "$portable_root/.github/workflows/$legacy.yml"
+done
+
+run_consumer_suite() {
+  local suite="$1" expected="$2" output rc=0
+  output="$(cd "$portable_root" && bash "scripts/development-workflow/tests/$suite" 2>&1)" || rc=$?
+  run_test "$suite consumer exit" "$expected" "$rc"
+  if [ "$rc" != "$expected" ]; then
+    printf '%s\n' "$output"
+  fi
+}
+run_consumer_suite test-apply-readiness-labels.sh 0
+run_consumer_suite test-review-doctrine-lint.sh 0
+run_consumer_suite test-reviewer-loop-guard-workflow.sh 0
+
+if [ -f "$portable_root/.github/workflows/pr-policy.yml" ]; then
+  mv "$portable_root/.github/workflows/pr-policy.yml" "$portable_root/pr-policy.yml"
+  run_consumer_suite test-reviewer-loop-guard-workflow.sh 0
+  # Exercise the readiness suite through its static producer assertions without
+  # repeating its later reviewer matrix. It still invokes the real helper.
+  python3 - "$portable_root/scripts/development-workflow/tests" <<'NO_POLICY'
+from pathlib import Path
+import sys
+root = Path(sys.argv[1])
+s = (root / "test-apply-readiness-labels.sh").read_text()
+s = s.split('echo "=== Area 5:', 1)[0] + '\n[ "$fail" -eq 0 ]\n'
+(root / "readiness-no-policy-smoke.sh").write_text(s)
+NO_POLICY
+  run_consumer_suite readiness-no-policy-smoke.sh 0
+  mv "$portable_root/pr-policy.yml" "$portable_root/.github/workflows/pr-policy.yml"
+fi
+
+# Those same states remain regressions in template mode.
+sed 's/is_template: false/is_template: true/' "$portable_root/.ai-dev-workflow.yaml" \
+  > "$portable_root/template.yaml"
+mv "$portable_root/template.yaml" "$portable_root/.ai-dev-workflow.yaml"
+run_consumer_suite test-review-doctrine-lint.sh 1
+run_consumer_suite test-reviewer-loop-guard-workflow.sh 1
+sed 's/is_template: true/is_template: false/' "$portable_root/.ai-dev-workflow.yaml" \
+  > "$portable_root/consumer.yaml"
+mv "$portable_root/consumer.yaml" "$portable_root/.ai-dev-workflow.yaml"
+
+# Removing either template guard must reproduce the consumer failure. The
+# suites' shared assertions continue running on consumers; only template-owned
+# state is gated. Existing missing-check/failed-check readiness cases likewise
+# remain real negative tests, rather than skipping its reviewer gate.
+for suite in test-review-doctrine-lint.sh test-reviewer-loop-guard-workflow.sh; do
+  if [ "$suite" = "test-reviewer-loop-guard-workflow.sh" ] && \
+      [ ! -f "$portable_root/.github/workflows/pr-policy.yml" ]; then
+    echo "SKIP: legacy-removal planted proof - consumer has no consolidated PR policy workflow"
+    continue
+  fi
+  suite_path="$portable_root/scripts/development-workflow/tests/$suite"
+  python3 - "$suite_path" <<'UNWRAP'
+from pathlib import Path
+import sys
+p = Path(sys.argv[1])
+s = p.read_text()
+try:
+    start = s.index('if [ "$(workflow_template_is_template "$REPO_ROOT/.ai-dev-workflow.yaml")" = "true" ]; then', s.index('PASS_COUNT=0'))
+    end = s.index('\nfi\n', start) + len('\nfi\n')
+    body, _ = s[start:end].split('\n', 1)[1].split('\nelse\n', 1)
+except ValueError:
+    raise SystemExit("FAIL: planted template guard shape changed in " + p.name)
+p.write_text(s[:start] + body + '\n' + s[end:])
+UNWRAP
+  run_consumer_suite "$suite" 1
+done
+
+# Readiness is expensive to nest twice. Re-run its real prefix through the
+# first head-policy scenario with isolation removed: this includes the genuine
+# mocked API, helper, and assertions, not a structural grep for the fix.
+readiness_path="$portable_root/scripts/development-workflow/tests/test-apply-readiness-labels.sh"
+python3 - "$readiness_path" <<'PLANT_READINESS'
+from pathlib import Path
+import sys
+p = Path(sys.argv[1])
+s = p.read_text().split('# ...and a head-config fetch failure', 1)[0]
+s = s.replace('export WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT="$ISOLATED_OVERRIDE_ROOT"',
+              'export WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT="$REPO_ROOT"')
+s = s.replace('${MOCK_LOCAL_OVERRIDE_ROOT:-$ISOLATED_OVERRIDE_ROOT}', '${MOCK_LOCAL_OVERRIDE_ROOT:-}')
+s += '\n[ "$fail" -eq 0 ]\n'
+p.write_text(s)
+PLANT_READINESS
+run_consumer_suite test-apply-readiness-labels.sh 1
 
 echo ""
 echo "=== Summary ==="

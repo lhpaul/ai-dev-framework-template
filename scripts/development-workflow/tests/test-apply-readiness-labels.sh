@@ -22,9 +22,18 @@ set -euo pipefail
 SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)"
 REPO_ROOT="$(CDPATH='' cd -- "$SCRIPT_DIR/../../.." && pwd)"
 HELPER="$REPO_ROOT/scripts/development-workflow/apply-readiness-labels.sh"
+# shellcheck source=scripts/development-workflow/workflow-lib.sh
+source "$REPO_ROOT/scripts/development-workflow/workflow-lib.sh"
 
 TMP_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
+
+# Fixtures own reviewer policy. An empty root prevents consumer or main-clone
+# machine-local overrides from replacing the mocked base policy (#1914).
+ISOLATED_OVERRIDE_ROOT="$TMP_ROOT/no-local-overrides"
+mkdir -p "$ISOLATED_OVERRIDE_ROOT"
+export WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT="$ISOLATED_OVERRIDE_ROOT"
+unset AI_DEV_WORKFLOW_CONFIG_FILE
 
 pass=0
 fail=0
@@ -773,16 +782,21 @@ unset _p05_green
 #     "Human requests changes" re-add step instructed standalone loop
 #     agents/skills to hand-apply both readiness labels.
 readiness_policy_surface=".github/workflows/pr-policy.yml"
-_p_policy="$(awk '/apply_regression_policy_after_clean_summary\(\) \{/{f=1} f{print} f && /^[[:space:]]*}$/{exit}' "$REPO_ROOT/$readiness_policy_surface")"
-run_test "pr_policy_applies_regression_label_via_helper" "1" \
-  "$([ "$(printf '%s\n' "$_p_policy" | grep -c 'apply-readiness-labels.sh' || true)" -ge 1 ] && echo 1 || echo 0)"
-run_test "pr_policy_no_direct_regression_label_add" "0" \
-  "$(printf '%s\n' "$_p_policy" | grep -- '--add-label "\$LABEL_NAME"' | grep -cv '^[[:space:]]*#' || true)"
-run_test "pr_policy_apply_block_only_label_remove_is_direct" "0" \
-  "$(printf '%s\n' "$_p_policy" | grep -- '--remove-label "\$LABEL_NAME"' | grep -cv '^[[:space:]]*#' || true)"
-run_test "pr_policy_helper_present_repo_route" "1" \
-  "$([ "$(grep -c 'apply-readiness-labels.sh' "$REPO_ROOT/$readiness_policy_surface" || true)" -ge 2 ] && echo 1 || echo 0)"
-unset _p_policy
+if [ ! -f "$REPO_ROOT/$readiness_policy_surface" ] &&
+    [ "$(workflow_template_is_template "$REPO_ROOT/.ai-dev-workflow.yaml")" != "true" ]; then
+  echo "SKIP: readiness producer checks - consumer has no consolidated PR policy workflow"
+else
+  _p_policy="$(awk '/apply_regression_policy_after_clean_summary\(\) \{/{f=1} f{print} f && /^[[:space:]]*}$/{exit}' "$REPO_ROOT/$readiness_policy_surface")"
+  run_test "pr_policy_applies_regression_label_via_helper" "1" \
+    "$([ "$(printf '%s\n' "$_p_policy" | grep -c 'apply-readiness-labels.sh' || true)" -ge 1 ] && echo 1 || echo 0)"
+  run_test "pr_policy_no_direct_regression_label_add" "0" \
+    "$(printf '%s\n' "$_p_policy" | grep -- '--add-label "\$LABEL_NAME"' | grep -cv '^[[:space:]]*#' || true)"
+  run_test "pr_policy_apply_block_only_label_remove_is_direct" "0" \
+    "$(printf '%s\n' "$_p_policy" | grep -- '--remove-label "\$LABEL_NAME"' | grep -cv '^[[:space:]]*#' || true)"
+  run_test "pr_policy_helper_present_repo_route" "1" \
+    "$([ "$(grep -c 'apply-readiness-labels.sh' "$REPO_ROOT/$readiness_policy_surface" || true)" -ge 2 ] && echo 1 || echo 0)"
+  unset _p_policy
+fi
 
 # Protocol 92 standard-workflow steps 6 and 8: both readiness labels go
 # through the helper; a direct apply instruction is forbidden. The
@@ -951,7 +965,7 @@ run_helper_no_local_config() {
   set +e
   out="$(
     PATH="$_BIN:$PATH" \
-    WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT="${MOCK_LOCAL_OVERRIDE_ROOT:-}" \
+    WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT="${MOCK_LOCAL_OVERRIDE_ROOT:-$ISOLATED_OVERRIDE_ROOT}" \
     MOCK_GH_LOG="$_LABEL_LOG" \
     MOCK_CALL_LOG="$_CALL_LOG" \
     MOCK_LABEL_STATE="$_LABEL_STATE" \
@@ -1769,7 +1783,7 @@ run_helper_platform() {
   set +e
   out="$(
     PATH="$_BIN:$PATH" \
-    WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT="" \
+    WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT="$ISOLATED_OVERRIDE_ROOT" \
     MOCK_GH_LOG="$_LABEL_LOG" \
     MOCK_CALL_LOG="$_CALL_LOG" \
     MOCK_LABEL_STATE="$_LABEL_STATE" \
