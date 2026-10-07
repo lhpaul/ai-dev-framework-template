@@ -19,10 +19,11 @@ PORTABLE_FOR = re.compile(r"\bfor\s+\w+\s+in\s+\$[A-Za-z_][A-Za-z0-9_]*\b")
 PORTABLE_SET = re.compile(r"\bset\s+--\s+\$[A-Za-z_][A-Za-z0-9_]*\b")
 BASH_ONLY = re.compile(r"BASH_SOURCE|<\(|\[\[|\$\{![^}]+\}|\b(?:readarray|mapfile)\b|\w+=\(")
 BASH4 = re.compile(r"\b(?:declare|local)\s+-A\b|\b(?:readarray|mapfile)\b")
-ARRAY = re.compile(r'"\$\{(?P<name>[A-Za-z_]\w*)\[@\](?P<default>:-)?\}"')
+ARRAY = re.compile(r'"\$\{(?P<name>[A-Za-z_]\w*)\[@\](?::-)?\}"')
 SAFE_ARRAY = re.compile(r'\$\{([A-Za-z_]\w*)\[@\](?:\+|:\+)"\$\{\1\[@\]\}"\}')
-SET_OPTIONS = re.compile(r'(?:^|[;&|(){}])\s*(?:(?:then|do|else)\s+)?(?P<command>set)\s+(?P<options>[^;&|(){}]*)')
-HEREDOC = re.compile(r"(?<!<)<<(?!<)(?P<tabs>-)?[ \t]*(?:(?P<quote>['\"])(?P<quoted>.*?)(?P=quote)|\\(?P<escaped>[^\s;&|<>()]+)|(?P<plain>[^\s;&|<>()]+))")
+# Intentional WS007 pattern corpus; production occurrences use the changed-line
+# baseline. Both exemptions are scoped to follow-up #1924, not line numbers.
+WS007_ALLOWLIST = {"scripts/lint/tests/test-workflow-shell-snippet-lint.sh"}
 
 
 @dataclass
@@ -250,168 +251,28 @@ def contract_before(lines: list[str], opener: int) -> str | None:
 
 
 def array_findings(path: str, lines: list[str], changed: set[int], offset: int = 0) -> list[Finding]:
-    """A lexical check, not a proof that arrays can be empty at runtime.
+    """Report both unguarded patterns without interpreting shell context.
 
-    Only added/changed lines are reported: existing occurrences belong to
-    follow-up #1924. Full preceding context still establishes nounset state.
-    Ignore comments, single-quoted literals and quoted heredoc bodies, which
-    do not expand arrays. Recognize the parameter-expansion guard explicitly;
-    other runtime guarantees should use that idiom at the expansion site.
+    Luis approved this conservative textual rule: comments, quoted data and
+    disabled nounset may also match. Changed-line mode leaves existing uses
+    and false positives untouched until #1924; the explicit allowlist holds
+    the intentional test corpus. --all checks existing lines too.
     """
+    if path in WS007_ALLOWLIST:
+        return []
     findings: list[Finding] = []
-    nounset = False
-    subshell_options: list[bool] = []
-    brace_options: list[bool | None] = []
-    pipeline_continues = False
-    pending_function = False
-    quote = ""
-    substitution_quotes: list[tuple[str, int]] = []
-    parenthesis_depth = 0
-    command_prefix = ""
-    heredoc = None
     for number, row in enumerate(lines, offset + 1):
-        expanding_body = False
-        if heredoc is not None:
-            delimiter, expands, strip_tabs = heredoc
-            if (row.lstrip("\t") if strip_tabs else row) == delimiter:
-                heredoc = None
-                continue
-            if not expands:
-                continue
-            # Unquoted heredocs expand parameters even in apparent comments
-            # and single-quoted text; body text cannot change nounset state.
-            expanding_body = True
-        visible = list(row) if expanding_body else []
-        commands = []
-        cursor = len(row) if expanding_body else 0
-        while cursor < len(row):
-            char = row[cursor]
-            if row[cursor:cursor + 2] == "$(" and row[cursor:cursor + 3] != "$((" and quote != "'":
-                substitution_quotes.append((quote, parenthesis_depth))
-                parenthesis_depth += 1
-                quote = ""
-                visible.extend("$(")
-                commands.extend(" (")
-                cursor += 2
-                continue
-            if char == "\\" and quote != "'":
-                visible.extend("  ")
-                commands.extend("  ")
-                cursor += 2
-                continue
-            commands.append(char if not quote and char not in "'\"" else " ")
-            if char == "'" and quote != '"':
-                quote = "" if quote == "'" else "'"
-                visible.append(" ")
-            elif quote == "'":
-                visible.append(" ")
-            elif char == '"':
-                quote = "" if quote == '"' else '"'
-                visible.append(char)
-            elif char == "#" and not quote and (cursor == 0 or row[cursor - 1].isspace() or row[cursor - 1] in ";&|(){}"):
-                break
-            else:
-                visible.append(char)
-            if not quote and char == "(":
-                parenthesis_depth += 1
-            elif not quote and char == ")":
-                parenthesis_depth -= 1
-                if substitution_quotes and substitution_quotes[-1][1] == parenthesis_depth:
-                    quote = substitution_quotes.pop()[0]
-            cursor += 1
-        code = "".join(visible)
-        command_code = "".join(commands)
-        delimiter = next((match for match in HEREDOC.finditer(row)
-                          if command_code[match.start():].startswith("<<")), None)
-        # Mask the entire safe guard so its nested quoted expansion is not
-        # mistaken for a raw expansion (including multiple arrays per line).
-        code = SAFE_ARRAY.sub(lambda match: " " * len(match.group()), code)
-        # Backslash-newline joins command words without changing the physical
-        # location of array diagnostics. Delay only the unfinished set command;
-        # complete commands before a separator still affect this line.
-        continued = (not expanding_body and cursor >= len(row) and quote != "'"
-                     and bool(re.search(r"(?<!\\)(?:\\\\)*\\$", row)))
-        if continued:
-            command_code = command_code[:-2]
-        command_text = command_prefix + command_code
-        option_events = [(match.start("command") - len(command_prefix), "set", match)
-                         for match in SET_OPTIONS.finditer(command_text)
-                         if not (continued and match.end() == len(command_text))]
-        command_prefix = ""
-        if continued:
-            command_prefix = re.split(r"[;&|(){}]", command_text)[-1]
-        events = sorted(
-            option_events
-            + [(match.start(), "array", match) for match in ARRAY.finditer(code)],
-            key=lambda event: event[0],
-        )
-        # Option changes in subshells (including command/process substitution)
-        # do not change the parent shell. Interleave boundaries with commands
-        # so same-line and multiline subshells retain the enclosing state.
-        events.extend((match.start(), match.group(), match)
-                      for match in re.finditer(r"[(){}]", command_code))
-        function_braces = {match.end() - 1 for match in re.finditer(
-            r"(?:\b\w+\s*\(\s*\)|\bfunction\s+\w+(?:\s*\(\s*\))?)\s*\{",
-            command_code,
-        )}
-        if pending_function:
-            opening = re.search(r"\{", command_code)
-            if opening:
-                function_braces.add(opening.start())
-                pending_function = False
-        if re.search(r"(?:\b\w+\s*\(\s*\)|\bfunction\s+\w+(?:\s*\(\s*\))?)\s*$", command_code):
-            pending_function = True
-        # A pipeline executes its commands in separate shells. Its set flags
-        # must not alter the parent state (including a continued pipeline).
-        # Explicit subshell boundaries separate inner commands from an outer
-        # pipe: their option changes are local and restored by the stack.
-        pipeline_sets = set()
-        for position, _, _ in option_events:
-            clause_start = max((match.end() for match in re.finditer(r";|&&|\|\||[()]", command_code[:max(position, 0)])), default=0)
-            clause_end = next((position + match.start() for match in re.finditer(r";|&&|\|\||[()]", command_code[max(position, 0):])), len(command_code))
-            if re.search(r"(?<!\|)\|(?!\|)", command_code[clause_start:clause_end]) or (pipeline_continues and clause_start == 0):
-                pipeline_sets.add(position)
-        pipeline_continues = bool(re.search(r"(?<!\|)\|\s*$", command_code))
-        events.sort(key=lambda event: event[0])
-        for position, kind, match in events:
-            if kind == "(":
-                subshell_options.append(nounset)
-            elif kind == ")":
-                if subshell_options:
-                    nounset = subshell_options.pop()
-            elif kind == "{":
-                brace_options.append(nounset if position in function_braces else None)
-            elif kind == "}":
-                if brace_options:
-                    enclosing = brace_options.pop()
-                    if enclosing is not None:
-                        nounset = enclosing
-            elif kind == "set":
-                if position in pipeline_sets:
-                    continue
-                options = match.group("options").split()
-                for index, option in enumerate(options):
-                    if option == "--":
-                        break
-                    if option in ("-o", "+o"):
-                        if index + 1 < len(options) and options[index + 1] == "nounset":
-                            nounset = option[0] == "-"
-                    elif re.fullmatch(r"[-+][a-zA-Z]+", option) and "u" in option:
-                        nounset = option[0] == "-"
-            elif number in changed and (match.group("default") or nounset):
-                name = match.group("name")
-                findings.append(Finding(
-                    "WS007", path, number,
-                    'Bash 3.2 unsafe empty-array expansion; use '
-                    + '${' + name + '[@]+"${' + name + '[@]}"}',
-                ))
-        if delimiter and command_code[delimiter.start():].startswith("<<"):
-            heredoc = (
-                delimiter.group("quoted") if delimiter.group("quote") is not None
-                else delimiter.group("escaped") or delimiter.group("plain"),
-                delimiter.group("plain") is not None,
-                delimiter.group("tabs") is not None,
-            )
+        if number not in changed:
+            continue
+        # Mask the safe guard so its nested quoted expansion is not reported.
+        code = SAFE_ARRAY.sub(lambda match: " " * len(match.group()), row)
+        for match in ARRAY.finditer(code):
+            name = match.group("name")
+            findings.append(Finding(
+                "WS007", path, number,
+                'Unguarded array expansion; use the Bash 3.2 safe form '
+                + '${' + name + '[@]+"${' + name + '[@]}"}',
+            ))
     return findings
 
 
