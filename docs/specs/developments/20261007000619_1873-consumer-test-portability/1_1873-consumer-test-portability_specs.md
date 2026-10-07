@@ -53,6 +53,11 @@ behavior has equivalent coverage in both repository modes.
 - Consumer-owned configuration, agent guidance, and historical documents are
   independent of the template's current repository state.
 - Assertions about template defaults apply only to the template.
+- Repository mode comes from the template declaration in the shared repository
+  workflow configuration, as interpreted by the existing repository-mode helper.
+  Its affirmative values declare a template; an absent declaration, empty value,
+  or unrecognized value receives consumer handling and skips template-only
+  assertions. This preserves existing classification rather than changing it.
 - Shared behavior must be tested using controlled inputs rather than depending
   on the receiving repository's mode.
 - Any skipped template-only assertion must be visible in test output.
