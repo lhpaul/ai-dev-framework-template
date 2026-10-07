@@ -27,6 +27,7 @@ The source-of-truth scope is selected committed paths, not a frozen file count.
 | Check | Command / query | Result |
 | --- | --- | --- |
 | Overwrite consumers | `rg -n 'Copy/overwrite all|Comparison method:|Category 1' .claude/commands/sync-template.md .cursor/commands/sync-template.md .claude/skills/sync-template.md` | Command, Cursor command and Claude skill contain the comparison/apply instructions requiring replacement |
+| Complete routing search | `rg -l 'sync-template\.md\|workflow-sync-template\|Copy/overwrite all' .claude .cursor .codex .agents docs AGENTS.md README.md REVIEW.md --glob '*.md' --glob '*.mdc' --glob '!docs/specs/developments/**'` | Results classified in the consumer table and routing-only paragraph below; historical development artifacts are evidence, not executable entrypoints |
 | Codex routing | `rg -n 'canonical|always-sync|last_synced_version' .codex/skills/workflow-sync-template/SKILL.md .agents/skills/sync-template/SKILL.md` | Canonical Codex wrapper routes to the command; command-style alias routes to the canonical skill |
 | Discovery symlinks | `git ls-tree -r HEAD .agents/skills/` | Discovery includes mode `120000` aliases; treating every incoming object as a regular file would break consumers |
 | Existing selection | `rg -n 'ROLE_SCOPE_SELECTION|def parse_manifest' scripts/development-workflow/select-sync-manifest-entries.py` | Role selection and manifest parsing are available for reuse |
@@ -107,7 +108,7 @@ checklist is introduced.
   so upstream removals cannot disappear silently from comparison.
 - Use consumer-owned `.ai-dev-workflow.sync-state.json`, schema version 1. Record
   template identity plus each actually synchronized path's exact commit, source
-  (`template` or verified `consumer` bootstrap), blob and Git mode. Store no
+  (`template` or verified `consumer` bootstrap), blob and Git mode (null blob/mode records verified absence in that commit). Store no
   credentials, machine paths or consumer-patched bytes as baseline content.
   Exclude this exact state path as project-owned in `sync-manifest.yaml`.
 - Resolve each recorded base from the appropriate Git object database and verify
@@ -134,11 +135,17 @@ regular-file permission bits when writing an existing file.
 | Base unknown, consumer differs or missing | Baseline unavailable; batch blocks |
 | Verified base absent, consumer absent | Add incoming |
 | Base present, consumer deleted | Retain deletion if incoming equals base; otherwise conflict |
-| Consumer equals base | Direct update; upstream removal needs the existing named deletion approval outside this helper |
+| Consumer equals base | Direct update if incoming exists; upstream removal with existing consumer content blocks for explicit manual resolution |
 | Incoming equals base | Retain local change |
 | Both changed regular text files | `git merge-file -p` on private ours/base/theirs; zero yields clean merged content; any other result blocks |
 | Remaining incompatible additions, types, binary changes or links | Conflict; no chosen side |
 
+- Upstream removal has no destructive helper opt-in. If incoming is absent and
+  consumer content remains, require the maintainer to retain/exclude the path or
+  approve and perform its removal through the existing named deletion policy,
+  then generate a fresh preview. Excluded paths retain their evidence; once both
+  sides are absent, the equality row records verified incoming absence. Never
+  perform that external resolution inside the helper transaction.
 - Merge the executable bit by the same three-way equality rules independently
   of text. A content merge does not discard an independent local mode change.
 - Symlinks are atomic link-target bytes, not files to dereference or text-merge.
@@ -180,6 +187,15 @@ contract above in these consumers, preserving their respective front matter:
 | `.claude/skills/sync-template.md` | Same contract and approvals as canonical command |
 | `.codex/skills/workflow-sync-template/SKILL.md` | Require shared helper and state-aware canonical flow; linked `.agents/skills/workflow-sync-template` receives the same content |
 | `.agents/skills/sync-template/SKILL.md` | Keep routing to canonical skill; change only if residual search finds conflicting wording |
+
+The broader routing search also returns `README.md` and `AGENTS.md` command
+catalogs, `docs/workflow/development-workflow/product-repo-injection.md` role
+guidance, and smoke runbooks `1284-sync-template-decide-vs-accept`,
+`retro-template-backlog-crossref`, `1311-haystack-large-pr-skip` and
+`1310-protocol-02-product-repo-path`. These route to the consumer table or verify
+unchanged approval, metadata and role behavior; no independent overwrite branch
+remains in them. Their expected outcome follows the canonical helper path; they
+need no content change. Historical spec/plan folders do not execute sync.
 
 Do not execute Claude while implementing or validating these text surfaces.
 Replace old superset/diff and blind copy instructions; add source-object
