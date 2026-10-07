@@ -112,7 +112,7 @@ def lint_added_lines(lines: Iterable[AddedLine]) -> list[Finding]:
             findings.extend(lint_logical_line(line))
 
     # Only SH006 sees unchanged context, to reconstruct partially edited commands.
-    for line in logical_lines(lines):
+    for line in logical_lines(lines, join_comment_lines=False):
         if not line.is_added or not TEST_PATH.match(line.path):
             continue
         if not line.content.strip() or line.content.lstrip().startswith("#"):
@@ -421,7 +421,36 @@ def has_unanchored_branch_prefix_grep(content: str) -> bool:
     return False
 
 
-def logical_lines(lines: Iterable[AddedLine]) -> list[AddedLine]:
+def has_shell_comment(content: str) -> bool:
+    """Locate an unquoted comment at a shell word boundary."""
+    quote = ""
+    escaped = False
+    word_start = True
+    for char in content:
+        if escaped:
+            escaped = False
+            word_start = False
+        elif quote == "'":
+            if char == "'":
+                quote = ""
+        elif char == "\\":
+            escaped = True
+        elif quote:
+            if char == quote:
+                quote = ""
+        elif char in {"'", '"'}:
+            quote = char
+            word_start = False
+        elif char == "#" and word_start:
+            return True
+        else:
+            word_start = char.isspace() or char in ";|&()<>"
+    return False
+
+
+def logical_lines(
+    lines: Iterable[AddedLine], *, join_comment_lines: bool = True
+) -> list[AddedLine]:
     combined: list[AddedLine] = []
     pending: AddedLine | None = None
     pending_end_line = 0
@@ -453,7 +482,11 @@ def logical_lines(lines: Iterable[AddedLine]) -> list[AddedLine]:
                 pending = line
                 pending_end_line = line.line
 
-        if pending.content.rstrip().endswith("\\"):
+        # A backslash inside a shell comment does not escape the newline.
+        # Keep legacy joining for SH001–SH005; SH006 includes diff context.
+        if pending.content.rstrip().endswith("\\") and (
+            join_comment_lines or not has_shell_comment(pending.content)
+        ):
             continue
 
         combined.append(pending)

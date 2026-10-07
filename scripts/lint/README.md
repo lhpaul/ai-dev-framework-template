@@ -69,6 +69,7 @@ in shell tests under `scripts/**/tests/**/*.sh`. SH001–SH005 retain their
   can SIGPIPE that producer and fail a matching assertion under pipefail. Feed
   captured text with a here-string, or use consuming grep with redirected output:
 
+<!-- workflow-shell-contract: bash -->
 ```bash
 grep -Fq -- "$needle" <<< "$output"
 printf '%s\n' "$output" | jq -r '.name' | grep -F -- "$needle" > /dev/null

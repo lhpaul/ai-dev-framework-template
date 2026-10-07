@@ -457,6 +457,8 @@ write_quiet_diff suppressed $'printf "%s\\n" "$input" | \\\n  __QUIET_GREP__ -q 
 run_test sh006_continued_suppression pass "$(run_linter "$TMP_DIR/suppressed.diff")"
 write_quiet_diff prior_suppression $'# workflow-shell-guard: allow SH006 - previous line does not suppress\nprintf "%s\\n" "$input" | __QUIET_GREP__ -q token'
 run_test sh006_previous_line_not_suppression fail "$(run_linter "$TMP_DIR/prior_suppression.diff")"
+write_quiet_diff comment_backslash $'# comment ending in \\\nprintf "%s\\n" "$input" | __QUIET_GREP__ -q token'
+run_test sh006_added_comment_backslash_does_not_hide_pipeline fail "$(run_linter "$TMP_DIR/comment_backslash.diff")"
 write_quiet_diff multi_suppression 'gh api example | __QUIET_GREP__ -q token __BEST_EFFORT_SUPPRESSION__ # workflow-shell-guard: allow SH001 - fixture # workflow-shell-guard: allow SH006 - intentional race'
 materialize_best_effort_suppression "$TMP_DIR/multi_suppression.diff"
 run_test sh006_multiple_local_suppressions pass "$(run_linter "$TMP_DIR/multi_suppression.diff")"
@@ -515,6 +517,31 @@ DIFF
 perl -pi -e 's/__QUIET_GREP__/grep/g' "$TMP_DIR/context-quiet.diff"
 run_test sh006_context_only_unsafe_not_new pass "$(run_linter "$TMP_DIR/context-quiet.diff")"
 
+for preceding_comment in \
+  '# comment ends in \' \
+  'echo safe # workflow-shell-guard: allow SH006 - previous comment ends in \'; do
+  cat > "$TMP_DIR/comment-context.diff" <<'DIFF'
+diff --git a/scripts/lint/tests/comment.sh b/scripts/lint/tests/comment.sh
+--- a/scripts/lint/tests/comment.sh
++++ b/scripts/lint/tests/comment.sh
+@@ -1,2 +1,2 @@
+ CONTEXT_COMMENT
+-echo safe
++printf '%s\n' "$input" | __QUIET_GREP__ -q token
+DIFF
+  perl -pi -e 's/__QUIET_GREP__/grep/g' "$TMP_DIR/comment-context.diff"
+  CONTEXT_COMMENT="$preceding_comment" perl -pi -e 's/CONTEXT_COMMENT/$ENV{CONTEXT_COMMENT}/g' "$TMP_DIR/comment-context.diff"
+  comment_status=0
+  comment_output=$(run_linter_output "$TMP_DIR/comment-context.diff") || comment_status=$?
+  run_test "sh006_context_comment_backslash_exit_${preceding_comment}" 1 "$comment_status"
+  run_test "sh006_context_comment_backslash_location_${preceding_comment}" yes "$(grep -Fq 'scripts/lint/tests/comment.sh:2: SH006' <<< "$comment_output" && echo yes || echo no)"
+done
+
+for hash_word in '"# quoted"' '\#escaped' 'literal#suffix'; do
+  write_quiet_diff hash_continuation "printf '%s\\n' $hash_word | "$'\\\n  __QUIET_GREP__ -q token'
+  run_test "sh006_hash_word_preserves_continuation_${hash_word}" fail "$(run_linter "$TMP_DIR/hash_continuation.diff")"
+done
+
 quiet_repo="$TMP_DIR/quiet-git-repo"
 mkdir -p "$quiet_repo/scripts/lint/tests"
 (
@@ -524,6 +551,8 @@ mkdir -p "$quiet_repo/scripts/lint/tests"
   git config user.name 'Test User'
   printf '%s\n' 'printf "%s\n" "$input" | \' 'grep -F baseline > /dev/null' > scripts/lint/tests/partial.sh
   git add scripts/lint/tests/partial.sh
+  printf '%s\n' '# comment ends in \' 'echo safe' > scripts/lint/tests/comment.sh
+  git add scripts/lint/tests/comment.sh
   git commit -q -m 'test: seed continued command'
   git checkout -q -b feature
   printf '%s\n' 'printf "%s\n" "$input" | \' '__QUIET_GREP__ -Fq token' > scripts/lint/tests/partial.sh
@@ -542,6 +571,18 @@ run_test sh006_git_partial_edit_location yes "$(grep -Fq 'scripts/lint/tests/par
   git commit -q -m 'test: correct the same assertion'
 )
 run_test sh006_git_same_assertion_corrected pass "$(run_git_linter "$quiet_repo")"
+
+(
+  cd "$quiet_repo"
+  printf '%s\n' '# comment ends in \' 'printf "%s\n" "$input" | __QUIET_GREP__ -q token' > scripts/lint/tests/comment.sh
+  perl -pi -e 's/__QUIET_GREP__/grep/g' scripts/lint/tests/comment.sh
+  git add scripts/lint/tests/comment.sh
+  git commit -q -m 'test: plant quiet grep after unchanged comment'
+)
+comment_git_status=0
+comment_git_output=$(cd "$quiet_repo" && python3 "$LINTER" --base-ref main 2>&1) || comment_git_status=$?
+run_test sh006_git_context_comment_backslash_exit 1 "$comment_git_status"
+run_test sh006_git_context_comment_backslash_location yes "$(grep -Fq 'scripts/lint/tests/comment.sh:2: SH006' <<< "$comment_git_output" && echo yes || echo no)"
 
 echo ""
 echo "Summary: ${PASS_COUNT} passed, ${FAIL_COUNT} failed"
