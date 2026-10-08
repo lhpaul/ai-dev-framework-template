@@ -224,8 +224,9 @@ unrelated legacy diagnostics remain unchanged.
 
 Resolution is a finite local configuration walk bounded by the selected files
 and D1 catalogue. It invokes no provider, network service, host provisioning or
-child session. Existing local-file discovery may use its current bounded git
-worktree inspection; model resolution adds no external retry or polling loop.
+child session. Existing local-file discovery uses filesystem inspection of the worktree
+.git pointer (linked_worktree_main_root), without invoking git; model resolution
+adds no external retry or polling loop.
 
 #### D6: Validation consumer behavior and regression
 
