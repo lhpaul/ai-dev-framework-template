@@ -4,16 +4,16 @@
 **Spec**: [Product contract](../../specs/developments/20261008075556_dsh-model-routing/1_dsh-model-routing_specs.md)
 **Plan**: [Implementation contract](../../specs/developments/20261008075556_dsh-model-routing/2_dsh-model-routing_implementation-plan.md)
 **Created in**: Plan Ready stage
-**Updated in**: Implementation records actual evidence before claiming smoke pass.
+**Updated in**: Implementation — actual DSH routing evidence recorded below.
 
 ## Prerequisites
 
-- [ ] Implementation branch has the resolver, tests and documented dispatch contract.
-- [ ] Python3 with the existing strict reader's PyYAML dependency is available.
-- [ ] Local DSH supports the verified child-selection contract; record dsh --version.
-- [ ] Operator already has working permitted routes for different balanced/premium models. Provider/account setup is excluded.
-- [ ] Use a temporary workspace, shared/local YAML fixtures and a temporary host overlay. Do not change the repository's real local YAML/env or checkpoint-policy.json.
-- [ ] Read the implemented DSH guide's fresh-session and exact allowlist setup. No supplied design assets; no fidelity baseline is needed.
+- [x] Implementation branch has the resolver, tests and documented dispatch contract.
+- [x] Python3 with the existing strict reader's PyYAML dependency is available.
+- [x] Local DSH supports the verified child-selection contract; record dsh --version.
+- [x] Operator already has working permitted routes for different balanced/premium models. Provider/account setup is excluded.
+- [x] Use a temporary workspace, shared/local YAML fixtures and a temporary host overlay. Do not change the repository's real local YAML/env or checkpoint-policy.json.
+- [x] Read the implemented DSH guide's fresh-session and exact allowlist setup. No supplied design assets; no fidelity baseline is needed.
 
 ## Test Data
 
@@ -165,15 +165,15 @@ without DSH routing keep their existing behavior.
 
 ## Assertions Checklist
 
-- [ ] AC1: Inherited absence and commented inactive defaults verified.
-- [ ] AC2: Partial/local overrides preserve unrelated entries and shared policy.
-- [ ] AC3: Every source/precedence/reference/direct form checked.
-- [ ] AC4: Route/source/file/tier and effective route listing checked.
-- [ ] AC5: Structured strict errors and validator parity checked.
-- [ ] AC6: Dispatch contract, source evidence and both fallback reasons checked.
-- [ ] AC7: Host setup and headless pinning guidance verified against runtime.
-- [ ] AC8: Policy parity/commented examples checked.
-- [ ] AC9: Same actual DSH parent session runs distinct tier children and fresh
+- [x] AC1: Inherited absence and commented inactive defaults verified.
+- [x] AC2: Partial/local overrides preserve unrelated entries and shared policy.
+- [x] AC3: Every source/precedence/reference/direct form checked.
+- [x] AC4: Route/source/file/tier and effective route listing checked.
+- [x] AC5: Structured strict errors and validator parity checked.
+- [x] AC6: Dispatch contract, source evidence and both fallback reasons checked.
+- [x] AC7: Host setup and headless pinning guidance verified against runtime.
+- [x] AC8: Policy parity/commented examples checked.
+- [x] AC9: Same actual DSH parent session runs distinct tier children and fresh
   locally overridden child with runtime route evidence.
 - [ ] AC10: Regression, manifest ownership and release fragment verified.
 
@@ -188,6 +188,49 @@ public summaries may contain route ids, version and concise results.
 The implementer adds actual execution results here or references durable
 approved evidence with an accurate pass/block status; this authored runbook
 itself makes no claim that the feature smoke has already run.
+
+## Actual Execution Evidence — 2026-10-08
+
+DSH `0.2.0-rc.2` passed the live routing journey through its public AgentRegistry
+factory and native subagent tool registry using a real in-process spawn backend.
+Actual request/context events verified provider/model and parent/child lineage;
+each child returned the exact fixed acknowledgement. These are runtime results,
+not model self-reports or mocked adapter output. The temporary host overlay used
+existing working routes and exposed no file/network/Claude tools.
+
+Actual runs used resolver checkpoint `619f70841ce67fb07c1fb7dd2154cb79f0df3243`.
+A replay against implementation resolver revision
+`42658841cbb4d8670ac37b73ee740bcaafc3c51b` matched all five captured resolutions
+using immutable per-case fixtures: role, tier, provider/model/effort, SOURCE and
+source filename. The resolver content digest was retained privately; future
+behavioral resolver changes require renewed replay or live smoke as appropriate.
+
+All routes below use existing provider `bailian-tpp`. SOURCE_FILE was the isolated
+shared `.ai-dev-workflow.yaml`, except the private role override used isolated
+`.ai-dev-workflow.local.yaml`. No real repository local configuration changed.
+
+| Case | Parent session | Child session | Requested / actual model | Source / outcome |
+| --- | --- | --- | --- | --- |
+| balanced | adf1927-374e052f-e24a-4f10-8bd3-f71325b63d55 | 12c95786-2417-410a-b5d1-4fa6697a304f | qwen3.7-plus / qwen3.7-plus | committed-tier; passed |
+| premium | adf1927-374e052f-e24a-4f10-8bd3-f71325b63d55 | a9945aa3-159b-4707-8a64-59cbc0405510 | qwen3.7-max / qwen3.7-max | committed-tier; passed |
+| local-role-override | adf1927-374e052f-e24a-4f10-8bd3-f71325b63d55 | ce6dc9c1-a8f3-4ece-89be-6a890a3d731e | glm-5.3 / glm-5.3 | local-role; passed |
+| disabled | adf1927-9005fdf0-778b-43ae-a699-6376a9af4cf7 | dc70aa9b-3738-4ee6-bfaf-102275285a08 | qwen3.7-plus / glm-5.3 | committed-tier; selection-disabled |
+| denied | adf1927-48c0ec01-a016-42b8-8e40-6b15d6394c00 | 16512dff-67c9-4936-94c2-a206359f3d41 | qwen3.7-plus / glm-5.3 | committed-tier; allowlist-denied |
+
+Balanced, premium and local-role children share one parent. The product-manager
+route remained unchanged after the local developer override. Shared policy's
+before/after SHA256 was identical:
+`57708645cb13fb131c54f62fdd4760f5f0179f9d85a9bced199819b187162f6d`.
+Selection-disabled and allowlist-denied each used a fresh separate parent and
+passed an empty dispatch field object, then actually inherited `glm-5.3`.
+All temporary runtimes shut down gracefully; fixture/session data was retained.
+
+Configuration and contract verification: the DSH suite's 18 unit methods cover
+all planned input classes; the existing resolver suite passed 798 assertions,
+hub-smoke fixtures passed 70 and Step7a consistency passed 25. Planted checks
+failed for a provider-only route at fixture line 6 and for an omitted
+selection-disabled contract at fixture line 230, then passed after correction.
+These fixture paths remain private; they contain synthetic data only.
 
 ## Troubleshooting and Known Limitations
 
