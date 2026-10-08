@@ -750,6 +750,56 @@ class Composed(unittest.TestCase):
         result = self.helper('begin','--input',path)
         return json.loads(result.stdout)['session']
 
+    def test_actual_linear_cleanup_emits_native_bridge_without_github_issue(self):
+        for index,(branch,status) in enumerate([('feature/ENG-12-item','Merged'),
+                ('spec/ENG-12-item','Spec Ready'),('implementation-plan/ENG-12-item','Plan Ready')]):
+            with self.subTest(branch=branch,status=status):
+                if index:
+                    self.tearDown();self.doCleanups();self.setUp()
+                self.command(['git','branch','-m',branch]);self.command(['git','push','-q','origin',branch])
+                (self.repo/'.ai-dev-workflow.yaml').write_text('issue_tracker:\n  provider: linear\n')
+                self.data['prs']['12'].update(state='MERGED',headRefName=branch)
+                self.data['missingGithubIssue']=True;self.fixture.write_text(json.dumps(self.data))
+                manifest=self.root/'1890-linear-cleanup.json'
+                manifest.write_text(json.dumps({'ownerRoot':str(self.repo),'prs':[dict(repo='org/repo',pr=12,
+                    head=self.head,base='develop',root=str(self.repo),phases=['cleanup'],
+                    policySkipped=['remote_delete','local_cleanup'])]}))
+                session=json.loads(self.helper('begin','--input',manifest).stdout)['session']
+                result=subprocess.run(['bash',str(self.scripts/'post-merge-cleanup.sh'),'--merge-session',session,
+                    '--repo-root',str(self.repo),'--base','develop','--pr','12',branch],cwd=self.repo,
+                    env=self.env,text=True,capture_output=True)
+                self.assertNotEqual(result.returncode,0)
+                self.assertIn('TRACKER_ACTION_REQUIRED=set_status issue=ENG-12 target_status='+ ("'"+status+"'" if ' ' in status else status),result.stdout)
+                state=json.loads(Path(session).read_text())
+                self.assertEqual(state['outcome'],'Interrupted')
+                self.assertEqual(state['prs'][0]['issues'][0]['id'],'ENG-12')
+                step=state['prs'][0]['steps']['tracker:ENG-12:pre']
+                self.assertIn('intentAt',step);self.assertEqual(step['status'],'uncertain')
+                events=json.loads(self.fixture.read_text())['events']
+                self.assertNotIn(['issue','view'],events);self.assertNotIn(['issue','close'],events)
+                self.helper('resume','--session',session,success=False)
+                proof=self.root/'1890-native-linear-proof.json'
+                proof.write_text(json.dumps(dict(provider='linear',repo='org/repo',issue='ENG-12',statusName=status,
+                    statusId='linear-merged',mutationRequestId='1890-bridge-mutation',readRequestId='1890-bridge-read',
+                    observedAt=step['intentAt'])))
+                rejected=self.helper('record-provider-result','--session',session,'--repo','org/repo','--pr','12',
+                    '--phase','tracker','--step','tracker:ENG-12:pre','--issue','ENG-12','--status',status,'--evidence',proof,success=False)
+                self.assertNotEqual(rejected.returncode,0)
+                self.assertNotEqual(json.loads(Path(session).read_text())['outcome'],'Completed')
+                evidence=json.loads(proof.read_text());evidence['observedAt']=budget.now()
+                proof.write_text(json.dumps(evidence))
+                self.helper('record-provider-result','--session',session,'--repo','org/repo','--pr','12',
+                    '--phase','tracker','--step','tracker:ENG-12:pre','--issue','ENG-12','--status',status,'--evidence',proof)
+                recovered=json.loads(self.helper('resume','--session',session).stdout)
+                self.assertEqual(recovered['outcome'],'Admitted')
+                finished=self.command(['bash',str(self.scripts/'post-merge-cleanup.sh'),'--merge-session',session,
+                    '--repo-root',str(self.repo),'--base','develop','--pr','12',branch],self.env)
+                self.assertNotIn('TRACKER_ACTION_REQUIRED=',finished.stdout)
+                self.assertEqual(json.loads(self.helper('report','--session',session).stdout)['outcome'],'Completed')
+                events=json.loads(self.fixture.read_text())['events']
+                self.assertNotIn(['issue','view'],events);self.assertNotIn(['issue','close'],events)
+                self.assertEqual(self.command(['git','branch','--show-current']).stdout.strip(),branch)
+
     def test_actual_merge_cleanup_no_deletion_composition(self):
         session = self.begin()
         result = self.command(['bash',str(self.scripts/'batch-merge.sh'),'--merge-session',session,

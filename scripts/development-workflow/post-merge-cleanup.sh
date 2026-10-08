@@ -1253,7 +1253,25 @@ if [ "$inspect_targets" -eq 1 ]; then
   exit 0
 fi
 
-if [ -n "$ISSUE_IDENTIFIER" ]; then
+cleanup_tracker_provider="$(workflow_normalize_issue_tracker_provider "$(workflow_config_provider issue_tracker "$HUB_REPO_ROOT/.ai-dev-workflow.yaml")")"
+if [ "$cleanup_tracker_provider" = linear ]; then
+  cd "$HUB_REPO_ROOT"
+  # Native Linear duties belong to the frozen owning tracker, not a same-number
+  # GitHub issue. The existing bridge emits work while the journal stays pending.
+  while IFS=$'\t' read -r cleanup_linear_step cleanup_linear_issue cleanup_linear_status; do
+    [ -n "$cleanup_linear_step" ] || continue
+    cleanup_linear_binding="$(workflow_merge_budget_helper check --session "$merge_session" --repo "$cleanup_budget_repo" \
+      --pr "$merged_pr_number" --phase tracker --step "$cleanup_linear_step" --issue "$cleanup_linear_issue")" || exit 2
+    [ "$(printf '%s' "$cleanup_linear_binding" | jq -r '.stepStatus')" != completed ] || continue
+    update_tracker_status_best_effort "$cleanup_linear_issue" "$cleanup_linear_status"
+    cleanup_linear_binding="$(workflow_merge_budget_helper check --session "$merge_session" --repo "$cleanup_budget_repo" \
+      --pr "$merged_pr_number" --phase tracker --step "$cleanup_linear_step" --issue "$cleanup_linear_issue")" || exit 2
+    [ "$(printf '%s' "$cleanup_linear_binding" | jq -r '.stepStatus')" = completed ] || {
+      echo "Linear reconciliation pending; apply the emitted native action through the owning bridge, then record fresh proof and resume." >&2
+      exit 2
+    }
+  done < <(printf '%s' "$cleanup_binding" | jq -r --arg repo "$cleanup_budget_repo" --argjson pr "$merged_pr_number" '.prs[] | select(.repo==$repo and .pr==$pr) | . as $target | .steps | to_entries[] | select(.value.phase=="tracker") | .value.issue as $issue | [.key,$issue,($target.issues[] | select(.id==$issue and .provider=="linear") | .status)] | @tsv')
+elif [ -n "$ISSUE_IDENTIFIER" ]; then
   cd "$HUB_REPO_ROOT"
   # For team-prefixed identifiers, log the extraction result.
   # All `gh issue` and `update_tracker_status_best_effort` calls use ISSUE_NUMBER

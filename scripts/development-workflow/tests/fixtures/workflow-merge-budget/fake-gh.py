@@ -90,6 +90,8 @@ if args[:2] == ['pr', 'merge']:
     save()
     sys.exit(0)
 if args[:2] == ['issue', 'view']:
+    if state.get('missingGithubIssue'):
+        sys.exit(1)
     emit({'number': int(args[2]), 'state': state.get('issueState', 'CLOSED')})
 if args[:2] == ['issue', 'close']:
     state.setdefault('issueMutationRepos',[]).append(os.environ.get('GH_REPO',state['repo']))
