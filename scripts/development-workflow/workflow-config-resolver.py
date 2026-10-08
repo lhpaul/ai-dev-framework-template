@@ -2081,7 +2081,7 @@ def routing_declared(raw: str) -> bool:
             if target is None:
                 break
             index, indent, text, value = target
-        if key_value(value)[0] == "dsh":
+        if key_value(value)[0] == "dsh" or re.match(r"^(?:dsh|'dsh'|\"dsh\")(?:\s|$)", value):
             # A missing enclosing map must not turn an explicit inline DSH
             # declaration into a legacy scalar and bypass strict validation.
             return True

@@ -238,6 +238,7 @@ class ModelRoutingTests(unittest.TestCase):
                      "models\n  dsh: {}\n", "models:\n  dsh [broken\n",
                      "models: {dsh: {tiers: {}}}\n",
                      "mode: single_repo\nmodels: dsh: {}\n",
+                     "mode: single_repo\nmodels: dsh [broken\n",
                      "models: !!map {dsh: {tiers: {balanced: {provider: p}}}}\n",
                      "models: &policy {dsh: {}}\n",
                      "policy: &policy {dsh: {}}\nmodels: *policy\n",
@@ -274,9 +275,14 @@ class ModelRoutingTests(unittest.TestCase):
             self.assertEqual(json.loads(validate.stderr), json.loads(route.stderr))
             self.assertEqual(json.loads(validate.stderr)["CODE"], "config_discovery")
             self.assertNotIn("PRIVATE_TEST_SENTINEL", validate.stderr)
+            missing.mkdir()
+            self.assertEqual(self.cli("validate", "--json", env=dict(os.environ)).returncode, 0)
+            self.assertEqual(self.cli("model-route", "--runner", "dsh", "--role", "developer", "--json",
+                                      env=dict(os.environ)).returncode, 0)
             self.write("mode: single_repo\n")
-            validate = self.cli("validate", "--json", env=dict(os.environ))
-            resolve = self.cli("resolve", "--json", env=dict(os.environ))
+            absent_env = dict(os.environ, WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT=str(self.root / "another-missing"))
+            validate = self.cli("validate", "--json", env=absent_env)
+            resolve = self.cli("resolve", "--json", env=absent_env)
             self.assertEqual(validate.returncode, resolve.returncode)
             self.assertEqual(validate.stderr, resolve.stderr)
 
