@@ -19,6 +19,10 @@ careful coverage, while the runtime integration is an existing dispatch tool.
 provider account setup, upstream patch, or optional preset bundle is required.
 The live smoke requires an installed DSH and existing working permitted routes.
 No database, application frontend, production deployment, or new service changes.
+Before implementation edits, verify that PR #1932 is merged and its approved
+spec is present on the selected implementation base. If either prerequisite
+fails, stop and report the missing dependency to the parent; do not substitute
+an unapproved or absent spec.
 
 ## Verification Log
 
@@ -221,6 +225,12 @@ invalid schema/type, incomplete route and dangling reference; a YAML/dependency
 read failure is distinguishable. Do not print the entire configuration or
 invalid raw values. No success route appears on an error path. Existing
 unrelated legacy diagnostics remain unchanged.
+The strict reader's existing YAML exception text can contain source snippets.
+The new model commands and routing-validation hook must replace that text with
+a stable sanitized MESSAGE, retaining safe file/field/location evidence without
+raw input. A malformed temporary fixture containing a private test sentinel
+must fail without that sentinel appearing in stdout or stderr; legacy command
+diagnostics remain unchanged.
 
 Resolution is a finite local configuration walk bounded by the selected files
 and D1 catalogue. It invokes no provider, network service, host provisioning or
@@ -326,6 +336,7 @@ count; coverage-equivalent consolidation is allowed.
 | Nested same-role/same-tier mappings and unrelated keys | deep_merge: retain counterparts and unrelated roles/tiers; field provenance correct |
 | Two explicit duplicate keys on one mapping, alias/tag, nonempty flow mapping | strict_yaml: reuse reader rejection; do not accept these through validation's absence fast path |
 | CRLF or alternate recognized YAML line break versus malformed indentation | yaml_boundaries: reader-consistent acceptance/rejection and structured diagnostic |
+| Malformed YAML containing a private synthetic sentinel | diagnostic_redaction: model commands and opted-in validator fail without leaking the sentinel or source snippet |
 | Escaped control characters in quoted route scalars | evidence_boundaries: no injected KEY=value lines; fail safely |
 | Dangling winning tier reference; dangling reference replaced by direct local route | reference_scope: error only for effective dangling reference; invalid source types still fail |
 | Local empty mapping over shared mapping | empty_override: retain route and committed provenance; replacement without shared counterpart fails incomplete |
@@ -425,6 +436,23 @@ this plan and the smoke runbook.
 
 ## Risks & Mitigations
 
+### Reversal procedure
+
+If the published feature requires reversal, prepare a normal reviewed PR that
+reverts its coherent implementation changes: resolver CLI/schema/output and
+the D2/D6 validation hook, matching tests, D7 dispatch/operator documentation,
+commented examples and sync ownership. Restore the pre-feature standalone
+validation contract together with the prior session-inherited DSH dispatch;
+do not remove validation alone while leaving documentation promising routing.
+Run the config-resolver, hub-smoke-fixtures, Step7a and sync-manifest suites to
+prove the restored behavior, then complete ordinary review/CI before merge.
+Consumers that received the feature use a reviewed follow-up sync PR to the
+approved reverted template snapshot. Do not rewrite history, delete retained
+branches or alter real machine-local YAML/env during reversal. Existing local
+routing keys cease selecting child routes after this coherent reversal; record
+that effect explicitly. Release-note handling follows the normal release
+protocol for the actual published state.
+
 | Risk | Likelihood / impact | Mitigation |
 | --- | --- | --- |
 | Partial override or reference replacement gives incorrect provenance | Medium / medium | D3–D4 unit matrix; no last-minute alternative merge semantics |
@@ -435,7 +463,7 @@ this plan and the smoke runbook.
 
 ## Implementation Order
 
-1. Verify operational assumptions Still valid; inspect current implementation
+1. Verify the approved spec dependency above and operational assumptions Still valid; inspect current implementation
    baseline and preserve original restrictions. This discharges the assumption
    check before any implementation edits.
 2. Implement D1–D5 with the Python edge cases. Complete and verify a coherent
