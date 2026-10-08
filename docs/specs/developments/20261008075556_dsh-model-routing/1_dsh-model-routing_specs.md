@@ -182,10 +182,14 @@ mode: single_repo
   A route `{}` remains subject to effective completeness after composition.
 - **BR9b — Grammar:** block mappings, exactly two ASCII spaces per nesting
   level, no tabs or indentation jumps. Keys are unquoted ASCII identifiers
-  `[A-Za-z_][A-Za-z0-9_-]*` and must belong to their schema level: `models`,
+  `[A-Za-z_][A-Za-z0-9_-]*`. Membership is checked only in the schema
+  phase: a lexically valid unknown key is a schema-name error, not syntax.
+  Accepted keys belong to their schema level: `models`,
   `dsh`, `tiers`/`roles`, supported tier/role catalogue, or
   `provider`/`model`/`reasoning_effort`. The only inline collection is `{}`.
-  Values are single-line strings or mappings. Bare strings use only ASCII
+  Accepted values are single-line strings or mappings. The lexer recognizes
+  null/boolean/numeric tokens for schema-type rejection, not syntax rejection.
+  Bare strings use only ASCII
   letters/digits and `_ . / : @ + -`, without spaces; `null` (any case), `~`,
   `true`/`false` (any case), and decimal numeric literals are invalid types,
   not route strings. Numeric literals mean signed integers or decimal/exponent
@@ -289,7 +293,7 @@ retention service is required; use the existing workflow evidence surfaces.
 - [ ] AC5: Unknown roles, unknown tiers, wrong types, empty required values,
   incomplete effective routes, and dangling tier references emit structured
   errors and block routed dispatch. Standalone config validation reports the
-  same policy errors. For each activated input, validate, model-route and
+  same policy errors. For each activated input with a policy error, validate, model-route and
   model-routes share the same policy diagnostic CODE/FILE/FIELD/MESSAGE and exit 2,
   with no successful route/context on stdout. Partial compositions, missing
   files and the explicit unactivated legacy boundary are covered.
