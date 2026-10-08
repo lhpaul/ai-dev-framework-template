@@ -2071,7 +2071,7 @@ def routing_declared(raw: str) -> bool:
             name = alias.group(1)
             visited.add(name)
             targets = [(i, level, line, payload) for i, (level, line) in enumerate(lines)
-                       if (payload := anchor_payload(key_value(line)[1], name)) is not None]
+                       if (payload := anchor_payload(line, name)) is not None]
             target = next(iter(targets), None)
             if target is None:
                 # A named but unanchored target is still invalid YAML; retain
