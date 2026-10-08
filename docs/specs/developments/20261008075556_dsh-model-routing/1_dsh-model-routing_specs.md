@@ -1,5 +1,7 @@
 # DSH Per-Role Model Routing — Spec
 
+**Issue**: #1927
+
 ## Overview
 
 Operators can assign different model routes to DSH workflow roles using shared
