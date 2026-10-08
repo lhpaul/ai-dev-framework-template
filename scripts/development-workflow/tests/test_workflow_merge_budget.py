@@ -93,6 +93,67 @@ class Admission(unittest.TestCase):
             self.assertEqual(budget.main(),0)
         self.assertEqual(json.loads(output.getvalue())['stepId'],'audit')
 
+    def _signal_main_case(self, queued=False, terminal=False):
+        from contextlib import redirect_stderr, redirect_stdout
+        import io
+        import signal
+        from types import SimpleNamespace
+        expected = self.owner/'1890-cancelled-body.txt'
+        expected.write_text('<!-- fixture -->')
+        phase = 'audit' if terminal else 'merge_api'
+        if terminal:
+            manifest = json.loads(self.manifest.read_text())
+            manifest['prs'][0].pop('phases')
+            manifest['prs'][0]['steps'] = [{'id':'audit','phase':'audit','auditRepo':'org/repo',
+                'auditTarget':12,'marker':'<!-- fixture -->'}]
+            self.manifest.write_text(json.dumps(manifest))
+        self.begin()
+        original_verify, original_publish = budget.verify, budget.publish
+        injected = False
+        def wait():
+            self.live.update(state='OPEN' if queued else 'MERGED',isInMergeQueue=queued)
+            return 0
+        def verify(state,target,entry):
+            completed = True if terminal else original_verify(state,target,entry)
+            if not terminal:
+                os.kill(os.getpid(),signal.SIGTERM)
+                os.kill(os.getpid(),signal.SIGINT)
+            return completed
+        def publish(path,state):
+            nonlocal injected
+            original_publish(path,state)
+            if terminal and state['outcome']=='Completed' and not injected:
+                injected = True
+                os.kill(os.getpid(),signal.SIGINT)
+        argv = ['workflow-merge-budget.py','run-step','--session',self.args.session,'--repo','org/repo',
+            '--pr','12','--phase',phase,'--step',phase]
+        if terminal:
+            argv += ['--expected-file',str(expected)]
+        argv += ['--','true']
+        with patch.object(sys,'argv',argv), patch.object(budget,'proof_root',return_value=str(self.owner)), \
+             patch.object(budget,'verify',side_effect=verify), patch.object(budget,'publish',side_effect=publish), \
+             patch.object(budget.os,'write',return_value=1), patch.object(budget,'group_alive',return_value=False), \
+             patch.object(budget.subprocess,'Popen',return_value=SimpleNamespace(pid=99999999,wait=wait)), \
+             redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+            self.assertEqual(budget.main(),2)
+        state = budget.snapshot(self.args.session)
+        self.assertEqual(state['outcome'],'Interrupted')
+        self.assertIsNotNone(state.get('cancellation'))
+        self.assertEqual(state['prs'][0]['steps'][phase]['status'],'pending' if queued else 'completed')
+        if queued:
+            self.assertTrue(state['prs'][0]['steps'][phase]['submission'])
+        if terminal:
+            self.assertTrue(injected)
+
+    def test_signal_during_merge_readback_is_sticky_with_verified_effect(self):
+        self._signal_main_case()
+
+    def test_signal_during_queue_readback_remains_interrupted(self):
+        self._signal_main_case(queued=True)
+
+    def test_signal_during_terminal_journal_publication_does_not_deadlock(self):
+        self._signal_main_case(terminal=True)
+
     def test_projection_derivation_and_equality(self):
         self.sample['remaining'] = 1125  # raw 25+50, margin50, reserve1000
         result = self.begin()
@@ -575,6 +636,8 @@ class Composed(unittest.TestCase):
         record_id = self.id()+('.'+self.evidence_case if hasattr(self,'evidence_case') else '')
         records[record_id] = {'events':json.loads(self.fixture.read_text()).get('events',[]),
                              'sessions':[]}
+        if hasattr(self,'cancellation_evidence'):
+            records[record_id]['cancellationEvidence'] = self.cancellation_evidence
         for journal in self.repo.glob('.git/workflow-merge-budget/*/state.json'):
             state = json.loads(journal.read_text())
             records[record_id]['sessions'].append({'outcome':state['outcome'],'reason':state['reason'],
@@ -765,6 +828,69 @@ class Composed(unittest.TestCase):
         evidence = json.loads(self.fixture.read_text())
         self.assertEqual([value.lower() for value in evidence['issueMutationRepos']],['org/repo'])
         self.assertEqual(evidence['issueState'],'CLOSED')
+
+    def test_cancelled_merge_retains_effect_and_requires_explicit_resume(self):
+        import signal
+        self.cancellation_evidence = []
+        for signum,mode in [(signal.SIGTERM,'exit'),(signal.SIGINT,'ignore')]:
+            with self.subTest(signal=signum,mode=mode):
+                self.data['prs']['12'].update(state='OPEN',isInMergeQueue=False)
+                self.data.update(mergePause=mode,mergeReady=False,mergeRelease=False,events=[])
+                self.fixture.write_text(json.dumps(self.data))
+                manifest = self.root/'1890-cancelled-merge.json'
+                manifest.write_text(json.dumps({'ownerRoot':str(self.repo),'prs':[{
+                    'repo':'org/repo','pr':12,'head':self.head,'base':'develop','root':str(self.repo),
+                    'phases':['merge_api','cleanup'],'policySkipped':['remote_delete','local_cleanup']}]}))
+                session = json.loads(self.helper('begin','--input',manifest).stdout)['session']
+                process = subprocess.Popen([sys.executable,str(self.scripts/'workflow-merge-budget.py'),
+                    'run-step','--session',session,'--repo','org/repo','--pr','12','--phase','merge_api',
+                    '--step','merge_api','--','gh','pr','merge','12','--match-head-commit',self.head],
+                    cwd=self.repo,env=self.env,text=True,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+                try:
+                    deadline = time.monotonic()+15
+                    while not json.loads(self.fixture.read_text()).get('mergeReady'):
+                        self.assertIsNone(process.poll())
+                        self.assertLess(time.monotonic(),deadline)
+                        time.sleep(0.02)
+                    os.kill(process.pid,signum)
+                    if mode == 'ignore':
+                        deadline = time.monotonic()+5
+                        while json.loads(Path(session).read_text())['outcome'] != 'Interrupted':
+                            self.assertLess(time.monotonic(),deadline,'cancellation not durably recorded while child lives')
+                            time.sleep(0.02)
+                        self.assertIsNone(process.poll())
+                        self.assertNotEqual(self.helper('resume','--session',session,success=False).returncode,0)
+                        stopped = self.helper('before-step','--session',session,'--repo','org/repo','--pr','12',
+                            '--phase','cleanup','--step','cleanup',success=False)
+                        self.assertNotEqual(stopped.returncode,0)
+                finally:
+                    data = json.loads(self.fixture.read_text()); data['mergeRelease'] = True
+                    self.fixture.write_text(json.dumps(data))
+                    output,error = process.communicate(timeout=15)
+                self.assertNotEqual(process.returncode,0,output+error)
+                state = json.loads(Path(session).read_text())
+                self.assertEqual(state['outcome'],'Interrupted')
+                self.assertEqual(state['prs'][0]['verifiedState'],'merged')
+                self.assertEqual(state['prs'][0]['steps']['merge_api']['status'],'completed')
+                self.assertNotEqual(self.helper('before-step','--session',session,'--repo','org/repo','--pr','12',
+                    '--phase','cleanup','--step','cleanup',success=False).returncode,0)
+                count = json.loads(self.fixture.read_text())['events'].count(['pr','merge'])
+                self.helper('resume','--session',session)
+                resumed = json.loads(Path(session).read_text())
+                self.assertNotIn('cancellation',resumed)
+                self.assertTrue(any(item.get('cancellation') for item in resumed['history']))
+                self.helper('run-step','--session',session,'--repo','org/repo','--pr','12',
+                    '--phase','merge_verify','--step','merge_verify','--','true')
+                self.command(['bash',str(self.scripts/'post-merge-cleanup.sh'),'--merge-session',session,
+                    '--repo-root',str(self.repo),'--base','develop','--pr','12','feature/12-item'],self.env)
+                self.assertEqual(json.loads(self.helper('report','--session',session).stdout)['outcome'],'Completed')
+                self.assertEqual(json.loads(self.fixture.read_text())['events'].count(['pr','merge']),count)
+                self.cancellation_evidence.append({'signal':signum.name,'childMode':mode,
+                    'cancelledOutcome':state['outcome'],'verifiedState':state['prs'][0]['verifiedState'],
+                    'mergeStep':state['prs'][0]['steps']['merge_api']['status'],
+                    'childExitCode':state['prs'][0]['steps']['merge_api']['exitCode'],
+                    'liveChildRecoveryRefused':mode=='ignore','currentStoppingCleared':True,
+                    'historyRetainsCancellation':True,'finalOutcome':'Completed','duplicateMergeCount':0})
 
     def test_actual_queue_waiting_no_cleanup_or_resubmission(self):
         self.data['queue'] = True

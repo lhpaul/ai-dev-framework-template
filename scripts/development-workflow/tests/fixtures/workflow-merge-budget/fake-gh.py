@@ -77,6 +77,16 @@ if args[:2] == ['pr', 'merge']:
         value['isInMergeQueue'] = True
     else:
         value['state'] = 'MERGED'
+    if state.get('mergePause'):
+        import signal
+        import time
+        if state['mergePause'] == 'ignore':
+            signal.signal(signal.SIGTERM,signal.SIG_IGN)
+            signal.signal(signal.SIGINT,signal.SIG_IGN)
+        state['mergeReady'] = True
+        save()
+        while not json.loads(path.read_text()).get('mergeRelease'):
+            time.sleep(0.02)
     save()
     sys.exit(0)
 if args[:2] == ['issue', 'view']:

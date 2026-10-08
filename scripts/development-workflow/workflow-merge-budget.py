@@ -299,7 +299,7 @@ def publish(path, state):
 
 
 @contextmanager
-def journal(path, write=True):
+def _journal_unmasked(path, write=True):
     path = check_storage(path)
     lockpath = safe_path(path.parent / "lock")
     fd = os.open(lockpath, os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0), 0o600)
@@ -319,6 +319,18 @@ def journal(path, write=True):
             publish(path, state)
     finally:
         os.close(fd)
+
+
+@contextmanager
+def journal(path, write=True):
+    # A cancellation handler writes the journal before forwarding the signal.
+    # Defer those handlers while this same thread owns its short file lock.
+    previous = signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM, signal.SIGINT})
+    try:
+        with _journal_unmasked(path, write) as state:
+            yield state
+    finally:
+        signal.pthread_sigmask(signal.SIG_SETMASK, previous)
 
 
 
@@ -905,8 +917,15 @@ def after(args):
         image["outcome"], image["reason"] = "Interrupted", str(exc)
         failure = str(exc)
     with journal(args.session) as state:
-        if state["revision"] != image["revision"]:
+        cancellation = state.get("cancellation")
+        cancelled = bool(cancellation and cancellation.get("attempt") == image["attempt"])
+        cancellation_only = (cancelled and state["revision"] == image["revision"] + 1
+                             and cancellation.get("revisionBefore") == image["revision"]
+                             and target_for(state, args)["steps"][key].get("token") == supplied)
+        if state["revision"] != image["revision"] and not cancellation_only:
             raise Stop("session changed during independent verification")
+        if cancelled:
+            image["outcome"], image["reason"] = "Interrupted", "execution cancelled; explicit live-verified resume required"
         current = target_for(state, args)
         current["steps"] = target["steps"]
         current["steps"][key] = entry
@@ -972,6 +991,8 @@ def resume(args):
             image["active"], image["started"] = None, False
             image["attempt"] += 1
             admission(image)
+            if image["outcome"] == "Admitted":
+                image.pop("cancellation", None)
             complete_if_ready(image)
     except (Stop, OSError) as exc:
         image["outcome"], image["reason"] = "Deferred", "unknown outstanding work: " + str(exc)
@@ -979,7 +1000,9 @@ def resume(args):
     with journal(args.session) as state:
         if state["revision"] != image["revision"]:
             raise Stop("session changed during recovery evidence collection")
-        image["history"].append({"outcome": state["outcome"], "at": now(), "initialSample": state.get("initialSample")})
+        image["history"].append({"outcome": state["outcome"], "at": now(), "initialSample": state.get("initialSample"), "cancellation": state.get("cancellation")})
+        if "cancellation" not in image and image["outcome"] in {"Admitted", "Completed"}:
+            state.pop("cancellation", None)
         state.update(image)
     return summary(snapshot(args.session))
 
@@ -1091,6 +1114,8 @@ def main():
     raw = sys.argv[1:]
     argv = raw[raw.index("--") + 1:] if "--" in raw else []
     args = parser.parse_args(raw[:raw.index("--")] if "--" in raw else raw)
+    previous_signals = {}
+    cancelled_signal = None
     try:
         if args.repo is not None:
             args.repo = repo(args.repo)
@@ -1177,6 +1202,29 @@ def main():
                     raise Stop("run-step requires argv after --")
                 args.executor_pid = os.getpid()
                 intent = before(args)
+                child = None
+                def interrupted(signum, frame):
+                    nonlocal cancelled_signal
+                    previous_mask = signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM, signal.SIGINT})
+                    try:
+                        if cancelled_signal is None:
+                            with journal(args.session) as state:
+                                entry = target_for(state, args)["steps"][step_key(args)]
+                                if entry.get("token") != intent["token"]:
+                                    raise Stop("cancelled execution lost its durable intent")
+                                state["cancellation"] = {"signal": signum, "at": now(), "attempt": state["attempt"],
+                                    "revisionBefore": state["revision"]}
+                                state["outcome"], state["reason"] = "Interrupted", "execution cancelled; explicit live-verified resume required"
+                            cancelled_signal = signum
+                        if child is not None:
+                            try:
+                                os.killpg(child.pid, signum)
+                            except ProcessLookupError:
+                                pass
+                    finally:
+                        signal.pthread_sigmask(signal.SIG_SETMASK, previous_mask)
+                for signum in (signal.SIGTERM, signal.SIGINT):
+                    previous_signals[signum] = signal.signal(signum, interrupted)
                 env = dict(os.environ, WORKFLOW_MERGE_BUDGET_SESSION=args.session,
                            WORKFLOW_MERGE_BUDGET_TOKEN=intent["token"])
                 env.pop("GH_REPO", None)
@@ -1220,19 +1268,17 @@ def main():
                 os.close(read_fd)
                 try:
                     with journal(args.session) as state:
-                        if state.get("active", {}).get("token") != intent["token"]:
-                            raise Stop("executor claim changed before child publication")
+                        if state.get("active", {}).get("token") != intent["token"] or state["outcome"] != "Admitted":
+                            raise Stop("executor claim changed or cancelled before child publication")
                         state["active"]["childPid"] = child.pid
                         state["active"]["childGroup"] = child.pid
                         state["active"].setdefault("children", []).append({"pid": child.pid, "group": child.pid,
                             "step": step_key(args), "repo": args.repo, "pr": args.pr})
+                    if cancelled_signal is not None:
+                        raise Stop("execution cancelled before mutation permission")
                     os.write(write_fd, b"1")
                 finally:
                     os.close(write_fd)
-                def interrupted(signum, frame):
-                    os.killpg(child.pid, signum)
-                for signum in (signal.SIGTERM, signal.SIGINT):
-                    signal.signal(signum, interrupted)
                 args.exit_code = child.wait()
                 try:
                     Path.cwd()
@@ -1247,7 +1293,7 @@ def main():
                 result = after(args)
                 result["childExitCode"] = args.exit_code
         print(json.dumps(result, sort_keys=True))
-        return 0 if args.command == "report" or result.get("outcome") not in {"Deferred", "Waiting", "Interrupted"} else 2
+        return 0 if cancelled_signal is None and (args.command == "report" or result.get("outcome") not in {"Deferred", "Waiting", "Interrupted"}) else 2
     except (Stop, OSError, KeyError, TypeError, ValueError) as exc:
         outcome = "Deferred" if args.command == "begin" else "Interrupted"
         if args.session:
@@ -1257,6 +1303,9 @@ def main():
                 pass
         print(json.dumps({"outcome": outcome, "reason": str(exc), "session": args.session}), file=sys.stderr)
         return 2
+    finally:
+        for signum, previous in previous_signals.items():
+            signal.signal(signum, previous)
 
 
 if __name__ == "__main__":
