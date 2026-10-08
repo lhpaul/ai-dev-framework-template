@@ -2087,18 +2087,43 @@ def routing_declared(raw: str) -> bool:
             elif char == ":" and depth == 1:
                 yield key_value(value[key_start:position] + ":")[0], value[position + 1:].lstrip()
 
-    def routing_hints(index: int, indent: int, value: str) -> tuple[bool, list[str]]:
-        merges = []
+    def routing_hints(index: int, indent: int, value: str) -> tuple[bool, list[str], list[tuple[int, int, str]]]:
+        merges, candidates = [], []
         if key_value(value)[0] == "dsh" or re.match(r"^(?:dsh|'dsh'|\"dsh\")(?:\s|$)", value):
             # A missing enclosing map must not turn an explicit inline DSH
             # declaration into a legacy scalar and bypass strict validation.
-            return True, merges
+            return True, merges, candidates
         if value.startswith("{"):
             for key, child_value in flow_entries(value):
                 if key == "dsh":
-                    return True, merges
+                    return True, merges, candidates
                 if key == "<<":
                     merges.extend(merge_aliases(child_value))
+        if value.startswith("["):
+            # A malformed models sequence can still explicitly declare DSH.
+            # Inspect each immediate item, keeping nested other maps opaque.
+            depth, start, quote, escaped = 0, 1, "", False
+            for position, char in enumerate(value):
+                if quote:
+                    if escaped:
+                        escaped = False
+                    elif char == "\\" and quote == '"':
+                        escaped = True
+                    elif char == quote:
+                        quote = ""
+                    continue
+                if char in ("'", '"'):
+                    quote = char
+                elif char in "{[":
+                    depth += 1
+                elif char in "}]":
+                    depth -= 1
+                    if depth == 0:
+                        candidates.append((len(lines), indent, value[start:position].strip()))
+                        break
+                elif char == "," and depth == 1:
+                    candidates.append((len(lines), indent, value[start:position].strip()))
+                    start = position + 1
         children = []
         for child_indent, child in lines[index + 1:]:
             if child_indent <= indent:
@@ -2109,12 +2134,14 @@ def routing_declared(raw: str) -> bool:
             if any(child_indent == child_level and (key_value(child)[0] == "dsh"
                     or re.match(r"^(?:dsh|'dsh'|\"dsh\")(?:\s|$)", child))
                    for child_indent, child in children):
-                return True, merges
+                return True, merges, candidates
             for child_indent, child in children:
+                if child_indent == child_level and re.match(r"^-\s", child):
+                    candidates.append((len(lines), child_indent, re.sub(r"^-\s+", "", child)))
                 key, child_value = key_value(child)
                 if child_indent == child_level and key == "<<":
                     merges.extend(merge_aliases(child_value))
-        return False, merges
+        return False, merges, candidates
 
     def probe_mapping(index: int, indent: int, value: str) -> bool:
         # Unsupported aliases may be ambiguous. Examine every explicit target
@@ -2131,10 +2158,11 @@ def routing_declared(raw: str) -> bool:
             value = re.sub(r"^(?:(?:&[^\s{}\[\],]+|!<[^>]*>|![^\s{}\[\],]+)\s*)+", "", value)
             alias = re.fullmatch(r"\*([^\s]+)", value)
             if not alias:
-                declared, merges = routing_hints(index, indent, value)
+                declared, merges, candidates = routing_hints(index, indent, value)
                 if declared:
                     return True
                 pending.extend((index, indent, "*" + name) for name in merges)
+                pending.extend(candidates)
                 continue
             name = alias.group(1)
             targets = [(i, level, payload) for i, (level, line) in enumerate(lines)
