@@ -9,7 +9,7 @@
 Documentation-only amendment to plan PR #1933 for Luis's selected strict,
 dependency-free parser design. The [proposed spec amendment #1935](https://github.com/lhpaul/ai-dev-framework-template/pull/1935) to #1932 supplies
 BR9, the normative format/activation contract
-([review baseline](https://github.com/lhpaul/ai-dev-framework-template/blob/bd1e93ea/docs/specs/developments/20261008075556_dsh-model-routing/1_dsh-model-routing_specs.md)); the base's original spec remains
+([review baseline](https://github.com/lhpaul/ai-dev-framework-template/blob/ad8cddc4/docs/specs/developments/20261008075556_dsh-model-routing/1_dsh-model-routing_specs.md)); the base's original spec remains
 historical until that amendment merges. This plan is prepared for paired human
 review, not permission to implement against an unmerged specification.
 No changes to implementation PR #1934 or retained candidate `43bddf22` are
@@ -47,9 +47,9 @@ Evidence below is from develop `98f5de0d7d72748abced53c9a36dc461934f8ef0`,
 | --- | --- | --- |
 | Template fit | `rg -n 'is_template' .ai-dev-workflow.yaml` | Framework tooling, no consumer language dependency |
 | Legacy versus strict readers | `rg -n '^def (parse_yaml_subset|parse_review_yaml|resolve_local_config|cmd_resolve)' scripts/development-workflow/workflow-config-resolver.py; sed -n '374,388p' scripts/development-workflow/workflow-config-resolver.py` | Existing entry points; preserve_empty_values=True delegates to PyYAML, default branch does not; new parser is proposed |
-| Shared reader consumers | `rg -n 'parse_yaml_subset\(|parse_review_yaml\(|cmd_resolve\(' scripts/development-workflow/workflow-config-resolver.py scripts/development-workflow/workflow-lib.sh scripts/development-workflow/validate-workflow-config.sh` | Existing composed paths in Composed Call Sites; review/auth/ordinary resolve remain unchanged; active validate/model commands share D2 result |
+| Shared reader consumers | `rg -n 'parse_yaml_subset|preprocess_yaml|parse_mapping\(|parse_list\(|parse_scalar\(|load_configs\(' scripts --glob '*.py' --glob '*.sh'` plus `rg -n '^def |load_configs\(|parse_yaml_subset\(' scripts/development-workflow/workflow-config-resolver.py` | Existing composed paths in Composed Call Sites; review/auth/ordinary resolve remain unchanged; active validate/model commands share D2 result |
 | Existing suites/runbook | `rg --files scripts/development-workflow/tests docs/testing/workflow | rg 'config-resolver|hub-smoke|step7a|dsh-model-routing'` | Existing legacy suites/runbook; new unit/harness paths are proposals on develop |
-| Allowed implementation population | `sed -n '/^## Files to Modify/,/^## Risks/p' docs/specs/developments/20261008075556_dsh-model-routing/2_dsh-model-routing_implementation-plan.md` (count table paths with `rg -c '^\| (scripts/|docs/|\.ai-dev|sync-manifest|changelog.d/)'`) | Original 14 named rows; scope unchanged, see amendment scope boundary |
+| Allowed implementation population | `sed -n '/^## Files to Modify/,/^## Risks/p' docs/specs/developments/20261008075556_dsh-model-routing/2_dsh-model-routing_implementation-plan.md` (count table paths with `rg -c '^\| (scripts/|docs/|\.ai-dev|sync-manifest|changelog.d/)'`) | Original named allowlist reproduced; normative count/scope is in amendment scope boundary |
 
 Operational assumption check for this bounded documentation invocation: original
 spec/plan are merged at the stated revisions; PR #1934 is a retained same-surface
@@ -380,7 +380,14 @@ of a failed validation result.
 | component-release-target.sh validate calls | Context validation precedes release-target interpretation; new model failure propagates without claiming a valid target |
 | Existing test-workflow-config-resolver.sh validate/wrapper tests | Wrapper success preserves absent-routing context; direct require-local failure at line583 remains a repository-context error, with D2 invalid opt-in policy rejected before successful validation |
 | Existing test-workflow-hub-smoke-fixtures.sh validate calls | Lines255/258 preserve mobile/admin require-local success with absent policy; line313 preserves missing-checkout rejection. D2 invalid opted-in policy is rejected at the same validate entry before any successful context; run this existing suite unchanged |
-| Ordinary resolve and review-effective/review-github-effective | Their existing separate commands/readers continue to produce their current results; DSH routing must not turn malformed reviewer policy into an absent-policy fallback |
+| Ordinary resolve | cmd_resolve → resolve_context → load_configs → default parse_yaml_subset; original context/release/path semantics and errors remain, without model-schema validation or projection |
+| mode | cmd_mode → load_configs → default reader → mode_from_shared; same mode/output and inline-list acceptance in unrelated legacy data |
+| auth | cmd_auth → resolve_auth_context → load_configs → default reader; same auth hints/precedence/errors, no strict DSH import or validation |
+| list-product-repos | cmd_list_product_repos → load_configs → default reader → product_repos; same workflow_hub requirement, list output and errors |
+| set-local-path | cmd_set_local_path → load_configs for selection, then set_local_product_repo_path → default reader of checkout-local file only; preserve normalization/write ownership, never write the main-clone fallback. Regression uses temporary fixture files only |
+| Legacy review-overrides | cmd_review_overrides → resolve_review_overrides → resolve_local_review_config → default reader; checkout without review still falls through to main-clone reviewer overrides; unchanged outputs, override origin and fallback rules |
+| review-effective/review-github-effective | Respective cmd/resolve_review functions → preserve_empty_values=True → parse_review_yaml, including selected/shared/main-clone reads; strict review errors and existing library dependency remain. The new raw adapter is not inserted into these branches |
+| Legacy parser helpers | Default parse_yaml_subset → preprocess_yaml → parse_mapping/parse_list → parse_scalar (and recursive calls); extracted snapshot adapter preserves all existing whitespace/comment/inline-list/coercion behavior. BR9 collection/type restrictions occur only in the separate policy parser, never these legacy helpers |
 
 No deleted branch's inputs need reassignment: this is additive validation.
 
