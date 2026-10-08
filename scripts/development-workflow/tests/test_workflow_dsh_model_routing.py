@@ -168,6 +168,8 @@ class ModelRoutingTests(unittest.TestCase):
     def test_scalar_boundaries_and_control_characters(self):
         self.write(self.policy("      balanced:\n        provider: p # comment\n        model: 'id#literal'\n"))
         self.assertEqual(self.route()["MODEL"], "id#literal")
+        self.write(self.policy("      balanced:\n        provider: p\n        model: 'literal &anchor *alias <<: text'\n"))
+        self.assertEqual(self.route()["MODEL"], "literal &anchor *alias <<: text")
         for escaped in ("\\n", "\\r", "\\t", "\\u0085", "\\u2028"):
             self.error(self.policy(f'      balanced:\n        provider: p\n        model: "m{escaped}x"\n'), "invalid_value")
 
@@ -175,6 +177,9 @@ class ModelRoutingTests(unittest.TestCase):
         cases = [self.policy(self.tier() + self.tier()),
                  "models:\n  dsh: {tiers: {balanced: {provider: p, model: m}}}\n",
                  "models:\n  dsh: &anchor {}\n", "models:\n  dsh: *alias\n",
+                 "models:\n  dsh:\n    <<: {}\n",
+                 "models:\n  dsh:\n    tiers:\n      balanced: &route\n        provider: p\n        model: m\n",
+                 "models:\n  dsh:\n    roles:\n      developer: *route\n",
                  "models:\n  dsh: !tag {}\n", "'models':\n  dsh: {}\n",
                  "models:\n   dsh: {}\n", 'models:\n  dsh:\n    tiers:\n      balanced:\n        model: [PRIVATE_TEST_SENTINEL\n']
         for invalid in cases:
@@ -184,6 +189,12 @@ class ModelRoutingTests(unittest.TestCase):
                 result = self.cli("model-route", "--runner", "dsh", "--role", "developer", "--json")
                 self.assertEqual(result.returncode, 2)
                 self.assertNotIn("PRIVATE_TEST_SENTINEL", result.stdout + result.stderr)
+                self.assertIn("anchors (&), aliases (*) and merge keys (<<) are not supported", diagnostic["MESSAGE"])
+                for command in (("model-routes", "--runner", "dsh", "--json"), ("validate", "--json")):
+                    parity = self.cli(*command)
+                    self.assertEqual(parity.returncode, 2)
+                    self.assertEqual(json.loads(parity.stderr), json.loads(result.stderr))
+                    self.assertEqual(parity.stdout, "")
 
     def test_reader_consistent_line_breaks(self):
         for newline in ("\r\n", "\u0085", "\u2028", "\u2029"):

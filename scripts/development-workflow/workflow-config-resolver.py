@@ -1921,7 +1921,8 @@ def load_model_policy(repo_root: Path, snapshots: dict[Path, str] | None = None)
             missing_dependency = isinstance(exc.__cause__, ImportError)
             model_error("dependency_missing" if missing_dependency else "invalid_yaml", path, "models.dsh",
                         "Install PyYAML==6.0.2 for strict routing validation" if missing_dependency
-                        else "Invalid or unsupported YAML configuration")
+                        else "Invalid or unsupported YAML configuration. Use explicit block mappings; "
+                             "YAML anchors (&), aliases (*) and merge keys (<<) are not supported")
         layers.append(model_layer(data, path))
     shared, local = layers
     effective = compose_model_maps(shared, local)
