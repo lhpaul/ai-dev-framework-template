@@ -241,6 +241,7 @@ class ModelRoutingTests(unittest.TestCase):
                      "models: &policy {dsh: {}}\n",
                      "policy: &policy {dsh: {}}\nmodels: *policy\n",
                      "policy: unrelated\nactual: &policy {dsh: {}}\nmodels: *policy\n",
+                     'decoy: "some &policy text"\nactual: &policy {dsh: {}}\nmodels: *policy\n',
                      "policy: &policy\n  dsh: {}\nmodels: *policy\n",
                      "policy:\n  dsh: {}\nmodels: *policy\n",
                      self.policy(self.tier()).replace("\n", "\u2028")):

@@ -2050,7 +2050,8 @@ def routing_declared(raw: str) -> bool:
                 break
             name = alias.group(1)
             visited.add(name)
-            anchor_pattern = r"(?:^|\s)&" + re.escape(name) + r"(?:\s|$)"
+            # Anchors are leading node metadata, never text in a scalar.
+            anchor_pattern = r"^(?:![^\s]+\s+)*&" + re.escape(name) + r"(?:\s|$)"
             targets = [(i, level, line) for i, (level, line) in enumerate(lines)
                        if re.search(anchor_pattern, key_value(line)[1])]
             target = next(iter(targets), None)
