@@ -347,3 +347,19 @@ portfolio_scan:
 # Merge-session heuristic headroom; quota is observed, never reserved.
 merge_budget:
   graphql_reserve: 1000
+
+# Optional DSH child routing; fully commented and inactive by default.
+# Canonical roles/tiers: docs/workflow/development-workflow/agent-model-config.md
+# Replace these illustrative ids with your already working provider/model ids.
+# models:
+#   dsh:
+#     tiers:
+#       balanced:
+#         provider: YOUR_PROVIDER
+#         model: YOUR_BALANCED_MODEL
+#       premium:
+#         provider: YOUR_PROVIDER
+#         model: YOUR_PREMIUM_MODEL
+#     roles:
+#       developer: balanced
+#       product-manager: premium

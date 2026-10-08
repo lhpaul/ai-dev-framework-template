@@ -65,3 +65,15 @@ template:
   source:
     local_path: ../ai-dev-framework-template
     # git_url: https://github.com/example/ai-dev-framework-template
+
+# Optional private DSH overrides; deep-merge by key and route field.
+# No routing is activated by this commented example.
+# models:
+#   dsh:
+#     tiers:
+#       premium:
+#         model: YOUR_PRIVATE_PREMIUM_MODEL
+#     roles:
+#       developer:
+#         provider: YOUR_PROVIDER
+#         model: YOUR_PRIVATE_DEVELOPER_MODEL

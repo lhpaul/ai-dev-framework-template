@@ -56,7 +56,7 @@ dsh --profile headless "Summarize the open PR"
 
 ## Provider routes
 
-DSH composes model routes from the active profile’s bundle and the user’s local
+DSH composes session-default model routes from the active profile’s bundle and the user’s local
 settings (not from in-repo agent frontmatter). The base bundle’s default route is
 provider/model configuration owned by the DSH install — operators pin or swap
 routes in DSH settings / profile overlays, then keep workflow **tier intent**
@@ -79,10 +79,186 @@ DSH has **no** in-repo per-role agent tree analogous to `.claude/agents/` or
 | Plan | `workflow-plan-reviewer` |
 | Implementation | `workflow-code-reviewer` |
 
-Pin provider/model for a review at **dispatch time** (CLI / profile / env for that
-invocation), not by editing a checked-in role file. Map the skill’s recommended
-tier (`economy` / `balanced` / `premium`) to the DSH route you assign for that run
-— see [`agent-model-config.md`](../agent-model-config.md).
+For children in a DSH driving session, resolve optional project role/tier policy
+and pass the selected route through the subagent tool as described below.
+Cross-runner headless review pins its invocation default separately; no
+checked-in DSH role file is required.
+
+---
+
+## Project role and tier routing
+
+Optional `models.dsh` policy belongs in `.ai-dev-workflow.yaml`; private machine
+changes belong in `.ai-dev-workflow.local.yaml`. The template and local example
+contain fully commented examples and activate no model. This is DSH child
+routing; other runners and headless defaults keep their existing behavior.
+
+Use block mappings supported by the existing strict reader. Configure
+`tiers.economy`, `tiers.balanced`, `tiers.premium` with `provider`, `model`, and
+optional `reasoning_effort`. A `roles` entry uses a canonical role name from
+[Agent Assignments](../agent-model-config.md#agent-assignments-tier-based) and is
+either a supported tier name or a direct route mapping. Effort ids belong to
+the installed adapter; ADF does not define another effort enum.
+
+```yaml
+models:
+  dsh:
+    tiers:
+      balanced:
+        provider: YOUR_PROVIDER
+        model: YOUR_BALANCED_MODEL
+      premium:
+        provider: YOUR_PROVIDER
+        model: YOUR_PREMIUM_MODEL
+    roles:
+      developer: balanced
+      product-manager: premium
+```
+
+Replace the illustrative ids with already working routes; provider/account
+setup is outside this feature. Local maps deep-merge over committed maps by
+key and route field. For example, a local provider-only override retains the
+committed model; unrelated roles and tiers retain their values. A tier-reference
+string replaces a route mapping and a mapping replaces a reference. Empty
+local maps add no field override; null and empty scalar values are errors.
+
+For role R, a local role entry wins over a committed role entry. A direct role
+route outranks any default-tier route; a reference selects its named tier,
+composed locally over committed tier fields. Without a role entry, resolve the
+role's recommended tier locally over committed policy, then inherit if absent.
+An explicit `--tier` changes only that default, so a configured role still wins.
+A winning reference to a tier with no configured route is an error.
+
+### Read-only inspection and validation
+
+<!-- workflow-shell-contract: bash-zsh -->
+```bash
+python3 scripts/development-workflow/workflow-config-resolver.py model-route \
+  --runner dsh --role developer --repo-root "$PWD" --json
+python3 scripts/development-workflow/workflow-config-resolver.py model-routes \
+  --runner dsh --repo-root "$PWD" --json
+bash scripts/development-workflow/validate-workflow-config.sh --repo-root "$PWD"
+```
+
+`model-route` requires `--role` or `--tier`. Its JSON keys and shell KEY=value
+fields are ROLE, TIER, PROVIDER, MODEL, REASONING_EFFORT, SOURCE, SOURCE_FILE;
+optional or unselected values are empty strings. SOURCE is local-role,
+committed-role, local-tier, committed-tier, or inherited. A partial local map
+reports local only when it contributes a selected field; an empty map over a
+committed map retains committed provenance. A tier-reference result names the
+tier route's source/file, regardless of the role reference's layer. Direct role
+routes have empty TIER; inherited results have no route/source file.
+
+`model-routes` emits ROUTES (deduplicated provider/model/effort tuples) and
+RESOLUTIONS (all canonical roles and explicit tier requests). It includes unused
+configured tiers and preserves resolution records sharing a route. Shell output
+uses ROUTE_COUNT, RESOLUTION_COUNT, and indexed ROUTE_n_/RESOLUTION_n_ fields.
+For a host allowlist, deduplicate exact provider/model pairs separately: effort
+is retained in the resolution record but is not part of the host pair identity.
+
+<!-- workflow-shell-contract: bash-zsh -->
+```bash
+set -euo pipefail
+python3 scripts/development-workflow/workflow-config-resolver.py model-routes \
+  --runner dsh --repo-root "$PWD" --json \
+  | jq '.ROUTES | map({provider: .PROVIDER, model: .MODEL}) | unique_by([.provider, .model])'
+```
+
+Inspection never writes configuration, provisions a host/provider, or starts a
+child. Local discovery follows the existing override-root, checkout, then
+linked-worktree main-clone lookup. Each resolution uses one parsed selected
+configuration pair; its evidence applies only to that invocation, not to a
+later child dispatch or an atomic transaction across concurrent file edits.
+
+Configured routing rejects unknown roles/tiers/keys, wrong types in either
+layer even if masked, invalid YAML, empty ids, incomplete effective routes and
+dangling winning references. `model-route` and opted-in `validate` report
+structured JSON on stderr with CODE, FILE, FIELD, MESSAGE and exit 2; no success
+route or raw YAML snippet is emitted. Fix policy before dispatch. Absent routing
+keeps standalone validation's existing grammar/dependency/output behavior.
+
+### Enable child selection and maintain the allowlist
+
+Verified against DSH `0.2.0-rc.2`, the primary `@deepseek-ai/dsh-tool-subagent`
+[Selecting a child LLM contract](https://github.com/deepseek-ai/deepseek-harness/tree/dsh-v0.2.0-rc.2/packages/subagent/tool-subagent).
+In the Web UI use **Plugins → Subagent → Model selection**, enable selection and
+supply a nonempty exact provider/model allowlist. The shipped Web subagent tool
+opts in with `modelSelectionSettings: true`; a custom profile must explicitly
+opt its chosen subagent tool in. The base/headless tool keeps its existing
+non-opted-in behavior. Use a backend advertising `agentOptions`; in-process and
+DSH SDK backends support selection, while ACP/Codex/Claude Code reject it.
+
+Alternatively, prepare an operator-controlled profile/invocation overlay for
+the settings owner id below; copy effective pairs from the inspection listing.
+Overlay rows replace the targeted whole config, so retain required fields when
+editing an existing overlay. The following ids are illustrative placeholders.
+
+```yaml
+- id: subagent-model-selection-settings
+  config:
+    enabled: true
+    allowedModels:
+      - provider: YOUR_PROVIDER
+        model: YOUR_BALANCED_MODEL
+      - provider: YOUR_PROVIDER
+        model: YOUR_PREMIUM_MODEL
+```
+
+<!-- workflow-shell-contract: bash-zsh -->
+```bash
+dsh --profile web --patch /path/to/private-model-selection.yml
+```
+
+Start a **fresh top-level session** after changing settings. Its captured exact
+allowlist is inherited by children and frozen; later settings changes do not
+alter that session. Restored sessions lacking a recorded policy stay disabled.
+The opt-in exposes `provider`, `model`, `reasoning_effort`, and
+`list_subagent_models`. Catalog membership is advisory: a route absent from the
+catalog is not necessarily denied by the exact allowlist or live adapter.
+
+### Resolve, pass, and record at every child dispatch
+
+The DSH parent follows Protocol 91's DSH dispatch contract before each fresh
+stage/review child. Resolve the target canonical role and parse its JSON;
+never eval it. For SOURCE inherited, omit all route fields. For a configured
+route, verify the session's captured selection policy and backend capability,
+then pass provider/model together and reasoning_effort only when configured.
+Use foreground dispatch where the workflow requires a completed result.
+
+Record the role, tier, requested route, SOURCE/file, actual child route and
+parent/child ids in the runner summary or review evidence. If selection is
+disabled, report **selection-disabled** visibly and omit all route fields. If
+the exact pair is denied, report **allowlist-denied** visibly and omit route
+fields. Both inherit the parent route while retaining the requested-source
+record. Unknown capability/policy requires the existing runner clarification or
+failure path; do not invent permission from catalog output. Invalid project
+policy blocks dispatch; post-dispatch/provider failures use ordinary stage
+failure handling and are never recast as successful inherited fallback.
+
+### Headless default is separate
+
+Project `models.dsh` does not pick the headless review default or change fork
+routing. To pin a headless invocation, configure `agent-default-model` in its
+profile or a private invocation overlay using the desired provider/model:
+
+```yaml
+- id: agent-default-model
+  config:
+    provider: YOUR_PROVIDER
+    model: YOUR_HEADLESS_MODEL
+```
+
+<!-- workflow-shell-contract: bash-zsh -->
+```bash
+DSH_PERMISSION_MODE=read-only dsh --profile headless \
+  --patch /path/to/private-headless-default.yml "Review the current change"
+```
+
+Headless defaults and child selection have separate owners. Reverify runtime
+capabilities after upgrades. Follow the [DSH routing smoke runbook](../../../testing/workflow/dsh-model-routing.smoke-test.md)
+for fixture validation, real distinct tier children in one parent session,
+private role override, and both visible host-restriction fallbacks. Config-only
+output or mocked adapters cannot establish actual child routing.
 
 ---
 
