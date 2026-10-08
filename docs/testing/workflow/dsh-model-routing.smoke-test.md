@@ -201,7 +201,7 @@ file/network/Claude tools.
 
 Actual runs used resolver checkpoint `619f70841ce67fb07c1fb7dd2154cb79f0df3243`.
 A replay against implementation resolver revision
-`28fa41019fa8673cec6225b5c256b69bd904322f` matched all five captured resolutions
+`1b972e33bf075946956b3399cea1cd76953ab927` matched all five captured resolutions
 using immutable per-case fixtures: role, tier, provider/model/effort, SOURCE and
 source filename. The resolver content digest was retained privately; future
 behavioral resolver changes require renewed replay or live smoke as appropriate.
@@ -238,7 +238,9 @@ selection-disabled contract at fixture line 230, then passed after correction.
 Discovery parity also failed with a missing synthetic override directory,
 then both commands passed after that directory was supplied; absent routing
 retained the exact legacy discovery diagnostic. Malformed inline DSH declarations
-now fail with the same sanitized error in both commands. Fresh targeted runs
+and ambiguous alias/merge declarations, root flow maps and verbatim tags
+now fail with the same sanitized error in both commands; unrelated forms retain
+the exact legacy response. Fresh targeted runs
 passed 19 routing methods, 798 resolver assertions and 70 hub assertions.
 These fixture paths remain private; they contain synthetic data only.
 
