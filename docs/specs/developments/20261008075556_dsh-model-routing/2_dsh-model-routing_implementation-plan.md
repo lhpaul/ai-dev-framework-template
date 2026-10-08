@@ -238,6 +238,21 @@ without a DSH grammar pass; do not reread files to obtain context.
 Bare unactivated models.dsh is deliberately inactive, even if YAML-like; this
 compatibility/migration boundary must be prominent in operator examples.
 
+The existing `set-local-path` writer is a separate mutation consumer: today
+`set_local_product_repo_path` serializes the entire local mapping through
+`dump_yaml_subset`, losing comment markers and silently deactivating policy.
+For an activated checkout-local file, reuse the common envelope reader and
+layer validation before any write; retain the opener, policy region and end
+marker as their original bytes. Apply existing path normalization/update
+semantics only to the parsed legacy projection, serialize only that tail, and
+join it after the preserved envelope. Preserve its closing line separator;
+never reserialize policy or duplicate a root models key. Malformed activated
+input fails before writing and leaves the file byte-identical. Unactivated
+files retain the current writer behavior; main-clone fallback remains read-only.
+This change stays inside workflow-config-resolver.py and the existing permitted
+resolver/DSH fixture tests. It does not make the three model-reading commands
+mutating or authorize changes to any real private configuration in this run.
+
 Validate each supplied policy layer against D1's names and route fields before
 D3 composition, even if the other layer masks an invalid value. Nonblank strings
 are required for present route fields; empty route mappings/partial fields can
@@ -389,7 +404,7 @@ of a failed validation result.
 | mode | cmd_mode → load_configs → default reader → mode_from_shared; same mode/output and inline-list acceptance in unrelated legacy data |
 | auth | cmd_auth → resolve_auth_context → load_configs → default reader; same auth hints/precedence/errors, no strict DSH import or validation |
 | list-product-repos | cmd_list_product_repos → load_configs → default reader → product_repos; same workflow_hub requirement, list output and errors |
-| set-local-path | cmd_set_local_path → load_configs for selection, then set_local_product_repo_path → default reader of checkout-local file only; preserve normalization/write ownership, never write the main-clone fallback. Regression uses temporary fixture files only |
+| set-local-path | cmd_set_local_path → load_configs for selection, then set_local_product_repo_path on checkout-local file only. Unactivated writer stays unchanged; activated writer uses D2 envelope/layer validation, preserves raw envelope/policy bytes and serializes only the updated legacy tail. Prove route and marker survival, malformed-input no-write and main-clone ownership in temporary fixtures |
 | Legacy review-overrides | cmd_review_overrides → resolve_review_overrides → resolve_local_review_config → default reader; checkout without review still falls through to main-clone reviewer overrides; unchanged outputs, override origin and fallback rules |
 | review-effective/review-github-effective | Respective cmd/resolve_review functions → preserve_empty_values=True → parse_review_yaml, including selected/shared/main-clone reads; strict review errors and existing library dependency remain. The new raw adapter is not inserted into these branches |
 | Legacy parser helpers | Default parse_yaml_subset → preprocess_yaml → parse_mapping/parse_list → parse_scalar (and recursive calls); extracted snapshot adapter preserves all existing whitespace/comment/inline-list/coercion behavior. BR9 collection/type restrictions occur only in the separate policy parser, never these legacy helpers |
@@ -432,6 +447,7 @@ or common acceptance of invalid input fails the test.
 | Unknown role/tier/key, blank id, incomplete effective route, dangling winning reference | Corresponding D5 schema/effective error; invalid lower layer cannot be masked |
 | Partial fields, deep merge, mapping/reference replacement, empty local overrides | Existing BR2–BR5 coverage retained; no hybrid/provenance regression |
 | Discovery override-root/checkout/main-clone, unrelated nested dsh text | Existing discovery unchanged; only envelope controls activation |
+| set-local-path on activated local policy plus product_repos tail; malformed active policy; unactivated control | All three commands retain the same effective route after the path update; envelope/policy bytes unchanged, only checkout tail updated; invalid active input leaves bytes unchanged; old unactivated behavior preserved |
 | Synthetic private sentinel and control/newline attempts | Redacted common error, no injected output lines or raw source leakage |
 | Instrumented common reader in each command; multi-route listing | One snapshot/read and one policy parse per active layer; no separate detector |
 

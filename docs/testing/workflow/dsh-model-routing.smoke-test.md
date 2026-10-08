@@ -62,6 +62,18 @@ branches and existing data; discard no repository work during smoke.
 **Expected result**: Results follow plan D1–D4 and spec BR2–BR5; inspection writes
 nothing and creates no child session.
 
+### Configuration editing regression (temporary fixtures only)
+
+**Maps to**: AC2 and BR9e.
+
+1. Create an activated local policy with an envelope and a legacy product_repos
+   tail. Record raw envelope/policy bytes and routes from all three commands.
+2. Run set-local-path against that temporary checkout. Confirm the repository
+   path changes while the envelope/policy bytes and effective routes survive;
+   the main-clone fallback is never written.
+3. Repeat with malformed activated policy; assert failure and byte-identical
+   local file. Repeat with an unactivated fixture; retain existing writer behavior.
+
 ### Step 3: Reject malformed policy with the same validator errors
 
 **Maps to**: AC5.
