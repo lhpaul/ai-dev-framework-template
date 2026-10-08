@@ -4,6 +4,18 @@
 **Spec**: [Approved product contract](1_dsh-model-routing_specs.md)
 **Smoke test runbook**: [DSH routing smoke](../../../testing/workflow/dsh-model-routing.smoke-test.md)
 
+## Amendment status
+
+Documentation-only amendment to plan PR #1933 for Luis's selected strict,
+dependency-free parser design. The [proposed spec amendment #1935](https://github.com/lhpaul/ai-dev-framework-template/pull/1935) to #1932 supplies
+BR9, the normative format/activation contract
+([review baseline](https://github.com/lhpaul/ai-dev-framework-template/blob/bd1e93ea/docs/specs/developments/20261008075556_dsh-model-routing/1_dsh-model-routing_specs.md)); the base's original spec remains
+historical until that amendment merges. This plan is prepared for paired human
+review, not permission to implement against an unmerged specification.
+No changes to implementation PR #1934 or retained candidate `43bddf22` are
+included. Both amendment PRs target develop; merge spec amendment first, then
+this plan, only after Luis approves. This run merges neither.
+
 ## Summary
 
 Extend the existing workflow configuration resolver with optional DSH routing,
@@ -13,16 +25,38 @@ prove configuration behavior with isolated fixtures and child routing with an
 actual DSH session. The approved spec supplies product rules; Technical
 Decisions below is the single implementation contract.
 
-**Estimated complexity**: M — configuration composition and validation need
-careful coverage, while the runtime integration is an existing dispatch tool.
-**Dependencies**: Approved spec PR #1932 is merged. No further ADF feature,
+**Estimated complexity**: M, with parser/compatibility risk requiring explicit
+review; no claim that a custom parser automatically qualifies for medium risk.
+A later implementation must classify at medium or below before delegated merge.
+**Dependencies**: Original spec PR #1932 is merged; both proposed document
+amendments must be approved and merged before any implementation resumes. No further ADF feature,
 provider account setup, upstream patch, or optional preset bundle is required.
 The live smoke requires an installed DSH and existing working permitted routes.
 No database, application frontend, production deployment, or new service changes.
-Before implementation edits, verify that PR #1932 is merged and its approved
-spec is present on the selected implementation base. If either prerequisite
+Before implementation edits, verify the spec and plan amendment PRs are merged
+and their approved revisions are present on the selected implementation base. If either prerequisite
 fails, stop and report the missing dependency to the parent; do not substitute
 an unapproved or absent spec.
+
+## Amendment Verification Log
+
+Evidence below is from develop `98f5de0d7d72748abced53c9a36dc461934f8ef0`,
+2026-10-08; historical runtime evidence below remains explicitly historical.
+
+| Fact / bounded scope | Reproducing query at that revision | Result / discharge |
+| --- | --- | --- |
+| Template fit | `rg -n 'is_template' .ai-dev-workflow.yaml` | Framework tooling, no consumer language dependency |
+| Legacy versus strict readers | `rg -n '^def (parse_yaml_subset|parse_review_yaml|resolve_local_config|cmd_resolve)' scripts/development-workflow/workflow-config-resolver.py; sed -n '374,388p' scripts/development-workflow/workflow-config-resolver.py` | Existing entry points; preserve_empty_values=True delegates to PyYAML, default branch does not; new parser is proposed |
+| Shared reader consumers | `rg -n 'parse_yaml_subset\(|parse_review_yaml\(|cmd_resolve\(' scripts/development-workflow/workflow-config-resolver.py scripts/development-workflow/workflow-lib.sh scripts/development-workflow/validate-workflow-config.sh` | Existing composed paths in Composed Call Sites; review/auth/ordinary resolve remain unchanged; active validate/model commands share D2 result |
+| Existing suites/runbook | `rg --files scripts/development-workflow/tests docs/testing/workflow | rg 'config-resolver|hub-smoke|step7a|dsh-model-routing'` | Existing legacy suites/runbook; new unit/harness paths are proposals on develop |
+| Allowed implementation population | `sed -n '/^## Files to Modify/,/^## Risks/p' docs/specs/developments/20261008075556_dsh-model-routing/2_dsh-model-routing_implementation-plan.md` (count table paths with `rg -c '^\| (scripts/|docs/|\.ai-dev|sync-manifest|changelog.d/)'`) | Original 14 named rows; scope unchanged, see amendment scope boundary |
+
+Operational assumption check for this bounded documentation invocation: original
+spec/plan are merged at the stated revisions; PR #1934 is a retained same-surface
+candidate, not a competing execution. Proposed paired amendments intentionally
+replace its reading contract, and implementation is held until both merge.
+The parent records current PR heads and original-branch retention separately;
+no portfolio scan or mutation of #1934 is authorized.
 
 ## Verification Log
 
@@ -156,37 +190,60 @@ retaining the contributing resolution records. Ignore inherited results when
 forming the configured route list. Do not omit an otherwise unused configured
 tier that an explicit tier request can select.
 
-#### D2: Strict schema and compatibility boundary
+#### D2: Strict parser, envelope and legacy compatibility
 
-Use `parse_yaml_subset(..., preserve_empty_values=True)` and
-`resolve_local_config` without changing their existing contracts. Model-route
-commands read and parse the selected shared/local configuration pair once per
-resolution, then use that in-memory pair for validation, composition and
-provenance; do not reread individual branches during a precedence walk. This
-is invocation evidence, not an atomic transaction spanning concurrent edits to
-multiple files. Missing files/block are absent; present null, scalar or list
-where a mapping is required is a schema error.
+Implement BR9 with Python standard-library code inside the existing resolver;
+no PyYAML/ruamel import, optional fallback parser, package provisioning or network
+call on this model-policy path. Existing review/auth readers and their separate
+dependencies are not changed by this decision. `resolve_local_config` continues
+to choose the same override-root, checkout and main-clone files.
 
-The optional `models.dsh` mapping admits `tiers` and `roles`. Tier keys are
-exactly economy/balanced/premium; role keys are D1's catalogue. Route mappings
-admit provider/model and optional reasoning_effort. Reject unknown keys and
-wrong types in either supplied layer even if a later override would mask them.
-Provider/model/effort are nonblank strings when present; reject control
-characters that cannot safely travel in the line-oriented shell evidence.
-Reasoning effort is an opaque adapter id, not a new ADF enum. Incomplete route
-mappings may be partial layer contributions: require provider and model only
-after D3 composes the effective entry. Validate dangling references against
-winning effective role entries, so an overridden valid tier-reference form is
-not mistaken for an effective dangling reference.
+Create one `load_model_policy` reading/validation path used by validate,
+model-route and model-routes. Snapshot the selected raw shared/local pair once
+per invocation. Parse each active envelope once; retain parsed policy, projected
+legacy configuration and source positions in an immutable result. Reuse that
+result for layer validation, composition, route listing and validate's context
+checks. No command may rediscover activation, reparse model policy, reread a
+selected file or hide reader exceptions as absence. Files are read once each;
+this is not an atomic transaction across simultaneous edits in different files.
 
-For standalone `validate`, add a dedicated model-schema validation hook while
-retaining existing repository-context validation/output and arguments. Activate
-the strict model-schema pass only when a routing block is configured; avoid
-introducing a PyYAML dependency or stricter grammar into an absent-routing
-legacy validation invocation. An explicitly malformed routing block must
-activate validation and fail, never disappear as absence. Use the same D5
-model diagnostics for model-route and standalone validation. Leave ordinary
-resolve, auth and review-effective behavior unchanged.
+Activation is a deterministic first-line protocol, not a search for `dsh` in
+YAML. Classify the exact reserved prefix in BR9a, including a BOM followed by
+that prefix as an invalid envelope, then verify the version/opener and mandatory
+end. Once reserved, malformed input cannot return to the inactive branch.
+Misplaced markers in an unactivated file remain ordinary legacy text. Reject
+extra reserved column-zero marker lines after the close and reject a root models
+key in the parsed legacy projection. Policy `{}` variants follow BR9a.
+
+The envelope grammar/escaping is exclusively spec BR9b–BR9d. Use a small lexer
+tracking quote/comment state and a mapping stack tracking exact two-space
+increments, per-mapping seen-key sets and source paths. Require complete scalar
+and line consumption; reject dangling punctuation or unsupported tokens instead
+of ignoring the suffix. Recognize numeric/null/boolean tokens as invalid typed
+values, using BR9b's lexical forms; retain quote metadata so quoted identifiers
+are strings. Unsupported constructs, including indentless/indented sequences,
+are explicit rejection tokens; they do not close the models region. No general
+YAML features or implicit coercions are implemented.
+
+In an active file, replace envelope lines by blank lines for the legacy projection
+so tail line positions remain stable. Factor a private raw-snapshot adapter from the legacy reader's default
+`preserve_empty_values=False` preprocessing/mapping/scalar path, preserving the
+existing public path-based API for its other consumers. Apply that dependency-free
+adapter to the projection; translate failures into D5 errors. Do not call
+preserve_empty_values=True: at the recorded revision that branch delegates to
+parse_review_yaml and imports PyYAML. Do not use `parse_review_yaml` or `routing_declared` for activation or
+policy parsing. For an unactivated file, contribute no model routes; validate
+reuses the same legacy semantics/output/arguments from its raw snapshots,
+without a DSH grammar pass; do not reread files to obtain context.
+Bare unactivated models.dsh is deliberately inactive, even if YAML-like; this
+compatibility/migration boundary must be prominent in operator examples.
+
+Validate each supplied policy layer against D1's names and route fields before
+D3 composition, even if the other layer masks an invalid value. Nonblank strings
+are required for present route fields; empty route mappings/partial fields can
+contribute to a complete composed entry. Check effective completeness and
+winning tier references after composition. BR9 format outcomes precede the
+existing routing and host-dispatch decision matrix.
 
 #### D3: Composition and precedence
 
@@ -221,12 +278,21 @@ configured route tuples as JSON, or deterministically indexed shell records.
 
 Model-schema/query failures exit 2 with a structured JSON diagnostic on stderr:
 CODE, FILE, FIELD, MESSAGE. Use stable code classes for unknown role/tier,
-invalid schema/type, incomplete route and dangling reference; a YAML/dependency
-read failure is distinguishable. Do not print the entire configuration or
+invalid schema/type, incomplete route and dangling reference. The common
+reader uses `invalid_envelope` for activation/delimiters/forbidden tail models,
+`invalid_yaml` for unsupported grammar, duplicate keys, malformed UTF-8 in an
+active file or active legacy-projection syntax failure, and `invalid_type` for
+null/boolean/numeric or nonmapping policy values. Name/field/value errors retain
+`unknown_name`, `unknown_field`, `invalid_value`; effective errors use
+`incomplete_route` and `dangling_reference`. Query errors remain `unknown_role`
+and `unknown_tier`. Syntax is checked before schema; shared-layer errors precede
+local-layer errors, then composition, then query validation. All three commands
+and the wrapper expose the identical first policy error object and exit 2.
+There is no dependency_missing fallback on this dependency-free policy path. Do not print the entire configuration or
 invalid raw values. No success route appears on an error path. Existing
 unrelated legacy diagnostics remain unchanged.
-The strict reader's existing YAML exception text can contain source snippets.
-The new model commands and routing-validation hook must replace that text with
+Legacy parser exception text can contain source snippets.
+The common active reader must replace that text with
 a stable sanitized MESSAGE, retaining safe file/field/location evidence without
 raw input. A malformed temporary fixture containing a private test sentinel
 must fail without that sentinel appearing in stdout or stderr; legacy command
@@ -301,13 +367,14 @@ child's route. Empty/missing/unknown input handling is covered by D1/D2/D5.
 ### Composed Call Sites
 
 The Verification Log searches enumerate the existing validation path. Preserve
-legacy repository-context outcomes first; model-schema failure is an additional
+legacy repository-context semantics; common policy reading precedes context
+validation/output for activated files. Model-schema failure is an additional
 read-only rejection only for configured DSH routing. No side effect moves ahead
 of a failed validation result.
 
 | Consumer/site | Ordered path and expected observable outcome |
 | --- | --- |
-| validate-workflow-config.sh | CLI arguments → resolver validate → repository context and D2 model validation; invalid opt-in routing exits nonzero, absent routing retains prior output/exit |
+| validate-workflow-config.sh | CLI arguments → D2 common policy reader → resolver context checks/output; invalid opt-in routing exits nonzero, absent routing retains prior output/exit |
 | workflow-lib.sh workflow_validate_repository_context | Wrapper → same validate command; preserve repo/require-local semantics, propagate D5 failure |
 | post-merge-cleanup.sh selected_repo_context/repo_context calls | Wrapper validation precedes cleanup target use; invalid policy prevents proceeding on an unvalidated context; existing valid/absent policy follows its normal branch |
 | component-release-target.sh validate calls | Context validation precedes release-target interpretation; new model failure propagates without claiming a valid target |
@@ -319,34 +386,47 @@ No deleted branch's inputs need reassignment: this is additive validation.
 
 ### Parser-Risk Edge Cases and Unit Mapping
 
-Classification: applicable, because D2 parses and validates structured YAML.
-Implement automated unit cases in
-`scripts/development-workflow/tests/test_workflow_dsh_model_routing.py`, invoked
-by `test-dsh-model-routing.sh`. Each row names a test intent, not a frozen case
-count; coverage-equivalent consolidation is allowed.
+Applicable: a custom structured-text lexer/parser changes tooling-path behavior.
+The following matrix is indicative test organization, not a Binding enumeration.
+Every semantic input class must be covered; equivalent consolidation is allowed.
+Implement the parametrized cases in test_workflow_dsh_model_routing.py and expose
+them through test-dsh-model-routing.sh. For each active malformed case, invoke
+validate, model-route, model-routes and the validation wrapper against the same
+fixture pair; assert D5's expected CODE/FILE/FIELD/MESSAGE, exit 2, empty stdout
+and identical diagnostics. Equality alone is insufficient: common inheritance
+or common acceptance of invalid input fails the test.
 
-| Concrete input class | Automated coverage intent |
+| Input class / concrete example | Expected proof |
 | --- | --- |
-| Missing files; existing files with no routing block | absent_files/absent_block: inherited; no writes and legacy validate unchanged |
-| Commented-out block, quoted hash in model id, plain trailing comment | commented_policy/scalar_boundaries: comments absent, literal quoted hash preserved |
-| True boolean, number, list, null or empty mapping in mapping positions | wrong_types: fail declared invalid types; allow empty root tier/role collections but require complete effective route entries |
-| provider-only/model-only effective route, empty/whitespace values | incomplete_routes/empty_ids: fail; composed provider-only local contribution succeeds |
-| Unknown role/tier; case mismatch; extra route key | unknown_names: strict known-name/schema errors |
-| Local role mapping vs shared tier-reference and converse | entry_replacement: no hybrid value, deterministic winning type |
-| Nested same-role/same-tier mappings and unrelated keys | deep_merge: retain counterparts and unrelated roles/tiers; field provenance correct |
-| Two explicit duplicate keys on one mapping, alias/tag, nonempty flow mapping | strict_yaml: reuse reader rejection; do not accept these through validation's absence fast path |
-| CRLF or alternate recognized YAML line break versus malformed indentation | yaml_boundaries: reader-consistent acceptance/rejection and structured diagnostic |
-| Malformed YAML containing a private synthetic sentinel | diagnostic_redaction: model commands and opted-in validator fail without leaking the sentinel or source snippet |
-| Escaped control characters in quoted route scalars | evidence_boundaries: no injected KEY=value lines; fail safely |
-| Dangling winning tier reference; dangling reference replaced by direct local route | reference_scope: error only for effective dangling reference; invalid source types still fail |
-| Local empty mapping over shared mapping | empty_override: retain route and committed provenance; replacement without shared counterpart fails incomplete |
-| Role route vs local default-tier route; explicit tier with/without role policy | role_priority/explicit_tier: spec precedence holds |
-| Checkout override, main-clone worktree fallback, explicit override root | local_discovery: existing precedence; fixtures, never real local files |
+| Missing files; unactivated legacy; misplaced marker; bare models.dsh without opener | Inherited routes; validate retains original context/output/errors; no YAML import, including python -S |
+| Exact opener/end; models: {}, dsh: {}, tiers/roles empty | Active valid empties; composition/provenance follow D3/D4 |
+| Unknown version, malformed reserved opener, BOM before opener, missing/repeated end, second envelope, tail models | invalid_envelope at common reader; never recover as absence |
+| Block mappings, exact indentation, LF/CRLF, comments, quoted hash/operator literals | Accepted boundaries; no false anchor/alias or comment interpretation |
+| Single-quote doubling, double-quote/backslash escapes; unsupported escape, unmatched quote, tabs, indentation jump | Accepted escapes decoded as BR9c; unsupported cases invalid_yaml |
+| models: dsh: {}; anchor adjacent to flow mapping | Historical malformed inline/metadata forms reject as invalid_yaml |
+| Indented models sequence; models with newline then - dsh: {} at column zero | Both list forms invalid_yaml, never inherited |
+| models list item other: {} followed by dsh: null; direct dsh: null | List form invalid_yaml; direct null invalid_type; same error across commands |
+| Flow sequence/mapping without close, dangling final item, trailing comma, nonempty flow, even if valid general YAML | invalid_yaml by subset, including historical models: [{dsh: {}} |
+| Block/multiline scalars, tags/directives/document markers, anchors/aliases/merge keys, duplicate keys | invalid_yaml; quoted operator strings remain accepted |
+| Boolean/numeric/null tokens versus quoted versions; wrong scalar in mapping position | invalid_type for wrong source types; quoted ids remain strings subject to schema |
+| Unknown role/tier/key, blank id, incomplete effective route, dangling winning reference | Corresponding D5 schema/effective error; invalid lower layer cannot be masked |
+| Partial fields, deep merge, mapping/reference replacement, empty local overrides | Existing BR2–BR5 coverage retained; no hybrid/provenance regression |
+| Discovery override-root/checkout/main-clone, unrelated nested dsh text | Existing discovery unchanged; only envelope controls activation |
+| Synthetic private sentinel and control/newline attempts | Redacted common error, no injected output lines or raw source leakage |
+| Instrumented common reader in each command; multi-route listing | One snapshot/read and one policy parse per active layer; no separate detector |
 
-Suppression semantics: Not applicable; no directives or suppression feature.
-Multiple occurrences on a line: duplicate explicit YAML keys and quoted scalar
-content are covered; no free-text match scanner is introduced. Normative syntax
-flexibility follows the existing strict reader instead of a new YAML grammar.
+Add bounded generative lexer tests for quote/comment/indentation/delimiter
+combinations under BR9, with a deterministic seed. Check accepted ASTs and
+expected rejected classes, not only command agreement. Existing resolver, hub,
+Step7a and no-routing tests remain; update only fixtures asserting the superseded
+bare-policy activation contract. Keep historical blocking shapes as regression
+coverage, placing each inside an activated envelope. Add unactivated counterparts
+to prove the deliberate compatibility boundary. No fresh real local files or
+provider calls are used in these parser tests.
+
+Suppression semantics: not applicable; no syntax suppressions are supported.
+The fixed grammar is the operator contract, not a claimed sample of all YAML.
+Historical rejection cases motivate coverage; they are not its completeness proof.
 Concurrency classification: Not applicable; finite synchronous reads/pure
 composition introduce no concurrent event sources or shared mutable cache.
 Cross-cutting checklist classification: Not applicable; D7 adds a runner-specific
@@ -415,7 +495,9 @@ dispatch-profile document, skill model pins or static preset bundle is planned.
 ## Files to Modify
 
 Implementation is bounded to the following paths; this plan PR contains only
-this plan and the smoke runbook.
+this plan and the smoke runbook. The spec amendment is a separate spec-stage
+PR; these document amendments are explicitly authorized outside the implementation
+allowlist. No runtime/config/test edit is made by either amendment PR.
 
 | Path | Work / decision | AC coverage |
 | --- | --- | --- |
@@ -433,6 +515,17 @@ this plan and the smoke runbook.
 | docs/testing/workflow/dsh-model-routing.smoke-test.md | Complete runbook/evidence | AC9 |
 | sync-manifest.yaml | Add explicit hub-only smoke entry; existing tooling/docs globs cover other files | AC10 |
 | changelog.d/1927.added.dsh-model-routing.md | Feature release note in required bold-title format | AC10 |
+
+### Scope boundary of this amendment
+
+The implementation Files to Modify table remains the original 14-path allowlist.
+The custom parser fits inside workflow-config-resolver.py; no new parser module,
+vendored library, requirements/bootstrap or CI file is approved. The amended
+smoke runbook is already one of those paths. Changes to the two spec/plan files
+are separately authorized documentation-stage work, not an implementation scope
+expansion. If implementation proves another file is required, stop before editing
+and ask Luis; do not silently add it. Shared/local example edits remain comments
+only, showing the activation/envelope without enabling template routes.
 
 ## Risks & Mitigations
 

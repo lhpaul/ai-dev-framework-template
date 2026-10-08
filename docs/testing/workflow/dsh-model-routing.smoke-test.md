@@ -9,7 +9,8 @@
 ## Prerequisites
 
 - [ ] Implementation branch has the resolver, tests and documented dispatch contract.
-- [ ] Python3 with the existing strict reader's PyYAML dependency is available.
+- [ ] Both strict-subset document amendments are merged and the implementation follows spec BR9.
+- [ ] Python3 is available; model-policy parsing needs no PyYAML/ruamel. Other review readers keep their own prerequisites.
 - [ ] Local DSH supports the verified child-selection contract; record dsh --version.
 - [ ] Operator already has working permitted routes for different balanced/premium models. Provider/account setup is excluded.
 - [ ] Use a temporary workspace, shared/local YAML fixtures and a temporary host overlay. Do not change the repository's real local YAML/env or checkpoint-policy.json.
@@ -33,7 +34,8 @@ branches and existing data; discard no repository work during smoke.
 **Maps to**: AC1, AC8.
 
 1. Run model-route for developer against a temporary directory with neither
-   policy file, then files containing only unrelated configuration.
+   policy file, then unactivated files containing unrelated configuration and
+   bare models.dsh. Check the exact first-line activation boundary from BR9.
 2. Confirm SOURCE is inherited and no route fields are selected.
 3. Check the shipped shared/local example routing blocks are fully commented.
 4. Compare absent-routing validation and reviewer behavior with existing tests.
@@ -44,7 +46,8 @@ branches and existing data; discard no repository work during smoke.
 
 **Maps to**: AC2, AC3, AC4.
 
-1. Run the new DSH/config suites using their isolated fixture setup.
+1. Run the new DSH/config suites using isolated fixtures with the exact BR9
+   opener at the first line and mandatory end delimiter in each active layer.
 2. Inspect examples exercising every source: local-role, committed-role,
    local-tier, committed-tier, inherited; include a role reference and direct
    role route. Confirm a shared direct role route outranks a local default tier.
@@ -63,8 +66,10 @@ nothing and creates no child session.
 
 **Maps to**: AC5.
 
-1. Exercise the plan's concrete parser-risk cases through model-route and
-   validate-workflow-config.sh against temporary fixtures.
+1. Exercise the plan's parametrized parser-risk matrix through validate,
+   model-route, model-routes and validate-workflow-config.sh on the same fixtures.
+   Include both list indentations, malformed flow, continuation null, anchors,
+   aliases, merge keys, delimiters and defined/unsupported escapes.
 2. Confirm unknown role/tier, wrong types, incomplete effective routes, empty
    required ids, unknown route keys and dangling winning references fail.
 3. Include malformed lower-layer types masked by a local override; they must
@@ -72,8 +77,9 @@ nothing and creates no child session.
    route; only the winning reference is checked for dangling resolution.
 4. At a recorded fixture file and line, plant a provider-only effective route,
    observe failure, supply the missing model and observe pass.
-5. Confirm failure emits a structured diagnostic without a success route or
-   unrelated configuration contents.
+5. Assert expected CODE and identical CODE/FILE/FIELD/MESSAGE, exit 2 and empty
+   stdout; reject shared acceptance/inheritance of invalid active input. Confirm
+   no synthetic private sentinel or unrelated configuration contents leak.
 
 **Expected result**: Invalid configured routing is visibly blocked; no silent
 inheritance or configuration writes.
@@ -122,7 +128,8 @@ output alone cannot pass this step.
 
 **Maps to**: AC2, AC4, AC9.
 
-1. Add a temporary local override for developer using another already permitted
+1. Activate the temporary local file with the BR9 envelope and add a developer
+   override using another already permitted
    working route; keep that pair in the session's original allowlist.
 2. Resolve developer again, showing local-role source. Confirm product-manager
    still resolves its previous route and shared policy's digest is unchanged.
@@ -179,6 +186,9 @@ without DSH routing keep their existing behavior.
 
 ## Evidence Record
 
+This documentation amendment specifies future verification only; prior smoke
+evidence for the bare-policy candidate does not prove the amended parser.
+
 Record implementation head, DSH version, suite commands/results, exact planted
 fixture file/line, parent/child ids, requested/effective route and SOURCE for each
 live dispatch, fallback reason, shared-policy digest comparison and any blocker.
@@ -194,7 +204,8 @@ itself makes no claim that the feature smoke has already run.
 | Symptom | Action |
 | --- | --- |
 | Unknown role or tier | Use the plan's canonical catalogue; do not infer runner-specific aliases |
-| YAML fixture rejected | Use block mappings and the existing strict-reader subset |
+| YAML fixture rejected | Use spec BR9 envelope, block mappings and defined escapes; no parser fallback |
+| Bare policy inherits | Move it explicitly into the first-line BR9 envelope in a fixture; unactivated data is not routing policy |
 | Selection fields absent | Confirm temporary opt-in, backend capability and fresh session; report disabled fallback visibly |
 | Previously allowed route still denied | Inspect the session's captured exact policy, not later host-setting edits |
 | Working route unavailable or provider failure | Report actual failure to the parent; no account setup, secret output or mocked substitute |
