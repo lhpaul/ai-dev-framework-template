@@ -2125,6 +2125,9 @@ def routing_declared(raw: str) -> bool:
                 elif char == "," and depth == 1:
                     candidates.append((len(lines), indent, value[start:position].strip()))
                     start = position + 1
+            else:
+                # An unfinished sequence still has an explicit final item.
+                candidates.append((len(lines), indent, value[start:].strip()))
         children = []
         for child_indent, child in lines[index + 1:]:
             if child_indent <= indent:
