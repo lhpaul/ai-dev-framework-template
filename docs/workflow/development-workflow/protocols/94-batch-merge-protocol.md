@@ -336,7 +336,27 @@ After a clean or resolved merge, in order:
    need to run a separate `git push origin <base>` step — the script already did it.
 
    If you are running a resolved-conflict merge (Step 4.3) and need to commit the
-   resolution before continuing, stage and commit the resolved files, then execute the frozen `base_push`
+   resolution before continuing, stage and commit the resolved files, then explicitly
+   recover the same session before any push:
+
+   <!-- workflow-shell-contract: bash-zsh -->
+   ```bash
+   MERGE_RESUME="$(python3 ./scripts/development-workflow/workflow-merge-budget.py resume --session "$MERGE_SESSION")" || {
+     printf '%s\n' "$MERGE_RESUME" >&2
+     printf 'ERROR: resolved merge recovery did not readmit the session; stop the selected sequence.\n' >&2
+     exit 1
+   }
+   printf '%s\n' "$MERGE_RESUME" | jq -e '.outcome == "Admitted"' >/dev/null || {
+     printf '%s\n' "$MERGE_RESUME" >&2
+     printf 'ERROR: recovered session is not Admitted; inspect its recorded outcome before continuing.\n' >&2
+     exit 1
+   }
+   ```
+
+   Recovery independently verifies that the resolved merge contains the frozen
+   reviewed head, records `local_merge` as completed and readmits only outstanding
+   work. If recovery cannot verify the resolution or budget, stop without pushing
+   or attempting another selected PR. Once Admitted, execute the frozen `base_push`
    step through the session executor with the existing `git push origin <base>`
    argv. Verify remote ancestry before proceeding to its frozen `merge_api`
    step and independent MERGED read-back. The script does not handle the

@@ -1212,6 +1212,49 @@ class Composed(unittest.TestCase):
         self.assertEqual(len(data['comments']),1)
         self.assertEqual(data['trackerStatus'],'Merged')
 
+    def test_actual_conflict_resolution_requires_explicit_resume_before_push(self):
+        (self.repo/'base.txt').write_text('feature change\n')
+        self.command(['git','add','base.txt']);self.command(['git','commit','-qm','fixture feature conflict'])
+        self.head=self.command(['git','rev-parse','HEAD']).stdout.strip()
+        self.command(['git','push','-q','origin','feature/12-item'])
+        self.data['prs']['12']['headRefOid']=self.head;self.fixture.write_text(json.dumps(self.data))
+        self.command(['git','checkout','develop'])
+        (self.repo/'base.txt').write_text('base change\n')
+        self.command(['git','add','base.txt']);self.command(['git','commit','-qm','fixture base conflict'])
+        self.command(['git','push','-q','origin','develop'])
+        before_remote=self.command(['git','rev-parse','HEAD']).stdout.strip()
+        session=self.begin()
+        conflicted=self.helper('run-step','--session',session,'--repo','org/repo','--pr','12',
+            '--step','local_merge','--phase','local_merge','--','git','merge','--no-ff','--no-edit',self.head,success=False)
+        self.assertNotEqual(conflicted.returncode,0)
+        state=json.loads(Path(session).read_text())
+        self.assertEqual(state['outcome'],'Interrupted')
+        self.assertEqual(state['prs'][0]['steps']['local_merge']['status'],'uncertain')
+        self.assertTrue((self.repo/'.git/MERGE_HEAD').exists())
+        (self.repo/'base.txt').write_text('resolved feature and base changes\n')
+        self.command(['git','add','base.txt']);self.command(['git','commit','-qm','fixture resolve merge conflict'])
+        resolved=self.command(['git','rev-parse','HEAD']).stdout.strip()
+        push=['run-step','--session',session,'--repo','org/repo','--pr','12','--step','base_push',
+              '--phase','base_push','--','git','push','origin','HEAD:refs/heads/develop']
+        denied=self.helper(*push,success=False)
+        self.assertNotEqual(denied.returncode,0)
+        self.assertTrue(self.command(['git','ls-remote','origin','refs/heads/develop']).stdout.startswith(before_remote))
+        self.assertNotIn(['pr','merge'],json.loads(self.fixture.read_text())['events'])
+        recovered=json.loads(self.helper('resume','--session',session).stdout)
+        self.assertEqual(recovered['outcome'],'Admitted')
+        self.assertEqual(recovered['prs'][0]['steps']['local_merge']['status'],'completed')
+        self.assertEqual(recovered['prs'][0]['steps']['local_merge']['commit'],resolved)
+        self.helper(*push)
+        self.helper('run-step','--session',session,'--repo','org/repo','--pr','12','--step','merge_api',
+            '--phase','merge_api','--','gh','pr','merge','12','--merge','--match-head-commit',self.head)
+        self.helper('run-step','--session',session,'--repo','org/repo','--pr','12','--step','merge_verify',
+            '--phase','merge_verify','--','true')
+        self.command(['bash',str(self.scripts/'post-merge-cleanup.sh'),'--merge-session',session,
+            '--repo-root',str(self.repo),'--base','develop','--pr','12','feature/12-item'],self.env)
+        self.assertEqual(json.loads(self.helper('report','--session',session).stdout)['outcome'],'Completed')
+        self.assertEqual(json.loads(self.fixture.read_text())['events'].count(['pr','merge']),1)
+        self.assertTrue(self.command(['git','ls-remote','origin','refs/heads/develop']).stdout.startswith(resolved))
+
     def test_actual_failed_push_retries_frozen_commit_after_checkout_change(self):
         session = self.begin()
         self.command(['git','checkout','develop'])
