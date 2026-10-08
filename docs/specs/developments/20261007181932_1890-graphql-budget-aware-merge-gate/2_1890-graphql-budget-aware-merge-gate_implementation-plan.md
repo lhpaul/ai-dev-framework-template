@@ -13,6 +13,24 @@ Add an invocation-scoped budget/session helper around the existing delegated and
 **Template fit**: Generic workflow tooling using the repository's existing Bash/Python toolchain; `template.is_template: true` does not trigger a framework-specific stop.
 **Alignment**: Luis's recorded option C in the spec's Approved Amendment resolves the prior hard-bound-versus-adapter choice. The estimate is intentionally heuristic and cannot guarantee quota or atomicity.
 
+## Approved Runtime Inventory Amendment
+
+Luis approved option A after implementation PR #1930 exposed product-runtime compatibility failures. This amendment adds only these implementation paths to the previously approved scope:
+
+| Additional path | Bounded change | Preserved constraint |
+| --- | --- | --- |
+| `scripts/development-workflow/validate-workflow-hub-skeletons.py` | Add `scripts/development-workflow/workflow-merge-budget.py` to `PRODUCT_RELEASE_RUNTIME_PATHS`. | Keep all validation predicates unchanged. |
+| `template/product-repo-injection/skeleton-manifest.yaml` | Declare the helper with `required_for_product_repo: true`. | Preserve product ownership, mode scopes and other required entries. |
+| `scripts/development-workflow/tests/test-workflow-orchestration-product-repo-aware.sh` | Supply typed quota, repository and owned merged-PR evidence in the existing private cleanup fixture. | Obtain genuine helper admission; no production bypass or live forwarding. |
+
+The spec, heuristic weights, lifecycle, merge queue, admin and already-merged behavior remain unchanged. Another implementation path or risk above medium requires a parent decision before edits. The parent explicitly approves the separate plan-amendment branch from `develop`; preserve all prior branches. Keep #1930 draft until this plan amendment passes normal review, CI and delegated gate and merges. Then integrate amended `develop` by normal merge into its existing feature branch, apply the three bounded changes, and refresh current-head implementation review, CI and delegated gates.
+
+Amendment evidence: base `84e9adbdde51bc160c633062ab5361095a167dad`; implementation head `b37c7a635db4b8b8472bda410b2ad26c9ab42f5b`. CI run [37703595141](https://github.com/lhpaul/ai-dev-framework-template/actions/runs/37703595141) fails the skeleton inventory in shards 1 and 8 and the product-awareness cleanup fixture in shard 4. The inventory validator rejects the already-planned helper as an unexpected sync runtime entry; the fixture lacks owned merged-PR and quota evidence. Source checks are `rg -n 'PRODUCT_RELEASE_RUNTIME_PATHS|workflow-lib.sh' scripts/development-workflow/validate-workflow-hub-skeletons.py`, `rg -n 'required_for_product_repo|workflow-lib.sh' template/product-repo-injection/skeleton-manifest.yaml`, and inspection of the cleanup cases in the product-awareness suite. These observations supersede the unchanged-validator disposition below; other consumer dispositions remain applicable.
+
+Private-copy proposal validation passed skeleton 25/25, hub smoke 70/70 and product-awareness 72/72. Removing the helper from that copy's product manifest produces the expected missing-runtime rejection; restoring the coordinated inventories passes. These results justify the bounded amendment and are not implementation-head CI evidence. After applying the amendment in #1930, rerun `bash scripts/development-workflow/tests/test-workflow-hub-skeletons.sh`, `bash scripts/development-workflow/tests/test-workflow-hub-smoke-fixtures.sh` and `bash scripts/development-workflow/tests/test-workflow-orchestration-product-repo-aware.sh`, preserve a planted/restored inventory proof, and run all selected CI suites on the resulting head.
+
+Operational assumptions verified at 2026-10-08T01:26:40+00:00 using `gh pr view 1930 --json state,isDraft,headRefName,headRefOid`, `git rev-parse origin/develop`, and `get_tracker_status_for_issue 1890`: #1890 remains the owning item in Project 1 at In Development; #1930 is the only active implementation PR for its existing feature branch; the approved spec and plan PRs #1928 and #1929 are merged. Verify these bounded identities and tracker ownership before dispatch. A later conflicting observation stops implementation under the existing stale-assumption rule.
+
 ## Verification Log
 
 Source snapshot: `f5162a5fa5246b630e7bfd632654a9eae70ddfda`, inspected 2026-10-07T22:14:12+00:00. Plan artifact stays in the existing development folder as `2_1890-graphql-budget-aware-merge-gate_implementation-plan.md`; the parent uses `implementation-plan/1890-graphql-budget-heuristic-merge-gate` from amended `develop` and preserves the earlier empty plan branch. Spec amendment PR #1928 is merged at this source snapshot; recorded source checks were rerun before committing the plan.
@@ -132,6 +150,8 @@ A deployment reversal reverts the helper, dependent runtime consumers, configura
 | `scripts/development-workflow/batch-merge.sh` | Support session across merge, delete-branch, annotate-hold, and `recheck-remaining --annotate`; per-PR merge validates membership in the frozen set, journals actual boundaries, and prevents the next merge after interruption. Standalone merge obtains a one-PR manifest; Protocol 94 always supplies its whole batch session. | AC1–AC6, AC8 |
 | `scripts/development-workflow/post-merge-cleanup.sh` | Read-only target inspection; preserve session on hub/product/worktree reentry; journal fine-grained follow-up and verify existing markers/live state before completion. Standalone cleanup recovery builds a follow-up-only session; missing-session behavior cannot skip admission at a tracker or remote-cleanup mutation. | AC2–AC6, AC8 |
 | `.ai-dev-workflow.yaml` | Add independently documented optional `merge_budget.graphql_reserve`; default resolution lives in helper. | AC3, AC4 |
+| `scripts/development-workflow/validate-workflow-hub-skeletons.py` | Add the helper to the exact required-runtime set without changing predicates; coordinated inventory validation accepts the shipped dependency. | AC8 |
+| `template/product-repo-injection/skeleton-manifest.yaml` | Declare the helper required for product injection; injected cleanup retains its dependency. | AC8 |
 | `sync-manifest.yaml` | Ship new helper as product runtime because injected cleanup/workflow-lib call it; retain existing hub/shared glob coverage and project-owned config treatment. | AC8 |
 | `changelog.d/1890.added.graphql-budget-aware-merge-gate.md` (new) | Add normal release-note fragment with repository bold-title/issue format. | AC8 |
 
@@ -213,7 +233,7 @@ Population: runtime helpers and active command/skill/protocol surfaces that name
 | `scripts/development-workflow/run-epic-risk-classifier.sh` | Update optional session binding/metadata; ordinary classification stays read-only. |
 | `scripts/development-workflow/security-advisory-classifier.sh` | Unchanged read-only security evidence/classification; existing gate still enforces its result. |
 | `scripts/development-workflow/select-test-suites.sh` | Unchanged test registry/selection consumer; new suite self-declares runtime coverage. |
-| `scripts/development-workflow/validate-workflow-hub-skeletons.py` | Unchanged required-runtime inventory validation; helper path remains shipped, no merge authority. |
+| `scripts/development-workflow/validate-workflow-hub-skeletons.py` | Add the helper to required-runtime membership under the approved amendment; unchanged predicates and no merge authority. |
 | `scripts/development-workflow/workflow-batch-plan.sh` | Unchanged read-only batch planning; execution handoff admits the selected full set. |
 
 ### Shared tracker-helper consumer enumeration
@@ -248,7 +268,7 @@ New files:
 - `scripts/development-workflow/tests/test_workflow_merge_budget.py` — unit/state/locking and composed helper tests.
 - `scripts/development-workflow/tests/fixtures/workflow-merge-budget/` — synthetic selected manifests, quota/PR/tracker responses and fake command event logs, each fixture tied to a coverage class.
 
-Update existing integration suites `test-run-epic-delegated-gate.sh`, `test-run-epic-risk-classifier.sh`, `test-run-epic-audit-trail.sh`, `test-batch-merge-recheck-remaining.sh`, `test-batch-merge-checkpoints.sh`, `test-batch-merge-changelog-race.sh`, `test-post-merge-cleanup.sh`, `test-select-test-suites.sh`, `test-sync-template-mode-scopes.sh`, `test-sync-template-apply-modes.sh`, and `test-check-sync-manifest-coverage.sh` for budget-aware compositions/runtime shipment. Existing bare merge tests add mocked `gh api rate_limit` responses and obtain real helper-created synthetic sessions rather than passing a test-only disable option or caller-trusted admission payload. Add `# covers:` headers in the new selectable shell suite for the runtime files, effective config, and fixture directory; provide focused selector proof that helper changes select it. Do not introduce prose-matching documentation tests or a new CI workflow.
+Update existing integration suites `test-run-epic-delegated-gate.sh`, `test-run-epic-risk-classifier.sh`, `test-run-epic-audit-trail.sh`, `test-batch-merge-recheck-remaining.sh`, `test-batch-merge-checkpoints.sh`, `test-batch-merge-changelog-race.sh`, `test-post-merge-cleanup.sh`, `test-select-test-suites.sh`, `test-sync-template-mode-scopes.sh`, `test-sync-template-apply-modes.sh`, `test-check-sync-manifest-coverage.sh`, and `test-workflow-orchestration-product-repo-aware.sh` for budget-aware compositions/runtime shipment. The product-awareness fixture supplies typed quota/repository/owned merged-PR reads for existing cleanup cases; unexpected commands fail and no live command forwarding is permitted. Existing bare merge tests add mocked `gh api rate_limit` responses and obtain real helper-created synthetic sessions rather than passing a test-only disable option or caller-trusted admission payload. Add `# covers:` headers in the new selectable shell suite for the runtime files, effective config, and fixture directory; provide focused selector proof that helper changes select it. Do not introduce prose-matching documentation tests or a new CI workflow.
 
 | Coverage class | Observable consumer proof | AC |
 | --- | --- | --- |
