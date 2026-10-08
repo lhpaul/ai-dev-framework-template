@@ -237,6 +237,12 @@ class ModelRoutingTests(unittest.TestCase):
                      "models:\n   dsh: {}\n", " models:\n   dsh: {}\n",
                      "models\n  dsh: {}\n", "models:\n  dsh [broken\n",
                      "models: {dsh: {tiers: {}}}\n",
+                     "models: !!map {dsh: {tiers: {balanced: {provider: p}}}}\n",
+                     "models: &policy {dsh: {}}\n",
+                     "policy: &policy {dsh: {}}\nmodels: *policy\n",
+                     "policy: unrelated\nactual: &policy {dsh: {}}\nmodels: *policy\n",
+                     "policy: &policy\n  dsh: {}\nmodels: *policy\n",
+                     "policy:\n  dsh: {}\nmodels: *policy\n",
                      self.policy(self.tier()).replace("\n", "\u2028")):
             with self.subTest(text=text):
                 self.write(text)
@@ -256,7 +262,9 @@ class ModelRoutingTests(unittest.TestCase):
         for text in ("mode: single_repo\n", "# models:\n#   dsh: {}\n", "models:\n  other:\n    dsh: unused\n",
                      'models: {other: {dsh: unused}}\n', 'models: {other: "dsh: unused"}\n',
                      'custom:\n  models:\n    dsh: unused\n',
-                     'custom:\n  models: {dsh: unused}\n'):
+                     'custom:\n  models: {dsh: unused}\n',
+                     'models: !!map {other: unused}\n',
+                     'policy: &policy {other: {dsh: unused}}\nmodels: *policy\n'):
             self.write(text)
             absent = subprocess.run([sys.executable, "-S", str(SCRIPT), "validate", "--repo-root", str(self.root), "--json"],
                                     capture_output=True, text=True, env=dict(os.environ, WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT=""))

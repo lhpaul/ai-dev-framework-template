@@ -2038,6 +2038,31 @@ def routing_declared(raw: str) -> bool:
         key, value = key_value(text)
         if key != "models" and not re.match(r"^(?:models|'models'|\"models\")(?:\s|$)", text):
             continue
+        # Metadata is forbidden by the strict reader, but must not conceal a
+        # routing declaration from this dependency-free activation boundary.
+        # Follow only explicit alias targets; unrelated model namespaces keep
+        # the legacy validator even when they use unsupported YAML metadata.
+        visited = set()
+        while True:
+            value = re.sub(r"^(?:(?:&[^\s]+|![^\s]+)\s*)+", "", value)
+            alias = re.fullmatch(r"\*([^\s]+)", value)
+            if not alias or alias.group(1) in visited:
+                break
+            name = alias.group(1)
+            visited.add(name)
+            anchor_pattern = r"(?:^|\s)&" + re.escape(name) + r"(?:\s|$)"
+            targets = [(i, level, line) for i, (level, line) in enumerate(lines)
+                       if re.search(anchor_pattern, key_value(line)[1])]
+            target = next(iter(targets), None)
+            if target is None:
+                # A named but unanchored target is still invalid YAML; retain
+                # direct-namespace detection for that malformed declaration.
+                target = next(((i, level, line) for i, (level, line) in enumerate(lines)
+                               if key_value(line)[0] == name), None)
+            if target is None:
+                break
+            index, indent, text = target
+            _, value = key_value(text)
         if value.startswith("{"):
             # Probe only direct flow keys, not dsh text inside values/other maps.
             depth, key_start, quote, escaped = 0, 1, "", False
