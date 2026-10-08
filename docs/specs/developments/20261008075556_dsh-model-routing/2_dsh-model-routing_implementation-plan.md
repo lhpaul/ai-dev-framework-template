@@ -1,0 +1,459 @@
+# DSH Per-Role Model Routing — Implementation Plan
+
+**Issue**: #1927
+**Spec**: [Approved product contract](1_dsh-model-routing_specs.md)
+**Smoke test runbook**: [DSH routing smoke](../../../testing/workflow/dsh-model-routing.smoke-test.md)
+
+## Summary
+
+Extend the existing workflow configuration resolver with optional DSH routing,
+strict schema validation, per-key local composition and explicit provenance.
+Document the DSH parent's resolve/pass/record contract and operator setup;
+prove configuration behavior with isolated fixtures and child routing with an
+actual DSH session. The approved spec supplies product rules; Technical
+Decisions below is the single implementation contract.
+
+**Estimated complexity**: M — configuration composition and validation need
+careful coverage, while the runtime integration is an existing dispatch tool.
+**Dependencies**: Approved spec PR #1932 is merged. No further ADF feature,
+provider account setup, upstream patch, or optional preset bundle is required.
+The live smoke requires an installed DSH and existing working permitted routes.
+No database, application frontend, production deployment, or new service changes.
+
+## Verification Log
+
+Repository-derived evidence below was gathered at
+`46a4c82d1acba3ac00eb7eae14ced4086853124e` on 2026-10-08. Run searches from the
+repository root at that revision; future implementation paths are proposals,
+not existence claims.
+
+| Check | Reproducing command/query | Observed result |
+| --- | --- | --- |
+| Revision/spec merge | `git show --no-patch --format='%H %s' 46a4c82d` | Approved spec merge #1932 |
+| Template fit | `rg -n 'is_template' .ai-dev-workflow.yaml` | Template mode true; this feature concerns framework workflow tooling |
+| Strict reader and local discovery | `rg -n '^def (parse_review_yaml|parse_yaml_subset|resolve_local_config|linked_worktree_main_root)' scripts/development-workflow/workflow-config-resolver.py` | Existing strict parser and override-root/checkout/main-clone discovery entry points |
+| Existing validate composition | `sed -n '1814,1840p' scripts/development-workflow/workflow-config-resolver.py` | resolve and validate currently share cmd_resolve; new validation must preserve existing repository-context results |
+| New capability absence | `rg -n 'model-route|models.dsh' scripts docs/workflow .ai-dev-workflow.yaml .ai-dev-workflow.local.example.yaml` | No matches; routing commands and policy not yet implemented on these plausible shipped surfaces |
+| Validation consumers | `rg -n 'workflow_validate_repository_context|resolver_args=\(validate|RESOLVER.*validate|workflow-config-resolver.py.*validate' scripts/development-workflow --glob '*.sh'` | CLI wrapper, workflow-lib wrapper, post-merge-cleanup calls, component-release-target calls and existing test consumers; see Composed Call Sites |
+| Role population | `sed -n '/## Agent Assignments (Tier-Based)/,/### Runner Notes/p' docs/workflow/development-workflow/agent-model-config.md` | The canonical table contains the 12 roles enumerated in D1; this table, not Cursor-specific profiles, defines the population |
+| Test selection | `rg -n 'covers:|Naming convention|Self-declaration' scripts/development-workflow/select-test-suites.sh` | Suite-local covers headers and naming map drive diff-based CI selection |
+| Sync ownership | `rg -n 'scripts/development-workflow/|docs/workflow/|workflow-config-resolver.py|local.example|docs/testing/workflow' sync-manifest.yaml` | Existing tooling/docs ownership plus explicit smoke-runbook precedent; add the proposed runbook entry |
+| Existing tests | `rg --files scripts/development-workflow/tests` | Config resolver, Step7a consistency, sync coverage and shell-snippet suites available |
+| Docs scope search | `rg -n 'DSH|models|model route' docs/project docs/best-practices AGENTS.md docs/workflow/development-workflow/agent-model-config.md docs/workflow/development-workflow/integrations/dsh.md` | Routing guidance lives in model-policy/DSH integration docs; placeholder project architecture is not a routing authority |
+
+The role-population query enumerates the named table's rows, excluding its
+headings/header. A reproducible count at the recorded revision is
+`sed -n '/## Agent Assignments (Tier-Based)/,/### Runner Notes/p' docs/workflow/development-workflow/agent-model-config.md | awk '/^[|] `/{n++} END {print n}'`,
+which returns 12. D1 preserves that enumeration and its
+tier values. No test-case count or whole-repository sweep is a binding target.
+
+## Factual Claim Evidence and Authoring Rigor
+
+- Rule 1 — Not applicable: this design does not match or parse external free-text
+  responses. The routing data is ADF-owned structured configuration; host
+  capability/allowlist decisions use explicit session policy, never matching
+  error wording or treating advisory model catalog absence as denial.
+- Rule 2 — Satisfied: each implementation decision is stated once in D1–D7;
+  steps, tests and file scope refer to those decisions. Product invariants are
+  referenced from the approved spec rather than independently redefined.
+- Rule 3 — Satisfied: the existing role population is directly enumerated by the
+  recorded canonical-table query, at the recorded revision. Projected tests and
+  files express coverage intent and carry no binding scaffolding enumeration.
+- Rule 4 — Satisfied: existence/absence and scope claims are supported by the
+  Verification Log's named searches in actual parser, callers, tests and docs.
+- Rule 5 — Satisfied: the validation unit's changed behavior is traced at each
+  discovered ordered consumer in Composed Call Sites, including unchanged
+  resolve/review commands and their separate paths.
+- Rule 6 — Satisfied: D2–D7 name governed input classes, invocation scope and
+  discharge points; Implementation Order applies those decisions at explicit
+  steps. A changed operational assumption stops before implementation edits.
+
+### Verified DSH Runtime Contract
+
+Verified 2026-10-08 against installed `@deepseek-ai/dsh-tool-subagent` and `dsh`
+version `0.2.0-rc.2`. Reproduce using the installed package's `package.json`,
+`README.md` section "Selecting a child LLM", and `lib/index.js` /
+`lib/model-selection-settings.js`. These are primary package sources; upstream
+source is [deepseek-harness, tool-subagent at dsh-v0.2.0-rc.2](https://github.com/deepseek-ai/deepseek-harness/tree/dsh-v0.2.0-rc.2/packages/subagent/tool-subagent).
+
+The tool's opt-in uses `modelSelectionSettings: true`; the host settings owner
+is `subagent-model-selection-settings`, with `enabled` and exact
+`allowedModels` provider/model pairs. Enabled policy needs a nonempty list and
+is captured at fresh top-level session composition, inherited by children and
+frozen for that session. Restored sessions without a recorded policy remain
+disabled. Child selection exposes `provider`, `model`, `reasoning_effort`, and
+`list_subagent_models`; provider/model are supplied together. Effort ids and
+model availability are adapter-owned; discovery is advisory, not proof that an
+unlisted model is denied. This capability requires a backend with agentOptions;
+ACP/Codex/Claude backends reject selection rather than ignore it.
+
+The shipped web preset opts the subagent tool into selection; the base/headless
+preset's tool does not. Reproduce that distinction in the installed
+`@deepseek-ai/dsh-web-app/presets/cordis.patch.yml` and
+`@deepseek-ai/dsh-base/cordis.patch.yml` subagent entries. D7 applies this
+verified contract; no application-side host-policy parser or upstream changes
+are proposed. Reverify installed capability if the runtime version changes.
+
+## Cross-Cutting Operational Assumption Check
+
+Verified at 2026-10-08T11:54:03Z and the Verification Log revision. The bounded
+invocation contains only #1927. Parent supplied a live same-surface open-PR
+check with no competing PR on the exact resolver/validator/routing-doc/config
+surfaces; shared DSH keywords alone are not conflict evidence.
+
+| Assumption surface | Recorded value | Authoritative source | Bounded scope | Result |
+| --- | --- | --- | --- | --- |
+| Artifact ownership/base | single_repo; this repository; develop | Parent invocation binding, current branch/base ancestry and workflow manifest | #1927 only; no competing exact-surface PR | Verified |
+| Shared reviewer default | Shipped review.on_draft.runner remains claude; this authorized run selects Codex through existing local override | Committed manifest and explicit issue/prompt exclusion | #1927; no mutation of real local override | Verified |
+| Optional routing activation | Template activates no DSH models; policy is opt-in | Approved spec BR1 and #1927 | Shared config/example and resolver surfaces only | Verified |
+| DSH selection boundary | Child dispatch and frozen session allowlist; headless defaults remain separate | Primary runtime contract above and existing integration doc | Installed runtime/version and #1927 contract | Verified |
+
+At implementation start, reread the current authoritative sources and record
+Still valid. Changed/unverifiable ownership, base, shared default or runtime
+capability is Stale or conflicting: stop before file edits and return the
+specific evidence to the parent. No real portfolio/board scan is authorized.
+
+## Layer-by-Layer Changes
+
+### Technical Decisions
+
+#### D1: Role policy and command surfaces
+
+Implement the following canonical role/tier catalogue in the resolver; test its
+parity with the canonical Agent Assignments table rather than parsing Markdown
+at runtime. Cursor-specific role additions and aliases are not implicitly
+accepted. Unknown role names produce D5's diagnostic.
+
+| Role | Default tier |
+| --- | --- |
+| orchestrator | economy |
+| item-orchestrator | balanced |
+| automated-reviewer-loop | economy |
+| product-manager | premium |
+| spec-reviewer | balanced |
+| tech-lead | premium |
+| implementation-plan-reviewer | balanced |
+| developer | balanced |
+| code-reviewer | balanced |
+| project-setup | balanced |
+| smoke-tester | balanced |
+| retrospective | balanced |
+
+Add `model-route --runner dsh [--role ROLE] [--tier TIER] [--repo-root PATH]
+[--json]`, requiring role or tier. With both present, the explicit tier replaces
+only the default tier; a configured role entry still wins (spec BR4). A known
+explicit tier without a configured route inherits unless a selected role entry
+explicitly references that absent tier (spec BR3's dangling-reference error).
+
+Add `model-routes --runner dsh [--repo-root PATH] [--json]` for allowlist setup.
+Return effective configured routes reachable through canonical roles and direct
+tier requests, with their resolution records; deduplicate route tuples while
+retaining the contributing resolution records. Ignore inherited results when
+forming the configured route list. Do not omit an otherwise unused configured
+tier that an explicit tier request can select.
+
+#### D2: Strict schema and compatibility boundary
+
+Use `parse_yaml_subset(..., preserve_empty_values=True)` and
+`resolve_local_config` without changing their existing contracts. Model-route
+commands read and parse the selected shared/local configuration pair once per
+resolution, then use that in-memory pair for validation, composition and
+provenance; do not reread individual branches during a precedence walk. This
+is invocation evidence, not an atomic transaction spanning concurrent edits to
+multiple files. Missing files/block are absent; present null, scalar or list
+where a mapping is required is a schema error.
+
+The optional `models.dsh` mapping admits `tiers` and `roles`. Tier keys are
+exactly economy/balanced/premium; role keys are D1's catalogue. Route mappings
+admit provider/model and optional reasoning_effort. Reject unknown keys and
+wrong types in either supplied layer even if a later override would mask them.
+Provider/model/effort are nonblank strings when present; reject control
+characters that cannot safely travel in the line-oriented shell evidence.
+Reasoning effort is an opaque adapter id, not a new ADF enum. Incomplete route
+mappings may be partial layer contributions: require provider and model only
+after D3 composes the effective entry. Validate dangling references against
+winning effective role entries, so an overridden valid tier-reference form is
+not mistaken for an effective dangling reference.
+
+For standalone `validate`, add a dedicated model-schema validation hook while
+retaining existing repository-context validation/output and arguments. Activate
+the strict model-schema pass only when a routing block is configured; avoid
+introducing a PyYAML dependency or stricter grammar into an absent-routing
+legacy validation invocation. An explicitly malformed routing block must
+activate validation and fail, never disappear as absence. Use the same D5
+model diagnostics for model-route and standalone validation. Leave ordinary
+resolve, auth and review-effective behavior unchanged.
+
+#### D3: Composition and precedence
+
+Implement spec BR2–BR3 using pure recursive mapping composition: local values
+replace equal keys; mapping/mapping values recurse; scalar/reference versus
+mapping replacement is whole-entry. Retain enough layer contribution metadata
+for D4. Do not mutate the parsed inputs or write either configuration file.
+Completeness is checked after composition, so a local provider-only override
+can inherit the shared model, while a provider-only effective route fails.
+Empty local mappings contribute no route-field override; null/empty scalar
+values are errors, not deletion instructions. Invalid winning policy never
+falls through to lower-priority policy or inheritance.
+
+#### D4: Successful output and provenance
+
+Single-route shell output uses the existing shlex-quoted KEY=value printer.
+JSON output carries equivalent uppercase fields: ROLE, TIER, PROVIDER, MODEL,
+REASONING_EFFORT, SOURCE, SOURCE_FILE. Empty optional/unselected values are empty
+strings; no secret-bearing unrelated configuration is emitted.
+
+SOURCE is local-role/committed-role for a direct role route, local-tier/
+committed-tier for a tier-derived route, or inherited. The selected entry's
+highest contributing layer determines SOURCE_FILE; a partial local mapping
+reports its local source even when another field is inherited. Empty mapping
+contributions do not falsely claim a local override. Tier-reference role results
+identify the tier route's contributing file and selected TIER; direct role
+results have empty TIER. Inherited results have no route/file and identify the
+selected/default tier. D1 listing emits these same resolution records and
+configured route tuples as JSON, or deterministically indexed shell records.
+
+#### D5: Failure and bounding
+
+Model-schema/query failures exit 2 with a structured JSON diagnostic on stderr:
+CODE, FILE, FIELD, MESSAGE. Use stable code classes for unknown role/tier,
+invalid schema/type, incomplete route and dangling reference; a YAML/dependency
+read failure is distinguishable. Do not print the entire configuration or
+invalid raw values. No success route appears on an error path. Existing
+unrelated legacy diagnostics remain unchanged.
+
+Resolution is a finite local configuration walk bounded by the selected files
+and D1 catalogue. It invokes no provider, network service, host provisioning or
+child session. Existing local-file discovery may use its current bounded git
+worktree inspection; model resolution adds no external retry or polling loop.
+
+#### D6: Validation consumer behavior and regression
+
+Keep command dispatch for resolve/review commands separate from the new
+validate model hook. The Composed Call Sites table defines the expectation at
+actual consumers; tests exercise absent routing as well as valid/invalid opt-in
+policy at those paths. No shared review schema, policy keys or output are
+redefined by this feature.
+
+#### D7: DSH dispatch and operator documentation
+
+For a DSH driving session, resolve D1's target role before each fresh stage/review
+child dispatch; parse the resolver's JSON result without eval. With SOURCE
+inherited, pass no route. For a valid configured route, use the exposed child
+selection capability and the session's captured exact-route policy; pass
+provider/model together and effort only when configured. Record requested route,
+SOURCE/file/tier and actual dispatch in the runner summary/review evidence.
+
+Selection disabled or the exact pair denied by the session allowlist means a
+visible inherited fallback: state the reason, retain requested-source evidence,
+and omit all route fields. Do not retry arbitrary provider errors as inherited
+success, confuse model-catalog absence with allowlist denial, or classify a
+post-dispatch failure as missing policy. An unknown capability/policy state
+requires explicit clarification through the existing runner failure/decision
+path; do not silently invent permission. These instructions govern DSH child
+dispatch only, not cross-runner headless default selection.
+
+List documentation updates in Documentation Updates; the operator guidance
+covers the verified runtime contract, UI path Plugins → Subagent → Model
+selection, a profile overlay using the settings-owner id, exact-route
+allowlist maintenance via D1 listing, and fresh-session requirements. Explain
+headless default pinning through agent-default-model/profile or invocation
+--patch overlay; routing policy does not choose a headless default. Examples
+use block YAML accepted by D2; template/shared and local-example examples stay
+fully commented. Executable snippets declare bash when launching Bash, otherwise
+bash-zsh; run the existing diff-aware shell snippet lint on implementation.
+
+### Decision-Gate Consistency Matrix
+
+Classification: applicable; D3 precedence plus D7 host capability yield different
+outcomes and next actions. Resolution ordering is governed only by D3/spec BR3;
+this table maps resolved inputs to dispatch actions without redefining that
+precedence. Mirrors are Protocol91, DSH integration and model-policy guidance;
+commented config examples and the runbook demonstrate the same contract.
+
+| Inputs at decision point | Allowed outcome | Required next action | Governing decision/example |
+| --- | --- | --- | --- |
+| Unknown/malformed input or invalid effective route | Configuration error | Show D5 diagnostic; correct before any routed child dispatch | D2/D5; dangling winning tier reference |
+| Valid resolution, inherited source | Inherited dispatch | Pass no route; record source/tier and actual inheritance | D4/D7; no routing configured |
+| Valid configured route and enabled/permitted session policy | Configured dispatch | Pass D7 fields and record actual dispatch | D7; distinct tier children |
+| Valid route, selection disabled | Visible inherited fallback | State disabled reason, omit route fields, retain requested-source record | D7; runbook Step7 |
+| Valid route, exact pair denied by session allowlist | Visible inherited fallback | State denied reason, omit route fields, retain requested-source record | D7; runbook Step7 |
+| Capability/policy unknown or cannot be verified | Existing runner failure/decision path | Return specific evidence to parent; do not invent permission | D7; inaccessible policy |
+| Child started and subsequently failed | Existing stage/review failure | Preserve route evidence; follow existing fix/escalation handling | D7; provider error is not a host-restriction fallback |
+
+Resolution and dispatch are consecutive phases. Invalid policy blocks dispatch;
+valid dispatch/fallback continues the existing stage; unknown evidence waits for
+parent handling, and child failures use its existing failure/escalation path.
+D2/D4 bind evidence to this invocation; an old resolution cannot prove a new
+child's route. Empty/missing/unknown input handling is covered by D1/D2/D5.
+
+### Composed Call Sites
+
+The Verification Log searches enumerate the existing validation path. Preserve
+legacy repository-context outcomes first; model-schema failure is an additional
+read-only rejection only for configured DSH routing. No side effect moves ahead
+of a failed validation result.
+
+| Consumer/site | Ordered path and expected observable outcome |
+| --- | --- |
+| validate-workflow-config.sh | CLI arguments → resolver validate → repository context and D2 model validation; invalid opt-in routing exits nonzero, absent routing retains prior output/exit |
+| workflow-lib.sh workflow_validate_repository_context | Wrapper → same validate command; preserve repo/require-local semantics, propagate D5 failure |
+| post-merge-cleanup.sh selected_repo_context/repo_context calls | Wrapper validation precedes cleanup target use; invalid policy prevents proceeding on an unvalidated context; existing valid/absent policy follows its normal branch |
+| component-release-target.sh validate calls | Context validation precedes release-target interpretation; new model failure propagates without claiming a valid target |
+| Existing test-workflow-config-resolver.sh wrapper tests | Existing absent-routing fixture remains successful and produces the prior context |
+| Ordinary resolve and review-effective/review-github-effective | Their existing separate commands/readers continue to produce their current results; DSH routing must not turn malformed reviewer policy into an absent-policy fallback |
+
+No deleted branch's inputs need reassignment: this is additive validation.
+
+### Parser-Risk Edge Cases and Unit Mapping
+
+Classification: applicable, because D2 parses and validates structured YAML.
+Implement automated unit cases in
+`scripts/development-workflow/tests/test_workflow_dsh_model_routing.py`, invoked
+by `test-dsh-model-routing.sh`. Each row names a test intent, not a frozen case
+count; coverage-equivalent consolidation is allowed.
+
+| Concrete input class | Automated coverage intent |
+| --- | --- |
+| Missing files; existing files with no routing block | absent_files/absent_block: inherited; no writes and legacy validate unchanged |
+| Commented-out block, quoted hash in model id, plain trailing comment | commented_policy/scalar_boundaries: comments absent, literal quoted hash preserved |
+| True boolean, number, list, null or empty mapping in mapping positions | wrong_types: fail declared invalid types; allow empty root tier/role collections but require complete effective route entries |
+| provider-only/model-only effective route, empty/whitespace values | incomplete_routes/empty_ids: fail; composed provider-only local contribution succeeds |
+| Unknown role/tier; case mismatch; extra route key | unknown_names: strict known-name/schema errors |
+| Local role mapping vs shared tier-reference and converse | entry_replacement: no hybrid value, deterministic winning type |
+| Nested same-role/same-tier mappings and unrelated keys | deep_merge: retain counterparts and unrelated roles/tiers; field provenance correct |
+| Two explicit duplicate keys on one mapping, alias/tag, nonempty flow mapping | strict_yaml: reuse reader rejection; do not accept these through validation's absence fast path |
+| CRLF or alternate recognized YAML line break versus malformed indentation | yaml_boundaries: reader-consistent acceptance/rejection and structured diagnostic |
+| Escaped control characters in quoted route scalars | evidence_boundaries: no injected KEY=value lines; fail safely |
+| Dangling winning tier reference; dangling reference replaced by direct local route | reference_scope: error only for effective dangling reference; invalid source types still fail |
+| Local empty mapping over shared mapping | empty_override: retain route and committed provenance; replacement without shared counterpart fails incomplete |
+| Role route vs local default-tier route; explicit tier with/without role policy | role_priority/explicit_tier: spec precedence holds |
+| Checkout override, main-clone worktree fallback, explicit override root | local_discovery: existing precedence; fixtures, never real local files |
+
+Suppression semantics: Not applicable; no directives or suppression feature.
+Multiple occurrences on a line: duplicate explicit YAML keys and quoted scalar
+content are covered; no free-text match scanner is introduced. Normative syntax
+flexibility follows the existing strict reader instead of a new YAML grammar.
+Concurrency classification: Not applicable; finite synchronous reads/pure
+composition introduce no concurrent event sources or shared mutable cache.
+Cross-cutting checklist classification: Not applicable; D7 adds a runner-specific
+routing contract, not a new safety/quality checklist for independent features.
+
+## Testing Strategy
+
+Use unit/config-CLI integration, documentation consistency, existing workflow
+regression and actual DSH smoke. Extend the diff-selected shell harness with
+covers headers for resolver, validator, routing docs/examples and its Python
+unit file; do not add a new CI job or provider-dependent CI test.
+
+- AC1–AC5: D1–D5 unit/CLI tests cover all precedence sources, direct/reference
+  forms, partial overrides, provenance, errors, read-only outputs and listing.
+- AC6–AC8: Assert the dispatch documentation's resolve/pass/record/fallback,
+  headless boundary and commented examples; role catalogue parity references the
+  canonical table. Existing Step7a consistency suite must remain green; update
+  its assertions only where parsed prose intentionally changes.
+- AC9: Execute the linked runbook with existing real routes. A mocked subagent
+  adapter can supplement unit coverage but cannot establish live DSH acceptance.
+- AC10: Run sync coverage and fragment validation, plus the diff-selected suites
+  and consumer fixtures with no routing configured.
+
+**Coverage intent/proportionality**: parser cases target actual introduced schema
+and composition failure classes, not a custom parser for prose-only documents.
+Reuse fixture helpers and table-driven tests; enumeration is indicative. Gate B
+self-check is satisfied by keeping tests limited to the production resolver and
+contract surfaces this change owns.
+
+**Planted-violation proof**: in a temporary fixture, identify the exact file/line
+holding an invalid model route; demonstrate validate fails, correct that route,
+and demonstrate pass. For a new/materially changed documentation assertion,
+plant an omitted dispatch/evidence requirement in its temporary source fixture,
+show its check fails, restore it and show pass. Record concrete evidence on the
+implementation PR, rather than trusting a declared control.
+
+**Residual verification**: implementation reruns the Verification Log surface
+searches, diff-based suite selection and role-catalogue parity; report changed
+files against the approved Files to Modify list and any uncovered residue.
+A genuinely required additional file or broader architecture is a parent scope
+decision before editing, not an automatic sweep.
+
+## Seed Data
+
+No application/database seed changes. Python tests create deterministic temporary
+shared/local YAML fixtures for every edge-case class above; shell integration
+creates temporary Git checkouts/worktrees for local-discovery behavior. Live
+smoke uses a temporary workspace and host overlay; operator-existing permitted
+routes supply the provider/model identifiers. No real machine-local YAML/env
+file is modified, and no credentials are emitted or stored in fixtures.
+
+## Documentation Updates
+
+The developer executes these updates under D7:
+
+- `docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md` — DSH stage/review dispatch and summary contract.
+- `docs/workflow/development-workflow/integrations/dsh.md` — layered routing, resolver/listing, host setup and headless boundary.
+- `docs/workflow/development-workflow/agent-model-config.md` — DSH tier/role routing parity, precedence and later-runner deferral.
+- `docs/testing/workflow/dsh-model-routing.smoke-test.md` — actual smoke evidence and version; runbook created by this plan PR.
+- `.ai-dev-workflow.yaml` and `.ai-dev-workflow.local.example.yaml` — fully commented DSH block examples.
+
+`AGENTS.md`, `REVIEW.md`, project placeholder docs and best practices need no
+new policy for this runner-specific contract. No new DSH agent tree, separate
+dispatch-profile document, skill model pins or static preset bundle is planned.
+
+## Files to Modify
+
+Implementation is bounded to the following paths; this plan PR contains only
+this plan and the smoke runbook.
+
+| Path | Work / decision | AC coverage |
+| --- | --- | --- |
+| scripts/development-workflow/workflow-config-resolver.py | D1–D6 commands/schema/composition/provenance and dedicated validate hook | AC1–AC5 |
+| scripts/development-workflow/validate-workflow-config.sh | Help/contract clarification if required for the existing validation wrapper; preserve arguments | AC5 |
+| scripts/development-workflow/tests/test-dsh-model-routing.sh | New fixture/CLI/docs test harness with explicit covers headers | AC1–AC8, AC10 |
+| scripts/development-workflow/tests/test_workflow_dsh_model_routing.py | New table-driven unit tests for the edge-case mapping | AC1–AC5 |
+| scripts/development-workflow/tests/test-workflow-config-resolver.sh | Add opted-in/absent validation integration assertions using its existing fixture pattern | AC1, AC5 |
+| scripts/development-workflow/tests/test-step7a-surface-consistency.sh | Preserve or update intentionally affected parsed dispatch prose | AC6 |
+| docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md | D7 | AC6 |
+| docs/workflow/development-workflow/integrations/dsh.md | D7 | AC6–AC8 |
+| docs/workflow/development-workflow/agent-model-config.md | D1 parity and D7 | AC8 |
+| .ai-dev-workflow.yaml | D7, commented example only | AC1, AC8 |
+| .ai-dev-workflow.local.example.yaml | D7, commented example only | AC8 |
+| docs/testing/workflow/dsh-model-routing.smoke-test.md | Complete runbook/evidence | AC9 |
+| sync-manifest.yaml | Add explicit hub-only smoke entry; existing tooling/docs globs cover other files | AC10 |
+| changelog.d/1927.added.dsh-model-routing.md | Feature release note in required bold-title format | AC10 |
+
+## Risks & Mitigations
+
+| Risk | Likelihood / impact | Mitigation |
+| --- | --- | --- |
+| Partial override or reference replacement gives incorrect provenance | Medium / medium | D3–D4 unit matrix; no last-minute alternative merge semantics |
+| Strict routing validation changes absent-policy consumers | Medium / medium | D2 compatibility boundary and D6 composed-call regression |
+| DSH session retains old allowlist after operator edit | Medium / medium | Verified runtime contract; fresh session in smoke |
+| Host is installed but permitted routes fail | Medium / medium | Show actual error; stop smoke/dispatch under normal failure path, never claim mocked parity |
+| Consumer sync misses the runbook or unit dependency | Low / medium | Manifest ownership plus coverage test and covers headers |
+
+## Implementation Order
+
+1. Verify operational assumptions Still valid; inspect current implementation
+   baseline and preserve original restrictions. This discharges the assumption
+   check before any implementation edits.
+2. Implement D1–D5 with the Python edge cases. Complete and verify a coherent
+   resolver/test checkpoint commit before moving to integration.
+3. Wire D2/D6 validation and CLI fixtures. Run config-resolver and new DSH tests;
+   produce the model-schema planted-violation proof before committing this part.
+4. Execute D7's Documentation Updates and consistency coverage. Produce any new
+   documentation-control planted proof, run Step7a consistency and the existing
+   workflow shell-snippet linter against origin/develop; commit the verified part.
+5. Add sync ownership and the release fragment; run sync coverage and fragment
+   validation. Fragment body follows `- **DSH per-role model routing** (#1927):`
+   followed by the user-visible routing behavior, never a commit-message literal.
+6. Run the smoke runbook in fixtures and one real DSH session; capture actual
+   child route/source evidence with existing permitted providers. Correct only
+   in-scope deterministic defects; missing provider capability/working routes is
+   an explicit blocker requiring parent handling, not false passing evidence.
+7. Run diff-selected regression suites, residual verification and consumer
+   compatibility checks; git diff --check. Commit smoke/evidence updates only
+   after their assertions pass. Leave all real local configuration untouched.
+8. Push once after each completed review-fix cycle, with explicit branch refspec
+   and remote SHA verification. Follow Protocol91 internal review, external loop,
+   regression label, CI, full readiness, audit and tracker checks at the current
+   head; parent owns durable merge admission and any authorized merge.
