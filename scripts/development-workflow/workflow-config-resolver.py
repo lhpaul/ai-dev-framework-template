@@ -2051,36 +2051,7 @@ def routing_declared(raw: str) -> bool:
                     return text[position + len(match.group()):].strip()
         return None
 
-    root_indent = min((indent for indent, _ in lines), default=0)
-    for index, (indent, text) in enumerate(lines):
-        if indent != root_indent:
-            continue
-        key, value = key_value(text)
-        if key != "models" and not re.match(r"^(?:models|'models'|\"models\")(?:\s|$)", text):
-            continue
-        # Metadata is forbidden by the strict reader, but must not conceal a
-        # routing declaration from this dependency-free activation boundary.
-        # Follow only explicit alias targets; unrelated model namespaces keep
-        # the legacy validator even when they use unsupported YAML metadata.
-        visited = set()
-        while True:
-            value = re.sub(r"^(?:(?:&[^\s]+|![^\s]+)\s*)+", "", value)
-            alias = re.fullmatch(r"\*([^\s]+)", value)
-            if not alias or alias.group(1) in visited:
-                break
-            name = alias.group(1)
-            visited.add(name)
-            targets = [(i, level, line, payload) for i, (level, line) in enumerate(lines)
-                       if (payload := anchor_payload(line, name)) is not None]
-            target = next(iter(targets), None)
-            if target is None:
-                # A named but unanchored target is still invalid YAML; retain
-                # direct-namespace detection for that malformed declaration.
-                target = next(((i, level, line, key_value(line)[1]) for i, (level, line) in enumerate(lines)
-                               if key_value(line)[0] == name), None)
-            if target is None:
-                break
-            index, indent, text, value = target
+    def has_dsh(index: int, indent: int, value: str) -> bool:
         if key_value(value)[0] == "dsh" or re.match(r"^(?:dsh|'dsh'|\"dsh\")(?:\s|$)", value):
             # A missing enclosing map must not turn an explicit inline DSH
             # declaration into a legacy scalar and bypass strict validation.
@@ -2121,6 +2092,47 @@ def routing_declared(raw: str) -> bool:
                     or re.match(r"^(?:dsh|'dsh'|\"dsh\")(?:\s|$)", child))
                    for child_indent, child in children):
                 return True
+        return False
+
+    def probe_mapping(index: int, indent: int, value: str) -> bool:
+        # Unsupported aliases may be ambiguous. Examine every explicit target
+        # for routing hints; the strict reader rejects the metadata itself.
+        # Visit each candidate once so cycles/duplicate anchors stay bounded.
+        pending = [(index, indent, value)]
+        seen = set()
+        while pending:
+            index, indent, value = pending.pop()
+            state = (index, value)
+            if state in seen:
+                continue
+            seen.add(state)
+            value = re.sub(r"^(?:(?:&[^\s{}\[\],]+|![^\s{}\[\],]+)\s*)+", "", value)
+            alias = re.fullmatch(r"\*([^\s]+)", value)
+            if not alias:
+                if has_dsh(index, indent, value):
+                    return True
+                continue
+            name = alias.group(1)
+            targets = [(i, level, payload) for i, (level, line) in enumerate(lines)
+                       if (payload := anchor_payload(line, name)) is not None]
+            if not targets:
+                # A named but unanchored target is invalid YAML too; retain
+                # detection of that explicitly malformed declaration.
+                targets = [(i, level, key_value(line)[1]) for i, (level, line) in enumerate(lines)
+                           if key_value(line)[0] == name]
+            pending.extend(targets)
+        return False
+
+    root_indent = min((indent for indent, _ in lines), default=0)
+    for index, (indent, text) in enumerate(lines):
+        if indent != root_indent:
+            continue
+        key, value = key_value(text)
+        if key != "models" and not re.match(r"^(?:models|'models'|\"models\")(?:\s|$)", text):
+            continue
+        if probe_mapping(index, indent, value):
+            return True
+
     return False
 
 
