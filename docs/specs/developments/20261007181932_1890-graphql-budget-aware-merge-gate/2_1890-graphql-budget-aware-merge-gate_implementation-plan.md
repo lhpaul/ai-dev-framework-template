@@ -15,6 +15,8 @@ Add an invocation-scoped budget/session helper around the existing delegated and
 
 ## Approved Runtime Inventory Amendment
 
+**Binding enumeration**
+
 Luis approved option A after implementation PR #1930 exposed product-runtime compatibility failures. This amendment adds only these implementation paths to the previously approved scope:
 
 | Additional path | Bounded change | Preserved constraint |
