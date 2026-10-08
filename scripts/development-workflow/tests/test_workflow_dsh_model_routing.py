@@ -222,6 +222,41 @@ class ModelRoutingTests(unittest.TestCase):
         payload = json.loads(self.cli("model-route", "--runner", "dsh", "--role", "developer", "--json").stdout)
         self.assertEqual(shell, payload)
 
+    def test_validate_parity_and_malformed_opt_in_boundary(self):
+        for text in (self.policy("      balanced:\n        provider: p\n"),
+                     "'models':\n  dsh: {}\n", '"models":\n  "dsh": {}\n',
+                     '"\\u006dodels":\n  dsh: {}\n',
+                     "models:\n   dsh: {}\n", " models:\n   dsh: {}\n",
+                     "models\n  dsh: {}\n", "models:\n  dsh [broken\n",
+                     "models: {dsh: {tiers: {}}}\n",
+                     self.policy(self.tier()).replace("\n", "\u2028")):
+            with self.subTest(text=text):
+                self.write(text)
+                route = self.cli("model-route", "--runner", "dsh", "--role", "developer", "--json")
+                validate = self.cli("validate", "--json")
+                self.assertEqual(validate.returncode, route.returncode, validate.stderr)
+                if route.returncode:
+                    self.assertEqual(json.loads(validate.stderr), json.loads(route.stderr))
+                else:
+                    self.assertEqual(json.loads(validate.stdout)["WORKFLOW_MODE"], "single_repo")
+        self.write('models:\n  dsh:\n    tiers:\n      balanced:\n        model: [PRIVATE_TEST_SENTINEL\n')
+        result = self.cli("validate")
+        self.assertNotIn("PRIVATE_TEST_SENTINEL", result.stderr + result.stdout)
+        self.assertEqual(json.loads(result.stderr)["CODE"], "invalid_yaml")
+
+    def test_absent_validate_has_no_new_dependency_or_grammar(self):
+        for text in ("mode: single_repo\n", "# models:\n#   dsh: {}\n", "models:\n  other:\n    dsh: unused\n"):
+            self.write(text)
+            absent = subprocess.run([sys.executable, "-S", str(SCRIPT), "validate", "--repo-root", str(self.root), "--json"],
+                                    capture_output=True, text=True, env=dict(os.environ, WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT=""))
+            self.assertEqual(absent.returncode, 0, absent.stderr)
+            self.assertEqual(absent.stdout, self.cli("resolve", "--json").stdout)
+        self.write(self.policy(self.tier()))
+        opted_in = subprocess.run([sys.executable, "-S", str(SCRIPT), "validate", "--repo-root", str(self.root)],
+                                 capture_output=True, text=True, env=dict(os.environ, WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT=""))
+        self.assertEqual(opted_in.returncode, 2)
+        self.assertEqual(json.loads(opted_in.stderr)["CODE"], "dependency_missing")
+
     def test_role_catalogue_matches_canonical_table(self):
         text = (ROOT / "docs/workflow/development-workflow/agent-model-config.md").read_text()
         table = text.split("## Agent Assignments (Tier-Based)", 1)[1].split("### Runner Notes", 1)[0]

@@ -1990,6 +1990,81 @@ def cmd_model_routes(args: argparse.Namespace) -> int:
     return 0
 
 
+def routing_declared(raw: str) -> bool:
+    """Detect an opt-in boundary without adding PyYAML to legacy validation.
+
+    This is only a conservative activation probe, never a YAML acceptance
+    parser. The strict reader decides syntax/schema after a declaration. Handle
+    the reader's line breaks, quoted keys (including escaped double quotes),
+    malformed indentation and unsupported inline mappings without hiding them.
+    """
+    lines = []
+    for line in raw.splitlines():
+        text = strip_inline_comment(line).strip()
+        if text:
+            lines.append((len(line) - len(line.lstrip()), text))
+
+    def key_value(text: str) -> tuple[str, str]:
+        match = re.match(r"^('(?:[^']|'')*'|\"(?:[^\"\\]|\\.)*\"|[^:]+)\s*:(.*)$", text)
+        if not match:
+            return "", ""
+        key, value = match.group(1).strip(), match.group(2).strip()
+        if key.startswith('"'):
+            try:
+                key = json.loads(key)
+            except (ValueError, TypeError):
+                return "", ""
+        elif key.startswith("'"):
+            key = key[1:-1].replace("''", "'")
+        return key, value
+
+    for index, (indent, text) in enumerate(lines):
+        key, value = key_value(text)
+        if key != "models" and not re.match(r"^(?:models|'models'|\"models\")(?:\s|$)", text):
+            continue
+        if value.startswith("{") and re.search(r"(?:\{|,)\s*(?:dsh|'dsh'|\"dsh\")\s*:", value):
+            return True
+        children = []
+        for child_indent, child in lines[index + 1:]:
+            if child_indent <= indent:
+                break
+            children.append((child_indent, child))
+        if children:
+            child_level = min(child_indent for child_indent, _ in children)
+            if any(child_indent == child_level and (key_value(child)[0] == "dsh"
+                    or re.match(r"^(?:dsh|'dsh'|\"dsh\")(?:\s|$)", child))
+                   for child_indent, child in children):
+                return True
+    return False
+
+
+def cmd_validate(args: argparse.Namespace) -> int:
+    root = repo_root_from_args(args.repo_root)
+    shared_path = root / ".ai-dev-workflow.yaml"
+    local_path, _, _ = resolve_local_config(root)
+    snapshots = {}
+    for path in (shared_path, local_path):
+        if path.exists():
+            try:
+                snapshots[path] = path.read_text(encoding="utf-8")
+            except (OSError, UnicodeError):
+                # Legacy repository-context validation owns its existing read errors.
+                return cmd_resolve(args)
+    configured = any(routing_declared(raw) for raw in snapshots.values())
+    try:
+        context = resolve_context(args)
+    except ConfigError:
+        if configured:
+            # Give malformed routing the same sanitized strict diagnostic as
+            # model-route; if routing is valid, retain the context error.
+            load_model_policy(root, snapshots)
+        raise
+    if configured:
+        load_model_policy(root, snapshots)
+    print_context(args, context)
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Resolve AI workflow repository context")
     subcommands = parser.add_subparsers(dest="command", required=True)
@@ -2009,7 +2084,7 @@ def build_parser() -> argparse.ArgumentParser:
             help="require a resolved local product checkout path",
         )
         command.add_argument("--json", action="store_true", help="print JSON instead of shell KEY=value")
-        command.set_defaults(func=cmd_resolve)
+        command.set_defaults(func=cmd_validate if name == "validate" else cmd_resolve)
 
     list_product_repos = subcommands.add_parser(
         "list-product-repos", help="list configured workflow_hub product repository names"
