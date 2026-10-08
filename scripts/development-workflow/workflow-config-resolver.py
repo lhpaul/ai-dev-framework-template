@@ -1811,6 +1811,185 @@ def cmd_review_github_effective(args: argparse.Namespace) -> int:
     return 0
 
 
+# Canonical core Agent Assignments; runner-specific aliases are intentionally absent.
+DSH_ROLE_TIERS = {
+    "orchestrator": "economy", "item-orchestrator": "balanced",
+    "automated-reviewer-loop": "economy", "product-manager": "premium",
+    "spec-reviewer": "balanced", "tech-lead": "premium",
+    "implementation-plan-reviewer": "balanced", "developer": "balanced",
+    "code-reviewer": "balanced", "project-setup": "balanced",
+    "smoke-tester": "balanced", "retrospective": "balanced",
+}
+DSH_TIERS = ("economy", "balanced", "premium")
+DSH_ROUTE_FIELDS = ("provider", "model", "reasoning_effort")
+
+
+class ModelConfigError(ConfigError):
+    """Safe model diagnostic; never retain raw configuration or parser output."""
+
+    def __init__(self, code: str, path: Path | str, field: str, message: str):
+        self.diagnostic = {"CODE": code, "FILE": str(path), "FIELD": field,
+                           "MESSAGE": message}
+        super().__init__(message)
+
+
+def model_error(code: str, path: Path | str, field: str, message: str) -> None:
+    raise ModelConfigError(code, path, field, message)
+
+
+def model_layer(data: dict[str, Any], path: Path) -> dict[str, Any]:
+    if "models" not in data:
+        return {}
+    models = data["models"]
+    if not isinstance(models, dict):
+        model_error("invalid_type", path, "models", "Expected a mapping")
+    if "dsh" not in models:
+        return {}
+    policy = models["dsh"]
+    if not isinstance(policy, dict):
+        model_error("invalid_type", path, "models.dsh", "Expected a mapping")
+    if set(policy) - {"tiers", "roles"}:
+        model_error("unknown_field", path, "models.dsh", "Unknown routing field")
+    for kind, names in (("tiers", DSH_TIERS), ("roles", DSH_ROLE_TIERS)):
+        entries = policy.get(kind, {})
+        if not isinstance(entries, dict):
+            model_error("invalid_type", path, f"models.dsh.{kind}", "Expected a mapping")
+        for name, value in entries.items():
+            field = f"models.dsh.{kind}"
+            if name not in names:
+                model_error("unknown_name", path, field, "Unknown role or tier name")
+            field += f".{name}"
+            if kind == "roles" and isinstance(value, str):
+                if value not in DSH_TIERS:
+                    model_error("unknown_tier", path, field, "Expected a supported tier reference")
+                continue
+            if not isinstance(value, dict):
+                model_error("invalid_type", path, field, "Expected a route mapping")
+            if set(value) - set(DSH_ROUTE_FIELDS):
+                model_error("unknown_field", path, field, "Unknown route field")
+            for key, scalar in value.items():
+                if not isinstance(scalar, str) or not scalar.strip():
+                    model_error("invalid_value", path, f"{field}.{key}", "Expected a nonblank string")
+                if any(ord(char) < 32 or 127 <= ord(char) <= 159 or char in "\u2028\u2029" for char in scalar):
+                    model_error("invalid_value", path, f"{field}.{key}", "Control characters are not permitted")
+    return policy
+
+
+def compose_model_maps(shared: dict[str, Any], local: dict[str, Any]) -> dict[str, Any]:
+    """Pure recursive composition; strings and mappings replace one another."""
+    result = {}
+    for key in sorted(shared.keys() | local.keys()):
+        if key in local:
+            value = local[key]
+            if isinstance(value, dict):
+                base = shared.get(key, {})
+                result[key] = compose_model_maps(base if isinstance(base, dict) else {}, value)
+            else:
+                result[key] = value
+        else:
+            value = shared[key]
+            result[key] = compose_model_maps(value, {}) if isinstance(value, dict) else value
+    return result
+
+
+def model_entry_source(kind: str, name: str, shared: dict[str, Any], local: dict[str, Any],
+                       shared_path: Path, local_path: Path) -> tuple[str, Path]:
+    local_entry = local.get(kind, {}).get(name)
+    # Empty mappings contribute no route field, unlike a replacing reference.
+    contributes = isinstance(local_entry, str) or bool(local_entry)
+    suffix = "role" if kind == "roles" else "tier"
+    return (f"local-{suffix}", local_path) if contributes else (f"committed-{suffix}", shared_path)
+
+
+def load_model_policy(repo_root: Path, snapshots: dict[Path, str] | None = None) -> tuple[Any, ...]:
+    shared_path = repo_root / ".ai-dev-workflow.yaml"
+    try:
+        local_path, _, _ = resolve_local_config(repo_root)
+    except ConfigError:
+        model_error("config_discovery", repo_root / LOCAL_CONFIG_NAME, "models.dsh", "Local override source is unavailable")
+    layers = []
+    for path in (shared_path, local_path):
+        try:
+            data = (parse_review_yaml(path, raw=snapshots[path]) if snapshots is not None and path in snapshots
+                    else parse_yaml_subset(path, preserve_empty_values=True))
+        except ConfigError as exc:
+            missing_dependency = isinstance(exc.__cause__, ImportError)
+            model_error("dependency_missing" if missing_dependency else "invalid_yaml", path, "models.dsh",
+                        "Install PyYAML==6.0.2 for strict routing validation" if missing_dependency
+                        else "Invalid or unsupported YAML configuration")
+        layers.append(model_layer(data, path))
+    shared, local = layers
+    effective = compose_model_maps(shared, local)
+    for kind in ("tiers", "roles"):
+        for name, value in effective.get(kind, {}).items():
+            _, path = model_entry_source(kind, name, shared, local, shared_path, local_path)
+            field = f"models.dsh.{kind}.{name}"
+            if isinstance(value, str):
+                if value not in effective.get("tiers", {}):
+                    model_error("dangling_reference", path, field, "Referenced tier has no configured route")
+            elif not all(key in value for key in ("provider", "model")):
+                model_error("incomplete_route", path, field, "Effective route requires provider and model")
+    return effective, shared, local, shared_path, local_path
+
+
+def model_resolution(policy: tuple[Any, ...], role: str = "", tier: str = "") -> dict[str, str]:
+    if role and role not in DSH_ROLE_TIERS:
+        model_error("unknown_role", "", "role", "Unknown workflow role")
+    if tier and tier not in DSH_TIERS:
+        model_error("unknown_tier", "", "tier", "Unknown model tier")
+    if not role and not tier:
+        model_error("missing_query", "", "role/tier", "Specify a role or tier")
+    effective, shared, local, shared_path, local_path = policy
+    selected_tier = tier or DSH_ROLE_TIERS[role]
+    entry = effective.get("roles", {}).get(role)
+    kind, name = "roles", role
+    if entry is None or isinstance(entry, str):
+        selected_tier = entry if isinstance(entry, str) else selected_tier
+        kind, name = "tiers", selected_tier
+        entry = effective.get("tiers", {}).get(selected_tier)
+    else:
+        selected_tier = ""
+    result = {"ROLE": role, "TIER": selected_tier, "PROVIDER": "", "MODEL": "",
+              "REASONING_EFFORT": "", "SOURCE": "inherited", "SOURCE_FILE": ""}
+    if entry is not None:
+        source, path = model_entry_source(kind, name, shared, local, shared_path, local_path)
+        result.update({"PROVIDER": entry["provider"], "MODEL": entry["model"],
+                       "REASONING_EFFORT": entry.get("reasoning_effort", ""),
+                       "SOURCE": source, "SOURCE_FILE": str(path)})
+    return result
+
+
+def cmd_model_route(args: argparse.Namespace) -> int:
+    if args.runner != "dsh":
+        model_error("unsupported_runner", "", "runner", "Only dsh routing is supported")
+    # Validate query before inspecting configuration, without argparse's plain errors.
+    model_resolution(({}, {}, {}, Path(), Path()), args.role or "", args.tier or "")
+    result = model_resolution(load_model_policy(repo_root_from_args(args.repo_root)),
+                              args.role or "", args.tier or "")
+    print_context(args, result)
+    return 0
+
+
+def cmd_model_routes(args: argparse.Namespace) -> int:
+    if args.runner != "dsh":
+        model_error("unsupported_runner", "", "runner", "Only dsh routing is supported")
+    policy = load_model_policy(repo_root_from_args(args.repo_root))
+    records = [model_resolution(policy, role=role) for role in DSH_ROLE_TIERS]
+    records += [model_resolution(policy, tier=tier) for tier in DSH_TIERS]
+    tuples = sorted({(r["PROVIDER"], r["MODEL"], r["REASONING_EFFORT"])
+                     for r in records if r["SOURCE"] != "inherited"})
+    routes = [dict(zip(("PROVIDER", "MODEL", "REASONING_EFFORT"), values)) for values in tuples]
+    if args.json:
+        print(json.dumps({"ROUTES": routes, "RESOLUTIONS": records}, sort_keys=True))
+    else:
+        output = {"ROUTE_COUNT": str(len(routes)), "RESOLUTION_COUNT": str(len(records))}
+        for group, items in (("ROUTE", routes), ("RESOLUTION", records)):
+            for index, item in enumerate(items):
+                output.update({f"{group}_{index}_{key}": value for key, value in item.items()})
+        print_shell_context(output)
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Resolve AI workflow repository context")
     subcommands = parser.add_subparsers(dest="command", required=True)
@@ -1876,6 +2055,15 @@ def build_parser() -> argparse.ArgumentParser:
     )
     github_effective.add_argument("--repo-root")
     github_effective.set_defaults(func=cmd_review_github_effective)
+    for name, func in (("model-route", cmd_model_route), ("model-routes", cmd_model_routes)):
+        command = subcommands.add_parser(name, help="inspect read-only DSH model routing")
+        command.add_argument("--runner", required=True)
+        command.add_argument("--repo-root")
+        command.add_argument("--json", action="store_true")
+        if name == "model-route":
+            command.add_argument("--role")
+            command.add_argument("--tier")
+        command.set_defaults(func=func)
     return parser
 
 
@@ -1884,6 +2072,9 @@ def main(argv: list[str]) -> int:
     args = parser.parse_args(argv)
     try:
         return int(args.func(args))
+    except ModelConfigError as exc:
+        print(json.dumps(exc.diagnostic, sort_keys=True), file=sys.stderr)
+        return 2
     except ConfigError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 2
