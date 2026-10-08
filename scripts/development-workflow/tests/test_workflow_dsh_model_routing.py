@@ -59,7 +59,7 @@ class ModelRoutingTests(unittest.TestCase):
         return ctx.exception.diagnostic
 
     def cli(self, *args, **kwargs):
-        env = dict(os.environ, WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT="")
+        env = kwargs.pop("env", dict(os.environ, WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT=""))
         return subprocess.run([sys.executable, "-B", str(SCRIPT), *args, "--repo-root", str(self.root)],
                               text=True, capture_output=True, env=env, **kwargs)
 
@@ -237,6 +237,7 @@ class ModelRoutingTests(unittest.TestCase):
                      "models:\n   dsh: {}\n", " models:\n   dsh: {}\n",
                      "models\n  dsh: {}\n", "models:\n  dsh [broken\n",
                      "models: {dsh: {tiers: {}}}\n",
+                     "mode: single_repo\nmodels: dsh: {}\n",
                      "models: !!map {dsh: {tiers: {balanced: {provider: p}}}}\n",
                      "models: &policy {dsh: {}}\n",
                      "policy: &policy {dsh: {}}\nmodels: *policy\n",
@@ -260,6 +261,24 @@ class ModelRoutingTests(unittest.TestCase):
         result = self.cli("validate")
         self.assertNotIn("PRIVATE_TEST_SENTINEL", result.stderr + result.stdout)
         self.assertEqual(json.loads(result.stderr)["CODE"], "invalid_yaml")
+
+    def test_opted_in_discovery_error_parity_preserves_absent_legacy(self):
+        missing = self.root / "PRIVATE_TEST_SENTINEL_missing"
+        with patch.dict(os.environ, WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT=str(missing)):
+            self.write(self.policy(self.tier()))
+            route = self.cli("model-route", "--runner", "dsh", "--role", "developer", "--json",
+                             env=dict(os.environ))
+            validate = self.cli("validate", "--json", env=dict(os.environ))
+            self.assertEqual(route.returncode, 2)
+            self.assertEqual(validate.returncode, 2)
+            self.assertEqual(json.loads(validate.stderr), json.loads(route.stderr))
+            self.assertEqual(json.loads(validate.stderr)["CODE"], "config_discovery")
+            self.assertNotIn("PRIVATE_TEST_SENTINEL", validate.stderr)
+            self.write("mode: single_repo\n")
+            validate = self.cli("validate", "--json", env=dict(os.environ))
+            resolve = self.cli("resolve", "--json", env=dict(os.environ))
+            self.assertEqual(validate.returncode, resolve.returncode)
+            self.assertEqual(validate.stderr, resolve.stderr)
 
     def test_absent_validate_has_no_new_dependency_or_grammar(self):
         for text in ("mode: single_repo\n", "# models:\n#   dsh: {}\n", "models:\n  other:\n    dsh: unused\n",

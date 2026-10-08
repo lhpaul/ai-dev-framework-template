@@ -2081,6 +2081,10 @@ def routing_declared(raw: str) -> bool:
             if target is None:
                 break
             index, indent, text, value = target
+        if key_value(value)[0] == "dsh":
+            # A missing enclosing map must not turn an explicit inline DSH
+            # declaration into a legacy scalar and bypass strict validation.
+            return True
         if value.startswith("{"):
             # Probe only direct flow keys, not dsh text inside values/other maps.
             depth, key_start, quote, escaped = 0, 1, "", False
@@ -2123,7 +2127,19 @@ def routing_declared(raw: str) -> bool:
 def cmd_validate(args: argparse.Namespace) -> int:
     root = repo_root_from_args(args.repo_root)
     shared_path = root / ".ai-dev-workflow.yaml"
-    local_path, _, _ = resolve_local_config(root)
+    try:
+        local_path, _, _ = resolve_local_config(root)
+    except ConfigError:
+        # Discovery fails before the usual snapshot boundary. An opted-in
+        # shared declaration still requires the model command's safe error;
+        # absent routing preserves the legacy discovery diagnostic.
+        try:
+            shared_raw = shared_path.read_text(encoding="utf-8")
+        except (OSError, UnicodeError):
+            shared_raw = ""
+        if routing_declared(shared_raw):
+            load_model_policy(root)
+        raise
     snapshots = {}
     for path in (shared_path, local_path):
         if path.exists():
