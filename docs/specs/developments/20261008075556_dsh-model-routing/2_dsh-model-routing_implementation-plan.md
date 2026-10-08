@@ -366,7 +366,12 @@ child's route. Empty/missing/unknown input handling is covered by D1/D2/D5.
 
 ### Composed Call Sites
 
-The Verification Log searches enumerate the existing validation path. Preserve
+The Amendment Verification Log's whole-scripts query enumerates reader/helper
+and load_configs consumers, including external dynamic imports and direct tests.
+The unrelated same-named parse_scalar in select-sync-manifest-entries.py is its
+own implementation, not a consumer of this resolver; workflow-lib.sh's matching
+key-presence comment is a contract reference, not a direct parser call. The table
+below traces the real consumer population as well as the validation wrapper chain. Preserve
 legacy repository-context semantics; common policy reading precedes context
 validation/output for activated files. Model-schema failure is an additional
 read-only rejection only for configured DSH routing. No side effect moves ahead
@@ -388,6 +393,14 @@ of a failed validation result.
 | Legacy review-overrides | cmd_review_overrides → resolve_review_overrides → resolve_local_review_config → default reader; checkout without review still falls through to main-clone reviewer overrides; unchanged outputs, override origin and fallback rules |
 | review-effective/review-github-effective | Respective cmd/resolve_review functions → preserve_empty_values=True → parse_review_yaml, including selected/shared/main-clone reads; strict review errors and existing library dependency remain. The new raw adapter is not inserted into these branches |
 | Legacy parser helpers | Default parse_yaml_subset → preprocess_yaml → parse_mapping/parse_list → parse_scalar (and recursive calls); extracted snapshot adapter preserves all existing whitespace/comment/inline-list/coercion behavior. BR9 collection/type restrictions occur only in the separate policy parser, never these legacy helpers |
+| run-bounded-prelude.sh guardrails reader | Dynamic resolver import → default parse_yaml_subset → guardrails snapshot; preserve present/default guardrails and unreadable exit 2. The adapter must not convert unrelated inline lists into unreadable policy. Regression is fixture-only, never a real run-item/run-work invocation |
+| run-work-router.sh guardrails reader | Dynamic import → default reader → section/mode/backlog-start output; preserve present/delegated data and conservative fallback on genuine legacy failure. Do not run against the real board for this item |
+| validate-workflow-hub-skeletons.py validate_skeleton_manifest | Imported resolver default reader → skeleton_role/entries validation; keep list manifests accepted, required-file checks and validation errors unchanged |
+| workflow-merge-budget.py config/reserve | Dynamic module.load_configs → default shared/local reader → reserve selection; preserve layer/override precedence and Stop on owning configuration unreadable; no merge/budget admission is executed by parser regressions |
+| workflow-portfolio-scan.py configuration | resolver.parse_yaml_subset(..., preserve_empty_values=True) → existing strict reader → tracker/portfolio reserve config; retain its dependency, precedence and ReadError behavior. Scope is direct fixture parsing, no live portfolio scan |
+| test-workflow-config-resolver.sh direct parser assertions | Default parse_yaml_subset at line775 and default parse_scalar/inline-list/control-value assertions retain legacy results; preserve_empty_values=True and review_effective=True assertions keep the strict-reader behavior. This population is separate from the suite's validate/wrapper consumers |
+| test-review-effective-yaml-parser.sh direct parser assertions | Strict parse_yaml_subset(..., preserve_empty_values=True) → parse_review_yaml; YAML quoting/line-break/error expectations and its existing dependency remain unchanged |
+
 
 No deleted branch's inputs need reassignment: this is additive validation.
 
