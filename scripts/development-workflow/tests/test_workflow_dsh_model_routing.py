@@ -237,9 +237,11 @@ class ModelRoutingTests(unittest.TestCase):
                      "models:\n   dsh: {}\n", " models:\n   dsh: {}\n",
                      "models\n  dsh: {}\n", "models:\n  dsh [broken\n",
                      "models: {dsh: {tiers: {}}}\n",
+                     "{mode: single_repo, models: {dsh: {}}}\n",
                      "mode: single_repo\nmodels: dsh: {}\n",
                      "mode: single_repo\nmodels: dsh [broken\n",
                      "models: !!map {dsh: {tiers: {balanced: {provider: p}}}}\n",
+                     "models: !<tag:example.org,2002:map> {dsh: {}}\n",
                      "models: &policy {dsh: {}}\n",
                      "models: &policy{dsh: {tiers: {balanced: {provider: p}}}}\n",
                      "mode: single_repo\nfirst: &route {codex: {}}\nsecond: &route {dsh: {}}\nmodels: *route\n",
@@ -300,16 +302,21 @@ class ModelRoutingTests(unittest.TestCase):
                      'custom:\n  models:\n    dsh: unused\n',
                      'custom:\n  models: {dsh: unused}\n',
                      'models: !!map {other: unused}\n',
+                     'models: !<tag:example.org,2002:map> {other: unused}\n',
                      'policy: &policy {other: {dsh: unused}}\nmodels: *policy\n',
                      'actual: {inner: &policy {other: unused}, sibling: {dsh: unused}}\nmodels: *policy\n',
                      'holder: {first: &route {codex: {}}, second: &route {other: {}}}\nmodels: *route\n',
                      'route: &route {other: {dsh: unused}}\nmodels: {<<: *route}\n',
-                     'first: &a *b\nsecond: &b *a\nmodels: *a\n'):
+                     'first: &a *b\nsecond: &b *a\nmodels: *a\n',
+                     '{mode: single_repo, models: {other: {dsh: unused}}}\n',
+                     '{mode: single_repo, custom: {models: {dsh: unused}}}\n'):
             self.write(text)
             absent = subprocess.run([sys.executable, "-S", str(SCRIPT), "validate", "--repo-root", str(self.root), "--json"],
                                     capture_output=True, text=True, env=dict(os.environ, WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT=""))
-            self.assertEqual(absent.returncode, 0, absent.stderr)
-            self.assertEqual(absent.stdout, self.cli("resolve", "--json").stdout)
+            legacy = self.cli("resolve", "--json")
+            self.assertEqual(absent.returncode, legacy.returncode, absent.stderr)
+            self.assertEqual(absent.stdout, legacy.stdout)
+            self.assertEqual(absent.stderr, legacy.stderr)
         self.write(self.policy(self.tier()))
         opted_in = subprocess.run([sys.executable, "-S", str(SCRIPT), "validate", "--repo-root", str(self.root)],
                                  capture_output=True, text=True, env=dict(os.environ, WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT=""))

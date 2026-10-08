@@ -2062,6 +2062,31 @@ def routing_declared(raw: str) -> bool:
         return [match.group(1) for item in sequence.group(1).split(",")
                 if (match := re.fullmatch(r"\s*\*([^\s{}\[\],]+)\s*", item))]
 
+    def flow_entries(value: str):
+        # Yield only immediate keys; nested maps and scalar text are not roots.
+        depth, key_start, quote, escaped = 0, 1, "", False
+        for position, char in enumerate(value):
+            if quote:
+                if escaped:
+                    escaped = False
+                elif char == "\\" and quote == '"':
+                    escaped = True
+                elif char == quote:
+                    quote = ""
+                continue
+            if char in ("'", '"'):
+                quote = char
+            elif char in "{[":
+                depth += 1
+            elif char in "}]":
+                depth -= 1
+                if depth == 0:
+                    break
+            elif char == "," and depth == 1:
+                key_start = position + 1
+            elif char == ":" and depth == 1:
+                yield key_value(value[key_start:position] + ":")[0], value[position + 1:].lstrip()
+
     def routing_hints(index: int, indent: int, value: str) -> tuple[bool, list[str]]:
         merges = []
         if key_value(value)[0] == "dsh" or re.match(r"^(?:dsh|'dsh'|\"dsh\")(?:\s|$)", value):
@@ -2069,33 +2094,11 @@ def routing_declared(raw: str) -> bool:
             # declaration into a legacy scalar and bypass strict validation.
             return True, merges
         if value.startswith("{"):
-            # Probe only direct flow keys, not dsh text inside values/other maps.
-            depth, key_start, quote, escaped = 0, 1, "", False
-            for position, char in enumerate(value):
-                if quote:
-                    if escaped:
-                        escaped = False
-                    elif char == "\\" and quote == '"':
-                        escaped = True
-                    elif char == quote:
-                        quote = ""
-                    continue
-                if char in ("'", '"'):
-                    quote = char
-                elif char in "{[":
-                    depth += 1
-                elif char in "}]":
-                    depth -= 1
-                    if depth == 0:
-                        break
-                elif char == "," and depth == 1:
-                    key_start = position + 1
-                elif char == ":" and depth == 1:
-                    key = key_value(value[key_start:position] + ":")[0]
-                    if key == "dsh":
-                        return True, merges
-                    if key == "<<":
-                        merges.extend(merge_aliases(value[position + 1:]))
+            for key, child_value in flow_entries(value):
+                if key == "dsh":
+                    return True, merges
+                if key == "<<":
+                    merges.extend(merge_aliases(child_value))
         children = []
         for child_indent, child in lines[index + 1:]:
             if child_indent <= indent:
@@ -2125,7 +2128,7 @@ def routing_declared(raw: str) -> bool:
             if state in seen:
                 continue
             seen.add(state)
-            value = re.sub(r"^(?:(?:&[^\s{}\[\],]+|![^\s{}\[\],]+)\s*)+", "", value)
+            value = re.sub(r"^(?:(?:&[^\s{}\[\],]+|!<[^>]*>|![^\s{}\[\],]+)\s*)+", "", value)
             alias = re.fullmatch(r"\*([^\s]+)", value)
             if not alias:
                 declared, merges = routing_hints(index, indent, value)
@@ -2147,6 +2150,11 @@ def routing_declared(raw: str) -> bool:
     root_indent = min((indent for indent, _ in lines), default=0)
     for index, (indent, text) in enumerate(lines):
         if indent != root_indent:
+            continue
+        if text.startswith("{"):
+            if any(key == "models" and probe_mapping(index, indent, value)
+                   for key, value in flow_entries(text)):
+                return True
             continue
         key, value = key_value(text)
         if key != "models" and not re.match(r"^(?:models|'models'|\"models\")(?:\s|$)", text):
