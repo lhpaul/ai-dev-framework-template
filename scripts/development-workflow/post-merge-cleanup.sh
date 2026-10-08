@@ -143,7 +143,9 @@ CALLER_WORKTREE_ROOT=""
 # On the base-worktree re-entry below, this process's directory is wherever the
 # first pass had moved to, not the caller's. The first pass hands the caller's
 # worktrees over in POST_MERGE_CLEANUP_CALLER_WORKTREES instead.
-if [ -n "$CALLER_PWD" ] && [ "${POST_MERGE_CLEANUP_REENTERED:-}" != "1" ] && [ "${POST_MERGE_CLEANUP_BUDGET_ENTERED:-}" != 1 ] && [ "$inspect_targets" -eq 0 ]; then
+# Read-only inspection inherits the first cleanup pass's capture, including an
+# intentionally empty list from a caller outside Git. Direct begin has no list.
+if { [ "$inspect_targets" -eq 0 ] || [ -z "${POST_MERGE_CLEANUP_CALLER_WORKTREES+x}" ]; } && [ -n "$CALLER_PWD" ] && [ "${POST_MERGE_CLEANUP_REENTERED:-}" != "1" ] && [ "${POST_MERGE_CLEANUP_BUDGET_ENTERED:-}" != 1 ]; then
   CALLER_WORKTREE_ROOT="$(physical_worktree_root "$CALLER_PWD" || true)"
 fi
 
@@ -179,8 +181,8 @@ add_caller_worktree() {
   fi
   return 0
 }
-[ "$inspect_targets" -eq 1 ] || add_caller_worktree "$CALLER_WORKTREE_ROOT"
-if [ "$repo_root_explicit" -eq 1 ] && [ "${POST_MERGE_CLEANUP_REENTERED:-}" != "1" ] && [ "${POST_MERGE_CLEANUP_BUDGET_ENTERED:-}" != 1 ] && [ "$inspect_targets" -eq 0 ]; then
+add_caller_worktree "$CALLER_WORKTREE_ROOT"
+if { [ "$inspect_targets" -eq 0 ] || [ -z "${POST_MERGE_CLEANUP_CALLER_WORKTREES+x}" ]; } && [ "$repo_root_explicit" -eq 1 ] && [ "${POST_MERGE_CLEANUP_REENTERED:-}" != "1" ] && [ "${POST_MERGE_CLEANUP_BUDGET_ENTERED:-}" != 1 ]; then
   add_caller_worktree "$repo_root"
 fi
 export POST_MERGE_CLEANUP_CALLER_WORKTREES="$CALLER_WORKTREES"
@@ -387,6 +389,12 @@ if [ "$inspect_targets" -eq 0 ]; then
   export WORKFLOW_MERGE_BUDGET_REPO="$cleanup_budget_repo"
   export WORKFLOW_MERGE_BUDGET_PR="$merged_pr_number"
   cleanup_binding="$(workflow_merge_budget_helper check --session "$merge_session" --repo "$cleanup_budget_repo" --pr "$merged_pr_number" --head "$cleanup_budget_head" --base "$DEVELOP_BRANCH" --branch "$TO_DELETE")" || exit 2
+  # Recovery may run from another declared checkout. Preserve caller ownership
+  # frozen by begin, rather than rediscovering it from this process's cwd.
+  while IFS= read -r cleanup_frozen_caller; do
+    add_caller_worktree "$cleanup_frozen_caller"
+  done < <(printf '%s' "$cleanup_binding" | jq -r --arg repo "$cleanup_budget_repo" --argjson pr "$merged_pr_number" '.prs[] | select(.repo==$repo and .pr==$pr) | .worktrees[]? | select(.caller==true) | .root')
+  export POST_MERGE_CLEANUP_CALLER_WORKTREES="$CALLER_WORKTREES"
   cleanup_skip_local="$(printf '%s' "$cleanup_binding" | jq -r --arg repo "$cleanup_budget_repo" --argjson pr "$merged_pr_number" '[.prs[] | select(.repo==$repo and .pr==$pr) | .policySkipped[]? | select(.=="local_cleanup")] | length')"
   cleanup_skip_remote="$(printf '%s' "$cleanup_binding" | jq -r --arg repo "$cleanup_budget_repo" --argjson pr "$merged_pr_number" '[.prs[] | select(.repo==$repo and .pr==$pr) | .policySkipped[]? | select(.=="remote_delete")] | length')"
   cleanup_execution="$(workflow_merge_budget_helper check --session "$merge_session" --repo "$cleanup_budget_repo" \
@@ -403,8 +411,12 @@ if [ "$inspect_targets" -eq 0 ]; then
   cleanup_reentry_args=()
   [ "${POST_MERGE_CLEANUP_REENTERED:-}" != 1 ] || cleanup_reentry_args+=(--continue-intent)
   if [ "$cleanup_skip_local" -eq 1 ]; then
-    [ "$cleanup_skip_remote" -eq 1 ] || { echo "Local cleanup skipped while remote cleanup pending; explicit separate remote step required" >&2; exit 2; }
+    cleanup_remote_declared="$(printf '%s' "$cleanup_binding" | jq -r --arg repo "$cleanup_budget_repo" --argjson pr "$merged_pr_number" '.prs[] | select(.repo==$repo and .pr==$pr) | .steps | has("remote_delete")')"
+    cleanup_remote_state="$(printf '%s' "$cleanup_binding" | jq -r --arg repo "$cleanup_budget_repo" --argjson pr "$merged_pr_number" '.prs[] | select(.repo==$repo and .pr==$pr) | .steps.remote_delete.status // "absent"')"
+    [ "$cleanup_remote_declared" = false ] || [ "$cleanup_skip_remote" -eq 1 ] || [ "$cleanup_remote_state" = completed ] || [ "$cleanup_remote_state" = skipped_by_policy ] || { echo "Local cleanup skipped while remote cleanup pending; explicit separate remote step required" >&2; exit 2; }
     for cleanup_skipped in remote_delete local_cleanup; do
+      # A spec/plan/fork has no frozen remote-deletion duty to discharge.
+      [ "$cleanup_skipped" != remote_delete ] || [ "$cleanup_remote_declared" = true ] || continue
       cleanup_skipped_state="$(printf '%s' "$cleanup_binding" | jq -r --arg repo "$cleanup_budget_repo" --argjson pr "$merged_pr_number" --arg step "$cleanup_skipped" '.prs[] | select(.repo==$repo and .pr==$pr) | .steps[$step].status // "pending"')"
       [ "$cleanup_skipped_state" = completed ] || [ "$cleanup_skipped_state" = skipped_by_policy ] || {
       workflow_merge_budget_before policy_skip "$cleanup_skipped" || exit 2

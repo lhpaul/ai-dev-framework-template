@@ -583,6 +583,99 @@ class Composed(unittest.TestCase):
         events = json.loads(self.fixture.read_text())['events']
         self.assertEqual(events.count(['pr','merge']), 1)
 
+    def test_direct_begin_preserves_linked_cleanup_caller(self):
+        (self.scripts/'post-merge-cleanup.sh').chmod(0o700)
+        self.command(['git','checkout','-q','develop'])
+        self.command(['git','merge','-q','--no-edit','feature/12-item'])
+        self.command(['git','push','-q','origin','develop'])
+        linked = self.root/'1890-caller-worktree'
+        self.command(['git','worktree','add','-q',str(linked),'feature/12-item'])
+        self.data['prs']['12']['state'] = 'MERGED'
+        self.fixture.write_text(json.dumps(self.data))
+        manifest = self.root/'1890-linked-manifest.json'
+        manifest.write_text(json.dumps({'ownerRoot':str(self.repo),'prs':[{
+            'repo':'org/repo','pr':12,'head':self.head,'base':'develop',
+            'root':str(linked),'phases':['cleanup']}]}))
+        admitted = subprocess.run([sys.executable,str(self.scripts/'workflow-merge-budget.py'),
+            'begin','--input',str(manifest)],cwd=linked,env=self.env,text=True,capture_output=True)
+        self.assertEqual(admitted.returncode,0,admitted.stderr)
+        session = json.loads(admitted.stdout)['session']
+        target = json.loads(Path(session).read_text())['prs'][0]
+        self.assertEqual(target['worktrees'],[{'root':str(linked),'caller':True}])
+        cleanup = subprocess.run(['bash',str(self.scripts/'post-merge-cleanup.sh'),
+            '--merge-session',session,'--repo-root',str(self.repo),'--cleanup-repo-root',str(linked),
+            '--base','develop','--pr','12','feature/12-item'],cwd=self.repo,env=self.env,text=True,capture_output=True)
+        self.assertEqual(cleanup.returncode,0,cleanup.stdout+cleanup.stderr)
+        self.assertEqual(json.loads(self.helper('report','--session',session).stdout)['outcome'],'Completed')
+        self.assertTrue(linked.is_dir())
+        self.assertEqual(subprocess.run(['git','-C',str(linked),'branch','--show-current'],
+            text=True,capture_output=True,check=True).stdout.strip(),'')
+
+    def test_retained_local_cleanup_without_remote_deletion_duty(self):
+        for branch_kind,fork in [('spec',False),('implementation-plan',False),('feature',True)]:
+            for skipped in [['local_cleanup'],['remote_delete','local_cleanup']]:
+                with self.subTest(branch_kind=branch_kind,skipped=skipped):
+                    branch = branch_kind+'/12-item'
+                    current = self.command(['git','branch','--show-current']).stdout.strip()
+                    if current != branch:
+                        self.command(['git','branch','-m',branch])
+                    self.command(['git','push','-q','origin',branch])
+                    self.data['prs']['12'].update(state='MERGED',headRefName=branch)
+                    self.data['fork'] = fork
+                    self.fixture.write_text(json.dumps(self.data))
+                    manifest = self.root/'1890-retained-manifest.json'
+                    manifest.write_text(json.dumps({'ownerRoot':str(self.repo),'prs':[{
+                        'repo':'org/repo','pr':12,'head':self.head,'base':'develop',
+                        'root':str(self.repo),'phases':['cleanup'],'policySkipped':skipped}]}))
+                    session = json.loads(self.helper('begin','--input',manifest).stdout)['session']
+                    target = json.loads(Path(session).read_text())['prs'][0]
+                    self.assertFalse(target['remoteCleanup'])
+                    self.assertNotIn('remote_delete',target['steps'])
+                    cleanup = subprocess.run(['bash',str(self.scripts/'post-merge-cleanup.sh'),
+                        '--merge-session',session,'--repo-root',str(self.repo),'--base','develop',
+                        '--pr','12',branch],cwd=self.repo,env=self.env,text=True,capture_output=True)
+                    self.assertEqual(cleanup.returncode,0,cleanup.stdout+cleanup.stderr)
+                    self.assertEqual(json.loads(self.helper('report','--session',session).stdout)['outcome'],'Completed')
+                    self.assertTrue(self.command(['git','branch','--list',branch]).stdout.strip())
+                    self.assertTrue(self.command(['git','ls-remote','--heads','origin',branch]).stdout.strip())
+
+    def test_retained_local_cleanup_after_verified_remote_deletion(self):
+        self.data['prs']['12']['state'] = 'MERGED'
+        self.fixture.write_text(json.dumps(self.data))
+        manifest = self.root/'1890-completed-remote-manifest.json'
+        manifest.write_text(json.dumps({'ownerRoot':str(self.repo),'prs':[{
+            'repo':'org/repo','pr':12,'head':self.head,'base':'develop',
+            'root':str(self.repo),'phases':['cleanup'],'policySkipped':['local_cleanup']}]}))
+        session = json.loads(self.helper('begin','--input',manifest).stdout)['session']
+        self.helper('run-step','--session',session,'--repo','org/repo','--pr','12',
+                    '--phase','remote_delete','--step','remote_delete','--',
+                    'git','push','origin','--delete','feature/12-item')
+        cleanup = subprocess.run(['bash',str(self.scripts/'post-merge-cleanup.sh'),
+            '--merge-session',session,'--repo-root',str(self.repo),'--base','develop',
+            '--pr','12','feature/12-item'],cwd=self.repo,env=self.env,text=True,capture_output=True)
+        self.assertEqual(cleanup.returncode,0,cleanup.stdout+cleanup.stderr)
+        self.assertEqual(json.loads(self.helper('report','--session',session).stdout)['outcome'],'Completed')
+        self.assertTrue(self.command(['git','branch','--list','feature/12-item']).stdout.strip())
+        self.assertFalse(self.command(['git','ls-remote','--heads','origin','feature/12-item']).stdout.strip())
+
+    def test_local_retention_refuses_unhandled_applicable_remote_duty(self):
+        self.data['prs']['12']['state'] = 'MERGED'
+        self.fixture.write_text(json.dumps(self.data))
+        manifest = self.root/'1890-applicable-remote-manifest.json'
+        manifest.write_text(json.dumps({'ownerRoot':str(self.repo),'prs':[{
+            'repo':'org/repo','pr':12,'head':self.head,'base':'develop',
+            'root':str(self.repo),'phases':['cleanup'],'policySkipped':['local_cleanup']}]}))
+        session = json.loads(self.helper('begin','--input',manifest).stdout)['session']
+        cleanup = subprocess.run(['bash',str(self.scripts/'post-merge-cleanup.sh'),
+            '--merge-session',session,'--repo-root',str(self.repo),'--base','develop',
+            '--pr','12','feature/12-item'],cwd=self.repo,env=self.env,text=True,capture_output=True)
+        self.assertNotEqual(cleanup.returncode,0)
+        self.assertIn('explicit separate remote step required',cleanup.stderr)
+        target = json.loads(Path(session).read_text())['prs'][0]
+        self.assertEqual(target['steps']['remote_delete']['status'],'pending')
+        self.assertTrue(self.command(['git','branch','--list','feature/12-item']).stdout.strip())
+        self.assertTrue(self.command(['git','ls-remote','--heads','origin','feature/12-item']).stdout.strip())
+
     def test_actual_queue_waiting_no_cleanup_or_resubmission(self):
         self.data['queue'] = True
         self.fixture.write_text(json.dumps(self.data))
