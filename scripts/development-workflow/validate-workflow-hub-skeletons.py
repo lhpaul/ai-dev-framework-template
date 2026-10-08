@@ -24,6 +24,7 @@ PRODUCT_RELEASE_RUNTIME_PATHS = {
     "scripts/development-workflow/reviewer_preflight_coderabbit.py",
     "scripts/development-workflow/validate-workflow-config.sh",
     "scripts/development-workflow/workflow-lib.sh",
+    "scripts/development-workflow/workflow-merge-budget.py",
     "scripts/development-workflow/workflow-project-reader.py",
     "scripts/development-workflow/codex-github-evidence-lib.sh",
     "scripts/development-workflow/pr-ownership-guard.sh",
