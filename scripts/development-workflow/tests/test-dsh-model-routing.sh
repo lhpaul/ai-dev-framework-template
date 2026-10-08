@@ -10,7 +10,10 @@ set -euo pipefail
 SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)"
 python3 -B "$SCRIPT_DIR/test_workflow_dsh_model_routing.py"
 DOC_ROOT="${DSH_ROUTING_DOC_ROOT:-$(CDPATH='' cd -- "$SCRIPT_DIR/../../.." && pwd)}"
-python3 -B - "$DOC_ROOT" <<'PY'
+# shellcheck source=scripts/development-workflow/workflow-lib.sh
+source "$SCRIPT_DIR/../workflow-lib.sh"
+TEMPLATE_MODE="$(workflow_template_is_template "$DOC_ROOT/.ai-dev-workflow.yaml")"
+python3 -B - "$DOC_ROOT" "$TEMPLATE_MODE" <<'PY'
 import sys
 from pathlib import Path
 root = Path(sys.argv[1])
@@ -30,11 +33,12 @@ for path, required in contracts.items():
     for fragment in required:
         if fragment not in text:
             raise SystemExit(f"FAIL: {root / path}: missing dispatch contract fragment {fragment!r}")
-for path in (".ai-dev-workflow.yaml", ".ai-dev-workflow.local.example.yaml"):
+for path in ((".ai-dev-workflow.yaml", ".ai-dev-workflow.local.example.yaml")
+             if sys.argv[2] == "true" else ()):
     lines = (root / path).read_text().splitlines()
     if not any(line == "# models:" for line in lines):
         raise SystemExit(f"FAIL: {path}: missing commented example")
     if any(line.startswith("models:") for line in lines):
         raise SystemExit(f"FAIL: {path}: routing example must remain inactive")
-print("PASS: DSH dispatch contract mirrors, headless boundary and inactive examples")
+print("PASS: DSH dispatch contract mirrors, headless boundary and template-owned examples")
 PY

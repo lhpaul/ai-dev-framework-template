@@ -1894,9 +1894,14 @@ def compose_model_maps(shared: dict[str, Any], local: dict[str, Any]) -> dict[st
 
 def model_entry_source(kind: str, name: str, shared: dict[str, Any], local: dict[str, Any],
                        shared_path: Path, local_path: Path) -> tuple[str, Path]:
-    local_entry = local.get(kind, {}).get(name)
-    # Empty mappings contribute no route field, unlike a replacing reference.
-    contributes = isinstance(local_entry, str) or bool(local_entry)
+    local_entries = local.get(kind, {})
+    local_entry = local_entries.get(name)
+    shared_entry = shared.get(kind, {}).get(name)
+    # Empty map-over-map overrides contribute no fields. A declared empty
+    # map replacing a reference (or creating an entry) still owns its error.
+    contributes = name in local_entries and (
+        bool(local_entry) or not isinstance(shared_entry, dict)
+    )
     suffix = "role" if kind == "roles" else "tier"
     return (f"local-{suffix}", local_path) if contributes else (f"committed-{suffix}", shared_path)
 

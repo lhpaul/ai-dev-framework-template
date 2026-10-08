@@ -114,6 +114,12 @@ class ModelRoutingTests(unittest.TestCase):
         self.assertEqual(self.route()["MODEL"], "premium")
         self.write(self.policy(roles="      developer: premium\n"), self.policy(roles="      developer:\n        provider: local\n        model: direct\n"))
         self.assertEqual(self.route()["MODEL"], "direct")
+        for shared in (self.policy(self.tier(), "      developer: balanced\n"), ""):
+            self.write(shared, self.policy(roles="      developer: {}\n"))
+            with self.assertRaises(resolver.ModelConfigError) as caught:
+                resolver.load_model_policy(self.root)
+            self.assertEqual(caught.exception.diagnostic["CODE"], "incomplete_route")
+            self.assertEqual(caught.exception.diagnostic["FILE"], str(self.local))
 
     def test_explicit_tier_is_only_default_and_missing_tier_inherits(self):
         self.write(self.policy(self.tier("premium", "p", "premium")))
