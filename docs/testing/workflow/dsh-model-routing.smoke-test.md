@@ -201,7 +201,7 @@ file/network/Claude tools.
 
 Actual runs used resolver checkpoint `619f70841ce67fb07c1fb7dd2154cb79f0df3243`.
 A replay against implementation resolver revision
-`6cb5d20d589488ee921f36f57a51255d08bf8b69` matched all five captured resolutions
+`28fa41019fa8673cec6225b5c256b69bd904322f` matched all five captured resolutions
 using immutable per-case fixtures: role, tier, provider/model/effort, SOURCE and
 source filename. The resolver content digest was retained privately; future
 behavioral resolver changes require renewed replay or live smoke as appropriate.
@@ -226,7 +226,7 @@ Selection-disabled and allowlist-denied each used a fresh separate parent and
 passed an empty dispatch field object, then actually inherited `glm-5.3`.
 All temporary runtimes shut down gracefully; fixture/session data was retained.
 
-Configuration and contract verification: the DSH suite's 18 unit methods cover
+Configuration and contract verification: the DSH suite's 19 unit methods cover
 all planned input classes; the existing resolver suite passed 798 assertions,
 hub-smoke fixtures passed 70 and Step7a consistency passed 25. All 37 final
 diff-selected workflow suites passed, including consumer sync, release fragments
@@ -235,6 +235,11 @@ workflow_hub and product_repo; real local-file digests remained unchanged.
 Planted checks
 failed for a provider-only route at fixture line 6 and for an omitted
 selection-disabled contract at fixture line 230, then passed after correction.
+Discovery parity also failed with a missing synthetic override directory,
+then both commands passed after that directory was supplied; absent routing
+retained the exact legacy discovery diagnostic. Malformed inline DSH declarations
+now fail with the same sanitized error in both commands. Fresh targeted runs
+passed 19 routing methods, 798 resolver assertions and 70 hub assertions.
 These fixture paths remain private; they contain synthetic data only.
 
 ## Troubleshooting and Known Limitations
