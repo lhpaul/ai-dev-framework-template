@@ -735,7 +735,7 @@ def tracker_read(state, issue):
                    and newer(proof.get("observedAt"), state.get("recoveryStartedAt")) for proof in proofs)
     if issue["provider"] in {"none", "github_issues"}:
         return issue_read(issue)["state"] == "CLOSED"
-    script = 'source "$1/workflow-lib.sh"; cd "$2"; value=$(get_tracker_status_for_issue "$3"); printf "%s\n%s\n%s" "$value" "$(workflow_status_order "$value")" "$(workflow_status_order "$4")"' 
+    script = 'source "$1/workflow-lib.sh"; cd "$2"; value=$(get_tracker_status_for_issue "$3"); printf "%s\n%s\n%s" "$value" "$(workflow_status_order "$value")" "$(workflow_status_order "$4")"'
     owner = proof_root(state, state["ownerCommonDir"], state["ownerRoot"])
     environment = dict(os.environ, WORKFLOW_MERGE_BUDGET_SESSION=state["session"], WORKFLOW_MERGE_BUDGET_OWNER_ROOT=owner,
                        WORKFLOW_TARGET_GITHUB_REPO=issue["repo"])
