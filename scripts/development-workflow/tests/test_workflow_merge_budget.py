@@ -53,6 +53,88 @@ class Admission(unittest.TestCase):
         self.args.session = value['session']
         return value
 
+    def test_newly_issued_retry_drops_historical_supersession_reference(self):
+        manifest = json.loads(self.manifest.read_text())
+        manifest['prs'][0].pop('phases')
+        manifest['prs'][0]['steps'] = [dict(id='audit',phase='audit',auditRepo='org/repo',
+            auditTarget=900,marker='<!-- ledger -->')]
+        self.manifest.write_text(json.dumps(manifest));self.begin()
+        with budget.journal(self.args.session) as state:
+            state['prs'][0]['steps']['audit'].update(supersededBy='historical',retryVerifiedAt=budget.now(),
+                expectedBody='<!-- ledger --> retry')
+        body = self.owner/'1890-retry-body';body.write_text('<!-- ledger --> retry')
+        self.args.phase='audit';self.args.step='audit';self.args.expected_file=str(body)
+        budget.before(self.args)
+        entry = budget.snapshot(self.args.session)['prs'][0]['steps']['audit']
+        self.assertEqual(entry['status'],'in_flight')
+        self.assertNotIn('supersededBy',entry)
+        self.assertIs(type(entry['intentRevision']),int)
+
+    def test_comment_supersession_owns_exact_scope_and_issued_intent(self):
+        for phase in ('audit','hold'):
+            with self.subTest(phase=phase):
+                old = dict(phase=phase,status='completed',auditRepo='Org/Repo',auditTarget=900,
+                    marker='<!-- ledger -->',intentAt='2026-10-07T10:00:00+00:00',intentRevision=1,
+                    verifiedAt='2026-10-07T10:00:01+00:00',expectedBody='old')
+                latest = dict(old,intentRevision=2,intentAt='2026-10-07T10:00:02+00:00',expectedBody='final')
+                pending = dict(phase=phase,status='pending',auditRepo='org/repo',auditTarget=900,marker='<!-- ledger -->')
+                target = dict(repo='org/repo',pr=12,root=str(self.owner),steps={'old':old,'pending':pending})
+                later_target = dict(target,pr=13,steps={'final':latest})
+                unrelated = []
+                for field,value in [('phase','hold' if phase=='audit' else 'audit'),('auditRepo','org/other'),
+                                    ('auditTarget',901),('marker','<!-- other -->')]:
+                    entry = dict(old);entry[field]=value
+                    unrelated.append(entry)
+                target['steps'].update({str(i):entry for i,entry in enumerate(unrelated)})
+                state = {'prs':[target,later_target]}
+                budget.supersede_verified_comment(state,later_target,'final')
+                self.assertEqual(old['supersededBy'],{'repo':'org/repo','pr':13,'step':'final'})
+                self.assertNotIn('supersededBy',pending)
+                for entry in unrelated:
+                    self.assertNotIn('supersededBy',entry)
+                    entry['supersededBy'] = dict(old['supersededBy'])
+                    with self.assertRaises(budget.Stop):
+                        budget.verify(state,target,entry)
+                endpoints = []
+                def read(endpoint):
+                    endpoints.append(endpoint)
+                    return [{'id':1,'body':'final'}]
+                with patch.object(budget,'comments_read',side_effect=read):
+                    self.assertTrue(budget.verify(state,target,old))
+                self.assertEqual(endpoints,['repos/Org/Repo/issues/900/comments?per_page=100'])
+
+    def test_comment_supersession_legacy_reference_and_cycles_fail_closed(self):
+        old = dict(phase='audit',status='completed',auditTarget=900,marker='<!-- ledger -->',
+            intentAt='2026-10-07T10:00:00+00:00',verifiedAt='2026-10-07T10:00:01+00:00',expectedBody='old')
+        latest = dict(old,intentAt='2026-10-07T10:00:02+00:00',expectedBody='final')
+        target = dict(repo='org/repo',pr=12,root=str(self.owner),steps={'old':old,'final':latest})
+        state = {'prs':[target]};old['supersededBy']='final'
+        with patch.object(budget,'comments_read',return_value=[{'id':1,'body':'final'}]):
+            self.assertTrue(budget.verify(state,target,old))
+        latest['supersededBy']='old'
+        with self.assertRaises(budget.Stop):
+            budget.verify(state,target,old)
+        latest.pop('supersededBy');latest.pop('intentAt')
+        with self.assertRaises(budget.Stop):
+            budget.verify(state,target,old)
+
+    def test_comment_intent_chronology_rejects_invalid_ties_and_mixed_cycles(self):
+        base = dict(intentAt='2026-10-07T10:00:01+00:00')
+        for value in (True,0,'2'):
+            with self.subTest(revision=value),self.assertRaises(budget.Stop):
+                budget.comment_order(dict(base,intentRevision=value),base)
+        for value in ('invalid',None):
+            with self.subTest(timestamp=value),self.assertRaises(budget.Stop):
+                budget.comment_order(dict(intentAt=value),base)
+        with self.assertRaises(budget.Stop):
+            budget.ordered_comment_group([(None,'a',dict(base)),(None,'b',dict(base))])
+        # Revision says A > C, while legacy wall time says C > B > A: no safe total order.
+        entries = [dict(intentAt='2026-10-07T10:00:00+00:00',intentRevision=3),
+                   dict(intentAt='2026-10-07T10:00:01+00:00'),
+                   dict(intentAt='2026-10-07T10:00:02+00:00',intentRevision=1)]
+        with self.assertRaises(budget.Stop):
+            budget.ordered_comment_group([(None,str(i),e) for i,e in enumerate(entries)])
+
     def test_dispatch_identity_drift_interrupts_before_child_launch(self):
         from contextlib import redirect_stderr, redirect_stdout
         import io
@@ -1156,6 +1238,68 @@ class Composed(unittest.TestCase):
             self.assertTrue(Path(report['session']).is_file())
             self.assertEqual(json.loads(self.helper('report','--session',report['session']).stdout)['outcome'],'Deferred')
             self.assertNotIn('Traceback',result.stderr)
+
+    def test_applied_final_audit_patch_recovers_in_execution_order(self):
+        for phase,reverse,cross_pr,outage in [('audit',False,False,True),('audit',True,False,True),
+                                            ('audit',False,True,True),('hold',False,False,True),
+                                            ('audit',False,True,False)]:
+            with self.subTest(phase=phase,reverse=reverse,cross_pr=cross_pr,outage=outage):
+                self.data.update(comments=[],commentReadOutage=False,auditPatchReadOutage=False,
+                                 commentMutationCount=0,events=[])
+                self.data['prs']['13'] = dict(self.data['prs']['12'],number=13)
+                self.fixture.write_text(json.dumps(self.data))
+                scope = dict(phase=phase,auditRepo='org/repo',auditTarget=900,marker='<!-- fixture-ledger -->')
+                pre,final = dict(scope,id='audit:pre'),dict(scope,id='audit:final')
+                selected = dict(repo='org/repo',pr=12,head=self.head,base='develop',root=str(self.repo))
+                targets = [dict(selected,steps=[final,pre] if reverse else [pre,final])]
+                if cross_pr:
+                    targets = [dict(selected,steps=[pre]),dict(selected,pr=13,steps=[final])]
+                manifest = self.root/'1890-audit-supersession.json'
+                manifest.write_text(json.dumps({'ownerRoot':str(self.repo),'prs':targets}))
+                session = json.loads(self.helper('begin','--input',manifest).stdout)['session']
+                body = self.root/'1890-ledger-body';body.write_text('<!-- fixture-ledger --> pre')
+                self.helper('run-step','--session',session,'--repo','org/repo','--pr','12',
+                    '--phase',phase,'--step','audit:pre','--expected-file',body,'--','gh','api',
+                    'repos/org/repo/issues/900/comments','-X','POST','-f','body='+body.read_text())
+                body.write_text('<!-- fixture-ledger --> final')
+                data = json.loads(self.fixture.read_text());data['auditPatchReadOutage'] = outage
+                self.fixture.write_text(json.dumps(data))
+                failed = self.helper('run-step','--session',session,'--repo','org/repo','--pr',13 if cross_pr else 12,
+                    '--phase',phase,'--step','audit:final','--expected-file',body,'--','gh','api',
+                    'repos/org/repo/issues/comments/1','-X','PATCH','-f','body='+body.read_text(),success=False)
+                self.assertEqual(failed.returncode != 0,outage)
+                self.assertEqual(json.loads(Path(session).read_text())['outcome'],'Interrupted' if outage else 'Completed')
+                data = json.loads(self.fixture.read_text());data['commentReadOutage'] = False
+                self.fixture.write_text(json.dumps(data))
+                recovered = self.helper('resume','--session',session)
+                self.assertEqual(json.loads(recovered.stdout)['outcome'],'Completed')
+                state = json.loads(Path(session).read_text())
+                self.assertEqual(state['prs'][0]['steps']['audit:pre']['status'],'completed')
+                self.assertIsNotNone(state['prs'][0]['steps']['audit:pre'].get('supersededBy'))
+                data = json.loads(self.fixture.read_text())
+                self.assertEqual(data['comments'],[{'id':1,'body':body.read_text()}])
+                self.assertEqual(data['commentMutationCount'],2)
+
+    def test_unissued_final_declaration_cannot_discharge_overwritten_pre_audit(self):
+        scope = dict(phase='audit',auditRepo='org/repo',auditTarget=900,marker='<!-- fixture-ledger -->')
+        manifest = self.root/'1890-unissued-audit.json'
+        manifest.write_text(json.dumps({'ownerRoot':str(self.repo),'prs':[dict(repo='org/repo',pr=12,
+            head=self.head,base='develop',root=str(self.repo),steps=[dict(scope,id='pre'),dict(scope,id='final')])]}))
+        session = json.loads(self.helper('begin','--input',manifest).stdout)['session']
+        body = self.root/'1890-issued-pre-body';body.write_text('<!-- fixture-ledger --> pre')
+        self.helper('run-step','--session',session,'--repo','org/repo','--pr','12','--phase','audit',
+            '--step','pre','--expected-file',body,'--','gh','api','repos/org/repo/issues/900/comments',
+            '-X','POST','-f','body='+body.read_text())
+        data = json.loads(self.fixture.read_text());data['comments'][0]['body']='<!-- fixture-ledger --> final'
+        self.fixture.write_text(json.dumps(data))
+        self.assertNotEqual(self.helper('resume','--session',session,success=False).returncode,0)
+        state = json.loads(Path(session).read_text())
+        self.assertEqual(state['outcome'],'Deferred')
+        self.assertEqual(state['prs'][0]['steps']['pre']['status'],'completed')
+        self.assertNotIn('supersededBy',state['prs'][0]['steps']['pre'])
+        self.assertEqual(state['prs'][0]['steps']['final']['status'],'pending')
+        self.assertNotIn('intentAt',state['prs'][0]['steps']['final'])
+        self.assertEqual(json.loads(self.fixture.read_text())['commentMutationCount'],1)
 
     def test_actual_failed_audit_readable_absence_retries_exact_intent(self):
         path = self.root/'1890-audit-retry-manifest.json'

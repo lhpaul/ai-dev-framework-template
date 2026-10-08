@@ -111,8 +111,24 @@ if args[:1] == ['api'] and any('/comments' in a for a in args):
         if state.get('auditFailure'):
             sys.exit(1)
         body = next(a[5:] for a in args if a.startswith('body='))
-        comments.append({'id':len(comments)+1,'body':body}); state['comments'] = comments; save()
-        emit(comments[-1])
+        if args[args.index('-X')+1] == 'PATCH':
+            endpoint = next(a for a in args if '/comments/' in a)
+            comment_id = int(endpoint.rsplit('/',1)[1])
+            found = next((c for c in comments if c['id']==comment_id),None)
+            if found is None:
+                sys.exit(1)
+            found['body'] = body
+            if state.get('auditPatchReadOutage'):
+                state['commentReadOutage'] = True
+        else:
+            found = {'id':len(comments)+1,'body':body}
+            comments.append(found)
+        state['commentMutationCount'] = state.get('commentMutationCount',0)+1
+        state['comments'] = comments
+        save()
+        emit(found)
+    if state.get('commentReadOutage'):
+        sys.exit(1)
     emit([comments] if '--slurp' in args else comments)
 if args[:2] == ['auth', 'status']:
     sys.exit(0)

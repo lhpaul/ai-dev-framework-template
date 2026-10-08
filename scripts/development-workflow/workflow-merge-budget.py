@@ -10,6 +10,7 @@ import argparse
 from contextlib import contextmanager
 from datetime import datetime, timezone
 import fcntl
+from functools import cmp_to_key
 import hashlib
 import importlib.util
 import json
@@ -688,8 +689,9 @@ def before(args):
             for selected in state["prs"]:
                 fresh = next(p for p in image["prs"] if p["repo"] == selected["repo"] and p["pr"] == selected["pr"])
                 selected["verifiedState"], selected["lastVerifiedAt"] = fresh["verifiedState"], fresh["lastVerifiedAt"]
-            entry = dict(old, status="in_flight", intentAt=now(), issue=args.issue,
+            entry = dict(old, status="in_flight", intentAt=now(), intentRevision=state["revision"] + 1, issue=args.issue,
                          expectedStatus=args.status, token=token)
+            entry.pop("supersededBy", None)  # A newly issued intent owns its own read-back duty.
             if expected is not None:
                 entry["expectedBody"] = expected
             current["steps"][key] = entry
@@ -763,11 +765,83 @@ def tracker_read(state, issue):
     return issue.get("statusPolicy") == "at_least" and re.fullmatch(r"[0-9]+", value[1]) is not None and re.fullmatch(r"[0-9]+", value[2]) is not None and int(value[1]) >= int(value[2])
 
 
-def verify(state, target, entry):
+def comment_scope(target, entry):
+    if entry["phase"] not in {"audit", "hold"} or type(entry.get("auditTarget", target["pr"])) is not int or not isinstance(entry.get("marker"), str) or not entry["marker"]:
+        raise Stop("invalid frozen comment scope")
+    return (entry["phase"], repo(entry.get("auditRepo", target["repo"])),
+            entry.get("auditTarget", target["pr"]), entry.get("marker"))
+
+
+def comment_order(left, right):
+    for entry in (left, right):
+        timestamp(entry.get("intentAt"))
+        if "intentRevision" in entry and (type(entry["intentRevision"]) is not int or entry["intentRevision"] <= 0):
+            raise Stop("invalid comment intent revision")
+    if "intentRevision" in left and "intentRevision" in right:
+        a, b = left["intentRevision"], right["intentRevision"]
+    else:
+        a, b = timestamp(left["intentAt"]), timestamp(right["intentAt"])
+    return (a > b) - (a < b)
+
+
+def ordered_comment_group(group):
+    for _, _, entry in group:
+        comment_order(entry, entry)
+    ordered = sorted(group, key=cmp_to_key(lambda a, b: comment_order(a[2], b[2])), reverse=True)
+    # Mixed older timestamp/newer revision evidence must form one consistent order.
+    for index, (_, _, later) in enumerate(ordered):
+        for _, _, earlier in ordered[index + 1:]:
+            if comment_order(later, earlier) <= 0:
+                raise Stop("ambiguous comment execution chronology")
+    return ordered
+
+
+def supersede_verified_comment(state, target, key):
+    latest = target["steps"][key]
+    if latest["phase"] not in {"audit", "hold"} or latest["status"] != "completed":
+        return
+    timestamp(latest.get("verifiedAt"))
+    comment_order(latest, latest)
+    group = [(p, k, e) for p in state["prs"] for k, e in p["steps"].items()
+             if e["phase"] in {"audit", "hold"} and e.get("intentAt")
+             and comment_scope(p, e) == comment_scope(target, latest)]
+    for previous_target, previous_key, previous in ordered_comment_group(group):
+        if previous is not latest and comment_order(previous, latest) < 0:
+            previous["supersededBy"] = {"repo": target["repo"], "pr": target["pr"], "step": key}
+
+
+def supersession_target(state, target, entry):
+    reference = entry["supersededBy"]
+    if isinstance(reference, str):  # compatible earlier same-PR journal reference
+        selected, key = target, reference
+    elif isinstance(reference, dict) and set(reference) == {"repo", "pr", "step"} and type(reference["pr"]) is int:
+        matches = [p for p in state["prs"] if p["repo"] == repo(reference["repo"]) and p["pr"] == reference["pr"]]
+        if len(matches) != 1 or not isinstance(reference["step"], str):
+            raise Stop("superseding intent has no frozen owner")
+        selected, key = matches[0], reference["step"]
+    else:
+        raise Stop("invalid superseding intent reference")
+    successor = selected["steps"].get(key)
+    if (not successor or entry["phase"] not in {"audit", "hold"}
+            or comment_scope(target, entry) != comment_scope(selected, successor)
+            or successor["status"] != "completed" or not successor.get("verifiedAt")
+            or comment_order(entry, successor) >= 0):
+        raise Stop("superseding comment is not a later verified owning intent")
+    timestamp(successor["verifiedAt"])
+    return selected, successor
+
+
+def verify(state, target, entry, seen=None):
     phase = entry["phase"]
     git_root = proof_root(state, target["commonDir"], target["root"]) if phase in {"local_merge", "base_push", "remote_delete", "local_cleanup", "policy_skip"} else target["root"]
     if entry.get("supersededBy"):
-        return verify(state, target, target["steps"][entry["supersededBy"]])
+        seen = set() if seen is None else seen
+        identity = (target["repo"], target["pr"], next((k for k, v in target["steps"].items() if v is entry), None))
+        if identity in seen:
+            raise Stop("cyclic comment supersession")
+        seen.add(identity)
+        selected, successor = supersession_target(state, target, entry)
+        return verify(state, selected, successor, seen)
     if phase in {"merge_api", "merge_verify", "cleanup", "remote_delete", "local_cleanup", "issue_close", "tracker", "policy_skip"}:
         live = pr_read(target)
         target["verifiedState"] = "merged" if live["state"] == "MERGED" else "unmerged"
@@ -929,11 +1003,11 @@ def after(args):
         current = target_for(state, args)
         current["steps"] = target["steps"]
         current["steps"][key] = entry
-        if entry["status"] == "completed" and entry["phase"] in {"audit", "hold"}:
-            for previous_key, previous in current["steps"].items():
-                if previous_key != key and previous["status"] == "completed" and previous["phase"] == entry["phase"] and all(
-                        previous.get(field) == entry.get(field) for field in ("auditRepo", "auditTarget", "marker")):
-                    previous["supersededBy"] = key
+        try:
+            supersede_verified_comment(state, current, key)
+        except Stop as exc:
+            image["outcome"], image["reason"] = "Interrupted", str(exc)
+            failure = str(exc)
 
         current["verifiedState"], current["lastVerifiedAt"] = target["verifiedState"], target["lastVerifiedAt"]
         state["outcome"], state["reason"] = image["outcome"], image["reason"]
@@ -964,7 +1038,31 @@ def resume(args):
         image["recoveryGeneration"] = image.get("recoveryGeneration", 0) + 1
         image["recoveryStartedAt"] = now()
     image["recoveryAwaitingProvider"] = False
+    def recover_entry(target, key, entry):
+        try:
+            verified = verify(image, target, entry)
+        except Stop as exc:
+            if exc.evidence and exc.evidence.get("knownOutstanding") and entry["status"] in {"pending", "in_flight", "uncertain"} and entry["phase"] in {"local_cleanup", "cleanup", "audit", "hold", "merge_api", "base_push"}:
+                entry.update(status="pending", retryVerifiedAt=now())
+                return
+            raise
+        if not verified:
+            if entry["status"] in {"in_flight", "uncertain"} and entry["phase"] in {"remote_delete", "local_cleanup", "tracker", "issue_close"}:
+                entry.update(status="pending", retryVerifiedAt=now())
+                return
+            raise Stop("outstanding or previously completed action cannot be verified")
+        entry["status"] = "skipped_by_policy" if entry.get("skippedPhase") or entry.get("policySkip") else "completed"
+        entry["verifiedAt"] = now()
+        supersede_verified_comment(image, target, key)
     try:
+        groups = {}
+        for target in image["prs"]:
+            for key, entry in target["steps"].items():
+                if entry["phase"] in {"audit", "hold"} and (entry.get("intentAt") or entry["status"] != "pending"):
+                    groups.setdefault(comment_scope(target, entry), []).append((target, key, entry))
+        for group in groups.values():
+            for target, key, entry in ordered_comment_group(group):
+                recover_entry(target, key, entry)
         for target in image["prs"]:
             live = pr_read(target)
             target["verifiedState"] = "merged" if live["state"] == "MERGED" else "unmerged"
@@ -972,21 +1070,11 @@ def resume(args):
             if live["state"] == "OPEN" and (live.get("isInMergeQueue") is True or isinstance(live.get("autoMergeRequest"), dict)):
                 image["outcome"], image["reason"] = "Waiting", "submission remains queued; do not repeat"
                 break
-            for entry in target["steps"].values():
+            for key, entry in target["steps"].items():
+                if entry["phase"] in {"audit", "hold"}:
+                    continue
                 if entry["status"] in {"in_flight", "uncertain", "completed", "skipped_by_policy"} or entry.get("submission"):
-                    try:
-                        verified = verify(image, target, entry)
-                    except Stop as exc:
-                        if exc.evidence and exc.evidence.get("knownOutstanding") and entry["status"] in {"in_flight", "uncertain"} and entry["phase"] in {"local_cleanup", "cleanup", "audit", "hold", "merge_api", "base_push"}:
-                            entry.update(status="pending", retryVerifiedAt=now())
-                            continue
-                        raise
-                    if not verified:
-                        if entry["status"] in {"in_flight", "uncertain"} and entry["phase"] in {"remote_delete", "local_cleanup", "tracker", "issue_close"}:
-                            entry.update(status="pending", retryVerifiedAt=now())
-                            continue
-                        raise Stop("outstanding or previously completed action cannot be verified")
-                    entry["status"] = "skipped_by_policy" if entry.get("skippedPhase") or entry.get("policySkip") else "completed"
+                    recover_entry(target, key, entry)
         else:
             image["active"], image["started"] = None, False
             image["attempt"] += 1
