@@ -2031,6 +2031,26 @@ def routing_declared(raw: str) -> bool:
             key = key[1:-1].replace("''", "'")
         return key, value
 
+    def anchor_payload(text: str, name: str) -> str | None:
+        # Probe node metadata in block/flow values, excluding scalar text.
+        quote, escaped = "", False
+        for position, char in enumerate(text):
+            if quote:
+                if escaped:
+                    escaped = False
+                elif char == "\\" and quote == '"':
+                    escaped = True
+                elif char == quote:
+                    quote = ""
+                continue
+            if char in ("'", '"'):
+                quote = char
+            elif char == "&" and re.search(r"(?:^|[\[{,:])\s*(?:![^\s]+\s+)*$", text[:position]):
+                match = re.match(r"&([^\s{}\[\],]+)", text[position:])
+                if match and match.group(1) == name:
+                    return text[position + len(match.group()):].strip()
+        return None
+
     root_indent = min((indent for indent, _ in lines), default=0)
     for index, (indent, text) in enumerate(lines):
         if indent != root_indent:
@@ -2050,20 +2070,17 @@ def routing_declared(raw: str) -> bool:
                 break
             name = alias.group(1)
             visited.add(name)
-            # Anchors are leading node metadata, never text in a scalar.
-            anchor_pattern = r"^(?:![^\s]+\s+)*&" + re.escape(name) + r"(?:\s|$)"
-            targets = [(i, level, line) for i, (level, line) in enumerate(lines)
-                       if re.search(anchor_pattern, key_value(line)[1])]
+            targets = [(i, level, line, payload) for i, (level, line) in enumerate(lines)
+                       if (payload := anchor_payload(key_value(line)[1], name)) is not None]
             target = next(iter(targets), None)
             if target is None:
                 # A named but unanchored target is still invalid YAML; retain
                 # direct-namespace detection for that malformed declaration.
-                target = next(((i, level, line) for i, (level, line) in enumerate(lines)
+                target = next(((i, level, line, key_value(line)[1]) for i, (level, line) in enumerate(lines)
                                if key_value(line)[0] == name), None)
             if target is None:
                 break
-            index, indent, text = target
-            _, value = key_value(text)
+            index, indent, text, value = target
         if value.startswith("{"):
             # Probe only direct flow keys, not dsh text inside values/other maps.
             depth, key_start, quote, escaped = 0, 1, "", False
@@ -2082,6 +2099,8 @@ def routing_declared(raw: str) -> bool:
                     depth += 1
                 elif char in "}]":
                     depth -= 1
+                    if depth == 0:
+                        break
                 elif char == "," and depth == 1:
                     key_start = position + 1
                 elif char == ":" and depth == 1:
