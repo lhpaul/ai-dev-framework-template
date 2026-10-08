@@ -294,6 +294,60 @@ class ModelRoutingTests(unittest.TestCase):
         self.assertNotIn("PRIVATE_TEST_SENTINEL", result.stderr + result.stdout)
         self.assertEqual(json.loads(result.stderr)["CODE"], "invalid_yaml")
 
+    def test_declared_malformed_corpus_rejects_with_identical_diagnostics(self):
+        cases = (
+            ("models:\n  - other: {}\n    dsh: null\n", "invalid_type"),
+            ("models:\n  - other: {}\n    dsh: {}\n", "invalid_type"),
+            ("models: [{dsh: {}}\n", "invalid_yaml"),
+            ("models: {dsh: {}\n", "invalid_yaml"),
+            ("models: [{dsh: {}},\n", "invalid_yaml"),
+            ("models: {dsh: {},\n", "invalid_yaml"),
+            ("models:\n  - dsh: {}\n  -\n", "invalid_type"),
+            ("models: [{dsh: {}},]\n", "invalid_yaml"),
+            ("models: {dsh: {},}\n", "invalid_yaml"),
+            ("models:\n  dsh: &policy {}\n", "invalid_yaml"),
+            ("policy: &policy {dsh: {}}\nmodels: *policy\n", "invalid_yaml"),
+            ("policy: &policy\n  dsh: {}\nmodels:\n  <<: *policy\n", "invalid_yaml"),
+            ("models:\n  dsh:\n    <<: {}\n", "invalid_yaml"),
+            ("models:\n  dsh: null\n", "invalid_type"),
+            ("models:\n  dsh: []\n", "invalid_type"),
+            ("models:\n  dsh: true\n", "invalid_type"),
+            ("models:\n  dsh:\n    roles: []\n", "invalid_type"),
+        )
+        for text, code in cases:
+            with self.subTest(text=text):
+                self.write(text)
+                route = self.cli("model-route", "--runner", "dsh", "--role", "developer", "--json")
+                self.assertEqual(route.returncode, 2, route.stdout + route.stderr)
+                self.assertEqual(route.stdout, "")
+                diagnostic = json.loads(route.stderr)
+                self.assertEqual(diagnostic["CODE"], code)
+                for command in (("validate", "--json"), ("model-routes", "--runner", "dsh", "--json")):
+                    result = self.cli(*command)
+                    self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                    self.assertEqual(result.stdout, "")
+                    self.assertEqual(json.loads(result.stderr), diagnostic)
+
+    def test_commands_share_one_policy_loader_and_one_strict_parse_per_layer(self):
+        self.write(self.policy(self.tier()), self.policy(self.tier(model="local")))
+        for command in (("validate", "--json"),
+                        ("model-route", "--runner", "dsh", "--role", "developer", "--json"),
+                        ("model-routes", "--runner", "dsh", "--json")):
+            args = resolver.build_parser().parse_args([*command, "--repo-root", str(self.root)])
+            with self.subTest(command=command), \
+                    patch.object(resolver, "load_model_policy", wraps=resolver.load_model_policy) as loader, \
+                    patch.object(resolver, "parse_review_yaml", wraps=resolver.parse_review_yaml) as strict, \
+                    patch.object(resolver, "routing_declared", wraps=resolver.routing_declared) as detection, \
+                    patch.object(resolver, "print_context"), patch("builtins.print"):
+                self.assertEqual(args.func(args), 0)
+                loader.assert_called_once_with(self.root.resolve())
+                self.assertEqual(strict.call_count, 2)
+                self.assertEqual(detection.call_count, 1)
+                detection.assert_called_once_with(self.shared.read_text())
+                self.assertEqual([call.args[0] for call in strict.call_args_list],
+                                 [self.shared.resolve(), self.local.resolve()])
+                self.assertTrue(all("raw" in call.kwargs for call in strict.call_args_list))
+
     def test_opted_in_discovery_error_parity_preserves_absent_legacy(self):
         missing = self.root / "PRIVATE_TEST_SENTINEL_missing"
         with patch.dict(os.environ, WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT=str(missing)):

@@ -1906,17 +1906,48 @@ def model_entry_source(kind: str, name: str, shared: dict[str, Any], local: dict
     return (f"local-{suffix}", local_path) if contributes else (f"committed-{suffix}", shared_path)
 
 
-def load_model_policy(repo_root: Path, snapshots: dict[Path, str] | None = None) -> tuple[Any, ...]:
+def load_model_policy(repo_root: Path) -> tuple[Any, ...]:
+    """Own the routing read, opt-in boundary and strict parse for every caller.
+
+    With no declared DSH policy, return inheritance without importing PyYAML
+    or changing legacy repository-context grammar. Once either selected layer
+    declares DSH, both layers use the same strict reader and safe diagnostics.
+    """
     shared_path = repo_root / ".ai-dev-workflow.yaml"
+    discovery_error = None
     try:
         local_path, _, _ = resolve_local_config(repo_root)
-    except ConfigError:
+    except ConfigError as exc:
+        discovery_error = exc
+        local_path = repo_root / LOCAL_CONFIG_NAME
+    snapshots = {}
+    read_errors = {}
+    # Failed discovery selects no local source. In particular, do not inspect
+    # a checkout file hidden by an unavailable explicit override root.
+    paths = (shared_path,) if discovery_error else (shared_path, local_path)
+    for path in paths:
+        if path.exists():
+            try:
+                snapshots[path] = path.read_text(encoding="utf-8")
+            except (OSError, UnicodeError) as exc:
+                read_errors[path] = exc
+    configured = any(routing_declared(raw) for raw in snapshots.values())
+    if not configured:
+        if discovery_error:
+            raise discovery_error
+        for path, exc in read_errors.items():
+            if isinstance(exc, OSError):
+                raise ConfigError(f"{path}: could not read config: {exc}") from exc
+            raise exc
+        return {}, {}, {}, shared_path, local_path
+    if discovery_error:
         model_error("config_discovery", repo_root / LOCAL_CONFIG_NAME, "models.dsh", "Local override source is unavailable")
     layers = []
     for path in (shared_path, local_path):
+        if path in read_errors:
+            model_error("invalid_yaml", path, "models.dsh", "Configuration could not be read as UTF-8")
         try:
-            data = (parse_review_yaml(path, raw=snapshots[path]) if snapshots is not None and path in snapshots
-                    else parse_yaml_subset(path, preserve_empty_values=True))
+            data = parse_review_yaml(path, raw=snapshots[path]) if path in snapshots else {}
         except ConfigError as exc:
             missing_dependency = isinstance(exc.__cause__, ImportError)
             model_error("dependency_missing" if missing_dependency else "invalid_yaml", path, "models.dsh",
@@ -2129,19 +2160,28 @@ def routing_declared(raw: str) -> bool:
                 # An unfinished sequence still has an explicit final item.
                 candidates.append((len(lines), indent, value[start:].strip()))
         children = []
-        for child_indent, child in lines[index + 1:]:
+        for child_index, (child_indent, child) in enumerate(lines[index + 1:], start=index + 1):
             if child_indent <= indent:
                 break
-            children.append((child_indent, child))
+            children.append((child_index, child_indent, child))
         if children:
-            child_level = min(child_indent for child_indent, _ in children)
+            child_level = min(child_indent for _, child_indent, _ in children)
+            if index < len(lines) and re.match(r"^-\s", lines[index][1]):
+                # A sequence item's mapping keys align with the key after
+                # its dash. Deeper keys belong to the first value, not to
+                # the models namespace (for example ``- other: ...``).
+                child_level = indent + 1
             if any(child_indent == child_level and (key_value(child)[0] == "dsh"
                     or re.match(r"^(?:dsh|'dsh'|\"dsh\")(?:\s|$)", child))
-                   for child_indent, child in children):
+                   for _, child_indent, child in children):
                 return True, merges, candidates
-            for child_indent, child in children:
+            for child_index, child_indent, child in children:
                 if child_indent == child_level and re.match(r"^-\s", child):
-                    candidates.append((len(lines), child_indent, re.sub(r"^-\s+", "", child)))
+                    # Retain the item's location and map-key column. Immediate
+                    # continuation keys belong to this item; nested values do
+                    # not. The probe only activates strict rejection of lists.
+                    prefix = re.match(r"^-\s+", child).group()
+                    candidates.append((child_index, child_indent + len(prefix) - 1, child[len(prefix):]))
                 key, child_value = key_value(child)
                 if child_indent == child_level and key == "<<":
                     merges.extend(merge_aliases(child_value))
@@ -2198,42 +2238,8 @@ def routing_declared(raw: str) -> bool:
 
 
 def cmd_validate(args: argparse.Namespace) -> int:
-    root = repo_root_from_args(args.repo_root)
-    shared_path = root / ".ai-dev-workflow.yaml"
-    try:
-        local_path, _, _ = resolve_local_config(root)
-    except ConfigError:
-        # Discovery fails before the usual snapshot boundary. An opted-in
-        # shared declaration still requires the model command's safe error;
-        # absent routing preserves the legacy discovery diagnostic.
-        try:
-            shared_raw = shared_path.read_text(encoding="utf-8")
-        except (OSError, UnicodeError):
-            shared_raw = ""
-        if routing_declared(shared_raw):
-            load_model_policy(root)
-        raise
-    snapshots = {}
-    for path in (shared_path, local_path):
-        if path.exists():
-            try:
-                snapshots[path] = path.read_text(encoding="utf-8")
-            except (OSError, UnicodeError):
-                # Legacy repository-context validation owns its existing read errors.
-                return cmd_resolve(args)
-    configured = any(routing_declared(raw) for raw in snapshots.values())
-    try:
-        context = resolve_context(args)
-    except ConfigError:
-        if configured:
-            # Give malformed routing the same sanitized strict diagnostic as
-            # model-route; if routing is valid, retain the context error.
-            load_model_policy(root, snapshots)
-        raise
-    if configured:
-        load_model_policy(root, snapshots)
-    print_context(args, context)
-    return 0
+    load_model_policy(repo_root_from_args(args.repo_root))
+    return cmd_resolve(args)
 
 
 def build_parser() -> argparse.ArgumentParser:
