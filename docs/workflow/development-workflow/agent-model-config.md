@@ -47,6 +47,8 @@ Use the tier names as stable policy and map them to whatever your current runner
 - In Cursor, set `.cursor/agents/*.md` to `auto` for ordinary coordination and QA agents, and pin an explicit high-reasoning model for agents that author or deeply review specs, plans, and code. Those `model:` fields are the source of truth for Cursor runs (see "Cursor model source of truth" below).
 - In Codex, keep skills tier-based (`economy`, `balanced`, `premium`) and explicitly select a supported task model/effort or dispatch a configured native role. Skill prose does not enforce a model. See [Codex model routing](integrations/codex-model-routing.md).
 - In DSH, optional `models.dsh.tiers` and `models.dsh.roles` map this canonical catalogue to child routes. Before each fresh dispatch, the parent resolves the role, passes provider/model and configured reasoning_effort when the frozen session allowlist permits them, and records SOURCE/file/tier plus actual dispatch. Disabled selection or an exact-pair denial produces a visible inherited fallback. No policy inherits the session; the headless default remains separately pinned by its profile/overlay. DSH has no in-repo per-role agent files. See [`integrations/dsh.md`](integrations/dsh.md#project-role-and-tier-routing).
+
+YAML anchors, aliases and merge keys are unsupported in `models.dsh`; use explicit block mappings. Unsupported node syntax fails closed before dispatch. Recognition for validation does not apply YAML reference/merge semantics, and quoted scalar characters remain ordinary text.
 - In any runner, prefer keeping the tier intent stable even when provider model names change.
 
 ### Claude Code model defaults (template)

@@ -93,6 +93,12 @@ changes belong in `.ai-dev-workflow.local.yaml`. The template and local example
 contain fully commented examples and activate no model. This is DSH child
 routing; other runners and headless defaults keep their existing behavior.
 
+YAML anchors, aliases and merge keys are unsupported in `models.dsh`.
+Write explicit block mappings instead: `&` anchors, `*` aliases and `<<` merge
+keys fail closed with `invalid_yaml`, exit 2 and no success route. Their syntax
+is recognized only to activate strict rejection; it is never applied to route
+composition. Those characters inside quoted scalar ids remain ordinary text.
+
 Use block mappings supported by the existing strict reader. Configure
 `tiers.economy`, `tiers.balanced`, `tiers.premium` with `provider`, `model`, and
 optional `reasoning_effort`. A `roles` entry uses a canonical role name from

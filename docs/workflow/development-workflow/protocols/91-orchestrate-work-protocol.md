@@ -78,6 +78,12 @@ YAML, deep-merged with the selected local override. Follow the schema,
 precedence, operator setup and headless boundary in
 [DSH routing guidance](../integrations/dsh.md#project-role-and-tier-routing).
 
+YAML anchors, aliases and merge keys are unsupported in `models.dsh`. Use
+explicit block mappings: reject these features with a clear structured
+`invalid_yaml` error before dispatch. Syntax recognition only activates
+rejection; it never expands YAML references or merges into a route. Quoted
+scalar ids containing `&`, `*` or `<<` remain ordinary text.
+
 <!-- workflow-shell-contract: bash-zsh -->
 ```bash
 python3 scripts/development-workflow/workflow-config-resolver.py model-route \

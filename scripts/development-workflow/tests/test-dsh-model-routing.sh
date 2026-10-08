@@ -21,12 +21,15 @@ contracts = {
     "docs/workflow/development-workflow/integrations/dsh.md": [
         "Resolve, pass, and record", "selection-disabled", "allowlist-denied",
         "SOURCE_FILE", "agent-default-model", "unique_by([.provider, .model])",
-        "modelSelectionSettings: true", "fresh top-level session"],
+        "modelSelectionSettings: true", "fresh top-level session",
+        "YAML anchors, aliases and merge keys are unsupported"],
     "docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md": [
         "Resolve, pass, and record", "selection-disabled", "allowlist-denied",
-        "SOURCE/SOURCE_FILE", "frozen", "post-dispatch failure"],
+        "SOURCE/SOURCE_FILE", "frozen", "post-dispatch failure",
+        "YAML anchors, aliases and merge keys are unsupported"],
     "docs/workflow/development-workflow/agent-model-config.md": [
-        "models.dsh.tiers", "models.dsh.roles", "actual dispatch", "headless default"],
+        "models.dsh.tiers", "models.dsh.roles", "actual dispatch", "headless default",
+        "YAML anchors, aliases and merge keys are unsupported"],
 }
 for path, required in contracts.items():
     text = (root / path).read_text()

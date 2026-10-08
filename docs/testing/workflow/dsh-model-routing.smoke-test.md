@@ -201,7 +201,7 @@ file/network/Claude tools.
 
 Actual runs used resolver checkpoint `619f70841ce67fb07c1fb7dd2154cb79f0df3243`.
 A replay against implementation resolver revision
-`1b972e33bf075946956b3399cea1cd76953ab927` matched all five captured resolutions
+`41d65f0a839b798f0fcdf46e332c65e421f4770a` matched all five captured resolutions
 using immutable per-case fixtures: role, tier, provider/model/effort, SOURCE and
 source filename. The resolver content digest was retained privately; future
 behavioral resolver changes require renewed replay or live smoke as appropriate.
@@ -242,6 +242,10 @@ and ambiguous alias/merge declarations, root flow maps and verbatim tags
 now fail with the same sanitized error in both commands; unrelated forms retain
 the exact legacy response. Fresh targeted runs
 passed 19 routing methods, 798 resolver assertions and 70 hub assertions.
+The authorized additional cycle also checks malformed block/flow sequences,
+including alias/merge targets. Anchors, aliases and merge keys always reject
+with a clear `invalid_yaml` diagnostic and no success route; all three model
+query/validation commands agree. Quoted scalar characters remain permitted.
 These fixture paths remain private; they contain synthetic data only.
 
 ## Troubleshooting and Known Limitations
