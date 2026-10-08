@@ -1,5 +1,11 @@
 # Guardrails Enforcement Reference
 
+## Merge-session admission and recovery
+
+After ordinary review/CI/readiness and before any merge-operation audit, hold, bypass, merge or follow-up mutation, follow [Protocol 94 section 3.6](protocols/94-batch-merge-protocol.md#36-merge-session-admission-and-recovery). Freeze the entire selected ordered set in one authoritative owner-bound session; an unaffordable set admits no prefix. Supply the same `--merge-session` to mutating merge/cleanup helpers, and `--operation merge` to operation-owned audit calls. Direct authorized `gh pr merge` commands run through `workflow-merge-budget.py run-step` with their existing argv unchanged. Read-only risk classification remains separate; delegated merge requires the durable session plus all existing gates.
+
+Deferred reports quota/reset, recorded PR states and pending follow-up without operation-owned remote writes; fresh selected PRs stay unmerged, while recovery deferral retains historical merged/uncertain facts. Waiting records a verified queue/auto-merge submission, stops subsequent selected merges and leaves merge-dependent follow-up pending. Interrupted retains completed/uncertain/pending work locally even if every API fails; stop further selected merges and use explicit verified recovery without duplicate submission or uncertain mutation replay. Completed requires all owned planned follow-up independently verified, including tracker and audit. Budget admission grants no risk, checkpoint, admin or deletion authority. Report the session recovery command together with the existing Ground-Truth Completion Verification before claiming a workflow terminal outcome.
+
 This page defines the single enforcement path that all orchestration protocols
 (`90-batch-orchestrate-work-protocol.md`, `91-orchestrate-work-protocol.md`, and
 `95-run-epic-protocol.md`) follow when guardrails are configured. It is the
@@ -176,6 +182,7 @@ and run the existing helpers:
 
 <!-- workflow-shell-contract: bash-zsh -->
 ```bash
+set -euo pipefail
 # 1. Classify PR risk against the stage max_merge_risk. A medium-risk PR only
 #    ever reaches a mergeable verdict if why_safe_to_merge evidence is
 #    attached; --why-safe-file lets --pr carry that evidence directly instead
@@ -185,7 +192,7 @@ and run the existing helpers:
   --max-risk <stages.<stage>.max_merge_risk>
 
 # 2. Run the delegated gate with the assembled evidence
-./scripts/development-workflow/run-epic-delegated-gate.sh --input <evidence-file>
+./scripts/development-workflow/run-epic-delegated-gate.sh --merge-session "$MERGE_SESSION" --input <evidence-file>
 ```
 
 **These two helpers use different, independently documented evidence
@@ -261,6 +268,12 @@ authorizes exactly one named command:
 gh pr merge <pr> --admin --match-head-commit <authorized-head-sha>
 ```
 
+Execute this exact argv through the admitted session executor using its frozen
+`merge_api` step. The pre-attempt and final bypass-marker writes use explicit
+`--operation merge --merge-session` and distinct frozen `--merge-step` IDs.
+Waiting or Interrupted stops the remaining selection and requires verified
+recovery; a successful command alone does not establish MERGED.
+
 Delegated mode, `may_merge_pr`, batch approval, risk tolerance, or satisfied
 unrelated checkpoints never substitute for that authorization.
 
@@ -332,6 +345,7 @@ table is required for consistent stop reporting.
 | `dispatch_handoff_unavailable` | A bounded Cursor run has no handoff of any kind available (or cannot confirm initial handoff availability) for the next mutating action, or a run declared `cursor-parent-orchestrated` or `cursor-native-handoff` discovers mid-run that stage or orchestration handoff has become unavailable — see the Cursor dispatch-profile stop conditions subsection below for the full set of causes and the unblocking action. |
 | `push_verification_failed` | A branch push could not be verified. Either the branch's upstream would send a bare `git push` somewhere other than its own remote branch on `origin`, or the commit the protocol pushed is not present on the remote afterwards. Silence is not success: a refused push prints a multi-line message that shell-output filtering can truncate to nothing. |
 | `guardrails_config_unreadable` | The `guardrails` block in `.ai-dev-workflow.yaml` is missing required fields, uses invalid values, or is internally contradictory. |
+| `budget_deferred` | Durable merge-session admission is absent, unreadable, out of scope or unaffordable. Name the selected item/PRs, report local projection/quota/reset evidence, and require corrected scope/config or explicit recovery after evidence/quota becomes available; no remote merge-operation mutation is allowed. |
 | `missing_audit_evidence` | A delegated decision required an audit record but the record could not be produced or verified. |
 | `evidence_schema_mismatch` | `run-epic-delegated-gate.sh` evidence is missing a required object (`.policy`), or `.statusChecks` is missing, `null`, or not an array — which cannot be distinguished from a genuine authority denial or a genuine "no CI has run" state (unless `ciPolicy`/`ci_policy` is `none`, where `.statusChecks` is not required at all); fix the evidence file's shape before treating the result as a real denial or CI verdict. |
 | `reviewer_preflight_blocked` | The reviewer preflight (`reviewer-preflight.sh`, Protocol 91 § Reviewer preflight before child dispatch) found the shared reviewer configuration, the machine-local override, and a reviewer platform's own configuration disagree for a lifecycle stage still ahead of this item (`OUTCOME=blocked`). |
@@ -552,8 +566,13 @@ guardrails.
 
 When `audit.pr_disposition_record` or `audit.work_item_ledger_record` is
 `required` in the effective guardrails, the runner records audit evidence using
-the existing run-epic audit helpers after any delegated review, fix, merge,
-block, or escalation decision:
+the existing run-epic audit helpers after delegated review, fix, block or
+escalation decisions on their pre-stage route. Merge-operation dispositions,
+ledgers and bypass records instead require definitive whole-set admission
+before any write and explicit `--operation merge --merge-session` scope. A
+budget deferral reports locally without creating remote audit evidence. The
+following examples are the pre-stage non-merge route; use Protocol 94 section
+3.6 for the merge-operation route:
 
 ```bash
 # Write or update a PR disposition record

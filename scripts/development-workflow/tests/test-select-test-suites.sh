@@ -783,6 +783,26 @@ else
   echo "FAIL: shard_loop_step_extractable — could not read the 'Run shard' step from $WORKFLOW_FILE"
 fi
 
+# Use the shipped suite's real declarations, so removing its coverage breaks
+# these assertions even if the selector's generic glob tests still pass.
+budget_suite="$T/test-workflow-merge-budget.sh"
+if [ -f "$SOURCE_REPO_ROOT/$budget_suite" ]; then
+  for changed in \
+    "$S/workflow-merge-budget.py" \
+    "$S/run-epic-audit-trail.sh" \
+    "$S/post-merge-cleanup.sh" \
+    "$T/test_workflow_merge_budget.py" \
+    "$T/fixtures/workflow-merge-budget/interrupted.json" \
+    .ai-dev-workflow.yaml sync-manifest.yaml; do
+    out="$(select_for "$changed")"
+    assert_contains "budget_suite_selected_for_${changed##*/}" "$budget_suite" "$out"
+  done
+  out="$(select_for docs/unrelated-budget-note.md)"
+  assert_not_contains "budget_suite_not_selected_for_unrelated_document" "$budget_suite" "$out"
+else
+  run_test "budget_suite_exists_for_actual_coverage_proof" "yes" "no"
+fi
+
 cleanup_shard_probe
 trap - EXIT
 

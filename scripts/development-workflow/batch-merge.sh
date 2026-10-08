@@ -40,7 +40,7 @@
 #
 # Merge output:
 #   MERGE_PR_NUMBER=<n>
-#   MERGE_RESULT=clean|conflict|failed
+#   MERGE_RESULT=clean|conflict|failed|waiting|interrupted|deferred
 #   CHANGELOG_DEDUPED=true|false          (only when MERGE_RESULT=clean; true when
 #                                          duplicate ### headers were auto-consolidated)
 #   CONFLICTED_FILES=<file1,file2,...>   (only when MERGE_RESULT=conflict)
@@ -48,9 +48,9 @@
 #
 # Note: cmd_merge pushes the merge commit to origin/<base> and calls
 # `gh pr merge --merge` so GitHub records the PR as MERGED (not CLOSED).
-# If `gh pr merge` fails and the PR is not yet MERGED, a warning is emitted
-# to stderr; Protocol 94 Step 4.2's `gh pr view --json state` poll is the
-# safety net that detects and reports any remaining non-MERGED state.
+# Durable merge_api and merge_verify steps independently read back GitHub state.
+# Queued submissions return waiting; unknown or failed follow-up stops the
+# selected sequence with interrupted/deferred until explicit verified resume.
 #
 # Delete-branch output:
 #   DELETE_PR_NUMBER=<n>
@@ -249,6 +249,25 @@ emit_recheck_record() {
 # once and then updated in place, so the PR page says why it is held, which
 # sibling invalidated it, what head it is at, and what must be re-verified
 # before any merge decision. Prints created|updated|failed:<why>.
+budget_hold_write() {
+  local pr="$1" body="$2" marker="$3" binding repo step body_file status=0
+  shift 3
+  [ -n "${WORKFLOW_MERGE_BUDGET_SESSION:-}" ] || { echo "Hold write requires merge session" >&2; return 2; }
+  repo="$(repo_slug)" || return 2
+  local step_args=()
+  [ -z "${WORKFLOW_MERGE_BUDGET_STEP:-}" ] || step_args+=(--step "$WORKFLOW_MERGE_BUDGET_STEP")
+  binding="$(workflow_merge_budget_helper check --session "$WORKFLOW_MERGE_BUDGET_SESSION" \
+    --repo "$repo" --pr "$pr" --phase hold --audit-target "$pr" --audit-repo "$repo" --marker "$marker" \
+    ${step_args[@]+"${step_args[@]}"})" || return 2
+  step="$(printf '%s' "$binding" | jq -er '.stepId')" || return 2
+  body_file="$(mktemp "$(dirname "$WORKFLOW_MERGE_BUDGET_SESSION")/hold-body.XXXXXX")" || return 2
+  printf '%s' "$body" >"$body_file"
+  workflow_merge_budget_helper run-step --session "$WORKFLOW_MERGE_BUDGET_SESSION" --repo "$repo" \
+    --pr "$pr" --phase hold --step "$step" --expected-file "$body_file" -- "$@" >/dev/null || status=$?
+  rm -f -- "$body_file"
+  return "$status"
+}
+
 annotate_hold_comment() {
   local pr="$1"
   local record="$2"
@@ -285,12 +304,12 @@ annotate_hold_comment() {
     '[.[] | select((.body // "") | contains($marker))] | last | .id // empty' 2>/dev/null | tail -n 1)"
   status=0
   if [ -n "$existing_id" ]; then
-    gh api "repos/{owner}/{repo}/issues/comments/${existing_id}" -X PATCH -f body="$body" >/dev/null 2>&1 || status=$?
+    budget_hold_write "$pr" "$body" "$marker" gh api "repos/{owner}/{repo}/issues/comments/${existing_id}" -X PATCH -f body="$body" || status=$?
     [ "$status" -eq 0 ] && { printf 'updated\n'; return 0; }
     printf 'failed:update\n'
     return 0
   fi
-  gh api "repos/{owner}/{repo}/issues/${pr}/comments" -f body="$body" >/dev/null 2>&1 || status=$?
+  budget_hold_write "$pr" "$body" "$marker" gh api "repos/{owner}/{repo}/issues/${pr}/comments" -f body="$body" || status=$?
   [ "$status" -eq 0 ] && { printf 'created\n'; return 0; }
   printf 'failed:create\n'
 }
@@ -309,7 +328,7 @@ annotate_hold_lifted() {
   case "$body" in *"**Hold lifted**"*) printf 'lifted\n'; return 0 ;; esac
   body="$(printf '%s\n\n**Hold lifted** at %s: rechecked clean after the latest sibling merge; the verdicts recorded above no longer describe this PR.\n' "$body" "$(date -u +%Y-%m-%dT%H:%M:%SZ)")"
   status=0
-  gh api "repos/{owner}/{repo}/issues/comments/${existing_id}" -X PATCH -f body="$body" >/dev/null 2>&1 || status=$?
+  budget_hold_write "$pr" "$body" "$marker" gh api "repos/{owner}/{repo}/issues/comments/${existing_id}" -X PATCH -f body="$body" || status=$?
   [ "$status" -eq 0 ] && { printf 'lifted\n'; return 0; }
   printf 'failed:update\n'
 }
@@ -800,6 +819,7 @@ cmd_annotate_hold() {
   local pr="" reason="" held_by="" sibling="" head_sha="" record annotation
   while [ $# -gt 0 ]; do
     case "$1" in
+      --merge-step) [ $# -ge 2 ] || die "--merge-step requires a value"; export WORKFLOW_MERGE_BUDGET_STEP="$2"; shift 2 ;;
       --pr) [ $# -ge 2 ] && [ -n "${2:-}" ] || die "--pr requires a PR number"; pr="${2#\#}"; shift 2 ;;
       --reason) [ $# -ge 2 ] && [ -n "${2:-}" ] || die "--reason requires a value"; reason="$2"; shift 2 ;;
       --held-by) [ $# -ge 2 ] && [ -n "${2:-}" ] || die "--held-by requires a value"; held_by="$2"; shift 2 ;;
@@ -1346,9 +1366,11 @@ PYEOF
 cmd_merge() {
   local pr_num=""
   local expected_head_sha=""
+  local merge_session="${WORKFLOW_MERGE_BUDGET_SESSION:-}"
 
   while [ $# -gt 0 ]; do
     case "$1" in
+      --merge-session) [ $# -ge 2 ] || die "--merge-session requires a path"; merge_session="$2"; shift 2 ;;
       --pr)
         [ $# -ge 2 ] && [ -n "${2:-}" ] || die "--pr requires a PR number value"
         pr_num="$2"
@@ -1416,7 +1438,7 @@ cmd_merge() {
 
   [ "$base" = "$TARGET_BASE" ] || \
     merge_die "PR #${pr_num} targets '${base}', not '${TARGET_BASE}'"
-  [ "$state" = "OPEN" ] || \
+  [ "$state" = "OPEN" ] || [ "$state" = "MERGED" ] || \
     merge_die "PR #${pr_num} is not open (state: ${state})"
   [ "$is_draft" = "false" ] || \
     merge_die "PR #${pr_num} is a draft"
@@ -1441,6 +1463,44 @@ cmd_merge() {
   conflict_state="$(git status --porcelain 2>/dev/null | grep -E '^(UU|AA|DD|AU|UA|DU|UD)' || true)"
   if [ -n "$conflict_state" ]; then
     merge_die "Working tree has unresolved conflicts from a previous merge — resolve or abort the in-progress merge before calling merge --pr again. Conflicting paths: $(printf '%s' "$conflict_state" | awk '{print $2}' | tr '\n' ' ')"
+  fi
+
+  local budget_repo budget_result
+  budget_repo="$(repo_slug)" || merge_die "Could not bind merge repository"
+  if [ -z "$merge_session" ]; then
+    budget_result="$(workflow_merge_budget_helper begin --repo-root "$(pwd -P)" \
+      --repo "$budget_repo" --pr "$pr_num" --head "$expected_head_sha" --base "$TARGET_BASE")" || {
+        print_kv MERGE_RESULT deferred
+        printf '%s\n' "$budget_result"
+        return 2
+      }
+    merge_session="$(printf '%s' "$budget_result" | jq -er '.session')" || return 2
+  fi
+  export WORKFLOW_MERGE_BUDGET_SESSION="$merge_session"
+  export WORKFLOW_MERGE_BUDGET_REPO="$budget_repo"
+  export WORKFLOW_MERGE_BUDGET_PR="$pr_num"
+  print_kv MERGE_BUDGET_SESSION "$merge_session"
+  budget_result="$(workflow_merge_budget_helper check --session "$merge_session" --repo "$budget_repo" \
+    --pr "$pr_num" --head "$expected_head_sha" --base "$TARGET_BASE" --phase local_merge --executor-pid "$$")" || {
+      print_kv MERGE_RESULT deferred; return 2;
+    }
+  local local_step
+  local_step="$(printf '%s' "$budget_result" | jq -er '.stepId')"
+  if [ "$state" = MERGED ]; then
+    [ "$(printf '%s' "$budget_result" | jq -r '.stepStatus')" = completed ] || {
+      print_kv MERGE_RESULT interrupted
+      echo "Already MERGED; resume the durable session to verify outstanding effects."
+      return 2
+    }
+    print_kv MERGE_RESULT clean
+    print_kv MERGE_API_RESULT already_merged
+    return 0
+  fi
+  if [ "$(printf '%s' "$budget_result" | jq -r '.nestedExecutionAuthorized')" != true ]; then
+    exec python3 "$SCRIPT_DIR/workflow-merge-budget.py" run-step --session "$merge_session" \
+      --repo "$budget_repo" --pr "$pr_num" --step "$local_step" --phase local_merge -- \
+      bash "$SCRIPT_DIR/batch-merge.sh" --merge-session "$merge_session" merge \
+      --pr "$pr_num" --expected-head-sha "$expected_head_sha" --base "$TARGET_BASE"
   fi
 
   # Ensure local TARGET_BASE is current
@@ -1513,24 +1573,32 @@ cmd_merge() {
       fi
     fi
 
-    # Push the merge commit so GitHub can process the merge event.
-    git push origin "$TARGET_BASE" >/dev/null 2>&1 || \
-      merge_die "Merge succeeded locally but push to origin/${TARGET_BASE} failed"
-
-    # Tell GitHub to record this PR as MERGED.  `gh pr merge --merge` detects
-    # that the commits are already on the base branch and marks the PR merged
-    # without creating a duplicate commit.
-    # If the call fails (e.g. already-MERGED idempotent case, API error, or
-    # auth issue), check the actual PR state.  Only warn when the PR is still
-    # not MERGED — the caller's Step 4.2 MERGED-state poll is the safety net.
-    if ! gh pr merge "$pr_num" --merge --match-head-commit "$expected_head_sha" 2>/dev/null; then
-      local post_state
-      post_state="$(gh pr view "$pr_num" --json state --jq '.state' 2>/dev/null)" || post_state=""
-      if [ "$post_state" != "MERGED" ]; then
-        echo "WARNING: gh pr merge failed for PR #${pr_num} — the local merge and push to the base branch succeeded, but GitHub has not recorded the PR as merged and it still reads '${post_state:-unknown}'. This is NOT yet resolved: per Protocol 94 Step 4.2 you must poll 'gh pr view ${pr_num} --json state' for MERGED (every 5s, up to 30s). If it converges, the merge is complete. If it does not, report this PR as FAILED and do not delete the remote branch or run cleanup." >&2
-      fi
+    workflow_merge_budget_before base_push base_push || {
+      print_kv MERGE_RESULT interrupted; return 2;
+    }
+    local push_status=0
+    git push origin "$TARGET_BASE" >/dev/null 2>&1 || push_status=$?
+    workflow_merge_budget_after base_push base_push "$push_status" >/dev/null || {
+      print_kv MERGE_RESULT interrupted; return 2;
+    }
+    workflow_merge_budget_before merge_api merge_api || {
+      print_kv MERGE_RESULT interrupted; return 2;
+    }
+    local api_status=0
+    # Preserve gh's already-merged, merge-queue and administrator behavior.
+    gh pr merge "$pr_num" --merge --match-head-commit "$expected_head_sha" 2>/dev/null || api_status=$?
+    if ! workflow_merge_budget_after merge_api merge_api "$api_status" >/dev/null; then
+      local budget_outcome
+      budget_outcome="$(workflow_merge_budget_helper report --session "$merge_session" | jq -r '.outcome')"
+      case "$budget_outcome" in Waiting) print_kv MERGE_RESULT waiting ;; *) print_kv MERGE_RESULT interrupted ;; esac
+      return 2
     fi
-
+    workflow_merge_budget_before merge_verify merge_verify || {
+      print_kv MERGE_RESULT interrupted; return 2;
+    }
+    workflow_merge_budget_after merge_verify merge_verify 0 >/dev/null || {
+      print_kv MERGE_RESULT interrupted; return 2;
+    }
     print_kv MERGE_RESULT "clean"
     print_kv CHANGELOG_DEDUPED "$changelog_deduped"
     return 0
@@ -1640,31 +1708,26 @@ cmd_delete_branch() {
   # when auto-delete-on-merge is enabled or a prior run already deleted it)
   # from genuine errors (network failure, auth, permission denied) — the latter
   # must be surfaced to the caller rather than silently reported as not_found.
-  local push_err push_exit
-  push_err="$(git push origin --delete "$branch" 2>&1)" && {
-    print_kv DELETE_RESULT "deleted"
-    return 0
-  }
-  push_exit=$?
-
-  # Match case-insensitively without a `producer | grep -qi` pipe (see
-  # _list_has_exact_line's comment above for why that shape is racy under
-  # pipefail). `tr` is safe here because — unlike `grep -q` — it always
-  # drains its input to EOF rather than exiting early on a match, so it
-  # cannot SIGPIPE the `printf` that feeds it.
-  local push_err_lower
-  push_err_lower="$(printf '%s' "$push_err" | tr '[:upper:]' '[:lower:]')"
-  if [[ "$push_err_lower" == *"remote ref does not exist"* ]]; then
-    # Branch was already gone — expected after auto-delete or a prior run.
-    print_kv DELETE_RESULT "not_found"
-  else
-    # Genuine push failure (network, auth, permissions, etc.) — report it and
-    # exit 2 to signal a fatal error per the script's exit-code contract.
-    print_kv DELETE_RESULT "skipped"
-    print_kv_escaped ERROR_MESSAGE "Failed to delete remote branch '${branch}' (exit ${push_exit}): ${push_err}"
-    echo "ERROR: failed to delete remote branch '${branch}': ${push_err}" >&2
-    exit 2
+  [ -n "${WORKFLOW_MERGE_BUDGET_SESSION:-}" ] || delete_die "Remote deletion requires merge session"
+  local deletion_repo deletion_binding deletion_step
+  deletion_repo="$(repo_slug)" || delete_die "Repository identity unavailable"
+  deletion_binding="$(workflow_merge_budget_helper check --session "$WORKFLOW_MERGE_BUDGET_SESSION" \
+    --repo "$deletion_repo" --pr "$pr_num" --phase remote_delete)" || delete_die "Deletion outside admitted frozen scope"
+  deletion_step="$(printf '%s' "$deletion_binding" | jq -er '.stepId')"
+  local deletion_result
+  if ! deletion_result="$(workflow_merge_budget_helper run-step --session "$WORKFLOW_MERGE_BUDGET_SESSION" \
+    --repo "$deletion_repo" --pr "$pr_num" --phase remote_delete --step "$deletion_step" -- \
+    git push origin --delete "$branch")"; then
+    delete_die "Remote branch deletion interrupted; use journal live recovery"
   fi
+  if [ "$(printf '%s' "$deletion_result" | jq -r '.childExitCode')" -eq 0 ]; then
+    print_kv DELETE_RESULT "deleted"
+  else
+    print_kv DELETE_RESULT "not_found"
+  fi
+  return 0
+
+
 }
 
 # ---------------------------------------------------------------------------
@@ -1674,6 +1737,7 @@ cmd_delete_branch() {
 # Parse global flags before the subcommand name.
 while [ $# -gt 0 ]; do
   case "$1" in
+    --merge-session) [ $# -ge 2 ] && [ -n "${2:-}" ] || die "--merge-session requires a path"; export WORKFLOW_MERGE_BUDGET_SESSION="$2"; shift 2 ;;
     --base)
       [ $# -ge 2 ] && [ -n "${2:-}" ] || die "--base requires a branch name"
       TARGET_BASE="$2"

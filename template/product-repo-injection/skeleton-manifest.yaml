@@ -65,6 +65,11 @@ entries:
     mode_scope: product_repo_injection
     required_for_product_repo: true
     note: shell helpers used by product-repo validation and PR readiness scripts
+  - group: durable merge admission and recovery
+    path: scripts/development-workflow/workflow-merge-budget.py
+    mode_scope: product_repo_injection
+    required_for_product_repo: true
+    note: durable budget admission and recovery dependency of workflow-lib.sh and post-merge-cleanup.sh
   - group: bounded project card reader
     path: scripts/development-workflow/workflow-project-reader.py
     mode_scope: product_repo_injection

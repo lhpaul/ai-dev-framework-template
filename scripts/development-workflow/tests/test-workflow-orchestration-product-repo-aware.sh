@@ -254,6 +254,30 @@ if [ -n "${GH_ARGS_LOG:-}" ]; then
   printf '%s\n' "$*" >> "$GH_ARGS_LOG"
 fi
 
+if [ "${GH_CLEANUP_BUDGET_FIXTURE:-}" = 1 ]; then
+  case "$*" in
+    api\ rate_limit)
+      printf '{"resources":{"graphql":{"remaining":5000,"limit":5000,"reset":%s}}}\n' "$(( $(date +%s) + 3600 ))"; exit 0 ;;
+    repo\ view\ --json\ nameWithOwner\ --jq*)
+      printf 'example/workflow-hub\n'; exit 0 ;;
+    repo\ view\ --json\ nameWithOwner)
+      printf '{"nameWithOwner":"example/workflow-hub"}\n'; exit 0 ;;
+    pr\ view\ *\ --json\ number,state,headRefName*)
+      printf '{"number":%s,"state":"MERGED","headRefName":"%s","isCrossRepository":false}\n' "$3" "$GH_CLEANUP_BRANCH"; exit 0 ;;
+    pr\ view\ *\ --json\ headRefOid\ --jq*)
+      printf '%s\n' "$GH_CLEANUP_HEAD"; exit 0 ;;
+    pr\ view\ *\ --json\ isCrossRepository\ --jq*)
+      printf 'false\n'; exit 0 ;;
+    pr\ view\ *\ --json\ body,title\ --jq*|pr\ view\ *\ --json\ commits\ --jq*|pr\ view\ *\ --json\ title\ --jq*)
+      printf '\n'; exit 0 ;;
+    api\ graphql*)
+      number=""
+      for arg in "$@"; do case "$arg" in number=*) number="${arg#number=}" ;; esac; done
+      [ -n "$number" ] || { echo 'unexpected cleanup query' >&2; exit 64; }
+      printf '{"data":{"repository":{"pullRequest":{"number":%s,"state":"MERGED","headRefName":"%s","headRefOid":"%s","baseRefName":"develop-workflow-hub-mode","isInMergeQueue":false,"autoMergeRequest":null}}}}\n' "$number" "$GH_CLEANUP_BRANCH" "$GH_CLEANUP_HEAD"; exit 0 ;;
+  esac
+fi
+
 case "$1" in
   auth)
     exit 0
@@ -652,6 +676,10 @@ run_fails_contains \
     develop-workflow-hub-mode
 
 base_override_output="$(
+  GH_CLEANUP_BUDGET_FIXTURE=1 \
+  GH_CLEANUP_BRANCH=spec/base-override \
+  GH_CLEANUP_HEAD="$(git -C "$cleanup_repo" rev-parse spec/base-override)" \
+  GH_PR_LIST_NUMBER=42 \
   GH_PR_LIST_BASE=wrong-base \
   WORKFLOW_TARGET_GITHUB_REPO=example/workflow-hub \
   PATH="$stub_bin:$PATH" \
@@ -670,6 +698,10 @@ run_contains \
   "$base_override_output"
 
 cleanup_output="$(
+  GH_CLEANUP_BUDGET_FIXTURE=1 \
+  GH_CLEANUP_BRANCH=spec/integration-cleanup \
+  GH_CLEANUP_HEAD="$(git -C "$cleanup_repo" rev-parse spec/integration-cleanup)" \
+  GH_PR_LIST_NUMBER=42 \
   GH_PR_LIST_BASE=develop-workflow-hub-mode \
   WORKFLOW_TARGET_GITHUB_REPO=example/workflow-hub \
   PATH="$stub_bin:$PATH" \
@@ -687,6 +719,10 @@ run_contains \
   "$cleanup_output"
 
 already_deleted_output="$(
+  GH_CLEANUP_BUDGET_FIXTURE=1 \
+  GH_CLEANUP_BRANCH=spec/already-deleted \
+  GH_CLEANUP_HEAD="$(git -C "$cleanup_repo" rev-parse develop-workflow-hub-mode)" \
+  GH_PR_LIST_NUMBER=99 \
   GH_PR_LIST_BASE=develop-workflow-hub-mode \
   GH_PR_LIST_HEAD=spec/already-deleted \
   GH_PR_LIST_HEAD_NUMBER=99 \

@@ -5,6 +5,12 @@ description: "Compatibility/advanced alias: resolve a native GitHub epic into a 
 
 # Run Epic
 
+## Merge-session admission and recovery
+
+After ordinary review/CI/readiness and before any merge-operation audit, hold, bypass, merge or follow-up mutation, follow [Protocol 94 section 3.6](../../../docs/workflow/development-workflow/protocols/94-batch-merge-protocol.md#36-merge-session-admission-and-recovery). Freeze the entire selected ordered set in one authoritative owner-bound session; an unaffordable set admits no prefix. Supply the same `--merge-session` to mutating merge/cleanup helpers, and `--operation merge` to operation-owned audit calls. Direct authorized `gh pr merge` commands run through `workflow-merge-budget.py run-step` with their existing argv unchanged. Read-only risk classification remains separate; delegated merge requires the durable session plus all existing gates.
+
+Deferred reports quota/reset, recorded PR states and pending follow-up without operation-owned remote writes; fresh selected PRs stay unmerged, while recovery deferral retains historical merged/uncertain facts. Waiting records a verified queue/auto-merge submission, stops subsequent selected merges and leaves merge-dependent follow-up pending. Interrupted retains completed/uncertain/pending work locally even if every API fails; stop further selected merges and use explicit verified recovery without duplicate submission or uncertain mutation replay. Completed requires all owned planned follow-up independently verified, including tracker and audit. Budget admission grants no risk, checkpoint, admin or deletion authority. Report the session recovery command together with the existing Ground-Truth Completion Verification before claiming a workflow terminal outcome.
+
 This is the Codex command-style alias for Claude Code `/run-epic`.
 
 > **Compatibility/advanced alias**: `/run-epic` bypasses the `/run-work`
@@ -52,6 +58,9 @@ This is the Codex command-style alias for Claude Code `/run-epic`.
    - `apply-pr-disposition --input <file> --pr <pr-number>`
    - `render-epic-ledger --input <file>`
    - `apply-epic-ledger --input <file> --epic <issue-number>`
+   For merge-operation writes, supply `--operation merge`, the admitted
+   `--merge-session`, and the frozen `--merge-step` through Protocol 94 section
+   3.6. The bare apply examples serve pre-stage decisions.
 8. Before any delegated merge, run
    `./scripts/development-workflow/run-epic-delegated-gate.sh` with current
    scope, reviewer, CI, risk, and audit evidence; pass `--policy <file>` when
@@ -113,4 +122,3 @@ named stop conditions and their human unblocking actions, and the
 invalid-declaration boundaries are defined once, normatively, in
 `docs/workflow/development-workflow/integrations/cursor-dispatch-profiles.md`.
 Follow that document; this surface deliberately does not restate it.
-

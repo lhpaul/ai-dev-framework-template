@@ -131,6 +131,9 @@ categories:
     - path: scripts/development-workflow/validate-workflow-config.sh
       mode_scope: product_repo_injection
       note: product-repo runtime helper for non-secret workflow configuration validation
+    - path: scripts/development-workflow/workflow-merge-budget.py
+      mode_scope: product_repo_injection
+      note: durable GraphQL budget admission and recovery for composed merge sessions
     - path: scripts/development-workflow/workflow-project-reader.py
       mode_scope: product_repo_injection
       note: bounded target project lookup shared by workflow-lib and portfolio scans

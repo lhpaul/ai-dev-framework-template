@@ -4,7 +4,7 @@
 **Spec**: [Approved spec](../../specs/developments/20261007181932_1890-graphql-budget-aware-merge-gate/1_1890-graphql-budget-aware-merge-gate_specs.md)
 **Plan**: [Implementation plan](../../specs/developments/20261007181932_1890-graphql-budget-aware-merge-gate/2_1890-graphql-budget-aware-merge-gate_implementation-plan.md)
 **Created in**: Plan Ready stage
-**Updated in**: In Development stage, when the mocked harness commands are implemented
+**Updated in**: In Development stage
 
 ## Prerequisites
 
@@ -12,8 +12,8 @@
 - Run the composed delegated and batch consumers, replacing only remote service/process boundaries with recording fixtures. Arithmetic-only testing does not satisfy this runbook.
 - Maintain a command/event ledger recording quota reads, selected identities, audit writes, base pushes, merge calls, state verification, deletion, cleanup and tracker actions. Capture session journals separately from remote mutation counts.
 - Scope all fake Git branches, worktrees, subprocesses and files to the fixture root. No live merge, issue/board write, portfolio scan, whole-board read or deletion of user resources is authorized by this runbook.
-- The implementation supplies `bash scripts/development-workflow/tests/test-workflow-merge-budget.sh`, which runs the composed Python harness. Before implementation, these instructions describe coverage intent; they do not claim that an unimplemented scenario flag is available.
-- Read the amended spec's Waiting/merge-queue contract and use the final plan's state names. This draft expects Waiting for verified pending/queued merge behavior, distinct from uncertain/error interruption.
+- The implementation supplies `bash scripts/development-workflow/tests/test-workflow-merge-budget.sh`, which runs the composed Python harness. The suite is the entrypoint; the steps below describe assertions rather than public scenario-selector flags.
+- Read the amended spec's Waiting/merge-queue contract and use the final plan's state names. The amended contract requires Waiting for verified pending/queued merge behavior, distinct from uncertain/error interruption.
 - The item has no supplied graphical design reference. No login, application server, production seed data or visual-fidelity baseline is required.
 
 ## Test Data
@@ -146,16 +146,67 @@ Use synthetic identities and deterministic timestamps. Load them through the com
 - Save fixture event logs, session records and failure reasons as implementation evidence. Record simulated verification explicitly; do not claim live merges or quota behavior were measured.
 - Stop fixture subprocesses and release handles. Remove only harness-owned temporary resources; preserve durable evidence needed to inspect failed/recovery scenarios.
 
+## Read-only query validation evidence
+
+The implementation's `MergeBudgetPR` literal was extracted from
+`workflow-merge-budget.py` with Python AST and sent unchanged through
+`gh api graphql` against this repository's already merged plan PR #1929.
+The response independently included number 1929, state MERGED, reviewed head
+`e4c56d272194e25af7424a6aa2bce6700b1f6d9d`, base `develop`,
+`isInMergeQueue: false`, and `autoMergeRequest: null`. The exact extracted query
+passed `lint-graphql-query-literals.py` as a shell query literal with one query
+and zero findings; the repository-wide shell scan also passed. This is query
+compatibility evidence, not a live merge or quota-cost guarantee.
+
+The installed `gh pr view --json` does not expose `isInMergeQueue`; the explicit
+read query avoids that unsupported projection without changing merge argv or
+pinning a CLI version. Read-only evidence is retained with this devsession's
+validation artifacts and referenced by the implementation PR.
+
+## Executed fixture verification
+
+The implementation validation executed the committed shell entrypoint and its
+Python unit/composed cases. Each composed case uses the real helper and consumer
+scripts with private Git roots and a recording fake `gh`; service responses are
+simulated. Relevant existing delegated, batch, cleanup, tracker, selector and
+sync suites also passed. The implementation PR records exact final counts and
+reviewed source identity.
+
+| Acceptance criteria | Executed cases / observable proof |
+| --- | --- |
+| AC1, AC3 | `test_projection_derivation_and_equality`, `test_provisional_balance_is_refreshed`, `test_actual_merge_cleanup_no_deletion_composition`, `test_actual_first_audit_refresh_and_malformed_manifests`; quota precedes dispatch, equality admits, component/margin/reserve reports are explicit. |
+| AC2, AC4 | `test_one_below_defers_before_intent`, `test_actual_full_batch_refuses_affordable_prefix_and_no_fallback`, `test_actual_insufficient_session_has_zero_mutations`, quota/reserve/manifest/duplicate-JSON validation cases; zero mutation and no prefix/fallback. |
+| AC5, AC6 | `test_actual_outage_after_verified_merge_offline_resume_no_duplicate`, `test_actual_failed_tracker_zero_exit_requires_recovery`, `test_actual_failed_audit_readable_absence_retries_exact_intent`, `test_actual_partial_close_effects_recover_without_replaying_success`; facts survive interruption and comment/closure effects are retried separately. |
+| AC5, AC6 | `test_surviving_child_blocks_recovery`, `test_provider_proof_cannot_release_surviving_mutating_child`, nested/competing executor, atomic-write/storage and remote-read-outside-lock cases; surviving children retain authority and journal failure blocks dispatch. The audit suite also exercises a surviving child after executor SIGKILL. |
+| AC6, AC8 | `test_actual_queue_waiting_no_cleanup_or_resubmission`, `test_actual_authorized_admin_argv_is_preserved`, `test_actual_already_merged_never_replays_api`; queued work remains Waiting and no merge is resubmitted. |
+| AC5, AC6 | `test_actual_advanced_base_recovery_preserves_pushed_commit`, `test_actual_failed_push_retries_frozen_commit_after_checkout_change`; pushed-base facts persist and retry uses the frozen commit. |
+| AC7 | `test_final_window_comparability`, `test_unavailable_final_sample_and_admission_preserve_known_facts`; reset/limit/increase/unavailable samples do not invent spend or erase verified facts. |
+| AC8 | Delegated gate/risk/audit and batch regression suites; `test_session_dispatch_clears_foreign_github_repo_override`, `test_actual_closed_released_tracker_preserves_forward_progress`, Linear recovery-generation proof and cleanup hub/product/worktree cases; ordinary gates and owned provider routing remain effective. |
+
+`test_planted_admission_violation_is_detected_and_restored` temporarily replaces
+the definitive insufficient-budget predicate in a private runtime copy. The
+ordinary composed low-budget test passes before the plant, fails with forbidden
+fixture merge dispatch after the plant, and passes after restoration. The proof
+records `workflow-merge-budget.py`, its concrete predicate line, source digest
+and revision; the plant is never committed or used against GitHub.
+
+The private validation artifacts contain the composed event/session ledger,
+planted red/green proof, suite logs, source digest and residual inventory. They
+are supporting execution evidence; the committed harness regenerates fixture
+proofs with `WORKFLOW_MERGE_BUDGET_TEST_EVIDENCE_DIR` when requested. Individual
+case records may deliberately end Waiting, Deferred or with outstanding steps
+because that case tests a stop, rather than claiming a complete workflow.
+
 ## Assertions Checklist
 
-- [ ] AC1: Sufficient quota precedes the first composed mutation in delegated single-item and epic paths.
-- [ ] AC2: One below/full-batch deferral makes zero mutations and recovery deferral preserves historical state.
-- [ ] AC3: Equality admits and the heuristic includes all selected gates/merge/follow-up, explicit margin and reserve.
-- [ ] AC4: Malformed/unavailable evidence, unknown projection and invalid resolved reserve defer; core quota is not a substitute.
-- [ ] AC5: Completed/uncertain/pending local evidence survives outage and restart.
-- [ ] AC6: Interruption/Waiting starts no additional merge; explicit live-verified resume avoids duplicate completed/uncertain actions.
-- [ ] AC7: Reports show estimate/margin/reserve/samples and comparable aggregate spend or explicit unavailable reason.
-- [ ] AC8: Delegated/batch paths retain existing readiness, risk, CI, ownership, checkpoint, audit, queue/admin/already-merged behavior.
+- [x] AC1: Sufficient quota precedes the first composed mutation in delegated single-item and epic paths.
+- [x] AC2: One below/full-batch deferral makes zero mutations and recovery deferral preserves historical state.
+- [x] AC3: Equality admits and the heuristic includes all selected gates/merge/follow-up, explicit margin and reserve.
+- [x] AC4: Malformed/unavailable evidence, unknown projection and invalid resolved reserve defer; core quota is not a substitute.
+- [x] AC5: Completed/uncertain/pending local evidence survives outage and restart.
+- [x] AC6: Interruption/Waiting starts no additional merge; explicit live-verified resume avoids duplicate completed/uncertain actions.
+- [x] AC7: Reports show estimate/margin/reserve/samples and comparable aggregate spend or explicit unavailable reason.
+- [x] AC8: Delegated/batch paths retain existing readiness, risk, CI, ownership, checkpoint, audit, queue/admin/already-merged behavior.
 
 ## Seed Data Reference
 
@@ -178,4 +229,4 @@ Use synthetic identities and deterministic timestamps. Load them through the com
 
 ## Known Limitations
 
-The runbook verifies mocked composed behavior, not live GitHub quota guarantees or real merges. The conservative estimate is heuristic; remote pagination, CLI internals, concurrency and service behavior can exceed it. The feature supplies durable interruption/recovery rather than a global quota reservation or atomic rollback. Scenario selectors/fixture commands are finalized during implementation and recorded with actual evidence. No graphical reference was supplied.
+The runbook verifies mocked composed behavior, not live GitHub quota guarantees or real merges. The conservative estimate is heuristic; remote pagination, CLI internals, concurrency and service behavior can exceed it. The feature supplies durable interruption/recovery rather than a global quota reservation or atomic rollback. Fixture commands and execution evidence are recorded during implementation; the runbook does not introduce production scenario-selector flags. No graphical reference was supplied.

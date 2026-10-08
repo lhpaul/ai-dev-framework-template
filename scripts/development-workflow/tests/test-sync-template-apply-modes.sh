@@ -6,6 +6,8 @@
 # covers: .cursor/commands/sync-template.md .claude/skills/sync-template.md
 # covers: .codex/skills/workflow-sync-template/**
 # covers: .agents/skills/workflow-sync-template/**
+# covers: sync-manifest.yaml scripts/development-workflow/select-sync-manifest-entries.py
+# covers: scripts/development-workflow/workflow-merge-budget.py
 
 set -euo pipefail
 
@@ -104,6 +106,27 @@ for f in "${WRAPPERS[@]}"; do
     pass "$base no longer documents old primary peer pair"
   fi
 done
+
+# Exercise shipment into a clean product checkout using the actual role selection.
+# Help is offline: missing Python imports or an omitted runtime fail here without gh.
+PRODUCT_FIXTURE="$(mktemp -d)"
+trap 'rm -rf "$PRODUCT_FIXTURE"' EXIT
+budget_runtime="scripts/development-workflow/workflow-merge-budget.py"
+selection="$(python3 "$REPO_ROOT/scripts/development-workflow/select-sync-manifest-entries.py" \
+  --manifest "$REPO_ROOT/sync-manifest.yaml" --role product_repo)"
+if grep -Fq "SELECTED category=always_sync mode_scope=product_repo_injection path=$budget_runtime glob=" <<< "$selection"; then
+  mkdir -p "$PRODUCT_FIXTURE/scripts/development-workflow"
+  cp "$REPO_ROOT/$budget_runtime" "$PRODUCT_FIXTURE/$budget_runtime"
+  if (cd "$PRODUCT_FIXTURE" && python3 "$budget_runtime" --help > help.txt 2>&1) \
+    && grep -q 'run-step' "$PRODUCT_FIXTURE/help.txt" \
+    && grep -q 'resume' "$PRODUCT_FIXTURE/help.txt"; then
+    pass "product injection ships usable public budget execution and recovery CLI"
+  else
+    fail "product injection budget CLI cannot load independently"
+  fi
+else
+  fail "product role omits required budget runtime"
+fi
 
 echo
 echo "Passed: $PASS_COUNT"

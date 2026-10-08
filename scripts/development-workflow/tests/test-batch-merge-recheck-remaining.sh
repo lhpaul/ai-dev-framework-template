@@ -67,6 +67,37 @@ count_for() {
 }
 
 case "$*" in
+  api\ rate_limit)
+    printf '{"resources":{"graphql":{"remaining":5000,"limit":5000,"reset":%s}}}\n' "$(( $(date +%s) + 3600 ))"
+    ;;
+  repo\ view\ --json\ nameWithOwner)
+    printf '{"nameWithOwner":"org/fixture"}\n'
+    ;;
+  repo\ view\ --json\ nameWithOwner\ --jq\ .nameWithOwner)
+    printf 'org/fixture\n'
+    ;;
+  api\ graphql*)
+    number=""
+    for arg in "$@"; do case "$arg" in number=*) number="${arg#number=}" ;; esac; done
+    case "$number" in 101|102) ;; *) printf 'unexpected budget PR\n' >&2; exit 64 ;; esac
+    state=OPEN; [ "$number" != 101 ] || state=MERGED
+    head=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    [ "${MOCK_SCENARIO:-}" != head_changed_annotate ] || head=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+    printf '{"data":{"repository":{"pullRequest":{"number":%s,"state":"%s","headRefName":"feature/mock-pr-%s","headRefOid":"%s","baseRefName":"develop","isInMergeQueue":false,"autoMergeRequest":null}}}}\n' "$number" "$state" "$number" "$head"
+    ;;
+  pr\ view\ 10[12]\ --repo\ org/fixture\ --json\ isCrossRepository\ --jq*)
+    printf 'false\n'
+    ;;
+  pr\ view\ 10[12]\ --repo\ org/fixture\ --json\ body,title\ --jq*|pr\ view\ 10[12]\ --repo\ org/fixture\ --json\ commits\ --jq*|pr\ view\ 10[12]\ --repo\ org/fixture\ --json\ title\ --jq*)
+    printf '\n'
+    ;;
+  api\ --paginate\ --slurp\ repos/org/fixture/issues/102/comments?per_page=100)
+    if [ -f "$MOCK_GH_STATE_DIR/hold-body-102" ]; then
+      jq -Rs '[[{id:777,body:.}]]' < "$MOCK_GH_STATE_DIR/hold-body-102"
+    else
+      printf '[[]]\n'
+    fi
+    ;;
   auth\ status)
     exit 0
     ;;
@@ -184,20 +215,24 @@ case "$*" in
     ;;
   api\ repos/\{owner\}/\{repo\}/issues/102/comments\ -f\ body=*)
     : > "$MOCK_GH_STATE_DIR/hold-comment-102"
-    printf '%s\n' "$*" > "$MOCK_GH_STATE_DIR/hold-body-102"
+    for arg in "$@"; do
+      case "$arg" in body=*) printf '%s' "${arg#body=}" > "$MOCK_GH_STATE_DIR/hold-body-102" ;; esac
+    done
     printf '{"id":777}\n'
     ;;
   api\ repos/\{owner\}/\{repo\}/issues/comments/777\ --jq\ .body)
     # Body read for the hold-lifted update: the marker plus whatever the last
-    # create/patch stored (the stored line is the whole argv, so take the tail).
+    # create/patch stored. Preserve the exact remote body without adding a newline.
     if [ -f "$MOCK_GH_STATE_DIR/hold-body-102" ]; then
-      sed 's/^.*-f body=//' "$MOCK_GH_STATE_DIR/hold-body-102"
+      cat "$MOCK_GH_STATE_DIR/hold-body-102"
     else
       printf '<!-- batch-merge-hold:v1 -->\nBatch merge hold\n'
     fi
     ;;
   api\ repos/\{owner\}/\{repo\}/issues/comments/777\ -X\ PATCH\ -f\ body=*)
-    printf '%s\n' "$*" > "$MOCK_GH_STATE_DIR/hold-body-102"
+    for arg in "$@"; do
+      case "$arg" in body=*) printf '%s' "${arg#body=}" > "$MOCK_GH_STATE_DIR/hold-body-102" ;; esac
+    done
     printf '{"id":777}\n'
     ;;
   pr\ view\ 102\ --json\ headRefOid,mergeStateStatus,statusCheckRollup)
@@ -214,6 +249,48 @@ export PATH="$MOCK_BIN:$PATH"
 export MOCK_GH_CALL_LOG="$CALL_LOG"
 export MOCK_GH_STATE_DIR="$TMP_ROOT/state"
 mkdir -p "$MOCK_GH_STATE_DIR"
+
+# Use an isolated real checkout and the production admission helper for every
+# annotated recheck. Read-only cases retain the original entrypoint.
+BUDGET_FIXTURE="$TMP_ROOT/budget-repo"
+git init -q --initial-branch=develop "$BUDGET_FIXTURE"
+git -C "$BUDGET_FIXTURE" remote add origin https://github.com/org/fixture.git
+cat > "$BUDGET_FIXTURE/.ai-dev-workflow.yaml" <<'YAML'
+issue_tracker:
+  provider: none
+merge_budget:
+  graphql_reserve: 1000
+YAML
+mkdir -p "$BUDGET_FIXTURE/scripts/development-workflow"
+for runtime in batch-merge.sh workflow-lib.sh workflow-config-resolver.py \
+  workflow-project-reader.py workflow-merge-budget.py post-merge-cleanup.sh tracker-status-for.sh closing-keyword-lib.sh; do
+  cp "$REPO_ROOT/scripts/development-workflow/$runtime" "$BUDGET_FIXTURE/scripts/development-workflow/$runtime"
+done
+REAL_HELPER="$BUDGET_FIXTURE/scripts/development-workflow/batch-merge.sh"
+READ_ONLY_HELPER="$HELPER"
+HELPER=budget_batch
+budget_batch() {
+  local annotated=0 arg head manifest admission session
+  for arg in "$@"; do
+    [ "$arg" != --annotate ] && [ "$arg" != annotate-hold ] || annotated=1
+  done
+  if [ "$annotated" -eq 0 ]; then
+    "$READ_ONLY_HELPER" "$@"
+    return $?
+  fi
+  head=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  [ "${MOCK_SCENARIO:-}" != head_changed_annotate ] || head=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+  manifest="$TMP_ROOT/annotation-manifest.json"
+  admission="$TMP_ROOT/annotation-admission.json"
+  jq -n --arg root "$BUDGET_FIXTURE" --arg head "$head" \
+    '{ownerRoot:$root,prs:[
+      {repo:"org/fixture",pr:101,head:$head,base:"develop",root:$root,phases:["merge_verify"]},
+      {repo:"org/fixture",pr:102,head:$head,base:"develop",root:$root,steps:[{id:"hold:102",phase:"hold",auditRepo:"org/fixture",auditTarget:102,marker:"<!-- batch-merge-hold:v1 -->"}]}]}' > "$manifest"
+  (cd "$BUDGET_FIXTURE" && python3 "$BUDGET_FIXTURE/scripts/development-workflow/workflow-merge-budget.py" begin \
+    --repo-root "$BUDGET_FIXTURE" --input "$manifest") > "$admission" || return $?
+  session="$(jq -er '.session' "$admission")" || return $?
+  (cd "$BUDGET_FIXTURE" && "$REAL_HELPER" --merge-session "$session" "$@")
+}
 
 PASS_COUNT=0
 FAIL_COUNT=0
@@ -584,7 +661,7 @@ run_test "invalid_config_error_record" "helper_failed" "$(json_field "$bad_confi
 if [ "$(workflow_template_is_template "$REPO_ROOT/.ai-dev-workflow.yaml")" = "true" ]; then
   run_test "placeholder_e2e_workflow_name_synced" "1" "$(
     if grep -q 'name: E2E regression (placeholder)' "$REPO_ROOT/.github/workflows/e2e-regression.yml" &&
-       grep -q 'E2E regression \\\\(placeholder\\\\)' "$HELPER"; then
+       grep -q 'E2E regression \\\\(placeholder\\\\)' "$READ_ONLY_HELPER"; then
       printf '1\n'
     else
       printf '0\n'
@@ -594,7 +671,7 @@ else
   echo "SKIP: placeholder_e2e_workflow_name_synced - template.is_template is not true (consumer repository)"
 fi
 
-run_test "no_mutation_calls" "0" "$(grep -Ec 'pr edit|pr merge|pr comment' "$CALL_LOG" || true)"
+run_test "no_merge_label_or_pr_comment_cli_calls" "0" "$(grep -Ec 'pr edit|pr merge|pr comment' "$CALL_LOG" || true)"
 
 echo ""
 echo "=== Summary ==="
