@@ -301,7 +301,8 @@ of a failed validation result.
 | workflow-lib.sh workflow_validate_repository_context | Wrapper → same validate command; preserve repo/require-local semantics, propagate D5 failure |
 | post-merge-cleanup.sh selected_repo_context/repo_context calls | Wrapper validation precedes cleanup target use; invalid policy prevents proceeding on an unvalidated context; existing valid/absent policy follows its normal branch |
 | component-release-target.sh validate calls | Context validation precedes release-target interpretation; new model failure propagates without claiming a valid target |
-| Existing test-workflow-config-resolver.sh wrapper tests | Existing absent-routing fixture remains successful and produces the prior context |
+| Existing test-workflow-config-resolver.sh validate/wrapper tests | Wrapper success preserves absent-routing context; direct require-local failure at line583 remains a repository-context error, with D2 invalid opt-in policy rejected before successful validation |
+| Existing test-workflow-hub-smoke-fixtures.sh validate calls | Lines255/258 preserve mobile/admin require-local success with absent policy; line313 preserves missing-checkout rejection. D2 invalid opted-in policy is rejected at the same validate entry before any successful context; run this existing suite unchanged |
 | Ordinary resolve and review-effective/review-github-effective | Their existing separate commands/readers continue to produce their current results; DSH routing must not turn malformed reviewer policy into an absent-policy fallback |
 
 No deleted branch's inputs need reassignment: this is additive validation.
@@ -439,7 +440,7 @@ this plan and the smoke runbook.
    check before any implementation edits.
 2. Implement D1–D5 with the Python edge cases. Complete and verify a coherent
    resolver/test checkpoint commit before moving to integration.
-3. Wire D2/D6 validation and CLI fixtures. Run config-resolver and new DSH tests;
+3. Wire D2/D6 validation and CLI fixtures. Run config-resolver, existing hub-smoke-fixtures and new DSH tests;
    produce the model-schema planted-violation proof before committing this part.
 4. Execute D7's Documentation Updates and consistency coverage. Produce any new
    documentation-control planted proof, run Step7a consistency and the existing
