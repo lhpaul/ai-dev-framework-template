@@ -2031,9 +2031,10 @@ def routing_declared(raw: str) -> bool:
             key = key[1:-1].replace("''", "'")
         return key, value
 
-    def anchor_payload(text: str, name: str) -> str | None:
+    def anchor_payloads(text: str, name: str) -> list[str]:
         # Probe node metadata in block/flow values, excluding scalar text.
         quote, escaped = "", False
+        payloads = []
         for position, char in enumerate(text):
             if quote:
                 if escaped:
@@ -2048,14 +2049,25 @@ def routing_declared(raw: str) -> bool:
             elif char == "&" and re.search(r"(?:^|[\[{,:])\s*(?:![^\s]+\s+)*$", text[:position]):
                 match = re.match(r"&([^\s{}\[\],]+)", text[position:])
                 if match and match.group(1) == name:
-                    return text[position + len(match.group()):].strip()
-        return None
+                    payloads.append(text[position + len(match.group()):].strip())
+        return payloads
 
-    def has_dsh(index: int, indent: int, value: str) -> bool:
+    def merge_aliases(value: str) -> list[str]:
+        alias = re.match(r"^\s*\*([^\s{}\[\],]+)", value)
+        if alias:
+            return [alias.group(1)]
+        sequence = re.match(r"^\s*\[([^\]]*)\]", value)
+        if not sequence:
+            return []
+        return [match.group(1) for item in sequence.group(1).split(",")
+                if (match := re.fullmatch(r"\s*\*([^\s{}\[\],]+)\s*", item))]
+
+    def routing_hints(index: int, indent: int, value: str) -> tuple[bool, list[str]]:
+        merges = []
         if key_value(value)[0] == "dsh" or re.match(r"^(?:dsh|'dsh'|\"dsh\")(?:\s|$)", value):
             # A missing enclosing map must not turn an explicit inline DSH
             # declaration into a legacy scalar and bypass strict validation.
-            return True
+            return True, merges
         if value.startswith("{"):
             # Probe only direct flow keys, not dsh text inside values/other maps.
             depth, key_start, quote, escaped = 0, 1, "", False
@@ -2079,8 +2091,11 @@ def routing_declared(raw: str) -> bool:
                 elif char == "," and depth == 1:
                     key_start = position + 1
                 elif char == ":" and depth == 1:
-                    if key_value(value[key_start:position] + ":")[0] == "dsh":
-                        return True
+                    key = key_value(value[key_start:position] + ":")[0]
+                    if key == "dsh":
+                        return True, merges
+                    if key == "<<":
+                        merges.extend(merge_aliases(value[position + 1:]))
         children = []
         for child_indent, child in lines[index + 1:]:
             if child_indent <= indent:
@@ -2091,8 +2106,12 @@ def routing_declared(raw: str) -> bool:
             if any(child_indent == child_level and (key_value(child)[0] == "dsh"
                     or re.match(r"^(?:dsh|'dsh'|\"dsh\")(?:\s|$)", child))
                    for child_indent, child in children):
-                return True
-        return False
+                return True, merges
+            for child_indent, child in children:
+                key, child_value = key_value(child)
+                if child_indent == child_level and key == "<<":
+                    merges.extend(merge_aliases(child_value))
+        return False, merges
 
     def probe_mapping(index: int, indent: int, value: str) -> bool:
         # Unsupported aliases may be ambiguous. Examine every explicit target
@@ -2109,12 +2128,14 @@ def routing_declared(raw: str) -> bool:
             value = re.sub(r"^(?:(?:&[^\s{}\[\],]+|![^\s{}\[\],]+)\s*)+", "", value)
             alias = re.fullmatch(r"\*([^\s]+)", value)
             if not alias:
-                if has_dsh(index, indent, value):
+                declared, merges = routing_hints(index, indent, value)
+                if declared:
                     return True
+                pending.extend((index, indent, "*" + name) for name in merges)
                 continue
             name = alias.group(1)
             targets = [(i, level, payload) for i, (level, line) in enumerate(lines)
-                       if (payload := anchor_payload(line, name)) is not None]
+                       for payload in anchor_payloads(line, name)]
             if not targets:
                 # A named but unanchored target is invalid YAML too; retain
                 # detection of that explicitly malformed declaration.

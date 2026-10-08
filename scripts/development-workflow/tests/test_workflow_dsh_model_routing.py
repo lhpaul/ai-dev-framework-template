@@ -244,6 +244,11 @@ class ModelRoutingTests(unittest.TestCase):
                      "models: &policy{dsh: {tiers: {balanced: {provider: p}}}}\n",
                      "mode: single_repo\nfirst: &route {codex: {}}\nsecond: &route {dsh: {}}\nmodels: *route\n",
                      "first: &route {dsh: {}}\nsecond: &route {other: {}}\nmodels: *route\n",
+                     "holder: {first: &route {codex: {}}, second: &route {dsh: {}}}\nmodels: *route\n",
+                     "route: &route {dsh: {}}\nmodels: {<<: *route}\n",
+                     "base: &base {dsh: {}}\nroute: &route {<<: *base}\nmodels: *route\n",
+                     "base: &base {dsh: {}}\nmodels:\n  <<: *base\n",
+                     "base: &base {dsh: {}}\nmodels: {<<: [*base]}\n",
                      "policy: &policy {dsh: {}}\nmodels: *policy\n",
                      "policy: unrelated\nactual: &policy {dsh: {}}\nmodels: *policy\n",
                      'decoy: "some &policy text"\nactual: &policy {dsh: {}}\nmodels: *policy\n',
@@ -296,7 +301,10 @@ class ModelRoutingTests(unittest.TestCase):
                      'custom:\n  models: {dsh: unused}\n',
                      'models: !!map {other: unused}\n',
                      'policy: &policy {other: {dsh: unused}}\nmodels: *policy\n',
-                     'actual: {inner: &policy {other: unused}, sibling: {dsh: unused}}\nmodels: *policy\n'):
+                     'actual: {inner: &policy {other: unused}, sibling: {dsh: unused}}\nmodels: *policy\n',
+                     'holder: {first: &route {codex: {}}, second: &route {other: {}}}\nmodels: *route\n',
+                     'route: &route {other: {dsh: unused}}\nmodels: {<<: *route}\n',
+                     'first: &a *b\nsecond: &b *a\nmodels: *a\n'):
             self.write(text)
             absent = subprocess.run([sys.executable, "-S", str(SCRIPT), "validate", "--repo-root", str(self.root), "--json"],
                                     capture_output=True, text=True, env=dict(os.environ, WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT=""))
