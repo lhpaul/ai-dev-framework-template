@@ -175,7 +175,7 @@ without DSH routing keep their existing behavior.
 - [x] AC8: Policy parity/commented examples checked.
 - [x] AC9: Same actual DSH parent session runs distinct tier children and fresh
   locally overridden child with runtime route evidence.
-- [ ] AC10: Regression, manifest ownership and release fragment verified.
+- [x] AC10: Regression, manifest ownership and release fragment verified.
 
 ## Evidence Record
 
@@ -185,9 +185,9 @@ live dispatch, fallback reason, shared-policy digest comparison and any blocker.
 Private file paths and runtime logs are not copied into public audit comments;
 public summaries may contain route ids, version and concise results.
 
-The implementer adds actual execution results here or references durable
-approved evidence with an accurate pass/block status; this authored runbook
-itself makes no claim that the feature smoke has already run.
+The execution record below describes the implementation verification run.
+Repeat these steps and refresh the evidence when a later resolver changes
+behavior.
 
 ## Actual Execution Evidence — 2026-10-08
 
@@ -228,7 +228,11 @@ All temporary runtimes shut down gracefully; fixture/session data was retained.
 
 Configuration and contract verification: the DSH suite's 18 unit methods cover
 all planned input classes; the existing resolver suite passed 798 assertions,
-hub-smoke fixtures passed 70 and Step7a consistency passed 25. Planted checks
+hub-smoke fixtures passed 70 and Step7a consistency passed 25. All 37 final
+diff-selected workflow suites passed, including consumer sync, release fragments
+and merge-session recovery. Manifest coverage passed for single_repo,
+workflow_hub and product_repo; real local-file digests remained unchanged.
+Planted checks
 failed for a provider-only route at fixture line 6 and for an omitted
 selection-disabled contract at fixture line 230, then passed after correction.
 These fixture paths remain private; they contain synthetic data only.
