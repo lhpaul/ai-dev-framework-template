@@ -201,7 +201,7 @@ file/network/Claude tools.
 
 Actual runs used resolver checkpoint `619f70841ce67fb07c1fb7dd2154cb79f0df3243`.
 A replay against implementation resolver revision
-`42658841cbb4d8670ac37b73ee740bcaafc3c51b` matched all five captured resolutions
+`6cb5d20d589488ee921f36f57a51255d08bf8b69` matched all five captured resolutions
 using immutable per-case fixtures: role, tier, provider/model/effort, SOURCE and
 source filename. The resolver content digest was retained privately; future
 behavioral resolver changes require renewed replay or live smoke as appropriate.
