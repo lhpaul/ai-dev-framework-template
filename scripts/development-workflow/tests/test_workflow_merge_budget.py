@@ -53,6 +53,46 @@ class Admission(unittest.TestCase):
         self.args.session = value['session']
         return value
 
+    def test_dispatch_identity_drift_interrupts_before_child_launch(self):
+        from contextlib import redirect_stderr, redirect_stdout
+        import io
+        self.begin()
+        original_before = budget.before
+        with patch.object(budget,'checkout_repo',return_value='org/repo') as identity:
+            def drift_after_intent(args):
+                result = original_before(args)
+                identity.return_value = 'org/foreign'
+                return result
+            with patch.object(budget,'before',side_effect=drift_after_intent), \
+                 patch.object(budget,'proof_root',return_value=str(self.owner)), \
+                 patch.object(budget.subprocess,'Popen') as launch, \
+                 patch.object(sys,'argv',['workflow-merge-budget.py','run-step','--session',self.args.session,
+                    '--repo','org/repo','--pr','12','--phase','merge_api','--step','merge_api','--',
+                    'gh','pr','merge','12']), redirect_stderr(io.StringIO()), redirect_stdout(io.StringIO()):
+                self.assertEqual(budget.main(),2)
+                launch.assert_not_called()
+        state = budget.snapshot(self.args.session)
+        self.assertEqual(state['outcome'],'Interrupted')
+        self.assertEqual(state['prs'][0]['steps']['merge_api']['status'],'uncertain')
+        self.assertIn('checkout differs',state['reason'])
+
+    def test_audit_lookup_normalizes_older_frozen_repository_case(self):
+        from contextlib import redirect_stdout
+        import io
+        manifest = json.loads(self.manifest.read_text())
+        manifest['prs'][0].pop('phases')
+        manifest['prs'][0]['steps'] = [{'id':'audit','phase':'audit','auditRepo':'Org/Repo',
+            'auditTarget':12,'marker':'<!-- fixture -->'}]
+        self.manifest.write_text(json.dumps(manifest))
+        self.begin()
+        with budget.journal(self.args.session) as state:
+            state['prs'][0]['steps']['audit']['auditRepo'] = 'Org/Repo'
+        output = io.StringIO()
+        with patch.object(sys,'argv',['workflow-merge-budget.py','check','--session',self.args.session,
+            '--repo','ORG/REPO','--pr','12','--phase','audit','--step','audit','--audit-repo','oRG/rEPO']), redirect_stdout(output):
+            self.assertEqual(budget.main(),0)
+        self.assertEqual(json.loads(output.getvalue())['stepId'],'audit')
+
     def test_projection_derivation_and_equality(self):
         self.sample['remaining'] = 1125  # raw 25+50, margin50, reserve1000
         result = self.begin()
@@ -675,6 +715,56 @@ class Composed(unittest.TestCase):
         self.assertEqual(target['steps']['remote_delete']['status'],'pending')
         self.assertTrue(self.command(['git','branch','--list','feature/12-item']).stdout.strip())
         self.assertTrue(self.command(['git','ls-remote','--heads','origin','feature/12-item']).stdout.strip())
+
+    def test_hub_dispatch_binds_implicit_merge_to_selected_product(self):
+        hub = self.root/'1890-hub'
+        hub.mkdir()
+        subprocess.run(['git','init','-q','-b','develop',str(hub)],check=True)
+        (hub/'.ai-dev-workflow.yaml').write_text('schema_version: 2\nmode: workflow_hub\nissue_tracker:\n  provider: none\nworkflow_hub:\n  product_repos:\n    - name: product\n      github_repo: org/repo\n      default_branch: develop\n')
+        (hub/'.ai-dev-workflow.local.yaml').write_text('product_repos:\n  - name: product\n    local_path: "'+str(self.repo)+'"\n')
+        self.data['checkoutRepos'] = {str(hub):'org/hub',str(self.repo):'org/repo'}
+        self.fixture.write_text(json.dumps(self.data))
+        manifest = self.root/'1890-product-dispatch.json'
+        manifest.write_text(json.dumps({'ownerRoot':str(hub),'prs':[{
+            'repo':'org/repo','pr':12,'head':self.head,'base':'develop','root':str(self.repo),
+            'phases':['base_push','merge_api','cleanup'],'policySkipped':['remote_delete','local_cleanup']}]}))
+        admitted = subprocess.run([sys.executable,str(self.scripts/'workflow-merge-budget.py'),
+            'begin','--input',str(manifest)],cwd=hub,env=self.env,text=True,capture_output=True)
+        self.assertEqual(admitted.returncode,0,admitted.stderr)
+        session = json.loads(admitted.stdout)['session']
+        pushed = subprocess.run([sys.executable,str(self.scripts/'workflow-merge-budget.py'),
+            'run-step','--session',session,'--repo','org/repo','--pr','12','--phase','base_push',
+            '--step','base_push','--','git','push','origin','HEAD:refs/heads/develop'],
+            cwd=hub,env=self.env,text=True,capture_output=True)
+        self.assertEqual(pushed.returncode,0,pushed.stderr)
+        self.assertIn(self.head,self.command(['git','ls-remote','--heads','origin','develop']).stdout)
+        merged = subprocess.run([sys.executable,str(self.scripts/'workflow-merge-budget.py'),
+            'run-step','--session',session,'--repo','org/repo','--pr','12','--phase','merge_api',
+            '--step','merge_api','--','gh','pr','merge','12','--admin','--match-head-commit',self.head],
+            cwd=hub,env=self.env,text=True,capture_output=True)
+        self.assertEqual(merged.returncode,0,merged.stderr)
+        evidence = json.loads(self.fixture.read_text())
+        self.assertEqual(evidence.get('foreignMergeCount',0),0)
+        self.assertEqual(evidence['mergeContexts'],[{'repo':'org/repo','cwd':str(self.repo)}])
+        self.assertEqual(evidence['mergeArgv'][0],['pr','merge','12','--admin','--match-head-commit',self.head])
+
+    def test_mixed_case_cleanup_uses_canonical_nested_repository(self):
+        self.data.update(repo='Org/Repo',issueState='OPEN')
+        self.data['prs']['12']['state'] = 'MERGED'
+        self.fixture.write_text(json.dumps(self.data))
+        session = self.begin()
+        cleanup = subprocess.run(['bash',str(self.scripts/'post-merge-cleanup.sh'),
+            '--merge-session',session,'--repo-root',str(self.repo),'--base','develop',
+            '--pr','12','feature/12-item'],cwd=self.repo,env=self.env,text=True,capture_output=True)
+        self.assertEqual(cleanup.returncode,0,cleanup.stdout+cleanup.stderr)
+        checked = self.helper('check','--session',session,'--repo','ORG/REPO','--pr','12')
+        self.assertEqual(json.loads(checked.stdout)['outcome'],'Completed')
+        state = json.loads(Path(session).read_text())
+        self.assertEqual(state['prs'][0]['repo'],'org/repo')
+        self.assertEqual(state['prs'][0]['steps']['issue_close:12']['status'],'completed')
+        evidence = json.loads(self.fixture.read_text())
+        self.assertEqual([value.lower() for value in evidence['issueMutationRepos']],['org/repo'])
+        self.assertEqual(evidence['issueState'],'CLOSED')
 
     def test_actual_queue_waiting_no_cleanup_or_resubmission(self):
         self.data['queue'] = True

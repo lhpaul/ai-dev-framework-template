@@ -28,7 +28,8 @@ if args[:2] == ['api', 'rate_limit']:
         sys.exit(1)
     emit({'resources': {'graphql': state['quota']}})
 if args[:2] == ['repo', 'view']:
-    repository = os.environ.get('GH_REPO',state['repo'])
+    checkout = subprocess.run(['git','rev-parse','--show-toplevel'],text=True,capture_output=True).stdout.strip()
+    repository = os.environ.get('GH_REPO',state.get('checkoutRepos',{}).get(checkout,state['repo']))
     emit({'nameWithOwner': repository, 'owner': {'login': state['repo'].split('/')[0]}, 'name': state['repo'].split('/')[1]})
 if args[:2] == ['api', 'graphql']:
     query = next((a[6:] for a in args if a.startswith('query=')), '')
@@ -64,6 +65,13 @@ if args[:2] == ['pr', 'view']:
     emit(value)
 if args[:2] == ['pr', 'merge']:
     state.setdefault('mergeArgv',[]).append(args)
+    checkout = subprocess.run(['git','rev-parse','--show-toplevel'],text=True,capture_output=True).stdout.strip()
+    repository = args[args.index('--repo')+1] if '--repo' in args else os.environ.get('GH_REPO',state.get('checkoutRepos',{}).get(checkout,state['repo']))
+    state.setdefault('mergeContexts',[]).append({'repo':repository,'cwd':checkout})
+    if repository.lower() != state['repo'].lower():
+        state['foreignMergeCount'] = state.get('foreignMergeCount',0)+1
+        save()
+        sys.exit(0)
     value = state['prs'][str(args[2])]
     if state.get('queue'):
         value['isInMergeQueue'] = True

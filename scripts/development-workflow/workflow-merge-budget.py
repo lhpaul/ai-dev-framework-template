@@ -103,7 +103,7 @@ def integer(value, name, positive=False):
 def repo(value):
     if not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", value):
         raise Stop("unresolved repository identity")
-    return value
+    return value.lower()
 
 
 def now():
@@ -235,6 +235,9 @@ def inspect(target, owner):
     response = decode(call([*argv, "--pr", str(target["pr"]), "--base", target["base"], target["branch"]], env=environment))
     if not isinstance(response, dict) or not isinstance(response.get("issues"), list):
         raise Stop("owned cleanup target projection unavailable")
+    for issue in response["issues"]:
+        if isinstance(issue, dict) and issue.get("repo"):
+            issue["repo"] = repo(issue["repo"])
     return response
 
 
@@ -338,7 +341,7 @@ def complete_if_ready(state):
 
 
 def target_for(state, args):
-    matches = [p for p in state["prs"] if p["repo"] == args.repo and p["pr"] == args.pr]
+    matches = [p for p in state["prs"] if repo(p["repo"]) == repo(args.repo) and p["pr"] == args.pr]
     if len(matches) != 1:
         raise Stop("step not in frozen selected set")
     return matches[0]
@@ -1089,6 +1092,10 @@ def main():
     argv = raw[raw.index("--") + 1:] if "--" in raw else []
     args = parser.parse_args(raw[:raw.index("--")] if "--" in raw else raw)
     try:
+        if args.repo is not None:
+            args.repo = repo(args.repo)
+        if args.audit_repo is not None:
+            args.audit_repo = repo(args.audit_repo)
         if args.command == "begin":
             if not args.input and not (args.repo and args.pr and args.head and args.base):
                 raise Stop("begin requires selected manifest or explicit single PR/repo/head/base")
@@ -1107,7 +1114,7 @@ def main():
                     if args.pr is None and args.phase == "audit":
                         candidates = [p for p in state["prs"] if any(
                             v["phase"] == "audit" and (args.step is None or v.get("id") == args.step) and v.get("auditTarget") == args.audit_target
-                            and (args.audit_repo is None or v.get("auditRepo") == args.audit_repo)
+                            and (args.audit_repo is None or repo(v.get("auditRepo")) == args.audit_repo)
                             and (args.marker is None or v.get("marker") == args.marker)
                             for v in p["steps"].values())]
                         if len(candidates) != 1:
@@ -1129,7 +1136,7 @@ def main():
                         matches = [(k, v) for k, v in selected["steps"].items()
                                    if v["phase"] == args.phase
                                    and (args.step is None or k == args.step)
-                                   and (args.audit_repo is None or v.get("auditRepo") == args.audit_repo)
+                                   and (args.audit_repo is None or repo(v.get("auditRepo")) == args.audit_repo)
                                    and (args.audit_target is None or v.get("auditTarget") == args.audit_target)
                                    and (args.marker is None or v.get("marker") == args.marker)
                                    and (args.issue is None or str(v.get("issue")) == str(args.issue))]
@@ -1174,23 +1181,31 @@ def main():
                            WORKFLOW_MERGE_BUDGET_TOKEN=intent["token"])
                 env.pop("GH_REPO", None)
                 env.pop("WORKFLOW_TARGET_GITHUB_REPO", None)
-                if args.phase in {"tracker", "issue_close"}:
-                    selected = target_for(snapshot(args.session), args)
-                    owning_issue = next(issue for issue in selected["issues"] if str(issue["id"]) == str(args.issue))
-                    env["GH_REPO"] = owning_issue["repo"]
-                    env["WORKFLOW_TARGET_GITHUB_REPO"] = owning_issue["repo"]
                 read_fd, write_fd = os.pipe()
-                owner_binding = snapshot(args.session)
-                env["WORKFLOW_MERGE_BUDGET_OWNER_ROOT"] = proof_root(owner_binding, owner_binding["ownerCommonDir"], owner_binding["ownerRoot"])
-                env["WORKFLOW_MERGE_BUDGET_PR"] = str(args.pr)
-                env["WORKFLOW_MERGE_BUDGET_REPO"] = args.repo
                 gate = ('import os,sys; fd=int(sys.argv[1]); permission=os.read(fd,1); '
                         'os.close(fd); '
                         'sys.exit(2) if permission != b"1" else os.execvpe(sys.argv[2],sys.argv[2:],os.environ)')
                 try:
+                    owner_binding = snapshot(args.session)
+                    selected = target_for(owner_binding, args)
+                    child_cwd = None
+                    if args.phase in {"local_merge", "base_push", "merge_api", "merge_verify", "remote_delete"}:
+                        child_cwd = proof_root(owner_binding, selected["commonDir"], selected["root"])
+                        if checkout_repo(child_cwd) != selected["repo"]:
+                            raise Stop("mutation checkout differs from frozen selected repository")
+                        env["GH_REPO"] = selected["repo"]
+                    elif args.phase in {"tracker", "issue_close"}:
+                        owning_issue = next(issue for issue in selected["issues"] if str(issue["id"]) == str(args.issue))
+                        env["GH_REPO"] = owning_issue["repo"]
+                        env["WORKFLOW_TARGET_GITHUB_REPO"] = owning_issue["repo"]
+                    elif args.phase in {"audit", "hold"}:
+                        env["GH_REPO"] = repo(selected["steps"][step_key(args)]["auditRepo"])
+                    env["WORKFLOW_MERGE_BUDGET_OWNER_ROOT"] = proof_root(owner_binding, owner_binding["ownerCommonDir"], owner_binding["ownerRoot"])
+                    env["WORKFLOW_MERGE_BUDGET_PR"] = str(args.pr)
+                    env["WORKFLOW_MERGE_BUDGET_REPO"] = selected["repo"]
                     child = subprocess.Popen([sys.executable, "-c", gate, str(read_fd), *argv],
-                                             env=env, pass_fds=(read_fd,), start_new_session=True)
-                except OSError as exc:
+                                             env=env, cwd=child_cwd, pass_fds=(read_fd,), start_new_session=True)
+                except (Stop, OSError) as exc:
                     os.close(read_fd)
                     os.close(write_fd)
                     with journal(args.session) as state:

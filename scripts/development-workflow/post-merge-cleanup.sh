@@ -389,6 +389,8 @@ if [ "$inspect_targets" -eq 0 ]; then
   export WORKFLOW_MERGE_BUDGET_REPO="$cleanup_budget_repo"
   export WORKFLOW_MERGE_BUDGET_PR="$merged_pr_number"
   cleanup_binding="$(workflow_merge_budget_helper check --session "$merge_session" --repo "$cleanup_budget_repo" --pr "$merged_pr_number" --head "$cleanup_budget_head" --base "$DEVELOP_BRANCH" --branch "$TO_DELETE")" || exit 2
+  cleanup_budget_repo="$(printf '%s' "$cleanup_binding" | jq -er --arg repo "$cleanup_budget_repo" --argjson pr "$merged_pr_number" '.prs[] | select(.repo==($repo|ascii_downcase) and .pr==$pr) | .repo')" || exit 2
+  export WORKFLOW_MERGE_BUDGET_REPO="$cleanup_budget_repo"
   # Recovery may run from another declared checkout. Preserve caller ownership
   # frozen by begin, rather than rediscovering it from this process's cwd.
   while IFS= read -r cleanup_frozen_caller; do
