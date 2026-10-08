@@ -347,6 +347,18 @@ class ModelRoutingTests(unittest.TestCase):
                 self.assertEqual([call.args[0] for call in strict.call_args_list],
                                  [self.shared.resolve(), self.local.resolve()])
                 self.assertTrue(all("raw" in call.kwargs for call in strict.call_args_list))
+        self.write("mode: single_repo\n", "")
+        for command in (("validate", "--json"),
+                        ("model-route", "--runner", "dsh", "--role", "developer", "--json"),
+                        ("model-routes", "--runner", "dsh", "--json")):
+            args = resolver.build_parser().parse_args([*command, "--repo-root", str(self.root)])
+            with self.subTest(absent_command=command), \
+                    patch.object(resolver, "load_model_policy", wraps=resolver.load_model_policy) as loader, \
+                    patch.object(resolver, "parse_review_yaml", side_effect=AssertionError("Unexpected strict parse")) as strict, \
+                    patch.object(resolver, "print_context"), patch("builtins.print"):
+                self.assertEqual(args.func(args), 0)
+                loader.assert_called_once_with(self.root.resolve())
+                strict.assert_not_called()
 
     def test_opted_in_discovery_error_parity_preserves_absent_legacy(self):
         missing = self.root / "PRIVATE_TEST_SENTINEL_missing"
