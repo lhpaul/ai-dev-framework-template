@@ -196,7 +196,8 @@ factory and native subagent tool registry using a real in-process spawn backend.
 Actual request/context events verified provider/model and parent/child lineage;
 each child returned the exact fixed acknowledgement. These are runtime results,
 not model self-reports or mocked adapter output. The temporary host overlay used
-existing working routes and exposed no file/network/Claude tools.
+existing working routes; the temporary smoke preset declared no
+file/network/Claude tools.
 
 Actual runs used resolver checkpoint `619f70841ce67fb07c1fb7dd2154cb79f0df3243`.
 A replay against implementation resolver revision
