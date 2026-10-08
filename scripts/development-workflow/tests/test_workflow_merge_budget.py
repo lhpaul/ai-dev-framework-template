@@ -1047,6 +1047,39 @@ class Composed(unittest.TestCase):
         self.assertEqual(json.loads(self.helper('report','--session',session).stdout)['outcome'],'Completed')
         self.assertEqual(json.loads(self.fixture.read_text())['events'].count(['pr','merge']),1)
 
+    def test_recovery_after_local_cleanup_finishes_only_pending_reconciliation(self):
+        (self.repo/'.ai-dev-workflow.yaml').write_text('issue_tracker:\n  provider: github_projects\n  project_number: 1\n')
+        self.data.update(trackerFailure=True,trackerStatus='Plan Ready',issueState='OPEN')
+        self.fixture.write_text(json.dumps(self.data))
+        session = self.begin(skipped=False)
+        self.command(['bash',str(self.scripts/'batch-merge.sh'),'--merge-session',session,
+                      'merge','--pr','12','--expected-head-sha',self.head],self.env)
+        argv = ['bash',str(self.scripts/'post-merge-cleanup.sh'),'--merge-session',session,
+                '--repo-root',str(self.repo),'--base','develop','--pr','12','feature/12-item']
+        failed = subprocess.run(argv,cwd=self.repo,env=self.env,text=True,capture_output=True)
+        self.assertNotEqual(failed.returncode,0)
+        state = json.loads(Path(session).read_text())
+        self.assertEqual(state['outcome'],'Interrupted')
+        self.assertEqual(state['prs'][0]['steps']['local_cleanup']['status'],'completed')
+        self.assertFalse(self.command(['git','branch','--list','feature/12-item']).stdout.strip())
+        self.assertFalse(self.command(['git','ls-remote','--heads','origin','feature/12-item']).stdout.strip())
+        data = json.loads(self.fixture.read_text()); data['trackerFailure'] = False
+        self.fixture.write_text(json.dumps(data))
+        self.helper('resume','--session',session)
+        recovered = subprocess.run(argv,cwd=self.repo,env=self.env,text=True,capture_output=True)
+        self.assertEqual(recovered.returncode,0,recovered.stdout+recovered.stderr)
+        self.assertIn('previous local cleanup outcome independently verified',recovered.stdout)
+        self.assertNotIn('develop is updated',recovered.stdout)
+        self.assertNotIn('Fetching origin',recovered.stdout)
+        self.assertNotIn('Deleting local branch',recovered.stdout)
+        self.assertEqual(json.loads(self.helper('report','--session',session).stdout)['outcome'],'Completed')
+        data = json.loads(self.fixture.read_text())
+        self.assertEqual(data['events'].count(['pr','merge']),1)
+        self.assertEqual(data['events'].count(['issue','close']),1)
+        self.assertEqual(data['issueState'],'CLOSED')
+        self.assertEqual(len(data['comments']),1)
+        self.assertEqual(data['trackerStatus'],'Merged')
+
     def test_actual_failed_push_retries_frozen_commit_after_checkout_change(self):
         session = self.begin()
         self.command(['git','checkout','develop'])

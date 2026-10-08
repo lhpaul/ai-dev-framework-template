@@ -1451,6 +1451,10 @@ if [ "$cleanup_skip_local" -eq 1 ]; then
   echo "Done. Owned follow-up verified; branch resources retained by policy."
   exit 0
 fi
+if [ "$cleanup_skip_local" -eq 2 ]; then
+  echo "Done. Owned follow-up verified; previous local cleanup outcome independently verified."
+  exit 0
+fi
 
 FINAL_REF_AFTER_CLEANUP="$DEVELOP_BRANCH"
 if [ "$BASE_CHECKED_OUT" -eq 1 ] && [ -n "$ORIGINAL_REF" ]; then
