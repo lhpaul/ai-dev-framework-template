@@ -2011,6 +2011,14 @@ def routing_declared(raw: str) -> bool:
         key, value = match.group(1).strip(), match.group(2).strip()
         if key.startswith('"'):
             try:
+                # YAML permits hex/long Unicode escapes that JSON does not.
+                # Normalize only safe ASCII letters for identity detection;
+                # the strict reader still rejects every quoted mapping key.
+                key = re.sub(r"\\(?:x[0-9a-fA-F]{2}|U[0-9a-fA-F]{8})",
+                             lambda match: (chr(int(match.group()[2:], 16))
+                                            if 65 <= int(match.group()[2:], 16) <= 90
+                                            or 97 <= int(match.group()[2:], 16) <= 122
+                                            else match.group()), key)
                 key = json.loads(key)
             except (ValueError, TypeError):
                 return "", ""
@@ -2022,8 +2030,29 @@ def routing_declared(raw: str) -> bool:
         key, value = key_value(text)
         if key != "models" and not re.match(r"^(?:models|'models'|\"models\")(?:\s|$)", text):
             continue
-        if value.startswith("{") and re.search(r"(?:\{|,)\s*(?:dsh|'dsh'|\"dsh\")\s*:", value):
-            return True
+        if value.startswith("{"):
+            # Probe only direct flow keys, not dsh text inside values/other maps.
+            depth, key_start, quote, escaped = 0, 1, "", False
+            for position, char in enumerate(value):
+                if quote:
+                    if escaped:
+                        escaped = False
+                    elif char == "\\" and quote == '"':
+                        escaped = True
+                    elif char == quote:
+                        quote = ""
+                    continue
+                if char in ("'", '"'):
+                    quote = char
+                elif char in "{[":
+                    depth += 1
+                elif char in "}]":
+                    depth -= 1
+                elif char == "," and depth == 1:
+                    key_start = position + 1
+                elif char == ":" and depth == 1:
+                    if key_value(value[key_start:position] + ":")[0] == "dsh":
+                        return True
         children = []
         for child_indent, child in lines[index + 1:]:
             if child_indent <= indent:
