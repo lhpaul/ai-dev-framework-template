@@ -254,7 +254,9 @@ class ModelRoutingTests(unittest.TestCase):
 
     def test_absent_validate_has_no_new_dependency_or_grammar(self):
         for text in ("mode: single_repo\n", "# models:\n#   dsh: {}\n", "models:\n  other:\n    dsh: unused\n",
-                     'models: {other: {dsh: unused}}\n', 'models: {other: "dsh: unused"}\n'):
+                     'models: {other: {dsh: unused}}\n', 'models: {other: "dsh: unused"}\n',
+                     'custom:\n  models:\n    dsh: unused\n',
+                     'custom:\n  models: {dsh: unused}\n'):
             self.write(text)
             absent = subprocess.run([sys.executable, "-S", str(SCRIPT), "validate", "--repo-root", str(self.root), "--json"],
                                     capture_output=True, text=True, env=dict(os.environ, WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT=""))

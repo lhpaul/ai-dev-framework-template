@@ -2031,7 +2031,10 @@ def routing_declared(raw: str) -> bool:
             key = key[1:-1].replace("''", "'")
         return key, value
 
+    root_indent = min((indent for indent, _ in lines), default=0)
     for index, (indent, text) in enumerate(lines):
+        if indent != root_indent:
+            continue
         key, value = key_value(text)
         if key != "models" and not re.match(r"^(?:models|'models'|\"models\")(?:\s|$)", text):
             continue
