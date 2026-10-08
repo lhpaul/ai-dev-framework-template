@@ -221,6 +221,10 @@ mode: single_repo
   DSH scan, YAML-library import or newly rejected syntax. Such a file contributes
   no routes even if it contains bare `models.dsh`. Operators must explicitly
   migrate that policy into the envelope; there is no automatic conversion.
+  The existing `set-local-path` operation must preserve an activated local
+  policy and its envelope while updating unrelated repository paths. It must
+  reject malformed activated input before writing, rather than silently
+  deactivate policy. Unactivated editing behavior stays unchanged.
 
 ### Format outcomes and parity matrix
 
@@ -284,6 +288,9 @@ retention service is required; use the existing workflow evidence surfaces.
 - [ ] AC2: Shared tier/role settings plus a local override of only premium or
   only developer preserve unrelated settings. Partial mapping-field overrides
   compose as BR2 defines; mapping/reference replacements are deterministic.
+  Updating a repository path through `set-local-path` preserves the local
+  activated policy and the effective route; malformed activated input causes
+  no write. Exercise both cases only in temporary fixtures.
 - [ ] AC3: Fixtures demonstrate local role, shared role, local tier, shared tier,
   and inherited precedence; direct role routes outrank default-tier routes,
   and tier-reference roles resolve local before shared tier.
