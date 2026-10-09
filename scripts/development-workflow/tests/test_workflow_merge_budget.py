@@ -963,12 +963,50 @@ class Composed(unittest.TestCase):
 
     def test_cancelled_merge_retains_effect_and_requires_explicit_resume(self):
         import signal
+        # Scope atomic publication to this test's private provider copy.
+        provider = self.bin/'gh'
+        provider_source = provider.read_text()
+        write = 'path.write_text(json.dumps(state))'
+        self.assertEqual(provider_source.count(write),2)
+        publisher = """def publish_fixture():
+    import tempfile
+    with tempfile.NamedTemporaryFile(mode='w',dir=path.parent,delete=False) as temporary:
+        json.dump(state,temporary)
+    os.replace(temporary.name,path)
+
+"""
+        provider_source = provider_source.replace("state.setdefault('events', []).append(args[:2])",
+            publisher + "state.setdefault('events', []).append(args[:2])")
+        provider_source = provider_source.replace(write,'publish_fixture()')
+        pause = "while not json.loads(path.read_text()).get('mergeRelease'):"
+        self.assertEqual(provider_source.count(pause),1)
+        provider_source = provider_source.replace(pause,
+            "while not Path(os.environ['MERGE_BUDGET_RELEASE']).exists():")
+        provider.write_text(provider_source)
+
+        def publish_fixture(data):
+            with tempfile.NamedTemporaryFile(mode='w',dir=self.root,delete=False) as temporary:
+                json.dump(data,temporary)
+            os.replace(temporary.name,self.fixture)
+
+        def wait_until(read,predicate,process,message):
+            deadline = time.monotonic()+15
+            while True:
+                value = read()
+                if predicate(value):
+                    return value
+                self.assertIsNone(process.poll(),message)
+                self.assertLess(time.monotonic(),deadline,message)
+                time.sleep(0.02)
+
         self.cancellation_evidence = []
         for signum,mode in [(signal.SIGTERM,'exit'),(signal.SIGINT,'ignore')]:
             with self.subTest(signal=signum,mode=mode):
                 self.data['prs']['12'].update(state='OPEN',isInMergeQueue=False)
                 self.data.update(mergePause=mode,mergeReady=False,mergeRelease=False,events=[])
-                self.fixture.write_text(json.dumps(self.data))
+                publish_fixture(self.data)
+                release = self.root/('1890-release-'+mode)
+                child_env = dict(self.env,MERGE_BUDGET_RELEASE=str(release))
                 manifest = self.root/'1890-cancelled-merge.json'
                 manifest.write_text(json.dumps({'ownerRoot':str(self.repo),'prs':[{
                     'repo':'org/repo','pr':12,'head':self.head,'base':'develop','root':str(self.repo),
@@ -977,28 +1015,40 @@ class Composed(unittest.TestCase):
                 process = subprocess.Popen([sys.executable,str(self.scripts/'workflow-merge-budget.py'),
                     'run-step','--session',session,'--repo','org/repo','--pr','12','--phase','merge_api',
                     '--step','merge_api','--','gh','pr','merge','12','--match-head-commit',self.head],
-                    cwd=self.repo,env=self.env,text=True,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+                    cwd=self.repo,env=child_env,text=True,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
                 try:
-                    deadline = time.monotonic()+15
-                    while not json.loads(self.fixture.read_text()).get('mergeReady'):
-                        self.assertIsNone(process.poll())
-                        self.assertLess(time.monotonic(),deadline)
-                        time.sleep(0.02)
+                    wait_until(lambda: json.loads(self.fixture.read_text()),
+                        lambda data: data.get('mergeReady'),process,'merge child did not become ready')
                     os.kill(process.pid,signum)
                     if mode == 'ignore':
-                        deadline = time.monotonic()+5
-                        while json.loads(Path(session).read_text())['outcome'] != 'Interrupted':
-                            self.assertLess(time.monotonic(),deadline,'cancellation not durably recorded while child lives')
-                            time.sleep(0.02)
+                        wait_until(lambda: json.loads(Path(session).read_text()),
+                            lambda data: data['outcome']=='Interrupted',process,
+                            'cancellation not durably recorded while child lives')
                         self.assertIsNone(process.poll())
                         self.assertNotEqual(self.helper('resume','--session',session,success=False).returncode,0)
                         stopped = self.helper('before-step','--session',session,'--repo','org/repo','--pr','12',
                             '--phase','cleanup','--step','cleanup',success=False)
                         self.assertNotEqual(stopped.returncode,0)
                 finally:
-                    data = json.loads(self.fixture.read_text()); data['mergeRelease'] = True
-                    self.fixture.write_text(json.dumps(data))
-                    output,error = process.communicate(timeout=15)
+                    # Releasing does not race the provider's JSON/event publication.
+                    try:
+                        release.touch()
+                    finally:
+                        try:
+                            output,error = process.communicate(timeout=15)
+                        except subprocess.TimeoutExpired:
+                            # Kill only this fixture's recorded group, then always reap its executor.
+                            try:
+                                child_group = (json.loads(Path(session).read_text()).get('active') or {}).get('childGroup')
+                                if child_group:
+                                    try:
+                                        os.killpg(child_group,signal.SIGKILL)
+                                    except ProcessLookupError:
+                                        pass
+                            finally:
+                                process.kill()
+                                output,error = process.communicate()
+                            self.fail('merge child did not join after release: '+output+error)
                 self.assertNotEqual(process.returncode,0,output+error)
                 state = json.loads(Path(session).read_text())
                 self.assertEqual(state['outcome'],'Interrupted')
