@@ -638,6 +638,80 @@ plant_linter "$TMP_DIR/plant-p4.py" "$TMP_DIR/p4.edit"
 check p4_plant_passes_empty 0 "$(run_linter python3 "$TMP_DIR/plant-p4.py" --input "$TMP_DIR/empty.diff")"
 check p4_shipped_refuses_empty 2 "$(run_linter python3 "$LINTER" --input "$TMP_DIR/empty.diff")"
 
+# WS007: exercise the public CLI in an isolated repository-shaped directory.
+# Old violations are intentionally untouched until #1924; only changed lines
+# are checked in diff mode. Each plant must fail specifically with WS007.
+python3 - "$LINTER" "$TMP_DIR" <<'PYARRAY'
+import pathlib
+import subprocess
+import sys
+
+linter = pathlib.Path(sys.argv[1])
+root = pathlib.Path(sys.argv[2]) / "array-cases"
+root.mkdir()
+case_count = 0
+
+def case(name, content, expected, changed=None, markdown=False, expected_lines=None, path=None):
+    global case_count
+    case_count += 1
+    path = path or ("docs/workflow/array.md" if markdown else "scripts/example.sh")
+    target = root / path
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(content)
+    lines = content.splitlines()
+    if changed is None:
+        changed = list(range(1, len(lines) + 1))
+    diff = f"diff --git a/{path} b/{path}\n--- a/{path}\n+++ b/{path}\n"
+    for number in changed:
+        diff += f"@@ -{number},0 +{number} @@\n+{lines[number - 1]}\n"
+    input_file = root / "case.diff"
+    input_file.write_text(diff)
+    result = subprocess.run([sys.executable, str(linter), "--input", str(input_file)],
+                            cwd=root, text=True, capture_output=True)
+    assert result.returncode == (1 if expected else 0), (name, result.stdout, result.stderr)
+    assert result.stdout.count("WS007:") == expected, (name, result.stdout)
+    if expected_lines is not None:
+        for number in expected_lines:
+            assert f"{path}:{number}: WS007:" in result.stdout, (name, result.stdout)
+    if expected:
+        assert '${arr[@]+"${arr[@]}"}' in result.stdout, (name, result.stdout)
+    print(f"PASS: array_{name}")
+
+case("default_plant", 'echo "${arr[@]:-}"\n', 1)
+case("default_corrected", 'echo ${arr[@]+"${arr[@]}"}\n', 0)
+case("raw_plant_without_nounset", 'echo "${arr[@]}"\n', 1)
+case("raw_corrected", 'echo ${arr[@]+"${arr[@]}"}\n', 0)
+case("nounset_disabled_still_flags", 'set -u\nset +u\necho "${arr[@]}"\n', 1)
+case("pipeline_subshell", 'cat | (set -u; echo "${arr[@]}")\n', 1)
+case("pipeline_subshell_corrected", 'cat | (set -u; echo ${arr[@]+"${arr[@]}"})\n', 0)
+case("pipeline_command_substitution", 'set -u; set +u "$(printf x)" | cat; echo "${arr[@]}"\n', 1)
+case("pipeline_command_substitution_corrected", 'set -u; set +u "$(printf x)" | cat; echo ${arr[@]+"${arr[@]}"}\n', 0)
+case("multiline_subshell", 'cat |\n(\nset -u\necho "${arr[@]}"\n)\necho "${arr[@]}"\n', 2, expected_lines=[4, 6])
+case("same_line", 'set -u; echo "${arr[@]}"; set +u; echo "${arr[@]}"\n', 2)
+case("safe_adjacent_unsafe", 'echo ${arr[@]+"${arr[@]}"} "${arr[@]}"\n', 1)
+case("safe_colon_guard", 'echo ${arr[@]:+"${arr[@]}"}\n', 0)
+case("different_guard_array", 'echo ${other[@]+"${arr[@]}"}\n', 1)
+case("two_arrays", 'echo "${arr[@]:-}" "${other[@]}"\n', 2)
+case("comment_text_still_flags", '# echo "${arr[@]}"\n', 1)
+case("single_quoted_data_still_flags", "echo '\"${arr[@]:-}\"'\n", 1)
+case("quoted_heredoc_data_still_flags", "cat <<'EOF'\n\"${arr[@]}\"\nEOF\n", 1)
+case("intentional_corpus_allowlist", 'echo "${arr[@]}" "${arr[@]:-}"\n', 0,
+     path="scripts/lint/tests/test-workflow-shell-snippet-lint.sh")
+case("other_test_not_allowlisted", 'echo "${arr[@]}"\n', 1,
+     path="scripts/lint/tests/another.sh")
+case("changed_only", 'echo "${arr[@]:-}"\necho changed\n', 0, changed=[2])
+case("old_false_positive", '# echo "${arr[@]}"\necho changed\n', 0, changed=[2])
+case("shifted_old_line", '\n\necho "${arr[@]}"\necho changed\n', 0, changed=[4])
+case("markdown_plant", '<!-- workflow-shell-contract: bash -->\n```bash\n#!/usr/bin/env bash\necho "${arr[@]}"\n```\n', 1, markdown=True, expected_lines=[4])
+case("markdown_corrected", '<!-- workflow-shell-contract: bash -->\n```bash\n#!/usr/bin/env bash\necho ${arr[@]+"${arr[@]}"}\n```\n', 0, markdown=True)
+case("markdown_old_line", '<!-- workflow-shell-contract: bash -->\n```bash\n#!/usr/bin/env bash\necho "${arr[@]:-}"\necho changed\n```\n', 0, changed=[5], markdown=True)
+# --all explicitly checks existing script lines too; diff mode is the baseline.
+result = subprocess.run([sys.executable, str(linter), "--all"], cwd=root, text=True, capture_output=True)
+assert result.returncode == 1 and "scripts/example.sh:" in result.stdout, result.stdout
+print("PASS: array_all_includes_scripts")
+print(f"{case_count + 1} WS007 cases passed")
+PYARRAY
+
 if ! command -v zsh >/dev/null; then
   echo "FAIL: zsh is required for cross-shell fixture coverage"
   exit 1

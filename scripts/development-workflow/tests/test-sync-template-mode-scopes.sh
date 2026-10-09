@@ -357,6 +357,18 @@ run_contains \
   "SELECTED category=always_sync mode_scope=product_repo_injection path=scripts/development-workflow/pr-review-loop.sh glob=" \
   "$real_product_output"
 
+# Product cleanup/gate hooks invoke this helper from the injected checkout.
+run_contains \
+  "product_selects_merge_budget_runtime" \
+  "SELECTED category=always_sync mode_scope=product_repo_injection path=scripts/development-workflow/workflow-merge-budget.py glob=" \
+  "$real_product_output"
+for role in single_repo workflow_hub; do
+  selected="$(python3 "$SELECTOR" --manifest "$real_manifest" --role "$role")"
+  run_contains "${role}_ships_merge_budget_runtime_directory" \
+    "SELECTED category=always_sync mode_scope=hub_only path=scripts/development-workflow/ glob=**" \
+    "$selected"
+done
+
 echo ""
 echo "sync-template mode-scope tests complete: $PASS_COUNT passed, $FAIL_COUNT failed."
 

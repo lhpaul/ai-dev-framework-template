@@ -17,6 +17,9 @@ import os
 import re
 import shlex
 import sys
+from collections import namedtuple
+from collections.abc import Mapping
+from types import MappingProxyType
 from pathlib import Path
 from typing import Any
 
@@ -92,8 +95,13 @@ def preprocess_yaml(path: Path) -> list[tuple[int, str, int]]:
     except OSError as exc:
         raise ConfigError(f"{path}: could not read config: {exc}") from exc
 
+    return preprocess_yaml_snapshot("\n".join(raw_lines), path)
+
+
+def preprocess_yaml_snapshot(raw: str, path: Path) -> list[tuple[int, str, int]]:
+    """Default legacy preprocessing on an already selected snapshot."""
     lines: list[tuple[int, str, int]] = []
-    for line_no, raw in enumerate(raw_lines, start=1):
+    for line_no, raw in enumerate(raw.splitlines(), start=1):
         if "\t" in raw[: len(raw) - len(raw.lstrip(" \t"))]:
             raise ConfigError(f"{path}:{line_no}: tabs are not supported for indentation")
         stripped_comment = strip_inline_comment(raw)
@@ -376,7 +384,16 @@ def parse_yaml_subset(path: Path, *, preserve_empty_values: bool = False) -> dic
         return {}
     if preserve_empty_values:
         return parse_review_yaml(path)
-    lines = preprocess_yaml(path)
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise ConfigError(f"{path}: could not read config: {exc}") from exc
+    return parse_yaml_snapshot(raw, path)
+
+
+def parse_yaml_snapshot(raw: str, path: Path) -> dict[str, Any]:
+    """Dependency-free legacy default; keep strict review consumers separate."""
+    lines = preprocess_yaml_snapshot(raw, path)
     if not lines:
         return {}
     if lines[0][0] != 0:
@@ -492,7 +509,10 @@ def resolve_local_config(repo_root: Path) -> tuple[Path, str, Path | None]:
     return checkout_file, "", main_clone_file
 
 
-def load_configs(repo_root: Path) -> tuple[dict[str, Any], dict[str, Any], Path, Path]:
+def load_configs(repo_root: Path, *, policy: ModelPolicy | None = None) -> tuple[dict[str, Any], dict[str, Any], Path, Path]:
+    if policy is not None:
+        return (thaw_model_snapshot(policy.configs[0]), thaw_model_snapshot(policy.configs[1]),
+                policy.shared_path, policy.local_path)
     shared_path = repo_root / ".ai-dev-workflow.yaml"
     local_path, _, _ = resolve_local_config(repo_root)
     shared = parse_yaml_subset(shared_path)
@@ -868,7 +888,8 @@ def dump_yaml_subset(value: Any, indent: int = 0) -> list[str]:
     return lines
 
 
-def set_local_product_repo_path(repo_root: Path, repo_name: str, local_path_value: str) -> Path:
+def set_local_product_repo_path(repo_root: Path, repo_name: str, local_path_value: str,
+                               *, snapshot: ModelSnapshot | None = None) -> Path:
     # Always read and write the checkout's own local config file, never the
     # main clone fallback that load_configs()/resolve_local_config() applies
     # for review-override resolution (#1560). Two problems otherwise: this
@@ -878,7 +899,9 @@ def set_local_product_repo_path(repo_root: Path, repo_name: str, local_path_valu
     # relative path would resolve incorrectly whenever repo_root and the main
     # clone are not the same filesystem depth apart from the target path.
     local_path = repo_root / LOCAL_CONFIG_NAME
-    local = parse_yaml_subset(local_path)
+    if snapshot is None:
+        snapshot = read_model_snapshot(local_path)
+    local = thaw_model_snapshot(snapshot.legacy)
     repos = as_list(local.get("product_repos"), local_path, "product_repos")
     updated = False
     match_count = 0
@@ -904,7 +927,11 @@ def set_local_product_repo_path(repo_root: Path, repo_name: str, local_path_valu
         new_repos.append({"name": repo_name, "local_path": normalized_path})
     local["product_repos"] = new_repos
 
-    local_path.write_text("\n".join(dump_yaml_subset(local)) + "\n", encoding="utf-8")
+    tail = ("\n".join(dump_yaml_subset(local)) + "\n").encode("utf-8")
+    envelope = snapshot.envelope
+    if envelope and not envelope.endswith(b"\n"):
+        envelope += b"\n"
+    local_path.write_bytes(envelope + tail)
     return local_path
 
 
@@ -1054,9 +1081,9 @@ def resolve_auth_context(args: argparse.Namespace) -> dict[str, str]:
     return context
 
 
-def resolve_context(args: argparse.Namespace) -> dict[str, str]:
+def resolve_context(args: argparse.Namespace, configs: tuple[Any, ...] | None = None) -> dict[str, str]:
     repo_root = repo_root_from_args(args.repo_root)
-    shared, local, shared_path, local_path = load_configs(repo_root)
+    shared, local, shared_path, local_path = configs if configs is not None else load_configs(repo_root)
     mode = mode_from_shared(shared, shared_path)
     context: dict[str, str] = {
         "WORKFLOW_MODE": mode,
@@ -1778,12 +1805,15 @@ def cmd_list_product_repos(args: argparse.Namespace) -> int:
 
 def cmd_set_local_path(args: argparse.Namespace) -> int:
     repo_root = repo_root_from_args(args.repo_root)
-    shared, _, shared_path, _ = load_configs(repo_root)
+    policy = load_model_policy(repo_root)
+    shared, _, shared_path, _ = load_configs(repo_root, policy=policy)
     mode = mode_from_shared(shared, shared_path)
     if mode != "workflow_hub":
         raise ConfigError(f"{shared_path}: workflow_hub mode is required to write product repository local paths")
     select_product_repo(product_repos(shared, shared_path), args.repo, shared_path)
-    written = set_local_product_repo_path(repo_root, args.repo, args.local_path)
+    # Reuse selected checkout bytes, while keeping any external fallback read-only.
+    snapshot = policy.snapshots[1] if policy.local_path == repo_root / LOCAL_CONFIG_NAME else None
+    written = set_local_product_repo_path(repo_root, args.repo, args.local_path, snapshot=snapshot)
     print_context(args, {"LOCAL_CONFIG_PATH": str(written)})
     return 0
 
@@ -1811,6 +1841,390 @@ def cmd_review_github_effective(args: argparse.Namespace) -> int:
     return 0
 
 
+# Canonical core Agent Assignments; runner-specific aliases are intentionally absent.
+DSH_ROLE_TIERS = {
+    "orchestrator": "economy", "item-orchestrator": "balanced",
+    "automated-reviewer-loop": "economy", "product-manager": "premium",
+    "spec-reviewer": "balanced", "tech-lead": "premium",
+    "implementation-plan-reviewer": "balanced", "developer": "balanced",
+    "code-reviewer": "balanced", "project-setup": "balanced",
+    "smoke-tester": "balanced", "retrospective": "balanced",
+}
+DSH_TIERS = ("economy", "balanced", "premium")
+DSH_ROUTE_FIELDS = ("provider", "model", "reasoning_effort")
+
+
+class ModelConfigError(ConfigError):
+    """Safe model diagnostic; never retain raw configuration or parser output."""
+
+    def __init__(self, code: str, path: Path | str, field: str, message: str):
+        self.diagnostic = {"CODE": code, "FILE": str(path), "FIELD": field,
+                           "MESSAGE": message}
+        super().__init__(message)
+
+
+def model_error(code: str, path: Path | str, field: str, message: str) -> None:
+    raise ModelConfigError(code, path, field, message)
+
+
+def model_layer(data: dict[str, Any], path: Path) -> dict[str, Any]:
+    if "models" not in data:
+        return {}
+    models = data["models"]
+    if not isinstance(models, dict):
+        model_error("invalid_type", path, "models", "Expected a mapping")
+    if set(models) - {"dsh"}:
+        model_error("unknown_field", path, "models", "Unknown model policy field")
+    if "dsh" not in models:
+        return {}
+    policy = models["dsh"]
+    if not isinstance(policy, dict):
+        model_error("invalid_type", path, "models.dsh", "Expected a mapping")
+    if set(policy) - {"tiers", "roles"}:
+        model_error("unknown_field", path, "models.dsh", "Unknown routing field")
+    for kind, names in (("tiers", DSH_TIERS), ("roles", DSH_ROLE_TIERS)):
+        entries = policy.get(kind, {})
+        if not isinstance(entries, dict):
+            model_error("invalid_type", path, f"models.dsh.{kind}", "Expected a mapping")
+        for name, value in entries.items():
+            field = f"models.dsh.{kind}"
+            if name not in names:
+                model_error("unknown_name", path, field, "Unknown role or tier name")
+            field += f".{name}"
+            if kind == "roles" and isinstance(value, str):
+                if value not in DSH_TIERS:
+                    model_error("unknown_name", path, field, "Expected a supported tier reference")
+                continue
+            if not isinstance(value, dict):
+                model_error("invalid_type", path, field, "Expected a route mapping")
+            if set(value) - set(DSH_ROUTE_FIELDS):
+                model_error("unknown_field", path, field, "Unknown route field")
+            for key, scalar in value.items():
+                if not isinstance(scalar, str):
+                    model_error("invalid_type", path, f"{field}.{key}", "Expected a string")
+                if not scalar.strip():
+                    model_error("invalid_value", path, f"{field}.{key}", "Expected a nonblank string")
+                if any(ord(char) < 32 or 127 <= ord(char) <= 159 or char in "\u2028\u2029" for char in scalar):
+                    model_error("invalid_value", path, f"{field}.{key}", "Control characters are not permitted")
+    return policy
+
+
+def compose_model_maps(shared: dict[str, Any], local: dict[str, Any]) -> dict[str, Any]:
+    """Pure recursive composition; strings and mappings replace one another."""
+    result = {}
+    for key in sorted(shared.keys() | local.keys()):
+        if key in local:
+            value = local[key]
+            if isinstance(value, Mapping):
+                base = shared.get(key, {})
+                result[key] = compose_model_maps(base if isinstance(base, Mapping) else {}, value)
+            else:
+                result[key] = value
+        else:
+            value = shared[key]
+            result[key] = compose_model_maps(value, {}) if isinstance(value, Mapping) else value
+    return result
+
+
+def model_entry_source(kind: str, name: str, shared: dict[str, Any], local: dict[str, Any],
+                       shared_path: Path, local_path: Path) -> tuple[str, Path]:
+    local_entries = local.get(kind, {})
+    local_entry = local_entries.get(name)
+    shared_entry = shared.get(kind, {}).get(name)
+    # Empty map-over-map overrides contribute no fields. A declared empty
+    # map replacing a reference (or creating an entry) still owns its error.
+    contributes = name in local_entries and (
+        bool(local_entry) or not isinstance(shared_entry, Mapping)
+    )
+    suffix = "role" if kind == "roles" else "tier"
+    return (f"local-{suffix}", local_path) if contributes else (f"committed-{suffix}", shared_path)
+
+
+MODEL_ENVELOPE_PREFIX = "# adf-models-dsh:"
+MODEL_ENVELOPE_OPEN = "# adf-models-dsh: v1"
+MODEL_ENVELOPE_END = "# adf-models-dsh: end"
+ModelSnapshot = namedtuple("ModelSnapshot", "policy legacy envelope positions")
+ModelPolicy = namedtuple("ModelPolicy", "effective shared local shared_path local_path configs positions snapshots")
+
+
+def copy_model_snapshot(value: Any, *, frozen: bool) -> Any:
+    """Copy containers iteratively; snapshotting must not narrow legacy depth."""
+    result = [None]
+    pending = [(False, value, result, 0)]
+    while pending:
+        finish_tuple, node, parent, key = pending.pop()
+        if finish_tuple:
+            parent[key] = tuple(node)
+        elif isinstance(node, Mapping):
+            target = {}
+            parent[key] = MappingProxyType(target) if frozen else target
+            pending.extend((False, item, target, child_key)
+                           for child_key, item in reversed(list(node.items())))
+        elif isinstance(node, (list, tuple)):
+            target = [None] * len(node)
+            parent[key] = target
+            if frozen:
+                pending.append((True, target, parent, key))
+            pending.extend((False, item, target, index)
+                           for index, item in reversed(list(enumerate(node))))
+        else:
+            parent[key] = node
+    return result[0]
+
+
+def freeze_model_mapping(value: Any) -> Any:
+    return copy_model_snapshot(value, frozen=True)
+
+
+def thaw_model_snapshot(value: Any) -> Any:
+    """Give legacy consumers their original mutable container types, without IO."""
+    return copy_model_snapshot(value, frozen=False)
+
+
+def model_syntax_error(path: Path, line: int) -> None:
+    model_error("invalid_yaml", path, "models.dsh",
+                f"Unsupported strict mapping syntax at line {line}; use BR9 block mappings")
+
+
+def model_scalar(text: str, path: Path, line: int) -> Any:
+    """Consume one BR9 scalar, including its entire suffix/comment."""
+    text = text.lstrip(" ")
+    if not text or text.startswith("#"):
+        return None  # a block header; children must establish its mapping
+    if text[0] in "\"'":
+        quote, index, result = text[0], 1, []
+        while index < len(text):
+            char = text[index]
+            if char == quote:
+                if quote == "'" and index + 1 < len(text) and text[index + 1] == "'":
+                    result.append("'")
+                    index += 2
+                    continue
+                index += 1
+                break
+            if char == "\\" and quote == '"':
+                index += 1
+                if index >= len(text) or text[index] not in ('"', "\\"):
+                    model_syntax_error(path, line)
+                char = text[index]
+            result.append(char)
+            index += 1
+        else:
+            model_syntax_error(path, line)
+        suffix = text[index:]
+        if suffix and not (suffix.startswith(" ") and
+                           (not suffix.strip(" ") or suffix.lstrip(" ").startswith("#"))):
+            model_syntax_error(path, line)
+        return "".join(result)
+    token, separator, suffix = text.partition(" ")
+    if separator and suffix.strip(" ") and not suffix.lstrip(" ").startswith("#"):
+        model_syntax_error(path, line)
+    if token == "{}":
+        return {}
+    if token.lower() == "null" or token == "~":
+        return None
+    if token.lower() in ("true", "false"):
+        return token.lower() == "true"
+    if re.fullmatch(r"[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?", token):
+        return 0  # recognized source type; never coerce numeric route ids
+    if not re.fullmatch(r"[A-Za-z0-9_./:@+\-]+", token):
+        model_syntax_error(path, line)
+    return token
+
+
+def parse_model_mapping(lines: list[str], path: Path) -> tuple[dict[str, Any], Mapping]:
+    """Finite mapping stack: no sequence/flow/reference grammar or recovery."""
+    root: dict[str, Any] = {}
+    stack = [(0, root, "")]
+    positions: dict[str, int] = {}
+    pending = None
+    for line, raw in enumerate(lines, start=2):
+        if any(ord(c) < 32 or 127 <= ord(c) <= 159 or c in "\u2028\u2029" for c in raw):
+            model_syntax_error(path, line)
+        if not raw.strip(" ") or raw.lstrip(" ").startswith("#"):
+            continue
+        indent = len(raw) - len(raw.lstrip(" "))
+        if indent % 2:
+            model_syntax_error(path, line)
+        if indent > stack[-1][0]:
+            if indent != stack[-1][0] + 2 or pending is None:
+                model_syntax_error(path, line)
+            parent, key, field = pending
+            child: dict[str, Any] = {}
+            parent[key] = child
+            stack.append((indent, child, field))
+        else:
+            while indent < stack[-1][0]:
+                stack.pop()
+            if indent != stack[-1][0]:
+                model_syntax_error(path, line)
+        match = re.fullmatch(r"([A-Za-z_][A-Za-z0-9_-]*):(?: (.*))?", raw[indent:])
+        if not match:
+            model_syntax_error(path, line)
+        key, text = match[1], match[2] or ""
+        mapping = stack[-1][1]
+        if key in mapping:
+            model_syntax_error(path, line)
+        mapping[key] = model_scalar(text, path, line)
+        field = ".".join(part for part in (stack[-1][2], key) if part)
+        positions[field] = line
+        # Only an absent value opens a block, never an explicit null or {}.
+        pending = (mapping, key, field) if not text.strip(" ") or text.lstrip(" ").startswith("#") else None
+    return root, MappingProxyType(positions)
+
+
+def read_model_snapshot(path: Path, *, legacy_error: ConfigError | None = None) -> ModelSnapshot:
+    """One byte read; activation is exclusively a reserved first physical line."""
+    if not path.exists():
+        if legacy_error is not None:
+            raise legacy_error
+        return ModelSnapshot(MappingProxyType({}), MappingProxyType({}), b"", MappingProxyType({}))
+    try:
+        raw_bytes = path.read_bytes()
+    except OSError as exc:
+        if legacy_error is not None:
+            raise legacy_error
+        raise ConfigError(f"{path}: could not read config: {exc}") from exc
+    first_bytes = raw_bytes.split(b"\n", 1)[0].rstrip(b"\r")
+    active = first_bytes.startswith(MODEL_ENVELOPE_PREFIX.encode())
+    bom_active = first_bytes.startswith(b"\xef\xbb\xbf" + MODEL_ENVELOPE_PREFIX.encode())
+    if bom_active:
+        model_error("invalid_envelope", path, "models", "Opening marker must be UTF-8 without BOM")
+    # Legacy load_configs discovers the selected local source before parsing.
+    # Preserve that error priority once the first-line protocol is inactive.
+    if not active and legacy_error is not None:
+        raise legacy_error
+    try:
+        raw = raw_bytes.decode("utf-8")
+    except UnicodeError:
+        if active:
+            model_error("invalid_yaml", path, "models.dsh", "Active configuration must be UTF-8")
+        raise
+    if not active:
+        return ModelSnapshot(MappingProxyType({}), freeze_model_mapping(parse_yaml_snapshot(raw, path)), b"", MappingProxyType({}))
+    # Physical lines, not str.splitlines: Unicode separators are grammar errors.
+    physical = raw.split("\n")
+    lines = [line[:-1] if line.endswith("\r") else line for line in physical]
+    if lines[0] != MODEL_ENVELOPE_OPEN:
+        model_error("invalid_envelope", path, "models", "Expected exact v1 opening marker on first line")
+    ends = [index for index, line in enumerate(lines) if line == MODEL_ENVELOPE_END]
+    if len(ends) != 1:
+        model_error("invalid_envelope", path, "models", "Expected exactly one closing marker")
+    end = ends[0]
+    if any(line.startswith(MODEL_ENVELOPE_PREFIX) for line in lines[1:end] + lines[end + 1:]):
+        model_error("invalid_envelope", path, "models", "Additional reserved markers are not permitted")
+    data, positions = parse_model_mapping(lines[1:end], path)
+    if "models" not in data:
+        model_error("invalid_envelope", path, "models", "Envelope requires one root models mapping")
+    projection = "\n" * (end + 1) + "\n".join(physical[end + 1:])
+    try:
+        legacy = parse_yaml_snapshot(projection, path)
+    except (ConfigError, RecursionError):
+        model_error("invalid_yaml", path, "models.dsh", "Invalid legacy region after policy envelope")
+    if "models" in legacy:
+        model_error("invalid_envelope", path, "models", "Legacy region must not supply root models")
+    if set(data) != {"models"}:
+        model_error("unknown_field", path, "models", "Unknown root policy field")
+    policy = model_layer(data, path)
+    # split with keepends retains the original opener, policy and end bytes.
+    envelope = b"".join(raw_bytes.splitlines(keepends=True)[:end + 1])
+    return ModelSnapshot(freeze_model_mapping(policy), freeze_model_mapping(legacy), envelope, positions)
+
+
+def load_model_policy(repo_root: Path) -> ModelPolicy:
+    """The sole reader/validator for validate, model-route and model-routes."""
+    shared_path = repo_root / ".ai-dev-workflow.yaml"
+    discovery_error = None
+    try:
+        local_path, _, _ = resolve_local_config(repo_root)
+    except ConfigError as exc:
+        discovery_error = exc
+        local_path = repo_root / LOCAL_CONFIG_NAME
+    shared_snapshot = read_model_snapshot(shared_path, legacy_error=discovery_error)
+    if discovery_error is not None:
+        model_error("config_discovery", repo_root / LOCAL_CONFIG_NAME, "models.dsh", "Local override source is unavailable")
+    local_snapshot = read_model_snapshot(local_path)
+    shared, local = shared_snapshot.policy, local_snapshot.policy
+    effective = compose_model_maps(shared, local)
+    for kind in ("tiers", "roles"):
+        for name, value in effective.get(kind, {}).items():
+            _, path = model_entry_source(kind, name, shared, local, shared_path, local_path)
+            field = f"models.dsh.{kind}.{name}"
+            if isinstance(value, str):
+                if value not in effective.get("tiers", {}):
+                    model_error("dangling_reference", path, field, "Referenced tier has no configured route")
+            elif not all(key in value for key in ("provider", "model")):
+                model_error("incomplete_route", path, field, "Effective route requires provider and model")
+    return ModelPolicy(freeze_model_mapping(effective), shared, local, shared_path, local_path,
+                       (shared_snapshot.legacy, local_snapshot.legacy, shared_path, local_path),
+                       (shared_snapshot.positions, local_snapshot.positions),
+                       (shared_snapshot, local_snapshot))
+
+
+def model_resolution(policy: tuple[Any, ...], role: str = "", tier: str = "") -> dict[str, str]:
+    if role and role not in DSH_ROLE_TIERS:
+        model_error("unknown_role", "", "role", "Unknown workflow role")
+    if tier and tier not in DSH_TIERS:
+        model_error("unknown_tier", "", "tier", "Unknown model tier")
+    if not role and not tier:
+        model_error("missing_query", "", "role/tier", "Specify a role or tier")
+    effective, shared, local, shared_path, local_path = policy[:5]
+    selected_tier = tier or DSH_ROLE_TIERS[role]
+    entry = effective.get("roles", {}).get(role)
+    kind, name = "roles", role
+    if entry is None or isinstance(entry, str):
+        selected_tier = entry if isinstance(entry, str) else selected_tier
+        kind, name = "tiers", selected_tier
+        entry = effective.get("tiers", {}).get(selected_tier)
+    else:
+        selected_tier = ""
+    result = {"ROLE": role, "TIER": selected_tier, "PROVIDER": "", "MODEL": "",
+              "REASONING_EFFORT": "", "SOURCE": "inherited", "SOURCE_FILE": ""}
+    if entry is not None:
+        source, path = model_entry_source(kind, name, shared, local, shared_path, local_path)
+        result.update({"PROVIDER": entry["provider"], "MODEL": entry["model"],
+                       "REASONING_EFFORT": entry.get("reasoning_effort", ""),
+                       "SOURCE": source, "SOURCE_FILE": str(path)})
+    return result
+
+
+def cmd_model_route(args: argparse.Namespace) -> int:
+    if args.runner != "dsh":
+        model_error("unsupported_runner", "", "runner", "Only dsh routing is supported")
+    result = model_resolution(load_model_policy(repo_root_from_args(args.repo_root)),
+                              args.role or "", args.tier or "")
+    print_context(args, result)
+    return 0
+
+
+def cmd_model_routes(args: argparse.Namespace) -> int:
+    if args.runner != "dsh":
+        model_error("unsupported_runner", "", "runner", "Only dsh routing is supported")
+    policy = load_model_policy(repo_root_from_args(args.repo_root))
+    records = [model_resolution(policy, role=role) for role in DSH_ROLE_TIERS]
+    records += [model_resolution(policy, tier=tier) for tier in DSH_TIERS]
+    tuples = sorted({(r["PROVIDER"], r["MODEL"], r["REASONING_EFFORT"])
+                     for r in records if r["SOURCE"] != "inherited"})
+    routes = [dict(zip(("PROVIDER", "MODEL", "REASONING_EFFORT"), values)) for values in tuples]
+    if args.json:
+        print(json.dumps({"ROUTES": routes, "RESOLUTIONS": records}, sort_keys=True))
+    else:
+        output = {"ROUTE_COUNT": str(len(routes)), "RESOLUTION_COUNT": str(len(records))}
+        for group, items in (("ROUTE", routes), ("RESOLUTION", records)):
+            for index, item in enumerate(items):
+                output.update({f"{group}_{index}_{key}": value for key, value in item.items()})
+        print_shell_context(output)
+    return 0
+
+
+def cmd_validate(args: argparse.Namespace) -> int:
+    policy = load_model_policy(repo_root_from_args(args.repo_root))
+    configs = (thaw_model_snapshot(policy.configs[0]), thaw_model_snapshot(policy.configs[1]),
+               policy.shared_path, policy.local_path)
+    print_context(args, resolve_context(args, configs))
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Resolve AI workflow repository context")
     subcommands = parser.add_subparsers(dest="command", required=True)
@@ -1830,7 +2244,7 @@ def build_parser() -> argparse.ArgumentParser:
             help="require a resolved local product checkout path",
         )
         command.add_argument("--json", action="store_true", help="print JSON instead of shell KEY=value")
-        command.set_defaults(func=cmd_resolve)
+        command.set_defaults(func=cmd_validate if name == "validate" else cmd_resolve)
 
     list_product_repos = subcommands.add_parser(
         "list-product-repos", help="list configured workflow_hub product repository names"
@@ -1876,6 +2290,15 @@ def build_parser() -> argparse.ArgumentParser:
     )
     github_effective.add_argument("--repo-root")
     github_effective.set_defaults(func=cmd_review_github_effective)
+    for name, func in (("model-route", cmd_model_route), ("model-routes", cmd_model_routes)):
+        command = subcommands.add_parser(name, help="inspect read-only DSH model routing")
+        command.add_argument("--runner", required=True)
+        command.add_argument("--repo-root")
+        command.add_argument("--json", action="store_true")
+        if name == "model-route":
+            command.add_argument("--role")
+            command.add_argument("--tier")
+        command.set_defaults(func=func)
     return parser
 
 
@@ -1884,6 +2307,9 @@ def main(argv: list[str]) -> int:
     args = parser.parse_args(argv)
     try:
         return int(args.func(args))
+    except ModelConfigError as exc:
+        print(json.dumps(exc.diagnostic, sort_keys=True), file=sys.stderr)
+        return 2
     except ConfigError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 2

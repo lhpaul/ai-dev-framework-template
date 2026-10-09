@@ -1,5 +1,11 @@
 # Protocol: Run One Workflow Item
 
+## Merge-session admission and recovery
+
+After ordinary review/CI/readiness and before any merge-operation audit, hold, bypass, merge or follow-up mutation, follow [Protocol 94 section 3.6](94-batch-merge-protocol.md#36-merge-session-admission-and-recovery). Freeze the entire selected ordered set in one authoritative owner-bound session; an unaffordable set admits no prefix. Supply the same `--merge-session` to mutating merge/cleanup helpers, and `--operation merge` to operation-owned audit calls. Direct authorized `gh pr merge` commands run through `workflow-merge-budget.py run-step` with their existing argv unchanged. Read-only risk classification remains separate; delegated merge requires the durable session plus all existing gates.
+
+Deferred reports quota/reset, recorded PR states and pending follow-up without operation-owned remote writes; fresh selected PRs stay unmerged, while recovery deferral retains historical merged/uncertain facts. Waiting records a verified queue/auto-merge submission, stops subsequent selected merges and leaves merge-dependent follow-up pending. Interrupted retains completed/uncertain/pending work locally even if every API fails; stop further selected merges and use explicit verified recovery without duplicate submission or uncertain mutation replay. Completed requires all owned planned follow-up independently verified, including tracker and audit. Budget admission grants no risk, checkpoint, admin or deletion authority. Report the session recovery command together with the existing Ground-Truth Completion Verification before claiming a workflow terminal outcome.
+
 **Agent role**: Work Item Runner (`item-orchestrator`)
 **Purpose**: Advance one workflow item, execute the next deterministic action, and keep that item moving until it reaches a real terminal condition
 
@@ -59,6 +65,73 @@ Named stop conditions (exact strings): `dispatch_profile_declaration_missing`, `
 No named stop for a harness or local-path denial: a reachable stage role's harness tool or local file-path permission denial on a delegated action is not a named stop condition; it is only observably similar to the `SUBAGENT_PERMISSION_DENIAL` contract (Work Item Runner to Portfolio Orchestrator only), and is Out of Scope, tracked as #1746.
 
 Invalid-declaration boundaries: an invalid profile value, an invalid accountable role (none named, including empty), an invalid posture for the checkpoint, and a coarse-fact mismatch in either direction (more permissive or less permissive than the assigned outcome) are each a missing declaration. The coarse check governs the initial declaration and coarse-fact re-declarations only; it does not govern the mid-run recovery transitions (stage-handoff loss, native-handoff mid-run failure), which remain valid re-declarations.
+
+---
+
+## DSH child model routing
+
+For a DSH driving session, resolve the canonical target role before every fresh
+stage or review child. Role names/default tiers follow Agent Assignments in
+[`agent-model-config.md`](../agent-model-config.md); runner-specific aliases are
+not inferred. The optional project policy is `models.dsh` in the shared workflow
+YAML, deep-merged with the selected local override. Follow the schema,
+precedence, operator setup and headless boundary in
+[DSH routing guidance](../integrations/dsh.md#project-role-and-tier-routing).
+
+Activation requires the exact `# adf-models-dsh: v1` first physical line and
+`# adf-models-dsh: end` close in each contributing file. Bare policy without
+that opener remains inactive legacy data. Inside, use the documented strict
+subset: two-space block mappings, known keys, one-line quoted/bare strings and
+`{}` only. Lists with or without indentation, nonempty flow collections,
+multiline values, tags/directives, duplicates and wrong types fail closed.
+`validate`, `model-route` and `model-routes` share the same policy reading path
+and first CODE/FILE/FIELD/MESSAGE error, exit 2 and empty stdout. The legacy tail
+and unactivated files retain the existing dependency-free reading contract.
+See the [format and activation guide](../integrations/dsh.md#explicit-activation-and-strict-format).
+
+YAML anchors, aliases and merge keys are unsupported in `models.dsh`. Use
+explicit block mappings: reject these features with a clear structured
+`invalid_yaml` error before dispatch. The activated strict parser rejects these operators; it never expands YAML
+references or merges into a route. Quoted
+scalar ids containing `&`, `*` or `<<` remain ordinary text.
+
+<!-- workflow-shell-contract: bash-zsh -->
+```bash
+python3 scripts/development-workflow/workflow-config-resolver.py model-route \
+  --runner dsh --role developer --repo-root "$PWD" --json
+```
+
+**Resolve, pass, and record**: parse the resolver's JSON without eval. For
+SOURCE inherited, omit provider/model/reasoning_effort. For a valid configured
+route, verify the installed backend's selection capability and this session's
+captured exact provider/model allowlist; pass provider/model together, and
+reasoning_effort only when configured. Record role, tier, requested route,
+SOURCE/SOURCE_FILE and actual route plus parent/child ids in the Work Item Runner
+Summary and review evidence. Re-resolve for each fresh dispatch; old evidence
+cannot establish a later child route.
+
+| Gate inputs | Allowed outcome | Required next action |
+| --- | --- | --- |
+| Invalid query or project policy | Configuration error | Show structured CODE/FILE/FIELD/MESSAGE; correct before dispatch |
+| Valid resolution, SOURCE inherited | Inherited dispatch | Omit route fields; record inheritance |
+| Configured route, selection enabled, exact pair permitted | Configured dispatch | Pass the resolved fields; record actual route and source |
+| Configured route, selection disabled | Visible inherited fallback | Report selection-disabled; omit all route fields; retain requested-source record |
+| Configured route, exact pair denied | Visible inherited fallback | Report allowlist-denied; omit all route fields; retain requested-source record |
+| Capability/policy unknown | Existing runner clarification/failure path | Report specific evidence to parent; do not invent permission from catalog membership |
+| Child/provider fails after dispatch | Existing stage/review failure | Preserve route evidence and use existing fix/escalation path |
+
+The host's selection policy is captured at fresh top-level session composition,
+inherited by children and frozen. Later host-setting changes require a new
+session; a restored session without a recorded policy remains disabled.
+Model-catalog absence is advisory and does not prove exact-pair denial. Invalid
+policy or post-dispatch failure never becomes successful inherited fallback.
+Project routing does not choose a headless default or change fork routing, the
+shared draft-review runner, reviewer gates, permissions, or merge-risk authority.
+
+Mirrors: DSH integration guidance, model-policy runner notes, commented shared/
+local examples and the [DSH smoke runbook](../../../testing/workflow/dsh-model-routing.smoke-test.md).
+Examples in those surfaces cover no policy, distinct tier routes, private role
+override, selection-disabled and allowlist-denied outcomes.
 
 ---
 
@@ -2714,11 +2787,13 @@ checks complete (Step 8a), before merging, apply the delegated merge gate from
 `guardrails-enforcement.md` section 3 Gate 5. When `stages.<stage>.may_merge_pr`
 is `true` in the effective guardrails, assemble the evidence object and run:
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
+set -euo pipefail
 ./scripts/development-workflow/run-epic-risk-classifier.sh \
   --pr <pr-number> --max-risk <stages.<stage>.max_merge_risk>
 
-./scripts/development-workflow/run-epic-delegated-gate.sh --input <evidence-file>
+./scripts/development-workflow/run-epic-delegated-gate.sh --merge-session "$MERGE_SESSION" --input <evidence-file>
 ```
 
 **Security-sensitive advisory evidence (BR8, BR9, AC8, AC9)**: the assembled
@@ -3838,7 +3913,8 @@ non-closing — recorded in the item report.
 
 <!-- workflow-shell-contract: bash-zsh -->
 ```bash
-./scripts/development-workflow/post-merge-cleanup.sh [--repo <product-repo>] --base <base-branch> --pr <merged-pr-number> <merged-branch>
+set -euo pipefail
+./scripts/development-workflow/post-merge-cleanup.sh --merge-session "$MERGE_SESSION" [--repo <product-repo>] --base <base-branch> --pr <merged-pr-number> <merged-branch>
 ```
 
 - Cleanup never removes the caller's own worktree (#1386). When the merged

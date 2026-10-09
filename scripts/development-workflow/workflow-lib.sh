@@ -34,6 +34,10 @@ workflow_repo_root() {
 }
 
 workflow_config_file() {
+  if [ -n "${WORKFLOW_MERGE_BUDGET_SESSION:-}" ] && [ -n "${WORKFLOW_MERGE_BUDGET_OWNER_ROOT:-}" ]; then
+    printf '%s/.ai-dev-workflow.yaml\n' "$WORKFLOW_MERGE_BUDGET_OWNER_ROOT"
+    return 0
+  fi
   printf '%s/.ai-dev-workflow.yaml\n' "$(workflow_repo_root)"
 }
 
@@ -3067,7 +3071,7 @@ ensure_on_project_board() {
 # - Owner is resolved via workflow_resolve_github_project_owner (see that function
 #   for the tiered fallback chain: env var → gh repo view → git remote URL).
 # - project_number falls back to issue_tracker.project_number in .ai-dev-workflow.yaml.
-update_tracker_status_best_effort() {
+_workflow_update_tracker_status_best_effort_impl() {
   local issue_number="$1"
   local status_label="$2"
   local required_current_status="${3:-}"
@@ -3214,6 +3218,60 @@ print(item.get('status') or '', end='')
     workflow_print_captured_gh_stderr
     echo "TRACKER_STATUS_UPDATE_FAILED issue=${issue_number} requested='${status_label}' reason=mutation_failed"
   fi
+}
+
+# Session hooks preserve the legacy best-effort adapter exit contract. The
+# durable journal, inspected by the composed caller, owns completion evidence.
+workflow_merge_budget_helper() {
+  local helper_dir
+  helper_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  python3 "$helper_dir/workflow-merge-budget.py" "$@"
+}
+
+workflow_merge_budget_before() {
+  local phase="$1" step="$2" evidence token
+  shift 2
+  evidence="$(workflow_merge_budget_helper before-step --session "$WORKFLOW_MERGE_BUDGET_SESSION" \
+    --repo "$WORKFLOW_MERGE_BUDGET_REPO" --pr "$WORKFLOW_MERGE_BUDGET_PR" \
+    --phase "$phase" --step "$step" --executor-pid "$$" "$@")" || return 1
+  token="$(printf '%s' "$evidence" | jq -er '.token')" || return 1
+  export WORKFLOW_MERGE_BUDGET_TOKEN="$token"
+}
+
+workflow_merge_budget_after() {
+  local phase="$1" step="$2" exit_code="$3"
+  shift 3
+  local retain=()
+  case "$phase" in local_merge|base_push) retain+=(--retain-executor) ;; esac
+  workflow_merge_budget_helper after-step ${retain[@]+"${retain[@]}"} --session "$WORKFLOW_MERGE_BUDGET_SESSION" \
+    --repo "$WORKFLOW_MERGE_BUDGET_REPO" --pr "$WORKFLOW_MERGE_BUDGET_PR" \
+    --phase "$phase" --step "$step" --exit-code "$exit_code" "$@"
+}
+
+update_tracker_status_best_effort() {
+  if [ -z "${WORKFLOW_MERGE_BUDGET_SESSION:-}" ]; then
+    _workflow_update_tracker_status_best_effort_impl "$@"
+    return $?
+  fi
+  local binding step provider
+  provider="$(workflow_normalize_issue_tracker_provider "$(workflow_issue_tracker_provider_raw)")"
+  case "$provider" in github_projects|linear) ;; *) return 0 ;; esac
+  binding="$(workflow_merge_budget_helper check --session "$WORKFLOW_MERGE_BUDGET_SESSION" \
+    --repo "${WORKFLOW_MERGE_BUDGET_REPO:-}" --pr "${WORKFLOW_MERGE_BUDGET_PR:-0}" \
+    --phase tracker --issue "$1" --executor-pid "$$")" || return 0
+  step="$(printf '%s' "$binding" | jq -er '.stepId')" || return 0
+  if [ "$(printf '%s' "$binding" | jq -r '.nestedExecutionAuthorized')" = true ]; then
+    _workflow_update_tracker_status_best_effort_impl "$@"
+    return $?
+  fi
+  local helper_dir
+  helper_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  workflow_merge_budget_helper run-step --session "$WORKFLOW_MERGE_BUDGET_SESSION" \
+    --repo "$WORKFLOW_MERGE_BUDGET_REPO" --pr "$WORKFLOW_MERGE_BUDGET_PR" \
+    --phase tracker --step "$step" --issue "$1" --status "$2" -- \
+    bash -c 'source "$1/workflow-lib.sh"; shift; _workflow_update_tracker_status_best_effort_impl "$@"' \
+      budget-tracker "$helper_dir" "$@" || return 0
+  return 0
 }
 
 # workflow_github_milestone_number <version>

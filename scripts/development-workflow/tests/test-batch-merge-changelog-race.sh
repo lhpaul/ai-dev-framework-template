@@ -48,7 +48,14 @@ HELPER="$REPO_ROOT/scripts/development-workflow/batch-merge.sh"
 TMP_ROOT="$(mktemp -d)"
 MOCK_BIN="$TMP_ROOT/bin"
 FIXTURE_DIR="$TMP_ROOT/fixtures"
-mkdir -p "$MOCK_BIN" "$FIXTURE_DIR"
+mkdir -p "$MOCK_BIN" "$FIXTURE_DIR" "$TMP_ROOT/.git"
+export MOCK_BUDGET_ROOT="$TMP_ROOT"
+cat > "$TMP_ROOT/.ai-dev-workflow.yaml" <<'YAML'
+issue_tracker:
+  provider: none
+merge_budget:
+  graphql_reserve: 1000
+YAML
 
 cleanup() {
   rm -rf "$TMP_ROOT"
@@ -188,6 +195,31 @@ jq -n '
 cat > "$MOCK_BIN/gh" <<'MOCK_GH'
 #!/usr/bin/env bash
 case "$*" in
+  api\ rate_limit)
+    printf '{"resources":{"graphql":{"remaining":5000,"limit":5000,"reset":%s}}}\n' "$(( $(date +%s) + 3600 ))"
+    ;;
+  repo\ view\ --json\ nameWithOwner)
+    printf '{"nameWithOwner":"org/fixture"}\n'
+    ;;
+  repo\ view\ --json\ nameWithOwner\ --jq\ .nameWithOwner)
+    printf 'org/fixture\n'
+    ;;
+  api\ graphql*)
+    number=""
+    for arg in "$@"; do case "$arg" in number=*) number="${arg#number=}" ;; esac; done
+    case "$number" in
+      9010) branch=fix/9010-already-gone ;;
+      9011) branch=fix/9011-genuine-failure ;;
+      *) printf 'unexpected budget query identity\n' >&2; exit 64 ;;
+    esac
+    printf '{"data":{"repository":{"pullRequest":{"number":%s,"state":"MERGED","headRefName":"%s","headRefOid":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","baseRefName":"develop","isInMergeQueue":false,"autoMergeRequest":null}}}}\n' "$number" "$branch"
+    ;;
+  pr\ view\ 901[01]\ --repo\ org/fixture\ --json\ isCrossRepository\ --jq*)
+    printf 'false\n'
+    ;;
+  pr\ view\ 901[01]\ --repo\ org/fixture\ --json\ body,title\ --jq*|pr\ view\ 901[01]\ --repo\ org/fixture\ --json\ commits\ --jq*|pr\ view\ 901[01]\ --repo\ org/fixture\ --json\ title\ --jq*)
+    printf '\n'
+    ;;
   auth\ status)
     exit 0
     ;;
@@ -355,7 +387,26 @@ echo "=== Part 5: cmd_delete_branch push_err classification (git mock) ==="
 
 cat > "$MOCK_BIN/git" <<'MOCK_GIT'
 #!/usr/bin/env bash
+if [ "${1:-}" = -C ]; then shift 2; fi
 case "$*" in
+  rev-parse\ --show-toplevel)
+    printf '%s\n' "$MOCK_BUDGET_ROOT"
+    ;;
+  rev-parse\ --git-common-dir|rev-parse\ --absolute-git-dir)
+    printf '%s/.git\n' "$MOCK_BUDGET_ROOT"
+    ;;
+  remote\ get-url\ origin|config\ --get\ remote.origin.url)
+    printf 'https://github.com/org/fixture.git\n'
+    ;;
+  worktree\ list\ --porcelain)
+    printf 'worktree %s\nHEAD aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\nbranch refs/heads/develop\n\n' "$MOCK_BUDGET_ROOT"
+    ;;
+  ls-remote\ --heads\ origin\ fix/9010-already-gone)
+    exit 0
+    ;;
+  ls-remote\ --heads\ origin\ fix/9011-genuine-failure)
+    printf 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\trefs/heads/fix/9011-genuine-failure\n'
+    ;;
   push\ origin\ --delete\ fix/9010-already-gone)
     {
       yes 'remote: filler padding line for the delete-branch push error test' | head -n 15
@@ -378,11 +429,23 @@ esac
 MOCK_GIT
 chmod +x "$MOCK_BIN/git"
 
-not_found_output="$("$HELPER" delete-branch --pr 9010 2>&1)"
+# Deletion mutations use real helper-created sessions, including owned-target
+# projection and a fresh quota check, rather than synthetic admission flags.
+create_delete_session() {
+  local number="$1" manifest="$TMP_ROOT/delete-$1.json" admission="$TMP_ROOT/admission-$1.json"
+  jq -n --arg root "$TMP_ROOT" --argjson pr "$number" \
+    '{ownerRoot:$root,prs:[{repo:"org/fixture",pr:$pr,head:"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",base:"develop",root:$root,steps:[{id:"remote_delete",phase:"remote_delete"}]}]}' > "$manifest"
+  python3 "$REPO_ROOT/scripts/development-workflow/workflow-merge-budget.py" begin \
+    --repo-root "$TMP_ROOT" --input "$manifest" > "$admission"
+  jq -er '.session' "$admission"
+}
+SESSION_9010="$(create_delete_session 9010)"
+SESSION_9011="$(create_delete_session 9011)"
+not_found_output="$("$HELPER" --merge-session "$SESSION_9010" delete-branch --pr 9010 2>&1)"
 run_test "delete_branch_classifies_already_gone_as_not_found" "not_found" "$(awk -F= '$1=="DELETE_RESULT"{print $2; exit}' <<< "$not_found_output")"
 
 set +e
-genuine_failure_output="$("$HELPER" delete-branch --pr 9011 2>&1)"
+genuine_failure_output="$("$HELPER" --merge-session "$SESSION_9011" delete-branch --pr 9011 2>&1)"
 genuine_failure_status=$?
 set -e
 run_test "delete_branch_classifies_genuine_failure_as_skipped_exit" "2" "$genuine_failure_status"

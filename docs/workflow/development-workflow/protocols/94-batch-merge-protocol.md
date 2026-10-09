@@ -187,6 +187,82 @@ If either check fails, **stop immediately** and report to the human. Do not atte
 
 ---
 
+## 3.6 Merge-session admission and recovery
+
+After discovery, inclusion decisions and ordinary current-head readiness, freeze the entire approved ordered set in one `workflow-merge-budget.py` session. The invocation artifact repository owns its durable journal: the workflow hub for hub-orchestrated work, otherwise the current repository. Resolve and declare product/cleanup roots before admission; pass the same session through product and linked-worktree reentry. Read-only discovery/risk computation and pre-stage reviewer work do not mutate this merge operation.
+
+Admission reads `gh api rate_limit` `resources.graphql`. Heuristic version 1 projects all outstanding selected work, including repeated owned reconciliation executions and sibling rechecks, with conservative weights plus `max(50, ceil(rawCost / 2))` estimation margin. The independent `merge_budget.graphql_reserve` resolves from CLI, owning local config, owning shared config, then omitted-setting default 1000. Invalid explicit values, unavailable quota, unresolved ownership or unknown projection defer rather than using a fallback. Admission requires `remaining >= projectedCost + reserve`; there is no affordable-prefix merge, global reservation, guaranteed upper bound or CLI-version prerequisite.
+
+Create the complete selected manifest described in the [helper reference](../../../../scripts/development-workflow/README.md#workflow-merge-budgetpy), run `begin --input <manifest> --repo-root <owner>` and retain its JSON `session` as `MERGE_SESSION` for all commands below. If begin defers, display its local report and stop; do not invoke the per-PR loop. Each planned audit has an explicit frozen destination/marker and distinct pre/final step IDs; the input carries no trusted quota or admission flag.
+
+A single-PR direct route follows the same admission ordering. This example
+expects a complete reviewed manifest and precomputed ordinary gate evidence;
+`merge_api` and `disposition-pre` are declared step IDs, not implicit additions:
+
+<!-- workflow-shell-contract: bash -->
+```bash
+set -euo pipefail
+python3 scripts/development-workflow/workflow-merge-budget.py begin \
+  --input "$MERGE_MANIFEST" --repo-root "$OWNER_ROOT" > "$ADMISSION_FILE"
+jq -e '.outcome == "Admitted"' "$ADMISSION_FILE" >/dev/null
+MERGE_SESSION=$(jq -er '.session' "$ADMISSION_FILE")
+bash scripts/development-workflow/run-epic-audit-trail.sh apply-pr-disposition \
+  --operation merge --merge-session "$MERGE_SESSION" --merge-step disposition-pre \
+  --input "$DISPOSITION_FILE" --pr "$PR_NUMBER"
+bash scripts/development-workflow/run-epic-delegated-gate.sh \
+  --merge-session "$MERGE_SESSION" --input "$GATE_FILE" --json > "$GATE_RESULT"
+jq -e '.mergePermitted == true' "$GATE_RESULT" >/dev/null
+python3 scripts/development-workflow/workflow-merge-budget.py run-step \
+  --session "$MERGE_SESSION" --repo "$PR_REPOSITORY" --pr "$PR_NUMBER" \
+  --step merge_api --phase merge_api -- \
+  gh pr merge "$PR_NUMBER" --squash --match-head-commit "$REVIEWED_HEAD_SHA"
+```
+
+This preserves the chosen route's existing merge method and arguments; use the
+actual authorized argv rather than switching every consumer to squash. A
+nonzero exit stops here and requires inspecting the durable report. The caller
+must handle Waiting/Interrupted before post-merge duties. Final disposition and
+ledger writes use their own declared IDs (for example, `disposition-final` and
+`ledger-final`) even when updating the same stable marker. Retain the session
+path in the handoff; `report --session "$MERGE_SESSION"` is local and
+`resume --session "$MERGE_SESSION"` explicitly re-verifies outstanding work.
+
+The `begin` assessment is provisional. The first operation-owned mutation hook refreshes quota and commits definitive whole-set admission locally before dispatch. This ordering includes disposition/ledger/bypass audits and hold writes, not only `gh pr merge`. Supply explicit `--operation merge` and the same `--merge-session` to these audit helpers. Keep pre-stage non-merge audits on their existing route. Ordinary readiness must already be complete: readiness/head drift stops and returns to its owning review phase rather than changing labels inside the merge operation. The delegated gate validates durable session/selected-head binding in addition to existing permission, risk, reviewer, CI, ownership and checkpoint gates; missing/unreadable admission is `budget_deferred` and grants no merge authority.
+
+A session containing only audit or hold work cannot authorize a delegated merge.
+The gate also requires the selected PR's frozen merge, independent merge
+verification, cleanup and derived owning follow-up duties. `begin` derives
+required cleanup and tracker/closure duties for merge routes; omitting them from
+a caller's shorthand cannot make a merge cheaper or its completion partial.
+
+Run every direct approved merge command through the unchanged-argv session executor; mutating batch/cleanup entrypoints also journal their actual internal boundaries. Preserve separate local merge, base push, GitHub merge call and independent MERGED verification. Successful queue/auto-merge submission is Waiting when live structured evidence verifies it remains unmerged. Waiting pauses this selected sequence, retains pending merge-dependent follow-up and never resubmits the merge. Unavailable submission evidence is Interrupted/uncertain. Existing authorized admin argv and already-merged state remain intact; budget does not authorize an admin bypass or deletion.
+
+| Session outcome | Required next action |
+| --- | --- |
+| Deferred before execution | Report readable quota, reserve, projection, reset, recorded PR states and pending follow-up locally; fresh PRs stay unmerged and recovery preserves historical merged/uncertain facts; make no operation-owned remote audit/hold/merge/follow-up writes. Correct invalid scope/config or explicitly resume after quota/evidence is available. |
+| Admitted | Execute the next selected authorized phase with durable intent and current-head gates; it is intermediate, not completion. |
+| Waiting | Stop further selected merges and merge-dependent cleanup. Report queued PR/pending duties and explicit recovery command; resume only after fresh live state verification, without another submission. |
+| Interrupted | Stop further selected merges; report last verified merged/unmerged/uncertain facts and pending reconciliation from the local journal. Explicit recovery first resolves potentially completed mutations and surviving child processes, then admits only known outstanding work. |
+| Completed | Independently verify all owned planned cleanup/tracker/audit duties and include existing Ground-Truth Completion Verification. A zero exit, best-effort tracker marker or deferred provider action cannot complete the session. |
+| Existing policy denial | Preserve its named guardrail and human unblocking action; budget creates no additional authority. Record verified state/outstanding work without pretending it is completed. |
+
+Issue closure/comment, tracker status before/after closure, remote/local/worktree cleanup and stable audit/ledger targets are separate duties. Do not begin the next selected merge after any required follow-up failure, even if a legacy best-effort helper exits zero. The authoritative journal and independent read-back govern discharge. Existing Linear MCP follow-up records intent, performs the authorized mutation, independently reads its owning issue/status and supplies normalized bridge proof in the same session; unavailable/mismatched read-back remains pending. Honor explicit cleanup/deletion authorization and record policy-skipped steps with retained evidence.
+
+Recovery never blindly repeats an uncertain merge, comment, audit or deletion. It checks live PR state, pushed-base ancestry, stable audit markers, branch/worktree existence and owning tracker/issue state; unavailable evidence preserves historical facts and defers unknown remaining work. A merged PR can resume pending follow-up without its deleted head branch. Offline `report` remains usable with all APIs failing. Report observed aggregate spend only for matching reset/limit windows and nonincreasing balance; otherwise explain why spend is unavailable and retain readable individual samples. Concurrent consumers may contribute to the difference.
+
+When a failed base push is independently verified as outstanding, explicit
+recovery admits its declared `base_push` step. Execute that step through
+`run-step`, pushing the durable intended commit to the frozen approved base
+with an ordinary fast-forward push. Preserve that commit when the current
+checkout has moved; the current HEAD does not replace the recorded intent.
+A divergent remote base defers for reconciliation. Continue through the
+declared merge and verification steps after the frozen push verifies, rather
+than rerunning an already completed local merge.
+
+For a coordinated reversal, stop new operations and resolve active Waiting/Interrupted work before disabling gates. Revert the helper and dependent runtime/guidance/sync consumers together through a reviewed PR, retain journals and a schema-compatible report/recovery reader, and refuse unknown schemas. Never roll back remote merges or delete session history as compensation. A reverted release unable to read a session directs the operator to the retained compatible reader; it does not migrate or replay it automatically.
+
+---
+
 ## Step 4: Sequential Merge Loop
 
 Process PRs one at a time in the approved order.
@@ -218,24 +294,27 @@ and rerun the review/CI readiness gate before merging.
 
 <!-- workflow-shell-contract: bash-zsh -->
 ```bash
+set -euo pipefail
 # Standard (merging into develop):
-./scripts/development-workflow/batch-merge.sh merge --pr <number> --expected-head-sha <reviewed-headRefOid>
+./scripts/development-workflow/batch-merge.sh --merge-session "$MERGE_SESSION" merge --pr <number> --expected-head-sha <reviewed-headRefOid>
 
 # Integration-branch override (merging into develop-<slug> or other base):
-./scripts/development-workflow/batch-merge.sh --base develop-<slug> merge --pr <number> --expected-head-sha <reviewed-headRefOid>
+./scripts/development-workflow/batch-merge.sh --merge-session "$MERGE_SESSION" --base develop-<slug> merge --pr <number> --expected-head-sha <reviewed-headRefOid>
 # Equivalent using the env var form:
-# TARGET_BASE=develop-<slug> ./scripts/development-workflow/batch-merge.sh merge --pr <number> --expected-head-sha <reviewed-headRefOid>
+# TARGET_BASE=develop-<slug> ./scripts/development-workflow/batch-merge.sh --merge-session "$MERGE_SESSION" merge --pr <number> --expected-head-sha <reviewed-headRefOid>
 ```
 
 Parse the output:
 
-- `MERGE_RESULT=clean` → merge succeeded with no conflicts. Check `CHANGELOG_DEDUPED` (see below), then proceed to **4.2 Post-merge steps**.
+- `MERGE_RESULT=clean` → GitHub MERGED is independently verified with no unresolved merge outcome. Check `CHANGELOG_DEDUPED` (see below), then proceed to **4.2 Post-merge steps**.
+- `MERGE_RESULT=waiting` → retain Waiting submission/pending evidence and stop later selected merges; explicit resume verifies live state without resubmission.
+- `MERGE_RESULT=interrupted` or `MERGE_RESULT=deferred` → report durable session evidence and stop later selected merges.
 - `MERGE_RESULT=conflict` → conflicts detected. Proceed to **4.3 Conflict classification**.
 - `MERGE_RESULT=failed` → unexpected failure. Report:
 
-  > Failed to merge PR #N: _ERROR_MESSAGE_. Skipping.
+  > Failed to merge PR #N: _ERROR_MESSAGE_. Stopping the selected sequence; explicit verified recovery is required.
 
-  Record outcome as `failed`. Continue with the next PR.
+  Record outcome as `failed` with Interrupted journal evidence. Stop further selected merges and report the explicit recovery command.
 
 **`CHANGELOG_DEDUPED` field (clean merges only)**: When `MERGE_RESULT=clean`, the script also emits `CHANGELOG_DEDUPED=true|false` to indicate whether the post-merge CHANGELOG deduplication guard ran and made changes.
 
@@ -257,8 +336,32 @@ After a clean or resolved merge, in order:
    need to run a separate `git push origin <base>` step — the script already did it.
 
    If you are running a resolved-conflict merge (Step 4.3) and need to commit the
-   resolution before continuing, run `git push origin <base>` after staging and
-   committing the resolved files. The script does not handle the post-conflict push.
+   resolution before continuing, stage and commit the resolved files, then explicitly
+   recover the same session before any push:
+
+   <!-- workflow-shell-contract: bash-zsh -->
+   ```bash
+   MERGE_RESUME="$(python3 ./scripts/development-workflow/workflow-merge-budget.py resume --session "$MERGE_SESSION")" || {
+     printf '%s\n' "$MERGE_RESUME" >&2
+     printf 'ERROR: resolved merge recovery did not readmit the session; stop the selected sequence.\n' >&2
+     exit 1
+   }
+   printf '%s\n' "$MERGE_RESUME" | jq -e '.outcome == "Admitted"' >/dev/null || {
+     printf '%s\n' "$MERGE_RESUME" >&2
+     printf 'ERROR: recovered session is not Admitted; inspect its recorded outcome before continuing.\n' >&2
+     exit 1
+   }
+   ```
+
+   Recovery independently verifies that the resolved merge contains the frozen
+   reviewed head, records `local_merge` as completed and readmits only outstanding
+   work. If recovery cannot verify the resolution or budget, stop without pushing
+   or attempting another selected PR. Once Admitted, execute the frozen `base_push`
+   step through the session executor with the existing `git push origin <base>`
+   argv. Verify remote ancestry before proceeding to its frozen `merge_api`
+   step and independent MERGED read-back. The script does not handle the
+   post-conflict push. Any failure stops the selected sequence with durable
+   pending work; do not repeat a push or merge whose result is uncertain.
 
 2. **Verify GitHub recognizes the PR as merged** (not just closed):
 
@@ -267,8 +370,8 @@ After a clean or resolved merge, in order:
    ```
 
    Expected output: `MERGED`.
-   - If the state is not `MERGED` after up to 30 seconds (poll every 5 s): report `failed` for this PR, do not delete the remote branch or run cleanup, and continue with the next PR.
-   - If the script emitted a `WARNING: gh pr merge failed` line to stderr, that is a signal that this MERGED-state check is especially important — the local merge and push to the base branch succeeded, but the GitHub merge-mark may have failed. `MERGE_RESULT=clean` on the same run refers to the local merge only and does **not** mean this PR is done: the poll above is what decides. If it does not converge to `MERGED` within 30 s, this PR is `failed` even though `MERGE_RESULT=clean` was printed.
+   - If the state is not `MERGED` after up to 30 seconds (poll every 5 s): record Interrupted/uncertain for this PR, do not delete the remote branch or run cleanup, and stop further selected merges until explicit verified recovery. A verified queue submission instead remains Waiting without resubmission.
+   - A successful local merge or base push alone cannot emit `MERGE_RESULT=clean`. The journal retains that commit/remote target when the GitHub merge call or verification is unavailable. Unverified merge state is Interrupted/uncertain, or Waiting for a verified queue submission; both stop further selected merges. A command error that independently resolves to MERGED keeps the verified merged fact and continues only its authorized pending follow-up.
 
    > **Failure mode — CLOSED instead of MERGED (historical context)**: Before issue
    > #412 was fixed, `batch-merge.sh` did a local `git merge` but neither pushed nor
@@ -281,7 +384,7 @@ After a clean or resolved merge, in order:
    > **Exceptional reviewer access bypass**: If a PR was excluded from the
    > normal batch route because `run-epic-delegated-gate.sh` returned
    > `exceptional_bypass_authorized`, do not merge it through `batch-merge.sh`.
-   > The runner must use the exact named `gh pr merge <pr> --admin --match-head-commit <authorized-head-sha>` command only
+   > The runner must use the exact named `gh pr merge <pr> --admin --match-head-commit <authorized-head-sha>` command through its frozen `merge_api` session step only
    > after verifying the PR/SHA/fingerprint authorization and pre-attempt
    > `reviewer-access-bypass` audit marker. After the one attempt, verify
    > GitHub's live PR state, update the same audit marker, fetch the refreshed
@@ -291,8 +394,9 @@ After a clean or resolved merge, in order:
 3. **Delete the remote branch** using the guarded helper (which re-checks MERGED
    state immediately before deletion to prevent the CLOSED-not-MERGED failure mode):
 
+   <!-- workflow-shell-contract: bash-zsh -->
    ```bash
-   ./scripts/development-workflow/batch-merge.sh delete-branch --pr <number>
+   ./scripts/development-workflow/batch-merge.sh --merge-session "$MERGE_SESSION" delete-branch --pr <number>
    ```
 
    Parse the output:
@@ -322,9 +426,10 @@ After a clean or resolved merge, in order:
    deletes it only after confirming the PR is `MERGED`; if deletion fails, the
    cleanup is non-terminal.
 
-   The helper requires a local branch to exist. Because `batch-merge.sh` merges
-   via `origin/<branch>` without creating a local tracking branch, create a
-   temporary local branch first:
+   For a fresh cleanup attempt that needs a local branch, the following legacy
+   preparation can create a temporary tracking branch. Explicit recovery of a
+   verified merged PR instead resumes its pending follow-up from the journal
+   without requiring or recreating an already deleted head branch:
 
    <!-- workflow-shell-contract: bash-zsh -->
    ```bash
@@ -343,10 +448,10 @@ After a clean or resolved merge, in order:
    # pre-merge develop commit, not the PR's tip, but post-merge-cleanup.sh only
    # needs the branch *name* to delete it — the commit it points to is irrelevant.
    git branch "$BRANCH" "origin/$BRANCH" 2>/dev/null || git branch "$BRANCH" HEAD~1 2>/dev/null || true
-   ./scripts/development-workflow/post-merge-cleanup.sh --base "$BASE_BRANCH" --pr "$PR_NUMBER" "$BRANCH"
+   ./scripts/development-workflow/post-merge-cleanup.sh --merge-session "$MERGE_SESSION" --base "$BASE_BRANCH" --pr "$PR_NUMBER" "$BRANCH"
    ```
 
-   If cleanup fails: report the failure but **do not halt remaining merges**. The human can re-run cleanup manually.
+   If cleanup fails: record Interrupted with the verified merged PR and pending cleanup/reconciliation, stop remaining selected merges, and report the explicit recovery command. Recovery independently verifies potentially completed work before retrying anything.
 
 5. **Recheck remaining in-scope PRs before selecting the next merge.**
 
@@ -355,7 +460,7 @@ After a clean or resolved merge, in order:
 
    <!-- workflow-shell-contract: bash -->
    ```bash
-   bash ./scripts/development-workflow/batch-merge.sh recheck-remaining \
+   bash ./scripts/development-workflow/batch-merge.sh --merge-session "$MERGE_SESSION" recheck-remaining \
      --prs <comma-separated-approved-pr-list> \
      --after-merged-pr <number> \
      --base "$BASE_BRANCH" \
@@ -411,7 +516,9 @@ After a clean or resolved merge, in order:
      not moved yet but will once the conflict is resolved, so the same
      re-verification follows. `annotation` reports whether the hold comment
      was `created`, `updated`, or `failed:<why>` — a failed annotation does
-     not change the classification, but report it.
+     not change the classification. An operation-owned annotation failure records
+     Interrupted with pending audit evidence and stops further selected merges
+     until explicit verified recovery.
    - `classification=out_of_scope_observation` is read-only information. Do
      not label, merge, retry for mutation, or add that PR to the frozen list.
    - `classification=helper_failed` or a non-zero helper exit is batch-fatal
@@ -650,4 +757,4 @@ The orchestrator should include the batch-merge summary in its overall `Step 6: 
   `scripts/development-workflow/workflow-branch-push-guard.sh`; batch merge
   approval does not authorize a force-push.
 - **Already-merged PRs stay merged** even if the human aborts the batch mid-run.
-- If `post-merge-cleanup` fails, report the failure and continue — do not halt remaining merges.
+- If `post-merge-cleanup` fails, record Interrupted and stop remaining selected merges until explicit verified recovery.

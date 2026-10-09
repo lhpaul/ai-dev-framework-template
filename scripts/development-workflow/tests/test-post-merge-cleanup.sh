@@ -71,6 +71,18 @@ set -euo pipefail
 args=" $* "
 
 case "$1 $2" in
+  "api graphql")
+    [[ "$args" == *"MergeBudgetPR"* ]] || { echo "Unexpected fixture GraphQL" >&2; exit 1; }
+    number="${GH_MERGED_PR:-0}"
+    printf '{"data":{"repository":{"pullRequest":{"number":%s,"state":"%s","headRefName":"%s","headRefOid":"%040d","baseRefName":"develop","isInMergeQueue":false,"autoMergeRequest":null}}}}\n' "$number" "${GH_PR_STATE:-MERGED}" "${GH_PR_HEAD_REF_NAME:-${GH_MERGED_HEAD:-}}" 1 ;;
+  "api repos/"*|"api --paginate")
+    common="$(git rev-parse --git-common-dir)"
+    endpoint="${3:-${2:-}}"
+    for value in "$@"; do case "$value" in repos/*/issues/*/comments*) endpoint="$value" ;; esac; done
+    issue="$(printf '%s' "$endpoint" | sed -E 's@.*/issues/([0-9]+)/comments.*@\1@')"
+    [ -f "$common/1890-comment-$issue" ] && jq -Rs '[[{body:.}]]' "$common/1890-comment-$issue" || printf '[]\n'
+    ;;
+  "api rate_limit") printf '{"resources":{"graphql":{"remaining":5000,"limit":5000,"reset":%s}}}\n' "$(( $(date +%s) + 3600 ))" ;;
   "pr list")
     head=""
     while [ "$#" -gt 0 ]; do
@@ -108,7 +120,13 @@ case "$1 $2" in
     ;;
   "pr view")
     pr_number="${3:-}"
-    if [[ "$args" == *"--json number,state,headRefName,isCrossRepository"* ]]; then
+    if [[ "$args" == *"--json isCrossRepository"* ]]; then
+      printf '%s\n' "${GH_IS_CROSS_REPOSITORY:-false}"
+    elif [[ "$args" == *"--json headRefOid"* ]]; then
+      printf '%040d\n' 1
+    elif [[ "$args" == *"--json number,state,headRefName,headRefOid,baseRefName,isInMergeQueue,autoMergeRequest"* ]]; then
+      printf '{"number":%s,"state":"%s","headRefName":"%s","headRefOid":"%040d","baseRefName":"develop","isInMergeQueue":false,"autoMergeRequest":null}\n' "$pr_number" "${GH_PR_STATE:-MERGED}" "${GH_PR_HEAD_REF_NAME:-${GH_MERGED_HEAD:-}}" 1
+    elif [[ "$args" == *"--json number,state,headRefName,isCrossRepository"* ]]; then
       if [ "$pr_number" = "${GH_MERGED_PR:-}" ] && [ "${GH_PR_STATE:-MERGED}" = "MERGED" ] && [ "${GH_PR_HEAD_REF_NAME:-${GH_MERGED_HEAD:-}}" = "${GH_MERGED_HEAD:-}" ]; then
         printf '{"number":%s,"state":"%s","headRefName":"%s","isCrossRepository":%s,"headRepository":{"name":"repo","owner":{"login":"owner"}},"headRepositoryOwner":{"login":"owner"}}\n' \
           "$GH_MERGED_PR" \
@@ -155,14 +173,28 @@ case "$1 $2" in
     fi
     ;;
   "issue view")
+    common="$(git rev-parse --git-common-dir)"
+    issue_state="${GH_ISSUE_STATE:-CLOSED}"
+    [ ! -f "$common/1890-closed-${3:-0}" ] || issue_state=CLOSED
     if [[ "$args" == *"--jq"* ]]; then
-      printf '%s\n' "${GH_ISSUE_STATE:-CLOSED}"
+      printf '%s\n' "$issue_state"
     else
-      printf '{"state":"%s"}\n' "${GH_ISSUE_STATE:-CLOSED}"
+      printf '{"number":%s,"state":"%s"}\n' "${3:-0}" "$issue_state"
     fi
     ;;
   "issue close")
-    printf 'closed %s\n' "$*"
+    original_args="$*"
+    common="$(git rev-parse --git-common-dir)"
+    issue="${3:-0}"
+    touch "$common/1890-closed-$issue"
+    while [ "$#" -gt 0 ]; do
+      if [ "$1" = --comment ]; then
+        printf '%s' "$2" >"$common/1890-comment-$issue"
+        break
+      fi
+      shift
+    done
+    printf 'closed %s\n' "$original_args"
     ;;
   "repo view")
     # Hub slug lookup (#1538). GH_HUB_REPO_FAIL simulates an unresolvable hub.
@@ -170,7 +202,15 @@ case "$1 $2" in
       echo "mock repo view failure" >&2
       exit 1
     fi
-    printf '%s\n' "${GH_HUB_REPO:-example/hub}"
+    fixture_repo=example/repo
+    if [ -f .ai-dev-workflow.yaml ] && grep -Eq '^[[:space:]]*product_repos:' .ai-dev-workflow.yaml; then
+      fixture_repo="${GH_HUB_REPO:-example/hub}"
+    fi
+    if [[ "$args" == *"--jq"* ]]; then
+      printf '%s\n' "$fixture_repo"
+    else
+      printf '{"nameWithOwner":"%s"}\n' "$fixture_repo"
+    fi
     ;;
   *)
     echo "unexpected gh invocation: $*" >&2
@@ -268,6 +308,7 @@ cp "$REPO_ROOT/scripts/development-workflow/workflow-lib.sh" "$worktree_repo/scr
 # point fails on a missing file rather than on the behaviour it tests.
 cp "$REPO_ROOT/scripts/development-workflow/closing-keyword-lib.sh" "$worktree_repo/scripts/development-workflow/closing-keyword-lib.sh"
 cp "$REPO_ROOT/scripts/development-workflow/workflow-config-resolver.py" "$worktree_repo/scripts/development-workflow/workflow-config-resolver.py"
+cp "$REPO_ROOT/scripts/development-workflow/workflow-merge-budget.py" "$worktree_repo/scripts/development-workflow/workflow-merge-budget.py"
 chmod +x "$worktree_repo/scripts/development-workflow/post-merge-cleanup.sh"
 worktree_pr_path="$TMP_ROOT/worktree-cleanup-pr"
 "$REAL_GIT" -C "$worktree_repo" worktree add -q "$worktree_pr_path" "$worktree_branch"
@@ -276,6 +317,7 @@ cp "$REPO_ROOT/scripts/development-workflow/post-merge-cleanup.sh" "$worktree_pr
 cp "$REPO_ROOT/scripts/development-workflow/workflow-lib.sh" "$worktree_pr_path/scripts/development-workflow/workflow-lib.sh"
 cp "$REPO_ROOT/scripts/development-workflow/closing-keyword-lib.sh" "$worktree_pr_path/scripts/development-workflow/closing-keyword-lib.sh"
 cp "$REPO_ROOT/scripts/development-workflow/workflow-config-resolver.py" "$worktree_pr_path/scripts/development-workflow/workflow-config-resolver.py"
+cp "$REPO_ROOT/scripts/development-workflow/workflow-merge-budget.py" "$worktree_pr_path/scripts/development-workflow/workflow-merge-budget.py"
 chmod +x "$worktree_pr_path/scripts/development-workflow/post-merge-cleanup.sh"
 worktree_output="$(
   GH_MERGED_HEAD="$worktree_branch" \
@@ -332,7 +374,7 @@ install_cleanup_helper() {
   local checkout="$1"
   local file
   mkdir -p "$checkout/scripts/development-workflow"
-  for file in post-merge-cleanup.sh workflow-lib.sh closing-keyword-lib.sh workflow-config-resolver.py; do
+  for file in post-merge-cleanup.sh workflow-lib.sh closing-keyword-lib.sh workflow-config-resolver.py workflow-merge-budget.py; do
     cp "$REPO_ROOT/scripts/development-workflow/$file" "$checkout/scripts/development-workflow/$file"
   done
   chmod +x "$checkout/scripts/development-workflow/post-merge-cleanup.sh"
@@ -681,6 +723,8 @@ run_test "fork_remote_ref_remains" "yes" "$(
 spec_branch="spec/noissue-persistent"
 spec_repo="$(make_repo spec "$spec_branch" yes)"
 spec_output="$(
+  GH_MERGED_HEAD="$spec_branch" \
+  GH_MERGED_PR=83 \
   WORKFLOW_TARGET_GITHUB_REPO=example/repo \
   PATH="$stub_bin:$PATH" \
   "$HELPER" --repo-root "$spec_repo" --base develop "$spec_branch"
@@ -767,6 +811,12 @@ run_test "workflow_hub_reentry_removes_product_branch" "no" "$(
   fi
 )"
 
+hub_budget_states=("$hub_repo"/.git/workflow-merge-budget/*/state.json)
+run_test "workflow_hub_one_owner_journal" "1" "${#hub_budget_states[@]}"
+run_test "workflow_hub_journal_owner_binding" "$(cd "$hub_repo" && pwd -P)" "$(jq -r '.ownerRoot' "${hub_budget_states[0]}")"
+run_test "workflow_hub_product_worktree_one_session_completed" "Completed" "$(jq -r '.outcome' "${hub_budget_states[0]}")"
+run_test "workflow_hub_product_worktree_declared_participants" "true" "$(jq -r --arg root "$(cd "$hub_product_repo" && pwd -P)" '.participants | index($root)!=null' "${hub_budget_states[0]}")"
+
 fail_branch="feature/noissue-delete-fails"
 fail_repo="$(make_repo delete-fails "$fail_branch" yes)"
 fail_bin="$TMP_ROOT/fail-bin"
@@ -774,7 +824,7 @@ write_gh_stub "$fail_bin"
 write_git_failure_stub "$fail_bin"
 run_fails_contains \
   "exact_pr_head_mismatch_blocks_delete" \
-  "REMOTE_DELETE_REASON=pr_not_merged_or_branch_mismatch" \
+  "PR branch differs from cleanup target" \
   env GH_MERGED_HEAD="$merged_branch" \
     GH_MERGED_PR=82 \
     GH_PR_HEAD_REF_NAME="feature/different-branch" \
@@ -786,7 +836,7 @@ quoted_branch='feature/x"),true#'
 quoted_repo="$(make_repo quoted "$quoted_branch" yes)"
 run_fails_contains \
   "quoted_branch_does_not_bypass_exact_pr_filter" \
-  "REMOTE_DELETE_REASON=pr_not_merged_or_branch_mismatch" \
+  "PR branch differs from cleanup target" \
   env GH_MERGED_HEAD="$quoted_branch" \
     GH_MERGED_PR=83 \
     GH_PR_HEAD_REF_NAME="feature/different-branch" \
@@ -1381,7 +1431,7 @@ run_test \
   "$([ "$sort_failure_status" -ne 0 ] && printf 'nonzero' || printf 'zero')"
 run_contains \
   "extraction_sort_failure_error_message" \
-  "ERROR: failed to sort extracted closing-keyword issue numbers" \
+  '"projectionComplete": false' \
   "$sort_failure_output"
 run_test \
   "extraction_sort_failure_does_not_fall_back_to_slug_issue" \
@@ -1524,8 +1574,8 @@ h1538e_branch="feature/hub1538-unresolved-hub"
 h1538e_hub="$(make_hub_fixture unresolved "$h1538e_branch")"
 h1538e_out="$(run_hub_cleanup "$h1538e_hub" "$h1538e_branch" 95 'Fixes #604
 Closes example/hub#605' GH_HUB_REPO_FAIL=1)"
-run_contains "hub_slug_unresolved_exit_ok" "EXIT=0" "$h1538e_out"
-run_contains "hub_slug_unresolved_is_announced" "could not resolve the workflow hub GitHub repository" "$h1538e_out"
+run_contains "hub_slug_unresolved_deferred" '"outcome": "Deferred"' "$h1538e_out"
+run_contains "hub_slug_unresolved_unknown_projection" '"projectionComplete": false' "$h1538e_out"
 run_test "hub_slug_unresolved_nothing_closed" "yes" "$(lacks "Closing issue" "$h1538e_out")"
 
 # F: team-prefixed branch — bare PR-body refs no longer override the

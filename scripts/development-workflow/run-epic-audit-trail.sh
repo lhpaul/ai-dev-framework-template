@@ -34,6 +34,12 @@ Usage:
 
 Renders or applies stable /run-epic audit comments. Apply mode updates an
 existing marker comment or creates one when no marker exists.
+
+Merge-operation apply calls require --operation merge --merge-session <path>.
+Use --merge-step <id> when pre/final writes share a marker. The frozen session
+must declare the exact destination and marker; intent precedes the write and
+independent read-back verifies its body. Non-merge pre-stage calls retain their
+existing route. An inherited merge session cannot silently use that route.
 EOF
 }
 
@@ -44,6 +50,10 @@ fi
 input_file=""
 pr_number=""
 epic_number=""
+operation="stage"
+merge_session="${WORKFLOW_MERGE_BUDGET_SESSION:-}"
+merge_step=""
+repo_root=""
 
 error_exit() {
   echo "ERROR: $*" >&2
@@ -714,7 +724,7 @@ post_marker_comment() {
   fi
 }
 
-apply_comment() {
+apply_comment_unjournaled() {
   local target="$1"
   local marker="$2"
   local body="$3"
@@ -752,8 +762,77 @@ apply_comment() {
   fi
 }
 
+apply_comment() {
+  local target="$1" marker="$2" body="$3"
+  local destination binding body_file selected_repo selected_pr selected_step status
+  local check_args=() child_args=()
+  if [ "$operation" != merge ]; then
+    [ -z "$merge_session" ] || error_exit "inherited merge-session requires --operation merge"
+    apply_comment_unjournaled "$target" "$marker" "$body"
+    return
+  fi
+  [ -n "$merge_session" ] || error_exit "merge-operation audit requires --merge-session"
+  destination="$(repo_slug)"
+  body_file="$(mktemp)" || error_exit "failed to create audit body evidence"
+  printf '%s' "$body" > "$body_file" || { rm -f "$body_file"; error_exit "failed to write audit body evidence"; }
+  check_args=(check --session "$merge_session" --phase audit --audit-target "$target"
+              --audit-repo "$destination" --marker "$marker"
+              --executor-pid "$$" --expected-file "$body_file")
+  [ -z "$merge_step" ] || check_args+=(--step "$merge_step")
+  [ -z "$repo_root" ] || check_args+=(--repo-root "$repo_root")
+  if ! binding="$(python3 "$SCRIPT_DIR/workflow-merge-budget.py" ${check_args[@]+"${check_args[@]}"})"; then
+    rm -f "$body_file"
+    error_exit "merge audit destination/marker/step is outside admitted session"
+  fi
+  if ! printf '%s\n' "$binding" | jq -e '.admissionValid == true' >/dev/null; then
+    rm -f "$body_file"
+    error_exit "merge-operation audit requires durable admitted session"
+  fi
+  selected_repo="$(printf '%s\n' "$binding" | jq -er '.selectedRepo')" || { rm -f "$body_file"; error_exit "selected audit repository missing"; }
+  selected_pr="$(printf '%s\n' "$binding" | jq -er '.selectedPR')" || { rm -f "$body_file"; error_exit "selected audit PR missing"; }
+  selected_step="$(printf '%s\n' "$binding" | jq -er '.stepId')" || { rm -f "$body_file"; error_exit "frozen audit step missing"; }
+  if printf '%s\n' "$binding" | jq -e '.nestedExecutionAuthorized == true' >/dev/null; then
+    # Only the durable executor's published child, matching token and exact
+    # frozen body, may dispatch this write. There is no caller bypass flag.
+    rm -f "$body_file"
+    apply_comment_unjournaled "$target" "$marker" "$body"
+    return
+  fi
+  child_args=("$command" --input "$input_file" --operation merge --merge-session "$merge_session" --merge-step "$selected_step")
+  [ -z "$pr_number" ] || child_args+=(--pr "$pr_number")
+  [ -z "$epic_number" ] || child_args+=(--epic "$epic_number")
+  [ -z "$repo_root" ] || child_args+=(--repo-root "$repo_root")
+  status=0
+  python3 "$SCRIPT_DIR/workflow-merge-budget.py" run-step --session "$merge_session" \
+      --repo "$selected_repo" --pr "$selected_pr" --step "$selected_step" --phase audit \
+      --expected-file "$body_file" -- bash "$SCRIPT_DIR/run-epic-audit-trail.sh" \
+      ${child_args[@]+"${child_args[@]}"} || status=$?
+  rm -f "$body_file"
+  [ "$status" -eq 0 ] || error_exit "merge audit Interrupted or intent refused; retain journal and use explicit verified recovery"
+}
+
 while [ "$#" -gt 0 ]; do
   case "$1" in
+    --operation)
+      require_value "$@"
+      operation="$2"
+      shift 2
+      ;;
+    --merge-session)
+      require_value "$@"
+      merge_session="$2"
+      shift 2
+      ;;
+    --merge-step)
+      require_value "$@"
+      merge_step="$2"
+      shift 2
+      ;;
+    --repo-root)
+      require_value "$@"
+      repo_root="$2"
+      shift 2
+      ;;
     --input)
       require_value "$@"
       input_file="$2"
@@ -780,6 +859,8 @@ while [ "$#" -gt 0 ]; do
       ;;
   esac
 done
+
+[ "$operation" = stage ] || [ "$operation" = merge ] || error_exit "--operation must be stage or merge"
 
 case "$command" in
   render-pr-disposition|apply-pr-disposition|render-epic-ledger|apply-epic-ledger|render-reviewer-access-bypass|apply-reviewer-access-bypass)

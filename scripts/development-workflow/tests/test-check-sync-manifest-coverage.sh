@@ -85,6 +85,7 @@ if [ "$(workflow_template_is_template "$REPO_ROOT/.ai-dev-workflow.yaml")" = "tr
     .github/workflows/workflow-tests.yml \
     .github/workflows/markdown-lint.yml \
     .github/workflows/closing-keyword-scope.yml \
+    scripts/development-workflow/workflow-merge-budget.py \
     docs/testing/workflow/retrospective-protocol.smoke-test.md \
     docs/testing/workflow/tracker-type-field-classification.smoke-test.md; do
     run_test "manifest_ships_${path##*/}" "yes" \

@@ -46,7 +46,20 @@ Use the tier names as stable policy and map them to whatever your current runner
 - In Claude Code, map the tier to the model family or explicit model ID configured in `.claude/agents/*.md`.
 - In Cursor, set `.cursor/agents/*.md` to `auto` for ordinary coordination and QA agents, and pin an explicit high-reasoning model for agents that author or deeply review specs, plans, and code. Those `model:` fields are the source of truth for Cursor runs (see "Cursor model source of truth" below).
 - In Codex, keep skills tier-based (`economy`, `balanced`, `premium`) and explicitly select a supported task model/effort or dispatch a configured native role. Skill prose does not enforce a model. See [Codex model routing](integrations/codex-model-routing.md).
-- In DSH, keep the same tier intent (`economy` / `balanced` / `premium`) and pin provider/model at **dispatch time** (profile route, CLI/env for that invocation, or local DSH settings). DSH has no in-repo per-role agent files; shared workflow skills (`workflow-*-reviewer`, implementer, etc.) carry the tier recommendation, and the parent-orchestrated session selects the route for the run. See [`integrations/dsh.md`](integrations/dsh.md).
+- In DSH, optional `models.dsh.tiers` and `models.dsh.roles` map this canonical catalogue to child routes. Before each fresh dispatch, the parent resolves the role, passes provider/model and configured reasoning_effort when the frozen session allowlist permits them, and records SOURCE/file/tier plus actual dispatch. Disabled selection or an exact-pair denial produces a visible inherited fallback. No policy inherits the session; the headless default remains separately pinned by its profile/overlay. DSH has no in-repo per-role agent files. See [`integrations/dsh.md`](integrations/dsh.md#project-role-and-tier-routing).
+
+Activation requires the exact `# adf-models-dsh: v1` first physical line and
+`# adf-models-dsh: end` close in each contributing file. Bare policy without
+that opener remains inactive legacy data. Inside, use the documented strict
+subset: two-space block mappings, known keys, one-line quoted/bare strings and
+`{}` only. Lists with or without indentation, nonempty flow collections,
+multiline values, tags/directives, duplicates and wrong types fail closed.
+`validate`, `model-route` and `model-routes` share the same policy reading path
+and first CODE/FILE/FIELD/MESSAGE error, exit 2 and empty stdout. The legacy tail
+and unactivated files retain the existing dependency-free reading contract.
+See the [format and activation guide](integrations/dsh.md#explicit-activation-and-strict-format).
+
+YAML anchors, aliases and merge keys are unsupported in `models.dsh`; use explicit block mappings. Unsupported node syntax fails closed before dispatch. The activated strict parser does not apply YAML reference/merge semantics, and quoted scalar characters remain ordinary text.
 - In any runner, prefer keeping the tier intent stable even when provider model names change.
 
 ### Claude Code model defaults (template)

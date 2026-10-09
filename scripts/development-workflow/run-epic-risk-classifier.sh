@@ -9,8 +9,11 @@ source "$SCRIPT_DIR/workflow-lib.sh"
 usage() {
   cat <<'EOF'
 Usage:
-  ./scripts/development-workflow/run-epic-risk-classifier.sh --pr <number> [--why-safe-file <file>] [--max-risk <low|medium|high>] [--repo-root <path>] [--product-repo <name>] [--json]
-  ./scripts/development-workflow/run-epic-risk-classifier.sh --input <file> [--why-safe-file <file>] [--max-risk <low|medium|high>] [--repo-root <path>] [--product-repo <name>] [--json]
+  ./scripts/development-workflow/run-epic-risk-classifier.sh --pr <number> [--why-safe-file <file>] [--max-risk <low|medium|high>] [--repo-root <path>] [--product-repo <name>] [--merge-session <path>] [--json]
+  ./scripts/development-workflow/run-epic-risk-classifier.sh --input <file> [--why-safe-file <file>] [--max-risk <low|medium|high>] [--repo-root <path>] [--product-repo <name>] [--merge-session <path>] [--json]
+
+--merge-session adds read-only durable budget metadata; it never changes risk
+classification, blockers or merge authority.
 
 Classifies delegated /run-epic PR merge risk. The classifier is read-only: it
 does not run reviewers, poll CI, edit labels, update trackers, merge PRs, close
@@ -78,6 +81,7 @@ pr_number=""
 input_file=""
 why_safe_file=""
 repo_root=""
+merge_session=""
 product_repo=""
 max_risk="low"
 json_output=0
@@ -627,6 +631,11 @@ while [ "$#" -gt 0 ]; do
       repo_root="$2"
       shift 2
       ;;
+    --merge-session)
+      require_value "$@"
+      merge_session="$2"
+      shift 2
+      ;;
     --product-repo)
       require_value "$@"
       product_repo="$2"
@@ -686,6 +695,20 @@ effective_root="${repo_root:-$(workflow_repo_root)}"
 state_json="$(workflow_merge_ci_policy_into_json "$state_json" "$effective_root" "$product_repo")"
 
 result_json="$(classify_state "$state_json")"
+if [ -n "$merge_session" ]; then
+  budget_repo="$(printf '%s\n' "$state_json" | jq -r '.github_repo // .repository // .repo // ""')"
+  budget_pr="$(printf '%s\n' "$state_json" | jq -r '.pr_number // .number // ""')"
+  budget_head="$(printf '%s\n' "$state_json" | jq -r '.head_sha // .headRefOid // ""')"
+  budget_base="$(printf '%s\n' "$state_json" | jq -r '.base // .baseRefName // ""')"
+  if ! budget_evidence="$(python3 "$SCRIPT_DIR/workflow-merge-budget.py" check \
+      --session "$merge_session" --repo "$budget_repo" --pr "$budget_pr" \
+      --head "$budget_head" --base "$budget_base" --repo-root "$effective_root" 2>&1)"; then
+    if ! printf '%s\n' "$budget_evidence" | jq -e 'type == "object"' >/dev/null 2>&1; then
+      budget_evidence='{"outcome":"Deferred","reason":"optional merge-session binding is unreadable"}'
+    fi
+  fi
+  result_json="$(printf '%s\n' "$result_json" | jq --argjson budget "$budget_evidence" '.budget = $budget')"
+fi
 if [ "$json_output" -eq 1 ]; then
   printf '%s\n' "$result_json" | jq '.'
 else

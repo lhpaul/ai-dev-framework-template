@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 #
-# Validate shared/local workflow repository-context configuration.
+# Validate shared/local repository context and optional models.dsh routing.
+# First-line DSH envelopes use the shared dependency-free strict policy reader.
+# Without activation, legacy repository-context behavior is preserved.
 #
 # Usage:
 #   scripts/development-workflow/validate-workflow-config.sh [--repo <name>] [--require-local] [--repo-root <path>]
@@ -22,7 +24,7 @@ while [ "$#" -gt 0 ]; do
       shift
       ;;
     -h|--help)
-      sed -n '2,8p' "$0"
+      sed -n '2,10p' "$0"
       exit 0
       ;;
     *)

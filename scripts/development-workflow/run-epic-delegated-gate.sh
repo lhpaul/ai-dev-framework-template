@@ -9,8 +9,12 @@ source "$SCRIPT_DIR/workflow-lib.sh"
 usage() {
   cat <<'EOF'
 Usage:
-  ./scripts/development-workflow/run-epic-delegated-gate.sh --input <file> [--policy <file>] [--repo-root <path>] [--product-repo <name>] [--json]
+  ./scripts/development-workflow/run-epic-delegated-gate.sh --input <file> [--policy <file>] [--repo-root <path>] [--product-repo <name>] [--merge-session <path>] [--json]
   ./scripts/development-workflow/run-epic-delegated-gate.sh verify-security-advisory-decisions --input <file>
+
+A selected PR requires --merge-session (or inherited WORKFLOW_MERGE_BUDGET_SESSION)
+with durable admission bound to its repository, reviewed head and base. Missing
+or invalid binding reports budget_deferred while preserving ordinary blockers.
 
 Evaluates whether a delegated /run-epic candidate PR may proceed to the
 repository merge protocol. The gate is read-only: it does not run reviewers,
@@ -120,6 +124,7 @@ esac
 input_file=""
 policy_file=""
 repo_root=""
+merge_session="${WORKFLOW_MERGE_BUDGET_SESSION:-}"
 product_repo=""
 json_output=0
 
@@ -623,6 +628,11 @@ while [ "$#" -gt 0 ]; do
     --repo-root)
       require_value "$@"
       repo_root="$2"
+      shift 2
+      ;;
+    --merge-session)
+      require_value "$@"
+      merge_session="$2"
       shift 2
       ;;
     --product-repo)
@@ -1311,6 +1321,41 @@ if [ -z "$decision_json" ]; then
   error_exit "failed to evaluate delegated gate decision (empty result)"
 fi
 
+# Durable admission is additional evidence, never a caller-supplied DTO flag.
+# Evaluate existing blockers first so a budget deferral retains their reasons.
+budget_evidence='{"outcome":"Deferred","reason":"merge-session binding is absent"}'
+budget_valid=false
+if [ -n "$merge_session" ]; then
+  budget_repo="$(printf '%s\n' "$state_json" | jq -r '.repository // .repo // .pr.repository // .productRepo.github_repo // ""')"
+  budget_pr="$(printf '%s\n' "$state_json" | jq -r '.pr.number')"
+  budget_head="$(printf '%s\n' "$state_json" | jq -r '.pr.headSha // .pr.head_sha // .pr.headRefOid // ""')"
+  budget_base="$(printf '%s\n' "$state_json" | jq -r '.pr.baseRefName')"
+  if [ -n "$budget_head" ] && budget_evidence="$(python3 "$SCRIPT_DIR/workflow-merge-budget.py" check \
+      --session "$merge_session" --repo "$budget_repo" --pr "$budget_pr" --require-merge-scope \
+      --head "$budget_head" --base "$budget_base" --repo-root "$effective_root" 2>&1)" &&
+      printf '%s\n' "$budget_evidence" | jq -e '.admissionValid == true' >/dev/null 2>&1; then
+    budget_valid=true
+  else
+    if ! printf '%s\n' "$budget_evidence" | jq -e 'type == "object"' >/dev/null 2>&1; then
+      budget_evidence='{"outcome":"Deferred","reason":"merge-session owner/identity/head binding is unreadable"}'
+    fi
+  fi
+fi
+if [ "$budget_valid" != true ] && [ "$(printf '%s\n' "$decision_json" | jq -r '.decision')" != "not_applicable" ]; then
+  budget_affected="$(printf '%s\n' "$state_json" | jq '{
+    number:(.item.number // .item.issue_number // .item.issueNumber // null),
+    pr:.pr.number, branch:.pr.headRefName
+  }')"
+  decision_json="$(printf '%s\n' "$decision_json" | jq --argjson budget "$budget_evidence" --argjson affected "$budget_affected" '
+    .decision = "budget_deferred" | .mergePermitted = false |
+    .exceptionalAdminMergePermitted = false |
+    .reasons += ["budget_deferred: durable admitted owner/session/selected-head binding required"] |
+    .nextAction = "correct session scope or explicitly resume after quota/evidence becomes available; no merge-operation mutation" |
+    .budget = ($budget + {affectedItem:$affected})')"
+else
+  decision_json="$(printf '%s\n' "$decision_json" | jq --argjson budget "$budget_evidence" '.budget = $budget')"
+fi
+
 bulk_advisory_warning=""
 bulk_advisory_warning="$(printf '%s\n' "$state_json" | jq -r '
   (.reviewer.advisoryCount // .reviewer.advisory_count // 0 | tonumber) as $count |
@@ -1336,6 +1381,20 @@ printf 'Exceptional admin merge permitted: %s\n' "$(printf '%s\n' "$decision_jso
 printf 'Reviewer access classification: %s\n' "$(printf '%s\n' "$decision_json" | jq -r '.reviewerAccess.classification')"
 printf 'Reviewer access proposed action: %s\n' "$(printf '%s\n' "$decision_json" | jq -r '.reviewerAccess.proposedAction')"
 printf 'Next action: %s\n' "$(printf '%s\n' "$decision_json" | jq -r '.nextAction')"
+if [ "$(printf '%s\n' "$decision_json" | jq -r '.decision')" = budget_deferred ]; then
+  printf '%s\n' "$decision_json" | jq -r '
+    "Work item: " + (if .budget.affectedItem.number == null or .budget.affectedItem.number == "" then
+      "unavailable; selected PR scope shown below" else "#" + (.budget.affectedItem.number|tostring) end),
+    "Affected PR: #\(.pr.number) branch \(.pr.headRefName)",
+    "Selected scope: " + (if (.budget.selectedSet | type)=="array" then
+      (.budget.selectedSet | map((.repo // "unknown") + "#" + ((.pr // "unknown")|tostring)) | join(", "))
+      else "this selected PR" end),
+    "Budget reason: " + (.budget.reason // "durable admission unavailable"),
+    "Projected GraphQL cost: " + ((.budget.estimate.projectedCost // "unavailable")|tostring),
+    "GraphQL remaining: " + ((.budget.initialSample.remaining // "unavailable")|tostring),
+    "GraphQL reset: " + ((.budget.initialSample.reset // "unavailable")|tostring),
+    "Recovery action: " + (.budget.recoveryAction // "provide a complete admitted merge session for this PR; correct scope/config or explicitly recover after quota/evidence becomes available")'
+fi
 printf 'Read-only: %s\n' "$(printf '%s\n' "$decision_json" | jq -r '.readOnlyGuarantee')"
 printf 'Reasons:\n'
 printf '%s\n' "$decision_json" | jq -r '.reasons[]? | "- " + .'

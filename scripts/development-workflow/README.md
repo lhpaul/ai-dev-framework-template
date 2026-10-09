@@ -1,5 +1,11 @@
 # Development workflow scripts
 
+## Merge-session admission and recovery
+
+After ordinary review/CI/readiness and before any merge-operation audit, hold, bypass, merge or follow-up mutation, follow [Protocol 94 section 3.6](../../docs/workflow/development-workflow/protocols/94-batch-merge-protocol.md#36-merge-session-admission-and-recovery). Freeze the entire selected ordered set in one authoritative owner-bound session; an unaffordable set admits no prefix. Supply the same `--merge-session` to mutating merge/cleanup helpers, and `--operation merge` to operation-owned audit calls. Direct authorized `gh pr merge` commands run through `workflow-merge-budget.py run-step` with their existing argv unchanged. Read-only risk classification remains separate; delegated merge requires the durable session plus all existing gates.
+
+Deferred reports quota/reset, recorded PR states and pending follow-up without operation-owned remote writes; fresh selected PRs stay unmerged, while recovery deferral retains historical merged/uncertain facts. Waiting records a verified queue/auto-merge submission, stops subsequent selected merges and leaves merge-dependent follow-up pending. Interrupted retains completed/uncertain/pending work locally even if every API fails; stop further selected merges and use explicit verified recovery without duplicate submission or uncertain mutation replay. Completed requires all owned planned follow-up independently verified, including tracker and audit. Budget admission grants no risk, checkpoint, admin or deletion authority. Report the session recovery command together with the existing Ground-Truth Completion Verification before claiming a workflow terminal outcome.
+
 Scripts used by the staged AI development workflow. Referenced by `docs/workflow/development-workflow/` and by the Codex skills in `.agents/skills/` and `.codex/skills/`. Run from the repository root.
 
 ## Running the test suite
@@ -314,7 +320,7 @@ Usage:
 
 <!-- workflow-shell-contract: bash-zsh -->
 ```bash
-bash ./scripts/development-workflow/batch-merge.sh recheck-remaining \
+bash ./scripts/development-workflow/batch-merge.sh --merge-session "$MERGE_SESSION" recheck-remaining \
   --prs 101,102,103 \
   --after-merged-pr 101 \
   --base develop \
@@ -1171,6 +1177,46 @@ GitHub-form `git_url` values such as `git@github.com:owner/repo.git` and
 resolved, it fails for that product repository instead of falling back to the
 workflow hub repository.
 
+
+### `workflow-merge-budget.py`
+
+Creates a private, owner-bound local journal for an authorized merge sequence. `begin` receives selected identities and planned phases, resolves owning issue/cleanup targets read-only, and samples actual GraphQL quota; it does not accept caller quota or success flags. The returned JSON includes the absolute `session` path. The complete lifecycle and ordered outcomes are normative in [Protocol 94 section 3.6](../../docs/workflow/development-workflow/protocols/94-batch-merge-protocol.md#36-merge-session-admission-and-recovery).
+
+A manifest freezes every selected PR, its reviewed head/base/root and planned step identities. For example, replace every illustrative identity/path/head with current approved readiness evidence before calling `begin`:
+
+```json
+{
+  "ownerRoot": "/path/to/artifact-repository",
+  "prs": [{
+    "repo": "example/project",
+    "pr": 42,
+    "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "base": "develop",
+    "root": "/path/to/participant-repository",
+    "steps": [
+      {"id": "disposition-pre", "phase": "audit", "auditRepo": "example/project", "auditTarget": 42, "marker": "<!-- run-epic:pr-disposition -->"},
+      {"id": "merge_api", "phase": "merge_api"},
+      {"id": "cleanup", "phase": "cleanup"},
+      {"id": "disposition-final", "phase": "audit", "auditRepo": "example/project", "auditTarget": 42, "marker": "<!-- run-epic:pr-disposition -->"}
+    ]
+  }]
+}
+```
+
+Add the required owning ledger targets and route-specific phases before admission; a batch manifest contains the complete ordered list, not only the next PR. Distinct pre/final audit step IDs may update the same existing stable marker without replaying a completed step. The non-audit `phases` shorthand is available for simple operations; audit phases require their explicit destination/marker. `policySkipped` may declare `remote_delete`/`local_cleanup` only under the already resolved cleanup policy; it grants no deletion or skip authorization and retained-branch evidence must be verified.
+
+Public commands are `begin --input <manifest> [--repo-root <owner>] [--reserve <nonnegative integer>]`, `run-step --session <state.json> --repo <owner/repo> --pr <number> --step <declared-id> --phase <phase> -- <argv...>`, `resume --session <state.json>`, and `report --session <state.json> [--final]`. `before-step`/`after-step` serve nested runtime hooks; only declared identities/steps can execute. A direct merge uses the declared `merge_api` step and preserves its existing `gh pr merge` arguments. For an audit, supply `--expected-file` with the exact rendered body so independent live read-back can discharge it. Do not execute a completed or uncertain step again; explicit resume reconciles live evidence first.
+
+The read-only `check --require-merge-scope` used by the delegated gate additionally
+requires frozen merge, merge verification, cleanup and owning follow-up duties.
+An admitted audit-only session can execute its declared audit without granting
+merge authority. Merge routes derive mandatory follow-up during `begin`, even
+when a caller provides only the merge phase. Linear recovery follows the
+[existing bridge](../../docs/workflow/development-workflow/integrations/linear.md#durable-merge-operation-bridge),
+with fresh proof bound to one recovery continuation.
+
+Optional `--final` reporting samples quota without erasing verified progress when the remote read fails; ordinary reporting uses the local record offline. Reports retain each readable sample, component estimate/margin/reserve, verified PR states, uncertain actions, pending follow-up and recovery command. The journal remains under `<owner-git-common-dir>/workflow-merge-budget/<session-id>/state.json`; do not commit or delete it during closeout or a coordinated reversal.
+
 ### `post-merge-cleanup.sh`
 
 After a development PR is merged and the remote branch deleted, sync with
@@ -1181,7 +1227,8 @@ Usage:
 
 <!-- workflow-shell-contract: bash-zsh -->
 ```bash
-./scripts/development-workflow/post-merge-cleanup.sh [--base develop-workflow-hub-mode] [--pr merged-pr-number] [BRANCH]
+set -euo pipefail
+./scripts/development-workflow/post-merge-cleanup.sh [--merge-session session-path] [--base develop-workflow-hub-mode] [--pr merged-pr-number] [BRANCH]
 ```
 
 - With `--pr`: bind implementation remote branch cleanup to the exact merged PR
@@ -1233,6 +1280,7 @@ Usage:
 
 <!-- workflow-shell-contract: bash-zsh -->
 ```bash
+set -euo pipefail
 # Discovery mode — auto-discover all ready-for-human-review PRs targeting develop
 ./scripts/development-workflow/batch-merge.sh discover
 
@@ -1240,7 +1288,7 @@ Usage:
 ./scripts/development-workflow/batch-merge.sh discover --prs 101,102,103
 
 # Per-PR merge — attempt to merge one reviewed PR into develop (called in a loop by the agent)
-./scripts/development-workflow/batch-merge.sh merge --pr 101 --expected-head-sha <reviewed-headRefOid>
+./scripts/development-workflow/batch-merge.sh --merge-session "$MERGE_SESSION" merge --pr 101 --expected-head-sha <reviewed-headRefOid>
 ```
 
 Outputs structured `KEY=VALUE` lines. See the script header for the full output format.
