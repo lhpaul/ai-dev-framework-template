@@ -358,9 +358,11 @@ class ModelRoutingTests(unittest.TestCase):
                     loader.assert_called_once_with(self.root.resolve())
                     self.assertEqual(parser.call_count, 2 if active else 0)
                     self.assertEqual(reads, [self.shared.resolve(), self.local.resolve()])
-                    policy = loader.return_value
         self.write(self.policy(self.tier()))
         policy = resolver.load_model_policy(self.root)
+        self.assertEqual(policy.positions[0]["models.dsh.tiers.balanced.model"], 7)
+        with self.assertRaises(TypeError):
+            policy.configs[0]["mode"] = "changed"
         with self.assertRaises(TypeError):
             policy.effective["tiers"]["balanced"]["model"] = "changed"
 

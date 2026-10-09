@@ -896,7 +896,7 @@ def set_local_product_repo_path(repo_root: Path, repo_name: str, local_path_valu
     # clone are not the same filesystem depth apart from the target path.
     local_path = repo_root / LOCAL_CONFIG_NAME
     snapshot = read_model_snapshot(local_path)
-    local = snapshot.legacy
+    local = thaw_model_snapshot(snapshot.legacy)
     repos = as_list(local.get("product_repos"), local_path, "product_repos")
     updated = False
     match_count = 0
@@ -1935,13 +1935,24 @@ def model_entry_source(kind: str, name: str, shared: dict[str, Any], local: dict
 MODEL_ENVELOPE_PREFIX = "# adf-models-dsh:"
 MODEL_ENVELOPE_OPEN = "# adf-models-dsh: v1"
 MODEL_ENVELOPE_END = "# adf-models-dsh: end"
-ModelSnapshot = namedtuple("ModelSnapshot", "policy legacy envelope")
-ModelPolicy = namedtuple("ModelPolicy", "effective shared local shared_path local_path configs")
+ModelSnapshot = namedtuple("ModelSnapshot", "policy legacy envelope positions")
+ModelPolicy = namedtuple("ModelPolicy", "effective shared local shared_path local_path configs positions")
 
 
 def freeze_model_mapping(value: Any) -> Any:
     if isinstance(value, dict):
         return MappingProxyType({key: freeze_model_mapping(item) for key, item in value.items()})
+    if isinstance(value, list):
+        return tuple(freeze_model_mapping(item) for item in value)
+    return value
+
+
+def thaw_model_snapshot(value: Any) -> Any:
+    """Give legacy consumers their original mutable container types, without IO."""
+    if isinstance(value, Mapping):
+        return {key: thaw_model_snapshot(item) for key, item in value.items()}
+    if isinstance(value, tuple):
+        return [thaw_model_snapshot(item) for item in value]
     return value
 
 
@@ -1961,7 +1972,9 @@ def model_scalar(text: str, path: Path, line: int) -> Any:
             char = text[index]
             if char == quote:
                 if quote == "'" and index + 1 < len(text) and text[index + 1] == "'":
-                    result.append("'"); index += 2; continue
+                    result.append("'")
+                    index += 2
+                    continue
                 index += 1
                 break
             if char == "\\" and quote == '"':
@@ -1994,10 +2007,11 @@ def model_scalar(text: str, path: Path, line: int) -> Any:
     return token
 
 
-def parse_model_mapping(lines: list[str], path: Path) -> dict[str, Any]:
+def parse_model_mapping(lines: list[str], path: Path) -> tuple[dict[str, Any], Mapping]:
     """Finite mapping stack: no sequence/flow/reference grammar or recovery."""
     root: dict[str, Any] = {}
-    stack = [(0, root)]
+    stack = [(0, root, "")]
+    positions: dict[str, int] = {}
     pending = None
     for line, raw in enumerate(lines, start=2):
         if any(ord(c) < 32 or 127 <= ord(c) <= 159 or c in "\u2028\u2029" for c in raw):
@@ -2010,10 +2024,10 @@ def parse_model_mapping(lines: list[str], path: Path) -> dict[str, Any]:
         if indent > stack[-1][0]:
             if indent != stack[-1][0] + 2 or pending is None:
                 model_syntax_error(path, line)
-            parent, key = pending
+            parent, key, field = pending
             child: dict[str, Any] = {}
             parent[key] = child
-            stack.append((indent, child))
+            stack.append((indent, child, field))
         else:
             while indent < stack[-1][0]:
                 stack.pop()
@@ -2027,15 +2041,17 @@ def parse_model_mapping(lines: list[str], path: Path) -> dict[str, Any]:
         if key in mapping:
             model_syntax_error(path, line)
         mapping[key] = model_scalar(text, path, line)
+        field = ".".join(part for part in (stack[-1][2], key) if part)
+        positions[field] = line
         # Only an absent value opens a block, never an explicit null or {}.
-        pending = (mapping, key) if not text.strip(" ") or text.lstrip(" ").startswith("#") else None
-    return root
+        pending = (mapping, key, field) if not text.strip(" ") or text.lstrip(" ").startswith("#") else None
+    return root, MappingProxyType(positions)
 
 
 def read_model_snapshot(path: Path) -> ModelSnapshot:
     """One byte read; activation is exclusively a reserved first physical line."""
     if not path.exists():
-        return ModelSnapshot({}, {}, b"")
+        return ModelSnapshot(MappingProxyType({}), MappingProxyType({}), b"", MappingProxyType({}))
     try:
         raw_bytes = path.read_bytes()
     except OSError as exc:
@@ -2052,7 +2068,7 @@ def read_model_snapshot(path: Path) -> ModelSnapshot:
             model_error("invalid_yaml", path, "models.dsh", "Active configuration must be UTF-8")
         raise
     if not active:
-        return ModelSnapshot({}, parse_yaml_snapshot(raw, path), b"")
+        return ModelSnapshot(MappingProxyType({}), freeze_model_mapping(parse_yaml_snapshot(raw, path)), b"", MappingProxyType({}))
     # Physical lines, not str.splitlines: Unicode separators are grammar errors.
     physical = raw.split("\n")
     lines = [line[:-1] if line.endswith("\r") else line for line in physical]
@@ -2064,7 +2080,7 @@ def read_model_snapshot(path: Path) -> ModelSnapshot:
     end = ends[0]
     if any(line.startswith(MODEL_ENVELOPE_PREFIX) for line in lines[1:end] + lines[end + 1:]):
         model_error("invalid_envelope", path, "models", "Additional reserved markers are not permitted")
-    data = parse_model_mapping(lines[1:end], path)
+    data, positions = parse_model_mapping(lines[1:end], path)
     if "models" not in data:
         model_error("invalid_envelope", path, "models", "Envelope requires one root models mapping")
     if set(data) != {"models"}:
@@ -2079,7 +2095,7 @@ def read_model_snapshot(path: Path) -> ModelSnapshot:
     policy = model_layer(data, path)
     # split with keepends retains the original opener, policy and end bytes.
     envelope = b"".join(raw_bytes.splitlines(keepends=True)[:end + 1])
-    return ModelSnapshot(freeze_model_mapping(policy), legacy, envelope)
+    return ModelSnapshot(freeze_model_mapping(policy), freeze_model_mapping(legacy), envelope, positions)
 
 
 def load_model_policy(repo_root: Path) -> ModelPolicy:
@@ -2105,7 +2121,8 @@ def load_model_policy(repo_root: Path) -> ModelPolicy:
             elif not all(key in value for key in ("provider", "model")):
                 model_error("incomplete_route", path, field, "Effective route requires provider and model")
     return ModelPolicy(freeze_model_mapping(effective), shared, local, shared_path, local_path,
-                       (shared_snapshot.legacy, local_snapshot.legacy, shared_path, local_path))
+                       (shared_snapshot.legacy, local_snapshot.legacy, shared_path, local_path),
+                       (shared_snapshot.positions, local_snapshot.positions))
 
 
 def model_resolution(policy: tuple[Any, ...], role: str = "", tier: str = "") -> dict[str, str]:
@@ -2166,7 +2183,9 @@ def cmd_model_routes(args: argparse.Namespace) -> int:
 
 def cmd_validate(args: argparse.Namespace) -> int:
     policy = load_model_policy(repo_root_from_args(args.repo_root))
-    print_context(args, resolve_context(args, policy.configs))
+    configs = (thaw_model_snapshot(policy.configs[0]), thaw_model_snapshot(policy.configs[1]),
+               policy.shared_path, policy.local_path)
+    print_context(args, resolve_context(args, configs))
     return 0
 
 
