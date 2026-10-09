@@ -509,7 +509,10 @@ def resolve_local_config(repo_root: Path) -> tuple[Path, str, Path | None]:
     return checkout_file, "", main_clone_file
 
 
-def load_configs(repo_root: Path) -> tuple[dict[str, Any], dict[str, Any], Path, Path]:
+def load_configs(repo_root: Path, *, policy: ModelPolicy | None = None) -> tuple[dict[str, Any], dict[str, Any], Path, Path]:
+    if policy is not None:
+        return (thaw_model_snapshot(policy.configs[0]), thaw_model_snapshot(policy.configs[1]),
+                policy.shared_path, policy.local_path)
     shared_path = repo_root / ".ai-dev-workflow.yaml"
     local_path, _, _ = resolve_local_config(repo_root)
     shared = parse_yaml_subset(shared_path)
@@ -885,7 +888,8 @@ def dump_yaml_subset(value: Any, indent: int = 0) -> list[str]:
     return lines
 
 
-def set_local_product_repo_path(repo_root: Path, repo_name: str, local_path_value: str) -> Path:
+def set_local_product_repo_path(repo_root: Path, repo_name: str, local_path_value: str,
+                               *, snapshot: ModelSnapshot | None = None) -> Path:
     # Always read and write the checkout's own local config file, never the
     # main clone fallback that load_configs()/resolve_local_config() applies
     # for review-override resolution (#1560). Two problems otherwise: this
@@ -895,7 +899,8 @@ def set_local_product_repo_path(repo_root: Path, repo_name: str, local_path_valu
     # relative path would resolve incorrectly whenever repo_root and the main
     # clone are not the same filesystem depth apart from the target path.
     local_path = repo_root / LOCAL_CONFIG_NAME
-    snapshot = read_model_snapshot(local_path)
+    if snapshot is None:
+        snapshot = read_model_snapshot(local_path)
     local = thaw_model_snapshot(snapshot.legacy)
     repos = as_list(local.get("product_repos"), local_path, "product_repos")
     updated = False
@@ -1800,12 +1805,15 @@ def cmd_list_product_repos(args: argparse.Namespace) -> int:
 
 def cmd_set_local_path(args: argparse.Namespace) -> int:
     repo_root = repo_root_from_args(args.repo_root)
-    shared, _, shared_path, _ = load_configs(repo_root)
+    policy = load_model_policy(repo_root)
+    shared, _, shared_path, _ = load_configs(repo_root, policy=policy)
     mode = mode_from_shared(shared, shared_path)
     if mode != "workflow_hub":
         raise ConfigError(f"{shared_path}: workflow_hub mode is required to write product repository local paths")
     select_product_repo(product_repos(shared, shared_path), args.repo, shared_path)
-    written = set_local_product_repo_path(repo_root, args.repo, args.local_path)
+    # Reuse selected checkout bytes, while keeping any external fallback read-only.
+    snapshot = policy.snapshots[1] if policy.local_path == repo_root / LOCAL_CONFIG_NAME else None
+    written = set_local_product_repo_path(repo_root, args.repo, args.local_path, snapshot=snapshot)
     print_context(args, {"LOCAL_CONFIG_PATH": str(written)})
     return 0
 
@@ -1936,7 +1944,7 @@ MODEL_ENVELOPE_PREFIX = "# adf-models-dsh:"
 MODEL_ENVELOPE_OPEN = "# adf-models-dsh: v1"
 MODEL_ENVELOPE_END = "# adf-models-dsh: end"
 ModelSnapshot = namedtuple("ModelSnapshot", "policy legacy envelope positions")
-ModelPolicy = namedtuple("ModelPolicy", "effective shared local shared_path local_path configs positions")
+ModelPolicy = namedtuple("ModelPolicy", "effective shared local shared_path local_path configs positions snapshots")
 
 
 def copy_model_snapshot(value: Any, *, frozen: bool) -> Any:
@@ -2149,7 +2157,8 @@ def load_model_policy(repo_root: Path) -> ModelPolicy:
                 model_error("incomplete_route", path, field, "Effective route requires provider and model")
     return ModelPolicy(freeze_model_mapping(effective), shared, local, shared_path, local_path,
                        (shared_snapshot.legacy, local_snapshot.legacy, shared_path, local_path),
-                       (shared_snapshot.positions, local_snapshot.positions))
+                       (shared_snapshot.positions, local_snapshot.positions),
+                       (shared_snapshot, local_snapshot))
 
 
 def model_resolution(policy: tuple[Any, ...], role: str = "", tier: str = "") -> dict[str, str]:

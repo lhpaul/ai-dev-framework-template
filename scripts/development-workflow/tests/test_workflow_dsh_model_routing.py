@@ -457,6 +457,76 @@ class ModelRoutingTests(unittest.TestCase):
             self.assertEqual(result.returncode, 2)
             self.assertEqual(self.local.read_bytes(), before_bytes)
 
+    def test_set_local_path_has_sanitized_error_parity_and_never_writes(self):
+        hub = "mode: workflow_hub\nworkflow_hub:\n  product_repos:\n    - name: app\n      github_repo: example/app\n"
+        local_tail = "product_repos:\n  - name: app\n    local_path: before\n"
+        commands = (("validate", "--json"),
+                    ("model-route", "--runner", "dsh", "--role", "developer", "--json"),
+                    ("model-routes", "--runner", "dsh", "--json"),
+                    ("set-local-path", "--repo", "app", "--local-path", "after", "--json"))
+        for layer in ("shared", "local"):
+            for bad_region in ("policy", "legacy"):
+                shared = self.policy(self.tier()) + hub
+                local = self.policy(self.tier(model="local")) + local_tail
+                tail = hub if layer == "shared" else local_tail
+                bad = (self.envelope("models:\n  dsh:\n    PRIVATE_TEST_SENTINEL!: value\n") + tail
+                       if bad_region == "policy" else
+                       self.policy(self.tier()) + tail + "PRIVATE_TEST_SENTINEL!: value\n")
+                self.write(bad if layer == "shared" else shared, bad if layer == "local" else local)
+                before = (self.shared.read_bytes(), self.local.read_bytes())
+                expected = None
+                for command in commands:
+                    with self.subTest(layer=layer, bad_region=bad_region, command=command):
+                        result = self.cli(*command)
+                        self.assertEqual(result.returncode, 2)
+                        self.assertEqual(result.stdout, "")
+                        diagnostic = json.loads(result.stderr)
+                        self.assertEqual(set(diagnostic), {"CODE", "FILE", "FIELD", "MESSAGE"})
+                        self.assertEqual(diagnostic["CODE"], "invalid_yaml")
+                        self.assertEqual(diagnostic["FILE"], str(self.shared if layer == "shared" else self.local))
+                        self.assertNotIn("PRIVATE_TEST_SENTINEL", result.stderr)
+                        if expected is None:
+                            expected = diagnostic
+                        self.assertEqual(diagnostic, expected)
+                        self.assertEqual((self.shared.read_bytes(), self.local.read_bytes()), before)
+
+    def test_set_local_path_reuses_snapshot_and_preserves_checkout_ownership(self):
+        hub = "mode: workflow_hub\nworkflow_hub:\n  product_repos:\n    - name: app\n      github_repo: example/app\n"
+        tail = "product_repos:\n  - name: app\n    local_path: before\n"
+        for active in (False, True):
+            envelope = self.policy(self.tier(model="owned")).replace("\n", "\r\n") if active else ""
+            self.write((self.policy(self.tier()) if active else "") + hub, envelope + tail)
+            args = resolver.build_parser().parse_args(["set-local-path", "--repo-root", str(self.root),
+                "--repo", "app", "--local-path", "after", "--json"])
+            original_read = Path.read_bytes
+            reads = []
+            def observed(path):
+                reads.append(path)
+                return original_read(path)
+            with self.subTest(active=active), \
+                    patch.object(resolver, "load_model_policy", wraps=resolver.load_model_policy) as loader, \
+                    patch.object(resolver, "parse_yaml_subset", side_effect=AssertionError("Legacy file reload")), \
+                    patch.object(Path, "read_bytes", observed), patch("builtins.print"):
+                self.assertEqual(args.func(args), 0)
+                loader.assert_called_once_with(self.root.resolve())
+                self.assertEqual(reads, [self.shared, self.local])
+            self.assertTrue(self.local.read_bytes().startswith(envelope.encode()))
+            self.assertIn("local_path: after", self.local.read_text())
+        external = self.root / "external"
+        external.mkdir()
+        external_local = external / resolver.LOCAL_CONFIG_NAME
+        external_local.write_text(self.policy(self.tier(model="external")))
+        external_bytes = external_local.read_bytes()
+        owned_envelope = self.policy(self.tier(model="owned")).replace("\n", "\r\n")
+        self.write(self.policy(self.tier()) + hub, owned_envelope + tail)
+        result = self.cli("set-local-path", "--repo", "app", "--local-path", "after", "--json",
+                          env=dict(os.environ, WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT=str(external)))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout)["LOCAL_CONFIG_PATH"], str(self.local))
+        self.assertEqual(external_local.read_bytes(), external_bytes)
+        self.assertTrue(self.local.read_bytes().startswith(owned_envelope.encode()))
+        self.assertIn("local_path: after", self.local.read_text())
+
     def test_opted_in_discovery_error_parity_preserves_absent_legacy(self):
         missing = self.root / "PRIVATE_TEST_SENTINEL_missing"
         with patch.dict(os.environ, WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT=str(missing)):
