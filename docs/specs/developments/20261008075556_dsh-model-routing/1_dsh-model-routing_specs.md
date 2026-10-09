@@ -2,6 +2,14 @@
 
 **Issue**: #1927
 
+## Amendment status
+
+This proposed amendment replaces the reading/activation boundary approved in
+spec PR #1932. Luis selected a dependency-free strict subset on 2026-10-08 and
+authorized documentation PRs only, without merge. The original merged history
+and implementation PR #1934/local candidate `43bddf22` remain unchanged.
+Implementation must wait for human approval and merge of both amendments.
+
 ## Overview
 
 Operators can assign different model routes to DSH workflow roles using shared
@@ -26,7 +34,8 @@ and, separately, private machine policy.
 
 **Steps**:
 
-1. Assign routes to the economy, balanced, and premium tiers as needed.
+1. Explicitly activate each contributing file with the BR9 envelope, then
+   assign routes to the economy, balanced, and premium tiers as needed.
 2. Optionally assign a workflow role to a tier or directly to a route.
 3. Override selected settings privately on one machine.
 4. Inspect the effective route for a role, its source layer, source file, and
@@ -101,7 +110,9 @@ inheritance. No credentials or provider accounts are provisioned by this item.
 ## Business Rules
 
 - BR1: Shared project policy and machine-local policy are optional. Missing
-  files or routing blocks preserve inheritance; the shipped template contains
+  files or files without the explicit activation defined below preserve
+  inheritance; an unactivated `models.dsh` is legacy data, not routing policy.
+  The shipped template contains
   only commented routing examples and activates no provider/model names.
 - BR2: Local policy deep-merges over shared policy by key. Unchanged tiers,
   roles, and route fields are inherited. A scalar tier reference replaces a
@@ -129,13 +140,112 @@ inheritance. No credentials or provider accounts are provisioned by this item.
   exposes all effective configured routes needed for host allowlist setup.
 - BR6: Each resolution is read-only and uses the configuration current for that
   invocation. Recorded evidence applies to that resolution and child dispatch;
-  old evidence does not establish a later invocation's route. Existing strict
-  configuration reading and local discovery semantics remain authoritative.
+  old evidence does not establish a later invocation's route. Existing local
+  discovery is unchanged. Unactivated files retain their legacy reading contract;
+  activated policy uses the strict format below, without a YAML dependency.
 - BR7: Disabled selection and a denied allowlist route have a visible inherited
   fallback. Malformed policy and post-dispatch failures do not use that fallback.
   No workflow authority, review gate, permission, or merge-risk limit changes.
 - BR8: Child routing does not change the headless review default, fork child
   routing, other runners' model selection, or the shipped draft-review runner.
+
+## Strict DSH Format and Activation
+
+BR9 is the single format contract for routing policy. This is an intentional
+amendment to bare `models.dsh` activation, not transparent support for all YAML.
+Each selected shared/local file independently opts in using these exact lines:
+
+```yaml
+# adf-models-dsh: v1
+models:
+  dsh:
+    tiers:
+      balanced:
+        provider: "provider-id"
+        model: 'model-id'
+    roles:
+      developer: balanced
+# adf-models-dsh: end
+mode: single_repo
+```
+
+- **BR9a — Activation/envelope:** the opening marker must be the first physical
+  line (column zero, UTF-8 without BOM). LF and CRLF are allowed. A BOM
+  followed by the reserved prefix is an invalid envelope, not inactive policy. A first line
+  beginning `# adf-models-dsh:` reserves this protocol: unknown version, wrong
+  spacing, premature end, or any malformed opener fails closed. No prefix means
+  no activation; later markers/comments or bare `models.dsh` do not activate it.
+  The exact end marker at column zero is mandatory and closes the policy.
+  Inside: one root `models` mapping, empty or containing exactly `dsh`; blank lines and ordinary
+  comments may surround entries. An empty policy is `models: {}`; `dsh: {}`,
+  `tiers: {}` and `roles: {}` are also allowed and select no route by themselves.
+  A route `{}` remains subject to effective completeness after composition.
+- **BR9b — Grammar:** block mappings, exactly two ASCII spaces per nesting
+  level, no tabs or indentation jumps. Keys are unquoted ASCII identifiers
+  `[A-Za-z_][A-Za-z0-9_-]*`. Membership is checked only in the schema
+  phase: a lexically valid unknown key is a schema-name error, not syntax.
+  Accepted keys belong to their schema level: `models`,
+  `dsh`, `tiers`/`roles`, supported tier/role catalogue, or
+  `provider`/`model`/`reasoning_effort`. The only inline collection is `{}`.
+  Accepted values are single-line strings or mappings. The lexer recognizes
+  null/boolean/numeric tokens for schema-type rejection, not syntax rejection.
+  Bare strings use only ASCII
+  letters/digits and `_ . / : @ + -`, without spaces; `null` (any case), `~`,
+  `true`/`false` (any case), and decimal numeric literals are invalid types,
+  not route strings. Numeric literals mean signed integers or decimal/exponent
+  forms, including `.5`, `1.` and `1e3`; quote them to use them as identifiers.
+  `yes`, `no`, `on` and `off` are strings; no YAML 1.1 implicit coercion applies.
+- **BR9c — Quoting/comments:** single-quoted strings escape a quote with `''`;
+  backslashes are literal. Double-quoted strings accept only `\\` and `\"`
+  escapes. Other escapes, unmatched quotes, raw/decoded control characters,
+  NEL/U+2028/U+2029 and multiline strings are rejected. Printable Unicode is
+  allowed inside quotes. After a value, only spaces or a space-separated `#`
+  comment may follow; `#` inside quotes is literal. Empty/blank required route
+  strings fail schema validation. Quoted `"null"` is a string. Quoted `"&x"`,
+  `"*x"` and `"<<"` are literal values, not operators.
+- **BR9d — Explicit rejection:** fail closed on sequences/lists with or without
+  indentation, nonempty flow mappings/sequences (including trailing commas),
+  dangling items, unclosed delimiters, multiline/block scalars, tags,
+  directives/document markers, duplicate keys, anchors, aliases, merge keys,
+  unknown keys and null/boolean/numeric or other incorrect types in policy.
+  Both `models:\n- dsh: {}` and its indented-list counterpart are errors;
+  neither is absence. Malformed or unsupported activated syntax cannot be
+  recovered by another parser or treated as inherited routing.
+- **BR9e — Legacy region:** the text after the end marker is ordinary legacy
+  configuration; it must not supply another root `models` key or envelope.
+  Validate its syntax through the existing dependency-free legacy reader after
+  removing the policy region while preserving line positions. Retain legacy
+  context semantics/arguments. All three commands share that reading result;
+  extra repository-context checks belong only to validate. For files without
+  activation, retain original legacy semantics for the same input bytes, with no strict
+  DSH scan, YAML-library import or newly rejected syntax. Such a file contributes
+  no routes even if it contains bare `models.dsh`. Operators must explicitly
+  migrate that policy into the envelope; there is no automatic conversion.
+  The existing `set-local-path` operation must preserve an activated local
+  policy and its envelope while updating unrelated repository paths. It must
+  reject malformed activated input before writing, rather than silently
+  deactivate policy. Unactivated editing behavior stays unchanged.
+
+### Format outcomes and parity matrix
+
+Rows are evaluated per selected layer, before composition; any activated error
+wins over successful absence or a valid override in the other layer. Within an
+activated layer: envelope, policy grammar, legacy-region syntax, schema, then
+composition/reference validation. The same ordered reader/validator governs
+all three commands and the shell validation wrapper.
+
+| Input | Outcome | Required next action | Example |
+| --- | --- | --- | --- |
+| File missing or no reserved first-line prefix | No routing contribution; legacy behavior | Opt in explicitly to configure routes | Bare models.dsh remains inactive |
+| Reserved prefix malformed, version unknown, missing/repeated end, second envelope or tail models | Structured envelope error, exit 2 | Correct envelope; do not dispatch | v2 opener or missing end |
+| Active unsupported/malformed grammar | Structured syntax error, exit 2 | Correct to BR9 subset | Indentless models list or unfinished flow item |
+| Active policy wrong type/name or invalid effective route | Structured schema/route error, exit 2 | Correct schema/composition | dsh: null or dangling tier |
+| Active valid partial/empty policy | Compose with other selected layer | Resolve using BR2–BR5 | Local provider inherits shared model |
+
+The existing resolution/dispatch matrix remains applicable after this format
+matrix. A malformed activated policy never reaches host fallback. Current
+invocation evidence governs; an earlier successful parse cannot authorize a
+later dispatch.
 
 ## Decision Contract and Consistency Matrix
 
@@ -171,12 +281,16 @@ retention service is required; use the existing workflow evidence surfaces.
 
 ## Acceptance Criteria
 
-- [ ] AC1: With neither policy file or neither routing block present, role
-  resolution is inherited and child dispatch receives no route; enabled
+- [ ] AC1: With no activated policy or only valid empty activated policies,
+  resolution is inherited and child
+  dispatch receives no route; legacy validation/output/dependencies and enabled
   behavior remains unchanged and template examples activate no model names.
 - [ ] AC2: Shared tier/role settings plus a local override of only premium or
   only developer preserve unrelated settings. Partial mapping-field overrides
   compose as BR2 defines; mapping/reference replacements are deterministic.
+  Updating a repository path through `set-local-path` preserves the local
+  activated policy and the effective route; malformed activated input causes
+  no write. Exercise both cases only in temporary fixtures.
 - [ ] AC3: Fixtures demonstrate local role, shared role, local tier, shared tier,
   and inherited precedence; direct role routes outrank default-tier routes,
   and tier-reference roles resolve local before shared tier.
@@ -186,7 +300,10 @@ retention service is required; use the existing workflow evidence surfaces.
 - [ ] AC5: Unknown roles, unknown tiers, wrong types, empty required values,
   incomplete effective routes, and dangling tier references emit structured
   errors and block routed dispatch. Standalone config validation reports the
-  same policy errors. Partial valid compositions and absent files are covered.
+  same policy errors. For each activated input with a policy error, validate, model-route and
+  model-routes share the same policy diagnostic CODE/FILE/FIELD/MESSAGE and exit 2,
+  with no successful route/context on stdout. Partial compositions, missing
+  files and the explicit unactivated legacy boundary are covered.
 - [ ] AC6: The Work Item Runner contract and DSH guidance describe resolve,
   pass, and record, plus visible inheritance when selection is disabled or a
   route is denied. Routing evidence and documentation consistency are checked.
@@ -195,7 +312,7 @@ retention service is required; use the existing workflow evidence surfaces.
   invocation overlay. Headless defaults do not consume role dispatch policy.
 - [ ] AC8: Model-policy guidance explains DSH layered routing and precedence
   alongside existing Codex guidance; shared and local example files contain
-  commented examples. Later generalization to other runners is identified as
+  commented examples showing BR9 activation/envelope and quoting. Later generalization to other runners is identified as
   outside this item.
 - [ ] AC9: The smoke runbook verifies, in one DSH session, balanced and premium
   role children using distinct permitted routes, then a temporary local override
@@ -204,13 +321,15 @@ retention service is required; use the existing workflow evidence surfaces.
   machine-local files.
 - [ ] AC10: The implementation includes routing regression/error coverage,
   applicable template sync ownership entries, and a release-note fragment.
-  Specification and plan PRs remain documentation-only stages.
+  The parameterized matrix covers the BR9 outcomes through all three commands,
+  asserting expected rejection as well as parity. Specification and plan PRs
+  remain documentation-only stages; no parser implementation is included here.
 
 ## Brief Objective List and Coverage Matrix
 
 | Objective | Brief requirement | Coverage |
 | --- | --- | --- |
-| O1 | Optional shared/local tier and role policy; template activates no models | AC1, AC2, AC8 |
+| O1 | Optional activated shared/local tier and role policy; inactive legacy preserved | AC1, AC2, AC8; BR9 |
 | O2 | Per-key local deep merge and exact precedence; role reference/direct forms | AC2, AC3; BR2–BR4 |
 | O3 | Read-only strict resolver; effective route, source, file, tier; route listing | AC4, AC5; BR5–BR6 |
 | O4 | Config validation and tests for precedence, invalid input, absent files | AC3, AC5, AC10 |
