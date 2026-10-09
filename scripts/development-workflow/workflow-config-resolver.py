@@ -1939,21 +1939,38 @@ ModelSnapshot = namedtuple("ModelSnapshot", "policy legacy envelope positions")
 ModelPolicy = namedtuple("ModelPolicy", "effective shared local shared_path local_path configs positions")
 
 
+def copy_model_snapshot(value: Any, *, frozen: bool) -> Any:
+    """Copy containers iteratively; snapshotting must not narrow legacy depth."""
+    result = [None]
+    pending = [(False, value, result, 0)]
+    while pending:
+        finish_tuple, node, parent, key = pending.pop()
+        if finish_tuple:
+            parent[key] = tuple(node)
+        elif isinstance(node, Mapping):
+            target = {}
+            parent[key] = MappingProxyType(target) if frozen else target
+            pending.extend((False, item, target, child_key)
+                           for child_key, item in reversed(list(node.items())))
+        elif isinstance(node, (list, tuple)):
+            target = [None] * len(node)
+            parent[key] = target
+            if frozen:
+                pending.append((True, target, parent, key))
+            pending.extend((False, item, target, index)
+                           for index, item in reversed(list(enumerate(node))))
+        else:
+            parent[key] = node
+    return result[0]
+
+
 def freeze_model_mapping(value: Any) -> Any:
-    if isinstance(value, dict):
-        return MappingProxyType({key: freeze_model_mapping(item) for key, item in value.items()})
-    if isinstance(value, list):
-        return tuple(freeze_model_mapping(item) for item in value)
-    return value
+    return copy_model_snapshot(value, frozen=True)
 
 
 def thaw_model_snapshot(value: Any) -> Any:
     """Give legacy consumers their original mutable container types, without IO."""
-    if isinstance(value, Mapping):
-        return {key: thaw_model_snapshot(item) for key, item in value.items()}
-    if isinstance(value, tuple):
-        return [thaw_model_snapshot(item) for item in value]
-    return value
+    return copy_model_snapshot(value, frozen=False)
 
 
 def model_syntax_error(path: Path, line: int) -> None:
@@ -2096,7 +2113,7 @@ def read_model_snapshot(path: Path, *, legacy_error: ConfigError | None = None) 
     projection = "\n" * (end + 1) + "\n".join(physical[end + 1:])
     try:
         legacy = parse_yaml_snapshot(projection, path)
-    except ConfigError:
+    except (ConfigError, RecursionError):
         model_error("invalid_yaml", path, "models.dsh", "Invalid legacy region after policy envelope")
     if "models" in legacy:
         model_error("invalid_envelope", path, "models", "Legacy region must not supply root models")

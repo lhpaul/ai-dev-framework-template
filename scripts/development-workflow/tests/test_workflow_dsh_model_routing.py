@@ -367,6 +367,54 @@ class ModelRoutingTests(unittest.TestCase):
         with self.assertRaises(TypeError):
             policy.effective["tiers"]["balanced"]["model"] = "changed"
 
+    def test_deep_legacy_snapshots_preserve_depth_and_active_error_boundary(self):
+        value = {"leaf": "kept"}
+        for _ in range(1500):
+            value = {"child": [value]}
+        frozen = resolver.freeze_model_mapping(value)
+        thawed = resolver.thaw_model_snapshot(frozen)
+        for _ in range(1500):
+            with self.assertRaises(TypeError):
+                frozen["child"] = "changed"
+            self.assertIsInstance(frozen["child"], tuple)
+            self.assertIsInstance(thawed["child"], list)
+            frozen, thawed = frozen["child"][0], thawed["child"][0]
+        self.assertEqual(dict(frozen), {"leaf": "kept"})
+        self.assertEqual(thawed, {"leaf": "kept"})
+
+        def legacy(depth):
+            return ("mode: single_repo\n" + "".join("  " * i + "nested:\n" for i in range(depth))
+                    + "  " * depth + "leaf: kept\n")
+        commands = (("validate", "--json"),
+                    ("model-route", "--runner", "dsh", "--role", "developer", "--json"),
+                    ("model-routes", "--runner", "dsh", "--json"))
+        for active in (False, True):
+            self.write((self.envelope("models: {}\n") if active else "") + legacy(600))
+            reference = self.cli("resolve", "--json")
+            self.assertEqual(reference.returncode, 0, reference.stderr)
+            for command in commands:
+                result = self.cli(*command)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                if command[0] == "validate":
+                    self.assertEqual((result.stdout, result.stderr), (reference.stdout, reference.stderr))
+        for layer in ("shared", "local"):
+            self.write("", "")
+            (self.shared if layer == "shared" else self.local).write_text(
+                self.envelope("models: {}\n") + legacy(1500))
+            diagnostics = []
+            for command in commands:
+                result = self.cli(*command)
+                self.assertEqual((result.returncode, result.stdout), (2, ""))
+                diagnostics.append(json.loads(result.stderr))
+            self.assertEqual(diagnostics, [diagnostics[0]] * len(commands))
+            self.assertEqual(diagnostics[0]["CODE"], "invalid_yaml")
+            self.assertNotIn("Traceback", diagnostics[0]["MESSAGE"])
+            wrapper = subprocess.run(["bash", str(ROOT / "scripts/development-workflow/validate-workflow-config.sh"),
+                                      "--repo-root", str(self.root)], capture_output=True, text=True,
+                                     env=dict(os.environ, WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT=""))
+            self.assertEqual((wrapper.returncode, wrapper.stdout), (2, ""))
+            self.assertEqual(json.loads(wrapper.stderr), diagnostics[0])
+
     def test_defined_quotes_types_comments_and_bounded_generative_lexer(self):
         cases = [("'it''s'", "it's"), (r'"a\\b\"c"', 'a\\b"c'),
                  ("'literal\\n'", "literal\\n"), ("'&x *x << # literal'", "&x *x << # literal"),
