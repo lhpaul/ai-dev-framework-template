@@ -320,6 +320,33 @@ class ModelRoutingTests(unittest.TestCase):
                 self.assertEqual((validation.returncode, validation.stdout, validation.stderr),
                                  (legacy.returncode, legacy.stdout, legacy.stderr))
 
+    def test_legacy_syntax_precedes_unknown_root_field_for_all_commands(self):
+        commands = (("validate", "--json"),
+                    ("model-route", "--runner", "dsh", "--role", "developer", "--json"),
+                    ("model-routes", "--runner", "dsh", "--json"))
+        policy = self.envelope("models: {}\nextra: {}\n")
+        for layer in ("shared", "local"):
+            for tail, code in (("PRIVATE_TEST_SENTINEL\n", "invalid_yaml"),
+                               ("mode: single_repo\n", "unknown_field")):
+                self.write(policy + tail if layer == "shared" else "",
+                           policy + tail if layer == "local" else "")
+                before = (self.shared.read_bytes(), self.local.read_bytes())
+                expected = None
+                for command in commands:
+                    with self.subTest(layer=layer, legacy_valid=code == "unknown_field", command=command):
+                        result = self.cli(*command)
+                        self.assertEqual(result.returncode, 2)
+                        self.assertEqual(result.stdout, "")
+                        diagnostic = json.loads(result.stderr)
+                        self.assertEqual(set(diagnostic), {"CODE", "FILE", "FIELD", "MESSAGE"})
+                        self.assertEqual(diagnostic["CODE"], code)
+                        self.assertEqual(diagnostic["FILE"], str(self.shared if layer == "shared" else self.local))
+                        self.assertNotIn("PRIVATE_TEST_SENTINEL", result.stderr)
+                        if expected is None:
+                            expected = diagnostic
+                        self.assertEqual(diagnostic, expected)
+                        self.assertEqual((self.shared.read_bytes(), self.local.read_bytes()), before)
+
     def test_envelope_errors_have_three_command_and_wrapper_parity(self):
         valid = self.policy(self.tier())
         cases = [valid.replace(": v1", ": v2", 1), valid.replace(": v1", ":v1", 1),

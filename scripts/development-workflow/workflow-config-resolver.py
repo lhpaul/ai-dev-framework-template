@@ -2116,8 +2116,6 @@ def read_model_snapshot(path: Path, *, legacy_error: ConfigError | None = None) 
     data, positions = parse_model_mapping(lines[1:end], path)
     if "models" not in data:
         model_error("invalid_envelope", path, "models", "Envelope requires one root models mapping")
-    if set(data) != {"models"}:
-        model_error("unknown_field", path, "models", "Unknown root policy field")
     projection = "\n" * (end + 1) + "\n".join(physical[end + 1:])
     try:
         legacy = parse_yaml_snapshot(projection, path)
@@ -2125,6 +2123,8 @@ def read_model_snapshot(path: Path, *, legacy_error: ConfigError | None = None) 
         model_error("invalid_yaml", path, "models.dsh", "Invalid legacy region after policy envelope")
     if "models" in legacy:
         model_error("invalid_envelope", path, "models", "Legacy region must not supply root models")
+    if set(data) != {"models"}:
+        model_error("unknown_field", path, "models", "Unknown root policy field")
     policy = model_layer(data, path)
     # split with keepends retains the original opener, policy and end bytes.
     envelope = b"".join(raw_bytes.splitlines(keepends=True)[:end + 1])
