@@ -198,18 +198,46 @@ without DSH routing keep their existing behavior.
 
 ## Evidence Record
 
-This documentation amendment specifies future verification only; prior smoke
-evidence for the bare-policy candidate does not prove the amended parser.
+Executed 2026-10-09 against the strict-envelope implementation checkpoint
+`805e0995`, DSH `0.2.0-rc.2`, using temporary workspaces and host overlays.
+Native child request/context events and exact acknowledgements verified actual
+routes; no child self-report or mocked adapter supplied this proof.
 
-Record implementation head, DSH version, suite commands/results, exact planted
-fixture file/line, parent/child ids, requested/effective route and SOURCE for each
-live dispatch, fallback reason, shared-policy digest comparison and any blocker.
-Private file paths and runtime logs are not copied into public audit comments;
-public summaries may contain route ids, version and concise results.
+| Case | Actual route | Resolver source | Result |
+| --- | --- | --- | --- |
+| developer / balanced | bailian-tpp / qwen3.7-plus | committed-tier, balanced | Pass |
+| product-manager / premium | bailian-tpp / qwen3.7-max | committed-tier, premium | Pass |
+| developer after temporary local override | bailian-tpp / glm-5.3 | local-role, no tier | Pass |
+| selection disabled | inherited bailian-tpp / glm-5.3 | requested committed-tier; selection-disabled | Pass, all route fields omitted |
+| exact pair denied | inherited bailian-tpp / glm-5.3 | requested committed-tier; allowlist-denied | Pass, all route fields omitted |
 
-The implementer adds actual execution results here or references durable
-approved evidence with an accurate pass/block status; this authored runbook
-itself makes no claim that the feature smoke has already run.
+The first three children shared parent
+`adf1927-4b726da0-460d-4c0a-a063-dbf26f2917e4`:
+`e023d7b7-d88a-411b-928d-78f44494ad6f`,
+`ddeddb58-e0f4-40f2-ac1a-abe5e423a35c` and
+`39c5c3ba-07e5-4968-876c-25d961cadf1f` respectively. The shared-policy digest
+and unrelated product-manager resolution stayed unchanged after the override.
+Separate fresh sessions verified both host fallback cases. All owned runtimes
+were shut down; no real local YAML/env or checkpoint policy was changed.
+Private evidence retains SOURCE_FILE, complete request fields and runtime
+records; private paths/configuration/logs are not copied into public comments.
+
+The amended matrix exercises validate, model-route, model-routes and the shell
+wrapper with expected rejection codes, exit 2, empty stdout and diagnostic
+parity, including the historical indentless-list blocker. Unactivated controls
+retain legacy semantics, and active commands also pass with Python `-S`.
+Current local checks: routing unit methods 23 pass, resolver assertions 798
+pass, hub-smoke assertions 70 pass, Step7a consistency assertions 25 pass,
+strict legacy-review assertions 149 pass. The implementation PR records the
+final reviewed SHA, final diff-selected regression, CI and risk results.
+
+Planted controls were executed in retained temporary fixtures: removing the
+required model field at line 7 produced incomplete_route/exit 2 and restoring
+it passed; removing the documented activation marker from a copied DSH guide
+made the contract assertion fail and restoring it passed. The PR records exact
+private fixture paths/lines through the authorized local evidence report.
+This record supersedes the old bare-policy smoke; its earlier runtime evidence
+remains historical and is not reused as proof of strict-policy parsing.
 
 ## Troubleshooting and Known Limitations
 

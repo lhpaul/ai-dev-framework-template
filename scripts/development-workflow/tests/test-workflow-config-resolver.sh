@@ -1908,6 +1908,38 @@ run_test "review-effective null local runner state is defined" defined "$(jq -r 
 run_test "review-effective null local runner is not applied" false "$(jq -r '.local_review_override_applied' <<< "$g14_json")"
 rm -f "$review_effective_dir/.ai-dev-workflow.local.yaml"
 
+# Optional DSH routing validation composes at the same repository-context entry.
+dsh_fixture="$(fixture_dir dsh-validation)"
+printf '%s\n' 'mode: single_repo' > "$dsh_fixture/.ai-dev-workflow.yaml"
+dsh_absent="$(python3 "$RESOLVER" validate --repo-root "$dsh_fixture")"
+run_test "absent DSH validation preserves resolve output" \
+  "$(python3 "$RESOLVER" resolve --repo-root "$dsh_fixture")" "$dsh_absent"
+cat > "$dsh_fixture/.ai-dev-workflow.yaml" <<'EOF'
+# adf-models-dsh: v1
+models:
+  dsh:
+    tiers:
+      balanced:
+        provider: fixture-provider
+# adf-models-dsh: end
+mode: single_repo
+EOF
+run_fails_contains "validator rejects incomplete opted-in DSH route" '"CODE": "incomplete_route"' \
+  bash "$VALIDATOR" --repo-root "$dsh_fixture"
+run_fails_contains "workflow context wrapper propagates DSH rejection" '"CODE": "incomplete_route"' \
+  workflow_validate_repository_context "" "$dsh_fixture"
+python3 - "$dsh_fixture/.ai-dev-workflow.yaml" <<'PYFIX'
+from pathlib import Path
+import sys
+p = Path(sys.argv[1])
+p.write_text(p.read_text().replace('        provider: fixture-provider\n',
+                                   '        provider: fixture-provider\n        model: fixture-model\n'))
+PYFIX
+run_test "valid opted-in DSH preserves repository-context output" "$dsh_absent" \
+  "$(bash "$VALIDATOR" --repo-root "$dsh_fixture")"
+run_test "validator resolves corrected DSH route" fixture-model \
+  "$(python3 "$RESOLVER" model-route --runner dsh --role developer --repo-root "$dsh_fixture" --json | jq -r '.MODEL')"
+
 echo ""
 echo "Passed: $PASS_COUNT"
 echo "Failed: $FAIL_COUNT"
