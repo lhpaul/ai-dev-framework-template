@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.48.0] - 2026-10-09
+
+### Added
+
+- **GraphQL budget-aware merging** (#1890): check the projected cost of the
+  complete merge sequence before mutation. Durable sessions retain deferred,
+  queued and interrupted work for verified recovery without duplicate mutations.
+- **DSH per-role model routing** (#1927): optional layered role and tier routes,
+  private overrides, read-only inspection and strict validation. Document child
+  dispatch, visible host-policy fallback and separate headless defaults while
+  preserving legacy behavior until activation.
+
+### Fixed
+
+- **Bash 3.2 array-expansion lint** (#1862): detect both unsafe empty-array
+  expansion patterns in changed shell lines and executable guidance, with safe
+  guard suggestions and an explicit test-corpus allowlist.
+- **Merge cancellation test stability** (#1937): publish the fixture atomically,
+  release its paused child independently and reap the executor on failure while
+  preserving recovery assertions.
+
 ## [0.47.1] - 2026-10-07
 
 ### Fixed
@@ -3288,7 +3309,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `.claude/settings.json` with pre-approved permissions for common git and fetch operations; `.claude/settings.local.json.example` documenting machine-specific overrides for optional integrations
 - `.gitignore` covering local Claude settings, `.env` files, and common system files
 
-[Unreleased]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.47.1...HEAD
+[Unreleased]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.48.0...HEAD
+[0.48.0]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.47.1...v0.48.0
 [0.47.1]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.47.0...v0.47.1
 [0.47.0]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.46.0...v0.47.0
 [0.46.0]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.45.0...v0.46.0
