@@ -93,13 +93,44 @@ changes belong in `.ai-dev-workflow.local.yaml`. The template and local example
 contain fully commented examples and activate no model. This is DSH child
 routing; other runners and headless defaults keep their existing behavior.
 
-YAML anchors, aliases and merge keys are unsupported in `models.dsh`.
-Write explicit block mappings instead: `&` anchors, `*` aliases and `<<` merge
-keys fail closed with `invalid_yaml`, exit 2 and no success route. Their syntax
-is recognized only to activate strict rejection; it is never applied to route
-composition. Those characters inside quoted scalar ids remain ordinary text.
+### Explicit activation and strict format
 
-Use block mappings supported by the existing strict reader. Configure
+Each selected shared/local file opts in independently. The exact line
+`# adf-models-dsh: v1` must be its first physical line, at column zero, UTF-8
+without BOM; close the policy with `# adf-models-dsh: end`. Move existing bare
+`models.dsh` into this envelope explicitly. Without the reserved first-line
+prefix `# adf-models-dsh:`, bare policy and misplaced markers stay inactive
+legacy data and select no route. A malformed reserved opener, unknown version,
+BOM before the opener, missing/repeated close, extra envelope or root `models`
+in the legacy tail fails closed as `invalid_envelope`.
+
+The dependency-free parser accepts block mappings, exactly two ASCII spaces
+per level, known unquoted ASCII keys, one-line strings and `{}` for an empty
+mapping. Bare strings contain only ASCII letters/digits and `_ . / : @ + -`;
+quote identifiers containing spaces or reserved typed tokens. Null (`null` in
+any case or `~`), booleans and signed decimal/exponent numeric tokens are wrong
+types, including `.5`, `1.` and `1e3`; `yes/no/on/off` stay literal strings.
+Single quotes double an embedded quote (`'it''s'`); backslashes are literal.
+Double quotes support only escaped backslash and escaped double quote.
+Comments after values require a separating space; quoted `#` remains literal.
+Printable Unicode is allowed in quotes; controls and NEL/U+2028/U+2029 fail.
+See [spec BR9](../../../specs/developments/20261008075556_dsh-model-routing/1_dsh-model-routing_specs.md#strict-dsh-format-and-activation)
+for the normative grammar and escaping contract.
+
+YAML anchors, aliases and merge keys are unsupported in `models.dsh`.
+Sequences with or without indentation, nonempty flow collections (even valid
+YAML), unclosed delimiters, dangling items/trailing commas, multiline/block
+scalars, tags/directives/document markers and duplicates fail with
+`invalid_yaml`. Quoted `"&x"`, `"*x"` and `"<<"` remain literal strings.
+Lexically valid unknown keys/names fail schema validation. No YAML library,
+fallback parser or heuristic detector is used for this policy.
+
+Everything after the close uses the existing dependency-free legacy reader;
+it may contain legacy lists. `set-local-path` preserves activated local envelope
+and policy bytes, updating only that legacy tail; malformed activated policy
+fails before writing. The main-clone fallback stays read-only.
+
+Configure
 `tiers.economy`, `tiers.balanced`, `tiers.premium` with `provider`, `model`, and
 optional `reasoning_effort`. A `roles` entry uses a canonical role name from
 [Agent Assignments](../agent-model-config.md#agent-assignments-tier-based) and is
@@ -107,6 +138,7 @@ either a supported tier name or a direct route mapping. Effort ids belong to
 the installed adapter; ADF does not define another effort enum.
 
 ```yaml
+# adf-models-dsh: v1
 models:
   dsh:
     tiers:
@@ -119,6 +151,8 @@ models:
     roles:
       developer: balanced
       product-manager: premium
+# adf-models-dsh: end
+# Ordinary legacy configuration follows here.
 ```
 
 Replace the illustrative ids with already working routes; provider/account
@@ -178,9 +212,11 @@ later child dispatch or an atomic transaction across concurrent file edits.
 
 Configured routing rejects unknown roles/tiers/keys, wrong types in either
 layer even if masked, invalid YAML, empty ids, incomplete effective routes and
-dangling winning references. `model-route` and opted-in `validate` report
-structured JSON on stderr with CODE, FILE, FIELD, MESSAGE and exit 2; no success
-route or raw YAML snippet is emitted. Fix policy before dispatch. Absent routing
+dangling winning references. `validate`, `model-route` and `model-routes`
+reuse one reader, one snapshot per selected file and one policy parse per active
+layer, checking shared before local, then composition and query. All three and
+the validation wrapper report the same first policy error as structured JSON on stderr with CODE, FILE, FIELD, MESSAGE and exit 2; no success
+route/context or raw YAML snippet is emitted. Fix policy before dispatch. Inactive routing
 keeps standalone validation's existing grammar/dependency/output behavior.
 
 ### Enable child selection and maintain the allowlist

@@ -351,6 +351,9 @@ merge_budget:
 # Optional DSH child routing; fully commented and inactive by default.
 # Canonical roles/tiers: docs/workflow/development-workflow/agent-model-config.md
 # Replace these illustrative ids with your already working provider/model ids.
+# To activate: remove one outer '# ' from this block and move its opener to
+# the FIRST physical line. Bare models.dsh without the envelope stays inactive.
+# # adf-models-dsh: v1
 # models:
 #   dsh:
 #     tiers:
@@ -363,3 +366,4 @@ merge_budget:
 #     roles:
 #       developer: balanced
 #       product-manager: premium
+# # adf-models-dsh: end

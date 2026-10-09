@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 #
 # Validate shared/local repository context and optional models.dsh routing.
-# Configured routing uses the strict reader and structured safe model diagnostics.
-# With models.dsh absent, legacy repository-context behavior is preserved.
+# First-line DSH envelopes use the shared dependency-free strict policy reader.
+# Without activation, legacy repository-context behavior is preserved.
 #
 # Usage:
 #   scripts/development-workflow/validate-workflow-config.sh [--repo <name>] [--require-local] [--repo-root <path>]

@@ -68,6 +68,9 @@ template:
 
 # Optional private DSH overrides; deep-merge by key and route field.
 # No routing is activated by this commented example.
+# To activate: remove one outer '# ' from this block and move its opener to
+# the FIRST physical line. Bare models.dsh without the envelope stays inactive.
+# # adf-models-dsh: v1
 # models:
 #   dsh:
 #     tiers:
@@ -77,3 +80,4 @@ template:
 #       developer:
 #         provider: YOUR_PROVIDER
 #         model: YOUR_PRIVATE_DEVELOPER_MODEL
+# # adf-models-dsh: end

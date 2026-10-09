@@ -22,14 +22,17 @@ contracts = {
         "Resolve, pass, and record", "selection-disabled", "allowlist-denied",
         "SOURCE_FILE", "agent-default-model", "unique_by([.provider, .model])",
         "modelSelectionSettings: true", "fresh top-level session",
-        "YAML anchors, aliases and merge keys are unsupported"],
+        "YAML anchors, aliases and merge keys are unsupported",
+        "# adf-models-dsh: v1", "# adf-models-dsh: end", "legacy data"],
     "docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md": [
         "Resolve, pass, and record", "selection-disabled", "allowlist-denied",
         "SOURCE/SOURCE_FILE", "frozen", "post-dispatch failure",
-        "YAML anchors, aliases and merge keys are unsupported"],
+        "YAML anchors, aliases and merge keys are unsupported",
+        "# adf-models-dsh: v1", "# adf-models-dsh: end", "legacy data"],
     "docs/workflow/development-workflow/agent-model-config.md": [
         "models.dsh.tiers", "models.dsh.roles", "actual dispatch", "headless default",
-        "YAML anchors, aliases and merge keys are unsupported"],
+        "YAML anchors, aliases and merge keys are unsupported",
+        "# adf-models-dsh: v1", "# adf-models-dsh: end", "legacy data"],
 }
 for path, required in contracts.items():
     text = (root / path).read_text()
@@ -41,6 +44,8 @@ for path in ((".ai-dev-workflow.yaml", ".ai-dev-workflow.local.example.yaml")
     lines = (root / path).read_text().splitlines()
     if not any(line == "# models:" for line in lines):
         raise SystemExit(f"FAIL: {path}: missing commented example")
+    if "# # adf-models-dsh: v1" not in lines or "# # adf-models-dsh: end" not in lines:
+        raise SystemExit(f"FAIL: {path}: missing commented activation envelope")
     if any(line.startswith("models:") for line in lines):
         raise SystemExit(f"FAIL: {path}: routing example must remain inactive")
 print("PASS: DSH dispatch contract mirrors, headless boundary and template-owned examples")

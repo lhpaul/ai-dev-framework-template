@@ -78,10 +78,21 @@ YAML, deep-merged with the selected local override. Follow the schema,
 precedence, operator setup and headless boundary in
 [DSH routing guidance](../integrations/dsh.md#project-role-and-tier-routing).
 
+Activation requires the exact `# adf-models-dsh: v1` first physical line and
+`# adf-models-dsh: end` close in each contributing file. Bare policy without
+that opener remains inactive legacy data. Inside, use the documented strict
+subset: two-space block mappings, known keys, one-line quoted/bare strings and
+`{}` only. Lists with or without indentation, nonempty flow collections,
+multiline values, tags/directives, duplicates and wrong types fail closed.
+`validate`, `model-route` and `model-routes` share the same policy reading path
+and first CODE/FILE/FIELD/MESSAGE error, exit 2 and empty stdout. The legacy tail
+and unactivated files retain the existing dependency-free reading contract.
+See the [format and activation guide](../integrations/dsh.md#explicit-activation-and-strict-format).
+
 YAML anchors, aliases and merge keys are unsupported in `models.dsh`. Use
 explicit block mappings: reject these features with a clear structured
-`invalid_yaml` error before dispatch. Syntax recognition only activates
-rejection; it never expands YAML references or merges into a route. Quoted
+`invalid_yaml` error before dispatch. The activated strict parser rejects these operators; it never expands YAML
+references or merges into a route. Quoted
 scalar ids containing `&`, `*` or `<<` remain ordinary text.
 
 <!-- workflow-shell-contract: bash-zsh -->
