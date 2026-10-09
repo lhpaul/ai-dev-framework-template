@@ -4,6 +4,7 @@ import importlib.util
 import json
 import os
 import re
+import random
 import shlex
 import subprocess
 import sys
@@ -24,7 +25,7 @@ class ModelRoutingTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
-        self.root = Path(self.temp.name)
+        self.root = Path(self.temp.name).resolve()
         self.shared = self.root / ".ai-dev-workflow.yaml"
         self.local = self.root / ".ai-dev-workflow.local.yaml"
         self.env = patch.dict(os.environ, {"WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT": ""})
@@ -35,13 +36,18 @@ class ModelRoutingTests(unittest.TestCase):
         self.shared.write_text(shared)
         self.local.write_text(local)
 
+    def envelope(self, text):
+        if text.startswith(resolver.MODEL_ENVELOPE_PREFIX):
+            return text
+        return resolver.MODEL_ENVELOPE_OPEN + "\n" + text + resolver.MODEL_ENVELOPE_END + "\n"
+
     def policy(self, tiers="", roles=""):
         text = "models:\n  dsh:\n"
         if tiers:
             text += "    tiers:\n" + tiers
         if roles:
             text += "    roles:\n" + roles
-        return text
+        return self.envelope(text)
 
     def tier(self, tier="balanced", provider="base", model="shared", effort=""):
         return (f"      {tier}:\n        provider: {provider}\n        model: {model}\n"
@@ -51,7 +57,7 @@ class ModelRoutingTests(unittest.TestCase):
         return resolver.model_resolution(resolver.load_model_policy(self.root), role, tier)
 
     def error(self, text, code=None, local=""):
-        self.write(text, local)
+        self.write(self.envelope(text), self.envelope(local) if local else "")
         with self.assertRaises(resolver.ModelConfigError) as ctx:
             self.route()
         if code:
@@ -171,7 +177,7 @@ class ModelRoutingTests(unittest.TestCase):
         self.write(self.policy("      balanced:\n        provider: p\n        model: 'literal &anchor *alias <<: text'\n"))
         self.assertEqual(self.route()["MODEL"], "literal &anchor *alias <<: text")
         for escaped in ("\\n", "\\r", "\\t", "\\u0085", "\\u2028"):
-            self.error(self.policy(f'      balanced:\n        provider: p\n        model: "m{escaped}x"\n'), "invalid_value")
+            self.error(self.policy(f'      balanced:\n        provider: p\n        model: "m{escaped}x"\n'), "invalid_yaml")
 
     def test_strict_yaml_and_safe_parser_diagnostics(self):
         cases = [self.policy(self.tier() + self.tier()),
@@ -189,7 +195,7 @@ class ModelRoutingTests(unittest.TestCase):
                 result = self.cli("model-route", "--runner", "dsh", "--role", "developer", "--json")
                 self.assertEqual(result.returncode, 2)
                 self.assertNotIn("PRIVATE_TEST_SENTINEL", result.stdout + result.stderr)
-                self.assertIn("anchors (&), aliases (*) and merge keys (<<) are not supported", diagnostic["MESSAGE"])
+                self.assertIn("BR9 block mappings", diagnostic["MESSAGE"])
                 for command in (("model-routes", "--runner", "dsh", "--json"), ("validate", "--json")):
                     parity = self.cli(*command)
                     self.assertEqual(parity.returncode, 2)
@@ -197,9 +203,11 @@ class ModelRoutingTests(unittest.TestCase):
                     self.assertEqual(parity.stdout, "")
 
     def test_reader_consistent_line_breaks(self):
-        for newline in ("\r\n", "\u0085", "\u2028", "\u2029"):
+        for newline in ("\n", "\r\n"):
             self.write(self.policy(self.tier()).replace("\n", newline))
             self.assertEqual(self.route()["MODEL"], "shared")
+        for char in ("\u0085", "\u2028", "\u2029", "\t", "\x00"):
+            self.error(self.policy(self.tier(model="'id" + char + "x'")), "invalid_yaml")
 
     def test_local_discovery_checkout_main_clone_and_override_root(self):
         main = self.root / "main"
@@ -239,126 +247,164 @@ class ModelRoutingTests(unittest.TestCase):
         payload = json.loads(self.cli("model-route", "--runner", "dsh", "--role", "developer", "--json").stdout)
         self.assertEqual(shell, payload)
 
-    def test_validate_parity_and_malformed_opt_in_boundary(self):
-        for text in (self.policy("      balanced:\n        provider: p\n"),
-                     "'models':\n  dsh: {}\n", '"models":\n  "dsh": {}\n',
-                     '"\\u006dodels":\n  dsh: {}\n',
-                     '"\\x6dodels":\n  dsh: {}\n', '"\\U0000006dodels":\n  dsh: {}\n',
-                     'models: {"\\x64sh": {}}\n',
-                     "models:\n   dsh: {}\n", " models:\n   dsh: {}\n",
-                     "models\n  dsh: {}\n", "models:\n  dsh [broken\n",
-                     "models: {dsh: {tiers: {}}}\n",
-                     "mode: single_repo\nmodels:\n  - dsh:\n      roles:\n        developer: balanced\n",
-                     "models:\n  - {dsh: {}}\n",
-                     "models: [{dsh: {}}]\n",
-                     "models: [{dsh: {}}\n",
-                     "models: [other, {dsh: {}}]\n",
-                     "models: [[{dsh: {}}]]\n",
-                     "policy: &policy [{dsh: {}}]\nmodels: *policy\n",
-                     "policy: &policy\n  - dsh: {}\nmodels: *policy\n",
-                     "policy: &policy [{dsh: {}}]\nmodels: {<<: *policy}\n",
-                     "policy: &policy\n  - dsh: {}\nmodels:\n  <<: *policy\n",
-                     "{mode: single_repo, models: {dsh: {}}}\n",
-                     "mode: single_repo\nmodels: dsh: {}\n",
-                     "mode: single_repo\nmodels: dsh [broken\n",
-                     "models: !!map {dsh: {tiers: {balanced: {provider: p}}}}\n",
-                     "models: !<tag:example.org,2002:map> {dsh: {}}\n",
-                     "models: &policy {dsh: {}}\n",
-                     "models: &policy{dsh: {tiers: {balanced: {provider: p}}}}\n",
-                     "mode: single_repo\nfirst: &route {codex: {}}\nsecond: &route {dsh: {}}\nmodels: *route\n",
-                     "first: &route {dsh: {}}\nsecond: &route {other: {}}\nmodels: *route\n",
-                     "holder: {first: &route {codex: {}}, second: &route {dsh: {}}}\nmodels: *route\n",
-                     "route: &route {dsh: {}}\nmodels: {<<: *route}\n",
-                     "base: &base {dsh: {}}\nroute: &route {<<: *base}\nmodels: *route\n",
-                     "base: &base {dsh: {}}\nmodels:\n  <<: *base\n",
-                     "base: &base {dsh: {}}\nmodels: {<<: [*base]}\n",
-                     "policy: &policy {dsh: {}}\nmodels: *policy\n",
-                     "policy: unrelated\nactual: &policy {dsh: {}}\nmodels: *policy\n",
-                     'decoy: "some &policy text"\nactual: &policy {dsh: {}}\nmodels: *policy\n',
-                     'decoy: some &policy text\nactual: {inner: &policy {dsh: {}}}\nmodels: *policy\n',
-                     'actual: {inner:\n  &policy {dsh: {}}}\nmodels: *policy\n',
-                     "policy: &policy\n  dsh: {}\nmodels: *policy\n",
-                     "policy:\n  dsh: {}\nmodels: *policy\n",
-                     self.policy(self.tier()).replace("\n", "\u2028")):
-            with self.subTest(text=text):
-                self.write(text)
-                route = self.cli("model-route", "--runner", "dsh", "--role", "developer", "--json")
-                validate = self.cli("validate", "--json")
-                self.assertEqual(validate.returncode, route.returncode, validate.stderr)
-                if route.returncode:
-                    self.assertEqual(json.loads(validate.stderr), json.loads(route.stderr))
-                else:
-                    self.assertEqual(json.loads(validate.stdout)["WORKFLOW_MODE"], "single_repo")
-        self.write('models:\n  dsh:\n    tiers:\n      balanced:\n        model: [PRIVATE_TEST_SENTINEL\n')
-        result = self.cli("validate")
-        self.assertNotIn("PRIVATE_TEST_SENTINEL", result.stderr + result.stdout)
-        self.assertEqual(json.loads(result.stderr)["CODE"], "invalid_yaml")
+    def assert_parity_error(self, text, code, local=""):
+        self.write(text, local)
+        commands = (("validate", "--json"),
+                    ("model-route", "--runner", "dsh", "--role", "developer", "--json"),
+                    ("model-routes", "--runner", "dsh", "--json"))
+        results = [self.cli(*command) for command in commands]
+        results.append(subprocess.run(["bash", str(ROOT / "scripts/development-workflow/validate-workflow-config.sh"),
+                                       "--repo-root", str(self.root)],
+                                      capture_output=True, text=True, env=dict(os.environ)))
+        expected = None
+        for result in results:
+            self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+            self.assertEqual(result.stdout, "")
+            diagnostic = json.loads(result.stderr)
+            self.assertEqual(set(diagnostic), {"CODE", "FILE", "FIELD", "MESSAGE"})
+            self.assertEqual(diagnostic["CODE"], code)
+            self.assertEqual(diagnostic["FILE"], str((self.shared if text else self.local).resolve()))
+            self.assertNotIn("PRIVATE_TEST_SENTINEL", result.stderr)
+            if expected is None:
+                expected = diagnostic
+            self.assertEqual(diagnostic, expected)
+        return expected
 
     def test_declared_malformed_corpus_rejects_with_identical_diagnostics(self):
-        cases = (
-            ("models:\n  - other: {}\n    dsh: null\n", "invalid_type"),
-            ("models:\n  - other: {}\n    dsh: {}\n", "invalid_type"),
-            ("models: [{dsh: {}}\n", "invalid_yaml"),
-            ("models: {dsh: {}\n", "invalid_yaml"),
-            ("models: [{dsh: {}},\n", "invalid_yaml"),
-            ("models: {dsh: {},\n", "invalid_yaml"),
-            ("models:\n  - dsh: {}\n  -\n", "invalid_type"),
-            ("models: [{dsh: {}},]\n", "invalid_yaml"),
-            ("models: {dsh: {},}\n", "invalid_yaml"),
-            ("models:\n  dsh: &policy {}\n", "invalid_yaml"),
-            ("policy: &policy {dsh: {}}\nmodels: *policy\n", "invalid_yaml"),
-            ("policy: &policy\n  dsh: {}\nmodels:\n  <<: *policy\n", "invalid_yaml"),
-            ("models:\n  dsh:\n    <<: {}\n", "invalid_yaml"),
-            ("models:\n  dsh: null\n", "invalid_type"),
-            ("models:\n  dsh: []\n", "invalid_type"),
-            ("models:\n  dsh: true\n", "invalid_type"),
-            ("models:\n  dsh:\n    roles: []\n", "invalid_type"),
-        )
-        for text, code in cases:
-            with self.subTest(text=text):
-                self.write(text)
-                route = self.cli("model-route", "--runner", "dsh", "--role", "developer", "--json")
-                self.assertEqual(route.returncode, 2, route.stdout + route.stderr)
-                self.assertEqual(route.stdout, "")
-                diagnostic = json.loads(route.stderr)
-                self.assertEqual(diagnostic["CODE"], code)
-                for command in (("validate", "--json"), ("model-routes", "--runner", "dsh", "--json")):
-                    result = self.cli(*command)
-                    self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
-                    self.assertEqual(result.stdout, "")
-                    self.assertEqual(json.loads(result.stderr), diagnostic)
+        syntax = [
+            "models:\n- dsh: {}\n", "models:\n  - dsh: {}\n",
+            "models:\n  - other: {}\n    dsh: null\n", "models:\n  - dsh: {}\n  -\n",
+            "models: [{dsh: {}}\n", "models: {dsh: {}\n",
+            "models: [{dsh: {}},\n", "models: {dsh: {},\n",
+            "models: [{dsh: {}},]\n", "models: {dsh: {},}\n",
+            "models: dsh: {}\n", "models: &x{}\n", "models: [ ]\n",
+            "models:\n  dsh: &policy {}\n", "models:\n  dsh: *policy\n",
+            "models:\n  dsh:\n    <<: {}\n", "models:\n  dsh: !tag {}\n",
+            "---\nmodels: {}\n", "%YAML 1.2\nmodels: {}\n",
+            "models:\n  dsh: |\n    PRIVATE_TEST_SENTINEL\n",
+            "models:\n  dsh: >\n    text\n", "models:\n   dsh: {}\n",
+            "models:\n    dsh: {}\n", "models:\n\tdsh: {}\n",
+            "models:\n  dsh: {}\n  dsh: {}\n", "'models': {}\n",
+            self.policy(self.tier(model='"unterminated')),
+            self.policy(self.tier(model='"bad\\n"')),
+            self.policy(self.tier(model="'ok'junk")),
+            self.policy(self.tier(model="id#no-space")),
+            self.policy(self.tier(model="'one\ntwo'")),
+            self.policy(self.tier(model='"PRIVATE_TEST_SENTINEL\\u0000"')),
+        ]
+        typed = ["models: null\n", "models:\n  dsh: null\n", "models:\n  dsh: true\n",
+                 "models:\n  dsh: plain\n", "models:\n  dsh:\n    tiers: 1\n",
+                 "models:\n  dsh:\n    roles: false\n", "models:\n  dsh:\n",
+                 self.policy("      balanced: null\n"),
+                 *[self.policy(self.tier(model=x)) for x in ("NULL", "~", "TRUE", "False", "12", "-1", ".5", "1.", "1e3", "+.5e-2")]]
+        schema = [(self.policy("      ultra: {}\n"), "unknown_name"),
+                  (self.policy(roles="      Developer: balanced\n"), "unknown_name"),
+                  (self.policy(self.tier() + "        extra: value\n"), "unknown_field"),
+                  ("models:\n  other: {}\n", "unknown_field"),
+                  (self.policy(self.tier(model="''")), "invalid_value"),
+                  (self.policy("      balanced: {}\n"), "incomplete_route"),
+                  (self.policy(roles="      developer: premium\n"), "dangling_reference")]
+        for raw, code in [(x, "invalid_yaml") for x in syntax] + [(x, "invalid_type") for x in typed] + schema:
+            active = self.envelope(raw)
+            with self.subTest(raw=raw, layer="shared"):
+                self.assert_parity_error(active, code)
+            with self.subTest(raw=raw, layer="local"):
+                self.assert_parity_error("", code, active)
+        # Retain the historical shapes without guessing activation from their text.
+        for raw in syntax[:16] + typed[:6]:
+            with self.subTest(inactive=raw):
+                self.write(raw)
+                legacy = self.cli("resolve", "--json")
+                validation = self.cli("validate", "--json")
+                self.assertEqual((validation.returncode, validation.stdout, validation.stderr),
+                                 (legacy.returncode, legacy.stdout, legacy.stderr))
 
-    def test_commands_share_one_policy_loader_and_one_strict_parse_per_layer(self):
-        self.write(self.policy(self.tier()), self.policy(self.tier(model="local")))
-        for command in (("validate", "--json"),
-                        ("model-route", "--runner", "dsh", "--role", "developer", "--json"),
-                        ("model-routes", "--runner", "dsh", "--json")):
-            args = resolver.build_parser().parse_args([*command, "--repo-root", str(self.root)])
-            with self.subTest(command=command), \
-                    patch.object(resolver, "load_model_policy", wraps=resolver.load_model_policy) as loader, \
-                    patch.object(resolver, "parse_review_yaml", wraps=resolver.parse_review_yaml) as strict, \
-                    patch.object(resolver, "routing_declared", wraps=resolver.routing_declared) as detection, \
-                    patch.object(resolver, "print_context"), patch("builtins.print"):
-                self.assertEqual(args.func(args), 0)
-                loader.assert_called_once_with(self.root.resolve())
-                self.assertEqual(strict.call_count, 2)
-                self.assertEqual(detection.call_count, 1)
-                detection.assert_called_once_with(self.shared.read_text())
-                self.assertEqual([call.args[0] for call in strict.call_args_list],
-                                 [self.shared.resolve(), self.local.resolve()])
-                self.assertTrue(all("raw" in call.kwargs for call in strict.call_args_list))
-        self.write("mode: single_repo\n", "")
-        for command in (("validate", "--json"),
-                        ("model-route", "--runner", "dsh", "--role", "developer", "--json"),
-                        ("model-routes", "--runner", "dsh", "--json")):
-            args = resolver.build_parser().parse_args([*command, "--repo-root", str(self.root)])
-            with self.subTest(absent_command=command), \
-                    patch.object(resolver, "load_model_policy", wraps=resolver.load_model_policy) as loader, \
-                    patch.object(resolver, "parse_review_yaml", side_effect=AssertionError("Unexpected strict parse")) as strict, \
-                    patch.object(resolver, "print_context"), patch("builtins.print"):
-                self.assertEqual(args.func(args), 0)
-                loader.assert_called_once_with(self.root.resolve())
-                strict.assert_not_called()
+    def test_envelope_errors_have_three_command_and_wrapper_parity(self):
+        valid = self.policy(self.tier())
+        cases = [valid.replace(": v1", ": v2", 1), valid.replace(": v1", ":v1", 1),
+                 "\ufeff" + valid, valid.replace(resolver.MODEL_ENVELOPE_END, ""),
+                 valid + resolver.MODEL_ENVELOPE_END + "\n", valid + valid,
+                 valid + "models: {}\n", resolver.MODEL_ENVELOPE_END + "\nmodels: {}\n"]
+        for text in cases:
+            with self.subTest(text=text):
+                self.assert_parity_error(text, "invalid_envelope")
+        self.assert_parity_error(valid + " PRIVATE_TEST_SENTINEL\n", "invalid_yaml")
+        self.shared.write_bytes((resolver.MODEL_ENVELOPE_OPEN + "\nmodels: {}\n").encode() + b"\xff")
+        for command in (("validate",), ("model-route", "--runner", "dsh", "--role", "developer"),
+                        ("model-routes", "--runner", "dsh")):
+            result = self.cli(*command)
+            self.assertEqual(json.loads(result.stderr)["CODE"], "invalid_yaml")
+
+    def test_commands_share_one_policy_loader_snapshot_and_parse_per_layer(self):
+        commands = (("validate", "--json"),
+                    ("model-route", "--runner", "dsh", "--role", "developer", "--json"),
+                    ("model-routes", "--runner", "dsh", "--json"))
+        for active in (False, True):
+            self.write(self.policy(self.tier()) if active else "mode: single_repo\n",
+                       self.policy(self.tier(model="local")) if active else "")
+            for command in commands:
+                args = resolver.build_parser().parse_args([*command, "--repo-root", str(self.root)])
+                original_read = Path.read_bytes
+                reads = []
+                def observed(path):
+                    reads.append(path)
+                    return original_read(path)
+                with self.subTest(active=active, command=command), \
+                        patch.object(resolver, "load_model_policy", wraps=resolver.load_model_policy) as loader, \
+                        patch.object(resolver, "parse_model_mapping", wraps=resolver.parse_model_mapping) as parser, \
+                        patch.object(resolver, "parse_review_yaml", side_effect=AssertionError("YAML dependency used")), \
+                        patch.object(Path, "read_bytes", observed), patch("builtins.print"):
+                    self.assertEqual(args.func(args), 0)
+                    loader.assert_called_once_with(self.root.resolve())
+                    self.assertEqual(parser.call_count, 2 if active else 0)
+                    self.assertEqual(reads, [self.shared.resolve(), self.local.resolve()])
+                    policy = loader.return_value
+        self.write(self.policy(self.tier()))
+        policy = resolver.load_model_policy(self.root)
+        with self.assertRaises(TypeError):
+            policy.effective["tiers"]["balanced"]["model"] = "changed"
+
+    def test_defined_quotes_types_comments_and_bounded_generative_lexer(self):
+        cases = [("'it''s'", "it's"), (r'"a\\b\"c"', 'a\\b"c'),
+                 ("'literal\\n'", "literal\\n"), ("'&x *x << # literal'", "&x *x << # literal"),
+                 ("'雪'", "雪"), ('"null"', "null"), ("'12'", "12"),
+                 *[(x, x) for x in ("yes", "no", "on", "off", "p/m:v@tag+id-1")]]
+        for value, expected in cases:
+            with self.subTest(value=value):
+                self.write(self.policy(self.tier(model=value + " # comment")))
+                self.assertEqual(self.route()["MODEL"], expected)
+        for empty in ("models: {}\n", "models:\n  dsh: {}\n",
+                      "models:\n  dsh:\n    tiers: {}\n    roles: {}\n"):
+            self.write(self.envelope(empty))
+            self.assertEqual(self.route()["SOURCE"], "inherited")
+        rng = random.Random(1927)
+        for index in range(40):
+            value = "".join(rng.choice("ab #&*<>雪'\\") for _ in range(12))
+            encoded = "'" + value.replace("'", "''") + "'"
+            with self.subTest(index=index):
+                self.write(self.policy(self.tier(model=encoded)))
+                self.assertEqual(self.route()["MODEL"], value)
+                self.error(self.policy(self.tier(model=encoded + rng.choice((",", "]", "}", "x")))), "invalid_yaml")
+        # Invalid query cannot mask malformed selected policy.
+        self.write(self.envelope("models:\n- dsh: {}\n"))
+        self.assertEqual(json.loads(self.cli("model-route", "--runner", "dsh", "--role", "Unknown").stderr)["CODE"], "invalid_yaml")
+
+    def test_set_local_path_preserves_active_bytes_and_rejects_before_write(self):
+        policy = self.policy(self.tier(model="local")).replace("\n", "\r\n")
+        tail = "product_repos:\n  - name: app\n    local_path: before\n"
+        self.write("mode: workflow_hub\nworkflow_hub:\n  product_repos:\n    - name: app\n      github_repo: example/app\n", policy + tail)
+        before = self.route()
+        result = self.cli("set-local-path", "--repo", "app", "--local-path", str(self.root / "after"))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(self.local.read_bytes().startswith(policy.encode()))
+        self.assertEqual(self.route(), before)
+        self.assertIn("local_path: after", self.local.read_text())
+        for raw in ("models:\n- dsh: {}\n", "models:\n  dsh: null\n"):
+            self.local.write_text(self.envelope(raw) + tail)
+            before_bytes = self.local.read_bytes()
+            result = self.cli("set-local-path", "--repo", "app", "--local-path", "after")
+            self.assertEqual(result.returncode, 2)
+            self.assertEqual(self.local.read_bytes(), before_bytes)
 
     def test_opted_in_discovery_error_parity_preserves_absent_legacy(self):
         missing = self.root / "PRIVATE_TEST_SENTINEL_missing"
@@ -413,8 +459,7 @@ class ModelRoutingTests(unittest.TestCase):
         self.write(self.policy(self.tier()))
         opted_in = subprocess.run([sys.executable, "-S", str(SCRIPT), "validate", "--repo-root", str(self.root)],
                                  capture_output=True, text=True, env=dict(os.environ, WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT=""))
-        self.assertEqual(opted_in.returncode, 2)
-        self.assertEqual(json.loads(opted_in.stderr)["CODE"], "dependency_missing")
+        self.assertEqual(opted_in.returncode, 0, opted_in.stderr)
 
     def test_role_catalogue_matches_canonical_table(self):
         text = (ROOT / "docs/workflow/development-workflow/agent-model-config.md").read_text()

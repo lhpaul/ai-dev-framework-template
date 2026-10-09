@@ -17,6 +17,9 @@ import os
 import re
 import shlex
 import sys
+from collections import namedtuple
+from collections.abc import Mapping
+from types import MappingProxyType
 from pathlib import Path
 from typing import Any
 
@@ -92,8 +95,13 @@ def preprocess_yaml(path: Path) -> list[tuple[int, str, int]]:
     except OSError as exc:
         raise ConfigError(f"{path}: could not read config: {exc}") from exc
 
+    return preprocess_yaml_snapshot("\n".join(raw_lines), path)
+
+
+def preprocess_yaml_snapshot(raw: str, path: Path) -> list[tuple[int, str, int]]:
+    """Default legacy preprocessing on an already selected snapshot."""
     lines: list[tuple[int, str, int]] = []
-    for line_no, raw in enumerate(raw_lines, start=1):
+    for line_no, raw in enumerate(raw.splitlines(), start=1):
         if "\t" in raw[: len(raw) - len(raw.lstrip(" \t"))]:
             raise ConfigError(f"{path}:{line_no}: tabs are not supported for indentation")
         stripped_comment = strip_inline_comment(raw)
@@ -376,7 +384,16 @@ def parse_yaml_subset(path: Path, *, preserve_empty_values: bool = False) -> dic
         return {}
     if preserve_empty_values:
         return parse_review_yaml(path)
-    lines = preprocess_yaml(path)
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise ConfigError(f"{path}: could not read config: {exc}") from exc
+    return parse_yaml_snapshot(raw, path)
+
+
+def parse_yaml_snapshot(raw: str, path: Path) -> dict[str, Any]:
+    """Dependency-free legacy default; keep strict review consumers separate."""
+    lines = preprocess_yaml_snapshot(raw, path)
     if not lines:
         return {}
     if lines[0][0] != 0:
@@ -878,7 +895,8 @@ def set_local_product_repo_path(repo_root: Path, repo_name: str, local_path_valu
     # relative path would resolve incorrectly whenever repo_root and the main
     # clone are not the same filesystem depth apart from the target path.
     local_path = repo_root / LOCAL_CONFIG_NAME
-    local = parse_yaml_subset(local_path)
+    snapshot = read_model_snapshot(local_path)
+    local = snapshot.legacy
     repos = as_list(local.get("product_repos"), local_path, "product_repos")
     updated = False
     match_count = 0
@@ -904,7 +922,11 @@ def set_local_product_repo_path(repo_root: Path, repo_name: str, local_path_valu
         new_repos.append({"name": repo_name, "local_path": normalized_path})
     local["product_repos"] = new_repos
 
-    local_path.write_text("\n".join(dump_yaml_subset(local)) + "\n", encoding="utf-8")
+    tail = ("\n".join(dump_yaml_subset(local)) + "\n").encode("utf-8")
+    envelope = snapshot.envelope
+    if envelope and not envelope.endswith(b"\n"):
+        envelope += b"\n"
+    local_path.write_bytes(envelope + tail)
     return local_path
 
 
@@ -1054,9 +1076,9 @@ def resolve_auth_context(args: argparse.Namespace) -> dict[str, str]:
     return context
 
 
-def resolve_context(args: argparse.Namespace) -> dict[str, str]:
+def resolve_context(args: argparse.Namespace, configs: tuple[Any, ...] | None = None) -> dict[str, str]:
     repo_root = repo_root_from_args(args.repo_root)
-    shared, local, shared_path, local_path = load_configs(repo_root)
+    shared, local, shared_path, local_path = configs if configs is not None else load_configs(repo_root)
     mode = mode_from_shared(shared, shared_path)
     context: dict[str, str] = {
         "WORKFLOW_MODE": mode,
@@ -1843,6 +1865,8 @@ def model_layer(data: dict[str, Any], path: Path) -> dict[str, Any]:
     models = data["models"]
     if not isinstance(models, dict):
         model_error("invalid_type", path, "models", "Expected a mapping")
+    if set(models) - {"dsh"}:
+        model_error("unknown_field", path, "models", "Unknown model policy field")
     if "dsh" not in models:
         return {}
     policy = models["dsh"]
@@ -1868,7 +1892,9 @@ def model_layer(data: dict[str, Any], path: Path) -> dict[str, Any]:
             if set(value) - set(DSH_ROUTE_FIELDS):
                 model_error("unknown_field", path, field, "Unknown route field")
             for key, scalar in value.items():
-                if not isinstance(scalar, str) or not scalar.strip():
+                if not isinstance(scalar, str):
+                    model_error("invalid_type", path, f"{field}.{key}", "Expected a string")
+                if not scalar.strip():
                     model_error("invalid_value", path, f"{field}.{key}", "Expected a nonblank string")
                 if any(ord(char) < 32 or 127 <= ord(char) <= 159 or char in "\u2028\u2029" for char in scalar):
                     model_error("invalid_value", path, f"{field}.{key}", "Control characters are not permitted")
@@ -1881,14 +1907,14 @@ def compose_model_maps(shared: dict[str, Any], local: dict[str, Any]) -> dict[st
     for key in sorted(shared.keys() | local.keys()):
         if key in local:
             value = local[key]
-            if isinstance(value, dict):
+            if isinstance(value, Mapping):
                 base = shared.get(key, {})
-                result[key] = compose_model_maps(base if isinstance(base, dict) else {}, value)
+                result[key] = compose_model_maps(base if isinstance(base, Mapping) else {}, value)
             else:
                 result[key] = value
         else:
             value = shared[key]
-            result[key] = compose_model_maps(value, {}) if isinstance(value, dict) else value
+            result[key] = compose_model_maps(value, {}) if isinstance(value, Mapping) else value
     return result
 
 
@@ -1900,62 +1926,174 @@ def model_entry_source(kind: str, name: str, shared: dict[str, Any], local: dict
     # Empty map-over-map overrides contribute no fields. A declared empty
     # map replacing a reference (or creating an entry) still owns its error.
     contributes = name in local_entries and (
-        bool(local_entry) or not isinstance(shared_entry, dict)
+        bool(local_entry) or not isinstance(shared_entry, Mapping)
     )
     suffix = "role" if kind == "roles" else "tier"
     return (f"local-{suffix}", local_path) if contributes else (f"committed-{suffix}", shared_path)
 
 
-def load_model_policy(repo_root: Path) -> tuple[Any, ...]:
-    """Own the routing read, opt-in boundary and strict parse for every caller.
+MODEL_ENVELOPE_PREFIX = "# adf-models-dsh:"
+MODEL_ENVELOPE_OPEN = "# adf-models-dsh: v1"
+MODEL_ENVELOPE_END = "# adf-models-dsh: end"
+ModelSnapshot = namedtuple("ModelSnapshot", "policy legacy envelope")
+ModelPolicy = namedtuple("ModelPolicy", "effective shared local shared_path local_path configs")
 
-    With no declared DSH policy, return inheritance without importing PyYAML
-    or changing legacy repository-context grammar. Once either selected layer
-    declares DSH, both layers use the same strict reader and safe diagnostics.
-    """
+
+def freeze_model_mapping(value: Any) -> Any:
+    if isinstance(value, dict):
+        return MappingProxyType({key: freeze_model_mapping(item) for key, item in value.items()})
+    return value
+
+
+def model_syntax_error(path: Path, line: int) -> None:
+    model_error("invalid_yaml", path, "models.dsh",
+                f"Unsupported strict mapping syntax at line {line}; use BR9 block mappings")
+
+
+def model_scalar(text: str, path: Path, line: int) -> Any:
+    """Consume one BR9 scalar, including its entire suffix/comment."""
+    text = text.lstrip(" ")
+    if not text or text.startswith("#"):
+        return None  # a block header; children must establish its mapping
+    if text[0] in "\"'":
+        quote, index, result = text[0], 1, []
+        while index < len(text):
+            char = text[index]
+            if char == quote:
+                if quote == "'" and index + 1 < len(text) and text[index + 1] == "'":
+                    result.append("'"); index += 2; continue
+                index += 1
+                break
+            if char == "\\" and quote == '"':
+                index += 1
+                if index >= len(text) or text[index] not in ('"', "\\"):
+                    model_syntax_error(path, line)
+                char = text[index]
+            result.append(char)
+            index += 1
+        else:
+            model_syntax_error(path, line)
+        suffix = text[index:]
+        if suffix and not (suffix.startswith(" ") and
+                           (not suffix.strip(" ") or suffix.lstrip(" ").startswith("#"))):
+            model_syntax_error(path, line)
+        return "".join(result)
+    token, separator, suffix = text.partition(" ")
+    if separator and suffix.strip(" ") and not suffix.lstrip(" ").startswith("#"):
+        model_syntax_error(path, line)
+    if token == "{}":
+        return {}
+    if token.lower() == "null" or token == "~":
+        return None
+    if token.lower() in ("true", "false"):
+        return token.lower() == "true"
+    if re.fullmatch(r"[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?", token):
+        return 0  # recognized source type; never coerce numeric route ids
+    if not re.fullmatch(r"[A-Za-z0-9_./:@+\-]+", token):
+        model_syntax_error(path, line)
+    return token
+
+
+def parse_model_mapping(lines: list[str], path: Path) -> dict[str, Any]:
+    """Finite mapping stack: no sequence/flow/reference grammar or recovery."""
+    root: dict[str, Any] = {}
+    stack = [(0, root)]
+    pending = None
+    for line, raw in enumerate(lines, start=2):
+        if any(ord(c) < 32 or 127 <= ord(c) <= 159 or c in "\u2028\u2029" for c in raw):
+            model_syntax_error(path, line)
+        if not raw.strip(" ") or raw.lstrip(" ").startswith("#"):
+            continue
+        indent = len(raw) - len(raw.lstrip(" "))
+        if indent % 2:
+            model_syntax_error(path, line)
+        if indent > stack[-1][0]:
+            if indent != stack[-1][0] + 2 or pending is None:
+                model_syntax_error(path, line)
+            parent, key = pending
+            child: dict[str, Any] = {}
+            parent[key] = child
+            stack.append((indent, child))
+        else:
+            while indent < stack[-1][0]:
+                stack.pop()
+            if indent != stack[-1][0]:
+                model_syntax_error(path, line)
+        match = re.fullmatch(r"([A-Za-z_][A-Za-z0-9_-]*):(?: (.*))?", raw[indent:])
+        if not match:
+            model_syntax_error(path, line)
+        key, text = match[1], match[2] or ""
+        mapping = stack[-1][1]
+        if key in mapping:
+            model_syntax_error(path, line)
+        mapping[key] = model_scalar(text, path, line)
+        # Only an absent value opens a block, never an explicit null or {}.
+        pending = (mapping, key) if not text.strip(" ") or text.lstrip(" ").startswith("#") else None
+    return root
+
+
+def read_model_snapshot(path: Path) -> ModelSnapshot:
+    """One byte read; activation is exclusively a reserved first physical line."""
+    if not path.exists():
+        return ModelSnapshot({}, {}, b"")
+    try:
+        raw_bytes = path.read_bytes()
+    except OSError as exc:
+        raise ConfigError(f"{path}: could not read config: {exc}") from exc
+    first_bytes = raw_bytes.split(b"\n", 1)[0].rstrip(b"\r")
+    active = first_bytes.startswith(MODEL_ENVELOPE_PREFIX.encode())
+    bom_active = first_bytes.startswith(b"\xef\xbb\xbf" + MODEL_ENVELOPE_PREFIX.encode())
+    if bom_active:
+        model_error("invalid_envelope", path, "models", "Opening marker must be UTF-8 without BOM")
+    try:
+        raw = raw_bytes.decode("utf-8")
+    except UnicodeError:
+        if active:
+            model_error("invalid_yaml", path, "models.dsh", "Active configuration must be UTF-8")
+        raise
+    if not active:
+        return ModelSnapshot({}, parse_yaml_snapshot(raw, path), b"")
+    # Physical lines, not str.splitlines: Unicode separators are grammar errors.
+    physical = raw.split("\n")
+    lines = [line[:-1] if line.endswith("\r") else line for line in physical]
+    if lines[0] != MODEL_ENVELOPE_OPEN:
+        model_error("invalid_envelope", path, "models", "Expected exact v1 opening marker on first line")
+    ends = [index for index, line in enumerate(lines) if line == MODEL_ENVELOPE_END]
+    if len(ends) != 1:
+        model_error("invalid_envelope", path, "models", "Expected exactly one closing marker")
+    end = ends[0]
+    if any(line.startswith(MODEL_ENVELOPE_PREFIX) for line in lines[1:end] + lines[end + 1:]):
+        model_error("invalid_envelope", path, "models", "Additional reserved markers are not permitted")
+    data = parse_model_mapping(lines[1:end], path)
+    if "models" not in data:
+        model_error("invalid_envelope", path, "models", "Envelope requires one root models mapping")
+    if set(data) != {"models"}:
+        model_error("unknown_field", path, "models", "Unknown root policy field")
+    projection = "\n" * (end + 1) + "\n".join(physical[end + 1:])
+    try:
+        legacy = parse_yaml_snapshot(projection, path)
+    except ConfigError:
+        model_error("invalid_yaml", path, "models.dsh", "Invalid legacy region after policy envelope")
+    if "models" in legacy:
+        model_error("invalid_envelope", path, "models", "Legacy region must not supply root models")
+    policy = model_layer(data, path)
+    # split with keepends retains the original opener, policy and end bytes.
+    envelope = b"".join(raw_bytes.splitlines(keepends=True)[:end + 1])
+    return ModelSnapshot(freeze_model_mapping(policy), legacy, envelope)
+
+
+def load_model_policy(repo_root: Path) -> ModelPolicy:
+    """The sole reader/validator for validate, model-route and model-routes."""
     shared_path = repo_root / ".ai-dev-workflow.yaml"
-    discovery_error = None
+    shared_snapshot = read_model_snapshot(shared_path)
     try:
         local_path, _, _ = resolve_local_config(repo_root)
-    except ConfigError as exc:
-        discovery_error = exc
-        local_path = repo_root / LOCAL_CONFIG_NAME
-    snapshots = {}
-    read_errors = {}
-    # Failed discovery selects no local source. In particular, do not inspect
-    # a checkout file hidden by an unavailable explicit override root.
-    paths = (shared_path,) if discovery_error else (shared_path, local_path)
-    for path in paths:
-        if path.exists():
-            try:
-                snapshots[path] = path.read_text(encoding="utf-8")
-            except (OSError, UnicodeError) as exc:
-                read_errors[path] = exc
-    configured = any(routing_declared(raw) for raw in snapshots.values())
-    if not configured:
-        if discovery_error:
-            raise discovery_error
-        for path, exc in read_errors.items():
-            if isinstance(exc, OSError):
-                raise ConfigError(f"{path}: could not read config: {exc}") from exc
-            raise exc
-        return {}, {}, {}, shared_path, local_path
-    if discovery_error:
-        model_error("config_discovery", repo_root / LOCAL_CONFIG_NAME, "models.dsh", "Local override source is unavailable")
-    layers = []
-    for path in (shared_path, local_path):
-        if path in read_errors:
-            model_error("invalid_yaml", path, "models.dsh", "Configuration could not be read as UTF-8")
-        try:
-            data = parse_review_yaml(path, raw=snapshots[path]) if path in snapshots else {}
-        except ConfigError as exc:
-            missing_dependency = isinstance(exc.__cause__, ImportError)
-            model_error("dependency_missing" if missing_dependency else "invalid_yaml", path, "models.dsh",
-                        "Install PyYAML==6.0.2 for strict routing validation" if missing_dependency
-                        else "Invalid or unsupported YAML configuration. Use explicit block mappings; "
-                             "YAML anchors (&), aliases (*) and merge keys (<<) are not supported")
-        layers.append(model_layer(data, path))
-    shared, local = layers
+    except ConfigError:
+        if shared_snapshot.envelope:
+            model_error("config_discovery", repo_root / LOCAL_CONFIG_NAME, "models.dsh", "Local override source is unavailable")
+        raise
+    local_snapshot = read_model_snapshot(local_path)
+    shared, local = shared_snapshot.policy, local_snapshot.policy
     effective = compose_model_maps(shared, local)
     for kind in ("tiers", "roles"):
         for name, value in effective.get(kind, {}).items():
@@ -1966,7 +2104,8 @@ def load_model_policy(repo_root: Path) -> tuple[Any, ...]:
                     model_error("dangling_reference", path, field, "Referenced tier has no configured route")
             elif not all(key in value for key in ("provider", "model")):
                 model_error("incomplete_route", path, field, "Effective route requires provider and model")
-    return effective, shared, local, shared_path, local_path
+    return ModelPolicy(freeze_model_mapping(effective), shared, local, shared_path, local_path,
+                       (shared_snapshot.legacy, local_snapshot.legacy, shared_path, local_path))
 
 
 def model_resolution(policy: tuple[Any, ...], role: str = "", tier: str = "") -> dict[str, str]:
@@ -1976,7 +2115,7 @@ def model_resolution(policy: tuple[Any, ...], role: str = "", tier: str = "") ->
         model_error("unknown_tier", "", "tier", "Unknown model tier")
     if not role and not tier:
         model_error("missing_query", "", "role/tier", "Specify a role or tier")
-    effective, shared, local, shared_path, local_path = policy
+    effective, shared, local, shared_path, local_path = policy[:5]
     selected_tier = tier or DSH_ROLE_TIERS[role]
     entry = effective.get("roles", {}).get(role)
     kind, name = "roles", role
@@ -1999,8 +2138,6 @@ def model_resolution(policy: tuple[Any, ...], role: str = "", tier: str = "") ->
 def cmd_model_route(args: argparse.Namespace) -> int:
     if args.runner != "dsh":
         model_error("unsupported_runner", "", "runner", "Only dsh routing is supported")
-    # Validate query before inspecting configuration, without argparse's plain errors.
-    model_resolution(({}, {}, {}, Path(), Path()), args.role or "", args.tier or "")
     result = model_resolution(load_model_policy(repo_root_from_args(args.repo_root)),
                               args.role or "", args.tier or "")
     print_context(args, result)
@@ -2027,219 +2164,10 @@ def cmd_model_routes(args: argparse.Namespace) -> int:
     return 0
 
 
-def routing_declared(raw: str) -> bool:
-    """Detect an opt-in boundary without adding PyYAML to legacy validation.
-
-    This is only a conservative activation probe, never a YAML acceptance
-    parser. The strict reader decides syntax/schema after a declaration. Handle
-    the reader's line breaks, quoted keys (including escaped double quotes),
-    malformed indentation and unsupported inline mappings without hiding them.
-    """
-    lines = []
-    for line in raw.splitlines():
-        text = strip_inline_comment(line).strip()
-        if text:
-            lines.append((len(line) - len(line.lstrip()), text))
-
-    def key_value(text: str) -> tuple[str, str]:
-        match = re.match(r"^('(?:[^']|'')*'|\"(?:[^\"\\]|\\.)*\"|[^:]+)\s*:(.*)$", text)
-        if not match:
-            return "", ""
-        key, value = match.group(1).strip(), match.group(2).strip()
-        if key.startswith('"'):
-            try:
-                # YAML permits hex/long Unicode escapes that JSON does not.
-                # Normalize only safe ASCII letters for identity detection;
-                # the strict reader still rejects every quoted mapping key.
-                key = re.sub(r"\\(?:x[0-9a-fA-F]{2}|U[0-9a-fA-F]{8})",
-                             lambda match: (chr(int(match.group()[2:], 16))
-                                            if 65 <= int(match.group()[2:], 16) <= 90
-                                            or 97 <= int(match.group()[2:], 16) <= 122
-                                            else match.group()), key)
-                key = json.loads(key)
-            except (ValueError, TypeError):
-                return "", ""
-        elif key.startswith("'"):
-            key = key[1:-1].replace("''", "'")
-        return key, value
-
-    def anchor_payloads(text: str, name: str) -> list[str]:
-        # Probe node metadata in block/flow values, excluding scalar text.
-        quote, escaped = "", False
-        payloads = []
-        for position, char in enumerate(text):
-            if quote:
-                if escaped:
-                    escaped = False
-                elif char == "\\" and quote == '"':
-                    escaped = True
-                elif char == quote:
-                    quote = ""
-                continue
-            if char in ("'", '"'):
-                quote = char
-            elif char == "&" and re.search(r"(?:^|[\[{,:])\s*(?:![^\s]+\s+)*$", text[:position]):
-                match = re.match(r"&([^\s{}\[\],]+)", text[position:])
-                if match and match.group(1) == name:
-                    payloads.append(text[position + len(match.group()):].strip())
-        return payloads
-
-    def merge_aliases(value: str) -> list[str]:
-        alias = re.match(r"^\s*\*([^\s{}\[\],]+)", value)
-        if alias:
-            return [alias.group(1)]
-        sequence = re.match(r"^\s*\[([^\]]*)\]", value)
-        if not sequence:
-            return []
-        return [match.group(1) for item in sequence.group(1).split(",")
-                if (match := re.fullmatch(r"\s*\*([^\s{}\[\],]+)\s*", item))]
-
-    def flow_entries(value: str):
-        # Yield only immediate keys; nested maps and scalar text are not roots.
-        depth, key_start, quote, escaped = 0, 1, "", False
-        for position, char in enumerate(value):
-            if quote:
-                if escaped:
-                    escaped = False
-                elif char == "\\" and quote == '"':
-                    escaped = True
-                elif char == quote:
-                    quote = ""
-                continue
-            if char in ("'", '"'):
-                quote = char
-            elif char in "{[":
-                depth += 1
-            elif char in "}]":
-                depth -= 1
-                if depth == 0:
-                    break
-            elif char == "," and depth == 1:
-                key_start = position + 1
-            elif char == ":" and depth == 1:
-                yield key_value(value[key_start:position] + ":")[0], value[position + 1:].lstrip()
-
-    def routing_hints(index: int, indent: int, value: str) -> tuple[bool, list[str], list[tuple[int, int, str]]]:
-        merges, candidates = [], []
-        if key_value(value)[0] == "dsh" or re.match(r"^(?:dsh|'dsh'|\"dsh\")(?:\s|$)", value):
-            # A missing enclosing map must not turn an explicit inline DSH
-            # declaration into a legacy scalar and bypass strict validation.
-            return True, merges, candidates
-        if value.startswith("{"):
-            for key, child_value in flow_entries(value):
-                if key == "dsh":
-                    return True, merges, candidates
-                if key == "<<":
-                    merges.extend(merge_aliases(child_value))
-        if value.startswith("["):
-            # A malformed models sequence can still explicitly declare DSH.
-            # Inspect each immediate item, keeping nested other maps opaque.
-            depth, start, quote, escaped = 0, 1, "", False
-            for position, char in enumerate(value):
-                if quote:
-                    if escaped:
-                        escaped = False
-                    elif char == "\\" and quote == '"':
-                        escaped = True
-                    elif char == quote:
-                        quote = ""
-                    continue
-                if char in ("'", '"'):
-                    quote = char
-                elif char in "{[":
-                    depth += 1
-                elif char in "}]":
-                    depth -= 1
-                    if depth == 0:
-                        candidates.append((len(lines), indent, value[start:position].strip()))
-                        break
-                elif char == "," and depth == 1:
-                    candidates.append((len(lines), indent, value[start:position].strip()))
-                    start = position + 1
-            else:
-                # An unfinished sequence still has an explicit final item.
-                candidates.append((len(lines), indent, value[start:].strip()))
-        children = []
-        for child_index, (child_indent, child) in enumerate(lines[index + 1:], start=index + 1):
-            if child_indent <= indent:
-                break
-            children.append((child_index, child_indent, child))
-        if children:
-            child_level = min(child_indent for _, child_indent, _ in children)
-            if index < len(lines) and re.match(r"^-\s", lines[index][1]):
-                # A sequence item's mapping keys align with the key after
-                # its dash. Deeper keys belong to the first value, not to
-                # the models namespace (for example ``- other: ...``).
-                child_level = indent + 1
-            if any(child_indent == child_level and (key_value(child)[0] == "dsh"
-                    or re.match(r"^(?:dsh|'dsh'|\"dsh\")(?:\s|$)", child))
-                   for _, child_indent, child in children):
-                return True, merges, candidates
-            for child_index, child_indent, child in children:
-                if child_indent == child_level and re.match(r"^-\s", child):
-                    # Retain the item's location and map-key column. Immediate
-                    # continuation keys belong to this item; nested values do
-                    # not. The probe only activates strict rejection of lists.
-                    prefix = re.match(r"^-\s+", child).group()
-                    candidates.append((child_index, child_indent + len(prefix) - 1, child[len(prefix):]))
-                key, child_value = key_value(child)
-                if child_indent == child_level and key == "<<":
-                    merges.extend(merge_aliases(child_value))
-        return False, merges, candidates
-
-    def probe_mapping(index: int, indent: int, value: str) -> bool:
-        # Unsupported aliases may be ambiguous. Examine every explicit target
-        # for routing hints; the strict reader rejects the metadata itself.
-        # Visit each candidate once so cycles/duplicate anchors stay bounded.
-        pending = [(index, indent, value)]
-        seen = set()
-        while pending:
-            index, indent, value = pending.pop()
-            state = (index, value)
-            if state in seen:
-                continue
-            seen.add(state)
-            value = re.sub(r"^(?:(?:&[^\s{}\[\],]+|!<[^>]*>|![^\s{}\[\],]+)\s*)+", "", value)
-            alias = re.fullmatch(r"\*([^\s]+)", value)
-            if not alias:
-                declared, merges, candidates = routing_hints(index, indent, value)
-                if declared:
-                    return True
-                pending.extend((index, indent, "*" + name) for name in merges)
-                pending.extend(candidates)
-                continue
-            name = alias.group(1)
-            targets = [(i, level, payload) for i, (level, line) in enumerate(lines)
-                       for payload in anchor_payloads(line, name)]
-            if not targets:
-                # A named but unanchored target is invalid YAML too; retain
-                # detection of that explicitly malformed declaration.
-                targets = [(i, level, key_value(line)[1]) for i, (level, line) in enumerate(lines)
-                           if key_value(line)[0] == name]
-            pending.extend(targets)
-        return False
-
-    root_indent = min((indent for indent, _ in lines), default=0)
-    for index, (indent, text) in enumerate(lines):
-        if indent != root_indent:
-            continue
-        if text.startswith("{"):
-            if any(key == "models" and probe_mapping(index, indent, value)
-                   for key, value in flow_entries(text)):
-                return True
-            continue
-        key, value = key_value(text)
-        if key != "models" and not re.match(r"^(?:models|'models'|\"models\")(?:\s|$)", text):
-            continue
-        if probe_mapping(index, indent, value):
-            return True
-
-    return False
-
-
 def cmd_validate(args: argparse.Namespace) -> int:
-    load_model_policy(repo_root_from_args(args.repo_root))
-    return cmd_resolve(args)
+    policy = load_model_policy(repo_root_from_args(args.repo_root))
+    print_context(args, resolve_context(args, policy.configs))
+    return 0
 
 
 def build_parser() -> argparse.ArgumentParser:
