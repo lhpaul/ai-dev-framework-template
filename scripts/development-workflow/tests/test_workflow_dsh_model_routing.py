@@ -299,6 +299,7 @@ class ModelRoutingTests(unittest.TestCase):
                  *[self.policy(self.tier(model=x)) for x in ("NULL", "~", "TRUE", "False", "12", "-1", ".5", "1.", "1e3", "+.5e-2")]]
         schema = [(self.policy("      ultra: {}\n"), "unknown_name"),
                   (self.policy(roles="      Developer: balanced\n"), "unknown_name"),
+                  (self.policy(roles="      developer: ultra\n"), "unknown_name"),
                   (self.policy(self.tier() + "        extra: value\n"), "unknown_field"),
                   ("models:\n  other: {}\n", "unknown_field"),
                   (self.policy(self.tier(model="''")), "invalid_value"),
@@ -430,6 +431,25 @@ class ModelRoutingTests(unittest.TestCase):
             resolve = self.cli("resolve", "--json", env=absent_env)
             self.assertEqual(validate.returncode, resolve.returncode)
             self.assertEqual(validate.stderr, resolve.stderr)
+
+    def test_unactivated_discovery_error_preserves_legacy_precedence(self):
+        env = dict(os.environ, WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT=str(self.root / "missing"))
+        for raw in (b"BROKEN_LEGACY_TOKEN\n", b"\xff", b"models:\n- dsh: {}\n", b"mode: single_repo\n"):
+            self.shared.write_bytes(raw)
+            with self.subTest(raw=raw):
+                legacy = self.cli("resolve", "--json", env=env)
+                self.assertEqual(legacy.returncode, 2)
+                for command in (("validate", "--json"),
+                                ("model-route", "--runner", "dsh", "--role", "developer", "--json"),
+                                ("model-routes", "--runner", "dsh", "--json")):
+                    result = self.cli(*command, env=env)
+                    self.assertEqual((result.returncode, result.stdout, result.stderr),
+                                     (legacy.returncode, legacy.stdout, legacy.stderr))
+        self.shared.write_text(self.envelope("models:\n  dsh: null\n"))
+        for command in (("validate",), ("model-route", "--runner", "dsh", "--role", "developer"),
+                        ("model-routes", "--runner", "dsh")):
+            result = self.cli(*command, env=env)
+            self.assertEqual(json.loads(result.stderr)["CODE"], "invalid_type")
 
     def test_absent_validate_has_no_new_dependency_or_grammar(self):
         for text in ("mode: single_repo\n", "# models:\n#   dsh: {}\n", "models:\n  other:\n    dsh: unused\n",

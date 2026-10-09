@@ -358,11 +358,11 @@ merge_budget:
 #   dsh:
 #     tiers:
 #       balanced:
-#         provider: YOUR_PROVIDER
-#         model: YOUR_BALANCED_MODEL
+#         provider: "YOUR_PROVIDER"
+#         model: "YOUR_BALANCED_MODEL"
 #       premium:
-#         provider: YOUR_PROVIDER
-#         model: YOUR_PREMIUM_MODEL
+#         provider: "YOUR_PROVIDER"
+#         model: "YOUR_PREMIUM_MODEL"
 #     roles:
 #       developer: balanced
 #       product-manager: premium

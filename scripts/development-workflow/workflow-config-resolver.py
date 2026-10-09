@@ -1885,7 +1885,7 @@ def model_layer(data: dict[str, Any], path: Path) -> dict[str, Any]:
             field += f".{name}"
             if kind == "roles" and isinstance(value, str):
                 if value not in DSH_TIERS:
-                    model_error("unknown_tier", path, field, "Expected a supported tier reference")
+                    model_error("unknown_name", path, field, "Expected a supported tier reference")
                 continue
             if not isinstance(value, dict):
                 model_error("invalid_type", path, field, "Expected a route mapping")
@@ -2048,19 +2048,27 @@ def parse_model_mapping(lines: list[str], path: Path) -> tuple[dict[str, Any], M
     return root, MappingProxyType(positions)
 
 
-def read_model_snapshot(path: Path) -> ModelSnapshot:
+def read_model_snapshot(path: Path, *, legacy_error: ConfigError | None = None) -> ModelSnapshot:
     """One byte read; activation is exclusively a reserved first physical line."""
     if not path.exists():
+        if legacy_error is not None:
+            raise legacy_error
         return ModelSnapshot(MappingProxyType({}), MappingProxyType({}), b"", MappingProxyType({}))
     try:
         raw_bytes = path.read_bytes()
     except OSError as exc:
+        if legacy_error is not None:
+            raise legacy_error
         raise ConfigError(f"{path}: could not read config: {exc}") from exc
     first_bytes = raw_bytes.split(b"\n", 1)[0].rstrip(b"\r")
     active = first_bytes.startswith(MODEL_ENVELOPE_PREFIX.encode())
     bom_active = first_bytes.startswith(b"\xef\xbb\xbf" + MODEL_ENVELOPE_PREFIX.encode())
     if bom_active:
         model_error("invalid_envelope", path, "models", "Opening marker must be UTF-8 without BOM")
+    # Legacy load_configs discovers the selected local source before parsing.
+    # Preserve that error priority once the first-line protocol is inactive.
+    if not active and legacy_error is not None:
+        raise legacy_error
     try:
         raw = raw_bytes.decode("utf-8")
     except UnicodeError:
@@ -2101,13 +2109,15 @@ def read_model_snapshot(path: Path) -> ModelSnapshot:
 def load_model_policy(repo_root: Path) -> ModelPolicy:
     """The sole reader/validator for validate, model-route and model-routes."""
     shared_path = repo_root / ".ai-dev-workflow.yaml"
-    shared_snapshot = read_model_snapshot(shared_path)
+    discovery_error = None
     try:
         local_path, _, _ = resolve_local_config(repo_root)
-    except ConfigError:
-        if shared_snapshot.envelope:
-            model_error("config_discovery", repo_root / LOCAL_CONFIG_NAME, "models.dsh", "Local override source is unavailable")
-        raise
+    except ConfigError as exc:
+        discovery_error = exc
+        local_path = repo_root / LOCAL_CONFIG_NAME
+    shared_snapshot = read_model_snapshot(shared_path, legacy_error=discovery_error)
+    if discovery_error is not None:
+        model_error("config_discovery", repo_root / LOCAL_CONFIG_NAME, "models.dsh", "Local override source is unavailable")
     local_snapshot = read_model_snapshot(local_path)
     shared, local = shared_snapshot.policy, local_snapshot.policy
     effective = compose_model_maps(shared, local)

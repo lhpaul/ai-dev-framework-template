@@ -75,9 +75,9 @@ template:
 #   dsh:
 #     tiers:
 #       premium:
-#         model: YOUR_PRIVATE_PREMIUM_MODEL
+#         model: "YOUR_PRIVATE_PREMIUM_MODEL"
 #     roles:
 #       developer:
-#         provider: YOUR_PROVIDER
-#         model: YOUR_PRIVATE_DEVELOPER_MODEL
+#         provider: "YOUR_PROVIDER"
+#         model: "YOUR_PRIVATE_DEVELOPER_MODEL"
 # # adf-models-dsh: end
