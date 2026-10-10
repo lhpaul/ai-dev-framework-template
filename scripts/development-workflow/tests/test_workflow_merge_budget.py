@@ -1786,6 +1786,43 @@ class ReleasePair(unittest.TestCase):
         self.assertNotIn(['pr','merge'],events)
         self.assertFalse(any('/releases/' in e[1] for e in events if len(e)>1))
 
+    def test_release_pair_deferred_final_audit_requires_cleanup_and_readback(self):
+        prs=[dict(repo='org/repo',pr=n,head=self.head,base=b,root=str(self.repo),
+            steps=[dict(id=phase,phase=phase) for phase in ('merge_api','merge_verify','cleanup')],
+            policySkipped=['remote_delete','local_cleanup']) for n,b in ((12,'main'),(13,'develop'))]
+        prs[0]['steps'].append(dict(id='audit:final',phase='audit',auditRepo='org/repo',
+            auditTarget=900,marker='<!-- release-final -->',deferUntilPairCleanup=True))
+        self.assertEqual(self.begin(prs=prs)['outcome'],'Admitted')
+        body=self.root/'release-final-audit.md';body.write_text('<!-- release-final --> verified paired release')
+        argv=['run-step','--session',self.session,'--repo','org/repo','--pr',12,
+            '--phase','audit','--step','audit:final','--expected-file',body,'--',
+            'gh','api','repos/org/repo/issues/900/comments','-X','POST','-f','body='+body.read_text()]
+        refused=self.helper(*argv,success=False)
+        self.assertNotEqual(refused.returncode,0)
+        self.assertIn('final release audit requires shared cleanup',refused.stderr)
+        self.reload();self.assertEqual(self.data.get('commentMutationCount',0),0)
+        self.assertEqual(json.loads(Path(self.session).read_text())['prs'][0]['steps']['audit:final']['status'],'pending')
+        self.helper('resume','--session',self.session)
+        self.merge(12);self.step(12,'merge_verify');self.published();self.step(12,'publication')
+        self.merge(13);self.step(13,'merge_verify')
+        self.reload();self.data['trackerStatuses']={'12':'Merged','13':'Merged'};self.save()
+        self.cleanup()
+        self.assertNotEqual(json.loads(self.helper('report','--session',self.session,'--final',success=False).stdout)['outcome'],'Completed')
+        self.reload();self.data['commentReadOutage']=True;self.save()
+        failed=self.helper(*argv,success=False)
+        self.assertNotEqual(failed.returncode,0)
+        self.reload();self.assertEqual(self.data['commentMutationCount'],1)
+        self.assertEqual(self.data['comments'],[{'id':1,'body':body.read_text()}])
+        state=json.loads(Path(self.session).read_text())
+        self.assertEqual(state['prs'][0]['steps']['audit:final']['status'],'uncertain')
+        self.assertNotEqual(state['outcome'],'Completed')
+        self.data['commentReadOutage']=False;self.save()
+        self.helper('resume','--session',self.session)
+        self.assertEqual(json.loads(self.helper('report','--session',self.session,'--final').stdout)['outcome'],'Completed')
+        self.reload();self.assertEqual(self.data['commentMutationCount'],1)
+        self.assertEqual(len(self.data['mergeArgv']),2)
+        self.assertEqual(self.data['trackerMutationCount'],2)
+
     def test_release_pair_unaffordable_admits_no_prefix(self):
         self.data['quota']['remaining']=30;self.save()
         self.assertEqual(self.begin()['outcome'],'Deferred')
