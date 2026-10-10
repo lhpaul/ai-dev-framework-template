@@ -1859,7 +1859,7 @@ class ReleasePair(unittest.TestCase):
         admitted=self.begin();self.assertEqual(admitted['outcome'],'Admitted')
         state=json.loads(Path(self.session).read_text())
         component=next(p for p in admitted['estimate']['components'] if p['kind']=='release_provider_proof')
-        self.assertEqual(component,dict(kind='release_provider_proof',count=3,weight=75))
+        self.assertEqual(component,dict(kind='release_provider_proof',count=3,weight=150))
         old_raw=admitted['estimate']['rawCost']-component['count']*component['weight']
         old_cost=old_raw+max(50,(old_raw+1)//2)
         self.reload();self.data['quota']['remaining']=old_cost+state['reserve']+1;self.save()
@@ -1876,6 +1876,13 @@ class ReleasePair(unittest.TestCase):
         recovery['prs'][0]['steps']['cleanup']['status']='pending'
         remaining=next(p for p in budget.estimate(recovery)['components'] if p['kind']=='release_provider_proof')
         self.assertEqual(remaining,component)
+        # Distinct declared branch duties all participate in the guard; their
+        # proof reserve must scale even when every provider is completed.
+        branch_steps=recovery['prs'][1]['steps']
+        for phase in ('remote_delete','local_cleanup'):
+            branch_steps[phase+':extra']=dict(branch_steps[phase])
+        scaled=next(p for p in budget.estimate(recovery)['components'] if p['kind']=='release_provider_proof')
+        self.assertEqual(scaled,dict(kind='release_provider_proof',count=3,weight=300))
         self.data['quota']['remaining']=5000;self.save()
         self.helper('resume','--session',self.session)
         self.merge(12);self.step(12,'merge_verify');self.published();self.step(12,'publication')

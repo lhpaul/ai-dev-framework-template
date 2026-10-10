@@ -1240,8 +1240,11 @@ Admission derives production's `publication` step and shared backport issue
 retains production's cleanup completion barrier. Declare all audit/ledger
 destinations as usual; only production final audits may explicitly set
 `deferUntilPairCleanup:true`. Duties and conservative read/proof costs contribute
-to whole-pair admission. A separate provider-proof pool reserves 75 units per
-stamp, tracker transition and finalization duty, plus the estimation margin.
+to whole-pair admission. A separate provider-proof pool reserves at least 150
+units per stamp, tracker transition and finalization duty, plus the estimation
+margin. Its weight grows to 75 times the number of branch-cleanup/retention
+duties when that exceeds 150, covering every repeated branch proof and the
+tracker's bounded pagination.
 It includes completed provider duties while any follow-up remains pending,
 because cleanup, completion and recovery independently reread their proofs.
 Missing scope or insufficient quota admits no prefix.

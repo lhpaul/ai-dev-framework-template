@@ -804,10 +804,13 @@ def estimate(state):
         # and recovery repeat those proofs even for completed provider steps.
         # Keep this pool until all work is complete; outstanding-only weights
         # would lose the reserve when a final audit is the sole pending duty.
+        branch_proofs = sum(entry["phase"] in {"remote_delete", "local_cleanup"}
+                            or entry.get("skippedPhase") in {"remote_delete", "local_cleanup"}
+                            for entry in state["prs"][1]["steps"].values())
         pieces.append({"kind": "release_provider_proof", "count": sum(
             entry["phase"] in {"release_stamp", "tracker", "release_finalize"}
             for target in state["prs"] for entry in target["steps"].values()) if outstanding else 0,
-            "weight": 75})
+            "weight": max(150, 75 * branch_proofs)})
         for phase, weight in (("publication", 25), ("release_stamp", 15), ("release_finalize", 15), ("cleanup", 30), ("audit", 10), ("hold", 10)):
             pieces.append({"kind": phase, "weight": weight, "count": sum(
                 entry["phase"] == phase and entry["status"] not in {"completed", "skipped_by_policy"}
