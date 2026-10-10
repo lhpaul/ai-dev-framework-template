@@ -2472,6 +2472,7 @@ separate; this preflight governs the normal post-approval transition.
 | Current-head `clean`, draft-only invocation | `1` | Full loop owns conversion |
 | Current-head `clean`, draft-only invocation | `0` | Convert only if draft, then full loop |
 | `skipped/not_configured`, zero draft platforms, unchanged head | `0` or `1` | Follow conversion ownership above |
+| `skipped/release_pr`, matching PR/branch, `release/*` or `hotfix/*`, unchanged head | Intentionally absent | Preserve the existing release skip; guarded manual conversion, then full-loop skip |
 | Other skipped/failed/missing verdict | Any | Stop without conversion |
 
 <!-- protocol-91-ready-transition:start -->
@@ -2505,24 +2506,41 @@ DRAFT_REASON=$(ready_gate_value REASON)
 READY_ENABLED=$(ready_gate_value READY_PHASE_ENABLED)
 DRAFT_COUNT=$(ready_gate_value PLATFORM_COUNT)
 LIVE_HEAD=$(gh pr view "$PR_NUMBER" --json headRefOid --jq '.headRefOid')
-case "$DRAFT_COUNT" in
-  ''|*[!0-9]*) echo "ERROR: draft platform count missing or malformed." >&2; exit 1 ;;
-esac
-case "$READY_ENABLED" in
-  0|1) : ;;
-  *) echo "ERROR: ready-phase telemetry missing or malformed." >&2; exit 1 ;;
-esac
-if [ "$DRAFT_MODE" != 1 ] || [ "$LIVE_HEAD" != "$DRAFT_HEAD" ]; then
-  echo "ERROR: draft gate invocation missing or head changed; rerun on current head." >&2
+if [ "$LIVE_HEAD" != "$DRAFT_HEAD" ]; then
+  echo "ERROR: draft gate head changed; rerun on current head." >&2
   exit 1
 fi
-if [ "$DRAFT_RESULT" = clean ] && [ "$DRAFT_REVIEWED_HEAD" = "$LIVE_HEAD" ]; then
-  :
-elif [ "$DRAFT_RESULT" = skipped ] && [ "$DRAFT_REASON" = not_configured ] && [ "$DRAFT_COUNT" -eq 0 ]; then
-  :
+if [ "$DRAFT_RESULT" = skipped ] && [ "$DRAFT_REASON" = release_pr ]; then
+  case "$BRANCH" in
+    release/*|hotfix/*) : ;;
+    *) echo "ERROR: release skip does not apply to this branch." >&2; exit 1 ;;
+  esac
+  if [ "$(ready_gate_value PR_NUMBER)" != "$PR_NUMBER" ] || [ "$(ready_gate_value BRANCH)" != "$BRANCH" ]; then
+    echo "ERROR: release skip identity missing or mismatched." >&2
+    exit 1
+  fi
+  # The existing release guard exits before ordinary phase/count telemetry.
+  READY_ENABLED=0
 else
-  echo "ERROR: draft GitHub gate has no current-head clean verdict; refuse ready transition." >&2
-  exit 1
+  case "$DRAFT_COUNT" in
+    ''|*[!0-9]*) echo "ERROR: draft platform count missing or malformed." >&2; exit 1 ;;
+  esac
+  case "$READY_ENABLED" in
+    0|1) : ;;
+    *) echo "ERROR: ready-phase telemetry missing or malformed." >&2; exit 1 ;;
+  esac
+  if [ "$DRAFT_MODE" != 1 ]; then
+    echo "ERROR: draft gate invocation missing or malformed." >&2
+    exit 1
+  fi
+  if [ "$DRAFT_RESULT" = clean ] && [ "$DRAFT_REVIEWED_HEAD" = "$LIVE_HEAD" ]; then
+    :
+  elif [ "$DRAFT_RESULT" = skipped ] && [ "$DRAFT_REASON" = not_configured ] && [ "$DRAFT_COUNT" -eq 0 ]; then
+    :
+  else
+    echo "ERROR: draft GitHub gate has no current-head clean verdict; refuse ready transition." >&2
+    exit 1
+  fi
 fi
 if [ "$READY_ENABLED" = 0 ]; then
   IS_DRAFT=$(gh pr view "$PR_NUMBER" --json isDraft --jq '.isDraft')
@@ -2542,7 +2560,8 @@ fi
 A nonzero loop exit stops this sequence. Retain its reason (including rate-limit
 reset telemetry), address fixable findings through the existing fixer flow, and
 rerun at the current head. Never run `gh pr ready` as a workaround. For a resumed
-PR already ready, this preflight still requires fresh draft-phase evidence before
+PR already ready, this preflight still requires fresh draft-phase evidence (or the
+identity-bound intentional release skip) before
 continuing the full loop; it does not undo an existing ready state.
 The legacy `--pre-after-clean-only` flag remains an alias for
 `--draft-github-only` during the transition release. See Protocol 93's

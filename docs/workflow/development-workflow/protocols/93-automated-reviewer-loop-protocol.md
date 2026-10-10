@@ -75,7 +75,9 @@ ready transition happens after the draft gate:
 
 After Step 7a APPROVED, run the executable **ready-transition preflight** in
 [Protocol 91](91-orchestrate-work-protocol.md#draft-github-gate-before-ready-phase-reviewers).
-It verifies fresh draft-gate output before invoking the full loop.
+It verifies fresh draft-gate output before invoking the full loop. The existing
+`release/*` and `hotfix/*` intentional skip remains allowed only with matching
+PR/branch skip evidence and an unchanged head.
 
 The preflight invokes the full loop only after verifying the draft verdict.
 That full loop marks the PR ready immediately before the first ready-phase

@@ -244,9 +244,16 @@ cases = [
     ("missing-count", False), ("malformed-count", False), ("duplicate-count", False),
     ("base-ready-checkout-empty", True), ("base-empty-checkout-ready", True),
     ("skipped-empty-no-ready", True), ("no-ready-ownership-changed", False),
+    ("hotfix-skip", True), ("release-skip", True), ("fix-release-skip", False),
+    ("hotfix-wrong-branch", False), ("hotfix-wrong-pr", False),
+    ("hotfix-duplicate-pr", False),
 ]
 
 def run_case(root, name, code=snippet):
+    if name.startswith("hotfix-"):
+        code = code.replace("BRANCH=fix/1864-draft-ready-preflight", "BRANCH=hotfix/1864-draft-ready-preflight")
+    elif name == "release-skip":
+        code = code.replace("BRANCH=fix/1864-draft-ready-preflight", "BRANCH=release/v1.0.0")
     trace = root / "trace"
     trace.write_text("")
     # Deliberately conflicting checkout policy: the loop has already resolved
@@ -300,6 +307,22 @@ if [[ " $* " != *" --draft-github-only "* ]]; then
   exit $?
 fi
 echo draft >> "$TEST_TRACE"
+case "$TEST_CASE" in
+  hotfix-*|release-skip|fix-release-skip)
+    printf 'RESULT=skipped\\nREASON=release_pr\\n'
+    case "$TEST_CASE" in
+      hotfix-wrong-pr) echo PR_NUMBER=999 ;;
+      hotfix-duplicate-pr) printf 'PR_NUMBER=999\\nPR_NUMBER=1864\\n' ;;
+      *) echo PR_NUMBER=1864 ;;
+    esac
+    if [[ "$TEST_CASE" == hotfix-wrong-branch ]]; then
+      echo BRANCH=hotfix/other
+    else
+      echo "BRANCH=$3"
+    fi
+    exit 0
+    ;;
+esac
 if [[ "$TEST_CASE" == nonzero ]]; then
   printf 'RESULT=escalate\\nREASON=rate_limited\\nRATE_LIMIT_RESET=1791640778\\n'
   exit 2
@@ -347,7 +370,7 @@ fi
         path.chmod(0o755)
     for name, allowed in cases:
         rc, trace, output = run_case(root, name)
-        if name in {"no-ready", "base-empty-checkout-ready", "skipped-empty-no-ready"}:
+        if name in {"no-ready", "base-empty-checkout-ready", "skipped-empty-no-ready", "hotfix-skip", "release-skip"}:
             expected = ["draft", "manual-ready", "full"]
         elif allowed or name == "full-failed":
             expected = ["draft", "full"]
@@ -372,7 +395,7 @@ fi
 print(f"verified:{len(cases) + 2}")
 PYTEST
 )"
-run_test "ready_transition_executable_matrix_and_plant" "verified:36" "$_ready_transition_report"
+run_test "ready_transition_executable_matrix_and_plant" "verified:42" "$_ready_transition_report"
 
 
 echo "${PASS_COUNT} passed, ${FAIL_COUNT} failed"
