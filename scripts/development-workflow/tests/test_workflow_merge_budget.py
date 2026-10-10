@@ -1709,7 +1709,7 @@ class ReleasePair(unittest.TestCase):
 
     def published(self):
         self.reload()
-        self.data.update(releaseTag={'object':{'type':'commit','sha':self.commits[12]}},
+        self.data.update(releaseTag={'ref':'refs/tags/v1.2.3','object':{'type':'commit','sha':self.commits[12]}},
             releasePublication={'id':1941,'tag_name':'v1.2.3','draft':False,'published_at':'2020-01-01T00:00:00Z'})
         self.save()
 
@@ -1771,7 +1771,7 @@ class ReleasePair(unittest.TestCase):
     def test_release_pair_annotated_tag_dereferences_to_production_commit(self):
         self.begin();self.merge(12);self.step(12,'merge_verify');self.published()
         annotation='a'*40
-        self.data['releaseTag']={'object':{'type':'tag','sha':annotation}}
+        self.data['releaseTag']={'ref':'refs/tags/v1.2.3','object':{'type':'tag','sha':annotation}}
         self.data['tagObjects']={annotation:{'sha':annotation,'object':{'type':'commit','sha':self.commits[12]}}};self.save()
         self.step(12,'publication');self.merge(13)
 
@@ -1804,6 +1804,9 @@ class ReleasePair(unittest.TestCase):
         self.helper('resume','--session',self.session)
         self.step(12,'publication',success=False)
         self.reload();self.assertEqual(len(self.data['mergeArgv']),1)
+        self.published();self.helper('resume','--session',self.session)
+        self.merge(13)
+        self.reload();self.assertEqual(len(self.data['mergeArgv']),2)
 
     def test_release_pair_regular_merge_parent_is_independent_proof(self):
         self.begin();self.merge(12)
@@ -1846,6 +1849,19 @@ class ReleasePair(unittest.TestCase):
         self.assertEqual(self.data['trackerStatuses'],{'12':'Released','13':'Released'})
         self.assertTrue(self.command(['git','branch','--list','release/v1.2.3']).stdout)
         self.assertTrue(self.command(['git','ls-remote','origin','refs/heads/release/v1.2.3']).stdout)
+
+    def test_release_pair_authorized_fixture_branch_cleanup_after_both_merges(self):
+        prs=[dict(repo='org/repo',pr=n,head=self.head,base=b,root=str(self.repo),
+            phases=['merge_api','cleanup']) for n,b in ((12,'main'),(13,'develop'))]
+        self.assertEqual(self.begin(prs=prs)['outcome'],'Admitted')
+        self.merge(12);self.step(12,'merge_verify');self.published();self.step(12,'publication')
+        self.merge(13);self.step(13,'merge_verify')
+        self.command(['git','push','-q','origin',self.commits[12]+':refs/heads/main',self.commits[13]+':refs/heads/develop'])
+        self.reload();self.data['trackerStatuses']={'12':'Merged','13':'Merged'};self.save()
+        self.cleanup()
+        self.assertEqual(self.command(['git','branch','--list','release/v1.2.3']).stdout,'')
+        self.assertEqual(self.command(['git','ls-remote','origin','refs/heads/release/v1.2.3']).stdout,'')
+        self.reload();self.assertEqual(len(self.data['mergeArgv']),2)
 
     def test_release_pair_linear_stamp_bridge_preserves_deferred_work(self):
         (self.repo/'.ai-dev-workflow.yaml').write_text('issue_tracker:\n  provider: linear\n  custom_fields:\n    release_field: Release\n')
@@ -1903,7 +1919,8 @@ class ReleasePair(unittest.TestCase):
         self.assertEqual(state['releasePair']['projection']['markerRepo'],'org/hub')
         self.assertEqual(state['releasePair']['projection']['publicationTag'],'product-v1.2.3')
         self.merge(12);self.step(12,'merge_verify');self.published()
-        self.data['releasePublication']['tag_name']='product-v1.2.3';self.data['trackerStatuses']={'12':'Merged','13':'Merged'};self.save()
+        self.data['releasePublication']['tag_name']='product-v1.2.3';self.data['releaseTag']['ref']='refs/tags/product-v1.2.3'
+        self.data['trackerStatuses']={'12':'Merged','13':'Merged'};self.save()
         self.step(12,'publication');self.merge(13);self.step(13,'merge_verify')
         self.cleanup(extra=('--repo','product','--repo-root',str(hub),'--evidence-file',str(evidence)))
         self.reload();self.assertEqual(self.data['stampMutationRepos'],['org/hub','org/hub'])

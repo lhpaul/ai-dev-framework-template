@@ -592,6 +592,8 @@ def publication_read(state):
     commit = regular_release_merge(production)
     tag_name = pair["projection"].get("publicationTag", pair["version"])
     tag = gh("api", "repos/%s/git/ref/tags/%s" % (pair["repo"], quote(tag_name, safe="")))
+    if not isinstance(tag, dict) or tag.get("ref") != "refs/tags/" + tag_name:
+        raise Stop("release tag ref identity unavailable")
     obj = tag.get("object") if isinstance(tag, dict) else None
     seen = set()
     for _ in range(8):
