@@ -579,7 +579,11 @@ The session route consumes frozen scope and verifies both regular merges and
 publication before follow-up. Every provider mutation has its own durable intent
 and read-back; best-effort zero exits and deferred Linear guidance cannot
 complete a duty. Retention requires the branch to remain present. Linked
-worktrees remain intact and must switch away before authorized branch deletion.
+worktrees remain intact. If the base is already checked out in another frozen
+participant, cleanup fast-forwards that clean checkout and detaches the selected
+checkout onto the updated base before authorized branch deletion. Tracked changes
+or an unfrozen base checkout leave cleanup pending; other release checkouts must
+switch away before branch deletion.
 Component invocations retain their `--repo`, `--repo-root`, `--evidence-file`,
 identity checks and local cleanup lock. Only the session JSON document goes to
 stdout; progress goes to stderr. Production's cleanup barrier completes after

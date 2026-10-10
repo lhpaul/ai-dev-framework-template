@@ -1264,7 +1264,10 @@ This entrypoint validates frozen caller/owner/version/base/component scope,
 enters the declared shared cleanup executor, invokes existing provider helpers
 through nested journal steps and verifies every actual effect. It preserves
 component cleanup locks, owning hub tracker routing, linked worktrees and
-declared retention; it never deletes worktrees. Progress goes to stderr, with
+declared retention; it never deletes worktrees. Authorized local deletion reuses
+a clean frozen checkout already on the backport base, fast-forwards it and
+detaches the selected checkout onto that updated base. Unfrozen ownership or
+tracked base changes refuse cleanup. Progress goes to stderr, with
 one session JSON document on stdout. Production cleanup completes only after
 shared backport cleanup verifies. Pending final audits still prevent Completed.
 

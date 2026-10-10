@@ -1880,11 +1880,27 @@ def release_cleanup(args):
                     argv = ["git", "-C", git_root, "push", "origin", "--delete", pair["branch"]]
             elif phase == "local_cleanup":
                 git_root = proof_root(current, selected["commonDir"], selected["root"])
-                # Never delete worktrees: the existing caller must switch linked
-                # checkouts away first. Failed proof leaves cleanup outstanding.
+                # Preserve worktrees; reuse the frozen participant already on
+                # the base, refusing tracked changes or ambiguous ownership.
                 if call(["git", "-C", git_root, "branch", "--list", pair["branch"]]):
-                    script = 'set -e; git -C "$1" fetch origin; git -C "$1" switch "$2"; git -C "$1" pull --ff-only origin "$2"; git -C "$1" branch -d "$3"'
-                    argv = ["bash", "-c", script, "release-budget", git_root, pair["backportBase"], pair["branch"]]
+                    listing = call(["git", "-C", git_root, "worktree", "list", "--porcelain"])
+                    bases = [block.splitlines()[0][9:] for block in listing.split("\n\n")
+                             if "branch refs/heads/" + pair["backportBase"] in block.splitlines()]
+                    if len(bases) > 1:
+                        raise Stop("release base worktree ownership ambiguous")
+                    base_root = str(root(bases[0])) if bases else git_root
+                    if base_root not in current["participants"] or str(common(base_root)) != selected["commonDir"]:
+                        raise Stop("release base worktree is not a frozen participant")
+                    if call(["git", "-C", base_root, "status", "--porcelain", "--untracked-files=no"]):
+                        raise Stop("release base worktree has tracked changes")
+                    if base_root != git_root:
+                        # Keep both checkouts. Update the already occupied base,
+                        # then detach the selected checkout onto that same ref.
+                        script = 'set -e; git -C "$1" fetch origin; git -C "$1" pull --ff-only origin "$2"; git -C "$3" switch --detach "$2"; git -C "$1" branch -d "$4"'
+                        argv = ["bash", "-c", script, "release-budget", base_root, pair["backportBase"], git_root, pair["branch"]]
+                    else:
+                        script = 'set -e; git -C "$1" fetch origin; git -C "$1" switch "$2"; git -C "$1" pull --ff-only origin "$2"; git -C "$1" branch -d "$3"'
+                        argv = ["bash", "-c", script, "release-budget", git_root, pair["backportBase"], pair["branch"]]
             run(selected, key, entry, argv, status)
     return {"sharedDutiesVerified": True, "releasePair": pair}
 

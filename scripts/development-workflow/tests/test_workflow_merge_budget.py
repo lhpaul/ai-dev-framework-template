@@ -1945,6 +1945,39 @@ class ReleasePair(unittest.TestCase):
         self.assertEqual(self.command(['git','ls-remote','origin','refs/heads/release/v1.2.3']).stdout,'')
         self.reload();self.assertEqual(len(self.data['mergeArgv']),2)
 
+    def test_release_pair_authorized_linked_cleanup_reuses_occupied_base(self):
+        main=self.repo
+        self.command(['git','switch','-q','develop'])
+        linked=self.root/'release-linked'
+        self.command(['git','worktree','add','-q',str(linked),'release/v1.2.3'])
+        shutil.copytree(self.scripts,linked/'scripts/development-workflow')
+        # Fixture helpers are deliberately untracked in both checkouts.
+        (main/'.git/info/exclude').write_text('/scripts/\n')
+        self.repo=linked;self.scripts=linked/'scripts/development-workflow'
+        prs=[dict(repo='org/repo',pr=n,head=self.head,base=b,root=str(linked),
+            phases=['merge_api','cleanup']) for n,b in ((12,'main'),(13,'develop'))]
+        self.assertEqual(self.begin(prs=prs)['outcome'],'Admitted')
+        self.merge(12);self.step(12,'merge_verify');self.published();self.step(12,'publication')
+        self.merge(13);self.step(13,'merge_verify')
+        self.command(['git','push','-q','origin',self.commits[12]+':refs/heads/main',self.commits[13]+':refs/heads/develop'])
+        self.command(['git','switch','-q','--detach',self.head])
+        self.reload();self.data['trackerStatuses']={'12':'Merged','13':'Merged'};self.save()
+        (main/'base.txt').write_text('retained caller changes\n')
+        self.cleanup(success=False)
+        self.assertEqual((main/'base.txt').read_text(),'retained caller changes\n')
+        self.assertTrue(self.command(['git','branch','--list','release/v1.2.3']).stdout)
+        (main/'base.txt').write_text('base\n')
+        self.helper('resume','--session',self.session)
+        self.cleanup()
+        self.assertTrue(main.is_dir() and linked.is_dir())
+        self.assertEqual(self.command(['git','branch','--show-current']).stdout,'')
+        self.assertEqual(subprocess.check_output(['git','-C',str(main),'branch','--show-current'],text=True).strip(),'develop')
+        self.assertEqual(self.command(['git','branch','--list','release/v1.2.3']).stdout,'')
+        self.assertEqual(self.command(['git','ls-remote','origin','refs/heads/release/v1.2.3']).stdout,'')
+        self.assertEqual(self.command(['git','rev-parse','HEAD']).stdout.strip(),self.commits[13])
+        self.reload();self.assertEqual(self.data['trackerMutationCount'],2)
+        self.assertEqual(len(self.data['mergeArgv']),2)
+
     def test_release_pair_linear_stamp_bridge_preserves_deferred_work(self):
         (self.repo/'.ai-dev-workflow.yaml').write_text('issue_tracker:\n  provider: linear\n  custom_fields:\n    release_field: Release\n')
         self.both()
