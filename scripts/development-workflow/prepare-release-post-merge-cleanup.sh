@@ -1150,7 +1150,10 @@ while [ $# -gt 0 ]; do
       shift 2
       ;;
     --merge-session)
-      [ $# -ge 2 ] || { usage; exit 2; }
+      if [ $# -lt 2 ] || [ -z "$2" ] || [ "${2#--}" != "$2" ]; then
+        echo "--merge-session requires a nonempty session path." >&2
+        exit 2
+      fi
       MERGE_SESSION="$2"
       COMPONENT_JSON_MODE=true
       shift 2

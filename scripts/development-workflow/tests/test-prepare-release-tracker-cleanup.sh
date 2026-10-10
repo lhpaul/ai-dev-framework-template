@@ -1210,6 +1210,20 @@ run_not_contains "session_complete_attestation_cannot_bypass_journal" "exiting i
 run_not_contains "session_missing_no_branch_delete" "Deleting remote branch" "$output"
 run_not_contains "session_missing_no_stamp_mutation" "RELEASE_STAMPED " "$output"
 
+# An explicitly requested but empty session must never fall back to legacy
+# cleanup, including a complete attestation and best-effort invocation.
+for session_value in "" "--best-effort"; do
+  result="$(run_cleanup "$repo_component_cleanup" --repo mobile-app --repo-root "$repo_component_cleanup" \
+    --evidence-file "$complete_evidence" --merge-session "$session_value" --best-effort --json)"
+  status="$(printf '%s\n' "$result" | sed -n '1p')"
+  output="$(printf '%s\n' "$result" | sed '1d')"
+  run_test "session_invalid_${session_value}_exits_before_cleanup" "2" "$status"
+  run_contains "session_invalid_${session_value}_message" "--merge-session requires a nonempty session path." "$output"
+  run_not_contains "session_invalid_${session_value}_no_legacy_shortcut" "exiting idempotently" "$output"
+  run_not_contains "session_invalid_${session_value}_no_branch_delete" "Deleting remote branch" "$output"
+  run_not_contains "session_invalid_${session_value}_no_stamp_mutation" "RELEASE_STAMPED " "$output"
+done
+
 echo "Results: $PASS_COUNT passed, $FAIL_COUNT failed"
 
 if [ "$FAIL_COUNT" -ne 0 ]; then
