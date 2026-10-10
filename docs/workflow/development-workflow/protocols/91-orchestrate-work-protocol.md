@@ -2459,16 +2459,20 @@ never draft GitHub evidence. Do not reuse a prior invocation's output.
 Fill `PR_NUMBER` and `BRANCH` with the selected PR and expected branch, then run
 this executable preflight after posting the APPROVED Step 7a summary. Preserve
 both loop outputs for Step 8a; the full output is the final Step 7 evidence.
+The draft loop's `READY_PHASE_ENABLED` and `PLATFORM_COUNT` telemetry is the
+source for conversion ownership and empty-draft detection: it resolves the PR's
+base configuration and local overrides, unlike a separate checkout-config read.
 The existing pre-dispatch CodeRabbit eligibility exception in Step 7a remains
 separate; this preflight governs the normal post-approval transition.
 
-| Effective ready-phase list | Draft-loop evidence | Decision |
+| Draft-loop evidence | Ready-phase telemetry | Decision |
 | --- | --- | --- |
-| Unreadable or malformed config | Any | Stop without conversion |
-| Empty | Not required | Ownership guard, manual ready conversion, full loop |
-| Nonempty | Current-head `clean`, draft-only invocation | Full loop owns conversion |
-| Nonempty, empty draft list | `skipped` with `not_configured`, unchanged head | Full loop owns conversion |
-| Nonempty | Missing, failed, stale, or other skipped verdict | Stop without conversion |
+| Loop exits nonzero | Any | Print its reason, stop without conversion |
+| Missing/malformed/duplicate required telemetry or changed head | Any | Stop without conversion |
+| Current-head `clean`, draft-only invocation | `1` | Full loop owns conversion |
+| Current-head `clean`, draft-only invocation | `0` | Convert only if draft, then full loop |
+| `skipped/not_configured`, zero draft platforms, unchanged head | `0` or `1` | Follow conversion ownership above |
+| Other skipped/failed/missing verdict | Any | Stop without conversion |
 
 <!-- protocol-91-ready-transition:start -->
 <!-- workflow-shell-contract: bash-zsh -->
@@ -2477,50 +2481,50 @@ set -euo pipefail
 PR_NUMBER=<pr_number>
 BRANCH=<branch_name>
 ./scripts/development-workflow/pr-ownership-guard.sh --pr "$PR_NUMBER" --expected-branch "$BRANCH"
-READY_CONFIG=$(python3 scripts/development-workflow/workflow-config-resolver.py review-github-effective --repo-root "$PWD")
-if ! printf '%s\n' "$READY_CONFIG" | jq -e '
-  (.unreadable_file == "") and
-  (.effective_on_ready_github_state as $state | ["defined", "empty", "absent"] | index($state) != null) and
-  (.effective_on_draft_github_state as $state | ["defined", "empty", "absent"] | index($state) != null) and
-  (.effective_on_ready_github | type == "array") and
-  (.effective_on_draft_github | type == "array") and
-  ([.effective_on_ready_github[], .effective_on_draft_github[]] | all(type == "string" and length > 0))
-' >/dev/null; then
-  echo "ERROR: ready-transition configuration unreadable or malformed." >&2
+DRAFT_HEAD=$(gh pr view "$PR_NUMBER" --json headRefOid --jq '.headRefOid')
+if [ -z "$DRAFT_HEAD" ]; then
+  echo "ERROR: draft gate head unavailable." >&2
   exit 1
 fi
-READY_COUNT=$(printf '%s\n' "$READY_CONFIG" | jq '.effective_on_ready_github | length')
-if [ "$READY_COUNT" -gt 0 ]; then
-  DRAFT_COUNT=$(printf '%s\n' "$READY_CONFIG" | jq '.effective_on_draft_github | length')
-  DRAFT_HEAD=$(gh pr view "$PR_NUMBER" --json headRefOid --jq '.headRefOid')
-  if [ -z "$DRAFT_HEAD" ]; then
-    echo "ERROR: draft gate head unavailable." >&2
-    exit 1
-  fi
-  DRAFT_GATE_RC=0
-  DRAFT_GATE_OUTPUT=$(./scripts/development-workflow/pr-review-loop.sh "$PR_NUMBER" --branch "$BRANCH" --draft-github-only) || DRAFT_GATE_RC=$?
-  printf '%s\n' "$DRAFT_GATE_OUTPUT"
-  if [ "$DRAFT_GATE_RC" -ne 0 ]; then
-    exit "$DRAFT_GATE_RC"
-  fi
-  DRAFT_RESULT=$(printf '%s\n' "$DRAFT_GATE_OUTPUT" | awk -F= '$1 == "RESULT" { n++; value=$2 } END { if (n == 1) print value }')
-  DRAFT_MODE=$(printf '%s\n' "$DRAFT_GATE_OUTPUT" | awk -F= '$1 == "DRAFT_GITHUB_ONLY" { n++; value=$2 } END { if (n == 1) print value }')
-  DRAFT_REVIEWED_HEAD=$(printf '%s\n' "$DRAFT_GATE_OUTPUT" | awk -F= '$1 == "POST_CLEAN_HEAD_SHA" { value=$2 } END { print value }')
-  DRAFT_REASON=$(printf '%s\n' "$DRAFT_GATE_OUTPUT" | awk -F= '$1 == "REASON" { n++; value=$2 } END { if (n == 1) print value }')
-  LIVE_HEAD=$(gh pr view "$PR_NUMBER" --json headRefOid --jq '.headRefOid')
-  if [ "$DRAFT_MODE" != 1 ] || [ "$LIVE_HEAD" != "$DRAFT_HEAD" ]; then
-    echo "ERROR: draft gate invocation missing or head changed; rerun on current head." >&2
-    exit 1
-  fi
-  if [ "$DRAFT_RESULT" = clean ] && [ "$DRAFT_REVIEWED_HEAD" = "$LIVE_HEAD" ]; then
-    :
-  elif [ "$DRAFT_RESULT" = skipped ] && [ "$DRAFT_REASON" = not_configured ] && [ "$DRAFT_COUNT" -eq 0 ]; then
-    :
-  else
-    echo "ERROR: draft GitHub gate has no current-head clean verdict; refuse ready transition." >&2
-    exit 1
-  fi
+DRAFT_GATE_RC=0
+DRAFT_GATE_OUTPUT=$(./scripts/development-workflow/pr-review-loop.sh "$PR_NUMBER" --branch "$BRANCH" --draft-github-only) || DRAFT_GATE_RC=$?
+printf '%s\n' "$DRAFT_GATE_OUTPUT"
+if [ "$DRAFT_GATE_RC" -ne 0 ]; then
+  exit "$DRAFT_GATE_RC"
+fi
+ready_gate_value() {
+  printf '%s\n' "$DRAFT_GATE_OUTPUT" | awk -F= -v key="$1" '
+    $1 == key { n++; if (NF == 2) value=$2; else bad=1 }
+    END { if (n == 1 && !bad) print value }
+  '
+}
+DRAFT_RESULT=$(ready_gate_value RESULT)
+DRAFT_MODE=$(ready_gate_value DRAFT_GITHUB_ONLY)
+DRAFT_REVIEWED_HEAD=$(ready_gate_value POST_CLEAN_HEAD_SHA)
+DRAFT_REASON=$(ready_gate_value REASON)
+READY_ENABLED=$(ready_gate_value READY_PHASE_ENABLED)
+DRAFT_COUNT=$(ready_gate_value PLATFORM_COUNT)
+LIVE_HEAD=$(gh pr view "$PR_NUMBER" --json headRefOid --jq '.headRefOid')
+case "$DRAFT_COUNT" in
+  ''|*[!0-9]*) echo "ERROR: draft platform count missing or malformed." >&2; exit 1 ;;
+esac
+case "$READY_ENABLED" in
+  0|1) : ;;
+  *) echo "ERROR: ready-phase telemetry missing or malformed." >&2; exit 1 ;;
+esac
+if [ "$DRAFT_MODE" != 1 ] || [ "$LIVE_HEAD" != "$DRAFT_HEAD" ]; then
+  echo "ERROR: draft gate invocation missing or head changed; rerun on current head." >&2
+  exit 1
+fi
+if [ "$DRAFT_RESULT" = clean ] && [ "$DRAFT_REVIEWED_HEAD" = "$LIVE_HEAD" ]; then
+  :
+elif [ "$DRAFT_RESULT" = skipped ] && [ "$DRAFT_REASON" = not_configured ] && [ "$DRAFT_COUNT" -eq 0 ]; then
+  :
 else
+  echo "ERROR: draft GitHub gate has no current-head clean verdict; refuse ready transition." >&2
+  exit 1
+fi
+if [ "$READY_ENABLED" = 0 ]; then
   IS_DRAFT=$(gh pr view "$PR_NUMBER" --json isDraft --jq '.isDraft')
   case "$IS_DRAFT" in
     true) gh pr ready "$PR_NUMBER" ;;

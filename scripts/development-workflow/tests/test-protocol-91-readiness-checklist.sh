@@ -117,7 +117,8 @@ run_test "target_repo_resolved_in_checklist" "yes" "$_target_repo_defined"
 _CHECKLIST="$(python3 - "$PROTOCOL" <<'PY'
 import sys
 
-lines = open(sys.argv[1], encoding="utf-8").read().splitlines()
+text = open(sys.argv[1], encoding="utf-8").read()
+lines = text.split("## Step 8a: Label Readiness Checklist (Hard Gate)", 1)[1].splitlines()
 start = None
 for index, line in enumerate(lines):
     if line.strip() == "PR_NUMBER=<pr_number>":
@@ -209,10 +210,9 @@ unset _PLANT_TMP _PLANT_PROTOCOL _planted_balance
 
 echo ""
 # --- 9. Execute the actual Protocol 91 ready-transition preflight ------------
-# Mocks are isolated from git/GitHub; the shipped fenced block is the code under
-# test. A premature conversion plant must fail the transition trace assertion.
+# Execute the shipped fenced block with isolated loop/ownership/GitHub mocks.
+# The loop telemetry is authoritative; a checkout config must not replace it.
 _ready_transition_report="$(python3 - "$PROTOCOL" <<'PYTEST'
-import json
 import os
 from pathlib import Path
 import re
@@ -235,21 +235,32 @@ cases = [
     ("duplicate", False), ("malformed", False), ("stale", False),
     ("moved", False), ("missing-mode", False), ("wrong-mode", False),
     ("nonzero", False), ("head-failed", False), ("empty-head", False),
-    ("config-failed", False), ("config-malformed", False),
-    ("config-unreadable", False), ("ownership-failed", False),
-    ("skipped-configured", False), ("skipped-empty", True),
+    ("ownership-failed", False), ("skipped-configured", False),
+    ("skipped-empty", True), ("skipped-wrong-reason", False),
     ("no-ready", True), ("no-ready-resume", True), ("full-failed", False),
-    ("config-malformed-state", False), ("no-ready-unknown-state", False),
+    ("no-ready-unknown-state", False), ("no-ready-blocked", False),
+    ("equals-result", False), ("equals-mode", False), ("duplicate-head", False),
+    ("missing-ready", False), ("malformed-ready", False), ("duplicate-ready", False),
+    ("missing-count", False), ("malformed-count", False), ("duplicate-count", False),
+    ("base-ready-checkout-empty", True), ("base-empty-checkout-ready", True),
+    ("skipped-empty-no-ready", True),
 ]
 
 def run_case(root, name, code=snippet):
     trace = root / "trace"
     trace.write_text("")
+    # Deliberately conflicting checkout policy: the loop has already resolved
+    # the PR-base policy and is the only source for ready ownership.
+    (root / ".ai-dev-workflow.yaml").write_text(
+        "review:\n  on_ready:\n    github: " + (
+            "[local-ai-reviewer]\n" if name == "base-empty-checkout-ready" else "[]\n"
+        )
+    )
     env = dict(os.environ, PATH=f"{root / 'bin'}:{os.environ['PATH']}",
                TEST_TRACE=str(trace), TEST_CASE=name)
     result = subprocess.run(["bash", "-c", code], cwd=root, env=env,
                             text=True, capture_output=True)
-    return result.returncode, trace.read_text().splitlines()
+    return result.returncode, trace.read_text().splitlines(), result.stdout
 
 with tempfile.TemporaryDirectory(prefix="protocol91-ready-") as directory:
     root = Path(directory)
@@ -257,16 +268,6 @@ with tempfile.TemporaryDirectory(prefix="protocol91-ready-") as directory:
     scripts.mkdir(parents=True)
     (root / "bin").mkdir()
     files = {
-        scripts / "workflow-config-resolver.py": r'''import json, os, sys
-case = os.environ["TEST_CASE"]
-if case == "config-failed": sys.exit(2)
-if case == "config-malformed": print("{}"); sys.exit(0)
-print(json.dumps({"unreadable_file": "bad-config" if case == "config-unreadable" else "",
- "effective_on_ready_github": [] if case.startswith("no-ready") else ["local-ai-reviewer"],
- "effective_on_ready_github_state": "malformed" if case == "config-malformed-state" else "defined",
- "effective_on_draft_github_state": "defined",
- "effective_on_draft_github": [] if case == "skipped-empty" else ["pr-agent"]}))
-''',
         scripts / "pr-ownership-guard.sh": '''#!/usr/bin/env bash
 [[ "$TEST_CASE" != ownership-failed ]]
 ''',
@@ -298,23 +299,44 @@ if [[ " $* " != *" --draft-github-only "* ]]; then
   exit $?
 fi
 echo draft >> "$TEST_TRACE"
-[[ "$TEST_CASE" != nonzero ]] || exit 1
+if [[ "$TEST_CASE" == nonzero ]]; then
+  printf 'RESULT=escalate\\nREASON=rate_limited\\nRATE_LIMIT_RESET=1791640778\\n'
+  exit 2
+fi
 case "$TEST_CASE" in
   missing-mode) ;;
   wrong-mode) echo DRAFT_GITHUB_ONLY=0 ;;
+  equals-mode) echo DRAFT_GITHUB_ONLY=1=invalid ;;
   *) echo DRAFT_GITHUB_ONLY=1 ;;
 esac
 case "$TEST_CASE" in
-  blocked) echo RESULT=needs_fixes ;;
+  missing-ready) ;;
+  malformed-ready) echo READY_PHASE_ENABLED=1=invalid ;;
+  duplicate-ready) printf 'READY_PHASE_ENABLED=0\\nREADY_PHASE_ENABLED=1\\n' ;;
+  no-ready*|base-empty-checkout-ready|skipped-empty-no-ready) echo READY_PHASE_ENABLED=0 ;;
+  *) echo READY_PHASE_ENABLED=1 ;;
+esac
+case "$TEST_CASE" in
+  missing-count) ;;
+  malformed-count) echo PLATFORM_COUNT=one ;;
+  duplicate-count) printf 'PLATFORM_COUNT=1\\nPLATFORM_COUNT=1\\n' ;;
+  skipped-empty*) echo PLATFORM_COUNT=0 ;;
+  *) echo PLATFORM_COUNT=1 ;;
+esac
+case "$TEST_CASE" in
+  blocked|no-ready-blocked) echo RESULT=needs_fixes ;;
   missing) ;;
   duplicate) printf 'RESULT=clean\\nRESULT=clean\\n' ;;
   malformed) echo RESULT=clean-extra ;;
+  equals-result) echo RESULT=clean=invalid ;;
+  skipped-wrong-reason) printf 'RESULT=skipped\\nREASON=unavailable\\n' ;;
   skipped-*) printf 'RESULT=skipped\\nREASON=not_configured\\n' ;;
   *) echo RESULT=clean ;;
 esac
 if [[ "$TEST_CASE" == stale ]]; then
   echo POST_CLEAN_HEAD_SHA={other}
 else
+  [[ "$TEST_CASE" != duplicate-head ]] || echo POST_CLEAN_HEAD_SHA={other}
   echo POST_CLEAN_HEAD_SHA={head}
 fi
 ''',
@@ -323,30 +345,33 @@ fi
         path.write_text(content)
         path.chmod(0o755)
     for name, allowed in cases:
-        rc, trace = run_case(root, name)
-        expected = ["manual-ready", "full"] if name == "no-ready" else (
-            ["full"] if name == "no-ready-resume" else
-            ["draft", "full"] if allowed or name == "full-failed" else
-            (["draft"] if name in {"blocked", "missing", "duplicate", "malformed",
-              "stale", "moved", "missing-mode", "wrong-mode", "nonzero", "skipped-configured"} else [])
-        )
-        assert (rc == 0) == allowed, (name, rc, trace)
+        rc, trace, output = run_case(root, name)
+        if name in {"no-ready", "base-empty-checkout-ready", "skipped-empty-no-ready"}:
+            expected = ["draft", "manual-ready", "full"]
+        elif allowed or name == "full-failed":
+            expected = ["draft", "full"]
+        elif name in {"ownership-failed", "head-failed", "empty-head"}:
+            expected = []
+        else:
+            expected = ["draft"]
+        assert (rc == 0) == allowed, (name, rc, trace, output)
         assert trace == expected, (name, expected, trace)
+        if name == "nonzero":
+            assert "REASON=rate_limited" in output and "RATE_LIMIT_RESET=1791640778" in output
         print(f"PASS: ready_transition_{name}", file=sys.stderr)
-    # A violation at the exact draft-loop invocation line: injecting manual ready
-    # before the draft gate must be detected even when all reviewer mocks pass.
-    plant = snippet.replace('DRAFT_GATE_OUTPUT=$(', 'gh pr ready "$PR_NUMBER"\n  DRAFT_GATE_OUTPUT=$(', 1)
+    # Plant premature conversion at the exact draft-loop invocation line.
+    plant = snippet.replace('DRAFT_GATE_OUTPUT=$(', 'gh pr ready "$PR_NUMBER"\nDRAFT_GATE_OUTPUT=$(', 1)
     assert plant != snippet
-    rc, trace = run_case(root, "clean", plant)
+    rc, trace, _ = run_case(root, "clean", plant)
     assert rc == 0 and trace != ["draft", "full"] and "manual-ready" in trace
     print("PASS: ready_transition_premature_conversion_plant_rejected", file=sys.stderr)
-    rc, trace = run_case(root, "clean")
+    rc, trace, _ = run_case(root, "clean")
     assert rc == 0 and trace == ["draft", "full"]
     print("PASS: ready_transition_plant_removed_passes", file=sys.stderr)
-print("verified:25")
+print(f"verified:{len(cases) + 2}")
 PYTEST
 )"
-run_test "ready_transition_executable_matrix_and_plant" "verified:25" "$_ready_transition_report"
+run_test "ready_transition_executable_matrix_and_plant" "verified:35" "$_ready_transition_report"
 
 
 echo "${PASS_COUNT} passed, ${FAIL_COUNT} failed"
