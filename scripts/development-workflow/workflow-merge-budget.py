@@ -23,13 +23,14 @@ import sys
 import tempfile
 import time
 import uuid
+from urllib.parse import quote
 
 SCRIPT = Path(__file__).resolve().parent
 SCHEMA = 1
 TERMINAL = {"Deferred", "Waiting", "Interrupted", "Completed"}
 PHASES = {"audit", "local_merge", "base_push", "merge_api", "merge_verify",
           "remote_delete", "local_cleanup", "issue_close", "tracker", "cleanup",
-          "recheck", "hold", "policy_skip"}
+          "recheck", "hold", "policy_skip", "publication", "release_stamp", "release_finalize"}
 
 
 PR_QUERY = """query MergeBudgetPR($owner: String!, $name: String!, $number: Int!) {
@@ -37,6 +38,7 @@ PR_QUERY = """query MergeBudgetPR($owner: String!, $name: String!, $number: Int!
     pullRequest(number: $number) {
       number state headRefName headRefOid baseRefName isInMergeQueue
       autoMergeRequest { enabledAt }
+      mergeCommit { oid }
     }
   }
 }"""
@@ -421,13 +423,270 @@ def project_release(args):
             "version": args.version, "branch": args.branch, "head": head, "base": args.base,
             "issues": issues, "scopeReadCost": read_cost,
             "markerRepo": issue_repo, "markerProvider": args.provider,
+            "mergedStatus": args.merged_status,
             "changelogDigest": hashlib.sha256(call(["git", "-C", str(checkout), "show", head + ":CHANGELOG.md"]).encode()).hexdigest()}
     if args.evidence:
         evidence = decode(Path(args.evidence).read_text())
         if not isinstance(evidence, dict) or not isinstance(evidence.get("target_binding"), dict):
             raise Stop("component release binding unavailable")
         projection["componentBinding"] = evidence["target_binding"]
+        tag_name = evidence.get("component_tag")
+        if not isinstance(tag_name, str) or not re.fullmatch(r"[A-Za-z0-9._-]+", tag_name):
+            raise Stop("component publication tag unavailable")
+        projection["publicationTag"] = tag_name
+    if args.provider == "linear":
+        projection["linearMarker"] = ({"kind": "field", "name": args.release_field, "value": args.version}
+                                      if args.release_field else {"kind": "label", "name": (args.release_label_prefix or "release/") + args.version})
     return projection
+
+
+def release_inspect(pair, target, owner, retained_scope=()):
+    argv = ["bash", str(SCRIPT / "prepare-release-post-merge-cleanup.sh"), pair["version"],
+            "--repo-root", str(owner), "--backport-base", target["base"],
+            "--inspect-targets", "--release-head", target["head"]]
+    if pair.get("productRepo"):
+        argv += ["--repo", pair["productRepo"], "--evidence-file", pair["evidenceFile"]]
+    for issue in retained_scope:
+        argv += ["--issue", str(issue["id"])]
+    environment = dict(os.environ)
+    for name in ("GH_REPO", "WORKFLOW_TARGET_GITHUB_REPO", "WORKFLOW_MERGE_BUDGET_SESSION", "WORKFLOW_MERGE_BUDGET_TOKEN"):
+        environment.pop(name, None)
+    value = decode(call(argv, cwd=owner, env=environment))
+    if not isinstance(value, dict) or not isinstance(value.get("issues"), list) or not value["issues"]:
+        raise Stop("complete release duty projection unavailable")
+    expected = {"repo": target["repo"], "root": target["root"], "version": pair["version"],
+                "head": target["head"], "branch": target["branch"], "base": target["base"]}
+    if any(value.get(key) != item for key, item in expected.items()):
+        raise Stop("release projection identity mismatch")
+    integer(value.get("scopeReadCost"), "release projection reads")
+    if value.get("markerProvider") not in {"github_projects", "github_issues", "linear", "none"}:
+        raise Stop("release marker provider unavailable")
+    repo(value.get("markerRepo"))
+    ids = set()
+    for issue in value["issues"]:
+        if (not isinstance(issue, dict) or not isinstance(issue.get("id"), str) or issue["id"] in ids
+                or issue.get("provider") != value["markerProvider"] or issue.get("repo") != value["markerRepo"]
+                or type(issue.get("releaseStamp")) is not bool or type(issue.get("tracker")) is not bool
+                or issue.get("close") is not False or not isinstance(issue.get("status"), str) or not issue["status"]
+                or issue.get("statusPolicy") != "exact"):
+            raise Stop("malformed release issue ownership/duties")
+        if issue["releaseStamp"] != (issue["provider"] != "none") or issue["tracker"] != (issue["provider"] in {"github_projects", "linear"}):
+            raise Stop("release provider duty omitted")
+        ids.add(issue["id"])
+    if not isinstance(value.get("changelogDigest"), str) or not re.fullmatch(r"[0-9a-f]{64}", value["changelogDigest"]):
+        raise Stop("finalized changelog fingerprint unavailable")
+    return value
+
+
+def release_step(target, key, phase, issue=None):
+    prior = target["steps"].get(key)
+    if prior and (prior["phase"] != phase or prior.get("issue") != issue):
+        raise Stop("release duty conflicts with declared step")
+    target["steps"].setdefault(key, {"phase": phase, "status": "pending", **({"issue": issue} if issue else {})})
+
+
+def freeze_release_pair(declaration, state):
+    if "releasePair" not in declaration:
+        if any(s["phase"] in {"publication", "release_stamp", "release_finalize"} or "deferUntilPairCleanup" in s
+               for p in state["prs"] for s in p["steps"].values()):
+            raise Stop("release duties require explicit pairing")
+        return
+    pair = declaration["releasePair"]
+    if not isinstance(pair, dict) or set(pair) - {"version", "productionPr", "backportPr", "productRepo", "evidenceFile"}:
+        raise Stop("unknown or malformed releasePair declaration")
+    pair = dict(pair)
+    version = pair.get("version")
+    if not isinstance(version, str) or not re.fullmatch(r"v?[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.-]+)?(?:\+[A-Za-z0-9.-]+)?", version):
+        raise Stop("invalid paired release version")
+    pair["version"] = "v" + (version[1:] if version.startswith("v") else version)
+    pair["productionPr"] = integer(pair.get("productionPr"), "production PR", True)
+    pair["backportPr"] = integer(pair.get("backportPr"), "backport PR", True)
+    if len(state["prs"]) != 2 or [p["pr"] for p in state["prs"]] != [pair["productionPr"], pair["backportPr"]]:
+        raise Stop("releasePair must bind exactly the ordered production/backport selection")
+    production, backport = state["prs"]
+    if (production["pr"] == backport["pr"] or production["base"] != "main" or backport["base"] == "main"
+            or any(production[k] != backport[k] for k in ("repo", "head", "branch", "root", "commonDir"))
+            or production["branch"].rsplit("/", 1)[-1] != pair["version"]
+            or set(production["policySkipped"]) != set(backport["policySkipped"])):
+        raise Stop("paired release repository/head/branch/version/base/retention mismatch")
+    if bool(pair.get("productRepo")) != bool(pair.get("evidenceFile")):
+        raise Stop("component pair requires both product route and evidence")
+    if pair.get("productRepo"):
+        if not isinstance(pair["productRepo"], str) or not isinstance(pair["evidenceFile"], str):
+            raise Stop("malformed component pair route")
+        pair["evidenceFile"] = str(Path(pair["evidenceFile"]).resolve())
+    projection = release_inspect(pair, backport, state["ownerRoot"])
+    pair.update(repo=production["repo"], root=production["root"], head=production["head"],
+                branch=production["branch"], backportBase=backport["base"], projection=projection)
+    state["releasePair"] = pair
+    production["issues"] = []
+    production["steps"] = {key: entry for key, entry in production["steps"].items()
+                           if entry["phase"] not in {"remote_delete", "local_cleanup"}
+                           and entry.get("skippedPhase") not in {"remote_delete", "local_cleanup"}}
+    backport["issues"] = projection["issues"]
+    for phase in ("remote_delete", "local_cleanup"):
+        if not any(s["phase"] == phase or s.get("skippedPhase") == phase for s in backport["steps"].values()):
+            release_step(backport, phase, phase)
+            if phase in backport["policySkipped"]:
+                backport["steps"][phase].update(phase="policy_skip", skippedPhase=phase)
+    release_step(production, "publication", "publication")
+    for issue in backport["issues"]:
+        if issue["tracker"]:
+            release_step(backport, "tracker:" + issue["id"] + ":pre", "tracker", issue["id"])
+        if issue["releaseStamp"]:
+            release_step(backport, "release_stamp:" + issue["id"], "release_stamp", issue["id"])
+    if projection["markerProvider"] in {"github_projects", "github_issues"}:
+        release_step(backport, "release_finalize", "release_finalize")
+    for target in state["prs"]:
+        for phase in ("merge_api", "merge_verify", "cleanup"):
+            if sum(s["phase"] == phase for s in target["steps"].values()) != 1:
+                raise Stop("paired route requires unique merge/verification/cleanup duties")
+        for entry in target["steps"].values():
+            if entry["phase"] in {"local_merge", "base_push", "issue_close"}:
+                raise Stop("paired release requires regular PR merge route")
+            if "deferUntilPairCleanup" in entry and (entry["phase"] != "audit"
+                    or target is not production or type(entry["deferUntilPairCleanup"]) is not bool):
+                raise Stop("invalid pair-owned deferred audit")
+            if entry["phase"] == "publication" and target is not production:
+                raise Stop("publication duty must belong to production")
+            if entry["phase"] in {"release_stamp", "tracker"} and not any(
+                    issue["id"] == str(entry.get("issue")) for issue in target["issues"]):
+                raise Stop("release duty has no frozen owning issue")
+            if entry["phase"] == "release_finalize" and target is not backport:
+                raise Stop("shared finalization must belong to backport")
+        if target["verifiedState"] == "merged":
+            regular_release_merge(target)
+    if sum(s["phase"] == "publication" for s in production["steps"].values()) != 1:
+        raise Stop("release requires one production publication duty")
+    for issue in backport["issues"]:
+        for phase, required in (("tracker", issue["tracker"]), ("release_stamp", issue["releaseStamp"])):
+            if sum(s["phase"] == phase and str(s.get("issue")) == issue["id"] for s in backport["steps"].values()) != int(required):
+                raise Stop("release issue duty must have one exact owner")
+    if sum(s["phase"] == "release_finalize" for s in backport["steps"].values()) != int(projection["markerProvider"] in {"github_projects", "github_issues"}):
+        raise Stop("release marker duty must have one exact owner")
+
+
+def regular_release_merge(target, live=None):
+    live = live or pr_read(target)
+    if live["headRefOid"] != target["head"] or live["headRefName"] != target["branch"]:
+        raise Stop("reviewed release identity changed")
+    if live["state"] != "MERGED":
+        raise Stop("release merge not independently verified", {"knownOutstanding": True})
+    commit = (live.get("mergeCommit") or {}).get("oid")
+    if not isinstance(commit, str) or not re.fullmatch(r"[0-9a-f]{40}", commit):
+        raise Stop("release merge commit unavailable")
+    value = gh("api", "repos/%s/git/commits/%s" % (target["repo"], commit))
+    parents = value.get("parents") if isinstance(value, dict) else None
+    if (not isinstance(value, dict) or value.get("sha") != commit or not isinstance(parents, list)
+            or len(parents) != 2 or any(not isinstance(p, dict) or not isinstance(p.get("sha"), str)
+                                      or not re.fullmatch(r"[0-9a-f]{40}", p["sha"]) for p in parents)
+            or parents[1]["sha"] != target["head"] or parents[0]["sha"] == target["head"]):
+        raise Stop("release requires a regular merge commit with the reviewed head parent")
+    target["verifiedMerge"] = {"commit": commit, "parents": [p["sha"] for p in parents], "observedAt": now()}
+    return commit
+
+
+def publication_read(state):
+    pair = state["releasePair"]
+    production = state["prs"][0]
+    commit = regular_release_merge(production)
+    tag_name = pair["projection"].get("publicationTag", pair["version"])
+    tag = gh("api", "repos/%s/git/ref/tags/%s" % (pair["repo"], quote(tag_name, safe="")))
+    obj = tag.get("object") if isinstance(tag, dict) else None
+    seen = set()
+    for _ in range(8):
+        if (not isinstance(obj, dict) or obj.get("type") not in {"tag", "commit"}
+                or not isinstance(obj.get("sha"), str) or not re.fullmatch(r"[0-9a-f]{40}", obj["sha"])):
+            raise Stop("release tag target unavailable")
+        if obj["type"] == "commit":
+            break
+        if obj["sha"] in seen:
+            raise Stop("release tag dereference cycle")
+        seen.add(obj["sha"])
+        annotation = gh("api", "repos/%s/git/tags/%s" % (pair["repo"], obj["sha"]))
+        if not isinstance(annotation, dict) or annotation.get("sha") != obj["sha"]:
+            raise Stop("annotated release tag identity unavailable")
+        obj = annotation.get("object")
+    else:
+        raise Stop("release tag dereference limit exceeded")
+    if obj["sha"] != commit:
+        raise Stop("release tag does not identify production merge")
+    release = gh("api", "repos/%s/releases/tags/%s" % (pair["repo"], quote(tag_name, safe="")))
+    if (not isinstance(release, dict) or type(release.get("id")) is not int or release["id"] <= 0
+            or release.get("tag_name") != tag_name or type(release.get("draft")) is not bool):
+        raise Stop("release publication identity unavailable")
+    if release["draft"] or not release.get("published_at"):
+        raise Stop("release publication still outstanding", {"knownOutstanding": True})
+    if timestamp(release["published_at"]) > datetime.now(timezone.utc):
+        raise Stop("release publication observation inconsistent")
+    pair["verifiedPublication"] = {"productionMerge": commit, "tagCommit": obj["sha"],
+                                   "tagName": tag_name, "releaseId": release["id"], "observedAt": now()}
+    return True
+
+
+def release_previous_allowed(state, target):
+    return bool(state.get("releasePair") and target is state["prs"][1] and all(
+        entry["status"] in {"completed", "skipped_by_policy"} or entry["phase"] == "cleanup"
+        or (entry["phase"] == "audit" and entry.get("deferUntilPairCleanup") is True)
+        for entry in state["prs"][0]["steps"].values()))
+
+
+def release_scope_check(state):
+    pair = state["releasePair"]
+    backport = state["prs"][1]
+    owner = proof_root(state, state["ownerCommonDir"], state["ownerRoot"])
+    current = release_inspect(pair, backport, owner, pair["projection"]["issues"])
+    fields = set(pair["projection"]) - {"scopeReadCost"}
+    if {k: current.get(k) for k in fields} != {k: pair["projection"][k] for k in fields}:
+        raise Stop("release scope/provider binding changed since admission")
+
+
+def release_action_check(state, target, args, live):
+    pair = state["releasePair"]
+    if live["headRefOid"] != target["head"] or live["headRefName"] != target["branch"]:
+        raise Stop("reviewed release head/branch changed")
+    if args.phase == "merge_api":
+        argv = getattr(args, "argv", [])
+        if (len(argv) < 4 or Path(argv[0]).name != "gh" or argv[1:3] != ["pr", "merge"]
+                or argv[3] != str(target["pr"]) or "--merge" not in argv
+                or any(a in {"--squash", "--rebase", "--delete-branch", "-d"} for a in argv)):
+            raise Stop("paired merge executor requires unchanged regular-merge argv without deletion")
+        for flag, expected in (("--repo", target["repo"]), ("--match-head-commit", target["head"])):
+            if argv.count(flag) != 1 or argv.index(flag) + 1 >= len(argv) or argv[argv.index(flag) + 1] != expected:
+                raise Stop("paired merge argv must bind the exact frozen repository and reviewed head")
+        if any(a == "-R" or a.startswith(("--repo=", "-R", "--match-head-commit=")) for a in argv[4:]):
+            raise Stop("ambiguous paired merge executor identity flags")
+        if live["state"] == "MERGED":
+            raise Stop("release already merged; reconcile instead of duplicate submission")
+        if live["state"] != "OPEN":
+            raise Stop("release PR is not OPEN")
+        if live["isInMergeQueue"] or live["autoMergeRequest"] is not None:
+            state["outcome"] = "Waiting"
+            target["steps"][step_key(args)]["submission"] = {"observedAt": now(), "state": "OPEN", "head": target["head"]}
+            raise Stop("verified existing release submission; never resubmit")
+        if target is state["prs"][1]:
+            publication_read(state)
+    followup = {"cleanup", "remote_delete", "local_cleanup", "policy_skip", "tracker", "release_stamp", "release_finalize"}
+    if args.phase in followup:
+        publication_read(state)
+        regular_release_merge(state["prs"][1])
+        if args.phase == "cleanup":
+            release_scope_check(state)
+        if target is state["prs"][0] and args.phase == "cleanup":
+            if any(s["status"] != "completed" for s in state["prs"][1]["steps"].values() if s["phase"] == "cleanup"):
+                raise Stop("shared backport cleanup remains pending")
+        if args.phase == "release_finalize" and any(s["status"] != "completed" for s in target["steps"].values()
+                                                   if s["phase"] in {"tracker", "release_stamp"}):
+            raise Stop("release stamping/tracker duties precede finalization")
+    if args.phase == "publication" and target is not state["prs"][0]:
+        raise Stop("publication is production-owned")
+    if args.phase == "publication":
+        regular_release_merge(target, live)
+    if args.phase == "release_stamp" and args.status != pair["version"]:
+        raise Stop("release stamp version differs from frozen intent")
+    if target["steps"][step_key(args)].get("deferUntilPairCleanup"):
+        if any(s["status"] != "completed" for s in state["prs"][1]["steps"].values() if s["phase"] == "cleanup"):
+            raise Stop("final release audit requires shared cleanup")
 
 
 def estimate(state):
@@ -442,6 +701,13 @@ def estimate(state):
         pieces.append({"kind": provider, "count": count, "weight": weight})
     remaining = sum(p["verifiedState"] == "unmerged" for p in state["prs"])
     pieces.append({"kind": "recheck", "count": remaining * (remaining - 1) // 2, "weight": 5})
+    if state.get("releasePair"):
+        pieces.append({"kind": "release_projection", "count": int(bool(outstanding) and not state["started"]),
+                       "weight": max(100, state["releasePair"]["projection"]["scopeReadCost"] * 2)})
+        for phase, weight in (("publication", 25), ("release_stamp", 15), ("release_finalize", 15), ("cleanup", 30), ("audit", 10), ("hold", 10)):
+            pieces.append({"kind": phase, "weight": weight, "count": sum(
+                entry["phase"] == phase and entry["status"] not in {"completed", "skipped_by_policy"}
+                for target in outstanding for entry in target["steps"].values())})
     raw = sum(p["count"] * p["weight"] for p in pieces)
     margin = max(50, (raw + 1) // 2)
     return {"version": 1, "heuristic": True, "components": pieces,
@@ -678,6 +944,8 @@ def begin(args):
                 raise Stop("PR branch differs from cleanup target; refusing cleanup and tracker updates")
             target["verifiedState"] = "merged" if live["state"] == "MERGED" else "unmerged"
             target["lastVerifiedAt"] = now()
+            if "releasePair" in declaration and live["state"] == "OPEN" and (live["isInMergeQueue"] or live["autoMergeRequest"] is not None):
+                target["observedSubmission"] = {"observedAt": now(), "state": "OPEN", "head": head}
             inspected = inspect(target, owner)
             target["issues"] = inspected["issues"]
             target["worktrees"] = inspected.get("worktrees", [])
@@ -720,9 +988,11 @@ def begin(args):
                     continue
                 if not isinstance(phase, str) or phase not in PHASES or not isinstance(key, str) or not re.fullmatch(r"[A-Za-z0-9_.:-]+", key) or key in target["steps"]:
                     raise Stop("unknown or duplicate planned phase/step")
-                if set(definition) - {"id", "phase", "auditTarget", "auditRepo", "marker", "issue"}:
+                if set(definition) - {"id", "phase", "auditTarget", "auditRepo", "marker", "issue", "deferUntilPairCleanup"}:
                     raise Stop("unsupported planned step fields; proof is journal-owned")
                 entry = dict(definition, status="pending")
+                if phase == "merge_api" and target.get("observedSubmission"):
+                    entry["submission"] = target["observedSubmission"]
                 if phase == "issue_close":
                     owned = [issue for issue in target["issues"] if str(issue["id"]) == str(entry.get("issue")) and issue.get("close")]
                     if len(owned) != 1:
@@ -750,10 +1020,12 @@ def begin(args):
                 for entry in target["steps"].values():
                     if entry["phase"] == phase:
                         entry.update(phase="policy_skip", skippedPhase=phase)
+        freeze_release_pair(declaration, state)
         state["participants"] = sorted(set(state["participants"]))
         state["manifestFingerprint"] = hashlib.sha256(json.dumps(declaration, sort_keys=True).encode()).hexdigest()
         state["projectionComplete"] = True
-        admission(state)
+        if admission(state) and state.get("releasePair") and any(p.get("observedSubmission") for p in state["prs"]):
+            state["outcome"], state["reason"] = "Waiting", "verified existing release queue/auto-merge submission; never resubmit"
     except (Stop, OSError) as exc:
         state["outcome"], state["reason"] = "Deferred", str(exc)
     publish(path, state)
@@ -772,7 +1044,7 @@ def before(args):
         raise Stop("frozen selected projection remains incomplete")
     if args.phase not in {"audit", "hold", "recheck"}:
         preceding = image["prs"][:image["prs"].index(target)]
-        if any(step["status"] not in {"completed", "skipped_by_policy"} for prior in preceding for step in prior["steps"].values()):
+        if any(step["status"] not in {"completed", "skipped_by_policy"} for prior in preceding for step in prior["steps"].values()) and not release_previous_allowed(image, target):
             raise Stop("preceding selected PR follow-up remains incomplete")
     old = target["steps"].get(key)
     if not old or old.get("phase") != args.phase:
@@ -818,6 +1090,8 @@ def before(args):
     failure = None
     try:
         if not image["started"]:
+            if image.get("releasePair"):
+                release_scope_check(image)
             for selected in image["prs"]:
                 selected_root = proof_root(image, selected["commonDir"], selected["root"])
                 if checkout_repo(selected_root).lower() != selected["repo"].lower():
@@ -825,9 +1099,10 @@ def before(args):
                 current = pr_read(selected)
                 selected["verifiedState"] = "merged" if current["state"] == "MERGED" else "unmerged"
                 selected["lastVerifiedAt"] = now()
-                current_targets = inspect(dict(selected, root=selected_root), proof_root(image, image["ownerCommonDir"], image["ownerRoot"]))["issues"]
-                if current_targets != selected["issues"]:
-                    raise Stop("owned follow-up targets changed since frozen projection")
+                if not image.get("releasePair"):
+                    current_targets = inspect(dict(selected, root=selected_root), proof_root(image, image["ownerCommonDir"], image["ownerRoot"]))["issues"]
+                    if current_targets != selected["issues"]:
+                        raise Stop("owned follow-up targets changed since frozen projection")
             if not admission(image):
                 raise Stop(image["reason"])
         current_root = proof_root(image, target["commonDir"], target["root"])
@@ -836,6 +1111,8 @@ def before(args):
         live = pr_read(target)
         target["verifiedState"] = "merged" if live["state"] == "MERGED" else "unmerged"
         target["lastVerifiedAt"] = now()
+        if image.get("releasePair"):
+            release_action_check(image, target, args, live)
         if args.phase in {"remote_delete", "local_cleanup", "cleanup", "issue_close", "tracker"} and target["verifiedState"] != "merged":
             raise Stop("merge-dependent follow-up requires verified MERGED")
         expected = Path(args.expected_file).read_text() if args.expected_file else None
@@ -860,11 +1137,18 @@ def before(args):
         for selected in state["prs"]:
             fresh = next(p for p in image["prs"] if p["repo"] == selected["repo"] and p["pr"] == selected["pr"])
             selected["verifiedState"], selected["lastVerifiedAt"] = fresh["verifiedState"], fresh["lastVerifiedAt"]
+            if fresh.get("verifiedMerge"):
+                selected["verifiedMerge"] = fresh["verifiedMerge"]
+            for step_id, entry in fresh["steps"].items():
+                if entry.get("submission"):
+                    selected["steps"][step_id]["submission"] = entry["submission"]
+        if image.get("releasePair"):
+            state["releasePair"] = image["releasePair"]
         for field in ("estimate", "initialSample", "quotaEvidence"):
             if field in image:
                 state[field] = image[field]
         if failure:
-            state["outcome"] = "Interrupted" if state["started"] else "Deferred"
+            state["outcome"] = "Waiting" if image["outcome"] == "Waiting" else ("Interrupted" if state["started"] else "Deferred")
             state["reason"] = failure
             if not any(entry["status"] == "in_flight" for target in state["prs"] for entry in target["steps"].values()):
                 state["active"] = None
@@ -1019,6 +1303,59 @@ def supersession_target(state, target, entry):
     return selected, successor
 
 
+def release_stamp_read(state, target, entry):
+    issue = next((i for i in target["issues"] if i["id"] == str(entry.get("issue"))), None)
+    if not issue or not issue.get("releaseStamp"):
+        raise Stop("release stamp has no frozen owning issue")
+    if issue["provider"] == "linear":
+        proof = entry.get("providerEvidence", {})
+        if (proof.get("repo") != issue["repo"] or proof.get("issue") != issue["id"]
+                or proof.get("releaseVersion") != state["releasePair"]["version"]
+                or proof.get("releaseMarker") != state["releasePair"]["projection"].get("linearMarker")
+                or not proof.get("markerId")
+                or not newer(proof.get("observedAt"), entry.get("intentAt"), state.get("recoveryStartedAt"))):
+            raise Stop("current owning Linear release-stamp bridge read-back required")
+        return True
+    value = gh("api", "repos/%s/issues/%s" % (issue["repo"], issue["id"]))
+    if (not isinstance(value, dict) or value.get("number") != int(issue["id"])
+            or value.get("state") not in {"open", "closed"} or "milestone" not in value or "pull_request" in value):
+        raise Stop("release stamp issue evidence unavailable")
+    milestone = value["milestone"]
+    if milestone is None:
+        return False
+    if (not isinstance(milestone, dict) or type(milestone.get("number")) is not int or milestone["number"] <= 0
+            or not isinstance(milestone.get("title"), str)):
+        raise Stop("release stamp milestone evidence unavailable")
+    if milestone["title"] != state["releasePair"]["version"]:
+        return False
+    entry["verifiedStamp"] = {"milestone": milestone["number"], "version": milestone["title"], "observedAt": now()}
+    return True
+
+
+def release_finalize_read(state, entry):
+    projection = state["releasePair"]["projection"]
+    if projection["markerProvider"] not in {"github_projects", "github_issues"}:
+        raise Stop("release finalization has no owning GitHub marker")
+    pages = gh("api", "--paginate", "--slurp", "repos/%s/milestones?state=all&per_page=100" % projection["markerRepo"])
+    if not isinstance(pages, list) or any(not isinstance(page, list) for page in pages):
+        raise Stop("release milestone pages unavailable")
+    milestones = [m for page in pages for m in page]
+    if any(not isinstance(m, dict) or not isinstance(m.get("title"), str) for m in milestones):
+        raise Stop("release milestone identity unavailable")
+    matches = [m for m in milestones if m["title"] == state["releasePair"]["version"]]
+    if not matches:
+        return False
+    if len(matches) != 1:
+        raise Stop("release milestone identity ambiguous")
+    milestone = matches[0]
+    if type(milestone.get("number")) is not int or milestone["number"] <= 0 or milestone.get("state") not in {"open", "closed"}:
+        raise Stop("release milestone state unavailable")
+    if milestone["state"] != "closed":
+        return False
+    entry["verifiedMarker"] = {"milestone": milestone["number"], "observedAt": now()}
+    return True
+
+
 def verify(state, target, entry, seen=None):
     phase = entry["phase"]
     git_root = proof_root(state, target["commonDir"], target["root"]) if phase in {"local_merge", "base_push", "remote_delete", "local_cleanup", "policy_skip"} else target["root"]
@@ -1036,6 +1373,8 @@ def verify(state, target, entry, seen=None):
         target["lastVerifiedAt"] = now()
         if phase in {"merge_api", "merge_verify"}:
             if live["state"] == "MERGED":
+                if state.get("releasePair"):
+                    regular_release_merge(target, live)
                 return True
             if live["state"] == "OPEN" and (live.get("isInMergeQueue") is True or isinstance(live.get("autoMergeRequest"), dict)):
                 state["outcome"], state["reason"] = "Waiting", "verified queued/auto-merge submission; resume after live MERGED"
@@ -1046,6 +1385,21 @@ def verify(state, target, entry, seen=None):
             raise Stop("merge outcome not verified")
         if live["state"] != "MERGED":
             raise Stop("follow-up requires verified MERGED")
+        if state.get("releasePair") and phase in {"cleanup", "remote_delete", "local_cleanup", "policy_skip", "tracker"}:
+            publication_read(state)
+            regular_release_merge(state["prs"][1])
+    if phase in {"publication", "release_stamp", "release_finalize"}:
+        if not state.get("releasePair"):
+            raise Stop("release proof has no frozen pair")
+        publication_read(state)
+        if phase == "publication":
+            if target is not state["prs"][0]:
+                raise Stop("publication proof has wrong owner")
+            return True
+        if target is not state["prs"][1]:
+            raise Stop("shared release proof has wrong owner")
+        regular_release_merge(target)
+        return release_stamp_read(state, target, entry) if phase == "release_stamp" else release_finalize_read(state, entry)
     if entry.get("existingMerge") and phase in {"local_merge", "base_push"}:
         return pr_read(target)["state"] == "MERGED"
     if phase == "local_merge":
@@ -1102,6 +1456,10 @@ def verify(state, target, entry, seen=None):
                     raise Stop("caller-owned worktree was not retained")
                 if call(["git", "-C", item["root"], "branch", "--show-current"]) == target["branch"]:
                     raise Stop("caller-owned worktree still holds deleted branch", {"knownOutstanding": True})
+            elif state.get("releasePair"):
+                if (not Path(item["root"]).is_dir() or "worktree " + item["root"] not in listing
+                        or call(["git", "-C", item["root"], "branch", "--show-current"]) == target["branch"]):
+                    raise Stop("release worktree must be retained and switched away", {"knownOutstanding": True})
             elif Path(item["root"]).exists() or "worktree " + item["root"] in listing:
                 raise Stop("non-caller merged worktree cleanup not verified", {"knownOutstanding": True})
         return not call(["git", "-C", git_root, "branch", "--list", target["branch"]])
@@ -1125,16 +1483,25 @@ def verify(state, target, entry, seen=None):
             return tracker_read(state, matches[0])
         return closure_read(matches[0], entry)
     if phase == "cleanup":
+        if state.get("releasePair") and target is state["prs"][0]:
+            shared = state["prs"][1]
+            cleanup = [s for s in shared["steps"].values() if s["phase"] == "cleanup"]
+            if len(cleanup) != 1 or cleanup[0]["status"] != "completed":
+                raise Stop("shared release cleanup remains unverified", {"knownOutstanding": True})
+            return verify(state, shared, cleanup[0])
         for issue in target["issues"]:
             if issue.get("tracker") and not tracker_read(state, issue):
                 raise Stop("owned tracker follow-up remains pending", {"knownOutstanding": True})
             if issue.get("close") and issue_read(issue)["state"] != "CLOSED":
                 raise Stop("owned closure follow-up remains pending", {"knownOutstanding": True})
+        duties = {"issue_close", "tracker", "remote_delete", "local_cleanup", "policy_skip"}
+        if state.get("releasePair"):
+            duties |= {"release_stamp", "release_finalize"}
         if any(entry["status"] not in {"completed", "skipped_by_policy"} for entry in target["steps"].values()
-               if entry["phase"] in {"issue_close", "tracker", "remote_delete", "local_cleanup", "policy_skip"}):
+               if entry["phase"] in duties):
             raise Stop("individual owned follow-up duties remain unverified", {"knownOutstanding": True})
         for related in target["steps"].values():
-            if related["phase"] in {"tracker", "issue_close", "remote_delete", "local_cleanup", "policy_skip"} and not verify(state, target, related):
+            if related["phase"] in duties and not verify(state, target, related):
                 raise Stop("completed individual duty no longer verifies")
         return True
     if phase == "recheck":
@@ -1198,6 +1565,12 @@ def after(args):
             failure = str(exc)
 
         current["verifiedState"], current["lastVerifiedAt"] = target["verifiedState"], target["lastVerifiedAt"]
+        if image.get("releasePair"):
+            state["releasePair"] = image["releasePair"]
+            for selected in state["prs"]:
+                fresh = next(p for p in image["prs"] if p["pr"] == selected["pr"] and p["repo"] == selected["repo"])
+                if fresh.get("verifiedMerge"):
+                    selected["verifiedMerge"] = fresh["verifiedMerge"]
         state["outcome"], state["reason"] = image["outcome"], image["reason"]
         if not getattr(args, "retain_executor", False) and not any(s["status"] == "in_flight" for p in state["prs"] for s in p["steps"].values()):
             state["active"] = None
@@ -1217,7 +1590,7 @@ def resume(args):
     if not image.get("projectionComplete"):
         return summary(image)
     linear_entries = [entry for target in image["prs"] for entry in target["steps"].values()
-                      if entry["phase"] == "tracker" and any(issue["provider"] == "linear" and str(issue["id"]) == str(entry.get("issue")) for issue in target["issues"])]
+                      if entry["phase"] in {"tracker", "release_stamp"} and any(issue["provider"] == "linear" and str(issue["id"]) == str(entry.get("issue")) for issue in target["issues"])]
     continuation = bool(image.get("recoveryAwaitingProvider") and linear_entries and all(
         entry.get("providerEvidence", {}).get("recoveryGeneration") == image.get("recoveryGeneration")
         and newer(entry.get("providerEvidence", {}).get("observedAt"), image.get("recoveryStartedAt"))
@@ -1230,12 +1603,12 @@ def resume(args):
         try:
             verified = verify(image, target, entry)
         except Stop as exc:
-            if exc.evidence and exc.evidence.get("knownOutstanding") and entry["status"] in {"pending", "in_flight", "uncertain"} and entry["phase"] in {"local_cleanup", "cleanup", "audit", "hold", "merge_api", "base_push"}:
+            if exc.evidence and exc.evidence.get("knownOutstanding") and entry["status"] in {"pending", "in_flight", "uncertain"} and entry["phase"] in {"local_cleanup", "cleanup", "audit", "hold", "merge_api", "base_push", "publication"}:
                 entry.update(status="pending", retryVerifiedAt=now())
                 return
             raise
         if not verified:
-            if entry["status"] in {"in_flight", "uncertain"} and entry["phase"] in {"remote_delete", "local_cleanup", "tracker", "issue_close"}:
+            if entry["status"] in {"in_flight", "uncertain"} and entry["phase"] in {"remote_delete", "local_cleanup", "tracker", "issue_close", "release_stamp", "release_finalize"}:
                 entry.update(status="pending", retryVerifiedAt=now())
                 return
             raise Stop("outstanding or previously completed action cannot be verified")
@@ -1258,6 +1631,11 @@ def resume(args):
             if live["state"] == "OPEN" and (live.get("isInMergeQueue") is True or isinstance(live.get("autoMergeRequest"), dict)):
                 image["outcome"], image["reason"] = "Waiting", "submission remains queued; do not repeat"
                 break
+            if image.get("releasePair") and live["state"] == "MERGED":
+                regular_release_merge(target, live)
+                for entry in target["steps"].values():
+                    if entry["phase"] in {"merge_api", "merge_verify"} and entry["status"] == "pending":
+                        entry.update(status="completed", verifiedAt=now(), reconciledMerge=True)
             for key, entry in target["steps"].items():
                 if entry["phase"] in {"audit", "hold"}:
                     continue
@@ -1284,7 +1662,7 @@ def resume(args):
 
 
 def summary(state, final=False):
-    result = {k: state.get(k) for k in ("schemaVersion", "session", "revision", "outcome", "reason", "reserve", "estimate", "initialSample", "quotaEvidence", "selectedSet", "projectionComplete", "prs")}
+    result = {k: state.get(k) for k in ("schemaVersion", "session", "revision", "outcome", "reason", "reserve", "estimate", "initialSample", "quotaEvidence", "selectedSet", "projectionComplete", "prs", "releasePair")}
     if result.get("prs") is not None:
         result["prs"] = decode(json.dumps(result["prs"]))
         for target in result["prs"]:
@@ -1328,24 +1706,28 @@ def provider(args):
         target = target_for(state, args)
         entry = target["steps"].get(step_key(args))
         issue = next((i for i in target["issues"] if str(i["id"]) == str(args.issue)), None)
-        if (not entry or not issue or issue["provider"] != "linear" or args.phase != "tracker"
-                or entry.get("phase") != "tracker" or str(entry.get("issue")) != str(args.issue)
-                or entry.get("expectedStatus") != issue["status"]
+        expected_status = state["releasePair"]["version"] if args.phase == "release_stamp" and state.get("releasePair") else (issue or {}).get("status")
+        if (not entry or not issue or issue["provider"] != "linear" or args.phase not in {"tracker", "release_stamp"}
+                or entry.get("phase") != args.phase or str(entry.get("issue")) != str(args.issue)
+                or entry.get("expectedStatus") != expected_status
                 or entry.get("status") not in {"in_flight", "uncertain", "completed"}):
             raise Stop("provider proof has no declared intent/owner")
         active = state.get("active") or {}
         if any(alive(child["pid"]) or group_alive(child["group"]) for child in active.get("children", [])):
             raise Stop("recorded mutating child still active; provider proof cannot release execution claim")
+        fields = (("releaseVersion", "releaseMarker", "markerId") if args.phase == "release_stamp" else ("statusName", "statusId"))
+        match = (evidence.get("releaseVersion") == expected_status and evidence.get("releaseMarker") == state["releasePair"]["projection"].get("linearMarker")
+                 if args.phase == "release_stamp" else evidence.get("statusName") == issue["status"])
         valid = (evidence.get("provider") == "linear" and evidence.get("issue") == issue["id"] and
-                 evidence.get("repo") == issue["repo"] and evidence.get("statusName") == issue["status"] and
-                 all(isinstance(evidence.get(field), str) and evidence[field] for field in ("statusId", "mutationRequestId", "readRequestId")) and
+                 evidence.get("repo") == issue["repo"] and match and
+                 all(isinstance(evidence.get(field), str) and evidence[field] for field in (fields[-1], "mutationRequestId", "readRequestId")) and
                  evidence["mutationRequestId"] != evidence["readRequestId"] and
                  newer(evidence.get("observedAt"), entry.get("intentAt"), state.get("recoveryStartedAt")))
         if not valid:
             entry["status"] = "uncertain"
             state["outcome"], state["reason"] = "Interrupted", "provider read-back unavailable or mismatched"
         else:
-            entry["providerEvidence"] = {k: evidence[k] for k in ("provider", "issue", "repo", "statusName", "statusId", "mutationRequestId", "readRequestId", "observedAt")}
+            entry["providerEvidence"] = {k: evidence[k] for k in ("provider", "issue", "repo", *fields, "mutationRequestId", "readRequestId", "observedAt")}
             entry["providerEvidence"]["recoveryGeneration"] = state.get("recoveryGeneration", 0)
             entry["status"] = "completed"
             if not any(s["status"] == "in_flight" for p in state["prs"] for s in p["steps"].values()):
@@ -1356,9 +1738,106 @@ def provider(args):
     return {"status": "completed"}
 
 
+def release_cleanup(args):
+    """Drive existing provider helpers inside the pair's declared cleanup child."""
+    state = checked_snapshot(args.session)
+    pair = state.get("releasePair")
+    if not pair or not state.get("projectionComplete"):
+        raise Stop("release cleanup requires a complete explicit pair session")
+    if (args.version != pair["version"] or args.branch != pair["branch"] or args.base != pair["backportBase"]
+            or args.product_repo != pair.get("productRepo")
+            or (str(Path(args.evidence).resolve()) if args.evidence else None) != pair.get("evidenceFile")):
+        raise Stop("release cleanup arguments differ from frozen owning pair")
+    target = state["prs"][1]
+    if set(args.scope_issue or []) - {i["id"] for i in target["issues"]}:
+        raise Stop("release cleanup caller expands frozen scope")
+    active = state.get("active") or {}
+    cleanup_id, cleanup_entry = next((k, e) for k, e in target["steps"].items() if e["phase"] == "cleanup")
+    nested = bool(cleanup_entry["status"] == "in_flight"
+                  and os.environ.get("WORKFLOW_MERGE_BUDGET_TOKEN") == active.get("token") == cleanup_entry.get("token")
+                  and any(c["pid"] == args.executor_pid and c["step"] == cleanup_id and c["repo"] == target["repo"]
+                          and c["pr"] == target["pr"] for c in active.get("children", [])))
+
+    def run(selected, key, entry, argv, status=None):
+        invocation = [sys.executable, str(SCRIPT / "workflow-merge-budget.py"), "run-step", "--session", args.session,
+                      "--repo", selected["repo"], "--pr", str(selected["pr"]), "--phase", entry["phase"], "--step", key]
+        if entry.get("issue") is not None:
+            invocation += ["--issue", str(entry["issue"]), "--status", status]
+        call(invocation + ["--", *argv])
+
+    if not nested:
+        if active:
+            raise Stop("release cleanup is not the owning child; explicit recovery required")
+        if cleanup_entry["status"] == "pending":
+            if not args.argv:
+                raise Stop("release cleanup driver requires original helper argv")
+            run(target, cleanup_id, cleanup_entry, args.argv + ["--release-head", pair["head"]])
+        elif cleanup_entry["status"] != "completed" or not verify(state, target, cleanup_entry):
+            raise Stop("shared cleanup requires explicit live-verified recovery")
+        state = checked_snapshot(args.session)
+        production = state["prs"][0]
+        key, entry = next((k,e) for k,e in production["steps"].items() if e["phase"] == "cleanup")
+        if entry["status"] == "pending":
+            run(production, key, entry, ["true"])
+        elif entry["status"] != "completed" or not verify(state, production, entry):
+            raise Stop("production cleanup barrier requires explicit recovery")
+        return summary(checked_snapshot(args.session), False)
+
+    # Scope and publication are read again at the mutation boundary; inherited
+    # environment or an old component cleanup JSON cannot discharge these duties.
+    release_scope_check(state)
+    publication_read(state)
+    regular_release_merge(target)
+    owner = proof_root(state, state["ownerCommonDir"], state["ownerRoot"])
+    issue_by_id = {i["id"]: i for i in target["issues"]}
+    for phase in ("release_stamp", "tracker", "release_finalize", "remote_delete", "local_cleanup", "policy_skip"):
+        for key, original in target["steps"].items():
+            if original["phase"] != phase:
+                continue
+            current = checked_snapshot(args.session)
+            selected = current["prs"][1]
+            entry = selected["steps"][key]
+            if entry["status"] in {"completed", "skipped_by_policy"}:
+                if not verify(current, selected, entry):
+                    raise Stop("completed release duty no longer verifies")
+                continue
+            if entry["status"] != "pending":
+                raise Stop("uncertain release duty requires explicit recovery")
+            status = None
+            argv = ["true"]
+            if phase in {"release_stamp", "tracker", "release_finalize"}:
+                if phase == "release_stamp":
+                    status = pair["version"]
+                    function, values = "record_release_for_issue_best_effort", [entry["issue"], status]
+                    if issue_by_id[entry["issue"]]["provider"] == "linear":
+                        print("LINEAR_RELEASE_ACTION_REQUIRED issue=%s version=%s marker=%s" %
+                              (entry["issue"], status, json.dumps(pair["projection"]["linearMarker"], sort_keys=True)), file=sys.stderr)
+                elif phase == "tracker":
+                    status = issue_by_id[entry["issue"]]["status"]
+                    function, values = "update_tracker_status_best_effort", [entry["issue"], status, pair["projection"]["mergedStatus"]]
+                else:
+                    function, values = "finalize_release_marker_best_effort", [pair["version"]]
+                # Function names are fixed here; values are positional argv, never shell source.
+                script = 'set -e; source "$1/workflow-lib.sh"; cd "$2"; shift 2; ' + function + ' "$@" >&2'
+                argv = ["bash", "-c", script, "release-budget", str(SCRIPT), owner, *values]
+            elif phase == "remote_delete":
+                git_root = proof_root(current, selected["commonDir"], selected["root"])
+                if call(["git", "-C", git_root, "ls-remote", "origin", "refs/heads/" + pair["branch"]]):
+                    argv = ["git", "-C", git_root, "push", "origin", "--delete", pair["branch"]]
+            elif phase == "local_cleanup":
+                git_root = proof_root(current, selected["commonDir"], selected["root"])
+                # Never delete worktrees: the existing caller must switch linked
+                # checkouts away first. Failed proof leaves cleanup outstanding.
+                if call(["git", "-C", git_root, "branch", "--list", pair["branch"]]):
+                    script = 'set -e; git -C "$1" fetch origin; git -C "$1" switch "$2"; git -C "$1" pull --ff-only origin "$2"; git -C "$1" branch -d "$3"'
+                    argv = ["bash", "-c", script, "release-budget", git_root, pair["backportBase"], pair["branch"]]
+            run(selected, key, entry, argv, status)
+    return {"sharedDutiesVerified": True, "releasePair": pair}
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=["begin", "before-step", "after-step", "run-step", "resume", "report", "check", "record-provider-result", "project-release"])
+    parser.add_argument("command", choices=["begin", "before-step", "after-step", "run-step", "resume", "report", "check", "record-provider-result", "project-release", "release-cleanup"])
     parser.add_argument("--input")
     parser.add_argument("--repo-root")
     parser.add_argument("--target-root")
@@ -1382,6 +1861,9 @@ def main():
     parser.add_argument("--evidence")
     parser.add_argument("--version")
     parser.add_argument("--provider")
+    parser.add_argument("--product-repo")
+    parser.add_argument("--release-field", default="")
+    parser.add_argument("--release-label-prefix", default="release/")
     parser.add_argument("--issue-repo")
     parser.add_argument("--project-id")
     parser.add_argument("--merged-status", default="Merged")
@@ -1397,6 +1879,7 @@ def main():
     raw = sys.argv[1:]
     argv = raw[raw.index("--") + 1:] if "--" in raw else []
     args = parser.parse_args(raw[:raw.index("--")] if "--" in raw else raw)
+    args.argv = argv
     previous_signals = {}
     cancelled_signal = None
     try:
@@ -1406,6 +1889,8 @@ def main():
             args.audit_repo = repo(args.audit_repo)
         if args.command == "project-release":
             result = project_release(args)
+        elif args.command == "release-cleanup":
+            result = release_cleanup(args)
         elif args.command == "begin":
             if not args.input and not (args.repo and args.pr and args.head and args.base):
                 raise Stop("begin requires selected manifest or explicit single PR/repo/head/base")
@@ -1527,10 +2012,13 @@ def main():
                         if checkout_repo(child_cwd) != selected["repo"]:
                             raise Stop("mutation checkout differs from frozen selected repository")
                         env["GH_REPO"] = selected["repo"]
-                    elif args.phase in {"tracker", "issue_close"}:
+                    elif args.phase in {"tracker", "issue_close", "release_stamp"}:
                         owning_issue = next(issue for issue in selected["issues"] if str(issue["id"]) == str(args.issue))
                         env["GH_REPO"] = owning_issue["repo"]
                         env["WORKFLOW_TARGET_GITHUB_REPO"] = owning_issue["repo"]
+                    elif args.phase == "release_finalize":
+                        env["GH_REPO"] = owner_binding["releasePair"]["projection"]["markerRepo"]
+                        env["WORKFLOW_TARGET_GITHUB_REPO"] = env["GH_REPO"]
                     elif args.phase in {"audit", "hold"}:
                         env["GH_REPO"] = repo(selected["steps"][step_key(args)]["auditRepo"])
                     env["WORKFLOW_MERGE_BUDGET_OWNER_ROOT"] = proof_root(owner_binding, owner_binding["ownerCommonDir"], owner_binding["ownerRoot"])

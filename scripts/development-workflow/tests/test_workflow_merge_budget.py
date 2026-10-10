@@ -1561,6 +1561,8 @@ class ReleaseScope(unittest.TestCase):
     helper = Composed.helper
 
     def setUp(self):
+        dates=patch.dict(os.environ,{'GIT_AUTHOR_DATE':'2026-10-10T12:00:00Z','GIT_COMMITTER_DATE':'2026-10-10T12:00:00Z'})
+        dates.start();self.addCleanup(dates.stop)
         Composed.setUp(self)
         shutil.copyfile(self.source/'prepare-release-post-merge-cleanup.sh', self.scripts/'prepare-release-post-merge-cleanup.sh')
         (self.repo/'.ai-dev-workflow.yaml').write_text('issue_tracker:\n  provider: github_projects\n  project_number: 1\n')
@@ -1645,6 +1647,311 @@ class ReleaseScope(unittest.TestCase):
         result=self.command(['bash',str(self.scripts/'prepare-release-post-merge-cleanup.sh'),'v1.2.3',
             '--inspect-targets','--release-head',self.release_head],self.env)
         self.assertEqual(json.loads(result.stdout),projection)
+
+
+class ReleasePair(unittest.TestCase):
+    command = Composed.command
+    helper = Composed.helper
+    candidate = ReleaseScope.candidate
+
+    def setUp(self):
+        ReleaseScope.setUp(self)
+        self.command(['git','branch','-m','release/v1.2.3'])
+        (self.repo/'CHANGELOG.md').write_text('# Changes\n\n## [1.2.3] - 2026-10-10\n- Shipped #12, #13 (ENG-12, ENG-13).\n')
+        self.command(['git','add','CHANGELOG.md','.ai-dev-workflow.yaml'])
+        self.command(['git','commit','-qm','reviewed release'])
+        self.head = self.command(['git','rev-parse','HEAD']).stdout.strip()
+        self.command(['git','push','-q','origin','release/v1.2.3'])
+        base = self.command(['git','rev-parse','develop']).stdout.strip()
+        tree = self.command(['git','rev-parse','HEAD^{tree}']).stdout.strip()
+        self.commits = {}
+        self.data.update(releaseMode=True, gitCommits={})
+        for number, target_base in ((12,'main'),(13,'develop')):
+            merged = subprocess.run(['git','commit-tree',tree,'-p',base,'-p',self.head],cwd=self.repo,
+                input='release merge '+str(number)+'\n',text=True,capture_output=True,check=True).stdout.strip()
+            self.commits[number] = merged
+            self.data['gitCommits'][merged] = {'sha':merged,'parents':[{'sha':base},{'sha':self.head}]}
+            self.data['prs'][str(number)] = dict(number=number,state='OPEN',headRefName='release/v1.2.3',
+                headRefOid=self.head,baseRefName=target_base,isInMergeQueue=False,autoMergeRequest=None,
+                fixtureMergeCommit=merged)
+        self.save()
+
+    def save(self):
+        self.fixture.write_text(json.dumps(self.data))
+
+    def reload(self):
+        self.data = json.loads(self.fixture.read_text())
+
+    def begin(self, **changes):
+        declaration = dict(ownerRoot=str(self.repo),releasePair=dict(version='v1.2.3',productionPr=12,backportPr=13),
+            prs=[dict(repo='org/repo',pr=n,head=self.head,base=b,root=str(self.repo),
+                phases=['merge_api','cleanup'],policySkipped=['remote_delete','local_cleanup'])
+                for n,b in ((12,'main'),(13,'develop'))])
+        declaration.update(changes)
+        path = self.root/'1941-pair.json';path.write_text(json.dumps(declaration))
+        result = self.helper('begin','--input',path,success=False)
+        value = json.loads(result.stdout)
+        self.session = value['session']
+        return value
+
+    def step(self, number, phase, *, key=None, issue=None, status=None, argv=('true',), success=True):
+        args = ['run-step','--session',self.session,'--repo','org/repo','--pr',number,
+                '--phase',phase,'--step',key or phase]
+        if issue is not None:
+            args += ['--issue',issue]
+        if status is not None:
+            args += ['--status',status]
+        return self.helper(*args,'--',*argv,success=success)
+
+    def merge(self, number, success=True, method='--merge'):
+        return self.step(number,'merge_api',argv=('gh','pr','merge',str(number),'--repo','org/repo',method,
+            '--match-head-commit',self.head),success=success)
+
+    def published(self):
+        self.reload()
+        self.data.update(releaseTag={'object':{'type':'commit','sha':self.commits[12]}},
+            releasePublication={'id':1941,'tag_name':'v1.2.3','draft':False,'published_at':'2020-01-01T00:00:00Z'})
+        self.save()
+
+    def both(self):
+        self.assertEqual(self.begin()['outcome'],'Admitted')
+        self.merge(12);self.step(12,'merge_verify');self.published();self.step(12,'publication')
+        self.merge(13);self.step(13,'merge_verify')
+
+    def cleanup(self, success=True, extra=()):
+        result=subprocess.run(['bash',str(self.scripts/'prepare-release-post-merge-cleanup.sh'),'v1.2.3',
+            '--merge-session',self.session,'--json',*extra],cwd=self.repo,env=self.env,text=True,capture_output=True)
+        if success:
+            self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+        else:
+            self.assertNotEqual(result.returncode,0,result.stdout+result.stderr)
+        return result
+
+    def test_release_pair_freezes_complete_duties_before_publication(self):
+        self.candidate(14,self.head);self.save()
+        value=self.begin();self.assertEqual(value['outcome'],'Admitted')
+        state=json.loads(Path(self.session).read_text())
+        self.assertEqual(state['prs'][0]['issues'],[])
+        self.assertEqual([i['id'] for i in state['prs'][1]['issues']],['12','13','14'])
+        self.assertFalse(any(s['phase']=='policy_skip' for s in state['prs'][0]['steps'].values()))
+        self.assertEqual(sum(s['phase']=='release_stamp' for s in state['prs'][1]['steps'].values()),3)
+        events=json.loads(self.fixture.read_text())['events']
+        self.assertNotIn(['pr','merge'],events)
+        self.assertFalse(any('/releases/' in e[1] for e in events if len(e)>1))
+
+    def test_release_pair_unaffordable_admits_no_prefix(self):
+        self.data['quota']['remaining']=30;self.save()
+        self.assertEqual(self.begin()['outcome'],'Deferred')
+        self.merge(12,success=False)
+        self.assertNotIn(['pr','merge'],json.loads(self.fixture.read_text())['events'])
+
+    def test_release_pair_extra_shipped_issue_increases_complete_projection(self):
+        first=self.begin()['estimate']['projectedCost']
+        self.reload();self.candidate(14,self.head);self.save()
+        self.assertGreater(self.begin()['estimate']['projectedCost'],first)
+
+    def test_release_like_branch_without_pair_retains_ordinary_barrier(self):
+        declaration=dict(ownerRoot=str(self.repo),prs=[dict(repo='org/repo',pr=n,head=self.head,
+            base=b,root=str(self.repo),phases=['merge_api','cleanup'],policySkipped=['remote_delete','local_cleanup'])
+            for n,b in ((12,'main'),(13,'develop'))])
+        path=self.root/'1941-ordinary.json';path.write_text(json.dumps(declaration))
+        self.session=json.loads(self.helper('begin','--input',path).stdout)['session']
+        self.merge(12);self.step(12,'merge_verify');self.merge(13,success=False)
+        self.reload();self.assertEqual(len(self.data['mergeArgv']),1)
+
+    def test_release_pair_scope_drift_refuses_then_restored_scope_advances(self):
+        self.begin();self.candidate(14,self.head);self.save()
+        self.merge(12,success=False)
+        self.reload();self.assertNotIn(['pr','merge'],self.data['events'])
+        self.data['releaseProjectItems']=[];self.save()
+        self.helper('resume','--session',self.session)
+        self.merge(12)
+        self.reload();self.assertEqual(len(self.data['mergeArgv']),1)
+
+    def test_release_pair_annotated_tag_dereferences_to_production_commit(self):
+        self.begin();self.merge(12);self.step(12,'merge_verify');self.published()
+        annotation='a'*40
+        self.data['releaseTag']={'object':{'type':'tag','sha':annotation}}
+        self.data['tagObjects']={annotation:{'sha':annotation,'object':{'type':'commit','sha':self.commits[12]}}};self.save()
+        self.step(12,'publication');self.merge(13)
+
+    def test_release_pair_rejects_mismatched_head_and_version(self):
+        self.data['prs']['13']['headRefOid']='f'*40;self.save()
+        self.assertEqual(self.begin()['outcome'],'Deferred')
+        self.data['prs']['13']['headRefOid']=self.head;self.save()
+        self.assertEqual(self.begin(releasePair=dict(version='v9.9.9',productionPr=12,backportPr=13))['outcome'],'Deferred')
+
+    def test_release_pair_requires_regular_executor_and_preserves_branch(self):
+        self.begin();self.merge(12,success=False,method='--squash')
+        self.assertNotIn(['pr','merge'],json.loads(self.fixture.read_text())['events'])
+        self.assertTrue(self.command(['git','ls-remote','origin','refs/heads/release/v1.2.3']).stdout)
+
+    def test_release_pair_publication_precedes_backport_and_shared_cleanup(self):
+        self.begin();self.merge(12);self.step(12,'merge_verify')
+        self.merge(13,success=False)
+        self.reload();self.assertEqual(len(self.data.get('mergeArgv',[])),1)
+        self.assertEqual(self.data['prs']['13']['state'],'OPEN')
+        self.published();self.helper('resume','--session',self.session)
+        self.step(12,'publication');self.merge(13);self.step(13,'merge_verify')
+        self.step(13,'cleanup',success=False)
+        self.reload();self.assertNotIn(['issue','close'],self.data['events'])
+
+    def test_release_pair_tag_and_draft_proofs_refuse_backport(self):
+        self.begin();self.merge(12);self.step(12,'merge_verify');self.published()
+        self.data['releaseTag']['object']['sha']=self.head;self.save()
+        self.step(12,'publication',success=False)
+        self.published();self.data['releasePublication']['draft']=True;self.save()
+        self.helper('resume','--session',self.session)
+        self.step(12,'publication',success=False)
+        self.reload();self.assertEqual(len(self.data['mergeArgv']),1)
+
+    def test_release_pair_regular_merge_parent_is_independent_proof(self):
+        self.begin();self.merge(12)
+        self.reload();self.data['gitCommits'][self.commits[12]]['parents']=[{'sha':self.head}];self.save()
+        self.helper('resume','--session',self.session,success=False)
+        self.reload();self.assertEqual(len(self.data['mergeArgv']),1)
+
+    def test_release_pair_known_queue_waits_without_duplicate_submission(self):
+        self.data['prs']['12']['isInMergeQueue']=True;self.save()
+        self.assertEqual(self.begin()['outcome'],'Waiting')
+        self.merge(12,success=False)
+        self.assertNotIn(['pr','merge'],json.loads(self.fixture.read_text())['events'])
+
+    def test_release_pair_completed_requires_live_stamps_tracker_marker_and_both_cleanup(self):
+        self.both();self.reload()
+        self.data['issueMilestones']={n:{'number':1,'title':'v1.2.3'} for n in ('12','13')}
+        self.data['trackerStatuses']={n:'Released' for n in ('12','13')}
+        self.data['milestones']=[{'number':1,'title':'v1.2.3','state':'closed'}];self.save()
+        for issue in ('12','13'):
+            self.step(13,'release_stamp',key='release_stamp:'+issue,issue=issue,status='v1.2.3')
+            self.step(13,'tracker',key='tracker:'+issue+':pre',issue=issue,status='Released')
+        self.step(13,'release_finalize')
+        for phase in ('remote_delete','local_cleanup'):
+            self.step(13,'policy_skip',key=phase)
+        self.step(13,'cleanup');self.step(12,'cleanup')
+        report=json.loads(self.helper('report','--session',self.session,'--final').stdout)
+        self.assertEqual(report['outcome'],'Completed')
+        self.reload();self.data['issueMilestones']['13']=None;self.save()
+        result=self.helper('resume','--session',self.session,success=False)
+        self.assertNotEqual(json.loads(result.stdout)['outcome'],'Completed')
+
+    def test_release_pair_actual_cleanup_runs_owned_helpers_and_emits_single_json(self):
+        self.both();self.reload();self.data['trackerStatuses']={'12':'Merged','13':'Merged'};self.save()
+        result=self.cleanup()
+        self.assertEqual(json.loads(result.stdout)['outcome'],'Completed')
+        self.reload()
+        self.assertEqual(self.data['stampMutationCount'],{'12':1,'13':1})
+        self.assertEqual(self.data['trackerMutationCount'],2)
+        self.assertEqual(self.data['finalizeMutationCount'],1)
+        self.assertEqual(self.data['trackerStatuses'],{'12':'Released','13':'Released'})
+        self.assertTrue(self.command(['git','branch','--list','release/v1.2.3']).stdout)
+        self.assertTrue(self.command(['git','ls-remote','origin','refs/heads/release/v1.2.3']).stdout)
+
+    def test_release_pair_linear_stamp_bridge_preserves_deferred_work(self):
+        (self.repo/'.ai-dev-workflow.yaml').write_text('issue_tracker:\n  provider: linear\n  custom_fields:\n    release_field: Release\n')
+        self.both()
+        self.cleanup(success=False)
+        state=json.loads(Path(self.session).read_text())
+        stamp=state['prs'][1]['steps']['release_stamp:ENG-12']
+        self.assertEqual(stamp['status'],'uncertain')
+        self.assertEqual(state['releasePair']['projection']['linearMarker'],{'kind':'field','name':'Release','value':'v1.2.3'})
+        proof=self.root/'1941-linear-stamp-proof.json'
+        evidence=dict(provider='linear',repo='org/repo',issue='ENG-12',releaseVersion='v1.2.3',
+            releaseMarker={'kind':'field','name':'Release','value':'v1.2.3'},markerId='field-id',
+            mutationRequestId='stamp-mutation',readRequestId='stamp-read',observedAt=stamp['intentAt'])
+        proof.write_text(json.dumps(evidence))
+        self.helper('record-provider-result','--session',self.session,'--repo','org/repo','--pr',13,
+            '--phase','release_stamp','--step','release_stamp:ENG-12','--issue','ENG-12','--evidence',proof,success=False)
+        evidence['observedAt']=budget.now();proof.write_text(json.dumps(evidence))
+        self.helper('record-provider-result','--session',self.session,'--repo','org/repo','--pr',13,
+            '--phase','release_stamp','--step','release_stamp:ENG-12','--issue','ENG-12','--evidence',proof)
+        state=json.loads(Path(self.session).read_text())
+        self.assertEqual(state['prs'][1]['steps']['release_stamp:ENG-12']['status'],'completed')
+        self.assertNotEqual(state['outcome'],'Completed')
+        self.reload();self.assertNotIn(['issue','close'],self.data['events'])
+
+    def test_release_pair_component_linked_checkout_keeps_hub_tracker_ownership(self):
+        hub=self.root/'hub';hub.mkdir()
+        subprocess.run(['git','init','-q','-b','develop',str(hub)],check=True)
+        scripts=hub/'scripts/development-workflow';shutil.copytree(self.scripts,scripts)
+        shutil.copyfile(self.source/'component-release-target.sh',scripts/'component-release-target.sh')
+        (scripts/'component-release-target.sh').chmod(0o700)
+        self.command(['git','switch','-q','develop'])
+        linked=self.root/'product-linked'
+        self.command(['git','worktree','add','-q',str(linked),'release/v1.2.3'])
+        (hub/'.ai-dev-workflow.yaml').write_text('schema_version: 2\nmode: workflow_hub\nissue_tracker:\n  provider: github_projects\n  project_number: 1\nworkflow_hub:\n  product_repos:\n    - name: product\n      github_repo: org/repo\n      default_branch: develop\n      release:\n        base: develop\n        branch_pattern: "{product_repo}/release/v{version}"\n        changelog_owner: product_repo\n        tag_owner: product_repo\n        github_release_owner: product_repo\n        deployment_evidence_owner: product_repo\n        cleanup_evidence_owner: product_repo\n        tracker_reconciliation_owner: hub\n')
+        (hub/'.ai-dev-workflow.local.yaml').write_text('product_repos:\n  - name: product\n    local_path: "'+str(linked)+'"\n')
+        # Existing component contract accepts the recorded branch without
+        # inventing a new tag-to-branch normalization rule.
+        self.data['checkoutRepos']={str(hub):'org/hub',str(linked):'org/repo',str(self.repo):'org/repo'}
+        self.save()
+        target=subprocess.run(['bash',str(scripts/'component-release-target.sh'),'--repo-root',str(hub),
+            '--repo','product','--release-branch','release/v1.2.3','--json'],cwd=hub,env=self.env,
+            text=True,capture_output=True,check=True)
+        evidence=hub/'component.json'
+        evidence.write_text(json.dumps(dict(schema_version='component_release_evidence.v1',target_binding=json.loads(target.stdout),
+            release_branch='release/v1.2.3',release_outcome='completed',ci_outcome='passed',deployment_outcome='recorded',
+            cleanup_outcome='not_started',component_tag='product-v1.2.3')))
+        manifest=hub/'pair.json';manifest.write_text(json.dumps(dict(ownerRoot=str(hub),
+            releasePair=dict(version='v1.2.3',productionPr=12,backportPr=13,productRepo='product',evidenceFile=str(evidence)),
+            prs=[dict(repo='org/repo',pr=n,head=self.head,base=b,root=str(linked),phases=['merge_api','cleanup'],
+                policySkipped=['remote_delete','local_cleanup']) for n,b in ((12,'main'),(13,'develop'))])))
+        self.repo=hub;self.scripts=scripts
+        self.session=json.loads(self.helper('begin','--input',manifest).stdout)['session']
+        state=json.loads(Path(self.session).read_text())
+        self.assertEqual(state['outcome'],'Admitted')
+        self.assertEqual(state['releasePair']['projection']['markerRepo'],'org/hub')
+        self.assertEqual(state['releasePair']['projection']['publicationTag'],'product-v1.2.3')
+        self.merge(12);self.step(12,'merge_verify');self.published()
+        self.data['releasePublication']['tag_name']='product-v1.2.3';self.data['trackerStatuses']={'12':'Merged','13':'Merged'};self.save()
+        self.step(12,'publication');self.merge(13);self.step(13,'merge_verify')
+        self.cleanup(extra=('--repo','product','--repo-root',str(hub),'--evidence-file',str(evidence)))
+        self.reload();self.assertEqual(self.data['stampMutationRepos'],['org/hub','org/hub'])
+        self.assertEqual(self.data['trackerMutationRepos'],['org/hub','org/hub'])
+        self.assertTrue(linked.is_dir())
+
+    def test_release_pair_partial_stamp_read_outage_reconciles_without_replay(self):
+        self.both();self.reload();self.data.update(trackerStatuses={'12':'Merged','13':'Merged'},stampPostReadOutage='13');self.save()
+        self.cleanup(success=False)
+        state=json.loads(Path(self.session).read_text())
+        self.assertEqual(state['outcome'],'Interrupted')
+        self.assertEqual(state['prs'][1]['steps']['release_stamp:12']['status'],'completed')
+        self.assertEqual(state['prs'][1]['steps']['release_stamp:13']['status'],'uncertain')
+        self.reload();self.assertEqual(self.data['stampMutationCount'],{'12':1,'13':1})
+        self.helper('resume','--session',self.session,success=False)
+        self.reload();self.data.pop('stampReadOutage');self.data.pop('stampPostReadOutage');self.save()
+        self.helper('resume','--session',self.session)
+        self.cleanup()
+        self.reload();self.assertEqual(self.data['stampMutationCount'],{'12':1,'13':1})
+        self.assertEqual(len(self.data['mergeArgv']),2)
+
+    def test_release_pair_recovery_at_four_boundaries_preserves_completed_merges(self):
+        for boundary in ('production','publication','backport','partial_cleanup'):
+            with self.subTest(boundary=boundary):
+                if boundary != 'production':
+                    self.doCleanups();self.setUp()
+                self.begin();self.merge(12)
+                if boundary != 'production':
+                    self.step(12,'merge_verify');self.published();self.step(12,'publication')
+                if boundary in ('backport','partial_cleanup'):
+                    self.merge(13)
+                if boundary == 'partial_cleanup':
+                    self.reload();self.data['stampFailureOnIssue']='13';self.data['trackerStatuses']={'12':'Merged','13':'Merged'};self.save()
+                    self.cleanup(success=False)
+                self.reload();self.data.update(prOutage=True,quotaOutage=True);self.save()
+                self.helper('resume','--session',self.session,success=False)
+                state=json.loads(Path(self.session).read_text())
+                self.assertEqual(state['prs'][0]['verifiedState'],'merged')
+                self.reload();self.data.pop('prOutage');self.data.pop('quotaOutage');self.data.pop('stampFailureOnIssue',None);self.save()
+                self.helper('resume','--session',self.session)
+                if boundary == 'production':
+                    self.published();self.step(12,'publication')
+                if boundary in ('production','publication'):
+                    self.merge(13)
+                self.reload();self.data.setdefault('trackerStatuses',{'12':'Merged','13':'Merged'});self.save()
+                self.cleanup()
+                self.reload();self.assertEqual(len(self.data['mergeArgv']),2)
+                self.assertEqual(self.data['stampMutationCount'],{'12':1,'13':1})
 
 
 if __name__ == '__main__':

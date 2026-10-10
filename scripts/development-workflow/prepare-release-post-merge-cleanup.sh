@@ -35,6 +35,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ORIGINAL_ARGS=("$@")
 # shellcheck source=scripts/development-workflow/workflow-lib.sh
 . "$SCRIPT_DIR/workflow-lib.sh"
 
@@ -58,6 +59,8 @@ EVIDENCE_FILE=""
 JSON_OUTPUT=false
 INSPECT_TARGETS=false
 RELEASE_HEAD=""
+MERGE_SESSION=""
+SESSION_CHILD=false
 COMPONENT_TARGET_FILE=""
 COMPONENT_LOCK_DIR=""
 COMPONENT_LOCK_CREATED=false
@@ -354,7 +357,7 @@ validate_component_release_cleanup() {
     echo "Component release evidence is missing required field: cleanup_outcome" >&2
     exit 1
   fi
-  if [ "$evidence_cleanup" = "complete" ] && [ "$INSPECT_TARGETS" != "true" ]; then
+  if [ "$evidence_cleanup" = "complete" ] && [ "$INSPECT_TARGETS" != "true" ] && [ -z "$MERGE_SESSION" ]; then
     cleanup_log "Component release cleanup evidence is already complete; exiting idempotently."
     if [ "$JSON_OUTPUT" = "true" ]; then
       jq -cnS --slurpfile evidence "$EVIDENCE_FILE" '{cleanup_outcome:"already_complete", evidence:$evidence[0]}'
@@ -369,7 +372,7 @@ validate_component_release_cleanup() {
   fi
   BACKPORT_BASE="$contract_base"
   # Inspection validates the existing component identity but takes no mutation lease.
-  if [ "$INSPECT_TARGETS" = "true" ]; then
+  if [ "$INSPECT_TARGETS" = "true" ] || { [ -n "$MERGE_SESSION" ] && [ "$SESSION_CHILD" != "true" ]; }; then
     return 0
   fi
 
@@ -1146,6 +1149,12 @@ while [ $# -gt 0 ]; do
       RELEASE_HEAD="$2"
       shift 2
       ;;
+    --merge-session)
+      [ $# -ge 2 ] || { usage; exit 2; }
+      MERGE_SESSION="$2"
+      COMPONENT_JSON_MODE=true
+      shift 2
+      ;;
     -h|--help)
       usage
       exit 0
@@ -1184,6 +1193,12 @@ if [ "$JSON_OUTPUT" = "true" ] && [ -n "$EVIDENCE_FILE" ]; then
   COMPONENT_JSON_MODE=true
 fi
 
+if [ -n "$MERGE_SESSION" ] && [ -n "${WORKFLOW_MERGE_BUDGET_TOKEN:-}" ]; then
+  child_binding="$(python3 "$SCRIPT_DIR/workflow-merge-budget.py" check --session "$MERGE_SESSION" \
+    --repo "${WORKFLOW_MERGE_BUDGET_REPO:-}" --pr "${WORKFLOW_MERGE_BUDGET_PR:-0}" \
+    --phase cleanup --executor-pid "$$")"
+  SESSION_CHILD="$(printf '%s' "$child_binding" | jq -r '.nestedExecutionAuthorized')"
+fi
 validate_component_release_cleanup "$HUB_REPO_ROOT"
 
 if [ -z "$RELEASE_INPUT" ]; then
@@ -1238,6 +1253,9 @@ if [ "$INSPECT_TARGETS" = "true" ]; then
       exit 1
     fi
     inspection_args+=(--project-id "$inspection_project_id")
+  elif [ "$TRACKER_PROVIDER" = "linear" ]; then
+    inspection_args+=(--release-field "$(workflow_issue_tracker_custom_field release_field)"
+      --release-label-prefix "$(workflow_issue_tracker_custom_field release_label_prefix || true)")
   fi
   for issue in "${ISSUE_NUMBERS[@]}"; do
     inspection_args+=(--scope-issue "$issue")
@@ -1246,6 +1264,20 @@ if [ "$INSPECT_TARGETS" = "true" ]; then
     inspection_args+=(--evidence "$EVIDENCE_FILE")
   fi
   python3 "$SCRIPT_DIR/workflow-merge-budget.py" "${inspection_args[@]}"
+  exit $?
+fi
+
+if [ -n "$MERGE_SESSION" ]; then
+  session_args=(release-cleanup --session "$MERGE_SESSION" --version "$RELEASE_VERSION"
+    --branch "$RELEASE_BRANCH" --base "$BACKPORT_BASE" --executor-pid "$$")
+  for issue in "${ISSUE_NUMBERS[@]}"; do
+    session_args+=(--scope-issue "$issue")
+  done
+  if [ -n "$PRODUCT_REPO" ]; then
+    session_args+=(--product-repo "$PRODUCT_REPO" --evidence "$EVIDENCE_FILE")
+  fi
+  python3 "$SCRIPT_DIR/workflow-merge-budget.py" "${session_args[@]}" -- \
+    bash "$SCRIPT_DIR/prepare-release-post-merge-cleanup.sh" "${ORIGINAL_ARGS[@]}"
   exit $?
 fi
 
