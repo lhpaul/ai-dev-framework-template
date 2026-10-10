@@ -2527,7 +2527,10 @@ fi
 if [ "$READY_ENABLED" = 0 ]; then
   IS_DRAFT=$(gh pr view "$PR_NUMBER" --json isDraft --jq '.isDraft')
   case "$IS_DRAFT" in
-    true) gh pr ready "$PR_NUMBER" ;;
+    true)
+      ./scripts/development-workflow/pr-ownership-guard.sh --pr "$PR_NUMBER" --expected-branch "$BRANCH"
+      gh pr ready "$PR_NUMBER"
+      ;;
     false) : ;;
     *) echo "ERROR: draft state unavailable; refuse ready transition." >&2; exit 1 ;;
   esac

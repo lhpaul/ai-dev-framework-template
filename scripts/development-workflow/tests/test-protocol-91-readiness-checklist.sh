@@ -243,7 +243,7 @@ cases = [
     ("missing-ready", False), ("malformed-ready", False), ("duplicate-ready", False),
     ("missing-count", False), ("malformed-count", False), ("duplicate-count", False),
     ("base-ready-checkout-empty", True), ("base-empty-checkout-ready", True),
-    ("skipped-empty-no-ready", True),
+    ("skipped-empty-no-ready", True), ("no-ready-ownership-changed", False),
 ]
 
 def run_case(root, name, code=snippet):
@@ -269,7 +269,8 @@ with tempfile.TemporaryDirectory(prefix="protocol91-ready-") as directory:
     (root / "bin").mkdir()
     files = {
         scripts / "pr-ownership-guard.sh": '''#!/usr/bin/env bash
-[[ "$TEST_CASE" != ownership-failed ]]
+[[ "$TEST_CASE" != ownership-failed ]] || exit 1
+if [[ "$TEST_CASE" == no-ready-ownership-changed ]] && grep -q '^draft$' "$TEST_TRACE"; then exit 1; fi
 ''',
         root / "bin/gh": f'''#!/usr/bin/env bash
 if [[ "$1 $2" == "pr ready" ]]; then
@@ -371,7 +372,7 @@ fi
 print(f"verified:{len(cases) + 2}")
 PYTEST
 )"
-run_test "ready_transition_executable_matrix_and_plant" "verified:35" "$_ready_transition_report"
+run_test "ready_transition_executable_matrix_and_plant" "verified:36" "$_ready_transition_report"
 
 
 echo "${PASS_COUNT} passed, ${FAIL_COUNT} failed"
