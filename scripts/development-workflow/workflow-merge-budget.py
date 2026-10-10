@@ -366,6 +366,7 @@ def release_omitted(checkout, head, issue_repo, release_repo, project_id, merged
     included = []
     for number in sorted(candidates, key=int):
         commits = set()
+        unrelated = False
         for nodes in release_pages(RELEASE_CLOSERS_QUERY, {"owner": owner, "name": name, "number": int(number)},
                                    lambda data: data["repository"]["issue"]["timelineItems"], 20):
             read_cost += 1
@@ -387,12 +388,15 @@ def release_omitted(checkout, head, issue_repo, release_repo, project_id, merged
                 if not closer["merged"]:
                     continue
                 if repo((closer.get("repository") or {}).get("nameWithOwner")) != release_repo:
-                    raise Stop("release closing PR repository mismatch")
+                    unrelated = True
+                    continue
                 commit = (closer.get("mergeCommit") or {}).get("oid")
                 if not isinstance(commit, str) or not re.fullmatch(r"[0-9a-f]{40}", commit):
                     raise Stop("release closing merge commit unavailable")
                 commits.add(commit)
         if not commits:
+            if unrelated:
+                continue
             raise Stop("Merged candidate has no independently known closing/reference merge: " + number)
         membership = {release_ancestor(checkout, commit, head) for commit in commits}
         if len(membership) != 1:

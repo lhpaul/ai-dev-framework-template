@@ -1246,8 +1246,11 @@ Read-only `prepare-release-post-merge-cleanup.sh --inspect-targets --release-hea
 <reviewed SHA>` extracts the exact finalized version section from the committed
 changelog. It paginates the owning Project's Merged candidates and includes only
 closing or cross-referenced merged-PR commits in the selected release repository,
-proven ancestors of that head. Recovery reads statuses from the frozen Project ID,
-regardless of current project configuration. Missing, malformed,
+proven ancestors of that head.
+Known merged references in sibling product repositories are excluded from a
+shared hub Project's selected release; unknown owning PRs still defer admission.
+Recovery reads statuses from the frozen Project ID, regardless of current
+project configuration. Missing, malformed,
 truncated or ambiguous evidence defers; current tag/Release timestamps are not
 required. Working-copy changelog edits cannot change reviewed scope.
 Read-only `--target-root <checkout>` keeps a selected linked release checkout

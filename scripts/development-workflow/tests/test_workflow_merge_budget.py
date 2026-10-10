@@ -1641,6 +1641,29 @@ class ReleaseScope(unittest.TestCase):
         pr['mergeCommit']={'oid':self.head}
         self.assertEqual([i['id'] for i in self.scope('- Shipped #12 again.\n')['issues']],['12','13'])
 
+    def test_release_scope_sibling_product_excluded_unknown_owner_refused(self):
+        self.candidate(13,'f'*40)
+        closer=self.data['releaseClosers']['13'][0]['closer']
+        closer['repository']['nameWithOwner']='org/other-product'
+        self.assertEqual([i['id'] for i in self.scope()['issues']],['12'])
+        closer['repository']=None
+        self.scope('- Unknown owning PR for #12.\n',success=False)
+        closer['repository']={'nameWithOwner':'org/other-product'}
+        self.data['releaseClosers']['13'].append({'__typename':'CrossReferencedEvent','source':dict(
+            __typename='PullRequest',merged=True,repository={'nameWithOwner':'org/repo'},
+            mergeCommit={'oid':self.head})})
+        self.assertEqual([i['id'] for i in self.scope('- Known selected-product reference #12.\n')['issues']],['12','13'])
+        tree=self.command(['git','rev-parse','HEAD^{tree}']).stdout.strip()
+        outside=subprocess.run(['git','commit-tree',tree],cwd=self.repo,input='unshipped reference\n',
+            text=True,capture_output=True,check=True).stdout.strip()
+        selected=self.data['releaseClosers']['13'][-1]['source']
+        self.data['releaseClosers']['13'].append({'__typename':'CrossReferencedEvent',
+            'source':dict(selected,mergeCommit={'oid':outside})})
+        refused=self.scope('- Ambiguous selected-product membership #12.\n',success=False)
+        self.assertIn('release candidate membership ambiguous',refused.stderr)
+        self.data['releaseClosers']['13'].pop()
+        self.assertEqual([i['id'] for i in self.scope('- Restored known membership #12.\n')['issues']],['12','13'])
+
     def test_release_scope_exhausts_project_pages_before_freezing_scope(self):
         self.candidate(13,self.head)
         self.data['releaseProjectPages']={
@@ -2109,6 +2132,8 @@ class ReleasePair(unittest.TestCase):
         self.candidate(14,self.head,repository='org/hub')
         pr=self.data['releaseClosers']['14'][0]['closer'];pr['repository']['nameWithOwner']='org/repo'
         self.data['releaseClosers']['14']=[{'__typename':'CrossReferencedEvent','source':pr}]
+        self.candidate(15,'f'*40,repository='org/hub')
+        self.data['releaseClosers']['15'][0]['closer']['repository']['nameWithOwner']='org/other-product'
         self.save()
         target=subprocess.run(['bash',str(scripts/'component-release-target.sh'),'--repo-root',str(hub),
             '--repo','product','--release-branch',branch,'--json'],cwd=hub,env=self.env,
@@ -2144,14 +2169,17 @@ class ReleasePair(unittest.TestCase):
         self.assertEqual(state['releasePair']['version'],version)
         self.assertEqual(state['releasePair']['projection']['version'],version)
         self.assertEqual(state['releasePair']['projection']['markerRepo'],'org/hub')
+        self.assertEqual([i['id'] for i in state['prs'][1]['issues']],['12','13','14'])
         self.assertEqual(state['releasePair']['projection']['publicationTag'],'product-v1.2.3')
         self.merge(12);self.step(12,'merge_verify');self.published()
         self.data['releasePublication']['tag_name']='product-v1.2.3';self.data['releaseTag']['ref']='refs/tags/product-v1.2.3'
-        self.data['trackerStatuses']={n:'Merged' for n in ('12','13','14')};self.save()
+        self.data['trackerStatuses']={n:'Merged' for n in ('12','13','14','15')};self.save()
         self.step(12,'publication');self.merge(13);self.step(13,'merge_verify')
         self.cleanup(extra=('--repo','product','--repo-root',str(hub),'--evidence-file',str(evidence)),release_input=branch)
         self.reload();self.assertEqual(self.data['stampMutationRepos'],['org/hub']*3)
         self.assertEqual(self.data['trackerMutationRepos'],['org/hub']*3)
+        self.assertEqual(self.data['trackerStatuses']['15'],'Merged')
+        self.assertNotIn('15',self.data['issueMilestones'])
         self.assertTrue(all(m['title']==version for m in self.data['issueMilestones'].values()))
         self.assertTrue(any(m['title']==version and m['state']=='closed' for m in self.data['milestones']))
         self.assertTrue(linked.is_dir())
