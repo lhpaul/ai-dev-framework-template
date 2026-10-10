@@ -1257,27 +1257,27 @@ if [ "$INSPECT_TARGETS" = "true" ]; then
     inspection_args+=(--release-field "$(workflow_issue_tracker_custom_field release_field)"
       --release-label-prefix "$(workflow_issue_tracker_custom_field release_label_prefix || true)")
   fi
-  for issue in "${ISSUE_NUMBERS[@]}"; do
+  for issue in ${ISSUE_NUMBERS[@]+"${ISSUE_NUMBERS[@]}"}; do
     inspection_args+=(--scope-issue "$issue")
   done
   if [ -n "$EVIDENCE_FILE" ]; then
     inspection_args+=(--evidence "$EVIDENCE_FILE")
   fi
-  python3 "$SCRIPT_DIR/workflow-merge-budget.py" "${inspection_args[@]}"
+  python3 "$SCRIPT_DIR/workflow-merge-budget.py" ${inspection_args[@]+"${inspection_args[@]}"}
   exit $?
 fi
 
 if [ -n "$MERGE_SESSION" ]; then
   session_args=(release-cleanup --session "$MERGE_SESSION" --version "$RELEASE_VERSION"
     --branch "$RELEASE_BRANCH" --base "$BACKPORT_BASE" --executor-pid "$$")
-  for issue in "${ISSUE_NUMBERS[@]}"; do
+  for issue in ${ISSUE_NUMBERS[@]+"${ISSUE_NUMBERS[@]}"}; do
     session_args+=(--scope-issue "$issue")
   done
   if [ -n "$PRODUCT_REPO" ]; then
     session_args+=(--product-repo "$PRODUCT_REPO" --evidence "$EVIDENCE_FILE")
   fi
-  python3 "$SCRIPT_DIR/workflow-merge-budget.py" "${session_args[@]}" -- \
-    bash "$SCRIPT_DIR/prepare-release-post-merge-cleanup.sh" "${ORIGINAL_ARGS[@]}"
+  python3 "$SCRIPT_DIR/workflow-merge-budget.py" ${session_args[@]+"${session_args[@]}"} -- \
+    bash "$SCRIPT_DIR/prepare-release-post-merge-cleanup.sh" ${ORIGINAL_ARGS[@]+"${ORIGINAL_ARGS[@]}"}
   exit $?
 fi
 

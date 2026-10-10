@@ -78,7 +78,8 @@ if args[:2] == ['api', 'graphql']:
     if 'fields(' in query:
         emit({'data': {'node': {'fields': {'nodes': [{'id': 'field', 'name': 'Status', 'options': [{'id': 'merged', 'name': 'Merged'}, {'id': 'plan', 'name': 'Plan Ready'}, {'id': 'released', 'name': 'Released'}]}], 'pageInfo': {'hasNextPage': False, 'endCursor': None}}}}})
     if 'projectV2(' in query:
-        emit({'data': {'user': {'projectV2': {'id': 'project'}}, 'organization': {'projectV2': {'id': 'project'}}}})
+        project_id = state.get('projectId', 'project')
+        emit({'data': {'user': {'projectV2': {'id': project_id}}, 'organization': {'projectV2': {'id': project_id}}}})
     sys.exit(1)
 if args[:2] == ['pr', 'view']:
     value = dict(state['prs'][str(args[2])])

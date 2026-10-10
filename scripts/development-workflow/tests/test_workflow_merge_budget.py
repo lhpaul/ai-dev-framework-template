@@ -1625,6 +1625,14 @@ class ReleaseScope(unittest.TestCase):
         self.assertFalse((self.repo/'.git/component-release-cleanup-locks').exists())
         self.assertTrue(all(i['releaseStamp'] and i['tracker'] and i['status']=='Released' for i in projection['issues']))
 
+    def test_release_scope_exhausts_project_pages_before_freezing_scope(self):
+        self.candidate(13,self.head)
+        self.data['releaseProjectPages']={
+            'first':{'nodes':[],'pageInfo':{'hasNextPage':True,'endCursor':'second'}},
+            'second':{'nodes':self.data['releaseProjectItems'],'pageInfo':{'hasNextPage':False,'endCursor':None}}}
+        projection=self.scope()
+        self.assertEqual([i['id'] for i in projection['issues']],['12','13'])
+
     def test_release_scope_unknown_response_defers(self):
         self.data['scopeOutage']=True
         self.scope(success=False)
@@ -1718,8 +1726,8 @@ class ReleasePair(unittest.TestCase):
         self.merge(12);self.step(12,'merge_verify');self.published();self.step(12,'publication')
         self.merge(13);self.step(13,'merge_verify')
 
-    def cleanup(self, success=True, extra=()):
-        result=subprocess.run(['bash',str(self.scripts/'prepare-release-post-merge-cleanup.sh'),'v1.2.3',
+    def cleanup(self, success=True, extra=(), release_input='v1.2.3'):
+        result=subprocess.run(['bash',str(self.scripts/'prepare-release-post-merge-cleanup.sh'),release_input,
             '--merge-session',self.session,'--json',*extra],cwd=self.repo,env=self.env,text=True,capture_output=True)
         if success:
             self.assertEqual(result.returncode,0,result.stdout+result.stderr)
@@ -1750,6 +1758,25 @@ class ReleasePair(unittest.TestCase):
         self.reload();self.candidate(14,self.head);self.save()
         self.assertGreater(self.begin()['estimate']['projectedCost'],first)
 
+    def test_release_pair_projection_accounts_for_excluded_candidates_rechecks(self):
+        self.begin()
+        state=json.loads(Path(self.session).read_text())
+        small=budget.estimate(state)['projectedCost']
+        # Non-shipped Merged candidates still require membership reads on all
+        # four projection boundaries, without adding an owning tracker duty.
+        state['releasePair']['projection']['scopeReadCost']=400
+        larger=budget.estimate(state)
+        component=next(p for p in larger['components'] if p['kind']=='release_projection')
+        self.assertEqual(component['weight'],1600)
+        self.assertGreater(larger['projectedCost'],small)
+        old_raw=larger['rawCost']-800
+        old_cost=old_raw+max(50,(old_raw+1)//2)
+        quota=dict(remaining=old_cost+1000+1,limit=5000,reset=int(time.time())+3600)
+        with patch.object(budget,'budget',return_value=quota):
+            self.assertFalse(budget.admission(state))
+        self.assertEqual(state['outcome'],'Deferred')
+        self.reload();self.assertNotIn(['pr','merge'],self.data['events'])
+
     def test_release_like_branch_without_pair_retains_ordinary_barrier(self):
         declaration=dict(ownerRoot=str(self.repo),prs=[dict(repo='org/repo',pr=n,head=self.head,
             base=b,root=str(self.repo),phases=['merge_api','cleanup'],policySkipped=['remote_delete','local_cleanup'])
@@ -1768,6 +1795,13 @@ class ReleasePair(unittest.TestCase):
         self.merge(12)
         self.reload();self.assertEqual(len(self.data['mergeArgv']),1)
 
+    def test_release_pair_project_binding_drift_refuses_then_restored_owner_advances(self):
+        self.begin();self.reload();self.data['projectId']='different-owning-project';self.save()
+        self.merge(12,success=False)
+        self.reload();self.assertNotIn(['pr','merge'],self.data['events'])
+        self.data['projectId']='project';self.save()
+        self.helper('resume','--session',self.session);self.merge(12)
+
     def test_release_pair_annotated_tag_dereferences_to_production_commit(self):
         self.begin();self.merge(12);self.step(12,'merge_verify');self.published()
         annotation='a'*40
@@ -1780,11 +1814,21 @@ class ReleasePair(unittest.TestCase):
         self.assertEqual(self.begin()['outcome'],'Deferred')
         self.data['prs']['13']['headRefOid']=self.head;self.save()
         self.assertEqual(self.begin(releasePair=dict(version='v9.9.9',productionPr=12,backportPr=13))['outcome'],'Deferred')
+        self.data['prs']['13']['state']='CLOSED';self.save()
+        self.assertEqual(self.begin()['outcome'],'Deferred')
+        self.data['prs']['13']['state']='OPEN';self.save()
+        self.assertEqual(self.begin()['outcome'],'Admitted')
 
     def test_release_pair_requires_regular_executor_and_preserves_branch(self):
-        self.begin();self.merge(12,success=False,method='--squash')
+        self.begin();result=self.merge(12,success=False,method='--squash')
+        self.assertIn('requires unchanged regular-merge argv',result.stderr)
         self.assertNotIn(['pr','merge'],json.loads(self.fixture.read_text())['events'])
         self.assertTrue(self.command(['git','ls-remote','origin','refs/heads/release/v1.2.3']).stdout)
+        self.helper('resume','--session',self.session)
+        result=self.step(12,'merge_api',argv=('gh','pr','merge','12','--repo','org/foreign','--merge',
+            '--match-head-commit',self.head),success=False)
+        self.assertIn('exact frozen repository',result.stderr)
+        self.helper('resume','--session',self.session);self.merge(12)
 
     def test_release_pair_publication_precedes_backport_and_shared_cleanup(self):
         self.begin();self.merge(12);self.step(12,'merge_verify')
@@ -1839,6 +1883,9 @@ class ReleasePair(unittest.TestCase):
         self.assertNotEqual(json.loads(result.stdout)['outcome'],'Completed')
 
     def test_release_pair_actual_cleanup_runs_owned_helpers_and_emits_single_json(self):
+        # On macOS this exercises the declared Bash 3.2 runtime, including an
+        # empty issue-argument array at the session cleanup entrypoint.
+        (self.bin/'bash').symlink_to('/bin/bash')
         self.both();self.reload();self.data['trackerStatuses']={'12':'Merged','13':'Merged'};self.save()
         result=self.cleanup()
         self.assertEqual(json.loads(result.stdout)['outcome'],'Completed')
@@ -1892,21 +1939,24 @@ class ReleasePair(unittest.TestCase):
         scripts=hub/'scripts/development-workflow';shutil.copytree(self.scripts,scripts)
         shutil.copyfile(self.source/'component-release-target.sh',scripts/'component-release-target.sh')
         (scripts/'component-release-target.sh').chmod(0o700)
+        branch='product/release/v1.2.3'
+        self.command(['git','branch','-m',branch]);self.command(['git','push','-q','origin',branch])
+        for pr in self.data['prs'].values():
+            pr['headRefName']=branch
         self.command(['git','switch','-q','develop'])
         linked=self.root/'product-linked'
-        self.command(['git','worktree','add','-q',str(linked),'release/v1.2.3'])
+        self.command(['git','worktree','add','-q',str(linked),branch])
         (hub/'.ai-dev-workflow.yaml').write_text('schema_version: 2\nmode: workflow_hub\nissue_tracker:\n  provider: github_projects\n  project_number: 1\nworkflow_hub:\n  product_repos:\n    - name: product\n      github_repo: org/repo\n      default_branch: develop\n      release:\n        base: develop\n        branch_pattern: "{product_repo}/release/v{version}"\n        changelog_owner: product_repo\n        tag_owner: product_repo\n        github_release_owner: product_repo\n        deployment_evidence_owner: product_repo\n        cleanup_evidence_owner: product_repo\n        tracker_reconciliation_owner: hub\n')
         (hub/'.ai-dev-workflow.local.yaml').write_text('product_repos:\n  - name: product\n    local_path: "'+str(linked)+'"\n')
-        # Existing component contract accepts the recorded branch without
-        # inventing a new tag-to-branch normalization rule.
+        # Preserve the configured component prefix and the existing opaque tag.
         self.data['checkoutRepos']={str(hub):'org/hub',str(linked):'org/repo',str(self.repo):'org/repo'}
         self.save()
         target=subprocess.run(['bash',str(scripts/'component-release-target.sh'),'--repo-root',str(hub),
-            '--repo','product','--release-branch','release/v1.2.3','--json'],cwd=hub,env=self.env,
+            '--repo','product','--release-branch',branch,'--json'],cwd=hub,env=self.env,
             text=True,capture_output=True,check=True)
         evidence=hub/'component.json'
         evidence.write_text(json.dumps(dict(schema_version='component_release_evidence.v1',target_binding=json.loads(target.stdout),
-            release_branch='release/v1.2.3',release_outcome='completed',ci_outcome='passed',deployment_outcome='recorded',
+            release_branch=branch,release_outcome='completed',ci_outcome='passed',deployment_outcome='recorded',
             cleanup_outcome='not_started',component_tag='product-v1.2.3')))
         manifest=hub/'pair.json';manifest.write_text(json.dumps(dict(ownerRoot=str(hub),
             releasePair=dict(version='v1.2.3',productionPr=12,backportPr=13,productRepo='product',evidenceFile=str(evidence)),
@@ -1922,7 +1972,7 @@ class ReleasePair(unittest.TestCase):
         self.data['releasePublication']['tag_name']='product-v1.2.3';self.data['releaseTag']['ref']='refs/tags/product-v1.2.3'
         self.data['trackerStatuses']={'12':'Merged','13':'Merged'};self.save()
         self.step(12,'publication');self.merge(13);self.step(13,'merge_verify')
-        self.cleanup(extra=('--repo','product','--repo-root',str(hub),'--evidence-file',str(evidence)))
+        self.cleanup(extra=('--repo','product','--repo-root',str(hub),'--evidence-file',str(evidence)),release_input=branch)
         self.reload();self.assertEqual(self.data['stampMutationRepos'],['org/hub','org/hub'])
         self.assertEqual(self.data['trackerMutationRepos'],['org/hub','org/hub'])
         self.assertTrue(linked.is_dir())

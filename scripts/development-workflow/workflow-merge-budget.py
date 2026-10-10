@@ -423,6 +423,7 @@ def project_release(args):
             "version": args.version, "branch": args.branch, "head": head, "base": args.base,
             "issues": issues, "scopeReadCost": read_cost,
             "markerRepo": issue_repo, "markerProvider": args.provider,
+            "projectId": args.project_id if args.provider == "github_projects" else None,
             "mergedStatus": args.merged_status,
             "changelogDigest": hashlib.sha256(call(["git", "-C", str(checkout), "show", head + ":CHANGELOG.md"]).encode()).hexdigest()}
     if args.evidence:
@@ -441,7 +442,7 @@ def project_release(args):
 
 
 def release_inspect(pair, target, owner, retained_scope=()):
-    argv = ["bash", str(SCRIPT / "prepare-release-post-merge-cleanup.sh"), pair["version"],
+    argv = ["bash", str(SCRIPT / "prepare-release-post-merge-cleanup.sh"), target["branch"],
             "--repo-root", str(owner), "--backport-base", target["base"],
             "--inspect-targets", "--release-head", target["head"]]
     if pair.get("productRepo"):
@@ -705,7 +706,9 @@ def estimate(state):
     pieces.append({"kind": "recheck", "count": remaining * (remaining - 1) // 2, "weight": 5})
     if state.get("releasePair"):
         pieces.append({"kind": "release_projection", "count": int(bool(outstanding) and not state["started"]),
-                       "weight": max(100, state["releasePair"]["projection"]["scopeReadCost"] * 2)})
+                       # First definitive hook, shared cleanup admission,
+                       # its owning child and production completion barrier.
+                       "weight": max(100, state["releasePair"]["projection"]["scopeReadCost"] * 4)})
         for phase, weight in (("publication", 25), ("release_stamp", 15), ("release_finalize", 15), ("cleanup", 30), ("audit", 10), ("hold", 10)):
             pieces.append({"kind": phase, "weight": weight, "count": sum(
                 entry["phase"] == phase and entry["status"] not in {"completed", "skipped_by_policy"}
@@ -946,6 +949,8 @@ def begin(args):
                 raise Stop("PR branch differs from cleanup target; refusing cleanup and tracker updates")
             target["verifiedState"] = "merged" if live["state"] == "MERGED" else "unmerged"
             target["lastVerifiedAt"] = now()
+            if "releasePair" in declaration and live["state"] not in {"OPEN", "MERGED"}:
+                raise Stop("paired release PR must be OPEN or independently MERGED")
             if "releasePair" in declaration and live["state"] == "OPEN" and (live["isInMergeQueue"] or live["autoMergeRequest"] is not None):
                 target["observedSubmission"] = {"observedAt": now(), "state": "OPEN", "head": head}
             inspected = inspect(target, owner)
