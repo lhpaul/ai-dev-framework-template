@@ -681,15 +681,41 @@ def release_action_check(state, target, args, live):
         raise Stop("reviewed release head/branch changed")
     if args.phase == "merge_api":
         argv = getattr(args, "argv", [])
+        message = "paired merge executor requires unchanged regular-merge argv without deletion"
         if (len(argv) < 4 or Path(argv[0]).name != "gh" or argv[1:3] != ["pr", "merge"]
-                or argv[3] != str(target["pr"]) or "--merge" not in argv
-                or any(a in {"--squash", "--rebase", "--delete-branch", "-d"} for a in argv)):
-            raise Stop("paired merge executor requires unchanged regular-merge argv without deletion")
-        for flag, expected in (("--repo", target["repo"]), ("--match-head-commit", target["head"])):
-            if argv.count(flag) != 1 or argv.index(flag) + 1 >= len(argv) or argv[argv.index(flag) + 1] != expected:
-                raise Stop("paired merge argv must bind the exact frozen repository and reviewed head")
-        if any(a == "-R" or a.startswith(("--repo=", "-R", "--match-head-commit=")) for a in argv[4:]):
-            raise Stop("ambiguous paired merge executor identity flags")
+                or argv[3] != str(target["pr"])):
+            raise Stop(message)
+        identity = {"--repo": target["repo"], "--match-head-commit": target["head"]}
+        text_flags = {"--author-email", "-A", "--body", "-b", "--body-file", "-F", "--subject", "-t"}
+        seen, index = set(), 4
+        while index < len(argv):
+            token = argv[index]
+            flag, separator, value = token.partition("=")
+            if flag in {"--merge", "--admin", "--auto"}:
+                if flag in seen or (separator and value not in {"1", "t", "T", "TRUE", "true", "True", "0", "f", "F", "FALSE", "false", "False"}):
+                    raise Stop(message)
+                enabled = not separator or value in {"1", "t", "T", "TRUE", "true", "True"}
+                if flag == "--merge" and not enabled:
+                    raise Stop(message)
+                seen.add(flag)
+            elif token in identity or flag in text_flags:
+                if token in identity:
+                    if token in seen or index + 1 >= len(argv) or argv[index + 1] != identity[token]:
+                        raise Stop("paired merge argv must bind the exact frozen repository and reviewed head")
+                    seen.add(token)
+                if not separator:
+                    index += 1
+                    if index >= len(argv):
+                        raise Stop(message)
+            else:
+                # Refuse method/deletion aliases, assignments and clusters, plus
+                # unknown CLI surfaces, before any provider mutation.
+                raise Stop(message)
+            index += 1
+        if "--merge" not in seen:
+            raise Stop(message)
+        if not set(identity).issubset(seen):
+            raise Stop("paired merge argv must bind the exact frozen repository and reviewed head")
         if live["state"] == "MERGED":
             raise Stop("release already merged; reconcile instead of duplicate submission")
         if live["state"] != "OPEN":

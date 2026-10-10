@@ -1250,6 +1250,10 @@ required. Working-copy changelog edits cannot change reviewed scope.
 
 Paired `merge_api` executors require regular `gh pr merge N --repo REPO --merge
 --match-head-commit SHA` arguments, preserving argv and existing authority.
+The guard parses option values before execution: enabled `--merge` is required,
+duplicate/conflicting booleans and every deletion or alternative-method form
+are refused, including assignments and short clusters. Unknown options and
+identity aliases are refused; supported commit-text options retain their values.
 Independent verification requires exactly two parents, including the reviewed
 head. Run `merge_verify`, then production `publication -- true`; its read-back
 dereferences lightweight/annotated version tags and verifies a published

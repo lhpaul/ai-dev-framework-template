@@ -1846,6 +1846,25 @@ class ReleasePair(unittest.TestCase):
         self.assertIn('exact frozen repository',result.stderr)
         self.helper('resume','--session',self.session);self.merge(12)
 
+    def test_release_pair_boolean_and_alias_guards_refuse_before_mutation(self):
+        self.begin()
+        prefix=('gh','pr','merge','12','--repo','org/repo','--match-head-commit',self.head)
+        for flags in (('--merge','--delete-branch=true'),
+                      ('--merge','--merge=false','--squash=true'),
+                      ('--merge','-d=true'), ('--merge','-rs'),
+                      ('--merge','--squash=false')):
+            with self.subTest(flags=flags):
+                result=self.step(12,'merge_api',argv=prefix+flags,success=False)
+                self.assertIn('requires unchanged regular-merge argv',result.stderr)
+                self.reload();self.assertNotIn(['pr','merge'],self.data['events'])
+                self.assertEqual(self.data['prs']['12']['state'],'OPEN')
+                self.assertTrue(self.command(['git','ls-remote','origin','refs/heads/release/v1.2.3']).stdout)
+                self.helper('resume','--session',self.session)
+        permitted=prefix+('--merge=true','--admin=false','--auto=false','--subject','literal --delete-branch=true')
+        self.step(12,'merge_api',argv=permitted)
+        self.reload();self.assertEqual(self.data['mergeArgv'],[list(permitted[1:])])
+        self.assertTrue(self.command(['git','ls-remote','origin','refs/heads/release/v1.2.3']).stdout)
+
     def test_release_pair_publication_precedes_backport_and_shared_cleanup(self):
         self.begin();self.merge(12);self.step(12,'merge_verify')
         self.merge(13,success=False)

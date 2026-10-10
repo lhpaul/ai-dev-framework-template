@@ -579,6 +579,9 @@ The session route consumes frozen scope and verifies both regular merges and
 publication before follow-up. Version identity accepts the existing optional
 `v` prefix, while frozen scope and cleanup preserve the validated release
 branch's spelling and component publication retains its opaque evidence tag.
+Before merge execution, the session validates effective option values and
+refuses conflicting booleans, alternative-method/deletion assignments or
+aliases, and unknown CLI surfaces; accepted argv remains unchanged.
 Every provider mutation has its own durable intent
 and read-back; best-effort zero exits and deferred Linear guidance cannot
 complete a duty. Retention requires the branch to remain present. Linked
