@@ -576,7 +576,10 @@ bash scripts/development-workflow/prepare-release-post-merge-cleanup.sh \
 ```
 
 The session route consumes frozen scope and verifies both regular merges and
-publication before follow-up. Every provider mutation has its own durable intent
+publication before follow-up. Version identity accepts the existing optional
+`v` prefix, while frozen scope and cleanup preserve the validated release
+branch's spelling and component publication retains its opaque evidence tag.
+Every provider mutation has its own durable intent
 and read-back; best-effort zero exits and deferred Linear guidance cannot
 complete a duty. Retention requires the branch to remain present. Linked
 worktrees remain intact. If the base is already checked out in another frozen

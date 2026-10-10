@@ -531,11 +531,16 @@ def freeze_release_pair(declaration, state):
     if len(state["prs"]) != 2 or [p["pr"] for p in state["prs"]] != [pair["productionPr"], pair["backportPr"]]:
         raise Stop("releasePair must bind exactly the ordered production/backport selection")
     production, backport = state["prs"]
+    branch_version = production["branch"].rsplit("/", 1)[-1]
+    version_identity = "v" + (branch_version[1:] if branch_version.startswith("v") else branch_version)
     if (production["pr"] == backport["pr"] or production["base"] != "main" or backport["base"] == "main"
             or any(production[k] != backport[k] for k in ("repo", "head", "branch", "root", "commonDir"))
-            or production["branch"].rsplit("/", 1)[-1] != pair["version"]
+            or version_identity != pair["version"]
             or set(production["policySkipped"]) != set(backport["policySkipped"])):
         raise Stop("paired release repository/head/branch/version/base/retention mismatch")
+    # Preserve the validated branch's spelling for existing provider helpers
+    # and component contracts; identity accepts their optional v prefix.
+    pair["version"] = branch_version
     if bool(pair.get("productRepo")) != bool(pair.get("evidenceFile")):
         raise Stop("component pair requires both product route and evidence")
     if pair.get("productRepo"):

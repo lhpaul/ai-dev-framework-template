@@ -1222,7 +1222,10 @@ Optional `--final` reporting samples quota without erasing verified progress whe
 Add `"releasePair":{"version":"v1.2.3","productionPr":42,"backportPr":43}`
 to the manifest and select exactly those two PRs in that order. Both bind the
 same repository, Git common directory, checkout, reviewed head and release
-branch ending in that version. Production targets `main`; backport targets its
+branch ending in that version, with the existing optional `v` prefix accepted
+for identity. The frozen version preserves the validated branch spelling for
+projection, provider markers and cleanup; component publication tags retain
+their opaque evidence identity. Production targets `main`; backport targets its
 distinct approved base. Each selection includes merge and cleanup phases.
 Component pairing additionally binds `productRepo` and absolute `evidenceFile`
 through the existing component target/evidence contract. A release-looking

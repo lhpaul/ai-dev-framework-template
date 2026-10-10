@@ -2002,12 +2002,18 @@ class ReleasePair(unittest.TestCase):
         self.reload();self.assertNotIn(['issue','close'],self.data['events'])
 
     def test_release_pair_component_linked_checkout_keeps_hub_tracker_ownership(self):
+        self.component_linked_checkout_keeps_hub_tracker_ownership('v1.2.3')
+
+    def test_release_pair_component_unprefixed_version_preserves_contract_and_cleanup(self):
+        self.component_linked_checkout_keeps_hub_tracker_ownership('1.2.3')
+
+    def component_linked_checkout_keeps_hub_tracker_ownership(self, version):
         hub=self.root/'hub';hub.mkdir()
         subprocess.run(['git','init','-q','-b','develop',str(hub)],check=True)
         scripts=hub/'scripts/development-workflow';shutil.copytree(self.scripts,scripts)
         shutil.copyfile(self.source/'component-release-target.sh',scripts/'component-release-target.sh')
         (scripts/'component-release-target.sh').chmod(0o700)
-        branch='product/release/v1.2.3'
+        branch='product/release/'+version
         self.command(['git','branch','-m',branch]);self.command(['git','push','-q','origin',branch])
         for pr in self.data['prs'].values():
             pr['headRefName']=branch
@@ -2015,6 +2021,9 @@ class ReleasePair(unittest.TestCase):
         linked=self.root/'product-linked'
         self.command(['git','worktree','add','-q',str(linked),branch])
         (hub/'.ai-dev-workflow.yaml').write_text('schema_version: 2\nmode: workflow_hub\nissue_tracker:\n  provider: github_projects\n  project_number: 1\nworkflow_hub:\n  product_repos:\n    - name: product\n      github_repo: org/repo\n      default_branch: develop\n      release:\n        base: develop\n        branch_pattern: "{product_repo}/release/v{version}"\n        changelog_owner: product_repo\n        tag_owner: product_repo\n        github_release_owner: product_repo\n        deployment_evidence_owner: product_repo\n        cleanup_evidence_owner: product_repo\n        tracker_reconciliation_owner: hub\n')
+        if not version.startswith('v'):
+            config=hub/'.ai-dev-workflow.yaml'
+            config.write_text(config.read_text().replace('/release/v{version}', '/release/{version}'))
         (hub/'.ai-dev-workflow.local.yaml').write_text('product_repos:\n  - name: product\n    local_path: "'+str(linked)+'"\n')
         # Preserve the configured component prefix and the existing opaque tag.
         self.data['checkoutRepos']={str(hub):'org/hub',str(linked):'org/repo',str(self.repo):'org/repo'}
@@ -2034,9 +2043,18 @@ class ReleasePair(unittest.TestCase):
             prs=[dict(repo='org/repo',pr=n,head=self.head,base=b,root=str(linked),phases=['merge_api','cleanup'],
                 policySkipped=['remote_delete','local_cleanup']) for n,b in ((12,'main'),(13,'develop'))])))
         self.repo=hub;self.scripts=scripts
+        if not version.startswith('v'):
+            declaration=json.loads(manifest.read_text())
+            declaration['releasePair']['version']='v9.9.9';manifest.write_text(json.dumps(declaration))
+            refused=json.loads(self.helper('begin','--input',manifest,success=False).stdout)
+            self.assertEqual(refused['outcome'],'Deferred')
+            self.reload();self.assertNotIn(['pr','merge'],self.data['events'])
+            declaration['releasePair']['version']='v1.2.3';manifest.write_text(json.dumps(declaration))
         self.session=json.loads(self.helper('begin','--input',manifest).stdout)['session']
         state=json.loads(Path(self.session).read_text())
         self.assertEqual(state['outcome'],'Admitted')
+        self.assertEqual(state['releasePair']['version'],version)
+        self.assertEqual(state['releasePair']['projection']['version'],version)
         self.assertEqual(state['releasePair']['projection']['markerRepo'],'org/hub')
         self.assertEqual(state['releasePair']['projection']['publicationTag'],'product-v1.2.3')
         self.merge(12);self.step(12,'merge_verify');self.published()
@@ -2046,6 +2064,8 @@ class ReleasePair(unittest.TestCase):
         self.cleanup(extra=('--repo','product','--repo-root',str(hub),'--evidence-file',str(evidence)),release_input=branch)
         self.reload();self.assertEqual(self.data['stampMutationRepos'],['org/hub']*3)
         self.assertEqual(self.data['trackerMutationRepos'],['org/hub']*3)
+        self.assertTrue(all(m['title']==version for m in self.data['issueMilestones'].values()))
+        self.assertTrue(any(m['title']==version and m['state']=='closed' for m in self.data['milestones']))
         self.assertTrue(linked.is_dir())
 
     def test_release_pair_partial_stamp_read_outage_reconciles_without_replay(self):
