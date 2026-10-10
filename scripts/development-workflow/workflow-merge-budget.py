@@ -694,6 +694,16 @@ def release_scope_check(state):
         raise Stop("release scope/provider binding changed since admission")
 
 
+def release_product_cleanup_read(state):
+    target = state["prs"][1]
+    duties = [entry for entry in target["steps"].values()
+              if entry["phase"] in {"remote_delete", "local_cleanup"}
+              or entry.get("skippedPhase") in {"remote_delete", "local_cleanup"}]
+    if any(entry["status"] not in {"completed", "skipped_by_policy"} or not verify(state, target, entry)
+           for entry in duties):
+        raise Stop("verified product branch cleanup/retention required before release reconciliation")
+
+
 def release_action_check(state, target, args, live):
     pair = state["releasePair"]
     if live["headRefOid"] != target["head"] or live["headRefName"] != target["branch"]:
@@ -751,6 +761,8 @@ def release_action_check(state, target, args, live):
     if args.phase in followup:
         publication_read(state)
         regular_release_merge(state["prs"][1])
+        if args.phase in {"release_stamp", "tracker", "release_finalize"}:
+            release_product_cleanup_read(state)
         if args.phase == "cleanup":
             release_scope_check(state)
         if target is state["prs"][0] and args.phase == "cleanup":
@@ -1466,6 +1478,8 @@ def release_finalize_read(state, entry):
 
 def verify(state, target, entry, seen=None):
     phase = entry["phase"]
+    if state.get("releasePair") and phase in {"release_stamp", "tracker", "release_finalize"}:
+        release_product_cleanup_read(state)
     git_root = proof_root(state, target["commonDir"], target["root"]) if phase in {"local_merge", "base_push", "remote_delete", "local_cleanup", "policy_skip"} else target["root"]
     if entry.get("supersededBy"):
         seen = set() if seen is None else seen
@@ -1898,7 +1912,7 @@ def release_cleanup(args):
     regular_release_merge(target)
     owner = proof_root(state, state["ownerCommonDir"], state["ownerRoot"])
     issue_by_id = {i["id"]: i for i in target["issues"]}
-    for phase in ("release_stamp", "tracker", "release_finalize", "remote_delete", "local_cleanup", "policy_skip"):
+    for phase in ("remote_delete", "local_cleanup", "policy_skip", "release_stamp", "tracker", "release_finalize"):
         for key, original in target["steps"].items():
             if original["phase"] != phase:
                 continue

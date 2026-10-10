@@ -2071,6 +2071,9 @@ class ReleasePair(unittest.TestCase):
         self.reload();self.data['trackerStatuses']={'12':'Merged','13':'Merged'};self.save()
         (main/'base.txt').write_text('retained caller changes\n')
         self.cleanup(success=False)
+        self.reload();self.assertEqual(self.data.get('trackerMutationCount',0),0)
+        self.assertEqual(self.data.get('stampMutationCount',{}),{})
+        self.assertEqual(self.data.get('milestones',[]),[])
         self.assertEqual((main/'base.txt').read_text(),'retained caller changes\n')
         self.assertTrue(self.command(['git','branch','--list','release/v1.2.3']).stdout)
         (main/'base.txt').write_text('base\n')
@@ -2084,6 +2087,28 @@ class ReleasePair(unittest.TestCase):
         self.assertEqual(self.command(['git','rev-parse','HEAD']).stdout.strip(),self.commits[13])
         self.reload();self.assertEqual(self.data['trackerMutationCount'],2)
         self.assertEqual(len(self.data['mergeArgv']),2)
+
+    def test_release_pair_provider_duties_require_verified_branch_cleanup(self):
+        self.both()
+        self.reload();self.data['trackerStatuses']={'12':'Merged','13':'Merged'};self.save()
+        for phase,key,issue,status,function,values in [
+            ('release_stamp','release_stamp:12','12','v1.2.3','record_release_for_issue_best_effort',['12','v1.2.3']),
+            ('tracker','tracker:12:pre','12','Released','update_tracker_status_best_effort',['12','Released','Merged']),
+            ('release_finalize','release_finalize',None,None,'finalize_release_marker_best_effort',['v1.2.3'])]:
+            argv=['bash','-c','set -e; source "$1/workflow-lib.sh"; cd "$2"; shift 2; '+function+' "$@"',
+                'plant-provider',str(self.scripts),str(self.repo),*values]
+            refused=self.step(13,phase,key=key,issue=issue,status=status,argv=argv,success=False)
+            self.assertNotEqual(refused.returncode,0)
+            self.assertIn('verified product branch cleanup/retention required before release reconciliation',refused.stderr)
+            self.reload();self.assertEqual(self.data.get('trackerMutationCount',0),0)
+            self.assertEqual(self.data.get('stampMutationCount',{}),{})
+            self.assertEqual(self.data.get('milestones',[]),[])
+            self.helper('resume','--session',self.session)
+        self.cleanup()
+        self.assertEqual(json.loads(self.helper('report','--session',self.session,'--final').stdout)['outcome'],'Completed')
+        self.reload();self.assertEqual(self.data['trackerMutationCount'],2)
+        self.assertEqual(self.data['stampMutationCount'],{'12':1,'13':1})
+        self.assertTrue(any(m['title']=='v1.2.3' and m['state']=='closed' for m in self.data['milestones']))
 
     def test_release_pair_main_owner_projects_selected_linked_checkout(self):
         main=self.repo

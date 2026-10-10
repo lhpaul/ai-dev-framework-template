@@ -585,7 +585,10 @@ aliases, and unknown CLI surfaces; accepted argv remains unchanged.
 The existing cross-repository remote-cleanup veto remains frozen: pairing
 cannot add deletion of a same-named origin branch for a fork head.
 Every provider mutation has its own durable intent
-and read-back; best-effort zero exits and deferred Linear guidance cannot
+and read-back. Authorized product branch cleanup or policy retention is
+independently verified before any release stamp, Released transition or marker
+closure; a dirty base checkout leaves those provider duties untouched.
+Best-effort zero exits and deferred Linear guidance cannot
 complete a duty. Retention requires the branch to remain present. Linked
 worktrees remain intact. If the base is already checked out in another frozen
 participant, cleanup fast-forwards that clean checkout and detaches the selected
