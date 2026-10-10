@@ -1240,7 +1240,11 @@ Admission derives production's `publication` step and shared backport issue
 retains production's cleanup completion barrier. Declare all audit/ledger
 destinations as usual; only production final audits may explicitly set
 `deferUntilPairCleanup:true`. Duties and conservative read/proof costs contribute
-to whole-pair admission. Missing scope or insufficient quota admits no prefix.
+to whole-pair admission. A separate provider-proof pool reserves 75 units per
+stamp, tracker transition and finalization duty, plus the estimation margin.
+It includes completed provider duties while any follow-up remains pending,
+because cleanup, completion and recovery independently reread their proofs.
+Missing scope or insufficient quota admits no prefix.
 
 Read-only `prepare-release-post-merge-cleanup.sh --inspect-targets --release-head
 <reviewed SHA>` extracts the exact finalized version section from the committed

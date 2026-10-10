@@ -1853,6 +1853,38 @@ class ReleasePair(unittest.TestCase):
         self.assertEqual(state['outcome'],'Deferred')
         self.reload();self.assertNotIn(['pr','merge'],self.data['events'])
 
+    def test_release_pair_provider_proofs_defer_whole_pair_and_survive_completed_duties(self):
+        # github_issues has no Project tracker weight to mask stamp proof cost.
+        (self.repo/'.ai-dev-workflow.yaml').write_text('issue_tracker:\n  provider: github_issues\n')
+        admitted=self.begin();self.assertEqual(admitted['outcome'],'Admitted')
+        state=json.loads(Path(self.session).read_text())
+        component=next(p for p in admitted['estimate']['components'] if p['kind']=='release_provider_proof')
+        self.assertEqual(component,dict(kind='release_provider_proof',count=3,weight=75))
+        old_raw=admitted['estimate']['rawCost']-component['count']*component['weight']
+        old_cost=old_raw+max(50,(old_raw+1)//2)
+        self.reload();self.data['quota']['remaining']=old_cost+state['reserve']+1;self.save()
+        deferred=self.begin();self.assertEqual(deferred['outcome'],'Deferred')
+        self.merge(12,success=False)
+        self.reload();self.assertNotIn(['pr','merge'],self.data['events'])
+        self.assertEqual(self.data.get('stampMutationCount',{}),{})
+        # A pending final barrier still rereads completed provider duties.
+        recovery=json.loads(Path(self.session).read_text())
+        recovery['started']=True
+        for target in recovery['prs']:
+            for entry in target['steps'].values():
+                entry['status']='completed'
+        recovery['prs'][0]['steps']['cleanup']['status']='pending'
+        remaining=next(p for p in budget.estimate(recovery)['components'] if p['kind']=='release_provider_proof')
+        self.assertEqual(remaining,component)
+        self.data['quota']['remaining']=5000;self.save()
+        self.helper('resume','--session',self.session)
+        self.merge(12);self.step(12,'merge_verify');self.published();self.step(12,'publication')
+        self.merge(13);self.step(13,'merge_verify');self.cleanup()
+        self.assertEqual(json.loads(self.helper('report','--session',self.session,'--final').stdout)['outcome'],'Completed')
+        self.reload();self.assertEqual(len(self.data['mergeArgv']),2)
+        self.assertEqual(self.data['stampMutationCount'],{'12':1,'13':1})
+        self.assertEqual(self.data.get('trackerMutationCount',0),0)
+
     def test_release_like_branch_without_pair_retains_ordinary_barrier(self):
         declaration=dict(ownerRoot=str(self.repo),prs=[dict(repo='org/repo',pr=n,head=self.head,
             base=b,root=str(self.repo),phases=['merge_api','cleanup'],policySkipped=['remote_delete','local_cleanup'])
@@ -1964,12 +1996,12 @@ class ReleasePair(unittest.TestCase):
         self.data['issueMilestones']={n:{'number':1,'title':'v1.2.3'} for n in ('12','13')}
         self.data['trackerStatuses']={n:'Released' for n in ('12','13')}
         self.data['milestones']=[{'number':1,'title':'v1.2.3','state':'closed'}];self.save()
+        for phase in ('remote_delete','local_cleanup'):
+            self.step(13,'policy_skip',key=phase)
         for issue in ('12','13'):
             self.step(13,'release_stamp',key='release_stamp:'+issue,issue=issue,status='v1.2.3')
             self.step(13,'tracker',key='tracker:'+issue+':pre',issue=issue,status='Released')
         self.step(13,'release_finalize')
-        for phase in ('remote_delete','local_cleanup'):
-            self.step(13,'policy_skip',key=phase)
         self.step(13,'cleanup');self.step(12,'cleanup')
         report=json.loads(self.helper('report','--session',self.session,'--final').stdout)
         self.assertEqual(report['outcome'],'Completed')

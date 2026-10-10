@@ -799,6 +799,15 @@ def estimate(state):
                        # First definitive hook, shared cleanup admission,
                        # its owning child and production completion barrier.
                        "weight": max(100, state["releasePair"]["projection"]["scopeReadCost"] * 4)})
+        # Provider actions independently recheck both branch duties before
+        # mutation and on read-back. Shared cleanup, the production barrier
+        # and recovery repeat those proofs even for completed provider steps.
+        # Keep this pool until all work is complete; outstanding-only weights
+        # would lose the reserve when a final audit is the sole pending duty.
+        pieces.append({"kind": "release_provider_proof", "count": sum(
+            entry["phase"] in {"release_stamp", "tracker", "release_finalize"}
+            for target in state["prs"] for entry in target["steps"].values()) if outstanding else 0,
+            "weight": 75})
         for phase, weight in (("publication", 25), ("release_stamp", 15), ("release_finalize", 15), ("cleanup", 30), ("audit", 10), ("hold", 10)):
             pieces.append({"kind": phase, "weight": weight, "count": sum(
                 entry["phase"] == phase and entry["status"] not in {"completed", "skipped_by_policy"}
