@@ -73,13 +73,12 @@ If the file is absent or the key is not present, CodeRabbit defaults to
 When a draft-restricting reviewer is listed in `review.on_ready.github`, the
 ready transition happens after the draft gate:
 
-<!-- workflow-shell-contract: bash-zsh -->
-```bash
-./scripts/development-workflow/pr-review-loop.sh <number> --branch <branch_name> --draft-github-only
-./scripts/development-workflow/pr-review-loop.sh <number> --branch <branch_name>
-```
+After Step 7a APPROVED, run the executable **ready-transition preflight** in
+[Protocol 91](91-orchestrate-work-protocol.md#draft-github-gate-before-ready-phase-reviewers).
+It verifies fresh draft-gate output before invoking the full loop.
 
-The second command marks the PR ready immediately before the first ready-phase
+The preflight invokes the full loop only after verifying the draft verdict.
+That full loop marks the PR ready immediately before the first ready-phase
 reviewer. This prevents silent reviewer skip while preserving draft-phase
 coverage — CodeRabbit configured with `auto_review.drafts: false` produces no
 comment when it bypasses a draft PR, making the omission invisible to the agent.
@@ -1303,11 +1302,12 @@ For each PR: run Step 7a first. Step 7a runs **all** configured runner
 reviewers sequentially (per the `review.on_draft.runner` list in
 `.ai-dev-workflow.yaml`, with `.ai-dev-workflow.local.yaml` local overrides
 taking precedence). All runner reviewers must APPROVE before proceeding. Then
-run the draft GitHub reviewer gate (`pr-review-loop.sh --draft-github-only`) for
-`review.on_draft.github`. Once Step 7a and the draft GitHub gate are clean, run
-`gh pr ready <pr_number>` to convert the draft PR to non-draft, then run Step 7
-to completion for `review.on_ready.github`, then Step 7b (regression label,
-implementation PRs only), then Step 8. Dispatch fixers and re-run as specified
+run Protocol 91's **ready-transition preflight**, which records and validates the
+draft GitHub reviewer gate (`pr-review-loop.sh --draft-github-only`) for
+`review.on_draft.github`. With `review.on_ready.github` configured, only the full
+loop converts the PR to ready after fresh draft-gate evidence; do not run
+`gh pr ready` manually after Step 7a. Run Step 7 to completion, then Step 7b
+(regression label, implementation PRs only), then Step 8. Dispatch fixers and re-run as specified
 in 91 until the PR is clean and ready for human review or escalated. After Step
 8 returns `green`, run Step 8a (label readiness checklist — this is a **hard
 gate** that verifies non-draft status, `ready-for-regression` label on
@@ -1920,7 +1920,7 @@ This prevents declaring a PR "clean" while substantive reviewer findings remain 
 
 After processing the requested PR(s), report:
 
-- **Ready for human review**: PR link, branch, and that the internal review gate, every configured automated reviewer, and CI are all clean (or skipped). For spec and plan PRs, mention that the `Document Quality Gate` log is present. Confirm that `gh pr ready` was run (after Step 7a APPROVED, before Step 7) to convert the draft PR to non-draft.
+- **Ready for human review**: PR link, branch, and that the internal review gate, every configured automated reviewer, and CI are all clean (or skipped). For spec and plan PRs, mention that the `Document Quality Gate` log is present. Confirm that Protocol 91’s ready-transition preflight passed after Step 7a APPROVED and that the full loop owned conversion when ready-phase reviewers were configured.
 - **Escalated**: PR link, reason (no progress over consecutive cycles, finding reappeared after fix, max cycles, or a review platform escalate such as Reviewer failed).
 - **Waiting on reviewer**: PR link, the pending platform (`PENDING_REVIEWER`), the revision (`PENDING_REVIEW_HEAD_SHA`), the request time and waited seconds, and the failure statement from `NO_FAILURE_DETECTED` / `FAILED_PEER_PLATFORMS` (see Protocol 91 Step 7). A No verdict yet stop is not an escalation; the human action is to re-run the loop later on the same revision, or to investigate the platform if it still has not answered.
 - **Skipped**: If no review platform is configured, or a configured platform is

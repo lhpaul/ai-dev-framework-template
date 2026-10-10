@@ -208,6 +208,147 @@ rm -rf "$_PLANT_TMP"
 unset _PLANT_TMP _PLANT_PROTOCOL _planted_balance
 
 echo ""
+# --- 9. Execute the actual Protocol 91 ready-transition preflight ------------
+# Mocks are isolated from git/GitHub; the shipped fenced block is the code under
+# test. A premature conversion plant must fail the transition trace assertion.
+_ready_transition_report="$(python3 - "$PROTOCOL" <<'PYTEST'
+import json
+import os
+from pathlib import Path
+import re
+import subprocess
+import sys
+import tempfile
+
+protocol = Path(sys.argv[1]).read_text(encoding="utf-8")
+section = protocol.split("<!-- protocol-91-ready-transition:start -->", 1)[1].split(
+    "<!-- protocol-91-ready-transition:end -->", 1
+)[0]
+snippet = re.search(r"```bash\n(.*?)\n```", section, re.S).group(1)
+snippet = snippet.replace("PR_NUMBER=<pr_number>", "PR_NUMBER=1864").replace(
+    "BRANCH=<branch_name>", "BRANCH=fix/1864-draft-ready-preflight"
+)
+head = "a" * 40
+other = "b" * 40
+cases = [
+    ("clean", True), ("blocked", False), ("missing", False),
+    ("duplicate", False), ("malformed", False), ("stale", False),
+    ("moved", False), ("missing-mode", False), ("wrong-mode", False),
+    ("nonzero", False), ("head-failed", False), ("empty-head", False),
+    ("config-failed", False), ("config-malformed", False),
+    ("config-unreadable", False), ("ownership-failed", False),
+    ("skipped-configured", False), ("skipped-empty", True),
+    ("no-ready", True), ("no-ready-resume", True), ("full-failed", False),
+    ("config-malformed-state", False), ("no-ready-unknown-state", False),
+]
+
+def run_case(root, name, code=snippet):
+    trace = root / "trace"
+    trace.write_text("")
+    env = dict(os.environ, PATH=f"{root / 'bin'}:{os.environ['PATH']}",
+               TEST_TRACE=str(trace), TEST_CASE=name)
+    result = subprocess.run(["bash", "-c", code], cwd=root, env=env,
+                            text=True, capture_output=True)
+    return result.returncode, trace.read_text().splitlines()
+
+with tempfile.TemporaryDirectory(prefix="protocol91-ready-") as directory:
+    root = Path(directory)
+    scripts = root / "scripts/development-workflow"
+    scripts.mkdir(parents=True)
+    (root / "bin").mkdir()
+    files = {
+        scripts / "workflow-config-resolver.py": r'''import json, os, sys
+case = os.environ["TEST_CASE"]
+if case == "config-failed": sys.exit(2)
+if case == "config-malformed": print("{}"); sys.exit(0)
+print(json.dumps({"unreadable_file": "bad-config" if case == "config-unreadable" else "",
+ "effective_on_ready_github": [] if case.startswith("no-ready") else ["local-ai-reviewer"],
+ "effective_on_ready_github_state": "malformed" if case == "config-malformed-state" else "defined",
+ "effective_on_draft_github_state": "defined",
+ "effective_on_draft_github": [] if case == "skipped-empty" else ["pr-agent"]}))
+''',
+        scripts / "pr-ownership-guard.sh": '''#!/usr/bin/env bash
+[[ "$TEST_CASE" != ownership-failed ]]
+''',
+        root / "bin/gh": f'''#!/usr/bin/env bash
+if [[ "$1 $2" == "pr ready" ]]; then
+  echo manual-ready >> "$TEST_TRACE"
+  exit 0
+fi
+if [[ " $* " == *" --json isDraft "* ]]; then
+  case "$TEST_CASE" in
+    no-ready-resume) echo false ;;
+    no-ready-unknown-state) echo null ;;
+    *) echo true ;;
+  esac
+  exit 0
+fi
+if [[ "$TEST_CASE" == head-failed ]]; then exit 1; fi
+if [[ "$TEST_CASE" == empty-head ]]; then echo ""; exit 0; fi
+if [[ "$TEST_CASE" == moved ]] && grep -q '^draft$' "$TEST_TRACE"; then
+  echo {other}
+else
+  echo {head}
+fi
+''',
+        scripts / "pr-review-loop.sh": f'''#!/usr/bin/env bash
+if [[ " $* " != *" --draft-github-only "* ]]; then
+  echo full >> "$TEST_TRACE"
+  [[ "$TEST_CASE" != full-failed ]]
+  exit $?
+fi
+echo draft >> "$TEST_TRACE"
+[[ "$TEST_CASE" != nonzero ]] || exit 1
+case "$TEST_CASE" in
+  missing-mode) ;;
+  wrong-mode) echo DRAFT_GITHUB_ONLY=0 ;;
+  *) echo DRAFT_GITHUB_ONLY=1 ;;
+esac
+case "$TEST_CASE" in
+  blocked) echo RESULT=needs_fixes ;;
+  missing) ;;
+  duplicate) printf 'RESULT=clean\\nRESULT=clean\\n' ;;
+  malformed) echo RESULT=clean-extra ;;
+  skipped-*) printf 'RESULT=skipped\\nREASON=not_configured\\n' ;;
+  *) echo RESULT=clean ;;
+esac
+if [[ "$TEST_CASE" == stale ]]; then
+  echo POST_CLEAN_HEAD_SHA={other}
+else
+  echo POST_CLEAN_HEAD_SHA={head}
+fi
+''',
+    }
+    for path, content in files.items():
+        path.write_text(content)
+        path.chmod(0o755)
+    for name, allowed in cases:
+        rc, trace = run_case(root, name)
+        expected = ["manual-ready", "full"] if name == "no-ready" else (
+            ["full"] if name == "no-ready-resume" else
+            ["draft", "full"] if allowed or name == "full-failed" else
+            (["draft"] if name in {"blocked", "missing", "duplicate", "malformed",
+              "stale", "moved", "missing-mode", "wrong-mode", "nonzero", "skipped-configured"} else [])
+        )
+        assert (rc == 0) == allowed, (name, rc, trace)
+        assert trace == expected, (name, expected, trace)
+        print(f"PASS: ready_transition_{name}", file=sys.stderr)
+    # A violation at the exact draft-loop invocation line: injecting manual ready
+    # before the draft gate must be detected even when all reviewer mocks pass.
+    plant = snippet.replace('DRAFT_GATE_OUTPUT=$(', 'gh pr ready "$PR_NUMBER"\n  DRAFT_GATE_OUTPUT=$(', 1)
+    assert plant != snippet
+    rc, trace = run_case(root, "clean", plant)
+    assert rc == 0 and trace != ["draft", "full"] and "manual-ready" in trace
+    print("PASS: ready_transition_premature_conversion_plant_rejected", file=sys.stderr)
+    rc, trace = run_case(root, "clean")
+    assert rc == 0 and trace == ["draft", "full"]
+    print("PASS: ready_transition_plant_removed_passes", file=sys.stderr)
+print("verified:25")
+PYTEST
+)"
+run_test "ready_transition_executable_matrix_and_plant" "verified:25" "$_ready_transition_report"
+
+
 echo "${PASS_COUNT} passed, ${FAIL_COUNT} failed"
 
 if [ "$FAIL_COUNT" -ne 0 ]; then
