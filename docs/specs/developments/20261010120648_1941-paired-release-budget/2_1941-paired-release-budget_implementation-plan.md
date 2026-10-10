@@ -33,6 +33,7 @@ All repository observations below were gathered at
 | Regression harnesses | `rg --files scripts/development-workflow/tests -g '*merge*budget*' -g '*prepare-release*'` | Existing Python journal suite and Bash release-cleanup suite provide the extension points listed below. |
 | Template delivery | `rg -n 'workflow-merge-budget.py' sync-manifest.yaml` | Existing helper is already delivered through the manifest; this plan adds no runtime module. |
 | Design assets | `rg -n 'Design assets' .git/devsession-1941/issue-body.md`; `rg --files docs/specs/developments/20261010120648_1941-paired-release-budget` | No UI or reference asset is supplied; smoke tests require no visual baseline. |
+| Application E2E fixture obligation | `rg -n -i 'E2E regression|placeholder' .github/workflows/e2e-regression.yml`; `rg -n 'path/to/committed/spec|TODO.*path convention' docs/testing/README.md` | CI names its job `E2E regression (placeholder)`; the testing guide still has an unfilled committed-spec path and TODO convention. The application E2E fixture obligation is not applicable; workflow harness coverage remains required. |
 
 ### Consumer outcomes at the composed call site
 
@@ -99,6 +100,17 @@ Modify `scripts/development-workflow/prepare-release-post-merge-cleanup.sh`:
   finalized scope/provider duties without deleting, stamping, updating or locking
   mutation resources. Read the changelog from that commit, use commit ancestry
   for omitted-shipped membership and fail closed on unavailable projection inputs.
+- For this inspection route, replace the legacy publication-date window with
+  exhaustive, validated pagination of the owning GitHub Project's issue items
+  currently in `Merged`. Filter candidates to the owning issue repository,
+  exclude references already present in the exact version's changelog section,
+  then resolve each candidate's closing merged PR evidence and test its merge
+  commit against the reviewed release head. Add only proven ancestors; proven
+  non-ancestors remain outside the frozen scope. This deliberately uses no current
+  tag, Release timestamp, issue-close time window or previous-tag date. Missing,
+  malformed, truncated or ambiguous membership evidence defers admission rather
+  than silently dropping candidates. Preserve the legacy date-window algorithm
+  for non-session cleanup and the existing non-GitHub-Projects provider routes.
 - Add `--merge-session`; validate the frozen pair, owner, version, branch, base
   and item scope before any affected mutation. Carry the same session through
   component-repository routing and linked checkout reentry.
@@ -181,6 +193,7 @@ separate validation framework.
 | --- | --- | --- |
 | Valid pair; publication before backport; shared cleanup after both | Python journal suite plus Bash cleanup entrypoint | AC1, AC4, AC7 |
 | Whole-set quota and scope-duty projection | Python admission tests, additional shipped items and independently readable frozen manifest | AC2, AC3 |
+| Pre-publication omitted scope | Admission with both current tag and Release absent; exhaustive owning-project Merged candidates include proven ancestors, exclude non-ancestors and defer unknown membership | AC2, AC3 |
 | Invalid identities, stale heads/version/scope, unknown publication | Plant each violation at the actual composed journal/cleanup boundary, show refusal, remove it and show permission | AC3, AC4 |
 | Recovery after production merge, during publication, after backport and during partial cleanup | Persist journals, interrupt fixture executors, resume with live boundary state; assert no duplicate merge/stamp submissions | AC5 |
 | Offline evidence and verified queue submission | Existing failure/Waiting fixtures extended to paired routes | AC6 |
@@ -239,6 +252,19 @@ These identify the affected operator contract. Do not edit them in this plan PR.
 Project architecture placeholders and `AGENTS.md` require no update for this fix.
 
 ## Risks & Mitigations
+
+### Reversal handling
+
+The optional pair contract leaves ordinary sessions readable without migration.
+A code revert cannot undo completed merges, publication, stamps or tracker changes.
+Before reverting, stop new paired admissions and retain the implementation revision
+and owner-bound journals. Recover outstanding paired sessions with that revision's
+helper and their recorded recovery command, under the original authority gates;
+do not feed release-specific phases to the older helper or replay uncertain intent.
+If recovery cannot independently verify all duties, preserve the journal as
+Interrupted/Deferred and require a human disposition before rollback proceeds.
+Completed paired journals remain immutable historical evidence. Reversal never
+deletes journals, branches or releases to make an unfinished session appear complete.
 
 | Risk | Mitigation |
 | --- | --- |
