@@ -1239,7 +1239,9 @@ to whole-pair admission. Missing scope or insufficient quota admits no prefix.
 Read-only `prepare-release-post-merge-cleanup.sh --inspect-targets --release-head
 <reviewed SHA>` extracts the exact finalized version section from the committed
 changelog. It paginates the owning Project's Merged candidates and includes only
-closing merged-PR commits proven ancestors of that head. Missing, malformed,
+closing or cross-referenced merged-PR commits in the selected release repository,
+proven ancestors of that head. Recovery reads statuses from the frozen Project ID,
+regardless of current project configuration. Missing, malformed,
 truncated or ambiguous evidence defers; current tag/Release timestamps are not
 required. Working-copy changelog edits cannot change reviewed scope.
 

@@ -491,7 +491,9 @@ The single-PR route keeps its existing session contract.
 
 `begin` inspects the reviewed release commit without mutation. It freezes the
 finalized changelog section plus omitted shipped items proved by exhaustive
-owning-project pagination and closing-PR ancestry. No current tag, Release date
+owning-project pagination and closing/cross-referenced PR ancestry in the selected
+release repository. Recovery verifies tracker duties against the frozen Project ID.
+No current tag, Release date
 or previous-tag date is needed. Unknown, ambiguous or truncated membership
 defers the whole operation. Issue stamps, tracker transitions, GitHub milestone
 finalization, branch cleanup/retention and declared audits all contribute to

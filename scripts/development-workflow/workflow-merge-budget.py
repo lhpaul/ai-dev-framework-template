@@ -263,13 +263,36 @@ RELEASE_ITEMS_QUERY = """query ReleaseBudgetItems($projectId: ID!, $after: Strin
 RELEASE_CLOSERS_QUERY = """query ReleaseBudgetClosers($owner: String!, $name: String!, $number: Int!, $after: String) {
   repository(owner: $owner, name: $name) {
     issue(number: $number) {
-      timelineItems(first: 100, after: $after, itemTypes: [CLOSED_EVENT]) {
+      timelineItems(first: 100, after: $after, itemTypes: [CLOSED_EVENT, CROSS_REFERENCED_EVENT]) {
         nodes {
+          __typename
+          ... on CrossReferencedEvent {
+            source {
+              __typename
+              ... on PullRequest { number merged repository { nameWithOwner } mergeCommit { oid } }
+            }
+          }
           ... on ClosedEvent {
             closer {
               __typename
               ... on PullRequest { number merged repository { nameWithOwner } mergeCommit { oid } }
             }
+          }
+        }
+        pageInfo { hasNextPage endCursor }
+      }
+    }
+  }
+}"""
+
+RELEASE_TRACKER_QUERY = """query ReleaseBudgetTracker($owner: String!, $repo: String!, $issueNumber: Int!, $after: String) {
+  repository(owner: $owner, name: $repo) {
+    issue(number: $issueNumber) {
+      projectItems(first: 100, after: $after, includeArchived: true) {
+        nodes {
+          project { id }
+          status: fieldValueByName(name: "Status") {
+            ... on ProjectV2ItemFieldSingleSelectValue { name }
           }
         }
         pageInfo { hasNextPage endCursor }
@@ -316,7 +339,7 @@ def release_ancestor(checkout, commit, head):
     return result.returncode == 0
 
 
-def release_omitted(checkout, head, issue_repo, project_id, merged_status, known):
+def release_omitted(checkout, head, issue_repo, release_repo, project_id, merged_status, known):
     candidates, read_cost = set(), 0
     for nodes in release_pages(RELEASE_ITEMS_QUERY, {"projectId": project_id}, lambda data: data["node"]["items"], 500):
         read_cost += 1
@@ -347,9 +370,12 @@ def release_omitted(checkout, head, issue_repo, project_id, merged_status, known
                                    lambda data: data["repository"]["issue"]["timelineItems"], 20):
             read_cost += 1
             for node in nodes:
-                if not isinstance(node, dict) or "closer" not in node:
+                if not isinstance(node, dict) or node.get("__typename") not in {"ClosedEvent", "CrossReferencedEvent"}:
                     raise Stop("release closing evidence malformed")
-                closer = node["closer"]
+                edge = "closer" if node["__typename"] == "ClosedEvent" else "source"
+                if edge not in node:
+                    raise Stop("release closing/reference source unavailable")
+                closer = node[edge]
                 if closer is None:
                     continue
                 if not isinstance(closer, dict) or not isinstance(closer.get("__typename"), str):
@@ -360,14 +386,14 @@ def release_omitted(checkout, head, issue_repo, project_id, merged_status, known
                     raise Stop("release closing merge state unavailable")
                 if not closer["merged"]:
                     continue
-                if repo((closer.get("repository") or {}).get("nameWithOwner")) != issue_repo:
+                if repo((closer.get("repository") or {}).get("nameWithOwner")) != release_repo:
                     raise Stop("release closing PR repository mismatch")
                 commit = (closer.get("mergeCommit") or {}).get("oid")
                 if not isinstance(commit, str) or not re.fullmatch(r"[0-9a-f]{40}", commit):
                     raise Stop("release closing merge commit unavailable")
                 commits.add(commit)
         if not commits:
-            raise Stop("Merged candidate has no independently known closing merge: " + number)
+            raise Stop("Merged candidate has no independently known closing/reference merge: " + number)
         membership = {release_ancestor(checkout, commit, head) for commit in commits}
         if len(membership) != 1:
             raise Stop("release candidate membership ambiguous: " + number)
@@ -403,7 +429,7 @@ def project_release(args):
     if args.provider == "github_projects":
         if not args.project_id:
             raise Stop("owning release project unavailable")
-        omitted, read_cost = release_omitted(checkout, head, issue_repo, args.project_id, args.merged_status, set(ids))
+        omitted, read_cost = release_omitted(checkout, head, issue_repo, repo(args.repo), args.project_id, args.merged_status, set(ids))
         ids += omitted
     if not ids:
         raise Stop("finalized release issue scope unavailable")
@@ -1231,6 +1257,27 @@ def tracker_read(state, issue):
                    and newer(proof.get("observedAt"), state.get("recoveryStartedAt")) for proof in proofs)
     if issue["provider"] in {"none", "github_issues"}:
         return issue_read(issue)["state"] == "CLOSED"
+    if state.get("releasePair"):
+        project_id = state["releasePair"]["projection"].get("projectId")
+        if not isinstance(project_id, str) or not project_id:
+            raise Stop("frozen release project unavailable")
+        owner, name = issue["repo"].split("/")
+        statuses = set()
+        for nodes in release_pages(RELEASE_TRACKER_QUERY,
+                                   {"owner": owner, "repo": name, "issueNumber": int(issue["id"])},
+                                   lambda data: data["repository"]["issue"]["projectItems"], 20):
+            for node in nodes:
+                if not isinstance(node, dict) or not isinstance(node.get("project"), dict) or not node["project"].get("id"):
+                    raise Stop("release tracker project identity unavailable")
+                if node["project"]["id"] != project_id:
+                    continue
+                status = node.get("status")
+                if not isinstance(status, dict) or not isinstance(status.get("name"), str) or not status["name"]:
+                    raise Stop("frozen release project status unavailable")
+                statuses.add(status["name"])
+        if len(statuses) != 1:
+            raise Stop("frozen release project membership missing or conflicting")
+        return statuses == {issue["status"]}
     script = 'source "$1/workflow-lib.sh"; cd "$2"; value=$(get_tracker_status_for_issue "$3"); printf "%s\n%s\n%s" "$value" "$(workflow_status_order "$value")" "$(workflow_status_order "$4")"'
     owner = proof_root(state, state["ownerCommonDir"], state["ownerRoot"])
     environment = dict(os.environ, WORKFLOW_MERGE_BUDGET_SESSION=state["session"], WORKFLOW_MERGE_BUDGET_OWNER_ROOT=owner,

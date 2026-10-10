@@ -70,10 +70,12 @@ if args[:2] == ['api', 'graphql']:
         owner = next((a[6:] for a in args if a.startswith('owner=')),state['repo'].split('/')[0])
         name = next((a[5:] for a in args if a.startswith('repo=')),state['repo'].split('/')[1])
         issue_repo = owner+'/'+name
+        cards = state.get('projectCards', {}).get(str(number), [{'id': 'item-'+str(number) if state.get('releaseMode') else 'item',
+            'project': {'id': 'project', 'number': 1},
+            'content': {'number': number, 'url': 'https://github.com/'+issue_repo+'/issues/'+str(number), 'repository': {'nameWithOwner': issue_repo}},
+            'status': {'name': state.get('trackerStatuses', {}).get(str(number), state.get('trackerStatus', 'Plan Ready'))}}])
         emit({'data': {'repository': {'issue': {'projectItems': {
-            'nodes': [{'id': 'item-'+str(number) if state.get('releaseMode') else 'item', 'project': {'id': 'project', 'number': 1},
-                       'content': {'number': number, 'url': 'https://github.com/'+issue_repo+'/issues/'+str(number), 'repository': {'nameWithOwner': issue_repo}},
-                       'status': {'name': state.get('trackerStatuses', {}).get(str(number), state.get('trackerStatus', 'Plan Ready'))}}],
+            'nodes': cards,
             'pageInfo': {'hasNextPage': False, 'endCursor': None}}}}, 'rateLimit': {'cost': 1}}})
     if 'fields(' in query:
         emit({'data': {'node': {'fields': {'nodes': [{'id': 'field', 'name': 'Status', 'options': [{'id': 'merged', 'name': 'Merged'}, {'id': 'plan', 'name': 'Plan Ready'}, {'id': 'released', 'name': 'Released'}]}], 'pageInfo': {'hasNextPage': False, 'endCursor': None}}}}})

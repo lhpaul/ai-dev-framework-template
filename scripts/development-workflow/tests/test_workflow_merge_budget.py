@@ -1585,7 +1585,7 @@ class ReleaseScope(unittest.TestCase):
     def candidate(self, number, commit, *, repository='org/repo'):
         self.data.setdefault('releaseProjectItems',[]).append({'content': {'__typename':'Issue','number':number,
             'repository': {'nameWithOwner':repository}}, 'status': {'name':'Merged'}})
-        self.data.setdefault('releaseClosers',{})[str(number)] = [{'closer': {'__typename':'PullRequest',
+        self.data.setdefault('releaseClosers',{})[str(number)] = [{'__typename':'ClosedEvent','closer': {'__typename':'PullRequest',
             'number':number+100,'merged':True,'repository': {'nameWithOwner':repository},'mergeCommit': {'oid':commit}}}]
 
     def test_release_scope_boundary_references(self):
@@ -1624,6 +1624,22 @@ class ReleaseScope(unittest.TestCase):
         self.assertTrue(self.command(['git','branch','--list','feature/12-item']).stdout.strip())
         self.assertFalse((self.repo/'.git/component-release-cleanup-locks').exists())
         self.assertTrue(all(i['releaseStamp'] and i['tracker'] and i['status']=='Released' for i in projection['issues']))
+
+    def test_release_scope_manual_close_uses_merged_cross_reference(self):
+        self.candidate(13,self.head)
+        pr=self.data['releaseClosers']['13'][0]['closer']
+        self.data['releaseClosers']['13']=[{'__typename':'ClosedEvent','closer':None},
+            {'__typename':'CrossReferencedEvent','source':pr}]
+        self.assertEqual([i['id'] for i in self.scope()['issues']],['12','13'])
+
+    def test_release_scope_cross_reference_missing_merge_refuses_then_restores(self):
+        self.candidate(13,self.head)
+        pr=self.data['releaseClosers']['13'][0]['closer']
+        self.data['releaseClosers']['13']=[{'__typename':'CrossReferencedEvent','source':pr}]
+        pr['mergeCommit']=None
+        self.scope(success=False)
+        pr['mergeCommit']={'oid':self.head}
+        self.assertEqual([i['id'] for i in self.scope('- Shipped #12 again.\n')['issues']],['12','13'])
 
     def test_release_scope_exhausts_project_pages_before_freezing_scope(self):
         self.candidate(13,self.head)
@@ -1897,6 +1913,25 @@ class ReleasePair(unittest.TestCase):
         self.assertTrue(self.command(['git','branch','--list','release/v1.2.3']).stdout)
         self.assertTrue(self.command(['git','ls-remote','origin','refs/heads/release/v1.2.3']).stdout)
 
+    def test_release_pair_recovery_reads_frozen_project_despite_config_drift(self):
+        self.both();self.reload();self.data['trackerStatuses']={'12':'Merged','13':'Merged'};self.save()
+        self.cleanup()
+        self.reload();self.data['projectId']='different-project'
+        self.data['projectCards']={n:[{'project':{'id':'different-project'},'status':{'name':'Released'}},
+            {'project':{'id':'project'},'status':{'name':'Merged'}}] for n in ('12','13')}
+        self.save();self.env['GITHUB_PROJECT_NUMBER']='2'
+        refused=json.loads(self.helper('resume','--session',self.session,success=False).stdout)
+        self.assertEqual(refused['outcome'],'Deferred')
+        self.reload();self.assertEqual(self.data['trackerMutationCount'],2)
+        self.assertEqual(len(self.data['mergeArgv']),2)
+        for cards in self.data['projectCards'].values():
+            cards[1]['status']['name']='Released'
+        self.save()
+        restored=json.loads(self.helper('resume','--session',self.session).stdout)
+        self.assertEqual(restored['outcome'],'Completed')
+        self.reload();self.assertEqual(self.data['trackerMutationCount'],2)
+        self.assertEqual(len(self.data['mergeArgv']),2)
+
     def test_release_pair_authorized_fixture_branch_cleanup_after_both_merges(self):
         prs=[dict(repo='org/repo',pr=n,head=self.head,base=b,root=str(self.repo),
             phases=['merge_api','cleanup']) for n,b in ((12,'main'),(13,'develop'))]
@@ -1950,6 +1985,9 @@ class ReleasePair(unittest.TestCase):
         (hub/'.ai-dev-workflow.local.yaml').write_text('product_repos:\n  - name: product\n    local_path: "'+str(linked)+'"\n')
         # Preserve the configured component prefix and the existing opaque tag.
         self.data['checkoutRepos']={str(hub):'org/hub',str(linked):'org/repo',str(self.repo):'org/repo'}
+        self.candidate(14,self.head,repository='org/hub')
+        pr=self.data['releaseClosers']['14'][0]['closer'];pr['repository']['nameWithOwner']='org/repo'
+        self.data['releaseClosers']['14']=[{'__typename':'CrossReferencedEvent','source':pr}]
         self.save()
         target=subprocess.run(['bash',str(scripts/'component-release-target.sh'),'--repo-root',str(hub),
             '--repo','product','--release-branch',branch,'--json'],cwd=hub,env=self.env,
@@ -1970,11 +2008,11 @@ class ReleasePair(unittest.TestCase):
         self.assertEqual(state['releasePair']['projection']['publicationTag'],'product-v1.2.3')
         self.merge(12);self.step(12,'merge_verify');self.published()
         self.data['releasePublication']['tag_name']='product-v1.2.3';self.data['releaseTag']['ref']='refs/tags/product-v1.2.3'
-        self.data['trackerStatuses']={'12':'Merged','13':'Merged'};self.save()
+        self.data['trackerStatuses']={n:'Merged' for n in ('12','13','14')};self.save()
         self.step(12,'publication');self.merge(13);self.step(13,'merge_verify')
         self.cleanup(extra=('--repo','product','--repo-root',str(hub),'--evidence-file',str(evidence)),release_input=branch)
-        self.reload();self.assertEqual(self.data['stampMutationRepos'],['org/hub','org/hub'])
-        self.assertEqual(self.data['trackerMutationRepos'],['org/hub','org/hub'])
+        self.reload();self.assertEqual(self.data['stampMutationRepos'],['org/hub']*3)
+        self.assertEqual(self.data['trackerMutationRepos'],['org/hub']*3)
         self.assertTrue(linked.is_dir())
 
     def test_release_pair_partial_stamp_read_outage_reconciles_without_replay(self):
