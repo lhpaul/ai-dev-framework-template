@@ -6,6 +6,7 @@
 # covers: scripts/development-workflow/run-epic-audit-trail.sh
 # covers: scripts/development-workflow/batch-merge.sh
 # covers: scripts/development-workflow/post-merge-cleanup.sh
+# covers: scripts/development-workflow/prepare-release-post-merge-cleanup.sh
 # covers: scripts/development-workflow/tests/test_workflow_merge_budget.py
 # covers: scripts/development-workflow/tests/fixtures/workflow-merge-budget/**
 # covers: .ai-dev-workflow.yaml

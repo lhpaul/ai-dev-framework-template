@@ -2,6 +2,7 @@
 """Synthetic #1890 provider; every unknown command fails, never forwards."""
 import json
 import os
+import re
 from pathlib import Path
 import subprocess
 import sys
@@ -30,9 +31,20 @@ if args[:2] == ['api', 'rate_limit']:
 if args[:2] == ['repo', 'view']:
     checkout = subprocess.run(['git','rev-parse','--show-toplevel'],text=True,capture_output=True).stdout.strip()
     repository = os.environ.get('GH_REPO',state.get('checkoutRepos',{}).get(checkout,state['repo']))
-    emit({'nameWithOwner': repository, 'owner': {'login': state['repo'].split('/')[0]}, 'name': state['repo'].split('/')[1]})
+    emit({'nameWithOwner': repository, 'owner': {'login': repository.split('/')[0]}, 'name': repository.split('/')[1]})
 if args[:2] == ['api', 'graphql']:
     query = next((a[6:] for a in args if a.startswith('query=')), '')
+    if 'ReleaseBudgetItems' in query:
+        if state.get('scopeOutage'):
+            sys.exit(1)
+        page = state.get('releaseProjectPage', {'nodes': state.get('releaseProjectItems', []),
+            'pageInfo': {'hasNextPage': False, 'endCursor': None}})
+        emit({'data': {'node': {'items': page}}})
+    if 'ReleaseBudgetClosers' in query:
+        number = next(a[7:] for a in args if a.startswith('number='))
+        nodes = state.get('releaseClosers', {}).get(number, [])
+        emit({'data': {'repository': {'issue': {'timelineItems': {'nodes': nodes,
+            'pageInfo': {'hasNextPage': False, 'endCursor': None}}}}}})
     if 'MergeBudgetPR' in query:
         if state.get('prOutage'):
             sys.exit(1)
@@ -134,4 +146,9 @@ if args[:1] == ['api'] and any('/comments' in a for a in args):
     emit([comments] if '--slurp' in args else comments)
 if args[:2] == ['auth', 'status']:
     sys.exit(0)
+if args[:1] == ['api']:
+    endpoint = next((a for a in args if a.startswith('repos/')), '')
+    match = re.fullmatch(r'repos/([^/]+/[^/]+)/issues/([1-9][0-9]*)', endpoint)
+    if match and '-X' not in args:
+        emit({'number': int(match[2]), 'state': 'closed', 'milestone': None})
 sys.exit(1)

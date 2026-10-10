@@ -242,6 +242,194 @@ def inspect(target, owner):
     return response
 
 
+RELEASE_ITEMS_QUERY = """query ReleaseBudgetItems($projectId: ID!, $after: String) {
+  node(id: $projectId) {
+    ... on ProjectV2 {
+      items(first: 100, after: $after) {
+        nodes {
+          content { __typename ... on Issue { number repository { nameWithOwner } } }
+          status: fieldValueByName(name: "Status") {
+            ... on ProjectV2ItemFieldSingleSelectValue { name }
+          }
+        }
+        pageInfo { hasNextPage endCursor }
+      }
+    }
+  }
+}"""
+
+RELEASE_CLOSERS_QUERY = """query ReleaseBudgetClosers($owner: String!, $name: String!, $number: Int!, $after: String) {
+  repository(owner: $owner, name: $name) {
+    issue(number: $number) {
+      timelineItems(first: 100, after: $after, itemTypes: [CLOSED_EVENT]) {
+        nodes {
+          ... on ClosedEvent {
+            closer {
+              __typename
+              ... on PullRequest { number merged repository { nameWithOwner } mergeCommit { oid } }
+            }
+          }
+        }
+        pageInfo { hasNextPage endCursor }
+      }
+    }
+  }
+}"""
+
+
+def release_pages(query, variables, connection, limit):
+    """Never turn missing pages, partial responses or cursor cycles into empty scope."""
+    cursor, seen = None, set()
+    for _ in range(limit):
+        argv = ["api", "graphql", "-f", "query=" + query]
+        for key, value in variables.items():
+            argv += ["-F" if type(value) is int else "-f", key + "=" + str(value)]
+        if cursor is not None:
+            argv += ["-f", "after=" + cursor]
+        response = gh(*argv)
+        try:
+            page = connection(response["data"])
+        except (KeyError, TypeError) as exc:
+            raise Stop("release scope connection unavailable") from exc
+        if (not isinstance(page, dict) or not isinstance(page.get("nodes"), list)
+                or not isinstance(page.get("pageInfo"), dict)
+                or type(page["pageInfo"].get("hasNextPage")) is not bool):
+            raise Stop("malformed release scope page")
+        yield page["nodes"]
+        if not page["pageInfo"]["hasNextPage"]:
+            return
+        cursor = page["pageInfo"].get("endCursor")
+        if not isinstance(cursor, str) or not cursor or cursor in seen:
+            raise Stop("release scope pagination cursor unavailable or repeated")
+        seen.add(cursor)
+    raise Stop("release scope pagination truncated")
+
+
+def release_ancestor(checkout, commit, head):
+    if not isinstance(commit, str) or not re.fullmatch(r"[0-9a-f]{40}", commit):
+        raise Stop("release membership merge commit unavailable")
+    result = subprocess.run(["git", "-C", str(checkout), "merge-base", "--is-ancestor", commit, head], capture_output=True)
+    if result.returncode not in {0, 1}:
+        raise Stop("release membership ancestry unavailable")
+    return result.returncode == 0
+
+
+def release_omitted(checkout, head, issue_repo, project_id, merged_status, known):
+    candidates, read_cost = set(), 0
+    for nodes in release_pages(RELEASE_ITEMS_QUERY, {"projectId": project_id}, lambda data: data["node"]["items"], 500):
+        read_cost += 1
+        for node in nodes:
+            if not isinstance(node, dict) or "status" not in node or "content" not in node:
+                raise Stop("release project item evidence unavailable")
+            status = node["status"]
+            if status is not None and (not isinstance(status, dict) or not isinstance(status.get("name"), str)):
+                raise Stop("release project status evidence malformed")
+            if not status or status["name"] != merged_status:
+                continue
+            content = node["content"]
+            if not isinstance(content, dict) or not isinstance(content.get("__typename"), str):
+                raise Stop("Merged item content unavailable")
+            if content["__typename"] != "Issue":
+                continue
+            number = str(integer(content.get("number"), "release candidate issue", True))
+            owning_repo = content.get("repository")
+            if not isinstance(owning_repo, dict):
+                raise Stop("release candidate repository unavailable")
+            if repo(owning_repo.get("nameWithOwner")) == issue_repo and number not in known:
+                candidates.add(number)
+    owner, name = issue_repo.split("/")
+    included = []
+    for number in sorted(candidates, key=int):
+        commits = set()
+        for nodes in release_pages(RELEASE_CLOSERS_QUERY, {"owner": owner, "name": name, "number": int(number)},
+                                   lambda data: data["repository"]["issue"]["timelineItems"], 20):
+            read_cost += 1
+            for node in nodes:
+                if not isinstance(node, dict) or "closer" not in node:
+                    raise Stop("release closing evidence malformed")
+                closer = node["closer"]
+                if closer is None:
+                    continue
+                if not isinstance(closer, dict) or not isinstance(closer.get("__typename"), str):
+                    raise Stop("release closing identity malformed")
+                if closer["__typename"] != "PullRequest":
+                    continue
+                if type(closer.get("merged")) is not bool:
+                    raise Stop("release closing merge state unavailable")
+                if not closer["merged"]:
+                    continue
+                if repo((closer.get("repository") or {}).get("nameWithOwner")) != issue_repo:
+                    raise Stop("release closing PR repository mismatch")
+                commit = (closer.get("mergeCommit") or {}).get("oid")
+                if not isinstance(commit, str) or not re.fullmatch(r"[0-9a-f]{40}", commit):
+                    raise Stop("release closing merge commit unavailable")
+                commits.add(commit)
+        if not commits:
+            raise Stop("Merged candidate has no independently known closing merge: " + number)
+        membership = {release_ancestor(checkout, commit, head) for commit in commits}
+        if len(membership) != 1:
+            raise Stop("release candidate membership ambiguous: " + number)
+        if True in membership:
+            included.append(number)
+    return included, read_cost
+
+
+def project_release(args):
+    checkout = root(args.target_root or args.repo_root or Path.cwd())
+    if not isinstance(args.version, str) or not re.fullmatch(r"v?[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.-]+)?(?:\+[A-Za-z0-9.-]+)?", args.version):
+        raise Stop("release version unavailable or malformed")
+    for value in (args.branch, args.base):
+        if not isinstance(value, str) or not value:
+            raise Stop("release branch/base unavailable")
+        call(["git", "check-ref-format", "--branch", value])
+    head = args.head
+    if not isinstance(head, str) or not re.fullmatch(r"[0-9a-f]{40}", head):
+        raise Stop("reviewed release head required")
+    if call(["git", "-C", str(checkout), "rev-parse", head + "^{commit}"]) != head:
+        raise Stop("reviewed release commit unavailable")
+    if args.provider not in {"github_projects", "github_issues", "linear", "none"}:
+        raise Stop("unsupported owning release provider")
+    issue_repo = repo(args.issue_repo)
+    ids = list(dict.fromkeys(args.scope_issue or []))
+    for identifier in ids:
+        valid = (re.fullmatch(r"[A-Za-z][A-Za-z0-9_]*-[1-9][0-9]*", identifier)
+                 if args.provider == "linear" and not identifier.isdigit()
+                 else re.fullmatch(r"[1-9][0-9]*", identifier))
+        if not valid:
+            raise Stop("invalid release scope issue")
+    read_cost = 0
+    if args.provider == "github_projects":
+        if not args.project_id:
+            raise Stop("owning release project unavailable")
+        omitted, read_cost = release_omitted(checkout, head, issue_repo, args.project_id, args.merged_status, set(ids))
+        ids += omitted
+    if not ids:
+        raise Stop("finalized release issue scope unavailable")
+    issues = []
+    for identifier in ids:
+        if args.provider in {"github_projects", "github_issues"}:
+            live = gh("api", "repos/%s/issues/%s" % (issue_repo, identifier))
+            if (not isinstance(live, dict) or live.get("number") != int(identifier)
+                    or live.get("state") not in {"open", "closed"} or "pull_request" in live):
+                raise Stop("finalized release issue identity unavailable")
+            read_cost += 1
+        issues.append({"id": identifier, "repo": issue_repo, "provider": args.provider,
+                       "close": False, "tracker": args.provider in {"github_projects", "linear"},
+                       "status": args.released_status, "statusPolicy": "exact",
+                       "releaseStamp": args.provider != "none"})
+    projection = {"schemaVersion": 1, "repo": repo(args.repo), "root": str(checkout),
+            "version": args.version, "branch": args.branch, "head": head, "base": args.base,
+            "issues": issues, "scopeReadCost": read_cost,
+            "markerRepo": issue_repo, "markerProvider": args.provider,
+            "changelogDigest": hashlib.sha256(call(["git", "-C", str(checkout), "show", head + ":CHANGELOG.md"]).encode()).hexdigest()}
+    if args.evidence:
+        evidence = decode(Path(args.evidence).read_text())
+        if not isinstance(evidence, dict) or not isinstance(evidence.get("target_binding"), dict):
+            raise Stop("component release binding unavailable")
+        projection["componentBinding"] = evidence["target_binding"]
+    return projection
+
+
 def estimate(state):
     pieces = [{"kind": "shared", "count": 1, "weight": 25}]
     outstanding = [p for p in state["prs"] if any(s["status"] not in {"completed", "skipped_by_policy"} for s in p["steps"].values())]
@@ -1170,7 +1358,7 @@ def provider(args):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=["begin", "before-step", "after-step", "run-step", "resume", "report", "check", "record-provider-result"])
+    parser.add_argument("command", choices=["begin", "before-step", "after-step", "run-step", "resume", "report", "check", "record-provider-result", "project-release"])
     parser.add_argument("--input")
     parser.add_argument("--repo-root")
     parser.add_argument("--target-root")
@@ -1192,6 +1380,13 @@ def main():
     parser.add_argument("--exit-code", type=int, default=0)
     parser.add_argument("--executor-pid", type=int)
     parser.add_argument("--evidence")
+    parser.add_argument("--version")
+    parser.add_argument("--provider")
+    parser.add_argument("--issue-repo")
+    parser.add_argument("--project-id")
+    parser.add_argument("--merged-status", default="Merged")
+    parser.add_argument("--released-status", default="Released")
+    parser.add_argument("--scope-issue", action="append")
     parser.add_argument("--followup-only", action="store_true")
     parser.add_argument("--require-merge-scope", action="store_true")
     parser.add_argument("--policy-skip", choices=["caller_worktree_detach_failed"])
@@ -1209,7 +1404,9 @@ def main():
             args.repo = repo(args.repo)
         if args.audit_repo is not None:
             args.audit_repo = repo(args.audit_repo)
-        if args.command == "begin":
+        if args.command == "project-release":
+            result = project_release(args)
+        elif args.command == "begin":
             if not args.input and not (args.repo and args.pr and args.head and args.base):
                 raise Stop("begin requires selected manifest or explicit single PR/repo/head/base")
             result = begin(args)

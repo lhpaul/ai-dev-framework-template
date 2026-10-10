@@ -56,6 +56,8 @@ PRODUCT_REPO=""
 REPO_ROOT_OVERRIDE=""
 EVIDENCE_FILE=""
 JSON_OUTPUT=false
+INSPECT_TARGETS=false
+RELEASE_HEAD=""
 COMPONENT_TARGET_FILE=""
 COMPONENT_LOCK_DIR=""
 COMPONENT_LOCK_CREATED=false
@@ -67,7 +69,7 @@ COMPONENT_JSON_MODE=false
 declare -a ISSUE_NUMBERS=()
 
 usage() {
-  echo "Usage: $0 <version|release-branch> [--repo NAME --repo-root PATH --evidence-file PATH] [--backport-base BRANCH] [--from-changelog] [--issue N]... [--issues N,N,...] [--best-effort] [--json]" >&2
+  echo "Usage: $0 <version|release-branch> [--repo NAME --repo-root PATH --evidence-file PATH] [--backport-base BRANCH] [--from-changelog] [--issue N]... [--issues N,N,...] [--best-effort] [--json] [--inspect-targets --release-head SHA]" >&2
 }
 
 normalize_release_branch() {
@@ -352,12 +354,23 @@ validate_component_release_cleanup() {
     echo "Component release evidence is missing required field: cleanup_outcome" >&2
     exit 1
   fi
-  if [ "$evidence_cleanup" = "complete" ]; then
+  if [ "$evidence_cleanup" = "complete" ] && [ "$INSPECT_TARGETS" != "true" ]; then
     cleanup_log "Component release cleanup evidence is already complete; exiting idempotently."
     if [ "$JSON_OUTPUT" = "true" ]; then
       jq -cnS --slurpfile evidence "$EVIDENCE_FILE" '{cleanup_outcome:"already_complete", evidence:$evidence[0]}'
     fi
     exit 0
+  fi
+
+  contract_base="$(json_field "$COMPONENT_TARGET_FILE" '.release_base')"
+  if [ -n "$BACKPORT_BASE_OVERRIDE" ] && [ "$BACKPORT_BASE_OVERRIDE" != "$contract_base" ]; then
+    echo "--backport-base '$BACKPORT_BASE_OVERRIDE' conflicts with the component release contract base '$contract_base'." >&2
+    exit 2
+  fi
+  BACKPORT_BASE="$contract_base"
+  # Inspection validates the existing component identity but takes no mutation lease.
+  if [ "$INSPECT_TARGETS" = "true" ]; then
+    return 0
   fi
 
   lock_key="$(json_field "$COMPONENT_TARGET_FILE" '.release_correlation_key')"
@@ -434,13 +447,19 @@ append_issues_from_changelog() {
   local changelog_path="${CHANGELOG_PATH:-CHANGELOG.md}"
   local extracted
 
-  if [ ! -f "$changelog_path" ]; then
+  if [ -z "$RELEASE_HEAD" ] && [ ! -f "$changelog_path" ]; then
     echo "Could not find changelog at '$changelog_path' for --from-changelog." >&2
     return 1
   fi
 
-  if ! extracted="$(python3 - "$version" "$changelog_path" "$TRACKER_PROVIDER" <<'PY'
+  local changelog_root
+  changelog_root="$PWD"
+  if [ -n "$COMPONENT_TARGET_FILE" ]; then
+    changelog_root="$(json_field "$COMPONENT_TARGET_FILE" '.local_checkout.path')"
+  fi
+  if ! extracted="$(python3 - "$version" "$changelog_path" "$TRACKER_PROVIDER" "$RELEASE_HEAD" "$changelog_root" <<'PY'
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -449,7 +468,18 @@ if version.startswith("v"):
     version = version[1:]
 path = Path(sys.argv[2])
 provider = sys.argv[3]
-text = path.read_text(encoding="utf-8")
+head = sys.argv[4]
+if head:
+    if not re.fullmatch(r"[0-9a-f]{40}", head):
+        print("CHANGELOG_REVIEWED_HEAD_INVALID", file=sys.stderr)
+        sys.exit(1)
+    result = subprocess.run(["git", "-C", sys.argv[5], "show", head + ":CHANGELOG.md"], text=True, capture_output=True)
+    if result.returncode:
+        print("CHANGELOG_REVIEWED_COMMIT_UNAVAILABLE", file=sys.stderr)
+        sys.exit(1)
+    text = result.stdout
+else:
+    text = path.read_text(encoding="utf-8")
 
 heading = re.compile(rf"^## \[(?:v?{re.escape(version)})\].*$", re.MULTILINE)
 match = heading.search(text)
@@ -1105,6 +1135,17 @@ while [ $# -gt 0 ]; do
       JSON_OUTPUT=true
       shift
       ;;
+    --inspect-targets)
+      INSPECT_TARGETS=true
+      FROM_CHANGELOG=true
+      COMPONENT_JSON_MODE=true
+      shift
+      ;;
+    --release-head)
+      [ $# -ge 2 ] || { usage; exit 2; }
+      RELEASE_HEAD="$2"
+      shift 2
+      ;;
     -h|--help)
       usage
       exit 0
@@ -1161,13 +1202,52 @@ cleanup_log "Backport base: $BACKPORT_BASE"
 if [ "$FROM_CHANGELOG" = "true" ]; then
   if ! append_issues_from_changelog "$RELEASE_VERSION"; then
     cleanup_log "TRACKER_INCOMPLETE=1 REASON=changelog_scope_unavailable"
-    if [ "$BEST_EFFORT" != "true" ]; then
+    if [ "$BEST_EFFORT" != "true" ] || [ "$INSPECT_TARGETS" = "true" ]; then
       exit 1
     fi
   fi
 fi
 
 dedupe_issue_numbers
+
+if [ "$INSPECT_TARGETS" = "true" ]; then
+  if [[ ! "$RELEASE_HEAD" =~ ^[0-9a-f]{40}$ ]]; then
+    echo "--inspect-targets requires a full reviewed --release-head SHA." >&2
+    exit 2
+  fi
+  inspection_root="$PWD"
+  if [ -n "$COMPONENT_TARGET_FILE" ]; then
+    inspection_root="$(json_field "$COMPONENT_TARGET_FILE" '.local_checkout.path')"
+  fi
+  if ! inspection_repo="$(cd "$inspection_root" && unset GH_REPO && gh repo view --json nameWithOwner --jq .nameWithOwner)"; then
+    echo "Could not resolve release checkout identity." >&2
+    exit 1
+  fi
+  inspection_issue_owner="$(workflow_resolve_github_repo_owner)"
+  inspection_issue_name="$(workflow_resolve_github_repo_name)"
+  inspection_args=(project-release --repo "$inspection_repo" --repo-root "$HUB_REPO_ROOT"
+    --target-root "$inspection_root" --version "$RELEASE_VERSION" --branch "$RELEASE_BRANCH"
+    --head "$RELEASE_HEAD" --base "$BACKPORT_BASE" --provider "$TRACKER_PROVIDER"
+    --issue-repo "$inspection_issue_owner/$inspection_issue_name"
+    --merged-status "$MERGED_LABEL" --released-status "$RELEASED_LABEL")
+  if [ "$TRACKER_PROVIDER" = "github_projects" ]; then
+    inspection_project_number="${GITHUB_PROJECT_NUMBER:-$(workflow_issue_tracker_project_number)}"
+    inspection_project_owner="$(workflow_resolve_github_project_owner)"
+    if ! inspection_project_id="$(workflow_github_project_id "$inspection_project_owner" "$inspection_project_number")" || [ -z "$inspection_project_id" ]; then
+      echo "Owning project unavailable for complete release projection." >&2
+      exit 1
+    fi
+    inspection_args+=(--project-id "$inspection_project_id")
+  fi
+  for issue in "${ISSUE_NUMBERS[@]}"; do
+    inspection_args+=(--scope-issue "$issue")
+  done
+  if [ -n "$EVIDENCE_FILE" ]; then
+    inspection_args+=(--evidence "$EVIDENCE_FILE")
+  fi
+  python3 "$SCRIPT_DIR/workflow-merge-budget.py" "${inspection_args[@]}"
+  exit $?
+fi
 
 if [ "$FROM_CHANGELOG" = "true" ]; then
   detect_omitted_merged_items "$RELEASE_VERSION"

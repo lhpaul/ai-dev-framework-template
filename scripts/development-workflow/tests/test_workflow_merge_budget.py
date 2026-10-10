@@ -1556,5 +1556,96 @@ class Composed(unittest.TestCase):
 
 
 
+class ReleaseScope(unittest.TestCase):
+    command = Composed.command
+    helper = Composed.helper
+
+    def setUp(self):
+        Composed.setUp(self)
+        shutil.copyfile(self.source/'prepare-release-post-merge-cleanup.sh', self.scripts/'prepare-release-post-merge-cleanup.sh')
+        (self.repo/'.ai-dev-workflow.yaml').write_text('issue_tracker:\n  provider: github_projects\n  project_number: 1\n')
+        self.env.update(GITHUB_PROJECT_OWNER='org', GITHUB_PROJECT_NUMBER='1')
+
+    def scope(self, section='- Shipped (#12).\n', *, success=True, version='v1.2.3'):
+        (self.repo/'CHANGELOG.md').write_text('# Changes\n\n## [1.2.3] - 2026-10-10\n'+section)
+        self.command(['git','add','CHANGELOG.md','.ai-dev-workflow.yaml'])
+        self.command(['git','commit','-qm','fixture release scope'])
+        self.release_head = self.command(['git','rev-parse','HEAD']).stdout.strip()
+        self.fixture.write_text(json.dumps(self.data))
+        result = subprocess.run(['bash',str(self.scripts/'prepare-release-post-merge-cleanup.sh'),version,
+            '--inspect-targets','--release-head',self.release_head],cwd=self.repo,env=self.env,text=True,capture_output=True)
+        if success:
+            self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+            return json.loads(result.stdout)
+        self.assertNotEqual(result.returncode,0,result.stdout+result.stderr)
+        return result
+
+    def candidate(self, number, commit, *, repository='org/repo'):
+        self.data.setdefault('releaseProjectItems',[]).append({'content': {'__typename':'Issue','number':number,
+            'repository': {'nameWithOwner':repository}}, 'status': {'name':'Merged'}})
+        self.data.setdefault('releaseClosers',{})[str(number)] = [{'closer': {'__typename':'PullRequest',
+            'number':number+100,'merged':True,'repository': {'nameWithOwner':repository},'mergeCommit': {'oid':commit}}}]
+
+    def test_release_scope_boundary_references(self):
+        self.assertEqual([i['id'] for i in self.scope('(#12), #13.\n')['issues']],['12','13'])
+
+    def test_release_scope_negative_references(self):
+        self.assertEqual([i['id'] for i in self.scope('thing#12 and #0; ship #13\n')['issues']],['13'])
+        result=self.scope('no issue references\n',success=False)
+        self.assertIn('CHANGELOG_NO_ISSUES_FOUND',result.stderr)
+
+    def test_release_scope_multiple_references_deduplicated(self):
+        self.assertEqual([i['id'] for i in self.scope('#12 #13 #12\n')['issues']],['12','13'])
+
+    def test_release_scope_exact_version_section(self):
+        projection=self.scope('#12\n\n## [1.2.30] - 2026-10-11\n#13\n')
+        self.assertEqual([i['id'] for i in projection['issues']],['12'])
+        self.scope('#12\n',version='v1.2.4',success=False)
+
+    def test_release_scope_omitted_unshipped_item_excluded(self):
+        self.command(['git','checkout','-qb','develop-other'])
+        (self.repo/'other.txt').write_text('other\n')
+        self.command(['git','add','other.txt']);self.command(['git','commit','-qm','unshipped'])
+        unshipped=self.command(['git','rev-parse','HEAD']).stdout.strip()
+        self.command(['git','checkout','-q','feature/12-item'])
+        self.candidate(13,unshipped)
+        self.assertEqual([i['id'] for i in self.scope()['issues']],['12'])
+
+    def test_release_scope_prepublication_includes_omitted_shipped(self):
+        self.candidate(13,self.head)
+        self.candidate(99,self.head,repository='org/other')
+        projection=self.scope()
+        self.assertEqual([i['id'] for i in projection['issues']],['12','13'])
+        events=json.loads(self.fixture.read_text())['events']
+        self.assertFalse(any(len(e)>1 and '/releases/' in e[1] for e in events))
+        self.assertEqual(self.command(['git','tag','--list']).stdout,'')
+        self.assertTrue(self.command(['git','branch','--list','feature/12-item']).stdout.strip())
+        self.assertFalse((self.repo/'.git/component-release-cleanup-locks').exists())
+        self.assertTrue(all(i['releaseStamp'] and i['tracker'] and i['status']=='Released' for i in projection['issues']))
+
+    def test_release_scope_unknown_response_defers(self):
+        self.data['scopeOutage']=True
+        self.scope(success=False)
+        self.data.pop('scopeOutage');self.data['releaseProjectPage']={'nodes':[],'pageInfo':{}}
+        result=self.scope('- Second attempt #12\n',success=False)
+        self.assertIn('malformed release scope page',result.stderr)
+        events=json.loads(self.fixture.read_text())['events']
+        self.assertNotIn(['pr','merge'],events)
+
+    def test_release_scope_missing_closer_and_cursor_cycle_refuse(self):
+        self.candidate(13,self.head);self.data['releaseClosers']['13']=[]
+        self.scope(success=False)
+        self.data['releaseProjectPage']={'nodes':[],'pageInfo':{'hasNextPage':True,'endCursor':'same'}}
+        result=self.scope('- Changed #12\n',success=False)
+        self.assertIn('cursor unavailable or repeated',result.stderr)
+
+    def test_release_scope_uses_reviewed_commit_with_dirty_changelog(self):
+        projection=self.scope()
+        (self.repo/'CHANGELOG.md').write_text('## [1.2.3]\n#99\n')
+        result=self.command(['bash',str(self.scripts/'prepare-release-post-merge-cleanup.sh'),'v1.2.3',
+            '--inspect-targets','--release-head',self.release_head],self.env)
+        self.assertEqual(json.loads(result.stdout),projection)
+
+
 if __name__ == '__main__':
     unittest.main()
