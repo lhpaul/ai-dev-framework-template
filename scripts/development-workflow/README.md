@@ -1217,7 +1217,78 @@ with fresh proof bound to one recovery continuation.
 
 Optional `--final` reporting samples quota without erasing verified progress when the remote read fails; ordinary reporting uses the local record offline. Reports retain each readable sample, component estimate/margin/reserve, verified PR states, uncertain actions, pending follow-up and recovery command. The journal remains under `<owner-git-common-dir>/workflow-merge-budget/<session-id>/state.json`; do not commit or delete it during closeout or a coordinated reversal.
 
+#### Explicit paired releases
+
+Add `"releasePair":{"version":"v1.2.3","productionPr":42,"backportPr":43}`
+to the manifest and select exactly those two PRs in that order. Both bind the
+same repository, Git common directory, checkout, reviewed head and release
+branch ending in that version. Production targets `main`; backport targets its
+distinct approved base. Each selection includes merge and cleanup phases.
+Component pairing additionally binds `productRepo` and absolute `evidenceFile`
+through the existing component target/evidence contract. A release-looking
+branch alone grants no exception.
+
+Admission derives production's `publication` step and shared backport issue
+`release_stamp:<id>`, `tracker:<id>:pre` where supported, and GitHub
+`release_finalize` steps. It moves branch cleanup/retention to backport and
+retains production's cleanup completion barrier. Declare all audit/ledger
+destinations as usual; only production final audits may explicitly set
+`deferUntilPairCleanup:true`. Duties and conservative read/proof costs contribute
+to whole-pair admission. Missing scope or insufficient quota admits no prefix.
+
+Read-only `prepare-release-post-merge-cleanup.sh --inspect-targets --release-head
+<reviewed SHA>` extracts the exact finalized version section from the committed
+changelog. It paginates the owning Project's Merged candidates and includes only
+closing merged-PR commits proven ancestors of that head. Missing, malformed,
+truncated or ambiguous evidence defers; current tag/Release timestamps are not
+required. Working-copy changelog edits cannot change reviewed scope.
+
+Paired `merge_api` executors require regular `gh pr merge N --repo REPO --merge
+--match-head-commit SHA` arguments, preserving argv and existing authority.
+Independent verification requires exactly two parents, including the reviewed
+head. Run `merge_verify`, then production `publication -- true`; its read-back
+dereferences lightweight/annotated version tags and verifies a published
+non-draft GitHub Release at the production merge. Backport rechecks publication
+before merge. Shared cleanup and each release follow-up require both merges and
+publication; only this validated pair may defer earlier shared cleanup.
+
+<!-- workflow-shell-contract: bash-zsh -->
+```bash
+bash scripts/development-workflow/prepare-release-post-merge-cleanup.sh \
+  v1.2.3 --backport-base develop --merge-session "$MERGE_SESSION" --json
+```
+
+This entrypoint validates frozen caller/owner/version/base/component scope,
+enters the declared shared cleanup executor, invokes existing provider helpers
+through nested journal steps and verifies every actual effect. It preserves
+component cleanup locks, owning hub tracker routing, linked worktrees and
+declared retention; it never deletes worktrees. Progress goes to stderr, with
+one session JSON document on stdout. Production cleanup completes only after
+shared backport cleanup verifies. Pending final audits still prevent Completed.
+
+GitHub stamp proof reads each owning issue's version milestone; finalization
+reads the uniquely matching closed milestone. Linear remains deferred until
+the existing `record-provider-result` bridge receives independent owning proof.
+For `--phase release_stamp`, supply `releaseVersion`, frozen `releaseMarker`
+(configured field/value or release label), `markerId`, provider/repo/issue,
+distinct mutation/read request IDs and a fresh `observedAt`; tracker proof keeps
+its existing statusName/statusId contract. Both proof kinds bind declared intent
+and recovery generation. Guidance or best-effort success never discharges them.
+
+At interruptions after production merge, during publication, after backport or
+partial cleanup, use `resume --session "$MERGE_SESSION"` before continuation.
+Fresh proof reconciles completed effects; only verified outstanding intents
+become pending. Unknown effects preserve historical merged/uncertain facts,
+even offline. Waiting never resubmits a queued merge. Normal `report` is local;
+`--final` additionally samples quota. Completed requires all declared duties,
+including audits, independently verified; report the recovery command and
+Ground-Truth Completion Verification. Preserve journals and a compatible reader
+before reverting this optional contract; ordinary sessions need no migration.
+
 ### `post-merge-cleanup.sh`
+
+Paired release operators use `prepare-release-post-merge-cleanup.sh
+--merge-session <state.json>` instead; see the contract above.
 
 After a development PR is merged and the remote branch deleted, sync with
 origin, switch to the merged PR's base branch, pull, and delete the local

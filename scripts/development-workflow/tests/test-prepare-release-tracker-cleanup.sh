@@ -15,6 +15,7 @@
 # covers: scripts/development-workflow/prepare-release-post-merge-cleanup.sh
 # covers: scripts/development-workflow/component-release-target.sh
 # covers: scripts/development-workflow/workflow-config-resolver.py
+# covers: scripts/development-workflow/workflow-merge-budget.py
 
 set -euo pipefail
 
@@ -1196,6 +1197,19 @@ run_contains "T20g_absent_message" "missing required field: cleanup_outcome" "$o
 run_not_contains "T20g_absent_no_delete" "Deleting remote branch" "$output"
 
 echo ""
+# A legacy complete component attestation cannot bypass an unreadable owning
+# journal, even when best-effort was requested. Exercise the actual CLI boundary.
+cp "$REPO_ROOT/scripts/development-workflow/workflow-merge-budget.py" \
+  "$repo_component_cleanup/scripts/development-workflow/workflow-merge-budget.py"
+result="$(run_cleanup "$repo_component_cleanup" --repo mobile-app --repo-root "$repo_component_cleanup" \
+  --evidence-file "$complete_evidence" --merge-session "$TMP_ROOT/missing-session/state.json" --best-effort --json)"
+status="$(printf '%s\n' "$result" | sed -n '1p')"
+output="$(printf '%s\n' "$result" | sed '1d')"
+run_test "session_missing_exits_nonzero_despite_best_effort" "2" "$status"
+run_not_contains "session_complete_attestation_cannot_bypass_journal" "exiting idempotently" "$output"
+run_not_contains "session_missing_no_branch_delete" "Deleting remote branch" "$output"
+run_not_contains "session_missing_no_stamp_mutation" "RELEASE_STAMPED " "$output"
+
 echo "Results: $PASS_COUNT passed, $FAIL_COUNT failed"
 
 if [ "$FAIL_COUNT" -ne 0 ]; then

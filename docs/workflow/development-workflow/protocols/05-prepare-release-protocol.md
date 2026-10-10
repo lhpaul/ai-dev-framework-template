@@ -477,6 +477,50 @@ Otherwise, when the production PR is ready (or clearly escalated):
 
 If Step 7 escalated or CI timed out, report status and blockers before merge.
 
+### 8.1 Admit the complete two-PR release session
+
+After both PRs pass current-head review, CI, readiness, risk and authority gates,
+and before any merge-owned audit or mutation, follow
+[Protocol 94 section 3.6](94-batch-merge-protocol.md#36-merge-session-admission-and-recovery).
+The manifest declares `releasePair` with `version`, `productionPr` and
+`backportPr`, and selects exactly those PRs in production/backport order. They
+bind the same repository, checkout, reviewed head and release branch; production
+targets `main`, backport targets the approved distinct `RELEASE_BASE`. Component
+releases also declare `productRepo` and absolute persisted `evidenceFile`.
+The single-PR route keeps its existing session contract.
+
+`begin` inspects the reviewed release commit without mutation. It freezes the
+finalized changelog section plus omitted shipped items proved by exhaustive
+owning-project pagination and closing-PR ancestry. No current tag, Release date
+or previous-tag date is needed. Unknown, ambiguous or truncated membership
+defers the whole operation. Issue stamps, tracker transitions, GitHub milestone
+finalization, branch cleanup/retention and declared audits all contribute to
+admission; an unaffordable pair admits no prefix. Existing gates and deletion
+permissions still apply.
+
+Use `run-step` for the authorized regular production merge with explicit
+`--repo` and `--match-head-commit`, preserving its argv. Execute `merge_verify`,
+then the derived `publication` step with a read-only child such as `true`.
+Publication requires the two-parent production merge containing the reviewed
+head, a version tag dereferencing to that merge, and a published non-draft
+GitHub Release. The backport edge rechecks that proof immediately before its
+regular merge. Only production's shared cleanup barrier and audits explicitly
+marked `deferUntilPairCleanup: true` may remain pending at this edge. Final
+deferred audits run after shared cleanup verifies.
+
+<!-- workflow-shell-contract: bash-zsh -->
+```bash
+python3 scripts/development-workflow/workflow-merge-budget.py run-step \
+  --session "$MERGE_SESSION" --repo "$RELEASE_REPO" --pr "$MAIN_PR" \
+  --phase publication --step publication -- true
+```
+
+Queue/auto-merge submission stops the sequence in Waiting. Interrupted execution
+preserves merged, uncertain and pending facts. Explicit `resume --session` reads
+PR, publication, stamp, tracker, marker and audit state before admitting known
+outstanding work. Never resubmit an uncertain merge or replay an uncertain stamp
+from helper stdout.
+
 ---
 
 ## Step 9: Post-Merge Cleanup (Branch + Tracker)
@@ -520,6 +564,26 @@ Use the helper script:
 ```bash
 ./scripts/development-workflow/prepare-release-post-merge-cleanup.sh "$RELEASE_BRANCH" --backport-base "$RELEASE_BASE" --from-changelog
 ```
+
+For the admitted two-PR session, pass its same authoritative journal:
+
+<!-- workflow-shell-contract: bash-zsh -->
+```bash
+bash scripts/development-workflow/prepare-release-post-merge-cleanup.sh \
+  "$RELEASE_BRANCH" --backport-base "$RELEASE_BASE" --merge-session "$MERGE_SESSION" --json
+```
+
+The session route consumes frozen scope and verifies both regular merges and
+publication before follow-up. Every provider mutation has its own durable intent
+and read-back; best-effort zero exits and deferred Linear guidance cannot
+complete a duty. Retention requires the branch to remain present. Linked
+worktrees remain intact and must switch away before authorized branch deletion.
+Component invocations retain their `--repo`, `--repo-root`, `--evidence-file`,
+identity checks and local cleanup lock. Only the session JSON document goes to
+stdout; progress goes to stderr. Production's cleanup barrier completes after
+shared backport cleanup independently verifies. Complete declared final
+disposition/ledger audits before claiming Completed, with the recovery command
+and Ground-Truth Completion Verification.
 
 For workflow-hub component releases, run cleanup from the hub checkout and pass
 the same selected product repository plus the persisted evidence file:
