@@ -582,6 +582,8 @@ branch's spelling and component publication retains its opaque evidence tag.
 Before merge execution, the session validates effective option values and
 refuses conflicting booleans, alternative-method/deletion assignments or
 aliases, and unknown CLI surfaces; accepted argv remains unchanged.
+The existing cross-repository remote-cleanup veto remains frozen: pairing
+cannot add deletion of a same-named origin branch for a fork head.
 Every provider mutation has its own durable intent
 and read-back; best-effort zero exits and deferred Linear guidance cannot
 complete a duty. Retention requires the branch to remain present. Linked

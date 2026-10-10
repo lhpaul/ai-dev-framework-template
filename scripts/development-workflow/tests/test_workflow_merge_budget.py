@@ -1951,6 +1951,34 @@ class ReleasePair(unittest.TestCase):
         self.reload();self.assertEqual(self.data['trackerMutationCount'],2)
         self.assertEqual(len(self.data['mergeArgv']),2)
 
+    def test_release_pair_cross_repository_veto_preserves_unrelated_origin_branch(self):
+        self.data['fork']=None;self.save()
+        # A same-named origin branch has unrelated work beyond the fork PR head.
+        tree=self.command(['git','rev-parse','HEAD^{tree}']).stdout.strip()
+        unrelated=subprocess.run(['git','commit-tree',tree,'-p',self.head],cwd=self.repo,
+            input='unrelated origin work\n',text=True,capture_output=True,check=True).stdout.strip()
+        self.command(['git','push','-q','origin',unrelated+':refs/heads/release/v1.2.3'])
+        prs=[dict(repo='org/repo',pr=n,head=self.head,base=b,root=str(self.repo),
+            phases=['merge_api','cleanup'],policySkipped=['local_cleanup']) for n,b in ((12,'main'),(13,'develop'))]
+        self.assertEqual(self.begin(prs=prs)['outcome'],'Deferred')
+        self.reload();self.assertNotIn(['pr','merge'],self.data['events'])
+        self.data['fork']=True;self.save()
+        self.assertEqual(self.begin(prs=prs)['outcome'],'Admitted')
+        state=json.loads(Path(self.session).read_text())
+        self.assertTrue(all(p['remoteCleanup'] is False for p in state['prs']))
+        self.assertTrue(all(p['releaseRemoteOwned'] is False for p in state['prs']))
+        self.assertFalse(any(s['phase']=='remote_delete' for p in state['prs'] for s in p['steps'].values()))
+        self.merge(12);self.step(12,'merge_verify');self.published();self.step(12,'publication')
+        self.merge(13);self.step(13,'merge_verify')
+        self.reload();self.data['trackerStatuses']={'12':'Merged','13':'Merged'};self.save()
+        self.assertEqual(json.loads(self.cleanup().stdout)['outcome'],'Completed')
+        remote=self.command(['git','ls-remote','origin','refs/heads/release/v1.2.3']).stdout
+        self.assertEqual(remote.split()[0],unrelated)
+        self.helper('resume','--session',self.session)
+        self.assertEqual(self.command(['git','ls-remote','origin','refs/heads/release/v1.2.3']).stdout,remote)
+        self.reload();self.assertEqual(len(self.data['mergeArgv']),2)
+        self.assertEqual(self.data['trackerMutationCount'],2)
+
     def test_release_pair_authorized_fixture_branch_cleanup_after_both_merges(self):
         prs=[dict(repo='org/repo',pr=n,head=self.head,base=b,root=str(self.repo),
             phases=['merge_api','cleanup']) for n,b in ((12,'main'),(13,'develop'))]

@@ -1230,6 +1230,9 @@ distinct approved base. Each selection includes merge and cleanup phases.
 Component pairing additionally binds `productRepo` and absolute `evidenceFile`
 through the existing component target/evidence contract. A release-looking
 branch alone grants no exception.
+Pairing preserves the existing cross-repository remote-cleanup veto: a fork head
+never creates a deletion duty for a same-named origin branch.
+Unknown or conflicting frozen remote ownership refuses pairing.
 
 Admission derives production's `publication` step and shared backport issue
 `release_stamp:<id>`, `tracker:<id>:pre` where supported, and GitHub

@@ -512,6 +512,17 @@ def release_step(target, key, phase, issue=None):
     target["steps"].setdefault(key, {"phase": phase, "status": "pending", **({"issue": issue} if issue else {})})
 
 
+def release_remote_owned(target):
+    # Ordinary cleanup also disables release branches by prefix. Distinguish
+    # that route policy from the independent cross-repository ownership veto.
+    value = gh("pr", "view", str(target["pr"]), "--repo", target["repo"],
+               "--json", "isCrossRepository,headRefName,headRefOid")
+    if (not isinstance(value, dict) or type(value.get("isCrossRepository")) is not bool
+            or value.get("headRefName") != target["branch"] or value.get("headRefOid") != target["head"]):
+        raise Stop("paired remote branch ownership unavailable or changed")
+    return not value["isCrossRepository"]
+
+
 def freeze_release_pair(declaration, state):
     if "releasePair" not in declaration:
         if any(s["phase"] in {"publication", "release_stamp", "release_finalize"} or "deferUntilPairCleanup" in s
@@ -531,10 +542,12 @@ def freeze_release_pair(declaration, state):
     if len(state["prs"]) != 2 or [p["pr"] for p in state["prs"]] != [pair["productionPr"], pair["backportPr"]]:
         raise Stop("releasePair must bind exactly the ordered production/backport selection")
     production, backport = state["prs"]
+    for target in (production, backport):
+        target["releaseRemoteOwned"] = release_remote_owned(target)
     branch_version = production["branch"].rsplit("/", 1)[-1]
     version_identity = "v" + (branch_version[1:] if branch_version.startswith("v") else branch_version)
     if (production["pr"] == backport["pr"] or production["base"] != "main" or backport["base"] == "main"
-            or any(production[k] != backport[k] for k in ("repo", "head", "branch", "root", "commonDir"))
+            or any(production[k] != backport[k] for k in ("repo", "head", "branch", "root", "commonDir", "releaseRemoteOwned"))
             or version_identity != pair["version"]
             or set(production["policySkipped"]) != set(backport["policySkipped"])):
         raise Stop("paired release repository/head/branch/version/base/retention mismatch")
@@ -557,6 +570,8 @@ def freeze_release_pair(declaration, state):
                            and entry.get("skippedPhase") not in {"remote_delete", "local_cleanup"}}
     backport["issues"] = projection["issues"]
     for phase in ("remote_delete", "local_cleanup"):
+        if phase == "remote_delete" and backport["releaseRemoteOwned"] is False:
+            continue
         if not any(s["phase"] == phase or s.get("skippedPhase") == phase for s in backport["steps"].values()):
             release_step(backport, phase, phase)
             if phase in backport["policySkipped"]:
@@ -679,6 +694,8 @@ def release_action_check(state, target, args, live):
     pair = state["releasePair"]
     if live["headRefOid"] != target["head"] or live["headRefName"] != target["branch"]:
         raise Stop("reviewed release head/branch changed")
+    if args.phase == "remote_delete" and (target.get("releaseRemoteOwned") is False or not release_remote_owned(target)):
+        raise Stop("cross-repository release branch is not owned by origin")
     if args.phase == "merge_api":
         argv = getattr(args, "argv", [])
         message = "paired merge executor requires unchanged regular-merge argv without deletion"
@@ -1014,6 +1031,8 @@ def begin(args):
             target["issues"] = inspected["issues"]
             target["worktrees"] = inspected.get("worktrees", [])
             target["remoteCleanup"] = inspected.get("remoteCleanup", True)
+            if "releasePair" in declaration and type(inspected.get("remoteCleanup")) is not bool:
+                raise Stop("paired remote branch ownership unavailable")
             for participant in inspected.get("participants", []):
                 participant = root(participant)
                 if common(participant) != common(target["root"]):
