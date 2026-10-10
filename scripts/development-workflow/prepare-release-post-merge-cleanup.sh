@@ -59,6 +59,7 @@ EVIDENCE_FILE=""
 JSON_OUTPUT=false
 INSPECT_TARGETS=false
 RELEASE_HEAD=""
+RELEASE_TARGET_ROOT=""
 MERGE_SESSION=""
 SESSION_CHILD=false
 COMPONENT_TARGET_FILE=""
@@ -72,7 +73,7 @@ COMPONENT_JSON_MODE=false
 declare -a ISSUE_NUMBERS=()
 
 usage() {
-  echo "Usage: $0 <version|release-branch> [--repo NAME --repo-root PATH --evidence-file PATH] [--backport-base BRANCH] [--from-changelog] [--issue N]... [--issues N,N,...] [--best-effort] [--json] [--inspect-targets --release-head SHA] [--merge-session PATH]" >&2
+  echo "Usage: $0 <version|release-branch> [--repo NAME --repo-root PATH --evidence-file PATH] [--backport-base BRANCH] [--from-changelog] [--issue N]... [--issues N,N,...] [--best-effort] [--json] [--inspect-targets --release-head SHA [--target-root PATH]] [--merge-session PATH]" >&2
 }
 
 normalize_release_branch() {
@@ -457,6 +458,9 @@ append_issues_from_changelog() {
 
   local changelog_root
   changelog_root="$PWD"
+  if [ -n "$RELEASE_TARGET_ROOT" ]; then
+    changelog_root="$RELEASE_TARGET_ROOT"
+  fi
   if [ -n "$COMPONENT_TARGET_FILE" ]; then
     changelog_root="$(json_field "$COMPONENT_TARGET_FILE" '.local_checkout.path')"
   fi
@@ -1149,6 +1153,14 @@ while [ $# -gt 0 ]; do
       RELEASE_HEAD="$2"
       shift 2
       ;;
+    --target-root)
+      if [ $# -lt 2 ] || [ -z "$2" ] || [ "${2#--}" != "$2" ]; then
+        echo "--target-root requires a nonempty checkout path." >&2
+        exit 2
+      fi
+      RELEASE_TARGET_ROOT="$2"
+      shift 2
+      ;;
     --merge-session)
       if [ $# -lt 2 ] || [ -z "$2" ] || [ "${2#--}" != "$2" ]; then
         echo "--merge-session requires a nonempty session path." >&2
@@ -1179,6 +1191,14 @@ while [ $# -gt 0 ]; do
   esac
 done
 
+if [ -n "$RELEASE_TARGET_ROOT" ]; then
+  if [ "$INSPECT_TARGETS" != "true" ] || [ -n "$MERGE_SESSION" ]; then
+    echo "--target-root is only supported for read-only --inspect-targets." >&2
+    exit 2
+  fi
+  RELEASE_TARGET_ROOT="$(canonical_dir "$RELEASE_TARGET_ROOT")"
+fi
+
 HUB_REPO_ROOT="$PWD"
 if [ -n "$REPO_ROOT_OVERRIDE" ]; then
   if [ ! -d "$REPO_ROOT_OVERRIDE" ]; then
@@ -1203,6 +1223,11 @@ if [ -n "$MERGE_SESSION" ] && [ -n "${WORKFLOW_MERGE_BUDGET_TOKEN:-}" ]; then
   SESSION_CHILD="$(printf '%s' "$child_binding" | jq -r '.nestedExecutionAuthorized')"
 fi
 validate_component_release_cleanup "$HUB_REPO_ROOT"
+if [ -n "$RELEASE_TARGET_ROOT" ] && [ -n "$COMPONENT_TARGET_FILE" ] && \
+  [ "$RELEASE_TARGET_ROOT" != "$(canonical_dir "$(json_field "$COMPONENT_TARGET_FILE" '.local_checkout.path')")" ]; then
+  echo "--target-root differs from the resolved component checkout." >&2
+  exit 2
+fi
 
 if [ -z "$RELEASE_INPUT" ]; then
   usage
@@ -1234,6 +1259,9 @@ if [ "$INSPECT_TARGETS" = "true" ]; then
     exit 2
   fi
   inspection_root="$PWD"
+  if [ -n "$RELEASE_TARGET_ROOT" ]; then
+    inspection_root="$RELEASE_TARGET_ROOT"
+  fi
   if [ -n "$COMPONENT_TARGET_FILE" ]; then
     inspection_root="$(json_field "$COMPONENT_TARGET_FILE" '.local_checkout.path')"
   fi

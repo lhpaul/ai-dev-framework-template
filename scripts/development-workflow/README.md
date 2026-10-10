@@ -1250,6 +1250,9 @@ proven ancestors of that head. Recovery reads statuses from the frozen Project I
 regardless of current project configuration. Missing, malformed,
 truncated or ambiguous evidence defers; current tag/Release timestamps are not
 required. Working-copy changelog edits cannot change reviewed scope.
+Read-only `--target-root <checkout>` keeps a selected linked release checkout
+separate from the session owner's `--repo-root`; component targets must match
+their resolved checkout. This option is refused for mutating cleanup.
 
 Paired `merge_api` executors require regular `gh pr merge N --repo REPO --merge
 --match-head-commit SHA` arguments, preserving argv and existing authority.

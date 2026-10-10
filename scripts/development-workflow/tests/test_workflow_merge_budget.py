@@ -2025,6 +2025,38 @@ class ReleasePair(unittest.TestCase):
         self.reload();self.assertEqual(self.data['trackerMutationCount'],2)
         self.assertEqual(len(self.data['mergeArgv']),2)
 
+    def test_release_pair_main_owner_projects_selected_linked_checkout(self):
+        main=self.repo
+        self.command(['git','switch','-q','develop'])
+        linked=self.root/'release-selected-linked'
+        self.command(['git','worktree','add','-q',str(linked),'release/v1.2.3'])
+        shutil.copyfile(linked/'.ai-dev-workflow.yaml',main/'.ai-dev-workflow.yaml')
+        refused=subprocess.run(['bash',str(self.scripts/'prepare-release-post-merge-cleanup.sh'),
+            'v1.2.3','--target-root',str(linked)],cwd=main,env=self.env,text=True,capture_output=True)
+        self.assertNotEqual(refused.returncode,0)
+        self.assertIn('only supported for read-only --inspect-targets',refused.stderr)
+        self.reload();self.assertNotIn(['pr','merge'],self.data['events'])
+        prs=[dict(repo='org/repo',pr=n,head=self.head,base=b,root=str(linked),
+            phases=['merge_api','cleanup'],policySkipped=['remote_delete','local_cleanup'])
+            for n,b in ((12,'main'),(13,'develop'))]
+        self.assertEqual(self.begin(prs=prs)['outcome'],'Admitted')
+        state=json.loads(Path(self.session).read_text())
+        self.assertEqual(state['ownerRoot'],str(main))
+        self.assertEqual(state['releasePair']['projection']['root'],str(linked))
+        self.assertEqual(state['releasePair']['projection']['markerProvider'],'github_projects')
+        self.assertEqual([i['id'] for i in state['prs'][1]['issues']],['12','13'])
+        self.merge(12);self.step(12,'merge_verify');self.published();self.step(12,'publication')
+        self.merge(13);self.step(13,'merge_verify')
+        self.reload();self.data['trackerStatuses']={'12':'Merged','13':'Merged'};self.save()
+        self.cleanup()
+        self.assertEqual(json.loads(self.helper('report','--session',self.session,'--final').stdout)['outcome'],'Completed')
+        self.helper('resume','--session',self.session)
+        self.reload();self.assertEqual(len(self.data['mergeArgv']),2)
+        self.assertEqual(self.data['trackerMutationCount'],2)
+        self.assertEqual(self.command(['git','branch','--show-current']).stdout.strip(),'develop')
+        self.assertEqual(subprocess.check_output(['git','-C',str(linked),'branch','--show-current'],text=True).strip(),'release/v1.2.3')
+        self.assertTrue(self.command(['git','ls-remote','origin','refs/heads/release/v1.2.3']).stdout)
+
     def test_release_pair_linear_stamp_bridge_preserves_deferred_work(self):
         (self.repo/'.ai-dev-workflow.yaml').write_text('issue_tracker:\n  provider: linear\n  custom_fields:\n    release_field: Release\n')
         self.both()
@@ -2085,6 +2117,15 @@ class ReleasePair(unittest.TestCase):
         evidence.write_text(json.dumps(dict(schema_version='component_release_evidence.v1',target_binding=json.loads(target.stdout),
             release_branch=branch,release_outcome='completed',ci_outcome='passed',deployment_outcome='recorded',
             cleanup_outcome='not_started',component_tag='product-v1.2.3')))
+        refused=subprocess.run(['bash',str(scripts/'prepare-release-post-merge-cleanup.sh'),branch,
+            '--repo-root',str(hub),'--repo','product','--evidence-file',str(evidence),
+            '--inspect-targets','--release-head',self.head,'--target-root',str(self.repo)],
+            cwd=hub,env=self.env,text=True,capture_output=True)
+        self.assertEqual(refused.returncode,2,refused.stdout+refused.stderr)
+        self.assertIn('--target-root differs from the resolved component checkout.',refused.stderr)
+        self.reload();self.assertNotIn(['pr','merge'],self.data['events'])
+        self.assertNotIn('trackerMutationCount',self.data)
+        self.assertNotIn('stampMutationCount',self.data)
         manifest=hub/'pair.json';manifest.write_text(json.dumps(dict(ownerRoot=str(hub),
             releasePair=dict(version='v1.2.3',productionPr=12,backportPr=13,productRepo='product',evidenceFile=str(evidence)),
             prs=[dict(repo='org/repo',pr=n,head=self.head,base=b,root=str(linked),phases=['merge_api','cleanup'],

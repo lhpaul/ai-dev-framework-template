@@ -470,7 +470,7 @@ def project_release(args):
 def release_inspect(pair, target, owner, retained_scope=()):
     argv = ["bash", str(SCRIPT / "prepare-release-post-merge-cleanup.sh"), target["branch"],
             "--repo-root", str(owner), "--backport-base", target["base"],
-            "--inspect-targets", "--release-head", target["head"]]
+            "--inspect-targets", "--release-head", target["head"], "--target-root", target["root"]]
     if pair.get("productRepo"):
         argv += ["--repo", pair["productRepo"], "--evidence-file", pair["evidenceFile"]]
     for issue in retained_scope:
