@@ -31,6 +31,7 @@ if args[:2] == ['api', 'rate_limit']:
 if args[:2] == ['repo', 'view']:
     checkout = subprocess.run(['git','rev-parse','--show-toplevel'],text=True,capture_output=True).stdout.strip()
     repository = os.environ.get('GH_REPO',state.get('checkoutRepos',{}).get(checkout,state['repo']))
+    repository = state.get('repoViewIdentity',repository)
     emit({'nameWithOwner': repository, 'owner': {'login': repository.split('/')[0]}, 'name': repository.split('/')[1]})
 if args[:2] == ['api', 'graphql']:
     query = next((a[6:] for a in args if a.startswith('query=')), '')
@@ -55,6 +56,7 @@ if args[:2] == ['api', 'graphql']:
         if state.get('trackerFailure'):
             sys.exit(1)
         state.setdefault('trackerMutationRepos',[]).append(os.environ.get('GH_REPO',state['repo']))
+        state.setdefault('trackerMutationProjectIds',[]).append(next(a[10:] for a in args if a.startswith('projectId=')))
         state['trackerMutationCount'] = state.get('trackerMutationCount',0)+1
         selected = next((a[9:] for a in args if a.startswith('optionId=')), 'merged')
         selected_status = 'Released' if selected == 'released' else 'Merged'
@@ -80,7 +82,8 @@ if args[:2] == ['api', 'graphql']:
     if 'fields(' in query:
         emit({'data': {'node': {'fields': {'nodes': [{'id': 'field', 'name': 'Status', 'options': [{'id': 'merged', 'name': 'Merged'}, {'id': 'plan', 'name': 'Plan Ready'}, {'id': 'released', 'name': 'Released'}]}], 'pageInfo': {'hasNextPage': False, 'endCursor': None}}}}})
     if 'projectV2(' in query:
-        project_id = state.get('projectId', 'project')
+        number = next((a.split('=',1)[1] for a in args if a.startswith('projectNumber=')), '1')
+        project_id = state.get('projectIdsByNumber', {}).get(number, state.get('projectId', 'project'))
         emit({'data': {'user': {'projectV2': {'id': project_id}}, 'organization': {'projectV2': {'id': project_id}}}})
     sys.exit(1)
 if args[:2] == ['pr', 'view']:

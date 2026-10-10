@@ -2149,6 +2149,110 @@ class ReleasePair(unittest.TestCase):
         self.assertEqual(self.data['stampMutationCount'],{'12':1,'13':1})
         self.assertTrue(any(m['title']=='v1.2.3' and m['state']=='closed' for m in self.data['milestones']))
 
+    def test_release_pair_provider_duties_refuse_project_and_provider_drift(self):
+        for drift in ('project_env','provider_none','provider_linear'):
+            for phase,key,issue,status,function,values in [
+                ('release_stamp','release_stamp:12','12','v1.2.3','record_release_for_issue_best_effort',['12','v1.2.3']),
+                ('tracker','tracker:12:pre','12','Released','update_tracker_status_best_effort',['12','Released','Merged']),
+                ('release_finalize','release_finalize',None,None,'finalize_release_marker_best_effort',['v1.2.3'])]:
+                with self.subTest(drift=drift,phase=phase):
+                    self.doCleanups();self.setUp()
+                    self.both()
+                    self.reload();self.data.update(trackerStatuses={'12':'Merged','13':'Merged'},
+                        projectIdsByNumber={'1':'project','2':'other-project'});self.save()
+                    for branch_phase in ('remote_delete','local_cleanup'):
+                        self.step(13,'policy_skip',key=branch_phase)
+                    config=self.repo/'.ai-dev-workflow.yaml';original=config.read_text()
+                    if drift == 'project_env':
+                        self.env['GITHUB_PROJECT_NUMBER']='2'
+                    else:
+                        config.write_text('issue_tracker:\n  provider: '+drift.removeprefix('provider_')+'\n')
+                    argv=['bash','-c','set -e; source "$1/workflow-lib.sh"; cd "$2"; shift 2; '+function+' "$@"',
+                        'plant-provider',str(self.scripts),str(self.repo),*values]
+                    refused=self.step(13,phase,key=key,issue=issue,status=status,argv=argv,success=False)
+                    self.assertIn('release provider binding changed since admission',refused.stderr)
+                    state=json.loads(Path(self.session).read_text())
+                    self.assertEqual(state['prs'][1]['steps'][key]['status'],'pending')
+                    self.assertNotIn('intentAt',state['prs'][1]['steps'][key])
+                    self.assertNotIn('token',state['prs'][1]['steps'][key])
+                    self.reload();self.assertEqual(self.data.get('trackerMutationCount',0),0)
+                    self.assertEqual(self.data.get('stampMutationCount',{}),{})
+                    self.assertEqual(self.data.get('milestones',[]),[])
+                    self.env['GITHUB_PROJECT_NUMBER']='1';config.write_text(original)
+                    # GitHub's display casing remains the same owning repo.
+                    self.reload();self.data['repoViewIdentity']='Org/Repo';self.save()
+                    self.helper('resume','--session',self.session)
+                    self.cleanup()
+                    self.assertEqual(json.loads(self.helper('report','--session',self.session,'--final').stdout)['outcome'],'Completed')
+                    self.reload();self.assertEqual(len(self.data['mergeArgv']),2)
+                    self.assertEqual(self.data['trackerMutationProjectIds'],['project','project'])
+                    self.assertEqual(self.data['stampMutationCount'],{'12':1,'13':1})
+
+    def test_release_pair_linked_cleanup_refuses_fast_forward_project_drift(self):
+        config=self.repo/'.ai-dev-workflow.yaml';original=config.read_text()
+        config.write_text(original.replace('project_number: 1','project_number: 2'))
+        self.command(['git','add','.ai-dev-workflow.yaml'])
+        tree=self.command(['git','write-tree']).stdout.strip()
+        base=self.command(['git','rev-parse','develop']).stdout.strip()
+        drift_merge=subprocess.run(['git','commit-tree',tree,'-p',base,'-p',self.head],cwd=self.repo,
+            input='backport base configuration drift\n',text=True,capture_output=True,check=True).stdout.strip()
+        config.write_text(original);self.command(['git','add','.ai-dev-workflow.yaml'])
+        self.commits[13]=drift_merge
+        self.data['gitCommits'][drift_merge]={'sha':drift_merge,'parents':[{'sha':base},{'sha':self.head}]}
+        self.data['prs']['13']['fixtureMergeCommit']=drift_merge
+        self.data['projectIdsByNumber']={'1':'project','2':'other-project'};self.save()
+        self.env.pop('GITHUB_PROJECT_NUMBER')
+        main=self.repo
+        self.command(['git','switch','-q','develop'])
+        linked=self.root/'release-linked-drift'
+        self.command(['git','worktree','add','-q',str(linked),'release/v1.2.3'])
+        shutil.copytree(self.scripts,linked/'scripts/development-workflow')
+        (main/'.git/info/exclude').write_text('/scripts/\n')
+        self.repo=linked;self.scripts=linked/'scripts/development-workflow'
+        prs=[dict(repo='org/repo',pr=n,head=self.head,base=b,root=str(linked),
+            phases=['merge_api','cleanup']) for n,b in ((12,'main'),(13,'develop'))]
+        self.assertEqual(self.begin(prs=prs)['outcome'],'Admitted')
+        self.merge(12);self.step(12,'merge_verify');self.published();self.step(12,'publication')
+        self.merge(13);self.step(13,'merge_verify')
+        self.command(['git','push','-q','origin',self.commits[12]+':refs/heads/main',drift_merge+':refs/heads/develop'])
+        self.command(['git','switch','-q','--detach',self.head])
+        self.reload();self.data['trackerStatuses']={'12':'Merged','13':'Merged'};self.save()
+        refused=self.cleanup(success=False)
+        self.assertNotEqual(refused.returncode,0)
+        self.assertEqual(self.command(['git','rev-parse','HEAD']).stdout.strip(),drift_merge)
+        self.assertIn('project_number: 2',(linked/'.ai-dev-workflow.yaml').read_text())
+        state=json.loads(Path(self.session).read_text())
+        self.assertEqual(state['prs'][1]['steps']['local_cleanup']['status'],'completed')
+        self.assertEqual(state['prs'][1]['steps']['release_stamp:12']['status'],'pending')
+        self.assertNotIn('intentAt',state['prs'][1]['steps']['release_stamp:12'])
+        self.reload();self.assertEqual(self.data.get('trackerMutationCount',0),0)
+        self.assertEqual(self.data.get('stampMutationCount',{}),{})
+        self.assertEqual(self.data.get('milestones',[]),[])
+        (linked/'.ai-dev-workflow.yaml').write_text(original)
+        self.helper('resume','--session',self.session)
+        self.cleanup()
+        self.assertEqual(json.loads(self.helper('report','--session',self.session,'--final').stdout)['outcome'],'Completed')
+        self.reload();self.assertEqual(len(self.data['mergeArgv']),2)
+        self.assertEqual(self.data['trackerMutationProjectIds'],['project','project'])
+        self.assertEqual(self.data['stampMutationCount'],{'12':1,'13':1})
+
+    def test_release_pair_linear_duties_refuse_marker_drift(self):
+        config=self.repo/'.ai-dev-workflow.yaml'
+        original='issue_tracker:\n  provider: linear\n  custom_fields:\n    release_field: Release\n'
+        config.write_text(original);self.both()
+        for phase in ('remote_delete','local_cleanup'):
+            self.step(13,'policy_skip',key=phase)
+        config.write_text(original.replace('release_field: Release','release_field: Other'))
+        refused=self.step(13,'release_stamp',key='release_stamp:ENG-12',issue='ENG-12',status='v1.2.3',success=False)
+        self.assertIn('release provider binding changed since admission',refused.stderr)
+        state=json.loads(Path(self.session).read_text())
+        self.assertEqual(state['prs'][1]['steps']['release_stamp:ENG-12']['status'],'pending')
+        config.write_text(original);self.helper('resume','--session',self.session)
+        self.cleanup(success=False)
+        state=json.loads(Path(self.session).read_text())
+        self.assertEqual(state['prs'][1]['steps']['release_stamp:ENG-12']['status'],'uncertain')
+        self.reload();self.assertEqual(len(self.data['mergeArgv']),2)
+
     def test_release_pair_main_owner_projects_selected_linked_checkout(self):
         main=self.repo
         self.command(['git','switch','-q','develop'])

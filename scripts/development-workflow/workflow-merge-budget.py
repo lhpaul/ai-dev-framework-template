@@ -704,6 +704,45 @@ def release_product_cleanup_read(state):
         raise Stop("verified product branch cleanup/retention required before release reconciliation")
 
 
+def release_provider_binding_read(state):
+    # Cleanup can fast-forward the owner to a different tracker configuration.
+    # Resolve just the executor's binding, without reprojecting the issue scope.
+    projection = state["releasePair"]["projection"]
+    owner = proof_root(state, state["ownerCommonDir"], state["ownerRoot"])
+    environment = dict(os.environ, WORKFLOW_MERGE_BUDGET_SESSION=state["session"],
+                       WORKFLOW_MERGE_BUDGET_OWNER_ROOT=owner,
+                       GH_REPO=projection["markerRepo"], WORKFLOW_TARGET_GITHUB_REPO=projection["markerRepo"])
+    script = '''set -euo pipefail
+source "$1/workflow-lib.sh"
+cd "$2"
+provider="$(workflow_normalize_issue_tracker_provider "$(workflow_issue_tracker_provider_raw)")"
+provider="${provider:-none}"
+repository="$(workflow_resolve_github_repo_owner)/$(workflow_resolve_github_repo_name)"
+project_id=""; release_field=""; release_prefix=""
+if [ "$provider" = github_projects ]; then
+  project_number="${GITHUB_PROJECT_NUMBER:-$(workflow_issue_tracker_project_number)}"
+  project_owner="$(workflow_resolve_github_project_owner)"
+  project_id="$(workflow_github_project_id "$project_owner" "$project_number")"
+  [ -n "$project_id" ]
+elif [ "$provider" = linear ]; then
+  release_field="$(workflow_issue_tracker_custom_field release_field)"
+  release_prefix="$(workflow_issue_tracker_custom_field release_label_prefix || true)"
+fi
+jq -n --arg provider "$provider" --arg repo "$repository" --arg project "$project_id" \\
+  --arg field "$release_field" --arg prefix "${release_prefix:-release/}" --arg version "$3" \\
+  '{markerProvider:$provider,markerRepo:$repo,projectId:(if $project == "" then null else $project end),
+    linearMarker:(if $provider != "linear" then null elif $field != "" then
+      {kind:"field",name:$field,value:$version} else {kind:"label",name:($prefix+$version)} end)}'
+'''
+    current = decode(call(["bash", "-c", script, "release-provider-binding", str(SCRIPT), owner,
+                           state["releasePair"]["version"]], cwd=owner, env=environment))
+    fields = ("markerProvider", "markerRepo", "projectId", "linearMarker")
+    if isinstance(current, dict):
+        current["markerRepo"] = repo(current.get("markerRepo"))
+    if not isinstance(current, dict) or any(current.get(key) != projection.get(key) for key in fields):
+        raise Stop("release provider binding changed since admission; refuse provider execution")
+
+
 def release_action_check(state, target, args, live):
     pair = state["releasePair"]
     if live["headRefOid"] != target["head"] or live["headRefName"] != target["branch"]:
@@ -763,6 +802,7 @@ def release_action_check(state, target, args, live):
         regular_release_merge(state["prs"][1])
         if args.phase in {"release_stamp", "tracker", "release_finalize"}:
             release_product_cleanup_read(state)
+            release_provider_binding_read(state)
         if args.phase == "cleanup":
             release_scope_check(state)
         if target is state["prs"][0] and args.phase == "cleanup":

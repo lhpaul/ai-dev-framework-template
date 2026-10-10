@@ -1266,6 +1266,12 @@ their resolved checkout. This option is refused for mutating cleanup.
 Shared cleanup first verifies authorized product branch cleanup or retention,
 then permits release stamps, Released tracker transitions and marker closure.
 Independent provider proof also rechecks that product-cleanup evidence.
+Before every stamp, tracker transition or marker finalization, the executor
+resolves its effective provider, repository, Project ID and Linear marker again.
+Any difference from the frozen binding refuses execution before a provider
+intent or write, including configuration changes introduced by cleanup's
+fast-forward. This bounded binding read uses the provider-proof reserve and
+does not reproject the issue scope. Restore the admitted binding before recovery.
 
 Paired `merge_api` executors require regular `gh pr merge N --repo REPO --merge
 --match-head-commit SHA` arguments, preserving argv and existing authority.
