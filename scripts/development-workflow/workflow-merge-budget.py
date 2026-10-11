@@ -1931,13 +1931,26 @@ def release_cleanup(args):
                   and os.environ.get("WORKFLOW_MERGE_BUDGET_TOKEN") == active.get("token") == cleanup_entry.get("token")
                   and any(c["pid"] == args.executor_pid and c["step"] == cleanup_id and c["repo"] == target["repo"]
                           and c["pr"] == target["pr"] for c in active.get("children", [])))
+    remote_tip_error = "remote release branch tip changed; preserve new commits and restore the frozen head before explicit session recovery"
 
     def run(selected, key, entry, argv, status=None):
         invocation = [sys.executable, str(SCRIPT / "workflow-merge-budget.py"), "run-step", "--session", args.session,
                       "--repo", selected["repo"], "--pr", str(selected["pr"]), "--phase", entry["phase"], "--step", key]
         if entry.get("issue") is not None:
             invocation += ["--issue", str(entry["issue"]), "--status", status]
-        call(invocation + ["--", *argv])
+        try:
+            call(invocation + ["--", *argv])
+        except Stop:
+            # Nested executor stderr is intentionally not trusted/forwarded.
+            # Recover this diagnostic from fresh frozen-ref evidence instead.
+            if entry["phase"] in {"cleanup", "remote_delete"} and any(
+                    e["phase"] == "remote_delete" for e in selected["steps"].values()):
+                git_root = proof_root(state, selected["commonDir"], selected["root"])
+                remote_ref = "refs/heads/" + pair["branch"]
+                remote_tip = call(["git", "-C", git_root, "ls-remote", "origin", remote_ref])
+                if remote_tip and remote_tip.split() != [pair["head"], remote_ref]:
+                    raise Stop(remote_tip_error)
+            raise
 
     if not nested:
         if active:
@@ -1996,8 +2009,15 @@ def release_cleanup(args):
                 argv = ["bash", "-c", script, "release-budget", str(SCRIPT), owner, *values]
             elif phase == "remote_delete":
                 git_root = proof_root(current, selected["commonDir"], selected["root"])
-                if call(["git", "-C", git_root, "ls-remote", "origin", "refs/heads/" + pair["branch"]]):
-                    argv = ["git", "-C", git_root, "push", "origin", "--delete", pair["branch"]]
+                remote_ref = "refs/heads/" + pair["branch"]
+                remote_tip = call(["git", "-C", git_root, "ls-remote", "origin", remote_ref])
+                if remote_tip:
+                    if remote_tip.split() != [pair["head"], remote_ref]:
+                        raise Stop(remote_tip_error)
+                    # Bind deletion to this exact SHA even if the ref advances
+                    # between the read and push; no history replacement occurs.
+                    argv = ["git", "-C", git_root, "push", "origin", "--delete", pair["branch"],
+                            "--force-with-lease=" + remote_ref + ":" + pair["head"]]
             elif phase == "local_cleanup":
                 git_root = proof_root(current, selected["commonDir"], selected["root"])
                 # Preserve worktrees; reuse the frozen participant already on

@@ -1233,6 +1233,10 @@ branch alone grants no exception.
 Pairing preserves the existing cross-repository remote-cleanup veto: a fork head
 never creates a deletion duty for a same-named origin branch.
 Unknown or conflicting frozen remote ownership refuses pairing.
+Before a declared paired remote deletion, the actual origin ref must match the
+frozen head. An exact expected-SHA deletion condition also refuses a concurrent
+advance; changed tips preserve their commits and leave the journal incomplete
+for explicit recovery after the approved ref is restored.
 
 Admission derives production's `publication` step and shared backport issue
 `release_stamp:<id>`, `tracker:<id>:pre` where supported, and GitHub

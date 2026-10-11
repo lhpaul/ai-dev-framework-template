@@ -2122,6 +2122,68 @@ class ReleasePair(unittest.TestCase):
         self.assertEqual(self.command(['git','ls-remote','origin','refs/heads/release/v1.2.3']).stdout,'')
         self.reload();self.assertEqual(len(self.data['mergeArgv']),2)
 
+    def remote_tip_owned_pair(self):
+        prs=[dict(repo='org/repo',pr=n,head=self.head,base=b,root=str(self.repo),
+            phases=['merge_api','cleanup']) for n,b in ((12,'main'),(13,'develop'))]
+        self.assertEqual(self.begin(prs=prs)['outcome'],'Admitted')
+        self.merge(12);self.step(12,'merge_verify');self.published();self.step(12,'publication')
+        self.merge(13);self.step(13,'merge_verify')
+        tree=self.command(['git','rev-parse','HEAD^{tree}']).stdout.strip()
+        advanced=subprocess.run(['git','commit-tree',tree,'-p',self.head],cwd=self.repo,
+            input='unmerged release branch advance\n',text=True,capture_output=True,check=True).stdout.strip()
+        self.command(['git','push','-q','origin',self.commits[12]+':refs/heads/main',
+            self.commits[13]+':refs/heads/develop',advanced+':refs/heads/fixture-unmerged'])
+        self.reload();self.data['trackerStatuses']={'12':'Merged','13':'Merged'};self.save()
+        return advanced
+
+    def remote_tip_restore_and_complete(self, advanced):
+        # Restore only the fixture ref, keeping the new commits on a named ref.
+        self.command(['git','--git-dir',str(self.origin),'update-ref',
+            'refs/heads/release/v1.2.3',self.head,advanced])
+        self.helper('resume','--session',self.session)
+        self.assertEqual(json.loads(self.cleanup().stdout)['outcome'],'Completed')
+        self.assertEqual(self.command(['git','ls-remote','origin','refs/heads/release/v1.2.3']).stdout,'')
+        self.assertEqual(self.command(['git','ls-remote','origin','refs/heads/fixture-unmerged']).stdout.split()[0],advanced)
+        self.helper('resume','--session',self.session)
+        self.reload();self.assertEqual(len(self.data['mergeArgv']),2)
+        self.assertEqual(self.data['stampMutationCount'],{'12':1,'13':1})
+        self.assertEqual(self.data['trackerMutationCount'],2)
+
+    def test_release_pair_remote_tip_drift_refuses_cleanup_then_restores(self):
+        advanced=self.remote_tip_owned_pair()
+        self.command(['git','push','-q','origin',advanced+':refs/heads/release/v1.2.3'])
+        refused=self.cleanup(success=False)
+        self.assertIn('remote release branch tip changed',refused.stderr)
+        self.assertEqual(self.command(['git','ls-remote','origin','refs/heads/release/v1.2.3']).stdout.split()[0],advanced)
+        self.reload();self.assertEqual(self.data.get('stampMutationCount',{}),{})
+        self.assertEqual(self.data.get('trackerMutationCount',0),0)
+        state=json.loads(Path(self.session).read_text())
+        self.assertEqual(state['prs'][1]['steps']['remote_delete']['status'],'pending')
+        self.assertNotIn('intentAt',state['prs'][1]['steps']['remote_delete'])
+        self.remote_tip_restore_and_complete(advanced)
+
+    def test_release_pair_remote_tip_race_refuses_deletion_then_restores(self):
+        advanced=self.remote_tip_owned_pair()
+        real_git=shutil.which('git');marker=self.root/'remote-tip-race';marker.write_text('armed')
+        wrapper=self.bin/'git'
+        wrapper.write_text('#!/usr/bin/env python3\nimport subprocess,sys\nfrom pathlib import Path\n'
+            + 'args=sys.argv[1:]\nmarker=Path('+repr(str(marker))+')\n'
+            + 'if "push" in args and "--delete" in args and "release/v1.2.3" in args and marker.read_text()=="armed":\n'
+            + '    subprocess.run('+repr([real_git,'--git-dir',str(self.origin),'update-ref',
+                'refs/heads/release/v1.2.3',advanced,self.head])+',check=True)\n'
+            + '    marker.write_text("fired")\n'
+            + 'sys.exit(subprocess.run(['+repr(real_git)+',*args]).returncode)\n')
+        wrapper.chmod(0o700)
+        refused=self.cleanup(success=False)
+        self.assertEqual(marker.read_text(),'fired')
+        self.assertIn('remote release branch tip changed',refused.stderr)
+        self.assertEqual(self.command(['git','ls-remote','origin','refs/heads/release/v1.2.3']).stdout.split()[0],advanced)
+        self.reload();self.assertEqual(self.data.get('stampMutationCount',{}),{})
+        self.assertEqual(self.data.get('trackerMutationCount',0),0)
+        state=json.loads(Path(self.session).read_text())
+        self.assertEqual(state['prs'][1]['steps']['remote_delete']['status'],'uncertain')
+        self.remote_tip_restore_and_complete(advanced)
+
     def test_release_pair_authorized_linked_cleanup_reuses_occupied_base(self):
         main=self.repo
         self.command(['git','switch','-q','develop'])
