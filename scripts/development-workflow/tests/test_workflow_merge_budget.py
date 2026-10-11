@@ -1834,6 +1834,37 @@ class ReleasePair(unittest.TestCase):
         self.reload();self.candidate(14,self.head);self.save()
         self.assertGreater(self.begin()['estimate']['projectedCost'],first)
 
+    def test_release_pair_archived_merged_ancestor_has_budget_and_release_duties(self):
+        baseline=self.begin()['estimate']['projectedCost']
+        self.reload();self.candidate(14,self.head);self.candidate(15,self.head)
+        self.data['releaseProjectItems'][0]['isArchived']=True
+        self.data['releaseProjectPages']={
+            'first':{'nodes':[self.data['releaseProjectItems'][1]],'pageInfo':{'hasNextPage':True,'endCursor':'archived'}},
+            'archived':{'nodes':[self.data['releaseProjectItems'][0]],'pageInfo':{'hasNextPage':False,'endCursor':None}}}
+        self.save()
+        admitted=self.begin();self.assertEqual(admitted['outcome'],'Deferred',admitted)
+        state=json.loads(Path(self.session).read_text())
+        self.assertEqual([i['id'] for i in state['prs'][1]['issues']],['12','13','14','15'])
+        self.assertGreater(admitted['estimate']['projectedCost'],baseline)
+        duties=state['prs'][1]['steps'].values()
+        self.assertEqual(sum(s['phase']=='release_stamp' for s in duties),4)
+        self.assertEqual(sum(s['phase']=='tracker' for s in duties),4)
+        self.reload();self.assertNotIn(['pr','merge'],self.data['events'])
+        self.data['quota'].update(remaining=6000,limit=6000);self.save()
+        self.assertEqual(json.loads(self.helper('resume','--session',self.session).stdout)['outcome'],'Admitted')
+        self.merge(12);self.step(12,'merge_verify');self.published();self.step(12,'publication')
+        self.merge(13);self.step(13,'merge_verify')
+        self.reload();self.data['trackerStatuses']={n:'Merged' for n in ('12','13','14','15')};self.save()
+        self.assertEqual(json.loads(self.cleanup().stdout)['outcome'],'Completed')
+        self.reload()
+        self.assertEqual(self.data['stampMutationCount'],{n:1 for n in ('12','13','14','15')})
+        self.assertEqual(self.data['trackerMutationCount'],4)
+        self.assertEqual(self.data['trackerStatuses'],{n:'Released' for n in ('12','13','14','15')})
+        self.assertEqual(json.loads(self.helper('resume','--session',self.session).stdout)['outcome'],'Completed')
+        self.reload();self.assertEqual(self.data['trackerMutationCount'],4)
+        self.assertEqual(self.data['stampMutationCount'],{n:1 for n in ('12','13','14','15')})
+        self.assertEqual(len(self.data['mergeArgv']),2)
+
     def test_release_pair_projection_accounts_for_excluded_candidates_rechecks(self):
         self.begin()
         state=json.loads(Path(self.session).read_text())

@@ -41,6 +41,11 @@ if args[:2] == ['api', 'graphql']:
         cursor = next((a[6:] for a in args if a.startswith('after=')), 'first')
         page = state.get('releaseProjectPages', {}).get(cursor, state.get('releaseProjectPage', {'nodes': state.get('releaseProjectItems', []),
             'pageInfo': {'hasNextPage': False, 'endCursor': None}}))
+        archived_arg = re.search(r'archivedStates\s*:\s*\[([^]]*)\]', query)
+        archived_states = re.findall(r'\b(?:NOT_ARCHIVED|ARCHIVED)\b', archived_arg[1]) if archived_arg else ['NOT_ARCHIVED']
+        if isinstance(page.get('nodes'), list):
+            page = dict(page, nodes=[item for item in page['nodes']
+                if ('ARCHIVED' if item.get('isArchived', False) else 'NOT_ARCHIVED') in archived_states])
         emit({'data': {'node': {'items': page}}})
     if 'ReleaseBudgetClosers' in query:
         number = next(a[7:] for a in args if a.startswith('number='))

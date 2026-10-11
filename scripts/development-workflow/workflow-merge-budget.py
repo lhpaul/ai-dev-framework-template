@@ -247,7 +247,7 @@ def inspect(target, owner):
 RELEASE_ITEMS_QUERY = """query ReleaseBudgetItems($projectId: ID!, $after: String) {
   node(id: $projectId) {
     ... on ProjectV2 {
-      items(first: 100, after: $after) {
+      items(first: 100, after: $after, archivedStates: [ARCHIVED, NOT_ARCHIVED]) {
         nodes {
           content { __typename ... on Issue { number repository { nameWithOwner } } }
           status: fieldValueByName(name: "Status") {
