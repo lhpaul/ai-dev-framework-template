@@ -2569,6 +2569,19 @@ class ReleasePair(unittest.TestCase):
             prs=[dict(repo='org/repo',pr=n,head=self.head,base=b,root=str(linked),phases=['merge_api','cleanup'],
                 policySkipped=['remote_delete','local_cleanup']) for n,b in ((12,'main'),(13,'develop'))])))
         self.repo=hub;self.scripts=scripts
+        declaration=json.loads(manifest.read_text())
+        component_route=declaration['releasePair'].pop('productRepo')
+        component_evidence=declaration['releasePair'].pop('evidenceFile')
+        manifest.write_text(json.dumps(declaration))
+        missing=self.helper('begin','--input',manifest,success=False)
+        missing_state=json.loads(missing.stdout)
+        self.assertEqual(missing_state['outcome'],'Deferred')
+        self.assertIn('separate product release requires component route and evidence',missing_state['reason'])
+        self.reload();self.assertNotIn(['pr','merge'],self.data['events'])
+        self.assertNotIn('trackerMutationCount',self.data)
+        self.assertNotIn('stampMutationCount',self.data)
+        declaration['releasePair'].update(productRepo=component_route,evidenceFile=component_evidence)
+        manifest.write_text(json.dumps(declaration))
         if not version.startswith('v'):
             declaration=json.loads(manifest.read_text())
             declaration['releasePair']['version']='v9.9.9';manifest.write_text(json.dumps(declaration))

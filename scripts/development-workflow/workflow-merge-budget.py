@@ -472,6 +472,13 @@ def project_release(args):
 
 
 def release_inspect(pair, target, owner, retained_scope=()):
+    mode = decode(call([sys.executable, str(SCRIPT / "workflow-config-resolver.py"),
+                        "mode", "--repo-root", str(owner), "--json"]))
+    if not isinstance(mode, dict) or mode.get("WORKFLOW_MODE") not in {"single_repo", "workflow_hub", "product_repo"}:
+        raise Stop("owning release repository mode unavailable")
+    if mode["WORKFLOW_MODE"] == "workflow_hub" and checkout_repo(owner) != repo(target["repo"]):
+        if any(not isinstance(pair.get(key), str) or not pair[key].strip() for key in ("productRepo", "evidenceFile")):
+            raise Stop("separate product release requires component route and evidence")
     argv = ["bash", str(SCRIPT / "prepare-release-post-merge-cleanup.sh"), target["branch"],
             "--repo-root", str(owner), "--backport-base", target["base"],
             "--inspect-targets", "--release-head", target["head"], "--target-root", target["root"]]
@@ -485,6 +492,8 @@ def release_inspect(pair, target, owner, retained_scope=()):
     value = decode(call(argv, cwd=owner, env=environment))
     if not isinstance(value, dict) or not isinstance(value.get("issues"), list) or not value["issues"]:
         raise Stop("complete release duty projection unavailable")
+    if pair.get("productRepo") and (not isinstance(value.get("componentBinding"), dict) or not value["componentBinding"]):
+        raise Stop("component release binding unavailable")
     expected = {"repo": target["repo"], "root": target["root"], "version": pair["version"],
                 "head": target["head"], "branch": target["branch"], "base": target["base"]}
     if any(value.get(key) != item for key, item in expected.items()):

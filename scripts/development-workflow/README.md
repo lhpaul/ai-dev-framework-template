@@ -1228,7 +1228,11 @@ projection, provider markers and cleanup; component publication tags retain
 their opaque evidence identity. Production targets `main`; backport targets its
 distinct approved base. Each selection includes merge and cleanup phases.
 Component pairing additionally binds `productRepo` and absolute `evidenceFile`
-through the existing component target/evidence contract. A release-looking
+through the existing component target/evidence contract. A hub-owned pair
+selecting a different repository must supply both before inspection; omission
+is refused during admission and scope rechecks before execution or shared cleanup.
+Declared components require an independently validated component binding in
+their projection. A release-looking
 branch alone grants no exception.
 Pairing preserves the existing cross-repository remote-cleanup veto: a fork head
 never creates a deletion duty for a same-named origin branch.
