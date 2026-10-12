@@ -1385,7 +1385,8 @@ def tracker_read(state, issue):
                                    {"owner": owner, "repo": name, "issueNumber": int(issue["id"])},
                                    lambda data: data["repository"]["issue"]["projectItems"], 20):
             for node in nodes:
-                if not isinstance(node, dict) or not isinstance(node.get("project"), dict) or not node["project"].get("id"):
+                if (not isinstance(node, dict) or not isinstance(node.get("project"), dict)
+                        or not isinstance(node["project"].get("id"), str) or not node["project"]["id"].strip()):
                     raise Stop("release tracker project identity unavailable")
                 if node["project"]["id"] != project_id:
                     continue

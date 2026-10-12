@@ -19,7 +19,7 @@ if [ -n "${WORKFLOW_MERGE_BUDGET_TEST_EVIDENCE_DIR:-}" ]; then
   python3 "$SCRIPT_DIR/test_workflow_merge_budget.py"
 else
   # Every case owns its temporary Git/provider resources. Run the complete
-  # enumeration in two isolated processes within the unchanged CI suite deadline.
+  # enumeration in four isolated processes within the unchanged CI suite deadline.
   python3 - "$SCRIPT_DIR/test_workflow_merge_budget.py" <<'PY'
 import importlib.util
 from pathlib import Path
@@ -42,7 +42,7 @@ def names(suite):
             yield test.id().split('.', 1)[1]
 
 tests = list(names(unittest.defaultTestLoader.loadTestsFromModule(module)))
-groups = [tests[::2], tests[1::2]]
+groups = [tests[index::4] for index in range(4)]
 assert tests and len(tests) == len(set(tests))
 assert sorted(test for group in groups for test in group) == sorted(tests)
 failed = False

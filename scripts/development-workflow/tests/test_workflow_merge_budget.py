@@ -58,6 +58,16 @@ class Admission(unittest.TestCase):
         issue={'provider':'github_projects','repo':'org/repo','id':'12','status':'Released'}
         card={'project_id':'frozen-project','item_id':'item-12','status':'Released'}
         with patch.object(budget,'call',return_value=json.dumps(card)) as fallback:
+            for invalid_id in (123,True,{'unknown':True},None,'',' \t'):
+                with self.subTest(primary_id=invalid_id), patch.object(budget,'release_pages',
+                        return_value=iter([[{'project':{'id':invalid_id},'status':{'name':'Released'}}]])):
+                    with self.assertRaisesRegex(budget.Stop,'project identity unavailable'):
+                        budget.tracker_read(state,issue)
+                fallback.assert_not_called()
+            with patch.object(budget,'release_pages',return_value=iter([[{
+                    'project':{'id':'frozen-project'},'status':{'name':'Released'}}]])):
+                self.assertTrue(budget.tracker_read(state,issue))
+            fallback.assert_not_called()
             for nodes in ([{'project':{'id':'frozen-project'},'status':{'name':'Merged'}}],
                           [{'project':{'id':'frozen-project'},'status':{'name':'Released'}}]):
                 with patch.object(budget,'release_pages',return_value=iter([nodes])):
