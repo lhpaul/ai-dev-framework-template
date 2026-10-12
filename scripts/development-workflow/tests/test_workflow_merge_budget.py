@@ -53,6 +53,66 @@ class Admission(unittest.TestCase):
         self.args.session = value['session']
         return value
 
+    def test_release_tracker_fallback_never_masks_primary_evidence(self):
+        state={'releasePair':{'projection':{'projectId':'frozen-project'}}}
+        issue={'provider':'github_projects','repo':'org/repo','id':'12','status':'Released'}
+        card={'project_id':'frozen-project','item_id':'item-12','status':'Released'}
+        with patch.object(budget,'call',return_value=json.dumps(card)) as fallback:
+            for nodes in ([{'project':{'id':'frozen-project'},'status':{'name':'Merged'}}],
+                          [{'project':{'id':'frozen-project'},'status':{'name':'Released'}}]):
+                with patch.object(budget,'release_pages',return_value=iter([nodes])):
+                    self.assertEqual(budget.tracker_read(state,issue),nodes[0]['status']['name']=='Released')
+                fallback.assert_not_called()
+            for evidence in ([{'project':{'id':'frozen-project'},'status':None}],
+                             [{'project':{'id':'frozen-project'},'status':{'name':'Released'}},
+                              {'project':{'id':'frozen-project'},'status':{'name':'Merged'}}]):
+                with patch.object(budget,'release_pages',return_value=iter([evidence])):
+                    with self.assertRaises(budget.Stop):budget.tracker_read(state,issue)
+                fallback.assert_not_called()
+            with patch.object(budget,'release_pages',side_effect=budget.Stop('unreadable primary')):
+                with self.assertRaises(budget.Stop):budget.tracker_read(state,issue)
+            fallback.assert_not_called()
+            with patch.object(budget,'release_pages',return_value=iter([[],[]])):
+                self.assertTrue(budget.tracker_read(state,issue))
+            argv=fallback.call_args.args[0]
+            self.assertEqual(argv[argv.index('--project-id')+1],'frozen-project')
+            self.assertEqual(argv[argv.index('--repo')+1],'org/repo')
+            self.assertEqual(argv[argv.index('--ttl')+1],'0')
+        for invalid in ({'membership':'absent','project_id':'frozen-project'},
+                        dict(card,project_id='different-project'),dict(card,status='')):
+            with patch.object(budget,'release_pages',return_value=iter([[]])), \
+                 patch.object(budget,'call',return_value=json.dumps(invalid)):
+                with self.assertRaises(budget.Stop):budget.tracker_read(state,issue)
+
+    def test_parallel_regression_wrapper_preserves_worker_failure(self):
+        wrapper=self.owner/'test-workflow-merge-budget.sh'
+        shutil.copyfile(Path(__file__).with_name(wrapper.name),wrapper)
+        fixture=self.owner/'test_workflow_merge_budget.py'
+        source='''import unittest
+class Proof(unittest.TestCase):
+    def test_a_planted_failure(self):
+        self.assertTrue(False)
+    def test_b_retained_case(self):
+        self.assertTrue(True)
+if __name__ == '__main__':
+    unittest.main()
+'''
+        fixture.write_text(source)
+        environment=dict(os.environ);environment.pop('WORKFLOW_MERGE_BUDGET_TEST_EVIDENCE_DIR',None)
+        refused=subprocess.run(['bash',str(wrapper)],env=environment,text=True,capture_output=True)
+        self.assertNotEqual(refused.returncode,0)
+        self.assertIn('TEST_COUNT=2',refused.stdout)
+        self.assertIn('WORKER_COUNT=2',refused.stdout)
+        self.assertIn('RESULT=failed',refused.stdout)
+        self.assertEqual(refused.stdout.count('Ran 1 test'),2)
+        fixture.write_text(source.replace('self.assertTrue(False)','self.assertTrue(True)'))
+        restored=subprocess.run(['bash',str(wrapper)],env=environment,text=True,capture_output=True)
+        self.assertEqual(restored.returncode,0,restored.stdout+restored.stderr)
+        self.assertIn('TEST_COUNT=2',restored.stdout)
+        self.assertIn('WORKER_COUNT=2',restored.stdout)
+        self.assertIn('RESULT=pass',restored.stdout)
+        self.assertEqual(restored.stdout.count('Ran 1 test'),2)
+
     def test_newly_issued_retry_drops_historical_supersession_reference(self):
         manifest = json.loads(self.manifest.read_text())
         manifest['prs'][0].pop('phases')
@@ -2079,6 +2139,51 @@ class ReleasePair(unittest.TestCase):
         restored=json.loads(self.helper('resume','--session',self.session).stdout)
         self.assertEqual(restored['outcome'],'Completed')
         self.reload();self.assertEqual(self.data['trackerMutationCount'],2)
+        self.assertEqual(len(self.data['mergeArgv']),2)
+
+    def test_release_pair_project_board_fallback_completes_and_recovers(self):
+        self.both();self.reload()
+        self.data['trackerStatuses']={'12':'Merged','13':'Merged'}
+        self.data['projectCardPages']={n:{
+            'first':{'nodes':[{'id':'foreign', 'project':{'id':'different-project'},
+                'status':{'name':'Released'}}], 'pageInfo':{'hasNextPage':True,'endCursor':'done'}},
+            'done':{'nodes':[], 'pageInfo':{'hasNextPage':False,'endCursor':None}}}
+            for n in ('12','13')}
+        cards=[{'id':'item-'+n, 'content':{'number':int(n), 'repository':{'nameWithOwner':'org/repo'}}}
+            for n in ('12','13')]
+        foreign={'id':'foreign-12', 'content':{'number':12, 'repository':{'nameWithOwner':'org/other'}}}
+        self.data['trackerBoardProjects']={'project':[foreign,*cards], 'different-project':cards}
+        self.save()
+        self.assertEqual(json.loads(self.cleanup().stdout)['outcome'],'Completed')
+        self.reload()
+        self.assertEqual(self.data['trackerStatuses'],{'12':'Released','13':'Released'})
+        self.assertEqual(self.data['trackerMutationCount'],2)
+        for index,request in enumerate(self.data['trackerReadRequests']):
+            if request[0]=='board':
+                self.assertEqual(request[2],'project')
+                self.assertEqual(self.data['trackerReadRequests'][index-2:index],
+                    [['primary',request[1],'first'],['primary',request[1],'done']])
+        self.assertTrue(any(r[0]=='board' for r in self.data['trackerReadRequests']))
+        for plant in ('foreign_same_number','unreadable_board','capped_no_match'):
+            with self.subTest(plant=plant):
+                self.reload()
+                if plant!='unreadable_board':
+                    self.data['trackerBoardProjects']['project']=[foreign,cards[1]]
+                self.data['trackerBoardOutage']=plant=='unreadable_board'
+                self.data['trackerBoardCapped']=plant=='capped_no_match'
+                self.save()
+                refused=json.loads(self.helper('resume','--session',self.session,success=False).stdout)
+                self.assertNotEqual(refused['outcome'],'Completed')
+                self.reload();self.assertEqual(self.data['trackerMutationCount'],2)
+                self.assertEqual(self.data['stampMutationCount'],{'12':1,'13':1})
+                self.assertEqual(len(self.data['mergeArgv']),2)
+                self.data['trackerBoardProjects']['project']=[foreign,*cards]
+                self.data['trackerBoardOutage']=False;self.data['trackerBoardCapped']=False;self.save()
+                self.assertEqual(json.loads(self.helper('resume','--session',self.session).stdout)['outcome'],'Completed')
+        self.reload()
+        self.assertEqual(self.data['trackerMutationProjectIds'],['project','project'])
+        self.assertEqual(self.data['trackerMutationCount'],2)
+        self.assertEqual(self.data['stampMutationCount'],{'12':1,'13':1})
         self.assertEqual(len(self.data['mergeArgv']),2)
 
     def test_release_pair_cross_repository_veto_preserves_unrelated_origin_branch(self):

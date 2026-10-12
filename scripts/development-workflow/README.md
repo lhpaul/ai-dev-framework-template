@@ -1261,7 +1261,11 @@ proven ancestors of that head.
 Known merged references in sibling product repositories are excluded from a
 shared hub Project's selected release; unknown owning PRs still defer admission.
 Recovery reads statuses from the frozen Project ID, regardless of current
-project configuration. Missing, malformed,
+project configuration. After exhausting an issue's Project connection without
+the owning card, paired read-back reuses the existing filtered board reader
+with the frozen Project ID and exact repository/issue join, without cached
+results. Unreadable or conflicting primary evidence is never replaced by a
+permissive board value. Missing, malformed,
 truncated or ambiguous evidence defers; current tag/Release timestamps are not
 required. Working-copy changelog edits cannot change reviewed scope.
 Read-only `--target-root <checkout>` keeps a selected linked release checkout

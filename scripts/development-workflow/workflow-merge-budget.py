@@ -1393,6 +1393,21 @@ def tracker_read(state, issue):
                 if not isinstance(status, dict) or not isinstance(status.get("name"), str) or not status["name"]:
                     raise Stop("frozen release project status unavailable")
                 statuses.add(status["name"])
+        if not statuses:
+            # Org boards can contain personal-repository issues absent from
+            # issue.projectItems. Reuse the owning exact repo/number join,
+            # without its short-lived cache, only after primary exhaustion.
+            try:
+                card = decode(call([sys.executable, str(SCRIPT / "workflow-project-reader.py"),
+                                    "--fallback", "--number", str(issue["id"]),
+                                    "--project-id", project_id, "--repo", issue["repo"], "--ttl", "0"]))
+            except Stop as exc:
+                raise Stop("frozen release project board fallback unavailable; restore owning card evidence before recovery") from exc
+            if (not isinstance(card, dict) or card.get("project_id") != project_id
+                    or not isinstance(card.get("item_id"), str) or not card["item_id"]
+                    or not isinstance(card.get("status"), str) or not card["status"]):
+                raise Stop("frozen release project board membership/status unavailable")
+            statuses.add(card["status"])
         if len(statuses) != 1:
             raise Stop("frozen release project membership missing or conflicting")
         return statuses == {issue["status"]}

@@ -35,6 +35,20 @@ if args[:2] == ['repo', 'view']:
     emit({'nameWithOwner': repository, 'owner': {'login': repository.split('/')[0]}, 'name': repository.split('/')[1]})
 if args[:2] == ['api', 'graphql']:
     query = next((a[6:] for a in args if a.startswith('query=')), '')
+    if any(a.startswith('selector=') for a in args):
+        if state.get('trackerBoardOutage'):
+            sys.exit(1)
+        project_id = next(a[10:] for a in args if a.startswith('projectId='))
+        selector = next(a[9:] for a in args if a.startswith('selector='))
+        number = re.search(r'Fixture issue #([1-9][0-9]*)', selector)[1]
+        state.setdefault('trackerReadRequests', []).append(['board', number, project_id])
+        cards = state.get('trackerBoardProjects', {}).get(project_id, [])
+        cards = [dict(card, status={'name': state.get('trackerStatuses', {}).get(number, 'Merged')})
+            for card in cards if str(card['content']['number']) == number]
+        save()
+        emit({'data': {'node': {'items': {'nodes': cards,
+            'pageInfo': {'hasNextPage': state.get('trackerBoardCapped', False),
+                         'endCursor': 'more' if state.get('trackerBoardCapped') else None}}}, 'rateLimit': {'cost': 1}}})
     if 'ReleaseBudgetItems' in query:
         if state.get('scopeOutage'):
             sys.exit(1)
@@ -81,9 +95,13 @@ if args[:2] == ['api', 'graphql']:
             'project': {'id': 'project', 'number': 1},
             'content': {'number': number, 'url': 'https://github.com/'+issue_repo+'/issues/'+str(number), 'repository': {'nameWithOwner': issue_repo}},
             'status': {'name': state.get('trackerStatuses', {}).get(str(number), state.get('trackerStatus', 'Plan Ready'))}}])
+        cursor = next((a[6:] for a in args if a.startswith('after=')), 'first')
+        page = state.get('projectCardPages', {}).get(str(number), {}).get(cursor,
+            {'nodes': cards, 'pageInfo': {'hasNextPage': False, 'endCursor': None}})
+        state.setdefault('trackerReadRequests', []).append(['primary', str(number), cursor])
+        save()
         emit({'data': {'repository': {'issue': {'projectItems': {
-            'nodes': cards,
-            'pageInfo': {'hasNextPage': False, 'endCursor': None}}}}, 'rateLimit': {'cost': 1}}})
+            **page}}}, 'rateLimit': {'cost': 1}}})
     if 'fields(' in query:
         emit({'data': {'node': {'fields': {'nodes': [{'id': 'field', 'name': 'Status', 'options': [{'id': 'merged', 'name': 'Merged'}, {'id': 'plan', 'name': 'Plan Ready'}, {'id': 'released', 'name': 'Released'}]}], 'pageInfo': {'hasNextPage': False, 'endCursor': None}}}}})
     if 'projectV2(' in query:
@@ -191,7 +209,8 @@ if args[:1] == ['api']:
     if match and '-X' not in args:
         if state.get('stampReadOutage'):
             sys.exit(1)
-        emit({'number': int(match[2]), 'state': 'closed', 'milestone': state.get('issueMilestones', {}).get(match[2])})
+        emit({'number': int(match[2]), 'title': 'Fixture issue #'+match[2], 'state': 'closed',
+              'milestone': state.get('issueMilestones', {}).get(match[2])})
     commit = re.fullmatch(r'repos/([^/]+/[^/]+)/git/commits/([0-9a-f]{40})', endpoint)
     if commit and commit[2] in state.get('gitCommits', {}):
         emit(state['gitCommits'][commit[2]])
