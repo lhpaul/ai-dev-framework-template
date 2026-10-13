@@ -93,7 +93,7 @@ class ReviewStructure(HTMLParser):
         self.stack = []
         self.source = source
         self.line_offsets = [0] + [match.end() for match in re.finditer(r"\n", source)]
-        self.valid = not re.search(r"<\s+/?\s*(?:h[1-6]|strong|b|em|span|p|div|summary|header)\b", source, re.I)
+        self.valid = True
 
     def handle_starttag(self, tag, attrs):
         # HTMLParser is tolerant of malformed attributes; the verdict is not.
@@ -124,8 +124,18 @@ class ReviewStructure(HTMLParser):
     def unknown_decl(self, data):
         self.valid = False  # Unsupported marked declarations are not evidence.
 
+    def source_tail(self):
+        line, column = self.getpos()
+        return self.source[self.line_offsets[line - 1] + column:]
+
     def handle_comment(self, data):
-        self.valid = False  # Normal comments were removed; this is bogus markup.
+        if not self.source_tail().startswith("<!--"):
+            self.valid = False  # Bogus declarations parsed as comments are invalid.
+
+    def handle_data(self, data):
+        # Inspect literal data positions, never quoted attributes or opaque comments.
+        if re.match(r"<\s+/?\s*(?:h[1-6]|strong|b|em|span|p|div|summary|header)\b", self.source_tail(), re.I):
+            self.valid = False
 
     def handle_decl(self, decl):
         if self.stack:
@@ -134,6 +144,15 @@ class ReviewStructure(HTMLParser):
     def handle_pi(self, data):
         if self.stack:
             self.valid = False
+
+
+def structurally_valid(body):
+    structure = ReviewStructure(body)
+    try:
+        structure.feed(body)
+    except (AssertionError, ValueError):
+        return False
+    return structure.valid and not structure.stack and not structure.rawdata.strip()
 
 
 class FocusLabels(HTMLParser):
@@ -248,18 +267,13 @@ def focus_labels(body):
 def classify(body):
     if not body:
         return "none"
-    # Persistent review-state JSON contains findings from superseded heads.
-    body = visible_review(body)
-    if body is None:
+    # Validate original markup before fences/inline code can hide invalid syntax.
+    # Proper HTML comments remain opaque to the parser and to verdict extraction.
+    if not structurally_valid(body):
         return "escalate"
-    # HTMLParser retains unfinished tags in rawdata even when they lack >.
-    # Validate every rendered review before trusting an earlier clean marker.
-    structure = ReviewStructure(body)
-    try:
-        structure.feed(body)
-    except (AssertionError, ValueError):
-        return "escalate"  # Malformed declarations must preserve the verdict contract.
-    if not structure.valid or structure.stack or structure.rawdata.strip():
+    body = visible_review(body)
+    # Sanitization must not create invalid markup from otherwise valid input.
+    if body is None or not structurally_valid(body):
         return "escalate"
     ticket_matches = list(re.finditer(r"^[ \t]*\*\*[^*\n]*Ticket compliance analysis[^*\n]*\*\*[ \t]*$|^### [^\n]*Ticket compliance analysis[^\n]*$|<strong>Ticket compliance analysis</strong>", body, re.M))
     if len(ticket_matches) > 1:

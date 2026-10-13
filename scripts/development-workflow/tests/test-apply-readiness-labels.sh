@@ -2391,9 +2391,9 @@ readiness_fixture_1946 legacy_truncated refused $'## PR Reviewer Guide\ncommit: 
 readiness_fixture_1946 tableless_unclosed_details refused $'## PR Reviewer Guide\ncommit: '"$HEAD"$'\n### Recommended focus areas for review\n<details><summary><strong>Possible Issue</strong></summary>\nAdvisory text\n'
 readiness_fixture_1946 indented_malformed_ticket refused $'## PR Reviewer Guide\ncommit: '"$HEAD"$'\n**Ticket compliance analysis ✅**\n**[42](url) - Fully compliant**\nCompliant requirements:\n- Done.\n  **[43](url) - Not compliant*\nNon-compliant requirements:\n- Missing.\n'
 readiness_fixture_1946 blank_focus_label refused $'## PR Reviewer Guide\ncommit: '"$HEAD"$'\n### Recommended focus areas for review\n<strong> </strong><br>Unknown issue.\n'
-readiness_fixture_1946 code_example_html labeled "${_ticket_body_1946}"$'```html\n<table><tr><td>Example only.\n```\n'
+readiness_fixture_1946 code_example_html refused "${_ticket_body_1946}"$'```html\n<table><tr><td>Example only.\n```\n'
 readiness_fixture_1946 code_example_not_verdict refused $'## PR Reviewer Guide\ncommit: '"$HEAD"$'\n```markdown\nNo major issues detected\n```\n'
-readiness_fixture_1946 inline_code_html labeled "${_ticket_body_1946}"$'Inline example: `<table><td>` is code, not layout.\n'
+readiness_fixture_1946 inline_code_html refused "${_ticket_body_1946}"$'Inline example: `<table><td>` is code, not layout.\n'
 readiness_fixture_1946 inline_code_not_verdict refused $'## PR Reviewer Guide\ncommit: '"$HEAD"$'\n`No major issues detected` is an example.\n'
 readiness_fixture_1946 mixed_empty_focus_label refused $'## PR Reviewer Guide\ncommit: '"$HEAD"$'\n### Recommended focus areas for review\n<strong>Possible Issue</strong><br>Advisory text.\n<strong></strong><br>Unknown issue.\n'
 readiness_fixture_1946 mixed_unclosed_focus_label refused $'## PR Reviewer Guide\ncommit: '"$HEAD"$'\n### Recommended focus areas for review\n<strong>Possible Issue</strong><br>Advisory text.\n<strong>Critical\n'
@@ -2452,6 +2452,44 @@ readiness_fixture_1946 scoped_human_no_colon refused "commit: $HEAD"$'\n## PR Re
 readiness_fixture_1946 scoped_human_colon refused "commit: $HEAD"$'\n## PR Reviewer Guide\n**Ticket compliance analysis ✅**\n**[42](url) - Fully compliant**\nCompliant requirements:\n- Requires further human verification:\n' reviewer-check-absent
 readiness_fixture_1946 scoped_human_rendered refused "commit: $HEAD"$'\n## PR Reviewer Guide\n**Ticket compliance analysis ✅**\n**[42](url) - Fully compliant**\nCompliant requirements:\n- Requires&nbsp;further <em>human</em> verification\n' reviewer-check-absent
 readiness_fixture_1946 scoped_partial_human_no_colon refused "commit: $HEAD"$'\n## PR Reviewer Guide\n**Ticket compliance analysis ✅**\n**[42](url) - Partially compliant**\nCompliant requirements:\n- Requires further human verification\n' reviewer-check-absent
+# The final raw-input guard runs before code-formatting sanitization.
+readiness_fixture_1946 raw_structure_h1_full refused "${_ticket_body_1946}"$'<h1 data-note=pre`bad`post>Reviewer notes</h1>\n' reviewer-check-absent
+readiness_fixture_1946 raw_structure_h1_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h1 data-note=pre`bad`post>Reviewer notes</h1>\n' reviewer-check-absent
+readiness_fixture_1946 raw_structure_h2_full refused "${_ticket_body_1946}"$'<h2 data-note=pre`bad`post>Reviewer notes</h2>\n' reviewer-check-absent
+readiness_fixture_1946 raw_structure_h2_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h2 data-note=pre`bad`post>Reviewer notes</h2>\n' reviewer-check-absent
+readiness_fixture_1946 raw_structure_h3_full refused "${_ticket_body_1946}"$'<h3 data-note=pre`bad`post>Reviewer notes</h3>\n' reviewer-check-absent
+readiness_fixture_1946 raw_structure_h3_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h3 data-note=pre`bad`post>Reviewer notes</h3>\n' reviewer-check-absent
+readiness_fixture_1946 raw_structure_h4_full refused "${_ticket_body_1946}"$'<h4 data-note=pre`bad`post>Reviewer notes</h4>\n' reviewer-check-absent
+readiness_fixture_1946 raw_structure_h4_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h4 data-note=pre`bad`post>Reviewer notes</h4>\n' reviewer-check-absent
+readiness_fixture_1946 raw_structure_h5_full refused "${_ticket_body_1946}"$'<h5 data-note=pre`bad`post>Reviewer notes</h5>\n' reviewer-check-absent
+readiness_fixture_1946 raw_structure_h5_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h5 data-note=pre`bad`post>Reviewer notes</h5>\n' reviewer-check-absent
+readiness_fixture_1946 raw_structure_h6_full refused "${_ticket_body_1946}"$'<h6 data-note=pre`bad`post>Reviewer notes</h6>\n' reviewer-check-absent
+readiness_fixture_1946 raw_structure_h6_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h6 data-note=pre`bad`post>Reviewer notes</h6>\n' reviewer-check-absent
+readiness_fixture_1946 raw_structure_strong_full refused "${_ticket_body_1946}"$'<strong data-note=pre`bad`post>Reviewer notes</strong>\n' reviewer-check-absent
+readiness_fixture_1946 raw_structure_strong_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<strong data-note=pre`bad`post>Reviewer notes</strong>\n' reviewer-check-absent
+readiness_fixture_1946 raw_structure_b_full refused "${_ticket_body_1946}"$'<b data-note=pre`bad`post>Reviewer notes</b>\n' reviewer-check-absent
+readiness_fixture_1946 raw_structure_b_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<b data-note=pre`bad`post>Reviewer notes</b>\n' reviewer-check-absent
+readiness_fixture_1946 raw_structure_span_full refused "${_ticket_body_1946}"$'<span data-note=pre`bad`post>Reviewer notes</span>\n' reviewer-check-absent
+readiness_fixture_1946 raw_structure_span_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<span data-note=pre`bad`post>Reviewer notes</span>\n' reviewer-check-absent
+readiness_fixture_1946 raw_structure_p_full refused "${_ticket_body_1946}"$'<p data-note=pre`bad`post>Reviewer notes</p>\n' reviewer-check-absent
+readiness_fixture_1946 raw_structure_p_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<p data-note=pre`bad`post>Reviewer notes</p>\n' reviewer-check-absent
+readiness_fixture_1946 raw_structure_div_full refused "${_ticket_body_1946}"$'<div data-note=pre`bad`post>Reviewer notes</div>\n' reviewer-check-absent
+readiness_fixture_1946 raw_structure_div_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<div data-note=pre`bad`post>Reviewer notes</div>\n' reviewer-check-absent
+readiness_fixture_1946 raw_structure_fenced_bad_attribute_full refused "${_ticket_body_1946}"$'```html\n<h3 data-note=pre`bad`post>Reviewer notes</h3>\n```\n' reviewer-check-absent
+readiness_fixture_1946 raw_structure_fenced_bad_attribute_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'```html\n<h3 data-note=pre`bad`post>Reviewer notes</h3>\n```\n' reviewer-check-absent
+readiness_fixture_1946 raw_structure_inline_bad_attribute_full refused "${_ticket_body_1946}"$'``<h3 data-note=pre`bad`post>Reviewer notes</h3>``\n' reviewer-check-absent
+readiness_fixture_1946 raw_structure_inline_bad_attribute_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'``<h3 data-note=pre`bad`post>Reviewer notes</h3>``\n' reviewer-check-absent
+readiness_fixture_1946 raw_structure_fenced_unclosed_full refused "${_ticket_body_1946}"$'```html\n<h3>Reviewer notes\n```\n' reviewer-check-absent
+readiness_fixture_1946 raw_structure_fenced_unclosed_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'```html\n<h3>Reviewer notes\n```\n' reviewer-check-absent
+readiness_fixture_1946 raw_structure_inline_unclosed_full refused "${_ticket_body_1946}"$'`<h3>Reviewer notes`\n' reviewer-check-absent
+readiness_fixture_1946 raw_structure_inline_unclosed_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'`<h3>Reviewer notes`\n' reviewer-check-absent
+readiness_fixture_1946 raw_structure_quoted_backticks labeled "${_ticket_body_1946}"$'<h3 data-note="pre`bad`post">Reviewer notes</h3>\n'
+readiness_fixture_1946 raw_structure_quoted_spaced_literal labeled "${_ticket_body_1946}"$'<h3 title="< h3">Reviewer notes</h3>\n'
+readiness_fixture_1946 raw_structure_opaque_history labeled "${_ticket_body_1946}"$'<!-- <h3 data-note=pre`bad`post>old malformed sample -->\n'
+readiness_fixture_1946 raw_structure_opaque_spaced_literal labeled "${_ticket_body_1946}"$'<!-- < h3>old malformed sample -->\n'
+readiness_fixture_1946 raw_structure_complete_fenced labeled "${_ticket_body_1946}"$'```html\n<h3>Recommended focus areas for review</h3><strong>Critical</strong>\n```\n'
+readiness_fixture_1946 raw_structure_complete_inline labeled "${_ticket_body_1946}"$'`<h3>Recommended focus areas for review</h3><strong>Critical</strong>`\n'
+readiness_fixture_1946 raw_structure_ordinary_inline labeled "${_ticket_body_1946}"$'Use `known_helper()` for this operation.\n'
 # Malformed HTML headers/children cannot hide behind compliant evidence.
 readiness_fixture_1946 html_structure_unknown_decl_full refused "${_ticket_body_1946}"$'<h3><![invalid[header]]></h3>\n' reviewer-check-absent
 readiness_fixture_1946 html_structure_unknown_decl_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h3><![invalid[header]]></h3>\n' reviewer-check-absent
@@ -2530,7 +2568,7 @@ readiness_fixture_1946 html_structure_valid_voids labeled "${_ticket_body_1946}"
 readiness_fixture_1946 html_structure_closed_focus refused "${_ticket_body_1946}"$'<h3>Recommended focus areas for review</h3><strong>Critical</strong>\n' blocking-findings needs_fixes
 readiness_fixture_1946 html_structure_escaped_literal labeled "${_ticket_body_1946}"$'&lt; h3&gt; is a literal example.\n'
 readiness_fixture_1946 html_structure_hidden labeled "${_ticket_body_1946}"$'<!-- <h3>Reviewer notes -->\n'
-readiness_fixture_1946 html_structure_fenced labeled "${_ticket_body_1946}"$'```html\n<h3>Reviewer notes\n```\n'
+readiness_fixture_1946 html_structure_fenced refused "${_ticket_body_1946}"$'```html\n<h3>Reviewer notes\n```\n'
 # Hard focus blockers override compliant tickets, even with heading prefixes.
 readiness_fixture_1946 focus_hard_h3_bare_full refused "${_ticket_body_1946}"$'<h3>Recommended focus areas for review</h3>\n<strong>Critical</strong>\n' blocking-findings needs_fixes
 readiness_fixture_1946 focus_hard_h3_bare_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h3>Recommended focus areas for review</h3>\n<strong>Critical</strong>\n' blocking-findings needs_fixes
