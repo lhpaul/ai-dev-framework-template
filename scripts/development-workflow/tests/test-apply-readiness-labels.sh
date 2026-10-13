@@ -2347,18 +2347,53 @@ MOCK_ISSUE_COMMENTS='[{"user":{"login":"github-actions[bot]"},"created_at":"2026
 result="$(run_helper_platform "$_codex_config")"
 run_test "pr_agent_clean_comment_labels_result" "labeled" "$(field "$result" RESULT)"
 # Planted failing case 2: a hard-blocker focus label refuses.
-MOCK_ISSUE_COMMENTS='[{"user":{"login":"github-actions[bot]"},"created_at":"2026-01-08T00:00:00Z","id":921,"body":"## PR Reviewer Guide\n\ncommit: '"$HEAD"'\n### Recommended focus areas for review\n<td><tr><strong>Security Concern</strong></td></tr>"}]'
+MOCK_ISSUE_COMMENTS='[{"user":{"login":"github-actions[bot]"},"created_at":"2026-01-08T00:00:00Z","id":921,"body":"## PR Reviewer Guide\n\ncommit: '"$HEAD"'\n### Recommended focus areas for review\n<tr><td><strong>Security Concern</strong></td></tr>"}]'
 result="$(run_helper_platform "$_codex_config")"
 run_test "pr_agent_hard_blocker_comment_refuses_reason" "blocking-findings" "$(field "$result" REASON)"
 run_test "pr_agent_hard_blocker_comment_no_label" "0" "$(grep -c 'add-label ready-for-human-review' "$_LABEL_LOG" || true)"
 # Advisory-only labels stay clean (the loop's advisory rule).
-MOCK_ISSUE_COMMENTS='[{"user":{"login":"github-actions[bot]"},"created_at":"2026-01-08T00:00:00Z","id":922,"body":"## PR Reviewer Guide\n\ncommit: '"$HEAD"'\n### Recommended focus areas for review\n<td><tr><strong>Possible Issue</strong></td></tr>"}]'
+MOCK_ISSUE_COMMENTS='[{"user":{"login":"github-actions[bot]"},"created_at":"2026-01-08T00:00:00Z","id":922,"body":"## PR Reviewer Guide\n\ncommit: '"$HEAD"'\n### Recommended focus areas for review\n<tr><td><strong>Possible Issue</strong></td></tr>"}]'
 result="$(run_helper_platform "$_codex_config")"
 run_test "pr_agent_advisory_comment_labels_result" "labeled" "$(field "$result" RESULT)"
 # No matching comment → fail closed.
 MOCK_ISSUE_COMMENTS='[]'
 result="$(run_helper_platform "$_codex_config")"
 run_test "pr_agent_no_comment_refuses_reason" "reviewer-check-absent" "$(field "$result" REASON)"
+
+# #1946: the readiness adapter must agree with the loop for complete current
+# ticket reviews, and refuse truncated, ambiguous or historically clean ones.
+_ticket_body_1946=$'## PR Reviewer Guide\ncommit: '"$HEAD"$'\n<table>\n<tr><td>\n**🎫 Ticket compliance analysis ✅**\n**[42](https://example.test/issues/42) - Fully compliant**\nCompliant requirements:\n- All required behavior is implemented.\n</td></tr>\n</table>\n'
+readiness_fixture_1946() {
+  local name="$1" expected="$2" body="$3" output
+  MOCK_ISSUE_COMMENTS="$(jq -nc --arg body "$body" '[{user:{login:"github-actions[bot]"},created_at:"2026-01-08T00:00:00Z",id:923,body:$body}]')"
+  output="$(run_helper_platform "$_codex_config")"
+  run_test "1946_${name}_readiness" "$expected" "$(field "$output" RESULT)"
+  if [ "$expected" = refused ]; then
+    run_test "1946_${name}_no_readiness_write" "0" "$(grep -c 'add-label ready-for-human-review' "$_LABEL_LOG" || true)"
+  fi
+}
+readiness_fixture_1946 complete labeled "$_ticket_body_1946"
+readiness_fixture_1946 partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"
+readiness_fixture_1946 human_verification refused "${_ticket_body_1946/Fully compliant/PR Code Verified}"
+readiness_fixture_1946 truncated refused "${_ticket_body_1946%</table>*}"
+readiness_fixture_1946 unknown refused $'## PR Reviewer Guide\ncommit: '"$HEAD"$'\n**Ticket compliance analysis ✅**\n'
+readiness_fixture_1946 hidden_clean refused $'## PR Reviewer Guide\ncommit: '"$HEAD"$'\n<!-- pr-agent-review-state:v1\n{"body":"No major issues detected"}\n-->\n'
+readiness_fixture_1946 hidden_blocker labeled "${_ticket_body_1946}"$'<!-- pr-agent-review-state:v1\n{"body":"Recommended focus areas for review\n<strong>Critical</strong>"}\n-->\n'
+readiness_fixture_1946 hidden_current_head refused $'## PR Reviewer Guide\ncommit: stalehead\nNo major issues detected\n<!-- pr-agent-review-state:v1\n{"last_seen_head_sha":"'"$HEAD"$'"}\n-->\n'
+readiness_fixture_1946 visible_current_marker labeled "${_ticket_body_1946/commit: $HEAD/#### (Review updated until commit https:\/\/github.com\/owner\/repo\/commit\/$HEAD)}"
+readiness_fixture_1946 empty_markdown_analysis refused $'## PR Reviewer Guide\ncommit: '"$HEAD"$'\n**Ticket compliance analysis ✅**\n**[42](url) - Fully compliant**\nCompliant requirements:\n\n---\n'
+readiness_fixture_1946 malformed_second_ticket refused "${_ticket_body_1946/<\/td>/$'**[43](url) - Not compliant*\n</td>'}"
+readiness_fixture_1946 legacy_truncated refused $'## PR Reviewer Guide\ncommit: '"$HEAD"$'\n<table>\n<tr><td>Recommended focus areas for review\n<strong>Possible Issue</strong>\n'
+readiness_fixture_1946 tableless_unclosed_details refused $'## PR Reviewer Guide\ncommit: '"$HEAD"$'\n### Recommended focus areas for review\n<details><summary><strong>Possible Issue</strong></summary>\nAdvisory text\n'
+readiness_fixture_1946 indented_malformed_ticket refused $'## PR Reviewer Guide\ncommit: '"$HEAD"$'\n**Ticket compliance analysis ✅**\n**[42](url) - Fully compliant**\nCompliant requirements:\n- Done.\n  **[43](url) - Not compliant*\nNon-compliant requirements:\n- Missing.\n'
+readiness_fixture_1946 blank_focus_label refused $'## PR Reviewer Guide\ncommit: '"$HEAD"$'\n### Recommended focus areas for review\n<strong> </strong><br>Unknown issue.\n'
+readiness_fixture_1946 code_example_html labeled "${_ticket_body_1946}"$'```html\n<table><tr><td>Example only.\n```\n'
+readiness_fixture_1946 code_example_not_verdict refused $'## PR Reviewer Guide\ncommit: '"$HEAD"$'\n```markdown\nNo major issues detected\n```\n'
+readiness_fixture_1946 inline_code_html labeled "${_ticket_body_1946}"$'Inline example: `<table><td>` is code, not layout.\n'
+readiness_fixture_1946 inline_code_not_verdict refused $'## PR Reviewer Guide\ncommit: '"$HEAD"$'\n`No major issues detected` is an example.\n'
+MOCK_ISSUE_COMMENTS='[]'
+unset _ticket_body_1946
+unset -f readiness_fixture_1946
 
 # coderabbit-cli / local-ai-reviewer (PRRT_kwDORWAxaM6m260s): these
 # reviewers are pure CLI (no check run, no review, no issue comment), so

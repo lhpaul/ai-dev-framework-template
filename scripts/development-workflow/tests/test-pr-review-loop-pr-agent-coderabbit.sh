@@ -1930,6 +1930,95 @@ unset _sha_a _sha_b _sha_a_upper _sha_abbrev _sha_39 _sha_41 _sha_non_hex _unkno
 unset _1648_render _1648_json _1648_legacy_payload _1648_carry_capture
 
 # ---------------------------------------------------------------------------
+# Area 1946: PR-Agent legacy and ticket-compliance review fixtures
+# ---------------------------------------------------------------------------
+echo ""
+echo "=== Area 1946: PR-Agent review format fixtures ==="
+
+# Fixtures are inline to keep the Fast Track exception scoped to the existing
+# suites. These exercise the actual acquisition and classification path, with
+# the visible current-head marker used by PR-Agent, not just a regex in a test.
+_fixture_dir_1946="$(mktemp -d)"
+cat > "$_fixture_dir_1946/gh" <<'GH1946'
+#!/usr/bin/env bash
+case "$*" in
+  *"--jq .head.sha"*) printf '%s\n' 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' ;;
+  *"--jq .commit.committer.date"*) printf '%s\n' '2020-01-01T00:00:00Z' ;;
+  *"issues/42/comments"*)
+    jq -nc --arg body "$PR_AGENT_FIXTURE_BODY" '[{user:{login:"github-actions[bot]"},updated_at:"2020-01-01T00:00:02Z",body:$body}]' ;;
+  *) printf '[]\n' ;;
+esac
+GH1946
+chmod +x "$_fixture_dir_1946/gh"
+_fixture_header_1946=$'## PR Reviewer Guide 🔍\n#### (Review updated until commit https://github.com/owner/repo/commit/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa)\n'
+_fixture_ticket_1946=$'<table>\n<tr><td>\n**🎫 Ticket compliance analysis ✅**\n\n**[42](https://example.test/issues/42) - Fully compliant**\n\nCompliant requirements:\n\n- All required behavior is implemented.\n\n</td></tr>\n</table>\n'
+_fixture_focus_1946=$'### Recommended focus areas for review\n<strong>Possible Issue</strong><br>A path with spaces, *glob* and tabs\tremains quoted.\n'
+
+fixture_test_1946() {
+  local name="$1" expected="$2" body="$3" output verdict loop_expected="${4:-$2}"
+  # The pure classifier has no environment prerequisites or remote effects.
+  verdict="$(printf '%s' "$body" | bash "$REPO_ROOT/scripts/development-workflow/apply-readiness-labels.sh" --classify-pr-agent)"
+  run_test "1946_${name}_classifier" "$expected" "$verdict"
+  output="$(PATH="$_fixture_dir_1946:$PATH" PR_AGENT_FIXTURE_BODY="${_fixture_header_1946}${body}" \
+    run_pr_agent_review 42 feature/42-test 1 0 || true)"
+  case "$loop_expected" in
+    none) loop_expected=escalate ;;
+  esac
+  run_test "1946_${name}_loop" "RESULT=$loop_expected" "$(printf '%s\n' "$output" | grep '^RESULT=')"
+}
+
+fixture_test_1946 legacy_clean clean 'No major issues detected'
+fixture_test_1946 legacy_advisory clean "$_fixture_focus_1946"
+fixture_test_1946 legacy_blocker needs_fixes "${_fixture_focus_1946/Possible Issue/Security Concern}"
+fixture_test_1946 ticket_clean clean "$_fixture_ticket_1946"
+fixture_test_1946 ticket_partial needs_fixes "${_fixture_ticket_1946/Fully compliant/Partially compliant}"
+fixture_test_1946 ticket_not_compliant needs_fixes "${_fixture_ticket_1946/Fully compliant/Not compliant}"
+fixture_test_1946 ticket_human_verification escalate "${_fixture_ticket_1946/Fully compliant/PR Code Verified}"
+fixture_test_1946 ticket_unknown_status escalate "${_fixture_ticket_1946/Fully compliant/Unknown status}"
+fixture_test_1946 ticket_missing_analysis escalate $'**Ticket compliance analysis ✅**\n**[42](url) - Fully compliant**\n'
+fixture_test_1946 ticket_truncated escalate "${_fixture_ticket_1946%</table>*}"
+fixture_test_1946 heading_only escalate '## PR Reviewer Guide'
+fixture_test_1946 ticket_heading_only escalate $'## PR Reviewer Guide\n**Ticket compliance analysis ✅**\n'
+fixture_test_1946 blank escalate $' \t\n'
+fixture_test_1946 empty none ''
+fixture_test_1946 unknown escalate 'Review completed successfully'
+fixture_test_1946 empty_focus needs_fixes $'### Recommended focus areas for review\nNo parseable labels\n'
+fixture_test_1946 key_issues_advisory clean "${_fixture_ticket_1946}${_fixture_focus_1946/Recommended focus areas for review/Key issues to review}"
+fixture_test_1946 ticket_security needs_fixes "${_fixture_ticket_1946}"$'<tr><td><strong>Security concerns</strong><br>Unsafe input execution.</td></tr>\n'
+fixture_test_1946 ticket_no_security clean "${_fixture_ticket_1946}"$'<tr><td><strong>Security concerns</strong><br>No security concerns identified.</td></tr>\n'
+fixture_test_1946 ticket_blocker needs_fixes "${_fixture_ticket_1946}${_fixture_focus_1946/Possible Issue/Critical}"
+fixture_test_1946 ticket_empty_focus escalate "${_fixture_ticket_1946}"$'### Key issues to review\n'
+fixture_test_1946 contradictory_legacy needs_fixes "No major issues detected"$'\n'"${_fixture_focus_1946/Possible Issue/Must Fix}"
+fixture_test_1946 hidden_old_clean escalate $'## PR Reviewer Guide\n<!-- pr-agent-review-state:v1\n{"body":"No major issues detected"}\n-->\n'
+fixture_test_1946 hidden_old_blocker clean "${_fixture_ticket_1946}"$'<!-- pr-agent-review-state:v1\n{"body":"Recommended focus areas for review\n<strong>Critical</strong>"}\n-->\n'
+# Acquisition deliberately rejects a marker hidden by an unterminated comment;
+# no bound summary is available. The pure parser still refuses that content.
+fixture_test_1946 unfinished_history escalate "${_fixture_ticket_1946}"$'<!-- pr-agent-review-state:v1\n' skipped
+fixture_test_1946 multiple_tickets_blocker needs_fixes $'**Ticket compliance analysis 🔶**\n**[42](url) - Fully compliant**\nCompliant requirements:\n- Implemented.\n**[43](url) - Not compliant**\nNon-compliant requirements:\n- Missing behavior.\n'
+fixture_test_1946 downstream_truncated escalate $'<table>\n<tr><td>\n**🎫 Ticket compliance analysis 🔶**\n**[42](url) - Partially compliant**\nCompliant requirements:\n- Guard provider.cancelSubscription against preapprovals holding an active lifecycle state (visible in subscription-ch...\n'
+fixture_test_1946 legacy_truncated escalate $'<table>\n<tr><td>Recommended focus areas for review\n<details><summary><strong>Possible Issue</strong></summary>\nAdvisory text\n'
+fixture_test_1946 empty_markdown_analysis escalate $'**Ticket compliance analysis ✅**\n**[42](url) - Fully compliant**\nCompliant requirements:\n\n---\n'
+fixture_test_1946 malformed_second_ticket escalate $'**Ticket compliance analysis ✅**\n**[42](url) - Fully compliant**\nCompliant requirements:\n- Implemented.\n**[43](url) - Not compliant*\nNon-compliant requirements:\n- Missing.\n'
+fixture_test_1946 nested_focus_table escalate $'<table>\n<tr><td>Recommended focus areas for review\n<table>\n<tr><td><strong>Possible Issue</strong></td><td>Advice.</td></tr>\n<tr><td><strong>Critical</strong></td><td>Unsafe.</td></tr>\n</table>\n</td></tr>\n</table>\n'
+fixture_test_1946 misnested_html escalate $'<table>\n<tr><td>\n**Ticket compliance analysis ✅**\n**[42](url) - Fully compliant**\nCompliant requirements:\n- Implemented.\n</tr></td>\n</table>\n'
+fixture_test_1946 tableless_unclosed_details escalate $'### Recommended focus areas for review\n<details><summary><strong>Possible Issue</strong></summary>\nAdvisory text\n'
+fixture_test_1946 indented_malformed_ticket escalate $'**Ticket compliance analysis ✅**\n**[42](url) - Fully compliant**\nCompliant requirements:\n- Done.\n  **[43](url) - Not compliant*\nNon-compliant requirements:\n- Missing.\n'
+fixture_test_1946 blank_focus_label escalate $'### Recommended focus areas for review\n<strong> </strong><br>Unknown issue.\n'
+fixture_test_1946 code_example_html clean "${_fixture_ticket_1946}${_fixture_focus_1946}"$'```html\n<table><tr><td>Example only.\n```\n'
+fixture_test_1946 code_example_not_verdict escalate $'## PR Reviewer Guide\n```markdown\nNo major issues detected\n```\n'
+fixture_test_1946 unfinished_code_fence escalate "${_fixture_ticket_1946}"$'```html\n<table>\n'
+fixture_test_1946 inline_code_html clean "${_fixture_ticket_1946}"$'Inline example: `<table><td>` is code, not layout.\n'
+fixture_test_1946 inline_code_not_verdict escalate '## PR Reviewer Guide: `No major issues detected` is an example.'
+# Define the nested advisory helpers in this shell via one mocked review.
+PATH="$_fixture_dir_1946:$PATH" PR_AGENT_FIXTURE_BODY="${_fixture_header_1946}${_fixture_ticket_1946}" \
+  run_pr_agent_review 42 feature/42-test 1 0 >/dev/null
+run_test 1946_current_advisories_only '' "$(_pr_agent_extract_advisory_labels "${_fixture_ticket_1946}"$'<!-- pr-agent-review-state:v1\nRecommended focus areas for review\n<strong>Possible Issue</strong>\n-->\n')"
+run_test 1946_new_focus_advisory_labels 'Possible Issue' "$(_pr_agent_extract_advisory_labels "${_fixture_focus_1946/Recommended focus areas for review/Key issues to review}")"
+rm -rf "$_fixture_dir_1946"
+unset _fixture_dir_1946 _fixture_header_1946 _fixture_ticket_1946 _fixture_focus_1946
+unset -f fixture_test_1946
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 echo ""

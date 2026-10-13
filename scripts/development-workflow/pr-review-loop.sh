@@ -5814,8 +5814,8 @@ run_devin_review() {
 run_pr_agent_review() {
   # PR-Agent posts all review output as plain PR issue comments — it does NOT submit
   # formal GitHub PR reviews (APPROVED/CHANGES_REQUESTED/COMMENTED). The summary
-  # comment always contains "PR Reviewer Guide" in its body. Two stable body markers
-  # distinguish clean from has-issues:
+  # comment always contains "PR Reviewer Guide" in its body. Legacy body markers
+  # and current ticket-compliance analysis distinguish clean from has-issues:
   #   "No major issues detected"                                → clean
   #   "Recommended focus areas for review" → may or may not be blocking (see below)
   #
@@ -6190,23 +6190,10 @@ _PR_AGENT_RULE_B_CANDIDATES_
     return 0
   }
 
-  # Extract <strong>LABEL</strong> tokens from the "Recommended focus areas for
-  # review" section of a PR-Agent comment body.
-  # Returns newline-delimited label strings (empty when section is absent or
-  # yields no tokens). Shared by _pr_agent_extract_advisory_labels and
-  # _pr_agent_classify to avoid duplicating the awk/grep/sed pipeline.
+  # Extract current visible focus labels for advisory handling. Historical
+  # state must not cause a fixer dispatch after the current review is clean.
   _pr_agent_extract_focus_labels() {
-    local body="$1"
-    if ! printf '%s\n' "$body" | grep -qF "Recommended focus areas for review"; then
-      return
-    fi
-    printf '%s\n' "$body" \
-      | awk '/Recommended focus areas for review/{found=1; next}
-             found && /^[[:space:]]*(\*\*|<\/td>|<tr>)|^---$/{found=0}
-             found{print}' \
-      | grep -oE '<strong>[^<]+</strong>' \
-      | sed 's|<strong>||g;s|</strong>||g;s|^[[:space:]]*||;s|[[:space:]]*$||' \
-      || true
+    printf '%s' "$1" | bash "$SCRIPT_DIR/apply-readiness-labels.sh" --pr-agent-focus-labels
   }
 
   # Extract advisory (non-blocking) labels from a PR-Agent comment body.
@@ -6298,59 +6285,14 @@ _EXTRACT_POSSIBLE_ISSUE_LABELS_
   }
 
   _pr_agent_classify() {
-    local body="$1"
-    local label label_lower labels
-    if [ -z "$body" ]; then
-      printf 'none'
-    elif printf '%s\n' "$body" | grep -q "No major issues detected"; then
-      printf 'clean'
-    elif printf '%s\n' "$body" | grep -q "Recommended focus areas for review"; then
-      # Inspect every bold label in the section to classify.
-      # Labels are lowercased before matching (case-insensitive — PR-Agent
-      # sometimes varies capitalisation across runs).
-      #   - Hard-blocker / security / compatibility labels → needs_fixes immediately
-      #     (critical, must fix, breaking change, security concern,
-      #      api change, backward compatibility)
-      #   - All other labels → non-blocking (advisory).
-      #     PR-Agent uses a wide variety of quality labels (Race Condition, Logic Error,
-      #     Inconsistent Error Handling, Performance Concern, Possible Issue, etc.)
-      #     that are advisory in nature. Security-critical concerns are always
-      #     labelled one of the hard-blocker patterns above by PR-Agent.
-      #   - If no labels are parseable → needs_fixes (unreadable format — conservative)
-      labels="$(_pr_agent_extract_focus_labels "$body")"
-      if [ -z "$labels" ]; then
-        # No finding-label tokens found — treat as unknown/unreadable, be conservative.
-        printf 'needs_fixes'
-        return
-      fi
-      while IFS= read -r label; do
-        [ -z "$label" ] && continue
-        # Normalize to lowercase for case-insensitive matching.
-        # PR-Agent occasionally varies label capitalisation across runs.
-        label_lower="$(printf '%s' "$label" | tr '[:upper:]' '[:lower:]')"
-        case "$label_lower" in
-          critical|"must fix"|"breaking change"|"security concern"|"api change"|"backward compatibility")
-            # Hard-blocker or security/compatibility concern — block immediately.
-            printf 'needs_fixes'
-            return
-            ;;
-          *)
-            # All other labels are treated as advisory-only (non-blocking).
-            # PR-Agent uses a wide variety of quality/style labels (Race Condition,
-            # Logic Error, Inconsistent Error Handling, Performance Concern, etc.)
-            # that represent code-quality suggestions, not security/breaking issues.
-            # Security-critical concerns are always separately labelled one of the
-            # hard-blocker patterns above.
-            ;;
-        esac
-      done <<_PR_AGENT_LABELS_
-$labels
-_PR_AGENT_LABELS_
-      # No hard-blocker label was found — all labels are advisory.
-      printf 'clean'
-    else
+    # Readiness and the loop must interpret the same visible review, including
+    # ticket compliance. The pure classifier mode performs no remote operation.
+    local verdict
+    if ! verdict="$(printf '%s' "$1" | bash "$SCRIPT_DIR/apply-readiness-labels.sh" --classify-pr-agent)"; then
       printf 'escalate'
+      return
     fi
+    printf '%s' "$verdict"
   }
 
   # --- Phase 1: Check for an existing PR-Agent summary comment on this HEAD ---

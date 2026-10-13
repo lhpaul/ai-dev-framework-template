@@ -49,13 +49,161 @@
 # rule as `run_bugbot_review()` (pr-review-loop.sh ~3838).
 set -euo pipefail
 
+# Pure stdin classifier shared with pr-review-loop.sh (#1946). Keeping this
+# entry before workflow setup lets both callers use one verdict contract without
+# loading another command runner or performing any GitHub operation.
+classify_pr_agent_review() {
+  python3 -c '
+import re
+import sys
+from html.parser import HTMLParser
+
+body = sys.stdin.read()
+blockers = {"critical", "must fix", "breaking change", "security concern",
+            "api change", "backward compatibility"}
+
+class ReviewStructure(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.stack = []
+        self.valid = True
+
+    def handle_starttag(self, tag, attrs):
+        if tag in {"table", "tr", "td", "details", "summary"}:
+            if tag == "table" and tag in self.stack:
+                self.valid = False  # Unknown nested-table rendering.
+            self.stack.append(tag)
+
+    def handle_endtag(self, tag):
+        if tag in {"table", "tr", "td", "details", "summary"}:
+            if not self.stack or self.stack.pop() != tag:
+                self.valid = False
+
+
+def visible_review(body):
+    if body.count("<!--") != body.count("-->"):
+        return None
+    body = re.sub(r"<!--[\s\S]*?-->", "", body)
+    # Code examples are not review metadata or HTML layout. PR-Agent uses
+    # variable-length fences when examples themselves contain backticks.
+    lines = []
+    fence = None
+    for line in body.splitlines():
+        marker = re.match(r"^[ \t]*(`{3,}|~{3,})", line)
+        if marker:
+            token = marker.group(1)
+            if fence is None:
+                fence = token
+            elif token[0] == fence[0] and len(token) >= len(fence):
+                fence = None
+            continue
+        if fence is None:
+            lines.append(line)
+    if fence is not None:
+        return None
+    return "\n".join(re.sub(r"(`+)[^`]*?\1", "", line) for line in lines)
+
+
+def focus_labels(body):
+    focus = re.search(r"(?:Recommended focus areas for review|Key issues to review)[^\n]*\n([\s\S]*?)(?=</td>|^### |^---$|\Z)", body, re.M)
+    if focus is None:
+        return None
+    return [(html or markdown).strip() for html, markdown in re.findall(r"<strong>([^<]+)</strong>|\*\*([^*\n]+)\*\*", focus.group(1))]
+
+
+def classify(body):
+    if not body:
+        return "none"
+    # Persistent review-state JSON contains findings from superseded heads.
+    body = visible_review(body)
+    if body is None:
+        return "escalate"
+    ticket = "Ticket compliance analysis" in body
+    if ticket or re.search(r"</?(?:table|tr|td|details|summary)(?:\s|>)", body, re.I):
+        # Reject malformed or cut-off HTML before trusting any clean marker,
+        # including legacy guides. Bare legacy focus fixtures need no table.
+        structure = ReviewStructure()
+        structure.feed(body)
+        if not structure.valid or structure.stack:
+            return "escalate"
+    if ticket:
+        section = re.split(r"Ticket compliance analysis[^\n]*\n", body, maxsplit=1)[-1]
+        section = re.split(r"</td>|^### ", section, maxsplit=1, flags=re.M)[0]
+        tickets = re.findall(r"\*\*(?:\[[^\]\n]+\]\([^\n]*?\)|Untracked ticket) - ([^*\n]+)\*\*([\s\S]*?)(?=\*\*(?:\[|Untracked ticket)|\Z)", section)
+        candidates = re.findall(r"^[ \t]*\*\*(?:\[|Untracked ticket)", section, re.M)
+        if not tickets or len(tickets) != len(candidates):
+            return "escalate"
+        verdicts = []
+        for level, requirements in tickets:
+            level = level.strip().lower()
+            if level not in {"fully compliant", "partially compliant", "not compliant", "pr code verified"}:
+                return "escalate"
+            # A status heading without its analysis is incomplete.
+            analyses = re.findall(r"(?:Compliant requirements|Non-compliant requirements|Requires further human verification):([\s\S]*?)(?=(?:Compliant requirements|Non-compliant requirements|Requires further human verification):|\Z)", requirements)
+            if not analyses or any(not re.sub(r"[\s*#_`-]", "", re.sub(r"<[^>]*>", "", analysis)) for analysis in analyses):
+                return "escalate"
+            if level in {"partially compliant", "not compliant"} or "Non-compliant requirements:" in requirements:
+                verdicts.append("needs_fixes")
+            elif level == "pr code verified" or "Requires further human verification:" in requirements:
+                verdicts.append("escalate")
+            else:
+                verdicts.append("clean")
+        if "needs_fixes" in verdicts:
+            return "needs_fixes"
+        if "escalate" in verdicts:
+            return "escalate"
+    # An explicit security section cannot be overridden by clean compliance.
+    security = re.search(r"(?:<strong>Security concerns</strong>|^### [^\n]*Security concerns)[ :]*(?:<br>)*([\s\S]*?)(?=</td>|^### |\Z)", body, re.M | re.I)
+    if security:
+        value = re.sub(r"<[^>]*>", "", security.group(1)).strip()
+        if not re.fullmatch(r"(?:No security concerns (?:identified|detected)|No|None|False)[.]?", value, re.I):
+            return "needs_fixes"
+    # Both rendered focus headings use the same hard-blocker/advisory labels.
+    labels = focus_labels(body)
+    if labels is not None:
+        labels = [label.lower() for label in labels]
+        if any(not label for label in labels):
+            return "escalate"
+        if not labels:
+            return "escalate" if ticket else "needs_fixes"
+        if any(label in blockers for label in labels):
+            return "needs_fixes"
+        return "clean"
+    if "Key issues to review" in body or "Recommended focus areas for review" in body:
+        return "escalate"
+    if ticket or "No major issues detected" in body:
+        return "clean"
+    return "escalate"
+
+if sys.argv[1] == "labels":
+    visible = visible_review(body)
+    if visible is not None:
+        print("\n".join(focus_labels(visible) or []), end="")
+else:
+    print(classify(body), end="")
+' "${1:-verdict}"
+}
+
+case "${1:-}" in
+  --classify-pr-agent|--pr-agent-focus-labels)
+    [ "$#" -eq 1 ] || { echo "Usage: apply-readiness-labels.sh --classify-pr-agent|--pr-agent-focus-labels < review.txt" >&2; exit 64; }
+    if [ "$1" = --pr-agent-focus-labels ]; then
+      classify_pr_agent_review labels
+    else
+      classify_pr_agent_review
+    fi
+    exit 0
+    ;;
+esac
+
 SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)"
 # shellcheck source=scripts/development-workflow/workflow-lib.sh
 source "$SCRIPT_DIR/workflow-lib.sh"
 
 usage() {
   cat <<'USAGE'
-Usage: apply-readiness-labels.sh --pr <number> [--repo <owner/repo>] \
+Usage: apply-readiness-labels.sh --classify-pr-agent|--pr-agent-focus-labels < review.txt
+       apply-readiness-labels.sh --pr <number> [--repo <owner/repo>] \
   --label <ready-for-human-review|ready-for-regression> \
   [--branch <branch>] [--dry-run] [--json]
 
@@ -842,8 +990,8 @@ codex_current_occupancy_comment_ids() {
 #     bot — the findings leg is the shared review scan the caller runs.
 #   - pr-agent: run_pr_agent_review's completion surface — the latest issue
 #     comment by the bot whose body contains "PR Reviewer Guide" and the
-#     head SHA, classified by the same label rules _pr_agent_classify
-#     applies ("No major issues detected" clean; hard-blocker focus-area
+#     visible head marker, classified by the shared stdin classifier
+#     that _pr_agent_classify applies ("No major issues detected" clean; hard-blocker focus-area
 #     labels needs-fixes; unreadable section needs-fixes).
 #   - coderabbit-cli / local-ai-reviewer: both reviewer scripts are pure-CLI
 #     readers (coderabbit-cli-reviewer.sh and local-ai-reviewer.sh make no
@@ -1011,45 +1159,23 @@ comment_only_completion_evidence() {
             | select(
                 (((.user.login // "") == $bot) or ((.user.login // "") == ($bot | sub("\\[bot\\]$"; ""))) or ((.user.login // "") == ($bot + "[bot]")))
               )
-            | select(((.body // "") | contains($sha)) and (((.body // "") | test("PR Reviewer Guide"; "i"))))
+            | select(((.body // "") | gsub("<!--[\\s\\S]*?-->"; "")) as $visible
+                  | ($visible | test("PR Reviewer Guide"; "i"))
+                    and ($visible | split("\n") | any(test("^(?:#### \\(Review updated until commit https://[^/[:space:]]+/[^/[:space:]]+/[^/[:space:]]+/commit/" + $sha + "\\)|commit: " + $sha + ")[[:space:]]*$"))))
           ]
-          | sort_by(.created_at)
+          | sort_by(.updated_at // .created_at)
           | last // empty
         ' 2>/dev/null)" || escalate issue-comment-parse-failed
       [ -n "$pragent_entry" ] || return 1
       body="$(printf '%s\n' "$pragent_entry" | jq -r '.body // ""')"
       created="$(printf '%s\n' "$pragent_entry" | jq -r '.created_at // ""')"
-      if printf '%s\n' "$body" | grep -q "No major issues detected"; then
-        reviewer_started_at="$created"
-        return 0
-      fi
-      if printf '%s\n' "$body" | grep -q "Recommended focus areas for review"; then
-        # Extract <strong>LABEL</strong> tokens from the focus section and
-        # apply the same hard-blocker label set _pr_agent_classify uses.
-        local focus_labels label label_lower
-        focus_labels="$(printf '%s\n' "$body" \
-          | awk '/Recommended focus areas for review/{found=1; next}
-                 found && /^[[:space:]]*(\*\*|<\/td>|<tr>)|^---$/{found=0}
-                 found{print}' \
-          | grep -oE '<strong>[^<]+</strong>' \
-          | sed 's|<strong>||g;s|</strong>||g;s|^[[:space:]]*||;s|[[:space:]]*$||' \
-          || true)"
-        [ -n "$focus_labels" ] || return 2
-        while IFS= read -r label; do
-          [ -n "$label" ] || continue
-          label_lower="$(printf '%s' "$label" | tr '[:upper:]' '[:lower:]')"
-          case "$label_lower" in
-            critical|"must fix"|"breaking change"|"security concern"|"api change"|"backward compatibility")
-              return 2
-              ;;
-          esac
-        done <<< "$focus_labels"
-        reviewer_started_at="$created"
-        return 0
-      fi
-      # No verdict markers at all: not this cycle's terminal comment shape —
-      # fail closed rather than guessing.
-      return 1
+      local pragent_verdict
+      pragent_verdict="$(printf '%s' "$body" | classify_pr_agent_review)" || escalate issue-comment-parse-failed
+      case "$pragent_verdict" in
+        clean) reviewer_started_at="$created"; return 0 ;;
+        needs_fixes) return 2 ;;
+        *) return 1 ;;
+      esac
       ;;
     greptile)
       # Round 18 (thread PRRT_kwDORWAxaM6m36Wu): the trigger must belong to
