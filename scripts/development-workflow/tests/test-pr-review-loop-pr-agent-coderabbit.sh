@@ -2023,6 +2023,11 @@ fixture_test_1946 malformed_ticket_heading escalate $'**Ticket compliance analys
 fixture_test_1946 duplicate_focus_sections escalate "${_fixture_focus_1946}"$'---\n'"${_fixture_focus_1946/Possible Issue/Critical}"
 fixture_test_1946 duplicate_ticket_sections escalate "${_fixture_ticket_1946}${_fixture_ticket_1946/Fully compliant/Not compliant}"
 fixture_test_1946 quoted_attribute_blocker needs_fixes "${_fixture_focus_1946}"$'<strong title=">">Security Concern</strong>\n'
+fixture_test_1946 colon_focus_blocker needs_fixes "${_fixture_ticket_1946}"$'### Key issues to review:\n<strong>Critical</strong>\n'
+fixture_test_1946 duplicate_security_sections escalate "${_fixture_ticket_1946}"$'<tr><td><strong>Security concerns</strong><br>No security concerns identified.</td></tr>\n<tr><td><strong>Security concerns</strong><br>Unsafe input execution.</td></tr>\n'
+fixture_test_1946 invalid_fence_closer escalate $'```markdown\n```example\nNo major issues detected\n'
+fixture_test_1946 markdown_no_security clean "${_fixture_ticket_1946}"$'### 🔒 No security concerns identified\n'
+fixture_test_1946 unknown_focus_heading escalate "${_fixture_ticket_1946}"$'### Review Key issues to review\n<strong>Critical</strong>\n'
 # Define the nested advisory helpers in this shell via one mocked review.
 PATH="$_fixture_dir_1946:$PATH" PR_AGENT_FIXTURE_BODY="${_fixture_header_1946}${_fixture_ticket_1946}" \
   run_pr_agent_review 42 feature/42-test 1 0 >/dev/null

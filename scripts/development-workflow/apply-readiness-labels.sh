@@ -117,7 +117,7 @@ def visible_review(body):
             token = marker.group(1)
             if fence is None:
                 fence = token
-            elif token[0] == fence[0] and len(token) >= len(fence):
+            elif token[0] == fence[0] and len(token) >= len(fence) and not line[marker.end():].strip():
                 fence = None
             continue
         if fence is None:
@@ -128,8 +128,13 @@ def visible_review(body):
 
 
 def focus_labels(body):
-    matches = list(re.finditer(r"(?:<strong>(?:Recommended focus areas for review|Key issues to review)</strong>[^\n]*|^[ \t]*(?:#{1,6}[ \t]+(?:⚡[ \t]*)?)?(?:Recommended focus areas for review|Key issues to review)[ \t]*)(?:\n|$)([\s\S]*?)(?=</td>|^### |^---$|\Z)", body, re.M))
+    matches = list(re.finditer(r"(?:<strong>(?:Recommended focus areas for review|Key issues to review)</strong>[^\n]*|^[ \t]*(?:#{1,6}[ \t]+(?:⚡[ \t]*)?)?(?:Recommended focus areas for review|Key issues to review):?[ \t]*)(?:\n|$)([\s\S]*?)(?=</td>|^### |^---$|\Z)", body, re.M))
     if not matches:
+        headings = FocusLabels()
+        headings.feed(body)
+        names = {"Recommended focus areas for review", "Key issues to review"}
+        if any(label.strip().rstrip(":") in names for label in headings.labels) or re.search(r"^[ \t]*(?:#{1,6}|\*\*)[^\n]*(?:Recommended focus areas for review|Key issues to review)", body, re.M):
+            return [""]  # Unrecognized metadata must not be ignored.
         return None
     if len(matches) != 1:
         return [""]  # Duplicate disposition sections are ambiguous.
@@ -189,9 +194,11 @@ def classify(body):
         if "escalate" in verdicts:
             return "escalate"
     # An explicit security section cannot be overridden by clean compliance.
-    security = re.search(r"(?:<strong>Security concerns</strong>|^### [^\n]*Security concerns)[ :]*(?:<br>)*([\s\S]*?)(?=</td>|^### |\Z)", body, re.M | re.I)
-    if security:
-        value = unescape(re.sub(r"<[^>]*>", "", security.group(1))).strip()
+    security_sections = list(re.finditer(r"(?:<strong>Security concerns</strong>|^#{1,6}[ \t]+(?:🔒[ \t]*)?Security concerns)[ :]*(?:<br>)*([\s\S]*?)(?=</td>|^### |\Z)", body, re.M | re.I))
+    if len(security_sections) > 1:
+        return "escalate"
+    if security_sections:
+        value = unescape(re.sub(r"<[^>]*>", "", security_sections[0].group(1))).strip()
         if not re.fullmatch(r"(?:No security concerns (?:identified|detected)|No|None|False)[.]?", value, re.I):
             return "needs_fixes"
     # Both rendered focus headings use the same hard-blocker/advisory labels.
