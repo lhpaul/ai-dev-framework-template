@@ -206,6 +206,8 @@ def classify(body):
         return "escalate"
     if security_sections:
         value = unescape(re.sub(r"<[^>]*>", "", security_sections[0].group(1))).strip()
+        if not re.sub(r"[\s*#_`-]", "", value):
+            return "escalate"  # No analysis establishes a known security finding.
         if not re.fullmatch(r"(?:No security concerns (?:identified|detected)|No|None|False)[.]?", value, re.I):
             needs_fixes = True
     # Both rendered focus headings use the same hard-blocker/advisory labels.
@@ -215,7 +217,7 @@ def classify(body):
         if any(not label for label in labels):
             return "escalate"
         if not labels:
-            return "escalate" if ticket else "needs_fixes"
+            return "escalate"  # An unreadable section cannot establish a fix.
         if any(label in blockers for label in labels):
             return "needs_fixes"
         return "needs_fixes" if needs_fixes else "clean"

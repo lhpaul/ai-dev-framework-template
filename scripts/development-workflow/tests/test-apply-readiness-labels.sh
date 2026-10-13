@@ -2364,10 +2364,14 @@ run_test "pr_agent_no_comment_refuses_reason" "reviewer-check-absent" "$(field "
 # ticket reviews, and refuse truncated, ambiguous or historically clean ones.
 _ticket_body_1946=$'## PR Reviewer Guide\ncommit: '"$HEAD"$'\n<table>\n<tr><td>\n**🎫 Ticket compliance analysis ✅**\n**[42](https://example.test/issues/42) - Fully compliant**\nCompliant requirements:\n- All required behavior is implemented.\n</td></tr>\n</table>\n'
 readiness_fixture_1946() {
-  local name="$1" expected="$2" body="$3" output
+  local name="$1" expected="$2" body="$3" output expected_reason="${4:-}"
   MOCK_ISSUE_COMMENTS="$(jq -nc --arg body "$body" '[{user:{login:"github-actions[bot]"},created_at:"2026-01-08T00:00:00Z",id:923,body:$body}]')"
   output="$(run_helper_platform "$_codex_config")"
   run_test "1946_${name}_readiness" "$expected" "$(field "$output" RESULT)"
+  if [ -n "$expected_reason" ]; then
+    run_test "1946_${name}_reason" "$expected_reason" "$(field "$output" REASON)"
+    run_test "1946_${name}_classifier" escalate "$(printf '%s' "$body" | bash "$REPO_ROOT/scripts/development-workflow/apply-readiness-labels.sh" --classify-pr-agent)"
+  fi
   if [ "$expected" = refused ]; then
     run_test "1946_${name}_no_readiness_write" "0" "$(grep -c 'add-label ready-for-human-review' "$_LABEL_LOG" || true)"
   fi
@@ -2413,6 +2417,12 @@ readiness_fixture_1946 extra_rendered_human refused "${_ticket_body_1946}"$'<str
 readiness_fixture_1946 extra_malformed_second_section refused "${_ticket_body_1946}"$'**Ticket compliance analysis ❌*\n**[43](url) - Not compliant**\nNon-compliant requirements:\n- Missing.\n'
 readiness_fixture_1946 extra_partial_unknown_focus refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'**Recommended focus areas for review**\n<strong>Critical</strong>\n'
 readiness_fixture_1946 extra_partial_human_ticket refused "commit: $HEAD"$'\n**Ticket compliance analysis 🔶**\n**[42](url) - Partially compliant**\nNon-compliant requirements:\n- Missing.\n**[43](url) - PR Code Verified**\nCompliant requirements:\n- Implemented; human verification pending.\n'
+readiness_fixture_1946 extra2_unreadable_legacy_focus refused "commit: $HEAD"$'\n### Recommended focus areas for review\nNo parseable labels\n' reviewer-check-absent
+readiness_fixture_1946 extra2_empty_security refused "${_ticket_body_1946}"$'<strong>Security concerns</strong><br>\n' reviewer-check-absent
+readiness_fixture_1946 extra2_blank_security refused "${_ticket_body_1946}"$'<tr><td><strong>Security concerns</strong><br><span> &nbsp; </span></td></tr>\n' reviewer-check-absent
+readiness_fixture_1946 extra2_markup_only_security refused "${_ticket_body_1946}"$'<strong>Security concerns</strong><br>\n- ** **\n' reviewer-check-absent
+readiness_fixture_1946 extra2_partial_empty_security refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<strong>Security concerns</strong><br>\n' reviewer-check-absent
+readiness_fixture_1946 extra2_security_fix_unreadable_focus refused "${_ticket_body_1946}"$'<tr><td><strong>Security concerns</strong><br>Unsafe input execution.</td></tr>\n### Recommended focus areas for review\nNo parseable labels\n' reviewer-check-absent
 unset _ticket_body_1946
 unset -f readiness_fixture_1946
 

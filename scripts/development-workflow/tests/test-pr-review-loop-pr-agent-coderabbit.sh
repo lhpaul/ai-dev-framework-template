@@ -1982,7 +1982,7 @@ fixture_test_1946 ticket_heading_only escalate $'## PR Reviewer Guide\n**Ticket 
 fixture_test_1946 blank escalate $' \t\n'
 fixture_test_1946 empty none ''
 fixture_test_1946 unknown escalate 'Review completed successfully'
-fixture_test_1946 empty_focus needs_fixes $'### Recommended focus areas for review\nNo parseable labels\n'
+fixture_test_1946 empty_focus escalate $'### Recommended focus areas for review\nNo parseable labels\n'
 fixture_test_1946 key_issues_advisory clean "${_fixture_ticket_1946}${_fixture_focus_1946/Recommended focus areas for review/Key issues to review}"
 fixture_test_1946 ticket_security needs_fixes "${_fixture_ticket_1946}"$'<tr><td><strong>Security concerns</strong><br>Unsafe input execution.</td></tr>\n'
 fixture_test_1946 ticket_no_security clean "${_fixture_ticket_1946}"$'<tr><td><strong>Security concerns</strong><br>No security concerns identified.</td></tr>\n'
@@ -2042,6 +2042,12 @@ fixture_test_1946 extra_rendered_human escalate "${_fixture_ticket_1946}"$'<stro
 fixture_test_1946 extra_malformed_second_section escalate "${_fixture_ticket_1946}"$'**Ticket compliance analysis ❌*\n**[43](url) - Not compliant**\nNon-compliant requirements:\n- Missing.\n'
 fixture_test_1946 extra_partial_unknown_focus escalate "${_fixture_ticket_1946/Fully compliant/Partially compliant}"$'**Recommended focus areas for review**\n<strong>Critical</strong>\n'
 fixture_test_1946 extra_partial_human_ticket escalate $'\n**Ticket compliance analysis 🔶**\n**[42](url) - Partially compliant**\nNon-compliant requirements:\n- Missing.\n**[43](url) - PR Code Verified**\nCompliant requirements:\n- Implemented; human verification pending.\n'
+fixture_test_1946 extra2_unreadable_legacy_focus escalate $'\n### Recommended focus areas for review\nNo parseable labels\n'
+fixture_test_1946 extra2_empty_security escalate "${_fixture_ticket_1946}"$'<strong>Security concerns</strong><br>\n'
+fixture_test_1946 extra2_blank_security escalate "${_fixture_ticket_1946}"$'<tr><td><strong>Security concerns</strong><br><span> &nbsp; </span></td></tr>\n'
+fixture_test_1946 extra2_markup_only_security escalate "${_fixture_ticket_1946}"$'<strong>Security concerns</strong><br>\n- ** **\n'
+fixture_test_1946 extra2_partial_empty_security escalate "${_fixture_ticket_1946/Fully compliant/Partially compliant}"$'<strong>Security concerns</strong><br>\n'
+fixture_test_1946 extra2_security_fix_unreadable_focus escalate "${_fixture_ticket_1946}"$'<tr><td><strong>Security concerns</strong><br>Unsafe input execution.</td></tr>\n### Recommended focus areas for review\nNo parseable labels\n'
 rm -rf "$_fixture_dir_1946"
 unset _fixture_dir_1946 _fixture_header_1946 _fixture_ticket_1946 _fixture_focus_1946
 unset -f fixture_test_1946
