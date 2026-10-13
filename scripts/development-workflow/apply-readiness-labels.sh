@@ -84,21 +84,56 @@ def value_verdict(value, negatives, findings):
     return "escalate"
 
 class ReviewStructure(HTMLParser):
-    def __init__(self):
+    void_tags = {"area", "base", "br", "col", "embed", "hr", "img", "input",
+                 "link", "meta", "param", "source", "track", "wbr"}
+    start_syntax = re.compile(r"<[A-Za-z][A-Za-z0-9:-]*(?:\s+[^\s/=>\"\x27<\x00-\x1f]+(?:\s*=\s*(?:\"[^\"]*\"|\x27[^\x27]*\x27|[^\s\"\x27=<>`]+))?)*\s*/?>")
+
+    def __init__(self, source):
         super().__init__()
         self.stack = []
-        self.valid = True
+        self.source = source
+        self.line_offsets = [0] + [match.end() for match in re.finditer(r"\n", source)]
+        self.valid = not re.search(r"<\s+/?\s*(?:h[1-6]|strong|b|em|span|p|div|summary|header)\b", source, re.I)
 
     def handle_starttag(self, tag, attrs):
-        if tag in {"table", "tr", "td", "details", "summary", "strong"}:
+        # HTMLParser is tolerant of malformed attributes; the verdict is not.
+        if not self.start_syntax.fullmatch(self.get_starttag_text()):
+            self.valid = False
+        names = [name for name, _ in attrs]
+        if len(names) != len(set(names)):
+            self.valid = False
+        if tag not in self.void_tags:
             if tag == "table" and tag in self.stack:
                 self.valid = False  # Unknown nested-table rendering.
             self.stack.append(tag)
 
+    def handle_startendtag(self, tag, attrs):
+        if tag not in self.void_tags:
+            self.valid = False  # A non-void HTML heading cannot self-close.
+        self.handle_starttag(tag, attrs)
+
     def handle_endtag(self, tag):
-        if tag in {"table", "tr", "td", "details", "summary", "strong"}:
-            if not self.stack or self.stack.pop() != tag:
-                self.valid = False
+        line, column = self.getpos()
+        offset = self.line_offsets[line - 1] + column
+        if not re.match(r"</" + re.escape(tag) + r"\s*>", self.source[offset:], re.I):
+            self.valid = False
+        if tag in self.void_tags or not self.stack or self.stack.pop() != tag:
+            self.valid = False
+
+
+    def unknown_decl(self, data):
+        self.valid = False  # Unsupported marked declarations are not evidence.
+
+    def handle_comment(self, data):
+        self.valid = False  # Normal comments were removed; this is bogus markup.
+
+    def handle_decl(self, decl):
+        if self.stack:
+            self.valid = False
+
+    def handle_pi(self, data):
+        if self.stack:
+            self.valid = False
 
 
 class FocusLabels(HTMLParser):
@@ -217,6 +252,15 @@ def classify(body):
     body = visible_review(body)
     if body is None:
         return "escalate"
+    # HTMLParser retains unfinished tags in rawdata even when they lack >.
+    # Validate every rendered review before trusting an earlier clean marker.
+    structure = ReviewStructure(body)
+    try:
+        structure.feed(body)
+    except (AssertionError, ValueError):
+        return "escalate"  # Malformed declarations must preserve the verdict contract.
+    if not structure.valid or structure.stack or structure.rawdata.strip():
+        return "escalate"
     ticket_matches = list(re.finditer(r"^[ \t]*\*\*[^*\n]*Ticket compliance analysis[^*\n]*\*\*[ \t]*$|^### [^\n]*Ticket compliance analysis[^\n]*$|<strong>Ticket compliance analysis</strong>", body, re.M))
     if len(ticket_matches) > 1:
         return "escalate"
@@ -227,12 +271,6 @@ def classify(body):
     ticket_candidates += sum("Ticket compliance analysis" in label for label in rendered_headers.labels)
     if ticket_candidates != len(ticket_matches):
         return "escalate"  # A malformed heading is not just a prose mention.
-    # HTMLParser retains unfinished tags in rawdata even when they lack >.
-    # Validate every rendered review before trusting an earlier clean marker.
-    structure = ReviewStructure()
-    structure.feed(body)
-    if not structure.valid or structure.stack or structure.rawdata.strip():
-        return "escalate"
     if any(re.match(r"Requires further human verification\b", " ".join(label.split()), re.I) for label in rendered_headers.labels) or re.search(r"^[ \t]*(?:#{1,6}[ \t]+|\*\*)?Requires further human verification\b", body, re.M | re.I):
         return "escalate"
     verification_reader = ReviewText()

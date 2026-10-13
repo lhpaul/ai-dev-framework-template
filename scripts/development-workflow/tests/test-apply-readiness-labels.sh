@@ -2452,6 +2452,85 @@ readiness_fixture_1946 scoped_human_no_colon refused "commit: $HEAD"$'\n## PR Re
 readiness_fixture_1946 scoped_human_colon refused "commit: $HEAD"$'\n## PR Reviewer Guide\n**Ticket compliance analysis ✅**\n**[42](url) - Fully compliant**\nCompliant requirements:\n- Requires further human verification:\n' reviewer-check-absent
 readiness_fixture_1946 scoped_human_rendered refused "commit: $HEAD"$'\n## PR Reviewer Guide\n**Ticket compliance analysis ✅**\n**[42](url) - Fully compliant**\nCompliant requirements:\n- Requires&nbsp;further <em>human</em> verification\n' reviewer-check-absent
 readiness_fixture_1946 scoped_partial_human_no_colon refused "commit: $HEAD"$'\n## PR Reviewer Guide\n**Ticket compliance analysis ✅**\n**[42](url) - Partially compliant**\nCompliant requirements:\n- Requires further human verification\n' reviewer-check-absent
+# Malformed HTML headers/children cannot hide behind compliant evidence.
+readiness_fixture_1946 html_structure_unknown_decl_full refused "${_ticket_body_1946}"$'<h3><![invalid[header]]></h3>\n' reviewer-check-absent
+readiness_fixture_1946 html_structure_unknown_decl_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h3><![invalid[header]]></h3>\n' reviewer-check-absent
+readiness_fixture_1946 html_structure_bogus_comment_full refused "${_ticket_body_1946}"$'<h3><!bogus>Reviewer notes</h3>\n' reviewer-check-absent
+readiness_fixture_1946 html_structure_bogus_comment_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h3><!bogus>Reviewer notes</h3>\n' reviewer-check-absent
+readiness_fixture_1946 html_structure_doctype_inside_full refused "${_ticket_body_1946}"$'<h3><!DOCTYPE html>Reviewer notes</h3>\n' reviewer-check-absent
+readiness_fixture_1946 html_structure_doctype_inside_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h3><!DOCTYPE html>Reviewer notes</h3>\n' reviewer-check-absent
+readiness_fixture_1946 html_structure_processing_instruction_full refused "${_ticket_body_1946}"$'<h3><?unknown?>Reviewer notes</h3>\n' reviewer-check-absent
+readiness_fixture_1946 html_structure_processing_instruction_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h3><?unknown?>Reviewer notes</h3>\n' reviewer-check-absent
+readiness_fixture_1946 html_structure_unclosed_h1_full refused "${_ticket_body_1946}"$'<h1>Recommended focus areas for review<strong>Critical</strong>\n' reviewer-check-absent
+readiness_fixture_1946 html_structure_unclosed_h1_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h1>Recommended focus areas for review<strong>Critical</strong>\n' reviewer-check-absent
+readiness_fixture_1946 html_structure_unclosed_h2_full refused "${_ticket_body_1946}"$'<h2>Recommended focus areas for review<strong>Critical</strong>\n' reviewer-check-absent
+readiness_fixture_1946 html_structure_unclosed_h2_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h2>Recommended focus areas for review<strong>Critical</strong>\n' reviewer-check-absent
+readiness_fixture_1946 html_structure_unclosed_h3_full refused "${_ticket_body_1946}"$'<h3>Recommended focus areas for review<strong>Critical</strong>\n' reviewer-check-absent
+readiness_fixture_1946 html_structure_unclosed_h3_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h3>Recommended focus areas for review<strong>Critical</strong>\n' reviewer-check-absent
+readiness_fixture_1946 html_structure_unclosed_h4_full refused "${_ticket_body_1946}"$'<h4>Recommended focus areas for review<strong>Critical</strong>\n' reviewer-check-absent
+readiness_fixture_1946 html_structure_unclosed_h4_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h4>Recommended focus areas for review<strong>Critical</strong>\n' reviewer-check-absent
+readiness_fixture_1946 html_structure_unclosed_h5_full refused "${_ticket_body_1946}"$'<h5>Recommended focus areas for review<strong>Critical</strong>\n' reviewer-check-absent
+readiness_fixture_1946 html_structure_unclosed_h5_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h5>Recommended focus areas for review<strong>Critical</strong>\n' reviewer-check-absent
+readiness_fixture_1946 html_structure_unclosed_h6_full refused "${_ticket_body_1946}"$'<h6>Recommended focus areas for review<strong>Critical</strong>\n' reviewer-check-absent
+readiness_fixture_1946 html_structure_unclosed_h6_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h6>Recommended focus areas for review<strong>Critical</strong>\n' reviewer-check-absent
+readiness_fixture_1946 html_structure_unclosed_strong_full refused "${_ticket_body_1946}"$'<strong>Recommended focus areas for review<strong>Critical</strong>\n' reviewer-check-absent
+readiness_fixture_1946 html_structure_unclosed_strong_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<strong>Recommended focus areas for review<strong>Critical</strong>\n' reviewer-check-absent
+readiness_fixture_1946 html_structure_unclosed_b_full refused "${_ticket_body_1946}"$'<b>Recommended focus areas for review<strong>Critical</strong>\n' reviewer-check-absent
+readiness_fixture_1946 html_structure_unclosed_b_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<b>Recommended focus areas for review<strong>Critical</strong>\n' reviewer-check-absent
+readiness_fixture_1946 html_structure_unclosed_em_full refused "${_ticket_body_1946}"$'<em>Recommended focus areas for review<strong>Critical</strong>\n' reviewer-check-absent
+readiness_fixture_1946 html_structure_unclosed_em_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<em>Recommended focus areas for review<strong>Critical</strong>\n' reviewer-check-absent
+readiness_fixture_1946 html_structure_unclosed_span_full refused "${_ticket_body_1946}"$'<span>Recommended focus areas for review<strong>Critical</strong>\n' reviewer-check-absent
+readiness_fixture_1946 html_structure_unclosed_span_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<span>Recommended focus areas for review<strong>Critical</strong>\n' reviewer-check-absent
+readiness_fixture_1946 html_structure_unclosed_div_full refused "${_ticket_body_1946}"$'<div>Recommended focus areas for review<strong>Critical</strong>\n' reviewer-check-absent
+readiness_fixture_1946 html_structure_unclosed_div_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<div>Recommended focus areas for review<strong>Critical</strong>\n' reviewer-check-absent
+readiness_fixture_1946 html_structure_unclosed_summary_full refused "${_ticket_body_1946}"$'<summary>Recommended focus areas for review<strong>Critical</strong>\n' reviewer-check-absent
+readiness_fixture_1946 html_structure_unclosed_summary_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<summary>Recommended focus areas for review<strong>Critical</strong>\n' reviewer-check-absent
+readiness_fixture_1946 html_structure_unclosed_header_full refused "${_ticket_body_1946}"$'<header>Recommended focus areas for review<strong>Critical</strong>\n' reviewer-check-absent
+readiness_fixture_1946 html_structure_unclosed_header_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<header>Recommended focus areas for review<strong>Critical</strong>\n' reviewer-check-absent
+readiness_fixture_1946 html_structure_unclosed_prefixed_h3_full refused "${_ticket_body_1946}"$'<h3>Custom Recommended focus areas for review<strong>Critical</strong>\n' reviewer-check-absent
+readiness_fixture_1946 html_structure_unclosed_prefixed_h3_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h3>Custom Recommended focus areas for review<strong>Critical</strong>\n' reviewer-check-absent
+readiness_fixture_1946 html_structure_mismatched_full refused "${_ticket_body_1946}"$'<h3>Reviewer notes</h4>\n' reviewer-check-absent
+readiness_fixture_1946 html_structure_mismatched_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h3>Reviewer notes</h4>\n' reviewer-check-absent
+readiness_fixture_1946 html_structure_crossed_full refused "${_ticket_body_1946}"$'<h3><strong>Reviewer notes</h3></strong>\n' reviewer-check-absent
+readiness_fixture_1946 html_structure_crossed_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h3><strong>Reviewer notes</h3></strong>\n' reviewer-check-absent
+readiness_fixture_1946 html_structure_unclosed_child_full refused "${_ticket_body_1946}"$'<h3><a href="url">Reviewer notes</h3>\n' reviewer-check-absent
+readiness_fixture_1946 html_structure_unclosed_child_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h3><a href="url">Reviewer notes</h3>\n' reviewer-check-absent
+readiness_fixture_1946 html_structure_orphan_close_full refused "${_ticket_body_1946}"$'</h3>\n' reviewer-check-absent
+readiness_fixture_1946 html_structure_orphan_close_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'</h3>\n' reviewer-check-absent
+readiness_fixture_1946 html_structure_self_closed_full refused "${_ticket_body_1946}"$'<h3/>\n' reviewer-check-absent
+readiness_fixture_1946 html_structure_self_closed_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h3/>\n' reviewer-check-absent
+readiness_fixture_1946 html_structure_bad_self_close_full refused "${_ticket_body_1946}"$'<h3/ >\n' reviewer-check-absent
+readiness_fixture_1946 html_structure_bad_self_close_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h3/ >\n' reviewer-check-absent
+readiness_fixture_1946 html_structure_bad_attribute_full refused "${_ticket_body_1946}"$'<h3 data-note=<oops>>Reviewer notes</h3>\n' reviewer-check-absent
+readiness_fixture_1946 html_structure_bad_attribute_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h3 data-note=<oops>>Reviewer notes</h3>\n' reviewer-check-absent
+readiness_fixture_1946 html_structure_missing_attribute_value_full refused "${_ticket_body_1946}"$'<h3 data-note=>Reviewer notes</h3>\n' reviewer-check-absent
+readiness_fixture_1946 html_structure_missing_attribute_value_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h3 data-note=>Reviewer notes</h3>\n' reviewer-check-absent
+readiness_fixture_1946 html_structure_unterminated_attribute_full refused "${_ticket_body_1946}"$'<h3 data-note="unterminated>Reviewer notes</h3>\n' reviewer-check-absent
+readiness_fixture_1946 html_structure_unterminated_attribute_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h3 data-note="unterminated>Reviewer notes</h3>\n' reviewer-check-absent
+readiness_fixture_1946 html_structure_duplicate_attribute_full refused "${_ticket_body_1946}"$'<h3 class="a" class="b">Reviewer notes</h3>\n' reviewer-check-absent
+readiness_fixture_1946 html_structure_duplicate_attribute_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h3 class="a" class="b">Reviewer notes</h3>\n' reviewer-check-absent
+readiness_fixture_1946 html_structure_bad_end_attribute_full refused "${_ticket_body_1946}"$'<h3>Reviewer notes</h3 extra>\n' reviewer-check-absent
+readiness_fixture_1946 html_structure_bad_end_attribute_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h3>Reviewer notes</h3 extra>\n' reviewer-check-absent
+readiness_fixture_1946 html_structure_bad_end_slash_full refused "${_ticket_body_1946}"$'<h3>Reviewer notes</h3/>\n' reviewer-check-absent
+readiness_fixture_1946 html_structure_bad_end_slash_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h3>Reviewer notes</h3/>\n' reviewer-check-absent
+readiness_fixture_1946 html_structure_spaced_open_full refused "${_ticket_body_1946}"$'< h3>Reviewer notes\n' reviewer-check-absent
+readiness_fixture_1946 html_structure_spaced_open_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'< h3>Reviewer notes\n' reviewer-check-absent
+readiness_fixture_1946 html_structure_spaced_slash_full refused "${_ticket_body_1946}"$'< /h3>Reviewer notes\n' reviewer-check-absent
+readiness_fixture_1946 html_structure_spaced_slash_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'< /h3>Reviewer notes\n' reviewer-check-absent
+readiness_fixture_1946 html_structure_truncated_open_full refused "${_ticket_body_1946}"$'<h3\n' reviewer-check-absent
+readiness_fixture_1946 html_structure_truncated_open_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h3\n' reviewer-check-absent
+readiness_fixture_1946 html_structure_truncated_end_full refused "${_ticket_body_1946}"$'<h3>Reviewer notes</h3\n' reviewer-check-absent
+readiness_fixture_1946 html_structure_truncated_end_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h3>Reviewer notes</h3\n' reviewer-check-absent
+readiness_fixture_1946 html_structure_complete_h1 labeled "${_ticket_body_1946}"$'<h1>Reviewer notes</h1>\n'
+readiness_fixture_1946 html_structure_complete_h6 labeled "${_ticket_body_1946}"$'<h6><span>Reviewer notes</span></h6>\n'
+readiness_fixture_1946 html_structure_valid_inline_child labeled "${_ticket_body_1946}"$'<h3><a href="url" title="notes">Reviewer notes</a></h3>\n'
+readiness_fixture_1946 html_structure_valid_boolean_attribute labeled "${_ticket_body_1946}"$'<h3 hidden>Reviewer notes</h3>\n'
+readiness_fixture_1946 html_structure_valid_quoted_gt labeled "${_ticket_body_1946}"$'<h3 title=">">Reviewer notes</h3>\n'
+readiness_fixture_1946 html_structure_valid_voids labeled "${_ticket_body_1946}"$'<h3>Reviewer notes<br><img src="x" /></h3><hr/>\n'
+readiness_fixture_1946 html_structure_closed_focus refused "${_ticket_body_1946}"$'<h3>Recommended focus areas for review</h3><strong>Critical</strong>\n' blocking-findings needs_fixes
+readiness_fixture_1946 html_structure_escaped_literal labeled "${_ticket_body_1946}"$'&lt; h3&gt; is a literal example.\n'
+readiness_fixture_1946 html_structure_hidden labeled "${_ticket_body_1946}"$'<!-- <h3>Reviewer notes -->\n'
+readiness_fixture_1946 html_structure_fenced labeled "${_ticket_body_1946}"$'```html\n<h3>Reviewer notes\n```\n'
 # Hard focus blockers override compliant tickets, even with heading prefixes.
 readiness_fixture_1946 focus_hard_h3_bare_full refused "${_ticket_body_1946}"$'<h3>Recommended focus areas for review</h3>\n<strong>Critical</strong>\n' blocking-findings needs_fixes
 readiness_fixture_1946 focus_hard_h3_bare_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h3>Recommended focus areas for review</h3>\n<strong>Critical</strong>\n' blocking-findings needs_fixes
