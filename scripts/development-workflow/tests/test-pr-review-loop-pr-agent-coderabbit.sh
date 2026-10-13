@@ -2014,6 +2014,14 @@ fixture_test_1946 mixed_unclosed_focus_label escalate "${_fixture_focus_1946}"$'
 fixture_test_1946 mixed_truncated_html_tag escalate "${_fixture_focus_1946}"$'<strong\n'
 fixture_test_1946 mixed_unclosed_markdown_label escalate "${_fixture_focus_1946}"$'**Critical\n'
 fixture_test_1946 attributed_blocker_label needs_fixes "${_fixture_focus_1946}"$'<strong class="finding">Critical</strong>\n'
+fixture_test_1946 encoded_blocker_label needs_fixes "${_fixture_focus_1946}"$'<strong>Security&#32;Concern</strong>\n'
+fixture_test_1946 encoded_empty_label escalate "${_fixture_focus_1946}"$'<strong>&nbsp;</strong>\n'
+fixture_test_1946 encoded_empty_analysis escalate $'**Ticket compliance analysis ✅**\n**[42](url) - Fully compliant**\nCompliant requirements:\n&nbsp;\n'
+fixture_test_1946 prose_marker_not_verdict escalate '## PR Reviewer Guide: the phrase No major issues detected is an example.'
+fixture_test_1946 prose_ticket_not_section clean "${_fixture_focus_1946}"$'The phrase Ticket compliance analysis names another format.\n'
+fixture_test_1946 malformed_ticket_heading escalate $'**Ticket compliance analysis ✅*\nNo major issues detected\n'
+fixture_test_1946 duplicate_focus_sections escalate "${_fixture_focus_1946}"$'---\n'"${_fixture_focus_1946/Possible Issue/Critical}"
+fixture_test_1946 duplicate_ticket_sections escalate "${_fixture_ticket_1946}${_fixture_ticket_1946/Fully compliant/Not compliant}"
 # Define the nested advisory helpers in this shell via one mocked review.
 PATH="$_fixture_dir_1946:$PATH" PR_AGENT_FIXTURE_BODY="${_fixture_header_1946}${_fixture_ticket_1946}" \
   run_pr_agent_review 42 feature/42-test 1 0 >/dev/null

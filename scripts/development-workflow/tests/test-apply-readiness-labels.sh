@@ -2395,6 +2395,11 @@ readiness_fixture_1946 mixed_empty_focus_label refused $'## PR Reviewer Guide\nc
 readiness_fixture_1946 mixed_unclosed_focus_label refused $'## PR Reviewer Guide\ncommit: '"$HEAD"$'\n### Recommended focus areas for review\n<strong>Possible Issue</strong><br>Advisory text.\n<strong>Critical\n'
 readiness_fixture_1946 mixed_truncated_html_tag refused $'## PR Reviewer Guide\ncommit: '"$HEAD"$'\n### Recommended focus areas for review\n<strong>Possible Issue</strong><br>Advisory text.\n<strong\n'
 readiness_fixture_1946 mixed_unclosed_markdown_label refused $'## PR Reviewer Guide\ncommit: '"$HEAD"$'\n### Recommended focus areas for review\n<strong>Possible Issue</strong><br>Advisory text.\n**Critical\n'
+readiness_fixture_1946 encoded_blocker_label refused $'## PR Reviewer Guide\ncommit: '"$HEAD"$'\n### Recommended focus areas for review\n<strong>Possible Issue</strong><br>Advisory text.\n<strong>Security&#32;Concern</strong>\n'
+readiness_fixture_1946 encoded_empty_label refused $'## PR Reviewer Guide\ncommit: '"$HEAD"$'\n### Recommended focus areas for review\n<strong>Possible Issue</strong><br>Advisory text.\n<strong>&nbsp;</strong>\n'
+readiness_fixture_1946 encoded_empty_analysis refused $'## PR Reviewer Guide\ncommit: '"$HEAD"$'\n**Ticket compliance analysis ✅**\n**[42](url) - Fully compliant**\nCompliant requirements:\n&nbsp;\n'
+readiness_fixture_1946 prose_marker_not_verdict refused $'## PR Reviewer Guide\ncommit: '"$HEAD"$'\nThe phrase No major issues detected is an example.\n'
+readiness_fixture_1946 prose_ticket_not_section labeled $'## PR Reviewer Guide\ncommit: '"$HEAD"$'\n### Recommended focus areas for review\n<strong>Possible Issue</strong><br>The phrase Ticket compliance analysis names another format.\n'
 MOCK_ISSUE_COMMENTS='[]'
 unset _ticket_body_1946
 unset -f readiness_fixture_1946

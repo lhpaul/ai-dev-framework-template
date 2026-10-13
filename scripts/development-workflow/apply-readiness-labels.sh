@@ -56,6 +56,7 @@ classify_pr_agent_review() {
   python3 -c '
 import re
 import sys
+from html import unescape
 from html.parser import HTMLParser
 
 body = sys.stdin.read()
@@ -105,15 +106,17 @@ def visible_review(body):
 
 
 def focus_labels(body):
-    focus = re.search(r"(?:Recommended focus areas for review|Key issues to review)[^\n]*\n([\s\S]*?)(?=</td>|^### |^---$|\Z)", body, re.M)
-    if focus is None:
+    matches = list(re.finditer(r"(?:<strong>(?:Recommended focus areas for review|Key issues to review)</strong>[^\n]*|^[ \t]*(?:#{1,6}[ \t]+(?:⚡[ \t]*)?)?(?:Recommended focus areas for review|Key issues to review)[ \t]*)(?:\n|$)([\s\S]*?)(?=</td>|^### |^---$|\Z)", body, re.M))
+    if not matches:
         return None
-    content = focus.group(1)
+    if len(matches) != 1:
+        return [""]  # Duplicate disposition sections are ambiguous.
+    content = matches[0].group(1)
     html_labels = re.findall(r"<strong(?:\s[^>]*)?>([^<]*)</strong>", content, re.I)
     markdown_labels = re.findall(r"\*\*([^*\n]*)\*\*", content)
     if len(html_labels) != len(re.findall(r"<strong\b", content, re.I)) or content.count("**") != 2 * len(markdown_labels):
         return [""]  # A complete earlier label must not hide a broken one.
-    return [label.strip() for label in html_labels + markdown_labels]
+    return [unescape(label).strip() for label in html_labels + markdown_labels]
 
 
 def classify(body):
@@ -123,7 +126,12 @@ def classify(body):
     body = visible_review(body)
     if body is None:
         return "escalate"
-    ticket = "Ticket compliance analysis" in body
+    ticket_matches = list(re.finditer(r"^[ \t]*\*\*[^*\n]*Ticket compliance analysis[^*\n]*\*\*[ \t]*$|^### [^\n]*Ticket compliance analysis[^\n]*$|<strong>Ticket compliance analysis</strong>", body, re.M))
+    if len(ticket_matches) > 1:
+        return "escalate"
+    ticket = bool(ticket_matches)
+    if not ticket and re.search(r"^[ \t]*(?:\*\*|#{1,6})[^\n]*Ticket compliance analysis", body, re.M):
+        return "escalate"  # A malformed heading is not just a prose mention.
     # HTMLParser retains unfinished tags in rawdata even when they lack >.
     # Validate every rendered review before trusting an earlier clean marker.
     structure = ReviewStructure()
@@ -131,7 +139,7 @@ def classify(body):
     if not structure.valid or structure.stack or structure.rawdata.strip():
         return "escalate"
     if ticket:
-        section = re.split(r"Ticket compliance analysis[^\n]*\n", body, maxsplit=1)[-1]
+        section = body[ticket_matches[0].end():]
         section = re.split(r"</td>|^### ", section, maxsplit=1, flags=re.M)[0]
         tickets = re.findall(r"\*\*(?:\[[^\]\n]+\]\([^\n]*?\)|Untracked ticket) - ([^*\n]+)\*\*([\s\S]*?)(?=\*\*(?:\[|Untracked ticket)|\Z)", section)
         candidates = re.findall(r"^[ \t]*\*\*(?:\[|Untracked ticket)", section, re.M)
@@ -144,7 +152,7 @@ def classify(body):
                 return "escalate"
             # A status heading without its analysis is incomplete.
             analyses = re.findall(r"(?:Compliant requirements|Non-compliant requirements|Requires further human verification):([\s\S]*?)(?=(?:Compliant requirements|Non-compliant requirements|Requires further human verification):|\Z)", requirements)
-            if not analyses or any(not re.sub(r"[\s*#_`-]", "", re.sub(r"<[^>]*>", "", analysis)) for analysis in analyses):
+            if not analyses or any(not re.sub(r"[\s*#_`-]", "", unescape(re.sub(r"<[^>]*>", "", analysis))) for analysis in analyses):
                 return "escalate"
             if level in {"partially compliant", "not compliant"} or "Non-compliant requirements:" in requirements:
                 verdicts.append("needs_fixes")
@@ -159,7 +167,7 @@ def classify(body):
     # An explicit security section cannot be overridden by clean compliance.
     security = re.search(r"(?:<strong>Security concerns</strong>|^### [^\n]*Security concerns)[ :]*(?:<br>)*([\s\S]*?)(?=</td>|^### |\Z)", body, re.M | re.I)
     if security:
-        value = re.sub(r"<[^>]*>", "", security.group(1)).strip()
+        value = unescape(re.sub(r"<[^>]*>", "", security.group(1))).strip()
         if not re.fullmatch(r"(?:No security concerns (?:identified|detected)|No|None|False)[.]?", value, re.I):
             return "needs_fixes"
     # Both rendered focus headings use the same hard-blocker/advisory labels.
@@ -173,9 +181,8 @@ def classify(body):
         if any(label in blockers for label in labels):
             return "needs_fixes"
         return "clean"
-    if "Key issues to review" in body or "Recommended focus areas for review" in body:
-        return "escalate"
-    if ticket or "No major issues detected" in body:
+    no_major = re.search(r"<strong>No major issues detected</strong>|^[ \t]*(?:#{1,6}[ \t]+(?:⚡[ \t]*)?)?No major issues detected[.]?[ \t]*$", body, re.M)
+    if ticket or no_major:
         return "clean"
     return "escalate"
 
