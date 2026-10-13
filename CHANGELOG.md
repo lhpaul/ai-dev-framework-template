@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.48.1] - 2026-10-13
+
+### Fixed
+
+- **Draft gate before ready** (#1864): require fresh draft GitHub gate evidence
+  before Protocol 91 marks a PR ready, and let the reviewer loop own conversion
+  when ready-phase reviewers are configured.
+- **Paired release merge sessions** (#1941): admit complete production/backport
+  release duties, verify publication before backport, and recover shared
+  cleanup without repeating completed mutations.
+- **PR-Agent ticket-compliance reviews** (#1946): recognize current and legacy
+  PR-Agent review formats in the reviewer loop and readiness gate, escalating
+  incomplete, ambiguous or unknown verdicts.
+
 ## [0.48.0] - 2026-10-09
 
 ### Added
@@ -3309,7 +3323,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `.claude/settings.json` with pre-approved permissions for common git and fetch operations; `.claude/settings.local.json.example` documenting machine-specific overrides for optional integrations
 - `.gitignore` covering local Claude settings, `.env` files, and common system files
 
-[Unreleased]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.48.0...HEAD
+[Unreleased]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.48.1...HEAD
+[0.48.1]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.48.0...v0.48.1
 [0.48.0]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.47.1...v0.48.0
 [0.47.1]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.47.0...v0.47.1
 [0.47.0]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.46.0...v0.47.0
