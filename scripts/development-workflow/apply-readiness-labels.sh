@@ -160,7 +160,11 @@ def classify(body):
     if len(ticket_matches) > 1:
         return "escalate"
     ticket = bool(ticket_matches)
-    if not ticket and re.search(r"^[ \t]*(?:\*\*|#{1,6})[^\n]*Ticket compliance analysis", body, re.M):
+    rendered_headers = FocusLabels()
+    rendered_headers.feed(body)
+    ticket_candidates = len(re.findall(r"^[ \t]*(?:\*\*|#{1,6})[^\n]*Ticket compliance analysis", body, re.M))
+    ticket_candidates += sum("Ticket compliance analysis" in label for label in rendered_headers.labels)
+    if ticket_candidates != len(ticket_matches):
         return "escalate"  # A malformed heading is not just a prose mention.
     # HTMLParser retains unfinished tags in rawdata even when they lack >.
     # Validate every rendered review before trusting an earlier clean marker.
@@ -168,8 +172,9 @@ def classify(body):
     structure.feed(body)
     if not structure.valid or structure.stack or structure.rawdata.strip():
         return "escalate"
-    if re.search(r"^[ \t]*(?:#{1,6}[ \t]+|\*\*)?Requires further human verification\b", body, re.M | re.I):
+    if any(re.match(r"Requires further human verification\b", " ".join(label.split()), re.I) for label in rendered_headers.labels) or re.search(r"^[ \t]*(?:#{1,6}[ \t]+|\*\*)?Requires further human verification\b", body, re.M | re.I):
         return "escalate"
+    needs_fixes = False
     if ticket:
         section = body[ticket_matches[0].end():]
         section = re.split(r"</td>|^### ", section, maxsplit=1, flags=re.M)[0]
@@ -186,16 +191,15 @@ def classify(body):
             analyses = re.findall(r"(?:Compliant requirements|Non-compliant requirements|Requires further human verification):([\s\S]*?)(?=(?:Compliant requirements|Non-compliant requirements|Requires further human verification):|\Z)", requirements)
             if not analyses or any(not re.sub(r"[\s*#_`-]", "", unescape(re.sub(r"<[^>]*>", "", analysis))) for analysis in analyses):
                 return "escalate"
-            if level in {"partially compliant", "not compliant"} or "Non-compliant requirements:" in requirements:
-                verdicts.append("needs_fixes")
-            elif level == "pr code verified" or "Requires further human verification:" in requirements:
+            if level == "pr code verified" or "Requires further human verification:" in requirements:
                 verdicts.append("escalate")
+            elif level in {"partially compliant", "not compliant"} or "Non-compliant requirements:" in requirements:
+                verdicts.append("needs_fixes")
             else:
                 verdicts.append("clean")
-        if "needs_fixes" in verdicts:
-            return "needs_fixes"
         if "escalate" in verdicts:
             return "escalate"
+        needs_fixes = "needs_fixes" in verdicts
     # An explicit security section cannot be overridden by clean compliance.
     security_sections = list(re.finditer(r"(?:<strong>Security concerns</strong>|^#{1,6}[ \t]+(?:🔒[ \t]*)?Security concerns)[ :]*(?:<br>)*([\s\S]*?)(?=</td>|^### |\Z)", body, re.M | re.I))
     if len(security_sections) > 1:
@@ -203,7 +207,7 @@ def classify(body):
     if security_sections:
         value = unescape(re.sub(r"<[^>]*>", "", security_sections[0].group(1))).strip()
         if not re.fullmatch(r"(?:No security concerns (?:identified|detected)|No|None|False)[.]?", value, re.I):
-            return "needs_fixes"
+            needs_fixes = True
     # Both rendered focus headings use the same hard-blocker/advisory labels.
     labels = focus_labels(body)
     if labels is not None:
@@ -214,8 +218,10 @@ def classify(body):
             return "escalate" if ticket else "needs_fixes"
         if any(label in blockers for label in labels):
             return "needs_fixes"
-        return "clean"
+        return "needs_fixes" if needs_fixes else "clean"
     no_major = re.search(r"<strong>No major issues detected</strong>|^[ \t]*(?:#{1,6}[ \t]+(?:⚡[ \t]*)?)?No major issues detected[.]?[ \t]*$", body, re.M)
+    if needs_fixes:
+        return "needs_fixes"
     if ticket or no_major:
         return "clean"
     return "escalate"

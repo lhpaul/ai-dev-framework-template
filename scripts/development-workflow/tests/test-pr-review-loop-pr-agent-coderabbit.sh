@@ -2038,6 +2038,10 @@ PATH="$_fixture_dir_1946:$PATH" PR_AGENT_FIXTURE_BODY="${_fixture_header_1946}${
   run_pr_agent_review 42 feature/42-test 1 0 >/dev/null
 run_test 1946_current_advisories_only '' "$(_pr_agent_extract_advisory_labels "${_fixture_ticket_1946}"$'<!-- pr-agent-review-state:v1\nRecommended focus areas for review\n<strong>Possible Issue</strong>\n-->\n')"
 run_test 1946_new_focus_advisory_labels 'Possible Issue' "$(_pr_agent_extract_advisory_labels "${_fixture_focus_1946/Recommended focus areas for review/Key issues to review}")"
+fixture_test_1946 extra_rendered_human escalate "${_fixture_ticket_1946}"$'<strong>Requires further human verification</strong><br>\n- Verify authorization manually.\n'
+fixture_test_1946 extra_malformed_second_section escalate "${_fixture_ticket_1946}"$'**Ticket compliance analysis ❌*\n**[43](url) - Not compliant**\nNon-compliant requirements:\n- Missing.\n'
+fixture_test_1946 extra_partial_unknown_focus escalate "${_fixture_ticket_1946/Fully compliant/Partially compliant}"$'**Recommended focus areas for review**\n<strong>Critical</strong>\n'
+fixture_test_1946 extra_partial_human_ticket escalate $'\n**Ticket compliance analysis 🔶**\n**[42](url) - Partially compliant**\nNon-compliant requirements:\n- Missing.\n**[43](url) - PR Code Verified**\nCompliant requirements:\n- Implemented; human verification pending.\n'
 rm -rf "$_fixture_dir_1946"
 unset _fixture_dir_1946 _fixture_header_1946 _fixture_ticket_1946 _fixture_focus_1946
 unset -f fixture_test_1946
