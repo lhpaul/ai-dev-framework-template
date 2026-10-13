@@ -49,13 +49,387 @@
 # rule as `run_bugbot_review()` (pr-review-loop.sh ~3838).
 set -euo pipefail
 
+# Pure stdin classifier shared with pr-review-loop.sh (#1946). Keeping this
+# entry before workflow setup lets both callers use one verdict contract without
+# loading another command runner or performing any GitHub operation.
+classify_pr_agent_review() {
+  python3 -c '
+import re
+import sys
+from html import unescape
+from html.parser import HTMLParser
+
+body = sys.stdin.read()
+blockers = {"critical", "must fix", "breaking change", "security concern",
+            "api change", "backward compatibility"}
+# Verdict-bearing values are closed sets. Descriptive requirement bullets are
+# evidence under these known headings, never additional status values.
+negative_values = {"no", "none", "false", "n/a", "not applicable"}
+security_negatives = negative_values | {"no security concerns identified", "no security concerns detected"}
+security_findings = blockers | {"yes", "true", "unsafe input execution"}
+focus_negatives = {"no major issues detected", "no issues detected", "no issues found", "none"}
+focus_advisories = {"possible issue", "edge case", "code quality", "best practice",
+                    "performance", "readability", "maintainability"}
+compliance_values = {"fully compliant": "clean", "partially compliant": "needs_fixes",
+                     "not compliant": "needs_fixes", "pr code verified": "escalate"}
+analysis_headings = {"Compliant requirements", "Non-compliant requirements",
+                     "Requires further human verification"}
+
+def value_verdict(value, negatives, findings):
+    value = " ".join(value.split()).lower().rstrip(".")
+    if value in negatives:
+        return "clean"
+    if value in findings:
+        return "needs_fixes"
+    return "escalate"
+
+class ReviewStructure(HTMLParser):
+    void_tags = {"area", "base", "br", "col", "embed", "hr", "img", "input",
+                 "link", "meta", "param", "source", "track", "wbr"}
+    start_syntax = re.compile(r"<[A-Za-z][A-Za-z0-9:-]*(?:\s+[^\s/=>\"\x27<\x00-\x1f]+(?:\s*=\s*(?:\"[^\"]*\"|\x27[^\x27]*\x27|[^\s\"\x27=<>`]+))?)*\s*/?>")
+
+    def __init__(self, source):
+        super().__init__()
+        self.stack = []
+        self.source = source
+        self.line_offsets = [0] + [match.end() for match in re.finditer(r"\n", source)]
+        self.valid = True
+
+    def handle_starttag(self, tag, attrs):
+        # HTMLParser is tolerant of malformed attributes; the verdict is not.
+        if not self.start_syntax.fullmatch(self.get_starttag_text()):
+            self.valid = False
+        names = [name for name, _ in attrs]
+        if len(names) != len(set(names)):
+            self.valid = False
+        if tag not in self.void_tags:
+            if tag == "table" and tag in self.stack:
+                self.valid = False  # Unknown nested-table rendering.
+            self.stack.append(tag)
+
+    def handle_startendtag(self, tag, attrs):
+        if tag not in self.void_tags:
+            self.valid = False  # A non-void HTML heading cannot self-close.
+        self.handle_starttag(tag, attrs)
+
+    def handle_endtag(self, tag):
+        line, column = self.getpos()
+        offset = self.line_offsets[line - 1] + column
+        if not re.match(r"</" + re.escape(tag) + r"\s*>", self.source[offset:], re.I):
+            self.valid = False
+        if tag in self.void_tags or not self.stack or self.stack.pop() != tag:
+            self.valid = False
+
+
+    def unknown_decl(self, data):
+        self.valid = False  # Unsupported marked declarations are not evidence.
+
+    def source_tail(self):
+        line, column = self.getpos()
+        return self.source[self.line_offsets[line - 1] + column:]
+
+    def handle_comment(self, data):
+        if not self.source_tail().startswith("<!--"):
+            self.valid = False  # Bogus declarations parsed as comments are invalid.
+
+    def handle_data(self, data):
+        # Inspect literal data positions, never quoted attributes or opaque comments.
+        if re.match(r"<\s+/?\s*(?:h[1-6]|strong|b|em|span|p|div|summary|header)\b", self.source_tail(), re.I):
+            self.valid = False
+
+    def handle_decl(self, decl):
+        if self.stack:
+            self.valid = False
+
+    def handle_pi(self, data):
+        if self.stack:
+            self.valid = False
+
+
+def structurally_valid(body):
+    structure = ReviewStructure(body)
+    try:
+        structure.feed(body)
+    except (AssertionError, ValueError):
+        return False
+    return structure.valid and not structure.stack and not structure.rawdata.strip()
+
+
+class FocusLabels(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.labels = []
+        self.current = None
+        self.count = 0
+
+    def handle_starttag(self, tag, attrs):
+        if tag == "strong":
+            self.count += 1
+            self.current = []
+
+    def handle_data(self, data):
+        if self.current is not None:
+            self.current.append(data)
+
+    def handle_endtag(self, tag):
+        if tag == "strong" and self.current is not None:
+            self.labels.append("".join(self.current))
+            self.current = None
+
+
+
+class ReviewText(HTMLParser):
+    """Render status fields once; inline markup does not change their values."""
+    def __init__(self):
+        super().__init__()
+        self.parts = []
+
+    def handle_starttag(self, tag, attrs):
+        if tag in {"br", "p", "div", "table", "tr", "td", "li", "summary", "details", "h1", "h2", "h3", "h4", "h5", "h6"}:
+            self.parts.append("\n")
+
+    def handle_endtag(self, tag):
+        self.handle_starttag(tag, [])
+
+    def handle_data(self, data):
+        self.parts.append(data)
+
+
+def visible_review(body):
+    if body.count("<!--") != body.count("-->"):
+        return None
+    body = re.sub(r"<!--[\s\S]*?-->", "", body)
+    # Code examples are not review metadata or HTML layout. PR-Agent uses
+    # variable-length fences when examples themselves contain backticks.
+    lines = []
+    fence = None
+    for line in body.splitlines():
+        marker = re.match(r"^[ \t]*(`{3,}|~{3,})", line)
+        if marker:
+            token = marker.group(1)
+            if fence is None:
+                fence = token
+            elif token[0] == fence[0] and len(token) >= len(fence) and not line[marker.end():].strip(" \t"):
+                fence = None
+            continue
+        if fence is None:
+            lines.append(line)
+    if fence is not None:
+        return None
+    return "\n".join(re.sub(r"(`+)[^`]*?\1", "", line) for line in lines)
+
+
+def focus_labels(body):
+    # Focus prefixes are presentation; a known hard blocker still counts.
+    focus_name = "Recommended focus areas for review"
+    parts = []
+    end = 0
+    html_headings = r"(?=(<(?P<tag>h[1-6]|strong|b|em|span|p|div|summary)\b[^>]*>(?P<title>[\s\S]*?)</(?P=tag)\s*>))"
+    for heading in re.finditer(html_headings, body, re.I):
+        # A containing review section is not itself a heading: never discard
+        # nested sections or findings while normalizing a presentation prefix.
+        if re.search(r"<(?:h[1-6]|p|div|br|table|tr|td|li|details|summary)\b", heading.group("title"), re.I):
+            continue
+        title_reader = ReviewText()
+        title_reader.feed(heading.group("title"))
+        title = " ".join("".join(title_reader.parts).split())
+        if heading.start() < end or not re.search(re.escape(focus_name) + r"\s*:?$", title, re.I):
+            continue
+        parts.extend([body[end:heading.start()], "<strong>" + focus_name + "</strong>"])
+        end = heading.end(1)
+    body = "".join(parts) + body[end:]
+    # Complete plain/Markdown headings can carry the same prefix.
+    body = re.sub(r"^[ \t]*(?:#{1,6}[ \t]+|\*\*)?[^<>\n]*?" + re.escape(focus_name) + r":?(?:\*\*)?[ \t]*(?:\n|$)", focus_name + "\n", body, flags=re.M | re.I)
+    names = r"Recommended focus areas for review|Key issues to review"
+    headings = list(re.finditer(r"<strong>(?:" + names + r"):?</strong>|^[ \t]*(?:#{1,6}[ \t]+(?:⚡[ \t]*)?)?(?:" + names + r"):?[ \t]*(?:\n|$)", body, re.M))
+    rendered_headings = FocusLabels()
+    rendered_headings.feed(body)
+    html_candidates = sum(bool(re.search(r"(?:" + names + r"):?$", " ".join(label.split()))) for label in rendered_headings.labels)
+    markdown_candidates = len(re.findall(r"^[ \t]*(?:#{1,6}|\*\*)[^\n]*(?:" + names + r")", body, re.M))
+    focus_reader = ReviewText()
+    focus_reader.feed(body)
+    rendered_candidates = len(re.findall(r"^[ \t]*[^\n]*?(?:" + names + r"):?[ \t]*$", "".join(focus_reader.parts), re.M | re.I))
+    if max(html_candidates + markdown_candidates, rendered_candidates) > len(headings) or len(headings) > 1:
+        return [""]  # A valid section cannot hide a later unknown section.
+    if not headings:
+        return None
+    # Start immediately after the heading: HTML findings can share its line.
+    content = re.split(r"</td>|^[ \t]*#{1,6}[ \t]+\S|^---$", body[headings[0].end():], maxsplit=1, flags=re.M)[0]
+    rendered = FocusLabels()
+    rendered.feed(content)
+    html_labels = rendered.labels
+    markdown_labels = re.findall(r"\*\*([^*\n]*)\*\*", content)
+    if len(html_labels) != rendered.count or content.count("**") != 2 * len(markdown_labels):
+        return [""]  # A complete earlier label must not hide a broken one.
+    return [" ".join(label.split()) for label in html_labels] + [" ".join(unescape(label).split()) for label in markdown_labels]
+
+
+def classify(body):
+    if not body:
+        return "none"
+    # Validate original markup before fences/inline code can hide invalid syntax.
+    # Proper HTML comments remain opaque to the parser and to verdict extraction.
+    if not structurally_valid(body):
+        return "escalate"
+    body = visible_review(body)
+    # Sanitization must not create invalid markup from otherwise valid input.
+    if body is None or not structurally_valid(body):
+        return "escalate"
+    ticket_matches = list(re.finditer(r"^[ \t]*\*\*[^*\n]*Ticket compliance analysis[^*\n]*\*\*[ \t]*$|^### [^\n]*Ticket compliance analysis[^\n]*$|<strong>Ticket compliance analysis</strong>", body, re.M))
+    if len(ticket_matches) > 1:
+        return "escalate"
+    ticket = bool(ticket_matches)
+    rendered_headers = FocusLabels()
+    rendered_headers.feed(body)
+    ticket_candidates = len(re.findall(r"^[ \t]*(?:\*\*|#{1,6})[^\n]*Ticket compliance analysis", body, re.M))
+    ticket_candidates += sum("Ticket compliance analysis" in label for label in rendered_headers.labels)
+    if ticket_candidates != len(ticket_matches):
+        return "escalate"  # A malformed heading is not just a prose mention.
+    if any(re.match(r"Requires further human verification\b", " ".join(label.split()), re.I) for label in rendered_headers.labels) or re.search(r"^[ \t]*(?:#{1,6}[ \t]+|\*\*)?Requires further human verification\b", body, re.M | re.I):
+        return "escalate"
+    verification_reader = ReviewText()
+    verification_reader.feed(body)
+    # Markdown emphasis is presentation; HTMLParser decodes entities once.
+    verification_heading = r"^[ \t]*(?:(?:#{1,6}|[-*]|[0-9]+[.)])\s+)?(?:[^\w\s]*\s*)?(?:(?:Review status|Review metadata)\s*[—:-]\s*)?(?:Human\s+verification|Verification\s+status|Verification)\b"
+    def render_emphasis(match):
+        text = match.group(2)
+        if re.match(verification_heading, text, re.I):
+            return "\n" + text + "\n"
+        return text
+    verification_text = re.sub(r"(\*\*|__)([\s\S]*?)\1", render_emphasis, "".join(verification_reader.parts))
+    verification_text = re.sub(r"[*_]", "", verification_text)
+    # Rendered HTML headings carry the same manual request as plain text.
+    # Anchor the known phrase so custom prefixes remain outside this scope.
+    if re.search(r"^[ \t]*Requires\s+further\s+human\s+verification\b", verification_text, re.M | re.I):
+        return "escalate"
+    verification_sections = list(re.finditer(verification_heading + r"\s*:?\s*([^\n]*)(?:\n|$)", verification_text, re.M | re.I))
+    verification_candidates = len(re.findall(verification_heading, verification_text, re.M | re.I))
+    styled_candidates = sum(bool(re.match(verification_heading, re.sub(r"[*_]", "", label), re.I)) for label in rendered_headers.labels)
+    styled_candidates += len(re.findall(r"^[ \t]*(?:#{1,6}|\*\*|__)[^\n]*Verification\s+status\b", body, re.M | re.I))
+    verification_candidates = max(verification_candidates, styled_candidates)
+    if len(verification_sections) != verification_candidates or len(verification_sections) > 1:
+        return "escalate"
+    if verification_sections:
+        verification_value = verification_sections[0].group(1)
+        if value_verdict(verification_value, negative_values | {"not required", "no further human verification required"}, {"yes", "true", "required", "pending"}) != "clean":
+            return "escalate"  # Known requests and unknown statuses both need a human.
+    needs_fixes = False
+    if ticket:
+        section = body[ticket_matches[0].end():]
+        section = re.split(r"</td>|^### ", section, maxsplit=1, flags=re.M)[0]
+        tickets = re.findall(r"\*\*(?:\[[^\]\n]+\]\([^\n]*?\)|Untracked ticket) - ([^*\n]+)\*\*([\s\S]*?)(?=\*\*(?:\[|Untracked ticket)|\Z)", section)
+        candidates = re.findall(r"^[ \t]*\*\*(?:\[|Untracked ticket)", section, re.M)
+        if not tickets or len(tickets) != len(candidates):
+            return "escalate"
+        verdicts = []
+        for level, requirements in tickets:
+            level = level.strip().lower()
+            if level not in compliance_values:
+                return "escalate"
+            # A status heading without its analysis is incomplete.
+            requirement_headers = re.findall(r"^[ \t]*([A-Za-z][A-Za-z -]*):[ \t]*$", requirements, re.M)
+            if not requirement_headers or any(header not in analysis_headings for header in requirement_headers):
+                return "escalate"
+            analyses = re.findall(r"(?:Compliant requirements|Non-compliant requirements|Requires further human verification):([\s\S]*?)(?=(?:Compliant requirements|Non-compliant requirements|Requires further human verification):|\Z)", requirements)
+            if not analyses or any(not re.sub(r"[\s*#_`-]", "", unescape(re.sub(r"<[^>]*>", "", analysis))) for analysis in analyses):
+                return "escalate"
+            # Unknown status-like text cannot serve as requirement analysis.
+            for analysis in analyses:
+                rendered_analysis = unescape(re.sub(r"<[^>]*>", "", analysis)).strip()
+                if " ".join(rendered_analysis.split()).lower().rstrip(".") in negative_values:
+                    continue
+                evidence_lines = [line.strip() for line in rendered_analysis.splitlines() if line.strip()]
+                if not evidence_lines or any(not re.match(r"^(?:[-*]|[0-9]+[.)])[ \t]+\S", line) for line in evidence_lines):
+                    return "escalate"
+                if any(re.fullmatch(r"(?:unknown|tbd|unavailable|undetermined|pending|not assessed)[.!?]?", re.sub(r"^(?:[-*]|[0-9]+[.)])[ \t]+", "", line), re.I) for line in evidence_lines):
+                    return "escalate"
+            if level == "pr code verified" or re.search(r"\bRequires\s+further\s+human\s+verification\b", unescape(re.sub(r"<[^>]*>", " ", requirements)), re.I):
+                verdicts.append("escalate")
+            elif level in {"partially compliant", "not compliant"} or "Non-compliant requirements:" in requirements:
+                verdicts.append("needs_fixes")
+            else:
+                verdicts.append(compliance_values[level])
+        if "escalate" in verdicts:
+            return "escalate"
+        needs_fixes = "needs_fixes" in verdicts
+    # An explicit security section cannot be overridden by clean compliance.
+    # Normalize only the known unprefixed HTML heading, retaining its body.
+    security_parts = []
+    security_end = 0
+    html_headings = r"(?=(<(?P<tag>h[1-6]|strong|b|em|span|p|div|summary)\b[^>]*>(?P<title>[\s\S]*?)</(?P=tag)\s*>))"
+    for heading in re.finditer(html_headings, body, re.I):
+        title_reader = ReviewText()
+        title_reader.feed(heading.group("title"))
+        title = " ".join("".join(title_reader.parts).split())
+        if heading.start() < security_end or not re.fullmatch(r"Security concerns\s*:?", title, re.I):
+            continue
+        security_parts.extend([body[security_end:heading.start()], "<strong>Security concerns</strong>"])
+        security_end = heading.end(1)
+    security_body = "".join(security_parts) + body[security_end:]
+    security_sections = list(re.finditer(r"(?:<strong>Security concerns</strong>|^#{1,6}[ \t]+(?:🔒[ \t]*)?Security concerns)[ :]*(?:<br>)*([\s\S]*?)(?=</td>|^#{1,6} |<h[1-6]\b|\Z)", security_body, re.M | re.I))
+    security_candidates = sum(bool(re.match(r"Security concerns\b", " ".join(label.split()), re.I)) for label in rendered_headers.labels)
+    security_candidates += len(re.findall(r"^[ \t]*(?:#{1,6}|\*\*)[^\n]*(?<!No )Security concerns", body, re.M | re.I))
+    security_candidates += len(re.findall(r"^[ \t]*Security concerns\b", body, re.M | re.I))
+    # An unreadable/unclosed HTML heading must not disappear from the gate.
+    security_candidates = max(security_candidates, len(re.findall(r"^[ \t]*Security\s+concerns\b", verification_text, re.M | re.I)))
+    if security_candidates != len(security_sections) or len(security_sections) > 1:
+        return "escalate"
+    if security_sections:
+        value = unescape(re.sub(r"<[^>]*>", "", security_sections[0].group(1))).strip()
+        security_verdict = value_verdict(value, security_negatives, security_findings)
+        if security_verdict == "escalate":
+            return "escalate"
+        needs_fixes = needs_fixes or security_verdict == "needs_fixes"
+    # Both rendered focus headings use the same hard-blocker/advisory labels.
+    labels = focus_labels(body)
+    if labels is not None:
+        labels = [label.lower() for label in labels]
+        if any(not label for label in labels):
+            return "escalate"
+        if not labels:
+            return "escalate"  # An unreadable section cannot establish a fix.
+        focus_verdicts = [value_verdict(label, focus_negatives | focus_advisories, blockers) for label in labels]
+        if "escalate" in focus_verdicts:
+            return "escalate"
+        if "needs_fixes" in focus_verdicts:
+            return "needs_fixes"
+        return "needs_fixes" if needs_fixes else "clean"
+    no_major = re.search(r"<strong>No major issues detected</strong>|^[ \t]*(?:#{1,6}[ \t]+(?:⚡[ \t]*)?)?No major issues detected[.]?[ \t]*$", body, re.M)
+    if needs_fixes:
+        return "needs_fixes"
+    if ticket or no_major:
+        return "clean"
+    return "escalate"
+
+if sys.argv[1] == "labels":
+    visible = visible_review(body)
+    if visible is not None:
+        print("\n".join(focus_labels(visible) or []), end="")
+else:
+    print(classify(body), end="")
+' "${1:-verdict}"
+}
+
+case "${1:-}" in
+  --classify-pr-agent|--pr-agent-focus-labels)
+    [ "$#" -eq 1 ] || { echo "Usage: apply-readiness-labels.sh --classify-pr-agent|--pr-agent-focus-labels < review.txt" >&2; exit 64; }
+    if [ "$1" = --pr-agent-focus-labels ]; then
+      classify_pr_agent_review labels
+    else
+      classify_pr_agent_review
+    fi
+    exit 0
+    ;;
+esac
+
 SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)"
 # shellcheck source=scripts/development-workflow/workflow-lib.sh
 source "$SCRIPT_DIR/workflow-lib.sh"
 
 usage() {
   cat <<'USAGE'
-Usage: apply-readiness-labels.sh --pr <number> [--repo <owner/repo>] \
+Usage: apply-readiness-labels.sh --classify-pr-agent|--pr-agent-focus-labels < review.txt
+       apply-readiness-labels.sh --pr <number> [--repo <owner/repo>] \
   --label <ready-for-human-review|ready-for-regression> \
   [--branch <branch>] [--dry-run] [--json]
 
@@ -842,8 +1216,8 @@ codex_current_occupancy_comment_ids() {
 #     bot — the findings leg is the shared review scan the caller runs.
 #   - pr-agent: run_pr_agent_review's completion surface — the latest issue
 #     comment by the bot whose body contains "PR Reviewer Guide" and the
-#     head SHA, classified by the same label rules _pr_agent_classify
-#     applies ("No major issues detected" clean; hard-blocker focus-area
+#     visible head marker, classified by the shared stdin classifier
+#     that _pr_agent_classify applies ("No major issues detected" clean; hard-blocker focus-area
 #     labels needs-fixes; unreadable section needs-fixes).
 #   - coderabbit-cli / local-ai-reviewer: both reviewer scripts are pure-CLI
 #     readers (coderabbit-cli-reviewer.sh and local-ai-reviewer.sh make no
@@ -1011,45 +1385,23 @@ comment_only_completion_evidence() {
             | select(
                 (((.user.login // "") == $bot) or ((.user.login // "") == ($bot | sub("\\[bot\\]$"; ""))) or ((.user.login // "") == ($bot + "[bot]")))
               )
-            | select(((.body // "") | contains($sha)) and (((.body // "") | test("PR Reviewer Guide"; "i"))))
+            | select(((.body // "") | gsub("<!--[\\s\\S]*?-->"; "")) as $visible
+                  | ($visible | test("PR Reviewer Guide"; "i"))
+                    and ($visible | split("\n") | any(test("^(?:#### \\(Review updated until commit https://[^/[:space:]]+/[^/[:space:]]+/[^/[:space:]]+/commit/" + $sha + "\\)|commit: " + $sha + ")[[:space:]]*$"))))
           ]
-          | sort_by(.created_at)
+          | sort_by(.updated_at // .created_at)
           | last // empty
         ' 2>/dev/null)" || escalate issue-comment-parse-failed
       [ -n "$pragent_entry" ] || return 1
       body="$(printf '%s\n' "$pragent_entry" | jq -r '.body // ""')"
       created="$(printf '%s\n' "$pragent_entry" | jq -r '.created_at // ""')"
-      if printf '%s\n' "$body" | grep -q "No major issues detected"; then
-        reviewer_started_at="$created"
-        return 0
-      fi
-      if printf '%s\n' "$body" | grep -q "Recommended focus areas for review"; then
-        # Extract <strong>LABEL</strong> tokens from the focus section and
-        # apply the same hard-blocker label set _pr_agent_classify uses.
-        local focus_labels label label_lower
-        focus_labels="$(printf '%s\n' "$body" \
-          | awk '/Recommended focus areas for review/{found=1; next}
-                 found && /^[[:space:]]*(\*\*|<\/td>|<tr>)|^---$/{found=0}
-                 found{print}' \
-          | grep -oE '<strong>[^<]+</strong>' \
-          | sed 's|<strong>||g;s|</strong>||g;s|^[[:space:]]*||;s|[[:space:]]*$||' \
-          || true)"
-        [ -n "$focus_labels" ] || return 2
-        while IFS= read -r label; do
-          [ -n "$label" ] || continue
-          label_lower="$(printf '%s' "$label" | tr '[:upper:]' '[:lower:]')"
-          case "$label_lower" in
-            critical|"must fix"|"breaking change"|"security concern"|"api change"|"backward compatibility")
-              return 2
-              ;;
-          esac
-        done <<< "$focus_labels"
-        reviewer_started_at="$created"
-        return 0
-      fi
-      # No verdict markers at all: not this cycle's terminal comment shape —
-      # fail closed rather than guessing.
-      return 1
+      local pragent_verdict
+      pragent_verdict="$(printf '%s' "$body" | classify_pr_agent_review)" || escalate issue-comment-parse-failed
+      case "$pragent_verdict" in
+        clean) reviewer_started_at="$created"; return 0 ;;
+        needs_fixes) return 2 ;;
+        *) return 1 ;;
+      esac
       ;;
     greptile)
       # Round 18 (thread PRRT_kwDORWAxaM6m36Wu): the trigger must belong to
