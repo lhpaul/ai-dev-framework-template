@@ -2415,7 +2415,7 @@ readiness_fixture_1946 unparsed_verification_heading refused "${_ticket_body_194
 MOCK_ISSUE_COMMENTS='[]'
 readiness_fixture_1946 extra_rendered_human refused "${_ticket_body_1946}"$'<strong>Requires further human verification</strong><br>\n- Verify authorization manually.\n'
 readiness_fixture_1946 extra_malformed_second_section refused "${_ticket_body_1946}"$'**Ticket compliance analysis ❌*\n**[43](url) - Not compliant**\nNon-compliant requirements:\n- Missing.\n'
-readiness_fixture_1946 extra_partial_unknown_focus refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'**Recommended focus areas for review**\n<strong>Critical</strong>\n'
+readiness_fixture_1946 extra_partial_bold_focus refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'**Recommended focus areas for review**\n<strong>Critical</strong>\n'
 readiness_fixture_1946 extra_partial_human_ticket refused "commit: $HEAD"$'\n**Ticket compliance analysis 🔶**\n**[42](url) - Partially compliant**\nNon-compliant requirements:\n- Missing.\n**[43](url) - PR Code Verified**\nCompliant requirements:\n- Implemented; human verification pending.\n'
 readiness_fixture_1946 extra2_unreadable_legacy_focus refused "commit: $HEAD"$'\n### Recommended focus areas for review\nNo parseable labels\n' reviewer-check-absent
 readiness_fixture_1946 extra2_empty_security refused "${_ticket_body_1946}"$'<strong>Security concerns</strong><br>\n' reviewer-check-absent
@@ -2452,6 +2452,68 @@ readiness_fixture_1946 scoped_human_no_colon refused "commit: $HEAD"$'\n## PR Re
 readiness_fixture_1946 scoped_human_colon refused "commit: $HEAD"$'\n## PR Reviewer Guide\n**Ticket compliance analysis ✅**\n**[42](url) - Fully compliant**\nCompliant requirements:\n- Requires further human verification:\n' reviewer-check-absent
 readiness_fixture_1946 scoped_human_rendered refused "commit: $HEAD"$'\n## PR Reviewer Guide\n**Ticket compliance analysis ✅**\n**[42](url) - Fully compliant**\nCompliant requirements:\n- Requires&nbsp;further <em>human</em> verification\n' reviewer-check-absent
 readiness_fixture_1946 scoped_partial_human_no_colon refused "commit: $HEAD"$'\n## PR Reviewer Guide\n**Ticket compliance analysis ✅**\n**[42](url) - Partially compliant**\nCompliant requirements:\n- Requires further human verification\n' reviewer-check-absent
+# Hard focus blockers override compliant tickets, even with heading prefixes.
+readiness_fixture_1946 focus_hard_h3_bare_full refused "${_ticket_body_1946}"$'<h3>Recommended focus areas for review</h3>\n<strong>Critical</strong>\n' blocking-findings needs_fixes
+readiness_fixture_1946 focus_hard_h3_bare_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h3>Recommended focus areas for review</h3>\n<strong>Critical</strong>\n' blocking-findings needs_fixes
+readiness_fixture_1946 focus_hard_h3_prefix_full refused "${_ticket_body_1946}"$'<h3>Custom Recommended focus areas for review</h3>\n<strong>Critical</strong>\n' blocking-findings needs_fixes
+readiness_fixture_1946 focus_hard_h3_prefix_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h3>Custom Recommended focus areas for review</h3>\n<strong>Critical</strong>\n' blocking-findings needs_fixes
+readiness_fixture_1946 focus_hard_strong_bare_full refused "${_ticket_body_1946}"$'<strong>Recommended focus areas for review</strong>\n<strong>Critical</strong>\n' blocking-findings needs_fixes
+readiness_fixture_1946 focus_hard_strong_bare_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<strong>Recommended focus areas for review</strong>\n<strong>Critical</strong>\n' blocking-findings needs_fixes
+readiness_fixture_1946 focus_hard_strong_prefix_full refused "${_ticket_body_1946}"$'<strong>Custom Recommended focus areas for review</strong>\n<strong>Critical</strong>\n' blocking-findings needs_fixes
+readiness_fixture_1946 focus_hard_strong_prefix_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<strong>Custom Recommended focus areas for review</strong>\n<strong>Critical</strong>\n' blocking-findings needs_fixes
+readiness_fixture_1946 focus_hard_h1_bare_full refused "${_ticket_body_1946}"$'<h1>Recommended focus areas for review</h1>\n<strong>Critical</strong>\n' blocking-findings needs_fixes
+readiness_fixture_1946 focus_hard_h1_bare_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h1>Recommended focus areas for review</h1>\n<strong>Critical</strong>\n' blocking-findings needs_fixes
+readiness_fixture_1946 focus_hard_h1_prefix_full refused "${_ticket_body_1946}"$'<h1>Custom Recommended focus areas for review</h1>\n<strong>Critical</strong>\n' blocking-findings needs_fixes
+readiness_fixture_1946 focus_hard_h1_prefix_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h1>Custom Recommended focus areas for review</h1>\n<strong>Critical</strong>\n' blocking-findings needs_fixes
+readiness_fixture_1946 focus_hard_h6_bare_full refused "${_ticket_body_1946}"$'<h6>Recommended focus areas for review</h6>\n<strong>Critical</strong>\n' blocking-findings needs_fixes
+readiness_fixture_1946 focus_hard_h6_bare_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h6>Recommended focus areas for review</h6>\n<strong>Critical</strong>\n' blocking-findings needs_fixes
+readiness_fixture_1946 focus_hard_h6_prefix_full refused "${_ticket_body_1946}"$'<h6>Custom Recommended focus areas for review</h6>\n<strong>Critical</strong>\n' blocking-findings needs_fixes
+readiness_fixture_1946 focus_hard_h6_prefix_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h6>Custom Recommended focus areas for review</h6>\n<strong>Critical</strong>\n' blocking-findings needs_fixes
+readiness_fixture_1946 focus_hard_b_bare_full refused "${_ticket_body_1946}"$'<b>Recommended focus areas for review</b>\n<strong>Critical</strong>\n' blocking-findings needs_fixes
+readiness_fixture_1946 focus_hard_b_bare_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<b>Recommended focus areas for review</b>\n<strong>Critical</strong>\n' blocking-findings needs_fixes
+readiness_fixture_1946 focus_hard_b_prefix_full refused "${_ticket_body_1946}"$'<b>Custom Recommended focus areas for review</b>\n<strong>Critical</strong>\n' blocking-findings needs_fixes
+readiness_fixture_1946 focus_hard_b_prefix_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<b>Custom Recommended focus areas for review</b>\n<strong>Critical</strong>\n' blocking-findings needs_fixes
+readiness_fixture_1946 focus_hard_span_bare_full refused "${_ticket_body_1946}"$'<span>Recommended focus areas for review</span>\n<strong>Critical</strong>\n' blocking-findings needs_fixes
+readiness_fixture_1946 focus_hard_span_bare_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<span>Recommended focus areas for review</span>\n<strong>Critical</strong>\n' blocking-findings needs_fixes
+readiness_fixture_1946 focus_hard_span_prefix_full refused "${_ticket_body_1946}"$'<span>Custom Recommended focus areas for review</span>\n<strong>Critical</strong>\n' blocking-findings needs_fixes
+readiness_fixture_1946 focus_hard_span_prefix_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<span>Custom Recommended focus areas for review</span>\n<strong>Critical</strong>\n' blocking-findings needs_fixes
+readiness_fixture_1946 focus_hard_div_bare_full refused "${_ticket_body_1946}"$'<div>Recommended focus areas for review</div>\n<strong>Critical</strong>\n' blocking-findings needs_fixes
+readiness_fixture_1946 focus_hard_div_bare_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<div>Recommended focus areas for review</div>\n<strong>Critical</strong>\n' blocking-findings needs_fixes
+readiness_fixture_1946 focus_hard_div_prefix_full refused "${_ticket_body_1946}"$'<div>Custom Recommended focus areas for review</div>\n<strong>Critical</strong>\n' blocking-findings needs_fixes
+readiness_fixture_1946 focus_hard_div_prefix_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<div>Custom Recommended focus areas for review</div>\n<strong>Critical</strong>\n' blocking-findings needs_fixes
+readiness_fixture_1946 focus_hard_attributes_bare_full refused "${_ticket_body_1946}"$'<h3 class="focus">Recommended focus areas for review:</h3>\n<strong>Critical</strong>\n' blocking-findings needs_fixes
+readiness_fixture_1946 focus_hard_attributes_bare_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h3 class="focus">Recommended focus areas for review:</h3>\n<strong>Critical</strong>\n' blocking-findings needs_fixes
+readiness_fixture_1946 focus_hard_attributes_prefix_full refused "${_ticket_body_1946}"$'<h3 class="focus">Custom Recommended focus areas for review:</h3>\n<strong>Critical</strong>\n' blocking-findings needs_fixes
+readiness_fixture_1946 focus_hard_attributes_prefix_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h3 class="focus">Custom Recommended focus areas for review:</h3>\n<strong>Critical</strong>\n' blocking-findings needs_fixes
+readiness_fixture_1946 focus_hard_nested_bare_full refused "${_ticket_body_1946}"$'<h3><strong>Recommended focus areas for review</strong></h3>\n<strong>Critical</strong>\n' blocking-findings needs_fixes
+readiness_fixture_1946 focus_hard_nested_bare_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h3><strong>Recommended focus areas for review</strong></h3>\n<strong>Critical</strong>\n' blocking-findings needs_fixes
+readiness_fixture_1946 focus_hard_nested_prefix_full refused "${_ticket_body_1946}"$'<h3>Custom <strong>Recommended focus areas for review</strong></h3>\n<strong>Critical</strong>\n' blocking-findings needs_fixes
+readiness_fixture_1946 focus_hard_nested_prefix_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h3>Custom <strong>Recommended focus areas for review</strong></h3>\n<strong>Critical</strong>\n' blocking-findings needs_fixes
+readiness_fixture_1946 focus_hard_fragmented_bare_full refused "${_ticket_body_1946}"$'<h3>Recommended focus <em>areas</em> for review</h3>\n<strong>Critical</strong>\n' blocking-findings needs_fixes
+readiness_fixture_1946 focus_hard_fragmented_bare_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h3>Recommended focus <em>areas</em> for review</h3>\n<strong>Critical</strong>\n' blocking-findings needs_fixes
+readiness_fixture_1946 focus_hard_fragmented_prefix_full refused "${_ticket_body_1946}"$'<h3>Custom Recommended focus <em>areas</em> for review</h3>\n<strong>Critical</strong>\n' blocking-findings needs_fixes
+readiness_fixture_1946 focus_hard_fragmented_prefix_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h3>Custom Recommended focus <em>areas</em> for review</h3>\n<strong>Critical</strong>\n' blocking-findings needs_fixes
+readiness_fixture_1946 focus_hard_markdown_bare_full refused "${_ticket_body_1946}"$'### Recommended focus areas for review\n<strong>Critical</strong>\n' blocking-findings needs_fixes
+readiness_fixture_1946 focus_hard_markdown_bare_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'### Recommended focus areas for review\n<strong>Critical</strong>\n' blocking-findings needs_fixes
+readiness_fixture_1946 focus_hard_markdown_prefix_full refused "${_ticket_body_1946}"$'### Custom Recommended focus areas for review\n<strong>Critical</strong>\n' blocking-findings needs_fixes
+readiness_fixture_1946 focus_hard_markdown_prefix_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'### Custom Recommended focus areas for review\n<strong>Critical</strong>\n' blocking-findings needs_fixes
+readiness_fixture_1946 focus_hard_bold_bare_full refused "${_ticket_body_1946}"$'**Recommended focus areas for review**\n<strong>Critical</strong>\n' blocking-findings needs_fixes
+readiness_fixture_1946 focus_hard_bold_bare_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'**Recommended focus areas for review**\n<strong>Critical</strong>\n' blocking-findings needs_fixes
+readiness_fixture_1946 focus_hard_bold_prefix_full refused "${_ticket_body_1946}"$'**Custom Recommended focus areas for review**\n<strong>Critical</strong>\n' blocking-findings needs_fixes
+readiness_fixture_1946 focus_hard_bold_prefix_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'**Custom Recommended focus areas for review**\n<strong>Critical</strong>\n' blocking-findings needs_fixes
+readiness_fixture_1946 focus_hard_plain_bare_full refused "${_ticket_body_1946}"$'Recommended focus areas for review\n<strong>Critical</strong>\n' blocking-findings needs_fixes
+readiness_fixture_1946 focus_hard_plain_bare_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'Recommended focus areas for review\n<strong>Critical</strong>\n' blocking-findings needs_fixes
+readiness_fixture_1946 focus_hard_plain_prefix_full refused "${_ticket_body_1946}"$'Custom Recommended focus areas for review\n<strong>Critical</strong>\n' blocking-findings needs_fixes
+readiness_fixture_1946 focus_hard_plain_prefix_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'Custom Recommended focus areas for review\n<strong>Critical</strong>\n' blocking-findings needs_fixes
+readiness_fixture_1946 focus_hard_unknown refused "${_ticket_body_1946}"$'<h3>Custom Recommended focus areas for review</h3>\n<strong>Unknown</strong>\n' reviewer-check-absent
+readiness_fixture_1946 focus_hard_mixed_unknown refused "${_ticket_body_1946}"$'<h3>Recommended focus areas for review</h3>\n<strong>Critical</strong>\n<strong>Unknown</strong>\n' reviewer-check-absent
+readiness_fixture_1946 focus_hard_advisory labeled "${_ticket_body_1946}"$'<h3>Custom Recommended focus areas for review</h3>\n<strong>Possible Issue</strong>\n'
+readiness_fixture_1946 focus_hard_negative labeled "${_ticket_body_1946}"$'<h3>Custom Recommended focus areas for review</h3>\n<strong>No major issues detected</strong>\n'
+readiness_fixture_1946 focus_hard_empty refused "${_ticket_body_1946}"$'<h3>Custom Recommended focus areas for review</h3>\n' reviewer-check-absent
+readiness_fixture_1946 focus_hard_duplicate refused "${_ticket_body_1946}"$'<h3>Recommended focus areas for review</h3>\n<strong>Possible Issue</strong>\n<h3>Custom Recommended focus areas for review</h3>\n<strong>Critical</strong>\n' reviewer-check-absent
+readiness_fixture_1946 focus_hard_wrapper_duplicate refused "${_ticket_body_1946}"$'<div><h3>Recommended focus areas for review</h3><strong>Critical</strong><h3>Recommended focus areas for review</h3></div>\n' reviewer-check-absent
+readiness_fixture_1946 focus_hard_hidden labeled "${_ticket_body_1946}"$'<!-- <h3>Recommended focus areas for review</h3><strong>Critical</strong> -->\n'
+readiness_fixture_1946 focus_hard_code labeled "${_ticket_body_1946}"$'```html\n<h3>Recommended focus areas for review</h3><strong>Critical</strong>\n```\n'
 # HTML security headings use the same explicit value lists (#1946).
 readiness_fixture_1946 html_security_h1_negative_full labeled "${_ticket_body_1946}"$'<h1>Security concerns</h1><p>None</p>\n'
 readiness_fixture_1946 html_security_h1_negative_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h1>Security concerns</h1><p>None</p>\n' blocking-findings needs_fixes

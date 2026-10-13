@@ -166,13 +166,36 @@ def visible_review(body):
 
 
 def focus_labels(body):
+    # Focus prefixes are presentation; a known hard blocker still counts.
+    focus_name = "Recommended focus areas for review"
+    parts = []
+    end = 0
+    html_headings = r"(?=(<(?P<tag>h[1-6]|strong|b|em|span|p|div|summary)\b[^>]*>(?P<title>[\s\S]*?)</(?P=tag)\s*>))"
+    for heading in re.finditer(html_headings, body, re.I):
+        # A containing review section is not itself a heading: never discard
+        # nested sections or findings while normalizing a presentation prefix.
+        if re.search(r"<(?:h[1-6]|p|div|br|table|tr|td|li|details|summary)\b", heading.group("title"), re.I):
+            continue
+        title_reader = ReviewText()
+        title_reader.feed(heading.group("title"))
+        title = " ".join("".join(title_reader.parts).split())
+        if heading.start() < end or not re.search(re.escape(focus_name) + r"\s*:?$", title, re.I):
+            continue
+        parts.extend([body[end:heading.start()], "<strong>" + focus_name + "</strong>"])
+        end = heading.end(1)
+    body = "".join(parts) + body[end:]
+    # Complete plain/Markdown headings can carry the same prefix.
+    body = re.sub(r"^[ \t]*(?:#{1,6}[ \t]+|\*\*)?[^<>\n]*?" + re.escape(focus_name) + r":?(?:\*\*)?[ \t]*(?:\n|$)", focus_name + "\n", body, flags=re.M | re.I)
     names = r"Recommended focus areas for review|Key issues to review"
     headings = list(re.finditer(r"<strong>(?:" + names + r"):?</strong>|^[ \t]*(?:#{1,6}[ \t]+(?:⚡[ \t]*)?)?(?:" + names + r"):?[ \t]*(?:\n|$)", body, re.M))
     rendered_headings = FocusLabels()
     rendered_headings.feed(body)
     html_candidates = sum(bool(re.search(r"(?:" + names + r"):?$", " ".join(label.split()))) for label in rendered_headings.labels)
     markdown_candidates = len(re.findall(r"^[ \t]*(?:#{1,6}|\*\*)[^\n]*(?:" + names + r")", body, re.M))
-    if html_candidates + markdown_candidates > len(headings) or len(headings) > 1:
+    focus_reader = ReviewText()
+    focus_reader.feed(body)
+    rendered_candidates = len(re.findall(r"^[ \t]*[^\n]*?(?:" + names + r"):?[ \t]*$", "".join(focus_reader.parts), re.M | re.I))
+    if max(html_candidates + markdown_candidates, rendered_candidates) > len(headings) or len(headings) > 1:
         return [""]  # A valid section cannot hide a later unknown section.
     if not headings:
         return None
