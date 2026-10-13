@@ -2448,6 +2448,10 @@ readiness_fixture_1946 closed_verification_after_partial refused "${_ticket_body
 readiness_fixture_1946 closed_legacy_unknown refused "commit: $HEAD"$'\n## PR Reviewer Guide\nReview complete: Unknown\n' reviewer-check-absent
 readiness_fixture_1946 closed_bare_security_unknown refused "${_ticket_body_1946}"$'Security concerns: Unknown\n' reviewer-check-absent
 readiness_fixture_1946 closed_malformed_verification_unknown refused "${_ticket_body_1946}"$'### Verification status Unknown\n' reviewer-check-absent
+readiness_fixture_1946 scoped_human_no_colon refused "commit: $HEAD"$'\n## PR Reviewer Guide\n**Ticket compliance analysis ✅**\n**[42](url) - Fully compliant**\nCompliant requirements:\n- Requires further human verification\n' reviewer-check-absent
+readiness_fixture_1946 scoped_human_colon refused "commit: $HEAD"$'\n## PR Reviewer Guide\n**Ticket compliance analysis ✅**\n**[42](url) - Fully compliant**\nCompliant requirements:\n- Requires further human verification:\n' reviewer-check-absent
+readiness_fixture_1946 scoped_human_rendered refused "commit: $HEAD"$'\n## PR Reviewer Guide\n**Ticket compliance analysis ✅**\n**[42](url) - Fully compliant**\nCompliant requirements:\n- Requires&nbsp;further <em>human</em> verification\n' reviewer-check-absent
+readiness_fixture_1946 scoped_partial_human_no_colon refused "commit: $HEAD"$'\n## PR Reviewer Guide\n**Ticket compliance analysis ✅**\n**[42](url) - Partially compliant**\nCompliant requirements:\n- Requires further human verification\n' reviewer-check-absent
 unset _ticket_body_1946
 unset -f readiness_fixture_1946
 

@@ -233,7 +233,7 @@ def classify(body):
                     return "escalate"
                 if any(re.fullmatch(r"(?:unknown|tbd|unavailable|undetermined|pending|not assessed)[.!?]?", re.sub(r"^(?:[-*]|[0-9]+[.)])[ \t]+", "", line), re.I) for line in evidence_lines):
                     return "escalate"
-            if level == "pr code verified" or "Requires further human verification:" in requirements:
+            if level == "pr code verified" or re.search(r"\bRequires\s+further\s+human\s+verification\b", unescape(re.sub(r"<[^>]*>", " ", requirements)), re.I):
                 verdicts.append("escalate")
             elif level in {"partially compliant", "not compliant"} or "Non-compliant requirements:" in requirements:
                 verdicts.append("needs_fixes")

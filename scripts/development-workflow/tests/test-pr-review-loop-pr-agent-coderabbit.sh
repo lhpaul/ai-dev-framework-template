@@ -2074,6 +2074,10 @@ fixture_test_1946 closed_legacy_unknown escalate $'\n## PR Reviewer Guide\nRevie
 run_test 1946_unknown_not_advisory '' "$(_pr_agent_extract_advisory_labels "${_fixture_focus_1946/Possible Issue/Unknown}")"
 fixture_test_1946 closed_bare_security_unknown escalate "${_fixture_ticket_1946}"$'Security concerns: Unknown\n'
 fixture_test_1946 closed_malformed_verification_unknown escalate "${_fixture_ticket_1946}"$'### Verification status Unknown\n'
+fixture_test_1946 scoped_human_no_colon escalate $'\n## PR Reviewer Guide\n**Ticket compliance analysis ✅**\n**[42](url) - Fully compliant**\nCompliant requirements:\n- Requires further human verification\n'
+fixture_test_1946 scoped_human_colon escalate $'\n## PR Reviewer Guide\n**Ticket compliance analysis ✅**\n**[42](url) - Fully compliant**\nCompliant requirements:\n- Requires further human verification:\n'
+fixture_test_1946 scoped_human_rendered escalate $'\n## PR Reviewer Guide\n**Ticket compliance analysis ✅**\n**[42](url) - Fully compliant**\nCompliant requirements:\n- Requires&nbsp;further <em>human</em> verification\n'
+fixture_test_1946 scoped_partial_human_no_colon escalate $'\n## PR Reviewer Guide\n**Ticket compliance analysis ✅**\n**[42](url) - Partially compliant**\nCompliant requirements:\n- Requires further human verification\n'
 rm -rf "$_fixture_dir_1946"
 unset _fixture_dir_1946 _fixture_header_1946 _fixture_ticket_1946 _fixture_focus_1946
 unset -f fixture_test_1946
