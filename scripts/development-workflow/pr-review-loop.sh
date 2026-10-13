@@ -6214,13 +6214,14 @@ _PR_AGENT_RULE_B_CANDIDATES_
           critical|"must fix"|"breaking change"|"security concern"|"api change"|"backward compatibility")
             # Hard-blocker — skip; these are handled by _pr_agent_classify as needs_fixes.
             ;;
-          *)
+          "possible issue"|"edge case"|"code quality"|"best practice"|performance|readability|maintainability)
             if [ -n "$advisory_labels" ]; then
               advisory_labels="${advisory_labels}|${label}"
             else
               advisory_labels="$label"
             fi
             ;;
+          *) : ;; # Unknown values belong to escalation, never advisory dispatch.
         esac
       done <<_PR_AGENT_ADVISORY_LABELS_
 $labels

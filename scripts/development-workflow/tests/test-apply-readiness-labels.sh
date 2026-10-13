@@ -2423,6 +2423,31 @@ readiness_fixture_1946 extra2_blank_security refused "${_ticket_body_1946}"$'<tr
 readiness_fixture_1946 extra2_markup_only_security refused "${_ticket_body_1946}"$'<strong>Security concerns</strong><br>\n- ** **\n' reviewer-check-absent
 readiness_fixture_1946 extra2_partial_empty_security refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<strong>Security concerns</strong><br>\n' reviewer-check-absent
 readiness_fixture_1946 extra2_security_fix_unreadable_focus refused "${_ticket_body_1946}"$'<tr><td><strong>Security concerns</strong><br>Unsafe input execution.</td></tr>\n### Recommended focus areas for review\nNo parseable labels\n' reviewer-check-absent
+# Closed-set policy: every verdict branch rejects unknown values (#1946).
+readiness_fixture_1946 closed_security_negative labeled "${_ticket_body_1946}"$'<tr><td><strong>Security concerns</strong><br>None</td></tr>\n'
+readiness_fixture_1946 closed_security_finding refused "${_ticket_body_1946}"$'<tr><td><strong>Security concerns</strong><br>Yes</td></tr>\n'
+readiness_fixture_1946 closed_security_unknown refused "${_ticket_body_1946}"$'<tr><td><strong>Security concerns</strong><br>Unknown</td></tr>\n' reviewer-check-absent
+readiness_fixture_1946 closed_security_unlisted refused "${_ticket_body_1946}"$'<tr><td><strong>Security concerns</strong><br>Unrecognized vulnerability status</td></tr>\n' reviewer-check-absent
+readiness_fixture_1946 closed_security_unknown_after_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<tr><td><strong>Security concerns</strong><br>Unknown</td></tr>\n' reviewer-check-absent
+readiness_fixture_1946 closed_focus_negative labeled "${_ticket_body_1946}"$'### Key issues to review\n<strong>No major issues detected</strong>\n'
+readiness_fixture_1946 closed_focus_advisory labeled "${_ticket_body_1946}"$'### Key issues to review\n<strong>Possible Issue</strong>\n'
+readiness_fixture_1946 closed_focus_finding refused "${_ticket_body_1946}"$'### Key issues to review\n<strong>Critical</strong>\n'
+readiness_fixture_1946 closed_focus_unknown refused "${_ticket_body_1946}"$'### Key issues to review\n<strong>Unknown</strong>\n' reviewer-check-absent
+readiness_fixture_1946 closed_focus_unlisted refused "${_ticket_body_1946}"$'### Key issues to review\n<strong>Unexpected Label</strong>\n' reviewer-check-absent
+readiness_fixture_1946 closed_focus_mixed_unknown refused "${_ticket_body_1946}"$'### Key issues to review\n<strong>Critical</strong>\n<strong>Unknown</strong>\n' reviewer-check-absent
+readiness_fixture_1946 closed_compliance_unknown refused "${_ticket_body_1946/Fully compliant/Unknown}" reviewer-check-absent
+readiness_fixture_1946 closed_compliance_unlisted refused "${_ticket_body_1946/Fully compliant/Newly approved}" reviewer-check-absent
+readiness_fixture_1946 closed_analysis_unknown refused "commit: $HEAD"$'\n## PR Reviewer Guide\n**Ticket compliance analysis ✅**\n**[42](url) - Fully compliant**\nCompliant requirements:\nUnknown\n' reviewer-check-absent
+readiness_fixture_1946 closed_analysis_bullet_unknown refused "commit: $HEAD"$'\n## PR Reviewer Guide\n**Ticket compliance analysis ✅**\n**[42](url) - Fully compliant**\nCompliant requirements:\n- Unknown\n' reviewer-check-absent
+readiness_fixture_1946 closed_analysis_unknown_heading refused "commit: $HEAD"$'\n## PR Reviewer Guide\n**Ticket compliance analysis ✅**\n**[42](url) - Fully compliant**\nCompliant requirements:\n- Implemented.\nUnknown requirements:\n- Not known.\n' reviewer-check-absent
+readiness_fixture_1946 closed_verification_negative labeled "${_ticket_body_1946}"$'<tr><td><strong>Verification status</strong><br>None</td></tr>\n'
+readiness_fixture_1946 closed_verification_request refused "${_ticket_body_1946}"$'<tr><td><strong>Verification status</strong><br>Required</td></tr>\n' reviewer-check-absent
+readiness_fixture_1946 closed_verification_unknown refused "${_ticket_body_1946}"$'<tr><td><strong>Verification status</strong><br>Unknown</td></tr>\n' reviewer-check-absent
+readiness_fixture_1946 closed_verification_unlisted refused "${_ticket_body_1946}"$'<tr><td><strong>Verification status</strong><br>Unexpected</td></tr>\n' reviewer-check-absent
+readiness_fixture_1946 closed_verification_after_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<tr><td><strong>Verification status</strong><br>Unknown</td></tr>\n' reviewer-check-absent
+readiness_fixture_1946 closed_legacy_unknown refused "commit: $HEAD"$'\n## PR Reviewer Guide\nReview complete: Unknown\n' reviewer-check-absent
+readiness_fixture_1946 closed_bare_security_unknown refused "${_ticket_body_1946}"$'Security concerns: Unknown\n' reviewer-check-absent
+readiness_fixture_1946 closed_malformed_verification_unknown refused "${_ticket_body_1946}"$'### Verification status Unknown\n' reviewer-check-absent
 unset _ticket_body_1946
 unset -f readiness_fixture_1946
 

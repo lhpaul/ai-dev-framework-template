@@ -2048,6 +2048,32 @@ fixture_test_1946 extra2_blank_security escalate "${_fixture_ticket_1946}"$'<tr>
 fixture_test_1946 extra2_markup_only_security escalate "${_fixture_ticket_1946}"$'<strong>Security concerns</strong><br>\n- ** **\n'
 fixture_test_1946 extra2_partial_empty_security escalate "${_fixture_ticket_1946/Fully compliant/Partially compliant}"$'<strong>Security concerns</strong><br>\n'
 fixture_test_1946 extra2_security_fix_unreadable_focus escalate "${_fixture_ticket_1946}"$'<tr><td><strong>Security concerns</strong><br>Unsafe input execution.</td></tr>\n### Recommended focus areas for review\nNo parseable labels\n'
+# Closed-set policy: every verdict branch rejects unknown values (#1946).
+fixture_test_1946 closed_security_negative clean "${_fixture_ticket_1946}"$'<tr><td><strong>Security concerns</strong><br>None</td></tr>\n'
+fixture_test_1946 closed_security_finding needs_fixes "${_fixture_ticket_1946}"$'<tr><td><strong>Security concerns</strong><br>Yes</td></tr>\n'
+fixture_test_1946 closed_security_unknown escalate "${_fixture_ticket_1946}"$'<tr><td><strong>Security concerns</strong><br>Unknown</td></tr>\n'
+fixture_test_1946 closed_security_unlisted escalate "${_fixture_ticket_1946}"$'<tr><td><strong>Security concerns</strong><br>Unrecognized vulnerability status</td></tr>\n'
+fixture_test_1946 closed_security_unknown_after_partial escalate "${_fixture_ticket_1946/Fully compliant/Partially compliant}"$'<tr><td><strong>Security concerns</strong><br>Unknown</td></tr>\n'
+fixture_test_1946 closed_focus_negative clean "${_fixture_ticket_1946}"$'### Key issues to review\n<strong>No major issues detected</strong>\n'
+fixture_test_1946 closed_focus_advisory clean "${_fixture_ticket_1946}"$'### Key issues to review\n<strong>Possible Issue</strong>\n'
+fixture_test_1946 closed_focus_finding needs_fixes "${_fixture_ticket_1946}"$'### Key issues to review\n<strong>Critical</strong>\n'
+fixture_test_1946 closed_focus_unknown escalate "${_fixture_ticket_1946}"$'### Key issues to review\n<strong>Unknown</strong>\n'
+fixture_test_1946 closed_focus_unlisted escalate "${_fixture_ticket_1946}"$'### Key issues to review\n<strong>Unexpected Label</strong>\n'
+fixture_test_1946 closed_focus_mixed_unknown escalate "${_fixture_ticket_1946}"$'### Key issues to review\n<strong>Critical</strong>\n<strong>Unknown</strong>\n'
+fixture_test_1946 closed_compliance_unknown escalate "${_fixture_ticket_1946/Fully compliant/Unknown}"
+fixture_test_1946 closed_compliance_unlisted escalate "${_fixture_ticket_1946/Fully compliant/Newly approved}"
+fixture_test_1946 closed_analysis_unknown escalate $'## PR Reviewer Guide\n**Ticket compliance analysis ✅**\n**[42](url) - Fully compliant**\nCompliant requirements:\nUnknown\n'
+fixture_test_1946 closed_analysis_bullet_unknown escalate $'## PR Reviewer Guide\n**Ticket compliance analysis ✅**\n**[42](url) - Fully compliant**\nCompliant requirements:\n- Unknown\n'
+fixture_test_1946 closed_analysis_unknown_heading escalate $'## PR Reviewer Guide\n**Ticket compliance analysis ✅**\n**[42](url) - Fully compliant**\nCompliant requirements:\n- Implemented.\nUnknown requirements:\n- Not known.\n'
+fixture_test_1946 closed_verification_negative clean "${_fixture_ticket_1946}"$'<tr><td><strong>Verification status</strong><br>None</td></tr>\n'
+fixture_test_1946 closed_verification_request escalate "${_fixture_ticket_1946}"$'<tr><td><strong>Verification status</strong><br>Required</td></tr>\n'
+fixture_test_1946 closed_verification_unknown escalate "${_fixture_ticket_1946}"$'<tr><td><strong>Verification status</strong><br>Unknown</td></tr>\n'
+fixture_test_1946 closed_verification_unlisted escalate "${_fixture_ticket_1946}"$'<tr><td><strong>Verification status</strong><br>Unexpected</td></tr>\n'
+fixture_test_1946 closed_verification_after_partial escalate "${_fixture_ticket_1946/Fully compliant/Partially compliant}"$'<tr><td><strong>Verification status</strong><br>Unknown</td></tr>\n'
+fixture_test_1946 closed_legacy_unknown escalate $'\n## PR Reviewer Guide\nReview complete: Unknown\n'
+run_test 1946_unknown_not_advisory '' "$(_pr_agent_extract_advisory_labels "${_fixture_focus_1946/Possible Issue/Unknown}")"
+fixture_test_1946 closed_bare_security_unknown escalate "${_fixture_ticket_1946}"$'Security concerns: Unknown\n'
+fixture_test_1946 closed_malformed_verification_unknown escalate "${_fixture_ticket_1946}"$'### Verification status Unknown\n'
 rm -rf "$_fixture_dir_1946"
 unset _fixture_dir_1946 _fixture_header_1946 _fixture_ticket_1946 _fixture_focus_1946
 unset -f fixture_test_1946

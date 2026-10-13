@@ -62,6 +62,26 @@ from html.parser import HTMLParser
 body = sys.stdin.read()
 blockers = {"critical", "must fix", "breaking change", "security concern",
             "api change", "backward compatibility"}
+# Verdict-bearing values are closed sets. Descriptive requirement bullets are
+# evidence under these known headings, never additional status values.
+negative_values = {"no", "none", "false", "n/a", "not applicable"}
+security_negatives = negative_values | {"no security concerns identified", "no security concerns detected"}
+security_findings = blockers | {"yes", "true", "unsafe input execution"}
+focus_negatives = {"no major issues detected", "no issues detected", "no issues found", "none"}
+focus_advisories = {"possible issue", "edge case", "code quality", "best practice",
+                    "performance", "readability", "maintainability"}
+compliance_values = {"fully compliant": "clean", "partially compliant": "needs_fixes",
+                     "not compliant": "needs_fixes", "pr code verified": "escalate"}
+analysis_headings = {"Compliant requirements", "Non-compliant requirements",
+                     "Requires further human verification"}
+
+def value_verdict(value, negatives, findings):
+    value = " ".join(value.split()).lower().rstrip(".")
+    if value in negatives:
+        return "clean"
+    if value in findings:
+        return "needs_fixes"
+    return "escalate"
 
 class ReviewStructure(HTMLParser):
     def __init__(self):
@@ -174,6 +194,15 @@ def classify(body):
         return "escalate"
     if any(re.match(r"Requires further human verification\b", " ".join(label.split()), re.I) for label in rendered_headers.labels) or re.search(r"^[ \t]*(?:#{1,6}[ \t]+|\*\*)?Requires further human verification\b", body, re.M | re.I):
         return "escalate"
+    verification_sections = list(re.finditer(r"<strong>(?:Human verification|Verification status|Verification)</strong>[ :]*(?:<br>)*([^\n]*)(?:\n|$)|^[ \t]*(?:#{1,6}[ \t]+)?(?:Human verification|Verification status|Verification):[ \t]*([^\n]*)(?:\n|$)", body, re.M | re.I))
+    verification_candidates = sum(bool(re.search(r"(?:human verification|verification status|verification)$", " ".join(label.split()), re.I)) for label in rendered_headers.labels)
+    verification_candidates += len(re.findall(r"^[ \t]*(?:#{1,6}[ \t]+)?(?:Human verification|Verification status|Verification)\b", body, re.M | re.I))
+    if len(verification_sections) != verification_candidates or len(verification_sections) > 1:
+        return "escalate"
+    if verification_sections:
+        verification_value = unescape(re.sub(r"<[^>]*>", "", verification_sections[0].group(1) or verification_sections[0].group(2) or ""))
+        if value_verdict(verification_value, negative_values | {"not required", "no further human verification required"}, {"yes", "true", "required", "pending"}) != "clean":
+            return "escalate"  # Known requests and unknown statuses both need a human.
     needs_fixes = False
     if ticket:
         section = body[ticket_matches[0].end():]
@@ -185,31 +214,47 @@ def classify(body):
         verdicts = []
         for level, requirements in tickets:
             level = level.strip().lower()
-            if level not in {"fully compliant", "partially compliant", "not compliant", "pr code verified"}:
+            if level not in compliance_values:
                 return "escalate"
             # A status heading without its analysis is incomplete.
+            requirement_headers = re.findall(r"^[ \t]*([A-Za-z][A-Za-z -]*):[ \t]*$", requirements, re.M)
+            if not requirement_headers or any(header not in analysis_headings for header in requirement_headers):
+                return "escalate"
             analyses = re.findall(r"(?:Compliant requirements|Non-compliant requirements|Requires further human verification):([\s\S]*?)(?=(?:Compliant requirements|Non-compliant requirements|Requires further human verification):|\Z)", requirements)
             if not analyses or any(not re.sub(r"[\s*#_`-]", "", unescape(re.sub(r"<[^>]*>", "", analysis))) for analysis in analyses):
                 return "escalate"
+            # Unknown status-like text cannot serve as requirement analysis.
+            for analysis in analyses:
+                rendered_analysis = unescape(re.sub(r"<[^>]*>", "", analysis)).strip()
+                if " ".join(rendered_analysis.split()).lower().rstrip(".") in negative_values:
+                    continue
+                evidence_lines = [line.strip() for line in rendered_analysis.splitlines() if line.strip()]
+                if not evidence_lines or any(not re.match(r"^(?:[-*]|[0-9]+[.)])[ \t]+\S", line) for line in evidence_lines):
+                    return "escalate"
+                if any(re.fullmatch(r"(?:unknown|tbd|unavailable|undetermined|pending|not assessed)[.!?]?", re.sub(r"^(?:[-*]|[0-9]+[.)])[ \t]+", "", line), re.I) for line in evidence_lines):
+                    return "escalate"
             if level == "pr code verified" or "Requires further human verification:" in requirements:
                 verdicts.append("escalate")
             elif level in {"partially compliant", "not compliant"} or "Non-compliant requirements:" in requirements:
                 verdicts.append("needs_fixes")
             else:
-                verdicts.append("clean")
+                verdicts.append(compliance_values[level])
         if "escalate" in verdicts:
             return "escalate"
         needs_fixes = "needs_fixes" in verdicts
     # An explicit security section cannot be overridden by clean compliance.
     security_sections = list(re.finditer(r"(?:<strong>Security concerns</strong>|^#{1,6}[ \t]+(?:🔒[ \t]*)?Security concerns)[ :]*(?:<br>)*([\s\S]*?)(?=</td>|^### |\Z)", body, re.M | re.I))
-    if len(security_sections) > 1:
+    security_candidates = sum(bool(re.match(r"Security concerns\b", " ".join(label.split()), re.I)) for label in rendered_headers.labels)
+    security_candidates += len(re.findall(r"^[ \t]*(?:#{1,6}|\*\*)[^\n]*(?<!No )Security concerns", body, re.M | re.I))
+    security_candidates += len(re.findall(r"^[ \t]*Security concerns\b", body, re.M | re.I))
+    if security_candidates != len(security_sections) or len(security_sections) > 1:
         return "escalate"
     if security_sections:
         value = unescape(re.sub(r"<[^>]*>", "", security_sections[0].group(1))).strip()
-        if not re.sub(r"[\s*#_`-]", "", value):
-            return "escalate"  # No analysis establishes a known security finding.
-        if not re.fullmatch(r"(?:No security concerns (?:identified|detected)|No|None|False)[.]?", value, re.I):
-            needs_fixes = True
+        security_verdict = value_verdict(value, security_negatives, security_findings)
+        if security_verdict == "escalate":
+            return "escalate"
+        needs_fixes = needs_fixes or security_verdict == "needs_fixes"
     # Both rendered focus headings use the same hard-blocker/advisory labels.
     labels = focus_labels(body)
     if labels is not None:
@@ -218,7 +263,10 @@ def classify(body):
             return "escalate"
         if not labels:
             return "escalate"  # An unreadable section cannot establish a fix.
-        if any(label in blockers for label in labels):
+        focus_verdicts = [value_verdict(label, focus_negatives | focus_advisories, blockers) for label in labels]
+        if "escalate" in focus_verdicts:
+            return "escalate"
+        if "needs_fixes" in focus_verdicts:
             return "needs_fixes"
         return "needs_fixes" if needs_fixes else "clean"
     no_major = re.search(r"<strong>No major issues detected</strong>|^[ \t]*(?:#{1,6}[ \t]+(?:⚡[ \t]*)?)?No major issues detected[.]?[ \t]*$", body, re.M)
