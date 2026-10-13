@@ -16,7 +16,10 @@ See the implementation plan's Seed Data section for their ownership.
 
 ### Step 1: Admission and identity
 
-Run `bash scripts/development-workflow/tests/test-workflow-merge-budget.sh`.
+Run `python3 scripts/development-workflow/tests/lib/merge-budget-runner.py --all`.
+CI executes the same complete enumeration across eight independently selected shell
+suites, each under the unchanged 600-second deadline. The `--all` command runs
+all cases serially and preserves the optional shared evidence-writer contract.
 Confirm valid-pair admission and refusal for unavailable quota, unaffordable complete
 scope, malformed identities and changed release scope. Added shipped duties must
 increase projection; refused admission must submit neither merge nor audit.

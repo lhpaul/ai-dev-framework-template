@@ -95,33 +95,32 @@ class Admission(unittest.TestCase):
                 with self.assertRaises(budget.Stop):budget.tracker_read(state,issue)
 
     def test_parallel_regression_wrapper_preserves_worker_failure(self):
-        wrapper=self.owner/'test-workflow-merge-budget.sh'
-        shutil.copyfile(Path(__file__).with_name(wrapper.name),wrapper)
+        # Exercise the actual eight CI entrypoints, including failure and restoration.
+        directory=Path(__file__).parent
+        wrappers=[directory/('test-workflow-merge-budget'+('' if i==0 else '-part-'+str(i+1))+'.sh')
+                  for i in range(8)]
+        (self.owner/'lib').mkdir()
+        shutil.copyfile(directory/'lib'/'merge-budget-runner.py',self.owner/'lib'/'merge-budget-runner.py')
+        for wrapper in wrappers:shutil.copyfile(wrapper,self.owner/wrapper.name)
         fixture=self.owner/'test_workflow_merge_budget.py'
-        source='''import unittest
-class Proof(unittest.TestCase):
-    def test_a_planted_failure(self):
-        self.assertTrue(False)
-    def test_b_retained_case(self):
-        self.assertTrue(True)
-if __name__ == '__main__':
-    unittest.main()
-'''
-        fixture.write_text(source)
+        cases=['    def test_case_%02d(self):\n        self.assertTrue(%s)\n'%(i,i!=0) for i in range(16)]
+        source='import unittest\nclass Proof(unittest.TestCase):\n'+''.join(cases)+"if __name__ == '__main__':\n    unittest.main()\n"
         environment=dict(os.environ);environment.pop('WORKFLOW_MERGE_BUDGET_TEST_EVIDENCE_DIR',None)
-        refused=subprocess.run(['bash',str(wrapper)],env=environment,text=True,capture_output=True)
-        self.assertNotEqual(refused.returncode,0)
-        self.assertIn('TEST_COUNT=2',refused.stdout)
-        self.assertIn('WORKER_COUNT=2',refused.stdout)
-        self.assertIn('RESULT=failed',refused.stdout)
-        self.assertEqual(refused.stdout.count('Ran 1 test'),2)
-        fixture.write_text(source.replace('self.assertTrue(False)','self.assertTrue(True)'))
-        restored=subprocess.run(['bash',str(wrapper)],env=environment,text=True,capture_output=True)
-        self.assertEqual(restored.returncode,0,restored.stdout+restored.stderr)
-        self.assertIn('TEST_COUNT=2',restored.stdout)
-        self.assertIn('WORKER_COUNT=2',restored.stdout)
-        self.assertIn('RESULT=pass',restored.stdout)
-        self.assertEqual(restored.stdout.count('Ran 1 test'),2)
+        for planted in (True,False):
+            fixture.write_text(source if planted else source.replace('self.assertTrue(False)','self.assertTrue(True)'))
+            ids=[];failed=[]
+            for i,wrapper in enumerate(wrappers):
+                result=subprocess.run(['bash',str(self.owner/wrapper.name)],env=environment,text=True,capture_output=True)
+                self.assertIn('TEST_COUNT=16',result.stdout)
+                self.assertIn('PARTITION_COUNT=8',result.stdout)
+                self.assertIn('PARTITION='+str(i)+'\n',result.stdout)
+                self.assertIn('SELECTED_TEST_COUNT=2',result.stdout)
+                self.assertIn('Ran 2 tests',result.stderr)
+                ids.extend(line.split('=',1)[1] for line in result.stdout.splitlines() if line.startswith('TEST_ID='))
+                if result.returncode:failed.append(i)
+            self.assertEqual(failed,[0] if planted else [])
+            self.assertEqual(sorted(ids),['Proof.test_case_%02d'%i for i in range(16)])
+            self.assertEqual(len(ids),len(set(ids)))
 
     def test_newly_issued_retry_drops_historical_supersession_reference(self):
         manifest = json.loads(self.manifest.read_text())
