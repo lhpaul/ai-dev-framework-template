@@ -81,6 +81,28 @@ class ReviewStructure(HTMLParser):
                 self.valid = False
 
 
+class FocusLabels(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.labels = []
+        self.current = None
+        self.count = 0
+
+    def handle_starttag(self, tag, attrs):
+        if tag == "strong":
+            self.count += 1
+            self.current = []
+
+    def handle_data(self, data):
+        if self.current is not None:
+            self.current.append(data)
+
+    def handle_endtag(self, tag):
+        if tag == "strong" and self.current is not None:
+            self.labels.append("".join(self.current))
+            self.current = None
+
+
 def visible_review(body):
     if body.count("<!--") != body.count("-->"):
         return None
@@ -112,11 +134,13 @@ def focus_labels(body):
     if len(matches) != 1:
         return [""]  # Duplicate disposition sections are ambiguous.
     content = matches[0].group(1)
-    html_labels = re.findall(r"<strong(?:\s[^>]*)?>([^<]*)</strong>", content, re.I)
+    rendered = FocusLabels()
+    rendered.feed(content)
+    html_labels = rendered.labels
     markdown_labels = re.findall(r"\*\*([^*\n]*)\*\*", content)
-    if len(html_labels) != len(re.findall(r"<strong\b", content, re.I)) or content.count("**") != 2 * len(markdown_labels):
+    if len(html_labels) != rendered.count or content.count("**") != 2 * len(markdown_labels):
         return [""]  # A complete earlier label must not hide a broken one.
-    return [unescape(label).strip() for label in html_labels + markdown_labels]
+    return [label.strip() for label in html_labels] + [unescape(label).strip() for label in markdown_labels]
 
 
 def classify(body):

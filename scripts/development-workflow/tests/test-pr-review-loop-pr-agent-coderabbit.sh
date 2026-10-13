@@ -2022,6 +2022,7 @@ fixture_test_1946 prose_ticket_not_section clean "${_fixture_focus_1946}"$'The p
 fixture_test_1946 malformed_ticket_heading escalate $'**Ticket compliance analysis ✅*\nNo major issues detected\n'
 fixture_test_1946 duplicate_focus_sections escalate "${_fixture_focus_1946}"$'---\n'"${_fixture_focus_1946/Possible Issue/Critical}"
 fixture_test_1946 duplicate_ticket_sections escalate "${_fixture_ticket_1946}${_fixture_ticket_1946/Fully compliant/Not compliant}"
+fixture_test_1946 quoted_attribute_blocker needs_fixes "${_fixture_focus_1946}"$'<strong title=">">Security Concern</strong>\n'
 # Define the nested advisory helpers in this shell via one mocked review.
 PATH="$_fixture_dir_1946:$PATH" PR_AGENT_FIXTURE_BODY="${_fixture_header_1946}${_fixture_ticket_1946}" \
   run_pr_agent_review 42 feature/42-test 1 0 >/dev/null

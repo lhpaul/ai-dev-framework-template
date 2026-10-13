@@ -2400,6 +2400,7 @@ readiness_fixture_1946 encoded_empty_label refused $'## PR Reviewer Guide\ncommi
 readiness_fixture_1946 encoded_empty_analysis refused $'## PR Reviewer Guide\ncommit: '"$HEAD"$'\n**Ticket compliance analysis ✅**\n**[42](url) - Fully compliant**\nCompliant requirements:\n&nbsp;\n'
 readiness_fixture_1946 prose_marker_not_verdict refused $'## PR Reviewer Guide\ncommit: '"$HEAD"$'\nThe phrase No major issues detected is an example.\n'
 readiness_fixture_1946 prose_ticket_not_section labeled $'## PR Reviewer Guide\ncommit: '"$HEAD"$'\n### Recommended focus areas for review\n<strong>Possible Issue</strong><br>The phrase Ticket compliance analysis names another format.\n'
+readiness_fixture_1946 quoted_attribute_blocker refused $'## PR Reviewer Guide\ncommit: '"$HEAD"$'\n### Recommended focus areas for review\n<strong title=">">Security Concern</strong>\n'
 MOCK_ISSUE_COMMENTS='[]'
 unset _ticket_body_1946
 unset -f readiness_fixture_1946
