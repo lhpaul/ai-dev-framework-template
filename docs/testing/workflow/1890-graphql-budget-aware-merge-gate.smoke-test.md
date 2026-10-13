@@ -12,7 +12,7 @@
 - Run the composed delegated and batch consumers, replacing only remote service/process boundaries with recording fixtures. Arithmetic-only testing does not satisfy this runbook.
 - Maintain a command/event ledger recording quota reads, selected identities, audit writes, base pushes, merge calls, state verification, deletion, cleanup and tracker actions. Capture session journals separately from remote mutation counts.
 - Scope all fake Git branches, worktrees, subprocesses and files to the fixture root. No live merge, issue/board write, portfolio scan, whole-board read or deletion of user resources is authorized by this runbook.
-- The implementation supplies `bash scripts/development-workflow/tests/test-workflow-merge-budget.sh`, which runs the composed Python harness. The suite is the entrypoint; the steps below describe assertions rather than public scenario-selector flags.
+- The implementation supplies `python3 scripts/development-workflow/tests/lib/merge-budget-runner.py --all`, which runs the composed Python harness. The suite is the entrypoint; the steps below describe assertions rather than public scenario-selector flags.
 - Read the amended spec's Waiting/merge-queue contract and use the final plan's state names. The amended contract requires Waiting for verified pending/queued merge behavior, distinct from uncertain/error interruption.
 - The item has no supplied graphical design reference. No login, application server, production seed data or visual-fidelity baseline is required.
 
