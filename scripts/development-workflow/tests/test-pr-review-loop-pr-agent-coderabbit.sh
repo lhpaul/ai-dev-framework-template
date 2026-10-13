@@ -2147,6 +2147,17 @@ fixture_test_1946 format_markdown_heading_required_full escalate "${_fixture_tic
 fixture_test_1946 format_markdown_heading_required_partial escalate "${_fixture_ticket_1946/Fully compliant/Partially compliant}"$'### Verification status\nRequired\n'
 fixture_test_1946 format_markdown_heading_unknown_full escalate "${_fixture_ticket_1946}"$'### Verification status\nUnknown\n'
 fixture_test_1946 format_markdown_heading_unknown_partial escalate "${_fixture_ticket_1946/Fully compliant/Partially compliant}"$'### Verification status\nUnknown\n'
+fixture_test_1946 format_emoji_heading_required_full escalate "${_fixture_ticket_1946}"$'### 👤 Verification status: Required\n'
+fixture_test_1946 format_emoji_heading_required_partial escalate "${_fixture_ticket_1946/Fully compliant/Partially compliant}"$'### 👤 Verification status: Required\n'
+fixture_test_1946 format_emoji_heading_unknown_full escalate "${_fixture_ticket_1946}"$'### 👤 Verification status: Unknown\n'
+fixture_test_1946 format_emoji_heading_unknown_partial escalate "${_fixture_ticket_1946/Fully compliant/Partially compliant}"$'### 👤 Verification status: Unknown\n'
+fixture_test_1946 format_decorated_plain_required_full escalate "${_fixture_ticket_1946}"$'Review status — Verification status Required\n'
+fixture_test_1946 format_decorated_plain_required_partial escalate "${_fixture_ticket_1946/Fully compliant/Partially compliant}"$'Review status — Verification status Required\n'
+fixture_test_1946 format_decorated_plain_unknown_full escalate "${_fixture_ticket_1946}"$'Review status — Verification status Unknown\n'
+fixture_test_1946 format_decorated_plain_unknown_partial escalate "${_fixture_ticket_1946/Fully compliant/Partially compliant}"$'Review status — Verification status Unknown\n'
+fixture_test_1946 format_unknown_heading_required escalate "${_fixture_ticket_1946}"$'### Custom Verification status: Required\n'
+fixture_test_1946 descriptive_status_reference clean $'**Ticket compliance analysis ✅**\n**[42](url) - Fully compliant**\nCompliant requirements:\n- Support Verification status Required values.\n'
+fixture_test_1946 descriptive_styled_status_reference clean $'**Ticket compliance analysis ✅**\n**[42](url) - Fully compliant**\nCompliant requirements:\n- <strong>Support Verification status Required values.</strong>\n'
 rm -rf "$_fixture_dir_1946"
 unset _fixture_dir_1946 _fixture_header_1946 _fixture_ticket_1946 _fixture_focus_1946
 unset -f fixture_test_1946

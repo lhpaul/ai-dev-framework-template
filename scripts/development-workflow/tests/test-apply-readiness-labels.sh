@@ -2521,6 +2521,17 @@ readiness_fixture_1946 format_markdown_heading_required_full refused "${_ticket_
 readiness_fixture_1946 format_markdown_heading_required_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'### Verification status\nRequired\n' reviewer-check-absent
 readiness_fixture_1946 format_markdown_heading_unknown_full refused "${_ticket_body_1946}"$'### Verification status\nUnknown\n' reviewer-check-absent
 readiness_fixture_1946 format_markdown_heading_unknown_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'### Verification status\nUnknown\n' reviewer-check-absent
+readiness_fixture_1946 format_emoji_heading_required_full refused "${_ticket_body_1946}"$'### 👤 Verification status: Required\n' reviewer-check-absent
+readiness_fixture_1946 format_emoji_heading_required_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'### 👤 Verification status: Required\n' reviewer-check-absent
+readiness_fixture_1946 format_emoji_heading_unknown_full refused "${_ticket_body_1946}"$'### 👤 Verification status: Unknown\n' reviewer-check-absent
+readiness_fixture_1946 format_emoji_heading_unknown_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'### 👤 Verification status: Unknown\n' reviewer-check-absent
+readiness_fixture_1946 format_decorated_plain_required_full refused "${_ticket_body_1946}"$'Review status — Verification status Required\n' reviewer-check-absent
+readiness_fixture_1946 format_decorated_plain_required_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'Review status — Verification status Required\n' reviewer-check-absent
+readiness_fixture_1946 format_decorated_plain_unknown_full refused "${_ticket_body_1946}"$'Review status — Verification status Unknown\n' reviewer-check-absent
+readiness_fixture_1946 format_decorated_plain_unknown_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'Review status — Verification status Unknown\n' reviewer-check-absent
+readiness_fixture_1946 format_unknown_heading_required refused "${_ticket_body_1946}"$'### Custom Verification status: Required\n' reviewer-check-absent
+readiness_fixture_1946 descriptive_status_reference labeled "${_ticket_body_1946/All required behavior is implemented./Support Verification status Required values.}"
+readiness_fixture_1946 descriptive_styled_status_reference labeled "${_ticket_body_1946/All required behavior is implemented./<strong>Support Verification status Required values.<\/strong>}"
 unset _ticket_body_1946
 unset -f readiness_fixture_1946
 

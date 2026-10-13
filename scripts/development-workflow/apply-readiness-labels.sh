@@ -215,16 +215,19 @@ def classify(body):
     verification_reader = ReviewText()
     verification_reader.feed(body)
     # Markdown emphasis is presentation; HTMLParser decodes entities once.
+    verification_heading = r"^[ \t]*(?:(?:#{1,6}|[-*]|[0-9]+[.)])\s+)?(?:[^\w\s]*\s*)?(?:(?:Review status|Review metadata)\s*[—:-]\s*)?(?:Human\s+verification|Verification\s+status|Verification)\b"
     def render_emphasis(match):
         text = match.group(2)
-        if re.match(r"\s*(?:Human\s+verification|Verification\s+status|Verification)\b", text, re.I):
+        if re.match(verification_heading, text, re.I):
             return "\n" + text + "\n"
         return text
     verification_text = re.sub(r"(\*\*|__)([\s\S]*?)\1", render_emphasis, "".join(verification_reader.parts))
     verification_text = re.sub(r"[*_]", "", verification_text)
-    verification_heading = r"^[ \t]*(?:(?:#{1,6}|[-*]|[0-9]+[.)])\s+)?(?:Human\s+verification|Verification\s+status|Verification)\b"
     verification_sections = list(re.finditer(verification_heading + r"\s*:?\s*([^\n]*)(?:\n|$)", verification_text, re.M | re.I))
     verification_candidates = len(re.findall(verification_heading, verification_text, re.M | re.I))
+    styled_candidates = sum(bool(re.match(verification_heading, re.sub(r"[*_]", "", label), re.I)) for label in rendered_headers.labels)
+    styled_candidates += len(re.findall(r"^[ \t]*(?:#{1,6}|\*\*|__)[^\n]*Verification\s+status\b", body, re.M | re.I))
+    verification_candidates = max(verification_candidates, styled_candidates)
     if len(verification_sections) != verification_candidates or len(verification_sections) > 1:
         return "escalate"
     if verification_sections:
