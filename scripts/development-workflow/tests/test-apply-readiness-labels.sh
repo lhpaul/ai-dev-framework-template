@@ -2364,13 +2364,13 @@ run_test "pr_agent_no_comment_refuses_reason" "reviewer-check-absent" "$(field "
 # ticket reviews, and refuse truncated, ambiguous or historically clean ones.
 _ticket_body_1946=$'## PR Reviewer Guide\ncommit: '"$HEAD"$'\n<table>\n<tr><td>\n**🎫 Ticket compliance analysis ✅**\n**[42](https://example.test/issues/42) - Fully compliant**\nCompliant requirements:\n- All required behavior is implemented.\n</td></tr>\n</table>\n'
 readiness_fixture_1946() {
-  local name="$1" expected="$2" body="$3" output expected_reason="${4:-}"
+  local name="$1" expected="$2" body="$3" output expected_reason="${4:-}" expected_classifier="${5:-escalate}"
   MOCK_ISSUE_COMMENTS="$(jq -nc --arg body "$body" '[{user:{login:"github-actions[bot]"},created_at:"2026-01-08T00:00:00Z",id:923,body:$body}]')"
   output="$(run_helper_platform "$_codex_config")"
   run_test "1946_${name}_readiness" "$expected" "$(field "$output" RESULT)"
   if [ -n "$expected_reason" ]; then
     run_test "1946_${name}_reason" "$expected_reason" "$(field "$output" REASON)"
-    run_test "1946_${name}_classifier" escalate "$(printf '%s' "$body" | bash "$REPO_ROOT/scripts/development-workflow/apply-readiness-labels.sh" --classify-pr-agent)"
+    run_test "1946_${name}_classifier" "$expected_classifier" "$(printf '%s' "$body" | bash "$REPO_ROOT/scripts/development-workflow/apply-readiness-labels.sh" --classify-pr-agent)"
   fi
   if [ "$expected" = refused ]; then
     run_test "1946_${name}_no_readiness_write" "0" "$(grep -c 'add-label ready-for-human-review' "$_LABEL_LOG" || true)"
@@ -2452,6 +2452,111 @@ readiness_fixture_1946 scoped_human_no_colon refused "commit: $HEAD"$'\n## PR Re
 readiness_fixture_1946 scoped_human_colon refused "commit: $HEAD"$'\n## PR Reviewer Guide\n**Ticket compliance analysis ✅**\n**[42](url) - Fully compliant**\nCompliant requirements:\n- Requires further human verification:\n' reviewer-check-absent
 readiness_fixture_1946 scoped_human_rendered refused "commit: $HEAD"$'\n## PR Reviewer Guide\n**Ticket compliance analysis ✅**\n**[42](url) - Fully compliant**\nCompliant requirements:\n- Requires&nbsp;further <em>human</em> verification\n' reviewer-check-absent
 readiness_fixture_1946 scoped_partial_human_no_colon refused "commit: $HEAD"$'\n## PR Reviewer Guide\n**Ticket compliance analysis ✅**\n**[42](url) - Partially compliant**\nCompliant requirements:\n- Requires further human verification\n' reviewer-check-absent
+# HTML security headings use the same explicit value lists (#1946).
+readiness_fixture_1946 html_security_h1_negative_full labeled "${_ticket_body_1946}"$'<h1>Security concerns</h1><p>None</p>\n'
+readiness_fixture_1946 html_security_h1_negative_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h1>Security concerns</h1><p>None</p>\n' blocking-findings needs_fixes
+readiness_fixture_1946 html_security_h1_finding_full refused "${_ticket_body_1946}"$'<h1>Security concerns</h1><p>Unsafe input execution.</p>\n' blocking-findings needs_fixes
+readiness_fixture_1946 html_security_h1_finding_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h1>Security concerns</h1><p>Unsafe input execution.</p>\n' blocking-findings needs_fixes
+readiness_fixture_1946 html_security_h1_unknown_full refused "${_ticket_body_1946}"$'<h1>Security concerns</h1><p>Unknown</p>\n' reviewer-check-absent escalate
+readiness_fixture_1946 html_security_h1_unknown_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h1>Security concerns</h1><p>Unknown</p>\n' reviewer-check-absent escalate
+readiness_fixture_1946 html_security_h2_negative_full labeled "${_ticket_body_1946}"$'<h2>Security concerns</h2><p>None</p>\n'
+readiness_fixture_1946 html_security_h2_negative_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h2>Security concerns</h2><p>None</p>\n' blocking-findings needs_fixes
+readiness_fixture_1946 html_security_h2_finding_full refused "${_ticket_body_1946}"$'<h2>Security concerns</h2><p>Unsafe input execution.</p>\n' blocking-findings needs_fixes
+readiness_fixture_1946 html_security_h2_finding_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h2>Security concerns</h2><p>Unsafe input execution.</p>\n' blocking-findings needs_fixes
+readiness_fixture_1946 html_security_h2_unknown_full refused "${_ticket_body_1946}"$'<h2>Security concerns</h2><p>Unknown</p>\n' reviewer-check-absent escalate
+readiness_fixture_1946 html_security_h2_unknown_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h2>Security concerns</h2><p>Unknown</p>\n' reviewer-check-absent escalate
+readiness_fixture_1946 html_security_h3_negative_full labeled "${_ticket_body_1946}"$'<h3>Security concerns</h3><p>None</p>\n'
+readiness_fixture_1946 html_security_h3_negative_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h3>Security concerns</h3><p>None</p>\n' blocking-findings needs_fixes
+readiness_fixture_1946 html_security_h3_finding_full refused "${_ticket_body_1946}"$'<h3>Security concerns</h3><p>Unsafe input execution.</p>\n' blocking-findings needs_fixes
+readiness_fixture_1946 html_security_h3_finding_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h3>Security concerns</h3><p>Unsafe input execution.</p>\n' blocking-findings needs_fixes
+readiness_fixture_1946 html_security_h3_unknown_full refused "${_ticket_body_1946}"$'<h3>Security concerns</h3><p>Unknown</p>\n' reviewer-check-absent escalate
+readiness_fixture_1946 html_security_h3_unknown_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h3>Security concerns</h3><p>Unknown</p>\n' reviewer-check-absent escalate
+readiness_fixture_1946 html_security_h4_negative_full labeled "${_ticket_body_1946}"$'<h4>Security concerns</h4><p>None</p>\n'
+readiness_fixture_1946 html_security_h4_negative_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h4>Security concerns</h4><p>None</p>\n' blocking-findings needs_fixes
+readiness_fixture_1946 html_security_h4_finding_full refused "${_ticket_body_1946}"$'<h4>Security concerns</h4><p>Unsafe input execution.</p>\n' blocking-findings needs_fixes
+readiness_fixture_1946 html_security_h4_finding_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h4>Security concerns</h4><p>Unsafe input execution.</p>\n' blocking-findings needs_fixes
+readiness_fixture_1946 html_security_h4_unknown_full refused "${_ticket_body_1946}"$'<h4>Security concerns</h4><p>Unknown</p>\n' reviewer-check-absent escalate
+readiness_fixture_1946 html_security_h4_unknown_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h4>Security concerns</h4><p>Unknown</p>\n' reviewer-check-absent escalate
+readiness_fixture_1946 html_security_h5_negative_full labeled "${_ticket_body_1946}"$'<h5>Security concerns</h5><p>None</p>\n'
+readiness_fixture_1946 html_security_h5_negative_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h5>Security concerns</h5><p>None</p>\n' blocking-findings needs_fixes
+readiness_fixture_1946 html_security_h5_finding_full refused "${_ticket_body_1946}"$'<h5>Security concerns</h5><p>Unsafe input execution.</p>\n' blocking-findings needs_fixes
+readiness_fixture_1946 html_security_h5_finding_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h5>Security concerns</h5><p>Unsafe input execution.</p>\n' blocking-findings needs_fixes
+readiness_fixture_1946 html_security_h5_unknown_full refused "${_ticket_body_1946}"$'<h5>Security concerns</h5><p>Unknown</p>\n' reviewer-check-absent escalate
+readiness_fixture_1946 html_security_h5_unknown_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h5>Security concerns</h5><p>Unknown</p>\n' reviewer-check-absent escalate
+readiness_fixture_1946 html_security_h6_negative_full labeled "${_ticket_body_1946}"$'<h6>Security concerns</h6><p>None</p>\n'
+readiness_fixture_1946 html_security_h6_negative_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h6>Security concerns</h6><p>None</p>\n' blocking-findings needs_fixes
+readiness_fixture_1946 html_security_h6_finding_full refused "${_ticket_body_1946}"$'<h6>Security concerns</h6><p>Unsafe input execution.</p>\n' blocking-findings needs_fixes
+readiness_fixture_1946 html_security_h6_finding_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h6>Security concerns</h6><p>Unsafe input execution.</p>\n' blocking-findings needs_fixes
+readiness_fixture_1946 html_security_h6_unknown_full refused "${_ticket_body_1946}"$'<h6>Security concerns</h6><p>Unknown</p>\n' reviewer-check-absent escalate
+readiness_fixture_1946 html_security_h6_unknown_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h6>Security concerns</h6><p>Unknown</p>\n' reviewer-check-absent escalate
+readiness_fixture_1946 html_security_strong_negative_full labeled "${_ticket_body_1946}"$'<strong>Security concerns</strong><p>None</p>\n'
+readiness_fixture_1946 html_security_strong_negative_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<strong>Security concerns</strong><p>None</p>\n' blocking-findings needs_fixes
+readiness_fixture_1946 html_security_strong_finding_full refused "${_ticket_body_1946}"$'<strong>Security concerns</strong><p>Unsafe input execution.</p>\n' blocking-findings needs_fixes
+readiness_fixture_1946 html_security_strong_finding_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<strong>Security concerns</strong><p>Unsafe input execution.</p>\n' blocking-findings needs_fixes
+readiness_fixture_1946 html_security_strong_unknown_full refused "${_ticket_body_1946}"$'<strong>Security concerns</strong><p>Unknown</p>\n' reviewer-check-absent escalate
+readiness_fixture_1946 html_security_strong_unknown_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<strong>Security concerns</strong><p>Unknown</p>\n' reviewer-check-absent escalate
+readiness_fixture_1946 html_security_b_negative_full labeled "${_ticket_body_1946}"$'<b>Security concerns</b><p>None</p>\n'
+readiness_fixture_1946 html_security_b_negative_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<b>Security concerns</b><p>None</p>\n' blocking-findings needs_fixes
+readiness_fixture_1946 html_security_b_finding_full refused "${_ticket_body_1946}"$'<b>Security concerns</b><p>Unsafe input execution.</p>\n' blocking-findings needs_fixes
+readiness_fixture_1946 html_security_b_finding_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<b>Security concerns</b><p>Unsafe input execution.</p>\n' blocking-findings needs_fixes
+readiness_fixture_1946 html_security_b_unknown_full refused "${_ticket_body_1946}"$'<b>Security concerns</b><p>Unknown</p>\n' reviewer-check-absent escalate
+readiness_fixture_1946 html_security_b_unknown_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<b>Security concerns</b><p>Unknown</p>\n' reviewer-check-absent escalate
+readiness_fixture_1946 html_security_em_negative_full labeled "${_ticket_body_1946}"$'<em>Security concerns</em><p>None</p>\n'
+readiness_fixture_1946 html_security_em_negative_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<em>Security concerns</em><p>None</p>\n' blocking-findings needs_fixes
+readiness_fixture_1946 html_security_em_finding_full refused "${_ticket_body_1946}"$'<em>Security concerns</em><p>Unsafe input execution.</p>\n' blocking-findings needs_fixes
+readiness_fixture_1946 html_security_em_finding_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<em>Security concerns</em><p>Unsafe input execution.</p>\n' blocking-findings needs_fixes
+readiness_fixture_1946 html_security_em_unknown_full refused "${_ticket_body_1946}"$'<em>Security concerns</em><p>Unknown</p>\n' reviewer-check-absent escalate
+readiness_fixture_1946 html_security_em_unknown_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<em>Security concerns</em><p>Unknown</p>\n' reviewer-check-absent escalate
+readiness_fixture_1946 html_security_span_negative_full labeled "${_ticket_body_1946}"$'<span>Security concerns</span><p>None</p>\n'
+readiness_fixture_1946 html_security_span_negative_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<span>Security concerns</span><p>None</p>\n' blocking-findings needs_fixes
+readiness_fixture_1946 html_security_span_finding_full refused "${_ticket_body_1946}"$'<span>Security concerns</span><p>Unsafe input execution.</p>\n' blocking-findings needs_fixes
+readiness_fixture_1946 html_security_span_finding_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<span>Security concerns</span><p>Unsafe input execution.</p>\n' blocking-findings needs_fixes
+readiness_fixture_1946 html_security_span_unknown_full refused "${_ticket_body_1946}"$'<span>Security concerns</span><p>Unknown</p>\n' reviewer-check-absent escalate
+readiness_fixture_1946 html_security_span_unknown_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<span>Security concerns</span><p>Unknown</p>\n' reviewer-check-absent escalate
+readiness_fixture_1946 html_security_div_negative_full labeled "${_ticket_body_1946}"$'<div>Security concerns</div><p>None</p>\n'
+readiness_fixture_1946 html_security_div_negative_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<div>Security concerns</div><p>None</p>\n' blocking-findings needs_fixes
+readiness_fixture_1946 html_security_div_finding_full refused "${_ticket_body_1946}"$'<div>Security concerns</div><p>Unsafe input execution.</p>\n' blocking-findings needs_fixes
+readiness_fixture_1946 html_security_div_finding_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<div>Security concerns</div><p>Unsafe input execution.</p>\n' blocking-findings needs_fixes
+readiness_fixture_1946 html_security_div_unknown_full refused "${_ticket_body_1946}"$'<div>Security concerns</div><p>Unknown</p>\n' reviewer-check-absent escalate
+readiness_fixture_1946 html_security_div_unknown_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<div>Security concerns</div><p>Unknown</p>\n' reviewer-check-absent escalate
+readiness_fixture_1946 html_security_p_negative_full labeled "${_ticket_body_1946}"$'<p>Security concerns</p><p>None</p>\n'
+readiness_fixture_1946 html_security_p_negative_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<p>Security concerns</p><p>None</p>\n' blocking-findings needs_fixes
+readiness_fixture_1946 html_security_p_finding_full refused "${_ticket_body_1946}"$'<p>Security concerns</p><p>Unsafe input execution.</p>\n' blocking-findings needs_fixes
+readiness_fixture_1946 html_security_p_finding_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<p>Security concerns</p><p>Unsafe input execution.</p>\n' blocking-findings needs_fixes
+readiness_fixture_1946 html_security_p_unknown_full refused "${_ticket_body_1946}"$'<p>Security concerns</p><p>Unknown</p>\n' reviewer-check-absent escalate
+readiness_fixture_1946 html_security_p_unknown_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<p>Security concerns</p><p>Unknown</p>\n' reviewer-check-absent escalate
+readiness_fixture_1946 html_security_summary_negative_full labeled "${_ticket_body_1946}"$'<summary>Security concerns</summary><p>None</p>\n'
+readiness_fixture_1946 html_security_summary_negative_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<summary>Security concerns</summary><p>None</p>\n' blocking-findings needs_fixes
+readiness_fixture_1946 html_security_summary_finding_full refused "${_ticket_body_1946}"$'<summary>Security concerns</summary><p>Unsafe input execution.</p>\n' blocking-findings needs_fixes
+readiness_fixture_1946 html_security_summary_finding_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<summary>Security concerns</summary><p>Unsafe input execution.</p>\n' blocking-findings needs_fixes
+readiness_fixture_1946 html_security_summary_unknown_full refused "${_ticket_body_1946}"$'<summary>Security concerns</summary><p>Unknown</p>\n' reviewer-check-absent escalate
+readiness_fixture_1946 html_security_summary_unknown_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<summary>Security concerns</summary><p>Unknown</p>\n' reviewer-check-absent escalate
+readiness_fixture_1946 html_security_attributes_negative_full labeled "${_ticket_body_1946}"$'<h3 class="security">Security concerns:</h3><p>None</p>\n'
+readiness_fixture_1946 html_security_attributes_negative_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h3 class="security">Security concerns:</h3><p>None</p>\n' blocking-findings needs_fixes
+readiness_fixture_1946 html_security_attributes_finding_full refused "${_ticket_body_1946}"$'<h3 class="security">Security concerns:</h3><p>Unsafe input execution.</p>\n' blocking-findings needs_fixes
+readiness_fixture_1946 html_security_attributes_finding_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h3 class="security">Security concerns:</h3><p>Unsafe input execution.</p>\n' blocking-findings needs_fixes
+readiness_fixture_1946 html_security_attributes_unknown_full refused "${_ticket_body_1946}"$'<h3 class="security">Security concerns:</h3><p>Unknown</p>\n' reviewer-check-absent escalate
+readiness_fixture_1946 html_security_attributes_unknown_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h3 class="security">Security concerns:</h3><p>Unknown</p>\n' reviewer-check-absent escalate
+readiness_fixture_1946 html_security_nested_negative_full labeled "${_ticket_body_1946}"$'<h3><strong>Security concerns</strong></h3><p>None</p>\n'
+readiness_fixture_1946 html_security_nested_negative_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h3><strong>Security concerns</strong></h3><p>None</p>\n' blocking-findings needs_fixes
+readiness_fixture_1946 html_security_nested_finding_full refused "${_ticket_body_1946}"$'<h3><strong>Security concerns</strong></h3><p>Unsafe input execution.</p>\n' blocking-findings needs_fixes
+readiness_fixture_1946 html_security_nested_finding_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h3><strong>Security concerns</strong></h3><p>Unsafe input execution.</p>\n' blocking-findings needs_fixes
+readiness_fixture_1946 html_security_nested_unknown_full refused "${_ticket_body_1946}"$'<h3><strong>Security concerns</strong></h3><p>Unknown</p>\n' reviewer-check-absent escalate
+readiness_fixture_1946 html_security_nested_unknown_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h3><strong>Security concerns</strong></h3><p>Unknown</p>\n' reviewer-check-absent escalate
+readiness_fixture_1946 html_security_fragmented_negative_full labeled "${_ticket_body_1946}"$'<h3>Secu<em>rity</em> con<strong>cerns</strong></h3><p>None</p>\n'
+readiness_fixture_1946 html_security_fragmented_negative_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h3>Secu<em>rity</em> con<strong>cerns</strong></h3><p>None</p>\n' blocking-findings needs_fixes
+readiness_fixture_1946 html_security_fragmented_finding_full refused "${_ticket_body_1946}"$'<h3>Secu<em>rity</em> con<strong>cerns</strong></h3><p>Unsafe input execution.</p>\n' blocking-findings needs_fixes
+readiness_fixture_1946 html_security_fragmented_finding_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h3>Secu<em>rity</em> con<strong>cerns</strong></h3><p>Unsafe input execution.</p>\n' blocking-findings needs_fixes
+readiness_fixture_1946 html_security_fragmented_unknown_full refused "${_ticket_body_1946}"$'<h3>Secu<em>rity</em> con<strong>cerns</strong></h3><p>Unknown</p>\n' reviewer-check-absent escalate
+readiness_fixture_1946 html_security_fragmented_unknown_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h3>Secu<em>rity</em> con<strong>cerns</strong></h3><p>Unknown</p>\n' reviewer-check-absent escalate
+readiness_fixture_1946 html_security_empty refused "${_ticket_body_1946}"$'<h3>Security concerns</h3>\n' reviewer-check-absent
+readiness_fixture_1946 html_security_unclosed refused "${_ticket_body_1946}"$'<h3>Security concerns<p>Unknown</p>\n' reviewer-check-absent
+readiness_fixture_1946 html_security_duplicate refused "${_ticket_body_1946}"$'<h3>Security concerns</h3><p>None</p><h3>Security concerns</h3><p>Unknown</p>\n' reviewer-check-absent
+readiness_fixture_1946 html_security_next_heading labeled "${_ticket_body_1946}"$'<h3>Security concerns</h3><p>None</p><h3>Review metadata</h3><p>Effort 2/5</p>\n'
+readiness_fixture_1946 html_security_prefix labeled "${_ticket_body_1946}"$'<h3>Custom Security concerns</h3><p>Unknown</p>\n'
+readiness_fixture_1946 html_security_prose labeled "${_ticket_body_1946}"$'<p>Document Security concerns in the user guide.</p>\n'
+readiness_fixture_1946 html_security_hidden labeled "${_ticket_body_1946}"$'<!-- <h3>Security concerns</h3><p>Unknown</p> -->\n'
+readiness_fixture_1946 html_security_code labeled "${_ticket_body_1946}"$'```html\n<h3>Security concerns</h3><p>Unknown</p>\n```\n'
 # Unprefixed rendered manual-request headings outrank compliance (#1946).
 readiness_fixture_1946 html_human_h3_full refused "${_ticket_body_1946}"$'<h3>Requires further human verification</h3><p>Verify authorization manually.</p>\n' reviewer-check-absent
 readiness_fixture_1946 html_human_h3_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h3>Requires further human verification</h3><p>Verify authorization manually.</p>\n' reviewer-check-absent

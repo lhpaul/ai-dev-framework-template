@@ -278,10 +278,25 @@ def classify(body):
             return "escalate"
         needs_fixes = "needs_fixes" in verdicts
     # An explicit security section cannot be overridden by clean compliance.
-    security_sections = list(re.finditer(r"(?:<strong>Security concerns</strong>|^#{1,6}[ \t]+(?:🔒[ \t]*)?Security concerns)[ :]*(?:<br>)*([\s\S]*?)(?=</td>|^### |\Z)", body, re.M | re.I))
+    # Normalize only the known unprefixed HTML heading, retaining its body.
+    security_parts = []
+    security_end = 0
+    html_headings = r"(?=(<(?P<tag>h[1-6]|strong|b|em|span|p|div|summary)\b[^>]*>(?P<title>[\s\S]*?)</(?P=tag)\s*>))"
+    for heading in re.finditer(html_headings, body, re.I):
+        title_reader = ReviewText()
+        title_reader.feed(heading.group("title"))
+        title = " ".join("".join(title_reader.parts).split())
+        if heading.start() < security_end or not re.fullmatch(r"Security concerns\s*:?", title, re.I):
+            continue
+        security_parts.extend([body[security_end:heading.start()], "<strong>Security concerns</strong>"])
+        security_end = heading.end(1)
+    security_body = "".join(security_parts) + body[security_end:]
+    security_sections = list(re.finditer(r"(?:<strong>Security concerns</strong>|^#{1,6}[ \t]+(?:🔒[ \t]*)?Security concerns)[ :]*(?:<br>)*([\s\S]*?)(?=</td>|^#{1,6} |<h[1-6]\b|\Z)", security_body, re.M | re.I))
     security_candidates = sum(bool(re.match(r"Security concerns\b", " ".join(label.split()), re.I)) for label in rendered_headers.labels)
     security_candidates += len(re.findall(r"^[ \t]*(?:#{1,6}|\*\*)[^\n]*(?<!No )Security concerns", body, re.M | re.I))
     security_candidates += len(re.findall(r"^[ \t]*Security concerns\b", body, re.M | re.I))
+    # An unreadable/unclosed HTML heading must not disappear from the gate.
+    security_candidates = max(security_candidates, len(re.findall(r"^[ \t]*Security\s+concerns\b", verification_text, re.M | re.I)))
     if security_candidates != len(security_sections) or len(security_sections) > 1:
         return "escalate"
     if security_sections:
