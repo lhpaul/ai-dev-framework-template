@@ -69,13 +69,13 @@ class ReviewStructure(HTMLParser):
         self.valid = True
 
     def handle_starttag(self, tag, attrs):
-        if tag in {"table", "tr", "td", "details", "summary"}:
+        if tag in {"table", "tr", "td", "details", "summary", "strong"}:
             if tag == "table" and tag in self.stack:
                 self.valid = False  # Unknown nested-table rendering.
             self.stack.append(tag)
 
     def handle_endtag(self, tag):
-        if tag in {"table", "tr", "td", "details", "summary"}:
+        if tag in {"table", "tr", "td", "details", "summary", "strong"}:
             if not self.stack or self.stack.pop() != tag:
                 self.valid = False
 
@@ -108,7 +108,7 @@ def focus_labels(body):
     focus = re.search(r"(?:Recommended focus areas for review|Key issues to review)[^\n]*\n([\s\S]*?)(?=</td>|^### |^---$|\Z)", body, re.M)
     if focus is None:
         return None
-    return [(html or markdown).strip() for html, markdown in re.findall(r"<strong>([^<]+)</strong>|\*\*([^*\n]+)\*\*", focus.group(1))]
+    return [(html or markdown).strip() for html, markdown in re.findall(r"<strong>([^<]*)</strong>|\*\*([^*\n]*)\*\*", focus.group(1))]
 
 
 def classify(body):
@@ -119,7 +119,7 @@ def classify(body):
     if body is None:
         return "escalate"
     ticket = "Ticket compliance analysis" in body
-    if ticket or re.search(r"</?(?:table|tr|td|details|summary)(?:\s|>)", body, re.I):
+    if ticket or re.search(r"</?(?:table|tr|td|details|summary|strong)(?:\s|>)", body, re.I):
         # Reject malformed or cut-off HTML before trusting any clean marker,
         # including legacy guides. Bare legacy focus fixtures need no table.
         structure = ReviewStructure()
