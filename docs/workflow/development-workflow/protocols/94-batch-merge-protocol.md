@@ -267,6 +267,17 @@ For a coordinated reversal, stop new operations and resolve active Waiting/Inter
 
 Process PRs one at a time in the approved order.
 
+An explicit validated `releasePair` is the narrow exception in
+[Protocol 05 section 8.1](05-prepare-release-protocol.md#81-admit-the-complete-two-pr-release-session).
+It freezes exactly production/backport and complete release scope, assigns
+shared release duties once to backport, and keeps production's cleanup barrier
+pending until shared cleanup verifies. Backport requires fresh regular
+production merge, matching tag and published non-draft Release evidence.
+Branch names alone never activate the exception; ordinary sequences retain the
+preceding-follow-up barrier. Release branch deletion and tracker mutations
+require both regular merges and publication. All mutations and deferred final
+audits use the same owner-bound session and existing authority gates.
+
 ### 4.1 Per-PR merge attempt
 
 > **Critical sequencing rule**: Call `batch-merge.sh merge --pr N --expected-head-sha <reviewed-headRefOid>` for **exactly one PR at a

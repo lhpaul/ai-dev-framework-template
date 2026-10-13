@@ -540,8 +540,8 @@ mutation.
 | Plan Ready                                                         | Plan PR is merged                                                                                                                                   | Set tracker status to **In Development**, then run `03-implement-development-protocol.md`                                                                                                                                                                                    |
 | In Development                                                     | Tracker **In Development** — feature/fix PR not yet human-ready                                                                                     | Continue implementation branch/PR work (Step 7a, 7, 8) until tracker moves to **Development in Review**                                                                                                                                                                      |
 | Development in Review                                              | Tracker **Development in Review** — feature/fix PR ready for humans                                                                                 | Wait — human review / merge (unless addressing `needs-fixes`)                                                                                                                                                                                                                |
-| Dev branch pushed, no PR yet                                       | Branch exists on local / remote / worktree; `stages.implementation.may_open_pr` is `true` (default) — if `false`, do not open the PR and report the `stages.implementation.may_open_pr` guardrail | Open draft PR, run the internal review gate (Step 7a), run `gh pr ready` to convert to non-draft, then run automated reviewer loop (Step 7) and CI loop (Step 8)                                                                                                             |
-| Draft PR open, internal review pending                             | PR is draft and the relevant internal review gate has not run yet or has open findings                                                              | Run the stage-specific internal review gate (Step 7a); apply fixes, push, repeat until clean. Once APPROVED, run `gh pr ready` to convert to non-draft                                                                                                                       |
+| Dev branch pushed, no PR yet                                       | Branch exists on local / remote / worktree; `stages.implementation.may_open_pr` is `true` (default) — if `false`, do not open the PR and report the `stages.implementation.may_open_pr` guardrail | Open draft PR, run the internal review gate (Step 7a), run the ready-transition preflight below, then complete automated reviewer loop (Step 7) and CI loop (Step 8)                                                                                                             |
+| Draft PR open, internal review pending                             | PR is draft and the relevant internal review gate has not run yet or has open findings                                                              | Run the stage-specific internal review gate (Step 7a); apply fixes, push, repeat until clean. Once APPROVED, run the ready-transition preflight below; keep draft until the draft GitHub gate clears                                                                                                                       |
 | Non-draft PR open, no readiness label, external review not yet run | PR is non-draft (converted after Step 7a APPROVED), external review not yet run                                                                     | Run Step 7 (external automated reviewers) and Step 8 (CI)                                                                                                                                                                                                                    |
 | PR open (non-draft), no readiness label                            | PR exists and latest push has not fully cleared                                                                                                     | Run Step 7 and Step 8 until clean or escalated                                                                                                                                                                                                                               |
 | PR labeled `needs-fixes`                                           | Human or automated systems requested changes                                                                                                        | Address feedback, push, then run Step 7a, Step 7, and Step 8                                                                                                                                                                                                                 |
@@ -1629,7 +1629,7 @@ Gate` log in the draft PR description before Step 7a begins. If the log is
 missing or obviously incomplete, treat the creator stage as incomplete and fix
 the PR description before running reviewer readiness loops.
 
-`creator -> draft PR opened with Document Quality Gate log when applicable -> internal review gate with all review.on_draft.runner reviewers (Step 7a) -> draft GitHub reviewer gate with review.on_draft.github -> gh pr ready -> ready GitHub reviewer phase with review.on_ready.github (Step 7) -> regression label (Step 7b, implementation PRs only) -> CI loop (Step 8) -> label readiness checklist (Step 8a) -> tracker status update (Step 8b) -> independent PR verification (Step 8c) -> wait or escalation`
+`creator -> draft PR opened with Document Quality Gate log when applicable -> internal review gate with all review.on_draft.runner reviewers (Step 7a) -> draft GitHub reviewer gate with review.on_draft.github -> ready-transition preflight (full loop owns conversion) -> ready GitHub reviewer phase with review.on_ready.github (Step 7) -> regression label (Step 7b, implementation PRs only) -> CI loop (Step 8) -> label readiness checklist (Step 8a) -> tracker status update (Step 8b) -> independent PR verification (Step 8c) -> wait or escalation`
 
 After any subagent finishes, determine whether the item still has a deterministic next action:
 
@@ -2142,7 +2142,7 @@ Initialize `internal_review_cycle = 0` at the start of Step 7a. Increment each t
 
 | Outcome                                                                                                   | Action                                                                                                                                                                        |
 | --------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| All reviewers `APPROVED`                                                                                  | Post the Step 7a summary comment (see below), then run `gh pr ready <pr_number>` to convert the draft PR to non-draft, then continue to Step 7 (external automated reviewers) |
+| All reviewers `APPROVED`                                                                                  | Post the Step 7a summary comment (see below), then run the ready-transition preflight below and continue to Step 7 (external automated reviewers) |
 | Any reviewer returns `NEEDS REVISION` (fixable) and `internal_review_cycle < max_internal_review_cycles`  | Fixes already applied by the agent; increment `internal_review_cycle`; re-run **all** internal reviewers from the beginning of the list                                       |
 | Any reviewer returns `NEEDS REVISION` (fixable) and `internal_review_cycle >= max_internal_review_cycles` | Post the Step 7a summary comment with verdict `escalated — max cycles reached`, then escalate to human                                                                        |
 | Any reviewer returns `NEEDS REVISION` (product/design decision)                                           | Post the Step 7a summary comment with verdict `escalated — human decision required`, then stop and escalate to human before proceeding                                        |
@@ -2167,7 +2167,7 @@ Implementation PRs run two sequential passes before final approval (with the con
 | Any reviewer returns `NEEDS REVISION` on Pass 1 (fixable) and `internal_review_cycle < max_internal_review_cycles`                                                               | Fixes already applied; increment `internal_review_cycle`; restart from Pass 1 for all reviewers                                                                                                                                                                                         |
 | Any reviewer returns `NEEDS REVISION` on Pass 1 (fixable) and `internal_review_cycle >= max_internal_review_cycles`                                                              | Post the Step 7a summary comment with verdict `escalated — max cycles reached`, then escalate to human                                                                                                                                                                                  |
 | Any reviewer returns `NEEDS REVISION` on Pass 1 (product/design decision)                                                                                                        | Post the Step 7a summary comment with verdict `escalated — human decision required`, then stop and escalate to human                                                                                                                                                                    |
-| All reviewers `APPROVED` on Pass 2                                                                                                                                               | Post the Step 7a summary comment (see below), then run `gh pr ready <pr_number>` to convert the draft PR to non-draft, then continue to Step 7 (external automated reviewers)                                                                                                           |
+| All reviewers `APPROVED` on Pass 2                                                                                                                                               | Post the Step 7a summary comment (see below), then run the ready-transition preflight below and continue to Step 7 (external automated reviewers)                                                                                                           |
 | Any reviewer returns `NEEDS REVISION` on Pass 2 (fixable) — fix is **non-trivial** — and `internal_review_cycle < max_internal_review_cycles`                                    | Fixes already applied; increment `internal_review_cycle`; restart from **Pass 1** for all reviewers                                                                                                                                                                                     |
 | Any reviewer returns `NEEDS REVISION` on Pass 2 (fixable) — fix is **trivial** (all three trivial-fix conditions met) — and `internal_review_cycle < max_internal_review_cycles` | Skip Pass 1 re-run; increment `internal_review_cycle`; post a skip note (see Trivial-fix skip rule); restart from **Pass 2** only. The same-SHA requirement does not apply to Pass 1 for this cycle — only Pass 2 must approve at the current commit SHA before `gh pr ready` is called |
 | Any reviewer returns `NEEDS REVISION` on Pass 2 (fixable) and `internal_review_cycle >= max_internal_review_cycles`                                                              | Post the Step 7a summary comment with verdict `escalated — max cycles reached`, then escalate to human                                                                                                                                                                                  |
@@ -2177,7 +2177,7 @@ Both passes must complete with all selected reviewers `APPROVED` before final ad
 
 #### Step 7a summary comment (mandatory)
 
-A Step 7a summary comment **must always be posted to the PR** when the gate exits — whether all reviewers ran, some were skipped, or the gate hard-failed (BR-7). Post via `gh pr comment` immediately before `gh pr ready` (in the success path) or immediately before stopping (in the hard-fail or escalation paths).
+A Step 7a summary comment **must always be posted to the PR** when the gate exits — whether all reviewers ran, some were skipped, or the gate hard-failed (BR-7). Post via `gh pr comment` immediately before the ready-transition preflight (in the success path) or immediately before stopping (in the hard-fail or escalation paths).
 
 Include a per-reviewer verdict for every configured reviewer, with its display
 label and its reason and remedy when unreachable, plus the gate outcome.
@@ -2449,15 +2449,123 @@ label or push, or Step 8a when the final readiness checklist was skipped.
 When `.ai-dev-workflow.yaml` contains `review.on_ready.github`, run the external
 reviewer loop in two PR lifecycle phases:
 
-Run the reviewer loop in two phases: keep the PR as draft and run
-`review.on_draft.github` platforms (`--draft-github-only`) until they are clean,
-then convert to non-draft with `gh pr ready` and run the full loop so
-`review.on_ready.github` platforms see a clean-gated ready PR. The legacy
-`--pre-after-clean-only` flag remains accepted as an alias for
-`--draft-github-only` during the transition release. For the full runbook and
-`READY_PHASE_*` telemetry details, see the **"Draft GitHub gate before
-ready-phase reviewers"** section in
-[`93-automated-reviewer-loop-protocol.md`](93-automated-reviewer-loop-protocol.md).
+Keep the PR draft after Step 7a approval. The **ready-transition preflight**
+is mandatory before any normal post-approval ready conversion, including resume
+and readiness-checklist recovery. It records the draft-loop output, refuses a
+missing, malformed, failed, or stale verdict, and leaves ready conversion to the
+full loop when ready-phase reviewers are configured. Step 7a approval alone is
+never draft GitHub evidence. Do not reuse a prior invocation's output.
+
+Fill `PR_NUMBER` and `BRANCH` with the selected PR and expected branch, then run
+this executable preflight after posting the APPROVED Step 7a summary. Preserve
+both loop outputs for Step 8a; the full output is the final Step 7 evidence.
+The draft loop's `READY_PHASE_ENABLED` and `PLATFORM_COUNT` telemetry is the
+source for conversion ownership and empty-draft detection: it resolves the PR's
+base configuration and local overrides, unlike a separate checkout-config read.
+The existing pre-dispatch CodeRabbit eligibility exception in Step 7a remains
+separate; this preflight governs the normal post-approval transition.
+
+| Draft-loop evidence | Ready-phase telemetry | Decision |
+| --- | --- | --- |
+| Loop exits nonzero | Any | Print its reason, stop without conversion |
+| Missing/malformed/duplicate required telemetry or changed head | Any | Stop without conversion |
+| Current-head `clean`, draft-only invocation | `1` | Full loop owns conversion |
+| Current-head `clean`, draft-only invocation | `0` | Convert only if draft, then full loop |
+| `skipped/not_configured`, zero draft platforms, unchanged head | `0` or `1` | Follow conversion ownership above |
+| `skipped/release_pr`, matching PR/branch, `release/*` or `hotfix/*`, unchanged head | Intentionally absent | Preserve the existing release skip; guarded manual conversion, then full-loop skip |
+| Other skipped/failed/missing verdict | Any | Stop without conversion |
+
+<!-- protocol-91-ready-transition:start -->
+<!-- workflow-shell-contract: bash-zsh -->
+```bash
+set -euo pipefail
+PR_NUMBER=<pr_number>
+BRANCH=<branch_name>
+./scripts/development-workflow/pr-ownership-guard.sh --pr "$PR_NUMBER" --expected-branch "$BRANCH"
+DRAFT_HEAD=$(gh pr view "$PR_NUMBER" --json headRefOid --jq '.headRefOid')
+if [ -z "$DRAFT_HEAD" ]; then
+  echo "ERROR: draft gate head unavailable." >&2
+  exit 1
+fi
+DRAFT_GATE_RC=0
+DRAFT_GATE_OUTPUT=$(./scripts/development-workflow/pr-review-loop.sh "$PR_NUMBER" --branch "$BRANCH" --draft-github-only) || DRAFT_GATE_RC=$?
+printf '%s\n' "$DRAFT_GATE_OUTPUT"
+if [ "$DRAFT_GATE_RC" -ne 0 ]; then
+  exit "$DRAFT_GATE_RC"
+fi
+ready_gate_value() {
+  printf '%s\n' "$DRAFT_GATE_OUTPUT" | awk -F= -v key="$1" '
+    $1 == key { n++; if (NF == 2) value=$2; else bad=1 }
+    END { if (n == 1 && !bad) print value }
+  '
+}
+DRAFT_RESULT=$(ready_gate_value RESULT)
+DRAFT_MODE=$(ready_gate_value DRAFT_GITHUB_ONLY)
+DRAFT_REVIEWED_HEAD=$(ready_gate_value POST_CLEAN_HEAD_SHA)
+DRAFT_REASON=$(ready_gate_value REASON)
+READY_ENABLED=$(ready_gate_value READY_PHASE_ENABLED)
+DRAFT_COUNT=$(ready_gate_value PLATFORM_COUNT)
+LIVE_HEAD=$(gh pr view "$PR_NUMBER" --json headRefOid --jq '.headRefOid')
+if [ "$LIVE_HEAD" != "$DRAFT_HEAD" ]; then
+  echo "ERROR: draft gate head changed; rerun on current head." >&2
+  exit 1
+fi
+if [ "$DRAFT_RESULT" = skipped ] && [ "$DRAFT_REASON" = release_pr ]; then
+  case "$BRANCH" in
+    release/*|hotfix/*) : ;;
+    *) echo "ERROR: release skip does not apply to this branch." >&2; exit 1 ;;
+  esac
+  if [ "$(ready_gate_value PR_NUMBER)" != "$PR_NUMBER" ] || [ "$(ready_gate_value BRANCH)" != "$BRANCH" ]; then
+    echo "ERROR: release skip identity missing or mismatched." >&2
+    exit 1
+  fi
+  # The existing release guard exits before ordinary phase/count telemetry.
+  READY_ENABLED=0
+else
+  case "$DRAFT_COUNT" in
+    ''|*[!0-9]*) echo "ERROR: draft platform count missing or malformed." >&2; exit 1 ;;
+  esac
+  case "$READY_ENABLED" in
+    0|1) : ;;
+    *) echo "ERROR: ready-phase telemetry missing or malformed." >&2; exit 1 ;;
+  esac
+  if [ "$DRAFT_MODE" != 1 ]; then
+    echo "ERROR: draft gate invocation missing or malformed." >&2
+    exit 1
+  fi
+  if [ "$DRAFT_RESULT" = clean ] && [ "$DRAFT_REVIEWED_HEAD" = "$LIVE_HEAD" ]; then
+    :
+  elif [ "$DRAFT_RESULT" = skipped ] && [ "$DRAFT_REASON" = not_configured ] && [ "$DRAFT_COUNT" -eq 0 ]; then
+    :
+  else
+    echo "ERROR: draft GitHub gate has no current-head clean verdict; refuse ready transition." >&2
+    exit 1
+  fi
+fi
+if [ "$READY_ENABLED" = 0 ]; then
+  IS_DRAFT=$(gh pr view "$PR_NUMBER" --json isDraft --jq '.isDraft')
+  case "$IS_DRAFT" in
+    true)
+      ./scripts/development-workflow/pr-ownership-guard.sh --pr "$PR_NUMBER" --expected-branch "$BRANCH"
+      gh pr ready "$PR_NUMBER"
+      ;;
+    false) : ;;
+    *) echo "ERROR: draft state unavailable; refuse ready transition." >&2; exit 1 ;;
+  esac
+fi
+./scripts/development-workflow/pr-review-loop.sh "$PR_NUMBER" --branch "$BRANCH"
+```
+<!-- protocol-91-ready-transition:end -->
+
+A nonzero loop exit stops this sequence. Retain its reason (including rate-limit
+reset telemetry), address fixable findings through the existing fixer flow, and
+rerun at the current head. Never run `gh pr ready` as a workaround. For a resumed
+PR already ready, this preflight still requires fresh draft-phase evidence (or the
+identity-bound intentional release skip) before
+continuing the full loop; it does not undo an existing ready state.
+The legacy `--pre-after-clean-only` flag remains an alias for
+`--draft-github-only` during the transition release. See Protocol 93's
+**Draft GitHub gate before ready-phase reviewers** runbook for phase telemetry.
 
 After running the helper script (it reads `.ai-dev-workflow.yaml` for the platform list automatically):
 
@@ -2909,7 +3017,7 @@ Interpret the result as follows:
 | Exit Code | Meaning                                                                                          | Action                                              |
 | --------- | ------------------------------------------------------------------------------------------------ | --------------------------------------------------- |
 | 0         | PR is ready (CI green, non-draft, regression label verified for implementation PRs, no unresolved threads) | Apply `ready-for-human-review`               |
-| 1         | PR is still in draft                                                                             | Run `gh pr ready` first                             |
+| 1         | PR is still in draft                                                                             | Return to the ready-transition preflight first                             |
 | 2         | `ready-for-regression` label applied this run                                                    | Re-run Step 8 (pr-ci-loop.sh) before returning here |
 | 3         | `ready-for-regression` label missing at pre-Check-4 gate                                         | Apply label, re-run Step 8                          |
 | 4         | Unresolved review threads at pre-Check-4 gate                                                    | Resolve threads, push fixes, re-run checklist       |
@@ -3307,7 +3415,7 @@ fi
 # Check 1: PR is non-draft
 DRAFT=$(gh pr view "$PR_NUMBER" --json isDraft --jq '.isDraft')
 if [ "$DRAFT" = "true" ]; then
-  echo "ERROR: PR is still a draft. Run 'gh pr ready $PR_NUMBER' first."
+  echo "ERROR: PR is still a draft. Return to the ready-transition preflight first."
   exit 1
 fi
 
@@ -3672,7 +3780,7 @@ a wait of its own (issue #1574).
 
 - **All checks pass (exit 0)**: Continue to Step 8b (update tracker status) and then Step 8c (independent PR verification); only report the PR as ready after Step 8c also passes
 - **Any check fails**: Stop and fix the condition. Do not apply `ready-for-human-review` until all checks pass
-  - If `PR is still a draft` (exit 1): Human error; run `gh pr ready <pr_number>` manually
+  - If `PR is still a draft` (exit 1): Return to the ready-transition preflight; do not convert manually
   - If `missing ready-for-regression` on implementation PR (exit 2 from Check 2): The label has been applied by Check 2. **Do not continue to Check 3/4.** Re-run `pr-ci-loop.sh` (Step 8) first to wait for the e2e/regression workflow triggered by the label. Only re-enter Step 8a after CI is green again. This ensures the e2e/regression check completes before the PR is marked ready.
   - If `ready-for-regression not verified` on implementation PR (exit 3 from pre-Check-4 gate): Step 7b was not completed. Apply the label via Step 7b, run Step 8 (CI loop), and re-enter Step 8a from the beginning. This gate is a hard block — `ready-for-human-review` cannot be applied until `ready-for-regression` is verified present.
   - If `unresolved review threads found` (exit 4 from GraphQL pre-Check-4 gate): The GraphQL query returned unresolved bot-authored review threads. Address the findings, push fixes, and re-enter Step 8a from the beginning. This gate is a hard block — `ready-for-human-review` cannot be applied until the GraphQL query confirms all threads are resolved. **Do not rely on self-tracked thread state** — the GraphQL query is the authoritative check.
