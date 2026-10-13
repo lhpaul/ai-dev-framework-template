@@ -2452,6 +2452,33 @@ readiness_fixture_1946 scoped_human_no_colon refused "commit: $HEAD"$'\n## PR Re
 readiness_fixture_1946 scoped_human_colon refused "commit: $HEAD"$'\n## PR Reviewer Guide\n**Ticket compliance analysis ✅**\n**[42](url) - Fully compliant**\nCompliant requirements:\n- Requires further human verification:\n' reviewer-check-absent
 readiness_fixture_1946 scoped_human_rendered refused "commit: $HEAD"$'\n## PR Reviewer Guide\n**Ticket compliance analysis ✅**\n**[42](url) - Fully compliant**\nCompliant requirements:\n- Requires&nbsp;further <em>human</em> verification\n' reviewer-check-absent
 readiness_fixture_1946 scoped_partial_human_no_colon refused "commit: $HEAD"$'\n## PR Reviewer Guide\n**Ticket compliance analysis ✅**\n**[42](url) - Partially compliant**\nCompliant requirements:\n- Requires further human verification\n' reviewer-check-absent
+# Unprefixed rendered manual-request headings outrank compliance (#1946).
+readiness_fixture_1946 html_human_h3_full refused "${_ticket_body_1946}"$'<h3>Requires further human verification</h3><p>Verify authorization manually.</p>\n' reviewer-check-absent
+readiness_fixture_1946 html_human_h3_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h3>Requires further human verification</h3><p>Verify authorization manually.</p>\n' reviewer-check-absent
+readiness_fixture_1946 html_human_h1_colon_full refused "${_ticket_body_1946}"$'<h1>Requires further human verification:</h1>\n' reviewer-check-absent
+readiness_fixture_1946 html_human_h1_colon_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h1>Requires further human verification:</h1>\n' reviewer-check-absent
+readiness_fixture_1946 html_human_h6_full refused "${_ticket_body_1946}"$'<h6>Requires further human verification</h6>\n' reviewer-check-absent
+readiness_fixture_1946 html_human_h6_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h6>Requires further human verification</h6>\n' reviewer-check-absent
+readiness_fixture_1946 html_human_strong_full refused "${_ticket_body_1946}"$'<strong>Requires further human verification</strong><br>Verify authorization manually.\n' reviewer-check-absent
+readiness_fixture_1946 html_human_strong_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<strong>Requires further human verification</strong><br>Verify authorization manually.\n' reviewer-check-absent
+readiness_fixture_1946 html_human_b_full refused "${_ticket_body_1946}"$'<b>Requires further human verification</b><br>Verify authorization manually.\n' reviewer-check-absent
+readiness_fixture_1946 html_human_b_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<b>Requires further human verification</b><br>Verify authorization manually.\n' reviewer-check-absent
+readiness_fixture_1946 html_human_em_full refused "${_ticket_body_1946}"$'<em>Requires further human verification</em>\n' reviewer-check-absent
+readiness_fixture_1946 html_human_em_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<em>Requires further human verification</em>\n' reviewer-check-absent
+readiness_fixture_1946 html_human_span_full refused "${_ticket_body_1946}"$'<span>Requires further human verification</span>\n' reviewer-check-absent
+readiness_fixture_1946 html_human_span_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<span>Requires further human verification</span>\n' reviewer-check-absent
+readiness_fixture_1946 html_human_div_full refused "${_ticket_body_1946}"$'<div>Requires further human verification</div>\n' reviewer-check-absent
+readiness_fixture_1946 html_human_div_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<div>Requires further human verification</div>\n' reviewer-check-absent
+readiness_fixture_1946 html_human_p_full refused "${_ticket_body_1946}"$'<p>Requires further human verification</p>\n' reviewer-check-absent
+readiness_fixture_1946 html_human_p_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<p>Requires further human verification</p>\n' reviewer-check-absent
+readiness_fixture_1946 html_human_summary_full refused "${_ticket_body_1946}"$'<details><summary>Requires further human verification</summary>Verify authorization manually.</details>\n' reviewer-check-absent
+readiness_fixture_1946 html_human_summary_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<details><summary>Requires further human verification</summary>Verify authorization manually.</details>\n' reviewer-check-absent
+readiness_fixture_1946 html_human_fragmented_full refused "${_ticket_body_1946}"$'<h3 class="verification"> Requires&nbsp;further <em>human</em> <strong>verification</strong>: </h3>\n' reviewer-check-absent
+readiness_fixture_1946 html_human_fragmented_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h3 class="verification"> Requires&nbsp;further <em>human</em> <strong>verification</strong>: </h3>\n' reviewer-check-absent
+readiness_fixture_1946 html_human_custom_prefix labeled "${_ticket_body_1946}"$'<h3>Custom Requires further human verification</h3>\n'
+readiness_fixture_1946 html_human_prose labeled "${_ticket_body_1946}"$'<p>Support Requires further human verification descriptions.</p>\n'
+readiness_fixture_1946 html_human_hidden labeled "${_ticket_body_1946}"$'<!-- <h3>Requires further human verification</h3> -->\n'
+readiness_fixture_1946 html_human_code labeled "${_ticket_body_1946}"$'```html\n<h3>Requires further human verification</h3>\n```\n'
 # Verification status is independent of presentation and compliance verdict.
 readiness_fixture_1946 format_plain_colon_required_full refused "${_ticket_body_1946}"$'Verification status: Required\n' reviewer-check-absent
 readiness_fixture_1946 format_plain_colon_required_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'Verification status: Required\n' reviewer-check-absent

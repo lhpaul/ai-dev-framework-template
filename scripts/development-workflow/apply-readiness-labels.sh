@@ -223,6 +223,10 @@ def classify(body):
         return text
     verification_text = re.sub(r"(\*\*|__)([\s\S]*?)\1", render_emphasis, "".join(verification_reader.parts))
     verification_text = re.sub(r"[*_]", "", verification_text)
+    # Rendered HTML headings carry the same manual request as plain text.
+    # Anchor the known phrase so custom prefixes remain outside this scope.
+    if re.search(r"^[ \t]*Requires\s+further\s+human\s+verification\b", verification_text, re.M | re.I):
+        return "escalate"
     verification_sections = list(re.finditer(verification_heading + r"\s*:?\s*([^\n]*)(?:\n|$)", verification_text, re.M | re.I))
     verification_candidates = len(re.findall(verification_heading, verification_text, re.M | re.I))
     styled_candidates = sum(bool(re.match(verification_heading, re.sub(r"[*_]", "", label), re.I)) for label in rendered_headers.labels)
