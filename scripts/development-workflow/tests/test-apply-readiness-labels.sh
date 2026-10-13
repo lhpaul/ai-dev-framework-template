@@ -2404,6 +2404,10 @@ readiness_fixture_1946 quoted_attribute_blocker refused $'## PR Reviewer Guide\n
 readiness_fixture_1946 colon_focus_blocker refused "${_ticket_body_1946}"$'### Key issues to review:\n<strong>Critical</strong>\n'
 readiness_fixture_1946 duplicate_security_sections refused "${_ticket_body_1946}"$'<tr><td><strong>Security concerns</strong><br>No security concerns identified.</td></tr>\n<tr><td><strong>Security concerns</strong><br>Unsafe input execution.</td></tr>\n'
 readiness_fixture_1946 invalid_fence_closer refused $'## PR Reviewer Guide\ncommit: '"$HEAD"$'\n```markdown\n```example\nNo major issues detected\n'
+readiness_fixture_1946 valid_then_unknown_focus refused $'## PR Reviewer Guide\ncommit: '"$HEAD"$'\n### Recommended focus areas for review\n<strong>Possible Issue</strong><br>Advisory text.\n### Review Key issues to review\n<strong>Critical</strong>\n'
+readiness_fixture_1946 same_line_html_blocker refused $'## PR Reviewer Guide\ncommit: '"$HEAD"$'\n<strong>Key issues to review</strong><br><strong>Critical</strong>\n<strong>Possible Issue</strong>\n'
+readiness_fixture_1946 nonbreaking_space_blocker refused $'## PR Reviewer Guide\ncommit: '"$HEAD"$'\n### Recommended focus areas for review\n<strong>Security&nbsp;Concern</strong>\n'
+readiness_fixture_1946 unparsed_verification_heading refused "${_ticket_body_1946}"$'Requires further human verification\n- Authorization must be checked manually.\n'
 MOCK_ISSUE_COMMENTS='[]'
 unset _ticket_body_1946
 unset -f readiness_fixture_1946

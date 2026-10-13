@@ -117,7 +117,7 @@ def visible_review(body):
             token = marker.group(1)
             if fence is None:
                 fence = token
-            elif token[0] == fence[0] and len(token) >= len(fence) and not line[marker.end():].strip():
+            elif token[0] == fence[0] and len(token) >= len(fence) and not line[marker.end():].strip(" \t"):
                 fence = None
             continue
         if fence is None:
@@ -128,24 +128,25 @@ def visible_review(body):
 
 
 def focus_labels(body):
-    matches = list(re.finditer(r"(?:<strong>(?:Recommended focus areas for review|Key issues to review)</strong>[^\n]*|^[ \t]*(?:#{1,6}[ \t]+(?:⚡[ \t]*)?)?(?:Recommended focus areas for review|Key issues to review):?[ \t]*)(?:\n|$)([\s\S]*?)(?=</td>|^### |^---$|\Z)", body, re.M))
-    if not matches:
-        headings = FocusLabels()
-        headings.feed(body)
-        names = {"Recommended focus areas for review", "Key issues to review"}
-        if any(label.strip().rstrip(":") in names for label in headings.labels) or re.search(r"^[ \t]*(?:#{1,6}|\*\*)[^\n]*(?:Recommended focus areas for review|Key issues to review)", body, re.M):
-            return [""]  # Unrecognized metadata must not be ignored.
+    names = r"Recommended focus areas for review|Key issues to review"
+    headings = list(re.finditer(r"<strong>(?:" + names + r"):?</strong>|^[ \t]*(?:#{1,6}[ \t]+(?:⚡[ \t]*)?)?(?:" + names + r"):?[ \t]*(?:\n|$)", body, re.M))
+    rendered_headings = FocusLabels()
+    rendered_headings.feed(body)
+    html_candidates = sum(bool(re.search(r"(?:" + names + r"):?$", " ".join(label.split()))) for label in rendered_headings.labels)
+    markdown_candidates = len(re.findall(r"^[ \t]*(?:#{1,6}|\*\*)[^\n]*(?:" + names + r")", body, re.M))
+    if html_candidates + markdown_candidates > len(headings) or len(headings) > 1:
+        return [""]  # A valid section cannot hide a later unknown section.
+    if not headings:
         return None
-    if len(matches) != 1:
-        return [""]  # Duplicate disposition sections are ambiguous.
-    content = matches[0].group(1)
+    # Start immediately after the heading: HTML findings can share its line.
+    content = re.split(r"</td>|^[ \t]*#{1,6}[ \t]+\S|^---$", body[headings[0].end():], maxsplit=1, flags=re.M)[0]
     rendered = FocusLabels()
     rendered.feed(content)
     html_labels = rendered.labels
     markdown_labels = re.findall(r"\*\*([^*\n]*)\*\*", content)
     if len(html_labels) != rendered.count or content.count("**") != 2 * len(markdown_labels):
         return [""]  # A complete earlier label must not hide a broken one.
-    return [label.strip() for label in html_labels] + [unescape(label).strip() for label in markdown_labels]
+    return [" ".join(label.split()) for label in html_labels] + [" ".join(unescape(label).split()) for label in markdown_labels]
 
 
 def classify(body):
@@ -166,6 +167,8 @@ def classify(body):
     structure = ReviewStructure()
     structure.feed(body)
     if not structure.valid or structure.stack or structure.rawdata.strip():
+        return "escalate"
+    if re.search(r"^[ \t]*(?:#{1,6}[ \t]+|\*\*)?Requires further human verification\b", body, re.M | re.I):
         return "escalate"
     if ticket:
         section = body[ticket_matches[0].end():]

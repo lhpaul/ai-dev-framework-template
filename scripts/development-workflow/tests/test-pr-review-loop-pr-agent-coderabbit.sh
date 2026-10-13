@@ -2028,6 +2028,11 @@ fixture_test_1946 duplicate_security_sections escalate "${_fixture_ticket_1946}"
 fixture_test_1946 invalid_fence_closer escalate $'```markdown\n```example\nNo major issues detected\n'
 fixture_test_1946 markdown_no_security clean "${_fixture_ticket_1946}"$'### 🔒 No security concerns identified\n'
 fixture_test_1946 unknown_focus_heading escalate "${_fixture_ticket_1946}"$'### Review Key issues to review\n<strong>Critical</strong>\n'
+fixture_test_1946 valid_then_unknown_focus escalate "${_fixture_focus_1946}"$'### Review Key issues to review\n<strong>Critical</strong>\n'
+fixture_test_1946 same_line_html_blocker needs_fixes $'<strong>Key issues to review</strong><br><strong>Critical</strong>\n<strong>Possible Issue</strong>\n'
+fixture_test_1946 nonbreaking_space_blocker needs_fixes "${_fixture_focus_1946}"$'<strong>Security&nbsp;Concern</strong>\n'
+fixture_test_1946 unparsed_verification_heading escalate "${_fixture_ticket_1946}"$'Requires further human verification\n- Authorization must be checked manually.\n'
+fixture_test_1946 nonascii_fence_suffix escalate $'```markdown\n```\u00a0\nNo major issues detected\n'
 # Define the nested advisory helpers in this shell via one mocked review.
 PATH="$_fixture_dir_1946:$PATH" PR_AGENT_FIXTURE_BODY="${_fixture_header_1946}${_fixture_ticket_1946}" \
   run_pr_agent_review 42 feature/42-test 1 0 >/dev/null
