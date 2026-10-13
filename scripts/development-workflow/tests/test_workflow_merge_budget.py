@@ -2277,6 +2277,77 @@ class ReleasePair(unittest.TestCase):
         self.assertNotIn('intentAt',state['prs'][1]['steps']['remote_delete'])
         self.remote_tip_restore_and_complete(advanced)
 
+    def public_remote_delete_restore_and_complete(self, advanced=None, with_cwd=False):
+        if advanced:
+            self.command(['git','--git-dir',str(self.origin),'update-ref',
+                'refs/heads/release/v1.2.3',self.head,advanced])
+        self.helper('resume','--session',self.session)
+        prefix=('git','-C',str(self.repo)) if with_cwd else ('git',)
+        self.step(13,'remote_delete',argv=(*prefix,'push','origin','--delete','release/v1.2.3',
+            '--force-with-lease=refs/heads/release/v1.2.3:'+self.head))
+        self.assertEqual(json.loads(self.cleanup().stdout)['outcome'],'Completed')
+        self.assertEqual(self.command(['git','ls-remote','origin','refs/heads/release/v1.2.3']).stdout,'')
+        if advanced:
+            self.assertEqual(self.command(['git','ls-remote','origin','refs/heads/fixture-unmerged']).stdout.split()[0],advanced)
+        self.helper('resume','--session',self.session)
+        self.reload();self.assertEqual(len(self.data['mergeArgv']),2)
+        self.assertEqual(self.data['stampMutationCount'],{'12':1,'13':1})
+        self.assertEqual(self.data['trackerMutationCount'],2)
+
+    def test_release_pair_public_remote_delete_drift_refuses_then_restores(self):
+        advanced=self.remote_tip_owned_pair()
+        self.command(['git','push','-q','origin',advanced+':refs/heads/release/v1.2.3'])
+        refused=self.step(13,'remote_delete',argv=('git','push','origin','--delete','release/v1.2.3'),success=False)
+        self.assertIn('remote release branch tip changed',refused.stderr)
+        self.assertEqual(self.command(['git','ls-remote','origin','refs/heads/release/v1.2.3']).stdout.split()[0],advanced)
+        state=json.loads(Path(self.session).read_text())
+        self.assertEqual(state['prs'][1]['steps']['remote_delete']['status'],'pending')
+        self.assertNotIn('intentAt',state['prs'][1]['steps']['remote_delete'])
+        self.reload();self.assertEqual(self.data.get('stampMutationCount',{}),{})
+        self.assertEqual(self.data.get('trackerMutationCount',0),0)
+        self.public_remote_delete_restore_and_complete(advanced)
+
+    def test_release_pair_public_remote_delete_requires_frozen_conditional_argv(self):
+        self.remote_tip_owned_pair()
+        lease='--force-with-lease=refs/heads/release/v1.2.3:'+self.head
+        commands=[('git','push','origin','--delete','release/v1.2.3'),
+            ('git','push','origin','--delete','release/v1.2.3','--force-with-lease'),
+            ('git','push','origin','--delete','release/v1.2.3',lease+'0'),
+            ('git','push','origin','--delete','release/v1.2.3',lease,'fixture-unmerged'),
+            ('git','-C',str(self.origin),'push','origin','--delete','release/v1.2.3',lease)]
+        for argv in commands:
+            with self.subTest(argv=argv):
+                refused=self.step(13,'remote_delete',argv=argv,success=False)
+                self.assertIn('paired remote deletion requires frozen origin/ref and expected-SHA condition',refused.stderr)
+                self.assertEqual(self.command(['git','ls-remote','origin','refs/heads/release/v1.2.3']).stdout.split()[0],self.head)
+                state=json.loads(Path(self.session).read_text())
+                self.assertNotIn('intentAt',state['prs'][1]['steps']['remote_delete'])
+                self.helper('resume','--session',self.session)
+        self.public_remote_delete_restore_and_complete(with_cwd=True)
+
+    def test_release_pair_public_remote_delete_race_preserves_commits_then_restores(self):
+        advanced=self.remote_tip_owned_pair()
+        real_git=shutil.which('git');marker=self.root/'public-remote-tip-race';marker.write_text('armed')
+        wrapper=self.bin/'git'
+        wrapper.write_text('#!/usr/bin/env python3\nimport subprocess,sys\nfrom pathlib import Path\n'
+            + 'args=sys.argv[1:]\nmarker=Path('+repr(str(marker))+')\n'
+            + 'if "push" in args and "--delete" in args and "release/v1.2.3" in args and marker.read_text()=="armed":\n'
+            + '    subprocess.run('+repr([real_git,'--git-dir',str(self.origin),'update-ref',
+                'refs/heads/release/v1.2.3',advanced,self.head])+',check=True)\n'
+            + '    marker.write_text("fired")\n'
+            + 'sys.exit(subprocess.run(['+repr(real_git)+',*args]).returncode)\n')
+        wrapper.chmod(0o700)
+        refused=self.step(13,'remote_delete',argv=('git','push','origin','--delete','release/v1.2.3',
+            '--force-with-lease=refs/heads/release/v1.2.3:'+self.head),success=False)
+        self.assertEqual(marker.read_text(),'fired')
+        self.assertIn('remote release branch tip changed',refused.stderr)
+        self.assertEqual(self.command(['git','ls-remote','origin','refs/heads/release/v1.2.3']).stdout.split()[0],advanced)
+        state=json.loads(Path(self.session).read_text())
+        self.assertEqual(state['prs'][1]['steps']['remote_delete']['status'],'uncertain')
+        self.reload();self.assertEqual(self.data.get('stampMutationCount',{}),{})
+        self.assertEqual(self.data.get('trackerMutationCount',0),0)
+        self.public_remote_delete_restore_and_complete(advanced)
+
     def test_release_pair_remote_tip_race_refuses_deletion_then_restores(self):
         advanced=self.remote_tip_owned_pair()
         real_git=shutil.which('git');marker=self.root/'remote-tip-race';marker.write_text('armed')

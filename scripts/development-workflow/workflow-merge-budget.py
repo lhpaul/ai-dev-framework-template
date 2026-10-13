@@ -752,12 +752,37 @@ jq -n --arg provider "$provider" --arg repo "$repository" --arg project "$projec
         raise Stop("release provider binding changed since admission; refuse provider execution")
 
 
+def release_remote_tip_read(state, target):
+    pair = state["releasePair"]
+    git_root = proof_root(state, target["commonDir"], target["root"])
+    remote_ref = "refs/heads/" + pair["branch"]
+    value = call(["git", "-C", git_root, "ls-remote", "origin", remote_ref])
+    if value and value.split() != [pair["head"], remote_ref]:
+        raise Stop("remote release branch tip changed; preserve new commits and restore the frozen head before explicit session recovery")
+    return bool(value)
+
+
+def release_remote_delete_check(state, target, argv):
+    present = release_remote_tip_read(state, target)
+    if not present and argv == ["true"]:
+        return  # The owning cleanup journals already-absent deletion as a no-op.
+    pair = state["releasePair"]
+    git_root = proof_root(state, target["commonDir"], target["root"])
+    expected = ["push", "origin", "--delete", pair["branch"],
+                "--force-with-lease=refs/heads/" + pair["branch"] + ":" + pair["head"]]
+    if (not argv or Path(argv[0]).name != "git"
+            or argv[1:] not in (expected, ["-C", git_root, *expected])):
+        raise Stop("paired remote deletion requires frozen origin/ref and expected-SHA condition; use the owning cleanup driver or exact conditional run-step argv")
+
+
 def release_action_check(state, target, args, live):
     pair = state["releasePair"]
     if live["headRefOid"] != target["head"] or live["headRefName"] != target["branch"]:
         raise Stop("reviewed release head/branch changed")
     if args.phase == "remote_delete" and (target.get("releaseRemoteOwned") is False or not release_remote_owned(target)):
         raise Stop("cross-repository release branch is not owned by origin")
+    if args.phase == "remote_delete":
+        release_remote_delete_check(state, target, getattr(args, "argv", []))
     if args.phase == "merge_api":
         argv = getattr(args, "argv", [])
         message = "paired merge executor requires unchanged regular-merge argv without deletion"
@@ -1640,6 +1665,8 @@ def verify(state, target, entry, seen=None):
             raise Stop("audit body not independently verified", {"knownOutstanding": True})
         return True
     if phase == "remote_delete":
+        if state.get("releasePair"):
+            return not release_remote_tip_read(state, target)
         value = call(["git", "-C", git_root, "ls-remote", "--heads", "origin", target["branch"]])
         return not value
     if phase == "local_cleanup":
