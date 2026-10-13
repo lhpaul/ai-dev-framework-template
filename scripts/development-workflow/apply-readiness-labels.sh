@@ -108,7 +108,12 @@ def focus_labels(body):
     focus = re.search(r"(?:Recommended focus areas for review|Key issues to review)[^\n]*\n([\s\S]*?)(?=</td>|^### |^---$|\Z)", body, re.M)
     if focus is None:
         return None
-    return [(html or markdown).strip() for html, markdown in re.findall(r"<strong>([^<]*)</strong>|\*\*([^*\n]*)\*\*", focus.group(1))]
+    content = focus.group(1)
+    html_labels = re.findall(r"<strong(?:\s[^>]*)?>([^<]*)</strong>", content, re.I)
+    markdown_labels = re.findall(r"\*\*([^*\n]*)\*\*", content)
+    if len(html_labels) != len(re.findall(r"<strong\b", content, re.I)) or content.count("**") != 2 * len(markdown_labels):
+        return [""]  # A complete earlier label must not hide a broken one.
+    return [label.strip() for label in html_labels + markdown_labels]
 
 
 def classify(body):
@@ -119,13 +124,12 @@ def classify(body):
     if body is None:
         return "escalate"
     ticket = "Ticket compliance analysis" in body
-    if ticket or re.search(r"</?(?:table|tr|td|details|summary|strong)(?:\s|>)", body, re.I):
-        # Reject malformed or cut-off HTML before trusting any clean marker,
-        # including legacy guides. Bare legacy focus fixtures need no table.
-        structure = ReviewStructure()
-        structure.feed(body)
-        if not structure.valid or structure.stack:
-            return "escalate"
+    # HTMLParser retains unfinished tags in rawdata even when they lack >.
+    # Validate every rendered review before trusting an earlier clean marker.
+    structure = ReviewStructure()
+    structure.feed(body)
+    if not structure.valid or structure.stack or structure.rawdata.strip():
+        return "escalate"
     if ticket:
         section = re.split(r"Ticket compliance analysis[^\n]*\n", body, maxsplit=1)[-1]
         section = re.split(r"</td>|^### ", section, maxsplit=1, flags=re.M)[0]

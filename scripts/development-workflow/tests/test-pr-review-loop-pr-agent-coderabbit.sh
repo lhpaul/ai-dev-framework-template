@@ -2011,6 +2011,9 @@ fixture_test_1946 inline_code_html clean "${_fixture_ticket_1946}"$'Inline examp
 fixture_test_1946 inline_code_not_verdict escalate '## PR Reviewer Guide: `No major issues detected` is an example.'
 fixture_test_1946 mixed_empty_focus_label escalate "${_fixture_focus_1946}"$'<strong></strong><br>Unknown issue.\n'
 fixture_test_1946 mixed_unclosed_focus_label escalate "${_fixture_focus_1946}"$'<strong>Critical\n'
+fixture_test_1946 mixed_truncated_html_tag escalate "${_fixture_focus_1946}"$'<strong\n'
+fixture_test_1946 mixed_unclosed_markdown_label escalate "${_fixture_focus_1946}"$'**Critical\n'
+fixture_test_1946 attributed_blocker_label needs_fixes "${_fixture_focus_1946}"$'<strong class="finding">Critical</strong>\n'
 # Define the nested advisory helpers in this shell via one mocked review.
 PATH="$_fixture_dir_1946:$PATH" PR_AGENT_FIXTURE_BODY="${_fixture_header_1946}${_fixture_ticket_1946}" \
   run_pr_agent_review 42 feature/42-test 1 0 >/dev/null

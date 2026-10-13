@@ -2393,6 +2393,8 @@ readiness_fixture_1946 inline_code_html labeled "${_ticket_body_1946}"$'Inline e
 readiness_fixture_1946 inline_code_not_verdict refused $'## PR Reviewer Guide\ncommit: '"$HEAD"$'\n`No major issues detected` is an example.\n'
 readiness_fixture_1946 mixed_empty_focus_label refused $'## PR Reviewer Guide\ncommit: '"$HEAD"$'\n### Recommended focus areas for review\n<strong>Possible Issue</strong><br>Advisory text.\n<strong></strong><br>Unknown issue.\n'
 readiness_fixture_1946 mixed_unclosed_focus_label refused $'## PR Reviewer Guide\ncommit: '"$HEAD"$'\n### Recommended focus areas for review\n<strong>Possible Issue</strong><br>Advisory text.\n<strong>Critical\n'
+readiness_fixture_1946 mixed_truncated_html_tag refused $'## PR Reviewer Guide\ncommit: '"$HEAD"$'\n### Recommended focus areas for review\n<strong>Possible Issue</strong><br>Advisory text.\n<strong\n'
+readiness_fixture_1946 mixed_unclosed_markdown_label refused $'## PR Reviewer Guide\ncommit: '"$HEAD"$'\n### Recommended focus areas for review\n<strong>Possible Issue</strong><br>Advisory text.\n**Critical\n'
 MOCK_ISSUE_COMMENTS='[]'
 unset _ticket_body_1946
 unset -f readiness_fixture_1946
