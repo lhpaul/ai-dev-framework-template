@@ -123,6 +123,24 @@ class FocusLabels(HTMLParser):
             self.current = None
 
 
+
+class ReviewText(HTMLParser):
+    """Render status fields once; inline markup does not change their values."""
+    def __init__(self):
+        super().__init__()
+        self.parts = []
+
+    def handle_starttag(self, tag, attrs):
+        if tag in {"br", "p", "div", "table", "tr", "td", "li", "summary", "details", "strong", "h1", "h2", "h3", "h4", "h5", "h6"}:
+            self.parts.append("\n")
+
+    def handle_endtag(self, tag):
+        self.handle_starttag(tag, [])
+
+    def handle_data(self, data):
+        self.parts.append(data)
+
+
 def visible_review(body):
     if body.count("<!--") != body.count("-->"):
         return None
@@ -194,13 +212,23 @@ def classify(body):
         return "escalate"
     if any(re.match(r"Requires further human verification\b", " ".join(label.split()), re.I) for label in rendered_headers.labels) or re.search(r"^[ \t]*(?:#{1,6}[ \t]+|\*\*)?Requires further human verification\b", body, re.M | re.I):
         return "escalate"
-    verification_sections = list(re.finditer(r"<strong>(?:Human verification|Verification status|Verification)</strong>[ :]*(?:<br>)*([^\n]*)(?:\n|$)|^[ \t]*(?:#{1,6}[ \t]+)?(?:Human verification|Verification status|Verification):[ \t]*([^\n]*)(?:\n|$)", body, re.M | re.I))
-    verification_candidates = sum(bool(re.search(r"(?:human verification|verification status|verification)$", " ".join(label.split()), re.I)) for label in rendered_headers.labels)
-    verification_candidates += len(re.findall(r"^[ \t]*(?:#{1,6}[ \t]+)?(?:Human verification|Verification status|Verification)\b", body, re.M | re.I))
+    verification_reader = ReviewText()
+    verification_reader.feed(body)
+    # Markdown emphasis is presentation; HTMLParser decodes entities once.
+    def render_emphasis(match):
+        text = match.group(2)
+        if re.match(r"\s*(?:Human\s+verification|Verification\s+status|Verification)\b", text, re.I):
+            return "\n" + text + "\n"
+        return text
+    verification_text = re.sub(r"(\*\*|__)([\s\S]*?)\1", render_emphasis, "".join(verification_reader.parts))
+    verification_text = re.sub(r"[*_]", "", verification_text)
+    verification_heading = r"^[ \t]*(?:(?:#{1,6}|[-*]|[0-9]+[.)])\s+)?(?:Human\s+verification|Verification\s+status|Verification)\b"
+    verification_sections = list(re.finditer(verification_heading + r"\s*:?\s*([^\n]*)(?:\n|$)", verification_text, re.M | re.I))
+    verification_candidates = len(re.findall(verification_heading, verification_text, re.M | re.I))
     if len(verification_sections) != verification_candidates or len(verification_sections) > 1:
         return "escalate"
     if verification_sections:
-        verification_value = unescape(re.sub(r"<[^>]*>", "", verification_sections[0].group(1) or verification_sections[0].group(2) or ""))
+        verification_value = verification_sections[0].group(1)
         if value_verdict(verification_value, negative_values | {"not required", "no further human verification required"}, {"yes", "true", "required", "pending"}) != "clean":
             return "escalate"  # Known requests and unknown statuses both need a human.
     needs_fixes = False
