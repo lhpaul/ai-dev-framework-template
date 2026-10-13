@@ -2532,6 +2532,14 @@ readiness_fixture_1946 format_decorated_plain_unknown_partial refused "${_ticket
 readiness_fixture_1946 format_unknown_heading_required refused "${_ticket_body_1946}"$'### Custom Verification status: Required\n' reviewer-check-absent
 readiness_fixture_1946 descriptive_status_reference labeled "${_ticket_body_1946/All required behavior is implemented./Support Verification status Required values.}"
 readiness_fixture_1946 descriptive_styled_status_reference labeled "${_ticket_body_1946/All required behavior is implemented./<strong>Support Verification status Required values.<\/strong>}"
+readiness_fixture_1946 format_fragmented_label_required_full refused "${_ticket_body_1946}"$'Verifi<strong>cation</strong> status: Required\n' reviewer-check-absent
+readiness_fixture_1946 format_fragmented_label_required_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'Verifi<strong>cation</strong> status: Required\n' reviewer-check-absent
+readiness_fixture_1946 format_fragmented_label_unknown_full refused "${_ticket_body_1946}"$'Verifi<strong>cation</strong> status: Unknown\n' reviewer-check-absent
+readiness_fixture_1946 format_fragmented_label_unknown_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'Verifi<strong>cation</strong> status: Unknown\n' reviewer-check-absent
+readiness_fixture_1946 format_fragmented_value_required_full refused "${_ticket_body_1946}"$'<strong>Verification status</strong>: <span>Req</span><em>uired</em>\n' reviewer-check-absent
+readiness_fixture_1946 format_fragmented_value_required_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<strong>Verification status</strong>: <span>Req</span><em>uired</em>\n' reviewer-check-absent
+readiness_fixture_1946 format_fragmented_value_unknown_full refused "${_ticket_body_1946}"$'<strong>Verification status</strong>: <span>Unk</span><em>nown</em>\n' reviewer-check-absent
+readiness_fixture_1946 format_fragmented_value_unknown_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<strong>Verification status</strong>: <span>Unk</span><em>nown</em>\n' reviewer-check-absent
 unset _ticket_body_1946
 unset -f readiness_fixture_1946
 

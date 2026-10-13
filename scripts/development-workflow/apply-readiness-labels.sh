@@ -131,7 +131,7 @@ class ReviewText(HTMLParser):
         self.parts = []
 
     def handle_starttag(self, tag, attrs):
-        if tag in {"br", "p", "div", "table", "tr", "td", "li", "summary", "details", "strong", "h1", "h2", "h3", "h4", "h5", "h6"}:
+        if tag in {"br", "p", "div", "table", "tr", "td", "li", "summary", "details", "h1", "h2", "h3", "h4", "h5", "h6"}:
             self.parts.append("\n")
 
     def handle_endtag(self, tag):

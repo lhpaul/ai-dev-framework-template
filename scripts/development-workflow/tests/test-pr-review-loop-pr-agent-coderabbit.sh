@@ -2158,6 +2158,14 @@ fixture_test_1946 format_decorated_plain_unknown_partial escalate "${_fixture_ti
 fixture_test_1946 format_unknown_heading_required escalate "${_fixture_ticket_1946}"$'### Custom Verification status: Required\n'
 fixture_test_1946 descriptive_status_reference clean $'**Ticket compliance analysis ✅**\n**[42](url) - Fully compliant**\nCompliant requirements:\n- Support Verification status Required values.\n'
 fixture_test_1946 descriptive_styled_status_reference clean $'**Ticket compliance analysis ✅**\n**[42](url) - Fully compliant**\nCompliant requirements:\n- <strong>Support Verification status Required values.</strong>\n'
+fixture_test_1946 format_fragmented_label_required_full escalate "${_fixture_ticket_1946}"$'Verifi<strong>cation</strong> status: Required\n'
+fixture_test_1946 format_fragmented_label_required_partial escalate "${_fixture_ticket_1946/Fully compliant/Partially compliant}"$'Verifi<strong>cation</strong> status: Required\n'
+fixture_test_1946 format_fragmented_label_unknown_full escalate "${_fixture_ticket_1946}"$'Verifi<strong>cation</strong> status: Unknown\n'
+fixture_test_1946 format_fragmented_label_unknown_partial escalate "${_fixture_ticket_1946/Fully compliant/Partially compliant}"$'Verifi<strong>cation</strong> status: Unknown\n'
+fixture_test_1946 format_fragmented_value_required_full escalate "${_fixture_ticket_1946}"$'<strong>Verification status</strong>: <span>Req</span><em>uired</em>\n'
+fixture_test_1946 format_fragmented_value_required_partial escalate "${_fixture_ticket_1946/Fully compliant/Partially compliant}"$'<strong>Verification status</strong>: <span>Req</span><em>uired</em>\n'
+fixture_test_1946 format_fragmented_value_unknown_full escalate "${_fixture_ticket_1946}"$'<strong>Verification status</strong>: <span>Unk</span><em>nown</em>\n'
+fixture_test_1946 format_fragmented_value_unknown_partial escalate "${_fixture_ticket_1946/Fully compliant/Partially compliant}"$'<strong>Verification status</strong>: <span>Unk</span><em>nown</em>\n'
 rm -rf "$_fixture_dir_1946"
 unset _fixture_dir_1946 _fixture_header_1946 _fixture_ticket_1946 _fixture_focus_1946
 unset -f fixture_test_1946
