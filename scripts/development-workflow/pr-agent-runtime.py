@@ -33,6 +33,7 @@ class Span:
     end: int = 0
     parent: object = None
     children: list = field(default_factory=list)
+    attrs: tuple = ()
 
 
 def mask_fences(source):
@@ -79,6 +80,7 @@ class ReviewSpans(HTMLParser):
     def handle_starttag(self, tag, attrs):
         start = self.position()
         node = Span(tag, start, start + len(self.get_starttag_text()))
+        node.attrs = tuple(attrs)
         if self.stack:
             node.parent = self.stack[-1]
             node.parent.children.append(node)
@@ -153,6 +155,10 @@ def ancillary_candidates(source):
                 if any(n.tag in {"summary", "details"} and summary.end <= n.start < detail.close_start
                        for n in descendants):
                     raise ValueError("ambiguous source excerpt")
+                # Verdict-like prose/markup outside a source fence is not an excerpt.
+                excerpt = mask_fences(source[summary.end:detail.close_start])
+                if STATUS_WORDS.search(plain_text(excerpt)) or '<strong' in excerpt.lower():
+                    continue
                 excerpts.append((summary.end, detail.close_start))
         safe_labels = {"Estimated effort to review", "No relevant tests", "PR contains tests",
                        "Contribution time estimate", "Priority files"}
@@ -161,7 +167,8 @@ def ancillary_candidates(source):
                 or STATUS_WORDS.search(plain_text(content))):
             continue
         tags = {n.tag for n in descendants}
-        if not tags <= {"td", "strong", "br", "ul", "li"}:
+        if (not tags <= {"td", "strong", "br", "ul", "li"}
+                or row.attrs or any(n.attrs for n in descendants)):
             continue
         tail = plain_text(source[labels[0].end:cell.close_start])
         if label == "Estimated effort to review" and not re.fullmatch(r":\s*[1-5]\s*[🔵⚪]{5}", tail):

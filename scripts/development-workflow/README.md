@@ -8,6 +8,32 @@ Deferred reports quota/reset, recorded PR states and pending follow-up without o
 
 Scripts used by the staged AI development workflow. Referenced by `docs/workflow/development-workflow/` and by the Codex skills in `.agents/skills/` and `.codex/skills/`. Run from the repository root.
 
+## PR-Agent publication runtime
+
+`pr-agent-runtime.py` installs the pinned PR-Agent review-composer and final
+GitHub publication hooks before invoking the image's original action runner.
+`python3 scripts/development-workflow/pr-agent-runtime.py --image` prints the
+image reference without live work. The GitHub workflow supplies its context,
+mounts and existing model configuration; do not invoke the live mode on the host.
+
+Oversized review publications prioritize complete original summaries/verdicts
+over history, recognized ancillary content and omission notices. Unsafe or
+non-retainable content produces a manual-verification diagnostic. Within-limit
+reviews and non-review limiter behavior remain unchanged. Omission logs contain
+reasons/counts; absent state never claims complete history or resolution.
+
+<!-- workflow-shell-contract: bash-zsh -->
+```bash
+bash scripts/development-workflow/tests/test-pr-agent-runtime.sh
+bash scripts/development-workflow/tests/test-pr-agent-runtime.sh --image-smoke
+```
+
+The image smoke test has networking disabled and mocks final create/edit calls.
+It verifies compatibility before any live runner invocation. Consumer sync
+includes the launcher alongside the shared PR-Agent workflow. See the
+[integration guide](../../docs/workflow/development-workflow/integrations/pr-agent.md#publication-runtime-and-comment-limits)
+for image upgrades, omission behavior and reversal/recovery limits.
+
 ## Running the test suite
 
 Each script's tests live alongside it in `scripts/development-workflow/tests/` as

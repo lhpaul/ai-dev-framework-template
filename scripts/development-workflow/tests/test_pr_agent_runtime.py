@@ -105,7 +105,7 @@ class FittingTests(unittest.TestCase):
         return result
 
     def test_unchanged_comments(self):
-        for body in ("", review(), review(True), "unknown review -- invalid marker"):
+        for body in ("", " \t\n", review(), review(True), "unknown review -- invalid marker"):
             for limit in (max(1, len(body)), len(body) + 10):
                 with self.subTest(body=body[:20], limit=limit):
                     self.assertEqual(body, self.fit(body, limit))
@@ -204,6 +204,23 @@ class FittingTests(unittest.TestCase):
         unsafe = visible.replace('```html\n', '').replace('\n```', '')
         self.assertEqual('escalate', classify(self.fit(unsafe)))
 
+    def test_late_blocker_and_protected_excerpt_status(self):
+        visible = review(True, '```python\n' + 'code ' * 16000 + '\n```')
+        visible = visible.replace('Must fix', 'Possible Issue').replace(
+            '</td></tr>\n</table>',
+            '<details><summary><strong title="x > y">Must fix</strong>Late original blocker</summary>'
+            '\n```python\nx\n```\n</details></td></tr>\n</table>',
+        )
+        result = self.fit(visible)
+        self.assertIn('Late original blocker', result)
+        self.assertIn('<strong title="x > y">Must fix</strong>', result)
+        self.assertEqual('needs_fixes', classify(result))
+        self.assertEqual(classify(visible), classify(result))
+        protected = review(True, '<strong>Must fix</strong>\n' + 'payload ' * 10000).replace(
+            '<strong>Must fix</strong></a>', '<strong>Possible Issue</strong></a>')
+        self.assertEqual('needs_fixes', classify(protected))
+        self.assertEqual('escalate', classify(self.fit(protected)))
+
     def test_visible_oversize_diagnostic(self):
         protected = review(True).replace('The original blocker', 'x' * 70000 + 'The original blocker')
         for original in (protected, review().replace('</table>', '') + 'x' * 70000,
@@ -236,6 +253,14 @@ class FittingTests(unittest.TestCase):
                     with self.assertRaises(RuntimeError):
                         runtime.main()
                 runner.assert_not_called()
+        with patch.object(runtime, 'install_hooks') as hooks:
+            with patch.object(runtime.runpy, 'run_path') as runner:
+                with patch.object(sys, 'argv', ['runtime', '--image']):
+                    with patch('builtins.print') as output:
+                        runtime.main()
+                output.assert_called_once_with(runtime.IMAGE)
+                hooks.assert_not_called()
+                runner.assert_not_called()
 
 
 class ConsumerDeliveryTests(unittest.TestCase):
@@ -250,7 +275,7 @@ class ConsumerDeliveryTests(unittest.TestCase):
         workflow = '.github/workflows/pr-agent.yml'
         helper = 'scripts/development-workflow/pr-agent-runtime.py'
         self.assertTrue({workflow, helper} <= selected(manifest))
-        with tempfile.TemporaryDirectory() as directory:
+        with tempfile.TemporaryDirectory(prefix='pr agent context ') as directory:
             planted = Path(directory) / 'manifest.yaml'
             text = manifest.read_text()
             text = re.sub(r'    - path: scripts/development-workflow/pr-agent-runtime.py\n'
@@ -312,6 +337,10 @@ class ConsumerDeliveryTests(unittest.TestCase):
             self.assertIn('GITHUB_OUTPUT=/github/output', argv)
             self.assertEqual(runtime.IMAGE, argv[-2])
             self.assertEqual('/github/workspace/scripts/development-workflow/pr-agent-runtime.py', argv[-1])
+            environment.pop('GITHUB_EVENT_PATH')
+            missing = subprocess.run(['bash', '-c', commands], env=environment, capture_output=True, text=True)
+            self.assertNotEqual(0, missing.returncode)
+            self.assertIn('GITHUB_EVENT_PATH', missing.stderr)
 
 
 @unittest.skipUnless(IMAGE_SMOKE, 'actual producer publication requires --image-smoke')

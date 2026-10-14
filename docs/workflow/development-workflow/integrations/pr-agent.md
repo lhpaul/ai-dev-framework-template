@@ -22,10 +22,9 @@ PR-Agent is **optional**. The workflow functions without it. See [`integrations/
 ### 1. Add the GitHub Actions Workflow
 
 The workflow file is already committed at `.github/workflows/pr-agent.yml`.
-It triggers automatically on low-volume PR lifecycle events
-(`opened`, `reopened`, `ready_for_review`) and on the explicit `/review`
-PR comment command. It does **not** run on every PR synchronize event by
-default, and arbitrary human comments do not trigger it.
+It triggers on same-repository PR events (`opened`, `reopened`,
+`ready_for_review`, `synchronize`) and on the exact `/review` PR comment
+command. Arbitrary discussion comments do not trigger it.
 
 ### 2. Choose a Model and Add the API Key
 
@@ -85,6 +84,62 @@ A local `.pr_agent.toml` has higher precedence than GitHub Actions env vars — 
 To switch models: update **all three keys** (`model`, `fallback_models`, `model_weak`) in **both** the TOML file and the workflow env vars, then swap the API key secret in the workflow. The `model_weak` key controls ancillary tasks (PR description generation, classification, file summaries) and must use the same provider as `model` so only one API key needs to be configured.
 
 ---
+
+## Publication Runtime and Comment Limits
+
+The workflow invokes the original PR-Agent action runner through
+[`pr-agent-runtime.py`](../../../../scripts/development-workflow/pr-agent-runtime.py).
+The launcher owns the immutable Docker image reference; its `--image` command
+prints that reference without importing PR-Agent or starting a review. Checkout
+uses the PR event's head revision for same-repository PR events and the trusted
+workflow revision for issue-comment events, with credentials not persisted.
+The container receives workspace/event/output mounts and the existing model
+configuration; secret values remain environment variables passed by name.
+
+The patch defers the review composer's size cap and fits the final GitHub
+create/edit body after persistent-update identity and current-head metadata.
+Complete comments at or below the provider limit pass through unchanged.
+Oversized reviews lose the exact generated resolved-history suffix first,
+then the complete hidden state marker if necessary. Retained state remains
+valid; omitted state is absent, rather than an empty or partially complete
+snapshot. Other provider comments use the original limiter.
+
+When the visible review itself is oversized, recognized tool guides, source
+excerpts after finding summaries, and safe non-verdict metadata may be removed.
+Original introductions, finding summaries and verdict/status rows remain
+complete. Unknown status content is protected. Only an unsafe layout/state or
+protected content that cannot fit uses a bounded diagnostic requesting manual
+verification; the existing classifier escalates it. Fitting never invents a
+clean verdict. An omission notice uses remaining space only, becomes shorter
+when necessary, and is omitted when it would displace the retained summary or
+verdict. Workflow logs record the reason and character counts even then,
+without logging review bodies or secrets.
+
+Run the publication regressions and real-image compatibility smoke test:
+
+<!-- workflow-shell-contract: bash-zsh -->
+```bash
+bash scripts/development-workflow/tests/test-pr-agent-runtime.sh
+bash scripts/development-workflow/tests/test-pr-agent-runtime.sh --image-smoke
+```
+
+The first command uses the standard library; the second uses the launcher's
+pinned image with networking disabled and mocked GitHub publication. It checks
+the actual parser/renderer, composer bindings and final fresh/persistent
+publication. Neither command starts a live review or needs API credentials.
+An unsupported hook signature fails before the runner starts, without an
+unpatched fallback. To upgrade the image, inspect its producer helpers and
+publication consumers, update the launcher's image reference deliberately,
+and repeat both suites before adopting the change.
+
+Consumer sync must adopt the shared launcher and `.github/workflows/pr-agent.yml`
+together, including for `product_repo`. A consumer that keeps its customized
+workflow must also port the launcher invocation and configuration forwarding.
+Reversal uses a reviewed follow-up PR restoring the previous action route and
+removing its shared-helper dependency together. Omitted history/excerpts cannot
+be recovered from the fitted persistent comment or count-only logs: recovery
+requires a retained pre-edit copy. A new full review establishes current
+findings; it does not recover or resolve the omitted historical findings.
 
 ## Step 7 — PR-Agent-Specific Implementation
 
@@ -232,14 +287,11 @@ issue-comment fan-out and should be an explicit local decision.
 
 ## Migration Notes for Downstream Repositories
 
-Earlier versions of this template ran PR-Agent on every same-repository PR
-synchronize event and on every human PR comment. That was convenient, but it
-could consume private-repository runner minutes even when PR-Agent output was
-not needed.
+The runtime patch preserves the existing triggers, permissions and model keys.
+Adopt the shared workflow and launcher together; do not replace the immutable
+image with a floating tag without repeating compatibility verification.
 
-After this change:
-
-- pushing a new commit to a PR does not run PR-Agent by default;
+- pushing a new commit to a same-repository PR triggers PR-Agent;
 - arbitrary human comments do not run PR-Agent;
 - `/run-reviewer-loop`, `/run-item`, and `/run-epic` still request PR-Agent when
   the effective review config includes `pr-agent`;
