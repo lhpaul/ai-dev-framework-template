@@ -24,8 +24,14 @@ jobs:
       contents: read
     name: PR-Agent review
     steps:
+      - name: Check out the approved event revision
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          # A comment request uses trusted workflow code, never PR-selected code.
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
       - name: PR-Agent
-        uses: the-pr-agent/pr-agent@0bd56c0508504c718cc03d504cd4ceb6725ba3c7 # v0.35.0
+        shell: bash
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # --- Model: DeepSeek (via LiteLLM) ---
@@ -55,3 +61,21 @@ jobs:
           github_action_config.auto_review: "true"
           github_action_config.auto_describe: "false"
           github_action_config.auto_improve: "false"
+        run: |
+          set -euo pipefail
+          IMAGE="$(python3 scripts/development-workflow/pr-agent-runtime.py --image)"
+          docker run --rm --entrypoint python \
+            --mount "type=bind,src=$GITHUB_WORKSPACE,dst=/github/workspace,readonly" \
+            --mount "type=bind,src=$GITHUB_EVENT_PATH,dst=/github/event.json,readonly" \
+            --mount "type=bind,src=$GITHUB_OUTPUT,dst=/github/output" \
+            --env GITHUB_WORKSPACE=/github/workspace --env GITHUB_EVENT_PATH=/github/event.json \
+            --env GITHUB_OUTPUT=/github/output \
+            --env GITHUB_EVENT_NAME --env GITHUB_REPOSITORY --env GITHUB_REPOSITORY_OWNER \
+            --env GITHUB_SHA --env GITHUB_REF --env GITHUB_BASE_REF --env GITHUB_HEAD_REF \
+            --env GITHUB_SERVER_URL --env GITHUB_API_URL --env GITHUB_ACTIONS \
+            --env GITHUB_RUN_ID --env GITHUB_RUN_NUMBER --env GITHUB_ACTOR \
+            --env GITHUB_TOKEN --env DEEPSEEK_API_KEY --env MOONSHOT_API_KEY \
+            --env config.model --env config.fallback_models --env config.model_weak \
+            --env github_action_config.pr_actions --env github_action_config.auto_review \
+            --env github_action_config.auto_describe --env github_action_config.auto_improve \
+            "$IMAGE" /github/workspace/scripts/development-workflow/pr-agent-runtime.py
