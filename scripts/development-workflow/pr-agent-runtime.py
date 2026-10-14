@@ -157,7 +157,8 @@ def ancillary_candidates(source):
         safe_labels = {"Estimated effort to review", "No relevant tests", "PR contains tests",
                        "Contribution time estimate", "Priority files"}
         content = source[cell.open_end:cell.close_start]
-        if label not in safe_labels or len(labels) != 1 or STATUS_WORDS.search(plain_text(content)):
+        if (label not in safe_labels or sum(n.tag == "strong" for n in descendants) != 1
+                or STATUS_WORDS.search(plain_text(content))):
             continue
         tags = {n.tag for n in descendants}
         if not tags <= {"td", "strong", "br", "ul", "li"}:

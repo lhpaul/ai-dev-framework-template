@@ -110,6 +110,9 @@ categories:
       glob: "**/*"
       mode_scope: hub_only
       note: workflow helper scripts (state inspection, PR/CI loops, etc.)
+    - path: scripts/development-workflow/pr-agent-runtime.py
+      mode_scope: shared
+      note: PR-Agent publication runtime required alongside the shared pr-agent.yml workflow (#1953)
     - path: scripts/development-workflow/workflow-config-resolver.py
       mode_scope: product_repo_injection
       note: product-repo runtime helper for repository mode and release contract resolution

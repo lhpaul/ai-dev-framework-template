@@ -8,6 +8,7 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+import tempfile
 from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
@@ -237,6 +238,82 @@ class FittingTests(unittest.TestCase):
                 runner.assert_not_called()
 
 
+class ConsumerDeliveryTests(unittest.TestCase):
+    def test_product_sync_dependency(self):
+        manifest = ROOT / 'sync-manifest.yaml'
+        selector = ROOT / 'scripts/development-workflow/select-sync-manifest-entries.py'
+        def selected(path):
+            output = subprocess.run([sys.executable, str(selector), '--manifest', str(path),
+                                     '--role', 'product_repo'], capture_output=True, text=True, check=True).stdout
+            return {line.split(' path=', 1)[1].split(' glob=', 1)[0]
+                    for line in output.splitlines() if line.startswith('SELECTED ')}
+        workflow = '.github/workflows/pr-agent.yml'
+        helper = 'scripts/development-workflow/pr-agent-runtime.py'
+        self.assertTrue({workflow, helper} <= selected(manifest))
+        with tempfile.TemporaryDirectory() as directory:
+            planted = Path(directory) / 'manifest.yaml'
+            text = manifest.read_text()
+            text = re.sub(r'    - path: scripts/development-workflow/pr-agent-runtime.py\n'
+                          r'      mode_scope: shared\n      note: [^\n]+\n', '', text)
+            planted.write_text(text)
+            self.assertIn(workflow, selected(planted))
+            with self.assertRaises(AssertionError):
+                self.assertTrue({workflow, helper} <= selected(planted), 'shared runtime missing')
+        self.assertTrue({workflow, helper} <= selected(manifest))
+
+    def test_suite_selection(self):
+        selector = ROOT / 'scripts/development-workflow/select-test-suites.sh'
+        for path in ('scripts/development-workflow/pr-agent-runtime.py',
+                     'scripts/development-workflow/tests/test_pr_agent_runtime.py',
+                     '.github/workflows/pr-agent.yml'):
+            result = subprocess.run(['bash', str(selector), '--changed-files', '-'], input=path + '\n',
+                                    text=True, capture_output=True, check=True)
+            self.assertIn('scripts/development-workflow/tests/test-pr-agent-runtime.sh', result.stdout.splitlines())
+
+    def test_workflow_context_and_secret_forwarding(self):
+        source = (ROOT / '.github/workflows/pr-agent.yml').read_text()
+        self.assertIn('types: [opened, reopened, ready_for_review, synchronize]', source)
+        self.assertIn("github.event.comment.body == '/review'", source)
+        self.assertIn('github.event.pull_request.head.repo.full_name == github.repository', source)
+        self.assertIn('ref: ${{ github.event_name == \'pull_request\' && github.event.pull_request.head.sha || github.sha }}', source)
+        self.assertIn('persist-credentials: false', source)
+        self.assertNotIn('pull_request_target:', source)
+        for permission in ('issues: write', 'pull-requests: write', 'contents: read'):
+            self.assertIn(permission, source)
+        commands = source.split('        run: |\n', 1)[1]
+        commands = '\n'.join(line[10:] for line in commands.splitlines())
+        with tempfile.TemporaryDirectory() as directory:
+            temp = Path(directory)
+            bin_path = temp / 'bin'
+            bin_path.mkdir()
+            capture = temp / 'docker.json'
+            python = bin_path / 'python3'
+            python.write_text('#!' + sys.executable + '\nimport sys\nprint(' + repr(runtime.IMAGE) + ')\n')
+            docker = bin_path / 'docker'
+            docker.write_text('#!' + sys.executable + '\nimport json,os,sys\n'
+                              'from pathlib import Path\nPath(os.environ["CAPTURE"]).write_text(json.dumps(sys.argv[1:]))\n')
+            python.chmod(0o755)
+            docker.chmod(0o755)
+            environment = {'PATH': str(bin_path) + ':' + os.environ['PATH'], 'CAPTURE': str(capture),
+                           'GITHUB_WORKSPACE': str(temp), 'GITHUB_EVENT_PATH': str(temp / 'event.json'),
+                           'GITHUB_OUTPUT': str(temp / 'output'),
+                           'GITHUB_TOKEN': 'synthetic-secret-not-a-real-token',
+                           'DEEPSEEK_API_KEY': 'synthetic-key-not-a-real-key'}
+            subprocess.run(['bash', '-c', commands], env=environment, check=True, capture_output=True)
+            argv = json.loads(capture.read_text())
+            for key in ('GITHUB_TOKEN', 'DEEPSEEK_API_KEY', 'config.model', 'config.fallback_models',
+                        'config.model_weak', 'github_action_config.pr_actions', 'github_action_config.auto_review',
+                        'github_action_config.auto_describe', 'github_action_config.auto_improve'):
+                self.assertIn(key, argv)
+            self.assertNotIn(environment['GITHUB_TOKEN'], argv)
+            self.assertNotIn(environment['DEEPSEEK_API_KEY'], argv)
+            self.assertIn('GITHUB_WORKSPACE=/github/workspace', argv)
+            self.assertIn('GITHUB_EVENT_PATH=/github/event.json', argv)
+            self.assertIn('GITHUB_OUTPUT=/github/output', argv)
+            self.assertEqual(runtime.IMAGE, argv[-2])
+            self.assertEqual('/github/workspace/scripts/development-workflow/pr-agent-runtime.py', argv[-1])
+
+
 @unittest.skipUnless(IMAGE_SMOKE, 'actual producer publication requires --image-smoke')
 class ImagePublicationTests(unittest.TestCase):
     @classmethod
@@ -303,6 +380,26 @@ class ImagePublicationTests(unittest.TestCase):
         provider = self.provider(10)
         for body in ('ordinary comment ' * 100, '**[Persistent review](https://example.invalid)** updated'):
             self.assertEqual(type(self).original_limiter(provider, body, 10), provider.limit_output_characters(body, 10))
+
+    def test_real_renderer_reduction(self):
+        from pr_agent.algo.utils import convert_to_markdown_v2
+        from pr_agent.config_loader import get_settings
+        get_settings().set('PR_REVIEWER.ENABLE_INTRO_TEXT', True)
+        original = convert_to_markdown_v2({'review': {
+            'estimated_effort_to_review_[1-5]': 3, 'relevant_tests': 'no',
+            'contribution_time_cost_estimate': {'best_case': '10m', 'average_case': '20m', 'worst_case': '30m'},
+            'security_concerns': 'no', 'key_issues_to_review': [],
+            'review_priority_files': ['src/example.py ' * 10000],
+            'risk_level': 'low', 'merge_recommendation': 'approve',
+        }})
+        self.assertGreater(len(original), 65000)
+        result = self.provider().limit_output_characters(original, 65000)
+        self.assertLessEqual(len(result), 65000)
+        for protected in ('Here are some key observations', 'No security concerns identified',
+                          'No major issues detected', '<strong>Risk level</strong>: Low',
+                          '<strong>Merge recommendation</strong>: Approve'):
+            self.assertIn(protected, result)
+        self.assertEqual(classify(original), classify(result))
 
     def test_incompatible_hook_before_install(self):
         def unsupported(output):
