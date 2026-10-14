@@ -2004,10 +2004,10 @@ fixture_test_1946 misnested_html escalate $'<table>\n<tr><td>\n**Ticket complian
 fixture_test_1946 tableless_unclosed_details escalate $'### Recommended focus areas for review\n<details><summary><strong>Possible Issue</strong></summary>\nAdvisory text\n'
 fixture_test_1946 indented_malformed_ticket escalate $'**Ticket compliance analysis ✅**\n**[42](url) - Fully compliant**\nCompliant requirements:\n- Done.\n  **[43](url) - Not compliant*\nNon-compliant requirements:\n- Missing.\n'
 fixture_test_1946 blank_focus_label escalate $'### Recommended focus areas for review\n<strong> </strong><br>Unknown issue.\n'
-fixture_test_1946 code_example_html clean "${_fixture_ticket_1946}${_fixture_focus_1946}"$'```html\n<table><tr><td>Example only.\n```\n'
+fixture_test_1946 code_example_html clean "${_fixture_ticket_1946}${_fixture_focus_1946}"$'\n```html\n<table><tr><td>Example only.\n```\n'
 fixture_test_1946 code_example_not_verdict escalate $'## PR Reviewer Guide\n```markdown\nNo major issues detected\n```\n'
 fixture_test_1946 unfinished_code_fence escalate "${_fixture_ticket_1946}"$'```html\n<table>\n'
-fixture_test_1946 inline_code_html clean "${_fixture_ticket_1946}"$'Inline example: `<table><td>` is code, not layout.\n'
+fixture_test_1946 inline_code_html clean "${_fixture_ticket_1946}"$'\nInline example: `<table><td>` is code, not layout.\n'
 # Runtime and classifier share the code mask; offsets must still locate real tags.
 _runtime_code_1959="$(python3 - "$REPO_ROOT" <<'PY1959'
 import runpy
@@ -2015,9 +2015,8 @@ import sys
 from types import SimpleNamespace
 
 runtime = runpy.run_path(sys.argv[1] + "/scripts/development-workflow/pr-agent-runtime.py")
-for example in ("`git show <head>:CHANGELOG.md`", "``git `<head>`\n<span>``",
-                "~~~html\n<head><summary>\n~~~\n", "`<!--`"):
-    source = "<details><summary>\n" + example + "</summary></details>"
+for example in ("`git show <head>:CHANGELOG.md`", "~~~html\n<head>\n~~~\n"):
+    source = example + "\n\n<details><summary>Visible</summary></details>"
     masked = runtime["mask_review_code"](source)
     assert len(masked) == len(source)
     assert [i for i, char in enumerate(masked) if char in "\r\n"] == [
@@ -2025,35 +2024,19 @@ for example in ("`git show <head>:CHANGELOG.md`", "``git `<head>`\n<span>``",
     nodes = runtime["ReviewSpans"](source).nodes
     assert [node.tag for node in nodes] == ["details", "summary"]
     assert source[nodes[1].close_start:nodes[1].end] == "</summary>"
-try:
-    runtime["ReviewSpans"]("<details><summary><head></summary></details>")
-except ValueError:
-    pass
-else:
-    raise AssertionError("unclosed visible HTML was accepted")
 
-for separator in ("\n\n", "\n \t\n", "\r\n\r\n"):
-    for ticks in ("`", "``"):
-        source = "Unmatched " + ticks + " example." + separator + "<strong>Critical</strong>"
-        source += separator + "Later " + ticks + " prose."
-        assert runtime["mask_review_code"](source) == source
-        assert runtime["mask_review_code"](source, preserve_offsets=False) == source
-        malformed = source.replace("<strong>Critical</strong>", "<head>")
+for source in ("Unmatched ` prose", "`first\nsecond`", "``complex``",
+               "<span>`Critical`</span>",
+               '<span title="`">Text</span>',
+               "<details><summary>Read `git show <head>:CHANGELOG.md`</summary></details>",
+               "Unmatched ` text.\n---\n<strong>Critical</strong>\nLater ` text."):
+    for preserve in (True, False):
         try:
-            runtime["ReviewSpans"](malformed)
+            runtime["mask_review_code"](source, preserve_offsets=preserve)
         except ValueError:
             pass
         else:
-            raise AssertionError("cross-paragraph code hid malformed visible HTML")
-
-# Prove boundaries preserve evidence in both offset and compact modes.
-for interruption in ("# Notes", "   ###### Notes", "<head>", "   <DIV>",
-                     "</summary>", "<pre>", "<STYLE>", "<!-- opaque -->", "<?", "<!DOCTYPE html>", "<![CDATA["):
-    source = "Unmatched `` example.\n" + interruption + "\n<head>\nLater `` prose."
-    assert runtime["mask_review_code"](source) == source
-    assert runtime["mask_review_code"](source, preserve_offsets=False) == source
-source = "### Notes `open\n<strong>Critical</strong>\nLater ` prose."
-assert runtime["mask_review_code"](source) == source
+            raise AssertionError("ambiguous code was accepted: " + source)
 
 class State:
     @staticmethod
@@ -2070,8 +2053,10 @@ body = ("## PR Reviewer Guide\n<table><tr><td>"
         "</summary>\n```html\n<head>\n" + "source " * 1000 + "\n```\n"
         "</details></td></tr></table>")
 result = runtime["fit_review"](body, 800, State, ("## PR Reviewer Guide",))
-assert len(result) <= 800
-assert "<strong>Must fix</strong>" in result and "`git show <head>:CHANGELOG.md`" in result
+assert len(result) <= 800 and "Verification: required" in result
+body = body.replace(" Read `git show <head>:CHANGELOG.md`.", " Visible finding.")
+result = runtime["fit_review"](body, 800, State, ("## PR Reviewer Guide",))
+assert len(result) <= 800 and "<strong>Must fix</strong>" in result
 assert "source " not in result and "Verification: required" not in result
 print("verified")
 PY1959
@@ -2079,106 +2064,31 @@ PY1959
 run_test "1959_runtime_code_offsets_and_publication" "verified" "$_runtime_code_1959"
 unset _runtime_code_1959
 
-# #1959: code is opaque; malformed visible HTML and blockers remain evidence.
-fixture_test_1946 markdown_code_inline_head clean "${_fixture_ticket_1946}"$'Read `git show <head>:CHANGELOG.md`.\n'
-fixture_test_1946 markdown_code_double_backtick clean "${_fixture_ticket_1946}"$'Read ``git `<head>`:CHANGELOG.md``.\n'
-fixture_test_1946 markdown_code_multiline_span clean "${_fixture_ticket_1946}"$'Read ``git `<head>`\n<span>``.\n'
-fixture_test_1946 markdown_code_longer_fence clean "${_fixture_ticket_1946}"$'````html\n```\n<head>\n`````\n\n'
-fixture_test_1946 markdown_code_tilde_fence clean "${_fixture_ticket_1946}"$'~~~~html\n<head>\n~~~~\n\n'
-fixture_test_1946 markdown_code_code_comment clean "${_fixture_ticket_1946}"$'Example `<!--` and fenced:\n```html\n<!--\n```\n\n'
-fixture_test_1946 markdown_code_raw_head escalate "${_fixture_ticket_1946}"$'Read <head> outside code.\n'
-fixture_test_1946 markdown_code_escaped_backtick escalate "${_fixture_ticket_1946}"$'Escaped \\`<head>` stays visible.\n'
-fixture_test_1946 markdown_code_duplicate_attributes escalate "${_fixture_ticket_1946}"$'<span title="`" title="`">Example</span>\n'
-fixture_test_1946 markdown_code_invalid_fence_info escalate "${_fixture_ticket_1946}"$'```invalid`info\n<strong>Critical</strong>\n```\n\n'
-fixture_test_1946 markdown_code_indented_fence escalate "${_fixture_ticket_1946}"$'    ```html\n<strong>Critical</strong>\n```\n\n'
-fixture_test_1946 markdown_code_unclosed_fence escalate "${_fixture_ticket_1946}"$'```html\n<head>\n\n'
-fixture_test_1946 markdown_code_outside_blocker needs_fixes "${_fixture_ticket_1946}"$'`<head>`\n### Recommended focus areas for review\n<strong>Critical</strong>\n\n'
-
-# Authorized P1 cycle: unmatched backticks cannot cross paragraph boundaries.
-_paragraph_case_1959=0
-for _separator_1959 in $'\n\n' $'\n \t\n' $'\r\n\r\n'; do
+# #1959: Luis authorizes simple one-line code only; ambiguity escalates.
+fixture_test_1946 markdown_code_inline_head clean "${_fixture_ticket_1946}"$'\nRead `git show <head>:CHANGELOG.md`.\n'
+fixture_test_1946 markdown_code_outside_blocker needs_fixes "${_fixture_ticket_1946}"$'\n`<head>`\n### Recommended focus areas for review\n<strong>Critical</strong>\n\n'
+fixture_test_1946 markdown_code_raw_head escalate "${_fixture_ticket_1946}"$'\nRead <head> outside code.\n'
+fixture_test_1946 markdown_code_longer_fence clean "${_fixture_ticket_1946}"$'\n````html\n```\n<head>\n`````\n\n'
+fixture_test_1946 markdown_code_tilde_fence clean "${_fixture_ticket_1946}"$'\n~~~~html\n<head>\n~~~~\n\n'
+fixture_test_1946 markdown_code_unclosed_fence escalate "${_fixture_ticket_1946}"$'\n```html\n<head>\n'
+fixture_test_1946 markdown_code_invalid_fence escalate "${_fixture_ticket_1946}"$'\n```invalid`info\n<strong>Critical</strong>\n```\n'
+fixture_test_1946 markdown_code_indented_fence escalate "${_fixture_ticket_1946}"$'\n    ```html\n<strong>Critical</strong>\n```\n'
+fixture_test_1946 markdown_code_double_backtick escalate "${_fixture_ticket_1946}"$'\nRead ``git `<head>`:CHANGELOG.md``.\n'
+fixture_test_1946 markdown_code_comment_example clean "${_fixture_ticket_1946}"$'\nRead `<!--`.\n'
+for _boundary_1959 in $'\n' $'\n\n' $'\r\n' $'\n---\n' $'\n***\n' $'\n- item\n' $'\n1. item\n' $'\n> quote\n' $'\n### Heading\n' $'\n~~~text\nsample\n~~~\n' $'\n```text\nsample\n```\n' $'\n<span>\n' $'\f' $'\v' $'\u2028'; do
   for _ticks_1959 in '`' '``'; do
-    for _evidence_kind_1959 in blocker raw_html unknown_security; do
-      _paragraph_case_1959=$((_paragraph_case_1959 + 1))
-      case "$_evidence_kind_1959" in
-        blocker)
-          _evidence_1959=$'### Recommended focus areas for review\n<strong>Critical</strong>'
-          _verdict_1959=needs_fixes ;;
-        raw_html)
-          _evidence_1959='<head>'
-          _verdict_1959=escalate ;;
-        unknown_security)
-          _evidence_1959=$'### Security concerns\nUndetermined'
-          _verdict_1959=escalate ;;
-      esac
-      fixture_test_1946 "paragraph_boundary_${_paragraph_case_1959}" "$_verdict_1959" \
-        "${_fixture_ticket_1946}Unmatched ${_ticks_1959} example.${_separator_1959}${_evidence_1959}${_separator_1959}Later ${_ticks_1959} prose."
-    done
+    fixture_test_1946 conservative_boundary escalate "${_fixture_ticket_1946}"$'\n'"Unmatched ${_ticks_1959} example.${_boundary_1959}"$'Recommended focus areas for review\n<strong>Critical</strong>'$'\n'"Later ${_ticks_1959} prose."
+    fixture_test_1946 conservative_boundary escalate "${_fixture_ticket_1946}"$'\n'"Unmatched ${_ticks_1959} example.${_boundary_1959}"'<span title="a" title="b">bad</span>'$'\n'"Later ${_ticks_1959} prose."
   done
 done
-unset _paragraph_case_1959 _separator_1959 _ticks_1959 _evidence_kind_1959 _evidence_1959 _verdict_1959
-
-# ATX headings and interrupting HTML blocks end a paragraph without blank lines.
-_block_case_1959=0
-for _line_end_1959 in $'\n' $'\r\n'; do
-  for _indent_1959 in '' '   '; do
-    for _ticks_1959 in '`' '``'; do
-      for _evidence_kind_1959 in atx_blocker atx_unknown atx_raw html_blocker html_unknown html_raw; do
-        _block_case_1959=$((_block_case_1959 + 1))
-        case "$_evidence_kind_1959" in
-          atx_blocker)
-            _evidence_1959=$'### Recommended focus areas for review\n<strong>Critical</strong>'
-            _verdict_1959=needs_fixes ;;
-          atx_unknown)
-            _evidence_1959=$'### Security concerns\nUndetermined'
-            _verdict_1959=escalate ;;
-          atx_raw)
-            _evidence_1959=$'### Notes\n<head>'
-            _verdict_1959=escalate ;;
-          html_blocker)
-            _evidence_1959=$'<div>\n### Recommended focus areas for review\n<strong>Critical</strong>\n</div>'
-            _verdict_1959=needs_fixes ;;
-          html_unknown)
-            _evidence_1959=$'<DIV>\n### Security concerns\nUndetermined\n</DIV>'
-            _verdict_1959=escalate ;;
-          html_raw)
-            _evidence_1959='<head>'
-            _verdict_1959=escalate ;;
-        esac
-        _evidence_1959="${_evidence_1959//$'\n'/$_line_end_1959}"
-        # Existing verdict extraction escalates CRLF headings conservatively.
-        if [ "$_line_end_1959" = $'\r\n' ] && [ "$_verdict_1959" = needs_fixes ]; then
-          _verdict_1959=escalate
-        fi
-        fixture_test_1946 "block_boundary_${_block_case_1959}" "$_verdict_1959" \
-          "${_fixture_ticket_1946}Unmatched ${_ticks_1959} example.${_line_end_1959}${_indent_1959}${_evidence_1959}${_line_end_1959}Later ${_ticks_1959} prose."
-      done
-    done
-  done
+for _tag_1959 in div pre style script textarea blockquote span custom details summary table td; do
+  fixture_test_1946 conservative_html escalate "${_fixture_ticket_1946}"$'\n'"<${_tag_1959}>"$'\n`<strong>Critical</strong>`\n'"</${_tag_1959}>"
+  fixture_test_1946 conservative_html_same_line escalate "${_fixture_ticket_1946}"$'\n'"<${_tag_1959}>"'`<span title="a" title="b">bad</span>`'"</${_tag_1959}>"
 done
-unset _block_case_1959 _line_end_1959 _indent_1959 _ticks_1959 _evidence_kind_1959 _evidence_1959 _verdict_1959
-# Fences end spans; raw HTML bodies retain literal backticks and evidence.
-for _ticks_1959 in '`' '``'; do
-  for _fence_1959 in '```' '~~~'; do
-    fixture_test_1946 fenced_span_boundary_needs_fixes needs_fixes "${_fixture_ticket_1946}Unmatched ${_ticks_1959} example."$'\n'"${_fence_1959}"$'text\nsample\n'"${_fence_1959}"$'\nRecommended focus areas for review\n<strong>Critical</strong>\n'"Later ${_ticks_1959} prose."
-  done
-  for _tag_1959 in div pre style script textarea blockquote; do
-    fixture_test_1946 raw_html_ticks_needs_fixes needs_fixes "${_fixture_ticket_1946}<${_tag_1959}>"$'\n'"Unmatched ${_ticks_1959} example."$'\nRecommended focus areas for review\n<strong>Critical</strong>\n'"Later ${_ticks_1959} prose."$'\n'"</${_tag_1959}>"
-    # Raw-text elements treat apparent inner tags as text, not markup.
-    case "$_tag_1959" in
-      div|pre|blockquote)
-      fixture_test_1946 raw_html_malformed escalate "${_fixture_ticket_1946}<${_tag_1959}>"$'\n'"${_ticks_1959}"'<span title="a" title="b">bad</span>'"${_ticks_1959}"$'\n'"</${_tag_1959}>"
-        ;;
-    esac
-  done
-done
-unset _ticks_1959 _fence_1959 _tag_1959
-
-fixture_test_1946 inline_type7_multiline clean "${_fixture_ticket_1946}"$'Read ``git <head>\n<headless>``.\n'
-fixture_test_1946 nonheading_multiline clean "${_fixture_ticket_1946}"$'Read ``git <head>\n####### Not ATX``.\n'
-fixture_test_1946 nonheading_without_space clean "${_fixture_ticket_1946}"$'Read ``git <head>\n#Not ATX``.\n'
-fixture_test_1946 heading_same_line clean "${_fixture_ticket_1946}"$'### Notes `git show <head>:CHANGELOG.md`.\n'
-fixture_test_1946 block_summary_multiline escalate "${_fixture_ticket_1946}"$'Read ``git `<head>`\n<summary>``.\n'
+unset _boundary_1959 _ticks_1959 _tag_1959
+fixture_test_1946 conservative_attribute escalate "${_fixture_ticket_1946}"$'\n<span title="`">Text</span>\n'
+fixture_test_1946 conservative_comment clean "${_fixture_ticket_1946}"$'\n<!-- `Critical` -->\n'
+fixture_test_1946 conservative_unmatched escalate "${_fixture_ticket_1946}"$'\nUnmatched ` example.\n'
 
 fixture_test_1946 inline_code_not_verdict escalate '## PR Reviewer Guide: `No major issues detected` is an example.'
 fixture_test_1946 mixed_empty_focus_label escalate "${_fixture_focus_1946}"$'<strong></strong><br>Unknown issue.\n'
@@ -2275,19 +2185,19 @@ fixture_test_1946 raw_structure_div_full escalate "${_fixture_ticket_1946}"$'<di
 fixture_test_1946 raw_structure_div_partial escalate "${_fixture_ticket_1946/Fully compliant/Partially compliant}"$'<div data-note=pre`bad`post>Reviewer notes</div>\n'
 fixture_test_1946 raw_structure_fenced_bad_attribute_full clean "${_fixture_ticket_1946}"$'```html\n<h3 data-note=pre`bad`post>Reviewer notes</h3>\n```\n'
 fixture_test_1946 raw_structure_fenced_bad_attribute_partial needs_fixes "${_fixture_ticket_1946/Fully compliant/Partially compliant}"$'```html\n<h3 data-note=pre`bad`post>Reviewer notes</h3>\n```\n'
-fixture_test_1946 raw_structure_inline_bad_attribute_full clean "${_fixture_ticket_1946}"$'``<h3 data-note=pre`bad`post>Reviewer notes</h3>``\n'
-fixture_test_1946 raw_structure_inline_bad_attribute_partial needs_fixes "${_fixture_ticket_1946/Fully compliant/Partially compliant}"$'``<h3 data-note=pre`bad`post>Reviewer notes</h3>``\n'
+fixture_test_1946 raw_structure_inline_bad_attribute_full escalate "${_fixture_ticket_1946}"$'``<h3 data-note=pre`bad`post>Reviewer notes</h3>``\n'
+fixture_test_1946 raw_structure_inline_bad_attribute_partial escalate "${_fixture_ticket_1946/Fully compliant/Partially compliant}"$'``<h3 data-note=pre`bad`post>Reviewer notes</h3>``\n'
 fixture_test_1946 raw_structure_fenced_unclosed_full clean "${_fixture_ticket_1946}"$'```html\n<h3>Reviewer notes\n```\n'
 fixture_test_1946 raw_structure_fenced_unclosed_partial needs_fixes "${_fixture_ticket_1946/Fully compliant/Partially compliant}"$'```html\n<h3>Reviewer notes\n```\n'
-fixture_test_1946 raw_structure_inline_unclosed_full clean "${_fixture_ticket_1946}"$'`<h3>Reviewer notes`\n'
-fixture_test_1946 raw_structure_inline_unclosed_partial needs_fixes "${_fixture_ticket_1946/Fully compliant/Partially compliant}"$'`<h3>Reviewer notes`\n'
-fixture_test_1946 raw_structure_quoted_backticks clean "${_fixture_ticket_1946}"$'<h3 data-note="pre`bad`post">Reviewer notes</h3>\n'
+fixture_test_1946 raw_structure_inline_unclosed_full clean "${_fixture_ticket_1946}"$'\n`<h3>Reviewer notes`\n'
+fixture_test_1946 raw_structure_inline_unclosed_partial needs_fixes "${_fixture_ticket_1946/Fully compliant/Partially compliant}"$'\n`<h3>Reviewer notes`\n'
+fixture_test_1946 raw_structure_quoted_backticks escalate "${_fixture_ticket_1946}"$'<h3 data-note="pre`bad`post">Reviewer notes</h3>\n'
 fixture_test_1946 raw_structure_quoted_spaced_literal clean "${_fixture_ticket_1946}"$'<h3 title="< h3">Reviewer notes</h3>\n'
 fixture_test_1946 raw_structure_opaque_history clean "${_fixture_ticket_1946}"$'<!-- <h3 data-note=pre`bad`post>old malformed sample -->\n'
 fixture_test_1946 raw_structure_opaque_spaced_literal clean "${_fixture_ticket_1946}"$'<!-- < h3>old malformed sample -->\n'
 fixture_test_1946 raw_structure_complete_fenced clean "${_fixture_ticket_1946}"$'```html\n<h3>Recommended focus areas for review</h3><strong>Critical</strong>\n```\n'
-fixture_test_1946 raw_structure_complete_inline clean "${_fixture_ticket_1946}"$'`<h3>Recommended focus areas for review</h3><strong>Critical</strong>`\n'
-fixture_test_1946 raw_structure_ordinary_inline clean "${_fixture_ticket_1946}"$'Use `known_helper()` for this operation.\n'
+fixture_test_1946 raw_structure_complete_inline clean "${_fixture_ticket_1946}"$'\n`<h3>Recommended focus areas for review</h3><strong>Critical</strong>`\n'
+fixture_test_1946 raw_structure_ordinary_inline clean "${_fixture_ticket_1946}"$'\nUse `known_helper()` for this operation.\n'
 # Malformed HTML headers/children cannot hide behind compliant evidence.
 fixture_test_1946 html_structure_unknown_decl_full escalate "${_fixture_ticket_1946}"$'<h3><![invalid[header]]></h3>\n'
 fixture_test_1946 html_structure_unknown_decl_partial escalate "${_fixture_ticket_1946/Fully compliant/Partially compliant}"$'<h3><![invalid[header]]></h3>\n'

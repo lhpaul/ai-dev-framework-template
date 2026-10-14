@@ -70,66 +70,33 @@ def fence_spans(source):
 
 
 def mask_review_code(source, preserve_offsets=True):
-    """Mask Markdown code while preserving offsets and opaque raw HTML.
-
-    Backticks in attributes/comments belong to HTML. Incomplete or unsupported
-    fences fail closed rather than hiding subsequent findings.
-    """
+    """Exclude simple single-line code and closed fences; reject ambiguity."""
     parts = []
     index = 0
-    backticks = re.compile(r"`+")
-    atx_heading = re.compile(r" {0,3}#{1,6}(?=[ \t\r\n]|$)")
-    # GFM HTML block types 1–6 interrupt paragraphs; type 7 (arbitrary complete
-    # tags) does not. Keep those inline tags legal inside multiline code spans.
-    block_tags = (
-        "address|article|aside|base|basefont|blockquote|body|caption|center|col|"
-        "colgroup|dd|details|dialog|dir|div|dl|dt|fieldset|figcaption|figure|footer|"
-        "form|frame|frameset|h[1-6]|head|header|hr|html|iframe|legend|li|link|main|"
-        "menu|menuitem|nav|noframes|ol|optgroup|option|p|param|section|source|"
-        "summary|table|tbody|td|tfoot|th|thead|title|tr|track|ul"
-    )
-    paragraph_break = re.compile(
-        r"\r?\n(?:[ \t]*\r?\n| {0,3}(?:#{1,6}(?=[ \t\r\n]|$)|"
-        r"`{3,}|~{3,}|<!--|<\?|<![A-Z]|<!\[CDATA\[|"
-        r"(?i:<(?:script|pre|style)(?=[ \t\r\n>]|$)|</?(?:"
-        + block_tags + r")(?=[ \t\r\n>]|/>|$))))"
-    )
+    html_depth = []
+    html_block = None
     opener = re.compile(r"[ \t]*(`{3,}|~{3,})[^\r\n]*(?:\r?\n|$)")
     html = re.compile(r"<\s*/?\s*[A-Za-z]|<!|<\?")
-    raw_body = re.compile(
-        r" {0,3}<(?P<tag>script|pre|style|textarea|" + block_tags + r")(?=[ \t\r\n>]|$)", re.I,
-    )
-    # Producer details/tables deliberately contain Markdown. Other block bodies
-    # are opaque HTML: literal backticks must never erase their contents.
-    producer_tags = {"details", "summary", "table", "tbody", "thead", "tfoot", "tr", "td", "th"}
-    raw_until = 0
 
     def masked(start, end):
         content = source[start:end]
         if preserve_offsets:
             return re.sub(r"[^\r\n]", " ", content)
-        # Verdict parsing needs line boundaries, not producer source offsets.
-        # Avoid feeding huge whitespace runs into heading-matching regexes.
         return " " + "".join(char for char in content if char in "\r\n")
 
     while index < len(source):
-        if index < raw_until:
-            parts.append(source[index:raw_until])
-            index = raw_until
-            continue
         if index == 0 or source[index - 1] == "\n":
-            raw = raw_body.match(source, index)
-            if raw and raw.group("tag").lower() not in producer_tags:
-                tag = raw.group("tag").lower()
-                if tag in {"script", "pre", "style", "textarea"}:
-                    ending = re.search(r"</" + tag + r"\s*>", source[raw.end():], re.I)
-                    raw_until = raw.end() + ending.end() if ending else len(source)
-                else:
-                    ending = re.search(r"\r?\n[ \t]*\r?\n", source[raw.end():])
-                    raw_until = raw.end() + ending.end() if ending else len(source)
-                continue
+            line_end = source.find("\n", index)
+            line_end = len(source) if line_end < 0 else line_end
+            if not source[index:line_end].strip():
+                html_block = None
             fence = opener.match(source, index)
             if fence:
+                producer_tags = {"table", "tbody", "thead", "tfoot", "tr", "td", "th", "details"}
+                if (any(tag not in producer_tags for tag in html_depth)
+                        or (html_block not in producer_tags | {None, "summary"}
+                            and not (html_depth and html_block == "strong"))):
+                    raise ValueError("ambiguous fence in raw HTML")
                 indent = re.match(r"[ \t]*", source[index:]).group()
                 if "\t" in indent or len(indent) > 3:
                     raise ValueError("unsupported source fence indentation")
@@ -150,38 +117,28 @@ def mask_review_code(source, preserve_offsets=True):
             if end < 0:
                 raise ValueError("unclosed source comment")
             end += 3
+            # Complete comments are opaque; their fence-like text is never code.
             parts.append(source[index:end])
             index = end
             continue
         if source[index] == "`":
-            start = index
-            while start > 0 and source[start - 1] == "\\":
-                start -= 1
-            if (index - start) % 2:
-                parts.append("`")
-                index += 1
-                continue
-            marker = backticks.match(source, index)
-            # An unmatched opener cannot claim evidence beyond the next block.
-            # Code in an ATX heading also cannot continue into the next line.
-            boundary = paragraph_break.search(source, marker.end())
-            paragraph_end = boundary.start() if boundary else len(source)
-            line_start = source.rfind("\n", 0, index) + 1
-            if atx_heading.match(source, line_start):
-                line_end = source.find("\n", marker.end())
-                if line_end >= 0:
-                    paragraph_end = min(paragraph_end, line_end)
-            closing = next((match for match in backticks.finditer(source, marker.end(), paragraph_end)
-                            if len(match.group()) == len(marker.group())), None)
-            if closing is not None:
-                parts.append(masked(index, closing.end()))
-                index = closing.end()
-                continue
-            parts.append(marker.group())
-            index = marker.end()
+            if html_depth or html_block:
+                raise ValueError("ambiguous backticks in HTML")
+            if index > 0 and source[index - 1] == "\\":
+                raise ValueError("ambiguous escaped backtick")
+            if source.startswith("``", index):
+                raise ValueError("unsupported inline delimiter")
+            end = source.find("`", index + 1)
+            if end < 0:
+                raise ValueError("unmatched inline delimiter")
+            content = source[index + 1:end]
+            if (not content or re.search(r"[\r\n\v\f\x85\u2028\u2029]", content)
+                    or content.endswith("\\") or source.startswith("``", end)):
+                raise ValueError("ambiguous inline span")
+            parts.append(masked(index, end + 1))
+            index = end + 1
             continue
         if html.match(source, index):
-            # Preserve malformed raw tags too, including duplicate attributes.
             end = index + 1
             quote = None
             while end < len(source):
@@ -195,7 +152,21 @@ def mask_review_code(source, preserve_offsets=True):
                     end += 1
                     break
                 end += 1
-            parts.append(source[index:end])
+            tag = source[index:end]
+            if "`" in tag:
+                raise ValueError("ambiguous backticks in HTML tag")
+            line_start = source.rfind("\n", 0, index) + 1
+            name = re.match(r"<\s*(/?)\s*([A-Za-z][A-Za-z0-9-]*)", tag)
+            if name:
+                closing, tag_name = name.group(1), name.group(2).lower()
+                if not source[line_start:index].strip():
+                    html_block = tag_name
+                if closing:
+                    if html_depth and html_depth[-1] == tag_name:
+                        html_depth.pop()
+                elif tag_name not in VOID_TAGS:
+                    html_depth.append(tag_name)
+            parts.append(tag)
             index = end
             continue
         parts.append(source[index])
