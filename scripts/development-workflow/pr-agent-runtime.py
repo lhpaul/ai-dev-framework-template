@@ -90,12 +90,19 @@ def mask_review_code(source, preserve_offsets=True):
     )
     paragraph_break = re.compile(
         r"\r?\n(?:[ \t]*\r?\n| {0,3}(?:#{1,6}(?=[ \t\r\n]|$)|"
-        r"<!--|<\?|<![A-Z]|<!\[CDATA\[|"
+        r"`{3,}|~{3,}|<!--|<\?|<![A-Z]|<!\[CDATA\[|"
         r"(?i:<(?:script|pre|style)(?=[ \t\r\n>]|$)|</?(?:"
         + block_tags + r")(?=[ \t\r\n>]|/>|$))))"
     )
     opener = re.compile(r"[ \t]*(`{3,}|~{3,})[^\r\n]*(?:\r?\n|$)")
     html = re.compile(r"<\s*/?\s*[A-Za-z]|<!|<\?")
+    raw_body = re.compile(
+        r" {0,3}<(?P<tag>script|pre|style|textarea|" + block_tags + r")(?=[ \t\r\n>]|$)", re.I,
+    )
+    # Producer details/tables deliberately contain Markdown. Other block bodies
+    # are opaque HTML: literal backticks must never erase their contents.
+    producer_tags = {"details", "summary", "table", "tbody", "thead", "tfoot", "tr", "td", "th"}
+    raw_until = 0
 
     def masked(start, end):
         content = source[start:end]
@@ -106,7 +113,21 @@ def mask_review_code(source, preserve_offsets=True):
         return " " + "".join(char for char in content if char in "\r\n")
 
     while index < len(source):
+        if index < raw_until:
+            parts.append(source[index:raw_until])
+            index = raw_until
+            continue
         if index == 0 or source[index - 1] == "\n":
+            raw = raw_body.match(source, index)
+            if raw and raw.group("tag").lower() not in producer_tags:
+                tag = raw.group("tag").lower()
+                if tag in {"script", "pre", "style", "textarea"}:
+                    ending = re.search(r"</" + tag + r"\s*>", source[raw.end():], re.I)
+                    raw_until = raw.end() + ending.end() if ending else len(source)
+                else:
+                    ending = re.search(r"\r?\n[ \t]*\r?\n", source[raw.end():])
+                    raw_until = raw.end() + ending.end() if ending else len(source)
+                continue
             fence = opener.match(source, index)
             if fence:
                 indent = re.match(r"[ \t]*", source[index:]).group()

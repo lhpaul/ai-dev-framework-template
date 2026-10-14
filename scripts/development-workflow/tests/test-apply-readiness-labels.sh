@@ -2486,6 +2486,23 @@ for _line_end_1959 in $'\n' $'\r\n'; do
 done
 unset _block_case_1959 _line_end_1959 _indent_1959 _ticks_1959 _evidence_kind_1959 _evidence_1959 _verdict_1959
 unset _reason_1959
+# Fences end spans; raw HTML bodies retain literal backticks and evidence.
+for _ticks_1959 in '`' '``'; do
+  for _fence_1959 in '```' '~~~'; do
+    readiness_fixture_1946 fenced_span_boundary_refused refused "${_ticket_body_1946}Unmatched ${_ticks_1959} example."$'\n'"${_fence_1959}"$'text\nsample\n'"${_fence_1959}"$'\nRecommended focus areas for review\n<strong>Critical</strong>\n'"Later ${_ticks_1959} prose." blocking-findings needs_fixes
+  done
+  for _tag_1959 in div pre style script textarea blockquote; do
+    readiness_fixture_1946 raw_html_ticks_refused refused "${_ticket_body_1946}<${_tag_1959}>"$'\n'"Unmatched ${_ticks_1959} example."$'\nRecommended focus areas for review\n<strong>Critical</strong>\n'"Later ${_ticks_1959} prose."$'\n'"</${_tag_1959}>" blocking-findings needs_fixes
+    # Raw-text elements treat apparent inner tags as text, not markup.
+    case "$_tag_1959" in
+      div|pre|blockquote)
+      readiness_fixture_1946 raw_html_malformed refused "${_ticket_body_1946}<${_tag_1959}>"$'\n'"${_ticks_1959}"'<span title="a" title="b">bad</span>'"${_ticks_1959}"$'\n'"</${_tag_1959}>" reviewer-check-absent escalate
+        ;;
+    esac
+  done
+done
+unset _ticks_1959 _fence_1959 _tag_1959
+
 readiness_fixture_1946 inline_type7_multiline labeled "${_ticket_body_1946}"$'Read ``git <head>\n<headless>``.\n'
 readiness_fixture_1946 nonheading_multiline labeled "${_ticket_body_1946}"$'Read ``git <head>\n####### Not ATX``.\n'
 readiness_fixture_1946 nonheading_without_space labeled "${_ticket_body_1946}"$'Read ``git <head>\n#Not ATX``.\n'
