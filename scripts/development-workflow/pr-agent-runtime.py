@@ -19,7 +19,8 @@ LOGGER = logging.getLogger("pr_agent_publication")
 VOID_TAGS = {"br", "hr", "img", "wbr", "input", "meta", "link"}
 STATUS_WORDS = re.compile(
     r"summary|verdict|security|compliance|verification|risk|merge|approval|"
-    r"block(?:ing|er|ed)?|requires?\s+(?:fix|human)|needs?\s+fix|unknown|pending",
+    r"block(?:ing|er|ed)?|requires?\s+(?:fix|human)|needs?\s+fix|unknown|pending|"
+    r"must\s+fix|critical|breaking\s+change|api\s+change|backward\s+compatibility",
     re.I,
 )
 
@@ -36,25 +37,40 @@ class Span:
     attrs: tuple = ()
 
 
-def mask_fences(source):
-    """Ignore source-example tags while retaining exact source offsets."""
-    lines = source.splitlines(keepends=True)
+def fence_spans(source):
+    """Locate complete producer code fences; all surrounding prose is protected."""
     fence = None
-    result = []
-    for line in lines:
-        match = re.match(r"^\s{0,3}(`{3,}|~{3,})", line)
+    offset = 0
+    start = 0
+    spans = []
+    for line in source.splitlines(keepends=True):
+        match = re.match(r"^[ \t]*(`{3,}|~{3,})", line)
         if fence is None and match:
             fence = match.group(1)
-            result.append(re.sub(r"[^\r\n]", " ", line))
+            start = offset
         elif fence is not None:
-            result.append(re.sub(r"[^\r\n]", " ", line))
-            if match and match.group(1)[0] == fence[0] and len(match.group(1)) >= len(fence):
+            if (match and match.group(1)[0] == fence[0]
+                    and len(match.group(1)) >= len(fence)
+                    and not line[match.end():].rstrip("\r\n").strip(" \t")):
+                spans.append((start, offset + len(line)))
                 fence = None
-        else:
-            result.append(line)
+        offset += len(line)
     if fence is not None:
         raise ValueError("unclosed source fence")
-    return "".join(result)
+    return spans
+
+
+def mask_fences(source):
+    """Ignore source-example tags while retaining exact source offsets."""
+    for start, end in reversed(fence_spans(source)):
+        source = source[:start] + re.sub(r"[^\r\n]", " ", source[start:end]) + source[end:]
+    return source
+
+
+def has_status_evidence(source):
+    # Unknown emphasis may carry a classifier heading or label. Protect it too.
+    return (STATUS_WORDS.search(plain_text(source))
+            or re.search(r"\*\*|__|<(?:strong|b|em)\b", source, re.I))
 
 
 class ReviewSpans(HTMLParser):
@@ -134,7 +150,8 @@ def ancillary_candidates(source):
             summaries = [n for n in node.children if n.tag == "summary"]
             if (len(summaries) == 1 and node.children[0] is summaries[0]
                     and plain_text(source[summaries[0].open_end:summaries[0].close_start])
-                    == "💡 Tool usage guide:"):
+                    == "💡 Tool usage guide:"
+                    and not has_status_evidence(source[summaries[0].end:node.close_start])):
                 trailers.append((node.start, node.end))
     for row in rows:
         if len(row.children) != 1 or row.children[0].tag != "td":
@@ -155,16 +172,15 @@ def ancillary_candidates(source):
                 if any(n.tag in {"summary", "details"} and summary.end <= n.start < detail.close_start
                        for n in descendants):
                     raise ValueError("ambiguous source excerpt")
-                # Verdict-like prose/markup outside a source fence is not an excerpt.
-                excerpt = mask_fences(source[summary.end:detail.close_start])
-                if STATUS_WORDS.search(plain_text(excerpt)) or '<strong' in excerpt.lower():
-                    continue
-                excerpts.append((summary.end, detail.close_start))
+                # Only the producer's fenced source is ancillary. Never remove
+                # unfenced text, irrespective of its HTML/Markdown status syntax.
+                excerpt = source[summary.end:detail.close_start]
+                excerpts.extend((summary.end + start, summary.end + end)
+                                for start, end in fence_spans(excerpt))
         safe_labels = {"Estimated effort to review", "No relevant tests", "PR contains tests",
                        "Contribution time estimate", "Priority files"}
-        content = source[cell.open_end:cell.close_start]
         if (label not in safe_labels or sum(n.tag == "strong" for n in descendants) != 1
-                or STATUS_WORDS.search(plain_text(content))):
+                or has_status_evidence(source[labels[0].end:cell.close_start])):
             continue
         tags = {n.tag for n in descendants}
         if (not tags <= {"td", "strong", "br", "ul", "li"}

@@ -171,7 +171,7 @@ class FittingTests(unittest.TestCase):
     def test_visible_oversize_preserves_summary(self):
         guide = '<details><summary><strong>💡 Tool usage guide:</strong></summary><hr>' + 'help ' * 14000 + '</details>'
         for blocking in (False, True):
-            visible = review(blocking, 'source ' * 10000 if blocking else '', guide)
+            visible = review(blocking, '```python\n' + 'source ' * 10000 + '\n```' if blocking else '', guide)
             result = self.fit(compose(visible, state()))
             self.assertEqual(classify(visible), classify(result))
             self.assertIn('Here are some key observations', result)
@@ -194,7 +194,7 @@ class FittingTests(unittest.TestCase):
         self.assertEqual('escalate', classify(result))
 
     def test_summary_span_boundaries(self):
-        excerpt = '```html\n<summary>fake</summary>\n<details>fake</details>\n```\n' + 'code ' * 16000
+        excerpt = '```html\n<summary>fake</summary>\n<details>fake</details>\n' + 'code ' * 16000 + '\n```\n'
         visible = review(True, excerpt)
         result = self.fit(visible)
         self.assertIn('The original blocker must remain visible.\n</summary>', result)
@@ -220,6 +220,62 @@ class FittingTests(unittest.TestCase):
             '<strong>Must fix</strong></a>', '<strong>Possible Issue</strong></a>')
         self.assertEqual('needs_fixes', classify(protected))
         self.assertEqual('escalate', classify(self.fit(protected)))
+
+    def test_markdown_blocker_counterexample(self):
+        # The exact reported input formerly changed needs_fixes to clean.
+        visible = review(True, '**Must fix**\n' + 'source ' * 12000).replace(
+            '<strong>Must fix</strong></a>', '<strong>Possible Issue</strong></a>')
+        self.assertEqual('needs_fixes', classify(visible))
+        self.assertEqual('escalate', classify(self.fit(visible)))
+        self.assertEqual(visible, self.fit(visible, len(visible)))
+
+    def test_all_unfenced_blocker_labels_survive(self):
+        labels = ('Must fix', 'Critical', 'Breaking Change', 'Security Concern',
+                  'API Change', 'Backward Compatibility')
+        code = '```python\n' + 'source ' * 12000 + '\n```\n'
+        for label in labels:
+            for evidence in ('**' + label + '**', '<strong>' + label + '</strong>'):
+                with self.subTest(evidence=evidence):
+                    for excerpt in (evidence + '\n' + code, code + evidence + '\n'):
+                        visible = review(True, excerpt).replace(
+                            '<strong>Must fix</strong></a>', '<strong>Possible Issue</strong></a>')
+                        result = self.fit(visible)
+                        self.assertIn(evidence, result)
+                        self.assertNotIn('source source', result)
+                        self.assertEqual('needs_fixes', classify(visible))
+                        self.assertEqual('needs_fixes', classify(result))
+
+    def test_unknown_unfenced_status_is_protected(self):
+        code = '~~~~python\n' + 'source ' * 12000 + '\n~~~~\n'
+        for evidence in ('**Unknown finding status**', 'Verification: pending'):
+            visible = review(True, code + evidence + '\n').replace(
+                '<strong>Must fix</strong></a>', '<strong>Possible Issue</strong></a>')
+            result = self.fit(visible)
+            self.assertIn(evidence, result)
+            self.assertEqual('escalate', classify(visible))
+            self.assertEqual('escalate', classify(result))
+
+    def test_fence_boundaries_do_not_hide_status(self):
+        for fence in ('```', '~~~~', '``````'):
+            excerpt = fence + 'python\n' + 'source ' * 12000 + '\n' + fence + ' not-a-close\n'
+            visible = review(True, excerpt)
+            self.assertEqual('escalate', classify(visible))
+            self.assertEqual('escalate', classify(self.fit(visible)))
+        excerpt = '````python\n``` nested marker\n' + 'source ' * 12000 + '\n`````\n**Must fix**\n'
+        visible = review(True, excerpt).replace(
+            '<strong>Must fix</strong></a>', '<strong>Possible Issue</strong></a>')
+        result = self.fit(visible)
+        self.assertIn('**Must fix**', result)
+        self.assertEqual('needs_fixes', classify(visible))
+        self.assertEqual('needs_fixes', classify(result))
+
+    def test_auxiliary_status_evidence_is_not_removed(self):
+        for evidence in ('Verification: pending\n', '**Verification**: pending\n'):
+            guide = '<details><summary><strong>💡 Tool usage guide:</strong></summary><hr>\n'
+            guide += evidence + 'help ' * 14000 + '</details>'
+            visible = review(False, suffix=guide)
+            self.assertNotEqual('clean', classify(visible))
+            self.assertEqual('escalate', classify(self.fit(visible)))
 
     def test_visible_oversize_diagnostic(self):
         protected = review(True).replace('The original blocker', 'x' * 70000 + 'The original blocker')
