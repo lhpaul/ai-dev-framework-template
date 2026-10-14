@@ -277,6 +277,37 @@ class FittingTests(unittest.TestCase):
             self.assertNotEqual('clean', classify(visible))
             self.assertEqual('escalate', classify(self.fit(visible)))
 
+    def test_comment_contained_fences_cannot_remove_live_blocker(self):
+        for fence in ('```', '~~~~'):
+            for excerpt in (
+                '<!--\n' + fence + '\n-->\n**Must fix**\n' + 'source ' * 12000
+                + '\n<!--\n' + fence + '\n-->\n',
+                '<!--\n' + fence + '\n-->\n<strong>Must fix</strong>\n'
+                + 'source ' * 12000 + '\n<!--\n' + fence + '\n-->\n',
+            ):
+                with self.subTest(fence=fence, excerpt=excerpt[:60]):
+                    visible = review(True, excerpt).replace(
+                        '<strong>Must fix</strong></a>', '<strong>Possible Issue</strong></a>')
+                    self.assertEqual('needs_fixes', classify(visible))
+                    self.assertEqual('escalate', classify(self.fit(visible)))
+                    self.assertEqual(visible, self.fit(visible, len(visible)))
+
+    def test_empty_classifier_headings_are_not_ancillary(self):
+        for heading in ('Recommended focus areas for review', 'Key issues to review',
+                        'Security concerns', 'Verification', 'Ticket compliance analysis'):
+            styles = ('### ' + heading,) if heading == 'Ticket compliance analysis' else (
+                heading, '### ' + heading, '<span>' + heading + '</span>')
+            for styled in styles:
+                payload = '\n' + styled + '\n' + 'help ' * 19000
+                metadata = '<tr><td><strong>Priority files</strong><br><br>' + payload + '</td></tr>'
+                guide = '<details><summary><strong>💡 Tool usage guide:</strong></summary><hr>'
+                for visible in (review().replace('</table>', metadata + '</table>'),
+                                review(suffix=guide + payload + '</details>')):
+                    with self.subTest(heading=styled, metadata='Priority files' in visible):
+                        self.assertEqual('escalate', classify(visible))
+                        self.assertEqual('escalate', classify(self.fit(visible)))
+                        self.assertEqual(visible, self.fit(visible, len(visible)))
+
     def test_visible_oversize_diagnostic(self):
         protected = review(True).replace('The original blocker', 'x' * 70000 + 'The original blocker')
         for original in (protected, review().replace('</table>', '') + 'x' * 70000,

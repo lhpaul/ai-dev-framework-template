@@ -57,6 +57,15 @@ def fence_spans(source):
         offset += len(line)
     if fence is not None:
         raise ValueError("unclosed source fence")
+    # The classifier removes HTML comments before recognizing fences. A span
+    # touching a comment can therefore cover live prose on its parser surface.
+    # Keep offsets intact and fail closed rather than masking that evidence.
+    comments = list(re.finditer(r"<!--[\s\S]*?-->", source))
+    if source.count("<!--") != len(comments) or source.count("-->") != len(comments):
+        raise ValueError("ambiguous source comment")
+    if any(start < comment.end() and comment.start() < end
+           for start, end in spans for comment in comments):
+        raise ValueError("source fence intersects HTML comment")
     return spans
 
 
@@ -70,6 +79,9 @@ def mask_fences(source):
 def has_status_evidence(source):
     # Unknown emphasis may carry a classifier heading or label. Protect it too.
     return (STATUS_WORDS.search(plain_text(source))
+            or re.search(r"recommended\s+focus\s+areas\s+for\s+review|key\s+issues\s+to\s+review|"
+                         r"ticket\s+compliance\s+analysis|(?:non-)?compliant\s+requirements",
+                         plain_text(source), re.I)
             or re.search(r"\*\*|__|<(?:strong|b|em)\b", source, re.I))
 
 
