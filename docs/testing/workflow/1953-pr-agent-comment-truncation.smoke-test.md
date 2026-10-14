@@ -33,9 +33,9 @@ bash scripts/development-workflow/tests/test-pr-agent-runtime.sh
 
 **Maps to**: AC1, AC3–AC5.
 
-Inspect the suite's full/short/omitted-notice, unchanged-comment, Unicode, malformed-state and oversized-visible cases.
+Inspect the suite's full/short/omitted-notice, unchanged-comment, Unicode, malformed-state and oversized-visible cases. Include clean and blocking reviews whose original summaries/verdicts fit after removing an optional trailer or source excerpts, a blocker near the end, and a separate case whose protected original content cannot fit.
 
-**Expected result**: Exact-limit and below-limit bodies remain unchanged. The notice never displaces a fitting visible summary or verdict. Retained state round-trips intact or is absent; no partial snapshot claims completeness. Unsupported oversized content produces a bounded diagnostic that escalates rather than approving a sliced review.
+**Expected result**: Exact-limit and below-limit bodies remain unchanged. The notice never displaces a fitting visible summary or verdict. When only ancillary content makes the visible review oversized, retain the exact original summaries and all verdict-bearing rows, remove that ancillary content, and preserve the original clean/blocking classifier result. Retained state round-trips intact or is absent; no partial snapshot claims completeness. Use a bounded escalating diagnostic only when the protected original content cannot fit or cannot be identified safely.
 
 ### Step 3: Verify the Real Runtime Publication Path
 
@@ -50,7 +50,7 @@ bash scripts/development-workflow/tests/test-pr-agent-runtime.sh --image-smoke
 
 It must invoke hook installation and mocked GitHub create/edit paths without starting a live review or calling GitHub.
 
-**Expected result**: Both composer bindings defer the cap, final create and persistent edit publish bounded bodies after metadata insertion, and a deliberately incompatible hook fails before runner invocation. Logs show omission reasons/counts without review bodies or credentials.
+**Expected result**: Both composer bindings defer the cap; final create and persistent edit preserve fitting original summaries/verdicts and publish bounded bodies after metadata insertion. A deliberately incompatible hook fails before runner invocation. Logs show omission reasons/counts without review bodies or credentials.
 
 ### Step 4: Verify Consumer Delivery and Preserved Workflow
 
@@ -64,7 +64,7 @@ Compare the implementation workflow with the baseline from the plan's Verificati
 
 - [ ] AC1: Full, abbreviated and absent notice cases preserve fitting visible content.
 - [ ] AC2: The existing classifier preserves both clean and blocking verdicts.
-- [ ] AC3: Final create/edit bodies never exceed the publication limit.
+- [ ] AC3: Final create/edit bodies never exceed the publication limit; ancillary reduction preserves fitting original summaries/verdicts before any diagnostic fallback.
 - [ ] AC4: Below-limit and exact-limit comments are byte-for-byte unchanged.
 - [ ] AC5: Omission is observable, and retained history never falsely claims completeness.
 - [ ] AC6: Actual runtime hooks, incompatible-runtime failure, workflow preservation and shared sync dependency are verified.
