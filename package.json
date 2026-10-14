@@ -1,6 +1,6 @@
 {
   "name": "ai-dev-framework-template",
-  "version": "0.48.1",
+  "version": "0.48.2",
   "private": true,
   "description": "Root package for markdown lint tooling",
   "scripts": {
