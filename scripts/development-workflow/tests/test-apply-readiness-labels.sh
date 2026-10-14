@@ -2391,9 +2391,107 @@ readiness_fixture_1946 legacy_truncated refused $'## PR Reviewer Guide\ncommit: 
 readiness_fixture_1946 tableless_unclosed_details refused $'## PR Reviewer Guide\ncommit: '"$HEAD"$'\n### Recommended focus areas for review\n<details><summary><strong>Possible Issue</strong></summary>\nAdvisory text\n'
 readiness_fixture_1946 indented_malformed_ticket refused $'## PR Reviewer Guide\ncommit: '"$HEAD"$'\n**Ticket compliance analysis ✅**\n**[42](url) - Fully compliant**\nCompliant requirements:\n- Done.\n  **[43](url) - Not compliant*\nNon-compliant requirements:\n- Missing.\n'
 readiness_fixture_1946 blank_focus_label refused $'## PR Reviewer Guide\ncommit: '"$HEAD"$'\n### Recommended focus areas for review\n<strong> </strong><br>Unknown issue.\n'
-readiness_fixture_1946 code_example_html refused "${_ticket_body_1946}"$'```html\n<table><tr><td>Example only.\n```\n'
+readiness_fixture_1946 code_example_html labeled "${_ticket_body_1946}"$'```html\n<table><tr><td>Example only.\n```\n'
 readiness_fixture_1946 code_example_not_verdict refused $'## PR Reviewer Guide\ncommit: '"$HEAD"$'\n```markdown\nNo major issues detected\n```\n'
-readiness_fixture_1946 inline_code_html refused "${_ticket_body_1946}"$'Inline example: `<table><td>` is code, not layout.\n'
+readiness_fixture_1946 inline_code_html labeled "${_ticket_body_1946}"$'Inline example: `<table><td>` is code, not layout.\n'
+# #1959: code is opaque; malformed visible HTML and blockers remain evidence.
+readiness_fixture_1946 markdown_code_inline_head labeled "${_ticket_body_1946}"$'Read `git show <head>:CHANGELOG.md`.\n'
+readiness_fixture_1946 markdown_code_double_backtick labeled "${_ticket_body_1946}"$'Read ``git `<head>`:CHANGELOG.md``.\n'
+readiness_fixture_1946 markdown_code_multiline_span labeled "${_ticket_body_1946}"$'Read ``git `<head>`\n<span>``.\n'
+readiness_fixture_1946 markdown_code_longer_fence labeled "${_ticket_body_1946}"$'````html\n```\n<head>\n`````\n\n'
+readiness_fixture_1946 markdown_code_tilde_fence labeled "${_ticket_body_1946}"$'~~~~html\n<head>\n~~~~\n\n'
+readiness_fixture_1946 markdown_code_code_comment labeled "${_ticket_body_1946}"$'Example `<!--` and fenced:\n```html\n<!--\n```\n\n'
+readiness_fixture_1946 markdown_code_raw_head refused "${_ticket_body_1946}"$'Read <head> outside code.\n'
+readiness_fixture_1946 markdown_code_escaped_backtick refused "${_ticket_body_1946}"$'Escaped \\`<head>` stays visible.\n'
+readiness_fixture_1946 markdown_code_duplicate_attributes refused "${_ticket_body_1946}"$'<span title="`" title="`">Example</span>\n'
+readiness_fixture_1946 markdown_code_invalid_fence_info refused "${_ticket_body_1946}"$'```invalid`info\n<strong>Critical</strong>\n```\n\n'
+readiness_fixture_1946 markdown_code_indented_fence refused "${_ticket_body_1946}"$'    ```html\n<strong>Critical</strong>\n```\n\n'
+readiness_fixture_1946 markdown_code_unclosed_fence refused "${_ticket_body_1946}"$'```html\n<head>\n\n'
+readiness_fixture_1946 markdown_code_outside_blocker refused "${_ticket_body_1946}"$'`<head>`\n### Recommended focus areas for review\n<strong>Critical</strong>\n\n'
+
+# Authorized P1 cycle: unmatched backticks cannot cross paragraph boundaries.
+_paragraph_case_1959=0
+for _separator_1959 in $'\n\n' $'\n \t\n' $'\r\n\r\n'; do
+  for _ticks_1959 in '`' '``'; do
+    for _evidence_kind_1959 in blocker raw_html unknown_security; do
+      _paragraph_case_1959=$((_paragraph_case_1959 + 1))
+      case "$_evidence_kind_1959" in
+        blocker)
+          _evidence_1959=$'### Recommended focus areas for review\n<strong>Critical</strong>'
+          _verdict_1959=needs_fixes ;;
+        raw_html)
+          _evidence_1959='<head>'
+          _verdict_1959=escalate ;;
+        unknown_security)
+          _evidence_1959=$'### Security concerns\nUndetermined'
+          _verdict_1959=escalate ;;
+      esac
+      if [ "$_verdict_1959" = needs_fixes ]; then
+        _reason_1959=blocking-findings
+      else
+        _reason_1959=reviewer-check-absent
+      fi
+      readiness_fixture_1946 "paragraph_boundary_${_paragraph_case_1959}" refused \
+        "${_ticket_body_1946}Unmatched ${_ticks_1959} example.${_separator_1959}${_evidence_1959}${_separator_1959}Later ${_ticks_1959} prose." \
+        "$_reason_1959" "$_verdict_1959"
+    done
+  done
+done
+unset _paragraph_case_1959 _separator_1959 _ticks_1959 _evidence_kind_1959 _evidence_1959 _verdict_1959
+unset _reason_1959
+
+# ATX headings and interrupting HTML blocks end a paragraph without blank lines.
+_block_case_1959=0
+for _line_end_1959 in $'\n' $'\r\n'; do
+  for _indent_1959 in '' '   '; do
+    for _ticks_1959 in '`' '``'; do
+      for _evidence_kind_1959 in atx_blocker atx_unknown atx_raw html_blocker html_unknown html_raw; do
+        _block_case_1959=$((_block_case_1959 + 1))
+        case "$_evidence_kind_1959" in
+          atx_blocker)
+            _evidence_1959=$'### Recommended focus areas for review\n<strong>Critical</strong>'
+            _verdict_1959=needs_fixes ;;
+          atx_unknown)
+            _evidence_1959=$'### Security concerns\nUndetermined'
+            _verdict_1959=escalate ;;
+          atx_raw)
+            _evidence_1959=$'### Notes\n<head>'
+            _verdict_1959=escalate ;;
+          html_blocker)
+            _evidence_1959=$'<div>\n### Recommended focus areas for review\n<strong>Critical</strong>\n</div>'
+            _verdict_1959=needs_fixes ;;
+          html_unknown)
+            _evidence_1959=$'<DIV>\n### Security concerns\nUndetermined\n</DIV>'
+            _verdict_1959=escalate ;;
+          html_raw)
+            _evidence_1959='<head>'
+            _verdict_1959=escalate ;;
+        esac
+        _evidence_1959="${_evidence_1959//$'\n'/$_line_end_1959}"
+        # Existing verdict extraction escalates CRLF headings conservatively.
+        if [ "$_line_end_1959" = $'\r\n' ] && [ "$_verdict_1959" = needs_fixes ]; then
+          _verdict_1959=escalate
+        fi
+        if [ "$_verdict_1959" = needs_fixes ]; then
+          _reason_1959=blocking-findings
+        else
+          _reason_1959=reviewer-check-absent
+        fi
+        readiness_fixture_1946 "block_boundary_${_block_case_1959}" refused \
+          "${_ticket_body_1946}Unmatched ${_ticks_1959} example.${_line_end_1959}${_indent_1959}${_evidence_1959}${_line_end_1959}Later ${_ticks_1959} prose." \
+          "$_reason_1959" "$_verdict_1959"
+      done
+    done
+  done
+done
+unset _block_case_1959 _line_end_1959 _indent_1959 _ticks_1959 _evidence_kind_1959 _evidence_1959 _verdict_1959
+unset _reason_1959
+readiness_fixture_1946 inline_type7_multiline labeled "${_ticket_body_1946}"$'Read ``git <head>\n<headless>``.\n'
+readiness_fixture_1946 nonheading_multiline labeled "${_ticket_body_1946}"$'Read ``git <head>\n####### Not ATX``.\n'
+readiness_fixture_1946 nonheading_without_space labeled "${_ticket_body_1946}"$'Read ``git <head>\n#Not ATX``.\n'
+readiness_fixture_1946 heading_same_line labeled "${_ticket_body_1946}"$'### Notes `git show <head>:CHANGELOG.md`.\n'
+readiness_fixture_1946 block_summary_multiline refused "${_ticket_body_1946}"$'Read ``git `<head>`\n<summary>``.\n'
+
 readiness_fixture_1946 inline_code_not_verdict refused $'## PR Reviewer Guide\ncommit: '"$HEAD"$'\n`No major issues detected` is an example.\n'
 readiness_fixture_1946 mixed_empty_focus_label refused $'## PR Reviewer Guide\ncommit: '"$HEAD"$'\n### Recommended focus areas for review\n<strong>Possible Issue</strong><br>Advisory text.\n<strong></strong><br>Unknown issue.\n'
 readiness_fixture_1946 mixed_unclosed_focus_label refused $'## PR Reviewer Guide\ncommit: '"$HEAD"$'\n### Recommended focus areas for review\n<strong>Possible Issue</strong><br>Advisory text.\n<strong>Critical\n'
@@ -2452,7 +2550,7 @@ readiness_fixture_1946 scoped_human_no_colon refused "commit: $HEAD"$'\n## PR Re
 readiness_fixture_1946 scoped_human_colon refused "commit: $HEAD"$'\n## PR Reviewer Guide\n**Ticket compliance analysis ✅**\n**[42](url) - Fully compliant**\nCompliant requirements:\n- Requires further human verification:\n' reviewer-check-absent
 readiness_fixture_1946 scoped_human_rendered refused "commit: $HEAD"$'\n## PR Reviewer Guide\n**Ticket compliance analysis ✅**\n**[42](url) - Fully compliant**\nCompliant requirements:\n- Requires&nbsp;further <em>human</em> verification\n' reviewer-check-absent
 readiness_fixture_1946 scoped_partial_human_no_colon refused "commit: $HEAD"$'\n## PR Reviewer Guide\n**Ticket compliance analysis ✅**\n**[42](url) - Partially compliant**\nCompliant requirements:\n- Requires further human verification\n' reviewer-check-absent
-# The final raw-input guard runs before code-formatting sanitization.
+# Raw HTML attributes remain opaque while Markdown code is masked.
 readiness_fixture_1946 raw_structure_h1_full refused "${_ticket_body_1946}"$'<h1 data-note=pre`bad`post>Reviewer notes</h1>\n' reviewer-check-absent
 readiness_fixture_1946 raw_structure_h1_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h1 data-note=pre`bad`post>Reviewer notes</h1>\n' reviewer-check-absent
 readiness_fixture_1946 raw_structure_h2_full refused "${_ticket_body_1946}"$'<h2 data-note=pre`bad`post>Reviewer notes</h2>\n' reviewer-check-absent
@@ -2475,14 +2573,14 @@ readiness_fixture_1946 raw_structure_p_full refused "${_ticket_body_1946}"$'<p d
 readiness_fixture_1946 raw_structure_p_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<p data-note=pre`bad`post>Reviewer notes</p>\n' reviewer-check-absent
 readiness_fixture_1946 raw_structure_div_full refused "${_ticket_body_1946}"$'<div data-note=pre`bad`post>Reviewer notes</div>\n' reviewer-check-absent
 readiness_fixture_1946 raw_structure_div_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<div data-note=pre`bad`post>Reviewer notes</div>\n' reviewer-check-absent
-readiness_fixture_1946 raw_structure_fenced_bad_attribute_full refused "${_ticket_body_1946}"$'```html\n<h3 data-note=pre`bad`post>Reviewer notes</h3>\n```\n' reviewer-check-absent
-readiness_fixture_1946 raw_structure_fenced_bad_attribute_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'```html\n<h3 data-note=pre`bad`post>Reviewer notes</h3>\n```\n' reviewer-check-absent
-readiness_fixture_1946 raw_structure_inline_bad_attribute_full refused "${_ticket_body_1946}"$'``<h3 data-note=pre`bad`post>Reviewer notes</h3>``\n' reviewer-check-absent
-readiness_fixture_1946 raw_structure_inline_bad_attribute_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'``<h3 data-note=pre`bad`post>Reviewer notes</h3>``\n' reviewer-check-absent
-readiness_fixture_1946 raw_structure_fenced_unclosed_full refused "${_ticket_body_1946}"$'```html\n<h3>Reviewer notes\n```\n' reviewer-check-absent
-readiness_fixture_1946 raw_structure_fenced_unclosed_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'```html\n<h3>Reviewer notes\n```\n' reviewer-check-absent
-readiness_fixture_1946 raw_structure_inline_unclosed_full refused "${_ticket_body_1946}"$'`<h3>Reviewer notes`\n' reviewer-check-absent
-readiness_fixture_1946 raw_structure_inline_unclosed_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'`<h3>Reviewer notes`\n' reviewer-check-absent
+readiness_fixture_1946 raw_structure_fenced_bad_attribute_full labeled "${_ticket_body_1946}"$'```html\n<h3 data-note=pre`bad`post>Reviewer notes</h3>\n```\n'
+readiness_fixture_1946 raw_structure_fenced_bad_attribute_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'```html\n<h3 data-note=pre`bad`post>Reviewer notes</h3>\n```\n' blocking-findings needs_fixes
+readiness_fixture_1946 raw_structure_inline_bad_attribute_full labeled "${_ticket_body_1946}"$'``<h3 data-note=pre`bad`post>Reviewer notes</h3>``\n'
+readiness_fixture_1946 raw_structure_inline_bad_attribute_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'``<h3 data-note=pre`bad`post>Reviewer notes</h3>``\n' blocking-findings needs_fixes
+readiness_fixture_1946 raw_structure_fenced_unclosed_full labeled "${_ticket_body_1946}"$'```html\n<h3>Reviewer notes\n```\n'
+readiness_fixture_1946 raw_structure_fenced_unclosed_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'```html\n<h3>Reviewer notes\n```\n' blocking-findings needs_fixes
+readiness_fixture_1946 raw_structure_inline_unclosed_full labeled "${_ticket_body_1946}"$'`<h3>Reviewer notes`\n'
+readiness_fixture_1946 raw_structure_inline_unclosed_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'`<h3>Reviewer notes`\n' blocking-findings needs_fixes
 readiness_fixture_1946 raw_structure_quoted_backticks labeled "${_ticket_body_1946}"$'<h3 data-note="pre`bad`post">Reviewer notes</h3>\n'
 readiness_fixture_1946 raw_structure_quoted_spaced_literal labeled "${_ticket_body_1946}"$'<h3 title="< h3">Reviewer notes</h3>\n'
 readiness_fixture_1946 raw_structure_opaque_history labeled "${_ticket_body_1946}"$'<!-- <h3 data-note=pre`bad`post>old malformed sample -->\n'
@@ -2568,7 +2666,7 @@ readiness_fixture_1946 html_structure_valid_voids labeled "${_ticket_body_1946}"
 readiness_fixture_1946 html_structure_closed_focus refused "${_ticket_body_1946}"$'<h3>Recommended focus areas for review</h3><strong>Critical</strong>\n' blocking-findings needs_fixes
 readiness_fixture_1946 html_structure_escaped_literal labeled "${_ticket_body_1946}"$'&lt; h3&gt; is a literal example.\n'
 readiness_fixture_1946 html_structure_hidden labeled "${_ticket_body_1946}"$'<!-- <h3>Reviewer notes -->\n'
-readiness_fixture_1946 html_structure_fenced refused "${_ticket_body_1946}"$'```html\n<h3>Reviewer notes\n```\n'
+readiness_fixture_1946 html_structure_fenced labeled "${_ticket_body_1946}"$'```html\n<h3>Reviewer notes\n```\n'
 # Hard focus blockers override compliant tickets, even with heading prefixes.
 readiness_fixture_1946 focus_hard_h3_bare_full refused "${_ticket_body_1946}"$'<h3>Recommended focus areas for review</h3>\n<strong>Critical</strong>\n' blocking-findings needs_fixes
 readiness_fixture_1946 focus_hard_h3_bare_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h3>Recommended focus areas for review</h3>\n<strong>Critical</strong>\n' blocking-findings needs_fixes

@@ -69,11 +69,117 @@ def fence_spans(source):
     return spans
 
 
-def mask_fences(source):
-    """Ignore source-example tags while retaining exact source offsets."""
-    for start, end in reversed(fence_spans(source)):
-        source = source[:start] + re.sub(r"[^\r\n]", " ", source[start:end]) + source[end:]
-    return source
+def mask_review_code(source, preserve_offsets=True):
+    """Mask Markdown code while preserving offsets and opaque raw HTML.
+
+    Backticks in attributes/comments belong to HTML. Incomplete or unsupported
+    fences fail closed rather than hiding subsequent findings.
+    """
+    parts = []
+    index = 0
+    backticks = re.compile(r"`+")
+    atx_heading = re.compile(r" {0,3}#{1,6}(?=[ \t\r\n]|$)")
+    # GFM HTML block types 1–6 interrupt paragraphs; type 7 (arbitrary complete
+    # tags) does not. Keep those inline tags legal inside multiline code spans.
+    block_tags = (
+        "address|article|aside|base|basefont|blockquote|body|caption|center|col|"
+        "colgroup|dd|details|dialog|dir|div|dl|dt|fieldset|figcaption|figure|footer|"
+        "form|frame|frameset|h[1-6]|head|header|hr|html|iframe|legend|li|link|main|"
+        "menu|menuitem|nav|noframes|ol|optgroup|option|p|param|section|source|"
+        "summary|table|tbody|td|tfoot|th|thead|title|tr|track|ul"
+    )
+    paragraph_break = re.compile(
+        r"\r?\n(?:[ \t]*\r?\n| {0,3}(?:#{1,6}(?=[ \t\r\n]|$)|"
+        r"<!--|<\?|<![A-Z]|<!\[CDATA\[|"
+        r"(?i:<(?:script|pre|style)(?=[ \t\r\n>]|$)|</?(?:"
+        + block_tags + r")(?=[ \t\r\n>]|/>|$))))"
+    )
+    opener = re.compile(r"[ \t]*(`{3,}|~{3,})[^\r\n]*(?:\r?\n|$)")
+    html = re.compile(r"<\s*/?\s*[A-Za-z]|<!|<\?")
+
+    def masked(start, end):
+        content = source[start:end]
+        if preserve_offsets:
+            return re.sub(r"[^\r\n]", " ", content)
+        # Verdict parsing needs line boundaries, not producer source offsets.
+        # Avoid feeding huge whitespace runs into heading-matching regexes.
+        return " " + "".join(char for char in content if char in "\r\n")
+
+    while index < len(source):
+        if index == 0 or source[index - 1] == "\n":
+            fence = opener.match(source, index)
+            if fence:
+                indent = re.match(r"[ \t]*", source[index:]).group()
+                if "\t" in indent or len(indent) > 3:
+                    raise ValueError("unsupported source fence indentation")
+                marker = fence.group(1)
+                if marker[0] == "`" and "`" in source[fence.end(1):fence.end()]:
+                    raise ValueError("invalid source fence info string")
+                closing = re.compile(
+                    r"^ {0,3}" + re.escape(marker[0]) + r"{" + str(len(marker))
+                    + r",}[ \t]*(?:\r?\n|$)", re.M,
+                ).search(source, fence.end())
+                if closing is None:
+                    raise ValueError("unclosed source fence")
+                parts.append(masked(index, closing.end()))
+                index = closing.end()
+                continue
+        if source.startswith("<!--", index):
+            end = source.find("-->", index + 4)
+            if end < 0:
+                raise ValueError("unclosed source comment")
+            end += 3
+            parts.append(source[index:end])
+            index = end
+            continue
+        if source[index] == "`":
+            start = index
+            while start > 0 and source[start - 1] == "\\":
+                start -= 1
+            if (index - start) % 2:
+                parts.append("`")
+                index += 1
+                continue
+            marker = backticks.match(source, index)
+            # An unmatched opener cannot claim evidence beyond the next block.
+            # Code in an ATX heading also cannot continue into the next line.
+            boundary = paragraph_break.search(source, marker.end())
+            paragraph_end = boundary.start() if boundary else len(source)
+            line_start = source.rfind("\n", 0, index) + 1
+            if atx_heading.match(source, line_start):
+                line_end = source.find("\n", marker.end())
+                if line_end >= 0:
+                    paragraph_end = min(paragraph_end, line_end)
+            closing = next((match for match in backticks.finditer(source, marker.end(), paragraph_end)
+                            if len(match.group()) == len(marker.group())), None)
+            if closing is not None:
+                parts.append(masked(index, closing.end()))
+                index = closing.end()
+                continue
+            parts.append(marker.group())
+            index = marker.end()
+            continue
+        if html.match(source, index):
+            # Preserve malformed raw tags too, including duplicate attributes.
+            end = index + 1
+            quote = None
+            while end < len(source):
+                char = source[end]
+                if quote:
+                    if char == quote:
+                        quote = None
+                elif char in ("\"", "'"):
+                    quote = char
+                elif char == ">":
+                    end += 1
+                    break
+                end += 1
+            parts.append(source[index:end])
+            index = end
+            continue
+        parts.append(source[index])
+        index += 1
+    return "".join(parts)
 
 
 def has_status_evidence(source):
@@ -96,7 +202,7 @@ class ReviewSpans(HTMLParser):
             self.offsets.append(match.end())
         self.stack = []
         self.nodes = []
-        self.feed(mask_fences(source))
+        self.feed(mask_review_code(source))
         self.close()
         if self.stack:
             raise ValueError("unbalanced review markup")

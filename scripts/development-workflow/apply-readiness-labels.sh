@@ -55,11 +55,13 @@ set -euo pipefail
 classify_pr_agent_review() {
   python3 -c '
 import re
+import runpy
 import sys
 from html import unescape
 from html.parser import HTMLParser
 
 body = sys.stdin.read()
+mask_review_code = runpy.run_path(sys.argv[2])["mask_review_code"]
 blockers = {"critical", "must fix", "breaking change", "security concern",
             "api change", "backward compatibility"}
 # Verdict-bearing values are closed sets. Descriptive requirement bullets are
@@ -196,27 +198,16 @@ class ReviewText(HTMLParser):
 
 
 def visible_review(body):
+    try:
+        body = mask_review_code(body, preserve_offsets=False)
+    except ValueError:
+        return None
+    # Validate HTML after masking code, before comment removal can join tags.
+    if not structurally_valid(body):
+        return None
     if body.count("<!--") != body.count("-->"):
         return None
-    body = re.sub(r"<!--[\s\S]*?-->", "", body)
-    # Code examples are not review metadata or HTML layout. PR-Agent uses
-    # variable-length fences when examples themselves contain backticks.
-    lines = []
-    fence = None
-    for line in body.splitlines():
-        marker = re.match(r"^[ \t]*(`{3,}|~{3,})", line)
-        if marker:
-            token = marker.group(1)
-            if fence is None:
-                fence = token
-            elif token[0] == fence[0] and len(token) >= len(fence) and not line[marker.end():].strip(" \t"):
-                fence = None
-            continue
-        if fence is None:
-            lines.append(line)
-    if fence is not None:
-        return None
-    return "\n".join(re.sub(r"(`+)[^`]*?\1", "", line) for line in lines)
+    return re.sub(r"<!--[\s\S]*?-->", "", body)
 
 
 def focus_labels(body):
@@ -267,10 +258,6 @@ def focus_labels(body):
 def classify(body):
     if not body:
         return "none"
-    # Validate original markup before fences/inline code can hide invalid syntax.
-    # Proper HTML comments remain opaque to the parser and to verdict extraction.
-    if not structurally_valid(body):
-        return "escalate"
     body = visible_review(body)
     # Sanitization must not create invalid markup from otherwise valid input.
     if body is None or not structurally_valid(body):
@@ -407,7 +394,7 @@ if sys.argv[1] == "labels":
         print("\n".join(focus_labels(visible) or []), end="")
 else:
     print(classify(body), end="")
-' "${1:-verdict}"
+' "${1:-verdict}" "$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/pr-agent-runtime.py"
 }
 
 case "${1:-}" in
