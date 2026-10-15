@@ -69,6 +69,98 @@ above that level triggers a stop, regardless of mode.
 
 ---
 
+## Project Path Risk Maps
+
+The classifier accepts optional project-owned categories in the shared
+`.ai-dev-workflow.yaml`. A rule has exactly `glob`, `risk` and `reason`, all
+nonblank single-line strings. Risk is `low`, `medium` or `high`; reasons explain
+the category to the operator. Machine-local workflow overrides do not supply
+risk rules.
+
+```yaml
+guardrails:
+  risk_paths:
+    - glob: "docs/store/**"
+      risk: medium
+      reason: "Store review package documentation"
+    - glob: "apps/**"
+      risk: medium
+      reason: "Application implementation"
+```
+
+For ordinary paths, matching project rules replace the built-in category. When
+several match, the highest risk wins regardless of order or specificity; every
+matched reason is reported. Unmatched paths use built-ins. The PR's path risk
+is the highest resulting risk across its changed files.
+
+High floors always win over project rules: auth/authentication,
+secret/secrets, credential/credentials and permission/permissions path
+categories, branch-deletion tooling, actual release tooling and non-test/lint
+CI workflows. These protections also apply inside docs and tests. Release
+tooling is identified under script, workflow, command and skill roots; a word
+such as `release` in `docs/store/first-review/release-checklist.json` alone is
+not release tooling. Existing CI filename inspection remains conservative.
+
+Patterns are case-sensitive full-path matches against repository-relative
+POSIX paths:
+
+| Pattern | Meaning |
+| --- | --- |
+| `*` | Zero or more characters except slash |
+| `**` | Zero or more characters including slash |
+| `?` | One character except slash |
+| Other supported characters | Literal characters; dotfiles are not excluded |
+
+For example, `docs/*` covers direct children and `docs/**` covers descendants.
+`**/file` requires a slash and does not cover the root file `file`; add a
+separate rule for that root file. Bracket classes, braces, backslashes, control
+characters, absolute paths, empty path segments and dot/dot-dot segments are
+unsupported. Quote patterns in YAML, especially ones starting with `*`.
+
+An absent map or `risk_paths: []` uses built-ins. Null, a bare key, a non-list,
+invalid rule or unsupported YAML syntax stops classification with a nonzero
+exit and a field/rule diagnostic. Invalid unmatched rules also stop the run;
+repair the configuration before retrying. Diagnostics do not echo raw invalid
+values. Use the workflow toolchain's PyYAML dependency and supported strict
+YAML subset: no tags, anchors, aliases, duplicate keys or multiline scalars.
+Missing or empty changed-file evidence preserves High risk, without adding a
+new independent merge prohibition; the existing risk ceiling and other gates
+continue to decide permission.
+
+In `single_repo` and `product_repo` modes, the root's shared file owns the map.
+In `workflow_hub` mode, the top-level map is for hub-owned files. A product map
+belongs in that product's existing hub configuration entry:
+
+```yaml
+workflow_hub:
+  product_repos:
+    - name: app
+      github_repo: example/app
+      guardrails:
+        risk_paths:
+          - glob: "docs/**"
+            risk: low
+            reason: "Product documentation"
+```
+
+The selected product's map replaces the hub map; absent product rules use
+built-ins and never inherit sibling or hub categories. An explicit product
+selector takes precedence over the evidence's product name; any evidence
+repository slug must agree. An exact hub-remote slug without a product selector
+uses hub policy. Git resolves that remote in ordinary checkouts and linked
+worktrees. Live PR evidence uses the target repository from the PR URL, so
+fork source repositories do not select a different product map.
+With product maps configured, missing, unknown, inconsistent
+or ambiguous project identity stops classification. With no maps anywhere,
+existing no-map hub runs do not need a new selector or local product checkout.
+
+Template sync ships classifier support and examples. Keep consumer-specific
+rule values in project-owned shared configuration and preserve them during
+special-handling config sync. A path map does not waive reviews, CI, sensitive
+advisories, budgets, checkpoints, risk ceilings or merge/deletion authorization.
+
+---
+
 ## Per-Stage Permissions
 
 Permissions can be configured independently for each of the three authored stages:

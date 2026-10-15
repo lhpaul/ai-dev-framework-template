@@ -1204,6 +1204,28 @@ resolved, it fails for that product repository instead of falling back to the
 workflow hub repository.
 
 
+### `workflow-risk-paths.py`
+
+Read-only configuration/matching helper used by `run-epic-risk-classifier.sh`.
+It reads normalized classifier JSON from stdin and returns an object with
+`matches`, keyed by changed path. Each match records the highest project risk
+and all applicable reasons. A missing or empty map returns no matches; invalid
+configuration or path evidence exits nonzero without a risk verdict. The
+classifier rebuilds this internal evidence even in `--input` mode, then applies
+its own built-in categories, immutable sensitive/tooling floors and PR gates.
+
+Arguments are `--repo-root <project-policy-root>` and optional
+`--product-repo <stable-product-name>`. Policy comes only from the shared
+`.ai-dev-workflow.yaml`, using the existing strict YAML reader and PyYAML
+toolchain. Hub product rules are selected in the hub's shared product entry;
+they do not require a local product checkout or inherit the hub's map.
+
+See [Project Path Risk Maps](../../docs/workflow/development-workflow/guardrails.md#project-path-risk-maps)
+for rule shape, full-path glob grammar, precedence, project selection and
+configuration-error repair. Public classifier CLI/result keys remain unchanged.
+Ordinary release-named docs no longer trigger a release-tooling floor. Missing
+changed-file evidence still yields High risk, governed by the existing ceiling.
+
 ### `workflow-merge-budget.py`
 
 Creates a private, owner-bound local journal for an authorized merge sequence. `begin` receives selected identities and planned phases, resolves owning issue/cleanup targets read-only, and samples actual GraphQL quota; it does not accept caller quota or success flags. The returned JSON includes the absolute `session` path. The complete lifecycle and ordered outcomes are normative in [Protocol 94 section 3.6](../../docs/workflow/development-workflow/protocols/94-batch-merge-protocol.md#36-merge-session-admission-and-recovery).
