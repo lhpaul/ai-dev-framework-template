@@ -127,12 +127,14 @@ def mask_review_code(source, preserve_offsets=True):
             continue
         if source[index] == "`":
             in_html = bool(html_depth or html_block)
+            history_markdown = (resolved_history and html_depth == ["details"]
+                                and html_block is None)
             # The producer emits inline Markdown in its table and in the
             # canonical resolved-history details body after that table. Raw
             # standalone HTML remains unsupported.
             if (any(tag not in inline_tags for tag in html_depth)
                     or html_block not in inline_tags | {None}
-                    or (in_html and "table" not in html_depth and not resolved_history)):
+                    or (in_html and "table" not in html_depth and not history_markdown)):
                 raise ValueError("ambiguous backticks in HTML")
             if index > 0 and source[index - 1] == "\\":
                 raise ValueError("ambiguous escaped backtick")
@@ -146,9 +148,9 @@ def mask_review_code(source, preserve_offsets=True):
                     or content.endswith("\\") or source.startswith("``", end)):
                 raise ValueError("ambiguous inline span")
             # Table spans cannot swallow raw container/comment boundaries.
-            # The canonical history body renders Markdown, so its closed code
-            # spans may quote literal closing tags or comment-like source.
-            if in_html and not resolved_history and re.search(r"<\s*/|<!|<\?", content):
+            # Only the root Markdown body of canonical history may quote
+            # closing tags/comments; nested raw HTML retains its guard.
+            if in_html and not history_markdown and re.search(r"<\s*/|<!|<\?", content):
                 raise ValueError("inline span crosses HTML markup")
             parts.append(masked(index, end + 1))
             index = end + 1

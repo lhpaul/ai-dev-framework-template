@@ -371,6 +371,28 @@ class InlineProducerHTMLTests(unittest.TestCase):
             self.assertEqual("needs_fixes", classify(live))
             self.assertEqual([label], self.labels(live))
 
+    def test_resolved_history_does_not_mask_nested_raw_html_boundaries(self):
+        prefix = "<details>\n<summary>✅ Resolved findings</summary>\n\n"
+        # Pass-2 counterexample: the first closing summary is real HTML; the
+        # backticks must not hide it and make the surplus closer look valid.
+        invalid = (prefix + "<details><summary>Example `</summary>`</summary></details>"
+                   "\n\n</details>")
+        for sample in (invalid,
+                       prefix + "<span>Example `</span>`</span>\n\n</details>",
+                       prefix + "<strong>Example `<!-- sample -->`</strong>\n\n</details>"):
+            body = review() + "\n" + sample
+            self.assertEqual("escalate", classify(body))
+            for preserve in (True, False):
+                with self.subTest(sample=sample, preserve=preserve):
+                    with self.assertRaises(ValueError):
+                        runtime.mask_review_code(body, preserve_offsets=preserve)
+        # After nested HTML closes and a blank line ends its block, ordinary
+        # root Markdown inline code is supported again, with offsets intact.
+        history = prefix + "<details><summary>Notes</summary></details>\n\nRead `</summary>`.\n\n</details>"
+        body = review() + "\n" + history
+        self.assertEqual("clean", classify(body))
+        self.assertEqual(len(body), len(runtime.mask_review_code(body)))
+
     def test_mask_offsets_and_original_prose(self):
         body = self.finding("Read `helper()` then act.")
         masked = runtime.mask_review_code(body)
