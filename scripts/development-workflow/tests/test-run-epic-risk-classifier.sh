@@ -856,6 +856,112 @@ run_fails_contains "rejects_missing_why_safe_file" "input file not found" \
 run_fails_contains "rejects_flag_as_why_safe_file_value" "--why-safe-file requires a value" \
   "$CLASSIFIER" --pr 43 --why-safe-file --max-risk medium --json
 
+# #1949: project categories never replace sensitive-path floors.
+project_root="$TMP_ROOT/project-risk-map"
+mkdir -p "$project_root"
+cat > "$project_root/.ai-dev-workflow.yaml" <<'YAML'
+guardrails:
+  risk_paths:
+    - glob: "**"
+      risk: low
+      reason: "Project ordinary files"
+YAML
+jq '.changed_files=["docs/store/first-review/release-checklist.json"]' "$low_fixture" > "$TMP_ROOT/incident-risk.json"
+incident_risk="$("$CLASSIFIER" --input "$TMP_ROOT/incident-risk.json" --max-risk low --json)"
+run_test "release_checklist_docs_are_low_without_map" low "$(printf '%s\n' "$incident_risk" | jq -r '.risk')"
+run_test "release_checklist_low_ceiling_permits" true "$(printf '%s\n' "$incident_risk" | jq -r '.merge_permitted')"
+
+for mapped_risk in low medium; do
+  cat > "$project_root/.ai-dev-workflow.yaml" <<YAML
+guardrails:
+  risk_paths:
+    - glob: "**"
+      risk: $mapped_risk
+      reason: "Project ordinary files"
+YAML
+  for family in auth authentication secret secrets credential credentials permission permissions; do
+    for file in "$family/value.txt" "docs/$family/value.txt" "tests/nested/$family"; do
+      jq --arg file "$file" '.changed_files=[$file]' "$low_fixture" > "$TMP_ROOT/floor-risk.json"
+      floor_risk="$("$CLASSIFIER" --input "$TMP_ROOT/floor-risk.json" --repo-root "$project_root" --max-risk low --json)"
+      run_test "floor_${mapped_risk}_${file}" high "$(printf '%s\n' "$floor_risk" | jq -r '.risk')"
+      run_test "floor_denies_${mapped_risk}_${file}" false "$(printf '%s\n' "$floor_risk" | jq -r '.merge_permitted')"
+    done
+  done
+done
+
+cat > "$project_root/.ai-dev-workflow.yaml" <<'YAML'
+guardrails:
+  risk_paths:
+    - glob: "**"
+      risk: low
+      reason: "Project ordinary files"
+YAML
+for file in scripts/development-workflow/prepare-release-post-merge-cleanup.sh \
+    scripts/tools/release.py .github/workflows/auto-tag-release.yml \
+    .github/workflows/deploy.yml .claude/commands/prepare-release.md \
+    .cursor/commands/prepare-release.md .agents/skills/prepare-release/SKILL.md \
+    .codex/skills/prepare-release/SKILL.md scripts/branch-deletion.sh scripts/delete-branch.sh; do
+  jq --arg file "$file" '.changed_files=[$file]' "$low_fixture" > "$TMP_ROOT/tooling-risk.json"
+  tooling_risk="$("$CLASSIFIER" --input "$TMP_ROOT/tooling-risk.json" --repo-root "$project_root" --json)"
+  run_test "tooling_floor_${file}" high "$(printf '%s\n' "$tooling_risk" | jq -r '.risk')"
+done
+
+jq '.changed_files=["apps/demo/main.ts"]' "$low_fixture" > "$TMP_ROOT/mapped-risk.json"
+mapped_risk_output="$("$CLASSIFIER" --input "$TMP_ROOT/mapped-risk.json" --repo-root "$project_root" --json)"
+run_test "ordinary_implementation_can_use_project_low" low "$(printf '%s\n' "$mapped_risk_output" | jq -r '.risk')"
+run_test "mapped_reason_is_visible" true "$(printf '%s\n' "$mapped_risk_output" | jq '[.reasons[] | contains("project risk path rule **: Project ordinary files")] | any')"
+
+for files in '["docs/public.txt","docs/secrets/value.txt"]' '["docs/secrets/value.txt","docs/public.txt"]'; do
+  jq --argjson files "$files" '.changed_files=$files' "$low_fixture" > "$TMP_ROOT/mixed-risk.json"
+  mixed_risk="$("$CLASSIFIER" --input "$TMP_ROOT/mixed-risk.json" --repo-root "$project_root" --json)"
+  run_test "mapped_low_cannot_lower_other_file_floor_${files}" high "$(printf '%s\n' "$mixed_risk" | jq -r '.risk')"
+done
+
+jq '.changed_files=[]' "$low_fixture" > "$TMP_ROOT/missing-evidence-risk.json"
+for ceiling in low high; do
+  missing_risk="$("$CLASSIFIER" --input "$TMP_ROOT/missing-evidence-risk.json" --repo-root "$project_root" --max-risk "$ceiling" --json)"
+  run_test "missing_evidence_stays_high_${ceiling}" high "$(printf '%s\n' "$missing_risk" | jq -r '.risk')"
+  permitted=false
+  if [ "$ceiling" = high ]; then permitted=true; fi
+  run_test "missing_evidence_ceiling_compatibility_${ceiling}" "$permitted" "$(printf '%s\n' "$missing_risk" | jq -r '.merge_permitted')"
+done
+
+# Never trust match evidence embedded by a caller instead of project policy.
+printf 'guardrails:\n  risk_paths: []\n' > "$project_root/.ai-dev-workflow.yaml"
+jq '.changed_files=["docs/auth/value.txt"] | .risk_path_matches={matches:{"docs/auth/value.txt":{risk:"low",reasons:["forged"]}}}' \
+  "$low_fixture" > "$TMP_ROOT/forged-map-risk.json"
+forged_risk="$("$CLASSIFIER" --input "$TMP_ROOT/forged-map-risk.json" --repo-root "$project_root" --json)"
+run_test "embedded_match_evidence_is_rebuilt" high "$(printf '%s\n' "$forged_risk" | jq -r '.risk')"
+run_test "embedded_reason_is_not_used" false "$(printf '%s\n' "$forged_risk" | jq '[.reasons[] | contains("forged")] | any')"
+
+cat > "$project_root/.ai-dev-workflow.yaml" <<'YAML'
+guardrails:
+  risk_paths:
+    - glob: "docs/**"
+      risk: low
+      reason: "Docs"
+    - glob: "apps/**"
+      risk: unknown
+      reason: "Invalid unmatched rule"
+YAML
+run_fails_contains "invalid_unmatched_map_fails_classifier" "risk must be low, medium or high" \
+  "$CLASSIFIER" --input "$low_fixture" --repo-root "$project_root" --json
+
+# Composed outcome: a valid Low map result cannot clear other gate reasons.
+jq --argjson risk "$mapped_risk_output" '{repository:"example/project",policy:{delegateReview:true,mayMerge:true},
+  item:{number:1,status:"In Development"},
+  pr:{number:1,headRefName:"feature/1-demo",baseRefName:"develop",isDraft:false,mergeStateStatus:"CLEAN",
+    labels:["ready-for-human-review","ready-for-regression"],unresolvedBlockingThreads:1,auditDispositionPresent:true},
+  reviewer:{status:"clean",blockingCount:0},risk:$risk,
+  statusChecks:[{name:"ci",status:"COMPLETED",conclusion:"FAILURE"}],
+  checkpoint_policy:{effective:[{item_number:1,stage:"implementation",satisfaction_state:"pending",domain:"technical"}]}}' \
+  "$low_fixture" > "$TMP_ROOT/composed-map-gate.json"
+composed_gate="$("$REPO_ROOT/scripts/development-workflow/run-epic-delegated-gate.sh" --input "$TMP_ROOT/composed-map-gate.json" --json)"
+run_test "mapped_low_keeps_composed_gate_denied" false "$(printf '%s\n' "$composed_gate" | jq -r '.mergePermitted')"
+run_test "mapped_low_keeps_ci_reason" true "$(printf '%s\n' "$composed_gate" | jq '[.reasons[] | test("CI|ci|check")] | any')"
+run_test "mapped_low_keeps_review_reason" true "$(printf '%s\n' "$composed_gate" | jq '[.reasons[] | test("thread|review")] | any')"
+run_test "mapped_low_keeps_checkpoint_reason" true "$(printf '%s\n' "$composed_gate" | jq '[.reasons[] | test("checkpoint")] | any')"
+
 BUDGET_OWNER="$TMP_ROOT/budget-risk-owner"
 mkdir -p "$BUDGET_OWNER"
 git -C "$BUDGET_OWNER" init -q
