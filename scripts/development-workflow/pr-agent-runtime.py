@@ -75,6 +75,8 @@ def mask_review_code(source, preserve_offsets=True):
     index = 0
     html_depth = []
     html_block = None
+    producer_table_closed = False
+    resolved_history = False
     inline_tags = {"table", "tbody", "thead", "tfoot", "tr", "td", "th",
                    "details", "summary", "strong", "a", "b", "em", "span"}
     opener = re.compile(r"[ \t]*(`{3,}|~{3,})[^\r\n]*(?:\r?\n|$)")
@@ -125,11 +127,12 @@ def mask_review_code(source, preserve_offsets=True):
             continue
         if source[index] == "`":
             in_html = bool(html_depth or html_block)
-            # Inline HTML is supported only while the producer review table
-            # is open; an isolated span/details is still ambiguous raw HTML.
+            # The producer emits inline Markdown in its table and in the
+            # canonical resolved-history details body after that table. Raw
+            # standalone HTML remains unsupported.
             if (any(tag not in inline_tags for tag in html_depth)
                     or html_block not in inline_tags | {None}
-                    or (in_html and "table" not in html_depth)):
+                    or (in_html and "table" not in html_depth and not resolved_history)):
                 raise ValueError("ambiguous backticks in HTML")
             if index > 0 and source[index - 1] == "\\":
                 raise ValueError("ambiguous escaped backtick")
@@ -142,9 +145,10 @@ def mask_review_code(source, preserve_offsets=True):
             if (not content or re.search(r"[\r\n\v\f\x85\u2028\u2029]", content)
                     or content.endswith("\\") or source.startswith("``", end)):
                 raise ValueError("ambiguous inline span")
-            # A span may contain a literal placeholder such as <head>, but
-            # must never swallow a container boundary or opaque HTML comment.
-            if in_html and re.search(r"<\s*/|<!|<\?", content):
+            # Table spans cannot swallow raw container/comment boundaries.
+            # The canonical history body renders Markdown, so its closed code
+            # spans may quote literal closing tags or comment-like source.
+            if in_html and not resolved_history and re.search(r"<\s*/|<!|<\?", content):
                 raise ValueError("inline span crosses HTML markup")
             parts.append(masked(index, end + 1))
             index = end + 1
@@ -170,11 +174,21 @@ def mask_review_code(source, preserve_offsets=True):
             name = re.match(r"<\s*(/?)\s*([A-Za-z][A-Za-z0-9-]*)", tag)
             if name:
                 closing, tag_name = name.group(1), name.group(2).lower()
+                if (not closing and tag_name == "details" and not html_depth
+                        and producer_table_closed
+                        and re.match(r"<details>\s*<summary>✅ Resolved findings</summary>"
+                                     r"[ \t]*\r?\n[ \t]*\r?\n", source[index:])):
+                    resolved_history = True
                 if not source[line_start:index].strip():
                     html_block = tag_name
                 if closing:
                     if html_depth and html_depth[-1] == tag_name:
                         html_depth.pop()
+                        if not html_depth:
+                            if tag_name == "table":
+                                producer_table_closed = True
+                            if tag_name == "details":
+                                resolved_history = False
                 elif tag_name not in VOID_TAGS:
                     html_depth.append(tag_name)
             parts.append(tag)
