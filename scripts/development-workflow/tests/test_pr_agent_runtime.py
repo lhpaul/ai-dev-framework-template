@@ -275,6 +275,108 @@ HTML_INLINE_REVIEWS = {
 }
 
 
+# Complete current PR-Agent report 6193308267, preserved verbatim.
+CURRENT_REVIEW_1978 = (
+    '## PR Reviewer Guide 🔍\n'
+    '\n'
+    '<!-- pr-agent:review:full -->\n'
+    '\n'
+    '#### (Review updated until commit https://github.com/lhpaul/ai-dev-framework-template/commit/a73ffb344cc70aad71018c9e6440c0a2005844f6)\n'
+    '\n'
+    '\n'
+    'Here are some key observations to aid the review process:\n'
+    '\n'
+    '<table>\n'
+    '<tr><td>⏱️&nbsp;<strong>Estimated effort to review</strong>: 4 🔵🔵🔵🔵⚪</td></tr>\n'
+    '<tr><td>🧪&nbsp;<strong>PR contains tests</strong></td></tr>\n'
+    '<tr><td>🔒&nbsp;<strong>No security concerns identified</strong></td></tr>\n'
+    '<tr><td>⚡&nbsp;<strong>Recommended focus areas for review</strong><br><br>\n'
+    '\n'
+    "<details><summary><a href='https://github.com/lhpaul/ai-dev-framework-template/pull/1978/files#diff-dba3e72840843ae37245e2f7afa96e5826cda270ac9fc17c31ea59c73bfbd184R179-R193'><strong>Possible Issue</strong></a>\n"
+    '\n'
+    'The `resolved_history` flag is set when a `<details>` block matching the canonical resolved-history pattern opens after the producer table closes, and it is only reset when a matching `</details>` is popped from `html_depth`. However, `resolved_history` is not reset when the parser encounters a new top-level raw HTML block or when the details block is closed via a path that does not pop `html_depth` (e.g. mismatched nesting). If a later, unrelated `<details>` block appears after the history block without an intervening `</details>` that pops the stack, `history_markdown` could remain true and permit inline spans containing `</` or `<?` in a context the PR intends to reject. The tests cover a later `<span>` block but not a later `<details>` block; verify the flag cannot leak past the intended history container.\n'
+    '</summary>\n'
+    '\n'
+    '```python\n'
+    'if (not closing and tag_name == "details" and not html_depth\n'
+    '        and producer_table_closed\n'
+    '        and re.match(r"<details>\\s*<summary>✅ Resolved findings</summary>"\n'
+    '                     r"[ \\t]*\\r?\\n[ \\t]*\\r?\\n", source[index:])):\n'
+    '    resolved_history = True\n'
+    'if not source[line_start:index].strip():\n'
+    '    html_block = tag_name\n'
+    'if closing:\n'
+    '    if html_depth and html_depth[-1] == tag_name:\n'
+    '        html_depth.pop()\n'
+    '        if not html_depth:\n'
+    '            if tag_name == "table":\n'
+    '                producer_table_closed = True\n'
+    '            if tag_name == "details":\n'
+    '                resolved_history = False\n'
+    '```\n'
+    '\n'
+    '</details>\n'
+    '\n'
+    "<details><summary><a href='https://github.com/lhpaul/ai-dev-framework-template/pull/1978/files#diff-dba3e72840843ae37245e2f7afa96e5826cda270ac9fc17c31ea59c73bfbd184R189-R193'><strong>Possible Issue</strong></a>\n"
+    '\n'
+    "The `producer_table_closed` flag is set to true whenever any `</table>` pops the last element of `html_depth`, regardless of whether that table was the producer review table. A standalone `<table></table>` earlier in the body (e.g. in unrelated prose) would set `producer_table_closed = True`, and a subsequent canonical-looking `<details><summary>✅ Resolved findings</summary>` block would then be treated as resolved history even though it did not follow the producer review table. This widens the acceptance surface beyond the stated intent of recognizing only the producer's canonical resolved-history details after its review table.\n"
+    '</summary>\n'
+    '\n'
+    '```python\n'
+    'if not html_depth:\n'
+    '    if tag_name == "table":\n'
+    '        producer_table_closed = True\n'
+    '    if tag_name == "details":\n'
+    '        resolved_history = False\n'
+    '```\n'
+    '\n'
+    '</details>\n'
+    '\n'
+    '</td></tr>\n'
+    '</table>\n'
+    '\n'
+    '<details>\n'
+    '<summary>✅ Resolved findings</summary>\n'
+    '\n'
+    '### scripts/development-workflow/pr-agent-runtime.py:133-136\n'
+    '\n'
+    '**Possible Issue**\n'
+    '\n'
+    'The inline-HTML acceptance gate requires `"table" in html_depth` whenever any HTML is open (`in_html and "table" not in html_depth and not resolved_history`). Because `html_block` is tracked separately from `html_depth`, a supported block tag opened at line start (which sets `html_block` rather than pushing onto `html_depth`) combined with an empty `html_depth` yields `in_html == True` but `"table" not in html_depth`, so the span is rejected even though the tag is in `inline_tags`. Conversely, a `<details>` opened via the depth stack outside a table is also rejected. This makes acceptance depend on which tracking structure the parser used for a given tag rather than on the documented "producer review table is open" condition. The added tests exercise the real producer comments, but a supported wrapper tracked via `html_block` (e.g. a line-leading `<strong>`/`<summary>`) would still escalate.\n'
+    '\n'
+    '### scripts/development-workflow/pr-agent-runtime.py:177-191\n'
+    '\n'
+    '**Possible Issue**\n'
+    '\n'
+    'The resolved-history detection sets `resolved_history = True` when a `<details>` with the exact canonical summary is opened after a closed producer table, but the flag is only reset when a `</details>` closing tag is popped from `html_depth`. If the history `<details>` is opened while `html_depth` is non-empty (e.g. nested inside another open element) or if the matching `</details>` is never pushed/popped in the same way, `resolved_history` can remain `True` past the intended history block. In that state the cross-container guard (`in_html and not resolved_history and re.search(...)`) is disabled, so a later standalone raw `<span>`/`<details>` containing backticks would be accepted instead of escalating. The test `test_resolved_history_retains_producer_context_only` covers the simple case but not a history block whose closing tag is unbalanced or nested, so this relaxation path is under-verified.\n'
+    '\n'
+    '### scripts/development-workflow/pr-agent-runtime.py:126-133\n'
+    '\n'
+    '**Possible Issue**\n'
+    '\n'
+    'The new inline-HTML gate computes `in_html = bool(html_depth or html_block)` and then rejects when `(in_html and "table" not in html_depth)`. Because `html_block` is a separate variable from `html_depth`, a case where `html_block` is set (e.g. a supported block tag like `details`/`summary`/`strong` opened outside a table) while `html_depth` is empty will satisfy `in_html` and then always raise, even though `html_block` is in `inline_tags`. Conversely, when `html_depth` is non-empty but contains only supported tags and no `table` (e.g. a `<details>` opened via the depth stack rather than the block variable), the `"table" not in html_depth` check rejects it. The intent stated in the comment is "supported only while the producer review table is open", but the condition mixes the two tracking structures inconsistently, so whether a given supported container is accepted depends on which of `html_depth`/`html_block` the parser happened to use for that tag. Verify that the depth-vs-block bookkeeping for `table`/`details`/`summary`/`strong` actually places `table` in `html_depth` for the real producer comments; if any supported wrapper is tracked in `html_block` instead, the span will be rejected despite being listed in `inline_tags`.\n'
+    '\n'
+    '### scripts/development-workflow/pr-agent-runtime.py:145-148\n'
+    '\n'
+    '**Possible Issue**\n'
+    '\n'
+    'The cross-container guard `if in_html and re.search(r"<\\s*/|<!|<\\?", content)` rejects any inline span whose content contains a closing-tag-like sequence or comment opener. This is intended to prevent swallowing container boundaries, but it also rejects legitimate inline code that contains a literal `</` or `<?` sequence, such as documenting `</summary>` or `<?php`. The PR description states the goal is to accept "complete single-backtick inline code" while rejecting "cross-container spans"; a span containing `</summary>` as literal text (not an actual tag boundary) is indistinguishable from a real boundary under this regex. If such content appears in a real producer finding, it will escalate. This may be an acceptable conservative tradeoff, but it is worth confirming the producer never emits inline code containing `</` or `<?` as literal content.\n'
+    '\n'
+    '### scripts/development-workflow/pr-agent-runtime.py:126-133\n'
+    '\n'
+    '**Possible Issue**\n'
+    '\n'
+    'The new inline-HTML gate checks `html_block not in inline_tags | {None}` and `(in_html and "table" not in html_depth)`, but `html_depth` is a list of open tags and `html_block` is a separate variable. The condition `any(tag not in inline_tags for tag in html_depth)` rejects any open tag outside the allowlist, yet the allowlist includes `span`, `a`, `b`, `em`, `strong`, `details`, `summary`, etc. A finding summary like `<details><summary><a href=\'...\'><strong>Possible Issue</strong></a> ...` opens `details`, `summary`, `a`, `strong` — all allowed — so the gate passes. However, the check `(in_html and "table" not in html_depth)` requires `table` to be present in `html_depth` whenever any HTML is open. If the producer table is opened and then closed before the inline span (e.g. a `<details>` block that appears after `</table>` but still within the review body), `html_depth` would no longer contain `table` and the span would be rejected even though it is inside the producer review. This is a narrow trigger, but it means the acceptance is tied to the table being currently open rather than the review being a producer review. Confirm whether the producer format always keeps the table open across all finding spans; if not, valid inline code after the table close would still escalate.\n'
+    '\n'
+    '</details>\n'
+    '\n'
+    '<!-- pr-agent-review-state:v1\n'
+    '{"findings":[{"body":"**Possible Issue**\\n\\nThe `producer_table_closed` flag is set to true whenever any `</table>` pops the last element of `html_depth`, regardless of whether that table was the producer review table. A standalone `<table></table>` earlier in the body (e.g. in unrelated prose) would set `producer_table_closed = True`, and a subsequent canonical-looking `<details><summary>✅ Resolved findings</summary>` block would then be treated as resolved history even though it did not follow the producer review table. This widens the acceptance surface beyond the stated intent of recognizing only the producer\'s canonical resolved-history details after its review table.","finding_id":"17d0394221fd","first_seen":"2026-10-15T14:37:48.518356Z","last_seen":"2026-10-15T14:37:48.518356Z","last_seen_head_sha":"a73ffb344cc70aad71018c9e6440c0a2005844f6","line_end":193,"line_start":189,"path":"scripts/development-workflow/pr-agent-runtime.py","state":"ACTIVE"},{"body":"**Possible Issue**\\n\\nThe new inline-HTML gate computes `in_html = bool(html_depth or html_block)` and then rejects when `(in_html and \\"table\\" not in html_depth)`. Because `html_block` is a separate variable from `html_depth`, a case where `html_block` is set (e.g. a supported block tag like `details`/`summary`/`strong` opened outside a table) while `html_depth` is empty will satisfy `in_html` and then always raise, even though `html_block` is in `inline_tags`. Conversely, when `html_depth` is non-empty but contains only supported tags and no `table` (e.g. a `<details>` opened via the depth stack rather than the block variable), the `\\"table\\" not in html_depth` check rejects it. The intent stated in the comment is \\"supported only while the producer review table is open\\", but the condition mixes the two tracking structures inconsistently, so whether a given supported container is accepted depends on which of `html_depth`/`html_block` the parser happened to use for that tag. Verify that the depth-vs-block bookkeeping for `table`/`details`/`summary`/`strong` actually places `table` in `html_depth` for the real producer comments; if any supported wrapper is tracked in `html_block` instead, the span will be rejected despite being listed in `inline_tags`.","finding_id":"24521fb8d005","first_seen":"2026-10-15T13:34:17.994063Z","last_seen":"2026-10-15T13:34:17.994063Z","last_seen_head_sha":"bd05503e5ce7243f948dc13f8203fad18b927105","line_end":133,"line_start":126,"path":"scripts/development-workflow/pr-agent-runtime.py","resolution_run_id":"https://github.com/lhpaul/ai-dev-framework-template/commit/925b3463a2fa829f93ba35371bc873bac187fdaa","resolved_at":"2026-10-15T13:58:34.511516Z","resolved_head_sha":"925b3463a2fa829f93ba35371bc873bac187fdaa","state":"RESOLVED"},{"body":"**Possible Issue**\\n\\nThe new inline-HTML gate checks `html_block not in inline_tags | {None}` and `(in_html and \\"table\\" not in html_depth)`, but `html_depth` is a list of open tags and `html_block` is a separate variable. The condition `any(tag not in inline_tags for tag in html_depth)` rejects any open tag outside the allowlist, yet the allowlist includes `span`, `a`, `b`, `em`, `strong`, `details`, `summary`, etc. A finding summary like `<details><summary><a href=\'...\'><strong>Possible Issue</strong></a> ...` opens `details`, `summary`, `a`, `strong` — all allowed — so the gate passes. However, the check `(in_html and \\"table\\" not in html_depth)` requires `table` to be present in `html_depth` whenever any HTML is open. If the producer table is opened and then closed before the inline span (e.g. a `<details>` block that appears after `</table>` but still within the review body), `html_depth` would no longer contain `table` and the span would be rejected even though it is inside the producer review. This is a narrow trigger, but it means the acceptance is tied to the table being currently open rather than the review being a producer review. Confirm whether the producer format always keeps the table open across all finding spans; if not, valid inline code after the table close would still escalate.","finding_id":"28886a027301","first_seen":"2026-10-15T13:32:23.844031Z","last_seen":"2026-10-15T13:32:23.844031Z","last_seen_head_sha":"283777e2ff0b6f6124e40edaebd294d0956ede2a","line_end":133,"line_start":126,"path":"scripts/development-workflow/pr-agent-runtime.py","resolution_run_id":"https://github.com/lhpaul/ai-dev-framework-template/commit/bd05503e5ce7243f948dc13f8203fad18b927105","resolved_at":"2026-10-15T13:34:17.994063Z","resolved_head_sha":"bd05503e5ce7243f948dc13f8203fad18b927105","state":"RESOLVED"},{"body":"**Possible Issue**\\n\\nThe cross-container guard `if in_html and re.search(r\\"<\\\\s*/|<!|<\\\\?\\", content)` rejects any inline span whose content contains a closing-tag-like sequence or comment opener. This is intended to prevent swallowing container boundaries, but it also rejects legitimate inline code that contains a literal `</` or `<?` sequence, such as documenting `</summary>` or `<?php`. The PR description states the goal is to accept \\"complete single-backtick inline code\\" while rejecting \\"cross-container spans\\"; a span containing `</summary>` as literal text (not an actual tag boundary) is indistinguishable from a real boundary under this regex. If such content appears in a real producer finding, it will escalate. This may be an acceptable conservative tradeoff, but it is worth confirming the producer never emits inline code containing `</` or `<?` as literal content.","finding_id":"3a8ca8a08881","first_seen":"2026-10-15T13:32:23.844031Z","last_seen":"2026-10-15T13:32:23.844031Z","last_seen_head_sha":"283777e2ff0b6f6124e40edaebd294d0956ede2a","line_end":148,"line_start":145,"path":"scripts/development-workflow/pr-agent-runtime.py","resolution_run_id":"https://github.com/lhpaul/ai-dev-framework-template/commit/bd05503e5ce7243f948dc13f8203fad18b927105","resolved_at":"2026-10-15T13:34:17.994063Z","resolved_head_sha":"bd05503e5ce7243f948dc13f8203fad18b927105","state":"RESOLVED"},{"body":"**Possible Issue**\\n\\nThe resolved-history detection sets `resolved_history = True` when a `<details>` with the exact canonical summary is opened after a closed producer table, but the flag is only reset when a `</details>` closing tag is popped from `html_depth`. If the history `<details>` is opened while `html_depth` is non-empty (e.g. nested inside another open element) or if the matching `</details>` is never pushed/popped in the same way, `resolved_history` can remain `True` past the intended history block. In that state the cross-container guard (`in_html and not resolved_history and re.search(...)`) is disabled, so a later standalone raw `<span>`/`<details>` containing backticks would be accepted instead of escalating. The test `test_resolved_history_retains_producer_context_only` covers the simple case but not a history block whose closing tag is unbalanced or nested, so this relaxation path is under-verified.","finding_id":"6feeab06a5eb","first_seen":"2026-10-15T13:58:34.511516Z","last_seen":"2026-10-15T13:58:34.511516Z","last_seen_head_sha":"925b3463a2fa829f93ba35371bc873bac187fdaa","line_end":191,"line_start":177,"path":"scripts/development-workflow/pr-agent-runtime.py","resolution_run_id":"https://github.com/lhpaul/ai-dev-framework-template/commit/a73ffb344cc70aad71018c9e6440c0a2005844f6","resolved_at":"2026-10-15T14:37:48.518356Z","resolved_head_sha":"a73ffb344cc70aad71018c9e6440c0a2005844f6","state":"RESOLVED"},{"body":"**Possible Issue**\\n\\nThe `resolved_history` flag is set when a `<details>` block matching the canonical resolved-history pattern opens after the producer table closes, and it is only reset when a matching `</details>` is popped from `html_depth`. However, `resolved_history` is not reset when the parser encounters a new top-level raw HTML block or when the details block is closed via a path that does not pop `html_depth` (e.g. mismatched nesting). If a later, unrelated `<details>` block appears after the history block without an intervening `</details>` that pops the stack, `history_markdown` could remain true and permit inline spans containing `</` or `<?` in a context the PR intends to reject. The tests cover a later `<span>` block but not a later `<details>` block; verify the flag cannot leak past the intended history container.","finding_id":"d43c9acb524a","first_seen":"2026-10-15T14:37:48.518356Z","last_seen":"2026-10-15T14:37:48.518356Z","last_seen_head_sha":"a73ffb344cc70aad71018c9e6440c0a2005844f6","line_end":193,"line_start":179,"path":"scripts/development-workflow/pr-agent-runtime.py","state":"ACTIVE"},{"body":"**Possible Issue**\\n\\nThe inline-HTML acceptance gate requires `\\"table\\" in html_depth` whenever any HTML is open (`in_html and \\"table\\" not in html_depth and not resolved_history`). Because `html_block` is tracked separately from `html_depth`, a supported block tag opened at line start (which sets `html_block` rather than pushing onto `html_depth`) combined with an empty `html_depth` yields `in_html == True` but `\\"table\\" not in html_depth`, so the span is rejected even though the tag is in `inline_tags`. Conversely, a `<details>` opened via the depth stack outside a table is also rejected. This makes acceptance depend on which tracking structure the parser used for a given tag rather than on the documented \\"producer review table is open\\" condition. The added tests exercise the real producer comments, but a supported wrapper tracked via `html_block` (e.g. a line-leading `<strong>`/`<summary>`) would still escalate.","finding_id":"f1314959da68","first_seen":"2026-10-15T13:58:34.511516Z","last_seen":"2026-10-15T13:58:34.511516Z","last_seen_head_sha":"925b3463a2fa829f93ba35371bc873bac187fdaa","line_end":136,"line_start":133,"path":"scripts/development-workflow/pr-agent-runtime.py","resolution_run_id":"https://github.com/lhpaul/ai-dev-framework-template/commit/a73ffb344cc70aad71018c9e6440c0a2005844f6","resolved_at":"2026-10-15T14:37:48.518356Z","resolved_head_sha":"a73ffb344cc70aad71018c9e6440c0a2005844f6","state":"RESOLVED"}],"last_run":{"complete":true,"excluded_files":[],"head_sha":"a73ffb344cc70aad71018c9e6440c0a2005844f6","kind":"full","run_id":"https://github.com/lhpaul/ai-dev-framework-template/commit/a73ffb344cc70aad71018c9e6440c0a2005844f6"},"schema_version":1}\n'
+    '-->\n'
+    '\n'
+)
+
+
 class InlineProducerHTMLTests(unittest.TestCase):
     def labels(self, body):
         return subprocess.run(
@@ -330,7 +432,8 @@ class InlineProducerHTMLTests(unittest.TestCase):
             self.assertEqual("needs_fixes", classify(body))
             self.assertEqual([label], self.labels(body))
         body = self.finding("Example: `<strong>Must fix</strong>`.")
-        self.assertEqual("escalate", classify(body))
+        self.assertEqual("clean", classify(body))
+        self.assertEqual(["Possible Issue"], self.labels(body))
 
     def test_quoted_code_and_comments_cannot_supply_clean_evidence(self):
         for sample in ("`No major issues detected`", "<!-- No major issues detected -->",
@@ -342,8 +445,8 @@ class InlineProducerHTMLTests(unittest.TestCase):
 
     def test_unsupported_and_ambiguous_inputs_still_escalate(self):
         for content in ("`unclosed", "``double``", "`two\nlines`", "`trailing\\`",
-                        "\\`escaped`", "`</summary><strong>Must fix</strong>`",
-                        "`<!-- hidden -->`", "<div>`helper()`</div>",
+                        "\\`escaped`", "`prose </summary>`",
+                        "`</summary> live prose <strong>Must fix</strong>`", "<div>`helper()`</div>",
                         '<a title="`helper()`">text</a>',
                         "<a title=bad`attribute`>text</a>"):
             with self.subTest(content=content):
@@ -392,6 +495,43 @@ class InlineProducerHTMLTests(unittest.TestCase):
         body = review() + "\n" + history
         self.assertEqual("clean", classify(body))
         self.assertEqual(len(body), len(runtime.mask_review_code(body)))
+
+    def test_isolated_html_tag_inline_is_literal_but_real_closers_fail(self):
+        for tag in ("<details>", "</details>", "<summary>", "</summary>", "<span>", "</span>"):
+            with self.subTest(tag=tag):
+                body = self.finding("Example `" + tag + "`.")
+                self.assertEqual("clean", classify(body))
+                self.assertEqual(["Possible Issue"], self.labels(body))
+                for preserve in (True, False):
+                    runtime.mask_review_code(body, preserve_offsets=preserve)
+                self.assertEqual("escalate", classify(self.finding("Example " + tag + ".")))
+    def test_html_only_inline_fragments_and_sequences_are_literal(self):
+        for content in ("</", "<?", "<table></table>",
+                        "<details><summary>✅ Resolved findings</summary>",
+                        "</summary><strong>Must fix</strong>", "<!-- hidden -->"):
+            with self.subTest(content=content):
+                body = self.finding("Example `" + content + "`.")
+                self.assertEqual("clean", classify(body))
+                self.assertEqual(["Possible Issue"], self.labels(body))
+                for preserve in (True, False):
+                    runtime.mask_review_code(body, preserve_offsets=preserve)
+                # Real closing tags, incomplete markup and nested review tables
+                # outside code remain unsafe even beside an advisory finding.
+                if content != "<!-- hidden -->":
+                    self.assertEqual("escalate", classify(self.finding(content)))
+                else:
+                    # A complete real comment is valid and opaque; it must
+                    # never suppress a blocker outside the quoted example.
+                    self.assertEqual("needs_fixes", classify(self.finding(content, "Critical")))
+                blocker = self.finding("Example `" + content + "`.", "Critical")
+                self.assertEqual("needs_fixes", classify(blocker))
+                self.assertEqual(["Critical"], self.labels(blocker))
+
+    def test_current_complete_review_with_html_code(self):
+        self.assertEqual("clean", classify(CURRENT_REVIEW_1978))
+        self.assertEqual({"Possible Issue"}, set(self.labels(CURRENT_REVIEW_1978)))
+        parsed = runtime.ReviewSpans(CURRENT_REVIEW_1978)
+        self.assertEqual(CURRENT_REVIEW_1978, parsed.source)
 
     def test_mask_offsets_and_original_prose(self):
         body = self.finding("Read `helper()` then act.")

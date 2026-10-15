@@ -88,6 +88,26 @@ def mask_review_code(source, preserve_offsets=True):
             return re.sub(r"[^\r\n]", " ", content)
         return " " + "".join(char for char in content if char in "\r\n")
 
+    def html_markup_only(content):
+        # Quoted HTML may be a fragment: do not require balanced tags here.
+        # Text between tags is part of an element; prose outside is a mixture.
+        if content.strip() in {"<", "</", "<!", "<!--", "<?"}:
+            return True
+        depth = 0
+        end = 0
+        for token in re.finditer(r"<!--.*?-->|<\?.*?\?>|</?[A-Za-z][^<>]*>", content):
+            if content[end:token.start()].strip() and depth == 0:
+                return False
+            tag = token.group()
+            if tag.startswith("</"):
+                depth = max(0, depth - 1)
+            elif not tag.startswith(("<!", "<?")) and not tag.endswith("/>"):
+                name = re.match(r"<([A-Za-z][A-Za-z0-9-]*)", tag).group(1).lower()
+                if name not in VOID_TAGS:
+                    depth += 1
+            end = token.end()
+        return end > 0 and not content[end:].strip()
+
     while index < len(source):
         if index == 0 or source[index - 1] == "\n":
             line_end = source.find("\n", index)
@@ -147,10 +167,11 @@ def mask_review_code(source, preserve_offsets=True):
             if (not content or re.search(r"[\r\n\v\f\x85\u2028\u2029]", content)
                     or content.endswith("\\") or source.startswith("``", end)):
                 raise ValueError("ambiguous inline span")
-            # Table spans cannot swallow raw container/comment boundaries.
-            # Only the root Markdown body of canonical history may quote
-            # closing tags/comments; nested raw HTML retains its guard.
-            if in_html and not history_markdown and re.search(r"<\s*/|<!|<\?", content):
+            # Complete HTML-only code is literal, including tag fragments.
+            # Mixed prose/HTML cannot swallow raw boundaries. Nested raw HTML
+            # outside the admitted producer contexts was already refused.
+            if (in_html and not history_markdown and not html_markup_only(content)
+                    and re.search(r"<\s*/|<!|<\?", content)):
                 raise ValueError("inline span crosses HTML markup")
             parts.append(masked(index, end + 1))
             index = end + 1
