@@ -62,11 +62,12 @@ case "$*" in
     cat <<'JSON'
 {
   "number": 42,
+  "url": "https://github.com/lhpaul/ai-dev-framework-template/pull/42",
   "title": "Live low risk",
   "baseRefName": "develop-delegated-epic-orchestration",
   "headRefName": "docs/live-low",
   "headRefOid": "42424242424242424242424242424242424242",
-  "headRepository": {"name": "ai-dev-framework-template", "owner": {"login": "lhpaul"}},
+  "headRepository": {"name": "fork", "owner": {"login": "contributor"}},
   "mergeStateStatus": "CLEAN",
   "isDraft": false,
   "reviewDecision": "APPROVED",
@@ -89,6 +90,7 @@ JSON
     # superseded-run and genuine-failure shapes share one mock.
     jq -n --argjson rollup "${MOCK_ROLLUP_44:-[]}" '{
       number: 44,
+      url: "https://github.com/lhpaul/ai-dev-framework-template/pull/44",
       title: "Live rollup dedupe",
       baseRefName: "develop",
       headRefName: "docs/live-rollup",
@@ -108,6 +110,7 @@ JSON
     cat <<'JSON'
 {
   "number": 43,
+  "url": "https://github.com/lhpaul/ai-dev-framework-template/pull/43",
   "title": "Live medium risk",
   "baseRefName": "develop",
   "headRefName": "fix/43-live-medium",
@@ -855,6 +858,28 @@ run_fails_contains "rejects_missing_why_safe_file" "input file not found" \
   "$CLASSIFIER" --pr 43 --why-safe-file "$TMP_ROOT/missing-why-safe.json" --max-risk medium --json
 run_fails_contains "rejects_flag_as_why_safe_file_value" "--why-safe-file requires a value" \
   "$CLASSIFIER" --pr 43 --why-safe-file --max-risk medium --json
+
+# A fork source must not replace the target product identity.
+fork_root="$TMP_ROOT/fork-hub"
+mkdir -p "$fork_root"
+cat > "$fork_root/.ai-dev-workflow.yaml" <<'YAML'
+mode: workflow_hub
+workflow_hub:
+  product_repos:
+    - name: app
+      github_repo: lhpaul/ai-dev-framework-template
+      guardrails:
+        risk_paths:
+          - glob: docs/**
+            risk: low
+            reason: Fork target map
+    - name: other
+      github_repo: example/other
+YAML
+fork_result="$("$CLASSIFIER" --pr 42 --repo-root "$fork_root" --product-repo app --max-risk low --json)"
+run_test "fork_pr_target_map_risk" low "$(printf '%s\n' "$fork_result" | jq -r '.risk')"
+run_test "fork_pr_selects_target_map" true "$(printf '%s\n' "$fork_result" | jq -r '[.reasons[] | contains("Fork target map")] | any')"
+run_fails_contains "fork_pr_rejects_wrong_target" "selector and evidence repository disagree" "$CLASSIFIER" --pr 42 --repo-root "$fork_root" --product-repo other --json
 
 # #1949: project categories never replace sensitive-path floors.
 project_root="$TMP_ROOT/project-risk-map"

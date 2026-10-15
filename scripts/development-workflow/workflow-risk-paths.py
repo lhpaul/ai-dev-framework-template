@@ -13,6 +13,7 @@ import json
 from pathlib import Path
 import re
 import sys
+import subprocess
 from typing import Any
 
 
@@ -82,7 +83,15 @@ def select_map(reader: Any, shared: dict[str, Any], path: Path, root: Path,
     if selected:
         candidates = [repo for repo in repos if repo["name"] == selected]
     elif slug:
-        if slug == reader.parse_remote_slug(root):
+        # Git resolves the common repository config for linked worktrees.
+        try:
+            remote = subprocess.run(
+                ["git", "-C", str(root), "remote", "get-url", "origin"],
+                check=True, capture_output=True, text=True, timeout=10,
+            ).stdout.strip()
+        except (OSError, subprocess.SubprocessError):
+            remote = ""
+        if slug == reader.github_repo_from_url(remote):
             return own_map, location
         candidates = [repo for repo in repos if repo_slug(repo) == slug]
     elif all(node is MISSING for node in product_maps):

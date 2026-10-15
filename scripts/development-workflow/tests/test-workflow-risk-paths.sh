@@ -137,6 +137,26 @@ class RiskPathsTests(unittest.TestCase):
         subprocess.run(["git", "-C", str(self.root), "remote", "add", "origin", "https://github.com/example/hub.git"], check=True)
         self.assertEqual(self.evaluate(config, github_repo="example/hub")["matches"]["docs/a.md"]["risk"], "high")
 
+    def test_hub_identity_in_linked_worktree(self):
+        self.config.write_text(self.hub_config())
+        def git(*args):
+            return subprocess.run(["git", "-C", str(self.root), *args],
+                                  check=True, capture_output=True, text=True)
+        git("init", "-q")
+        git("remote", "add", "origin", "https://github.com/example/hub.git")
+        git("add", ".ai-dev-workflow.yaml")
+        git("-c", "user.name=Test", "-c", "user.email=test@example.invalid",
+            "-c", "commit.gpgsign=false", "commit", "-qm", "Fixture")
+        linked = self.root / "linked"
+        git("worktree", "add", "--detach", str(linked))
+        self.assertTrue((linked / ".git").is_file())
+        evidence = {"changed_files": ["docs/a.md"], "github_repo": "example/hub"}
+        expected = module.evaluate(self.root, "", evidence)
+        self.assertEqual(module.evaluate(linked, "", evidence), expected)
+        self.assertEqual(expected["matches"]["docs/a.md"]["risk"], "high")
+        with self.assertRaises(module.RiskPathError):
+            module.evaluate(linked, "", dict(evidence, github_repo="example/unknown"))
+
     def test_project_selection_errors_and_no_map_compatibility(self):
         for identity in ({}, {"product": "missing"}, {"github_repo": "example/missing"},
                          {"product": "one", "github_repo": "example/two"}):

@@ -147,7 +147,10 @@ The selected product's map replaces the hub map; absent product rules use
 built-ins and never inherit sibling or hub categories. An explicit product
 selector takes precedence over the evidence's product name; any evidence
 repository slug must agree. An exact hub-remote slug without a product selector
-uses hub policy. With product maps configured, missing, unknown, inconsistent
+uses hub policy. Git resolves that remote in ordinary checkouts and linked
+worktrees. Live PR evidence uses the target repository from the PR URL, so
+fork source repositories do not select a different product map.
+With product maps configured, missing, unknown, inconsistent
 or ambiguous project identity stops classification. With no maps anywhere,
 existing no-map hub runs do not need a new selector or local product checkout.
 
