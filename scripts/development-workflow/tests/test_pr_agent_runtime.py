@@ -244,9 +244,24 @@ class InlineProducerHTMLTests(unittest.TestCase):
                     self.assertEqual("clean", classify(body))
                     self.assertEqual(["Possible Issue"], self.labels(body))
         for tag in ("table", "tbody", "thead", "tfoot", "tr", "td", "th",
-                    "details", "summary"):
-            body = review() + "\n<" + tag + ">Use `helper()`.</" + tag + ">\n"
-            self.assertEqual("clean", classify(body), tag)
+                    "details", "summary", "strong"):
+            sample = "Use `helper()`."
+            if tag != "table":
+                sample = "<" + tag + ">" + sample + "</" + tag + ">"
+            body = "<table>" + sample + "</table>"
+            masked = runtime.mask_review_code(body)
+            self.assertEqual(len(body), len(masked), tag)
+            self.assertNotIn("helper()", masked, tag)
+
+    def test_inline_html_requires_open_producer_table(self):
+        for source in ("<span>`Critical`</span>",
+                       "<details><summary>Read `git show <head>:CHANGELOG.md`</summary></details>",
+                       "<table></table><span>`Critical`</span>"):
+            for preserve in (True, False):
+                with self.subTest(source=source, preserve=preserve):
+                    with self.assertRaises(ValueError):
+                        runtime.mask_review_code(source, preserve_offsets=preserve)
+            self.assertEqual("escalate", classify(review() + "\n" + source))
 
     def test_real_blockers_survive_inline_examples(self):
         for label in ("Must fix", "Critical", "Security concern", "Breaking change"):

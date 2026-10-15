@@ -2053,7 +2053,11 @@ body = ("## PR Reviewer Guide\n<table><tr><td>"
         "</summary>\n```html\n<head>\n" + "source " * 1000 + "\n```\n"
         "</details></td></tr></table>")
 result = runtime["fit_review"](body, 800, State, ("## PR Reviewer Guide",))
-assert len(result) <= 800 and "Verification: required" in result
+# #1967: complete inline code in producer HTML is supported; reduction must
+# preserve the real blocker and inline prose instead of synthesizing ambiguity.
+assert len(result) <= 800 and "<strong>Must fix</strong>" in result
+assert "Read `git show <head>:CHANGELOG.md`." in result
+assert "source " not in result and "Verification: required" not in result
 body = body.replace(" Read `git show <head>:CHANGELOG.md`.", " Visible finding.")
 result = runtime["fit_review"](body, 800, State, ("## PR Reviewer Guide",))
 assert len(result) <= 800 and "<strong>Must fix</strong>" in result

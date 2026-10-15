@@ -125,8 +125,11 @@ def mask_review_code(source, preserve_offsets=True):
             continue
         if source[index] == "`":
             in_html = bool(html_depth or html_block)
+            # Inline HTML is supported only while the producer review table
+            # is open; an isolated span/details is still ambiguous raw HTML.
             if (any(tag not in inline_tags for tag in html_depth)
-                    or html_block not in inline_tags | {None}):
+                    or html_block not in inline_tags | {None}
+                    or (in_html and "table" not in html_depth)):
                 raise ValueError("ambiguous backticks in HTML")
             if index > 0 and source[index - 1] == "\\":
                 raise ValueError("ambiguous escaped backtick")
