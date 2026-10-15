@@ -24,11 +24,29 @@ jobs:
       contents: read
     name: PR-Agent review
     steps:
-      - name: Check out the approved event revision
+      - name: Resolve the trusted PR base revision
+        id: trusted-base
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b  # v7
+        with:
+          script: |
+            const {data: pr} = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.issue.number,
+            });
+            if (pr.head.repo.full_name !== `${context.repo.owner}/${context.repo.repo}`) {
+              throw new Error('PR-Agent requires a same-repository pull request');
+            }
+            if (!/^[0-9a-f]{40}$/.test(pr.base.sha)) {
+              throw new Error('Cannot resolve the trusted PR base revision');
+            }
+            core.setOutput('sha', pr.base.sha);
+      - name: Check out the trusted PR base revision
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
-          # A comment request uses trusted workflow code, never PR-selected code.
-          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+          # All executable repository code and configuration come from this
+          # revision, including for /review requests targeting a non-default base.
+          ref: ${{ steps.trusted-base.outputs.sha }}
           persist-credentials: false
       - name: PR-Agent
         shell: bash

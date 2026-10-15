@@ -91,8 +91,9 @@ The workflow invokes the original PR-Agent action runner through
 [`pr-agent-runtime.py`](../../../../scripts/development-workflow/pr-agent-runtime.py).
 The launcher owns the immutable Docker image reference; its `--image` command
 prints that reference without importing PR-Agent or starting a review. Checkout
-uses the PR event's head revision for same-repository PR events and the trusted
-workflow revision for issue-comment events, with credentials not persisted.
+uses the PR base commit resolved through the GitHub API for both automatic
+pull-request reviews and `/review` issue-comment requests, including PRs targeting
+a non-default branch, with credentials not persisted.
 The container receives workspace/event/output mounts and the existing model
 configuration; secret values remain environment variables passed by name.
 
