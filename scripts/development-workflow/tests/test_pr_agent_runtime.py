@@ -796,6 +796,89 @@ class FittingTests(unittest.TestCase):
 
 
 class ConsumerDeliveryTests(unittest.TestCase):
+    def assert_trusted_workflow(self, source):
+        checkouts = re.findall(r'      - name: .*\n(?:        .*\n)*?        uses: actions/checkout@[^\n]+\n'
+                               r'        with:\n((?:          .*\n)+)', source)
+        self.assertEqual(1, len(checkouts))
+        self.assertIn('ref: ${{ steps.trusted-base.outputs.sha }}', checkouts[0])
+        self.assertIn('persist-credentials: false', checkouts[0])
+        self.assertIn('id: trusted-base', source)
+        self.assertRegex(source, r'uses: actions/github-script@[0-9a-f]{40}  # v7')
+        self.assertLess(source.index('id: trusted-base'), source.index('uses: actions/checkout@'))
+        self.assertLess(source.index('uses: actions/checkout@'), source.index('      - name: PR-Agent\n'))
+
+    def test_workflow_trusted_revision_contract(self):
+        source = (ROOT / '.github/workflows/pr-agent.yml').read_text()
+        self.assert_trusted_workflow(source)
+        for revision in ('github.event.pull_request.head.sha', 'github.sha',
+                         "github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha"):
+            with self.subTest(revision=revision):
+                changed = source.replace('steps.trusted-base.outputs.sha', revision)
+                with self.assertRaises(AssertionError):
+                    self.assert_trusted_workflow(changed)
+
+    @unittest.skipIf(IMAGE_SMOKE, 'workflow resolver runs on the GitHub host')
+    def test_workflow_resolves_actual_pr_base_for_every_trigger(self):
+        source = (ROOT / '.github/workflows/pr-agent.yml').read_text()
+        match = re.search(r'          script: \|\n((?:            [^\n]*\n)+)', source)
+        self.assertIsNotNone(match)
+        script = '\n'.join(line[12:] for line in match[1].splitlines())
+        harness = r'''
+const fs = require('fs');
+const input = JSON.parse(fs.readFileSync(0, 'utf8'));
+const calls = [], outputs = {};
+const github = {rest: {pulls: {get: async args => {
+  calls.push(args);
+  if (input.apiError) throw new Error('API unavailable');
+  return {data: input.pullRequest};
+}}}};
+const core = {setOutput: (key, value) => {outputs[key] = value;}};
+const AsyncFunction = Object.getPrototypeOf(async function() {}).constructor;
+(async () => {
+  let error = null;
+  try { await new AsyncFunction('github', 'context', 'core', input.script)(github, input.context, core); }
+  catch (failure) { error = failure.message; }
+  process.stdout.write(JSON.stringify({calls, outputs, error}));
+})();
+'''
+        base_sha = 'a' * 40
+        pull_request = {'base': {'sha': base_sha, 'ref': 'develop-product'},
+                        'head': {'sha': 'b' * 40, 'repo': {'full_name': 'example/product'}}}
+        context = {'repo': {'owner': 'example', 'repo': 'product'}, 'issue': {'number': 42},
+                   'sha': 'c' * 40, 'payload': {'repository': {'default_branch': 'main'}}}
+
+        def resolve(event_name, action, response=None, api_error=False):
+            event_context = {**context, 'eventName': event_name,
+                             'payload': {**context['payload'], 'action': action}}
+            if event_name == 'pull_request':
+                event_context['payload']['pull_request'] = {
+                    'base': {'sha': 'd' * 40}, 'head': {'sha': 'b' * 40}}
+            else:
+                event_context['payload'].update(issue={'number': 42, 'pull_request': {}},
+                                                comment={'body': '/review'})
+            result = subprocess.run(['node', '-e', harness], input=json.dumps({
+                'script': script, 'context': event_context, 'pullRequest': response or pull_request,
+                'apiError': api_error}), text=True, capture_output=True, check=True)
+            return json.loads(result.stdout)
+
+        for event, action in [('pull_request', action) for action in
+                              ('opened', 'reopened', 'ready_for_review', 'synchronize')] + [('issue_comment', 'created')]:
+            with self.subTest(event=event, action=action):
+                result = resolve(event, action)
+                self.assertEqual([{'owner': 'example', 'repo': 'product', 'pull_number': 42}], result['calls'])
+                self.assertEqual({'sha': base_sha}, result['outputs'])
+                self.assertIsNone(result['error'])
+        for sha in ('', ' ', 'a' * 39, 'a' * 41, 'g' * 40):
+            with self.subTest(invalid_base=sha):
+                result = resolve('issue_comment', 'created', {**pull_request, 'base': {'sha': sha}})
+                self.assertEqual({}, result['outputs'])
+                self.assertIsNotNone(result['error'])
+        for response, api_error in [({**pull_request, 'head': {'repo': {'full_name': 'other/product'}}}, False),
+                                    (pull_request, True)]:
+            result = resolve('issue_comment', 'created', response, api_error)
+            self.assertEqual({}, result['outputs'])
+            self.assertIsNotNone(result['error'])
+
     def test_product_sync_dependency(self):
         manifest = ROOT / 'sync-manifest.yaml'
         selector = ROOT / 'scripts/development-workflow/select-sync-manifest-entries.py'
@@ -832,7 +915,7 @@ class ConsumerDeliveryTests(unittest.TestCase):
         self.assertIn('types: [opened, reopened, ready_for_review, synchronize]', source)
         self.assertIn("github.event.comment.body == '/review'", source)
         self.assertIn('github.event.pull_request.head.repo.full_name == github.repository', source)
-        self.assertIn('ref: ${{ github.event_name == \'pull_request\' && github.event.pull_request.head.sha || github.sha }}', source)
+        self.assert_trusted_workflow(source)
         self.assertIn('persist-credentials: false', source)
         self.assertNotIn('pull_request_target:', source)
         for permission in ('issues: write', 'pull-requests: write', 'contents: read'):
