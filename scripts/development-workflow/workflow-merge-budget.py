@@ -2075,6 +2075,8 @@ def release_cleanup(args):
                 # Preserve worktrees; reuse the frozen participant already on
                 # the base, refusing tracked changes or ambiguous ownership.
                 if call(["git", "-C", git_root, "branch", "--list", pair["branch"]]):
+                    if call(["git", "-C", git_root, "status", "--porcelain", "--untracked-files=no"]):
+                        raise Stop("selected release worktree has tracked changes; local cleanup pending")
                     listing = call(["git", "-C", git_root, "worktree", "list", "--porcelain"])
                     bases = [block.splitlines()[0][9:] for block in listing.split("\n\n")
                              if "branch refs/heads/" + pair["backportBase"] in block.splitlines()]

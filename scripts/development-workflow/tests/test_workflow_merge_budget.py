@@ -1657,6 +1657,22 @@ class ReleaseScope(unittest.TestCase):
         self.data.setdefault('releaseClosers',{})[str(number)] = [{'__typename':'ClosedEvent','closer': {'__typename':'PullRequest',
             'number':number+100,'merged':True,'repository': {'nameWithOwner':repository},'mergeCommit': {'oid':commit}}}]
 
+    def test_release_head_rejected_before_ordinary_cleanup(self):
+        self.scope()
+        before = self.command(['git','show-ref']).stdout
+        for head in (self.release_head, 'invalid', ''):
+            with self.subTest(head=head):
+                self.data['events'] = []
+                self.fixture.write_text(json.dumps(self.data))
+                result = subprocess.run(['bash',str(self.scripts/'prepare-release-post-merge-cleanup.sh'),
+                    'v1.2.3','--from-changelog','--release-head',head,'--best-effort'],
+                    cwd=self.repo,env=self.env,text=True,capture_output=True)
+                self.assertEqual(result.returncode,2,result.stdout+result.stderr)
+                self.assertIn('--release-head',result.stderr)
+                self.assertNotIn('CHANGELOG_',result.stderr)
+                self.assertEqual(json.loads(self.fixture.read_text())['events'],[['auth','status']])
+                self.assertEqual(self.command(['git','show-ref']).stdout,before)
+
     def test_release_scope_boundary_references(self):
         self.assertEqual([i['id'] for i in self.scope('(#12), #13.\n')['issues']],['12','13'])
 
@@ -1842,6 +1858,30 @@ class ReleasePair(unittest.TestCase):
         else:
             self.assertNotEqual(result.returncode,0,result.stdout+result.stderr)
         return result
+
+    def test_release_head_rejected_for_non_child_session_caller(self):
+        self.assertEqual(self.begin()['outcome'],'Admitted')
+        result=self.cleanup(success=False,extra=('--release-head',self.head))
+        self.assertEqual(result.returncode,2,result.stdout+result.stderr)
+        self.assertIn('--release-head',result.stderr)
+        self.reload();self.assertNotIn('mergeArgv',self.data)
+        self.assertEqual(self.data.get('trackerMutationCount',0),0)
+        state=json.loads(Path(self.session).read_text())
+        self.assertEqual(state['prs'][1]['steps']['cleanup']['status'],'pending')
+
+    def test_release_head_child_must_match_frozen_head(self):
+        self.both()
+        tree=self.command(['git','rev-parse','HEAD^{tree}']).stdout.strip()
+        other=subprocess.run(['git','commit-tree',tree,'-p',self.head],cwd=self.repo,
+            input='same scope, different reviewed head\n',text=True,capture_output=True,check=True).stdout.strip()
+        result=self.step(13,'cleanup',argv=('bash',str(self.scripts/'prepare-release-post-merge-cleanup.sh'),
+            'v1.2.3','--merge-session',self.session,'--from-changelog','--release-head',other),success=False)
+        self.assertNotEqual(result.returncode,0)
+        self.reload();self.assertEqual(self.data.get('trackerMutationCount',0),0)
+        self.assertEqual(self.data.get('stampMutationCount',{}),{})
+        state=json.loads(Path(self.session).read_text())
+        self.assertEqual(state['outcome'],'Interrupted')
+        self.assertNotEqual(state['prs'][1]['steps']['cleanup']['status'],'completed')
 
     def test_release_pair_freezes_complete_duties_before_publication(self):
         self.candidate(14,self.head);self.save()
@@ -2404,6 +2444,57 @@ class ReleasePair(unittest.TestCase):
         self.assertEqual(self.command(['git','rev-parse','HEAD']).stdout.strip(),self.commits[13])
         self.reload();self.assertEqual(self.data['trackerMutationCount'],2)
         self.assertEqual(len(self.data['mergeArgv']),2)
+
+    def dirty_selected_worktree(self, staged):
+        main=self.repo
+        self.command(['git','switch','-q','develop'])
+        linked=self.root/'release-linked'
+        self.command(['git','worktree','add','-q',str(linked),'release/v1.2.3'])
+        shutil.copytree(self.scripts,linked/'scripts/development-workflow')
+        (main/'.git/info/exclude').write_text('/scripts/\n')
+        self.repo=linked;self.scripts=linked/'scripts/development-workflow'
+        prs=[dict(repo='org/repo',pr=n,head=self.head,base=b,root=str(linked),
+            phases=['merge_api','cleanup']) for n,b in ((12,'main'),(13,'develop'))]
+        self.assertEqual(self.begin(prs=prs)['outcome'],'Admitted')
+        self.merge(12);self.step(12,'merge_verify');self.published();self.step(12,'publication')
+        self.merge(13);self.step(13,'merge_verify')
+        self.command(['git','push','-q','origin',self.commits[12]+':refs/heads/main',self.commits[13]+':refs/heads/develop'])
+        self.reload();self.data['trackerStatuses']={'12':'Merged','13':'Merged'};self.save()
+        (linked/'base.txt').write_text('retain selected changes\n')
+        (linked/'untracked.txt').write_text('retain untracked file\n')
+        if staged:
+            self.command(['git','add','base.txt'])
+        before=self.command(['git','status','--porcelain','--untracked-files=no']).stdout
+        base_head=subprocess.check_output(['git','-C',str(main),'rev-parse','HEAD'],text=True).strip()
+        self.cleanup(success=False)
+        self.assertEqual(self.command(['git','status','--porcelain','--untracked-files=no']).stdout,before)
+        self.assertEqual(self.command(['git','branch','--show-current']).stdout.strip(),'release/v1.2.3')
+        self.assertEqual(self.command(['git','rev-parse','HEAD']).stdout.strip(),self.head)
+        self.assertEqual(subprocess.check_output(['git','-C',str(main),'rev-parse','HEAD'],text=True).strip(),base_head)
+        self.assertEqual((linked/'base.txt').read_text(),'retain selected changes\n')
+        self.assertTrue(main.is_dir() and linked.is_dir())
+        self.reload();self.assertEqual(self.data.get('trackerMutationCount',0),0)
+        self.assertEqual(self.data.get('stampMutationCount',{}),{})
+        state=json.loads(Path(self.session).read_text())
+        self.assertEqual(state['outcome'],'Interrupted')
+        local=[e for e in state['prs'][1]['steps'].values() if e['phase']=='local_cleanup']
+        self.assertEqual([e['status'] for e in local],['pending'])
+        # Restore only the fixture edit. Untracked files must not block recovery.
+        (linked/'base.txt').write_text('base\n')
+        self.command(['git','add','base.txt'])
+        self.helper('resume','--session',self.session)
+        self.cleanup()
+        self.assertEqual((linked/'untracked.txt').read_text(),'retain untracked file\n')
+        self.assertTrue(main.is_dir() and linked.is_dir())
+        self.assertEqual(self.command(['git','branch','--list','release/v1.2.3']).stdout,'')
+        self.reload();self.assertEqual(self.data['trackerMutationCount'],2)
+        self.assertEqual(len(self.data['mergeArgv']),2)
+
+    def test_release_pair_dirty_selected_unstaged_preserves_pending_cleanup(self):
+        self.dirty_selected_worktree(staged=False)
+
+    def test_release_pair_dirty_selected_staged_preserves_pending_cleanup(self):
+        self.dirty_selected_worktree(staged=True)
 
     def test_release_pair_provider_duties_require_verified_branch_cleanup(self):
         self.both()
