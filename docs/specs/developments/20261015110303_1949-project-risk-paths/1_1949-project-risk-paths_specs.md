@@ -104,6 +104,11 @@ are valid and both mean use built-in classification.
    The plan specifies the supported configuration shape and exact validation.
 8. Projects without a map need no migration. Their results remain unchanged
    except for the requested release-filename false-positive correction.
+   In particular, missing or empty changed-file evidence retains High risk.
+   That absence does not independently prohibit delegated merge: the existing
+   risk ceiling and all other merge gates still decide permission. With a High
+   ceiling and no other blocker, the current classifier may permit merge;
+   this run's Low ceiling does not permit it.
 9. Template sync ships support and guidance, not another project's categories.
    Consumer repositories choose their own map. No consumer is edited here.
 10. Classification remains read-only. A project map never grants merge,
@@ -123,7 +128,7 @@ precedence over ordinary matched and unmatched rows.
 | Valid map; ordinary file; one or more project matches | Highest matched project risk; all matched reasons | Continue existing gates | Classifier, match tests, guidance | Broad Low and narrow High both match → High |
 | Valid map; ordinary file; no project match | Built-in category | Continue existing gates | Classifier, regression tests | Unconfigured implementation path → Medium |
 | Per-file results available | Highest file risk, subject to existing PR signals | Existing risk/CI/review/checkpoint gates | Classifier and existing callers | Low docs plus High secrets → High |
-| Missing changed-file evidence | Existing fail-closed outcome | Obtain evidence; no delegated merge | Existing classifier contract | Empty changed-path list |
+| Valid configuration; missing or empty changed-file evidence | High risk, preserving existing behavior | Apply the existing risk ceiling and all other merge gates; absence alone adds no merge prohibition | Existing classifier contract and compatibility rule 8 | Empty changed-path list can pass a High ceiling, but not this run's Low ceiling |
 
 ## Operational Visibility
 
@@ -161,7 +166,9 @@ precedence over ordinary matched and unmatched rows.
 - [ ] AC7: Invalid maps and invalid matched or unmatched rules report a useful
   configuration error and cannot yield merge-eligible classification.
 - [ ] AC8: Mixed changed-file sets aggregate the highest per-file risk. Missing
-  changed-file evidence keeps the existing fail-closed behavior.
+  or empty changed-file evidence retains High risk without a new independent
+  merge prohibition: it may permit merge at a High ceiling when all other
+  gates pass, and cannot permit merge at this run's Low ceiling.
 - [ ] AC9: Automated regression tests cover AC1–AC8, including a planted attempt
   to lower a sensitive floor that fails and the corrected case that passes.
 - [ ] AC10: A maintainer can follow shipped guidance to declare categories,
