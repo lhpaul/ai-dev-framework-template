@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # covers: scripts/development-workflow/workflow-risk-paths.py
 # covers: scripts/development-workflow/run-epic-risk-classifier.sh
+# covers: scripts/development-workflow/workflow-config-resolver.py
 set -euo pipefail
 SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)"
 python3 - "$SCRIPT_DIR/../workflow-risk-paths.py" <<'PY'

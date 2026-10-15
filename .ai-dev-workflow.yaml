@@ -339,6 +339,14 @@ guardrails:
     pr_disposition_record: required
     work_item_ledger_record: required
 
+  # Optional project-owned categories; no rules are enabled by this example.
+  # Highest matching rule wins; sensitive/tooling High floors cannot be lowered.
+  # See docs/workflow/development-workflow/guardrails.md (Project Path Risk Maps).
+  # risk_paths:
+  #   - glob: "docs/store/**"
+  #     risk: medium
+  #     reason: "Store review package documentation"
+
 # No-target GitHub Projects scan reserve; whole numbers 0..5000 only.
 # Invalid/empty values warn and fall back to 1000 (Protocol 90 Step 1a).
 portfolio_scan:
