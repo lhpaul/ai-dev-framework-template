@@ -59,6 +59,7 @@ EVIDENCE_FILE=""
 JSON_OUTPUT=false
 INSPECT_TARGETS=false
 RELEASE_HEAD=""
+RELEASE_HEAD_SET=false
 RELEASE_TARGET_ROOT=""
 MERGE_SESSION=""
 SESSION_CHILD=false
@@ -1151,6 +1152,7 @@ while [ $# -gt 0 ]; do
     --release-head)
       [ $# -ge 2 ] || { usage; exit 2; }
       RELEASE_HEAD="$2"
+      RELEASE_HEAD_SET=true
       shift 2
       ;;
     --target-root)
@@ -1216,11 +1218,27 @@ if [ "$JSON_OUTPUT" = "true" ] && [ -n "$EVIDENCE_FILE" ]; then
   COMPONENT_JSON_MODE=true
 fi
 
+if [ "$RELEASE_HEAD_SET" = "true" ] && [[ ! "$RELEASE_HEAD" =~ ^[0-9a-f]{40}$ ]]; then
+  echo "--release-head requires a full reviewed commit SHA." >&2
+  exit 2
+fi
 if [ -n "$MERGE_SESSION" ] && [ -n "${WORKFLOW_MERGE_BUDGET_TOKEN:-}" ]; then
-  child_binding="$(python3 "$SCRIPT_DIR/workflow-merge-budget.py" check --session "$MERGE_SESSION" \
-    --repo "${WORKFLOW_MERGE_BUDGET_REPO:-}" --pr "${WORKFLOW_MERGE_BUDGET_PR:-0}" \
-    --phase cleanup --executor-pid "$$")"
+  child_check_args=(check --session "$MERGE_SESSION"
+    --repo "${WORKFLOW_MERGE_BUDGET_REPO:-}" --pr "${WORKFLOW_MERGE_BUDGET_PR:-0}"
+    --phase cleanup --executor-pid "$$")
+  if [ "$RELEASE_HEAD_SET" = "true" ]; then
+    child_check_args+=(--head "$RELEASE_HEAD")
+  fi
+  child_binding="$(python3 "$SCRIPT_DIR/workflow-merge-budget.py" ${child_check_args[@]+"${child_check_args[@]}"})"
   SESSION_CHILD="$(printf '%s' "$child_binding" | jq -r '.nestedExecutionAuthorized')"
+fi
+# Reject before component leases or CHANGELOG extraction can use caller scope.
+if [ "$RELEASE_HEAD_SET" = "true" ] && [ "$INSPECT_TARGETS" != "true" ]; then
+  if [ "$SESSION_CHILD" != "true" ] || ! printf '%s' "$child_binding" | jq -e --arg head "$RELEASE_HEAD" \
+    '.releasePair != null and .releasePair.head == $head and .selectedPR == .releasePair.backportPr' >/dev/null; then
+    echo "--release-head is only supported for read-only --inspect-targets or the authenticated owning release cleanup child." >&2
+    exit 2
+  fi
 fi
 validate_component_release_cleanup "$HUB_REPO_ROOT"
 if [ -n "$RELEASE_TARGET_ROOT" ] && [ -n "$COMPONENT_TARGET_FILE" ] && \

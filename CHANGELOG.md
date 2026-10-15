@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.48.3] - 2026-10-14
+
+### Fixed
+
+- **Safe release cleanup** (#1958): leave cleanup pending when the selected release worktree has staged or unstaged tracked edits, preserving its changes even when the base worktree is clean. Restrict `--release-head` to read-only inspection or an authenticated cleanup child bound to the frozen release head.
+- **PR-Agent Markdown code handling** (#1959): exclude simple single-line inline code and well-closed fences from HTML validation while retaining fail-closed escalation for ambiguous delimiters, multiline spans and backticks in raw HTML. Preserve closed source fences in producer HTML during bounded publication without discarding visible findings.
+
 ## [0.48.2] - 2026-10-14
 
 ### Fixed
@@ -3331,7 +3338,8 @@ Known limitation: human-verification headings split by HTML comments can still b
 - `.claude/settings.json` with pre-approved permissions for common git and fetch operations; `.claude/settings.local.json.example` documenting machine-specific overrides for optional integrations
 - `.gitignore` covering local Claude settings, `.env` files, and common system files
 
-[Unreleased]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.48.2...HEAD
+[Unreleased]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.48.3...HEAD
+[0.48.3]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.48.2...v0.48.3
 [0.48.2]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.48.1...v0.48.2
 [0.48.1]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.48.0...v0.48.1
 [0.48.0]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.47.1...v0.48.0

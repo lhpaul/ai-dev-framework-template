@@ -69,11 +69,109 @@ def fence_spans(source):
     return spans
 
 
-def mask_fences(source):
-    """Ignore source-example tags while retaining exact source offsets."""
-    for start, end in reversed(fence_spans(source)):
-        source = source[:start] + re.sub(r"[^\r\n]", " ", source[start:end]) + source[end:]
-    return source
+def mask_review_code(source, preserve_offsets=True):
+    """Exclude simple single-line code and closed fences; reject ambiguity."""
+    parts = []
+    index = 0
+    html_depth = []
+    html_block = None
+    opener = re.compile(r"[ \t]*(`{3,}|~{3,})[^\r\n]*(?:\r?\n|$)")
+    html = re.compile(r"<\s*/?\s*[A-Za-z]|<!|<\?")
+
+    def masked(start, end):
+        content = source[start:end]
+        if preserve_offsets:
+            return re.sub(r"[^\r\n]", " ", content)
+        return " " + "".join(char for char in content if char in "\r\n")
+
+    while index < len(source):
+        if index == 0 or source[index - 1] == "\n":
+            line_end = source.find("\n", index)
+            line_end = len(source) if line_end < 0 else line_end
+            if not source[index:line_end].strip():
+                html_block = None
+            fence = opener.match(source, index)
+            if fence:
+                producer_tags = {"table", "tbody", "thead", "tfoot", "tr", "td", "th", "details"}
+                if (any(tag not in producer_tags for tag in html_depth)
+                        or (html_block not in producer_tags | {None, "summary"}
+                            and not (html_depth and html_block == "strong"))):
+                    raise ValueError("ambiguous fence in raw HTML")
+                indent = re.match(r"[ \t]*", source[index:]).group()
+                if "\t" in indent or len(indent) > 3:
+                    raise ValueError("unsupported source fence indentation")
+                marker = fence.group(1)
+                if marker[0] == "`" and "`" in source[fence.end(1):fence.end()]:
+                    raise ValueError("invalid source fence info string")
+                closing = re.compile(
+                    r"^ {0,3}" + re.escape(marker[0]) + r"{" + str(len(marker))
+                    + r",}[ \t]*(?:\r?\n|$)", re.M,
+                ).search(source, fence.end())
+                if closing is None:
+                    raise ValueError("unclosed source fence")
+                parts.append(masked(index, closing.end()))
+                index = closing.end()
+                continue
+        if source.startswith("<!--", index):
+            end = source.find("-->", index + 4)
+            if end < 0:
+                raise ValueError("unclosed source comment")
+            end += 3
+            # Complete comments are opaque; their fence-like text is never code.
+            parts.append(source[index:end])
+            index = end
+            continue
+        if source[index] == "`":
+            if html_depth or html_block:
+                raise ValueError("ambiguous backticks in HTML")
+            if index > 0 and source[index - 1] == "\\":
+                raise ValueError("ambiguous escaped backtick")
+            if source.startswith("``", index):
+                raise ValueError("unsupported inline delimiter")
+            end = source.find("`", index + 1)
+            if end < 0:
+                raise ValueError("unmatched inline delimiter")
+            content = source[index + 1:end]
+            if (not content or re.search(r"[\r\n\v\f\x85\u2028\u2029]", content)
+                    or content.endswith("\\") or source.startswith("``", end)):
+                raise ValueError("ambiguous inline span")
+            parts.append(masked(index, end + 1))
+            index = end + 1
+            continue
+        if html.match(source, index):
+            end = index + 1
+            quote = None
+            while end < len(source):
+                char = source[end]
+                if quote:
+                    if char == quote:
+                        quote = None
+                elif char in ("\"", "'"):
+                    quote = char
+                elif char == ">":
+                    end += 1
+                    break
+                end += 1
+            tag = source[index:end]
+            if "`" in tag:
+                raise ValueError("ambiguous backticks in HTML tag")
+            line_start = source.rfind("\n", 0, index) + 1
+            name = re.match(r"<\s*(/?)\s*([A-Za-z][A-Za-z0-9-]*)", tag)
+            if name:
+                closing, tag_name = name.group(1), name.group(2).lower()
+                if not source[line_start:index].strip():
+                    html_block = tag_name
+                if closing:
+                    if html_depth and html_depth[-1] == tag_name:
+                        html_depth.pop()
+                elif tag_name not in VOID_TAGS:
+                    html_depth.append(tag_name)
+            parts.append(tag)
+            index = end
+            continue
+        parts.append(source[index])
+        index += 1
+    return "".join(parts)
 
 
 def has_status_evidence(source):
@@ -96,7 +194,7 @@ class ReviewSpans(HTMLParser):
             self.offsets.append(match.end())
         self.stack = []
         self.nodes = []
-        self.feed(mask_fences(source))
+        self.feed(mask_review_code(source))
         self.close()
         if self.stack:
             raise ValueError("unbalanced review markup")
