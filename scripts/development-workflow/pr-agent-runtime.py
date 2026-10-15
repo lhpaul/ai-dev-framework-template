@@ -75,6 +75,10 @@ def mask_review_code(source, preserve_offsets=True):
     index = 0
     html_depth = []
     html_block = None
+    producer_table_closed = False
+    resolved_history = False
+    inline_tags = {"table", "tbody", "thead", "tfoot", "tr", "td", "th",
+                   "details", "summary", "strong", "a", "b", "em", "span"}
     opener = re.compile(r"[ \t]*(`{3,}|~{3,})[^\r\n]*(?:\r?\n|$)")
     html = re.compile(r"<\s*/?\s*[A-Za-z]|<!|<\?")
 
@@ -83,6 +87,26 @@ def mask_review_code(source, preserve_offsets=True):
         if preserve_offsets:
             return re.sub(r"[^\r\n]", " ", content)
         return " " + "".join(char for char in content if char in "\r\n")
+
+    def html_markup_only(content):
+        # Quoted HTML may be a fragment: do not require balanced tags here.
+        # Text between tags is part of an element; prose outside is a mixture.
+        if content.strip() in {"<", "</", "<!", "<!--", "<?"}:
+            return True
+        depth = 0
+        end = 0
+        for token in re.finditer(r"<!--.*?-->|<\?.*?\?>|</?[A-Za-z][^<>]*>", content):
+            if content[end:token.start()].strip() and depth == 0:
+                return False
+            tag = token.group()
+            if tag.startswith("</"):
+                depth = max(0, depth - 1)
+            elif not tag.startswith(("<!", "<?")) and not tag.endswith("/>"):
+                name = re.match(r"<([A-Za-z][A-Za-z0-9-]*)", tag).group(1).lower()
+                if name not in VOID_TAGS:
+                    depth += 1
+            end = token.end()
+        return end > 0 and not content[end:].strip()
 
     while index < len(source):
         if index == 0 or source[index - 1] == "\n":
@@ -122,7 +146,15 @@ def mask_review_code(source, preserve_offsets=True):
             index = end
             continue
         if source[index] == "`":
-            if html_depth or html_block:
+            in_html = bool(html_depth or html_block)
+            history_markdown = (resolved_history and html_depth == ["details"]
+                                and html_block is None)
+            # The producer emits inline Markdown in its table and in the
+            # canonical resolved-history details body after that table. Raw
+            # standalone HTML remains unsupported.
+            if (any(tag not in inline_tags for tag in html_depth)
+                    or html_block not in inline_tags | {None}
+                    or (in_html and "table" not in html_depth and not history_markdown)):
                 raise ValueError("ambiguous backticks in HTML")
             if index > 0 and source[index - 1] == "\\":
                 raise ValueError("ambiguous escaped backtick")
@@ -135,6 +167,12 @@ def mask_review_code(source, preserve_offsets=True):
             if (not content or re.search(r"[\r\n\v\f\x85\u2028\u2029]", content)
                     or content.endswith("\\") or source.startswith("``", end)):
                 raise ValueError("ambiguous inline span")
+            # Complete HTML-only code is literal, including tag fragments.
+            # Mixed prose/HTML cannot swallow raw boundaries. Nested raw HTML
+            # outside the admitted producer contexts was already refused.
+            if (in_html and not history_markdown and not html_markup_only(content)
+                    and re.search(r"<\s*/|<!|<\?", content)):
+                raise ValueError("inline span crosses HTML markup")
             parts.append(masked(index, end + 1))
             index = end + 1
             continue
@@ -159,11 +197,21 @@ def mask_review_code(source, preserve_offsets=True):
             name = re.match(r"<\s*(/?)\s*([A-Za-z][A-Za-z0-9-]*)", tag)
             if name:
                 closing, tag_name = name.group(1), name.group(2).lower()
+                if (not closing and tag_name == "details" and not html_depth
+                        and producer_table_closed
+                        and re.match(r"<details>\s*<summary>✅ Resolved findings</summary>"
+                                     r"[ \t]*\r?\n[ \t]*\r?\n", source[index:])):
+                    resolved_history = True
                 if not source[line_start:index].strip():
                     html_block = tag_name
                 if closing:
                     if html_depth and html_depth[-1] == tag_name:
                         html_depth.pop()
+                        if not html_depth:
+                            if tag_name == "table":
+                                producer_table_closed = True
+                            if tag_name == "details":
+                                resolved_history = False
                 elif tag_name not in VOID_TAGS:
                     html_depth.append(tag_name)
             parts.append(tag)
