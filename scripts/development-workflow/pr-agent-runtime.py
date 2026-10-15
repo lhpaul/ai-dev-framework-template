@@ -75,6 +75,8 @@ def mask_review_code(source, preserve_offsets=True):
     index = 0
     html_depth = []
     html_block = None
+    inline_tags = {"table", "tbody", "thead", "tfoot", "tr", "td", "th",
+                   "details", "summary", "strong", "a", "b", "em", "span"}
     opener = re.compile(r"[ \t]*(`{3,}|~{3,})[^\r\n]*(?:\r?\n|$)")
     html = re.compile(r"<\s*/?\s*[A-Za-z]|<!|<\?")
 
@@ -122,7 +124,9 @@ def mask_review_code(source, preserve_offsets=True):
             index = end
             continue
         if source[index] == "`":
-            if html_depth or html_block:
+            in_html = bool(html_depth or html_block)
+            if (any(tag not in inline_tags for tag in html_depth)
+                    or html_block not in inline_tags | {None}):
                 raise ValueError("ambiguous backticks in HTML")
             if index > 0 and source[index - 1] == "\\":
                 raise ValueError("ambiguous escaped backtick")
@@ -135,6 +139,10 @@ def mask_review_code(source, preserve_offsets=True):
             if (not content or re.search(r"[\r\n\v\f\x85\u2028\u2029]", content)
                     or content.endswith("\\") or source.startswith("``", end)):
                 raise ValueError("ambiguous inline span")
+            # A span may contain a literal placeholder such as <head>, but
+            # must never swallow a container boundary or opaque HTML comment.
+            if in_html and re.search(r"<\s*/|<!|<\?", content):
+                raise ValueError("inline span crosses HTML markup")
             parts.append(masked(index, end + 1))
             index = end + 1
             continue

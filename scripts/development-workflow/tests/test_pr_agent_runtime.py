@@ -98,6 +98,193 @@ def classify(body):
     ).stdout.strip()
 
 
+# Complete producer comments from #1967; issuecomment ids 6180457309 / 6192010352.
+HTML_INLINE_REVIEWS = {
+    '1966': r'''## PR Reviewer Guide 🔍
+
+<!-- pr-agent:review:full -->
+
+Here are some key observations to aid the review process:
+
+<table>
+<tr><td>⏱️&nbsp;<strong>Estimated effort to review</strong>: 3 🔵🔵🔵⚪⚪</td></tr>
+<tr><td>🧪&nbsp;<strong>PR contains tests</strong></td></tr>
+<tr><td>🔒&nbsp;<strong>No security concerns identified</strong></td></tr>
+<tr><td>⚡&nbsp;<strong>Recommended focus areas for review</strong><br><br>
+
+<details><summary><a href='https://github.com/lhpaul/ai-dev-framework-template/pull/1966/files#diff-5fa4b162a9e57de4f6e9dfcb5398951dacfdc660caae3d8f8daf42962921dc46R1236-R1242'><strong>Possible Issue</strong></a>
+
+The new `--release-head` authorization check reads `$child_binding` and `$SESSION_CHILD`, but these are only assigned inside the `if [ -n "$MERGE_SESSION" ] && [ -n "${WORKFLOW_MERGE_BUDGET_TOKEN:-}" ]` block. When a caller passes `--release-head` without a merge session (or without the budget token), `child_binding` is unset. Under `set -u` (nounset, used by these scripts) the `printf '%s' "$child_binding"` in the rejection branch would abort with an unbound-variable error rather than the intended exit 2 message. The guard should default `child_binding` (e.g. `child_binding=""`) before the check, or test `$SESSION_CHILD` first. Note: the added test `test_release_head_rejected_before_ordinary_cleanup` passes `--release-head` without a session, so if that test passes it may indicate the variable is initialized elsewhere in the file — verify the initialization before treating this as confirmed.
+</summary>
+
+```shell
+if [ "$RELEASE_HEAD_SET" = "true" ] && [ "$INSPECT_TARGETS" != "true" ]; then
+  if [ "$SESSION_CHILD" != "true" ] || ! printf '%s' "$child_binding" | jq -e --arg head "$RELEASE_HEAD" \
+    '.releasePair != null and .releasePair.head == $head and .selectedPR == .releasePair.backportPr' >/dev/null; then
+    echo "--release-head is only supported for read-only --inspect-targets or the authenticated owning release cleanup child." >&2
+    exit 2
+  fi
+fi
+```
+
+</details>
+
+</td></tr>
+</table>
+
+<!-- pr-agent-review-state:v1
+{"findings":[{"body":"**Possible Issue**\n\nThe new `--release-head` authorization check reads `$child_binding` and `$SESSION_CHILD`, but these are only assigned inside the `if [ -n \"$MERGE_SESSION\" ] && [ -n \"${WORKFLOW_MERGE_BUDGET_TOKEN:-}\" ]` block. When a caller passes `--release-head` without a merge session (or without the budget token), `child_binding` is unset. Under `set -u` (nounset, used by these scripts) the `printf '%s' \"$child_binding\"` in the rejection branch would abort with an unbound-variable error rather than the intended exit 2 message. The guard should default `child_binding` (e.g. `child_binding=\"\"`) before the check, or test `$SESSION_CHILD` first. Note: the added test `test_release_head_rejected_before_ordinary_cleanup` passes `--release-head` without a session, so if that test passes it may indicate the variable is initialized elsewhere in the file — verify the initialization before treating this as confirmed.","finding_id":"a31a4f1947d3","first_seen":"2026-10-14T23:06:44.710516Z","last_seen":"2026-10-14T23:06:44.710516Z","last_seen_head_sha":"73d1bd159b1b1bd1f52459ecc33939ee78b826a6","line_end":1242,"line_start":1236,"path":"scripts/development-workflow/prepare-release-post-merge-cleanup.sh","state":"ACTIVE"}],"last_run":{"complete":true,"excluded_files":[],"head_sha":"73d1bd159b1b1bd1f52459ecc33939ee78b826a6","kind":"full","run_id":"https://github.com/lhpaul/ai-dev-framework-template/commit/73d1bd159b1b1bd1f52459ecc33939ee78b826a6"},"schema_version":1}
+-->
+
+''',
+    '1974': r'''## PR Reviewer Guide 🔍
+
+<!-- pr-agent:review:full -->
+
+#### (Review updated until commit https://github.com/lhpaul/ai-dev-framework-template/commit/76a0820f0f899398040511c40c16182a8aaab127)
+
+
+Here are some key observations to aid the review process:
+
+<table>
+<tr><td>⏱️&nbsp;<strong>Estimated effort to review</strong>: 4 🔵🔵🔵🔵⚪</td></tr>
+<tr><td>🧪&nbsp;<strong>PR contains tests</strong></td></tr>
+<tr><td>🔒&nbsp;<strong>No security concerns identified</strong></td></tr>
+<tr><td>⚡&nbsp;<strong>Recommended focus areas for review</strong><br><br>
+
+<details><summary><a href='https://github.com/lhpaul/ai-dev-framework-template/pull/1974/files#diff-69990674c60490161235d30d9b51b9c6d186bdee2ab0fa8e1029dca6abb9858fR365-R378'><strong>Possible Issue</strong></a>
+
+The `protected_risk_path` function matches release tooling with patterns like `scripts/*release*.sh`, `.github/workflows/*release*`, and `.agents/skills/*release*/*`. These use `*` which in shell `case` matches across `/` boundaries, so a path such as `scripts/development-workflow/prepare-release-post-merge-cleanup.sh` matches `scripts/*release*.sh` (intended), but also a nested path like `scripts/foo/bar/release-helper.sh` would match. More importantly, the pattern `.github/workflows/*release*` will match any workflow whose name contains `release` anywhere, including `deploy-release-notes.yml`, which is the intended conservative behavior. This is likely intentional, but verify that the broad `*release*` matching does not re-introduce the false-positive class the PR aims to fix for paths under `scripts/` that merely mention release in a subdirectory name (e.g. `scripts/docs/release-notes.md` would not match since it requires `.sh`/`.py`). Confirm the tooling-root scoping is as narrow as the plan intends.
+</summary>
+
+```shell
+protected_risk_path() {
+  case "$1" in
+    scripts/*release*.sh|scripts/*release*.py|.github/workflows/*release*|\
+    .claude/commands/*release*.md|.cursor/commands/*release*.md|\
+    .agents/skills/*release*/*|.codex/skills/*release*/*|\
+    *branch-deletion*|*delete-branch*|\
+    auth/*|*/auth/*|*/auth|authentication/*|*/authentication/*|*/authentication|\
+    secret/*|*/secret/*|*/secret|secrets/*|*/secrets/*|*/secrets|\
+    credential/*|*/credential/*|*/credential|credentials/*|*/credentials/*|*/credentials|\
+    permission/*|*/permission/*|*/permission|permissions/*|*/permissions/*|*/permissions)
+      return 0 ;;
+  esac
+  return 1
+}
+```
+
+</details>
+
+<details><summary><a href='https://github.com/lhpaul/ai-dev-framework-template/pull/1974/files#diff-c6cd4825f13ea12046fe63020bbb4ae7cda1684a24d681b71e8e54b06b72acafR82-R98'><strong>Possible Issue</strong></a>
+
+In `select_map`, when `mode == "workflow_hub"` and `own_map` is present but no product maps exist, and no product identity is supplied, the code falls through to `raise RiskPathError("project risk map requires an unambiguous project identity")` only when `product_maps` is non-empty. When `all(node is MISSING for node in product_maps)` is true and `own_map` is not MISSING, the `elif all(...)` branch returns `own_map`. This means a hub with a top-level map but no product maps and no selector silently uses the hub map for any product, which may be intended. However, if `product_maps` is non-empty but the selected product has no map, `map_node` returns MISSING and `rules_from_node` yields no rules, so the product silently gets built-ins rather than the hub map — verify this matches the documented "absent product rules use built-ins and never inherit sibling or hub categories" behavior. The concern is whether a product entry that omits `guardrails` is distinguishable from one that intends to inherit; the docs say it should not inherit, so this appears correct, but the fall-through ordering deserves a test for the mixed case (some products mapped, some not).
+</summary>
+
+```python
+if selected:
+    candidates = [repo for repo in repos if repo["name"] == selected]
+elif slug:
+    if slug == reader.parse_remote_slug(root):
+        return own_map, location
+    candidates = [repo for repo in repos if repo_slug(repo) == slug]
+elif all(node is MISSING for node in product_maps):
+    return own_map, location
+else:
+    raise RiskPathError("project risk map requires an unambiguous project identity")
+if len(candidates) != 1:
+    raise RiskPathError("project risk map target is unknown or ambiguous")
+selected_repo = candidates[0]
+if slug and repo_slug(selected_repo) != slug:
+    raise RiskPathError("project risk map selector and evidence repository disagree")
+location = "workflow_hub.product_repos[].guardrails.risk_paths"
+return map_node(selected_repo, "selected product"), location
+```
+
+</details>
+
+</td></tr>
+</table>
+
+<!-- pr-agent-review-state:v1
+{"findings":[{"body":"**Possible Issue**\n\nThe `changed_file_risk` function now rebuilds `file_reasons` for each file and appends to the global `reasons` array. For files that match the `scripts/development-workflow/tests/*|test/*|tests/*` case, `file_risk` remains `low` and a reason is appended. However, if a project map matches the same file with a higher risk, the project risk overrides `file_risk` but the built-in reason is still appended. This means the reasons array may contain both the built-in \"low-risk docs or tests change\" reason and the project reason, even though the final risk is higher. This is likely intentional for visibility, but could be confusing. The test `mapped_reason_is_visible` checks for project reason presence, not absence of built-in reasons.","finding_id":"3443f7ae914b","first_seen":"2026-10-15T12:26:28.618644Z","last_seen":"2026-10-15T12:26:28.618644Z","last_seen_head_sha":"76a0820f0f899398040511c40c16182a8aaab127","line_end":418,"line_start":407,"path":"scripts/development-workflow/run-epic-risk-classifier.sh","state":"ACTIVE"},{"body":"**Possible Issue**\n\nThe `protected_risk_path` function matches release tooling with patterns like `scripts/*release*.sh`, `.github/workflows/*release*`, and `.agents/skills/*release*/*`. These use `*` which in shell `case` matches across `/` boundaries, so a path such as `scripts/development-workflow/prepare-release-post-merge-cleanup.sh` matches `scripts/*release*.sh` (intended), but also a nested path like `scripts/foo/bar/release-helper.sh` would match. More importantly, the pattern `.github/workflows/*release*` will match any workflow whose name contains `release` anywhere, including `deploy-release-notes.yml`, which is the intended conservative behavior. This is likely intentional, but verify that the broad `*release*` matching does not re-introduce the false-positive class the PR aims to fix for paths under `scripts/` that merely mention release in a subdirectory name (e.g. `scripts/docs/release-notes.md` would not match since it requires `.sh`/`.py`). Confirm the tooling-root scoping is as narrow as the plan intends.","finding_id":"3960ab9411ef","first_seen":"2026-10-15T12:28:02.850774Z","last_seen":"2026-10-15T12:28:02.850774Z","last_seen_head_sha":"76a0820f0f899398040511c40c16182a8aaab127","line_end":378,"line_start":365,"path":"scripts/development-workflow/run-epic-risk-classifier.sh","state":"ACTIVE"},{"body":"**Possible Issue**\n\nIn `select_map`, when `mode == \"workflow_hub\"` and `own_map` is present but no product maps exist, and no product identity is supplied, the code falls through to `raise RiskPathError(\"project risk map requires an unambiguous project identity\")` only when `product_maps` is non-empty. When `all(node is MISSING for node in product_maps)` is true and `own_map` is not MISSING, the `elif all(...)` branch returns `own_map`. This means a hub with a top-level map but no product maps and no selector silently uses the hub map for any product, which may be intended. However, if `product_maps` is non-empty but the selected product has no map, `map_node` returns MISSING and `rules_from_node` yields no rules, so the product silently gets built-ins rather than the hub map — verify this matches the documented \"absent product rules use built-ins and never inherit sibling or hub categories\" behavior. The concern is whether a product entry that omits `guardrails` is distinguishable from one that intends to inherit; the docs say it should not inherit, so this appears correct, but the fall-through ordering deserves a test for the mixed case (some products mapped, some not).","finding_id":"55f491a5f239","first_seen":"2026-10-15T12:28:02.850774Z","last_seen":"2026-10-15T12:28:02.850774Z","last_seen_head_sha":"76a0820f0f899398040511c40c16182a8aaab127","line_end":98,"line_start":82,"path":"scripts/development-workflow/workflow-risk-paths.py","state":"ACTIVE"},{"body":"**Possible Issue**\n\nThe `protected_risk_path` function is invoked before the built-in `case` categories, and it returns `high` for any path matching `scripts/*release*.sh`. However, the previous `*release*` pattern was intentionally broad and also covered release-named docs. The new function narrows release detection to tooling roots, which is the stated intent. The concern is that `protected_risk_path` is checked first and sets `floor_reason`, but the subsequent `case` block for `.github/workflows/*` can also set `floor_reason` for non-test/lint workflows. If a file matches both `protected_risk_path` (e.g., `.github/workflows/*release*`) and the `.github/workflows/*` case, the `floor_reason` from `protected_risk_path` is set, then the `case` block runs and may overwrite `floor_reason` with the same or a different message. Since both set `file_risk=\"high\"`, the final risk is correct, but the reason text may be duplicated or replaced. This is a minor cosmetic issue, not a correctness bug, but worth confirming the reason aggregation is as intended.","finding_id":"6e81189b04dc","first_seen":"2026-10-15T12:26:28.618644Z","last_seen":"2026-10-15T12:26:28.618644Z","last_seen_head_sha":"76a0820f0f899398040511c40c16182a8aaab127","line_end":405,"line_start":391,"path":"scripts/development-workflow/run-epic-risk-classifier.sh","state":"ACTIVE"},{"body":"**Possible Issue**\n\nIn `select_map`, when `mode == \"workflow_hub\"` and `own_map` is not MISSING but `product_maps` are all MISSING, the function proceeds to select a product. If `selected` is empty and `slug` is empty, it falls through to `elif all(node is MISSING for node in product_maps): return own_map, location`. This is correct. However, if `selected` is provided but no product matches, `candidates` is empty and `len(candidates) != 1` raises an error. This is intended. The concern is the case where `slug` matches the hub remote (`slug == reader.parse_remote_slug(root)`) and `own_map` is MISSING but product maps exist. The function returns `own_map` (MISSING) and location, which means no rules are applied. This is correct for hub-owned files, but if the hub remote slug is provided as evidence for a product file, it would incorrectly use hub policy. The test `test_project_isolation_and_explicit_priority` covers this, so it appears intentional.","finding_id":"a6236f8c966e","first_seen":"2026-10-15T12:26:28.618644Z","last_seen":"2026-10-15T12:26:28.618644Z","last_seen_head_sha":"76a0820f0f899398040511c40c16182a8aaab127","line_end":89,"line_start":82,"path":"scripts/development-workflow/workflow-risk-paths.py","state":"ACTIVE"}],"last_run":{"complete":true,"excluded_files":[],"head_sha":"76a0820f0f899398040511c40c16182a8aaab127","kind":"full","run_id":"https://github.com/lhpaul/ai-dev-framework-template/commit/76a0820f0f899398040511c40c16182a8aaab127"},"schema_version":1}
+-->
+
+''',
+}
+
+
+class InlineProducerHTMLTests(unittest.TestCase):
+    def labels(self, body):
+        return subprocess.run(
+            ["bash", str(ROOT / "scripts/development-workflow/apply-readiness-labels.sh"),
+             "--pr-agent-focus-labels"], input=body, text=True, capture_output=True, check=True,
+        ).stdout.strip().splitlines()
+
+    def finding(self, content, label="Possible Issue"):
+        return review(True).replace("Must fix", label).replace(
+            "The original blocker must remain visible.", content)
+
+    def test_complete_real_reviews(self):
+        for name, body in HTML_INLINE_REVIEWS.items():
+            with self.subTest(pr=name):
+                self.assertEqual("clean", classify(body))
+                self.assertTrue(self.labels(body))
+                self.assertEqual({"Possible Issue"}, set(self.labels(body)))
+                parsed = runtime.ReviewSpans(body)
+                self.assertEqual(body, parsed.source)
+
+    def test_leasity_minimal_and_supported_containers(self):
+        for content in ("Read `git show <head>:CHANGELOG.md`.",
+                        "Read `known_helper()` and `--release-head`."):
+            for wrapper in ("{}", "<a href='url'>{}</a>",
+                            "<b>{}</b>", "<em>{}</em>", "<span>{}</span>"):
+                with self.subTest(content=content, wrapper=wrapper):
+                    body = self.finding(wrapper.format(content))
+                    self.assertEqual("clean", classify(body))
+                    self.assertEqual(["Possible Issue"], self.labels(body))
+        for tag in ("table", "tbody", "thead", "tfoot", "tr", "td", "th",
+                    "details", "summary"):
+            body = review() + "\n<" + tag + ">Use `helper()`.</" + tag + ">\n"
+            self.assertEqual("clean", classify(body), tag)
+
+    def test_real_blockers_survive_inline_examples(self):
+        for label in ("Must fix", "Critical", "Security concern", "Breaking change"):
+            body = self.finding("Read `helper()`.", label)
+            self.assertEqual("needs_fixes", classify(body))
+            self.assertEqual([label], self.labels(body))
+        body = self.finding("Example: `<strong>Must fix</strong>`.")
+        self.assertEqual("escalate", classify(body))
+
+    def test_quoted_code_and_comments_cannot_supply_clean_evidence(self):
+        for sample in ("`No major issues detected`", "<!-- No major issues detected -->",
+                       '<span title="No major issues detected">example</span>'):
+            body = "<details><summary>" + sample + "</summary></details>"
+            self.assertEqual("escalate", classify(body))
+        body = self.finding("`Possible Issue`").replace("<strong>Possible Issue</strong>", "")
+        self.assertNotEqual("clean", classify(body))
+
+    def test_unsupported_and_ambiguous_inputs_still_escalate(self):
+        for content in ("`unclosed", "``double``", "`two\nlines`", "`trailing\\`",
+                        "\\`escaped`", "`</summary><strong>Must fix</strong>`",
+                        "`<!-- hidden -->`", "<div>`helper()`</div>",
+                        '<a title="`helper()`">text</a>',
+                        "<a title=bad`attribute`>text</a>"):
+            with self.subTest(content=content):
+                self.assertEqual("escalate", classify(self.finding(content)))
+        body = self.finding("`helper()`").replace("</summary>", "</details>", 1)
+        self.assertEqual("escalate", classify(body))
+
+    def test_mask_offsets_and_original_prose(self):
+        body = self.finding("Read `helper()` then act.")
+        masked = runtime.mask_review_code(body)
+        self.assertEqual(len(body), len(masked))
+        self.assertEqual(body.count("\n"), masked.count("\n"))
+        self.assertIn(" then act.", masked)
+        self.assertIn("<strong>Possible Issue</strong>", masked)
+        self.assertNotIn("helper()", masked)
+
+
 class FittingTests(unittest.TestCase):
     def fit(self, body, limit=65000):
         result = runtime.fit_review(body, limit, STATE, HEADERS)
