@@ -1990,7 +1990,7 @@ fixture_test_1946 ticket_blocker needs_fixes "${_fixture_ticket_1946}${_fixture_
 fixture_test_1946 ticket_empty_focus escalate "${_fixture_ticket_1946}"$'### Key issues to review\n'
 fixture_test_1946 contradictory_legacy needs_fixes "No major issues detected"$'\n'"${_fixture_focus_1946/Possible Issue/Must Fix}"
 fixture_test_1946 hidden_old_clean escalate $'## PR Reviewer Guide\n<!-- pr-agent-review-state:v1\n{"body":"No major issues detected"}\n-->\n'
-fixture_test_1946 hidden_old_blocker clean "${_fixture_ticket_1946}"$'<!-- pr-agent-review-state:v1\n{"body":"Recommended focus areas for review\n<strong>Critical</strong>"}\n-->\n'
+fixture_test_1946 hidden_old_blocker clean "${_fixture_ticket_1946}"$'<!-- pr-agent-review-state:v1\n{"body":"Recommended focus areas for review\\n<strong>Critical</strong>"}\n-->\n'
 # Acquisition deliberately rejects a marker hidden by an unterminated comment;
 # no bound summary is available. The pure parser still refuses that content.
 fixture_test_1946 unfinished_history escalate "${_fixture_ticket_1946}"$'<!-- pr-agent-review-state:v1\n' skipped
