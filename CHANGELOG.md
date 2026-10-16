@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.48.4] - 2026-10-16
+
+### Fixed
+
+- **Project path-risk categories** (#1949): configure project path categories with deterministic overlap handling and visible reasons. Release-named documentation avoids a release-tooling High floor; sensitive-path floors, missing-evidence behavior and risk ceilings remain enforced. Hub identity supports linked worktrees, and fork PRs use the target project map.
+- **PR-Agent inline code** (#1967): accept complete simple inline backticks and treat HTML-only inline fragments as literal text, while retaining escalation for ambiguous or invalid Markdown/HTML mixtures.
+- **Trusted PR-Agent execution** (#1975): run automatic reviews and `/review` requests from the pull request's trusted base revision.
+- **Codex review receipts** (#1980): recognize leading receipts and HTML metadata in reviewer and readiness classification while preserving strict verdict matching and reviews without receipts.
+- **PR-Agent hidden review state** (#1985): parse hidden review JSON as opaque data so comment delimiters and complete inline code in findings avoid false ambiguity. Malformed state, spans crossing HTML containers and unknown visible findings still fail closed.
+
 ## [0.48.3] - 2026-10-14
 
 ### Fixed
@@ -3338,7 +3348,8 @@ Known limitation: human-verification headings split by HTML comments can still b
 - `.claude/settings.json` with pre-approved permissions for common git and fetch operations; `.claude/settings.local.json.example` documenting machine-specific overrides for optional integrations
 - `.gitignore` covering local Claude settings, `.env` files, and common system files
 
-[Unreleased]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.48.3...HEAD
+[Unreleased]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.48.4...HEAD
+[0.48.4]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.48.3...v0.48.4
 [0.48.3]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.48.2...v0.48.3
 [0.48.2]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.48.1...v0.48.2
 [0.48.1]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.48.0...v0.48.1
