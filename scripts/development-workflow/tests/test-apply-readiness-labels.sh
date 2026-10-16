@@ -2382,7 +2382,7 @@ readiness_fixture_1946 human_verification refused "${_ticket_body_1946/Fully com
 readiness_fixture_1946 truncated refused "${_ticket_body_1946%</table>*}"
 readiness_fixture_1946 unknown refused $'## PR Reviewer Guide\ncommit: '"$HEAD"$'\n**Ticket compliance analysis ✅**\n'
 readiness_fixture_1946 hidden_clean refused $'## PR Reviewer Guide\ncommit: '"$HEAD"$'\n<!-- pr-agent-review-state:v1\n{"body":"No major issues detected"}\n-->\n'
-readiness_fixture_1946 hidden_blocker labeled "${_ticket_body_1946}"$'<!-- pr-agent-review-state:v1\n{"body":"Recommended focus areas for review\n<strong>Critical</strong>"}\n-->\n'
+readiness_fixture_1946 hidden_blocker labeled "${_ticket_body_1946}"$'<!-- pr-agent-review-state:v1\n{"body":"Recommended focus areas for review\\n<strong>Critical</strong>"}\n-->\n'
 readiness_fixture_1946 hidden_current_head refused $'## PR Reviewer Guide\ncommit: stalehead\nNo major issues detected\n<!-- pr-agent-review-state:v1\n{"last_seen_head_sha":"'"$HEAD"$'"}\n-->\n'
 readiness_fixture_1946 visible_current_marker labeled "${_ticket_body_1946/commit: $HEAD/#### (Review updated until commit https:\/\/github.com\/owner\/repo\/commit\/$HEAD)}"
 readiness_fixture_1946 empty_markdown_analysis refused $'## PR Reviewer Guide\ncommit: '"$HEAD"$'\n**Ticket compliance analysis ✅**\n**[42](url) - Fully compliant**\nCompliant requirements:\n\n---\n'
@@ -2412,10 +2412,26 @@ for _boundary_1959 in $'\n' $'\n\n' $'\r\n' $'\n---\n' $'\n***\n' $'\n- item\n' 
   done
 done
 for _tag_1959 in div pre style script textarea blockquote span custom details summary table td; do
-  readiness_fixture_1946 conservative_html refused "${_ticket_body_1946}"$'\n'"<${_tag_1959}>"$'\n`<strong>Critical</strong>`\n'"</${_tag_1959}>" reviewer-check-absent escalate
-  readiness_fixture_1946 conservative_html_same_line refused "${_ticket_body_1946}"$'\n'"<${_tag_1959}>"'`<span title="a" title="b">bad</span>`'"</${_tag_1959}>" reviewer-check-absent escalate
+  # #1967: quoted HTML is literal only in the admitted table context. Real
+  # malformed HTML and every unsupported raw wrapper retain refusal below.
+  _html_result_1967=refused
+  _html_reason_1967=reviewer-check-absent
+  _html_classifier_1967=escalate
+  if [ "$_tag_1959" = table ]; then
+    _html_result_1967=labeled
+    _html_reason_1967=gate-passed
+    _html_classifier_1967=clean
+  fi
+  readiness_fixture_1946 conservative_html "$_html_result_1967" "${_ticket_body_1946}"$'\n'"<${_tag_1959}>"$'\n`<strong>Critical</strong>`\n'"</${_tag_1959}>" "$_html_reason_1967" "$_html_classifier_1967"
+  if [ "$_tag_1959" = table ]; then
+    run_test "1946_conservative_html_readiness_write" "1" "$(grep -c 'add-label ready-for-human-review' "$_LABEL_LOG" || true)"
+  fi
+  readiness_fixture_1946 conservative_html_same_line "$_html_result_1967" "${_ticket_body_1946}"$'\n'"<${_tag_1959}>"'`<span title="a" title="b">bad</span>`'"</${_tag_1959}>" "$_html_reason_1967" "$_html_classifier_1967"
+  if [ "$_tag_1959" = table ]; then
+    run_test "1946_conservative_html_same_line_readiness_write" "1" "$(grep -c 'add-label ready-for-human-review' "$_LABEL_LOG" || true)"
+  fi
 done
-unset _boundary_1959 _ticks_1959 _tag_1959
+unset _boundary_1959 _ticks_1959 _tag_1959 _html_result_1967 _html_reason_1967 _html_classifier_1967
 readiness_fixture_1946 conservative_attribute refused "${_ticket_body_1946}"$'\n<span title="`">Text</span>\n' reviewer-check-absent escalate
 readiness_fixture_1946 conservative_comment labeled "${_ticket_body_1946}"$'\n<!-- `Critical` -->\n'
 readiness_fixture_1946 conservative_unmatched refused "${_ticket_body_1946}"$'\nUnmatched ` example.\n' reviewer-check-absent escalate

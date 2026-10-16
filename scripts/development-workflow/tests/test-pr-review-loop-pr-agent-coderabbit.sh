@@ -1990,7 +1990,7 @@ fixture_test_1946 ticket_blocker needs_fixes "${_fixture_ticket_1946}${_fixture_
 fixture_test_1946 ticket_empty_focus escalate "${_fixture_ticket_1946}"$'### Key issues to review\n'
 fixture_test_1946 contradictory_legacy needs_fixes "No major issues detected"$'\n'"${_fixture_focus_1946/Possible Issue/Must Fix}"
 fixture_test_1946 hidden_old_clean escalate $'## PR Reviewer Guide\n<!-- pr-agent-review-state:v1\n{"body":"No major issues detected"}\n-->\n'
-fixture_test_1946 hidden_old_blocker clean "${_fixture_ticket_1946}"$'<!-- pr-agent-review-state:v1\n{"body":"Recommended focus areas for review\n<strong>Critical</strong>"}\n-->\n'
+fixture_test_1946 hidden_old_blocker clean "${_fixture_ticket_1946}"$'<!-- pr-agent-review-state:v1\n{"body":"Recommended focus areas for review\\n<strong>Critical</strong>"}\n-->\n'
 # Acquisition deliberately rejects a marker hidden by an unterminated comment;
 # no bound summary is available. The pure parser still refuses that content.
 fixture_test_1946 unfinished_history escalate "${_fixture_ticket_1946}"$'<!-- pr-agent-review-state:v1\n' skipped
@@ -2053,7 +2053,11 @@ body = ("## PR Reviewer Guide\n<table><tr><td>"
         "</summary>\n```html\n<head>\n" + "source " * 1000 + "\n```\n"
         "</details></td></tr></table>")
 result = runtime["fit_review"](body, 800, State, ("## PR Reviewer Guide",))
-assert len(result) <= 800 and "Verification: required" in result
+# #1967: complete inline code in producer HTML is supported; reduction must
+# preserve the real blocker and inline prose instead of synthesizing ambiguity.
+assert len(result) <= 800 and "<strong>Must fix</strong>" in result
+assert "Read `git show <head>:CHANGELOG.md`." in result
+assert "source " not in result and "Verification: required" not in result
 body = body.replace(" Read `git show <head>:CHANGELOG.md`.", " Visible finding.")
 result = runtime["fit_review"](body, 800, State, ("## PR Reviewer Guide",))
 assert len(result) <= 800 and "<strong>Must fix</strong>" in result
@@ -2082,10 +2086,13 @@ for _boundary_1959 in $'\n' $'\n\n' $'\r\n' $'\n---\n' $'\n***\n' $'\n- item\n' 
   done
 done
 for _tag_1959 in div pre style script textarea blockquote span custom details summary table td; do
-  fixture_test_1946 conservative_html escalate "${_fixture_ticket_1946}"$'\n'"<${_tag_1959}>"$'\n`<strong>Critical</strong>`\n'"</${_tag_1959}>"
-  fixture_test_1946 conservative_html_same_line escalate "${_fixture_ticket_1946}"$'\n'"<${_tag_1959}>"'`<span title="a" title="b">bad</span>`'"</${_tag_1959}>"
+  # #1967: HTML-only inline code is literal in an admitted table context.
+  _html_verdict_1967=escalate
+  if [ "$_tag_1959" = table ]; then _html_verdict_1967=clean; fi
+  fixture_test_1946 conservative_html "$_html_verdict_1967" "${_fixture_ticket_1946}"$'\n'"<${_tag_1959}>"$'\n`<strong>Critical</strong>`\n'"</${_tag_1959}>"
+  fixture_test_1946 conservative_html_same_line "$_html_verdict_1967" "${_fixture_ticket_1946}"$'\n'"<${_tag_1959}>"'`<span title="a" title="b">bad</span>`'"</${_tag_1959}>"
 done
-unset _boundary_1959 _ticks_1959 _tag_1959
+unset _boundary_1959 _ticks_1959 _tag_1959 _html_verdict_1967
 fixture_test_1946 conservative_attribute escalate "${_fixture_ticket_1946}"$'\n<span title="`">Text</span>\n'
 fixture_test_1946 conservative_comment clean "${_fixture_ticket_1946}"$'\n<!-- `Critical` -->\n'
 fixture_test_1946 conservative_unmatched escalate "${_fixture_ticket_1946}"$'\nUnmatched ` example.\n'
