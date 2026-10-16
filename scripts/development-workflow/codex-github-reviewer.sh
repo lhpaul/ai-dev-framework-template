@@ -45,8 +45,8 @@
 #      Note: "blocking issues:" (with colon) disambiguates the list form from
 #      "no blocking issues found"; bare "blocking" excluded (too broad).
 #   2. Whole-body exact template match → APPROVED (exit 0)
-#      The entire, untruncated response — whitespace-normalized, nothing
-#      truncated or discarded — must reproduce, character for character, one
+#      After complete leading HTML metadata comments are consumed (#1980),
+#      the whitespace-normalized verdict and full footer must reproduce one
 #      of the small set of clean-response templates in
 #      CODEX_APPROVED_TEMPLATES (captured verbatim from real Codex responses,
 #      each including the complete vendor <details> "About Codex in GitHub"
@@ -732,9 +732,9 @@ codex_strip_not_only_idiom() {
 
 # Collapses every run of whitespace (spaces, tabs, newlines, carriage
 # returns — including blank lines between paragraphs) to a single space,
-# then trims leading/trailing whitespace. This is the ONLY step performed
-# before matching in codex_response_is_approved below, and the ONLY
-# permitted flexibility in template matching (issue #1491's
+# then trims leading/trailing whitespace. Alongside consuming complete leading
+# HTML metadata comments (#1980), this is the only flexibility permitted
+# before exact template matching (issue #1491's
 # conservative-verdict-classifier implementation plan, Decision 1) — no
 # case folding, no optional clauses, no punctuation tolerance, no
 # synonym alternation, and no truncation of any kind. `tr` first converts
@@ -758,9 +758,9 @@ codex_normalize_whitespace() {
 # the approved template + the footer's opening line only + an actual
 # instruction (e.g. "Rename the unsafe function.") matched the visible
 # portion exactly and would have been misclassified APPROVED under that
-# design. There is no discarded byte range left for that construction
-# (or any construction) to hide in — the entire body, first character to
-# last, must be part of this one literal.
+# design. No part of the visible verdict or footer is discarded: after
+# complete leading HTML metadata comments (#1980), all remaining content
+# must be part of this one literal.
 #
 # This template has exactly TWO bounded placeholders, both anchored at a
 # fixed position between exact literal text on either side, never a
@@ -779,8 +779,8 @@ codex_normalize_whitespace() {
 # template, requires a live capture of the new evidence and the same
 # review discipline the deleted CODEX_APPROVAL_PATTERN once required —
 # these are the ONLY levers that can widen the approval surface, and
-# reintroducing any truncation step before matching is explicitly
-# forbidden (Decision 2/5).
+# truncating the visible verdict or footer before matching remains
+# forbidden (Decision 2/5; leading metadata exception in #1980).
 #
 # The footer portion of this literal was verified byte-identical (modulo
 # one API-transport-only trailing newline that whitespace normalization
@@ -853,8 +853,8 @@ CODEX_APPROVED_TEMPLATES=(
   '^Codex Review: Didn'"'"'t find any major issues\. [^*`[:cntrl:]]{1,60} \*\*Reviewed commit:\*\* `[0-9a-f]{7,40}` <details> <summary>ℹ️ About Codex in GitHub</summary> <br/> \[Your team has set up Codex to review pull requests in this repo\]\(https://chatgpt\.com/codex/cloud/settings/general\)\. Reviews are triggered when you - Open a pull request for review - Mark a draft as ready - Comment "@codex review"\. If Codex has suggestions, it will comment; otherwise it will react with 👍\. Codex can also answer questions or update the PR\. Try commenting "@codex address that feedback"\. </details>$'
 )
 
-# `APPROVED` requires the ENTIRE, untruncated response — whitespace-
-# normalized, nothing else changed — to reproduce one of
+# `APPROVED` consumes complete leading HTML metadata comments (#1980), then
+# requires the ENTIRE remaining whitespace-normalized response to reproduce one of
 # CODEX_APPROVED_TEMPLATES exactly (issue #1491's conservative-verdict-
 # classifier implementation plan, Decision 1). There is no
 # fence-marker check, no quoted-span stripping, no "not only" idiom
@@ -871,6 +871,14 @@ CODEX_APPROVED_TEMPLATES=(
 codex_response_is_approved() {
   local body="$1" normalized template
   normalized=$(codex_normalize_whitespace "$body")
+  # #1980: receipts and other HTML metadata may precede the verdict. Consume
+  # only complete leading comments, through their FIRST closing delimiter.
+  # Never drop inner/trailing content or any part of the visible verdict/footer.
+  while [[ "$normalized" == '<!--'* ]]; do
+    [[ "$normalized" == *'-->'* ]] || return 1
+    normalized=${normalized#*-->}
+    normalized=${normalized# }
+  done
   for template in "${CODEX_APPROVED_TEMPLATES[@]}"; do
     if grep -qE "$template" <<< "$normalized"; then
       return 0

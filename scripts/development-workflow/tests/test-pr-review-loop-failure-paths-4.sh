@@ -61,6 +61,124 @@ export CODEX_GITHUB_PRE_TRIGGER_WAIT=0
 echo ""
 echo "=== Area 13: PR #801 reviewer-loop failure paths (part 4 of 4) ==="
 
+# Issue #1980: real receipt bodies captured from the three affected consumers.
+# Keep all body bytes, including the vendor footer; URLs identify the captures.
+_codex_receipt_dir="$(mktemp -d)"
+cat > "$_codex_receipt_dir/fixtures.json" <<'CODEX_RECEIPT_FIXTURES'
+[
+  {
+    "name": "baum",
+    "body": "<!-- codex-review-receipt:v1 -->\n\nCodex Review: Didn't find any major issues. :tada:\n\n**Reviewed commit:** `f37c7cdee2`\n\n<details> <summary>ℹ️ About Codex in GitHub</summary>\n<br/>\n\n[Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you\n- Open a pull request for review\n- Mark a draft as ready\n- Comment \"@codex review\".\n\nIf Codex has suggestions, it will comment; otherwise it will react with 👍.\n\n\n\n\nCodex can also answer questions or update the PR. Try commenting \"@codex address that feedback\".\n            \n</details>",
+    "html_url": "https://github.com/BaumAPPADM/web-app-angular/pull/130#issuecomment-6201746086"
+  },
+  {
+    "name": "leasity",
+    "body": "<!-- codex-review-receipt:v1 -->\n\nCodex Review: Didn't find any major issues. Hooray!\n\n**Reviewed commit:** `ddd401fef5`\n\n<details> <summary>ℹ️ About Codex in GitHub</summary>\n<br/>\n\n[Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you\n- Open a pull request for review\n- Mark a draft as ready\n- Comment \"@codex review\".\n\nIf Codex has suggestions, it will comment; otherwise it will react with 👍.\n\n\n\n\nCodex can also answer questions or update the PR. Try commenting \"@codex address that feedback\".\n            \n</details>",
+    "html_url": "https://github.com/lhpaul/leasity-exchanges-prototype/pull/801#issuecomment-6203632919"
+  },
+  {
+    "name": "radar",
+    "body": "<!-- codex-review-receipt:v1 -->\n\nCodex Review: Didn't find any major issues. Breezy!\n\n**Reviewed commit:** `123c7a1626`\n\n<details> <summary>ℹ️ About Codex in GitHub</summary>\n<br/>\n\n[Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you\n- Open a pull request for review\n- Mark a draft as ready\n- Comment \"@codex review\".\n\nIf Codex has suggestions, it will comment; otherwise it will react with 👍.\n\n\n\n\nCodex can also answer questions or update the PR. Try commenting \"@codex address that feedback\".\n            \n</details>",
+    "html_url": "https://github.com/RADAR-Insights/radar-insights-platform/pull/861#issuecomment-6202839822"
+  }
+]
+CODEX_RECEIPT_FIXTURES
+cat > "$_codex_receipt_dir/gh" <<'CODEX_RECEIPT_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*) exit 0 ;;
+  *"pr view"*headRefOid*) printf '%s\n' "$RECEIPT_HEAD" ;;
+  *"--method POST"*) printf '{"id":1980,"created_at":"2026-01-01T00:00:00Z"}\n' ;;
+  *"issues/comments/"*"/reactions"*) printf '[]\n' ;;
+  *"pulls/"*"/comments"*)
+    if [ "$RECEIPT_CASE" = finding ]; then
+      jq -nc --arg sha "$RECEIPT_HEAD" '[{id:74,pull_request_review_id:73,commit_id:$sha,body:"Must fix the guard."}]'
+    else printf '[]\n'; fi ;;
+  *"pulls/"*"/reviews"*)
+    if [ "$RECEIPT_CASE" = finding ]; then
+      jq -nc --arg sha "$RECEIPT_HEAD" --arg body "$RECEIPT_BODY" \
+        '[{id:73,submitted_at:"2026-01-01T00:00:01Z",commit_id:$sha,state:"CHANGES_REQUESTED",user:{login:"chatgpt-codex-connector[bot]"},body:$body}]'
+    else printf '[]\n'; fi ;;
+  *"api graphql"*"databaseId"*)
+    printf '{"data":{"repository":{"pullRequest":{"reviewThreads":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"isResolved":false,"comments":{"nodes":[{"databaseId":74}]}}]}}}}}\n' ;;
+  *"api graphql"*"headRefOid"*)
+    jq -nc --arg sha "$RECEIPT_HEAD" '{data:{repository:{pullRequest:{headRefOid:$sha,headRef:{target:{committedDate:"2026-01-01T00:00:00Z"}},reviewThreads:{pageInfo:{hasNextPage:false,endCursor:null},nodes:[]}}}}}' ;;
+  *"issues/"*"/timeline"*) printf '[]\n' ;;
+  *"issues/"*"/comments"*)
+    if [ "$RECEIPT_CASE" = finding ]; then printf '[]\n'
+    else
+      jq -nc --arg body "$RECEIPT_BODY" \
+        '[{id:1981,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:$body}]'
+    fi ;;
+  *) printf 'ERROR=unexpected-gh-invocation\n' >&2; exit 64 ;;
+esac
+CODEX_RECEIPT_GH
+chmod +x "$_codex_receipt_dir/gh"
+
+# Load only the real pure classifier definitions, not either command's main.
+# This checks the readiness copy without mocking the classifier under test.
+_codex_receipt_approval_status() (
+  # Extract pure definitions from the target script.
+  # shellcheck disable=SC1090
+  source <(sed -n '/^codex_normalize_whitespace() {$/,/^}$/p; /^CODEX_APPROVED_TEMPLATES=($/,/^)/p; /^codex_response_is_approved() {$/,/^}$/p' "$1")
+  local rc=0
+  codex_response_is_approved "$2" || rc=$?
+  printf '%s' "$rc"
+)
+_codex_receipt_run_adapter() {
+  local name="$1" expected="$2" rc=0 output
+  output="$(PATH="$_codex_receipt_dir:$PATH" \
+    RECEIPT_BODY="$3" RECEIPT_HEAD="$4" RECEIPT_CASE="$name" \
+    "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+    42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 2>&1)" || rc=$?
+  run_test "codex_receipt_${name}_adapter_exit" "$expected" "$rc"
+  case "$expected" in
+    0) run_test "codex_receipt_${name}_adapter_verdict" 'VERDICT: APPROVED' \
+         "$(printf '%s\n' "$output" | grep '^VERDICT:')" ;;
+    1) run_test "codex_receipt_${name}_adapter_verdict" 'VERDICT: NEEDS_REVISION' \
+         "$(printf '%s\n' "$output" | grep '^VERDICT:')" ;;
+    2) run_test "codex_receipt_${name}_adapter_reason" 'REASON=codex_current_verdict_unrecognized' \
+         "$(printf '%s\n' "$output" | grep '^REASON=')" ;;
+  esac
+}
+for _receipt_name in baum leasity radar; do
+  _receipt_body="$(jq -r --arg name "$_receipt_name" '.[] | select(.name == $name) | .body' "$_codex_receipt_dir/fixtures.json")"
+  _receipt_head="$(printf '%s\n' "$_receipt_body" | sed -n 's/^\*\*Reviewed commit:\*\* `\([0-9a-f]*\)`/\1/p')"
+  _codex_receipt_run_adapter "$_receipt_name" 0 "$_receipt_body" "$_receipt_head"
+  for _receipt_script in codex-github-reviewer apply-readiness-labels; do
+    run_test "codex_receipt_${_receipt_name}_${_receipt_script}_approval" 0 \
+      "$(_codex_receipt_approval_status "$REPO_ROOT/scripts/development-workflow/$_receipt_script.sh" "$_receipt_body")"
+  done
+done
+_receipt_legacy="${_receipt_body#*-->}"
+_receipt_metadata=$' \t\n<!-- consumer metadata\n{"source":"review", "path":"with spaces/*"}\n-->\n<!-- another metadata comment -->'
+_codex_receipt_run_adapter metadata 0 "$_receipt_metadata$_receipt_legacy" "$_receipt_head"
+_codex_receipt_run_adapter legacy 0 "$_receipt_legacy" "$_receipt_head"
+_codex_receipt_run_adapter finding 1 $'<!-- codex-review-receipt:v1 -->\nSee inline comment.' "$_receipt_head"
+_codex_receipt_run_adapter unknown 2 $'<!-- codex-review-receipt:v1 -->\nUnrecognized status.\n**Reviewed commit:** `123c7a1626`' "$_receipt_head"
+for _receipt_script in codex-github-reviewer apply-readiness-labels; do
+  _receipt_source="$REPO_ROOT/scripts/development-workflow/$_receipt_script.sh"
+  run_test "codex_receipt_${_receipt_script}_legacy" 0 \
+    "$(_codex_receipt_approval_status "$_receipt_source" "$_receipt_legacy")"
+  run_test "codex_receipt_${_receipt_script}_multiple_metadata" 0 \
+    "$(_codex_receipt_approval_status "$_receipt_source" "$_receipt_metadata$_receipt_body")"
+  for _receipt_negative in \
+    '' $' \t\n' '<!-- codex-review-receipt:v1 -->' \
+    "<!-- unfinished $_receipt_legacy" \
+    "$_receipt_body<!-- trailing metadata -->" \
+    "Unrecognized preamble $_receipt_body" \
+    "$_receipt_body Must fix the guard." \
+    "${_receipt_body/Codex Review:/Codex <!-- inner metadata --> Review:}" \
+    $'<!-- codex-review-receipt:v1 -->\nUnknown verdict.'; do
+    run_test "codex_receipt_${_receipt_script}_rejects_extra_or_unknown_content" 1 \
+      "$(_codex_receipt_approval_status "$_receipt_source" "$_receipt_negative")"
+  done
+done
+rm -rf "$_codex_receipt_dir"
+unset _codex_receipt_dir _receipt_name _receipt_body _receipt_head _receipt_legacy
+unset _receipt_metadata _receipt_script _receipt_source _receipt_negative
+unset -f _codex_receipt_approval_status _codex_receipt_run_adapter
+
 # Evidenced flavor token: ':tada:' (issue #1491 follow-up; approved by the bounded placeholder)
 _codex_placeholder_tada_approved_mock_dir="$(mktemp -d)"
 cat > "$_codex_placeholder_tada_approved_mock_dir/gh" <<'CODEX_PLACEHOLDER_TADA_APPROVED_GH'
