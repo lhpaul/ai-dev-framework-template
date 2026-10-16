@@ -875,8 +875,9 @@ comment_only_reviewer_verdict() {
 # codex_normalize_whitespace (~line 725), codex_strip_quoted_spans /
 # codex_strip_not_only_idiom / codex_response_is_blocking (~lines 640-685).
 # DO NOT simplify this into a substring test: the classifier's guarantee is
-# that the ENTIRE body, whitespace-normalized, reproduces the approved
-# template exactly — a clean sentence plus injected blocking text
+# that after complete leading HTML metadata comments (#1980), the ENTIRE
+# remaining whitespace-normalized body reproduces the approved template exactly
+# — a clean sentence plus injected blocking text
 # ("Must fix ...") matches the sentence but never the whole-body template,
 # and blocking markers are checked FIRST so a disguised rejection always
 # loses.
@@ -931,6 +932,14 @@ CODEX_APPROVED_TEMPLATES=(
 codex_response_is_approved() {
   local body="$1" normalized template
   normalized=$(codex_normalize_whitespace "$body")
+  # #1980: receipts and other HTML metadata may precede the verdict. Consume
+  # only complete leading comments, through their FIRST closing delimiter.
+  # Never drop inner/trailing content or any part of the visible verdict/footer.
+  while [[ "$normalized" == '<!--'* ]]; do
+    [[ "$normalized" == *'-->'* ]] || return 1
+    normalized=${normalized#*-->}
+    normalized=${normalized# }
+  done
   for template in "${CODEX_APPROVED_TEMPLATES[@]}"; do
     if grep -qE "$template" <<< "$normalized"; then
       return 0
