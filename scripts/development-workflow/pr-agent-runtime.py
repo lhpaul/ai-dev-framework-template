@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from html import unescape
 from html.parser import HTMLParser
 import inspect
+import json
 import logging
 from pathlib import Path
 import re
@@ -77,6 +78,7 @@ def mask_review_code(source, preserve_offsets=True):
     html_block = None
     producer_table_closed = False
     resolved_history = False
+    review_state_seen = False
     inline_tags = {"table", "tbody", "thead", "tfoot", "tr", "td", "th",
                    "details", "summary", "strong", "a", "b", "em", "span"}
     opener = re.compile(r"[ \t]*(`{3,}|~{3,})[^\r\n]*(?:\r?\n|$)")
@@ -137,6 +139,16 @@ def mask_review_code(source, preserve_offsets=True):
                 index = closing.end()
                 continue
         if source.startswith("<!--", index):
+            if re.match(r"<!--\s*pr-agent-review-state", source[index:]):
+                if review_state_seen:
+                    raise ValueError("duplicate review-state marker")
+                end = review_state_comment_end(source, index)
+                review_state_seen = True
+                # Only the in-memory parser view changes. Preserve offsets for
+                # publication spans; JSON strings are opaque to HTML scanning.
+                parts.append("<!--" + masked(index + 4, end - 3) + "-->")
+                index = end
+                continue
             end = source.find("-->", index + 4)
             if end < 0:
                 raise ValueError("unclosed source comment")
@@ -168,10 +180,11 @@ def mask_review_code(source, preserve_offsets=True):
                     or content.endswith("\\") or source.startswith("``", end)):
                 raise ValueError("ambiguous inline span")
             # Complete HTML-only code is literal, including tag fragments.
-            # Mixed prose/HTML cannot swallow raw boundaries. Nested raw HTML
-            # outside the admitted producer contexts was already refused.
+            # A quoted comment opener is literal too, even in an expression.
+            # Mixed prose/HTML still cannot swallow closing tags, declarations
+            # or processing instructions across raw container boundaries.
             if (in_html and not history_markdown and not html_markup_only(content)
-                    and re.search(r"<\s*/|<!|<\?", content)):
+                    and re.search(r"<\s*/|<!(?!--)|<\?", content)):
                 raise ValueError("inline span crosses HTML markup")
             parts.append(masked(index, end + 1))
             index = end + 1
@@ -220,6 +233,40 @@ def mask_review_code(source, preserve_offsets=True):
         parts.append(source[index])
         index += 1
     return "".join(parts)
+
+
+def review_state_comment_end(source, start):
+    """Read a v1 JSON object without interpreting delimiters in its strings."""
+    header = re.match(r"<!--\s*pr-agent-review-state:v1\s+", source[start:])
+    if header is None:
+        raise ValueError("unknown review-state marker")
+
+    def unique_object(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError("duplicate review-state key")
+            result[key] = value
+        return result
+
+    def invalid_constant(value):
+        raise ValueError("invalid review-state constant")
+
+    decoder = json.JSONDecoder(object_pairs_hook=unique_object,
+                               parse_constant=invalid_constant)
+    try:
+        state, end = decoder.raw_decode(source, start + header.end())
+    except RecursionError as error:
+        raise ValueError("review-state nesting exceeds decoder limits") from error
+    if (not isinstance(state, dict)
+            or ("schema_version" in state
+                and (type(state["schema_version"]) is not int
+                     or state["schema_version"] != 1))):
+        raise ValueError("unsupported review-state payload")
+    closing = re.match(r"\s*-->", source[end:])
+    if closing is None:
+        raise ValueError("unclosed review-state marker")
+    return end + closing.end()
 
 
 def has_status_evidence(source):

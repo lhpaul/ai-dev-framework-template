@@ -527,6 +527,48 @@ class InlineProducerHTMLTests(unittest.TestCase):
                 self.assertEqual("needs_fixes", classify(blocker))
                 self.assertEqual(["Critical"], self.labels(blocker))
 
+    def test_comment_delimiters_in_complete_inline_expressions(self):
+        for content in ('source.startswith("<!--", index)',
+                        're.match(r"<!--\\s*pr-agent-review-state", source[index:])',
+                        'marker = "<!-- literal -->"',
+                        'text.replace("<!--", "-->")'):
+            for label, expected in (("Possible Issue", "clean"), ("Must fix", "needs_fixes")):
+                with self.subTest(content=content, label=label):
+                    body = self.finding("Read `" + content + "` then act.", label)
+                    self.assertEqual(expected, classify(body))
+                    self.assertEqual([label], self.labels(body))
+                    masked = runtime.mask_review_code(body)
+                    self.assertEqual(len(body), len(masked))
+                    self.assertEqual(body.count("\n"), masked.count("\n"))
+                    self.assertIn(" then act.", masked)
+                    self.assertNotIn(content, masked)
+
+    def test_comment_expressions_do_not_relax_other_inline_boundaries(self):
+        for content in ('`source.startswith("<!--", index)',
+                        '`source.startswith("<!--",\n index)`',
+                        '`<!-- example </summary>`',
+                        '`<!-- </summary><strong>Must fix</strong>`',
+                        '`prose <!DOCTYPE html>`', '`prose <?php`'):
+            with self.subTest(content=content):
+                body = self.finding(content)
+                self.assertEqual("escalate", classify(body))
+                for preserve in (True, False):
+                    with self.assertRaises(ValueError):
+                        runtime.mask_review_code(body, preserve_offsets=preserve)
+        body = review() + '\n<span>`source.startswith("<!--", index)`</span>'
+        self.assertEqual("escalate", classify(body))
+
+    def test_real_1986_comment_with_inline_comment_expression(self):
+        original = PR_1986_INLINE_REVIEW
+        self.assertEqual("clean", classify(original))
+        self.assertEqual(["Possible Issue", "Possible Issue"], self.labels(original))
+        parsed = runtime.ReviewSpans(original)
+        self.assertEqual(original, parsed.source)
+        self.assertEqual(len(original), len(runtime.mask_review_code(original)))
+        blocker = original.replace("<strong>Possible Issue</strong>",
+                                   "<strong>Must fix</strong>", 1)
+        self.assertEqual("needs_fixes", classify(blocker))
+
     def test_current_complete_review_with_html_code(self):
         self.assertEqual("clean", classify(CURRENT_REVIEW_1978))
         self.assertEqual({"Possible Issue"}, set(self.labels(CURRENT_REVIEW_1978)))
@@ -1053,6 +1095,212 @@ class ImagePublicationTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, 'incompatible'):
                 runtime.install_hooks()
         self.assertIs(current, self.provider_class.limit_output_characters)
+
+
+# Captured read-only from PR #1983, issuecomment 6207732003, head 950f94e9.
+PR_1983_REVIEW = (
+    '## PR Reviewer Guide 🔍\n'
+    '\n'
+    '<!-- pr-agent:review:full -->\n'
+    '\n'
+    '#### (Review updated until commit https://github.com/lhpaul/ai-dev-framework-template/commit/950f94e9df62ce51c33a44733513bbdaff3f1d67)\n'
+    '\n'
+    '\n'
+    'Here are some key observations to aid the review process:\n'
+    '\n'
+    '<table>\n'
+    '<tr><td>⏱️&nbsp;<strong>Estimated effort to review</strong>: 3 🔵🔵🔵⚪⚪</td></tr>\n'
+    '<tr><td>🧪&nbsp;<strong>PR contains tests</strong></td></tr>\n'
+    '<tr><td>🔒&nbsp;<strong>No security concerns identified</strong></td></tr>\n'
+    '<tr><td>⚡&nbsp;<strong>Recommended focus areas for review</strong><br><br>\n'
+    '\n'
+    "<details><summary><a href='https://github.com/lhpaul/ai-dev-framework-template/pull/1983/files#diff-d5b14e171d2f73383716d358c73452f57cc03a70974714ccd36e06090ab775dfR938-R942'><strong>Possible Issue</strong></a>\n"
+    '\n'
+    'The leading-metadata consumption loop strips the closing `-->` and then removes at most one following space (`normalized=${normalized# }`). If a receipt is followed by a newline (or multiple spaces) before the verdict, the loop exits with `normalized` still starting with whitespace, so the `^`-anchored template match fails and a clean review is rejected as `codex_current_verdict_unrecognized`. This works in the tests only because `codex_normalize_whitespace` collapses all whitespace to single spaces first, so the residual is exactly one space. The logic is correct given normalization runs first, but it is fragile: it silently depends on the caller having normalized. Confirm normalization always precedes this loop in both classifiers (it does in the shown code), otherwise the single-space strip is insufficient.\n'
+    '</summary>\n'
+    '\n'
+    '```shell\n'
+    'while [[ "$normalized" == \'<!--\'* ]]; do\n'
+    '  [[ "$normalized" == *\'-->\'* ]] || return 1\n'
+    '  normalized=${normalized#*-->}\n'
+    '  normalized=${normalized# }\n'
+    'done\n'
+    '```\n'
+    '\n'
+    '</details>\n'
+    '\n'
+    "<details><summary><a href='https://github.com/lhpaul/ai-dev-framework-template/pull/1983/files#diff-5b4fab22790748d685f0bd2f84b270ce6a8adbe191389dd844deb2b7cca99ca8R123-R123'><strong>Test Isolation</strong></a>\n"
+    '\n'
+    "The fixture extraction uses `sed -n '/^codex_normalize_whitespace() {$/,/^}$/p; ...'` to source pure definitions from the target script. This relies on the function bodies containing no line that is exactly `}` at column 0 before the real closing brace. If any of these functions later contains a nested block whose closing brace is at column 0, the extracted snippet will be truncated mid-function and the test will fail confusingly rather than testing the classifier. This is a maintenance hazard rather than a current defect, since the current bodies satisfy the pattern.\n"
+    '</summary>\n'
+    '\n'
+    '```shell\n'
+    'source <(sed -n \'/^codex_normalize_whitespace() {$/,/^}$/p; /^CODEX_APPROVED_TEMPLATES=($/,/^)/p; /^codex_response_is_approved() {$/,/^}$/p\' "$1")\n'
+    '```\n'
+    '\n'
+    '</details>\n'
+    '\n'
+    '</td></tr>\n'
+    '</table>\n'
+    '\n'
+    '<details>\n'
+    '<summary>✅ Resolved findings</summary>\n'
+    '\n'
+    '### scripts/development-workflow/apply-readiness-labels.sh:938-942\n'
+    '\n'
+    '**Possible Issue**\n'
+    '\n'
+    'The leading-metadata consumption loop strips only a single space after each `-->` (`normalized=${normalized# }`). Since `codex_normalize_whitespace` collapses all whitespace runs to a single space, this is normally fine, but the loop condition `[[ "$normalized" == \'<!--\'* ]]` requires the next comment to start immediately. If a body has two adjacent metadata comments separated by whitespace that normalizes to exactly one space, the single-space strip handles it; however, if the normalization ever leaves the body starting with a space before `<!--` (e.g. leading whitespace before the first comment), the loop won\'t enter and the template match fails closed. This is a fail-closed behavior, so impact is limited to false negatives, not false approvals. Verify the normalization guarantees no leading space remains before the first `<!--`.\n'
+    '\n'
+    '### scripts/development-workflow/tests/test-pr-review-loop-failure-paths-4.sh:120-127\n'
+    '\n'
+    '**Test Extraction Fragility**\n'
+    '\n'
+    "The `_codex_receipt_approval_status` helper extracts function definitions via `sed -n '/^codex_normalize_whitespace() {$/,/^}$/p; ...'`. This relies on the closing brace being exactly `^}$` on its own line. If the classifier functions are ever reformatted (e.g. closing brace indented, or a nested block ending with `}` at column 0), the extraction silently produces a truncated or empty definition, and the test would pass or fail for the wrong reason rather than erroring clearly. This is a test-maintenance concern, not a runtime defect.\n"
+    '\n'
+    '</details>\n'
+    '\n'
+    '<!-- pr-agent-review-state:v1\n'
+    '{"findings":[{"body":"**Possible Issue**\\n\\nThe leading-metadata consumption loop strips the closing `--\\u003e` and then strips a single following space via `normalized=${normalized# }`. After `codex_normalize_whitespace`, all whitespace runs are already collapsed to a single space, so this is generally fine. However, consider the case where the metadata comment is the entire body (e.g. `<!-- codex-review-receipt:v1 --\\u003e`). The loop consumes the comment, leaving an empty string, and then falls through to the template match which fails — this is the intended fail-closed behavior. The concern is more subtle: if the body is `<!-- a --\\u003e<!-- b --\\u003e` (two adjacent comments with no whitespace), after consuming the first comment the remainder is `<!-- b --\\u003e` which still starts with `<!--`, so the loop continues correctly. This appears handled. No concrete defect identified.","finding_id":"154e2f148c34","first_seen":"2026-10-16T04:09:58.828595Z","last_seen":"2026-10-16T04:09:58.828595Z","last_seen_head_sha":"950f94e9df62ce51c33a44733513bbdaff3f1d67","line_end":942,"line_start":938,"path":"scripts/development-workflow/apply-readiness-labels.sh","state":"ACTIVE"},{"body":"**Possible Issue**\\n\\nThe leading-metadata consumption loop strips the closing `--\\u003e` and then removes at most one following space (`normalized=${normalized# }`). If a receipt is followed by a newline (or multiple spaces) before the verdict, the loop exits with `normalized` still starting with whitespace, so the `^`-anchored template match fails and a clean review is rejected as `codex_current_verdict_unrecognized`. This works in the tests only because `codex_normalize_whitespace` collapses all whitespace to single spaces first, so the residual is exactly one space. The logic is correct given normalization runs first, but it is fragile: it silently depends on the caller having normalized. Confirm normalization always precedes this loop in both classifiers (it does in the shown code), otherwise the single-space strip is insufficient.","finding_id":"1d092640b813","first_seen":"2026-10-16T11:47:16.601922Z","last_seen":"2026-10-16T11:47:16.601922Z","last_seen_head_sha":"950f94e9df62ce51c33a44733513bbdaff3f1d67","line_end":942,"line_start":938,"path":"scripts/development-workflow/apply-readiness-labels.sh","state":"ACTIVE"},{"body":"**Test Isolation**\\n\\nThe fixture extraction uses `sed -n \'/^codex_normalize_whitespace() {$/,/^}$/p; ...\'` to source pure definitions from the target script. This relies on the function bodies containing no line that is exactly `}` at column 0 before the real closing brace. If any of these functions later contains a nested block whose closing brace is at column 0, the extracted snippet will be truncated mid-function and the test will fail confusingly rather than testing the classifier. This is a maintenance hazard rather than a current defect, since the current bodies satisfy the pattern.","finding_id":"ae538e9769b3","first_seen":"2026-10-16T11:47:16.601922Z","last_seen":"2026-10-16T11:47:16.601922Z","last_seen_head_sha":"950f94e9df62ce51c33a44733513bbdaff3f1d67","line_end":123,"line_start":123,"path":"scripts/development-workflow/tests/test-pr-review-loop-failure-paths-4.sh","state":"ACTIVE"},{"body":"**Test Extraction Fragility**\\n\\nThe `_codex_receipt_approval_status` helper extracts function definitions via `sed -n \'/^codex_normalize_whitespace() {$/,/^}$/p; ...\'`. This relies on the closing brace being exactly `^}$` on its own line. If the classifier functions are ever reformatted (e.g. closing brace indented, or a nested block ending with `}` at column 0), the extraction silently produces a truncated or empty definition, and the test would pass or fail for the wrong reason rather than erroring clearly. This is a test-maintenance concern, not a runtime defect.","finding_id":"e64a1db73aa4","first_seen":"2026-10-16T03:56:43.795201Z","last_seen":"2026-10-16T03:56:43.795201Z","last_seen_head_sha":"12dfd02f66ee980edd37b554e6660a0a95908d65","line_end":127,"line_start":120,"path":"scripts/development-workflow/tests/test-pr-review-loop-failure-paths-4.sh","resolution_run_id":"https://github.com/lhpaul/ai-dev-framework-template/commit/950f94e9df62ce51c33a44733513bbdaff3f1d67","resolved_at":"2026-10-16T04:09:58.828595Z","resolved_head_sha":"950f94e9df62ce51c33a44733513bbdaff3f1d67","state":"RESOLVED"},{"body":"**Possible Issue**\\n\\nThe leading-metadata consumption loop strips only a single space after each `--\\u003e` (`normalized=${normalized# }`). Since `codex_normalize_whitespace` collapses all whitespace runs to a single space, this is normally fine, but the loop condition `[[ \\"$normalized\\" == \'<!--\'* ]]` requires the next comment to start immediately. If a body has two adjacent metadata comments separated by whitespace that normalizes to exactly one space, the single-space strip handles it; however, if the normalization ever leaves the body starting with a space before `<!--` (e.g. leading whitespace before the first comment), the loop won\'t enter and the template match fails closed. This is a fail-closed behavior, so impact is limited to false negatives, not false approvals. Verify the normalization guarantees no leading space remains before the first `<!--`.","finding_id":"f4066716eaeb","first_seen":"2026-10-16T03:56:43.795201Z","last_seen":"2026-10-16T03:56:43.795201Z","last_seen_head_sha":"12dfd02f66ee980edd37b554e6660a0a95908d65","line_end":942,"line_start":938,"path":"scripts/development-workflow/apply-readiness-labels.sh","resolution_run_id":"https://github.com/lhpaul/ai-dev-framework-template/commit/950f94e9df62ce51c33a44733513bbdaff3f1d67","resolved_at":"2026-10-16T04:09:58.828595Z","resolved_head_sha":"950f94e9df62ce51c33a44733513bbdaff3f1d67","state":"RESOLVED"}],"last_run":{"complete":true,"excluded_files":[],"head_sha":"950f94e9df62ce51c33a44733513bbdaff3f1d67","kind":"full","run_id":"https://github.com/lhpaul/ai-dev-framework-template/commit/950f94e9df62ce51c33a44733513bbdaff3f1d67"},"schema_version":1}\n'
+    '-->\n'
+)
+
+
+# Captured read-only from PR #1986, issuecomment 6217136440, head 8d51852b.
+PR_1986_INLINE_REVIEW = (
+    '## PR Reviewer Guide 🔍\n'
+    '\n'
+    '<!-- pr-agent:review:full -->\n'
+    '\n'
+    '#### (Review updated until commit https://github.com/lhpaul/ai-dev-framework-template/commit/8d51852b44188908a24fa7851b26e1108199331e)\n'
+    '\n'
+    '\n'
+    'Here are some key observations to aid the review process:\n'
+    '\n'
+    '<table>\n'
+    '<tr><td>⏱️&nbsp;<strong>Estimated effort to review</strong>: 3 🔵🔵🔵⚪⚪</td></tr>\n'
+    '<tr><td>🧪&nbsp;<strong>PR contains tests</strong></td></tr>\n'
+    '<tr><td>🔒&nbsp;<strong>No security concerns identified</strong></td></tr>\n'
+    '<tr><td>⚡&nbsp;<strong>Recommended focus areas for review</strong><br><br>\n'
+    '\n'
+    "<details><summary><a href='https://github.com/lhpaul/ai-dev-framework-template/pull/1986/files#diff-dba3e72840843ae37245e2f7afa96e5826cda270ac9fc17c31ea59c73bfbd184R141-R151'><strong>Possible Issue</strong></a>\n"
+    '\n'
+    'In `mask_review_code`, the review-state branch is only entered when `source.startswith("<!--", index)` and the regex `<!--\\s*pr-agent-review-state` matches. The new `review_state_seen` flag raises `ValueError("duplicate review-state marker")` on a second marker. However, the duplicate detection relies on the marker being reached via this exact path. If a second `pr-agent-review-state` marker appears inside a fenced code block or is otherwise masked before reaching this branch, the duplicate is not detected. This is likely intentional (masked content is opaque), but worth confirming the fail-closed guarantee holds for the intended threat model. Low confidence; the test `test_malformed_and_unknown_state_fail_closed` covers the adjacent-marker case.\n'
+    '</summary>\n'
+    '\n'
+    '```python\n'
+    'if source.startswith("<!--", index):\n'
+    '    if re.match(r"<!--\\s*pr-agent-review-state", source[index:]):\n'
+    '        if review_state_seen:\n'
+    '            raise ValueError("duplicate review-state marker")\n'
+    '        end = review_state_comment_end(source, index)\n'
+    '        review_state_seen = True\n'
+    '        # Only the in-memory parser view changes. Preserve offsets for\n'
+    '        # publication spans; JSON strings are opaque to HTML scanning.\n'
+    '        parts.append("<!--" + masked(index + 4, end - 3) + "-->")\n'
+    '        index = end\n'
+    '        continue\n'
+    '```\n'
+    '\n'
+    '</details>\n'
+    '\n'
+    "<details><summary><a href='https://github.com/lhpaul/ai-dev-framework-template/pull/1986/files#diff-dba3e72840843ae37245e2f7afa96e5826cda270ac9fc17c31ea59c73bfbd184R265-R268'><strong>Possible Issue</strong></a>\n"
+    '\n'
+    '`review_state_comment_end` uses `decoder.raw_decode(source, start + header.end())` and then matches `\\s*-->` after the decoded JSON. If the JSON object is followed by trailing content other than whitespace before `-->` (e.g. a stray token), `raw_decode` stops at the object end and the `\\s*-->` match fails, raising `unclosed review-state marker`. This is fail-closed and acceptable. No concrete defect; noting only that the error message may be misleading for trailing-garbage cases. Not flagging as a bug.\n'
+    '</summary>\n'
+    '\n'
+    '```python\n'
+    'closing = re.match(r"\\s*-->", source[end:])\n'
+    'if closing is None:\n'
+    '    raise ValueError("unclosed review-state marker")\n'
+    'return end + closing.end()\n'
+    '```\n'
+    '\n'
+    '</details>\n'
+    '\n'
+    '</td></tr>\n'
+    '</table>\n'
+    '\n'
+    '<!-- pr-agent-review-state:v1\n'
+    '{"findings":[{"body":"**Possible Issue**\\n\\n`review_state_comment_end` uses `decoder.raw_decode(source, start + header.end())` and then matches `\\\\s*--\\u003e` after the decoded JSON. If the JSON object is followed by trailing content other than whitespace before `--\\u003e` (e.g. a stray token), `raw_decode` stops at the object end and the `\\\\s*--\\u003e` match fails, raising `unclosed review-state marker`. This is fail-closed and acceptable. No concrete defect; noting only that the error message may be misleading for trailing-garbage cases. Not flagging as a bug.","finding_id":"7097fba26714","first_seen":"2026-10-16T14:05:06.280922Z","last_seen":"2026-10-16T14:05:06.280922Z","last_seen_head_sha":"8d51852b44188908a24fa7851b26e1108199331e","line_end":268,"line_start":265,"path":"scripts/development-workflow/pr-agent-runtime.py","state":"ACTIVE"},{"body":"**Possible Issue**\\n\\nIn `mask_review_code`, the review-state branch is only entered when `source.startswith(\\"<!--\\", index)` and the regex `<!--\\\\s*pr-agent-review-state` matches. The new `review_state_seen` flag raises `ValueError(\\"duplicate review-state marker\\")` on a second marker. However, the duplicate detection relies on the marker being reached via this exact path. If a second `pr-agent-review-state` marker appears inside a fenced code block or is otherwise masked before reaching this branch, the duplicate is not detected. This is likely intentional (masked content is opaque), but worth confirming the fail-closed guarantee holds for the intended threat model. Low confidence; the test `test_malformed_and_unknown_state_fail_closed` covers the adjacent-marker case.","finding_id":"f5d49efd62e3","first_seen":"2026-10-16T14:05:06.280922Z","last_seen":"2026-10-16T14:05:06.280922Z","last_seen_head_sha":"8d51852b44188908a24fa7851b26e1108199331e","line_end":151,"line_start":141,"path":"scripts/development-workflow/pr-agent-runtime.py","state":"ACTIVE"}],"last_run":{"complete":false,"excluded_files":[],"head_sha":"8d51852b44188908a24fa7851b26e1108199331e","kind":"partial","run_id":"https://github.com/lhpaul/ai-dev-framework-template/commit/8d51852b44188908a24fa7851b26e1108199331e"},"schema_version":1}\n'
+    '-->\n'
+)
+
+
+class HiddenReviewStateTests(unittest.TestCase):
+    def labels(self, body):
+        return subprocess.run(
+            ["bash", str(ROOT / "scripts/development-workflow/apply-readiness-labels.sh"),
+             "--pr-agent-focus-labels"], input=body, text=True,
+            capture_output=True, check=True,
+        ).stdout
+
+    def test_real_1983_comment_reaches_visible_findings(self):
+        original = PR_1983_REVIEW
+        self.assertIn("950f94e9df62ce51c33a44733513bbdaff3f1d67", original)
+        self.assertGreater(original.count("<!--"), original.count("-->"))
+        self.assertEqual("Possible Issue\nTest Isolation", self.labels(original))
+        # Unknown visible labels remain closed (#1972 is a separate item).
+        self.assertEqual("escalate", classify(original))
+        # A test-only copy isolates the delimiter bug from that unknown label.
+        known_advisories = original.replace("<strong>Test Isolation</strong>",
+                                            "<strong>Possible Issue</strong>")
+        self.assertEqual("clean", classify(known_advisories))
+        blocker = known_advisories.replace("<strong>Possible Issue</strong>",
+                                           "<strong>Must fix</strong>", 1)
+        self.assertEqual("needs_fixes", classify(blocker))
+        self.assertEqual(original, PR_1983_REVIEW)
+
+    def test_json_delimiters_are_data_with_and_without_producer_escaping(self):
+        snapshot = state(size=0)
+        snapshot["findings"][0]["body"] = (
+            '<!-- nested <!-- "quoted" \\ --> --!> `unclosed <table> 雪'
+        )
+        snapshot["findings"][0]["extra"] = {"items": ["<!--", "-->", {"a": "<!--"}]}
+        for payload in (json.dumps(snapshot),
+                        json.dumps(snapshot).replace("-->", "--\\u003e")):
+            hidden = "<!-- pr-agent-review-state:v1\n" + payload + "\n-->"
+            self.assertEqual(snapshot, json.loads(payload))
+            for blocking in (False, True):
+                with self.subTest(escaped="\\u003e" in payload, blocking=blocking):
+                    body = review(blocking=blocking, suffix=hidden)
+                    self.assertEqual("needs_fixes" if blocking else "clean", classify(body))
+                    self.assertEqual("Must fix" if blocking else "", self.labels(body))
+
+    def test_malformed_and_unknown_state_fail_closed(self):
+        invalid = (
+            "<!-- pr-agent-review-state:v2 {} -->",
+            "<!-- pr-agent-review-state:v10 {} -->",
+            "<!-- pr-agent-review-state {} -->",
+            "<!-- pr-agent-review-state:v1 -->",
+            "<!-- pr-agent-review-state:v1 {broken} -->",
+            "<!-- pr-agent-review-state:v1 [] -->",
+            "<!-- pr-agent-review-state:v1 null -->",
+            "<!-- pr-agent-review-state:v1 {} trailing -->",
+            "<!-- pr-agent-review-state:v1 {}",
+            '<!-- pr-agent-review-state:v1 {"schema_version":2} -->',
+            '<!-- pr-agent-review-state:v1 {"schema_version":true} -->',
+            '<!-- pr-agent-review-state:v1 {"a":1,"a":2} -->',
+            '<!-- pr-agent-review-state:v1 {"nested":{"a":1,"a":2}} -->',
+            '<!-- pr-agent-review-state:v1 {"a":NaN} -->',
+            '<!-- pr-agent-review-state:v1 {"a":Infinity} -->',
+            '<!-- pr-agent-review-state:v1 {"body":"unterminated -->',
+            "<!-- pr-agent-review-state:v1 {} --!>",
+            "<!-- pr-agent-review-state:v1 {} -->" * 2,
+        )
+        for hidden in invalid:
+            with self.subTest(hidden=hidden):
+                body = review(suffix=hidden)
+                self.assertEqual("escalate", classify(body))
+                self.assertEqual("", self.labels(body))
+
+    def test_invalid_html_outside_state_and_later_blockers_remain_visible(self):
+        hidden = SyntheticState.serialize_review_state(state(size=0))
+        for tail in ("<!-- unclosed", "<!-- nested <!-- -->", "-->"):
+            with self.subTest(tail=tail):
+                self.assertEqual("escalate", classify(review(suffix=hidden + tail)))
+        self.assertEqual("needs_fixes", classify(hidden + "\n" + review(blocking=True)))
+        self.assertEqual("needs_fixes", classify(review(suffix=hidden + "\n### Security concerns: Critical\n")))
 
 
 if __name__ == '__main__':

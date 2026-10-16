@@ -2382,7 +2382,7 @@ readiness_fixture_1946 human_verification refused "${_ticket_body_1946/Fully com
 readiness_fixture_1946 truncated refused "${_ticket_body_1946%</table>*}"
 readiness_fixture_1946 unknown refused $'## PR Reviewer Guide\ncommit: '"$HEAD"$'\n**Ticket compliance analysis ✅**\n'
 readiness_fixture_1946 hidden_clean refused $'## PR Reviewer Guide\ncommit: '"$HEAD"$'\n<!-- pr-agent-review-state:v1\n{"body":"No major issues detected"}\n-->\n'
-readiness_fixture_1946 hidden_blocker labeled "${_ticket_body_1946}"$'<!-- pr-agent-review-state:v1\n{"body":"Recommended focus areas for review\n<strong>Critical</strong>"}\n-->\n'
+readiness_fixture_1946 hidden_blocker labeled "${_ticket_body_1946}"$'<!-- pr-agent-review-state:v1\n{"body":"Recommended focus areas for review\\n<strong>Critical</strong>"}\n-->\n'
 readiness_fixture_1946 hidden_current_head refused $'## PR Reviewer Guide\ncommit: stalehead\nNo major issues detected\n<!-- pr-agent-review-state:v1\n{"last_seen_head_sha":"'"$HEAD"$'"}\n-->\n'
 readiness_fixture_1946 visible_current_marker labeled "${_ticket_body_1946/commit: $HEAD/#### (Review updated until commit https:\/\/github.com\/owner\/repo\/commit\/$HEAD)}"
 readiness_fixture_1946 empty_markdown_analysis refused $'## PR Reviewer Guide\ncommit: '"$HEAD"$'\n**Ticket compliance analysis ✅**\n**[42](url) - Fully compliant**\nCompliant requirements:\n\n---\n'
