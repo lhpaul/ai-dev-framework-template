@@ -180,10 +180,11 @@ def mask_review_code(source, preserve_offsets=True):
                     or content.endswith("\\") or source.startswith("``", end)):
                 raise ValueError("ambiguous inline span")
             # Complete HTML-only code is literal, including tag fragments.
-            # Mixed prose/HTML cannot swallow raw boundaries. Nested raw HTML
-            # outside the admitted producer contexts was already refused.
+            # A quoted comment opener is literal too, even in an expression.
+            # Mixed prose/HTML still cannot swallow closing tags, declarations
+            # or processing instructions across raw container boundaries.
             if (in_html and not history_markdown and not html_markup_only(content)
-                    and re.search(r"<\s*/|<!|<\?", content)):
+                    and re.search(r"<\s*/|<!(?!--)|<\?", content)):
                 raise ValueError("inline span crosses HTML markup")
             parts.append(masked(index, end + 1))
             index = end + 1
