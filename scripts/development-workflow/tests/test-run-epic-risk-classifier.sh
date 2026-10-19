@@ -346,7 +346,7 @@ product_repo:
     github_repo: example/workflow-hub
 YAML
 hub_via_env_output="$(env WORKFLOW_HUB_REPO_ROOT="$hub_ci_dir" "$CLASSIFIER" --input "$hub_via_env_fixture" --repo-root "$product_hub_lookup_dir" --max-risk medium --json)"
-run_test "hub_ci_policy_from_workflow_hub_repo_root_env" "true" "$(printf '%s\n' "$hub_via_env_output" | jq -r '.merge_permitted')"
+run_test "inherited_hub_locator_does_not_replace_product_ci_policy" "false" "$(printf '%s\n' "$hub_via_env_output" | jq -r '.merge_permitted')"
 
 run_test "json_output_has_reasons" "yes" "$(printf '%s\n' "$low_output" | jq -e '.reasons | length > 0' >/dev/null && echo yes || echo no)"
 run_test "json_output_shape_stable" "yes" "$(
