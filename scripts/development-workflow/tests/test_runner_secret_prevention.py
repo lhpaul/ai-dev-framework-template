@@ -397,6 +397,18 @@ sys.exit(rc)
         self.assert_redacts('token=firstFake password="secondFake"; Authorization: Bearer thirdFake token=fourthFake',
                             ['firstFake', 'secondFake', 'thirdFake', 'fourthFake'])
 
+    def test_sensitive_assignment_multiword_values(self):
+        for text in ('password: fabricated first tail\nresult: clean\n',
+                     'token=fabricated first tail; operation=review',
+                     r'token=fabricated\ first\ tail operation=review',
+                     r'password=fabricated\;first\ tail; operation=review',
+                     'token=fabricated first password=second fake tail; operation=review'):
+            output = self.assert_redacts(text, ['fabricated', 'first', 'tail', 'second fake'])
+            self.assertIn('result: clean' if '\nresult:' in text else 'operation=review', output)
+        output = self.assert_redacts('{"token":"fabricated first tail","result":"clean","count":1}',
+                                     ['fabricated', 'first', 'tail'])
+        self.assertEqual(json.loads(output), {'token': '[REDACTED]', 'result': 'clean', 'count': 1})
+
     def test_header_and_url_values(self):
         output = self.assert_redacts('Authorization: Bearer fabricatedBearer\nAuthorization: Basic fabricatedBasic==\nhttps://user:fakePassword@example.test/path\n',
                                      ['fabricatedBearer', 'fabricatedBasic', 'fakePassword', 'user:'])
@@ -508,8 +520,8 @@ sys.exit(rc)
         command = bindir / 'synthetic-review'
         evidence = self.root / 'evidence.json'
         for valid, expected in ((True, 0), (False, 2)):
-            payload = '{"result":"clean","reason":"token=fakeVerdictReason","comments":0}' if valid else 'invalid-verdict'
-            command.write_text('''#!/bin/sh\necho 'token=fakeCapturedError' >&2\nprintf '%s\\n' 'positionPayload'\nexit statusCode\n'''.replace('positionPayload', payload).replace('statusCode', '0' if valid else '7'))
+            payload = '{"result":"clean","reason":"token=fakeVerdictReason hiddenVerdictSuffix","comments":0}' if valid else 'invalid-verdict'
+            command.write_text('''#!/bin/sh\necho 'token=fakeCapturedError hiddenCapturedSuffix' >&2\nprintf '%s\\n' 'positionPayload'\nexit statusCode\n'''.replace('positionPayload', payload).replace('statusCode', '0' if valid else '7'))
             command.chmod(0o755)
             call_env = dict(env, LOCAL_AI_REVIEWER_COMMAND=str(command), LOCAL_AI_REVIEWER_EVIDENCE_FILE=str(evidence),
                             LOCAL_AI_REVIEWER_GRAPH_STRATEGY='none')
@@ -518,11 +530,14 @@ sys.exit(rc)
             self.assertEqual(result.returncode, expected, result.stderr + result.stdout)
             self.assertNotIn('fakeCapturedError', result.stdout + result.stderr)
             self.assertNotIn('fakeVerdictReason', result.stdout + result.stderr)
+            self.assertNotIn('hiddenVerdictSuffix', result.stdout + result.stderr)
+            self.assertNotIn('hiddenCapturedSuffix', result.stdout + result.stderr)
             if valid:
                 data = json.loads(evidence.read_text())
                 self.assertEqual(data['result'], 'clean')
                 self.assertEqual(data['counts']['blocking'], 0)
                 self.assertNotIn('fakePersistentContext', evidence.read_text())
+                self.assertNotIn('hiddenVerdictSuffix', evidence.read_text())
         command.write_text("#!/bin/sh\necho 'quota exceeded; try again at token=fakeQuotaDiagnostic' >&2\nexit 7\n")
         result = subprocess.run(['bash', str(scripts / 'local-ai-reviewer.sh'), '1993', 'fixture', 'repo'], env=call_env,
                                 cwd=self.checkout, capture_output=True, text=True)
@@ -543,11 +558,12 @@ sys.exit(rc)
         # producer; the actual append and JSON renderer remain under test.
         history = function_text('pr-review-loop.sh', 'reviewer_loop_history_append_to_summary')
         history += '\n' + function_text('pr-review-loop.sh', 'reviewer_loop_history_render_section')
-        history += "\nreviewer_loop_history_payload_from_existing() { printf '%s' '{\"history_status\":\"available\",\"entries\":[{\"result\":\"clean\",\"blocking_count\":0,\"detail\":\"token=fakeHistoryDiagnostic\"}]}'; }\nREVIEWER_LOOP_HISTORY_MARKER='<!-- reviewer-loop-history:v1 -->'\n"
+        history += "\nreviewer_loop_history_payload_from_existing() { printf '%s' '{\"history_status\":\"available\",\"entries\":[{\"result\":\"clean\",\"blocking_count\":0,\"detail\":\"token=fakeHistoryDiagnostic hiddenHistorySuffix\"}]}'; }\nREVIEWER_LOOP_HISTORY_MARKER='<!-- reviewer-loop-history:v1 -->'\n"
         result = self.bash("reviewer_loop_history_append_to_summary 'detail token=fakePublishedDiagnostic' ''", extra=history)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertNotIn('fakePublishedDiagnostic', result.stdout)
         self.assertNotIn('fakeHistoryDiagnostic', result.stdout)
+        self.assertNotIn('hiddenHistorySuffix', result.stdout)
         payload = json.loads(result.stdout.split('```json\n')[1].split('```')[0])
         self.assertEqual(payload['entries'][0]['result'], 'clean')
         self.assertEqual(payload['entries'][0]['blocking_count'], 0)

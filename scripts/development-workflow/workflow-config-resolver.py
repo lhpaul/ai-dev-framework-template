@@ -84,16 +84,22 @@ def redact_text(text: str) -> str:
     else:
         pieces.append(text[offset:])
     text = "".join(pieces)
-    # Quotes contain escaped delimiters: remove through the real closing quote.
-    value = r'''(?:\[REDACTED\]|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|"[^\n]*|'[^\n]*|[^\s,;}\]]+)'''
     key = r"(?:[A-Za-z0-9]+[_.-])*(?:token|password|passphrase|secret|api[ _.-]?key|access[ _.-]?key|private[ _.-]?key)(?:[_.-](?:value|key))?"
+    # Plain/YAML values can contain spaces. End at a structural separator or
+    # the next assignment, not the first word. Shell escapes consume their
+    # following character, including a space or an otherwise delimiting ';'.
+    next_assignment = r'''[ \t]+["']?(?:[A-Za-z_][\w.-]*|''' + key + r''')["']?[ \t]*[:=]'''
+    plain = r'''(?:\\[^\r\n]|(?!''' + next_assignment + r''')[^\r\n,;}\]#\\])+'''
+    # Quoted values retain their complete escaped contents and JSON envelope.
+    value = r'''(?:\[REDACTED\]|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|"[^\n]*|'[^\n]*|''' + plain + ")"
     assignment = re.compile(r"(?<![\w.-])([\"']?" + key + r"[\"']?\s*[:=]\s*)(" + value + ")", re.IGNORECASE)
     def mask_assignment(match: re.Match) -> str:
         raw = match[2]
         quote = raw[:1] if raw[:1] in ("\"", "'") else ""
         if not quote and match[1].startswith('"'):
             quote = '"'
-        return match[1] + quote + marker + quote
+        trailing_space = raw[len(raw.rstrip(" \t")):]
+        return match[1] + quote + marker + quote + trailing_space
     text = assignment.sub(mask_assignment, text)
     authorization = re.compile(r'''(\bauthorization["']?\s*[:=]\s*)((?:(?:Bearer|Basic)\s+)?''' + value + ")", re.IGNORECASE)
     text = authorization.sub(mask_assignment, text)
