@@ -15242,7 +15242,7 @@ if [ "$_pr_base_exit" -eq 0 ]; then
   _pr_base="$_pr_base_raw"
 elif ! printf '%s\n' "$_pr_base_raw" | grep -qi "Could not resolve\|not found"; then
   printf 'WARNING: failed to resolve PR base branch (exit %d): %s — falling back to working-tree config\n' \
-    "$_pr_base_exit" "$_pr_base_raw" >&2
+    "$_pr_base_exit" "$_pr_base_raw" | workflow_redact_text >&2
 fi
 if [ -n "$_pr_base" ]; then
   if _PR_CONFIG_TMPFILE="$(mktemp 2>/dev/null)"; then

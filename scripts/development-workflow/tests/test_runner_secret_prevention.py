@@ -27,6 +27,9 @@ MODULE = importlib.util.module_from_spec(SPEC)
 with patch.object(Path, 'read_text', side_effect=AssertionError('import read configuration')):
     SPEC.loader.exec_module(MODULE)
 
+# Only public shared configuration is consulted for template-owned artifact checks.
+IS_TEMPLATE = MODULE.parse_yaml_subset(ROOT / '.ai-dev-workflow.yaml').get('template', {}).get('is_template') is True
+
 
 def function_text(file: str, name: str) -> str:
     """Extract an existing Bash function, retaining real composed implementation."""
@@ -286,6 +289,7 @@ sys.exit(rc)
                                 env=dict(self.env, WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT='invalid-must-not-read'), text=True, capture_output=True)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout, output)
+        self.assertEqual(MODULE.redact_text(output), output)
         shell = self.bash('workflow_redact_text', extra='') if not text else subprocess.run(
             ['bash', '-c', f'source {str(SCRIPTS / "workflow-lib.sh")!r}; workflow_redact_text'],
             input=text, env=self.env, text=True, capture_output=True)
@@ -447,6 +451,53 @@ sys.exit(rc)
         self.assertIn('<!-- run-epic:pr-disposition -->', result.stdout)
         self.assertNotIn('fakeAuditDiagnostic', result.stdout)
         self.assertNotIn('/tmp/fake-private-path', result.stdout)
+
+    @unittest.skipUnless(IS_TEMPLATE, "project-owned controls vary in consumer repositories")
+    def test_prevention_controls(self):
+        import fnmatch
+        subprocess.run(['git', 'init', '-q', str(self.checkout)], check=True, capture_output=True)
+        shutil.copyfile(ROOT / '.gitignore', self.checkout / '.gitignore')
+        private = ('.ai-dev-workflow.local.yaml', '.ai-dev-workflow.local.yaml.retired',
+                   '.ai-dev-workflow.local.private.yaml', '.ai-dev-workflow.local.env',
+                   '.ai-dev-workflow.local.env.bak', '.env', '.env.production', '.env.local',
+                   'private.key', 'service-key.pem', 'service.private.pem', 'private_key.pem',
+                   'id_rsa', 'id_ed25519', '.netrc', '.aws/credentials', 'credentials.json')
+        public = ('.ai-dev-workflow.local.example.yaml', '.ai-dev-workflow.local.env.example',
+                  '.env.example', 'certificate.pem', 'certificate.crt', 'id_ed25519.pub')
+        for name, ignored in [(n, True) for n in private] + [(n, False) for n in public]:
+            result = subprocess.run(['git', '-C', str(self.checkout), 'check-ignore', '-q', '--', name])
+            self.assertEqual(result.returncode, 0 if ignored else 1, name)
+        policy = json.loads((ROOT / '.claude/settings.json').read_text())['permissions']
+        self.assertIn('Bash(git status:*)', policy['allow'])
+        for operation in ('Read', 'Edit'):
+            patterns = [rule[len(operation)+1:-1] for rule in policy['deny'] if rule.startswith(operation + '(')]
+            for name in ('.ai-dev-workflow.local.yaml', '.ai-dev-workflow.local.env', 'private.key',
+                         'service-key.pem', 'id_ed25519', 'credentials.json'):
+                self.assertTrue(any(fnmatch.fnmatch('fixture/' + name, pattern) for pattern in patterns), (operation, name))
+            for name in public:
+                self.assertFalse(any(fnmatch.fnmatch('fixture/' + name, pattern) for pattern in patterns), (operation, name))
+        guidance = (ROOT / 'AGENTS.md').read_text()
+        self.assertIn('not agent inspection or editing targets', guidance)
+        self.assertIn('Authorized protocol scripts deliberately read', guidance)
+        self.assertIn('disposable synthetic repositories', guidance)
+
+    @unittest.skipUnless(IS_TEMPLATE, "release fragments belong to the template repository")
+    def test_upgrade_artifacts_presence_and_content(self):
+        # AC-9 / smoke journey 8: presence and required content, not a residual
+        # search that could pass after an artifact is deleted.
+        guide = ROOT / 'docs/workflow/development-workflow/integrations/runner-secret-prevention.md'
+        fragment = ROOT / 'changelog.d/1993.security.runner-secret-prevention.md'
+        self.assertTrue(guide.is_file(), str(guide))
+        self.assertTrue(fragment.is_file(), str(fragment))
+        text = guide.read_text()
+        for phrase in ('WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT', 'minimal local review configuration',
+                       'no automatic copying', 'Do not restore fallback during downstream template sync',
+                       'conflated public Bash', 'not supported', 'reviewed forward fix',
+                       'distinct failure status', 'checkout-local'):
+            self.assertIn(phrase, text.replace('\n', ' '))
+        note = fragment.read_text()
+        for phrase in ('(#1993)', 'explicit selection', 'minimal checkout-local review settings', 'never copied automatically'):
+            self.assertIn(phrase, note)
 
 
 if __name__ == '__main__':

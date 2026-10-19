@@ -1165,10 +1165,12 @@ Pre-dispatch validation is mandatory:
   open or update PRs, modify labels, or update tracker state.
 
 The worktree creator does not seed `.ai-dev-workflow.local.yaml` into the
-worktree, and runners must not copy it by hand: the workflow scripts resolve a
-linked worktree's local override from the main clone (#1560). The contract and
-the post-entry verification live in one place — Protocol 91, ["Worktree isolation for batch dispatch"](91-orchestrate-work-protocol.md#worktree-isolation-for-batch-dispatch),
-under "Local reviewer override continuity".
+worktree, and runners must not copy it by hand. Implicit local selection stays
+inside the current checkout; an external source requires an explicit
+`WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT` handoff. Missing, empty and product-only
+local settings never trigger another-checkout discovery. The contract and
+post-entry verification live in Protocol 91, ["Worktree isolation for batch dispatch"](91-orchestrate-work-protocol.md#worktree-isolation-for-batch-dispatch),
+under "Local reviewer override continuity"; see the [consumer upgrade guide](../integrations/runner-secret-prevention.md).
 
 This requirement is separate from the unsanctioned nested-agent PR guard in
 #1200. The #1200 guard prevents child agents from creating duplicate or

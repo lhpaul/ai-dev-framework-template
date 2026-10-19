@@ -85,7 +85,7 @@ def redact_text(text: str) -> str:
         pieces.append(text[offset:])
     text = "".join(pieces)
     # Quotes contain escaped delimiters: remove through the real closing quote.
-    value = r'''(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|"[^\n]*|'[^\n]*|[^\s,;}\]]+)'''
+    value = r'''(?:\[REDACTED\]|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|"[^\n]*|'[^\n]*|[^\s,;}\]]+)'''
     key = r"(?:[A-Za-z0-9]+[_.-])*(?:token|password|passphrase|secret|api[ _.-]?key|access[ _.-]?key|private[ _.-]?key)(?:[_.-](?:value|key))?"
     assignment = re.compile(r"(?<![\w.-])([\"']?" + key + r"[\"']?\s*[:=]\s*)(" + value + ")", re.IGNORECASE)
     def mask_assignment(match: re.Match) -> str:
@@ -815,11 +815,7 @@ def resolve_local_path(
     name: str,
     require_local: bool,
 ) -> tuple[str, str]:
-    # Relative local_path/checkout_root values are anchored to local_path's own
-    # directory, not repo_root. When repo_root is a linked worktree without its
-    # own local config, local_path resolves to the main clone's file (#1560);
-    # anchoring to repo_root there would resolve the same stored relative value
-    # to a different absolute path depending on which checkout it is read from.
+    # Relative paths are anchored to the deliberately selected source directory.
     local_entry = local_product_repo(local, local_path, name)
     explicit = local_entry.get("local_path") or local_entry.get("checkout_path")
     if explicit:
@@ -1728,10 +1724,7 @@ def resolve_review_overrides(args: argparse.Namespace) -> dict[str, str]:
         "INTERNAL_REVIEWERS_UNAVAILABLE_POLICY": policy,
         "INTERNAL_REVIEWERS_UNAVAILABLE_POLICY_SOURCE": policy_source,
         "LOCAL_OVERRIDE_SOURCE": ",".join(sources),
-        # Which file the values above came from, and where it lives relative to
-        # --repo-root. A linked worktree reports origin=main_clone (#1560); an
-        # agent that still resolves zero reviewers while this is non-empty is
-        # reading the wrong file, not facing a policy decision.
+        # Selected source identity only; compatibility ancestry metadata is empty.
         "LOCAL_OVERRIDE_FILE": local_file,
         "LOCAL_OVERRIDE_ORIGIN": local_origin,
         "MAIN_CLONE_LOCAL_OVERRIDE_FILE": str(main_clone_file) if main_clone_file else "",

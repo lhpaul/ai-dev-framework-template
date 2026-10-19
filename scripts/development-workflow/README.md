@@ -1466,3 +1466,25 @@ Use this when:
 - The agent protocol `94-batch-merge-protocol.md` is running a batch merge.
 - You want to inspect the merge ordering for a set of PRs before invoking the agent command.
 - Called by the `/batch-merge` Claude Code command, `/batch-merge` Cursor command, or the `/batch-merge` / `batch-merge` Codex skill alias.
+
+## Private runner configuration
+
+Implicit `.ai-dev-workflow.local.yaml` selection stays inside the current
+checkout, including linked worktrees. External indirection requires explicit
+`WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT`; a selected missing/unreadable source fails
+without shared/default fallback. The Bash declaration helper returns 0 for a
+declaration (including `[]`), 1 for absence and 2 for source/schema failure;
+public list readers return 0 for valid lists/absence and 2 for failure. Callers
+must capture failures before conditional iteration or aggregation.
+
+Preflight's `review-snapshot --repo-root <source> --destination <private-dir>`
+reads the selected source once and atomically stages only validated reviewer
+settings with mode 0600. Staged readers remove inherited external-source overrides;
+original attribution is separate metadata. `redact-text` sanitizes diagnostic
+stdin without loading configuration; `workflow_redact_text` exposes that boundary
+for Bash, and `workflow_redact_json` preserves structured diagnostic values.
+Functional configuration and deliberate auth transport are separate interfaces.
+
+See the [consumer upgrade and prevention guide](../../docs/workflow/development-workflow/integrations/runner-secret-prevention.md).
+Reversal to implicit inheritance or conflated Bash failure/absence statuses is not
+supported; regressions use reviewed forward fixes preserving both contracts.

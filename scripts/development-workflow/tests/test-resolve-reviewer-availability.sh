@@ -55,6 +55,9 @@ with tempfile.TemporaryDirectory(prefix='availability-tests-') as tmp:
         path = bins / command
         path.unlink(missing_ok=True)  # Never follow a dependency symlink when writing a fake.
         if command == 'python3':
+            # Redaction is a separate pure diagnostic command, not the parser
+            # invocation this fake is targeting (including timeout/error plants).
+            body = (f'for arg in "$@"; do if [ "$arg" = redact-text ]; then exec {real_python!r} "$@"; fi; done\n' + body)
             # Fake the requested config parser, not the Linux process supervisor
             # that bounds and reaps that parser. A hanging target stays bounded.
             body = (f'if [ "$1" = -B ] && [ "$2" = -c ] && [[ "$3" == "# Step 7a Linux probe supervisor"* ]]; then exec {real_python!r} "$@"; fi\n' + body)

@@ -1243,11 +1243,14 @@ echo "Branch context verified: $CURRENT"
 
 **Local reviewer override continuity — verify once after entering the worktree**
 
-`git worktree add` carries no gitignored files, so the worktree has no
-`.ai-dev-workflow.local.yaml` of its own. The workflow scripts resolve a linked
-worktree's override from the main clone automatically (#1560); confirm that
-from inside the worktree now, rather than discovering it in Step 7a as a
-zero-reachable-reviewer hard-fail:
+`git worktree add` carries no gitignored files. Implicit private configuration
+selection is confined to the current checkout; a missing, empty or product-only
+local file never inherits another checkout's settings. Operators may deliberately
+select a readable external source with `WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT`.
+Invalid explicit selection fails without shared/default substitution. Runners
+must not copy private files or inspect their contents manually.
+
+Verify selected source identity after entering the worktree:
 
 <!-- workflow-shell-contract: bash-zsh -->
 ```bash
@@ -1255,13 +1258,14 @@ python3 ./scripts/development-workflow/workflow-config-resolver.py review-overri
   | grep -E '^(LOCAL_OVERRIDE_FILE|LOCAL_OVERRIDE_ORIGIN|MAIN_CLONE_LOCAL_OVERRIDE_FILE)='
 ```
 
-Expected for a worktree of a clone that has a local override:
-`LOCAL_OVERRIDE_ORIGIN=main_clone` with `LOCAL_OVERRIDE_FILE` equal to
-`MAIN_CLONE_LOCAL_OVERRIDE_FILE`. `MAIN_CLONE_LOCAL_OVERRIDE_FILE` set while
-`LOCAL_OVERRIDE_FILE` is empty means the override exists and is not being
-applied — stop and report it to the Portfolio Orchestrator; do not copy the
-file by hand. All three empty means the clone has no local override and the
-shared `.ai-dev-workflow.yaml` applies.
+An intentional current-checkout source reports `LOCAL_OVERRIDE_ORIGIN=checkout`;
+an explicitly selected source reports `override_root`. With no local source,
+file and origin are empty and shared settings apply under existing reader rules.
+`MAIN_CLONE_LOCAL_OVERRIDE_FILE` is always empty compatibility metadata. Source
+failures stop the operation; they are never absence. See the [consumer upgrade
+guide](../integrations/runner-secret-prevention.md) for explicit selection and
+minimal review-only settings. Reviewer-loop initiating-root handoffs remain
+explicit; preflight pins staged readers to its validated projection.
 
 Apply the same verification pattern any time a `git switch` or `git checkout <branch>` is issued outside the worktree-creation path (e.g., when a stage protocol's recovery step asks to switch branches):
 

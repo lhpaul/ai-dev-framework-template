@@ -225,6 +225,10 @@ Read [`docs/best-practices/STACK-SPECIFIC.md`](docs/best-practices/STACK-SPECIFI
 
 ### Safety Rules
 
+- Private local workflow configuration, environment files, private keys and credential files are not agent inspection or editing targets. Do not open them manually, copy their contents into fixtures, or include their values in transcripts or review artifacts. Public versioned examples remain readable.
+- Authorized protocol scripts deliberately read the selected private configuration as part of normal execution. Select external sources explicitly; never restore implicit inheritance from another checkout or copy private files into worktrees. Preflight stages only validated reviewer settings.
+- Prove configuration isolation, safe diagnostics and prevention controls with disposable synthetic repositories and fabricated values. Runtime-specific permission rules do not enforce arbitrary external sessions.
+
 - **No `git push --force`**, `git reset --hard`, or rebase on shared branches without explicit human approval
 - **Stop and ask** if an action seems destructive or has wide blast radius
 - Human review is required before merging PRs; opening a PR is not a terminal condition by itself
