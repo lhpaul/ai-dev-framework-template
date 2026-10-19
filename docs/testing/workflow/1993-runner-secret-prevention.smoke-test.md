@@ -32,7 +32,12 @@ reference applies.
    Repeat with a valid and an explicitly empty modern runner declaration beside a
    schema-invalid opaque legacy alias: the alias is omitted and does not reject
    the modern value. Distinguish malformed YAML from selected reviewer-field
-   schema errors. Verify atomic staging and cleanup on simulated failure.
+   schema errors. Keep an explicit external override in the caller, mutate the
+   synthetic external source after projection, and prove both staged commands and
+   every bucket still use the projection without rereading that source. Repeat
+   with malformed/removed external input and a no-projection control. Confirm
+   original-source metadata remains separate and the caller's override is unchanged.
+   Verify atomic staging and cleanup on simulated failure.
 4. **Safe errors (AC-4)**: Pass malformed synthetic config containing an opaque
    fake value that matches no known credential prefix. Check stdout and stderr:
    source/category metadata is present and the value, raw line and parser excerpt
@@ -55,7 +60,10 @@ reference applies.
    check; the corrected variant must pass. Record fixture location and result.
 8. **Consumer guidance (AC-9)**: Confirm the upgrade guide and changelog explain
    explicit selection and minimal local review settings, warn against reintroducing
-   fallback during sync, and contain no real local values.
+   fallback during sync, and contain no real local values. Confirm the guide states
+   that reversal to implicit inheritance or conflated public Bash statuses is not
+   supported; regression recovery uses a reviewed forward fix preserving both
+   contracts, with explicit or checkout-local source selection.
 
 ## Expected Evidence
 

@@ -45,6 +45,7 @@ indicative coverage projections, not frozen enumerations or artifact counts.
 | `git grep -n 'workflow_config_review_on_draft_runner\|workflow_config_review_on_draft_github\|workflow_config_review_on_ready_github\|workflow_config_review_platforms\|workflow_config_review_local_list_if_declared\|workflow_local_config_file' -- scripts/development-workflow ':!scripts/development-workflow/tests/*' ':!*.md'` | Direct Bash consumers include readiness labels, completion self-check, policy recommender, reviewer-loop aggregation/process substitutions, library check-name/configured predicates and phase aliases, and CodeRabbit CLI policy selection. Their failure outcomes are specified below. |
 | `git grep -n 'RATE_LIMIT_POLICY\|rate_limit_policy_from_config' -- scripts/development-workflow/coderabbit-cli-reviewer.sh` | The selector suppresses local-source errors; the invalid-policy warning interpolates the rejected value. Both require composed corrections. |
 | `git grep -n 'def review_runner_value\|def parse_review_yaml' -- scripts/development-workflow/workflow-config-resolver.py` | Modern runner declaration takes precedence over the legacy alias; YAML parsing alone does not validate reviewer-field shapes. |
+| `git grep -n 'review-effective --repo-root\|review-github-effective --repo-root\|WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT' -- scripts/development-workflow/reviewer-preflight.sh scripts/development-workflow/workflow-config-resolver.py` | Staged readers select an inherited explicit root independently of `--repo-root`; a staged directory alone cannot pin them to a projection. |
 
 The versioned `.claude/settings.json` has an allow policy and no deny list at this
 revision; inspect only its versioned permission policy when editing that control.
@@ -159,6 +160,36 @@ Missing source means no local projection; invalid explicitly selected source or
 invalid declared review settings fail with a safe category. Test that source
 selection, origin reporting, and actual staged settings agree on the same snapshot.
 
+#### Pin staged readers to the validated projection
+
+For preflight, `review-snapshot` owns the original source selection and the single
+private-file read, returning source identity/origin metadata separately from the
+staged settings. Replace the independent raw-source `review-overrides` parse in
+this staging path with that snapshot result; other runtime callers of
+`review-overrides` retain their existing interface. Preserve original-source
+metadata for attribution without using it to select the staged readers' input.
+
+Invoke both staged `review-effective` and `review-github-effective` with
+`--repo-root "$shared_dir"` and a command-scoped removal of
+`WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT` (for example `env -u` inside the existing
+bounded invocation). Apply the same environment boundary to any subsequent staged
+reader. Do this even when no local projection was produced. The current resolver
+must then select only the private, validated projection beside the staged shared
+config; it cannot reselect the original external source. Do not globally unset
+the operator's override or replace original-source attribution with the temporary
+directory's origin. Preserve the original source in separate metadata fields and
+keep staged-file identity distinct.
+
+`test_staged_projection_pinning` must run the composed synthetic preflight with an
+explicit external root, produce the projection, then mutate the external file
+before staged reads. Change runner and draft/ready GitHub buckets to different
+fabricated settings, then repeat with a malformed or removed source. Both staged
+commands must still resolve every bucket from the original validated projection,
+without rereading the external file; an access spy verifies the single source
+read. Confirm original-source metadata remains correct and the caller's override
+is unchanged. Include a no-projection control proving inherited override cannot
+reintroduce local settings into staged reads. No real private file is involved.
+
 ### Safe diagnostics and output redaction — AC-4 and AC-5
 
 Add a pure redaction function and a `redact-text` stdin command in the existing
@@ -241,6 +272,23 @@ sync. Do not edit consumer repositories. Add
 `changelog.d/1993.security.runner-secret-prevention.md` with the repository's
 `- **Title** (#1993): ...` release-note format.
 
+### Reversal policy for the changed public contract
+
+Reversal to implicit cross-checkout private inheritance or to Bash status handling
+that conflates source failure with absence is **not supported**. No compatibility
+flag, automatic downgrade, or rollback procedure will restore either behavior.
+The consumer upgrade guide must state this policy for both source selection and
+the public Bash statuses together; do not recommend reverting only a selector,
+reader, or caller. This is a supported-operation policy, not a claim that Git
+history is physically irreversible.
+
+If rollout exposes a regression, stop the affected operation and correct it in a
+reviewed forward fix preserving checkout isolation, explicit-source validation,
+and the distinct failure status throughout callers. Operators can use a valid
+explicit source or intentional checkout-local settings under the new contract.
+Do not copy private values or recover by restoring silent inheritance. Existing
+review, risk, CI and merge-session gates also apply to that forward fix.
+
 ## Testing Strategy
 
 **Types**: Python unit tests, synthetic Bash/CLI integration, Git ignore-engine
@@ -279,6 +327,7 @@ consumer in addition to pure-function coverage.
 | Harmless words such as token count, public key names, and ordinary URLs | `test_negative_lookalikes` prevents indiscriminate destruction of useful output. |
 | Malformed config with a synthetic opaque value lacking a recognized prefix | `test_config_error_metadata_only` proves no parser excerpt or scalar is rendered; `test_coderabbit_policy_metadata_only` reaches CLI startup for file/env opaque values and preserves safe default behavior. |
 | Empty/non-review local mapping; modern and legacy review lists; shadowed opaque malformed legacy scalar | `test_review_projection_semantics` validates the allowlist, precedence before selection, omitted shadowed alias, and valid plus explicit-empty modern declarations. |
+| External source changes after projection; inherited override present during staged reads; no local projection | `test_staged_projection_pinning` exercises both staged commands, all buckets, separate original-source metadata, source access count and unchanged caller environment. |
 | Unknown nested review values, duplicate keys, invalid selected scalar/list/item/policy shapes | `test_invalid_review_projection` distinguishes YAML parse errors from selected-field schema errors and proves safe failure before staging. |
 | Missing, unreadable, relative, symlinked, or explicitly selected external sources | `test_source_isolation` exercises Python/Bash parity and all source branches. |
 | Invalid explicit roots with shared config present/absent; valid no-declaration and explicit-empty controls | `test_bash_source_failure_propagation` reaches the ordered consumers above, conditional contexts and aggregation, and proves fatal source errors cannot select shared/default policy or trigger mutations. |
