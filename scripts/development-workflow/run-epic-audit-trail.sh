@@ -783,7 +783,7 @@ apply_comment() {
               --executor-pid "$$" --expected-file "$body_file")
   [ -z "$merge_step" ] || check_args+=(--step "$merge_step")
   [ -z "$repo_root" ] || check_args+=(--repo-root "$repo_root")
-  if ! binding="$(python3 "$SCRIPT_DIR/workflow-merge-budget.py" ${check_args[@]+"${check_args[@]}"})"; then
+  if ! binding="$(workflow_command_with_safe_stderr python3 "$SCRIPT_DIR/workflow-merge-budget.py" ${check_args[@]+"${check_args[@]}"})"; then
     rm -f "$body_file"
     error_exit "merge audit destination/marker/step is outside admitted session"
   fi
@@ -806,7 +806,7 @@ apply_comment() {
   [ -z "$epic_number" ] || child_args+=(--epic "$epic_number")
   [ -z "$repo_root" ] || child_args+=(--repo-root "$repo_root")
   status=0
-  python3 "$SCRIPT_DIR/workflow-merge-budget.py" run-step --session "$merge_session" \
+  workflow_command_with_safe_stderr python3 "$SCRIPT_DIR/workflow-merge-budget.py" run-step --session "$merge_session" \
       --repo "$selected_repo" --pr "$selected_pr" --step "$selected_step" --phase audit \
       --expected-file "$body_file" -- bash "$SCRIPT_DIR/run-epic-audit-trail.sh" \
       ${child_args[@]+"${child_args[@]}"} || status=$?

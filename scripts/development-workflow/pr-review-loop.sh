@@ -2105,7 +2105,7 @@ run_greptile_review() {
   repo="$(repo_slug)"
 
   if [ -z "$trigger_author_login" ]; then
-    trigger_author_login="$(gh api user --jq '.login')"
+    trigger_author_login="$(workflow_command_with_safe_stderr gh api user --jq '.login')"
   fi
 
   # #1789 (plan D15 greptile row): the head every piece of evidence is bound
@@ -2161,7 +2161,7 @@ run_greptile_review() {
     _gr_head_refs_json="$(printf '%s\n' "${reviewer_loop_head_request_refs:-}" | jq -R 'select(. != "")' | jq -sc '.' 2>/dev/null)" || _gr_head_refs_json="[]"
     [ -n "$_gr_head_refs_json" ] || _gr_head_refs_json="[]"
     recent_trigger_comment="$(
-      gh api "repos/$repo/issues/$pr_number/comments" --paginate \
+      workflow_command_with_safe_stderr gh api "repos/$repo/issues/$pr_number/comments" --paginate \
         | jq --arg author "$trigger_author_login" \
             --arg trigger "$trigger_comment" \
             --argjson max_wait "$max_wait" \
@@ -2184,7 +2184,7 @@ run_greptile_review() {
     review_comment_id="$(printf '%s\n' "$recent_trigger_comment" | jq -r '.id')"
     review_window_start="$(printf '%s\n' "$recent_trigger_comment" | jq -r '.created_at')"
     existing_thumbs_up="$(
-      gh api "repos/$repo/issues/comments/$review_comment_id/reactions" \
+      workflow_command_with_safe_stderr gh api "repos/$repo/issues/comments/$review_comment_id/reactions" \
         | jq --arg bot "$bot_login" '[.[] | select(.content == "+1" and .user.login == $bot)] | length'
     )"
     if [ "$existing_thumbs_up" -gt 0 ]; then
@@ -2199,7 +2199,7 @@ run_greptile_review() {
   fi
 
   if [ -z "$review_comment_id" ]; then
-    since_iso="$(gh api "repos/$repo/commits/$head_sha" --jq '.commit.committer.date // empty')"
+    since_iso="$(workflow_command_with_safe_stderr gh api "repos/$repo/commits/$head_sha" --jq '.commit.committer.date // empty')"
     if [ -z "$since_iso" ]; then
       since_iso="$(date -u -v-24H +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date -u -d '24 hours ago' +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || echo '1970-01-01T00:00:00Z')"
     fi
@@ -2208,7 +2208,7 @@ run_greptile_review() {
     # to the head — review comments by original_commit_id, reviews by
     # commit_id — not only created after the head commit's committer time.
     existing_comments="$(
-      gh api "repos/$repo/pulls/$pr_number/comments" --paginate \
+      workflow_command_with_safe_stderr gh api "repos/$repo/pulls/$pr_number/comments" --paginate \
         | jq -r --arg bot "$bot_login" --arg since "$since_iso" --arg head "$head_sha" "$REVIEWER_LOOP_HEAD_BINDING_JQ"'
             .[]
             | select(.user.login == $bot and .created_at > $since and bound_review_comment($head))
@@ -2217,7 +2217,7 @@ run_greptile_review() {
           '
     )"
     existing_reviews="$(
-      gh api "repos/$repo/pulls/$pr_number/reviews" --paginate \
+      workflow_command_with_safe_stderr gh api "repos/$repo/pulls/$pr_number/reviews" --paginate \
         | jq -r --arg bot "$bot_login" --arg since "$since_iso" --arg head "$head_sha" "$REVIEWER_LOOP_HEAD_BINDING_JQ"'
             .[]
             | select(
@@ -2278,7 +2278,7 @@ run_greptile_review() {
     rm -f "$existing_blocking_file"
     review_window_start="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
     local _gr_post_json=""
-    _gr_post_json="$(gh api "repos/$repo/issues/$pr_number/comments" --method POST --raw-field body="$trigger_comment")" || _gr_post_json=""
+    _gr_post_json="$(workflow_command_with_safe_stderr gh api "repos/$repo/issues/$pr_number/comments" --method POST --raw-field body="$trigger_comment")" || _gr_post_json=""
     review_comment_id="$(printf '%s' "$_gr_post_json" | jq -r 'if type == "object" then (.id // empty | tostring) else empty end' 2>/dev/null)" || review_comment_id=""
     if [ -n "$review_comment_id" ]; then
       # #1789 (plan D12): the request this invocation posted — the trigger
@@ -2337,7 +2337,7 @@ run_greptile_review() {
   # #1789 (plan D15 greptile row): findings after the thumbs-up count only when
   # bound to the head, in addition to the request-time filter.
   comments="$(
-    gh api "repos/$repo/pulls/$pr_number/comments" --paginate \
+    workflow_command_with_safe_stderr gh api "repos/$repo/pulls/$pr_number/comments" --paginate \
       | jq -r --arg bot "$bot_login" --arg since "$review_window_start" --arg head "$head_sha" "$REVIEWER_LOOP_HEAD_BINDING_JQ"'
         .[]
         | select(.user.login == $bot and .created_at > $since and bound_review_comment($head))
@@ -2352,7 +2352,7 @@ run_greptile_review() {
   )"
 
   blocking_reviews="$(
-    gh api "repos/$repo/pulls/$pr_number/reviews" --paginate \
+    workflow_command_with_safe_stderr gh api "repos/$repo/pulls/$pr_number/reviews" --paginate \
       | jq -r --arg bot "$bot_login" --arg since "$review_window_start" --arg head "$head_sha" "$REVIEWER_LOOP_HEAD_BINDING_JQ"'
         .[]
         | select(
@@ -5297,7 +5297,7 @@ run_devin_review() {
   cd_workflow_repo_root
   repo="$(repo_slug)"
 
-  head_sha="$(gh api "repos/$repo/pulls/$pr_number" --jq '.head.sha')"
+  head_sha="$(workflow_command_with_safe_stderr gh api "repos/$repo/pulls/$pr_number" --jq '.head.sha')"
   if [ -z "$head_sha" ]; then
     print_kv RESULT escalate
     print_kv REASON "head-sha-unavailable"
@@ -5308,7 +5308,7 @@ run_devin_review() {
     print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
     return 2
   fi
-  since_iso="$(gh api "repos/$repo/commits/$head_sha" --jq '.commit.committer.date // empty')"
+  since_iso="$(workflow_command_with_safe_stderr gh api "repos/$repo/commits/$head_sha" --jq '.commit.committer.date // empty')"
   if [ -z "$since_iso" ]; then
     since_iso="$(date -u -v-24H +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date -u -d '24 hours ago' +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || echo '1970-01-01T00:00:00Z')"
   fi
@@ -5323,7 +5323,7 @@ run_devin_review() {
   # review comments by original_commit_id, reviews by commit_id — in addition
   # to the time filter.
   existing_comments="$(
-    gh api "repos/$repo/pulls/$pr_number/comments" --paginate \
+    workflow_command_with_safe_stderr gh api "repos/$repo/pulls/$pr_number/comments" --paginate \
       | jq -r --arg bot "$bot_login" --arg since "$since_iso" --arg head "$head_sha" "$REVIEWER_LOOP_HEAD_BINDING_JQ"'
           .[]
           | select(.user.login == $bot and .created_at > $since and .in_reply_to_id == null and bound_review_comment($head))
@@ -5332,7 +5332,7 @@ run_devin_review() {
         '
   )"
   existing_reviews="$(
-    gh api "repos/$repo/pulls/$pr_number/reviews" --paginate \
+    workflow_command_with_safe_stderr gh api "repos/$repo/pulls/$pr_number/reviews" --paginate \
       | jq -r --arg bot "$bot_login" --arg since "$since_iso" --arg head "$head_sha" "$REVIEWER_LOOP_HEAD_BINDING_JQ"'
           .[]
           | select(
@@ -5580,7 +5580,7 @@ run_devin_review() {
         # summaries (e.g., CHANGES_REQUESTED/COMMENTED) may have been superseded
         # by later clean runs and can cause false stale blockers.
         stale_comments="$(
-          gh api "repos/$repo/pulls/$pr_number/comments" --paginate \
+          workflow_command_with_safe_stderr gh api "repos/$repo/pulls/$pr_number/comments" --paginate \
             | jq -s -r --arg bot "$bot_login" '
                 (
                   [
@@ -5671,7 +5671,7 @@ run_devin_review() {
   blocking_lines_file="$(mktemp)"
 
   comments="$(
-    gh api "repos/$repo/pulls/$pr_number/comments" --paginate \
+    workflow_command_with_safe_stderr gh api "repos/$repo/pulls/$pr_number/comments" --paginate \
       | jq -r --arg bot "$bot_login" --arg since "$since_iso" --arg head "$head_sha" "$REVIEWER_LOOP_HEAD_BINDING_JQ"'
         .[]
         | select(.user.login == $bot and .created_at > $since and .in_reply_to_id == null and bound_review_comment($head))
@@ -5686,7 +5686,7 @@ run_devin_review() {
   )"
 
   blocking_reviews="$(
-    gh api "repos/$repo/pulls/$pr_number/reviews" --paginate \
+    workflow_command_with_safe_stderr gh api "repos/$repo/pulls/$pr_number/reviews" --paginate \
       | jq -r --arg bot "$bot_login" --arg since "$since_iso" --arg head "$head_sha" "$REVIEWER_LOOP_HEAD_BINDING_JQ"'
         .[]
         | select(
@@ -5862,7 +5862,7 @@ run_pr_agent_review() {
   # PR head as before when the loop has none.
   head_sha="${loop_head_sha:-}"
   if reviewer_loop_head_is_unknown_or_invalid "$head_sha"; then
-    head_sha="$(gh api "repos/$repo/pulls/$pr_number" --jq '.head.sha')"
+    head_sha="$(workflow_command_with_safe_stderr gh api "repos/$repo/pulls/$pr_number" --jq '.head.sha')"
   fi
   if [ -z "$head_sha" ]; then
     print_kv RESULT escalate
@@ -5875,7 +5875,7 @@ run_pr_agent_review() {
     return 2
   fi
   # Use the HEAD commit's push timestamp to scope comments to this review cycle.
-  since_iso="$(gh api "repos/$repo/commits/$head_sha" --jq '.commit.committer.date // empty')"
+  since_iso="$(workflow_command_with_safe_stderr gh api "repos/$repo/commits/$head_sha" --jq '.commit.committer.date // empty')"
   if [ -z "$since_iso" ]; then
     since_iso="$(date -u -v-24H +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date -u -d '24 hours ago' +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || echo '1970-01-01T00:00:00Z')"
   fi
@@ -6072,7 +6072,7 @@ _PR_AGENT_RULE_B_CANDIDATES_
     head_refs_json="$(printf '%s\n' "${reviewer_loop_head_request_refs:-}" | jq -R 'select(. != "")' | jq -sc '.' 2>/dev/null)" || head_refs_json="[]"
     [ -n "$head_refs_json" ] || head_refs_json="[]"
 
-    gh api "repos/$repo/issues/$pr_number/comments" --paginate \
+    workflow_command_with_safe_stderr gh api "repos/$repo/issues/$pr_number/comments" --paginate \
       | jq -rs --arg body "$trigger_body" --arg since "$since_iso" --argjson reuse_window "$trigger_reuse_window" \
                --argjson head_refs "$head_refs_json" '
           add // []
@@ -7733,7 +7733,7 @@ run_coderabbit_review() {
   cd_workflow_repo_root
   repo="$(repo_slug)"
 
-  head_sha="$(gh api "repos/$repo/pulls/$pr_number" --jq '.head.sha')"
+  head_sha="$(workflow_command_with_safe_stderr gh api "repos/$repo/pulls/$pr_number" --jq '.head.sha')"
   if [ -z "$head_sha" ]; then
     print_kv RESULT escalate
     print_kv REASON "head-sha-unavailable"
@@ -7746,7 +7746,7 @@ run_coderabbit_review() {
     print_kv CODERABBIT_REVIEWS_RECEIVED 0
     return 2
   fi
-  since_iso="$(gh api "repos/$repo/commits/$head_sha" --jq '.commit.committer.date // empty')"
+  since_iso="$(workflow_command_with_safe_stderr gh api "repos/$repo/commits/$head_sha" --jq '.commit.committer.date // empty')"
   if [ -z "$since_iso" ]; then
     since_iso="$(date -u -v-24H +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date -u -d '24 hours ago' +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || echo '1970-01-01T00:00:00Z')"
   fi
@@ -7761,7 +7761,7 @@ run_coderabbit_review() {
   # head — review comments by original_commit_id, reviews by commit_id — in
   # addition to the time filter.
   existing_comments="$(
-    gh api "repos/$repo/pulls/$pr_number/comments" --paginate \
+    workflow_command_with_safe_stderr gh api "repos/$repo/pulls/$pr_number/comments" --paginate \
       | jq -r --arg bot "$bot_login" --arg since "$since_iso" --arg head "$head_sha" "$REVIEWER_LOOP_HEAD_BINDING_JQ"'
           .[]
           | select(.user.login == $bot and .created_at > $since and .in_reply_to_id == null and bound_review_comment($head))
@@ -7770,7 +7770,7 @@ run_coderabbit_review() {
         '
   )"
   existing_reviews="$(
-    gh api "repos/$repo/pulls/$pr_number/reviews" --paginate \
+    workflow_command_with_safe_stderr gh api "repos/$repo/pulls/$pr_number/reviews" --paginate \
       | jq -r --arg bot "$bot_login" --arg since "$since_iso" --arg head "$head_sha" "$REVIEWER_LOOP_HEAD_BINDING_JQ"'
           .[]
           | select(
@@ -7854,7 +7854,7 @@ run_coderabbit_review() {
   # before sorting, so the "most recent" selection spans the entire comment history
   # rather than being limited to the last item on whichever page arrived last.
   phase0_most_recent_body="$(
-    gh api "repos/$repo/issues/$pr_number/comments" --paginate \
+    workflow_command_with_safe_stderr gh api "repos/$repo/issues/$pr_number/comments" --paginate \
       | jq -rs --arg bot "$bot_login" '
           add // []
           | map(select(.user.login == $bot))
@@ -8077,7 +8077,7 @@ run_coderabbit_review() {
       # historical pause banners from prior HEAD commits.
       local paused_count
       paused_count="$(
-        gh api "repos/$repo/issues/$pr_number/comments" --paginate \
+        workflow_command_with_safe_stderr gh api "repos/$repo/issues/$pr_number/comments" --paginate \
           | jq -s --arg bot "$bot_login" --arg since "$since_iso" '
               [.[].[] | select(
                   .user.login == $bot and
@@ -8129,7 +8129,7 @@ run_coderabbit_review() {
       # declined to post a trigger (#1579).
       local silent_paused_count
       silent_paused_count="$(
-        gh api "repos/$repo/issues/$pr_number/comments" --paginate \
+        workflow_command_with_safe_stderr gh api "repos/$repo/issues/$pr_number/comments" --paginate \
           | jq -s --arg bot "$bot_login" --arg since "$since_iso" '
               [.[].[] | select(
                   .user.login == $bot and
@@ -8425,7 +8425,7 @@ run_coderabbit_review() {
         local stale_blocking_count=0
         local stale_comments
         stale_comments="$(
-          gh api "repos/$repo/pulls/$pr_number/comments" --paginate \
+          workflow_command_with_safe_stderr gh api "repos/$repo/pulls/$pr_number/comments" --paginate \
             | jq -s -r --arg bot "$bot_login" '
                 (
                   [
@@ -8501,7 +8501,7 @@ run_coderabbit_review() {
         # rather than posting a new one, so we check both created_at and updated_at.
         local timeout_incomplete_count
         timeout_incomplete_count="$(
-          gh api "repos/$repo/issues/$pr_number/comments" --paginate \
+          workflow_command_with_safe_stderr gh api "repos/$repo/issues/$pr_number/comments" --paginate \
             | jq -s --arg bot "$bot_login" --arg since "$since_iso" '
                 [.[].[] | select(
                     .user.login == $bot and
@@ -8551,7 +8551,7 @@ run_coderabbit_review() {
         # and revised at 23:52, straddling later comments.
         local timeout_latest_cr_body
         timeout_latest_cr_body="$(
-          gh api "repos/$repo/issues/$pr_number/comments" --paginate \
+          workflow_command_with_safe_stderr gh api "repos/$repo/issues/$pr_number/comments" --paginate \
             | jq -rs --arg bot "$bot_login" --arg since "$since_iso" '
                 add // []
                 | map(select(
@@ -8649,7 +8649,7 @@ run_coderabbit_review() {
   blocking_lines_file="$(mktemp)"
 
   comments="$(
-    gh api "repos/$repo/pulls/$pr_number/comments" --paginate \
+    workflow_command_with_safe_stderr gh api "repos/$repo/pulls/$pr_number/comments" --paginate \
       | jq -r --arg bot "$bot_login" --arg since "$since_iso" --arg head "$head_sha" "$REVIEWER_LOOP_HEAD_BINDING_JQ"'
         .[]
         | select(.user.login == $bot and .created_at > $since and .in_reply_to_id == null and bound_review_comment($head))
@@ -8664,7 +8664,7 @@ run_coderabbit_review() {
   )"
 
   blocking_reviews="$(
-    gh api "repos/$repo/pulls/$pr_number/reviews" --paginate \
+    workflow_command_with_safe_stderr gh api "repos/$repo/pulls/$pr_number/reviews" --paginate \
       | jq -r --arg bot "$bot_login" --arg since "$since_iso" --arg head "$head_sha" "$REVIEWER_LOOP_HEAD_BINDING_JQ"'
         .[]
         | select(
@@ -8910,13 +8910,13 @@ check_unresolved_threads() {
 
     local result
     if [ -n "$cursor" ]; then
-      result="$(gh api graphql \
+      result="$(workflow_command_with_safe_stderr gh api graphql \
         -f query="$graphql_query" \
         -f owner="$owner" -f repo="$repo_name" -F pr="$pr_number" -f cursor="$cursor" \
         --jq '.data.repository.pullRequest')" \
         || { workflow_diagnostic "WARN: check_unresolved_threads: GraphQL query failed for PR #$pr_number" >&2; return 3; }
     else
-      result="$(gh api graphql \
+      result="$(workflow_command_with_safe_stderr gh api graphql \
         -f query="$graphql_query" \
         -f owner="$owner" -f repo="$repo_name" -F pr="$pr_number" \
         --jq '.data.repository.pullRequest')" \
@@ -9165,7 +9165,7 @@ run_project_advisory_checks() {
   set -e
 
   if [ -n "$advisory_output" ]; then
-    printf '%s\n' "$advisory_output"
+    printf '%s\n' "$advisory_output" | workflow_redact_text
   fi
 
   return 0
@@ -9479,12 +9479,14 @@ reviewer_loop_gh_read_err_file() {
 # next read starts clean. A missing or empty path returns 1.
 reviewer_loop_gh_read_denied() {
   local err_file="${1:-}"
-  local err_text="" detail=""
+  local err_text="" detail="" error_class=""
   [ -n "$err_file" ] && [ -f "$err_file" ] || return 1
-  err_text="$(workflow_redact_text <"$err_file")" || return 2
+  err_text="$(cat "$err_file")"
+  error_class="$(reviewer_loop_gh_read_error_class "$err_text")"
+  err_text="$(printf '%s' "$err_text" | workflow_redact_text)" || return 2
   : > "$err_file" 2>/dev/null || true
   [ -n "$err_text" ] || return 1
-  if [ "$(reviewer_loop_gh_read_error_class "$err_text")" = "denied" ]; then
+  if [ "$error_class" = "denied" ]; then
     # awk reads all input (no early exit), so no SIGPIPE under pipefail.
     detail="$(printf '%s\n' "$err_text" | awk 'NF && !d { print; d = 1 }' | tr -d '\r' | cut -c1-200)" || detail=""
     printf '%s\n' "${detail:-authorization or permission refused}"
@@ -9505,7 +9507,7 @@ reviewer_loop_gh_capture_stderr() {
   if [ -n "$err_file" ]; then
     gh "$@" 2>>"$err_file"
   else
-    gh "$@"
+    workflow_command_with_safe_stderr gh "$@"
   fi
 }
 
@@ -9635,7 +9637,7 @@ sync_reviewer_failed_label() {
 
   if [ "$required" = "1" ]; then
     ensure_reviewer_failed_label_exists
-    if ! gh pr edit "$pr_number_arg" --add-label "$REVIEWER_FAILED_LABEL" >/dev/null; then
+    if ! workflow_command_with_safe_stderr gh pr edit "$pr_number_arg" --add-label "$REVIEWER_FAILED_LABEL" >/dev/null; then
       workflow_diagnostic "WARN: failed to apply ${REVIEWER_FAILED_LABEL} label to PR #${pr_number_arg}; proceeding with reviewer loop" >&2
     fi
   else
@@ -9648,7 +9650,7 @@ sync_reviewer_failed_label() {
     if [ "$label_check_status" -eq 1 ]; then
       return 0
     fi
-    if ! gh pr edit "$pr_number_arg" --remove-label "$REVIEWER_FAILED_LABEL" >/dev/null; then
+    if ! workflow_command_with_safe_stderr gh pr edit "$pr_number_arg" --remove-label "$REVIEWER_FAILED_LABEL" >/dev/null; then
       workflow_diagnostic "WARN: failed to remove ${REVIEWER_FAILED_LABEL} label from PR #${pr_number_arg}; proceeding with reviewer loop" >&2
     fi
   fi
@@ -9830,6 +9832,8 @@ append_compare_metrics_row() {
   local branch_name_arg="$2"
   local overall_result_arg="$3"
   shift 3
+  pr_number_arg="$(printf '%s' "$pr_number_arg" | workflow_redact_text)" || return 2
+  overall_result_arg="$(printf '%s' "$overall_result_arg" | workflow_redact_text)" || return 2
 
   local metrics_file
   metrics_file="$(workflow_repo_root)/docs/workflow/retro-metrics-platforms.md"
@@ -9850,8 +9854,8 @@ append_compare_metrics_row() {
   local -a platform_names=()
   local -a verdict_tokens=()
   while [ "$#" -ge 2 ]; do
-    platform_names+=("$1")
-    verdict_tokens+=("$2")
+    platform_names+=("$(printf '%s' "$1" | workflow_redact_text)") || return 2
+    verdict_tokens+=("$(printf '%s' "$2" | workflow_redact_text)") || return 2
     shift 2
   done
 
@@ -10009,7 +10013,7 @@ restore_regression_label_if_missing() {
       # output "false", causing a spurious re-apply. Use command substitution with
       # explicit exit-code capture instead, equivalent to pipefail on a single-stage
       # pipeline (gh --jq is one command, not a pipe).
-      if ! _rfr_has_label="$(gh pr view "$pr_number" --json labels \
+      if ! _rfr_has_label="$(workflow_command_with_safe_stderr gh pr view "$pr_number" --json labels \
           --jq '[.labels[].name] | any(. == "ready-for-regression")')"; then
         workflow_diagnostic "WARN: gh pr view failed for regression-label auto-restore (PR ${pr_number}); skipping" >&2
         return 0
@@ -12107,6 +12111,7 @@ reviewer_loop_missed_findings_from_history_payload() {
 # Render one summary line (<=200 chars) for a missed-finding record JSON object.
 reviewer_loop_missed_finding_summary_line() {
   local record_json="${1:-}"
+  record_json="$(printf '%s' "$record_json" | workflow_redact_json)" || return 2
   local reviewer short_sha blocking path_total state classification label
   local prefix suffix remainder_max budget named=0 path next_len rem rem_text line
   local -a paths=()
@@ -13977,7 +13982,7 @@ reviewer_loop_timing_summary_section() {
       || [ "${#platform_timing_records[@]}" -eq 0 ]; then
     return 0
   fi
-  timing_lines="$(printf '%s\n' "${platform_timing_records[@]}" | jq -r '
+  timing_lines="$(printf '%s\n' "${platform_timing_records[@]}" | jq -s . | workflow_redact_json | jq -c '.[]' | jq -r '
       def source_label:
         if . == "default" then "built-in default"
         elif . == "configured" then "configured"
@@ -15299,7 +15304,7 @@ if [ "${#platforms[@]}" -gt 0 ]; then
   cd "$repo_root" || exit 1
 
   if [ -z "$branch_name" ]; then
-    if ! branch_name="$(gh pr view "$pr_number" --json headRefName --jq '.headRefName')"; then
+    if ! branch_name="$(workflow_command_with_safe_stderr gh pr view "$pr_number" --json headRefName --jq '.headRefName')"; then
       workflow_diagnostic "ERROR: could not resolve PR #$pr_number head branch." >&2
       exit 1
     fi

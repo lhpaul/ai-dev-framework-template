@@ -257,13 +257,100 @@ esac
 
     def local_entry(self, payload, stderr=None, status=0, **env):
         (self.f.checkout / 'REVIEW.md').write_text('# Synthetic reviewer contract\n')
-        self.gh_script('case "$*" in "pr diff"*) echo README.md;; "pr view"*) cat "$SYNTHETIC_PR";; "auth status"*) exit 0;; *) exit 99;; esac\n')
+        self.gh_script('case "$*" in "pr diff"*) echo README.md;; "repo view"*) echo fixture/repo;; "pr view"*) cat "$SYNTHETIC_PR";; "auth status"*) exit 0;; *) exit 99;; esac\n')
         command = self.f.bin / 'synthetic-review'
         command.write_text('#!/bin/sh\nprintf "%s\\n" ' + shlex.quote(json.dumps(payload) if isinstance(payload, dict) else payload) + '\n' +
                            'printf "%s\\n" ' + shlex.quote(stderr or 'token=' + self.secret) + ' >&2\nexit ' + str(status) + '\n')
         command.chmod(0o755)
         self.f.env.update(LOCAL_AI_REVIEWER_COMMAND=str(command), LOCAL_AI_REVIEWER_GRAPH_STRATEGY='none', **env)
         return self.entry('local-ai-reviewer.sh', '1993', 'fixture', 'repo')
+
+    def test_D11_hosted_producer_reports_and_native_errors(self):
+        for function in ('run_greptile_review', 'run_copilot_review', 'run_bugbot_review',
+                         'run_devin_review', 'run_pr_agent_review', 'run_coderabbit_review'):
+            with self.subTest(producer=function):
+                result = self.safe(self.bash('require_gh() { :; }; cd_workflow_repo_root() { :; }; repo_slug() { echo fixture/repo; };\n' +
+                    'gh() { printf "token=' + self.secret + '\\n" >&2; return 0; };\n' +
+                    function + ' 1993 "feature/token=' + self.secret + '" 1 1', loop=True), 2)
+                self.assertIn('REASON=head-sha-unavailable', result.stdout)
+                self.assertIn('BRANCH=feature/token=[REDACTED]', result.stdout)
+        # A real finding path reaches the shared escaped-KV sink too.
+        comments = json.dumps([{'id': 42, 'user': {'login': 'greptile-apps[bot]'},
+                                'created_at': '2026-10-19T00:00:00Z', 'original_commit_id': 'a' * 40,
+                                'body': '[P1] password: ' + self.secret, 'path': 'token=' + self.secret, 'line': 4}])
+        result = self.safe(self.bash('require_gh() { :; }; cd_workflow_repo_root() { :; }; repo_slug() { echo fixture/repo; };\n' +
+            'loop_head_sha=' + 'a' * 40 + '; PR_REVIEW_TRIGGER_AUTHOR_LOGIN=fixture;\n' +
+            'gh() { printf "token=' + self.secret + '\\n" >&2; case "$*" in *"commits/"*) echo 2020-01-01T00:00:00Z;; ' +
+            '*"pulls/1993/comments"*) printf "%s\\n" ' + shlex.quote(comments) + ';; *) echo "[]";; esac; }\n' +
+            'run_greptile_review 1993 feature/1993-fixture 1 1', loop=True), 1)
+        self.assertIn('RESULT=needs_fixes', result.stdout)
+        self.assertIn('BLOCKING_1_BODY=', result.stdout)
+
+    def test_D12_real_child_adapter_handoff(self):
+        import shutil
+        real_git = shutil.which('git', path=self.f.env['PATH'])
+        git = self.f.bin / 'git'
+        git.write_text('#!/bin/sh\ncase "$*" in *"remote get-url origin"*) echo https://github.com/fixture/repo.git; exit 0;; esac\nexec ' +
+                       shlex.quote(real_git) + ' "$@"\n')
+        git.chmod(0o755)
+        self.local_entry({'result': 'needs_rerun', 'reason': 'password: ' + self.secret})
+        result = self.safe(self.bash('repo_root=' + shlex.quote(str(self.f.checkout)) + ';\n' +
+            'run_local_ai_reviewer_review 1993 feature/1993-fixture 1 3', loop=True), 1)
+        self.assertIn('PLATFORM=local-ai-reviewer', result.stdout)
+        self.assertIn('REASON=password: [REDACTED]', result.stdout)
+
+    def test_D13_read_denial_classifies_original_before_redaction(self):
+        path = self.f.root / 'read.err'
+        for error, status in [('token=' + self.secret + ' HTTP 403 forbidden', 0),
+                              ('retry token=' + self.secret, 1)]:
+            with self.subTest(status=status):
+                path.write_text(error)
+                result = self.safe(self.bash('reviewer_loop_gh_read_denied ' + shlex.quote(str(path)), loop=True), status)
+                self.assertEqual(path.read_text(), '')
+                self.assertIn('[REDACTED]', result.stdout + result.stderr)
+
+    def test_D14_loop_startup_and_ownership_diagnostic_handoffs(self):
+        result = self.safe(self.entry('pr-review-loop.sh', '1993', '--bad token=' + self.secret), 64)
+        self.assertIn('Unknown option', result.stderr)
+        result = self.safe(self.bash('print_reviewer_read_denied fixture 1993 "feature/token=' + self.secret + '" "password: ' + self.secret + '"', loop=True), 0)
+        self.assertIn('RESULT=escalate', result.stdout)
+        self.assertIn('[REDACTED]', result.stderr)
+
+    def test_D15_history_and_preserved_sections_publication(self):
+        payload = {'schema': 'reviewer_loop_history.v1', 'history_status': 'available',
+                   'entries': [{'result': 'clean', 'blocking_count': 0, 'detail': 'token=' + self.secret}]}
+        body = 'reviewer_loop_history_payload_from_existing() { printf "%s" ' + shlex.quote(json.dumps(payload)) + '; }\n'
+        body += 'reviewer_loop_history_append_to_summary "summary password: ' + self.secret + '" ""\n'
+        body += 'workflow_diagnostic "token=' + self.secret + '" >&2\n'
+        result = self.safe(self.bash(body, loop=True), 0)
+        parsed = json.loads(result.stdout.split('```json\n')[1].split('```')[0])
+        self.assertEqual(parsed['entries'][0]['result'], 'clean')
+        self.assertIn('[REDACTED]', parsed['entries'][0]['detail'])
+        published = self.f.root / 'published-summary.md'
+        self.f.env['SYNTHETIC_PUBLISHED'] = str(published)
+        self.gh_script('case "$*" in "repo view"*) echo fixture/repo;; "pr comment"*) while [ "$#" -gt 0 ]; do ' +
+                       'case "$1" in --body-file) cp "$2" "$SYNTHETIC_PUBLISHED"; break;; *) shift;; esac; done;; *) echo "[]";; esac\n')
+        # Definition only from after the harness-return point; no main loop runs.
+        post = fixtures.function_text('pr-review-loop.sh', '_post_review_summary')
+        result = self.safe(self.bash(post + '\npr_number=1993; branch_name=feature/1993-fixture; compare_mode=0; compare_verdicts=();\n' +
+                                    '_post_review_summary escalate "token=' + self.secret + '" fixture 0 0', loop=True), 0)
+        self.assertIn('Automated Reviewer Loop Summary', published.read_text())
+        self.assertIn('[REDACTED]', published.read_text())
+        self.assertNotIn(self.secret, published.read_text())
+
+    def test_D16_metrics_timing_and_missed_finding_renderers(self):
+        folder = self.f.checkout / 'docs/workflow'; folder.mkdir(parents=True)
+        timing = json.dumps({'platform': 'token=' + self.secret, 'result': 'clean', 'outcome_class': 'verdict_received',
+                             'wait_budget_seconds': 1, 'wait_budget_source': 'default', 'elapsed_seconds': 1})
+        missed = json.dumps({'reviewer': 'token=' + self.secret, 'reviewed_head': 'a' * 40, 'blocking_count': 1,
+                             'path_total': 1, 'paths': ['password: ' + self.secret], 'local_evidence_state': 'unknown'})
+        result = self.safe(self.bash('append_compare_metrics_row 1993 feature/1993-fixture clean "token=' + self.secret + '" "password: ' + self.secret + '"\n' +
+            'platform_timing_records=(' + shlex.quote(timing) + ')\nreviewer_loop_timing_summary_section\n' +
+            'reviewer_loop_missed_finding_summary_line ' + shlex.quote(missed) + '\nworkflow_diagnostic "token=' + self.secret + '" >&2', loop=True), 0)
+        metrics = (folder / 'retro-metrics-platforms.md').read_text()
+        self.assertNotIn(self.secret, metrics)
+        self.assertIn('| #1993 | feature |', metrics)
+        self.assertIn('[REDACTED]', result.stdout)
 
     def test_D17_local_result_reason_and_counts(self):
         result = self.safe(self.local_entry({'result': 'needs_rerun', 'comments': 0, 'reason': 'password: ' + self.secret}), 1)
@@ -415,6 +502,10 @@ esac
         self.assertIn('REVIEWED_HEAD=' + 'a' * 40, result.stdout)
         bad = self.safe(self.entry('codex-github-reviewer.sh', 'token=' + self.secret, 'fixture', 'repo'), 2)
         self.assertIn('ERROR: PR number', bad.stderr)
+        self.gh_script('case "$*" in "auth status"*) exit 0;; esac\nprintf "token=SECRET\\n" >&2\nexit 7\n')
+        failed_read = self.safe(self.entry('codex-github-reviewer.sh', '1993', 'fixture', 'repo'), 2)
+        self.assertIn('could not resolve PR', failed_read.stderr)
+        self.assertIn('[REDACTED]', failed_read.stderr)
 
     def test_D33_actions_evidence_helper_no_reviewer_execution(self):
         text = '\n'.join(fixtures.function_text('claude-code-action-reviewer.sh', n) for n in (
@@ -551,6 +642,51 @@ esac
                                               '--expected-head-repo', 'fixture/repo', '--repo', 'fixture/repo'), status)
                 self.assertIn('RESULT=' + verdict, result.stdout)
                 self.assertIn('PR_HEAD_BRANCH=token=[REDACTED]', result.stdout)
+
+    def test_D45_functional_parser_outputs_then_diagnostic_promotion(self):
+        import runpy
+        data = self.f.root / 'ready-findings.json'
+        empty = self.f.root / 'local-findings.json'; empty.write_text('[]')
+        data.write_text(json.dumps([{'path': 'token=' + self.secret, 'line': 4, 'message': 'password: ' + self.secret}]))
+        result = self.run_command(['python3', str(self.f.runtime / 'local-ai-reviewer-findings.py'),
+                                   '--local', str(empty), '--ready', str(data)])
+        self.assertEqual(result.returncode, 0, result.stderr)
+        normalized = json.loads(result.stdout)
+        self.assertEqual(normalized['net_new_count'], 1)
+        self.assertEqual(normalized['net_new'][0]['path'], 'token=' + self.secret)
+        # PR-Agent code/metadata parsing is functional; never mutate review
+        # content or hooks here, and never import a provider or run its entry.
+        runtime = runpy.run_path(str(self.f.runtime / 'pr-agent-runtime.py'))
+        functional = runtime['mask_review_code']('plain token=' + self.secret)
+        self.assertIn(self.secret, functional)
+        # Real Codex marker extraction likewise retains the raw token for
+        # validation; only its promotion to a runner report is redacted.
+        marker = fixtures.function_text('codex-github-evidence-lib.sh', 'codex_extract_reviewed_commit_field')
+        result = self.safe(self.bash(marker + '\ncodex_extract_reviewed_commit_field ' +
+            shlex.quote('Reviewed commit: `token=' + self.secret + '`') + '\n' +
+            'printf "%s" "$MARKER_FIELD_TOKEN" >' + shlex.quote(str(self.f.root / 'marker.raw')) + '\n' +
+            'workflow_diagnostic_kv MARKER_TOKEN "$MARKER_FIELD_TOKEN"\nworkflow_diagnostic "password: ' + self.secret + '" >&2'), 0)
+        self.assertIn(self.secret, (self.f.root / 'marker.raw').read_text())
+        self.assertIn('MARKER_TOKEN=[REDACTED]', result.stdout)
+
+    def test_D46_optional_advisory_both_channels_and_fail_open(self):
+        extension = self.f.root / 'synthetic-advisory.sh'
+        extension.write_text('#!/bin/sh\nprintf "password: ' + self.secret + '\\n"\nprintf "token=' + self.secret + '\\n" >&2\nexit 7\n')
+        result = self.safe(self.bash('run_project_advisory_checks 1993 ' + shlex.quote(str(extension)), loop=True), 0)
+        self.assertEqual(result.stderr, '')  # Existing suppression stays intact.
+        self.assertIn('password: [REDACTED]', result.stdout)
+
+    def test_D47_audit_fake_admission_child_failure_only(self):
+        budget = self.f.runtime / 'workflow-merge-budget.py'
+        spy = self.f.root / 'budget-called'
+        budget.write_text('import pathlib, sys\npathlib.Path(' + repr(str(spy)) + ').write_text("called")\n' +
+                          'print("token=' + self.secret + '", file=sys.stderr)\nraise SystemExit(9)\n')
+        result = self.safe(self.entry('run-epic-audit-trail.sh', 'apply-pr-disposition', '--input', str(self.audit_fixture()),
+                                      '--pr', '1993', '--operation', 'merge', '--merge-session', 'synthetic-not-a-session'), 1)
+        self.assertTrue(spy.exists())
+        self.assertIn('outside admitted session', result.stderr)
+        self.assertIn('token=[REDACTED]', result.stderr)
+        self.assertFalse(self.f.log.exists())  # No mutation/provider was reached.
 
 
 if __name__ == '__main__':

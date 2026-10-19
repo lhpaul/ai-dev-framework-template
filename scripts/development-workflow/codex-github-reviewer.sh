@@ -228,7 +228,7 @@ fi
 # Guard the assignment with 'if !' to prevent set -e from exiting with code 1
 # (NEEDS_REVISION) before the empty-check guard below can emit the VERDICT line.
 
-if ! CURRENT_SHA_FULL=$(gh pr view "$PR_NUMBER" --repo "$OWNER/$REPO" --json headRefOid --jq '.headRefOid' | head -c 100); then
+if ! CURRENT_SHA_FULL=$(workflow_command_with_safe_stderr gh pr view "$PR_NUMBER" --repo "$OWNER/$REPO" --json headRefOid --jq '.headRefOid' | head -c 100); then
   workflow_diagnostic "ERROR: could not resolve PR #$PR_NUMBER HEAD SHA" >&2
   echo "VERDICT: TIMED_OUT — could not resolve PR HEAD SHA (treated as unavailable)"
   exit 2
@@ -290,7 +290,7 @@ codex_trigger_approval_reaction_count() {
 
   local reaction_tmpfile
   reaction_tmpfile=$(mktemp)
-  if gh api "repos/$OWNER/$REPO/issues/comments/$comment_id/reactions" --paginate \
+  if workflow_command_with_safe_stderr gh api "repos/$OWNER/$REPO/issues/comments/$comment_id/reactions" --paginate \
     | jq -sr --arg bot "$BOT_LOGIN" --arg bot_plain "$BOT_LOGIN_PLAIN" \
       '(add // []) | [.[] | select(.content == "+1" and (.user.login == $bot or .user.login == $bot_plain))] | length' \
     > "$reaction_tmpfile"; then
@@ -315,7 +315,7 @@ codex_inline_review_comment_count_since() {
 
   local review_comment_tmpfile
   review_comment_tmpfile=$(mktemp)
-  if gh api "repos/$OWNER/$REPO/pulls/$PR_NUMBER/comments" --paginate \
+  if workflow_command_with_safe_stderr gh api "repos/$OWNER/$REPO/pulls/$PR_NUMBER/comments" --paginate \
     | jq -sr --arg bot "$BOT_LOGIN" --arg bot_plain "$BOT_LOGIN_PLAIN" --arg trigger_time "$trigger_time" --arg sha "$CURRENT_SHA_FULL" \
       '(add // []) | [.[] | select((.user.login == $bot or .user.login == $bot_plain) and .created_at >= $trigger_time and ((.original_commit_id // "") == $sha))] | length' \
     > "$review_comment_tmpfile"; then
@@ -1775,7 +1775,7 @@ EOF
 
 codex_require_current_head() {
   local latest_sha latest_sha_full
-  if ! latest_sha_full=$(gh pr view "$PR_NUMBER" --repo "$OWNER/$REPO" --json headRefOid --jq '.headRefOid' | head -c 100); then
+  if ! latest_sha_full=$(workflow_command_with_safe_stderr gh pr view "$PR_NUMBER" --repo "$OWNER/$REPO" --json headRefOid --jq '.headRefOid' | head -c 100); then
     workflow_diagnostic "ERROR: could not revalidate PR #$PR_NUMBER HEAD SHA" >&2
     echo "VERDICT: TIMED_OUT — could not revalidate PR HEAD SHA (treated as unavailable)"
     echo "REASON=codex-github-head-unavailable"
@@ -2144,7 +2144,7 @@ if [ -z "$TRIGGER_TIME" ]; then
   # trigger second.
   # Guard with 'if !' to emit TIMED_OUT (exit 2) on failure instead of letting
   # set -e exit with code 1 (NEEDS_REVISION) without a VERDICT line.
-  if ! TRIGGER_RESPONSE=$(gh api "repos/$OWNER/$REPO/issues/$PR_NUMBER/comments" \
+  if ! TRIGGER_RESPONSE=$(workflow_command_with_safe_stderr gh api "repos/$OWNER/$REPO/issues/$PR_NUMBER/comments" \
     --method POST \
     --raw-field body="$TRIGGER_PHRASE (review triggered by workflow runner, commit: $CURRENT_SHA)"); then
     workflow_diagnostic "ERROR: failed to post trigger comment to PR #$PR_NUMBER" >&2
@@ -2481,7 +2481,7 @@ emit_reviewed_head_if_known
     workflow_diagnostic "INFO: no response yet; re-triggering (attempt ${ATTEMPT_NUM}/${TOTAL_ATTEMPTS}, total elapsed ${TOTAL_ELAPSED}s/${MAX_WAIT}s)..."
     # --raw-field passes the body string as-is to the GitHub API without shell
     # re-interpretation, so special characters in TRIGGER_PHRASE are safe.
-    if ! TRIGGER_RESPONSE=$(gh api "repos/$OWNER/$REPO/issues/$PR_NUMBER/comments" \
+    if ! TRIGGER_RESPONSE=$(workflow_command_with_safe_stderr gh api "repos/$OWNER/$REPO/issues/$PR_NUMBER/comments" \
       --method POST \
       --raw-field body="$TRIGGER_PHRASE — retrigger ${RETRIGGER_COUNT}/${MAX_RETRIGGERS} after timeout (sha: $CURRENT_SHA)"); then
       workflow_diagnostic "ERROR: failed to post retrigger comment to PR #$PR_NUMBER" >&2
@@ -2518,7 +2518,7 @@ workflow_diagnostic "INFO: poll budget exhausted; waiting ${POLL_INTERVAL}s for 
 ASYNC_TRIGGER_COMMENT_ID=""
 if [ "$MAX_RETRIGGERS" -gt 0 ]; then
   echo "INFO: posting async-arrival trigger comment..."
-  if ! TRIGGER_RESPONSE=$(gh api "repos/$OWNER/$REPO/issues/$PR_NUMBER/comments" \
+  if ! TRIGGER_RESPONSE=$(workflow_command_with_safe_stderr gh api "repos/$OWNER/$REPO/issues/$PR_NUMBER/comments" \
     --method POST \
     --raw-field body="$TRIGGER_PHRASE — async-arrival check after poll-window expiry (sha: $CURRENT_SHA)"); then
     echo "WARNING: failed to post async-arrival trigger comment; continuing with grace poll from existing trigger time" >&2
