@@ -1262,14 +1262,8 @@ def review_runner_value(data: dict[str, Any]) -> tuple[Any, bool, bool]:
     A present modern key wins even when empty or malformed. Its malformed
     ancestors must also block rather than letting the alias change coverage.
 
-    This precedence is correct only for resolve_review_effective's *local
-    override* call site: workflow_config_review_local_list_if_declared
-    (workflow-lib.sh, what Step 7a actually consults for the local file)
-    treats a locally *declared* empty runner list as a deliberate opt-out,
-    not a signal to fall back to anything — including that same local
-    file's own internal_reviewers, which Step 7a never even reads for the
-    local-override check. Do not reuse this function for the shared/shipped
-    side of the resolution; see review_runner_shared_value below.
+    Shared/shipped runner fallback retains its separate historic rules in
+    review_runner_shared_value; local lists use declared-modern precedence.
     """
     modern_raw, modern_present, modern_structure_error = review_effective_value_from_path(
         data, ["review", "on_draft", "runner"]
@@ -1401,6 +1395,16 @@ def review_github_value(data: dict[str, Any], bucket: str, path: list[str]) -> t
     # than the legacy derivation's, which is always "absent" once both of
     # its own source keys are also absent.
     return modern_raw, modern_present, modern_structure_error
+
+
+def local_review_list_value(data: dict[str, Any], phase: str, key: str) -> tuple[Any, bool, bool]:
+    """Local modern declarations shadow aliases, including explicit []."""
+    if key == "runner":
+        return review_runner_value(data)
+    raw, present, invalid = review_effective_value_from_path(data, ["review", phase, key])
+    if not present and not invalid:
+        return review_github_legacy_derived_value(data, phase + "_github")
+    return raw, present, invalid
 
 
 def review_policy_state(value: Any, present: bool) -> tuple[str, Any, str]:
@@ -1574,8 +1578,8 @@ def resolve_review_github_effective(args: argparse.Namespace) -> dict[str, Any]:
     downstream repository still on the legacy keys (AGENTS.md: "remain
     accepted for one transition release") gets the same reviewer list here
     that Step 7 (``pr-review-loop.sh``) actually dispatches. As with
-    ``workflow_config_review_local_list_if_declared``, the local override
-    never falls back to legacy — only the modern local key is read.
+    ``workflow_config_review_local_list_if_declared``, local modern declarations
+    shadow legacy aliases even when explicitly empty.
     """
     repo_root = repo_root_from_args(args.repo_root)
     if not repo_root.is_dir() or not os.access(repo_root, os.R_OK | os.X_OK):
@@ -1625,7 +1629,7 @@ def resolve_review_github_effective(args: argparse.Namespace) -> dict[str, Any]:
             shared, bucket_key, path
         )
         shipped_list, _ = review_runner_state(shipped_raw, shipped_present)
-        local_raw, local_present, local_structure_error = review_effective_value_from_path(local, path)
+        local_raw, local_present, local_structure_error = local_review_list_value(local, path[1], path[2])
         # A bare `key:` with nothing after it (YAML null) is not the same as
         # a declared, possibly-empty, override: workflow_config_review_
         # local_list_if_declared (workflow-lib.sh, what Step 7 actually
@@ -1680,6 +1684,7 @@ def resolve_local_review_config(repo_root: Path) -> tuple[Path, str, Path | None
 def resolve_review_overrides(args: argparse.Namespace) -> dict[str, str]:
     repo_root = repo_root_from_args(args.repo_root)
     local_path, local_origin, main_clone_file, local = resolve_local_review_config(repo_root)
+    local = project_review_settings(local, local_path)
     local_file = str(local_path) if local_path.is_file() else ""
     if not local_file:
         local_origin = ""
@@ -2211,10 +2216,7 @@ def project_review_settings(data: dict[str, Any], path: Path) -> dict[str, Any]:
     if runner is not None:
         review.setdefault("on_draft", {})["runner"] = runner
     for phase in ("on_draft", "on_ready"):
-        raw, present, invalid = review_effective_value_from_path(data, ["review", phase, "github"])
-        # A declared modern list, including [], shadows legacy aliases.
-        if not present and not invalid:
-            raw, present, invalid = review_github_legacy_derived_value(data, phase + "_github")
+        raw, present, invalid = local_review_list_value(data, phase, "github")
         values = selected_list(raw, present, invalid, f"review.{phase}.github")
         if values is not None:
             review.setdefault(phase, {})["github"] = values
@@ -2226,6 +2228,25 @@ def project_review_settings(data: dict[str, Any], path: Path) -> dict[str, Any]:
     if present:
         review[field] = raw
     return {"review": review} if review else {}
+
+
+def dump_review_projection(data: dict[str, Any], indent: int = 0) -> list[str]:
+    """Serialize the validated allowlist without collapsing explicit empty lists."""
+    lines: list[str] = []
+    prefix = " " * indent
+    for key, value in data.items():
+        if isinstance(value, dict):
+            lines.append(f"{prefix}{key}:")
+            lines.extend(dump_review_projection(value, indent + 2))
+        elif isinstance(value, list):
+            if not value:
+                lines.append(f"{prefix}{key}: []")
+            else:
+                lines.append(f"{prefix}{key}:")
+                lines.extend(f"{prefix}  - {json.dumps(item)}" for item in value)
+        else:
+            lines.append(f"{prefix}{key}: {json.dumps(value)}")
+    return lines
 
 
 def cmd_review_snapshot(args: argparse.Namespace) -> int:
@@ -2250,7 +2271,7 @@ def cmd_review_snapshot(args: argparse.Namespace) -> int:
                                              prefix=".review-projection-", delete=False) as stream:
                 temporary = stream.name
                 os.chmod(temporary, 0o600)
-                stream.write("\n".join(dump_yaml_subset(projection)) + "\n")
+                stream.write("\n".join(dump_review_projection(projection)) + "\n")
             os.replace(temporary, staged)
             temporary = None
         except OSError as exc:
@@ -2274,8 +2295,7 @@ def cmd_local_source(args: argparse.Namespace) -> int:
 def cmd_review_local_list(args: argparse.Namespace) -> int:
     path, _, _ = resolve_local_config(repo_root_from_args(args.repo_root))
     data = parse_yaml_subset(path, preserve_empty_values=True)
-    value, present, invalid = review_effective_value_from_path(
-        data, ["review", args.phase, args.key])
+    value, present, invalid = local_review_list_value(data, args.phase, args.key)
     values, state = review_runner_state(value, present)
     if invalid or state == "malformed":
         raise ConfigError(f"{path}: invalid review.{args.phase}.{args.key} schema")

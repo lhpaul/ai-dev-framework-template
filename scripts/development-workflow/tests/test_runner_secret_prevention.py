@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import base64
 import importlib.util
 import json
 import os
@@ -142,11 +143,18 @@ class RunnerSecurityTests(unittest.TestCase):
                 args = f' "{self.checkout}/.ai-dev-workflow.yaml"' if name in ('configured_review_platforms', 'emit_review_lifecycle_duplicate_warnings') else ''
                 result = self.bash(f'if out="$({name}{args})"; then exit 90; else status=$?; fi\n[ "$status" -eq 2 ] && [ -z "$out" ]', extra=extra, env=env)
                 self.assertEqual(result.returncode, 0, (shared, name, result.stderr))
+            # PR/base snapshot helper retains source failure across temporary-file
+            # cleanup even when called conditionally.
+            encoded = base64.b64encode(b'review:\n  on_ready:\n    github: [bugbot]\n').decode()
+            extra = function_text('apply-readiness-labels.sh', 'pr_head_config_ready_platforms')
+            extra += f"\ngh() {{ printf '%s\\n' {encoded!r}; }}\nloop_dispatched_base=1\n"
+            result = self.bash('if out="$(pr_head_config_ready_platforms fixture/repo synthetic-sha)"; then exit 90; else status=$?; fi; [ "$status" -eq 2 ] && [ -z "$out" ]', extra=extra, env=env)
+            self.assertEqual(result.returncode, 0, result.stderr)
             # Actual public startup must stop before any stubbed service mutation.
             scripts = self.checkout / 'scripts/development-workflow'
             scripts.mkdir(parents=True, exist_ok=True)
             for file in ('workflow-lib.sh', 'workflow-config-resolver.py', 'pr-ci-loop.sh',
-                         'pr-review-loop.sh', 'apply-readiness-labels.sh', 'coderabbit-cli-reviewer.sh'):
+                         'pr-review-loop.sh', 'apply-readiness-labels.sh', 'coderabbit-cli-reviewer.sh', 'run-epic-policy-recommender.sh'):
                 shutil.copyfile(SCRIPTS / file, scripts / file)
             bindir = self.root / 'bin'; bindir.mkdir(exist_ok=True)
             for service in ('gh', 'codex', 'claude', 'coderabbit', 'cr'):
@@ -156,6 +164,11 @@ class RunnerSecurityTests(unittest.TestCase):
             for file in ('pr-ci-loop.sh', 'pr-review-loop.sh', 'apply-readiness-labels.sh', 'coderabbit-cli-reviewer.sh'):
                 result = subprocess.run(['bash', str(scripts / file)], env=script_env, capture_output=True, text=True)
                 self.assertEqual(result.returncode, 2, (file, result.stderr))
+            scope = self.root / 'scope.json'
+            scope.write_text('{"groups":{},"items":[],"policy":{}}')
+            result = subprocess.run(['bash', str(scripts / 'run-epic-policy-recommender.sh'), '--scope', str(scope), '--original-command', '/run-item 1993', '--json'], env=script_env, capture_output=True, text=True)
+            self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn('failed to read review.on_draft.runner', result.stderr)
             self.assertFalse((self.root / 'mutations').exists())
         # Earlier bucket failure cannot be hidden by a later successful bucket.
         result = self.bash('if out="$(workflow_config_review_platforms)"; then exit 90; else [ "$?" -eq 2 ] && [ -z "$out" ]; fi',
@@ -171,15 +184,48 @@ class RunnerSecurityTests(unittest.TestCase):
         opaque = 'inventedOpaqueValueForShadowedAlias'
         for runner in ('[codex]', '[]'):
             data = MODULE.parse_review_yaml(self.checkout / 'synthetic.yaml', raw=(
-                f'review:\n  internal_reviewers: {opaque}\n  on_draft:\n    runner: {runner}\n    github: []\n  on_ready:\n    github: [pr-agent]\n  ignored_secret: fabricated-unrelated\nproduct_repos: []\n'))
+                f'review:\n  internal_reviewers: {opaque}\n  platforms: {opaque}\n  phase_after_clean: {opaque}\n  on_draft:\n    runner: {runner}\n    github: []\n  on_ready:\n    github: [pr-agent]\n  ignored_secret: fabricated-unrelated\nproduct_repos: []\n'))
             projection = MODULE.project_review_settings(data, self.checkout / 'synthetic.yaml')
             self.assertEqual(projection['review']['on_draft']['runner'], json.loads(runner.replace('codex', '"codex"')))
             self.assertNotIn(opaque, json.dumps(projection))
             self.assertNotIn('ignored_secret', json.dumps(projection))
+            self.write('\n'.join(MODULE.dump_review_projection(data)) + '\n')
+            expected = json.loads(runner.replace('codex', '"codex"'))
+            result = self.bash('workflow_config_review_on_draft_runner')
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stdout.splitlines(), expected)
+            effective = self.cli('review-effective')
+            self.assertEqual(effective.returncode, 0, effective.stderr)
+            self.assertEqual(json.loads(effective.stdout)['effective_runner'], expected)
+            github = self.cli('review-github-effective')
+            self.assertEqual(github.returncode, 0, github.stderr)
+            self.assertEqual(json.loads(github.stdout)['effective_on_draft_github'], [])
+            self.assertEqual(json.loads(github.stdout)['effective_on_ready_github'], ['pr-agent'])
+            overrides = self.cli('review-overrides', '--json')
+            self.assertEqual(overrides.returncode, 0, overrides.stderr)
+            self.assertNotIn(opaque, overrides.stdout)
+            stage = self.root / ('empty-stage' if runner == '[]' else 'defined-stage'); stage.mkdir()
+            snapshot = self.cli('review-snapshot', '--destination', str(stage))
+            self.assertEqual(snapshot.returncode, 0, snapshot.stderr)
+            effective = subprocess.run([sys.executable, str(RESOLVER), 'review-effective', '--repo-root', str(stage)], env=self.env, text=True, capture_output=True)
+            self.assertEqual(effective.returncode, 0, effective.stderr)
+            self.assertEqual(json.loads(effective.stdout)['effective_runner'], expected)
+            self.assertEqual(json.loads(effective.stdout)['effective_runner_state'], 'empty' if runner == '[]' else 'defined')
+            self.assertNotIn(opaque, (stage / MODULE.LOCAL_CONFIG_NAME).read_text())
+
+
         for raw in ('', 'product_repos: []\n', 'review: {}\n'):
             self.assertEqual(MODULE.project_review_settings(MODULE.parse_review_yaml(Path('fake'), raw=raw), Path('fake')), {})
         legacy = MODULE.project_review_settings({'review': {'internal_reviewers': ['codex'], 'platforms': ['pr-agent', 'bugbot'], 'phase_after_clean': ['bugbot']}}, Path('fake'))
         self.assertEqual(legacy['review'], {'on_draft': {'runner': ['codex'], 'github': ['pr-agent']}, 'on_ready': {'github': ['bugbot']}})
+        self.write('review:\n  internal_reviewers: [codex]\n  platforms: [pr-agent, bugbot]\n  phase_after_clean: [bugbot]\n')
+        for command, expected in (('workflow_config_review_on_draft_runner', 'codex'),
+                                  ('workflow_config_review_on_draft_github', 'pr-agent'),
+                                  ('workflow_config_review_on_ready_github', 'bugbot')):
+            result = self.bash(command)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stdout.strip(), expected)
+
         self.write('review:\n  on_draft:\n    runner: [codex]\n  secret: fabricated-unrelated\n')
         staged = self.root / 'staged'; staged.mkdir()
         result = self.cli('review-snapshot', '--destination', str(staged))

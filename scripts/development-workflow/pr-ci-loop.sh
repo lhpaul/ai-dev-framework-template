@@ -342,7 +342,7 @@ while :; do
   fi
   reviewer_check_names="$(
     configured_reviewer_check_names_json ""
-  )"
+  )" || exit 2
   if ! ci_checks_json="$(
     printf '%s\n' "$normalized_checks_json" | jq --argjson reviewer_names "$reviewer_check_names" '
       [

@@ -285,7 +285,7 @@ caller_override_root="$(
   WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT="$_LOCAL_OVERRIDE_DIR" \
     resolve_local_review_override_root "$_TEMP_WORKTREE_DIR"
 )"
-run_test "caller_override_root_is_preserved" "$_LOCAL_OVERRIDE_DIR" "$caller_override_root"
+run_test "caller_override_root_is_canonical_selected_source" "$(CDPATH='' cd -- "$_LOCAL_OVERRIDE_DIR" && pwd -P)" "$caller_override_root"
 rm -rf "$_TEMP_WORKTREE_DIR"
 unset _TEMP_WORKTREE_DIR initiating_override_parsed caller_override_root
 

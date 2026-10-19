@@ -1875,7 +1875,7 @@ with tempfile.TemporaryDirectory(prefix='reviewer-preflight-tests-') as tmp:
     bins54 = root / 'bin54'
     bins54.mkdir(exist_ok=True)
     stub_python54 = bins54 / 'python3'
-    stub_python54.write_text('#!/bin/bash\nexit 0\n')
+    stub_python54.write_text('#!/bin/bash\nif [ "${2:-}" = redact-text ]; then exec ' + repr(shutil.which('python3')) + ' "$@"; fi\nexit 0\n')
     stub_python54.chmod(0o755)
     (bins54 / 'dirname').symlink_to(shutil.which('dirname'))
     repo54 = root / 'repo54'
