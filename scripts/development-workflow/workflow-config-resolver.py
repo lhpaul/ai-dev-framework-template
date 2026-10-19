@@ -85,24 +85,71 @@ def redact_text(text: str) -> str:
         pieces.append(text[offset:])
     text = "".join(pieces)
     key = r"(?:[A-Za-z0-9]+[_.-])*(?:token|password|passphrase|secret|api[ _.-]?key|access[ _.-]?key|private[ _.-]?key)(?:[_.-](?:value|key))?"
-    # Plain/YAML values can contain spaces. End at a structural separator or
-    # the next assignment, not the first word. Shell escapes consume their
-    # following character, including a space or an otherwise delimiting ';'.
+    # A YAML line scalar can contain spaces, commas and semicolons. Shell
+    # assignment separators and mapping delimiters apply only in their context.
     next_assignment = r'''[ \t]+["']?(?:[A-Za-z_][\w.-]*|''' + key + r''')["']?[ \t]*[:=]'''
-    plain = r'''(?:\\[^\r\n]|(?!''' + next_assignment + r''')[^\r\n,;}\]#\\])+'''
-    # Quoted values retain their complete escaped contents and JSON envelope.
-    value = r'''(?:\[REDACTED\]|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|"[^\n]*|'[^\n]*|''' + plain + ")"
-    assignment = re.compile(r"(?<![\w.-])([\"']?" + key + r"[\"']?\s*[:=]\s*)(" + value + ")", re.IGNORECASE)
-    def mask_assignment(match: re.Match) -> str:
-        raw = match[2]
+    next_field = re.compile(next_assignment, re.IGNORECASE)
+    assignment = re.compile(r'''(?<![\w.-])(["']?(?:''' + key + r'''|authorization)["']?[ \t]*[:=][ \t]*)''', re.IGNORECASE)
+
+    def in_flow_mapping(position: int) -> bool:
+        depth, quote, escaped = 0, "", False
+        for char in text[:position]:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif quote:
+                if char == quote:
+                    quote = ""
+            elif char in ('"', "'"):
+                quote = char
+            elif char == "{":
+                depth += 1
+            elif char == "}":
+                depth = max(0, depth - 1)
+        return depth > 0
+
+    pieces, offset = [], 0
+    for match in assignment.finditer(text):
+        if match.start() < offset:
+            continue
+        start = end = match.end()
+        colon = match[1].rstrip().endswith(":")
+        flow = colon and in_flow_mapping(match.start())
+        quote = ""
+        if text.startswith(marker, start):
+            end += len(marker)
+        else:
+            while end < len(text):
+                char = text[end]
+                if char == "\\" and end + 1 < len(text):
+                    end += 2
+                    continue
+                if quote:
+                    if char == quote:
+                        quote = ""
+                        # A quoted YAML/JSON scalar ends at its closing quote.
+                        if colon and text[start:start + 1] in ('"', "'"):
+                            end += 1
+                            break
+                elif char in ('"', "'") and (not colon or end == start):
+                    quote = char
+                elif char in "\r\n" or (flow and char in ",}]") or (not colon and char in ";|&"):
+                    break
+                elif char in " \t" and (text[end:].lstrip(" \t").startswith("#") or (not colon and next_field.match(text, end))):
+                    break
+                end += 1
+        raw = text[start:end]
+        if not raw:
+            continue
         quote = raw[:1] if raw[:1] in ("\"", "'") else ""
         if not quote and match[1].startswith('"'):
             quote = '"'
         trailing_space = raw[len(raw.rstrip(" \t")):]
-        return match[1] + quote + marker + quote + trailing_space
-    text = assignment.sub(mask_assignment, text)
-    authorization = re.compile(r'''(\bauthorization["']?\s*[:=]\s*)((?:(?:Bearer|Basic)\s+)?''' + value + ")", re.IGNORECASE)
-    text = authorization.sub(mask_assignment, text)
+        pieces.extend((text[offset:match.start()], match[1], quote + marker + quote, trailing_space))
+        offset = end
+    pieces.append(text[offset:])
+    text = "".join(pieces)
     text = re.sub(r"(?i)\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+", lambda match: match[1] + " " + marker, text)
     text = re.sub(r"(?i)(\b[a-z][a-z0-9+.-]*://)[^\s/@]+(?::[^\s/@]*)?@", lambda match: match[1] + marker + "@", text)
     text = re.sub(r"(?<![A-Za-z0-9_])(?:gh[pousr]_[A-Za-z0-9_]+|github_pat_[A-Za-z0-9_]+|sk-(?:proj-)?[A-Za-z0-9_-]+|xox[baprs]-[A-Za-z0-9-]+)(?![A-Za-z0-9_])", marker, text)

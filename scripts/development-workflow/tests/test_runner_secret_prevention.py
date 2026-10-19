@@ -402,12 +402,20 @@ sys.exit(rc)
                      'token=fabricated first tail; operation=review',
                      r'token=fabricated\ first\ tail operation=review',
                      r'password=fabricated\;first\ tail; operation=review',
+                     'password: fabricated#first tail # public note\nresult: clean\n',
+                     'password: fabricated multi, first; word tail\nresult: clean\n',
+                     'password: fabricated\'s "first", word tail\nresult: clean\n',
+                     'token=fabricated\\\nfirst tail; operation=review',
                      'token=fabricated first password=second fake tail; operation=review'):
             output = self.assert_redacts(text, ['fabricated', 'first', 'tail', 'second fake'])
             self.assertIn('result: clean' if '\nresult:' in text else 'operation=review', output)
+            if '# public note' in text:
+                self.assertIn('# public note', output)
         output = self.assert_redacts('{"token":"fabricated first tail","result":"clean","count":1}',
                                      ['fabricated', 'first', 'tail'])
         self.assertEqual(json.loads(output), {'token': '[REDACTED]', 'result': 'clean', 'count': 1})
+        output = self.assert_redacts('{"token":123,"nested":{},"password":false,"result":"clean"}', ['123', 'false'])
+        self.assertEqual(json.loads(output), {'token': '[REDACTED]', 'nested': {}, 'password': '[REDACTED]', 'result': 'clean'})
 
     def test_header_and_url_values(self):
         output = self.assert_redacts('Authorization: Bearer fabricatedBearer\nAuthorization: Basic fabricatedBasic==\nhttps://user:fakePassword@example.test/path\n',
