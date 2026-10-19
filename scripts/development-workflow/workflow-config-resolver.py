@@ -63,6 +63,9 @@ class ConfigError(Exception):
     """Configuration problem with a human-readable message."""
 
 
+SENSITIVE_DIAGNOSTIC_KEY = r"(?:[A-Za-z0-9]+[_.-])*(?:token|password|passphrase|secret|api[ _.-]?key|access[ _.-]?key|private[ _.-]?key)(?:[_.-](?:value|key))?"
+
+
 def redact_text(text: str) -> str:
     """Bounded structural diagnostic sanitizer; never reads configuration."""
     marker = "[REDACTED]"
@@ -85,7 +88,7 @@ def redact_text(text: str) -> str:
     else:
         pieces.append(text[offset:])
     text = "".join(pieces)
-    key = r"(?:[A-Za-z0-9]+[_.-])*(?:token|password|passphrase|secret|api[ _.-]?key|access[ _.-]?key|private[ _.-]?key)(?:[_.-](?:value|key))?"
+    key = SENSITIVE_DIAGNOSTIC_KEY
     # A YAML line scalar can contain spaces, commas and semicolons. Shell
     # assignment separators and mapping delimiters apply only in their context.
     next_assignment = r'''[ \t]+["']?(?:[A-Za-z_][\w.-]*|''' + key + r''')["']?[ \t]*[:=]'''
@@ -156,7 +159,14 @@ def redact_text(text: str) -> str:
         if not quote and match[1].startswith('"'):
             quote = '"'
         trailing_space = raw[len(raw.rstrip(" \t")):]
-        pieces.extend((text[offset:match.start()], match[1], quote + marker + quote, trailing_space))
+        context = ""
+        if not flow and not quote and re.fullmatch(r"authorization[ \t]*[:=][ \t]*", match[1], re.IGNORECASE):
+            # Retain only known protocol labels, never any credential bytes.
+            # An adjacent Bearer/Basic credential is still wholly removed even
+            # when the Authorization value consumed the complete diagnostic line.
+            schemes = dict.fromkeys(item.title() for item in re.findall(r"\b(Bearer|Basic)[ \t]+\S+", raw, re.IGNORECASE))
+            context = "".join(" " + scheme + " " + marker for scheme in schemes)
+        pieces.extend((text[offset:match.start()], match[1], quote + marker + quote, context, trailing_space))
         offset = end
     pieces.append(text[offset:])
     text = "".join(pieces)
@@ -176,7 +186,14 @@ def cmd_redact_text(args: argparse.Namespace) -> int:
                 if isinstance(value, list):
                     return [sanitize(item) for item in value]
                 if isinstance(value, dict):
-                    return {key: sanitize(item) for key, item in value.items()}
+                    output = {}
+                    for key, item in value.items():
+                        sensitive = re.fullmatch(SENSITIVE_DIAGNOSTIC_KEY, key, re.IGNORECASE)
+                        header = key.lower() == "authorization" and isinstance(item, str)
+                        # An authorization metadata object is not a header;
+                        # recurse so its own sensitive fields still disappear.
+                        output[redact_text(key)] = "[REDACTED]" if sensitive or header else sanitize(item)
+                    return output
                 return value
             output = json.dumps(sanitize(json.loads(raw)), sort_keys=True) + "\n"
         else:

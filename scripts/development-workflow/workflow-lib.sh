@@ -132,7 +132,7 @@ workflow_config_resolver_script() {
 # Diagnostic-only stdin boundary. Never send functional config/auth payloads here.
 _workflow_redact_stdin() {
   local sanitized
-  sanitized="$(python3 "$(workflow_config_resolver_script)" redact-text "$@")" || {
+  sanitized="$(python3 "$(workflow_config_resolver_script)" redact-text "$@" 2>/dev/null)" || {
     printf 'ERROR: diagnostic sanitization failed\n' >&2
     return 2
   }
@@ -144,6 +144,28 @@ workflow_redact_json() { _workflow_redact_stdin --json; }
 
 workflow_diagnostic() {
   printf '%s\n' "$*" | workflow_redact_text
+}
+
+# Report values are diagnostics regardless of their key suffix. Keep functional
+# print_kv separate: configuration/auth/control payloads are not diagnostic logs.
+workflow_diagnostic_kv() {
+  case "$1" in
+    COMMENT_COUNT|BLOCKING_COUNT|SUGGESTION_COUNT|PR_NUMBER|TOTAL_CHECK_COUNT|FAILING_CHECK_COUNT|PENDING_CHECK_COUNT|REVIEWER_CHECK_COUNT)
+      case "$2" in
+        ''|*[!0-9]*) ;;
+        *) printf '%s=%s\n' "$1" "$2"; return 0 ;;
+      esac ;;
+    RESULT)
+      case "$2" in
+        clean|needs_fixes|escalate|skipped|waiting_on_reviewer|green|red|timeout)
+          printf '%s=%s\n' "$1" "$2"; return 0 ;;
+      esac ;;
+    HEAD_SHA|REVIEWED_HEAD)
+      if [[ "$2" =~ ^[0-9a-fA-F]{40}$ ]]; then
+        printf '%s=%s\n' "$1" "$2"; return 0
+      fi ;;
+  esac
+  printf '%s=%s\n' "$1" "$2" | workflow_redact_text
 }
 
 workflow_config_exists() {

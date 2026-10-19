@@ -42,14 +42,10 @@ _RESULT_EMITTED=0
 # the single choke point every RESULT line already passes through is what makes
 # this cover all ~100 emission sites without annotating each one.
 print_kv() {
+  workflow_diagnostic_kv "$1" "$2" || return 2
   if [ "$1" = "RESULT" ]; then
     _RESULT_EMITTED=1
   fi
-  local value="$2"
-  case "$1" in
-    *DETAIL*|*BODY|*REMEDY|*ERROR*) value="$(printf '%s' "$value" | workflow_redact_text)" || return 2 ;;
-  esac
-  printf '%s=%s\n' "$1" "$value"
 }
 
 # _emit_truncation_guard <exit-status>
@@ -2062,7 +2058,7 @@ emit_prefixed_platform_output() {
         continue
         ;;
     esac
-    printf 'PLATFORM_%s_%s=%s\n' "$index" "$key" "$value"
+    print_kv "PLATFORM_${index}_${key}" "$value" || return 2
   done <<< "$kv_output"
 }
 
@@ -3306,6 +3302,7 @@ run_ronda_review() {
         # length-capped so it cannot break the key=value output contract.
         local ronda_title
         ronda_title="$(printf '%s' "$fetch_output" | jq -r '.output.title // ""' 2>/dev/null)" || ronda_title=""
+        ronda_title="$(printf '%s' "$ronda_title" | workflow_redact_text)" || return 2
         ronda_title="$(printf '%s' "$ronda_title" | tr '\r\n' '  ' | cut -c1-200)"
         workflow_diagnostic "WARN: run_ronda_review: Ronda pass failed for PR #$pr_number (SHA=$current_sha): ${ronda_title:-<no title>}" >&2
         print_kv RESULT escalate

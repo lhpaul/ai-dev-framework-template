@@ -56,14 +56,14 @@ merge_step=""
 repo_root=""
 
 error_exit() {
-  echo "ERROR: $*" >&2
+  printf 'ERROR: %s\n' "$*" | redact_text >&2
   exit 1
 }
 
 require_value() {
   local option="$1"
   if [ "$#" -lt 2 ] || [ -z "${2:-}" ] || [ "${2#--}" != "$2" ]; then
-    echo "$option requires a value." >&2
+    printf '%s requires a value.\n' "$option" | redact_text >&2
     usage >&2
     exit 64
   fi
@@ -184,6 +184,9 @@ render_pr_disposition() {
     error_exit "missing required PR disposition fields: $missing"
   fi
 
+  # Sanitize values before Markdown escaping/table layout. Filtering only the
+  # rendered line can consume neighboring table cells or hide safe context.
+  json="$(printf '%s' "$json" | workflow_redact_json)" || return 2
   {
     printf '%s\n' "$PR_MARKER"
     printf '## /run-epic PR Disposition\n\n'
@@ -516,7 +519,7 @@ warn_unknown_pr_disposition_keys() {
   ' 2>/dev/null)" || error_exit "failed to check for unknown PR disposition keys (jq parse error)"
   if [ -n "$unknown" ]; then
     printf 'WARN: unrecognized top-level PR disposition field(s) will not appear in the rendered audit comment: %s\n' \
-      "$unknown" >&2
+      "$unknown" | redact_text >&2
   fi
 }
 
@@ -536,6 +539,7 @@ render_epic_ledger() {
     error_exit "missing required epic ledger fields"
   fi
 
+  json="$(printf '%s' "$json" | workflow_redact_json)" || return 2
   {
     printf '%s\n' "$EPIC_MARKER"
     printf '## /run-epic Epic Ledger\n\n'
@@ -630,6 +634,7 @@ render_reviewer_access_bypass() {
     error_exit "missing required reviewer access-bypass fields: $missing"
   fi
 
+  json="$(printf '%s' "$json" | workflow_redact_json)" || return 2
   {
     printf '%s\n' "$REVIEWER_ACCESS_BYPASS_MARKER"
     printf '## Reviewer Access Bypass Audit\n\n'
@@ -851,7 +856,7 @@ while [ "$#" -gt 0 ]; do
       exit 0
       ;;
     *)
-      echo "Unknown option: $1" >&2
+      printf 'Unknown option: %s\n' "$1" | redact_text >&2
       usage >&2
       exit 64
       ;;
