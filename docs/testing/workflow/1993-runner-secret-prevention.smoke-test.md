@@ -20,21 +20,32 @@ reference applies.
    and product-only local settings, and an escaping symlink.
 2. **Explicit source (AC-3)**: Deliberately select the synthetic external root.
    Confirm its validated settings apply. Missing, unreadable and malformed roots
-   must report safe errors without selecting another file.
+   must report safe errors without selecting another file. Reach every composed
+   Bash consumer named in the plan with an invalid explicit root, both with and
+   without shared config. Confirm conditional calls and bucket aggregation retain
+   failure and perform no reviewer/label mutation; valid absence and explicit
+   empty lists retain their separate semantics.
 3. **Minimum review staging (AC-6)**: Include fake unrelated sensitive settings
    beside valid reviewer declarations. Run synthetic preflight and inspect only
    its synthetic snapshot. Confirm the reviewer declarations and explicit empty
    lists retain meaning; unrelated fields and fake sensitive values are absent.
-   Verify atomic staging and cleanup on simulated failure.
+   Repeat with a valid and an explicitly empty modern runner declaration beside a
+   schema-invalid opaque legacy alias: the alias is omitted and does not reject
+   the modern value. Distinguish malformed YAML from selected reviewer-field
+   schema errors. Verify atomic staging and cleanup on simulated failure.
 4. **Safe errors (AC-4)**: Pass malformed synthetic config containing an opaque
    fake value that matches no known credential prefix. Check stdout and stderr:
    source/category metadata is present and the value, raw line and parser excerpt
-   are absent. Check both legacy and strict/model error paths.
+   are absent. Check both legacy and strict/model error paths. Reach CodeRabbit
+   CLI startup with an opaque fake invalid rate-limit policy from synthetic file
+   and env inputs; confirm metadata-only warning and existing warn default, while
+   invalid-source failures stop before defaulting. Stub the CLI and all services.
 5. **Redaction (AC-5)**: Exercise each redactor class from the plan through the
    resolver/Bash boundary and persistent reviewer/audit renderer. Confirm complete
    fake values are absent, stable markers remain, harmless text remains useful,
    and caller success/failure status survives. Cover multiline and unterminated
-   private-key blocks and filter failure without unsafe echo.
+   private-key blocks, escaped quotes/backslashes inside quoted assignments, and
+   filter failure without unsafe echo.
 6. **Prevention controls (AC-7)**: In a temporary Git repo, prove private workflow,
    env and private-key filenames are ignored while the public examples are
    trackable. Validate the versioned permission rules and portable agent guidance;

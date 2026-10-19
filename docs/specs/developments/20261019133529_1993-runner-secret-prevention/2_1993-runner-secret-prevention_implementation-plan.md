@@ -42,6 +42,9 @@ indicative coverage projections, not frozen enumerations or artifact counts.
 | `git grep -n 'mode_scope: product_repo_injection\|path: scripts/development-workflow/workflow-config-resolver.py' -- sync-manifest.yaml` | The existing resolver is an injected runtime dependency. Keeping sanitization in that file avoids introducing a module absent from product checkouts. |
 | `gh pr list --repo lhpaul/ai-dev-framework-template --state open --search 'config in:title' --json number,title,headRefName,baseRefName` and the same query with `'security in:title'` | Both bounded same-surface title searches returned empty. This is bounded context, not a claim that no other PR could touch a shared file. |
 | `git grep -n 'def parse_review_yaml\|raw = path.read_text' -- scripts/development-workflow/workflow-config-resolver.py` | `parse_review_yaml(path, raw=...)` already supports an in-memory strict snapshot. |
+| `git grep -n 'workflow_config_review_on_draft_runner\|workflow_config_review_on_draft_github\|workflow_config_review_on_ready_github\|workflow_config_review_platforms\|workflow_config_review_local_list_if_declared\|workflow_local_config_file' -- scripts/development-workflow ':!scripts/development-workflow/tests/*' ':!*.md'` | Direct Bash consumers include readiness labels, completion self-check, policy recommender, reviewer-loop aggregation/process substitutions, library check-name/configured predicates and phase aliases, and CodeRabbit CLI policy selection. Their failure outcomes are specified below. |
+| `git grep -n 'RATE_LIMIT_POLICY\|rate_limit_policy_from_config' -- scripts/development-workflow/coderabbit-cli-reviewer.sh` | The selector suppresses local-source errors; the invalid-policy warning interpolates the rejected value. Both require composed corrections. |
+| `git grep -n 'def review_runner_value\|def parse_review_yaml' -- scripts/development-workflow/workflow-config-resolver.py` | Modern runner declaration takes precedence over the legacy alias; YAML parsing alone does not validate reviewer-field shapes. |
 
 The versioned `.claude/settings.json` has an allow policy and no deny list at this
 revision; inspect only its versioned permission policy when editing that control.
@@ -86,20 +89,65 @@ they have no remaining functional caller; keep unrelated Git worktree utilities.
 | Strict review readers → reviewer availability | Checkout-local/explicit review settings with existing empty-list semantics; no primary-checkout policy substitution. |
 | Review-overrides → preflight and reviewer-loop initiating-root handoff | Selected file identity only, empty main-clone metadata; the exported root is an explicit handoff, never discovered from Git ancestry. |
 | `load_model_policy` → validate/model-route/model-routes | Same source isolation, preserving structured model error codes and envelope semantics. |
-| Bash local-file selector → draft runner/GitHub and ready GitHub list readers | Shared settings receive the input formerly consumed by the fallback when no local declaration exists. Declared local empty lists keep disabling behavior. |
-| `coderabbit-cli-reviewer.sh` local-file preflight | The shared selector yields only the current or explicit file. Existing remote identity validation is retained. |
+| Bash local-file selector → draft runner/GitHub and ready GitHub list readers | Only a valid source with no applicable local declaration permits shared settings; declared local empty lists keep disabling behavior. Invalid selected sources propagate as errors, including when the shared file is absent. |
+| `coderabbit-cli-reviewer.sh` local-file preflight | The shared selector yields only the current or explicit file; source failure stops policy resolution instead of selecting shared settings. Existing remote identity validation is retained. |
 | `set_local_product_repo_path` | Validate its implicit local source against the same physical checkout boundary before reading a snapshot; continue writing only the current checkout's file, without changing write ownership. |
+
+#### Bash failure propagation through ordered consumers
+
+Give `workflow_config_review_local_list_if_declared` distinct outcomes: `0` for
+an applicable declaration (including an empty list), `1` for no declaration, and
+`2` for source/read/validation failure. Guard selector assignments explicitly and
+retain their failure status; never depend on `set -e` inside `if`, command
+substitution, or a function invoked conditionally. Only outcome `1` permits the
+shared-policy branch. The public list readers return `0` for a valid list or
+valid absence and `2` for failure. Validate an applicable local/explicit source
+before a missing-shared-file return or other empty-success shortcut, including
+temporary shared snapshots with local overrides enabled. No declaration and a
+failed source must remain distinguishable through each layer.
+
+| Ordered Bash path | Required failure outcome / implementation discharge |
+| --- | --- |
+| `workflow_local_config_file` → local declaration helper → each draft/ready reader | Guard assignments, inspect the three-way result, and stop on `2` before shared/legacy fallback. Valid absence alone permits fallback. |
+| `workflow_config_review_platforms` draft → ready aggregation | Guard each read independently; a later successful bucket must not mask an earlier failure or expose a partial effective list. |
+| `workflow_config_review_phase_after_clean_platforms` | Remove the missing-shared early return ahead of source validation; preserve the ready reader's failure. |
+| `workflow_config_review_github_reviewer_configured` | Keep `1` for valid not-configured and `2` for resolution failure; propagate `2` through its predicate callers instead of treating it as absence. |
+| `configured_reviewer_check_names_json` → check/CI consumers in `workflow-lib.sh` | Capture and validate platform resolution before iteration or empty-JSON success; update its callers to propagate failure. Missing shared config must not bypass explicit-source validation. |
+| `apply-readiness-labels.sh` configured-ready and PR/base snapshot helpers | Retain failure through both local and temporary-config paths and cleanup; refuse/escalate readiness before label mutation, never infer an empty reviewer set. |
+| `item-completion-self-check.sh` configured platforms and downstream thread evidence | Capture resolution before iteration; report unavailable/failed evidence rather than a clean empty platform set. |
+| `run-epic-policy-recommender.sh` runner count | Preserve its existing read-failure branch and reach it for invalid explicit roots even without shared config; do not recommend from a zero-count substitute. |
+| `pr-review-loop.sh` lifecycle duplicate collection, configured-platform helpers, repository-platform initialization and phase-after-clean loading | Guard every bucket and replace error-hiding process substitutions with checked capture before iteration. Validate before missing-file shortcuts; stop the loop on source failure rather than warn-and-continue, return success, or infer no reviewers. |
+| `coderabbit-cli-reviewer.sh` source → policy reader → startup assignment | Remove source-error suppression; propagate failure through the policy function and startup even in conditional contexts. Do not reinterpret failure as an empty value or apply shared/default policy. |
+
+Implementation must follow the recorded query through these helpers' callers and
+account for their composed return statuses in residual evidence. Integration tests
+must reach each affected public consumer with an explicitly invalid synthetic root
+both **with and without** shared config, and assert failure before reviewer,
+readiness-label or merge-related mutation. Include conditional invocation and
+aggregation where an earlier failure precedes a successful bucket. Separately
+prove valid no-declaration fallback and explicit-empty disabling; these are not
+error cases. Stub all services and use fabricated configuration only.
 
 ### Review-only snapshot — AC-6
 
 Add a resolver subcommand `review-snapshot` accepting the real source checkout and
 a destination directory owned by reviewer preflight. Resolve the source once,
-read its bytes once into memory, and validate the supported reviewer fields using
+read its bytes once into memory, and parse YAML using
 `parse_review_yaml(path, raw=...)` against that same snapshot. Do not re-read the
-source separately per review bucket.
-Serialize an allowlisted review projection to a private temporary file. Include
-the runner list/legacy alias, draft/ready GitHub reviewer lists, and unavailable
-reviewer policy only when declared; preserve explicit empty lists and precedence.
+source separately per review bucket. YAML syntax/type parsing and reviewer-field
+schema validation are separate steps: after parsing, resolve modern-versus-legacy
+precedence before selecting fields, then validate the selected list/item shapes
+and unavailable-reviewer policy values against the effective reader contract.
+A declared modern runner list, including `[]`, shadows `internal_reviewers`;
+apply the existing equivalent GitHub-list precedence before choosing aliases.
+Do not validate or serialize a shadowed legacy field. A syntactically valid but
+schema-invalid opaque legacy scalar beside a valid modern declaration must neither
+enter the projection nor reject it. Malformed YAML still fails before selection.
+
+Serialize only the selected validated review fields to a private temporary file.
+Include effective runner and draft/ready GitHub lists and unavailable-reviewer
+policy only when declared; emit a legacy alias only when it supplies the effective
+value and no modern declaration shadows it. Preserve explicit empty lists.
 Never serialize unvalidated scalar values, unrelated review subtrees, product
 paths, auth settings, or arbitrary unknown keys. Shared configuration still comes
 from the preflight's selected Git revision, not the current worktree.
@@ -135,6 +183,15 @@ invalid override values. Apply that rule to strict reader `unreadable_detail`, C
 `ConfigError`/Unicode failures, and model-policy diagnostics while preserving their
 stable machine codes, exit statuses and shape. An arbitrary unrecognized value in
 a malformed private file must remain absent even if it matches no redaction pattern.
+
+Apply the same metadata-only rule to `coderabbit-cli-reviewer.sh`'s invalid
+`review.coderabbit_cli.rate_limit_policy` / `CODERABBIT_CLI_RATE_LIMIT_POLICY`
+warning: identify the field, safe invalid-value category and default action,
+without interpolating the rejected scalar. Preserve the existing warn default for
+a successfully read but invalid policy; source failure follows the propagation
+contract above and cannot become a warn/default success. Test the actual CLI
+startup diagnostic with an opaque fabricated value lacking a recognizable secret
+prefix, from both the selected synthetic file and environment, with services stubbed.
 
 Expose `workflow_redact_text` from `workflow-lib.sh`. Use it at the human-facing
 error/report boundaries in `reviewer-preflight.sh`,
@@ -214,16 +271,17 @@ consumer in addition to pure-function coverage.
 
 | Input class | Coverage intent / unit method |
 | --- | --- |
-| Case/separator variants, whitespace, quoted/unquoted sensitive values | `test_sensitive_assignments` covers JSON/YAML/shell text and complete value removal. |
+| Case/separator variants, whitespace, quoted/unquoted sensitive values, escaped quotes/backslashes inside quotes | `test_sensitive_assignments` covers JSON/YAML/shell text and complete value removal through the closing delimiter; an escaped quote must not leave a value suffix visible. |
 | Multiple sensitive assignments or authorization values on one line | `test_multiple_values` proves every value is removed. |
 | Bearer/Basic header values and credentials in URL user information | `test_header_and_url_values` preserves safe operation context. |
 | Recognizable token prefixes at punctuation/string boundaries | `test_token_boundaries` covers adjacent text and end-of-input. |
 | Multiline, nested-looking, or unterminated private-key blocks | `test_private_key_blocks` removes the full block without leaking continuation lines. |
 | Harmless words such as token count, public key names, and ordinary URLs | `test_negative_lookalikes` prevents indiscriminate destruction of useful output. |
-| Malformed config with a synthetic opaque value lacking a recognized prefix | `test_config_error_metadata_only` proves no parser excerpt or scalar is rendered. |
-| Empty/non-review local mapping; modern and legacy review lists | `test_review_projection_semantics` validates the allowlist and empty disabling behavior. |
-| Unknown nested review values, duplicate keys, invalid scalar/list types | `test_invalid_review_projection` proves safe failure before staging. |
+| Malformed config with a synthetic opaque value lacking a recognized prefix | `test_config_error_metadata_only` proves no parser excerpt or scalar is rendered; `test_coderabbit_policy_metadata_only` reaches CLI startup for file/env opaque values and preserves safe default behavior. |
+| Empty/non-review local mapping; modern and legacy review lists; shadowed opaque malformed legacy scalar | `test_review_projection_semantics` validates the allowlist, precedence before selection, omitted shadowed alias, and valid plus explicit-empty modern declarations. |
+| Unknown nested review values, duplicate keys, invalid selected scalar/list/item/policy shapes | `test_invalid_review_projection` distinguishes YAML parse errors from selected-field schema errors and proves safe failure before staging. |
 | Missing, unreadable, relative, symlinked, or explicitly selected external sources | `test_source_isolation` exercises Python/Bash parity and all source branches. |
+| Invalid explicit roots with shared config present/absent; valid no-declaration and explicit-empty controls | `test_bash_source_failure_propagation` reaches the ordered consumers above, conditional contexts and aggregation, and proves fatal source errors cannot select shared/default policy or trigger mutations. |
 | Source removed during staging; redactor error; caller nonzero exit | `test_failure_boundaries` proves no fallback, unsafe echo, partial snapshot, or masked command failure. |
 
 No inline suppression directives are introduced. No new concurrent event sources
