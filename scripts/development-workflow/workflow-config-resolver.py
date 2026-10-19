@@ -95,8 +95,8 @@ def redact_text(text: str) -> str:
             quote = '"'
         return match[1] + quote + marker + quote
     text = assignment.sub(mask_assignment, text)
-    text = re.sub(r'''(?i)(\bauthorization["']?\s*[:=]\s*[\"']?)(?:(?:Bearer|Basic)\s+)?[^\s,;\"'}]+''',
-                  lambda match: match[1] + marker, text)
+    authorization = re.compile(r'''(\bauthorization["']?\s*[:=]\s*)((?:(?:Bearer|Basic)\s+)?''' + value + ")", re.IGNORECASE)
+    text = authorization.sub(mask_assignment, text)
     text = re.sub(r"(?i)\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+", lambda match: match[1] + " " + marker, text)
     text = re.sub(r"(?i)(\b[a-z][a-z0-9+.-]*://)[^\s/@]+(?::[^\s/@]*)?@", lambda match: match[1] + marker + "@", text)
     text = re.sub(r"(?<![A-Za-z0-9_])(?:gh[pousr]_[A-Za-z0-9_]+|github_pat_[A-Za-z0-9_]+|sk-(?:proj-)?[A-Za-z0-9_-]+|xox[baprs]-[A-Za-z0-9-]+)(?![A-Za-z0-9_])", marker, text)

@@ -1416,7 +1416,7 @@ if [ -n "$setup_probe_output" ] && grep -Eiq 'usage[[:space:]_-]*limit|quota[[:s
     printf '%s\n' "$command_stderr" | workflow_redact_text >&2
   fi
   print_result escalate 0 0 0 quota_exhausted quota_exhausted
-  [ -n "$quota_reset_at" ] && print_kv QUOTA_RESET_AT "$quota_reset_at"
+  [ -n "$quota_reset_at" ] && print_kv QUOTA_RESET_AT "$(printf '%s' "$quota_reset_at" | workflow_redact_text)"
   exit 2
 fi
 if [ -z "$(printf '%s' "$command_stdout" | tr -d '[:space:]')" ]; then

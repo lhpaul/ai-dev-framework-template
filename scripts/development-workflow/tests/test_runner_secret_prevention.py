@@ -403,6 +403,8 @@ sys.exit(rc)
         self.assertIn('example.test/path', output)
         output = self.assert_redacts('{"Authorization":"opaqueFakeAuthorization"}', ['opaqueFakeAuthorization'])
         self.assertEqual(json.loads(output)['Authorization'], '[REDACTED]')
+        output = self.assert_redacts(json.dumps({'Authorization': 'Bearer opaque\\"FakeAuthorization'}), ['opaque', 'FakeAuthorization'])
+        self.assertEqual(json.loads(output)['Authorization'], '[REDACTED]')
 
     def test_token_boundaries(self):
         for token in ('ghp_fabricatedToken', 'github_pat_fabricatedToken', 'sk-proj-fabricatedToken', 'xoxb-fabricatedToken'):
@@ -521,6 +523,13 @@ sys.exit(rc)
                 self.assertEqual(data['result'], 'clean')
                 self.assertEqual(data['counts']['blocking'], 0)
                 self.assertNotIn('fakePersistentContext', evidence.read_text())
+        command.write_text("#!/bin/sh\necho 'quota exceeded; try again at token=fakeQuotaDiagnostic' >&2\nexit 7\n")
+        result = subprocess.run(['bash', str(scripts / 'local-ai-reviewer.sh'), '1993', 'fixture', 'repo'], env=call_env,
+                                cwd=self.checkout, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertIn('REASON=quota_exhausted', result.stdout)
+        self.assertIn('QUOTA_RESET_AT=token=[REDACTED]', result.stdout)
+        self.assertNotIn('fakeQuotaDiagnostic', result.stdout + result.stderr)
         # Load the real reviewer loop in its explicit harness mode: no main loop,
         # reviewer service, label, tracker, or merge mutation can execute.
         errfile = self.root / 'operation.err'
