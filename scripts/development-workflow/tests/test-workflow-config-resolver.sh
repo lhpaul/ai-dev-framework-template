@@ -1637,7 +1637,7 @@ write_review_effective_fixture 'review:' '  on_draft:' '    runner: [codex,,curs
 assert_review_effective_states "E-34 shared double comma" malformed unreadable
 write_review_effective_fixture 'review:' '  on_draft:' '    runner: [codex]'
 printf '%s\n' 'review:' '  on_draft:' '    runner: [codex,,cursor]' > "$review_effective_dir/.ai-dev-workflow.local.yaml"
-run_test "review-effective E-34 legacy double comma unchanged" "REVIEW_ON_DRAFT_RUNNER=codex,cursor" "$(python3 "$RESOLVER" review-overrides --repo-root "$review_effective_dir" | sed -n '/^REVIEW_ON_DRAFT_RUNNER=/p')"
+run_fails_contains "review-effective E-34 selected double comma fails before fields" "invalid YAML" python3 "$RESOLVER" review-overrides --repo-root "$review_effective_dir"
 assert_review_effective_states "E-34 local double comma" malformed unreadable
 rm -f "$review_effective_dir/.ai-dev-workflow.local.yaml"
 write_review_effective_fixture 'review:' '  on_draft:' '    runner: [codex, extra: value]'
@@ -1746,7 +1746,7 @@ write_review_effective_fixture 'review:' '  on_draft:' '    runner: [codex]'
 printf '%s\n' 'review:' '  on_draft:' '    runner: [codex-github]' '    runner: []' > "$review_effective_dir/.ai-dev-workflow.local.yaml"
 assert_review_effective_states "duplicate local runner" malformed unreadable
 run_test "duplicate local source" "$review_effective_dir/.ai-dev-workflow.local.yaml" "$(review_effective_state unreadable_file)"
-run_test "legacy duplicate runner behavior unchanged" "REVIEW_ON_DRAFT_RUNNER=" "$(python3 "$RESOLVER" review-overrides --repo-root "$review_effective_dir" | sed -n '/^REVIEW_ON_DRAFT_RUNNER=/p')"
+run_fails_contains "legacy selected duplicate runner fails before fields" "duplicate mapping key" python3 "$RESOLVER" review-overrides --repo-root "$review_effective_dir"
 rm -f "$review_effective_dir/.ai-dev-workflow.local.yaml"
 write_review_effective_fixture 'review:' '  on_draft:' '    runner:' '      - name: codex' '        name: cursor'
 assert_review_effective_states "duplicate list mapping continuation" malformed unreadable

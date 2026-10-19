@@ -618,6 +618,8 @@ class ModelRoutingTests(unittest.TestCase):
                      '{mode: single_repo, models: {other: {dsh: unused}}}\n',
                      '{mode: single_repo, custom: {models: {dsh: unused}}}\n'):
             self.write(text)
+            # No selected private source: shared legacy grammar stays dependency-free.
+            self.local.unlink()
             absent = subprocess.run([sys.executable, "-S", str(SCRIPT), "validate", "--repo-root", str(self.root), "--json"],
                                     capture_output=True, text=True, env=dict(os.environ, WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT=""))
             legacy = self.cli("resolve", "--json")
@@ -625,9 +627,20 @@ class ModelRoutingTests(unittest.TestCase):
             self.assertEqual(absent.stdout, legacy.stdout)
             self.assertEqual(absent.stderr, legacy.stderr)
         self.write(self.policy(self.tier()))
+        self.local.unlink()
         opted_in = subprocess.run([sys.executable, "-S", str(SCRIPT), "validate", "--repo-root", str(self.root)],
                                  capture_output=True, text=True, env=dict(os.environ, WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT=""))
         self.assertEqual(opted_in.returncode, 0, opted_in.stderr)
+
+    def test_selected_private_source_requires_syntax_dependency(self):
+        self.write('mode: single_repo\n', 'review:\n  on_draft:\n    runner: [cursor]\n')
+        result = subprocess.run([sys.executable, '-S', str(SCRIPT), 'validate', '--repo-root', str(self.root)],
+                                capture_output=True, text=True,
+                                env=dict(os.environ, WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT=''))
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(result.stdout, '')
+        self.assertIn('selected-source validation requires PyYAML', result.stderr)
+        self.assertNotIn('cursor', result.stderr)
 
     def test_role_catalogue_matches_canonical_table(self):
         text = (ROOT / "docs/workflow/development-workflow/agent-model-config.md").read_text()
