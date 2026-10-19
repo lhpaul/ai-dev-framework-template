@@ -8,7 +8,12 @@ LOCAL_PROBE_CAP_SECONDS=3
 HOSTED_PROBE_CAP_SECONDS=4
 set -euo pipefail
 
-fail() { printf 'ERROR: %s\n' "$*" >&2; exit 2; }
+SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+export REVIEWER_PREFLIGHT_CODERABBIT_MODULE_DIR="$SCRIPT_DIR"
+# shellcheck source=scripts/development-workflow/workflow-lib.sh
+source "$SCRIPT_DIR/workflow-lib.sh"
+
+fail() { workflow_diagnostic "ERROR: $*" >&2; exit 2; }
 if [ "${WORKFLOW_REVIEWER_AVAILABILITY_TEST_MODE:-0}" = 1 ]; then
   case "${WORKFLOW_REVIEWER_AVAILABILITY_BUDGET_SECONDS:-8}" in
     [1-8]) AVAILABILITY_BUDGET_SECONDS=${WORKFLOW_REVIEWER_AVAILABILITY_BUDGET_SECONDS:-8} ;;
@@ -36,10 +41,7 @@ case "$owner/$repo" in *[!a-zA-Z0-9_./-]*) fail 'invalid owner or repo' ;; esac
 case "$owner" in */*|.|..) fail 'invalid owner' ;; esac
 case "$repo" in */*|.|..) fail 'invalid repo' ;; esac
 case "$runner_kind" in claude|cursor|codex|dsh|unknown) ;; *) fail 'unsupported runner-kind' ;; esac
-SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
-export REVIEWER_PREFLIGHT_CODERABBIT_MODULE_DIR="$SCRIPT_DIR"
-# shellcheck source=scripts/development-workflow/workflow-lib.sh
-source "$SCRIPT_DIR/workflow-lib.sh"
+
 for dependency in python3 jq mktemp rm sleep cat; do
   have_cmd "$dependency" || fail "missing dependency: $dependency"
 done
@@ -247,7 +249,7 @@ add_record() {
   esac
   if [ "$2" != override-excluded ]; then configured="${configured:+$configured,}$display"; fi
 }
-report() {
+report_unredacted() {
   local i=0 n
   # Include temporary-file cleanup in the reported determination duration.
   rm -rf -- "$work_dir"
@@ -282,6 +284,10 @@ report() {
   print_kv_escaped BLOCK_CAUSE "$block_cause"
   print_kv_escaped ELAPSED_SECONDS "$SECONDS.0"
 }
+report() {
+  report_unredacted | workflow_redact_text
+}
+
 block() { block_cause=$1; report; exit 1; }
 config_deadline=$((SECONDS + CONFIG_RESOLVE_CAP_SECONDS))
 clamp_bound "$CONFIG_RESOLVE_CAP_SECONDS"
@@ -289,7 +295,7 @@ config_rc=0
 run_bounded "$bound" "$work_dir/config.json" "$work_dir/config.err" \
   python3 "$SCRIPT_DIR/workflow-config-resolver.py" review-effective --repo-root "$repo_root" || config_rc=$?
 if [ "$config_rc" = 124 ]; then block config-resolution-inconclusive; fi
-if [ "$config_rc" != 0 ]; then cat "$work_dir/config.err" >&2; fail "review-effective failed (exit $config_rc)"; fi
+if [ "$config_rc" != 0 ]; then workflow_redact_text <"$work_dir/config.err" >&2; fail "review-effective failed (exit $config_rc)"; fi
 # Parsing and every JSON decode share one configuration-stage deadline,
 # further constrained by the overall determination deadline.
 # Run in this shell so cancellation retains ownership of the active process.

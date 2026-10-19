@@ -78,6 +78,23 @@ workflow_config_resolver_script() {
   printf '%s/workflow-config-resolver.py\n' "$(workflow_script_dir)"
 }
 
+# Diagnostic-only stdin boundary. Never send functional config/auth payloads here.
+_workflow_redact_stdin() {
+  local sanitized
+  sanitized="$(python3 "$(workflow_config_resolver_script)" redact-text "$@")" || {
+    printf 'ERROR: diagnostic sanitization failed\n' >&2
+    return 2
+  }
+  printf '%s\n' "$sanitized"
+}
+
+workflow_redact_text() { _workflow_redact_stdin; }
+workflow_redact_json() { _workflow_redact_stdin --json; }
+
+workflow_diagnostic() {
+  printf '%s\n' "$*" | workflow_redact_text
+}
+
 workflow_config_exists() {
   [ -f "$(workflow_config_file)" ]
 }

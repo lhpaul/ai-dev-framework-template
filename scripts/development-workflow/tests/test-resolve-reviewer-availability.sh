@@ -425,7 +425,7 @@ reviews:
         for token in ('nUlL','NuLl','tRuE','fAlSe'):
             reset();source.write_text('review:\n  internal_reviewers_unavailable_policy: '+token+'\n')
             d=run('codex',1)
-            check(f'T-31 mixed-case policy stays unsupported {source.name} {token}',d['BLOCK_CAUSE']=='policy-unsupported' and d['POLICY_INPUT']==token,d)
+            check(f'T-31 mixed-case policy stays unsupported {source.name} {token}',d['BLOCK_CAUSE']=='policy-unsupported' and d['POLICY_INPUT']=='',d)
             reset();source.write_text('review:\n  on_draft:\n    runner: '+token+'\n')
             d=run('codex',1)
             check(f'T-31 mixed-case runner never falls back {source.name} {token}',d['BLOCK_CAUSE']=='list-malformed' and d['FALLBACK_APPLIED']=='false',d)
@@ -475,7 +475,7 @@ reviews:
             check(f'T-42 escaped reviewer control rendered {source.name} {escaped}',d['REVIEWER_'+d['REVIEWER_COUNT']+'_NAME']==rendered,d)
             reset();source.write_text('review:\n  internal_reviewers_unavailable_policy: "'+escaped+'"\n')
             d=run('codex',1)
-            check(f'T-42 escaped policy control rendered {source.name} {escaped}',d['BLOCK_CAUSE']=='policy-unsupported' and d['POLICY_INPUT']==rendered,d)
+            check(f'T-42 escaped policy control rendered {source.name} {escaped}',d['BLOCK_CAUSE']=='policy-unsupported' and d['POLICY_INPUT']=='',d)
     for source in (cfg, local):
         for flow in ('[codex,#]', '[#]', '[codex,#name]', '[[#name],codex]', '[codex, #name]', '[codex,\t#name]', '[codex,:bad]', '[:bad]', '[[codex,:bad]]'):
             reset();source.write_text('review:\n  on_draft:\n    runner: '+flow+'\n')
@@ -524,7 +524,7 @@ reviews:
             for token in (space, 'warn'+space+'#literal', space+'warn', 'warn'+space):
                 reset();source.write_text('review:\n  internal_reviewers_unavailable_policy: '+token+'\n')
                 d=run('codex',1)
-                check(f'T-31 Unicode policy stays unsupported {source.name} {token!r}',d['BLOCK_CAUSE']=='policy-unsupported' and d['POLICY_INPUT']==token,d)
+                check(f'T-31 Unicode policy stays unsupported {source.name} {token!r}',d['BLOCK_CAUSE']=='policy-unsupported' and d['POLICY_INPUT']=='',d)
             for token in (space, 'codex'+space+'#literal'):
                 reset();source.write_text('review:\n  on_draft:\n    runner: ['+token+']\n')
                 d=run('codex',1)
@@ -703,7 +703,7 @@ exec perl -e 'setpgrp(0,0) or die; my $bound=shift; $SIG{TERM}="IGNORE"; my $pid
     run();gh(body='if [ "$1" = auth ]; then sleep 30; else sleep 30; fi');run(expected=1)
     check('T-47 no auth preflight','auth' not in log.read_text())
     reset('[codex]','"bad policy"');d=run(expected=1)
-    check('T-48 unsupported raw policy',d['POLICY_INPUT']=='bad policy' and d['POLICY']=='')
+    check('T-48 unsupported raw policy',d['POLICY_INPUT']=='' and d['POLICY']=='')
     for malformed in ('review:\n  on_draft:\n    runner:[]\n', 'review:\n  on_draft:\n    runner:null\n', 'review:\n  on_draft:{}\n', 'review:{}\n', 'review:\n  internal_reviewers_unavailable_policy:warn\n'):
         reset();cfg.write_text(malformed);d=run('codex',1)
         expected_cause='list-malformed' if '    runner:' in malformed else 'policy-unreadable'
@@ -717,7 +717,7 @@ exec perl -e 'setpgrp(0,0) or die; my $bound=shift; $SIG{TERM}="IGNORE"; my $pid
             reset();source.write_text(duplicate);d=run('codex',1)
             check(f'T-48 duplicate config blocks {source.name} {duplicate!r}',d['BLOCK_CAUSE']=='policy-unreadable' and d['REVIEWER_COUNT']=='0' and d['UNREADABLE_FILE']==str(source) and 'duplicate mapping key' in d['UNREADABLE_DETAIL'],d)
     reset('[codex]','warn#typo');d=run('codex',1)
-    check('T-48 hash without separation remains unsupported policy',d['BLOCK_CAUSE']=='policy-unsupported' and d['POLICY_INPUT']=='warn#typo' and d['REVIEWER_COUNT']=='0',d)
+    check('T-48 hash without separation remains unsupported policy',d['BLOCK_CAUSE']=='policy-unsupported' and d['POLICY_INPUT']=='' and d['REVIEWER_COUNT']=='0',d)
     reset('[codex#typo]');d=run('codex',1)
     check('T-48 hash without separation remains reviewer value',d['REVIEWER_1_NAME']=='codex#typo' and d['REVIEWER_1_REASON']=='value-not-supported',d)
     reset('[codex]','warn # ordinary comment');d=run('codex')
@@ -743,7 +743,7 @@ exec perl -e 'setpgrp(0,0) or die; my $bound=shift; $SIG{TERM}="IGNORE"; my $pid
     reset();cfg.write_text('review:\n  internal_reviewers: codex\n');d=run('codex',1)
     check('T-48 malformed legacy alias blocks fallback',d['BLOCK_CAUSE']=='list-malformed' and d['REVIEWER_COUNT']=='0',d)
     reset('[codex]','{}');d=run(expected=1)
-    check('T-48 collection diagnostics',d['POLICY_INPUT']=='{}' and str(cfg)==d['UNREADABLE_FILE'] and bool(d['UNREADABLE_DETAIL']), d)
+    check('T-48 collection diagnostics',d['POLICY_INPUT']=='' and str(cfg)==d['UNREADABLE_FILE'] and bool(d['UNREADABLE_DETAIL']), d)
     for malformed in ('review: []\n',):
         reset();local.write_text(malformed);d=run('codex',1)
         check(f'T-31 malformed ancestor {malformed!r}',d['BLOCK_CAUSE']=='policy-unreadable' and str(local)==d['UNREADABLE_FILE'] and bool(d['UNREADABLE_DETAIL']),d)

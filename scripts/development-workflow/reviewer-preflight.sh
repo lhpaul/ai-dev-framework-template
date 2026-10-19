@@ -55,7 +55,7 @@ set -euo pipefail
 # around it.
 export GIT_NO_LAZY_FETCH=1
 
-fail() { printf 'ERROR: %s\n' "$*" >&2; exit 3; }
+fail() { workflow_diagnostic "ERROR: $*" >&2; exit 3; }
 
 SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source=scripts/development-workflow/workflow-lib.sh
@@ -907,7 +907,7 @@ run_bounded "$bound" "$early_output_json" "$work_dir/early-classify.err" \
 early_valid_rc=0
 bounded_jq plain "$work_dir/early-valid.out" "$work_dir/early-valid.err" -e . "$early_output_json" >/dev/null 2>&1 || early_valid_rc=$?
 if [ "$early_classify_rc" -gt 3 ] || { [ "$early_classify_rc" != 0 ] && [ "$early_valid_rc" != 0 ]; }; then
-  cat "$work_dir/early-classify.err" >&2
+  workflow_redact_text <"$work_dir/early-classify.err" >&2
   fail "reviewer_preflight.py failed (exit $early_classify_rc)"
 fi
 early_outcome=$(bounded_jq plain "$work_dir/early-outcome.out" "$work_dir/early-outcome.err" -er '.outcome' "$early_output_json") || fail 'cannot inspect early stage-set validation output'
@@ -1062,7 +1062,7 @@ run_bounded "$bound" "$output_json" "$work_dir/preflight.err" \
 final_valid_rc=0
 bounded_jq plain "$work_dir/final-valid.out" "$work_dir/final-valid.err" -e . "$output_json" >/dev/null 2>&1 || final_valid_rc=$?
 if [ "$preflight_rc" -gt 3 ] || { [ "$preflight_rc" != 0 ] && [ "$final_valid_rc" != 0 ]; }; then
-  cat "$work_dir/preflight.err" >&2
+  workflow_redact_text <"$work_dir/preflight.err" >&2
   fail "reviewer_preflight.py failed (exit $preflight_rc)"
 fi
 
@@ -1100,7 +1100,7 @@ if [ "$json_output" = true ]; then
     jq --argjson elapsed "$SECONDS" --argjson budget "$PREFLIGHT_BUDGET_SECONDS" \
     '. + {elapsed_seconds: $elapsed, budget_seconds: $budget}' "$output_json" || json_render_rc=$?
   [ "$json_render_rc" = 0 ] || fail "cannot render the JSON report (exit $json_render_rc): $(cat "$work_dir/json-report.err" 2>/dev/null)"
-  cat "$work_dir/json-report.out"
+  workflow_redact_json <"$work_dir/json-report.out"
   exit "$preflight_rc"
 fi
 
@@ -1125,6 +1125,7 @@ run_bounded "$bound" "$work_dir/report-fields.out" "$work_dir/report-fields.err"
 [ "$report_rc" = 0 ] || fail "cannot render the report (exit $report_rc): $(cat "$work_dir/report-fields.err" 2>/dev/null)"
 report_fields=()
 while IFS= read -r -d '' report_field; do report_fields+=("$report_field"); done <"$work_dir/report-fields.out"
+{
 print_kv_escaped OUTCOME "${report_fields[0]}"
 print_kv_escaped OUTCOME_LABEL "${report_fields[1]}"
 print_kv_escaped CHECKED_SHARED_CONFIG_REF "${report_fields[2]}"
@@ -1153,5 +1154,7 @@ while [ "$n" -lt "$platform_count" ]; do
 done
 print_kv_escaped ELAPSED_SECONDS "$SECONDS"
 print_kv_escaped BUDGET_SECONDS "$PREFLIGHT_BUDGET_SECONDS"
+
+} | workflow_redact_text
 
 exit "$preflight_rc"

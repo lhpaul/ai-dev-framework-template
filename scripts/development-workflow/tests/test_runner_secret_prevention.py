@@ -50,6 +50,11 @@ class RunnerSecurityTests(unittest.TestCase):
                     'WORKFLOW_MERGE_BUDGET_SESSION', 'WORKFLOW_MERGE_BUDGET_OWNER_ROOT'):
             self.env.pop(key, None)
         self.env['PYTHONDONTWRITEBYTECODE'] = '1'
+        runtimes = self.root / 'runtime-stubs'; runtimes.mkdir()
+        for binary in ('codex', 'claude', 'cursor', 'dsh', 'coderabbit', 'cr', 'gh'):
+            stub = runtimes / binary
+            stub.write_text('#!/bin/sh\nexit 99\n'); stub.chmod(0o755)
+        self.env['PATH'] = str(runtimes) + os.pathsep + self.env['PATH']
 
     def write(self, text: str, root: Path | None = None, local=True):
         path = (root or self.checkout) / (MODULE.LOCAL_CONFIG_NAME if local else '.ai-dev-workflow.yaml')
@@ -218,7 +223,7 @@ class RunnerSecurityTests(unittest.TestCase):
         wrapper.write_text(f"#!{sys.executable}\n" + r'''
 import contextlib, importlib.util, io, json, os, pathlib, sys
 args = sys.argv[1:]
-if not args or not args[0].endswith('workflow-config-resolver.py'):
+if not args or not args[0].endswith('workflow-config-resolver.py') or (len(args) > 1 and args[1] == 'redact-text'):
     os.execv(os.environ['REAL_PYTHON'], [os.environ['REAL_PYTHON'], *args])
 spec = importlib.util.spec_from_file_location('isolated_resolver', args[0])
 module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
@@ -271,6 +276,177 @@ sys.exit(rc)
             self.assertEqual(github['payload']['effective_on_draft_github'], ['bugbot'] if action == 'no-projection' else ['pr-agent'])
             self.assertEqual(github['payload']['effective_on_ready_github'], [] if action == 'no-projection' else ['coderabbit'])
             self.assertEqual(env['WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT'], str(self.external))
+
+    def assert_redacts(self, text, forbidden):
+        with patch.object(MODULE, 'resolve_local_config', side_effect=AssertionError('redactor read configuration')):
+            output = MODULE.redact_text(text)
+        for value in forbidden:
+            self.assertNotIn(value, output)
+        result = subprocess.run([sys.executable, str(RESOLVER), 'redact-text'], input=text,
+                                env=dict(self.env, WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT='invalid-must-not-read'), text=True, capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, output)
+        shell = self.bash('workflow_redact_text', extra='') if not text else subprocess.run(
+            ['bash', '-c', f'source {str(SCRIPTS / "workflow-lib.sh")!r}; workflow_redact_text'],
+            input=text, env=self.env, text=True, capture_output=True)
+        self.assertEqual(shell.returncode, 0, shell.stderr)
+        for value in forbidden:
+            self.assertNotIn(value, shell.stdout + shell.stderr)
+        return output
+
+    def test_sensitive_assignments(self):
+        for key in ('token', 'PASSWORD', 'Passphrase', 'client_secret', 'API_KEY', 'api-key', 'access.key', 'private key'):
+            for value in ('fabricatedOpaqueValue', '"fabricated \\"quoted-tail"', "'fabricated \\'quoted-tail'", '"fabricated\\\\tail"'):
+                with self.subTest(key=key, value=value):
+                    self.assert_redacts(f'{key} = {value}; operation=review', ['fabricated', 'quoted-tail'])
+        output = self.assert_redacts('{"api_key":"fabricatedOpaqueValue", "result":"clean", "count":0}', ['fabricatedOpaqueValue'])
+        self.assertEqual(json.loads(output)['result'], 'clean')
+
+    def test_multiple_values(self):
+        self.assert_redacts('token=firstFake password="secondFake"; Authorization: Bearer thirdFake token=fourthFake',
+                            ['firstFake', 'secondFake', 'thirdFake', 'fourthFake'])
+
+    def test_header_and_url_values(self):
+        output = self.assert_redacts('Authorization: Bearer fabricatedBearer\nAuthorization: Basic fabricatedBasic==\nhttps://user:fakePassword@example.test/path\n',
+                                     ['fabricatedBearer', 'fabricatedBasic', 'fakePassword', 'user:'])
+        self.assertIn('example.test/path', output)
+
+    def test_token_boundaries(self):
+        for token in ('ghp_fabricatedToken', 'github_pat_fabricatedToken', 'sk-proj-fabricatedToken', 'xoxb-fabricatedToken'):
+            self.assert_redacts(f'({token}), "{token}"; end={token}', [token])
+
+    def test_private_key_blocks(self):
+        for text in ('-----BEGIN PRIVATE KEY-----\nfabricatedLine1\nfabricatedLine2\n-----END PRIVATE KEY-----',
+                     '-----BEGIN RSA PRIVATE KEY-----\nfabricatedLine1\nfabricatedLine2',
+                     '-----BEGIN PRIVATE KEY-----\n-----BEGIN PUBLIC KEY-----\nfabricatedLine1\n-----END PRIVATE KEY-----',
+                     '-----BEGIN PRIVATE KEY-----\n-----BEGIN RSA PRIVATE KEY-----\nfabricatedLine1\n-----END RSA PRIVATE KEY-----\nfabricatedLine2\n-----END PRIVATE KEY-----'):
+            self.assert_redacts(text, ['fabricatedLine1', 'fabricatedLine2', 'BEGIN PRIVATE KEY'])
+
+    def test_negative_lookalikes(self):
+        text = 'token count 3; public_key: identity.pub; https://example.test/path\n<strong>No security concerns identified</strong>\n**[Persistent review]** [link](https://example.test/review)\n**Verdict**: APPROVED'
+        self.assertEqual(self.assert_redacts(text, []), text)
+
+    def test_config_error_metadata_only(self):
+        opaque = 'fabricatedOpaqueNoKnownPrefix'
+        for raw in (f'review:\n  {opaque} invalid\n', f'review:\n  on_draft:\n    runner: ["{opaque}\n',
+                    f'review:\n  internal_reviewers_unavailable_policy: {opaque}\n'):
+            self.write(raw)
+            for command in ('review-effective', 'review-github-effective', 'review-overrides', 'mode', 'validate'):
+                result = self.cli(command)
+                if command == 'review-overrides' and 'internal_reviewers_unavailable_policy:' in raw:
+                    # Functional override transport is deliberately not a diagnostic.
+                    continue
+                self.assertNotIn(opaque, result.stdout + result.stderr, (command, result.stdout, result.stderr))
+                self.assertNotIn('Traceback', result.stderr)
+        (self.checkout / MODULE.LOCAL_CONFIG_NAME).write_bytes(b'\xff')
+        for command in ('review-effective', 'review-github-effective', 'review-overrides', 'mode', 'validate'):
+            result = self.cli(command)
+            self.assertNotIn('Traceback', result.stderr)
+            self.assertNotIn('0xff', result.stderr)
+
+    def test_coderabbit_policy_metadata_only(self):
+        scripts = self.checkout / 'scripts/development-workflow'; scripts.mkdir(parents=True)
+        for name in ('coderabbit-cli-reviewer.sh', 'workflow-lib.sh', 'workflow-config-resolver.py'):
+            shutil.copyfile(SCRIPTS / name, scripts / name)
+        bindir = self.root / 'bin'; bindir.mkdir()
+        (bindir / 'gh').write_text('#!/bin/sh\nexit 1\n'); (bindir / 'gh').chmod(0o755)
+        opaque = 'fabricatedOpaquePolicyNoPrefix'
+        for from_env in (False, True):
+            self.write('review:\n  coderabbit_cli:\n    rate_limit_policy: ' + ('warn' if from_env else opaque) + '\n')
+            env = dict(self.env, PATH=str(bindir) + os.pathsep + self.env['PATH'])
+            if from_env: env['CODERABBIT_CLI_RATE_LIMIT_POLICY'] = opaque
+            result = subprocess.run(['bash', str(scripts / 'coderabbit-cli-reviewer.sh'), '1', 'fixture', 'repo'], env=env, text=True, capture_output=True)
+            self.assertNotIn(opaque, result.stdout + result.stderr)
+            self.assertIn('defaulting to warn', result.stderr)
+            self.assertIn('rate_limit_policy', result.stderr)
+            env['WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT'] = str(self.root / 'missing')
+            result = subprocess.run(['bash', str(scripts / 'coderabbit-cli-reviewer.sh'), '1', 'fixture', 'repo'], env=env, text=True, capture_output=True)
+            self.assertEqual(result.returncode, 2)
+            self.assertNotIn('defaulting to warn', result.stderr)
+
+    def test_failure_boundaries(self):
+        # Filter failure emits no unsafe input and cannot change command status.
+        text = 'token=fabricatedNeverEcho'
+        with patch.object(MODULE, 'redact_text', side_effect=ValueError(text)), patch.object(MODULE.sys, 'stdin') as stdin, patch.object(MODULE.sys, 'stderr') as stderr, patch.object(MODULE.sys, 'stdout') as stdout:
+            stdin.read.return_value = text
+            self.assertEqual(MODULE.cmd_redact_text(type('Args', (), {'json': False})()), 2)
+            stdout.write.assert_not_called()
+            self.assertNotIn('fabricatedNeverEcho', str(stderr.write.call_args_list))
+        for status in (0, 7):
+            result = self.bash(f"""set +e; output="$(printf 'token=fabricatedNeverEcho\\n'; exit {status})"; status=$?; set -e; printf '%s' "$output" | workflow_redact_text; exit "$status"; """)
+            self.assertEqual(result.returncode, status)
+            self.assertNotIn('fabricatedNeverEcho', result.stdout + result.stderr)
+        result = self.bash('workflow_redact_text', extra='workflow_config_resolver_script() { echo /synthetic/missing-filter; }')
+        self.assertEqual(result.returncode, 2)
+        self.assertNotIn(text, result.stdout + result.stderr)
+
+    def test_composed_diagnostic_boundaries(self):
+        scripts = self.checkout / 'scripts/development-workflow'; scripts.mkdir(parents=True)
+        for name in ('workflow-lib.sh', 'workflow-config-resolver.py', 'resolve-reviewer-availability.sh',
+                     'local-ai-reviewer.sh', 'pr-review-loop.sh', 'run-epic-audit-trail.sh', 'reviewer_preflight_coderabbit.py', 'codex-github-evidence-lib.sh'):
+            shutil.copyfile(SCRIPTS / name, scripts / name)
+        bindir = self.root / 'bin'; bindir.mkdir()
+        gh = bindir / 'gh'
+        gh.write_text('''#!/bin/sh\ncase "$*" in\n*"pr view"*) printf '%s\\n' '{"baseRefName":"develop","headRefName":"feature/1993-fixture","headRefOid":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","body":"token=fakePersistentContext"}' ;;\n*"pr diff"*) echo README.md ;;\n*) echo "token=fakeCapturedError" >&2; exit 1 ;;\nesac\n''')
+        gh.chmod(0o755)
+        (bindir / 'codex').write_text('#!/bin/sh\nexit 1\n'); (bindir / 'codex').chmod(0o755)
+        env = dict(self.env, PATH=str(bindir) + os.pathsep + self.env['PATH'])
+        self.write('review:\n  on_draft:\n    runner: [codex, coderabbit]\n')
+        # Native codex is just an availability declaration; no runtime is launched.
+        for runner, expected in (('codex', 0), ('unknown', 1)):
+            result = subprocess.run(['bash', str(scripts / 'resolve-reviewer-availability.sh'), '--repo-root', str(self.checkout),
+                                     '--owner', 'fixture', '--repo', 'repo', '--runner-kind', runner], env=env, capture_output=True, text=True)
+            self.assertEqual(result.returncode, expected, result.stderr + result.stdout)
+            self.assertNotIn('fakeCapturedError', result.stdout + result.stderr)
+        subprocess.run(['git', 'init', '-q', str(self.checkout)], check=True, capture_output=True)
+        (self.checkout / 'REVIEW.md').write_text('# Synthetic review contract\n')
+        command = bindir / 'synthetic-review'
+        evidence = self.root / 'evidence.json'
+        for valid, expected in ((True, 0), (False, 2)):
+            payload = '{"result":"clean","reason":"token=fakeVerdictReason","comments":0}' if valid else 'invalid-verdict'
+            command.write_text('''#!/bin/sh\necho 'token=fakeCapturedError' >&2\nprintf '%s\\n' 'positionPayload'\nexit statusCode\n'''.replace('positionPayload', payload).replace('statusCode', '0' if valid else '7'))
+            command.chmod(0o755)
+            call_env = dict(env, LOCAL_AI_REVIEWER_COMMAND=str(command), LOCAL_AI_REVIEWER_EVIDENCE_FILE=str(evidence),
+                            LOCAL_AI_REVIEWER_GRAPH_STRATEGY='none')
+            result = subprocess.run(['bash', str(scripts / 'local-ai-reviewer.sh'), '1993', 'fixture', 'repo'], env=call_env,
+                                    cwd=self.checkout, capture_output=True, text=True)
+            self.assertEqual(result.returncode, expected, result.stderr + result.stdout)
+            self.assertNotIn('fakeCapturedError', result.stdout + result.stderr)
+            self.assertNotIn('fakeVerdictReason', result.stdout + result.stderr)
+            if valid:
+                data = json.loads(evidence.read_text())
+                self.assertEqual(data['result'], 'clean')
+                self.assertEqual(data['counts']['blocking'], 0)
+                self.assertNotIn('fakePersistentContext', evidence.read_text())
+        # Load the real reviewer loop in its explicit harness mode: no main loop,
+        # reviewer service, label, tracker, or merge mutation can execute.
+        errfile = self.root / 'operation.err'
+        for error, expected in (('HTTP 403 token=fakeCapturedError', 0), ('temporary retry token=fakeCapturedError', 1)):
+            errfile.write_text(error)
+            result = subprocess.run(['bash', '-c', f'HARNESS_MODE=1 source {str(scripts / "pr-review-loop.sh")!r}; reviewer_loop_gh_read_denied {str(errfile)!r}'],
+                                    env=env, cwd=self.checkout, capture_output=True, text=True)
+            self.assertEqual(result.returncode, expected, result.stderr + result.stdout)
+            self.assertNotIn('fakeCapturedError', result.stdout + result.stderr)
+        # Exercise the persistent summary composition with a synthetic history
+        # producer; the actual append and JSON renderer remain under test.
+        history = function_text('pr-review-loop.sh', 'reviewer_loop_history_append_to_summary')
+        history += '\n' + function_text('pr-review-loop.sh', 'reviewer_loop_history_render_section')
+        history += "\nreviewer_loop_history_payload_from_existing() { printf '%s' '{\"history_status\":\"available\",\"entries\":[{\"result\":\"clean\",\"blocking_count\":0,\"detail\":\"token=fakeHistoryDiagnostic\"}]}'; }\nREVIEWER_LOOP_HISTORY_MARKER='<!-- reviewer-loop-history:v1 -->'\n"
+        result = self.bash("reviewer_loop_history_append_to_summary 'detail token=fakePublishedDiagnostic' ''", extra=history)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn('fakePublishedDiagnostic', result.stdout)
+        self.assertNotIn('fakeHistoryDiagnostic', result.stdout)
+        payload = json.loads(result.stdout.split('```json\n')[1].split('```')[0])
+        self.assertEqual(payload['entries'][0]['result'], 'clean')
+        self.assertEqual(payload['entries'][0]['blocking_count'], 0)
+        audit = self.root / 'audit.json'
+        audit.write_text(json.dumps({'scope_source': 'synthetic #1993', 'item': {'number': 1993, 'title': 'Synthetic'}, 'pr': {'number': 1, 'head_sha': 'a' * 40}, 'risk': {'level': 'low'}, 'merge_authority': 'none', 'final_decision': 'hold', 'reviewer': {'result': 'clean'},
+                                     'advisories': [{'source': 'fixture', 'decision': 'fixed', 'rationale': 'token=fakeAuditDiagnostic /tmp/fake-private-path'}]}))
+        result = subprocess.run(['bash', str(scripts / 'run-epic-audit-trail.sh'), 'render-pr-disposition', '--input', str(audit)], env=env, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('<!-- run-epic:pr-disposition -->', result.stdout)
+        self.assertNotIn('fakeAuditDiagnostic', result.stdout)
+        self.assertNotIn('/tmp/fake-private-path', result.stdout)
 
 
 if __name__ == '__main__':

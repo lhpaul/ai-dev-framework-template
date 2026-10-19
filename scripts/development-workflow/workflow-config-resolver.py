@@ -62,6 +62,69 @@ class ConfigError(Exception):
     """Configuration problem with a human-readable message."""
 
 
+def redact_text(text: str) -> str:
+    """Bounded structural diagnostic sanitizer; never reads configuration."""
+    marker = "[REDACTED]"
+    # Track nesting so a misleading nested delimiter cannot expose a suffix.
+    key_boundary = re.compile(r"-----((?:BEGIN|END)) (?:[A-Z0-9]+ )*PRIVATE KEY-----", re.IGNORECASE)
+    pieces: list[str] = []
+    offset = depth = 0
+    for boundary in key_boundary.finditer(text):
+        if boundary[1].upper() == "BEGIN":
+            if depth == 0:
+                pieces.append(text[offset:boundary.start()])
+            depth += 1
+        elif depth:
+            depth -= 1
+            if depth == 0:
+                pieces.append(marker)
+                offset = boundary.end()
+    if depth:
+        pieces.append(marker)
+    else:
+        pieces.append(text[offset:])
+    text = "".join(pieces)
+    # Quotes contain escaped delimiters: remove through the real closing quote.
+    value = r'''(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|"[^\n]*|'[^\n]*|[^\s,;}\]]+)'''
+    key = r"(?:[A-Za-z0-9]+[_.-])*(?:token|password|passphrase|secret|api[ _.-]?key|access[ _.-]?key|private[ _.-]?key)(?:[_.-](?:value|key))?"
+    assignment = re.compile(r"(?<![\w.-])([\"']?" + key + r"[\"']?\s*[:=]\s*)(" + value + ")", re.IGNORECASE)
+    def mask_assignment(match: re.Match) -> str:
+        raw = match[2]
+        quote = raw[:1] if raw[:1] in ("\"", "'") else ""
+        if not quote and match[1].startswith('"'):
+            quote = '"'
+        return match[1] + quote + marker + quote
+    text = assignment.sub(mask_assignment, text)
+    text = re.sub(r"(?i)(\bauthorization\s*[:=]\s*[\"']?)(?:(?:Bearer|Basic)\s+)?[^\s,;\"'}]+",
+                  lambda match: match[1] + marker, text)
+    text = re.sub(r"(?i)\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+", lambda match: match[1] + " " + marker, text)
+    text = re.sub(r"(?i)(\b[a-z][a-z0-9+.-]*://)[^\s/@]+(?::[^\s/@]*)?@", lambda match: match[1] + marker + "@", text)
+    text = re.sub(r"(?<![A-Za-z0-9_])(?:gh[pousr]_[A-Za-z0-9_]+|github_pat_[A-Za-z0-9_]+|sk-(?:proj-)?[A-Za-z0-9_-]+|xox[baprs]-[A-Za-z0-9-]+)(?![A-Za-z0-9_])", marker, text)
+    return text
+
+
+def cmd_redact_text(args: argparse.Namespace) -> int:
+    try:
+        raw = sys.stdin.read()
+        if args.json:
+            def sanitize(value: Any) -> Any:
+                if isinstance(value, str):
+                    return redact_text(value)
+                if isinstance(value, list):
+                    return [sanitize(item) for item in value]
+                if isinstance(value, dict):
+                    return {key: sanitize(item) for key, item in value.items()}
+                return value
+            output = json.dumps(sanitize(json.loads(raw)), sort_keys=True) + "\n"
+        else:
+            output = redact_text(raw)
+    except Exception:
+        print("ERROR: diagnostic sanitization failed", file=sys.stderr)
+        return 2
+    sys.stdout.write(output)
+    return 0
+
+
 def strip_inline_comment(line: str) -> str:
     in_single = False
     in_double = False
@@ -94,7 +157,7 @@ def preprocess_yaml(path: Path) -> list[tuple[int, str, int]]:
     try:
         raw_lines = path.read_text(encoding="utf-8").splitlines()
     except OSError as exc:
-        raise ConfigError(f"{path}: could not read config: {exc}") from exc
+        raise ConfigError(f"{path}: could not read config") from exc
 
     return preprocess_yaml_snapshot("\n".join(raw_lines), path)
 
@@ -121,7 +184,7 @@ def split_key_value(content: str, path: Path, line_no: int) -> tuple[str, str | 
     key, value = content.split(":", 1)
     key = key.strip()
     if not re.match(r"^[A-Za-z0-9_.-]+$", key):
-        raise ConfigError(f"{path}:{line_no}: unsupported key '{key}'")
+        raise ConfigError(f"{path}:{line_no}: unsupported mapping key")
     value = value.strip()
     return key, value if value != "" else None
 
@@ -326,7 +389,7 @@ def parse_review_yaml(path: Path, *, raw: str | None = None) -> dict[str, Any]:
     except (yaml.YAMLError, OSError, RecursionError, ValueError) as exc:
         mark = getattr(exc, "problem_mark", None)
         location = f"{path}:{mark.line + 1}" if mark is not None else str(path)
-        raise ConfigError(f"{location}: invalid YAML: {exc}") from exc
+        raise ConfigError(f"{location}: invalid YAML") from exc
 
     def convert(node: Any) -> Any:
         line_no = node.start_mark.line + 1
@@ -360,7 +423,7 @@ def parse_review_yaml(path: Path, *, raw: str | None = None) -> dict[str, Any]:
                     raise ConfigError(f"{path}:{line_no}: unsupported mapping key")
                 key = key_node.value
                 if key in result:
-                    raise ConfigError(f"{path}:{key_node.start_mark.line + 1}: duplicate mapping key '{key}'")
+                    raise ConfigError(f"{path}:{key_node.start_mark.line + 1}: duplicate mapping key")
                 if isinstance(value_node, (yaml.MappingNode, yaml.SequenceNode)) and not value_node.flow_style:
                     if value_node.start_mark.column != key_node.start_mark.column + 2:
                         raise ConfigError(f"{path}:{value_node.start_mark.line + 1}: expected child indentation of {key_node.start_mark.column + 2}")
@@ -377,7 +440,7 @@ def parse_review_yaml(path: Path, *, raw: str | None = None) -> dict[str, Any]:
     except RecursionError as exc:
         raise ConfigError(f"{path}: YAML nesting exceeds the supported depth") from exc
     except (ValueError, OverflowError) as exc:
-        raise ConfigError(f"{path}: unsupported YAML scalar conversion: {exc}") from exc
+        raise ConfigError(f"{path}: unsupported YAML scalar conversion") from exc
 
 
 def parse_yaml_subset(path: Path, *, preserve_empty_values: bool = False) -> dict[str, Any]:
@@ -388,7 +451,7 @@ def parse_yaml_subset(path: Path, *, preserve_empty_values: bool = False) -> dic
     try:
         raw = path.read_text(encoding="utf-8")
     except OSError as exc:
-        raise ConfigError(f"{path}: could not read config: {exc}") from exc
+        raise ConfigError(f"{path}: could not read config") from exc
     return parse_yaml_snapshot(raw, path)
 
 
@@ -433,20 +496,22 @@ LOCAL_CONFIG_NAME = ".ai-dev-workflow.local.yaml"
 
 def validate_local_source(repo_root: Path, *, explicit: bool = False) -> Path:
     """Validate a selected source without discovering another checkout."""
-    root = repo_root.resolve()
-    if not root.is_dir() or not os.access(root, os.R_OK | os.X_OK):
-        raise ConfigError("local-source: unreadable directory")
-    path = root / LOCAL_CONFIG_NAME
-    if not path.exists() and not path.is_symlink():
-        if explicit:
-            raise ConfigError(f"{path}: local-source missing file")
+    try:
+        root = repo_root.resolve()
+        if not root.is_dir() or not os.access(root, os.R_OK | os.X_OK):
+            raise ConfigError("local-source: unreadable directory")
+        path = root / LOCAL_CONFIG_NAME
+        if not path.exists() and not path.is_symlink():
+            if explicit:
+                raise ConfigError(f"{path}: local-source missing file")
+            return path
+        if not path.is_file() or not os.access(path, os.R_OK):
+            raise ConfigError(f"{path}: local-source unreadable regular file")
+        if not explicit and not path.resolve().is_relative_to(root):
+            raise ConfigError(f"{path}: local-source external indirection requires explicit selection")
         return path
-    if not path.is_file() or not os.access(path, os.R_OK):
-        raise ConfigError(f"{path}: local-source unreadable regular file")
-    if not explicit and not path.resolve().is_relative_to(root):
-        raise ConfigError(f"{path}: local-source external indirection requires explicit selection")
-    return path
-
+    except (OSError, RuntimeError) as exc:
+        raise ConfigError("local-source: filesystem validation failed") from exc
 
 def resolve_local_config(repo_root: Path) -> tuple[Path, str, Path | None]:
     """Checkout-local selection, or a validated explicit external source.
@@ -541,7 +606,7 @@ def validate_release_branch_pattern(
     unknown = sorted(placeholders - {"{version}", "{product_repo}"})
     if unknown:
         raise ConfigError(
-            f"{shared_path}: {field_path} contains unknown placeholder(s): {', '.join(unknown)}"
+            f"{shared_path}: {field_path} contains unknown placeholder(s)"
         )
     if "{version}" not in raw:
         raise ConfigError(f"{shared_path}: {field_path} must include the {{version}} placeholder")
@@ -617,7 +682,7 @@ def normalize_release_contract(
     forbidden_values = sorted(forbidden_release_value_paths(release))
     if forbidden_values:
         raise ConfigError(
-            f"{shared_path}: {field_path} contains forbidden local or secret value(s): {', '.join(forbidden_values)}"
+            f"{shared_path}: {field_path} contains forbidden local or secret fields"
         )
 
     base_source = "explicit" if release.get("base") not in {None, ""} else "default"
@@ -661,21 +726,21 @@ def product_repos(shared: dict[str, Any], shared_path: Path) -> list[dict[str, A
         forbidden = sorted(find_local_only_keys(raw))
         if forbidden:
             raise ConfigError(
-                f"{shared_path}: workflow_hub.product_repos[{index}] contains local-only field(s): {', '.join(forbidden)}"
+                f"{shared_path}: workflow_hub.product_repos[{index}] contains local-only fields"
             )
         name = raw.get("name")
         if not isinstance(name, str) or not name:
             raise ConfigError(f"{shared_path}: workflow_hub.product_repos[{index}].name is required")
         if name in seen:
             raise ConfigError(
-                f"{shared_path}: duplicate workflow_hub.product_repos name '{name}'"
+                f"{shared_path}: duplicate workflow_hub.product_repos name"
             )
         seen.add(name)
         github_repo = raw.get("github_repo") or ""
         git_url = raw.get("git_url") or ""
         if not github_repo and not git_url:
             raise ConfigError(
-                f"{shared_path}: workflow_hub.product_repos[{index}] '{name}' must define github_repo or git_url"
+                f"{shared_path}: workflow_hub.product_repos[{index}] must define github_repo or git_url"
             )
         repo = dict(raw)
         repo["default_branch"] = repo.get("default_branch") or "main"
@@ -724,13 +789,12 @@ def select_product_repo(repos: list[dict[str, Any]], target: str | None, shared_
         for repo in repos:
             if repo.get("name") == target:
                 return repo
-        raise ConfigError(f"{shared_path}: no workflow_hub.product_repos entry named '{target}'")
+        raise ConfigError(f"{shared_path}: selected workflow_hub.product_repos entry is missing")
     if not repos:
         raise ConfigError(f"{shared_path}: workflow_hub.product_repos is required for workflow_hub mode")
     if len(repos) > 1:
-        names = ", ".join(str(repo.get("name")) for repo in repos)
         raise ConfigError(
-            f"{shared_path}: product repository selection is ambiguous; pass --repo. Available: {names}"
+            f"{shared_path}: product repository selection is ambiguous; pass --repo"
         )
     return repos[0]
 
@@ -768,7 +832,7 @@ def resolve_local_path(
         return str(base / name), "checkout_root"
     if require_local:
         raise ConfigError(
-            f"{local_path}: local path for product repo '{name}' is required; set product_repos[].local_path or checkout_root"
+            f"{local_path}: local path for selected product repo is required; set product_repos[].local_path or checkout_root"
         )
     return "", ""
 
@@ -865,7 +929,7 @@ def set_local_product_repo_path(repo_root: Path, repo_name: str, local_path_valu
 
     if match_count > 1:
         raise ConfigError(
-            f"{local_path}: duplicate product_repos entries named '{repo_name}' cannot be updated safely"
+            f"{local_path}: duplicate product_repos entries cannot be updated safely"
         )
 
     if not updated:
@@ -1349,10 +1413,10 @@ def review_policy_state(value: Any, present: bool) -> tuple[str, Any, str]:
     if value is None or value == "":
         return "", value, "empty"
     if not isinstance(value, str):
-        return "", value, "unreadable"
+        return "", None, "unreadable"
     if value in {"warn", "fail-if-any-unavailable"}:
         return value, value, "defined"
-    return value, value, "unsupported"
+    return "", None, "unsupported"
 
 
 def resolve_review_effective(args: argparse.Namespace) -> dict[str, Any]:
@@ -1391,7 +1455,7 @@ def resolve_review_effective(args: argparse.Namespace) -> dict[str, Any]:
         base.update({
             "effective_policy_state": "unreadable",
             "unreadable_file": str(shared_path),
-            "unreadable_detail": str(exc),
+            "unreadable_detail": str(exc) if isinstance(exc, ConfigError) else "configuration: invalid UTF-8 encoding",
         })
         return base
 
@@ -1402,7 +1466,7 @@ def resolve_review_effective(args: argparse.Namespace) -> dict[str, Any]:
         base.update({
             "effective_policy_state": "unreadable",
             "unreadable_file": str(parse_path),
-            "unreadable_detail": str(exc),
+            "unreadable_detail": str(exc) if isinstance(exc, ConfigError) else "configuration: invalid UTF-8 encoding",
         })
         return base
 
@@ -1549,14 +1613,14 @@ def resolve_review_github_effective(args: argparse.Namespace) -> dict[str, Any]:
     try:
         shared = parse_yaml_subset(shared_path, preserve_empty_values=True)
     except (ConfigError, UnicodeDecodeError) as exc:
-        base.update({"unreadable_file": str(shared_path), "unreadable_detail": str(exc)})
+        base.update({"unreadable_file": str(shared_path), "unreadable_detail": str(exc) if isinstance(exc, ConfigError) else "configuration: invalid UTF-8 encoding"})
         return base
 
     parse_path = local_path
     try:
         local = parse_yaml_subset(local_path, preserve_empty_values=True)
     except (ConfigError, UnicodeDecodeError) as exc:
-        base.update({"unreadable_file": str(parse_path), "unreadable_detail": str(exc)})
+        base.update({"unreadable_file": str(parse_path), "unreadable_detail": str(exc) if isinstance(exc, ConfigError) else "configuration: invalid UTF-8 encoding"})
         return base
 
     local_review_override_applied = False
@@ -1803,7 +1867,7 @@ def model_layer(data: dict[str, Any], path: Path) -> dict[str, Any]:
         for name, value in entries.items():
             field = f"models.dsh.{kind}"
             if name not in names:
-                model_error("unknown_name", path, field, "Unknown role or tier name")
+                model_error("unknown_name", path, f"models.dsh.{kind}", "Unknown role or tier name")
             field += f".{name}"
             if kind == "roles" and isinstance(value, str):
                 if value not in DSH_TIERS:
@@ -1998,7 +2062,7 @@ def read_model_snapshot(path: Path, *, legacy_error: ConfigError | None = None) 
     except OSError as exc:
         if legacy_error is not None:
             raise legacy_error
-        raise ConfigError(f"{path}: could not read config: {exc}") from exc
+        raise ConfigError(f"{path}: could not read config") from exc
     first_bytes = raw_bytes.split(b"\n", 1)[0].rstrip(b"\r")
     active = first_bytes.startswith(MODEL_ENVELOPE_PREFIX.encode())
     bom_active = first_bytes.startswith(b"\xef\xbb\xbf" + MODEL_ENVELOPE_PREFIX.encode())
@@ -2238,6 +2302,10 @@ def build_parser() -> argparse.ArgumentParser:
     snapshot.add_argument("--destination", required=True)
     snapshot.set_defaults(func=cmd_review_snapshot)
 
+    redactor = subcommands.add_parser("redact-text", help="sanitize diagnostic stdin without reading configuration")
+    redactor.add_argument("--json", action="store_true", help="sanitize JSON string values, preserving structure")
+    redactor.set_defaults(func=cmd_redact_text)
+
     source = subcommands.add_parser("local-source", help="validate and print selected local source")
     source.add_argument("--repo-root")
     source.set_defaults(func=cmd_local_source)
@@ -2328,8 +2396,9 @@ def main(argv: list[str]) -> int:
     except ModelConfigError as exc:
         print(json.dumps(exc.diagnostic, sort_keys=True), file=sys.stderr)
         return 2
-    except ConfigError as exc:
-        print(f"ERROR: {exc}", file=sys.stderr)
+    except (ConfigError, UnicodeError) as exc:
+        detail = str(exc) if isinstance(exc, ConfigError) else "configuration: invalid UTF-8 encoding"
+        print(f"ERROR: {detail}", file=sys.stderr)
         return 2
 
 

@@ -89,12 +89,10 @@ load_input_json() {
 }
 
 redact_text() {
-  sed -E \
-    -e 's#gh[pousr]_[A-Za-z0-9_]+#[REDACTED_TOKEN]#g' \
-    -e 's#Bearer[[:space:]]+[A-Za-z0-9._=-]+#Bearer [REDACTED]#g' \
-    -e 's#Authorization:[[:space:]]*[^[:space:]]+#Authorization: [REDACTED]#g' \
+  workflow_redact_text | sed -E \
     -e 's#/Users/[^[:space:]|)]+#[REDACTED_LOCAL_PATH]#g' \
     -e 's#/tmp/[^[:space:]|)]+#[REDACTED_LOCAL_PATH]#g'
+
 }
 
 table_cell_filter='

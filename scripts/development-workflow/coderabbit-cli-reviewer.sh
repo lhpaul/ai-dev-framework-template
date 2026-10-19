@@ -184,7 +184,7 @@ RATE_LIMIT_POLICY="${RATE_LIMIT_POLICY:-warn}"
 case "$RATE_LIMIT_POLICY" in
   warn|strict) ;;
   *)
-    echo "WARN: invalid CodeRabbit CLI rate-limit policy '$RATE_LIMIT_POLICY'; defaulting to warn" >&2
+    echo "WARN: invalid-value category for review.coderabbit_cli.rate_limit_policy / CODERABBIT_CLI_RATE_LIMIT_POLICY; defaulting to warn" >&2
     RATE_LIMIT_POLICY="warn"
     ;;
 esac
