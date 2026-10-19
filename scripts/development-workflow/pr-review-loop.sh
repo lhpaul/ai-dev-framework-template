@@ -14917,6 +14917,7 @@ if [ -n "$max_wait_override" ] && ! reviewer_wait_seconds_is_valid "$max_wait_ov
 fi
 
 workflow_bind_local_config_root "$repo_root" || exit 2
+repo_root="$(workflow_local_config_root)"
 if ! local_review_override_root="$(resolve_local_review_override_root "$repo_root")"; then
   workflow_diagnostic "ERROR: could not resolve the initiating checkout's local reviewer policy." >&2
   exit 2

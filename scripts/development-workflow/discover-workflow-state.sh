@@ -70,6 +70,7 @@ print_filtered_refs() {
   esac
 }
 
+repo_root="$(CDPATH='' cd -- "$repo_root" && pwd -P)" || exit 2
 cd "$repo_root"
 
 mode_context="$(workflow_repository_mode "$repo_root")"

@@ -507,6 +507,7 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 
+repo_root="$(CDPATH='' cd -- "$repo_root" && pwd -P)" || exit 1
 cd "$repo_root" || exit 1
 if [ -n "$scan_snapshot" ]; then
   python3 "$SCRIPT_DIR/workflow-portfolio-scan.py" --repo-root "$repo_root" \

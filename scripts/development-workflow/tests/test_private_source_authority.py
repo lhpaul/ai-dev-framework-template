@@ -85,8 +85,8 @@ builtins.open, io.open, os.open = builtin, io_open, os_open
         return subprocess.run(command, cwd=cwd or self.product, env=self.f.env,
                               capture_output=True, text=True, timeout=30)
 
-    def bash(self, text):
-        return self.run_command(['bash', '-c', 'source ' + shlex.quote(str(self.f.runtime / 'workflow-lib.sh')) + '\n' + text])
+    def bash(self, text, cwd=None):
+        return self.run_command(['bash', '-c', 'source ' + shlex.quote(str(self.f.runtime / 'workflow-lib.sh')) + '\n' + text], cwd=cwd)
 
     def no_foreign_reads(self, allowed=()):
         paths = set(self.reads.read_text().splitlines()) if self.reads.exists() else set()
@@ -98,8 +98,11 @@ builtins.open, io.open, os.open = builtin, io_open, os_open
                             ('modified', 'product_repos:\n  - name: mobile\n    local_path: ../fabricated-target\n'),
                             ('malformed', 'broken: [synthetic-opaque\n')):
             with self.subTest(state=state):
-                if text is not None:
-                    self.foreign.write_text(text)
+                for foreign in getattr(self, 'foreign_paths', (self.foreign,)):
+                    if text is None:
+                        foreign.unlink(missing_ok=True)
+                    else:
+                        foreign.write_text(text)
                 result = invoke()
                 self.assertNotIn('synthetic-opaque', result.stdout + result.stderr)
                 stdout = normalize(result.stdout) if normalize else result.stdout
@@ -161,7 +164,7 @@ builtins.open, io.open, os.open = builtin, io_open, os_open
         # a legitimate in-process binding and command substitutions must see it.
         self.foreign = self.f.checkout / '.ai-dev-workflow.local.yaml'
         self.f.env['_WORKFLOW_LOCAL_CONFIG_ROOT'] = str(self.f.checkout)
-        root = shlex.quote('../product'); lib = shlex.quote(str(self.f.runtime / 'workflow-lib.sh'))
+        root = shlex.quote('product'); lib = shlex.quote(str(self.f.runtime / 'workflow-lib.sh'))
         command = ('workflow_bind_local_config_root ' + root + '\ncd ' + shlex.quote(str(self.f.checkout)) + '\nsource ' + lib +
                    '\nvalue="$(workflow_local_config_file)" || exit $?\nprintf "%s\\n" "$value"\n'
                    'workflow_merge_ci_policy_into_json \'{}\' ""\n')
@@ -176,7 +179,7 @@ builtins.open, io.open, os.open = builtin, io_open, os_open
         def check(result):
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(result.stdout.splitlines(), [str(self.product / '.ai-dev-workflow.local.yaml'), '{}'])
-        self.invariant(lambda: self.bash(command), check)
+        self.invariant(lambda: self.bash(command, cwd=self.f.root), check)
 
     def test_R05_ci_hub_sibling_probe(self):
         self.invariant(lambda: self.bash('workflow_hub_root_for_ci_policy ' + shlex.quote(str(self.product)) + ' fixture/mobile'),
@@ -237,9 +240,11 @@ builtins.open, io.open, os.open = builtin, io_open, os_open
         self.selected_entry_invariance('coderabbit-cli-reviewer.sh')
 
     def test_R12_ci_loop_selected_root(self):
-        # Stop before GitHub polling, after the real selected-source parser.
-        (self.f.bin / 'gh').write_text('#!/bin/sh\nexit 99\n')
-        self.selected_entry_invariance('pr-ci-loop.sh')
+        self.nested_checkouts()
+        command = ['bash', str(self.f.runtime / 'pr-ci-loop.sh'), '1993', '--repo-root', 'product',
+                   '--product-repo', 'mobile', '--poll-interval', '1', '--max-wait', '1']
+        self.invariant(lambda: self.run_command(command, cwd=self.f.root))
+        self.parser_reached(self.product, 'resolve')
 
     def test_R13_review_loop_root_and_handoff(self):
         self.selected_entry_invariance('pr-review-loop.sh')
@@ -301,6 +306,29 @@ builtins.open, io.open, os.open = builtin, io_open, os_open
         self.invariant(lambda: self.run_command(['bash', str(self.f.runtime / 'post-merge-cleanup.sh'),
                                                 '--inspect-targets', 'feature/1993-fixture'], cwd=linked))
         self.parser_reached(linked, 'mode')
+        inherited_cases = [
+            {'POST_MERGE_CLEANUP_REENTERED': '1'},
+            {'POST_MERGE_CLEANUP_BUDGET_ENTERED': '1', 'POST_MERGE_CLEANUP_CALLER_WORKTREES': str(self.f.checkout)},
+            {'GIT_DIR': str(self.f.checkout / '.git'), 'GIT_WORK_TREE': str(self.f.checkout),
+             'GIT_COMMON_DIR': str(self.f.checkout / '.git'), 'GIT_CONFIG_COUNT': '1',
+             'GIT_CONFIG_KEY_0': 'core.worktree', 'GIT_CONFIG_VALUE_0': str(self.f.checkout)},
+        ]
+        original_env = dict(self.f.env)
+        for inherited in inherited_cases:
+            with self.subTest(inherited=','.join(sorted(inherited))):
+                self.f.env = dict(original_env, **inherited)
+                self.calls.unlink(missing_ok=True)
+                self.invariant(lambda: self.run_command(['bash', str(self.f.runtime / 'post-merge-cleanup.sh'),
+                                                        '--inspect-targets', 'feature/1993-fixture'], cwd=linked))
+                self.parser_reached(linked, 'mode')
+        self.f.env = original_env
+        # Relative explicit root is anchored at invocation CWD, before the
+        # helper enters the selected checkout or considers caller worktrees.
+        self.nested_checkouts(base=self.f.checkout)
+        self.invariant(lambda: self.run_command(['bash', str(self.f.runtime / 'post-merge-cleanup.sh'),
+                                                '--repo-root', 'product', '--inspect-targets', 'feature/1993-fixture'],
+                                               cwd=self.f.root))
+        self.parser_reached(self.product, 'mode')
 
     def test_R20_home_and_unrecognized_env_no_authority(self):
         self.f.env.update(HOME=str(self.hub), GIT_COMMON_DIR=str(self.hub),
@@ -324,8 +352,49 @@ builtins.open, io.open, os.open = builtin, io_open, os_open
         self.parser_reached(self.product, 'review-local-list')
 
     def test_R23_completion_selected_root(self):
-        # Real synthetic completion entry, with all remote/runtime calls stubbed.
-        self.selected_entry_invariance('item-completion-self-check.sh')
+        # Relative entry roots must be bound before cd changes their meaning.
+        self.foreign = self.f.checkout / '.ai-dev-workflow.local.yaml'
+        command = ['bash', str(self.f.runtime / 'item-completion-self-check.sh'),
+                   '--issue', '1993', '--branch', 'feature/1993-fixture', '--stage', 'synthetic',
+                   '--worktree-path', str(self.product), '--repo-root', 'product', '--pr', '1993',
+                   '--expected-base', 'develop', '--require-clean', 'false', '--require-ci-green', 'false',
+                   '--require-review-summary', 'true', '--require-review-threads', 'true']
+        self.invariant(lambda: self.run_command(command, cwd=self.f.root), lambda result: self.assertNotIn('unreadable directory', result.stderr))
+        self.parser_reached(self.product, 'local-source')
+        self.parser_reached(self.product, 'review-local-list')
+
+    def nested_checkouts(self, base=None):
+        # Reinterpreting "product" after one or more cd/child boundaries would
+        # land in a distinguishable nested fake checkout, never a missing path.
+        root = base or self.product
+        self.foreign_paths = []
+        for _ in range(3):
+            root = root / 'product'; root.mkdir()
+            (root / '.ai-dev-workflow.yaml').write_text((self.product / '.ai-dev-workflow.yaml').read_text())
+            (root / '.git').mkdir()
+            (root / '.git/config').write_text('[remote "origin"]\n url = https://github.com/fixture/foreign\n')
+            self.foreign_paths.append(root / '.ai-dev-workflow.local.yaml')
+        self.f.env['WORKFLOW_SKIP_FETCH'] = '1'
+
+    def relative_entry(self, script, arguments):
+        self.nested_checkouts()
+        self.invariant(lambda: self.run_command(['bash', str(self.f.runtime / script), '--repo-root', 'product', *arguments],
+                                               cwd=self.f.root))
+        self.parser_reached(self.product, 'mode')
+
+    def test_R24_discovery_relative_root(self):
+        self.relative_entry('discover-workflow-state.sh', [])
+
+    def test_R25_next_action_relative_root(self):
+        self.relative_entry('workflow-next-action.sh', ['--branch', 'feature/1993-fixture'])
+
+    def test_R26_batch_plan_relative_handoff(self):
+        development = self.f.root / 'development'; development.mkdir()
+        self.relative_entry('workflow-batch-plan.sh', [str(development)])
+
+    def test_R27_batch_lanes_relative_handoff(self):
+        development = self.f.root / 'development'; development.mkdir()
+        self.relative_entry('workflow-batch-lanes.sh', ['--scan', str(development)])
 
 
 if __name__ == '__main__':

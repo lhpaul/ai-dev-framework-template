@@ -90,6 +90,7 @@ if [ -z "$pr_number" ]; then
 fi
 
 workflow_bind_local_config_root "$repo_root" || exit 2
+repo_root="$(workflow_local_config_root)"
 require_gh
 cd "$repo_root"
 

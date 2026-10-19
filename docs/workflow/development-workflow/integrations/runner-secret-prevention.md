@@ -38,6 +38,11 @@ to read another checkout's private file. The Bash library keeps this entry
 binding in process memory, preserves it when re-sourced, and discards a
 same-name inherited environment scalar. Existing explicit shared-file overrides
 still supply shared policy; they do not select adjacent private configuration.
+Relative roots are resolved against the invocation directory before changing
+directory or forwarding them to a child, including batch wrappers. Cleanup's
+source selection uses the actual calling worktree independently of inherited
+operation reentry flags or Git location overrides; cleanup protections and merge
+session requirements still apply.
 
 <!-- workflow-shell-contract: bash-zsh -->
 ```bash

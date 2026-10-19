@@ -307,6 +307,7 @@ if [ -z "$repo_root" ]; then
   repo_root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 fi
 
+repo_root="$(CDPATH='' cd -- "$repo_root" && pwd -P)" || exit 1
 cd "$repo_root" || exit 1
 
 caps_json="$(read_parallelism_caps "$repo_root")"

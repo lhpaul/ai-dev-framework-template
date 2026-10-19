@@ -535,8 +535,9 @@ worktree_path_for_branch() {
   '
 }
 
-cd "$repo_root"
 workflow_bind_local_config_root "$repo_root" || exit 2
+repo_root="$(workflow_local_config_root)"
+cd "$repo_root"
 
 resolved_repo_root="$(pwd -P)"
 resolved_worktree_path="$(CDPATH='' cd -- "$worktree_path" 2>/dev/null && pwd -P || printf '%s' "$worktree_path")"

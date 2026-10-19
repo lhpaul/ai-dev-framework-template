@@ -340,7 +340,7 @@ run_contains \
   "$worktree_output"
 run_contains \
   "worktree_cleanup_uses_stable_tracker_root" \
-  "TRACKER_REPO_ROOT=$worktree_repo" \
+  "TRACKER_REPO_ROOT=$(CDPATH='' cd -- "$worktree_repo" && pwd -P)" \
   "$worktree_output"
 run_contains \
   "worktree_cleanup_processes_numbered_issue_after_reentry" \
@@ -801,7 +801,7 @@ run_contains \
   "workflow_hub_reentry_uses_hub_helper" \
   "Re-entering cleanup through the workflow hub helper" \
   "$hub_product_output"
-run_contains "workflow_hub_reentry_preserves_tracker_root" "TRACKER_REPO_ROOT=$hub_repo" "$hub_product_output"
+run_contains "workflow_hub_reentry_preserves_tracker_root" "TRACKER_REPO_ROOT=$(CDPATH='' cd -- "$hub_repo" && pwd -P)" "$hub_product_output"
 run_contains "workflow_hub_reentry_uses_product_base_worktree" "CLEANUP_REPO_ROOT=$hub_product_repo" "$hub_product_output"
 run_test "workflow_hub_reentry_removes_product_branch" "no" "$(
   if "$REAL_GIT" -C "$hub_product_repo" show-ref --quiet "refs/heads/$hub_product_branch"; then

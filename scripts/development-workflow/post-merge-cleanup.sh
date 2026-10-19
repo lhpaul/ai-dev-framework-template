@@ -42,8 +42,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # worktree; that worktree must survive cleanup (#1386).
 CALLER_PWD="$(pwd -P 2>/dev/null || true)"
 
-cd_workflow_repo_root
-
 HUB_REPO_ROOT="$(workflow_repo_root)"
 DEVELOP_BRANCH="develop"
 TO_DELETE=""
@@ -139,6 +137,19 @@ physical_git_common_dir() {
   (CDPATH='' cd -- "$dir" && pwd -P)
 }
 
+# Source authority uses actual caller identity, independently of operation
+# reentry metadata or inherited Git locations/config. These are local reads.
+private_source_git() {
+  env -i PATH="$PATH" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null git "$@"
+}
+
+private_source_common_dir() {
+  local root="$1" dir
+  dir="$(private_source_git -C "$root" rev-parse --git-common-dir 2>/dev/null)" || return 1
+  case "$dir" in /*) ;; *) dir="$root/$dir" ;; esac
+  (CDPATH='' cd -- "$dir" && pwd -P)
+}
+
 CALLER_WORKTREE_ROOT=""
 # On the base-worktree re-entry below, this process's directory is wherever the
 # first pass had moved to, not the caller's. The first pass hands the caller's
@@ -154,14 +165,22 @@ fi
 # which is the shared main clone whenever a worktree runner invokes the
 # main-clone copy of the helper. When the caller is standing in another working
 # tree of the same repository, that working tree is the root it meant.
-if [ "$repo_root_explicit" -eq 0 ] && [ -n "$CALLER_WORKTREE_ROOT" ]; then
+source_caller_worktree_root=""
+if [ "$repo_root_explicit" -eq 0 ] && [ -n "$CALLER_PWD" ]; then
+  source_caller_worktree_root="$(private_source_git -C "$CALLER_PWD" rev-parse --show-toplevel 2>/dev/null)" || source_caller_worktree_root=""
+  if [ -n "$source_caller_worktree_root" ]; then
+    source_caller_worktree_root="$(CDPATH='' cd -- "$source_caller_worktree_root" && pwd -P)" || source_caller_worktree_root=""
+    case "$CALLER_PWD/" in "$source_caller_worktree_root/"*) ;; *) source_caller_worktree_root="" ;; esac
+  fi
+fi
+if [ "$repo_root_explicit" -eq 0 ] && [ -n "$source_caller_worktree_root" ]; then
   default_repo_root_real="$(CDPATH='' cd -- "$repo_root" 2>/dev/null && pwd -P || true)"
-  if [ -n "$default_repo_root_real" ] && [ "$CALLER_WORKTREE_ROOT" != "$default_repo_root_real" ]; then
-    caller_common_dir="$(physical_git_common_dir "$CALLER_WORKTREE_ROOT" || true)"
-    default_common_dir="$(physical_git_common_dir "$default_repo_root_real" || true)"
+  if [ -n "$default_repo_root_real" ] && [ "$source_caller_worktree_root" != "$default_repo_root_real" ]; then
+    caller_common_dir="$(private_source_common_dir "$source_caller_worktree_root" || true)"
+    default_common_dir="$(private_source_common_dir "$default_repo_root_real" || true)"
     if [ -n "$caller_common_dir" ] && [ "$caller_common_dir" = "$default_common_dir" ]; then
-      echo "Using the calling working tree '$CALLER_WORKTREE_ROOT' as --repo-root (no --repo-root was passed)."
-      repo_root="$CALLER_WORKTREE_ROOT"
+      echo "Using the calling working tree '$source_caller_worktree_root' as --repo-root (no --repo-root was passed)."
+      repo_root="$source_caller_worktree_root"
     fi
   fi
 fi
@@ -205,6 +224,7 @@ is_caller_worktree() {
   grep -Fqx -- "$candidate" <<<"$CALLER_WORKTREES"
 }
 
+repo_root="$(CDPATH='' cd -- "$repo_root" && pwd -P)" || exit 2
 HUB_REPO_ROOT="$repo_root"
 cd "$HUB_REPO_ROOT" || exit 1
 

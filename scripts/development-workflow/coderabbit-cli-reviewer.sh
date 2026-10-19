@@ -122,6 +122,9 @@ done
 
 # Bind only after argument parsing, before any policy/private-source read.
 workflow_bind_local_config_root "${REPO_ROOT:-$(workflow_repo_root)}" || exit 2
+if [ -n "$REPO_ROOT" ]; then
+  REPO_ROOT="$(workflow_local_config_root)"
+fi
 
 case "$TIMEOUT" in
   ''|0|*[!0-9]*)
