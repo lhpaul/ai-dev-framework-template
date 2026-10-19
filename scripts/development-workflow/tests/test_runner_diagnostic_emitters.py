@@ -54,12 +54,12 @@ class RunnerDiagnosticEmitters(unittest.TestCase):
             self.assertNotIn('fabricatedChildError', stream)
         return result
 
-    def ronda(self, *, conclusion='failure', blocking=0, prefix=False):
+    def ronda(self, *, conclusion='failure', blocking=0, prefix=False, title=None):
         payload = self.f.root / 'checks.json'
         payload.write_text(json.dumps({'check_runs': [{
             'name': 'Ronda review', 'id': 1, 'head_sha': 'a' * 40,
             'status': 'completed', 'conclusion': conclusion,
-            'output': {'title': 'token=' + self.secret + ' opaque suffix',
+            'output': {'title': title or 'token=' + self.secret + ' opaque suffix',
                        'summary': f'Blocking: {blocking}, Important: 0, Nit: 0\npassword: {self.secret}'},
         }]}))
         body = '''require_gh() { :; }
@@ -431,8 +431,21 @@ esac
         self.assertIn('FAILING_CHECKS=token=[REDACTED]', result.stdout)
 
     def test_D29_ci_real_argument_stderr(self):
-        result = self.safe(self.entry('pr-ci-loop.sh', '1993', '--bad token=' + self.secret), 64)
-        self.assertIn('Unknown option:', result.stderr)
+        for argument in ('--bad token=' + self.secret, '--token=' + self.secret):
+            with self.subTest(argument=argument):
+                result = self.safe(self.entry('pr-ci-loop.sh', '1993', argument), 64)
+                self.assertIn('Unknown option:', result.stderr)
+                self.assertIn('[REDACTED]', result.stderr)
+        # The same literal assignment reaches both channels through Ronda.
+        result = self.safe(self.ronda(title='--token=' + self.secret), 2)
+        self.assertIn('RONDA_CHECK_TITLE=--token=[REDACTED]', result.stdout)
+        self.assertIn('--token=[REDACTED]', result.stderr)
+        # Adjacent assignments retain harmless context on both channels.
+        result = self.safe(self.bash('workflow_diagnostic "context --token=' + self.secret + ' --password=syntheticSecond keep=visible"\n' +
+                                    'workflow_diagnostic "context --token=' + self.secret + ' --password=syntheticSecond keep=visible" >&2'), 0)
+        self.assertNotIn('syntheticSecond', result.stdout + result.stderr)
+        self.assertIn('--token=[REDACTED] --password=[REDACTED] keep=visible', result.stdout)
+        self.assertEqual(result.stdout, result.stderr)
 
     def test_D30_completion_real_observation_and_header(self):
         pr = json.loads(self.f.pr.read_text()); pr['headRefName'] = 'token=' + self.secret

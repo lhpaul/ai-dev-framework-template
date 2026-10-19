@@ -91,9 +91,9 @@ def redact_text(text: str) -> str:
     key = SENSITIVE_DIAGNOSTIC_KEY
     # A YAML line scalar can contain spaces, commas and semicolons. Shell
     # assignment separators and mapping delimiters apply only in their context.
-    next_assignment = r'''[ \t]+["']?(?:[A-Za-z_][\w.-]*|''' + key + r''')["']?[ \t]*[:=]'''
+    next_assignment = r'''[ \t]+(?:--?)?["']?(?:[A-Za-z_][\w.-]*|''' + key + r''')["']?[ \t]*[:=]'''
     next_field = re.compile(next_assignment, re.IGNORECASE)
-    assignment = re.compile(r'''(?<![\w.-])(["']?(?:''' + key + r'''|authorization)["']?[ \t]*[:=][ \t]*)''', re.IGNORECASE)
+    assignment = re.compile(r'''(?<![\w.])(["']?(?:''' + key + r'''|authorization)["']?[ \t]*[:=][ \t]*)''', re.IGNORECASE)
 
     def in_flow_mapping(position: int) -> bool:
         depth, quote, index = 0, "", 0
