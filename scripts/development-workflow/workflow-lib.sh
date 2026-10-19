@@ -33,6 +33,19 @@ workflow_repo_root() {
   CDPATH='' cd -- "$(workflow_script_dir)/../.." && pwd
 }
 
+# Anchor an explicit relative source at invocation CWD before any entry changes
+# directory or hands it to a child. This is path metadata only: no private read.
+workflow_anchor_local_override_root() {
+  case "${WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT:-}" in
+    ''|/*) return 0 ;;
+  esac
+  local entry_cwd
+  entry_cwd="$(pwd -P)" || return 2
+  WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT="$entry_cwd/$WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT"
+  export WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT
+}
+workflow_anchor_local_override_root
+
 # Bash arrays cannot be inherited through the environment. Discard a same-name
 # inherited scalar, while preserving an entry's binding if this library is sourced
 # again in the same process. This is state, not another configuration override.
@@ -50,13 +63,17 @@ workflow_local_config_root() {
 }
 
 workflow_bind_local_config_root() {
-  local root="${1:-}"
+  local root="${1:-}" selected_file
   [ -n "$root" ] || return 2
   if ! root="$(CDPATH='' cd -- "$root" 2>/dev/null && pwd -P)"; then
     printf 'ERROR: local-source unreadable directory\n' >&2
     return 2
   fi
-  workflow_local_config_file "$root" >/dev/null || return 2
+  selected_file="$(workflow_local_config_file "$root")" || return 2
+  if [ -n "${WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT:-}" ]; then
+    WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT="$(dirname -- "$selected_file")" || return 2
+    export WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT
+  fi
   _WORKFLOW_LOCAL_CONFIG_ROOT=("$root")
 }
 

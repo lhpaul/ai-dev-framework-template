@@ -124,6 +124,32 @@ builtins.open, io.open, os.open = builtin, io_open, os_open
     def python(self, *arguments):
         return self.run_command(['python3', str(self.f.runtime / 'workflow-config-resolver.py'), *arguments])
 
+    def relative_override_invariant(self, invoke, command=None, root=None, check=None):
+        # The recognized relative source belongs to invocation CWD, never the
+        # selected checkout after cd. Only fabricated paths and metadata logged.
+        first = self.f.root / 'selected'; first.mkdir(exist_ok=True)
+        second = self.product / 'selected'; second.mkdir(exist_ok=True)
+        # Git status is public output; hide the synthetic forbidden directory
+        # itself so creating its private file does not change unrelated status.
+        exclude = self.product / '.git/info/exclude'
+        with exclude.open('a') as stream:
+            stream.write('\n/selected/\n')
+        private = first / '.ai-dev-workflow.local.yaml'
+        private.write_text('review:\n  on_draft:\n    runner: [codex]\n    github: [bugbot]\n  on_ready:\n    github: [bugbot]\nproduct_repos:\n  - name: mobile\n    local_path: ../product\n')
+        self.f.env['WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT'] = 'selected'
+        previous_paths = getattr(self, 'foreign_paths', None)
+        self.foreign_paths = [second / '.ai-dev-workflow.local.yaml']
+        self.allowed = (private,)
+        self.reads.unlink(missing_ok=True)
+        self.calls.unlink(missing_ok=True)
+        self.invariant(invoke, check)
+        self.assertTrue(self.reads.is_file(), 'real entry must read selected synthetic source')
+        self.parser_reached(root or self.product, command)
+        if previous_paths is None:
+            del self.foreign_paths
+        else:
+            self.foreign_paths = previous_paths
+
     def test_R01_python_checkout_authority(self):
         self.invariant(lambda: self.python('resolve', '--repo-root', str(self.product), '--json'),
                        lambda result: self.assertEqual(result.returncode, 0, result.stderr))
@@ -142,6 +168,19 @@ builtins.open, io.open, os.open = builtin, io_open, os_open
         self.assertIn('invalid YAML', bad.stderr)
         self.assertNotIn('synthetic-opaque', bad.stderr)
         self.assertEqual(bad.stdout, '')
+        command = ('workflow_bind_local_config_root product\ncd product\nsource ' +
+                   shlex.quote(str(self.f.runtime / 'workflow-lib.sh')) +
+                   '\nworkflow_config_review_on_draft_runner "$(workflow_effective_config_file)"')
+        self.relative_override_invariant(lambda: self.bash(command, cwd=self.f.root), 'review-local-list',
+                                         check=lambda result: self.assertEqual(result.stdout.strip(), 'codex'))
+        # A pure output redactor must not parse/read selected private bytes on
+        # import, even when the explicitly named synthetic source is malformed.
+        (self.f.root / 'selected/.ai-dev-workflow.local.yaml').write_text('broken: [synthetic-opaque\n')
+        self.reads.unlink(missing_ok=True)
+        pure = self.bash("printf 'token=syntheticvalue\\n' | workflow_redact_text", cwd=self.f.root)
+        self.assertEqual(pure.returncode, 0, pure.stderr)
+        self.assertNotIn('syntheticvalue', pure.stdout)
+        self.assertFalse(self.reads.exists(), 'pure library import read private configuration')
 
     def test_R03_python_model_and_projection_roots(self):
         private = self.product / '.ai-dev-workflow.local.yaml'
@@ -245,6 +284,9 @@ builtins.open, io.open, os.open = builtin, io_open, os_open
                    '--product-repo', 'mobile', '--poll-interval', '1', '--max-wait', '1']
         self.invariant(lambda: self.run_command(command, cwd=self.f.root))
         self.parser_reached(self.product, 'resolve')
+        command = ['bash', str(self.f.runtime / 'pr-ci-loop.sh'), '1993', '--repo-root', 'product',
+                   '--repo', 'fixture/repo', '--poll-interval', '1', '--max-wait', '1']
+        self.relative_override_invariant(lambda: self.run_command(command, cwd=self.f.root), 'review-local-list')
 
     def test_R13_review_loop_root_and_handoff(self):
         self.selected_entry_invariance('pr-review-loop.sh')
@@ -271,6 +313,10 @@ builtins.open, io.open, os.open = builtin, io_open, os_open
         self.invariant(lambda: self.review_function('apply-readiness-labels.sh', 'pr_head_config_ready_platforms', command),
                        lambda result: self.assertEqual(result.returncode, 0, result.stderr))
         self.parser_reached(self.product, 'review-local-list')
+        relative = ('workflow_bind_local_config_root product\ncd product\n' +
+                    fixtures.function_text('apply-readiness-labels.sh', 'pr_head_config_ready_platforms') +
+                    '\n' + command)
+        self.relative_override_invariant(lambda: self.bash(relative, cwd=self.f.root), 'review-local-list')
 
     def test_R16_preflight_projection_handoff(self):
         # Existing pinning suite exercises both staged readers, source mutation,
@@ -294,6 +340,18 @@ builtins.open, io.open, os.open = builtin, io_open, os_open
         self.allowed = (private,)
         self.invariant(lambda: self.python('resolve', '--repo-root', str(self.f.checkout), '--repo', 'mobile', '--json'),
                        lambda result: self.assertEqual(json.loads(result.stdout)['TARGET_LOCAL_PATH'], str(self.hub)))
+        # These entries retain their original CWD (script-dir cd is a subshell),
+        # including open-product-pr's token-helper handoff. Real dry-run/status
+        # entry controls need no credential or provider invocation.
+        for script, arguments, command in (
+            ('github-app-token.sh', ['--status'], 'auth'),
+            ('open-product-pr.sh', ['--base', 'develop', '--approved-base', 'develop',
+                                    '--head', 'feature/1993-fixture', '--title', 'Synthetic',
+                                    '--body-file', str(self.f.body), '--dry-run'], 'resolve')):
+            with self.subTest(entry=script):
+                self.relative_override_invariant(lambda: self.run_command(
+                    ['bash', str(self.f.runtime / script), '--repo-root', str(self.f.checkout),
+                     '--repo', 'mobile', *arguments], cwd=self.f.root), command, self.f.checkout)
 
     def test_R19_cleanup_caller_worktree_authority(self):
         # Real linked-worktree identity, read-only inspection only. Main-clone
@@ -329,6 +387,9 @@ builtins.open, io.open, os.open = builtin, io_open, os_open
                                                 '--repo-root', 'product', '--inspect-targets', 'feature/1993-fixture'],
                                                cwd=self.f.root))
         self.parser_reached(self.product, 'mode')
+        self.relative_override_invariant(lambda: self.run_command(
+            ['bash', str(self.f.runtime / 'post-merge-cleanup.sh'), '--repo-root', 'product',
+             '--inspect-targets', 'feature/1993-fixture'], cwd=self.f.root), 'mode')
 
     def test_R20_home_and_unrecognized_env_no_authority(self):
         self.f.env.update(HOME=str(self.hub), GIT_COMMON_DIR=str(self.hub),
@@ -362,6 +423,7 @@ builtins.open, io.open, os.open = builtin, io_open, os_open
         self.invariant(lambda: self.run_command(command, cwd=self.f.root), lambda result: self.assertNotIn('unreadable directory', result.stderr))
         self.parser_reached(self.product, 'local-source')
         self.parser_reached(self.product, 'review-local-list')
+        self.relative_override_invariant(lambda: self.run_command(command, cwd=self.f.root), 'review-local-list')
 
     def nested_checkouts(self, base=None):
         # Reinterpreting "product" after one or more cd/child boundaries would
@@ -381,6 +443,8 @@ builtins.open, io.open, os.open = builtin, io_open, os_open
         self.invariant(lambda: self.run_command(['bash', str(self.f.runtime / script), '--repo-root', 'product', *arguments],
                                                cwd=self.f.root))
         self.parser_reached(self.product, 'mode')
+        self.relative_override_invariant(lambda: self.run_command(
+            ['bash', str(self.f.runtime / script), '--repo-root', 'product', *arguments], cwd=self.f.root), 'mode')
 
     def test_R24_discovery_relative_root(self):
         self.relative_entry('discover-workflow-state.sh', [])
@@ -390,10 +454,16 @@ builtins.open, io.open, os.open = builtin, io_open, os_open
 
     def test_R26_batch_plan_relative_handoff(self):
         development = self.f.root / 'development'; development.mkdir()
+        # A real development has a document; empty arrays in the unrelated
+        # pre-existing Bash 3.2 issue-number helper must not mask this route.
+        (development / '1_specs.md').write_text('**Issue**: #1993\n')
         self.relative_entry('workflow-batch-plan.sh', [str(development)])
 
     def test_R27_batch_lanes_relative_handoff(self):
         development = self.f.root / 'development'; development.mkdir()
+        # A real development has a document; empty arrays in the unrelated
+        # pre-existing Bash 3.2 issue-number helper must not mask this route.
+        (development / '1_specs.md').write_text('**Issue**: #1993\n')
         self.relative_entry('workflow-batch-lanes.sh', ['--scan', str(development)])
 
 

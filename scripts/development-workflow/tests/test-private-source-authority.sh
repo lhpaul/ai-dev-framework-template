@@ -11,6 +11,8 @@
 # covers: scripts/development-workflow/apply-readiness-labels.sh
 # covers: scripts/development-workflow/reviewer-preflight.sh
 # covers: scripts/development-workflow/resolve-reviewer-availability.sh
+# covers: scripts/development-workflow/github-app-token.sh
+# covers: scripts/development-workflow/open-product-pr.sh
 # covers: scripts/development-workflow/post-merge-cleanup.sh
 # covers: scripts/development-workflow/discover-workflow-state.sh
 # covers: scripts/development-workflow/workflow-next-action.sh

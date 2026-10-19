@@ -39,7 +39,11 @@ binding in process memory, preserves it when re-sourced, and discards a
 same-name inherited environment scalar. Existing explicit shared-file overrides
 still supply shared policy; they do not select adjacent private configuration.
 Relative roots are resolved against the invocation directory before changing
-directory or forwarding them to a child, including batch wrappers. Cleanup's
+directory or forwarding them to a child, including batch wrappers. An explicit
+relative `WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT` is likewise anchored to the
+invocation directory before any directory change or child handoff. Importing
+the Bash library only anchors path metadata; it does not read private content.
+Entry validation then preserves the validated physical source directory. Cleanup's
 source selection uses the actual calling worktree independently of inherited
 operation reentry flags or Git location overrides; cleanup protections and merge
 session requirements still apply.
