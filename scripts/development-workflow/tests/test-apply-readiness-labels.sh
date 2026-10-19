@@ -28,10 +28,11 @@ source "$REPO_ROOT/scripts/development-workflow/workflow-lib.sh"
 TMP_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
 
-# Fixtures own reviewer policy. An empty root prevents consumer or main-clone
-# machine-local overrides from replacing the mocked base policy (#1914).
+# Fixtures own reviewer policy. A valid synthetic source without declarations
+# prevents workstation overrides from replacing the mocked base policy.
 ISOLATED_OVERRIDE_ROOT="$TMP_ROOT/no-local-overrides"
 mkdir -p "$ISOLATED_OVERRIDE_ROOT"
+printf 'review: {}\n' >"$ISOLATED_OVERRIDE_ROOT/.ai-dev-workflow.local.yaml"
 export WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT="$ISOLATED_OVERRIDE_ROOT"
 unset AI_DEV_WORKFLOW_CONFIG_FILE
 

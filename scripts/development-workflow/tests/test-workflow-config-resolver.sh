@@ -243,7 +243,7 @@ product_repos:
 YAML
 run_fails_contains \
   "workflow_hub_set_local_path_duplicate_local_fails" \
-  "duplicate product_repos entries named 'mobile-app'" \
+  "duplicate product_repos entries" \
   python3 "$RESOLVER" set-local-path --repo-root "$duplicate_local_dir" --repo mobile-app --local-path ../three
 
 run_fails_contains \
@@ -253,7 +253,7 @@ run_fails_contains \
 
 run_fails_contains \
   "workflow_hub_unknown_repo" \
-  "no workflow_hub.product_repos entry named 'unknown-app'" \
+  "selected workflow_hub.product_repos entry is missing" \
   python3 "$RESOLVER" resolve --repo-root "$hub_dir" --repo unknown-app
 
 ci_policy_dir="$(fixture_dir ci-policy-hub)"
@@ -460,7 +460,7 @@ workflow_hub:
 YAML
 run_fails_contains \
   "workflow_hub_release_rejects_unknown_pattern_placeholder" \
-  "contains unknown placeholder(s): {channel}" \
+  "contains unknown placeholder(s)" \
   python3 "$RESOLVER" resolve --repo-root "$bad_release_pattern_dir" --repo mobile-app
 
 static_release_pattern_dir="$(fixture_dir static-release-pattern)"
@@ -512,7 +512,7 @@ workflow_hub:
 YAML
 run_fails_contains \
   "workflow_hub_release_rejects_secret_key" \
-  "contains local-only field(s): release.secret_name" \
+  "contains local-only fields" \
   python3 "$RESOLVER" resolve --repo-root "$secret_release_dir" --repo mobile-app
 
 password_release_dir="$(fixture_dir password-release)"
@@ -529,7 +529,7 @@ workflow_hub:
 YAML
 run_fails_contains \
   "workflow_hub_release_rejects_password_key" \
-  "contains local-only field(s): release.password" \
+  "contains local-only fields" \
   python3 "$RESOLVER" resolve --repo-root "$password_release_dir" --repo mobile-app
 
 api_key_release_dir="$(fixture_dir api-key-release)"
@@ -547,7 +547,7 @@ workflow_hub:
 YAML
 run_fails_contains \
   "workflow_hub_release_rejects_api_key" \
-  "contains forbidden local or secret value(s): external.apiKey" \
+  "contains forbidden local or secret fields" \
   python3 "$RESOLVER" resolve --repo-root "$api_key_release_dir" --repo mobile-app
 
 token_release_dir="$(fixture_dir token-release)"
@@ -564,7 +564,7 @@ workflow_hub:
 YAML
 run_fails_contains \
   "workflow_hub_release_rejects_token_value" \
-  "contains forbidden local or secret value(s): evidence_note" \
+  "contains forbidden local or secret fields" \
   python3 "$RESOLVER" resolve --repo-root "$token_release_dir" --repo mobile-app
 
 no_local_dir="$(fixture_dir no-local)"
@@ -579,7 +579,7 @@ workflow_hub:
 YAML
 run_fails_contains \
   "workflow_hub_require_local_path" \
-  "local path for product repo 'mobile-app' is required" \
+  "local path for selected product repo is required" \
   python3 "$RESOLVER" validate --repo-root "$no_local_dir" --repo mobile-app --require-local
 
 duplicate_dir="$(fixture_dir duplicate)"
@@ -596,7 +596,7 @@ workflow_hub:
 YAML
 run_fails_contains \
   "workflow_hub_duplicate_names" \
-  "duplicate workflow_hub.product_repos name 'mobile-app'" \
+  "duplicate workflow_hub.product_repos name" \
   python3 "$RESOLVER" resolve --repo-root "$duplicate_dir" --repo mobile-app
 
 missing_identity_dir="$(fixture_dir missing-identity)"
@@ -626,7 +626,7 @@ workflow_hub:
 YAML
 run_fails_contains \
   "workflow_hub_rejects_local_only_fields" \
-  "contains local-only field(s): local_path" \
+  "contains local-only fields" \
   python3 "$RESOLVER" resolve --repo-root "$local_only_dir" --repo mobile-app
 
 nested_local_only_dir="$(fixture_dir nested-local-only-field)"
@@ -644,7 +644,7 @@ workflow_hub:
 YAML
 run_fails_contains \
   "workflow_hub_rejects_nested_local_only_fields" \
-  "contains local-only field(s): github_app.private_key_path" \
+  "contains local-only fields" \
   python3 "$RESOLVER" resolve --repo-root "$nested_local_only_dir" --repo mobile-app
 
 nested_list_local_only_dir="$(fixture_dir nested-list-local-only-field)"
@@ -663,7 +663,7 @@ workflow_hub:
 YAML
 run_fails_contains \
   "workflow_hub_preserves_nested_list_mapping" \
-  "contains local-only field(s): app_identifiers[1].github_app.private_key_path" \
+  "contains local-only fields" \
   python3 "$RESOLVER" resolve --repo-root "$nested_list_local_only_dir" --repo mobile-app
 
 ssh_remote_dir="$(fixture_dir ssh-remote)"
@@ -1530,7 +1530,7 @@ with tempfile.TemporaryDirectory() as tmp:
                 shared.write_text("review:\n  on_draft:\n    runner: [codex]\n")
                 source.write_text("review:\n  internal_reviewers_unavailable_policy: "+token+"\n")
                 d = json.loads(subprocess.check_output([sys.executable, sys.argv[1], "review-effective", "--repo-root", tmp]))
-                assert d["effective_policy_state"] == "unsupported" and d["policy_input"] == token, d
+                assert d["effective_policy_state"] == "unsupported" and d["policy_input"] is None, d
                 checks += 1
             for value in (space, "codex"+space+"#literal", "x:"+space+"y", "x"+space+'"y#z'):
                 for node in (value, "["+value+"]"):
@@ -1671,7 +1671,7 @@ run_test "review-effective E-36 invalid UTF-8 runner malformed" malformed "$(jq 
 run_test "review-effective E-36 invalid UTF-8 source" "$review_effective_dir/.ai-dev-workflow.yaml" "$(jq -r '.unreadable_file' <<< "$utf8_json")"
 write_review_effective_fixture 'review:' '  on_draft:' '    runner: [codex]'
 printf '\377' > "$review_effective_dir/.ai-dev-workflow.local.yaml"
-run_fails_contains "review-effective E-36 legacy invalid UTF-8 behavior unchanged" "UnicodeDecodeError" python3 "$RESOLVER" review-overrides --repo-root "$review_effective_dir"
+run_fails_contains "review-effective E-36 legacy invalid UTF-8 diagnostic is metadata-only" "invalid UTF-8 encoding" python3 "$RESOLVER" review-overrides --repo-root "$review_effective_dir"
 rm -f "$review_effective_dir/.ai-dev-workflow.local.yaml"
 write_review_effective_fixture 'review:' '  on_draft:' '    runner: [codex, .inf]'
 assert_review_effective_states "E-36 non-finite numeric member" malformed unreadable
@@ -1733,7 +1733,7 @@ run_test "review-effective policy-only override cannot hide malformed runner anc
 rm -f "$review_effective_dir/.ai-dev-workflow.local.yaml"
 write_review_effective_fixture 'review:' '  on_draft:' '    runner: [codex-github]' '    runner: []'
 assert_review_effective_states "duplicate runner" malformed unreadable
-run_contains "duplicate runner diagnostic identifies second key" ".ai-dev-workflow.yaml:4: duplicate mapping key 'runner'" "$(review_effective_state unreadable_detail)"
+run_contains "duplicate runner diagnostic identifies second key" ".ai-dev-workflow.yaml:4: duplicate mapping key" "$(review_effective_state unreadable_detail)"
 write_review_effective_fixture 'review:' '  internal_reviewers_unavailable_policy: fail-if-any-unavailable' '  internal_reviewers_unavailable_policy: warn'
 assert_review_effective_states "duplicate policy" malformed unreadable
 write_review_effective_fixture 'review:' '  on_draft:' '    runner: [codex-github]' 'review:' '  on_draft:' '    runner: []'
@@ -1750,7 +1750,7 @@ run_test "legacy duplicate runner behavior unchanged" "REVIEW_ON_DRAFT_RUNNER=" 
 rm -f "$review_effective_dir/.ai-dev-workflow.local.yaml"
 write_review_effective_fixture 'review:' '  on_draft:' '    runner:' '      - name: codex' '        name: cursor'
 assert_review_effective_states "duplicate list mapping continuation" malformed unreadable
-run_contains "duplicate continuation identifies second key" ".ai-dev-workflow.yaml:5: duplicate mapping key 'name'" "$(review_effective_state unreadable_detail)"
+run_contains "duplicate continuation identifies second key" ".ai-dev-workflow.yaml:5: duplicate mapping key" "$(review_effective_state unreadable_detail)"
 write_review_effective_fixture 'review:' '  on_draft:' '    runner: [codex]' '  on_ready:' '    runner: [cursor]'
 assert_review_effective_states "same key in separate mappings is valid" defined absent
 

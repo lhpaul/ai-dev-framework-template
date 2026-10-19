@@ -7,6 +7,7 @@ import base64
 import importlib.util
 import json
 import os
+import re
 from pathlib import Path
 import shutil
 import subprocess
@@ -25,7 +26,9 @@ for node in TREE.body:
         raise AssertionError('unexpected import-time execution')
 SPEC = importlib.util.spec_from_file_location('synthetic_runner_resolver', RESOLVER)
 MODULE = importlib.util.module_from_spec(SPEC)
-with patch.object(Path, 'read_text', side_effect=AssertionError('import read configuration')):
+with patch.object(Path, 'read_text', side_effect=AssertionError('import read configuration')), \
+        patch.object(Path, 'read_bytes', side_effect=AssertionError('import read configuration')), \
+        patch.object(Path, 'open', side_effect=AssertionError('import opened configuration')):
     SPEC.loader.exec_module(MODULE)
 
 # Only public shared configuration is consulted for template-owned artifact checks.
@@ -50,9 +53,12 @@ class RunnerSecurityTests(unittest.TestCase):
         self.external = self.root / 'external'
         self.external.mkdir()
         self.env = dict(os.environ)
-        for key in ('WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT', 'AI_DEV_WORKFLOW_CONFIG_FILE',
-                    'WORKFLOW_MERGE_BUDGET_SESSION', 'WORKFLOW_MERGE_BUDGET_OWNER_ROOT'):
-            self.env.pop(key, None)
+        for key in list(self.env):
+            if key.startswith(('WORKFLOW_', 'AI_DEV_WORKFLOW_', 'LOCAL_AI_REVIEWER_', 'CODERABBIT_CLI_')) or re.search(
+                    r'token|secret|password|passphrase|api.?key|access.?key|credential', key, re.IGNORECASE):
+                self.env.pop(key, None)
+        self.env.update(GIT_CONFIG_GLOBAL='/dev/null', GIT_CONFIG_SYSTEM='/dev/null',
+                        GIT_CONFIG_NOSYSTEM='1', GIT_TERMINAL_PROMPT='0')
         self.env['PYTHONDONTWRITEBYTECODE'] = '1'
         runtimes = self.root / 'runtime-stubs'; runtimes.mkdir()
         for binary in ('codex', 'claude', 'cursor', 'dsh', 'coderabbit', 'cr', 'gh'):
@@ -93,6 +99,17 @@ class RunnerSecurityTests(unittest.TestCase):
             result = self.bash('workflow_local_config_file')
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertNotIn(str(main), result.stdout + result.stderr)
+        # Source selection is independent of Git layout, including a submodule,
+        # a primary checkout and a directory outside Git.
+        dot_git = self.checkout / '.git'
+        for layout in ('submodule', 'primary', 'outside'):
+            if dot_git.is_file(): dot_git.unlink()
+            elif dot_git.is_dir(): dot_git.rmdir()
+            if layout == 'submodule': dot_git.write_text('gitdir: ../main/.git/modules/fake\n')
+            elif layout == 'primary': dot_git.mkdir()
+            result = self.bash('workflow_local_config_file')
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stdout.strip(), str(self.checkout / MODULE.LOCAL_CONFIG_NAME))
         (self.checkout / MODULE.LOCAL_CONFIG_NAME).unlink()
         (self.checkout / MODULE.LOCAL_CONFIG_NAME).symlink_to(main / MODULE.LOCAL_CONFIG_NAME)
         self.assertEqual(self.cli('local-source').returncode, 2)
@@ -277,12 +294,13 @@ if not args or not args[0].endswith('workflow-config-resolver.py') or (len(args)
 spec = importlib.util.spec_from_file_location('isolated_resolver', args[0])
 module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
 reads = []
-read_text = pathlib.Path.read_text
+source_open = pathlib.Path.open
 source = pathlib.Path(os.environ['SYNTHETIC_SOURCE'])
 def spy(path, *a, **kw):
-    if path == source: reads.append(str(path))
-    return read_text(path, *a, **kw)
-pathlib.Path.read_text = spy
+    mode = kw.get('mode', a[0] if a else 'r')
+    if path == source and 'r' in mode: reads.append(str(path))
+    return source_open(path, *a, **kw)
+pathlib.Path.open = spy
 capture = io.StringIO()
 with contextlib.redirect_stdout(capture):
     rc = module.main(args[1:])
@@ -312,6 +330,7 @@ sys.exit(rc)
                                      'on_draft.runner=draft,on_draft.github=draft,on_ready.github=ready'],
                                     env=env, text=True, capture_output=True)
             self.assertIn(result.returncode, (0, 1), result.stderr)
+            self.assertNotIn('fabricated-do-not-stage', result.stdout + result.stderr)
             entries = [json.loads(line) for line in log.read_text().splitlines()]
             snapshot = next(e for e in entries if e['command'] == 'review-snapshot')
             self.assertEqual(snapshot['reads'], [str(source)])
@@ -325,6 +344,28 @@ sys.exit(rc)
             self.assertEqual(github['payload']['effective_on_draft_github'], ['bugbot'] if action == 'no-projection' else ['pr-agent'])
             self.assertEqual(github['payload']['effective_on_ready_github'], [] if action == 'no-projection' else ['coderabbit'])
             self.assertEqual(env['WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT'], str(self.external))
+
+        # Actual preflight failure diagnostics must remain metadata-only, even
+        # when the malformed source includes an unrecognizable opaque value.
+        self.write('review:\n  on_draft:\n    runner: [opaquePrivateFixture\n', self.external)
+        result = subprocess.run(['bash', str(scripts / 'reviewer-preflight.sh'), '--repo-root', str(self.checkout),
+                                 '--mode', 'pre-dispatch', '--target-base', 'develop', '--remaining-stages',
+                                 'on_draft.runner', '--pr-state', 'on_draft.runner=draft'], env=env,
+                                capture_output=True, text=True)
+        self.assertEqual(result.returncode, 3, result.stdout + result.stderr)
+        self.assertNotIn('opaquePrivateFixture', result.stdout + result.stderr)
+        self.assertIn('review-snapshot failed', result.stderr)
+        # A successful JSON render of a blocked reviewer result keeps its
+        # machine envelope while sanitizing diagnostic strings.
+        self.write('review:\n  on_draft:\n    runner: ["token=fakePreflightDiagnostic"]\n', self.external)
+        result = subprocess.run(['bash', str(scripts / 'reviewer-preflight.sh'), '--repo-root', str(self.checkout),
+                                 '--mode', 'pre-dispatch', '--target-base', 'develop', '--remaining-stages',
+                                 'on_draft.runner', '--pr-state', 'on_draft.runner=draft', '--json'], env=env,
+                                capture_output=True, text=True)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        report = json.loads(result.stdout)
+        self.assertEqual(report['outcome'], 'blocked')
+        self.assertNotIn('fakePreflightDiagnostic', result.stdout + result.stderr)
 
     def assert_redacts(self, text, forbidden):
         with patch.object(MODULE, 'resolve_local_config', side_effect=AssertionError('redactor read configuration')):
@@ -360,6 +401,8 @@ sys.exit(rc)
         output = self.assert_redacts('Authorization: Bearer fabricatedBearer\nAuthorization: Basic fabricatedBasic==\nhttps://user:fakePassword@example.test/path\n',
                                      ['fabricatedBearer', 'fabricatedBasic', 'fakePassword', 'user:'])
         self.assertIn('example.test/path', output)
+        output = self.assert_redacts('{"Authorization":"opaqueFakeAuthorization"}', ['opaqueFakeAuthorization'])
+        self.assertEqual(json.loads(output)['Authorization'], '[REDACTED]')
 
     def test_token_boundaries(self):
         for token in ('ghp_fabricatedToken', 'github_pat_fabricatedToken', 'sk-proj-fabricatedToken', 'xoxb-fabricatedToken'):
@@ -417,6 +460,16 @@ sys.exit(rc)
     def test_failure_boundaries(self):
         # Filter failure emits no unsafe input and cannot change command status.
         text = 'token=fabricatedNeverEcho'
+
+        source = self.write('review:\n  on_draft:\n    runner: [codex]\n')
+        stage = self.root / 'removed-source-stage'; stage.mkdir()
+        def remove_after_selection(root):
+            source.unlink()
+            return source, 'checkout', None
+        with patch.object(MODULE, 'resolve_local_config', side_effect=remove_after_selection):
+            with self.assertRaises(MODULE.ConfigError):
+                MODULE.cmd_review_snapshot(type('Args', (), {'repo_root': str(self.checkout), 'destination': str(stage)})())
+        self.assertEqual(list(stage.iterdir()), [])
         with patch.object(MODULE, 'redact_text', side_effect=ValueError(text)), patch.object(MODULE.sys, 'stdin') as stdin, patch.object(MODULE.sys, 'stderr') as stderr, patch.object(MODULE.sys, 'stdout') as stdout:
             stdin.read.return_value = text
             self.assertEqual(MODULE.cmd_redact_text(type('Args', (), {'json': False})()), 2)

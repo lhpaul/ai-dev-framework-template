@@ -31,7 +31,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-for _cmd in awk bash cat dirname grep jq mktemp rm sleep tr; do
+for _cmd in awk bash cat dirname grep jq mktemp python3 rm sleep tr; do
   _cmd_path="$(command -v "$_cmd")"
   ln -sf "$_cmd_path" "$NO_CLI_BIN/$_cmd"
 done
