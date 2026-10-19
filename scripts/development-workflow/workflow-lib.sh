@@ -149,6 +149,19 @@ workflow_diagnostic_kv_escaped() {
   print_kv_escaped "$1" "$value"
 }
 
+# External-command boundary: keep stdout functional, sanitize stderr after the
+# command exits, and preserve its status. No background filters or lost waits.
+workflow_command_with_safe_stderr() {
+  local diagnostic_file command_status=0
+  diagnostic_file="$(mktemp)" || { printf 'ERROR: diagnostic capture failed\n' >&2; return 2; }
+  "$@" 2>"$diagnostic_file" || command_status=$?
+  if [ -s "$diagnostic_file" ]; then
+    workflow_redact_text <"$diagnostic_file" >&2 || { rm -f "$diagnostic_file"; return 2; }
+  fi
+  rm -f "$diagnostic_file"
+  return "$command_status"
+}
+
 workflow_diagnostic_printf() {
   # Caller-supplied formats are fixed code; values remain separate arguments.
   # shellcheck disable=SC2059

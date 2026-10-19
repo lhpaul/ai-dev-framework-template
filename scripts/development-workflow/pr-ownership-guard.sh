@@ -17,6 +17,10 @@
 
 set -euo pipefail
 
+DIAGNOSTIC_SCRIPT_DIR="$(CDPATH='' cd -- "${BASH_SOURCE[0]%/*}" && pwd)"
+# shellcheck source=scripts/development-workflow/workflow-lib.sh
+source "$DIAGNOSTIC_SCRIPT_DIR/workflow-lib.sh"
+
 usage() {
   cat <<'USAGE'
 Usage: pr-ownership-guard.sh --pr <number> [--expected-branch <branch>] \
@@ -65,7 +69,7 @@ USAGE
 }
 
 die_usage() {
-  printf 'ERROR: %s\n' "$*" >&2
+  workflow_diagnostic_printf 'ERROR: %s\n' "$*" >&2
   usage >&2
   exit 2
 }
@@ -149,19 +153,19 @@ esac
 refuse() {
   # refuse <exit-code> <result> <message> <required-action>
   local code="$1" result="$2" message="$3" action="$4"
-  printf 'RESULT=%s\n' "$result"
-  printf 'PR=%s\n' "$PR_NUMBER"
-  printf 'EXPECTED_BRANCH=%s\n' "$EXPECTED_BRANCH"
-  printf 'EXPECTED_BRANCH_SOURCE=%s\n' "$EXPECTED_SOURCE"
-  printf 'PR_HEAD_BRANCH=%s\n' "${PR_HEAD_BRANCH:-}"
-  printf 'PR_HEAD_REPO=%s\n' "${PR_HEAD_REPO:-}"
-  printf 'PR_IS_CROSS_REPOSITORY=%s\n' "${PR_IS_CROSS:-}"
-  printf 'EXPECTED_HEAD_REPO=%s\n' "${EXPECTED_HEAD_REPO:-<pr-base-repository>}"
+  workflow_diagnostic_kv RESULT "$result"
+  workflow_diagnostic_kv PR "$PR_NUMBER"
+  workflow_diagnostic_kv EXPECTED_BRANCH "$EXPECTED_BRANCH"
+  workflow_diagnostic_kv EXPECTED_BRANCH_SOURCE "$EXPECTED_SOURCE"
+  workflow_diagnostic_kv PR_HEAD_BRANCH "${PR_HEAD_BRANCH:-}"
+  workflow_diagnostic_kv PR_HEAD_REPO "${PR_HEAD_REPO:-}"
+  workflow_diagnostic_kv PR_IS_CROSS_REPOSITORY "${PR_IS_CROSS:-}"
+  workflow_diagnostic_kv EXPECTED_HEAD_REPO "${EXPECTED_HEAD_REPO:-<pr-base-repository>}"
   if [ -n "${MISMATCH:-}" ]; then
-    printf 'MISMATCH=%s\n' "$MISMATCH"
+    workflow_diagnostic_kv MISMATCH "$MISMATCH"
   fi
-  printf 'REQUIRED_ACTION=%s\n' "$action"
-  printf 'REFUSED: PR #%s mutation blocked: %s\n' "$PR_NUMBER" "$message" >&2
+  workflow_diagnostic_kv REQUIRED_ACTION "$action"
+  workflow_diagnostic_printf 'REFUSED: PR #%s mutation blocked: %s\n' "$PR_NUMBER" "$message" >&2
   exit "$code"
 }
 
@@ -181,6 +185,13 @@ if [ -z "$EXPECTED_BRANCH" ]; then
   fi
 fi
 
+if ! command -v gh >/dev/null 2>&1 && ! command -v python3 >/dev/null 2>&1; then
+  # A fully empty PATH cannot run the sanitizer. Emit fixed metadata only;
+  # preserve the existing missing-gh failure status without echoing arguments.
+  printf 'RESULT=pr_unresolved\n'
+  printf 'ERROR: gh CLI is not available\n' >&2
+  exit 3
+fi
 if ! command -v gh >/dev/null 2>&1; then
   refuse 3 pr_unresolved "gh CLI is not available" \
     "Install or expose gh CLI, then re-run the guard before mutating the PR."
@@ -342,10 +353,10 @@ elif [ -n "$TARGET_REPO" ] && [ "$(lowercase "$PR_HEAD_REPO")" != "$(lowercase "
 fi
 
 printf 'RESULT=owned\n'
-printf 'PR=%s\n' "$PR_NUMBER"
-printf 'EXPECTED_BRANCH=%s\n' "$EXPECTED_BRANCH"
-printf 'EXPECTED_BRANCH_SOURCE=%s\n' "$EXPECTED_SOURCE"
-printf 'PR_HEAD_BRANCH=%s\n' "$PR_HEAD_BRANCH"
-printf 'PR_HEAD_REPO=%s\n' "$PR_HEAD_REPO"
-printf 'PR_IS_CROSS_REPOSITORY=%s\n' "$PR_IS_CROSS"
-printf 'EXPECTED_HEAD_REPO=%s\n' "${EXPECTED_HEAD_REPO:-<pr-base-repository>}"
+workflow_diagnostic_kv PR "$PR_NUMBER"
+workflow_diagnostic_kv EXPECTED_BRANCH "$EXPECTED_BRANCH"
+workflow_diagnostic_kv EXPECTED_BRANCH_SOURCE "$EXPECTED_SOURCE"
+workflow_diagnostic_kv PR_HEAD_BRANCH "$PR_HEAD_BRANCH"
+workflow_diagnostic_kv PR_HEAD_REPO "$PR_HEAD_REPO"
+workflow_diagnostic_kv PR_IS_CROSS_REPOSITORY "$PR_IS_CROSS"
+workflow_diagnostic_kv EXPECTED_HEAD_REPO "${EXPECTED_HEAD_REPO:-<pr-base-repository>}"

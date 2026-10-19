@@ -9,6 +9,15 @@
 # covers: scripts/development-workflow/pr-ci-loop.sh
 # covers: scripts/development-workflow/item-completion-self-check.sh
 # covers: scripts/development-workflow/apply-readiness-labels.sh
+# covers: scripts/development-workflow/haystack-reviewer.sh
+# covers: scripts/development-workflow/codex-github-reviewer.sh
+# covers: scripts/development-workflow/claude-code-action-reviewer.sh
+# covers: scripts/development-workflow/local-http-review-command.sh
+# covers: scripts/development-workflow/local-codex-review-command.sh
+# covers: scripts/development-workflow/local-http-reviewer.sh
+# covers: scripts/development-workflow/local-codex-reviewer.sh
+# covers: scripts/development-workflow/reviewer-effectiveness-report.sh
+# covers: scripts/development-workflow/pr-ownership-guard.sh
 # covers: scripts/development-workflow/tests/test_runner_diagnostic_emitters.py
 # covers: scripts/development-workflow/tests/test_private_source_consumers.py
 set -euo pipefail

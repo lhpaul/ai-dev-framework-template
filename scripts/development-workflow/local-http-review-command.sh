@@ -7,6 +7,10 @@
 
 set -euo pipefail
 
+DIAGNOSTIC_SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=scripts/development-workflow/workflow-lib.sh
+source "$DIAGNOSTIC_SCRIPT_DIR/workflow-lib.sh"
+
 DIFF_MAX_BYTES="${LOCAL_AI_REVIEWER_DIFF_MAX_BYTES:-200000}"
 payload_file="$(mktemp)"
 body_file="$(mktemp)"
@@ -106,8 +110,8 @@ diff_text="$(git diff --find-renames --find-copies "origin/${BASE_BRANCH}...HEAD
 diff_exit=$?
 set -e
 if [ "$diff_exit" -ne 0 ]; then
-  echo "ERROR: git diff origin/${BASE_BRANCH}...HEAD failed (exit ${diff_exit})" >&2
-  cat "$diff_err" >&2
+  workflow_diagnostic "ERROR: git diff origin/${BASE_BRANCH}...HEAD failed (exit ${diff_exit})" >&2
+  workflow_redact_text <"$diff_err" >&2
   exit 1
 fi
 if [ "${#diff_text}" -gt "$DIFF_MAX_BYTES" ]; then
@@ -161,7 +165,7 @@ base_url="${base_url%/}"
 url="${base_url}/chat/completions"
 
 set +e
-http_code="$("$curl_bin" -sS -o "$body_file" -w '%{http_code}' \
+http_code="$(workflow_command_with_safe_stderr "$curl_bin" -sS -o "$body_file" -w '%{http_code}' \
   --max-time "$http_timeout" \
   -H 'Content-Type: application/json' \
   -H "Authorization: Bearer ${api_key}" \
@@ -171,20 +175,21 @@ curl_exit=$?
 set -e
 
 if [ "$curl_exit" -ne 0 ]; then
-  echo "ERROR: HTTP reviewer HTTP request failed (curl exit ${curl_exit})" >&2
+  workflow_diagnostic "ERROR: HTTP reviewer HTTP request failed (curl exit ${curl_exit})" >&2
   exit 1
 fi
 
 if [ "$http_code" = "401" ] || [ "$http_code" = "403" ]; then
-  echo "ERROR: missing credentials or unauthorized (${http_code})" >&2
+  workflow_diagnostic "ERROR: missing credentials or unauthorized (${http_code})" >&2
   exit 1
 fi
 if [ "$http_code" != "200" ]; then
-  echo "ERROR: HTTP reviewer HTTP ${http_code}" >&2
+  workflow_diagnostic "ERROR: HTTP reviewer HTTP ${http_code}" >&2
   if grep -Eiq 'missing[[:space:]_-]+model|model[[:space:]_-]+access|model.*unavailable' "$body_file"; then
     echo "ERROR: missing model access" >&2
   fi
-  head -c 2000 "$body_file" >&2 || true
+  diagnostic_body="$(workflow_redact_text <"$body_file")" || exit 1
+  printf '%.2000s\n' "$diagnostic_body" >&2
   echo >&2
   exit 1
 fi
@@ -304,7 +309,8 @@ emit(obj)
 content="$(jq -r '.choices[0].message.content // empty' "$body_file")"
 if [ -z "$content" ]; then
   echo "ERROR: HTTP reviewer returned empty message content" >&2
-  head -c 2000 "$body_file" >&2 || true
+  diagnostic_body="$(workflow_redact_text <"$body_file")" || exit 1
+  printf '%.2000s\n' "$diagnostic_body" >&2
   echo >&2
   exit 1
 fi

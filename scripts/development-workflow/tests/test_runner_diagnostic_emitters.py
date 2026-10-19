@@ -136,6 +136,53 @@ gh() {
         self.assertIn('[REDACTED]', result.stdout)
         self.assertIn('[REDACTED]', result.stderr)
 
+    def preflight(self, *extra):
+        return self.entry('reviewer-preflight.sh', '--repo-root', str(self.f.checkout),
+                          '--owner', 'fixture', '--repo', 'repo', '--mode', 'pre-dispatch',
+                          '--target-base', 'develop', '--remaining-stages', 'on_draft.runner',
+                          '--pr-state', 'on_draft.runner=draft', *extra)
+
+    def test_D04_preflight_real_git_failure_handoff(self):
+        import shutil
+        real_git = shutil.which('git', path=self.f.env['PATH'])
+        git = self.f.bin / 'git'
+        git.write_text('#!/bin/sh\ncase "$*" in *"ls-remote"*) printf "token=' + self.secret +
+                       '\\n" >&2; exit 7;; esac\nexec ' + shlex.quote(real_git) + ' "$@"\n')
+        git.chmod(0o755)
+        result = self.safe(self.preflight(), 3)
+        self.assertIn('cannot resolve', result.stderr)
+        self.assertIn('token=[REDACTED]', result.stderr)
+
+    def test_D05_preflight_actual_classifier_reports_json_and_kv(self):
+        self.f.private.write_text('review:\n  on_draft:\n    runner: ["token=' + self.secret + '"]\n')
+        for flags in ((), ('--json',)):
+            with self.subTest(flags=flags):
+                result = self.safe(self.preflight(*flags), 1)
+                if flags:
+                    data = json.loads(result.stdout)
+                    self.assertEqual(data['outcome'], 'blocked')
+                else:
+                    self.assertIn('OUTCOME=blocked', result.stdout)
+                    self.assertIn('value-not-supported', result.stdout)
+                self.assertIn('[REDACTED]', result.stdout)
+
+    def test_D06_availability_real_source_failure_and_fail(self):
+        self.f.private.write_text('review: [invalid,, token=' + self.secret + ']\n')
+        result = self.safe(self.entry('resolve-reviewer-availability.sh', '--repo-root', str(self.f.checkout),
+                                      '--owner', 'fixture', '--repo', 'repo', '--runner-kind', 'codex'), 1)
+        self.assertIn('invalid YAML', result.stdout)
+        self.assertIn('BLOCK_CAUSE=policy-unreadable', result.stdout)
+        bad = self.safe(self.entry('resolve-reviewer-availability.sh', '--bad token=' + self.secret), 2)
+        self.assertIn('unknown argument', bad.stderr)
+
+    def test_D07_availability_actual_report_values(self):
+        self.f.private.write_text('review:\n  on_draft:\n    runner: ["token=' + self.secret + '"]\n')
+        result = self.safe(self.entry('resolve-reviewer-availability.sh', '--repo-root', str(self.f.checkout),
+                                      '--owner', 'fixture', '--repo', 'repo', '--runner-kind', 'codex'), 1)
+        self.assertIn('REVIEWER_2_NAME=token=[REDACTED]', result.stdout)
+        self.assertIn('value-not-supported', result.stdout)
+        self.assertIn('OUTCOME=', result.stdout)
+
     def test_D08_result_fields_in_real_provider_paths(self):
         for conclusion, blocking, status, verdict in [('success', 0, 0, 'clean'),
                                                       ('success', 1, 1, 'needs_fixes'),
@@ -338,6 +385,121 @@ esac
         self.assertIn('ownership-unverified', result.stdout)
         bad = self.safe(self.entry('apply-readiness-labels.sh', '--bad token=' + self.secret), 2)
         self.assertIn('unknown argument:', bad.stderr)
+
+
+    def test_D31_haystack_real_cli_and_check_run_diagnostics(self):
+        command = self.f.bin / 'haystack'
+        command.write_text('#!/bin/sh\nprintf "%s\\n" ' + shlex.quote(json.dumps({'findings': [
+            {'category': 'Critical', 'summary': 'password: ' + self.secret}]})) + '\nprintf "token=' + self.secret + '\\n" >&2\n')
+        command.chmod(0o755)
+        self.f.env['HAYSTACK_PR_STATUS_CHECK'] = '0'
+        result = self.safe(self.entry('haystack-reviewer.sh', '1993', 'fixture', 'repo', '--timeout', '3'), 1)
+        self.assertIn('RESULT=needs_fixes', result.stdout)
+        self.assertIn('[REDACTED]', result.stderr)
+        names = ['emit_haystack_check_run_result', 'emit_reviewed_head_if_known', 'capture_reviewed_head_from_check_json']
+        text = '\n'.join(fixtures.function_text('haystack-reviewer.sh', n) for n in names)
+        payload = json.dumps({'status': 'completed', 'conclusion': 'success', 'head_sha': 'a' * 40,
+                              'details_url': 'https://example.test/?token=' + self.secret,
+                              'output': {'title': 'password: ' + self.secret, 'summary': '**Findings:** 0'}})
+        result = self.safe(self.bash(text + '\nfetch_haystack_check_run_json() { printf "%s\\n" ' + shlex.quote(payload) + '; }\n' +
+            'emit_haystack_analysis_file_limit_skip_from_json() { return 1; }\nemit_haystack_check_run_result\nworkflow_diagnostic "token=' + self.secret + '" >&2'), 0)
+        self.assertIn('CHECK_RUN_TITLE=password: [REDACTED]', result.stdout)
+        self.assertIn('REVIEWED_HEAD=' + 'a' * 40, result.stdout)
+
+    def test_D32_codex_github_real_evidence_emission_and_startup(self):
+        text = '\n'.join(fixtures.function_text('codex-github-reviewer.sh', n) for n in (
+            'emit_reviewed_head_if_known', 'emit_review_requested_at_if_known'))
+        result = self.safe(self.bash(text + '\nCURRENT_SHA_FULL=' + 'a' * 40 + '; TRIGGER_TIME="token=' + self.secret + '"\n' +
+                                    'emit_reviewed_head_if_known\nworkflow_diagnostic "password: ' + self.secret + '" >&2'), 0)
+        self.assertIn('REVIEW_REQUESTED_AT=token=[REDACTED]', result.stdout)
+        self.assertIn('REVIEWED_HEAD=' + 'a' * 40, result.stdout)
+        bad = self.safe(self.entry('codex-github-reviewer.sh', 'token=' + self.secret, 'fixture', 'repo'), 2)
+        self.assertIn('ERROR: PR number', bad.stderr)
+
+    def test_D33_actions_evidence_helper_no_reviewer_execution(self):
+        text = '\n'.join(fixtures.function_text('claude-code-action-reviewer.sh', n) for n in (
+            'verify_claude_code_action_run_log', 'classify_claude_code_action_log'))
+        # GH fixture only; this helper never dispatches Actions or a reviewer.
+        result = self.safe(self.bash(text + '\ngh() { printf "token=' + self.secret + '\\n" >&2; return 7; }\n' +
+                                    'verify_claude_code_action_run_log 1 fixture repo'), 3)
+        self.assertIn('VERDICT: UNAVAILABLE', result.stdout)
+        self.assertIn('token=[REDACTED]', result.stderr)
+
+    def companion_environment(self):
+        context = self.f.root / 'context.json'; context.write_text('{}')
+        (self.f.checkout / 'REVIEW.md').write_text('# Synthetic contract\n')
+        subprocess.run(['git', 'update-ref', 'refs/remotes/origin/develop', 'HEAD'], cwd=self.f.checkout,
+                       env=self.f.env, check=True, capture_output=True)
+        self.f.env.update(CONTEXT_BUNDLE_PATH=str(context), BASE_BRANCH='develop', LOCAL_AI_REVIEWER_MODEL='synthetic',
+                          LOCAL_AI_REVIEWER_API_BASE_URL='https://synthetic.invalid', LOCAL_AI_REVIEWER_API_KEY='fabricated-api-only')
+
+    def test_D34_http_companion_functional_stdout_and_safe_failure(self):
+        self.companion_environment()
+        command = self.f.bin / 'curl'
+        prefix = '#!/bin/sh\nwhile [ "$#" -gt 0 ]; do case "$1" in -o) destination=$2; shift 2;; *) shift;; esac; done\n'
+        command.write_text(prefix + 'printf "%s" ' + shlex.quote(json.dumps({'error': 'password: ' + self.secret})) +
+                           ' > "$destination"\nprintf "token=' + self.secret + '\\n" >&2\nprintf 500\n')
+        command.chmod(0o755)
+        result = self.safe(self.entry('local-http-review-command.sh'), 1)
+        self.assertIn('HTTP 500', result.stderr)
+        self.assertIn('[REDACTED]', result.stderr)
+        raw = json.dumps({'choices': [{'message': {'content': json.dumps({'result': 'needs_fixes', 'reason': 'token=' + self.secret})}}]})
+        command.write_text(prefix + 'printf "%s" ' + shlex.quote(raw) +
+                           ' > "$destination"\nprintf "token=' + self.secret + '\\n" >&2\nprintf 200\n')
+        result = self.entry('local-http-review-command.sh')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(self.secret, result.stdout)  # Functional response, retained.
+        self.assertNotIn(self.secret, result.stderr)
+        self.assertEqual(json.loads(result.stdout)['result'], 'needs_fixes')
+
+    def test_D35_codex_companion_preserves_response_and_status(self):
+        self.companion_environment()
+        command = self.f.bin / 'codex'
+        payload = json.dumps({'result': 'needs_fixes', 'reason': 'token=' + self.secret})
+        command.write_text('#!/bin/sh\nwhile [ "$#" -gt 0 ]; do case "$1" in -o) destination=$2; shift 2;; *) shift;; esac; done\n' +
+                           'printf "%s" ' + shlex.quote(payload) + ' > "$destination"\nprintf "token=' + self.secret + '\\n" >&2\nexit 0\n')
+        result = self.entry('local-codex-review-command.sh')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout), json.loads(payload))
+        self.assertNotIn(self.secret, result.stderr)
+        command.write_text('#!/bin/sh\nprintf "password: ' + self.secret + '\\n" >&2\nexit 7\n')
+        result = self.safe(self.entry('local-codex-review-command.sh'), 7)
+        self.assertEqual(result.stdout, '')
+        self.assertIn('[REDACTED]', result.stderr)
+
+    def test_D36_compatibility_aliases_delegate_to_safe_local_entry(self):
+        for name in ('local-codex-reviewer.sh', 'local-http-reviewer.sh'):
+            with self.subTest(entry=name):
+                result = self.safe(self.entry(name, 'token=' + self.secret, 'fixture', 'repo'), 2)
+                self.assertIn('ERROR: PR number', result.stderr)
+
+    def test_D43_effectiveness_real_report_final_renderers(self):
+        source = shlex.quote(str(self.f.runtime / 'reviewer-effectiveness-report.sh'))
+        for output in ('--json', ''):
+            with self.subTest(output=output):
+                payload = {'requested': 1, 'included': 0, 'excluded': 1, 'records': [], 'rows': [],
+                           'repo': 'fixture/repo', 'reason': 'token=' + self.secret,
+                           'accounting': {'requested': 1, 'included': 0, 'excluded': 1},
+                           'exclusions': [{'pr': 1993, 'reason': 'password: ' + self.secret}]}
+                body = 'HARNESS_MODE=1 source ' + source + '\nrer_build_report() { printf "%s\\n" ' + shlex.quote(json.dumps(payload)) + '; }\n'
+                result = self.safe(self.bash(body + '\nrer_main --pr 1993 --repo fixture/repo ' + output + '\n' +
+                                            'workflow_diagnostic "password: ' + self.secret + '" >&2'), 0)
+                self.assertIn('[REDACTED]', result.stdout)
+                if output:
+                    self.assertEqual(json.loads(result.stdout)['requested'], 1)
+        result = self.safe(self.entry('reviewer-effectiveness-report.sh', '--bad token=' + self.secret), 1)
+        self.assertIn('unknown argument', result.stderr)
+
+    def test_D44_ownership_compares_raw_then_sanitizes_reports(self):
+        payload = {'headRefName': 'token=' + self.secret, 'headRepositoryOwner': {'login': 'fixture'},
+                   'headRepository': {'name': 'repo'}, 'isCrossRepository': False}
+        self.gh_script('printf "%s\\n" ' + shlex.quote(json.dumps(payload)) + '\n')
+        for expected, status, verdict in [('token=' + self.secret, 0, 'owned'), ('other', 1, 'not_owned')]:
+            with self.subTest(status=status):
+                result = self.safe(self.entry('pr-ownership-guard.sh', '--pr', '1993', '--expected-branch', expected,
+                                              '--expected-head-repo', 'fixture/repo', '--repo', 'fixture/repo'), status)
+                self.assertIn('RESULT=' + verdict, result.stdout)
+                self.assertIn('PR_HEAD_BRANCH=token=[REDACTED]', result.stdout)
 
 
 if __name__ == '__main__':
