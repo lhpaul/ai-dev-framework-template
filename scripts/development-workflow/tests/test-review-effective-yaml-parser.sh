@@ -81,6 +81,41 @@ with tempfile.TemporaryDirectory(prefix='review-yaml-parser-') as tmp:
             assert 'REVIEW_ON_DRAFT_RUNNER=codex' in legacy, legacy
         passed += 1
 
+    # AC3 source validation is independent of the modern reader's dependency.
+    # Use distinct selected/shared policy so a fallback cannot satisfy this case.
+    dependency_env = {**os.environ, 'PYTHONPATH': str(missing)}
+    dependency_env.pop('WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT', None)
+    shared.write_text(valid)
+    selected_valid = 'review:\n  on_draft:\n    runner: [cursor]\n'
+    for source_text in (None, '', 'other: ordinary context\n', selected_valid,
+                        selected_valid + 'other: [fabricatedOpaque,,tail]\n',
+                        selected_valid + 'other: "fabricatedOpaque\n',
+                        selected_valid + 'other: first\nother: fabricatedOpaque\n'):
+        if source_text is None:
+            local.unlink(missing_ok=True)
+        else:
+            local.write_text(source_text)
+        selected_env = dict(dependency_env)
+        if source_text is not None:
+            selected_env['WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT'] = str(root)
+        legacy = subprocess.run([
+            sys.executable, sys.argv[1], 'review-overrides', '--repo-root', tmp,
+        ], env=selected_env, capture_output=True, text=True)
+        if source_text is not None and 'fabricatedOpaque' in source_text:
+            assert legacy.returncode == 2, legacy
+            assert legacy.stdout == '', legacy.stdout
+            assert 'invalid YAML' in legacy.stderr or 'duplicate mapping' in legacy.stderr, legacy.stderr
+            assert 'fabricatedOpaque' not in legacy.stderr, legacy.stderr
+            assert 'PyYAML' not in legacy.stderr, legacy.stderr
+        else:
+            assert legacy.returncode == 0, legacy.stderr
+            assert 'REVIEW_ON_DRAFT_RUNNER=' in legacy.stdout, legacy.stdout
+            if source_text == selected_valid:
+                assert 'REVIEW_ON_DRAFT_RUNNER=cursor' in legacy.stdout, legacy.stdout
+            assert 'PyYAML' not in legacy.stderr, legacy.stderr
+        passed += 1
+    local.unlink(missing_ok=True)
+
     # Document the parser's line-break boundary without emulating its scanner.
     for linebreak in ('\u0085', '\u2028', '\u2029'):
         shared.write_text('other: "a'+linebreak+'b"\n')

@@ -13,13 +13,15 @@ working directory. Missing, unreadable or malformed selected sources stop the
 operation without substituting shared or default settings. Do not print private
 configuration values while diagnosing the named source and safe error category.
 
-The existing PyYAML dependency must be installed for the `python3` that validates
-a selected private source, including legacy context/auth commands and Bash
-consumers such as CodeRabbit's policy reader. Validation covers the complete
-selected file before field extraction; a malformed unrelated or trailing section
-cannot become an absent field and activate shared/default policy. No private
-source means legacy context commands retain dependency-free reading. This check
-does not replace the separate reviewer-field schema/projection validation.
+Selected private sources are validated in full by the framework's strict,
+dependency-free YAML subset parser before any legacy field is extracted, including
+context/auth commands and Bash policy readers. Malformed unrelated or trailing
+sections cannot become absent fields and activate shared/default policy. Missing,
+empty and shared-only legacy paths also require no PyYAML. Syntax checking remains
+separate from field/schema validation and does not expand the supported YAML
+features. Modern strict `review-effective`, `review-github-effective` and review
+projection retain their existing PyYAML dependency; this is separate from source
+validation and legacy policy reading.
 
 CI-policy enrichment also stays in the selected checkout. It no longer scans
 sibling directories or follows an inherited `WORKFLOW_HUB_REPO_ROOT` to read a

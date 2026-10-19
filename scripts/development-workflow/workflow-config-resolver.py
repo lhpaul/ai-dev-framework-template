@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Resolve shared and local workflow repository context.
 
-Selected private sources and strict review-effective use the existing PyYAML
-dependency for complete syntax validation. Field readers support the small YAML subset in `.ai-dev-workflow.yaml` and
+Selected private sources use a dependency-free strict framework-subset validator.
+Strict review-effective retains its existing PyYAML dependency. Field readers
+support the small YAML subset in `.ai-dev-workflow.yaml` and
 `.ai-dev-workflow.local.yaml`: nested mappings, lists, and scalar values.
 Unsupported or malformed structures fail closed with a file-specific error.
 """
@@ -509,6 +510,13 @@ def parse_yaml_subset(path: Path, *, preserve_empty_values: bool = False) -> dic
     if not path.exists():
         return {}
     if preserve_empty_values:
+        if path.name == LOCAL_CONFIG_NAME:
+            try:
+                raw = path.read_text(encoding="utf-8")
+            except OSError as exc:
+                raise ConfigError(f"{path}: could not read config") from exc
+            validate_selected_yaml(raw, path)
+            return parse_review_yaml(path, raw=raw)
         return parse_review_yaml(path)
     try:
         raw = path.read_text(encoding="utf-8")
@@ -558,39 +566,256 @@ def as_list(value: Any, path: Path, field: str) -> list[Any]:
 LOCAL_CONFIG_NAME = ".ai-dev-workflow.local.yaml"
 
 
-def validate_selected_yaml(raw: str, path: Path) -> None:
-    """Validate all selected private bytes before any legacy field selection."""
+class SelectedYamlParser:
+    """Strict, finite framework grammar; no YAML object construction or recovery.
+
+    Block mappings/sequences and one-line flow collections/scalars are supported.
+    Metadata, references and multiline scalars are deliberately unsupported, as
+    in the framework readers. Legacy field conversion remains a separate step.
+    """
+
+    def __init__(self, raw: str, path: Path, *, review_fields: bool = False):
+        self.path = path
+        self.review_fields = review_fields
+        self.lines: list[tuple[int, str, int]] = []
+        for number, physical in enumerate(raw.split("\n"), 1):
+            line = physical.removesuffix("\r")
+            if any((ord(c) < 32 and c != "\t") or 127 <= ord(c) <= 159
+                   or 0xD800 <= ord(c) <= 0xDFFF or c in "\u2028\u2029" for c in line):
+                self.fail(number)
+            indent = len(line) - len(line.lstrip(" \t"))
+            if "\t" in line[:indent]:
+                self.fail(number)
+            content = line[indent:]
+            if content.strip() and not content.startswith("#"):
+                if indent % 2:
+                    self.fail(number)
+                self.lines.append((indent, content, number))
+
+    def fail(self, line: int, category: str = "invalid YAML") -> None:
+        raise ConfigError(f"{self.path}:{line}: {category}")
+
+    def scalar(self, text: str, line: int, *, depth: int = 0) -> Any:
+        """Consume the complete scalar/flow value, including its comment suffix."""
+        index = 0
+
+        def spaces() -> None:
+            nonlocal index
+            while index < len(text) and text[index] in " \t":
+                index += 1
+
+        def quoted() -> str:
+            nonlocal index
+            quote = text[index]
+            index += 1
+            output = []
+            escapes = {"0": "\0", "a": "\a", "b": "\b", "t": "\t", "n": "\n",
+                       "v": "\v", "f": "\f", "r": "\r", "e": "\x1b", " ": " ",
+                       '"': '"', "/": "/", "\\": "\\", "N": "\x85", "_": "\xa0",
+                       "L": "\u2028", "P": "\u2029"}
+            while index < len(text):
+                char = text[index]
+                index += 1
+                if char == quote:
+                    if quote == "'" and index < len(text) and text[index] == "'":
+                        output.append("'")
+                        index += 1
+                        continue
+                    result = "".join(output)
+                    if "\0" in result:
+                        self.fail(line, "unsupported YAML scalar")
+                    return result
+                if char == "\\" and quote == '"':
+                    if index >= len(text):
+                        self.fail(line)
+                    escape = text[index]
+                    index += 1
+                    if escape in ("x", "u", "U"):
+                        size = {"x": 2, "u": 4, "U": 8}[escape]
+                        digits = text[index:index + size]
+                        if len(digits) != size or not re.fullmatch(r"[0-9a-fA-F]+", digits):
+                            self.fail(line)
+                        code = int(digits, 16)
+                        if code > 0x10FFFF or 0xD800 <= code <= 0xDFFF:
+                            self.fail(line)
+                        char = chr(code)
+                        index += size
+                    elif escape in escapes:
+                        char = escapes[escape]
+                    else:
+                        self.fail(line)
+                output.append(char)
+            self.fail(line)
+
+        def value(level: int, flow: bool = False, key: bool = False) -> Any:
+            nonlocal index
+            if level > 100:
+                self.fail(line, "unsupported YAML nesting")
+            spaces()
+            if index >= len(text):
+                self.fail(line)
+            char = text[index]
+            if char in "\"'":
+                return quoted()
+            if char in "[{":
+                opening = char
+                closing = "]" if char == "[" else "}"
+                index += 1
+                items: Any = [] if opening == "[" else {}
+                spaces()
+                if index < len(text) and text[index] == closing:
+                    index += 1
+                    return items
+                if opening == "{" and self.review_fields:
+                    self.fail(line, "unsupported YAML flow mapping")
+                while True:
+                    item = value(level + 1, True, opening == "{")
+                    spaces()
+                    if opening == "[":
+                        items.append(item)
+                    else:
+                        if not isinstance(item, str) or index >= len(text) or text[index] != ":":
+                            self.fail(line)
+                        index += 1
+                        spaces()
+                        if item in items:
+                            self.fail(line, "duplicate mapping key")
+                        items[item] = value(level + 1, True)
+                        spaces()
+                    if index >= len(text):
+                        self.fail(line)
+                    separator = text[index]
+                    index += 1
+                    if separator == closing:
+                        return items
+                    if separator != ",":
+                        self.fail(line)
+                    spaces()
+                    if index < len(text) and text[index] == closing:
+                        index += 1  # Existing YAML flow trailing-comma syntax.
+                        return items
+            start = index
+            if char in ",]}#&*!|>%@`" or (flow and char in ":?") or (char in "-?:" and
+                    (index + 1 == len(text) or text[index + 1] in " \t")):
+                self.fail(line)
+            while index < len(text):
+                char = text[index]
+                if flow and char in ",]}":
+                    break
+                if char == "#" and (index == start or text[index - 1] in " \t"):
+                    break
+                if key and char == ":":
+                    break
+                if (flow and char in "[{") or (char == ":" and
+                        (index + 1 == len(text) or text[index + 1] in " \t" or
+                         (flow and text[index + 1] in ",[]{}"))):
+                    self.fail(line)
+                index += 1
+            token = text[start:index].rstrip(" \t")
+            if not token:
+                self.fail(line)
+            if key:
+                return token
+            if token in ("null", "Null", "NULL", "~"):
+                return None
+            if token in ("true", "True", "TRUE", "false", "False", "FALSE"):
+                return token.lower() == "true"
+            # Syntax validation is not numeric/schema conversion. The private
+            # list reader only needs to distinguish numeric nodes from strings;
+            # legacy fields retain their own conversion, including large values.
+            try:
+                return parse_review_numeric_scalar(token, self.path, line)
+            except (ConfigError, ValueError, OverflowError):
+                if self.review_fields:
+                    self.fail(line, "unsupported YAML scalar conversion")
+                return 0
+
+        spaces()
+        if index == len(text) or text[index] == "#":
+            return None
+        result = value(depth)
+        end = index
+        spaces()
+        if index < len(text) and not (text[index] == "#" and
+                (index > end or (index > 0 and text[index - 1] in " \t"))):
+            self.fail(line)
+        return result
+
+    @staticmethod
+    def sequence(content: str) -> bool:
+        return content == "-" or content.startswith("- ")
+
+    def mapping_entry(self, content: str, number: int) -> tuple[str, str]:
+        match = re.fullmatch(r"([A-Za-z0-9_.-]+):(?:[ \t]+(.*))?", content)
+        if not match:
+            self.fail(number)
+        return match[1], match[2] or ""
+
+    def block(self, index: int, indent: int, depth: int = 0) -> tuple[Any, int]:
+        if depth > 100:
+            self.fail(self.lines[index][2], "unsupported YAML nesting")
+        sequence = self.sequence(self.lines[index][1])
+        result: Any = [] if sequence else {}
+        while index < len(self.lines) and self.lines[index][0] == indent:
+            _, content, number = self.lines[index]
+            if self.sequence(content) != sequence:
+                self.fail(number)
+            index += 1
+            mapping_item = False
+            if sequence:
+                content = content[1:].lstrip(" ")
+                mapping_item = bool(re.match(r"[A-Za-z0-9_.-]+:(?:[ \t]|$)", content))
+                target: Any = {} if mapping_item else result
+            else:
+                target = result
+            if not sequence or mapping_item:
+                key, text = self.mapping_entry(content, number)
+                if key in target:
+                    self.fail(number, "duplicate mapping key")
+            else:
+                key, text = "", content
+            item = self.scalar(text, number, depth=depth)
+            header = not text.strip() or text.lstrip().startswith("#")
+            value_indent = indent + (4 if mapping_item else 2)
+            if header and index < len(self.lines) and self.lines[index][0] > indent:
+                if self.lines[index][0] != value_indent:
+                    # List mapping continuation belongs to the item, not key.
+                    if not mapping_item or self.lines[index][0] != indent + 2:
+                        self.fail(self.lines[index][2])
+                else:
+                    item, index = self.block(index, value_indent, depth + 1)
+            if not sequence or mapping_item:
+                target[key] = item
+            else:
+                result.append(item)
+            if mapping_item:
+                if index < len(self.lines) and self.lines[index][0] == indent + 2:
+                    continuation, index = self.block(index, indent + 2, depth + 1)
+                    if not isinstance(continuation, dict) or target.keys() & continuation.keys():
+                        self.fail(number, "duplicate or invalid mapping continuation")
+                    target.update(continuation)
+                result.append(target)
+            if index < len(self.lines) and self.lines[index][0] > indent:
+                self.fail(self.lines[index][2])
+        return result, index
+
+    def parse(self) -> dict[str, Any]:
+        if not self.lines:
+            return {}
+        if self.lines[0][0] != 0 or self.sequence(self.lines[0][1]):
+            self.fail(self.lines[0][2], "selected source must be a mapping")
+        data, index = self.block(0, 0)
+        if index != len(self.lines):
+            self.fail(self.lines[index][2])
+        return data
+
+
+def validate_selected_yaml(raw: str, path: Path, *, review_fields: bool = False) -> dict[str, Any]:
+    """Validate all selected private bytes without a third-party parser."""
     try:
-        import yaml
-    except ImportError as exc:
-        raise ConfigError(f"{path}: selected-source validation requires PyYAML") from exc
-    try:
-        root = yaml.compose(raw, Loader=yaml.BaseLoader)
-        if root is None:
-            return
-        if not isinstance(root, yaml.MappingNode):
-            raise ConfigError(f"{path}: selected source must be a mapping")
-        pending, visited = [root], set()
-        while pending:
-            node = pending.pop()
-            if id(node) in visited:
-                continue
-            visited.add(id(node))
-            if isinstance(node, yaml.MappingNode):
-                keys = set()
-                for key, value in node.value:
-                    if not isinstance(key, yaml.ScalarNode):
-                        raise ConfigError(f"{path}: unsupported selected-source mapping key")
-                    if key.value in keys:
-                        raise ConfigError(f"{path}:{key.start_mark.line + 1}: duplicate mapping key")
-                    keys.add(key.value)
-                    pending.append(value)
-            elif isinstance(node, yaml.SequenceNode):
-                pending.extend(node.value)
-    except (yaml.YAMLError, RecursionError, ValueError) as exc:
-        mark = getattr(exc, "problem_mark", None)
-        location = f"{path}:{mark.line + 1}" if mark is not None else str(path)
-        raise ConfigError(f"{location}: invalid YAML") from exc
+        return SelectedYamlParser(raw, path, review_fields=review_fields).parse()
+    except (RecursionError, ValueError, OverflowError) as exc:
+        raise ConfigError(f"{path}: invalid YAML") from exc
 
 
 def validate_local_source(repo_root: Path, *, explicit: bool = False) -> Path:
@@ -2358,6 +2583,7 @@ def cmd_review_snapshot(args: argparse.Namespace) -> int:
             raw = path.read_text(encoding="utf-8")
         except (OSError, UnicodeError) as exc:
             raise ConfigError(f"{path}: review-snapshot source unreadable") from exc
+        validate_selected_yaml(raw, path)
         projection = project_review_settings(parse_review_yaml(path, raw=raw), path)
     destination = Path(args.destination)
     staged = destination / LOCAL_CONFIG_NAME
@@ -2404,7 +2630,13 @@ def cmd_yaml_source_check(args: argparse.Namespace) -> int:
 
 def cmd_review_local_list(args: argparse.Namespace) -> int:
     path, _, _ = resolve_local_config(repo_root_from_args(args.repo_root))
-    data = parse_yaml_subset(path, preserve_empty_values=True)
+    if path.is_file():
+        try:
+            data = validate_selected_yaml(path.read_text(encoding="utf-8"), path, review_fields=True)
+        except OSError as exc:
+            raise ConfigError(f"{path}: selected source unreadable") from exc
+    else:
+        data = {}
     value, present, invalid = local_review_list_value(data, args.phase, args.key)
     values, state = review_runner_state(value, present)
     if invalid or state == "malformed":

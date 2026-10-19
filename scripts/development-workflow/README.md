@@ -1484,6 +1484,11 @@ original attribution is separate metadata. `redact-text` sanitizes diagnostic
 stdin without loading configuration; `workflow_redact_text` exposes that boundary
 for Bash, and `workflow_redact_json` preserves structured diagnostic values.
 Functional configuration and deliberate auth transport are separate interfaces.
+Complete selected-private syntax validation and legacy context/Bash policy reads
+use the framework's strict subset parser without PyYAML. Empty/missing private
+and shared-only legacy paths also remain dependency-free. The modern strict
+review-effective/GitHub readers and projection retain their existing PyYAML
+requirement; unsupported YAML still fails closed before legacy field selection.
 
 See the [consumer upgrade and prevention guide](../../docs/workflow/development-workflow/integrations/runner-secret-prevention.md).
 Reversal to implicit inheritance or conflated Bash failure/absence statuses is not
