@@ -92,14 +92,17 @@ def redact_text(text: str) -> str:
     assignment = re.compile(r'''(?<![\w.-])(["']?(?:''' + key + r'''|authorization)["']?[ \t]*[:=][ \t]*)''', re.IGNORECASE)
 
     def in_flow_mapping(position: int) -> bool:
-        depth, quote, escaped = 0, "", False
-        for char in text[:position]:
-            if escaped:
-                escaped = False
-            elif char == "\\":
-                escaped = True
-            elif quote:
+        depth, quote, index = 0, "", 0
+        while index < position:
+            char = text[index]
+            if quote:
+                if quote == '"' and char == "\\":
+                    index += 2
+                    continue
                 if char == quote:
+                    if quote == "'" and text[index + 1:index + 2] == "'":
+                        index += 2
+                        continue
                     quote = ""
             elif char in ('"', "'"):
                 quote = char
@@ -107,6 +110,7 @@ def redact_text(text: str) -> str:
                 depth += 1
             elif char == "}":
                 depth = max(0, depth - 1)
+            index += 1
         return depth > 0
 
     pieces, offset = [], 0
@@ -122,11 +126,16 @@ def redact_text(text: str) -> str:
         else:
             while end < len(text):
                 char = text[end]
-                if char == "\\" and end + 1 < len(text):
+                if char == "\\" and end + 1 < len(text) and (not colon or quote == '"'):
                     end += 2
                     continue
                 if quote:
                     if char == quote:
+                        # YAML single quotes escape an apostrophe by doubling
+                        # it; a backslash inside that scalar remains literal.
+                        if colon and quote == "'" and text[end + 1:end + 2] == "'":
+                            end += 2
+                            continue
                         quote = ""
                         # A quoted YAML/JSON scalar ends at its closing quote.
                         if colon and text[start:start + 1] in ('"', "'"):

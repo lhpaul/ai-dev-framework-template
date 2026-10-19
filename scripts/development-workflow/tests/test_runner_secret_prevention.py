@@ -8,6 +8,7 @@ import importlib.util
 import json
 import os
 import re
+import shlex
 from pathlib import Path
 import shutil
 import subprocess
@@ -417,6 +418,44 @@ sys.exit(rc)
         output = self.assert_redacts('{"token":123,"nested":{},"password":false,"result":"clean"}', ['123', 'false'])
         self.assertEqual(json.loads(output), {'token': '[REDACTED]', 'nested': {}, 'password': '[REDACTED]', 'result': 'clean'})
 
+    def assert_yaml_scalar_redacted(self, scalar):
+        text = 'password: ' + scalar + ' # public note\nresult: clean\n'
+        parsed = MODULE.parse_review_yaml(Path('synthetic-scalar.yaml'), raw=text)
+        self.assertIsInstance(parsed['password'], str)
+        output = self.assert_redacts(text, ['fabricated', 'hiddenSuffix', 'secretTail'])
+        self.assertEqual(MODULE.parse_review_yaml(Path('synthetic-scalar.yaml'), raw=output)['result'], 'clean')
+        self.assertIn('[REDACTED]', output)
+        self.assertIn('# public note', output)
+        if scalar.startswith(("'", '"')):
+            import yaml  # Existing strict-reader dependency; synthetic syntax oracle.
+            # The preceding public field combines a literal backslash and
+            # YAML's doubled apostrophe inside a flow mapping.
+            flow = r"{public: 'ordinary\''note', password: " + scalar + ', result: clean}\n'
+            yaml.safe_load(flow)
+            safe_flow = self.assert_redacts(flow, ['fabricated', 'hiddenSuffix', 'secretTail'])
+            self.assertEqual(yaml.safe_load(safe_flow)['result'], 'clean')
+
+    def test_yaml_single_quoted_doubled_apostrophe(self):
+        self.assert_yaml_scalar_redacted("'fabricated''hiddenSuffix multi, secretTail'")
+
+    def test_yaml_single_quoted_literal_backslash(self):
+        self.assert_yaml_scalar_redacted(r"'fabricated\''hiddenSuffix secretTail'")
+
+    def test_yaml_double_quoted_escaped_quote(self):
+        self.assert_yaml_scalar_redacted(r'"fabricated\"hiddenSuffix secretTail"')
+
+    def test_yaml_double_quoted_escaped_backslash(self):
+        self.assert_yaml_scalar_redacted(r'"fabricated\\hiddenSuffix \\\"secretTail"')
+
+    def test_yaml_plain_spaces(self):
+        self.assert_yaml_scalar_redacted('fabricated hiddenSuffix secretTail')
+
+    def test_yaml_plain_internal_hash(self):
+        self.assert_yaml_scalar_redacted('fabricated#hiddenSuffix secretTail')
+
+    def test_yaml_plain_special_characters(self):
+        self.assert_yaml_scalar_redacted(r'''fabricated, hiddenSuffix; \\literal 'double" !@$%^&*() []{} secretTail''')
+
     def test_header_and_url_values(self):
         output = self.assert_redacts('Authorization: Bearer fabricatedBearer\nAuthorization: Basic fabricatedBasic==\nhttps://user:fakePassword@example.test/path\n',
                                      ['fabricatedBearer', 'fabricatedBasic', 'fakePassword', 'user:'])
@@ -527,9 +566,15 @@ sys.exit(rc)
         (self.checkout / 'REVIEW.md').write_text('# Synthetic review contract\n')
         command = bindir / 'synthetic-review'
         evidence = self.root / 'evidence.json'
+        yaml_diagnostic = ('password: \'fabricated\'\'hiddenSingleSuffix secretTail\'\n'
+                           'password: "fabricated\\\\\\"hiddenDoubleSuffix secretTail"\n'
+                           'password: fabricated#hiddenPlainSuffix, secretTail')
+        for line in yaml_diagnostic.splitlines():
+            MODULE.parse_review_yaml(Path('synthetic-diagnostic.yaml'), raw=line)
         for valid, expected in ((True, 0), (False, 2)):
-            payload = '{"result":"clean","reason":"token=fakeVerdictReason hiddenVerdictSuffix","comments":0}' if valid else 'invalid-verdict'
-            command.write_text('''#!/bin/sh\necho 'token=fakeCapturedError hiddenCapturedSuffix' >&2\nprintf '%s\\n' 'positionPayload'\nexit statusCode\n'''.replace('positionPayload', payload).replace('statusCode', '0' if valid else '7'))
+            payload = json.dumps({'result': 'clean', 'reason': 'token=fakeVerdictReason hiddenVerdictSuffix\n' + yaml_diagnostic, 'comments': 0}) if valid else 'invalid-verdict'
+            stderr = 'token=fakeCapturedError hiddenCapturedSuffix\n' + yaml_diagnostic
+            command.write_text("#!/bin/sh\nprintf '%s\\n' " + shlex.quote(stderr) + " >&2\nprintf '%s\\n' " + shlex.quote(payload) + '\nexit ' + ('0' if valid else '7') + '\n')
             command.chmod(0o755)
             call_env = dict(env, LOCAL_AI_REVIEWER_COMMAND=str(command), LOCAL_AI_REVIEWER_EVIDENCE_FILE=str(evidence),
                             LOCAL_AI_REVIEWER_GRAPH_STRATEGY='none')
@@ -540,12 +585,16 @@ sys.exit(rc)
             self.assertNotIn('fakeVerdictReason', result.stdout + result.stderr)
             self.assertNotIn('hiddenVerdictSuffix', result.stdout + result.stderr)
             self.assertNotIn('hiddenCapturedSuffix', result.stdout + result.stderr)
+            for suffix in ('hiddenSingleSuffix', 'hiddenDoubleSuffix', 'hiddenPlainSuffix', 'secretTail'):
+                self.assertNotIn(suffix, result.stdout + result.stderr)
             if valid:
                 data = json.loads(evidence.read_text())
                 self.assertEqual(data['result'], 'clean')
                 self.assertEqual(data['counts']['blocking'], 0)
                 self.assertNotIn('fakePersistentContext', evidence.read_text())
                 self.assertNotIn('hiddenVerdictSuffix', evidence.read_text())
+                for suffix in ('hiddenSingleSuffix', 'hiddenDoubleSuffix', 'hiddenPlainSuffix', 'secretTail'):
+                    self.assertNotIn(suffix, evidence.read_text())
         command.write_text("#!/bin/sh\necho 'quota exceeded; try again at token=fakeQuotaDiagnostic' >&2\nexit 7\n")
         result = subprocess.run(['bash', str(scripts / 'local-ai-reviewer.sh'), '1993', 'fixture', 'repo'], env=call_env,
                                 cwd=self.checkout, capture_output=True, text=True)
