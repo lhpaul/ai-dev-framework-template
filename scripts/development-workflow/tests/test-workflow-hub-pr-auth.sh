@@ -392,7 +392,7 @@ workflow_hub:
 YAML
 run_fails_contains \
   "shared_config_rejects_private_key_path" \
-  "contains local-only field(s): github_app.private_key_path" \
+  "contains local-only fields" \
   python3 "$RESOLVER" auth --repo-root "$shared_secret_dir" --repo mobile-app
 
 token_exchange_stub="$TMP_ROOT/token-exchange-stub.sh"

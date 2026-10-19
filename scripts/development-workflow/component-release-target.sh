@@ -284,7 +284,7 @@ resolver_status="$(printf '%s\n' "$resolver_result" | sed -n '1p')"
 resolver_output="$(printf '%s\n' "$resolver_result" | sed '1d')"
 if [ "$resolver_status" -ne 0 ]; then
   case "$resolver_output" in
-    *"no workflow_hub.product_repos entry named"*)
+    *"selected workflow_hub.product_repos entry is missing"*|*"no workflow_hub.product_repos entry named"*)
       emit_stop "unknown_product_repository" "select one configured product repository key" "hub_repository"
       exit 0
       ;;
@@ -292,11 +292,11 @@ if [ "$resolver_status" -ne 0 ]; then
       emit_stop "ambiguous_product_selection" "select exactly one configured product repository key" "hub_repository"
       exit 0
       ;;
-    *"local path for product repo"*)
+    *"local path for selected product repo"*|*"local path for product repo"*)
       emit_stop "unavailable_product_repository_checkout" "configure a local checkout path for the selected product repository" "hub_repository"
       exit 0
       ;;
-    *workflow_hub.product_repos*.release.*|*product_repo.release.*|*"contains forbidden local or secret value"*)
+    *workflow_hub.product_repos*.release.*|*product_repo.release.*|*"contains forbidden local or secret fields"*|*"contains forbidden local or secret value"*)
       emit_stop "invalid_release_contract" "correct the selected product repository release contract before mutation" "hub_repository"
       exit 0
       ;;

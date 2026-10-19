@@ -265,7 +265,7 @@ run_fails_contains \
   python3 "$RESOLVER" resolve --repo-root "$hub_dir"
 run_fails_contains \
   "fixture_unknown_repo_fails" \
-  "no workflow_hub.product_repos entry named 'unknown-app'" \
+  "selected workflow_hub.product_repos entry is missing" \
   python3 "$RESOLVER" resolve --repo-root "$hub_dir" --repo unknown-app
 
 echo ""
@@ -309,7 +309,7 @@ cat > "$tmp_config_hub/.tmp/template-config.json" <<JSON
 JSON
 run_fails_contains \
   "tmp_template_config_not_checkout_source" \
-  "local path for product repo 'mobile-app' is required" \
+  "local path for selected product repo is required" \
   python3 "$RESOLVER" validate --repo-root "$tmp_config_hub" --repo mobile-app --require-local
 
 echo ""
@@ -330,7 +330,7 @@ run_contains "sync_already_current" "REASON=already_current" "$sync_output"
 run_contains "sync_summary_skipped" "SUMMARY synced=0 skipped=2 clean=0 dirty=0 missing=0 blocked=0 failed=0" "$sync_output"
 run_fails_contains \
   "status_unknown_product_fails" \
-  "no workflow_hub.product_repos entry named 'unknown-app'" \
+  "selected workflow_hub.product_repos entry is missing" \
   bash "$STATUS_CMD" --repo-root "$hub_dir" --repo unknown-app
 run_fails_contains \
   "sync_missing_local_path_guidance" \

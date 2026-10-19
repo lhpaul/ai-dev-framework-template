@@ -143,7 +143,7 @@ else
   echo "FAIL: status_all_bad_repo_list_exit - expected bad repo list failure"
   FAIL_COUNT=$((FAIL_COUNT + 1))
 fi
-run_contains "status_all_bad_repo_list_reason" "duplicate workflow_hub.product_repos name 'duplicate-app'" "$broken_list_status"
+run_contains "status_all_bad_repo_list_reason" "duplicate workflow_hub.product_repos name" "$broken_list_status"
 run_contains "status_all_bad_repo_list_summary" "SUMMARY" "$broken_list_status"
 
 hub_dir="$(fixture_dir hub)"
