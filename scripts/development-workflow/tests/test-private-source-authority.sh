@@ -4,6 +4,14 @@
 # covers: scripts/development-workflow/workflow-config-resolver.py
 # covers: scripts/development-workflow/run-epic-risk-classifier.sh
 # covers: scripts/development-workflow/run-epic-delegated-gate.sh
+# covers: scripts/development-workflow/coderabbit-cli-reviewer.sh
+# covers: scripts/development-workflow/pr-ci-loop.sh
+# covers: scripts/development-workflow/pr-review-loop.sh
+# covers: scripts/development-workflow/item-completion-self-check.sh
+# covers: scripts/development-workflow/apply-readiness-labels.sh
+# covers: scripts/development-workflow/reviewer-preflight.sh
+# covers: scripts/development-workflow/resolve-reviewer-availability.sh
+# covers: scripts/development-workflow/post-merge-cleanup.sh
 # covers: scripts/development-workflow/tests/test_private_source_authority.py
 # covers: scripts/development-workflow/tests/test_private_source_consumers.py
 set -euo pipefail

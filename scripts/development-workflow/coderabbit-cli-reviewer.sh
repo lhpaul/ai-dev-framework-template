@@ -10,9 +10,6 @@ SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/development-workflow/workflow-lib.sh
 source "$SCRIPT_DIR/workflow-lib.sh"
 
-# Validate the selected source before CI/reviewer/readiness operations.
-workflow_local_config_file >/dev/null || exit 2
-
 usage() {
   cat >&2 <<'EOF'
 Usage: coderabbit-cli-reviewer.sh <pr_number> <owner> <repo> [--timeout <seconds>] [--repo-root <path>]
@@ -122,6 +119,9 @@ while [ "$#" -gt 0 ]; do
       ;;
   esac
 done
+
+# Bind only after argument parsing, before any policy/private-source read.
+workflow_bind_local_config_root "${REPO_ROOT:-$(workflow_repo_root)}" || exit 2
 
 case "$TIMEOUT" in
   ''|0|*[!0-9]*)

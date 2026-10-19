@@ -172,7 +172,7 @@ class RunnerSecurityTests(unittest.TestCase):
             scripts = self.checkout / 'scripts/development-workflow'
             scripts.mkdir(parents=True, exist_ok=True)
             for file in ('workflow-lib.sh', 'workflow-config-resolver.py', 'pr-ci-loop.sh',
-                         'pr-review-loop.sh', 'apply-readiness-labels.sh', 'coderabbit-cli-reviewer.sh', 'run-epic-policy-recommender.sh'):
+                         'pr-review-loop.sh', 'codex-github-evidence-lib.sh', 'apply-readiness-labels.sh', 'coderabbit-cli-reviewer.sh', 'run-epic-policy-recommender.sh'):
                 shutil.copyfile(SCRIPTS / file, scripts / file)
             bindir = self.root / 'bin'; bindir.mkdir(exist_ok=True)
             for service in ('gh', 'codex', 'claude', 'coderabbit', 'cr'):
@@ -180,8 +180,12 @@ class RunnerSecurityTests(unittest.TestCase):
                 stub.write_text('#!/bin/sh\necho unexpected-service >> "$MUTATION_LOG"\nexit 99\n'); stub.chmod(0o755)
             script_env = dict(env, PATH=str(bindir) + os.pathsep + self.env['PATH'], MUTATION_LOG=str(self.root / 'mutations'))
             for file in ('pr-ci-loop.sh', 'pr-review-loop.sh', 'apply-readiness-labels.sh', 'coderabbit-cli-reviewer.sh'):
-                result = subprocess.run(['bash', str(scripts / file)], env=script_env, capture_output=True, text=True)
+                arguments = ['1993', 'fixture', 'repo'] if file == 'coderabbit-cli-reviewer.sh' else ['1993']
+                if file == 'apply-readiness-labels.sh':
+                    arguments = ['--pr', '1993', '--label', 'ready-for-human-review']
+                result = subprocess.run(['bash', str(scripts / file), *arguments], env=script_env, capture_output=True, text=True)
                 self.assertEqual(result.returncode, 2, (file, result.stderr))
+                self.assertRegex(result.stderr, 'local-source|source resolution failed', (file, result.stderr))
             scope = self.root / 'scope.json'
             scope.write_text('{"groups":{},"items":[],"policy":{}}')
             result = subprocess.run(['bash', str(scripts / 'run-epic-policy-recommender.sh'), '--scope', str(scope), '--original-command', '/run-item 1993', '--json'], env=script_env, capture_output=True, text=True)

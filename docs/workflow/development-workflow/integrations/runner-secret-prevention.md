@@ -30,6 +30,15 @@ invoke the helper with that hub as `--repo-root` and select the product using
 authorize its private source. This applies to the final context lookup as well
 as mode and product-list probes.
 
+For commands accepting `--repo-root`, private-source validation and later Bash
+reviewer policy reads use that parsed entry root. A missing private file there
+stays absent even when the tooling checkout has one. Changing directory, reading
+a temporary shared policy or spawning a child reviewer does not grant permission
+to read another checkout's private file. The Bash library keeps this entry
+binding in process memory, preserves it when re-sourced, and discards a
+same-name inherited environment scalar. Existing explicit shared-file overrides
+still supply shared policy; they do not select adjacent private configuration.
+
 <!-- workflow-shell-contract: bash-zsh -->
 ```bash
 export WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT=/path/to/authorized-checkout

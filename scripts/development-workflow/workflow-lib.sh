@@ -33,6 +33,33 @@ workflow_repo_root() {
   CDPATH='' cd -- "$(workflow_script_dir)/../.." && pwd
 }
 
+# Bash arrays cannot be inherited through the environment. Discard a same-name
+# inherited scalar, while preserving an entry's binding if this library is sourced
+# again in the same process. This is state, not another configuration override.
+case "$(declare -p _WORKFLOW_LOCAL_CONFIG_ROOT 2>/dev/null || true)" in
+  'declare -a '*) ;;
+  *) unset _WORKFLOW_LOCAL_CONFIG_ROOT; declare -a _WORKFLOW_LOCAL_CONFIG_ROOT=() ;;
+esac
+
+workflow_local_config_root() {
+  if [ -n "${_WORKFLOW_LOCAL_CONFIG_ROOT[0]:-}" ]; then
+    printf '%s\n' "${_WORKFLOW_LOCAL_CONFIG_ROOT[0]}"
+  else
+    workflow_repo_root
+  fi
+}
+
+workflow_bind_local_config_root() {
+  local root="${1:-}"
+  [ -n "$root" ] || return 2
+  if ! root="$(CDPATH='' cd -- "$root" 2>/dev/null && pwd -P)"; then
+    printf 'ERROR: local-source unreadable directory\n' >&2
+    return 2
+  fi
+  workflow_local_config_file "$root" >/dev/null || return 2
+  _WORKFLOW_LOCAL_CONFIG_ROOT=("$root")
+}
+
 workflow_config_file() {
   if [ -n "${WORKFLOW_MERGE_BUDGET_SESSION:-}" ] && [ -n "${WORKFLOW_MERGE_BUDGET_OWNER_ROOT:-}" ]; then
     printf '%s/.ai-dev-workflow.yaml\n' "$WORKFLOW_MERGE_BUDGET_OWNER_ROOT"
@@ -60,7 +87,14 @@ workflow_effective_config_file() {
 
 # Source resolution never discovers another checkout. Status 2 means failure.
 workflow_local_config_file() {
-  python3 "$(workflow_config_resolver_script)" local-source --repo-root "${1:-$(workflow_repo_root)}"
+  local root
+  if [ "$#" -gt 0 ]; then
+    [ -n "$1" ] || return 2
+    root="$1"
+  else
+    root="$(workflow_local_config_root)"
+  fi
+  python3 "$(workflow_config_resolver_script)" local-source --repo-root "$root"
 }
 
 workflow_local_review_override_root() {
@@ -244,7 +278,7 @@ workflow_github_repo_from_context() {
 }
 
 workflow_product_repo_name_for_github_slug() {
-  local root="$1"
+  local root="${1:-}"
   local slug="$2"
   local name context github
 
@@ -271,7 +305,7 @@ workflow_product_repo_name_for_github_slug() {
 # Compatibility API: a hub is usable only when it is already the selected root.
 # A hub locator or a neighboring public manifest never authorizes private reads.
 workflow_hub_root_for_ci_policy() {
-  local root="$1"
+  local root="${1:-}"
   local mode_json mode
   [ -n "$root" ] || return 1
   workflow_local_config_file "$root" >/dev/null || return 2
@@ -1031,7 +1065,7 @@ workflow_config_review_local_list_if_declared() {
   local config_file="$1" phase="$2" key="$3" status=0
   workflow_is_default_config_file "$config_file" || return 1
   python3 "$(workflow_config_resolver_script)" review-local-list \
-    --repo-root "$(workflow_repo_root)" --phase "$phase" --key "$key" || status=$?
+    --repo-root "$(workflow_local_config_root)" --phase "$phase" --key "$key" || status=$?
   return "$status"
 }
 
@@ -1394,14 +1428,26 @@ workflow_config_review_phase_after_clean_platforms() {
 }
 
 workflow_repository_mode() {
-  local repo_root="${1:-$(workflow_repo_root)}"
+  local repo_root
+  if [ "$#" -gt 0 ]; then
+    [ -n "$1" ] || return 2
+    repo_root="$1"
+  else
+    repo_root="$(workflow_local_config_root)"
+  fi
 
   python3 "$(workflow_config_resolver_script)" mode --repo-root "$repo_root"
 }
 
 workflow_repository_context() {
   local target_repo="${1:-}"
-  local repo_root="${2:-$(workflow_repo_root)}"
+  local repo_root
+  if [ "$#" -ge 2 ]; then
+    [ -n "$2" ] || return 2
+    repo_root="$2"
+  else
+    repo_root="$(workflow_local_config_root)"
+  fi
   local args=(resolve --repo-root "$repo_root")
 
   if [ -n "$target_repo" ]; then
@@ -1413,7 +1459,13 @@ workflow_repository_context() {
 
 workflow_validate_repository_context() {
   local target_repo="${1:-}"
-  local repo_root="${2:-$(workflow_repo_root)}"
+  local repo_root
+  if [ "$#" -ge 2 ]; then
+    [ -n "$2" ] || return 2
+    repo_root="$2"
+  else
+    repo_root="$(workflow_local_config_root)"
+  fi
   local require_local="${3:-}"
   local args=(validate --repo-root "$repo_root")
 
@@ -1428,7 +1480,13 @@ workflow_validate_repository_context() {
 }
 
 workflow_review_override_context() {
-  local repo_root="${1:-$(workflow_repo_root)}"
+  local repo_root
+  if [ "$#" -gt 0 ]; then
+    [ -n "$1" ] || return 2
+    repo_root="$1"
+  else
+    repo_root="$(workflow_local_config_root)"
+  fi
 
   python3 "$(workflow_config_resolver_script)" review-overrides --repo-root "$repo_root"
 }

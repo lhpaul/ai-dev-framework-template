@@ -9,8 +9,6 @@ SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/development-workflow/workflow-lib.sh
 source "$SCRIPT_DIR/workflow-lib.sh"
 
-# Validate the selected source before CI/reviewer/readiness operations.
-workflow_local_config_file >/dev/null || exit 2
 # shellcheck source=scripts/development-workflow/codex-github-evidence-lib.sh
 source "$SCRIPT_DIR/codex-github-evidence-lib.sh"
 
@@ -14918,6 +14916,7 @@ if [ -n "$max_wait_override" ] && ! reviewer_wait_seconds_is_valid "$max_wait_ov
   exit 64
 fi
 
+workflow_bind_local_config_root "$repo_root" || exit 2
 if ! local_review_override_root="$(resolve_local_review_override_root "$repo_root")"; then
   workflow_diagnostic "ERROR: could not resolve the initiating checkout's local reviewer policy." >&2
   exit 2
