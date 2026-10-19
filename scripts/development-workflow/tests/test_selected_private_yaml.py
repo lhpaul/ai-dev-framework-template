@@ -100,7 +100,11 @@ class SelectedPrivateYaml(unittest.TestCase):
                    'other: &syntheticOpaque value', 'other: *syntheticOpaque',
                    'other: "syntheticOpaque"suffix', 'other: "syntheticOpaque\\q"',
                    '# syntheticOpaque\x00', 'other: syntheticOpaque\x07',
-                   'other:\n   key: syntheticOpaque']
+                   'other:\n   key: syntheticOpaque', '\tother: syntheticOpaque',
+                   'other: !!str syntheticOpaque', 'other: |\n  syntheticOpaque',
+                   'other: >\n  syntheticOpaque', 'other: "syntheticOpaque\n  tail"',
+                   'other: [syntheticOpaque,\n  tail]',
+                   'other: {key: first, key: syntheticOpaque}']
         for text in invalid:
             for position in ('before', 'after'):
                 with self.subTest(text=text, position=position):
@@ -139,10 +143,18 @@ flow: {name: value, nested: [x, y]}
         ]:
             with self.subTest(raw=raw):
                 self.assertEqual(self.parse('other: ' + raw + '\n')['other'], expected)
+                self.f.private.write_text(self.valid + 'other: ' + raw + '\n')
+                actual = self.cli('local-source', '--repo-root', str(self.f.checkout))
+                self.assertEqual(actual.returncode, 0, actual.stderr)
         for raw, expected in [('"\\e[2J"', '\x1b[2J'), ('"#literal"', '#literal'),
                               ("':bad'", ':bad'), ('a#b', 'a#b'), ('a:b', 'a:b')]:
             with self.subTest(flow=raw):
                 self.assertEqual(self.parse('other: [codex, ' + raw + '] # context\n')['other'], ['codex', expected])
+                self.f.private.write_text('review:\n  on_draft:\n    runner: [codex, ' + raw + ']\n')
+                actual = self.cli('review-local-list', '--repo-root', str(self.f.checkout),
+                                  '--phase', 'on_draft', '--key', 'runner')
+                self.assertEqual(actual.returncode, 0, actual.stderr)
+                self.assertEqual(actual.stdout.splitlines(), ['codex', expected])
 
     def test_P07_schema_remains_after_precedence_and_syntax(self):
         self.f.private.write_text(self.valid + 'review_alias: opaque\n')
