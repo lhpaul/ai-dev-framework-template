@@ -159,6 +159,119 @@ class RunnerSecurityTests(unittest.TestCase):
         self.write('review:\n  on_draft:\n    runner: []\n')
         self.assertEqual(self.bash('workflow_config_review_on_draft_runner').stdout, '')
 
+    def test_review_projection_semantics(self):
+        opaque = 'inventedOpaqueValueForShadowedAlias'
+        for runner in ('[codex]', '[]'):
+            data = MODULE.parse_review_yaml(self.checkout / 'synthetic.yaml', raw=(
+                f'review:\n  internal_reviewers: {opaque}\n  on_draft:\n    runner: {runner}\n    github: []\n  on_ready:\n    github: [pr-agent]\n  ignored_secret: fabricated-unrelated\nproduct_repos: []\n'))
+            projection = MODULE.project_review_settings(data, self.checkout / 'synthetic.yaml')
+            self.assertEqual(projection['review']['on_draft']['runner'], json.loads(runner.replace('codex', '"codex"')))
+            self.assertNotIn(opaque, json.dumps(projection))
+            self.assertNotIn('ignored_secret', json.dumps(projection))
+        for raw in ('', 'product_repos: []\n', 'review: {}\n'):
+            self.assertEqual(MODULE.project_review_settings(MODULE.parse_review_yaml(Path('fake'), raw=raw), Path('fake')), {})
+        legacy = MODULE.project_review_settings({'review': {'internal_reviewers': ['codex'], 'platforms': ['pr-agent', 'bugbot'], 'phase_after_clean': ['bugbot']}}, Path('fake'))
+        self.assertEqual(legacy['review'], {'on_draft': {'runner': ['codex'], 'github': ['pr-agent']}, 'on_ready': {'github': ['bugbot']}})
+        self.write('review:\n  on_draft:\n    runner: [codex]\n  secret: fabricated-unrelated\n')
+        staged = self.root / 'staged'; staged.mkdir()
+        result = self.cli('review-snapshot', '--destination', str(staged))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        content = (staged / MODULE.LOCAL_CONFIG_NAME).read_text()
+        self.assertNotIn('fabricated-unrelated', content)
+        self.assertEqual((staged / MODULE.LOCAL_CONFIG_NAME).stat().st_mode & 0o777, 0o600)
+
+    def test_invalid_review_projection(self):
+        for raw in ('review:\n  on_draft:\n    runner: [unfinished\n',
+                    'review:\n  on_draft:\n    runner: [codex]\n    runner: []\n',
+                    'review: []\n', 'review:\n  on_ready: opaque\n',
+                    'review:\n  on_draft:\n    runner: opaque\n',
+                    'review:\n  on_draft:\n    runner: [false]\n',
+                    'review:\n  internal_reviewers_unavailable_policy: opaque\n'):
+            self.write(raw)
+            staged = self.root / 'stage-invalid'; staged.mkdir(exist_ok=True)
+            result = self.cli('review-snapshot', '--destination', str(staged))
+            self.assertEqual(result.returncode, 2, (raw, result.stdout, result.stderr))
+            self.assertEqual(list(staged.iterdir()), [])
+        self.write('review:\n  on_draft:\n    runner: [codex]\n')
+        with patch.dict(os.environ, self.env, clear=True), patch.object(MODULE.os, 'replace', side_effect=OSError('fabricated-error')):
+            with self.assertRaises(MODULE.ConfigError):
+                MODULE.cmd_review_snapshot(type('Args', (), {'repo_root': str(self.checkout), 'destination': str(staged)})())
+        self.assertEqual(list(staged.iterdir()), [])
+
+    def test_staged_projection_pinning(self):
+        scripts = self.root / 'tools/scripts/development-workflow'; scripts.mkdir(parents=True)
+        for path in SCRIPTS.iterdir():
+            if path.is_file() and (path.name in ('workflow-lib.sh', 'workflow-config-resolver.py', 'reviewer-preflight.sh') or path.name.startswith('reviewer_preflight')):
+                shutil.copyfile(path, scripts / path.name)
+        shared = 'review:\n  on_draft:\n    runner: [cursor]\n    github: [bugbot]\n  on_ready:\n    github: []\n'
+        self.write(shared, local=False)
+        def git(*args):
+            subprocess.run(['git', '-C', str(self.checkout), *args], check=True, capture_output=True)
+        git('init', '-q'); git('checkout', '-q', '-b', 'develop'); git('add', '.ai-dev-workflow.yaml')
+        git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.test', 'commit', '-qm', 'init')
+        git('remote', 'add', 'origin', str(self.checkout))
+        original = 'review:\n  on_draft:\n    runner: [codex]\n    github: [pr-agent]\n  on_ready:\n    github: [coderabbit]\n  ignored_secret: fabricated-do-not-stage\n'
+        bindir = self.root / 'bin'; bindir.mkdir()
+        wrapper = bindir / 'python3'
+        # Execute the actual resolver in-process to spy on its single source read;
+        # mutate only the synthetic external source after atomic projection.
+        wrapper.write_text(f"#!{sys.executable}\n" + r'''
+import contextlib, importlib.util, io, json, os, pathlib, sys
+args = sys.argv[1:]
+if not args or not args[0].endswith('workflow-config-resolver.py'):
+    os.execv(os.environ['REAL_PYTHON'], [os.environ['REAL_PYTHON'], *args])
+spec = importlib.util.spec_from_file_location('isolated_resolver', args[0])
+module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
+reads = []
+read_text = pathlib.Path.read_text
+source = pathlib.Path(os.environ['SYNTHETIC_SOURCE'])
+def spy(path, *a, **kw):
+    if path == source: reads.append(str(path))
+    return read_text(path, *a, **kw)
+pathlib.Path.read_text = spy
+capture = io.StringIO()
+with contextlib.redirect_stdout(capture):
+    rc = module.main(args[1:])
+text = capture.getvalue()
+entry = {'command': args[1], 'reads': reads, 'override': os.environ.get('WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT'), 'payload': json.loads(text) if text else None}
+with open(os.environ['SPY_LOG'], 'a') as log: log.write(json.dumps(entry) + '\n')
+if args[1] == 'review-snapshot':
+    action = os.environ['SOURCE_MUTATION']
+    if action == 'remove': source.unlink()
+    elif action == 'malformed': source.write_text('review: [broken')
+    elif action == 'change': source.write_text('review:\n  on_draft:\n    runner: [claude]\n    github: [bugbot]\n  on_ready:\n    github: [ronda]\n')
+sys.stdout.write(text)
+sys.exit(rc)
+''')
+        wrapper.chmod(0o755)
+        for action in ('change', 'malformed', 'remove', 'no-projection'):
+            source = self.write('product_repos: []\n' if action == 'no-projection' else original, self.external)
+            log = self.root / ('spy-' + action)
+            env = dict(self.env, WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT=str(self.external),
+                       REAL_PYTHON=sys.executable, SYNTHETIC_SOURCE=str(source), SOURCE_MUTATION=action,
+                       SPY_LOG=str(log), PATH=str(bindir) + os.pathsep + self.env['PATH'],
+                       WORKFLOW_REVIEWER_PREFLIGHT_TEST_MODE='1', WORKFLOW_REVIEWER_PREFLIGHT_BUDGET_SECONDS='60',
+                       WORKFLOW_REVIEWER_PREFLIGHT_PER_PLATFORM_CAP_SECONDS='20')
+            result = subprocess.run(['bash', str(scripts / 'reviewer-preflight.sh'), '--repo-root', str(self.checkout),
+                                     '--mode', 'pre-dispatch', '--target-base', 'develop', '--remaining-stages',
+                                     'on_draft.runner,on_draft.github,on_ready.github', '--pr-state',
+                                     'on_draft.runner=draft,on_draft.github=draft,on_ready.github=ready'],
+                                    env=env, text=True, capture_output=True)
+            self.assertIn(result.returncode, (0, 1), result.stderr)
+            entries = [json.loads(line) for line in log.read_text().splitlines()]
+            snapshot = next(e for e in entries if e['command'] == 'review-snapshot')
+            self.assertEqual(snapshot['reads'], [str(source)])
+            self.assertEqual(snapshot['payload']['LOCAL_OVERRIDE_FILE'], str(source))
+            self.assertEqual(snapshot['payload']['LOCAL_OVERRIDE_ORIGIN'], 'override_root')
+            runner = next(e for e in entries if e['command'] == 'review-effective')
+            github = next(e for e in entries if e['command'] == 'review-github-effective')
+            for entry in (runner, github):
+                self.assertIsNone(entry['override']); self.assertEqual(entry['reads'], [])
+            self.assertEqual(runner['payload']['effective_runner'], ['cursor'] if action == 'no-projection' else ['codex'])
+            self.assertEqual(github['payload']['effective_on_draft_github'], ['bugbot'] if action == 'no-projection' else ['pr-agent'])
+            self.assertEqual(github['payload']['effective_on_ready_github'], [] if action == 'no-projection' else ['coderabbit'])
+            self.assertEqual(env['WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT'], str(self.external))
+
 
 if __name__ == '__main__':
     unittest.main()

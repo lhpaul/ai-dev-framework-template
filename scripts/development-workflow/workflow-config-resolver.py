@@ -17,6 +17,7 @@ import os
 import re
 import shlex
 import sys
+import tempfile
 from collections import namedtuple
 from collections.abc import Mapping
 from types import MappingProxyType
@@ -2138,6 +2139,75 @@ def cmd_validate(args: argparse.Namespace) -> int:
     return 0
 
 
+def project_review_settings(data: dict[str, Any], path: Path) -> dict[str, Any]:
+    """Select precedence first, then validate only fields crossing the handoff."""
+    review: dict[str, Any] = {}
+
+    def selected_list(raw: Any, present: bool, invalid: bool, field: str) -> list[str] | None:
+        values, state = review_runner_state(raw, present)
+        if invalid or state == "malformed":
+            raise ConfigError(f"{path}: invalid reviewer-field schema: {field}")
+        return values if present and raw is not None else None
+
+    raw, present, invalid = review_runner_value(data)
+    runner = selected_list(raw, present, invalid, "review.on_draft.runner")
+    if runner is not None:
+        review.setdefault("on_draft", {})["runner"] = runner
+    for phase in ("on_draft", "on_ready"):
+        raw, present, invalid = review_effective_value_from_path(data, ["review", phase, "github"])
+        # A declared modern list, including [], shadows legacy aliases.
+        if not present and not invalid:
+            raw, present, invalid = review_github_legacy_derived_value(data, phase + "_github")
+        values = selected_list(raw, present, invalid, f"review.{phase}.github")
+        if values is not None:
+            review.setdefault(phase, {})["github"] = values
+    field = "internal_reviewers_unavailable_policy"
+    raw, present, invalid = review_effective_value_from_path(data, ["review", field])
+    _, _, state = review_policy_state(raw, present)
+    if invalid or state in ("unreadable", "unsupported"):
+        raise ConfigError(f"{path}: invalid reviewer-field schema: review.{field}")
+    if present:
+        review[field] = raw
+    return {"review": review} if review else {}
+
+
+def cmd_review_snapshot(args: argparse.Namespace) -> int:
+    root = repo_root_from_args(args.repo_root)
+    path, origin, _ = resolve_local_config(root)
+    projection: dict[str, Any] = {}
+    if origin:
+        # One source read; parser and schema projection share these exact bytes.
+        try:
+            raw = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeError) as exc:
+            raise ConfigError(f"{path}: review-snapshot source unreadable") from exc
+        projection = project_review_settings(parse_review_yaml(path, raw=raw), path)
+    destination = Path(args.destination)
+    staged = destination / LOCAL_CONFIG_NAME
+    temporary: str | None = None
+    if staged.exists() or staged.is_symlink():
+        raise ConfigError("review-snapshot: destination already contains a local projection")
+    if projection:
+        try:
+            with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=destination,
+                                             prefix=".review-projection-", delete=False) as stream:
+                temporary = stream.name
+                os.chmod(temporary, 0o600)
+                stream.write("\n".join(dump_yaml_subset(projection)) + "\n")
+            os.replace(temporary, staged)
+            temporary = None
+        except OSError as exc:
+            raise ConfigError("review-snapshot: atomic staging failed") from exc
+        finally:
+            if temporary is not None:
+                Path(temporary).unlink(missing_ok=True)
+    print(json.dumps({"LOCAL_OVERRIDE_FILE": str(path) if origin else "",
+                      "LOCAL_OVERRIDE_ORIGIN": origin,
+                      "MAIN_CLONE_LOCAL_OVERRIDE_FILE": "",
+                      "STAGED_OVERRIDE_FILE": str(staged) if projection else ""}, sort_keys=True))
+    return 0
+
+
 def cmd_local_source(args: argparse.Namespace) -> int:
     path, _, _ = resolve_local_config(repo_root_from_args(args.repo_root))
     print(path)
@@ -2162,6 +2232,11 @@ def cmd_review_local_list(args: argparse.Namespace) -> int:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Resolve AI workflow repository context")
     subcommands = parser.add_subparsers(dest="command", required=True)
+
+    snapshot = subcommands.add_parser("review-snapshot", help="stage validated review-only local settings")
+    snapshot.add_argument("--repo-root")
+    snapshot.add_argument("--destination", required=True)
+    snapshot.set_defaults(func=cmd_review_snapshot)
 
     source = subcommands.add_parser("local-source", help="validate and print selected local source")
     source.add_argument("--repo-root")
