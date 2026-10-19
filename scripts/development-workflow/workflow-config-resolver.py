@@ -176,26 +176,35 @@ def redact_text(text: str) -> str:
     return text
 
 
+def redact_diagnostic_json(value: Any) -> Any:
+    if isinstance(value, str):
+        return redact_text(value)
+    if isinstance(value, list):
+        return [redact_diagnostic_json(item) for item in value]
+    if isinstance(value, dict):
+        output = {}
+        for key, item in value.items():
+            sensitive = re.fullmatch(SENSITIVE_DIAGNOSTIC_KEY, key, re.IGNORECASE)
+            header = key.lower() == "authorization" and isinstance(item, str)
+            # An authorization metadata object is not a header;
+            # recurse so its own sensitive fields still disappear.
+            output[redact_text(key)] = "[REDACTED]" if sensitive or header else redact_diagnostic_json(item)
+        return output
+    return value
+
+
+class DiagnosticArgumentParser(argparse.ArgumentParser):
+    """CLI parse/help errors are diagnostic text; never read config here."""
+    def _print_message(self, message, file=None):
+        if message:
+            super()._print_message(redact_text(message), file)
+
+
 def cmd_redact_text(args: argparse.Namespace) -> int:
     try:
         raw = sys.stdin.read()
         if args.json:
-            def sanitize(value: Any) -> Any:
-                if isinstance(value, str):
-                    return redact_text(value)
-                if isinstance(value, list):
-                    return [sanitize(item) for item in value]
-                if isinstance(value, dict):
-                    output = {}
-                    for key, item in value.items():
-                        sensitive = re.fullmatch(SENSITIVE_DIAGNOSTIC_KEY, key, re.IGNORECASE)
-                        header = key.lower() == "authorization" and isinstance(item, str)
-                        # An authorization metadata object is not a header;
-                        # recurse so its own sensitive fields still disappear.
-                        output[redact_text(key)] = "[REDACTED]" if sensitive or header else sanitize(item)
-                    return output
-                return value
-            output = json.dumps(sanitize(json.loads(raw)), sort_keys=True) + "\n"
+            output = json.dumps(redact_diagnostic_json(json.loads(raw)), sort_keys=True) + "\n"
         else:
             output = redact_text(raw)
     except Exception:
@@ -2666,7 +2675,7 @@ def cmd_review_local_list(args: argparse.Namespace) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Resolve AI workflow repository context")
+    parser = DiagnosticArgumentParser(description="Resolve AI workflow repository context")
     subcommands = parser.add_subparsers(dest="command", required=True)
 
     yaml_check = subcommands.add_parser("yaml-source-check", help="validate selected YAML before legacy field extraction")

@@ -24,7 +24,8 @@ import json
 import sys
 from typing import Any
 
-from reviewer_preflight_coderabbit import PatternTimeoutError, base_branch_covered
+from reviewer_preflight_coderabbit import (PatternTimeoutError, base_branch_covered,
+                                          DiagnosticArgumentParser, diagnostic_json, diagnostic_text)
 
 # Per-bucket supported reviewer platform lists (spec: "value-not-supported").
 # A value supported in one bucket is not automatically supported in another —
@@ -575,14 +576,14 @@ def exit_code_for_outcome(outcome: str) -> int:
 
 
 def main(argv: list[str]) -> int:
-    parser = argparse.ArgumentParser(description="Reviewer preflight cross-check engine")
+    parser = DiagnosticArgumentParser(description="Reviewer preflight cross-check engine")
     parser.add_argument("--input-json", required=True, help="path to the input JSON payload")
     args = parser.parse_args(argv)
     try:
         with open(args.input_json, encoding="utf-8") as handle:
             payload = json.load(handle)
     except (OSError, json.JSONDecodeError) as error:
-        print(f"ERROR: cannot read input JSON: {error}", file=sys.stderr)
+        print(diagnostic_text(f"ERROR: cannot read input JSON: {error}"), file=sys.stderr)
         return 3
     try:
         result = classify(payload)
@@ -596,7 +597,12 @@ def main(argv: list[str]) -> int:
             "platforms": [],
             "prerequisite_detail": failure.detail,
         }
-    print(json.dumps(result, sort_keys=True))
+    try:
+        rendered = json.dumps(diagnostic_json(result), sort_keys=True)
+    except Exception:
+        print("ERROR: diagnostic sanitization failed", file=sys.stderr)
+        return 2
+    print(rendered)
     return exit_code_for_outcome(result["outcome"])
 
 

@@ -473,6 +473,57 @@ esac
                 result = self.safe(self.entry(name, 'token=' + self.secret, 'fixture', 'repo'), 2)
                 self.assertIn('ERROR: PR number', result.stderr)
 
+    def test_D37_classifier_cli_report_and_read_error(self):
+        payload = self.f.root / 'classifier.json'
+        payload.write_text(json.dumps({'target_base': 'develop', 'remaining_stages': [],
+                                       'checked_shared_config_ref': 'token=' + self.secret}))
+        result = self.safe(self.run_command(['python3', str(self.f.runtime / 'reviewer_preflight.py'),
+                                             '--input-json', str(payload)]), 0)
+        self.assertEqual(json.loads(result.stdout)['outcome'], 'no-review-remaining')
+        self.assertIn('[REDACTED]', result.stdout)
+        missing = self.f.root / ('token=' + self.secret)
+        result = self.safe(self.run_command(['python3', str(self.f.runtime / 'reviewer_preflight.py'),
+                                             '--input-json', str(missing)]), 3)
+        self.assertIn('cannot read input JSON', result.stderr)
+
+    def test_D38_input_builder_preserves_functional_bundle_and_safe_error(self):
+        target = self.f.root / 'assembled.json'
+        result = self.safe(self.run_command(['python3', str(self.f.runtime / 'reviewer_preflight_build_input.py'),
+                                             '--target-base', 'develop', '--checked-shared-config-ref', 'token=' + self.secret,
+                                             '--output', str(target)]), 0)
+        self.assertEqual(result.stdout, '')
+        self.assertIn(self.secret, target.read_text())  # Internal functional bundle.
+        bad = self.f.root / ('token=' + self.secret)
+        bad.write_text('malformed-json')
+        result = self.safe(self.run_command(['python3', str(self.f.runtime / 'reviewer_preflight_build_input.py'),
+                                             '--runner-json', str(bad), '--output', str(target)]), 1)
+        self.assertIn('cannot build preflight input', result.stderr)
+
+    def test_D39_config_probe_functional_payload_and_parse_diagnostics(self):
+        config = self.f.root / 'synthetic-coderabbit.yaml'
+        config.write_text('reviews:\n  auto_review:\n    enabled: true\n    base_branches: ["token=' + self.secret + '"]\n')
+        result = self.run_command(['python3', str(self.f.runtime / 'reviewer_preflight_coderabbit.py'),
+                                   '--mode', 'full-json', str(config)])
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout)['base_branches'], ['token=' + self.secret])
+        self.assertEqual(result.stderr, '')
+        config.write_text('reviews:\n  auto_review: [token=' + self.secret + '\n')
+        result = self.safe(self.run_command(['python3', str(self.f.runtime / 'reviewer_preflight_coderabbit.py'),
+                                             '--mode', 'full-json', str(config)]), 3)
+        self.assertEqual(result.stdout, '')
+        self.assertIn('[REDACTED]', result.stderr)
+        for name in ('reviewer_preflight.py', 'reviewer_preflight_build_input.py', 'reviewer_preflight_coderabbit.py',
+                     'workflow-config-resolver.py'):
+            with self.subTest(parser=name):
+                arguments = {
+                    'reviewer_preflight.py': ['--input-json', str(config), '--bad', 'token=' + self.secret],
+                    'reviewer_preflight_build_input.py': ['--output', str(config), '--bad', 'token=' + self.secret],
+                    'reviewer_preflight_coderabbit.py': ['--mode', 'token=' + self.secret, str(config)],
+                    'workflow-config-resolver.py': ['token=' + self.secret],
+                }[name]
+                result = self.safe(self.run_command(['python3', str(self.f.runtime / name), *arguments]), 2)
+                self.assertIn('error:', result.stderr)
+
     def test_D43_effectiveness_real_report_final_renderers(self):
         source = shlex.quote(str(self.f.runtime / 'reviewer-effectiveness-report.sh'))
         for output in ('--json', ''):

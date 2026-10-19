@@ -18,6 +18,11 @@
 # covers: scripts/development-workflow/local-codex-reviewer.sh
 # covers: scripts/development-workflow/reviewer-effectiveness-report.sh
 # covers: scripts/development-workflow/pr-ownership-guard.sh
+# covers: scripts/development-workflow/reviewer_preflight.py
+# covers: scripts/development-workflow/reviewer_preflight_build_input.py
+# covers: scripts/development-workflow/reviewer_preflight_coderabbit.py
+# covers: scripts/development-workflow/reviewer-preflight.sh
+# covers: scripts/development-workflow/resolve-reviewer-availability.sh
 # covers: scripts/development-workflow/tests/test_runner_diagnostic_emitters.py
 # covers: scripts/development-workflow/tests/test_private_source_consumers.py
 set -euo pipefail
