@@ -8,7 +8,7 @@ if declare -p REVIEW_DOCTRINE_MAX_BYTES >/dev/null 2>&1; then
   case "$(declare -p REVIEW_DOCTRINE_MAX_BYTES 2>/dev/null || true)" in
     *"-r"*)
       if [ "${REVIEW_DOCTRINE_MAX_BYTES}" != "12000" ]; then
-        echo "ERROR: REVIEW_DOCTRINE_MAX_BYTES is readonly at ${REVIEW_DOCTRINE_MAX_BYTES}; AC-12 requires 12000." >&2
+        echo "ERROR: REVIEW_DOCTRINE_MAX_BYTES has an invalid readonly value; AC-12 requires 12000." >&2
         return 1
       fi
       ;;
@@ -141,6 +141,19 @@ _workflow_redact_stdin() {
 
 workflow_redact_text() { _workflow_redact_stdin; }
 workflow_redact_json() { _workflow_redact_stdin --json; }
+
+# Sanitize complete values before escaping for the line-oriented report contract.
+workflow_diagnostic_kv_escaped() {
+  local value
+  value="$(printf '%s' "$2" | workflow_redact_text)" || return 2
+  print_kv_escaped "$1" "$value"
+}
+
+workflow_diagnostic_printf() {
+  # Caller-supplied formats are fixed code; values remain separate arguments.
+  # shellcheck disable=SC2059
+  printf "$@" | workflow_redact_text
+}
 
 workflow_diagnostic() {
   printf '%s\n' "$*" | workflow_redact_text
@@ -2161,7 +2174,7 @@ workflow_run_gh_capture_stderr() {
 
 workflow_print_captured_gh_stderr() {
   if [ -n "$__workflow_last_gh_stderr" ]; then
-    printf '%s\n' "$__workflow_last_gh_stderr" | sed 's/^/  gh: /' >&2
+    printf '%s\n' "$__workflow_last_gh_stderr" | workflow_redact_text | sed 's/^/  gh: /' >&2
   fi
 }
 

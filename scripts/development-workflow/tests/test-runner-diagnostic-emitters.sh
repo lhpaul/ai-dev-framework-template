@@ -5,6 +5,10 @@
 # covers: scripts/development-workflow/local-ai-reviewer.sh
 # covers: scripts/development-workflow/run-epic-audit-trail.sh
 # covers: scripts/development-workflow/codex-github-evidence-lib.sh
+# covers: scripts/development-workflow/coderabbit-cli-reviewer.sh
+# covers: scripts/development-workflow/pr-ci-loop.sh
+# covers: scripts/development-workflow/item-completion-self-check.sh
+# covers: scripts/development-workflow/apply-readiness-labels.sh
 # covers: scripts/development-workflow/tests/test_runner_diagnostic_emitters.py
 # covers: scripts/development-workflow/tests/test_private_source_consumers.py
 set -euo pipefail

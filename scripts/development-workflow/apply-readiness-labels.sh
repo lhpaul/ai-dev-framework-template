@@ -413,6 +413,9 @@ SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)"
 # shellcheck source=scripts/development-workflow/workflow-lib.sh
 source "$SCRIPT_DIR/workflow-lib.sh"
 
+# This entry emits diagnostic reports; shared config/control transport stays raw.
+print_kv() { workflow_diagnostic_kv "$@"; }
+
 # Validate the selected source before CI/reviewer/readiness operations.
 workflow_local_config_file >/dev/null || exit 2
 
@@ -493,33 +496,33 @@ dry_run="false"
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --pr)
-      [ "$#" -ge 2 ] && [ -n "${2:-}" ] || { printf 'ERROR: missing value for --pr\n' >&2; exit 2; }
-      [ -z "$pr_number" ] || { printf 'ERROR: repeated option: --pr\n' >&2; exit 2; }
+      [ "$#" -ge 2 ] && [ -n "${2:-}" ] || { workflow_diagnostic_printf 'ERROR: missing value for --pr\n' >&2; exit 2; }
+      [ -z "$pr_number" ] || { workflow_diagnostic_printf 'ERROR: repeated option: --pr\n' >&2; exit 2; }
       pr_number="$2"
       shift 2
       ;;
     --repo)
-      [ "$#" -ge 2 ] && [ -n "${2:-}" ] || { printf 'ERROR: missing value for --repo\n' >&2; exit 2; }
-      [ -z "$repo" ] || { printf 'ERROR: repeated option: --repo\n' >&2; exit 2; }
+      [ "$#" -ge 2 ] && [ -n "${2:-}" ] || { workflow_diagnostic_printf 'ERROR: missing value for --repo\n' >&2; exit 2; }
+      [ -z "$repo" ] || { workflow_diagnostic_printf 'ERROR: repeated option: --repo\n' >&2; exit 2; }
       repo="$2"
       shift 2
       ;;
     --label)
-      [ "$#" -ge 2 ] && [ -n "${2:-}" ] || { printf 'ERROR: missing value for --label\n' >&2; exit 2; }
-      [ -z "$label" ] || { printf 'ERROR: repeated option: --label\n' >&2; exit 2; }
+      [ "$#" -ge 2 ] && [ -n "${2:-}" ] || { workflow_diagnostic_printf 'ERROR: missing value for --label\n' >&2; exit 2; }
+      [ -z "$label" ] || { workflow_diagnostic_printf 'ERROR: repeated option: --label\n' >&2; exit 2; }
       label="$2"
       shift 2
       ;;
     --branch)
-      [ "$#" -ge 2 ] && [ -n "${2:-}" ] || { printf 'ERROR: missing value for --branch\n' >&2; exit 2; }
-      [ -z "$branch_name" ] || { printf 'ERROR: repeated option: --branch\n' >&2; exit 2; }
+      [ "$#" -ge 2 ] && [ -n "${2:-}" ] || { workflow_diagnostic_printf 'ERROR: missing value for --branch\n' >&2; exit 2; }
+      [ -z "$branch_name" ] || { workflow_diagnostic_printf 'ERROR: repeated option: --branch\n' >&2; exit 2; }
       branch_name="$2"
       shift 2
       ;;
     --dry-run) dry_run="true"; shift ;;
     --json) json_output="true"; shift ;;
     --help|-h) usage; exit 0 ;;
-    *) printf 'ERROR: unknown argument: %s\n' "$1" >&2; usage >&2; exit 2 ;;
+    *) workflow_diagnostic_printf 'ERROR: unknown argument: %s\n' "$1" >&2; usage >&2; exit 2 ;;
   esac
 done
 
@@ -529,10 +532,10 @@ if [ -z "$pr_number" ] || [ -z "$label" ]; then
 fi
 case "$label" in
   ready-for-human-review|ready-for-regression) ;;
-  *) printf 'ERROR: --label must be ready-for-human-review or ready-for-regression\n' >&2; exit 2 ;;
+  *) workflow_diagnostic_printf 'ERROR: --label must be ready-for-human-review or ready-for-regression\n' >&2; exit 2 ;;
 esac
 case "$pr_number" in
-  ''|*[!0-9]*) printf 'ERROR: --pr must be a number\n' >&2; exit 2 ;;
+  ''|*[!0-9]*) workflow_diagnostic_printf 'ERROR: --pr must be a number\n' >&2; exit 2 ;;
 esac
 
 require_gh
@@ -1540,7 +1543,7 @@ emit_verdict() {
   print_kv DRY_RUN "$dry_run"
   if [ "$json_output" = "true" ]; then
     python3 -c 'import json,sys; print(json.dumps(dict(result=sys.argv[1], reason=sys.argv[2], prNumber=sys.argv[3], repo=sys.argv[4], label=sys.argv[5], headSha=sys.argv[6], reviewerReport=sys.argv[7], blockingFindingCount=int(sys.argv[8]), pendingCheckCount=int(sys.argv[9]), failingCheckCount=int(sys.argv[10]), dryRun=(sys.argv[11] == "true"))))' \
-      "$result" "$reason" "$pr_number" "$repo" "$label" "$head_sha" "$reviewer_report" "$blocking_count" "$pending_count" "$failing_count" "$dry_run"
+      "$result" "$reason" "$pr_number" "$repo" "$label" "$head_sha" "$reviewer_report" "$blocking_count" "$pending_count" "$failing_count" "$dry_run" | workflow_redact_json
   fi
 }
 
@@ -1611,7 +1614,7 @@ remove_readiness_label_best_effort() {
     return 0
   fi
   if ! gh pr edit "$pr_number" --repo "$repo" --remove-label "$label_to_remove" >/dev/null 2>&1; then
-    printf 'WARN: %s\n' "failed to remove $label_to_remove on PR #$pr_number — remove it manually" >&2
+    workflow_diagnostic_printf 'WARN: %s\n' "failed to remove $label_to_remove on PR #$pr_number — remove it manually" >&2
   fi
 }
 

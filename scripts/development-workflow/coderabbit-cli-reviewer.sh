@@ -10,6 +10,9 @@ SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/development-workflow/workflow-lib.sh
 source "$SCRIPT_DIR/workflow-lib.sh"
 
+# This entry emits diagnostic reports; shared config/control transport stays raw.
+print_kv() { workflow_diagnostic_kv "$@"; }
+
 usage() {
   cat >&2 <<'EOF'
 Usage: coderabbit-cli-reviewer.sh <pr_number> <owner> <repo> [--timeout <seconds>] [--repo-root <path>]
@@ -45,7 +48,7 @@ print_result() {
 }
 
 emit_rate_limited_result() {
-  echo "WARN: CodeRabbit CLI rate limit detected" >&2
+  workflow_diagnostic "WARN: CodeRabbit CLI rate limit detected" >&2
   if [ "$RATE_LIMIT_POLICY" = "strict" ]; then
     print_result escalate 0 0 0 rate_limited "rate_limited"
     exit 2
@@ -75,16 +78,16 @@ shift 3
 
 case "$PR_NUMBER" in
   ''|0|*[!0-9]*)
-    echo "ERROR: PR number '$PR_NUMBER' is not a valid positive integer" >&2
+    workflow_diagnostic "ERROR: PR number '$PR_NUMBER' is not a valid positive integer" >&2
     exit 3
     ;;
 esac
 if ! valid_slug_component "$OWNER"; then
-  echo "ERROR: owner '$OWNER' contains invalid characters" >&2
+  workflow_diagnostic "ERROR: owner '$OWNER' contains invalid characters" >&2
   exit 3
 fi
 if ! valid_slug_component "$REPO"; then
-  echo "ERROR: repo '$REPO' contains invalid characters" >&2
+  workflow_diagnostic "ERROR: repo '$REPO' contains invalid characters" >&2
   exit 3
 fi
 
@@ -94,7 +97,7 @@ while [ "$#" -gt 0 ]; do
   case "$1" in
     --timeout)
       if [ "$#" -lt 2 ] || [ -z "${2:-}" ]; then
-        echo "ERROR: --timeout requires a value" >&2
+        workflow_diagnostic "ERROR: --timeout requires a value" >&2
         exit 3
       fi
       TIMEOUT="$2"
@@ -102,7 +105,7 @@ while [ "$#" -gt 0 ]; do
       ;;
     --repo-root)
       if [ "$#" -lt 2 ] || [ -z "${2:-}" ]; then
-        echo "ERROR: --repo-root requires a value" >&2
+        workflow_diagnostic "ERROR: --repo-root requires a value" >&2
         exit 3
       fi
       REPO_ROOT="$2"
@@ -113,7 +116,7 @@ while [ "$#" -gt 0 ]; do
       exit 0
       ;;
     *)
-      echo "ERROR: unknown option '$1'" >&2
+      workflow_diagnostic "ERROR: unknown option '$1'" >&2
       usage
       exit 3
       ;;
@@ -128,7 +131,7 @@ fi
 
 case "$TIMEOUT" in
   ''|0|*[!0-9]*)
-    echo "ERROR: --timeout value '$TIMEOUT' is not a positive integer" >&2
+    workflow_diagnostic "ERROR: --timeout value '$TIMEOUT' is not a positive integer" >&2
     exit 3
     ;;
 esac
@@ -188,7 +191,7 @@ RATE_LIMIT_POLICY="${RATE_LIMIT_POLICY:-warn}"
 case "$RATE_LIMIT_POLICY" in
   warn|strict) ;;
   *)
-    echo "WARN: invalid-value category for review.coderabbit_cli.rate_limit_policy / CODERABBIT_CLI_RATE_LIMIT_POLICY; defaulting to warn" >&2
+    workflow_diagnostic "WARN: invalid-value category for review.coderabbit_cli.rate_limit_policy / CODERABBIT_CLI_RATE_LIMIT_POLICY; defaulting to warn" >&2
     RATE_LIMIT_POLICY="warn"
     ;;
 esac
@@ -207,7 +210,7 @@ if command -v gh >/dev/null 2>&1; then
   fi
 fi
 if [ -z "$BASE_BRANCH" ] && [ "$GH_AVAILABLE" -eq 1 ]; then
-  echo "ERROR: could not resolve pull request base branch for #$PR_NUMBER" >&2
+  workflow_diagnostic "ERROR: could not resolve pull request base branch for #$PR_NUMBER" >&2
   print_result escalate 0 0 0 base_branch_unavailable "base_branch_unavailable"
   exit 2
 fi
@@ -249,12 +252,12 @@ redact_github_remote_slug() {
 
 if [ -n "$REPO_ROOT" ]; then
   if [ ! -d "$REPO_ROOT/.git" ] && ! git -C "$REPO_ROOT" rev-parse --git-dir >/dev/null 2>&1; then
-    echo "ERROR: --repo-root is not a Git checkout: $REPO_ROOT" >&2
+    workflow_diagnostic "ERROR: --repo-root is not a Git checkout: $REPO_ROOT" >&2
     print_result escalate 0 0 0 invalid_repo_root "invalid_repo_root"
     exit 2
   fi
   if [ -z "$HEAD_SHA" ]; then
-    echo "ERROR: could not resolve pull request head SHA for #$PR_NUMBER" >&2
+    workflow_diagnostic "ERROR: could not resolve pull request head SHA for #$PR_NUMBER" >&2
     print_result escalate 0 0 0 head_sha_unavailable "head_sha_unavailable"
     exit 2
   fi
@@ -263,7 +266,7 @@ if [ -n "$REPO_ROOT" ]; then
   fi
   repo_root_slug="$(normalize_github_remote_slug "$repo_root_origin")"
   if [ "$repo_root_slug" != "$OWNER/$REPO" ]; then
-    echo "ERROR: --repo-root origin does not match expected repository ($(redact_github_remote_slug "$repo_root_origin") != $OWNER/$REPO)" >&2
+    workflow_diagnostic "ERROR: --repo-root origin does not match expected repository ($(redact_github_remote_slug "$repo_root_origin") != $OWNER/$REPO)" >&2
     print_result escalate 0 0 0 repo_root_mismatch "repo_root_mismatch"
     exit 2
   fi
@@ -271,7 +274,7 @@ if [ -n "$REPO_ROOT" ]; then
     CURRENT_SHA=""
   fi
   if [ "$CURRENT_SHA" != "$HEAD_SHA" ]; then
-    echo "ERROR: checkout HEAD does not match PR head ($CURRENT_SHA != $HEAD_SHA)" >&2
+    workflow_diagnostic "ERROR: checkout HEAD does not match PR head ($CURRENT_SHA != $HEAD_SHA)" >&2
     print_result escalate 0 0 0 checkout_head_mismatch "checkout_head_mismatch"
     exit 2
   fi
@@ -285,7 +288,7 @@ elif command -v coderabbit >/dev/null 2>&1; then
   CODERABBIT_CMD="coderabbit"
   CODERABBIT_SUBCOMMAND="review"
 else
-  echo "INFO: CodeRabbit CLI not found on PATH" >&2
+  workflow_diagnostic "INFO: CodeRabbit CLI not found on PATH" >&2
   print_result skipped 0 0 0 unavailable "unavailable"
   exit 3
 fi
@@ -377,13 +380,13 @@ ${cli_stderr}"
 # itself exited 124 before the budget leaves the flag at 0 and reaches the
 # no_output / invalid_json / cli_failed handling below (failure evidence).
 if [ "${RUN_WITH_TIMEOUT_EXPIRED:-0}" = "1" ]; then
-  echo "WARN: CodeRabbit CLI timed out after ${TIMEOUT}s" >&2
+  workflow_diagnostic "WARN: CodeRabbit CLI timed out after ${TIMEOUT}s" >&2
   print_result skipped 0 0 0 timeout "timeout"
   exit 3
 fi
 
 if [ -z "$(printf '%s' "$cli_stdout" | tr -d '[:space:]')" ]; then
-  echo "WARN: CodeRabbit CLI produced no JSON output (exit $cli_exit)" >&2
+  workflow_diagnostic "WARN: CodeRabbit CLI produced no JSON output (exit $cli_exit)" >&2
   if printf '%s\n' "$combined_output" | grep -Eiq 'rate[ -]?limit|too many requests|HTTP[[:space:]]*429'; then
     emit_rate_limited_result
   elif printf '%s\n' "$cli_stderr" | grep -Eiq "$AUTH_PATTERN"; then
@@ -544,7 +547,7 @@ case "$parse_status" in
       emit_rate_limited_result
     fi
     if [ "$comment_count" -eq 0 ] && [ "$auth_output" = true ]; then
-      echo "WARN: CodeRabbit CLI authentication appears unavailable" >&2
+      workflow_diagnostic "WARN: CodeRabbit CLI authentication appears unavailable" >&2
       print_result skipped 0 0 0 unauthorized "unavailable"
       exit 3
     fi
@@ -553,15 +556,15 @@ case "$parse_status" in
       index=1
       while IFS= read -r blocking_finding; do
         [ -n "$blocking_finding" ] || continue
-        print_kv_escaped "BLOCKING_${index}_PATH" "$(printf '%s\n' "$blocking_finding" | jq -r '.path // ""')"
-        print_kv_escaped "BLOCKING_${index}_LINE" "$(printf '%s\n' "$blocking_finding" | jq -r '.line // ""')"
-        print_kv_escaped "BLOCKING_${index}_BODY" "$(printf '%s\n' "$blocking_finding" | jq -r '.body // ""')"
+        workflow_diagnostic_kv_escaped "BLOCKING_${index}_PATH" "$(printf '%s\n' "$blocking_finding" | jq -r '.path // ""')"
+        workflow_diagnostic_kv_escaped "BLOCKING_${index}_LINE" "$(printf '%s\n' "$blocking_finding" | jq -r '.line // ""')"
+        workflow_diagnostic_kv_escaped "BLOCKING_${index}_BODY" "$(printf '%s\n' "$blocking_finding" | jq -r '.body // ""')"
         index=$((index + 1))
       done < <(printf '%s\n' "$blocking_findings_json" | jq -c '.[]?' 2>/dev/null)
       exit 1
     fi
     if [ "$cli_exit" -ne 0 ]; then
-      echo "WARN: CodeRabbit CLI exited non-zero after producing non-blocking JSON (exit $cli_exit)" >&2
+      workflow_diagnostic "WARN: CodeRabbit CLI exited non-zero after producing non-blocking JSON (exit $cli_exit)" >&2
       print_result skipped 0 0 0 cli_failed "skipped"
       exit 3
     fi
@@ -572,16 +575,16 @@ case "$parse_status" in
     if [ "$rate_limit_output" = true ]; then
       emit_rate_limited_result
     elif [ "$auth_output" = true ]; then
-      echo "WARN: CodeRabbit CLI authentication appears unavailable" >&2
+      workflow_diagnostic "WARN: CodeRabbit CLI authentication appears unavailable" >&2
       print_result skipped 0 0 0 unauthorized "unavailable"
     else
-      echo "WARN: CodeRabbit CLI JSON did not contain a recognized findings array" >&2
+      workflow_diagnostic "WARN: CodeRabbit CLI JSON did not contain a recognized findings array" >&2
       print_result skipped 0 0 0 invalid_json "skipped"
     fi
     exit 3
     ;;
   ambiguous)
-    echo "WARN: CodeRabbit CLI JSON contained findings with ambiguous severity" >&2
+    workflow_diagnostic "WARN: CodeRabbit CLI JSON contained findings with ambiguous severity" >&2
     print_result skipped 0 0 0 ambiguous_output "skipped"
     exit 3
     ;;
@@ -589,10 +592,10 @@ case "$parse_status" in
     if [ "$rate_limit_output" = true ]; then
       emit_rate_limited_result
     elif [ "$auth_output" = true ]; then
-      echo "WARN: CodeRabbit CLI authentication appears unavailable" >&2
+      workflow_diagnostic "WARN: CodeRabbit CLI authentication appears unavailable" >&2
       print_result skipped 0 0 0 unauthorized "unavailable"
     else
-      echo "WARN: CodeRabbit CLI output was not recognized as valid JSON" >&2
+      workflow_diagnostic "WARN: CodeRabbit CLI output was not recognized as valid JSON" >&2
       print_result skipped 0 0 0 invalid_json "skipped"
     fi
     exit 3

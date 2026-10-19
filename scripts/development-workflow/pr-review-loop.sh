@@ -2267,7 +2267,7 @@ run_greptile_review() {
         [ -z "${blocking_json:-}" ] && continue
         print_kv "BLOCKING_${index}_PATH" "$(printf '%s\n' "$blocking_json" | jq -r '.path')"
         print_kv "BLOCKING_${index}_LINE" "$(printf '%s\n' "$blocking_json" | jq -r '.line')"
-        print_kv_escaped "BLOCKING_${index}_BODY" "$(printf '%s\n' "$blocking_json" | jq -r '.body')"
+        workflow_diagnostic_kv_escaped "BLOCKING_${index}_BODY" "$(printf '%s\n' "$blocking_json" | jq -r '.body')"
         index=$((index + 1))
       done < "$existing_blocking_file"
       reviewer_loop_print_reviewed_head_from_json_lines < "$existing_blocking_file"
@@ -2407,7 +2407,7 @@ run_greptile_review() {
       [ -z "${blocking_json:-}" ] && continue
       print_kv "BLOCKING_${index}_PATH" "$(printf '%s\n' "$blocking_json" | jq -r '.path')"
       print_kv "BLOCKING_${index}_LINE" "$(printf '%s\n' "$blocking_json" | jq -r '.line')"
-      print_kv_escaped "BLOCKING_${index}_BODY" "$(printf '%s\n' "$blocking_json" | jq -r '.body')"
+      workflow_diagnostic_kv_escaped "BLOCKING_${index}_BODY" "$(printf '%s\n' "$blocking_json" | jq -r '.body')"
       index=$((index + 1))
     done < "$blocking_lines_file"
     reviewer_loop_print_reviewed_head_from_json_lines < "$blocking_lines_file"
@@ -3888,7 +3888,7 @@ run_bugbot_review() {
       [ -z "${blocking_json:-}" ] && continue
       print_kv "BLOCKING_${index}_PATH" "$(printf '%s\n' "$blocking_json" | jq -r '.path')"
       print_kv "BLOCKING_${index}_LINE" "$(printf '%s\n' "$blocking_json" | jq -r '.line')"
-      print_kv_escaped "BLOCKING_${index}_BODY" "$(printf '%s\n' "$blocking_json" | jq -r '.body')"
+      workflow_diagnostic_kv_escaped "BLOCKING_${index}_BODY" "$(printf '%s\n' "$blocking_json" | jq -r '.body')"
       index=$((index + 1))
     done < "$existing_blocking_file"
     rm -f "$existing_blocking_file"
@@ -4183,7 +4183,7 @@ run_bugbot_review() {
               [ -z "${blocking_json:-}" ] && continue
               print_kv "BLOCKING_${index}_PATH" "$(printf '%s\n' "$blocking_json" | jq -r '.path')"
               print_kv "BLOCKING_${index}_LINE" "$(printf '%s\n' "$blocking_json" | jq -r '.line')"
-              print_kv_escaped "BLOCKING_${index}_BODY" "$(printf '%s\n' "$blocking_json" | jq -r '.body')"
+              workflow_diagnostic_kv_escaped "BLOCKING_${index}_BODY" "$(printf '%s\n' "$blocking_json" | jq -r '.body')"
               index=$((index + 1))
             done < "$blocking_lines_file"
             rm -f "$blocking_lines_file"
@@ -4344,7 +4344,7 @@ run_bugbot_review() {
             [ -z "${blocking_json:-}" ] && continue
             print_kv "BLOCKING_${index}_PATH" "$(printf '%s\n' "$blocking_json" | jq -r '.path')"
             print_kv "BLOCKING_${index}_LINE" "$(printf '%s\n' "$blocking_json" | jq -r '.line')"
-            print_kv_escaped "BLOCKING_${index}_BODY" "$(printf '%s\n' "$blocking_json" | jq -r '.body')"
+            workflow_diagnostic_kv_escaped "BLOCKING_${index}_BODY" "$(printf '%s\n' "$blocking_json" | jq -r '.body')"
             index=$((index + 1))
           done < "$blocking_lines_file"
           rm -f "$blocking_lines_file"
@@ -4513,7 +4513,7 @@ run_bugbot_review() {
               [ -z "${blocking_json:-}" ] && continue
               print_kv "BLOCKING_${index}_PATH" "$(printf '%s\n' "$blocking_json" | jq -r '.path')"
               print_kv "BLOCKING_${index}_LINE" "$(printf '%s\n' "$blocking_json" | jq -r '.line')"
-              print_kv_escaped "BLOCKING_${index}_BODY" "$(printf '%s\n' "$blocking_json" | jq -r '.body')"
+              workflow_diagnostic_kv_escaped "BLOCKING_${index}_BODY" "$(printf '%s\n' "$blocking_json" | jq -r '.body')"
               index=$((index + 1))
             done < "$blocking_lines_file"
             rm -f "$blocking_lines_file"
@@ -5404,7 +5404,7 @@ run_devin_review() {
       [ -z "${blocking_json:-}" ] && continue
       print_kv "BLOCKING_${index}_PATH" "$(printf '%s\n' "$blocking_json" | jq -r '.path')"
       print_kv "BLOCKING_${index}_LINE" "$(printf '%s\n' "$blocking_json" | jq -r '.line')"
-      print_kv_escaped "BLOCKING_${index}_BODY" "$(printf '%s\n' "$blocking_json" | jq -r '.body')"
+      workflow_diagnostic_kv_escaped "BLOCKING_${index}_BODY" "$(printf '%s\n' "$blocking_json" | jq -r '.body')"
       index=$((index + 1))
     done < "$existing_blocking_file"
     reviewer_loop_print_reviewed_head_from_json_lines < "$existing_blocking_file"
@@ -5628,7 +5628,7 @@ run_devin_review() {
             [ -z "${blocking_json:-}" ] && continue
             print_kv "BLOCKING_${index}_PATH" "$(printf '%s\n' "$blocking_json" | jq -r '.path')"
             print_kv "BLOCKING_${index}_LINE" "$(printf '%s\n' "$blocking_json" | jq -r '.line')"
-            print_kv_escaped "BLOCKING_${index}_BODY" "$(printf '%s\n' "$blocking_json" | jq -r '.body')"
+            workflow_diagnostic_kv_escaped "BLOCKING_${index}_BODY" "$(printf '%s\n' "$blocking_json" | jq -r '.body')"
             index=$((index + 1))
           done < "$stale_file"
           reviewer_loop_print_reviewed_head_from_json_lines < "$stale_file"
@@ -5765,7 +5765,7 @@ run_devin_review() {
       [ -z "${blocking_json:-}" ] && continue
       print_kv "BLOCKING_${index}_PATH" "$(printf '%s\n' "$blocking_json" | jq -r '.path')"
       print_kv "BLOCKING_${index}_LINE" "$(printf '%s\n' "$blocking_json" | jq -r '.line')"
-      print_kv_escaped "BLOCKING_${index}_BODY" "$(printf '%s\n' "$blocking_json" | jq -r '.body')"
+      workflow_diagnostic_kv_escaped "BLOCKING_${index}_BODY" "$(printf '%s\n' "$blocking_json" | jq -r '.body')"
       index=$((index + 1))
     done < "$blocking_lines_file"
     reviewer_loop_print_reviewed_head_from_json_lines < "$blocking_lines_file"
@@ -6661,7 +6661,7 @@ reviewer_loop_print_blocking_from_unreplied_rest_comments() {
     fi
     print_kv "BLOCKING_${idx}_PATH" "${path:-unknown}"
     print_kv "BLOCKING_${idx}_LINE" "$line"
-    print_kv_escaped "BLOCKING_${idx}_BODY" "$title"
+    workflow_diagnostic_kv_escaped "BLOCKING_${idx}_BODY" "$title"
   done < "$blocking_file"
 
   reviewer_loop_print_reviewed_head_from_json_lines < "$blocking_file"
@@ -7823,7 +7823,7 @@ run_coderabbit_review() {
       [ -z "${blocking_json:-}" ] && continue
       print_kv "BLOCKING_${index}_PATH" "$(printf '%s\n' "$blocking_json" | jq -r '.path')"
       print_kv "BLOCKING_${index}_LINE" "$(printf '%s\n' "$blocking_json" | jq -r '.line')"
-      print_kv_escaped "BLOCKING_${index}_BODY" "$(printf '%s\n' "$blocking_json" | jq -r '.body')"
+      workflow_diagnostic_kv_escaped "BLOCKING_${index}_BODY" "$(printf '%s\n' "$blocking_json" | jq -r '.body')"
       index=$((index + 1))
     done < "$existing_blocking_file"
     rm -f "$existing_blocking_file"
@@ -8479,7 +8479,7 @@ run_coderabbit_review() {
             [ -z "${blocking_json:-}" ] && continue
             print_kv "BLOCKING_${index}_PATH" "$(printf '%s\n' "$blocking_json" | jq -r '.path')"
             print_kv "BLOCKING_${index}_LINE" "$(printf '%s\n' "$blocking_json" | jq -r '.line')"
-            print_kv_escaped "BLOCKING_${index}_BODY" "$(printf '%s\n' "$blocking_json" | jq -r '.body')"
+            workflow_diagnostic_kv_escaped "BLOCKING_${index}_BODY" "$(printf '%s\n' "$blocking_json" | jq -r '.body')"
             index=$((index + 1))
           done < "$stale_file"
           reviewer_loop_print_reviewed_head_from_json_lines < "$stale_file"
@@ -8722,7 +8722,7 @@ run_coderabbit_review() {
       [ -z "${blocking_json:-}" ] && continue
       print_kv "BLOCKING_${index}_PATH" "$(printf '%s\n' "$blocking_json" | jq -r '.path')"
       print_kv "BLOCKING_${index}_LINE" "$(printf '%s\n' "$blocking_json" | jq -r '.line')"
-      print_kv_escaped "BLOCKING_${index}_BODY" "$(printf '%s\n' "$blocking_json" | jq -r '.body')"
+      workflow_diagnostic_kv_escaped "BLOCKING_${index}_BODY" "$(printf '%s\n' "$blocking_json" | jq -r '.body')"
       index=$((index + 1))
     done < "$blocking_lines_file"
     rm -f "$blocking_lines_file"
@@ -11857,7 +11857,7 @@ reviewer_loop_print_blocking_from_unresolved_bot_threads() {
     fi
     print_kv "BLOCKING_${idx}_PATH" "${path:-unknown}"
     print_kv "BLOCKING_${idx}_LINE" "$line"
-    print_kv_escaped "BLOCKING_${idx}_BODY" "$title"
+    workflow_diagnostic_kv_escaped "BLOCKING_${idx}_BODY" "$title"
   done < <(printf '%s\n' "$json" | jq -c '.[]?')
   return 0
 }

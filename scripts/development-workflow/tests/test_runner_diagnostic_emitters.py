@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
+import signal
 from pathlib import Path
 import shlex
 import subprocess
@@ -26,8 +28,16 @@ class RunnerDiagnosticEmitters(unittest.TestCase):
         self.secret = 'fabricatedDiagnosticValue'
 
     def run_command(self, command, *, input=None):
-        return subprocess.run(command, env=self.f.env, cwd=self.f.checkout, input=input,
-                              capture_output=True, text=True, timeout=30)
+        process = subprocess.Popen(command, env=self.f.env, cwd=self.f.checkout,
+                                   stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                   stderr=subprocess.PIPE, text=True, start_new_session=True)
+        try:
+            stdout, stderr = process.communicate(input, timeout=30)
+        except subprocess.TimeoutExpired:
+            os.killpg(process.pid, signal.SIGKILL)
+            process.communicate()
+            raise
+        return subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
 
     def entry(self, name, *args):
         return self.run_command(['bash', str(self.f.runtime / name), *args])
@@ -191,6 +201,143 @@ esac
 '''.replace('SECRET', self.secret))
         result = self.safe(self.entry('run-epic-audit-trail.sh', 'apply-pr-disposition', '--input', str(self.audit_fixture()), '--pr', '1993'), 1)
         self.assertIn('failed to create marker comment', result.stderr)
+
+
+    def gh_script(self, text):
+        path = self.f.bin / 'gh'
+        path.write_text('#!/bin/sh\n' + text.replace('SECRET', self.secret))
+        path.chmod(0o755)
+
+    def local_entry(self, payload, stderr=None, status=0, **env):
+        (self.f.checkout / 'REVIEW.md').write_text('# Synthetic reviewer contract\n')
+        self.gh_script('case "$*" in "pr diff"*) echo README.md;; "pr view"*) cat "$SYNTHETIC_PR";; "auth status"*) exit 0;; *) exit 99;; esac\n')
+        command = self.f.bin / 'synthetic-review'
+        command.write_text('#!/bin/sh\nprintf "%s\\n" ' + shlex.quote(json.dumps(payload) if isinstance(payload, dict) else payload) + '\n' +
+                           'printf "%s\\n" ' + shlex.quote(stderr or 'token=' + self.secret) + ' >&2\nexit ' + str(status) + '\n')
+        command.chmod(0o755)
+        self.f.env.update(LOCAL_AI_REVIEWER_COMMAND=str(command), LOCAL_AI_REVIEWER_GRAPH_STRATEGY='none', **env)
+        return self.entry('local-ai-reviewer.sh', '1993', 'fixture', 'repo')
+
+    def test_D17_local_result_reason_and_counts(self):
+        result = self.safe(self.local_entry({'result': 'needs_rerun', 'comments': 0, 'reason': 'password: ' + self.secret}), 1)
+        self.assertIn('RESULT=needs_rerun', result.stdout)
+        self.assertIn('COMMENT_COUNT=0', result.stdout)
+        self.assertIn('REASON=password: [REDACTED]', result.stdout)
+
+    def test_D18_real_local_strict_and_ordinary_finding_outputs(self):
+        # Actual emission functions: structured functional findings retain their
+        # bytes until the runner promotes PATH/CHECK/BODY into public reports.
+        text = fixtures.function_text('local-ai-reviewer.sh', 'emit_strict_entry_output')
+        payload = json.dumps([{'check': 'token=' + self.secret, 'path': 'token=' + self.secret,
+                               'line': 4, 'body': 'password: ' + self.secret}])
+        result = self.safe(self.bash('print_kv() { workflow_diagnostic_kv "$@"; }\n' + text +
+                                    '\nemit_strict_entry_output STRICT applied 1 checks 0 reason applied ' + shlex.quote(payload) + '\n' +
+                                    'workflow_diagnostic "token=' + self.secret + '" >&2'), 0)
+        self.assertIn('STRICT_1_PATH=token=[REDACTED]', result.stdout)
+        self.assertIn('STRICT_1_LINE=4', result.stdout)
+        finding = self.safe(self.local_entry({'result': 'needs_fixes', 'findings': [
+            {'path': 'token=' + self.secret, 'line': 4, 'message': 'password: ' + self.secret,
+             'severity': 'blocking', 'clear_in_scope': True}]}), 1)
+        self.assertIn('BLOCKING_1_PATH=token=[REDACTED]', finding.stdout)
+
+    def test_D19_local_quota_empty_and_invalid(self):
+        for payload, error, status, reason in [('', 'token=' + self.secret, 7, 'malformed_output'),
+                                               ('invalid', 'token=' + self.secret, 7, 'malformed_output'),
+                                               ('', 'quota exceeded; try again at token=' + self.secret, 7, 'quota_exhausted')]:
+            with self.subTest(reason=reason, payload=payload):
+                result = self.safe(self.local_entry(payload, error, status), 2)
+                self.assertIn('REASON=' + reason, result.stdout)
+                self.assertIn('[REDACTED]', result.stderr)
+                if reason == 'quota_exhausted':
+                    self.assertIn('QUOTA_RESET_AT=token=[REDACTED]', result.stdout)
+
+    def test_D20_local_persistent_evidence_and_write_failure(self):
+        evidence = self.f.root / 'evidence.json'
+        pr = json.loads(self.f.pr.read_text()); pr['body'] = 'token=' + self.secret
+        self.f.pr.write_text(json.dumps(pr))
+        result = self.safe(self.local_entry({'result': 'clean', 'comments': 0, 'reason': 'password: ' + self.secret},
+                                           LOCAL_AI_REVIEWER_EVIDENCE_FILE=str(evidence)), 0)
+        data = json.loads(evidence.read_text())
+        self.assertEqual(data['result'], 'clean')
+        self.assertNotIn(self.secret, evidence.read_text())
+        missing = self.f.root / ('token=' + self.secret) / 'missing' / 'evidence.json'
+        result = self.safe(self.local_entry({'result': 'clean', 'comments': 0},
+                                           LOCAL_AI_REVIEWER_EVIDENCE_FILE=str(missing)), 0)
+        self.assertIn('could not write', result.stderr)
+
+    def test_D21_local_startup_invalid_argument(self):
+        result = self.safe(self.entry('local-ai-reviewer.sh', 'token=' + self.secret, 'fixture', 'repo'), 2)
+        self.assertIn('ERROR: PR number', result.stderr)
+
+    def test_D26_coderabbit_startup_and_opaque_policy(self):
+        result = self.safe(self.entry('coderabbit-cli-reviewer.sh', 'token=' + self.secret, 'fixture', 'repo'), 3)
+        self.assertIn('ERROR: PR number', result.stderr)
+        self.f.env['CODERABBIT_CLI_RATE_LIMIT_POLICY'] = 'opaque-fabricated-policy'
+        self.gh_script('case "$*" in "auth status"*) exit 0;; "pr view"*) echo \'{"baseRefName":"develop"}\';; *) exit 99;; esac\n')
+        result = self.safe(self.entry('coderabbit-cli-reviewer.sh', '1993', 'fixture', 'repo'), 3)
+        self.assertIn('invalid-value category', result.stderr)
+        self.assertNotIn('opaque-fabricated-policy', result.stdout + result.stderr)
+
+    def test_D27_coderabbit_real_cli_findings(self):
+        self.gh_script('case "$*" in "auth status"*) exit 0;; "pr view"*) echo \'{"baseRefName":"develop"}\';; *) exit 99;; esac\n')
+        command = self.f.bin / 'cr'
+        payload = {'findings': [{'path': 'token=' + self.secret, 'line': 4, 'body': 'password: ' + self.secret, 'severity': 'critical'}]}
+        command.write_text('#!/bin/sh\nprintf "%s\\n" ' + shlex.quote(json.dumps(payload)) + '\nprintf "token=' + self.secret + '\\n" >&2\n')
+        command.chmod(0o755)
+        result = self.safe(self.entry('coderabbit-cli-reviewer.sh', '1993', 'fixture', 'repo'), 1)
+        self.assertIn('RESULT=needs_fixes', result.stdout)
+        self.assertIn('BLOCKING_1_PATH=token=[REDACTED]', result.stdout)
+
+    def test_D28_ci_real_check_names_and_json(self):
+        payload = json.dumps({'statusCheckRollup': [{'name': 'token=' + self.secret, 'status': 'COMPLETED', 'conclusion': 'FAILURE'}]})
+        self.gh_script('case "$*" in "auth status"*) exit 0;; *"headRefOid"*) echo aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa;; *"statusCheckRollup"*) printf "%s\\n" ' + shlex.quote(payload) + ';; *) exit 99;; esac\n')
+        result = self.safe(self.entry('pr-ci-loop.sh', '1993', '--repo', 'fixture/repo', '--repo-root', str(self.f.checkout),
+                                      '--poll-interval', '1', '--max-wait', '1'), 1)
+        self.assertIn('RESULT=red', result.stdout)
+        self.assertIn('FAILING_CHECKS=token=[REDACTED]', result.stdout)
+
+    def test_D29_ci_real_argument_stderr(self):
+        result = self.safe(self.entry('pr-ci-loop.sh', '1993', '--bad token=' + self.secret), 64)
+        self.assertIn('Unknown option:', result.stderr)
+
+    def test_D30_completion_real_observation_and_header(self):
+        pr = json.loads(self.f.pr.read_text()); pr['headRefName'] = 'token=' + self.secret
+        self.f.pr.write_text(json.dumps(pr))
+        result = self.safe(self.entry('item-completion-self-check.sh', '--issue', '1993', '--branch', 'feature/1993-fixture',
+                                      '--stage', 'token=' + self.secret, '--worktree-path', str(self.f.checkout), '--repo-root', str(self.f.checkout), '--pr', '1993',
+                                      '--expected-base', 'develop', '--require-clean', 'false', '--require-ci-green', 'false'), 1)
+        self.assertIn('Ground-Truth Completion Verification', result.stdout)
+        self.assertIn('observed=token=[REDACTED]', result.stdout)
+        bad = self.safe(self.entry('item-completion-self-check.sh', '--bad token=' + self.secret), 64)
+        self.assertIn('Unknown option:', bad.stderr)
+
+    def test_D40_library_captured_github_and_bootstrap(self):
+        result = self.safe(self.bash('__workflow_last_gh_stderr="token=' + self.secret + '"\nworkflow_print_captured_gh_stderr\n' +
+                                    'workflow_diagnostic "password: ' + self.secret + '"'), 0)
+        self.assertIn('gh: token=[REDACTED]', result.stderr)
+        result = self.safe(self.run_command(['bash', '-c', 'readonly REVIEW_DOCTRINE_MAX_BYTES=' + shlex.quote('token=' + self.secret) +
+                                             '; source ' + shlex.quote(str(self.f.runtime / 'workflow-lib.sh'))]), 1)
+        self.assertIn('invalid readonly value', result.stderr)
+
+    def test_D41_readiness_actual_verdict_json(self):
+        # Real emit_verdict with its actual entry-local sink; no label mutation.
+        text = (self.f.runtime / 'apply-readiness-labels.sh').read_text()
+        sink = next(line for line in text.splitlines() if line.startswith('print_kv() {'))
+        report = fixtures.function_text('apply-readiness-labels.sh', 'emit_verdict')
+        result = self.safe(self.bash(sink + '\n' + report + '\n' +
+            'result=refused; reason="token=' + self.secret + '"; pr_number=1993; repo=fixture/repo; label=ready-for-human-review; head_sha=' + 'a' * 40 + '; reviewer_report="password: ' + self.secret + '"; blocking_count=1; pending_count=0; failing_count=0; dry_run=true; json_output=true\nemit_verdict\nworkflow_diagnostic "token=' + self.secret + '" >&2'), 0)
+        self.assertIn('RESULT=refused', result.stdout)
+        data = json.loads(result.stdout.splitlines()[-1])
+        self.assertEqual(data['blockingFindingCount'], 1)
+        self.assertTrue(data['dryRun'])
+
+    def test_D42_readiness_ownership_child_failure_and_args(self):
+        self.gh_script('case "$*" in "auth status"*) exit 0;; esac\nprintf "token=SECRET\\n" >&2\nexit 7\n')
+        result = self.safe(self.entry('apply-readiness-labels.sh', '--pr', '1993', '--repo', 'fixture/repo',
+                                      '--label', 'ready-for-human-review', '--dry-run'), 2)
+        self.assertIn('ownership-unverified', result.stdout)
+        bad = self.safe(self.entry('apply-readiness-labels.sh', '--bad token=' + self.secret), 2)
+        self.assertIn('unknown argument:', bad.stderr)
 
 
 if __name__ == '__main__':

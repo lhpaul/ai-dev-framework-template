@@ -32,7 +32,7 @@ EOF
 require_option_value() {
   local option="$1"
   if [ "$#" -lt 2 ] || [ -z "${2:-}" ]; then
-    echo "$option requires a value." >&2
+    workflow_diagnostic "$option requires a value." >&2
     usage >&2
     exit 64
   fi
@@ -149,7 +149,7 @@ while [ "$#" -gt 0 ]; do
       exit 0
       ;;
     *)
-      echo "Unknown option: $1" >&2
+      workflow_diagnostic "Unknown option: $1" >&2
       usage >&2
       exit 64
       ;;
@@ -161,7 +161,7 @@ is_true() {
     true|1|yes) return 0 ;;
     false|0|no|"") return 1 ;;
     *)
-      echo "Boolean option must be true or false, got '$1'." >&2
+      workflow_diagnostic "Boolean option must be true or false, got '$1'." >&2
       exit 64
       ;;
   esac
@@ -173,7 +173,7 @@ validate_bool_option() {
   case "${value:-}" in
     true|1|yes|false|0|no|"") ;;
     *)
-      echo "$option must be true or false, got '$value'." >&2
+      workflow_diagnostic "$option must be true or false, got '$value'." >&2
       exit 64
       ;;
   esac
@@ -200,7 +200,7 @@ discrepancy_count=0
 unavailable_required_count=0
 
 md_escape() {
-  printf '%s' "${1:-}" | tr '\n' ' ' | sed 's/|/\\|/g; s/[[:space:]][[:space:]]*/ /g; s/^ //; s/ $//'
+  printf '%s' "${1:-}" | workflow_redact_text | tr '\n' ' ' | sed 's/|/\\|/g; s/[[:space:]][[:space:]]*/ /g; s/^ //; s/ $//'
 }
 
 add_row() {
@@ -952,7 +952,7 @@ else
   overall_result="discrepancy"
 fi
 
-cat <<EOF
+cat <<EOF | workflow_redact_text
 ## Ground-Truth Completion Verification
 
 - Item: #$issue

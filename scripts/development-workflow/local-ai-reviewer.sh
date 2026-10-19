@@ -10,6 +10,9 @@ SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/development-workflow/workflow-lib.sh
 source "$SCRIPT_DIR/workflow-lib.sh"
 
+# This entry emits diagnostic reports; shared config/control transport stays raw.
+print_kv() { workflow_diagnostic_kv "$@"; }
+
 usage() {
   cat >&2 <<'EOF'
 Usage: local-ai-reviewer.sh <pr_number> <owner> <repo> [--timeout <seconds>] [--repo-root <path>]
@@ -1619,7 +1622,9 @@ write_evidence_file() {
   strict_plan_json="$(strict_build_strict_evidence_json "$strict_plan_state" "$strict_plan_count" \
     "$strict_plan_checks" "$strict_plan_applied" "$strict_plan_unknown_count" "$strict_plan_reason")"
 
-  if ! jq -n \
+  local evidence_error
+  evidence_error="$(mktemp)" || { workflow_diagnostic "WARN: could not capture evidence diagnostics" >&2; return 0; }
+  if ! { jq -n \
     --arg schema_version "local_ai_reviewer_evidence.v1" \
     --arg result "$final_result" \
     --arg reason "$final_reason" \
@@ -1679,9 +1684,11 @@ write_evidence_file() {
       },
       strict_spec: $strict_spec,
       strict_plan: $strict_plan
-    }' | workflow_redact_json >"$LOCAL_AI_REVIEWER_EVIDENCE_FILE"; then
+    }' | workflow_redact_json >"$LOCAL_AI_REVIEWER_EVIDENCE_FILE"; } 2>"$evidence_error"; then
+    workflow_redact_text <"$evidence_error" >&2
     workflow_diagnostic "WARN: could not write local AI reviewer evidence file: $LOCAL_AI_REVIEWER_EVIDENCE_FILE" >&2
   fi
+  rm -f "$evidence_error"
 }
 
 emit_ordinary_and_strict() {
