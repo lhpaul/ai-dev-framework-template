@@ -21,6 +21,15 @@ cannot become an absent field and activate shared/default policy. No private
 source means legacy context commands retain dependency-free reading. This check
 does not replace the separate reviewer-field schema/projection validation.
 
+CI-policy enrichment also stays in the selected checkout. It no longer scans
+sibling directories or follows an inherited `WORKFLOW_HUB_REPO_ROOT` to read a
+hub's configuration. Product checkouts should declare `product_repo.ci_policy`
+in their versioned manifest. To resolve a hub's product policy deliberately,
+invoke the helper with that hub as `--repo-root` and select the product using
+`--product-repo`; a shared hub reference or inherited locator alone does not
+authorize its private source. This applies to the final context lookup as well
+as mode and product-list probes.
+
 <!-- workflow-shell-contract: bash-zsh -->
 ```bash
 export WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT=/path/to/authorized-checkout

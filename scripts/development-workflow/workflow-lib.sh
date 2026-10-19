@@ -248,11 +248,10 @@ workflow_product_repo_name_for_github_slug() {
   local slug="$2"
   local name context github
 
-  workflow_local_config_file "$root" >/dev/null || return 2
-
   if [ -z "$root" ] || [ -z "$slug" ]; then
     return 1
   fi
+  workflow_local_config_file "$root" >/dev/null || return 2
 
   while IFS= read -r name; do
     [ -n "$name" ] || continue
@@ -269,50 +268,17 @@ workflow_product_repo_name_for_github_slug() {
   return 1
 }
 
+# Compatibility API: a hub is usable only when it is already the selected root.
+# A hub locator or a neighboring public manifest never authorizes private reads.
 workflow_hub_root_for_ci_policy() {
   local root="$1"
-  local github_slug="${2:-}"
-  local mode context candidate parent repo_name
-
+  local mode_json mode
+  [ -n "$root" ] || return 1
   workflow_local_config_file "$root" >/dev/null || return 2
-
-  if [ -z "$root" ]; then
-    return 1
-  fi
-
-  if [ -n "${WORKFLOW_HUB_REPO_ROOT:-}" ] && [ -f "${WORKFLOW_HUB_REPO_ROOT}/.ai-dev-workflow.yaml" ]; then
-    mode="$(python3 "$(workflow_config_resolver_script)" mode --repo-root "$WORKFLOW_HUB_REPO_ROOT" --json 2>/dev/null | jq -r '.WORKFLOW_MODE // ""')"
-    if [ "$mode" = "workflow_hub" ]; then
-      printf '%s\n' "$WORKFLOW_HUB_REPO_ROOT"
-      return 0
-    fi
-  fi
-
-  mode="$(python3 "$(workflow_config_resolver_script)" mode --repo-root "$root" --json 2>/dev/null | jq -r '.WORKFLOW_MODE // ""')"
-  if [ "$mode" != "product_repo" ]; then
-    return 1
-  fi
-
-  if [ -z "$github_slug" ]; then
-    context="$(workflow_repository_context "" "$root" 2>/dev/null)" || return 1
-    github_slug="$(workflow_github_repo_from_context "$context")"
-  fi
-  [ -n "$github_slug" ] || return 1
-
-  parent="$(dirname "$root")"
-  for candidate in "$parent"/*; do
-    [ -e "$candidate/.ai-dev-workflow.yaml" ] || continue
-    mode="$(python3 "$(workflow_config_resolver_script)" mode --repo-root "$candidate" --json 2>/dev/null | jq -r '.WORKFLOW_MODE // ""')"
-    if [ "$mode" = "workflow_hub" ]; then
-      repo_name="$(workflow_product_repo_name_for_github_slug "$candidate" "$github_slug" 2>/dev/null || true)"
-      if [ -n "$repo_name" ]; then
-        printf '%s\n' "$candidate"
-        return 0
-      fi
-    fi
-  done
-
-  return 1
+  mode_json="$(python3 "$(workflow_config_resolver_script)" mode --repo-root "$root" --json)" || return 2
+  mode="$(printf '%s\n' "$mode_json" | jq -r '.WORKFLOW_MODE // ""')" || return 2
+  [ "$mode" = workflow_hub ] || return 1
+  printf '%s\n' "$root"
 }
 
 workflow_merge_ci_policy_into_json() {
@@ -321,12 +287,11 @@ workflow_merge_ci_policy_into_json() {
   local repo_name="${3:-}"
   local trust_repo_name=0
 
-  workflow_local_config_file "$root" >/dev/null || return 2
-
   if [ -z "$root" ]; then
     printf '%s\n' "$json"
     return 0
   fi
+  workflow_local_config_file "$root" >/dev/null || return 2
 
   if [ -n "$(printf '%s\n' "$json" | jq -r '.ciPolicy // .ci_policy // ""' 2>/dev/null)" ]; then
     printf '%s\n' "$json"
@@ -348,29 +313,26 @@ workflow_merge_ci_policy_into_json() {
     fi
   fi
 
-  local github_slug resolve_root="$root" context ci_policy mode
+  local github_slug context ci_policy mode_json mode
   github_slug="$(printf '%s\n' "$json" | jq -r '.github_repo // ""' 2>/dev/null)"
 
-  mode="$(python3 "$(workflow_config_resolver_script)" mode --repo-root "$root" --json 2>/dev/null | jq -r '.WORKFLOW_MODE // ""')"
-  if [ "$mode" = "product_repo" ]; then
-    local hub_root
-    hub_root="$(workflow_hub_root_for_ci_policy "$root" "$github_slug" 2>/dev/null || true)"
-    if [ -n "$hub_root" ]; then
-      resolve_root="$hub_root"
-      if [ -z "$repo_name" ] && [ -n "$github_slug" ]; then
-        repo_name="$(workflow_product_repo_name_for_github_slug "$hub_root" "$github_slug" 2>/dev/null || true)"
-      fi
-    fi
-  elif [ -z "$repo_name" ] && [ -n "$github_slug" ]; then
-    repo_name="$(workflow_product_repo_name_for_github_slug "$resolve_root" "$github_slug" 2>/dev/null || true)"
+  # CI policy belongs to the selected checkout. Do not discover a hub via
+  # siblings or inherited locators, then re-root later context/private reads.
+  mode_json="$(python3 "$(workflow_config_resolver_script)" mode --repo-root "$root" --json)" || return 2
+  mode="$(printf '%s\n' "$mode_json" | jq -r '.WORKFLOW_MODE // ""')" || return 2
+  if [ "$mode" = workflow_hub ] && [ -z "$repo_name" ] && [ -n "$github_slug" ]; then
+    repo_name="$(workflow_product_repo_name_for_github_slug "$root" "$github_slug")" || {
+      local lookup_status=$?
+      [ "$lookup_status" -eq 1 ] || return 2
+    }
   fi
 
-  if [ -n "$github_slug" ] && [ -z "$repo_name" ]; then
+  if [ "$mode" = workflow_hub ] && [ -n "$github_slug" ] && [ -z "$repo_name" ]; then
     printf '%s\n' "$json"
     return 0
   fi
 
-  if ! context="$(workflow_repository_context "$repo_name" "$resolve_root" 2>/dev/null)"; then
+  if ! context="$(workflow_repository_context "$repo_name" "$root" 2>/dev/null)"; then
     printf '%s\n' "$json"
     return 0
   fi
