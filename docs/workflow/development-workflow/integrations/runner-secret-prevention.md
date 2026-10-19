@@ -13,6 +13,14 @@ working directory. Missing, unreadable or malformed selected sources stop the
 operation without substituting shared or default settings. Do not print private
 configuration values while diagnosing the named source and safe error category.
 
+The existing PyYAML dependency must be installed for the `python3` that validates
+a selected private source, including legacy context/auth commands and Bash
+consumers such as CodeRabbit's policy reader. Validation covers the complete
+selected file before field extraction; a malformed unrelated or trailing section
+cannot become an absent field and activate shared/default policy. No private
+source means legacy context commands retain dependency-free reading. This check
+does not replace the separate reviewer-field schema/projection validation.
+
 <!-- workflow-shell-contract: bash-zsh -->
 ```bash
 export WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT=/path/to/authorized-checkout

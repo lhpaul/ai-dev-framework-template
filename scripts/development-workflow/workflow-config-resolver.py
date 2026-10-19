@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Resolve shared and local workflow repository context.
 
-Legacy commands use only the Python standard library. Strict review-effective
-uses PyYAML for complete syntax validation and supports the small YAML subset in `.ai-dev-workflow.yaml` and
+Selected private sources and strict review-effective use the existing PyYAML
+dependency for complete syntax validation. Field readers support the small YAML subset in `.ai-dev-workflow.yaml` and
 `.ai-dev-workflow.local.yaml`: nested mappings, lists, and scalar values.
 Unsupported or malformed structures fail closed with a file-specific error.
 """
@@ -518,7 +518,9 @@ def parse_yaml_subset(path: Path, *, preserve_empty_values: bool = False) -> dic
 
 
 def parse_yaml_snapshot(raw: str, path: Path) -> dict[str, Any]:
-    """Dependency-free legacy default; keep strict review consumers separate."""
+    """Keep legacy fields; validate selected private bytes before extracting them."""
+    if path.name == LOCAL_CONFIG_NAME:
+        validate_selected_yaml(raw, path)
     lines = preprocess_yaml_snapshot(raw, path)
     if not lines:
         return {}
@@ -554,6 +556,41 @@ def as_list(value: Any, path: Path, field: str) -> list[Any]:
 
 
 LOCAL_CONFIG_NAME = ".ai-dev-workflow.local.yaml"
+
+
+def validate_selected_yaml(raw: str, path: Path) -> None:
+    """Validate all selected private bytes before any legacy field selection."""
+    try:
+        import yaml
+    except ImportError as exc:
+        raise ConfigError(f"{path}: selected-source validation requires PyYAML") from exc
+    try:
+        root = yaml.compose(raw, Loader=yaml.BaseLoader)
+        if root is None:
+            return
+        if not isinstance(root, yaml.MappingNode):
+            raise ConfigError(f"{path}: selected source must be a mapping")
+        pending, visited = [root], set()
+        while pending:
+            node = pending.pop()
+            if id(node) in visited:
+                continue
+            visited.add(id(node))
+            if isinstance(node, yaml.MappingNode):
+                keys = set()
+                for key, value in node.value:
+                    if not isinstance(key, yaml.ScalarNode):
+                        raise ConfigError(f"{path}: unsupported selected-source mapping key")
+                    if key.value in keys:
+                        raise ConfigError(f"{path}:{key.start_mark.line + 1}: duplicate mapping key")
+                    keys.add(key.value)
+                    pending.append(value)
+            elif isinstance(node, yaml.SequenceNode):
+                pending.extend(node.value)
+    except (yaml.YAMLError, RecursionError, ValueError) as exc:
+        mark = getattr(exc, "problem_mark", None)
+        location = f"{path}:{mark.line + 1}" if mark is not None else str(path)
+        raise ConfigError(f"{location}: invalid YAML") from exc
 
 
 def validate_local_source(repo_root: Path, *, explicit: bool = False) -> Path:
@@ -2350,7 +2387,18 @@ def cmd_review_snapshot(args: argparse.Namespace) -> int:
 
 def cmd_local_source(args: argparse.Namespace) -> int:
     path, _, _ = resolve_local_config(repo_root_from_args(args.repo_root))
+    parse_yaml_subset(path)
     print(path)
+    return 0
+
+
+def cmd_yaml_source_check(args: argparse.Namespace) -> int:
+    path = Path(args.file)
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as exc:
+        raise ConfigError(f"{path}: selected source unreadable") from exc
+    validate_selected_yaml(raw, path)
     return 0
 
 
@@ -2371,6 +2419,10 @@ def cmd_review_local_list(args: argparse.Namespace) -> int:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Resolve AI workflow repository context")
     subcommands = parser.add_subparsers(dest="command", required=True)
+
+    yaml_check = subcommands.add_parser("yaml-source-check", help="validate selected YAML before legacy field extraction")
+    yaml_check.add_argument("--file", required=True)
+    yaml_check.set_defaults(func=cmd_yaml_source_check)
 
     snapshot = subcommands.add_parser("review-snapshot", help="stage validated review-only local settings")
     snapshot.add_argument("--repo-root")

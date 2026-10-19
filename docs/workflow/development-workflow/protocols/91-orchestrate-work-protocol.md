@@ -86,7 +86,9 @@ subset: two-space block mappings, known keys, one-line quoted/bare strings and
 multiline values, tags/directives, duplicates and wrong types fail closed.
 `validate`, `model-route` and `model-routes` share the same policy reading path
 and first CODE/FILE/FIELD/MESSAGE error, exit 2 and empty stdout. The legacy tail
-and unactivated files retain the existing dependency-free reading contract.
+and unactivated shared files retain dependency-free field reading. Selected
+private bytes are first syntax-validated with the existing PyYAML dependency,
+as described in the selected-source contract below.
 See the [format and activation guide](../integrations/dsh.md#explicit-activation-and-strict-format).
 
 YAML anchors, aliases and merge keys are unsupported in `models.dsh`. Use
@@ -1751,7 +1753,12 @@ unsupported shapes fail closed throughout both files. Scalar typing remains
 explicit: only `null`/`Null`/`NULL`/`~` and empty plain values are null, and only
 `true`/`True`/`TRUE` or `false`/`False`/`FALSE` are booleans; quoted values stay
 strings. Numeric conversion limits produce structured unreadable-config diagnostics.
-Legacy resolver commands retain their existing dependency-free parser.
+Legacy field extraction retains its existing parser. A selected private source
+is syntax-validated in full with the existing PyYAML dependency before any
+legacy field is read, including non-review commands and CodeRabbit policy
+selection. Missing PyYAML or malformed selected YAML is a source failure, never
+permission to substitute shared/default policy. Commands without a private source
+retain dependency-free legacy reading.
 
 
 The resolver accepts the transition-release `review.internal_reviewers` alias

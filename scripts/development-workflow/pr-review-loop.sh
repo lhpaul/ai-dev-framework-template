@@ -14528,11 +14528,8 @@ _check_release_pr_guard() {
 #
 # Prints the directory whose .ai-dev-workflow.local.yaml carries the review
 # policy for this run, or nothing when the policy is the shared config. The
-# resolver reports LOCAL_OVERRIDE_FILE, which is the initiating root's own file
-# or — when the initiating root is a linked worktree without one — the main
-# clone's (#1560). Printing the file's directory rather than the initiating
-# root keeps the exported WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT pointing at a
-# directory that actually holds the file.
+# resolver reports only the deliberately selected file. Validate the entire
+# selected source before exporting its directory to a handoff.
 resolve_local_review_override_root() {
   local initiating_root="$1"
   local caller_override_root="${WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT:-}"
@@ -14548,7 +14545,7 @@ resolve_local_review_override_root() {
   fi
 
   if ! override_context="$(workflow_review_override_context "$initiating_root")"; then
-    return 1
+    return 2
   fi
   override_source="$(workflow_context_value "LOCAL_OVERRIDE_SOURCE" "$override_context")"
   override_file="$(workflow_context_value "LOCAL_OVERRIDE_FILE" "$override_context")"

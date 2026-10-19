@@ -60,7 +60,7 @@ workflow_effective_config_file() {
 
 # Source resolution never discovers another checkout. Status 2 means failure.
 workflow_local_config_file() {
-  python3 "$(workflow_config_resolver_script)" local-source --repo-root "$(workflow_repo_root)"
+  python3 "$(workflow_config_resolver_script)" local-source --repo-root "${1:-$(workflow_repo_root)}"
 }
 
 workflow_local_review_override_root() {
@@ -248,6 +248,8 @@ workflow_product_repo_name_for_github_slug() {
   local slug="$2"
   local name context github
 
+  workflow_local_config_file "$root" >/dev/null || return 2
+
   if [ -z "$root" ] || [ -z "$slug" ]; then
     return 1
   fi
@@ -271,6 +273,8 @@ workflow_hub_root_for_ci_policy() {
   local root="$1"
   local github_slug="${2:-}"
   local mode context candidate parent repo_name
+
+  workflow_local_config_file "$root" >/dev/null || return 2
 
   if [ -z "$root" ]; then
     return 1
@@ -316,6 +320,8 @@ workflow_merge_ci_policy_into_json() {
   local root="${2:-}"
   local repo_name="${3:-}"
   local trust_repo_name=0
+
+  workflow_local_config_file "$root" >/dev/null || return 2
 
   if [ -z "$root" ]; then
     printf '%s\n' "$json"

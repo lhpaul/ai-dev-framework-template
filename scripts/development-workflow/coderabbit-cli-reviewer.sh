@@ -134,6 +134,7 @@ rate_limit_policy_from_file() {
   local config_file="$1"
   local value=""
   if [ -n "$config_file" ] && [ -f "$config_file" ]; then
+    python3 "$(workflow_config_resolver_script)" yaml-source-check --file "$config_file" || return 2
     value="$(
       awk '
         function trim(v) {
