@@ -430,83 +430,34 @@ def as_list(value: Any, path: Path, field: str) -> list[Any]:
 LOCAL_CONFIG_NAME = ".ai-dev-workflow.local.yaml"
 
 
-def linked_worktree_main_root(repo_root: Path) -> Path | None:
-    """Return the main clone's root when ``repo_root`` is a linked git worktree.
-
-    ``git worktree add`` carries no untracked or gitignored files, so a linked
-    worktree never contains ``.ai-dev-workflow.local.yaml`` (#1560). Detection
-    is git-free on purpose: callers such as ``run-epic-policy-recommender.sh``
-    are contractually forbidden from invoking ``git`` or ``gh``, and a linked
-    worktree is recognisable from the filesystem alone — its ``.git`` is a
-    *file* whose first line is ``gitdir: <main>/.git/worktrees/<name>``. The
-    main clone (a ``.git`` directory), a plain checkout, a bare repository, a
-    submodule (``gitdir: .../.git/modules/<name>``) and a directory outside
-    any repository all return ``None``.
-    """
-    dot_git = repo_root / ".git"
-    try:
-        if not dot_git.is_file():
-            return None
-        first_line = dot_git.read_text(encoding="utf-8", errors="replace").splitlines()[:1]
-    except OSError:
-        return None
-    if not first_line or not first_line[0].startswith("gitdir:"):
-        return None
-    gitdir = Path(first_line[0][len("gitdir:"):].strip())
-    if not gitdir.is_absolute():
-        gitdir = repo_root / gitdir
-    try:
-        gitdir = gitdir.resolve()
-        resolved_root = repo_root.resolve()
-    except OSError:
-        return None
-    if gitdir.parent.name != "worktrees" or gitdir.parent.parent.name != ".git":
-        return None
-    main_root = gitdir.parent.parent.parent
-    if main_root == resolved_root or not (main_root / ".git").is_dir():
-        return None
-    return main_root
+def validate_local_source(repo_root: Path, *, explicit: bool = False) -> Path:
+    """Validate a selected source without discovering another checkout."""
+    root = repo_root.resolve()
+    if not root.is_dir() or not os.access(root, os.R_OK | os.X_OK):
+        raise ConfigError("local-source: unreadable directory")
+    path = root / LOCAL_CONFIG_NAME
+    if not path.exists() and not path.is_symlink():
+        if explicit:
+            raise ConfigError(f"{path}: local-source missing file")
+        return path
+    if not path.is_file() or not os.access(path, os.R_OK):
+        raise ConfigError(f"{path}: local-source unreadable regular file")
+    if not explicit and not path.resolve().is_relative_to(root):
+        raise ConfigError(f"{path}: local-source external indirection requires explicit selection")
+    return path
 
 
 def resolve_local_config(repo_root: Path) -> tuple[Path, str, Path | None]:
-    """Locate the local override file that applies to ``repo_root``.
+    """Checkout-local selection, or a validated explicit external source.
 
-    Returns ``(path, origin, main_clone_file)``.
-
-    ``origin`` is ``override_root`` when ``WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT``
-    names the source (the initiating checkout of a reviewer-loop handoff,
-    #1033), ``checkout`` when ``repo_root`` holds the file itself,
-    ``main_clone`` when ``repo_root`` is a linked worktree without one and the
-    main clone has it (#1560), and ``""`` when no file exists anywhere — ``path``
-    is then the checkout's own, not-yet-existing file, which is also where
-    writes land in that case.
-
-    ``main_clone_file`` is the main clone's file whenever ``repo_root`` is a
-    linked worktree and that file exists, independent of which file is used.
-    It lets callers report "a local override exists in the main clone but was
-    not the one applied" instead of a bare "no override".
+    Compatibility main-clone metadata is always empty; no Git ancestry is read.
     """
     override_root = os.environ.get("WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT", "")
-    main_root = linked_worktree_main_root(repo_root)
-    main_clone_file: Path | None = None
-    if main_root is not None:
-        candidate = main_root / LOCAL_CONFIG_NAME
-        if candidate.is_file():
-            main_clone_file = candidate
     if override_root:
-        root = Path(override_root)
-        if not root.is_dir():
-            raise ConfigError(
-                "configured local reviewer override source is unavailable: "
-                f"WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT={override_root}"
-            )
-        return root.resolve() / LOCAL_CONFIG_NAME, "override_root", main_clone_file
-    checkout_file = repo_root / LOCAL_CONFIG_NAME
-    if checkout_file.is_file():
-        return checkout_file, "checkout", main_clone_file
-    if main_clone_file is not None:
-        return main_clone_file, "main_clone", main_clone_file
-    return checkout_file, "", main_clone_file
+        path = validate_local_source(Path(override_root), explicit=True)
+        return path, "override_root", None
+    path = validate_local_source(repo_root)
+    return path, "checkout" if path.is_file() else "", None
 
 
 def load_configs(repo_root: Path, *, policy: ModelPolicy | None = None) -> tuple[dict[str, Any], dict[str, Any], Path, Path]:
@@ -890,15 +841,8 @@ def dump_yaml_subset(value: Any, indent: int = 0) -> list[str]:
 
 def set_local_product_repo_path(repo_root: Path, repo_name: str, local_path_value: str,
                                *, snapshot: ModelSnapshot | None = None) -> Path:
-    # Always read and write the checkout's own local config file, never the
-    # main clone fallback that load_configs()/resolve_local_config() applies
-    # for review-override resolution (#1560). Two problems otherwise: this
-    # would silently mutate a different checkout's file from inside a linked
-    # worktree, and normalized_path below is computed relative to repo_root —
-    # if that write landed in another directory (the main clone), the stored
-    # relative path would resolve incorrectly whenever repo_root and the main
-    # clone are not the same filesystem depth apart from the target path.
-    local_path = repo_root / LOCAL_CONFIG_NAME
+    # Writes always belong to this checkout; validate physical containment first.
+    local_path = validate_local_source(repo_root)
     if snapshot is None:
         snapshot = read_model_snapshot(local_path)
     local = thaw_model_snapshot(snapshot.legacy)
@@ -1453,16 +1397,6 @@ def resolve_review_effective(args: argparse.Namespace) -> dict[str, Any]:
     parse_path = local_path
     try:
         local = parse_yaml_subset(local_path, preserve_empty_values=True)
-        # A linked worktree's product-repos-only local file must not mask the
-        # main clone's review settings (#1560).
-        if local_origin == "checkout" and main_clone_file is not None and "review" not in local:
-            parse_path = main_clone_file
-            main_local = parse_yaml_subset(main_clone_file, preserve_empty_values=True)
-            if "review" in main_local:
-                local_path, local_origin, local = main_clone_file, "main_clone", main_local
-                local_file = str(local_path)
-                base["local_override_file"] = local_file
-                base["local_override_origin"] = local_origin
     except (ConfigError, UnicodeDecodeError) as exc:
         base.update({
             "effective_policy_state": "unreadable",
@@ -1620,14 +1554,6 @@ def resolve_review_github_effective(args: argparse.Namespace) -> dict[str, Any]:
     parse_path = local_path
     try:
         local = parse_yaml_subset(local_path, preserve_empty_values=True)
-        if local_origin == "checkout" and main_clone_file is not None and "review" not in local:
-            parse_path = main_clone_file
-            main_local = parse_yaml_subset(main_clone_file, preserve_empty_values=True)
-            if "review" in main_local:
-                local_path, local_origin, local = main_clone_file, "main_clone", main_local
-                local_file = str(local_path)
-                base["local_override_file"] = local_file
-                base["local_override_origin"] = local_origin
     except (ConfigError, UnicodeDecodeError) as exc:
         base.update({"unreadable_file": str(parse_path), "unreadable_detail": str(exc)})
         return base
@@ -1685,22 +1611,9 @@ def scalar_from_path(data: dict[str, Any], path: list[str]) -> str:
 
 
 def resolve_local_review_config(repo_root: Path) -> tuple[Path, str, Path | None, dict[str, Any]]:
-    """Like ``resolve_local_config`` but for the ``review`` section specifically.
-
-    A checkout-local file that carries no ``review`` section — the file
-    ``set-local-path`` writes into a linked worktree holds only
-    ``product_repos`` — must not mask the main clone's reviewer override; that
-    would recreate the zero-reachable-reviewer failure #1560 exists to end.
-    Returns ``(path, origin, main_clone_file, parsed)`` where ``parsed`` is the
-    mapping the review values come from.
-    """
+    """Return only the selected checkout-local or explicit review source."""
     local_path, origin, main_clone_file = resolve_local_config(repo_root)
-    local = parse_yaml_subset(local_path)
-    if origin == "checkout" and main_clone_file is not None and "review" not in local:
-        main_local = parse_yaml_subset(main_clone_file)
-        if "review" in main_local:
-            return main_clone_file, "main_clone", main_clone_file, main_local
-    return local_path, origin, main_clone_file, local
+    return local_path, origin, main_clone_file, parse_yaml_subset(local_path)
 
 
 def resolve_review_overrides(args: argparse.Namespace) -> dict[str, str]:
@@ -2225,9 +2138,39 @@ def cmd_validate(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_local_source(args: argparse.Namespace) -> int:
+    path, _, _ = resolve_local_config(repo_root_from_args(args.repo_root))
+    print(path)
+    return 0
+
+
+def cmd_review_local_list(args: argparse.Namespace) -> int:
+    path, _, _ = resolve_local_config(repo_root_from_args(args.repo_root))
+    data = parse_yaml_subset(path, preserve_empty_values=True)
+    value, present, invalid = review_effective_value_from_path(
+        data, ["review", args.phase, args.key])
+    values, state = review_runner_state(value, present)
+    if invalid or state == "malformed":
+        raise ConfigError(f"{path}: invalid review.{args.phase}.{args.key} schema")
+    if not present or value is None:
+        return 1
+    for item in values:
+        print(item)
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Resolve AI workflow repository context")
     subcommands = parser.add_subparsers(dest="command", required=True)
+
+    source = subcommands.add_parser("local-source", help="validate and print selected local source")
+    source.add_argument("--repo-root")
+    source.set_defaults(func=cmd_local_source)
+    local_list = subcommands.add_parser("review-local-list", help="read a declared local review list")
+    local_list.add_argument("--repo-root")
+    local_list.add_argument("--phase", choices=("on_draft", "on_ready"), required=True)
+    local_list.add_argument("--key", choices=("runner", "github"), required=True)
+    local_list.set_defaults(func=cmd_review_local_list)
 
     mode = subcommands.add_parser("mode", help="print the effective workflow mode")
     mode.add_argument("--repo-root")

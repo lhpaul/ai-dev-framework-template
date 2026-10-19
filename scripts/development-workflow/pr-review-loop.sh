@@ -8,6 +8,9 @@ set -euo pipefail
 SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/development-workflow/workflow-lib.sh
 source "$SCRIPT_DIR/workflow-lib.sh"
+
+# Validate the selected source before CI/reviewer/readiness operations.
+workflow_local_config_file >/dev/null || exit 2
 # shellcheck source=scripts/development-workflow/codex-github-evidence-lib.sh
 source "$SCRIPT_DIR/codex-github-evidence-lib.sh"
 
@@ -1342,13 +1345,15 @@ expensive_gate_local_ai_configured() {
       fi
     done
   else
+    local resolved_configured_platforms
+    resolved_configured_platforms="$(reviewer_loop_repo_configured_platforms)" || return 2
     while IFS= read -r configured_line; do
       configured_line="$(trim "$configured_line")"
       if [ "$configured_line" = "local-ai-reviewer" ]; then
         printf '1\n'
         return 0
       fi
-    done < <(reviewer_loop_repo_configured_platforms)
+    done <<< "$resolved_configured_platforms"
   fi
   printf '0\n'
 }
@@ -1689,7 +1694,7 @@ expensive_gate_baseline_checks_status() {
   fi
 
   live_head="$(printf '%s\n' "$payload" | jq -r '.headRefOid // ""' 2>/dev/null)" || live_head=""
-  reviewer_names="$(configured_reviewer_check_names_json "")" || reviewer_names='[]'
+  reviewer_names="$(configured_reviewer_check_names_json "")" || return 2
 
   if ! normalized_json="$(
     printf '%s\n' "$payload" | normalize_status_check_rollup 2>/dev/null
@@ -2006,15 +2011,11 @@ emit_review_lifecycle_duplicate_warnings() {
   local duplicates
   local duplicate
 
-  [ -f "$config_file" ] || return 0
-
-  duplicates="$(
-    {
-      workflow_config_review_on_draft_runner "$config_file"
-      workflow_config_review_on_draft_github "$config_file"
-      workflow_config_review_on_ready_github "$config_file"
-    } | sort | uniq -d
-  )" || return 0
+  local runners draft ready
+  runners="$(workflow_config_review_on_draft_runner "$config_file")" || return 2
+  draft="$(workflow_config_review_on_draft_github "$config_file")" || return 2
+  ready="$(workflow_config_review_on_ready_github "$config_file")" || return 2
+  duplicates="$(printf '%s\n' "$runners" "$draft" "$ready" | sed '/^$/d' | sort | uniq -d)" || return 2
 
   while IFS= read -r duplicate; do
     [ -z "$duplicate" ] && continue
@@ -10860,13 +10861,12 @@ reviewer_loop_repo_configured_platforms() {
     return 0
   fi
   local cfg="${config_file:-$(workflow_config_file)}"
-  if [ ! -f "$cfg" ]; then
-    return 0
-  fi
+  local resolved_platforms
+  resolved_platforms="$(WORKFLOW_APPLY_LOCAL_REVIEW_OVERRIDES=1 workflow_config_review_platforms "$cfg")" || return 2
   while IFS= read -r line; do
     line="$(trim "$line")"
     [ -n "$line" ] && printf '%s\n' "$line"
-  done < <(WORKFLOW_APPLY_LOCAL_REVIEW_OVERRIDES=1 workflow_config_review_platforms "$cfg")
+  done <<< "$resolved_platforms"
 }
 
 # reviewer_loop_compose_current_round_payload <history_payload> <iteration>
@@ -11336,7 +11336,7 @@ reviewer_loop_second_local_pass_before_ready_gate() {
   _sl_prior_payload="$(reviewer_loop_prior_history_payload_from_pr "$pr_number_arg")"
   _sl_next_iteration="$(printf '%s\n' "$_sl_prior_payload" | jq '(.entries // []) | length + 1' 2>/dev/null)" || _sl_next_iteration=1
   [[ "$_sl_next_iteration" =~ ^[0-9]+$ ]] || _sl_next_iteration=1
-  _sl_configured="$(reviewer_loop_repo_configured_platforms)"
+  _sl_configured="$(reviewer_loop_repo_configured_platforms)" || return 2
   _sl_composed="$(reviewer_loop_compose_current_round_payload "$_sl_prior_payload" "$_sl_next_iteration")"
   _sl_required="$(reviewer_loop_local_pass_required "$_sl_composed" "$loop_head_sha" "$_sl_configured")"
   local_second_pass_reason="$_sl_required"
@@ -14536,10 +14536,9 @@ resolve_local_review_override_root() {
   local override_file=""
 
   if [ -n "$caller_override_root" ]; then
-    if [ ! -d "$caller_override_root" ]; then
-      return 1
-    fi
-    printf '%s\n' "$caller_override_root"
+    local selected_file
+    selected_file="$(python3 "$(workflow_config_resolver_script)" local-source --repo-root "$initiating_root")" || return 2
+    dirname -- "$selected_file"
     return 0
   fi
 
@@ -15252,15 +15251,16 @@ if [ -n "$_pr_base" ]; then
   fi
 fi
 config_file="${_PR_CONFIG_TMPFILE:-$(workflow_config_file)}"
-if [ -f "$config_file" ]; then
+if :; then
   if [ "$review_lifecycle_duplicate_warnings_emitted" -eq 0 ]; then
-    WORKFLOW_APPLY_LOCAL_REVIEW_OVERRIDES=1 emit_review_lifecycle_duplicate_warnings "$config_file"
+    WORKFLOW_APPLY_LOCAL_REVIEW_OVERRIDES=1 emit_review_lifecycle_duplicate_warnings "$config_file" || exit 2
     review_lifecycle_duplicate_warnings_emitted=1
   fi
+  resolved_repo_platforms="$(WORKFLOW_APPLY_LOCAL_REVIEW_OVERRIDES=1 workflow_config_review_platforms "$config_file")" || exit 2
   while IFS= read -r line; do
     line="$(trim "$line")"
     [ -n "$line" ] && repo_review_platforms+=("$line")
-  done < <(WORKFLOW_APPLY_LOCAL_REVIEW_OVERRIDES=1 workflow_config_review_platforms "$config_file")
+  done <<< "$resolved_repo_platforms"
 fi
 
 if [ "${#platforms[@]}" -eq 0 ] && [ "${#repo_review_platforms[@]}" -gt 0 ]; then
@@ -15269,15 +15269,16 @@ fi
 
 if [ "${#phase_after_clean_platforms[@]}" -eq 0 ]; then
   config_file="${config_file:-$(workflow_config_file)}"
-  if [ -f "$config_file" ]; then
+  if :; then
     if [ "$review_lifecycle_duplicate_warnings_emitted" -eq 0 ]; then
-      WORKFLOW_APPLY_LOCAL_REVIEW_OVERRIDES=1 emit_review_lifecycle_duplicate_warnings "$config_file"
+      WORKFLOW_APPLY_LOCAL_REVIEW_OVERRIDES=1 emit_review_lifecycle_duplicate_warnings "$config_file" || exit 2
       review_lifecycle_duplicate_warnings_emitted=1
     fi
+    resolved_ready_platforms="$(WORKFLOW_APPLY_LOCAL_REVIEW_OVERRIDES=1 workflow_config_review_phase_after_clean_platforms "$config_file")" || exit 2
     while IFS= read -r line; do
       line="$(trim "$line")"
       [ -n "$line" ] && phase_after_clean_platforms+=("$line")
-    done < <(WORKFLOW_APPLY_LOCAL_REVIEW_OVERRIDES=1 workflow_config_review_phase_after_clean_platforms "$config_file")
+    done <<< "$resolved_ready_platforms"
   fi
 fi
 

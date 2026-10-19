@@ -10,6 +10,9 @@ SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/development-workflow/workflow-lib.sh
 source "$SCRIPT_DIR/workflow-lib.sh"
 
+# Validate the selected source before CI/reviewer/readiness operations.
+workflow_local_config_file >/dev/null || exit 2
+
 usage() {
   cat >&2 <<'EOF'
 Usage: coderabbit-cli-reviewer.sh <pr_number> <owner> <repo> [--timeout <seconds>] [--repo-root <path>]
@@ -160,14 +163,14 @@ rate_limit_policy_from_config() {
   local local_file
   local value=""
 
-  local_file="$(workflow_local_config_file 2>/dev/null || true)"
+  local_file="$(workflow_local_config_file)" || return 2
   if [ -n "$local_file" ] && [ -f "$local_file" ]; then
-    value="$(rate_limit_policy_from_file "$local_file")"
+    value="$(rate_limit_policy_from_file "$local_file")" || return 2
   fi
 
   if [ -z "$value" ]; then
     config_file="$(workflow_effective_config_file 2>/dev/null || true)"
-    value="$(rate_limit_policy_from_file "$config_file")"
+    value="$(rate_limit_policy_from_file "$config_file")" || return 2
   fi
 
   printf '%s' "$value"
@@ -175,7 +178,7 @@ rate_limit_policy_from_config() {
 
 RATE_LIMIT_POLICY="${CODERABBIT_CLI_RATE_LIMIT_POLICY:-}"
 if [ -z "$RATE_LIMIT_POLICY" ]; then
-  RATE_LIMIT_POLICY="$(rate_limit_policy_from_config)"
+  RATE_LIMIT_POLICY="$(rate_limit_policy_from_config)" || exit 2
 fi
 RATE_LIMIT_POLICY="${RATE_LIMIT_POLICY:-warn}"
 case "$RATE_LIMIT_POLICY" in

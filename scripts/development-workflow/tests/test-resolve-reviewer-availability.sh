@@ -585,7 +585,7 @@ reviews:
     reset('[claude,cursor,codex]');main=root/'main';wtgit=main/'.git/worktrees/linked';wtgit.mkdir(parents=True)
     (wtgit/'commondir').write_text('../..\n');(repo/'.git').write_text(f'gitdir: {wtgit}\n')
     (main/'.ai-dev-workflow.local.yaml').write_text('review:\n  on_draft:\n    runner: [codex]\n')
-    d=run('codex');check('T-34 main-clone override', 'main_clone' in d['LOCAL_OVERRIDE_STATE'])
+    d=run('codex');check('T-34 no main-clone inheritance', d['LOCAL_OVERRIDE_STATE']=='none')
     (repo/'.ai-dev-workflow.local.yaml').write_text('product_repos:\n  checkout_root: ../linked-product\n')
     (main/'.ai-dev-workflow.local.yaml').write_text('product_repos:\n  checkout_root: ../main-product\n')
     d=run('codex');check('T-34 linked product-only local files are not review overrides',d['LOCAL_OVERRIDE_STATE']=='none' and d['OUTCOME']=='proceeded-reduced',d)

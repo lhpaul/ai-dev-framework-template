@@ -6,6 +6,9 @@ SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)"
 # shellcheck source=scripts/development-workflow/workflow-lib.sh
 source "$SCRIPT_DIR/workflow-lib.sh"
 
+# Validate the selected source before CI/reviewer/readiness operations.
+workflow_local_config_file >/dev/null || exit 2
+
 usage() {
   cat <<'EOF'
 Usage: ./scripts/development-workflow/pr-ci-loop.sh <pr-number> [--repo owner/repo|product-name] [--product-repo name] [--repo-root path] [--poll-interval seconds] [--max-wait seconds]

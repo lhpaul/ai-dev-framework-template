@@ -261,12 +261,14 @@ configured_platforms_all_no_thread() {
   local platform=""
   local seen=0
 
-  config_file="$(workflow_effective_config_file)"
+  local resolved_platforms
+  config_file="$(workflow_effective_config_file 2>/dev/null || workflow_config_file)"
+  resolved_platforms="$(configured_review_platforms "$config_file")" || return 2
   while IFS= read -r platform; do
     [ -n "$platform" ] || continue
     platform_has_no_review_threads "$platform" || return 1
     seen=1
-  done < <(configured_review_platforms "$config_file")
+  done <<< "$resolved_platforms"
   [ "$seen" -eq 1 ]
 }
 
@@ -297,7 +299,9 @@ configured_thread_bot_logins_json() {
   local bot_login=""
   local -a bot_logins=()
 
-  config_file="$(workflow_effective_config_file)"
+  local resolved_platforms
+  config_file="$(workflow_effective_config_file 2>/dev/null || workflow_config_file)"
+  resolved_platforms="$(configured_review_platforms "$config_file")" || return 2
   while IFS= read -r platform; do
     [ -n "$platform" ] || continue
     bot_login="$(bot_login_for_platform "$platform")"
@@ -306,7 +310,7 @@ configured_thread_bot_logins_json() {
       [ -n "$bot_login_variant" ] || continue
       bot_logins+=("$bot_login_variant")
     done < <(thread_bot_login_variants "$bot_login")
-  done < <(configured_review_platforms "$config_file")
+  done <<< "$resolved_platforms"
 
   if [ "${#bot_logins[@]}" -eq 0 ]; then
     printf '[]\n'
@@ -432,10 +436,12 @@ local_ai_reviewer_configured() {
   local config_file
   local platform
 
-  config_file="$(workflow_effective_config_file)"
+  local resolved_platforms
+  config_file="$(workflow_effective_config_file 2>/dev/null || workflow_config_file)"
+  resolved_platforms="$(configured_review_platforms "$config_file")" || return 2
   while IFS= read -r platform; do
     [ "$platform" = "local-ai-reviewer" ] && return 0
-  done < <(configured_review_platforms "$config_file")
+  done <<< "$resolved_platforms"
   return 1
 }
 
@@ -495,13 +501,15 @@ reviewer_check_names_json() {
   local check_name=""
   local -a check_names=()
 
-  config_file="$(workflow_effective_config_file)"
+  local resolved_platforms
+  config_file="$(workflow_effective_config_file 2>/dev/null || workflow_config_file)"
+  resolved_platforms="$(configured_review_platforms "$config_file")" || return 2
   while IFS= read -r platform; do
     [ -n "$platform" ] || continue
     check_name="$(reviewer_check_name_for_platform "$platform")"
     [ -n "$check_name" ] || continue
     check_names+=("$check_name")
-  done < <(configured_review_platforms "$config_file")
+  done <<< "$resolved_platforms"
 
   if [ "${#check_names[@]}" -eq 0 ]; then
     printf '[]\n'
@@ -697,7 +705,10 @@ if [ -n "$pr_number" ]; then
         add_row "pull_request.changed_files" "verified" "$pr_files" "gh pr view $pr_number --json files"
       fi
 
-      reviewer_checks="$(reviewer_check_names_json)"
+      if ! reviewer_checks="$(reviewer_check_names_json)"; then
+        add_row "pull_request.reviewer_configuration" "unavailable_required" "source resolution failed" "configured review platforms"
+        reviewer_checks='[]'
+      fi
       # Superseded runs stay in the rollup; judge only the latest run per
       # check (shared helper, workflow-lib.sh, #1559).
       if normalized_checks="$(printf '%s\n' "$pr_json" | normalize_status_check_rollup 2>&1)" \
@@ -764,6 +775,8 @@ if [ -n "$pr_number" ]; then
 
       if ! is_true "$require_review_summary"; then
         add_row "pull_request.local_reviewer_head" "unavailable_optional" "not claimed" "--require-review-summary not set"
+      elif ! configured_review_platforms "$(workflow_effective_config_file 2>/dev/null || workflow_config_file)" >/dev/null; then
+        add_row "pull_request.local_reviewer_head" "unavailable_required" "source resolution failed" "configured review platforms"
       elif ! local_ai_reviewer_configured; then
         add_row "pull_request.local_reviewer_head" "unavailable_optional" "local-ai-reviewer not configured" "resolved platform list"
       elif latest_review_summary="$(fetch_latest_review_summary "$pr_repo" "$pr_number" 2>&1)"; then
@@ -814,7 +827,10 @@ if [ -n "$pr_number" ]; then
       if is_true "$require_review_threads"; then
         owner="${pr_repo%%/*}"
         name="${pr_repo#*/}"
-        thread_bot_logins_json="$(configured_thread_bot_logins_json)"
+        if ! thread_bot_logins_json="$(configured_thread_bot_logins_json)"; then
+          add_row "pull_request.reviewer_configuration" "unavailable_required" "source resolution failed" "configured review platforms"
+          thread_bot_logins_json='[]'
+        fi
         threads_json=""
         thread_count=""
         graph_thread_comment_ids="[]"

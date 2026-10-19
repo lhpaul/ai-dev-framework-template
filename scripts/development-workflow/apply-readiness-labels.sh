@@ -413,6 +413,9 @@ SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)"
 # shellcheck source=scripts/development-workflow/workflow-lib.sh
 source "$SCRIPT_DIR/workflow-lib.sh"
 
+# Validate the selected source before CI/reviewer/readiness operations.
+workflow_local_config_file >/dev/null || exit 2
+
 usage() {
   cat <<'USAGE'
 Usage: apply-readiness-labels.sh --classify-pr-agent|--pr-agent-focus-labels < review.txt
@@ -585,7 +588,7 @@ configured_ready_reviewer_platforms() {
 # loop dispatched.
 pr_head_config_ready_platforms() {
   local repo_arg="$1" sha_arg="$2"
-  local content_b64 config_body head_config_file rc
+  local content_b64 config_body head_config_file rc=0
   content_b64="$(gh api "repos/$repo_arg/contents/.ai-dev-workflow.yaml?ref=$sha_arg" \
       --jq '.content // ""' 2>/dev/null)" || return 1
   [ -n "$content_b64" ] || return 1
@@ -594,11 +597,10 @@ pr_head_config_ready_platforms() {
   head_config_file="$(mktemp)" || return 1
   printf '%s\n' "$config_body" >"$head_config_file"
   if [ "${loop_dispatched_base:-0}" = "1" ]; then
-    WORKFLOW_APPLY_LOCAL_REVIEW_OVERRIDES=1 workflow_config_review_on_ready_github "$head_config_file"
+    WORKFLOW_APPLY_LOCAL_REVIEW_OVERRIDES=1 workflow_config_review_on_ready_github "$head_config_file" || rc=$?
   else
-    workflow_config_review_on_ready_github "$head_config_file"
+    workflow_config_review_on_ready_github "$head_config_file" || rc=$?
   fi
-  rc=$?
   rm -f "$head_config_file"
   return "$rc"
 }
@@ -1956,7 +1958,7 @@ if [ "$is_implementation_pr" = "true" ]; then
   # head fetch/parse failure escalates — fail closed — instead of silently
   # gating on this checkout's configuration, which the PR may have changed.
   if [ -n "${AI_DEV_WORKFLOW_CONFIG_FILE:-}" ]; then
-    ready_platforms="$(configured_ready_reviewer_platforms)"
+    ready_platforms="$(configured_ready_reviewer_platforms)" || escalate ready-config-unreadable
   elif ! ready_platforms="$(pr_head_config_ready_platforms "$repo" "$head_sha" 2>/dev/null)"; then
     escalate ready-config-unreadable
   fi

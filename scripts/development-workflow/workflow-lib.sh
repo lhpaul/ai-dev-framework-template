@@ -58,112 +58,15 @@ workflow_effective_config_file() {
   return 1
 }
 
-# workflow_linked_worktree_main_root [repo_root]
-#
-# Prints the main clone root when repo_root is a linked git worktree. Prints
-# nothing and returns 1 for the main clone itself, a plain checkout, a bare
-# repository, a submodule, or a directory outside any git repository.
-# Git-free on purpose: callers such as run-epic-policy-recommender.sh must
-# never invoke git or gh, and a linked worktree is recognisable from the
-# filesystem alone — its .git is a FILE whose first line is
-# `gitdir: <main>/.git/worktrees/<name>`. Mirrors linked_worktree_main_root()
-# in workflow-config-resolver.py (#1560).
-workflow_linked_worktree_main_root() {
-  local repo_root="${1:-$(workflow_repo_root)}"
-  local dot_git="" first="" gitdir="" main_root="" resolved_root=""
-
-  dot_git="$repo_root/.git"
-  [ -f "$dot_git" ] || return 1
-  IFS= read -r first < "$dot_git" || [ -n "$first" ] || return 1
-  case "$first" in gitdir:*) ;; *) return 1 ;; esac
-  gitdir="${first#gitdir:}"
-  gitdir="${gitdir#"${gitdir%%[![:space:]]*}"}"
-  # Trim trailing whitespace too, including a stray CR that `read` (unlike
-  # Python's splitlines()) does not strip from a CRLF-terminated line — the
-  # trimmed value must resolve with `cd` below, same as workflow-config-
-  # resolver.py's linked_worktree_main_root().
-  gitdir="${gitdir%"${gitdir##*[![:space:]]}"}"
-  case "$gitdir" in /*) ;; *) gitdir="$repo_root/$gitdir" ;; esac
-  gitdir="$(CDPATH='' cd -- "$gitdir" 2>/dev/null && pwd -P)" || return 1
-  case "$gitdir" in */.git/worktrees/*) ;; *) return 1 ;; esac
-  main_root="${gitdir%/.git/worktrees/*}"
-  resolved_root="$(CDPATH='' cd -- "$repo_root" 2>/dev/null && pwd -P)" || return 1
-  [ "$main_root" != "$resolved_root" ] || return 1
-  [ -d "$main_root/.git" ] || return 1
-  printf '%s\n' "$main_root"
-}
-
-# workflow_local_review_override_root
-#
-# Prints the directory whose .ai-dev-workflow.local.yaml applies to this
-# checkout. Precedence: WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT (the initiating
-# checkout of a reviewer-loop handoff, #1033), then the checkout's own file,
-# then — when the checkout is a linked worktree with no file of its own — the
-# main clone (#1560: `git worktree add` never carries gitignored files, so
-# without this every externally created worktree silently lost the override).
-workflow_local_review_override_root() {
-  local override_root="${WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT:-}"
-  local repo_root="" main_root=""
-
-  if [ -n "$override_root" ]; then
-    if [ ! -d "$override_root" ]; then
-      echo "ERROR: configured local reviewer override source is unavailable." >&2
-      return 1
-    fi
-    printf '%s\n' "$override_root"
-    return 0
-  fi
-
-  repo_root="$(workflow_repo_root)"
-  # A checkout-local file without a `review:` section (set-local-path writes
-  # one holding only product_repos into a worktree) must not mask the main
-  # clone's reviewer override — that is the #1560 failure all over again.
-  # An UNREADABLE file is neither present nor absent: falling through to the
-  # main clone would apply a different policy than the resolver, which fails
-  # on the same file. Probe status 2 is a structured error; stop.
-  local checkout_status=0 main_status=0
-  _workflow_local_file_has_review_section "$repo_root/.ai-dev-workflow.local.yaml" || checkout_status=$?
-  [ "$checkout_status" -ne 2 ] || return 1
-  if [ "$checkout_status" -eq 1 ] && main_root="$(workflow_linked_worktree_main_root "$repo_root")"; then
-    _workflow_local_file_has_review_section "$main_root/.ai-dev-workflow.local.yaml" || main_status=$?
-    [ "$main_status" -ne 2 ] || return 1
-    if [ "$main_status" -eq 0 ]; then
-      printf '%s\n' "$main_root"
-      return 0
-    fi
-  fi
-  printf '%s\n' "$repo_root"
-}
-
-# _workflow_local_file_has_review_section <file>
-# True when the file exists and declares a top-level `review:` key, whatever
-# its value — empty, `{}`, `null`, `~`, or a nested mapping. Matches on the
-# key alone (mirrors workflow-config-resolver.py's `"review" not in local`
-# key-presence check) so an explicit-but-empty `review: {}` is still treated
-# as present and does not fall through to the main clone's file.
-_workflow_local_file_has_review_section() {
-  local file="$1"
-  [ -f "$file" ] || return 1
-  # Key presence only, matching parse_yaml_subset(), which strips whitespace
-  # around keys: `review : {}` is a review section there and must be one here.
-  # Status 2 (with an error on stderr) means the file exists but cannot be
-  # read — callers must not treat that as "no review section".
-  local status=0
-  grep -Eq '^review[[:blank:]]*:' "$file" || status=$?
-  if [ "$status" -gt 1 ]; then
-    echo "ERROR: local reviewer override exists but could not be read (grep status $status): $file" >&2
-    return 2
-  fi
-  return "$status"
-}
-
+# Source resolution never discovers another checkout. Status 2 means failure.
 workflow_local_config_file() {
-  local override_root
+  python3 "$(workflow_config_resolver_script)" local-source --repo-root "$(workflow_repo_root)"
+}
 
-  if ! override_root="$(workflow_local_review_override_root)"; then
-    return 1
-  fi
-  printf '%s/.ai-dev-workflow.local.yaml\n' "$override_root"
+workflow_local_review_override_root() {
+  local file
+  file="$(workflow_local_config_file)" || return 2
+  dirname -- "$file"
 }
 
 workflow_is_default_config_file() {
@@ -516,7 +419,12 @@ configured_reviewer_check_names_json() {
     config_file="$(workflow_effective_config_file 2>/dev/null || workflow_config_file)"
   fi
 
-  if [ -f "$config_file" ]; then
+  local platforms
+  if [ "$config_file" = "$(workflow_config_file)" ]; then
+    platforms="$(WORKFLOW_APPLY_LOCAL_REVIEW_OVERRIDES=1 workflow_config_review_platforms "$config_file")" || return 2
+  else
+    platforms="$(workflow_config_review_platforms "$config_file")" || return 2
+  fi
     while IFS= read -r platform; do
       platform="$(printf '%s' "$platform" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
       [ -z "$platform" ] && continue
@@ -531,14 +439,7 @@ configured_reviewer_check_names_json() {
           names+=("${RONDA_CHECK_NAME:-Ronda review}")
           ;;
       esac
-    done < <(
-      if [ "$config_file" = "$(workflow_config_file)" ]; then
-        WORKFLOW_APPLY_LOCAL_REVIEW_OVERRIDES=1 workflow_config_review_platforms "$config_file"
-      else
-        workflow_config_review_platforms "$config_file"
-      fi
-    )
-  fi
+    done <<< "$platforms"
 
   if [ "${#names[@]}" -eq 0 ]; then
     printf '[]\n'
@@ -1140,26 +1041,27 @@ workflow_config_review_nested_list_declared() {
   ' "$config_file"
 }
 
+# 0 = declaration (including []), 1 = absent, 2 = source/schema failure.
 workflow_config_review_local_list_if_declared() {
-  local config_file="$1"
-  local phase="$2"
-  local key="$3"
-  local local_file
-
+  local config_file="$1" phase="$2" key="$3" status=0
   workflow_is_default_config_file "$config_file" || return 1
-  local_file="$(workflow_local_config_file)"
-  workflow_config_review_nested_list_declared "$local_file" "$phase" "$key" || return 1
-  workflow_config_review_nested_list "$local_file" "$phase" "$key"
+  python3 "$(workflow_config_resolver_script)" review-local-list \
+    --repo-root "$(workflow_repo_root)" --phase "$phase" --key "$key" || status=$?
+  return "$status"
 }
 
 workflow_config_review_on_draft_runner() {
   local config_file="${1:-$(workflow_config_file)}"
 
-  [ -f "$config_file" ] || return 0
-
+  local status=0
   if workflow_config_review_local_list_if_declared "$config_file" on_draft runner; then
     return 0
+  else
+    status=$?
+    [ "$status" -eq 1 ] || return 2
   fi
+
+  [ -f "$config_file" ] || return 0
 
   if workflow_config_review_nested_list "$config_file" on_draft runner | grep -q .; then
     workflow_config_review_nested_list "$config_file" on_draft runner
@@ -1171,11 +1073,15 @@ workflow_config_review_on_draft_runner() {
 workflow_config_review_on_draft_github() {
   local config_file="${1:-$(workflow_config_file)}"
 
-  [ -f "$config_file" ] || return 0
-
+  local status=0
   if workflow_config_review_local_list_if_declared "$config_file" on_draft github; then
     return 0
+  else
+    status=$?
+    [ "$status" -eq 1 ] || return 2
   fi
+
+  [ -f "$config_file" ] || return 0
 
   if workflow_config_review_nested_list "$config_file" on_draft github | grep -q .; then
     workflow_config_review_nested_list "$config_file" on_draft github
@@ -1199,11 +1105,15 @@ workflow_config_review_on_draft_github() {
 workflow_config_review_on_ready_github() {
   local config_file="${1:-$(workflow_config_file)}"
 
-  [ -f "$config_file" ] || return 0
-
+  local status=0
   if workflow_config_review_local_list_if_declared "$config_file" on_ready github; then
     return 0
+  else
+    status=$?
+    [ "$status" -eq 1 ] || return 2
   fi
+
+  [ -f "$config_file" ] || return 0
 
   if workflow_config_review_nested_list "$config_file" on_ready github | grep -q .; then
     workflow_config_review_nested_list "$config_file" on_ready github
@@ -1215,12 +1125,12 @@ workflow_config_review_on_ready_github() {
 }
 
 workflow_config_review_platforms() {
-  local config_file="${1:-$(workflow_config_file)}"
-
-  [ -f "$config_file" ] || return 0
-
-  workflow_config_review_on_draft_github "$config_file"
-  workflow_config_review_on_ready_github "$config_file"
+  local config_file="${1:-$(workflow_config_file)}" draft ready
+  draft="$(workflow_config_review_on_draft_github "$config_file")" || return 2
+  ready="$(workflow_config_review_on_ready_github "$config_file")" || return 2
+  [ -z "$draft" ] || printf '%s\n' "$draft"
+  [ -z "$ready" ] || printf '%s\n' "$ready"
+  return 0
 }
 
 # workflow_config_review_github_reviewer_configured <platform> [config_file]
@@ -1239,13 +1149,12 @@ workflow_config_review_github_reviewer_configured() {
   local platforms
 
   [ -n "$platform" ] || return 1
-  [ -f "$config_file" ] || return 1
 
   # No pipe into `grep -q`: this library runs under `set -euo pipefail`, where
   # grep closing the pipe early kills the producer with SIGPIPE and aborts the
   # caller with 141. Capture first, match against a here-string.
   if ! platforms="$(workflow_config_review_platforms "$config_file")"; then
-    return 1
+    return 2
   fi
 
   grep -Fxq -- "$platform" <<<"$platforms"
@@ -1495,8 +1404,6 @@ workflow_config_review_wait_budget_keys() {
 
 workflow_config_review_phase_after_clean_platforms() {
   local config_file="${1:-$(workflow_config_file)}"
-
-  [ -f "$config_file" ] || return 0
 
   workflow_config_review_on_ready_github "$config_file"
 }

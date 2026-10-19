@@ -217,7 +217,7 @@ class ModelRoutingTests(unittest.TestCase):
             directory.mkdir(parents=True)
         (checkout / ".git").write_text(f"gitdir: {main}/.git/worktrees/w\n")
         (main / resolver.LOCAL_CONFIG_NAME).write_text(self.policy(self.tier(model="main")))
-        self.assertEqual(resolver.model_resolution(resolver.load_model_policy(checkout), "developer")["MODEL"], "main")
+        self.assertEqual(resolver.model_resolution(resolver.load_model_policy(checkout), "developer")["MODEL"], "")
         (checkout / resolver.LOCAL_CONFIG_NAME).write_text(self.policy(self.tier(model="checkout")))
         self.assertEqual(resolver.model_resolution(resolver.load_model_policy(checkout), "developer")["MODEL"], "checkout")
         (override / resolver.LOCAL_CONFIG_NAME).write_text(self.policy(self.tier(model="override")))
@@ -567,6 +567,7 @@ class ModelRoutingTests(unittest.TestCase):
             self.assertEqual(json.loads(validate.stderr)["CODE"], "config_discovery")
             self.assertNotIn("PRIVATE_TEST_SENTINEL", validate.stderr)
             missing.mkdir()
+            (missing / resolver.LOCAL_CONFIG_NAME).write_text("review: {}\n")
             self.assertEqual(self.cli("validate", "--json", env=dict(os.environ)).returncode, 0)
             self.assertEqual(self.cli("model-route", "--runner", "dsh", "--role", "developer", "--json",
                                       env=dict(os.environ)).returncode, 0)
