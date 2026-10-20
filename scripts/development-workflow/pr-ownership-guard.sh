@@ -161,7 +161,7 @@ refuse() {
     EXPECTED_HEAD_REPO "${EXPECTED_HEAD_REPO:-<pr-base-repository>}")
   if [ -n "${MISMATCH:-}" ]; then fields+=(MISMATCH "$MISMATCH"); fi
   fields+=(REQUIRED_ACTION "$action")
-  workflow_diagnostic_kvs "${fields[@]}"
+  workflow_diagnostic_kvs ${fields[@]+"${fields[@]}"}
   workflow_diagnostic_printf 'REFUSED: PR #%s mutation blocked: %s\n' "$PR_NUMBER" "$message" >&2
   exit "$code"
 }
