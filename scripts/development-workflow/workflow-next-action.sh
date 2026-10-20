@@ -272,7 +272,7 @@ repository_context_for_action() {
           action_repository="$(basename "$repo_root")"
         else
           if ! context="$(workflow_repository_context "$target_repo" "$repo_root")"; then
-            return 1
+            return 3 # internal validation failure; callers normalize to CLI status 2
           fi
           action_repository_kind="product_repo_owned"
           action_repository="$(workflow_context_value TARGET_REPO_NAME "$context")"
@@ -286,7 +286,7 @@ repository_context_for_action() {
         ;;
     esac
   else
-    context="$(workflow_repository_context "" "$repo_root")"
+    context="$(workflow_repository_context "" "$repo_root")" || return 3
     action_repository="$(workflow_context_value TARGET_REPO_NAME "$context")"
     action_github_repo="$(workflow_github_repo_from_context "$context")"
     action_local_path="$(workflow_context_value TARGET_LOCAL_PATH "$context")"
@@ -317,7 +317,7 @@ github_repo_args_for_action() {
     if [ "$hub_only_status" -eq 2 ]; then
       return 1
     fi
-    context="$(workflow_repository_context "$target_repo" "$repo_root")"
+    context="$(workflow_repository_context "$target_repo" "$repo_root")" || return 2
     action_github_repo="$(workflow_github_repo_from_context "$context")"
     if [ -n "$action_github_repo" ]; then
       printf '%s\n%s\n' "--repo" "$action_github_repo"
@@ -371,6 +371,7 @@ if [ -n "$pr_number" ]; then
     if [ "$pr_action_status" -ne 0 ]; then
       if [ "$pr_action_status" -ne 2 ]; then
         echo "ERROR: $pr_action_context" >&2
+        [ "$pr_action_status" -ne 3 ] || exit 2
         exit "$pr_action_status"
       fi
       print_kv WORKFLOW_MODE "$workflow_mode"
@@ -386,9 +387,10 @@ if [ -n "$pr_number" ]; then
   fi
   pr_view_args=()
   if [ "$workflow_mode" = "workflow_hub" ]; then
+    pr_target_args="$(github_repo_args_for_action implementation)" || exit 2
     while IFS= read -r arg; do
       [ -n "$arg" ] && pr_view_args+=("$arg")
-    done < <(github_repo_args_for_action implementation)
+    done <<< "$pr_target_args"
   fi
   if [ "${#pr_view_args[@]}" -eq 0 ] && [ -n "$pr_hub_probe_json" ]; then
     # Routing resolved to the current (hub) checkout -- the probe above
@@ -422,6 +424,7 @@ if [ -n "$pr_number" ]; then
   if [ "$pr_action_status" -ne 0 ]; then
     if [ "$pr_action_status" -ne 2 ]; then
       echo "ERROR: $pr_action_context" >&2
+      [ "$pr_action_status" -ne 3 ] || exit 2
       exit "$pr_action_status"
     fi
     printf '%s\n' "$pr_action_context"
@@ -480,6 +483,7 @@ if [ -n "$branch_name" ]; then
   if [ "$action_context_status" -ne 0 ]; then
     if [ "$action_context_status" -ne 2 ]; then
       echo "ERROR: $action_context_output" >&2
+      [ "$action_context_status" -ne 3 ] || exit 2
       exit "$action_context_status"
     fi
     print_kv WORKFLOW_MODE "$workflow_mode"
@@ -495,10 +499,11 @@ if [ -n "$branch_name" ]; then
   pr_list_args=()
   pr_view_args=()
   if [ "$action_kind" = "implementation" ]; then
+    branch_target_args="$(github_repo_args_for_action implementation)" || exit 2
     while IFS= read -r arg; do
       [ -n "$arg" ] && pr_list_args+=("$arg")
       [ -n "$arg" ] && pr_view_args+=("$arg")
-    done < <(github_repo_args_for_action implementation)
+    done <<< "$branch_target_args"
   fi
   if gh_available; then
     if [ "${#pr_list_args[@]}" -gt 0 ]; then
@@ -647,9 +652,10 @@ if [ "$feature_branch_exists" -eq 0 ] && [ -n "$plan_file" ] && gh_available; th
   # Try exact branch name first: [prefix]/<slug>
   merged_pr_args=()
   if [ "$dev_prefix" != "spec" ] && [ "$workflow_mode" = "workflow_hub" ]; then
+    merged_target_args="$(github_repo_args_for_action implementation)" || exit 2
     while IFS= read -r arg; do
       [ -n "$arg" ] && merged_pr_args+=("$arg")
-    done < <(github_repo_args_for_action implementation)
+    done <<< "$merged_target_args"
   fi
   if [ "${#merged_pr_args[@]}" -gt 0 ]; then
     if ! merged_count="$(gh pr list "${merged_pr_args[@]}" --state merged --head "${dev_prefix}/$slug" --limit 100 --json number --jq 'length')"; then
@@ -725,6 +731,7 @@ case "$next_action" in
     if [ "$action_context_status" -ne 0 ]; then
       if [ "$action_context_status" -ne 2 ]; then
         echo "ERROR: $action_context_output" >&2
+        [ "$action_context_status" -ne 3 ] || exit 2
         exit "$action_context_status"
       fi
       printf '%s\n' "$action_context_output"
@@ -736,9 +743,12 @@ case "$next_action" in
     fi
     ;;
   *)
-    if ! action_context_output="$(repository_context_for_action hub 2>&1)"; then
+    action_context_status=0
+    action_context_output="$(repository_context_for_action hub 2>&1)" || action_context_status=$?
+    if [ "$action_context_status" -ne 0 ]; then
       echo "ERROR: $action_context_output" >&2
-      exit 1
+      [ "$action_context_status" -ne 3 ] || exit 2
+      exit "$action_context_status"
     fi
     ;;
 esac

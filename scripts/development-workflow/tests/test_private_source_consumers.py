@@ -260,8 +260,8 @@ workflow_hub:
         return subprocess.run([shell, '-c', script], cwd=self.checkout, env=self.env,
                               capture_output=True, text=True, timeout=30)
 
-    def suppression_assert_metadata(self, failed, expected, opaque):
-        self.assertEqual(failed.returncode, 2, failed.stdout + failed.stderr)
+    def suppression_assert_metadata(self, failed, expected, opaque, status=2):
+        self.assertEqual(failed.returncode, status, failed.stdout + failed.stderr)
         self.assertEqual(failed.stdout, '')
         self.assertEqual(failed.stderr, expected)
         self.assertIn('configuration:', expected)
@@ -313,6 +313,100 @@ workflow_hub:
 
     def test_S03_inferred_merge(self):
         self.suppression_lookup_case('S03')
+
+    def test_S04_discovery(self):
+        opaque = 'fabricatedOpaqueSuppressionS04'
+        self.private.write_text('product_repos: ' + opaque + '\n')
+        # The fake CLI permits only the read-only listing; never a real GH call.
+        gh = self.bin / 'gh'
+        gh.write_text('#!/bin/sh\ncase "$*" in "auth status"*) exit 0;; "pr list"*) echo "(none)";; *) exit 99;; esac\n')
+        direct = subprocess.run(['python3', str(self.runtime / 'workflow-config-resolver.py'), 'resolve', '--repo-root', str(self.checkout), '--repo', 'mobile'], env=self.env, text=True, capture_output=True)
+        self.assertEqual(direct.returncode, 2)
+        args = [str(self.runtime / 'discover-workflow-state.sh'), '--repo-root', str(self.checkout), '--repo', 'mobile']
+        for shell in dict.fromkeys(('/bin/bash', shutil.which('bash'))):
+            with self.subTest(shell=shell):
+                self.private.write_text('product_repos: ' + opaque + '\n')
+                failed = subprocess.run([shell, *args], cwd=self.checkout, env=self.env, text=True, capture_output=True, timeout=30)
+                self.suppression_assert_metadata(failed, direct.stderr, opaque)
+                self.private.write_text('review: {}\n')
+                restored = subprocess.run([shell, *args], cwd=self.checkout, env=self.env, text=True, capture_output=True, timeout=30)
+                self.assertEqual(restored.returncode, 0, restored.stderr)
+                self.assertIn('ACTION_REPOSITORY_KIND=product_repo_owned', restored.stdout)
+                self.assertIn('TARGET_GITHUB_REPO=fixture/mobile', restored.stdout)
+                shared = self.shared.read_text()
+                self.shared.write_text(shared + 'unused: true\n')
+                # Valid ambiguous selection and unknown selector remain explicit absence.
+                self.shared.write_text(shared.replace('review:\n', '    - name: second\n      github_repo: fixture/second\nreview:\n', 1))
+                for tail in ([], ['--repo', 'unknown-selection']):
+                    absent = subprocess.run([shell, str(self.runtime / 'discover-workflow-state.sh'), '--repo-root', str(self.checkout), *tail], cwd=self.checkout, env=self.env, text=True, capture_output=True, timeout=30)
+                    self.assertEqual(absent.returncode, 0, absent.stderr)
+                    self.assertIn('ACTION_REPOSITORY_KIND=selection_missing', absent.stdout)
+                    self.assertEqual(absent.stderr, '')
+                self.shared.write_text(shared)
+
+    def next_suppression_case(self, route):
+        opaque = 'fabricatedOpaqueSuppression' + route
+        source = self.shared.read_text()
+        if route == 'S05':
+            self.shared.write_text('mode: single_repo\nrelease: ' + opaque + '\n')
+            self.private.write_text('review: {}\n')
+        else:
+            self.private.write_text('product_repos: ' + opaque + '\n')
+        direct = subprocess.run(['python3', str(self.runtime / 'workflow-config-resolver.py'), 'resolve', '--repo-root', str(self.checkout), '--repo', 'mobile'], env=self.env, text=True, capture_output=True)
+        self.assertEqual(direct.returncode, 2)
+        helpers = function_text('workflow-next-action.sh', 'repository_context_for_action') + '\n' + function_text('workflow-next-action.sh', 'github_repo_args_for_action')
+        extra = helpers + '\nrepo_root=' + shlex.quote(str(self.checkout)) + '\ntarget_repo=mobile\nworkflow_mode=' + ('single_repo' if route == 'S05' else 'workflow_hub') + '\nimplementation_item_is_hub_only_cached() { return 1; }\n'
+        if route in ('S05', 'S06'):
+            command = 'repository_context_for_action implementation' if route == 'S05' else 'github_repo_args_for_action implementation'
+            block = None
+        else:
+            text = (SCRIPTS / 'workflow-next-action.sh').read_text()
+            bounds = {
+                'S07': ('  pr_view_args=()\n  if [ "$workflow_mode" = "workflow_hub" ]; then', '\n  if [ "${#pr_view_args[@]}" -eq 0 ]', 'pr_view_args'),
+                'S08': ('  pr_list_args=()\n  pr_view_args=()', '\n  if gh_available; then', 'pr_list_args'),
+                'S09': ('  merged_pr_args=()', '\n  if [ "${#merged_pr_args[@]}" -gt 0 ]', 'merged_pr_args'),
+            }
+            start, end, array = bounds[route]; first = text.index(start)
+            block = text[first:text.index(end, first)]
+            extra += '\naction_kind=implementation\ndev_prefix=feature\n'
+            command = 'unused'
+        def run(shell):
+            if block is None:
+                return self.suppression_shell(command, shell, extra)
+            # Actual caller block and actual helper, including old process substitution.
+            script = 'source ' + shlex.quote(str(self.runtime / 'workflow-lib.sh')) + '\n' + extra + '\n' + block
+            script += '\nprintf "ARG=%s\\n" ${' + array + '[@]+"${' + array + '[@]}"}\n'
+            return subprocess.run([shell, '-c', script], cwd=self.checkout, env=self.env, capture_output=True, text=True, timeout=30)
+        for shell in dict.fromkeys(('/bin/bash', shutil.which('bash'))):
+            with self.subTest(route=route, shell=shell):
+                failed = run(shell)
+                self.suppression_assert_metadata(failed, direct.stderr, opaque, status=3 if route == 'S05' else 2)
+                if route == 'S05': self.shared.write_text('mode: single_repo\n')
+                self.private.write_text('review: {}\n')
+                restored = run(shell)
+                self.assertEqual(restored.returncode, 0, restored.stderr)
+                self.assertEqual(restored.stderr, '')
+                if route == 'S05': self.assertIn('ACTION_REPOSITORY_KIND=single_repo_context', restored.stdout)
+                elif route == 'S06': self.assertEqual(restored.stdout, '--repo\nfixture/mobile\n')
+                else: self.assertEqual(restored.stdout, 'ARG=--repo\nARG=fixture/mobile\n')
+                if route == 'S05': self.shared.write_text('mode: single_repo\nrelease: ' + opaque + '\n')
+                else: self.private.write_text('product_repos: ' + opaque + '\n')
+        self.shared.write_text(source)
+
+    def test_S05_next_context(self):
+        self.next_suppression_case('S05')
+
+    def test_S06_next_args(self):
+        self.next_suppression_case('S06')
+
+    def test_S07_next_pr_handoff(self):
+        self.next_suppression_case('S07')
+
+    def test_S08_next_branch_handoff(self):
+        self.next_suppression_case('S08')
+
+    def test_S09_next_merged_handoff(self):
+        self.next_suppression_case('S09')
 
     def check_consumer(self, row):
         valid_source = '''review:
