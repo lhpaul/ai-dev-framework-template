@@ -1483,6 +1483,9 @@ settings with mode 0600. Staged readers remove inherited external-source overrid
 original attribution is separate metadata. `redact-text` sanitizes diagnostic
 stdin without loading configuration; `workflow_redact_text` exposes that boundary
 for Bash, and `workflow_redact_json` preserves structured diagnostic values.
+`workflow_diagnostic_kvs` batches fixed report keys using NUL-framed whole values
+through `redact-text --kv`. Each value is sanitized independently before any
+report is published; invalid framing or UTF-8 fails without partial stdout.
 Functional configuration and deliberate auth transport are separate interfaces.
 Configuration parse/validation errors use the central closed type/line/column/known-key
 formatter; no source path, excerpt or exception text is emitted. Model error `FILE`

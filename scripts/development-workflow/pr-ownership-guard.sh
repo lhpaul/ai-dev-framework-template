@@ -153,18 +153,15 @@ esac
 refuse() {
   # refuse <exit-code> <result> <message> <required-action>
   local code="$1" result="$2" message="$3" action="$4"
-  workflow_diagnostic_kv RESULT "$result"
-  workflow_diagnostic_kv PR "$PR_NUMBER"
-  workflow_diagnostic_kv EXPECTED_BRANCH "$EXPECTED_BRANCH"
-  workflow_diagnostic_kv EXPECTED_BRANCH_SOURCE "$EXPECTED_SOURCE"
-  workflow_diagnostic_kv PR_HEAD_BRANCH "${PR_HEAD_BRANCH:-}"
-  workflow_diagnostic_kv PR_HEAD_REPO "${PR_HEAD_REPO:-}"
-  workflow_diagnostic_kv PR_IS_CROSS_REPOSITORY "${PR_IS_CROSS:-}"
-  workflow_diagnostic_kv EXPECTED_HEAD_REPO "${EXPECTED_HEAD_REPO:-<pr-base-repository>}"
-  if [ -n "${MISMATCH:-}" ]; then
-    workflow_diagnostic_kv MISMATCH "$MISMATCH"
-  fi
-  workflow_diagnostic_kv REQUIRED_ACTION "$action"
+  local fields
+  fields=(RESULT "$result" PR "$PR_NUMBER"
+    EXPECTED_BRANCH "$EXPECTED_BRANCH" EXPECTED_BRANCH_SOURCE "$EXPECTED_SOURCE"
+    PR_HEAD_BRANCH "${PR_HEAD_BRANCH:-}" PR_HEAD_REPO "${PR_HEAD_REPO:-}"
+    PR_IS_CROSS_REPOSITORY "${PR_IS_CROSS:-}"
+    EXPECTED_HEAD_REPO "${EXPECTED_HEAD_REPO:-<pr-base-repository>}")
+  if [ -n "${MISMATCH:-}" ]; then fields+=(MISMATCH "$MISMATCH"); fi
+  fields+=(REQUIRED_ACTION "$action")
+  workflow_diagnostic_kvs "${fields[@]}"
   workflow_diagnostic_printf 'REFUSED: PR #%s mutation blocked: %s\n' "$PR_NUMBER" "$message" >&2
   exit "$code"
 }
@@ -352,11 +349,8 @@ elif [ -n "$TARGET_REPO" ] && [ "$(lowercase "$PR_HEAD_REPO")" != "$(lowercase "
     "Pass --repo for the repository that owns the PR; never mutate a PR in another repository."
 fi
 
-printf 'RESULT=owned\n'
-workflow_diagnostic_kv PR "$PR_NUMBER"
-workflow_diagnostic_kv EXPECTED_BRANCH "$EXPECTED_BRANCH"
-workflow_diagnostic_kv EXPECTED_BRANCH_SOURCE "$EXPECTED_SOURCE"
-workflow_diagnostic_kv PR_HEAD_BRANCH "$PR_HEAD_BRANCH"
-workflow_diagnostic_kv PR_HEAD_REPO "$PR_HEAD_REPO"
-workflow_diagnostic_kv PR_IS_CROSS_REPOSITORY "$PR_IS_CROSS"
-workflow_diagnostic_kv EXPECTED_HEAD_REPO "${EXPECTED_HEAD_REPO:-<pr-base-repository>}"
+workflow_diagnostic_kvs RESULT owned \
+  PR "$PR_NUMBER" EXPECTED_BRANCH "$EXPECTED_BRANCH" \
+  EXPECTED_BRANCH_SOURCE "$EXPECTED_SOURCE" PR_HEAD_BRANCH "$PR_HEAD_BRANCH" \
+  PR_HEAD_REPO "$PR_HEAD_REPO" PR_IS_CROSS_REPOSITORY "$PR_IS_CROSS" \
+  EXPECTED_HEAD_REPO "${EXPECTED_HEAD_REPO:-<pr-base-repository>}"

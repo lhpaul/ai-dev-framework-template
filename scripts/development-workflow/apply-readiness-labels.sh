@@ -1530,17 +1530,18 @@ commented_review_body_blocks() {
 }
 
 emit_verdict() {
-  print_kv RESULT "$result"
-  print_kv REASON "$reason"
-  print_kv PR_NUMBER "$pr_number"
-  print_kv REPO "$repo"
-  print_kv LABEL "$label"
-  print_kv HEAD_SHA "$head_sha"
-  print_kv REVIEWER_REPORT "$reviewer_report"
-  print_kv BLOCKING_FINDING_COUNT "$blocking_count"
-  print_kv PENDING_CHECK_COUNT "$pending_count"
-  print_kv FAILING_CHECK_COUNT "$failing_count"
-  print_kv DRY_RUN "$dry_run"
+  workflow_diagnostic_kvs \
+    RESULT "$result" \
+    REASON "$reason" \
+    PR_NUMBER "$pr_number" \
+    REPO "$repo" \
+    LABEL "$label" \
+    HEAD_SHA "$head_sha" \
+    REVIEWER_REPORT "$reviewer_report" \
+    BLOCKING_FINDING_COUNT "$blocking_count" \
+    PENDING_CHECK_COUNT "$pending_count" \
+    FAILING_CHECK_COUNT "$failing_count" \
+    DRY_RUN "$dry_run"
   if [ "$json_output" = "true" ]; then
     python3 -c 'import json,sys; print(json.dumps(dict(result=sys.argv[1], reason=sys.argv[2], prNumber=sys.argv[3], repo=sys.argv[4], label=sys.argv[5], headSha=sys.argv[6], reviewerReport=sys.argv[7], blockingFindingCount=int(sys.argv[8]), pendingCheckCount=int(sys.argv[9]), failingCheckCount=int(sys.argv[10]), dryRun=(sys.argv[11] == "true"))))' \
       "$result" "$reason" "$pr_number" "$repo" "$label" "$head_sha" "$reviewer_report" "$blocking_count" "$pending_count" "$failing_count" "$dry_run" | workflow_redact_json

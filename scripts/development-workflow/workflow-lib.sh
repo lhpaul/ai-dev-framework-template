@@ -142,6 +142,17 @@ _workflow_redact_stdin() {
 workflow_redact_text() { _workflow_redact_stdin; }
 workflow_redact_json() { _workflow_redact_stdin --json; }
 
+# Fixed report keys and whole values, framed before any redaction/serialization.
+# One resolver process per report; this never reads or caches configuration.
+workflow_diagnostic_kvs() {
+  if [ "$#" -eq 0 ] || [ "$(( $# % 2 ))" -ne 0 ]; then
+    printf 'ERROR: diagnostic sanitization failed\n' >&2
+    return 2
+  fi
+  printf '%s\0' "$@" | _workflow_redact_stdin --kv
+}
+
+
 # Sanitize complete values before escaping for the line-oriented report contract.
 workflow_diagnostic_kv_escaped() {
   local value

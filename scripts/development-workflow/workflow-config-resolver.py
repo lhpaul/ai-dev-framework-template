@@ -344,11 +344,36 @@ class DiagnosticArgumentParser(argparse.ArgumentParser):
             super()._print_message(redact_text(message), file)
 
 
+def redact_diagnostic_kv_frames(raw: str) -> str:
+    """NUL-framed key/value records, sanitized independently before publication.
+
+    Bash variables cannot contain NUL. Framing preserves multiline values and
+    prevents an unterminated private-key block from consuming a later field.
+    Build the complete report first: malformed input cannot publish a prefix.
+    """
+    if not raw.endswith("\0"):
+        raise ValueError("invalid diagnostic framing")
+    fields = raw[:-1].split("\0")
+    if not fields or len(fields) % 2:
+        raise ValueError("invalid diagnostic pair count")
+    records = []
+    for index in range(0, len(fields), 2):
+        key, value = fields[index:index + 2]
+        if not re.fullmatch(r"[A-Z][A-Z0-9_]*", key):
+            raise ValueError("invalid diagnostic key")
+        # Match workflow_diagnostic_kv's complete-pair sanitization and command
+        # substitution stripping; no escaping/truncation precedes this boundary.
+        records.append(redact_text(key + "=" + value + "\n").rstrip("\n") + "\n")
+    return "".join(records)
+
+
 def cmd_redact_text(args: argparse.Namespace) -> int:
     try:
-        raw = sys.stdin.read()
+        raw = sys.stdin.buffer.read().decode("utf-8") if args.kv else sys.stdin.read()
         if args.json:
             output = json.dumps(redact_diagnostic_json(json.loads(raw)), sort_keys=True) + "\n"
+        elif args.kv:
+            output = redact_diagnostic_kv_frames(raw)
         else:
             output = redact_text(raw)
     except Exception:
@@ -2845,7 +2870,9 @@ def build_parser() -> argparse.ArgumentParser:
     snapshot.set_defaults(func=cmd_review_snapshot)
 
     redactor = subcommands.add_parser("redact-text", help="sanitize diagnostic stdin without reading configuration")
-    redactor.add_argument("--json", action="store_true", help="sanitize JSON string values, preserving structure")
+    redactor_format = redactor.add_mutually_exclusive_group()
+    redactor_format.add_argument("--json", action="store_true", help="sanitize JSON string values, preserving structure")
+    redactor_format.add_argument("--kv", action="store_true", help="sanitize NUL-framed diagnostic key/value pairs independently")
     redactor.set_defaults(func=cmd_redact_text)
 
     source = subcommands.add_parser("local-source", help="validate and print selected local source")
