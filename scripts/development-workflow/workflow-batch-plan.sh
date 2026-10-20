@@ -669,7 +669,7 @@ for development_path in "${development_paths[@]}"; do
   next_action_output="$("$SCRIPT_DIR/workflow-next-action.sh" ${next_action_args[@]+"${next_action_args[@]}"} 2>&1)" || next_action_status=$?
   if [ "$next_action_status" -ne 0 ]; then
     if [ "$next_action_status" -eq 2 ]; then
-      printf '%s\n' "$next_action_output" >&2
+      printf 'configuration: configuration validation error\n' >&2
       exit 2
     fi
     # next-action failed (e.g., no merged spec/plan PR yet).  Emit an abbreviated

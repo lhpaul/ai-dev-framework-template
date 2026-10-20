@@ -530,7 +530,7 @@ if [ "$scope_mode" = "item" ] && [ "$(workflow_template_is_template)" = "true" ]
         fm_next_action_status=0
         fm_next_action_output="$("$SCRIPT_DIR/workflow-next-action.sh" --development "${fm_matching_folders[0]}" --repo-root "$fm_repo_root" 2>&1)" || fm_next_action_status=$?
         if [ "$fm_next_action_status" -eq 2 ]; then
-          printf '%s\n' "$fm_next_action_output" >&2
+          printf 'configuration: configuration validation error\n' >&2
           exit 2
         fi
         if [ "$fm_next_action_status" -eq 0 ]; then

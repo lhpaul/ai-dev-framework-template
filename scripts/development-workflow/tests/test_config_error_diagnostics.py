@@ -586,6 +586,77 @@ api=runpy.run_path(sys.argv[1]); print(json.dumps(api['dependency_fields'](sys.a
         self.assertEqual(json.loads(good.stdout)['scope']['resolvedIssueNumber'], 1993)
 
 
+    def mixed_fatal_child(self):
+        """Plant functional stdout at a real late-failing CLI boundary.
+
+        Keep the actual validator and failure2; this challenges downstream
+        consumers even though the corrected child normally publishes atomically.
+        """
+        path = self.f.runtime / 'workflow-next-action.sh'; original = path.read_text()
+        anchor = ('action_context_output="$(repository_context_for_action hub 2>&1)" || action_context_status=$?\n'
+                  '    if [ "$action_context_status" -ne 0 ]; then\n')
+        self.assertEqual(original.count(anchor), 1)
+        path.write_text(original.replace(anchor, anchor + '      printf "ROUTING_SELECTED_PRODUCT_REPO_KEY=%s\\n" ' + shlex.quote(self.opaque) + '\n'))
+        return path, original
+
+    def test_T07_batch_forward(self):
+        development = self.late_setup(single=True, plan=False)
+        self.f.shared.write_text('mode: single_repo\nrelease: ' + self.opaque + '\n')
+        path, original = self.mixed_fatal_child()
+        producer = self.late_cli('workflow-next-action.sh', '--development', str(development))
+        self.assertEqual(producer.returncode, 2, producer.stdout + producer.stderr)
+        self.assertIn(self.opaque, producer.stdout, 'plant did not reach real child error boundary')
+        self.assertIn('configuration:', producer.stderr)
+        try:
+            self.late_safe(self.late_cli('workflow-batch-plan.sh', str(development)))
+        finally:
+            path.write_text(original)
+        self.f.shared.write_text('mode: single_repo\n')
+        good = self.late_cli('workflow-batch-plan.sh', str(development))
+        self.assertEqual(good.returncode, 0, good.stdout + good.stderr)
+        self.assertIn('NEXT_ACTION=write-plan\n', good.stdout)
+        self.assertEqual(good.stderr, '')
+
+    def test_T08_prelude_forward(self):
+        development = self.late_setup(single=True, plan=False); self.prelude_scope()
+        valid = 'mode: single_repo\ntemplate:\n  is_template: true\n'
+        self.f.shared.write_text(valid + 'release: ' + self.opaque + '\n')
+        path, original = self.mixed_fatal_child()
+        producer = self.late_cli('workflow-next-action.sh', '--development', str(development))
+        self.assertEqual(producer.returncode, 2, producer.stdout + producer.stderr)
+        self.assertIn(self.opaque, producer.stdout, 'plant did not reach real child error boundary')
+        self.assertIn('configuration:', producer.stderr)
+        args = [TEST_BASH, str(self.f.runtime / 'run-bounded-prelude.sh'), '--original-command', '/run-item 1993', '--issue', '1993', '--json']
+        try:
+            self.late_safe(self.run_command(args))
+        finally:
+            path.write_text(original)
+        self.f.shared.write_text(valid)
+        good = self.run_command(args)
+        self.assertEqual(good.returncode, 0, good.stdout + good.stderr)
+        self.assertEqual(json.loads(good.stdout)['scope']['resolvedIssueNumber'], 1993)
+
+    def test_T09_scan_forward(self):
+        self.late_setup(); self.late_schema()
+        # Transport a real selected branch context through the scan consumer.
+        # A04 separately covers the unmodified full development/batch/scan chain.
+        batch = self.f.runtime / 'workflow-batch-plan.sh'; original = batch.read_text()
+        batch.write_text('#!/bin/sh\nexec ' + shlex.join([TEST_BASH, str(self.f.runtime / 'workflow-next-action.sh'), '--branch', 'feature/1993-fixture', '--repo', self.selected, '--repo-root', str(self.f.checkout)]) + '\n')
+        (self.f.bin / 'gh').write_text('#!/bin/sh\nexit 99\n')
+        try:
+            producer = self.late_cli('workflow-next-action.sh', '--branch', 'feature/1993-fixture', '--repo', self.selected)
+            self.late_safe(producer)
+            self.late_safe(self.late_cli('workflow-batch-lanes.sh', '--scan'))
+            self.f.private.write_text('review: {}\n')
+            good = self.late_cli('workflow-batch-lanes.sh', '--scan')
+            self.assertEqual(good.returncode, 0, good.stdout + good.stderr)
+            self.assertTrue(good.stdout.startswith('MAX_CONCURRENT_SPEC=0\nMAX_CONCURRENT_PLAN=0\nMAX_CONCURRENT_REVIEW=0\nMAX_CONCURRENT_IMPLEMENTATION=1\n\n'))
+            self.assertIn('ACTION_REPOSITORY=' + self.selected + '\n', good.stdout)
+            self.assertEqual(good.stderr, '')
+        finally:
+            batch.write_text(original)
+
+
 def consumer_test(row):
     def test(self):
         self.f.private.write_text(self.bad)
