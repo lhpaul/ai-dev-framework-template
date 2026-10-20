@@ -254,6 +254,66 @@ workflow_hub:
                 self.private.write_text('product_repos: ' + opaque + '\n')
         self.assertFalse(self.log.exists(), 'unexpected external runtime or mutation')
 
+    def suppression_shell(self, command, shell='/bin/bash', extra=''):
+        script = 'source ' + shlex.quote(str(self.runtime / 'workflow-lib.sh')) + '\n' + extra
+        script += '\nif ' + command + '; then exit 0; else exit "$?"; fi\n'
+        return subprocess.run([shell, '-c', script], cwd=self.checkout, env=self.env,
+                              capture_output=True, text=True, timeout=30)
+
+    def suppression_assert_metadata(self, failed, expected, opaque):
+        self.assertEqual(failed.returncode, 2, failed.stdout + failed.stderr)
+        self.assertEqual(failed.stdout, '')
+        self.assertEqual(failed.stderr, expected)
+        self.assertIn('configuration:', expected)
+        for forbidden in (opaque, str(self.private), str(self.external), str(self.checkout), 'Traceback'):
+            self.assertNotIn(forbidden, failed.stdout + failed.stderr)
+        self.assertFalse(self.log.exists(), 'unexpected provider/transport/mutation')
+
+    def suppression_lookup_case(self, route):
+        opaque = 'fabricatedOpaqueSuppression' + route
+        shared = self.shared.read_text().replace('github_repo: fixture/mobile', 'github_repo: fixture/mobile\n      ci_policy: none')
+        self.shared.write_text(shared)
+        invalid = 'product_repos: ' + opaque + '\n'
+        if route == 'S02':
+            self.shared.write_text(shared.replace('- name: mobile\n      github_repo: fixture/mobile\n      ci_policy: none', '- ' + opaque))
+            invalid = 'review:\n  on_draft:\n    runner: []\n'
+        self.private.write_text(invalid)
+        command = 'list-product-repos' if route == 'S02' else 'resolve'
+        args = ['python3', str(self.runtime / 'workflow-config-resolver.py'), command, '--repo-root', str(self.checkout)]
+        if command == 'resolve': args += ['--repo', 'mobile']
+        direct = subprocess.run(args, env=self.env, capture_output=True, text=True, timeout=20)
+        self.assertEqual(direct.returncode, 2)
+        expected = direct.stderr
+        root = shlex.quote(str(self.checkout))
+        call = ('workflow_merge_ci_policy_into_json \'{"github_repo":"fixture/mobile","risk":"low"}\' ' + root
+                if route == 'S03' else 'workflow_product_repo_name_for_github_slug ' + root + ' fixture/mobile')
+        for shell in dict.fromkeys(('/bin/bash', shutil.which('bash'))):
+            with self.subTest(route=route, shell=shell):
+                self.private.write_text(invalid)
+                if route == 'S02': self.shared.write_text(shared.replace('- name: mobile\n      github_repo: fixture/mobile\n      ci_policy: none', '- ' + opaque))
+                failed = self.suppression_shell(call, shell)
+                self.suppression_assert_metadata(failed, expected, opaque)
+                self.shared.write_text(shared)
+                self.private.write_text('review:\n  on_draft:\n    runner: []\n')
+                restored = self.suppression_shell(call, shell)
+                self.assertEqual(restored.returncode, 0, restored.stderr)
+                self.assertEqual(restored.stderr, '')
+                if route == 'S03':
+                    self.assertEqual(json.loads(restored.stdout), {'github_repo': 'fixture/mobile', 'risk': 'low', 'ciPolicy': 'none'})
+                else:
+                    self.assertEqual(restored.stdout, 'mobile\n')
+                    absent = self.suppression_shell('workflow_product_repo_name_for_github_slug ' + root + ' fixture/not-configured', shell)
+                    self.assertEqual((absent.returncode, absent.stdout, absent.stderr), (1, '', ''))
+
+    def test_S01_lookup_context(self):
+        self.suppression_lookup_case('S01')
+
+    def test_S02_lookup_list(self):
+        self.suppression_lookup_case('S02')
+
+    def test_S03_inferred_merge(self):
+        self.suppression_lookup_case('S03')
+
     def check_consumer(self, row):
         valid_source = '''review:
   on_draft:

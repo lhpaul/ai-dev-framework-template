@@ -356,24 +356,23 @@ workflow_github_repo_from_context() {
 workflow_product_repo_name_for_github_slug() {
   local root="${1:-}"
   local slug="$2"
-  local name context github
+  local name context github names
 
   if [ -z "$root" ] || [ -z "$slug" ]; then
     return 1
   fi
   workflow_local_config_file "$root" >/dev/null || return 2
 
+  names="$(python3 "$(workflow_config_resolver_script)" list-product-repos --repo-root "$root")" || return 2
   while IFS= read -r name; do
     [ -n "$name" ] || continue
-    if ! context="$(workflow_repository_context "$name" "$root" 2>/dev/null)"; then
-      continue
-    fi
+    context="$(workflow_repository_context "$name" "$root")" || return 2
     github="$(workflow_github_repo_from_context "$context")"
     if [ "$github" = "$slug" ]; then
       printf '%s\n' "$name"
       return 0
     fi
-  done < <(python3 "$(workflow_config_resolver_script)" list-product-repos --repo-root "$root" 2>/dev/null)
+  done <<< "$names"
 
   return 1
 }
