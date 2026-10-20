@@ -80,7 +80,7 @@ with tempfile.TemporaryDirectory(prefix='availability-tests-') as tmp:
             activity.write_text(json.dumps(comments))
         fake('gh', f'printf "%s\\n" "$*" >> {str(log)!r}\n'+ (body or f'cat {str(activity)!r}'))
 
-    def run(driver='claude', expected=0, extra_env=None, arguments=None, closed_stdin=False):
+    def run(driver='claude', expected=0, extra_env=None, arguments=None, closed_stdin=False, capture=None):
         started = time.monotonic()
         result = subprocess.run(
             [bash,str(helper), '--repo-root',str(repo), '--owner','example','--repo','test', '--runner-kind',driver] if arguments is None else [bash,str(helper),*arguments],
@@ -90,6 +90,8 @@ with tempfile.TemporaryDirectory(prefix='availability-tests-') as tmp:
         elapsed = time.monotonic()-started
         assert elapsed <= 10.0, (elapsed,result.stdout,result.stderr)
         assert result.returncode == expected, (result.returncode,expected,result.stdout,result.stderr)
+        if capture is not None:
+            capture.append(result)
         assert not any((ord(c)<32 and c!='\n') or 127<=ord(c)<=159 for c in result.stdout), repr(result.stdout)
         rows = result.stdout.splitlines()
         assert all('=' in row for row in rows), result.stdout
@@ -473,9 +475,27 @@ reviews:
     check('T-42 serializer escapes all C0/C1 and preserves Unicode',serializer.stdout=='FIELD='+expected_controls+printable.replace('\\','\\\\')+'\n',repr(serializer.stdout))
     for source in (cfg, local):
         for escaped, rendered in ((r'bad\e[2J',r'bad\x1b[2J'),(r'bad\a',r'bad\x07'),(r'bad\x7f',r'bad\x7f'),(r'bad\u009b2J',r'bad\u009b2J'),(r'bad\N',r'bad\u0085'),(r'bad\\e[2J',r'bad\\e[2J')):
-            reset();source.write_text('review:\n  on_draft:\n    runner: ["'+escaped+'"]\n')
-            d=run('codex',1)
-            check(f'T-42 escaped reviewer control rendered {source.name} {escaped}',d['REVIEWER_'+d['REVIEWER_COUNT']+'_NAME']=='unknown',d)
+            if escaped == r'bad\\e[2J':
+                # Literal backslash-e remains a printable unknown name.
+                reset();source.write_text('review:\n  on_draft:\n    runner: ["'+escaped+'"]\n')
+                d=run('codex',1)
+                check(f'T-42 literal escaped reviewer remains valid {source.name}',d['REVIEWER_'+d['REVIEWER_COUNT']+'_NAME']=='unknown',d)
+            else:
+                opaque='fabricatedOpaqueControlName'
+                reset();source.write_text('review:\n  on_draft:\n    runner: ["'+opaque+escaped+'"]\n')
+                parsed=yaml.safe_load(source.read_text())['review']['on_draft']['runner']
+                check(f'T-42 reviewer control is valid YAML {source.name} {escaped}',len(parsed)==1 and opaque in parsed[0])
+                selected=subprocess.run([real_python,str(scripts/'workflow-config-resolver.py'),'review-list',
+                                         '--repo-root',str(repo),'--shared-file',str(cfg),'--apply-local',
+                                         '--phase','on_draft','--key','runner'],env=env,text=True,capture_output=True)
+                check(f'T-42 selected reviewer control rejected {source.name} {escaped}',
+                      selected.returncode==2 and selected.stdout=='' and 'schema' in selected.stderr and opaque not in selected.stdout+selected.stderr)
+                captured=[]
+                d=run('codex',1,capture=captured)
+                check(f'T-42 reviewer control blocks without identities {source.name} {escaped}',
+                      d['OUTCOME']=='blocked' and d['BLOCK_CAUSE']=='list-malformed' and d['CONFIG_LIST_STATE']=='malformed'
+                      and d['REVIEWER_COUNT']=='0' and d['FALLBACK_APPLIED']=='false'
+                      and opaque not in captured[0].stdout+captured[0].stderr,d)
             reset();source.write_text('review:\n  internal_reviewers_unavailable_policy: "'+escaped+'"\n')
             d=run('codex',1)
             check(f'T-42 escaped policy control rendered {source.name} {escaped}',d['BLOCK_CAUSE']=='policy-unsupported' and d['POLICY_INPUT']=='',d)
@@ -519,9 +539,21 @@ reviews:
             d=run('codex',1)
             check(f'T-31 tab node indicator blocks {source.name} {token!r}',d['BLOCK_CAUSE']=='policy-unreadable' and d['REVIEWER_COUNT']=='0',d)
             for quote in ("'", '"'):
-                reset();source.write_text('review:\n  on_draft:\n    runner: [codex, '+quote+token+quote+']\n')
-                d=run('codex')
-                check(f'T-31 quoted tab node stays reportable {source.name} {quote} {token!r}',d['OUTCOME']=='proceeded-reduced' and d['REVIEWER_2_NAME']=='unknown' and d['REVIEWER_2_REASON']=='value-not-supported',d)
+                opaque='fabricatedOpaqueQuotedTabName'
+                reset();source.write_text('review:\n  on_draft:\n    runner: [codex, '+quote+opaque+token+quote+']\n')
+                parsed=yaml.safe_load(source.read_text())['review']['on_draft']['runner']
+                check(f'T-31 quoted tab remains valid YAML {source.name} {quote} {token!r}',parsed==['codex',opaque+token])
+                selected=subprocess.run([real_python,str(scripts/'workflow-config-resolver.py'),'review-list',
+                                         '--repo-root',str(repo),'--shared-file',str(cfg),'--apply-local',
+                                         '--phase','on_draft','--key','runner'],env=env,text=True,capture_output=True)
+                check(f'T-31 selected quoted tab name rejected {source.name} {quote} {token!r}',
+                      selected.returncode==2 and selected.stdout=='' and 'schema' in selected.stderr and opaque not in selected.stdout+selected.stderr)
+                captured=[]
+                d=run('codex',1,capture=captured)
+                check(f'T-31 quoted tab name blocks without identities {source.name} {quote} {token!r}',
+                      d['OUTCOME']=='blocked' and d['BLOCK_CAUSE']=='list-malformed' and d['CONFIG_LIST_STATE']=='malformed'
+                      and d['REVIEWER_COUNT']=='0' and d['FALLBACK_APPLIED']=='false'
+                      and opaque not in captured[0].stdout+captured[0].stderr,d)
     for source in (cfg, local):
         for space in ('\u00a0', '\u2003', '\u3000'):
             for token in (space, 'warn'+space+'#literal', space+'warn', 'warn'+space):
@@ -530,8 +562,27 @@ reviews:
                 check(f'T-31 Unicode policy stays unsupported {source.name} {token!r}',d['BLOCK_CAUSE']=='policy-unsupported' and d['POLICY_INPUT']=='',d)
             for token in (space, 'codex'+space+'#literal'):
                 reset();source.write_text('review:\n  on_draft:\n    runner: ['+token+']\n')
-                d=run('codex',1)
-                check(f'T-31 Unicode runner stays unsupported {source.name} {token!r}',any(d[f'REVIEWER_{n}_NAME']=='unknown' and d[f'REVIEWER_{n}_REASON']=='value-not-supported' for n in range(1,int(d['REVIEWER_COUNT'])+1)) and d['FALLBACK_APPLIED']=='false',d)
+                if token==space:
+                    # Keep the name whitespace-only; an unrelated fabricated
+                    # field checks that rejection never repeats source text.
+                    opaque='fabricatedOpaqueWhitespaceContext'
+                    source.write_text(source.read_text()+'other: '+opaque+'\n')
+                    parsed=yaml.safe_load(source.read_text())['review']['on_draft']['runner']
+                    check(f'T-31 Unicode blank name is valid YAML {source.name} {token!r}',parsed==[token])
+                    selected=subprocess.run([real_python,str(scripts/'workflow-config-resolver.py'),'review-list',
+                                             '--repo-root',str(repo),'--shared-file',str(cfg),'--apply-local',
+                                             '--phase','on_draft','--key','runner'],env=env,text=True,capture_output=True)
+                    check(f'T-31 selected Unicode blank name rejected {source.name} {token!r}',
+                          selected.returncode==2 and selected.stdout=='' and 'schema' in selected.stderr and opaque not in selected.stdout+selected.stderr)
+                    captured=[]
+                    d=run('codex',1,capture=captured)
+                    check(f'T-31 Unicode blank name blocks without identities {source.name} {token!r}',
+                          d['OUTCOME']=='blocked' and d['BLOCK_CAUSE']=='list-malformed' and d['CONFIG_LIST_STATE']=='malformed'
+                          and d['REVIEWER_COUNT']=='0' and d['FALLBACK_APPLIED']=='false'
+                          and opaque not in captured[0].stdout+captured[0].stderr,d)
+                else:
+                    d=run('codex',1)
+                    check(f'T-31 Unicode runner stays unsupported {source.name} {token!r}',any(d[f'REVIEWER_{n}_NAME']=='unknown' and d[f'REVIEWER_{n}_REASON']=='value-not-supported' for n in range(1,int(d['REVIEWER_COUNT'])+1)) and d['FALLBACK_APPLIED']=='false',d)
         for token in ('warn #comment', '"warn" #comment'):
             reset();source.write_text('review:\n  internal_reviewers_unavailable_policy: '+token+'\n')
             d=run('codex')
@@ -596,8 +647,26 @@ reviews:
     reset('[codex]','[warn]');d=run('codex',1);check('T-35 non-scalar policy',d['POLICY_STATE']=='unreadable' and d['POLICY']=='')
     reset('[codex-github]');gh([{'user':{'login':'chatgpt-codex-connector[bot]'},'created_at':'2000-01-01T00:00:00Z'}]);check('T-38 historical proxy',run()['REVIEWER_1_STATUS']=='reachable')
     for name in ('codex, claude','my reviewer','a, b c',"it's",''):
-        reset(json.dumps([name]));d=run(expected=1)
-        check(f'T-39 / T-44 unsupported text hidden {name!r}',d['REVIEWER_COUNT']=='1' and d['REVIEWER_1_NAME']=='unknown' and d['CONFIGURED']=='unknown')
+        reset(json.dumps([name]))
+        if name:
+            d=run(expected=1)
+            check(f'T-39 / T-44 unsupported text hidden {name!r}',d['REVIEWER_COUNT']=='1' and d['REVIEWER_1_NAME']=='unknown' and d['CONFIGURED']=='unknown')
+        else:
+            opaque='fabricatedOpaqueEmptyNameContext'
+            cfg.write_text(cfg.read_text()+'other: '+opaque+'\n')
+            parsed=yaml.safe_load(cfg.read_text())['review']['on_draft']['runner']
+            check('T-39 / T-44 empty name remains valid YAML',parsed==[''])
+            selected=subprocess.run([real_python,str(scripts/'workflow-config-resolver.py'),'review-list',
+                                     '--repo-root',str(repo),'--shared-file',str(cfg),'--apply-local',
+                                     '--phase','on_draft','--key','runner'],env=env,text=True,capture_output=True)
+            check('T-39 / T-44 selected empty name rejected',
+                  selected.returncode==2 and selected.stdout=='' and 'schema' in selected.stderr and opaque not in selected.stdout+selected.stderr)
+            captured=[]
+            d=run(expected=1,capture=captured)
+            check('T-39 / T-44 empty name blocks without identities',
+                  d['OUTCOME']=='blocked' and d['BLOCK_CAUSE']=='list-malformed' and d['CONFIG_LIST_STATE']=='malformed'
+                  and d['REVIEWER_COUNT']=='0' and d['FALLBACK_APPLIED']=='false'
+                  and opaque not in captured[0].stdout+captured[0].stderr,d)
     reset();fake('python3','sleep 30');d=run(expected=1)
     check('T-40 config timeout ceiling',d['BLOCK_CAUSE']=='config-resolution-inconclusive' and d['REVIEWER_COUNT']=='0' and d['POLICY_STATE']==d['CONFIG_LIST_STATE']=='not-evaluated')
     fake('python3','echo deliberate-parser-error >&2; exit 2');check('T-41 config invocation error','OUTCOME' not in run(expected=2))
@@ -781,8 +850,21 @@ exec perl -e 'setpgrp(0,0) or die; my $bound=shift; $SIG{TERM}="IGNORE"; my $pid
     for malformed in (r'[codex, "bad\q"]', r'[codex, "bad\x1"]', r'[codex, "bad\u12"]', r'[codex, "bad\uD800"]', r'[codex, "bad\U00110000"]', r'[codex, "bad\0"]'):
         reset(malformed);d=run('codex',1)
         check(f'T-31 invalid YAML escape {malformed}',d['BLOCK_CAUSE']=='policy-unreadable' and d['REVIEWER_COUNT']=='0' and bool(d['UNREADABLE_DETAIL']),d)
-    reset(r'[codex, "bad\nname"]');d=run('codex')
-    check('T-31 escaped newline stays one verdict field',d['OUTCOME']=='proceeded-reduced' and d['REVIEWER_2_NAME']=='unknown' and d['REVIEWER_COUNT']=='2',d)
+    opaque='fabricatedOpaqueNewlineName'
+    reset('[codex, "'+opaque+r'\nname"]')
+    parsed=yaml.safe_load(cfg.read_text())['review']['on_draft']['runner']
+    check('T-31 escaped newline remains valid YAML',parsed==['codex',opaque+'\nname'])
+    selected=subprocess.run([real_python,str(scripts/'workflow-config-resolver.py'),'review-list',
+                             '--repo-root',str(repo),'--shared-file',str(cfg),'--apply-local',
+                             '--phase','on_draft','--key','runner'],env=env,text=True,capture_output=True)
+    check('T-31 selected escaped newline name rejected',
+          selected.returncode==2 and selected.stdout=='' and 'schema' in selected.stderr and opaque not in selected.stdout+selected.stderr)
+    captured=[]
+    d=run('codex',1,capture=captured)
+    check('T-31 escaped newline blocks without identities',
+          d['OUTCOME']=='blocked' and d['BLOCK_CAUSE']=='list-malformed' and d['CONFIG_LIST_STATE']=='malformed'
+          and d['REVIEWER_COUNT']=='0' and d['FALLBACK_APPLIED']=='false'
+          and opaque not in captured[0].stdout+captured[0].stderr,d)
     for scalar in ('"foo: bar"',"'foo: bar'",'https://example.test'):
         reset();cfg.write_text('review:\n  on_draft:\n    runner:\n      - '+scalar+'\n');d=run(expected=1)
         check(f'T-49 colon scalar {scalar}',d['REVIEWER_1_NAME']=='unknown' and d['REVIEWER_1_REASON']=='value-not-supported')

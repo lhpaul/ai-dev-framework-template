@@ -146,15 +146,22 @@ flow: {name: value, nested: [x, y]}
                 self.f.private.write_text(self.valid + 'other: ' + raw + '\n')
                 actual = self.cli('local-source', '--repo-root', str(self.f.checkout))
                 self.assertEqual(actual.returncode, 0, actual.stderr)
-        for raw, expected in [('"\\e[2J"', '\x1b[2J'), ('"#literal"', '#literal'),
+        for raw, expected in [('"fabricatedOpaqueControlName\\e[2J"', 'fabricatedOpaqueControlName\x1b[2J'), ('"#literal"', '#literal'),
                               ("':bad'", ':bad'), ('a#b', 'a#b'), ('a:b', 'a:b')]:
             with self.subTest(flow=raw):
                 self.assertEqual(self.parse('other: [codex, ' + raw + '] # context\n')['other'], ['codex', expected])
                 self.f.private.write_text('review:\n  on_draft:\n    runner: [codex, ' + raw + ']\n')
                 actual = self.cli('review-local-list', '--repo-root', str(self.f.checkout),
                                   '--phase', 'on_draft', '--key', 'runner')
-                self.assertEqual(actual.returncode, 0, actual.stderr)
-                self.assertEqual(actual.stdout.splitlines(), ['codex', expected])
+                if '\x1b' in expected:
+                    # The scalar is valid YAML above, but not a reviewer name.
+                    self.assertEqual(actual.returncode, 2, actual.stdout + actual.stderr)
+                    self.assertEqual(actual.stdout, '')
+                    self.assertIn('schema', actual.stderr)
+                    self.assertNotIn('fabricatedOpaqueControlName', actual.stdout + actual.stderr)
+                else:
+                    self.assertEqual(actual.returncode, 0, actual.stderr)
+                    self.assertEqual(actual.stdout.splitlines(), ['codex', expected])
 
     def test_P07_schema_remains_after_precedence_and_syntax(self):
         self.f.private.write_text(self.valid + 'review_alias: opaque\n')
