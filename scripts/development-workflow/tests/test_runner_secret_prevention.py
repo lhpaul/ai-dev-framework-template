@@ -369,7 +369,16 @@ builtins.open = opened
             source.write_bytes(b'review:\n  coderabbit_cli:\n    rate_limit_policy: strict\n'.replace(b'\n', separator))
             result = self.bash('rate_limit_policy_from_file "$OPTIONAL_FILE"', extra=extra, env=dict(self.env, OPTIONAL_FILE=str(source)))
             self.assertEqual((result.returncode, result.stdout, result.stderr), (0, expected, ''))
-        for raw, expected in [('strict', 'strict'), ('"strict" # synthetic', 'strict'), ("'warn'", 'warn'), ('"str\\u0069ct"', 'str\\u0069ct'), ('fabricated-unknown', 'fabricated-unknown'), ('strict\u2003', 'strict\u2003')]:
+        # The retained legacy extractor uses AWK's POSIX space class, whose
+        # Unicode membership depends on the AWK implementation and locale.
+        # Probe the class independently; do not impose Python/BSD trimming on
+        # the same valid YAML when CI's AWK classifies U+2003 as whitespace.
+        space = subprocess.run(['awk', '{ print ($0 ~ /^[[:space:]]+$/) ? "yes" : "no" }'],
+                               input='\u2003\n', env=self.env, text=True, capture_output=True)
+        self.assertEqual((space.returncode, space.stderr), (0, ''))
+        self.assertIn(space.stdout, ('yes\n', 'no\n'))
+        unicode_expected = 'strict' if space.stdout == 'yes\n' else 'strict\u2003'
+        for raw, expected in [('strict', 'strict'), ('"strict" # synthetic', 'strict'), ("'warn'", 'warn'), ('"str\\u0069ct"', 'str\\u0069ct'), ('fabricated-unknown', 'fabricated-unknown'), ('strict\u2003', unicode_expected)]:
             source = self.write('review:\n  coderabbit_cli:\n    rate_limit_policy: ' + raw + '\n', self.external)
             result = self.bash('rate_limit_policy_from_file "$OPTIONAL_FILE"', extra=extra, env=dict(self.env, OPTIONAL_FILE=str(source)))
             self.assertEqual((result.returncode, result.stdout, result.stderr), (0, expected, ''))
