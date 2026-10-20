@@ -164,7 +164,8 @@ gh() {
                 else:
                     self.assertIn('OUTCOME=blocked', result.stdout)
                     self.assertIn('value-not-supported', result.stdout)
-                self.assertIn('[REDACTED]', result.stdout)
+                self.assertIn('unknown', result.stdout)
+                self.assertIn('configuration validation error', result.stdout)
 
     def test_D06_availability_real_source_failure_and_fail(self):
         self.f.private.write_text('review: [invalid,, token=' + self.secret + ']\n')
@@ -179,7 +180,8 @@ gh() {
         self.f.private.write_text('review:\n  on_draft:\n    runner: ["token=' + self.secret + '"]\n')
         result = self.safe(self.entry('resolve-reviewer-availability.sh', '--repo-root', str(self.f.checkout),
                                       '--owner', 'fixture', '--repo', 'repo', '--runner-kind', 'codex'), 1)
-        self.assertIn('REVIEWER_2_NAME=token=[REDACTED]', result.stdout)
+        self.assertIn('REVIEWER_2_NAME=unknown', result.stdout)
+        self.assertIn('value-not-supported', result.stdout)
         self.assertIn('value-not-supported', result.stdout)
         self.assertIn('OUTCOME=', result.stdout)
 
@@ -588,7 +590,7 @@ esac
         missing = self.f.root / ('token=' + self.secret)
         result = self.safe(self.run_command(['python3', str(self.f.runtime / 'reviewer_preflight.py'),
                                              '--input-json', str(missing)]), 3)
-        self.assertIn('cannot read input JSON', result.stderr)
+        self.assertIn('configuration: configuration unreadable', result.stderr)
 
     def test_D38_input_builder_preserves_functional_bundle_and_safe_error(self):
         target = self.f.root / 'assembled.json'
@@ -601,7 +603,7 @@ esac
         bad.write_text('malformed-json')
         result = self.safe(self.run_command(['python3', str(self.f.runtime / 'reviewer_preflight_build_input.py'),
                                              '--runner-json', str(bad), '--output', str(target)]), 1)
-        self.assertIn('cannot build preflight input', result.stderr)
+        self.assertIn('configuration: invalid JSON; line=1; column=1', result.stderr)
 
     def test_D39_config_probe_functional_payload_and_parse_diagnostics(self):
         config = self.f.root / 'synthetic-coderabbit.yaml'
@@ -615,7 +617,7 @@ esac
         result = self.safe(self.run_command(['python3', str(self.f.runtime / 'reviewer_preflight_coderabbit.py'),
                                              '--mode', 'full-json', str(config)]), 3)
         self.assertEqual(result.stdout, '')
-        self.assertIn('[REDACTED]', result.stderr)
+        self.assertIn('configuration: invalid YAML; line=3; column=1', result.stderr)
         for name in ('reviewer_preflight.py', 'reviewer_preflight_build_input.py', 'reviewer_preflight_coderabbit.py',
                      'workflow-config-resolver.py'):
             with self.subTest(parser=name):
