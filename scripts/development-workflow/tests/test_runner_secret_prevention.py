@@ -9,6 +9,7 @@ import json
 import os
 import re
 import shlex
+import signal
 from pathlib import Path
 import shutil
 import subprocess
@@ -84,6 +85,9 @@ class RunnerSecurityTests(unittest.TestCase):
                               env=env or self.env, text=True, capture_output=True)
 
     def selected_race_fixture(self):
+        # Each action starts with a fresh disposable regular fixture, even if
+        # the preceding action deliberately left a FIFO at that fake path.
+        (self.external / MODULE.LOCAL_CONFIG_NAME).unlink(missing_ok=True)
         source = self.write('review:\n  on_draft:\n    runner: [codex]\n    github: [pr-agent]\n  on_ready:\n    github: [coderabbit]\n  coderabbit_cli:\n    rate_limit_policy: strict\nignored: fabricated-original-opaque\n', self.external)
         self.write('review:\n  on_draft:\n    runner: [claude]\n    github: [ronda]\n  on_ready:\n    github: [bugbot]\n  coderabbit_cli:\n    rate_limit_policy: warn\n', local=False)
         bindir = self.root / 'race-bin'
@@ -106,6 +110,8 @@ def selection(*a, **kw):
         changed = True
         action = os.environ['RACE_ACTION']
         if action == 'remove': source.unlink()
+        elif action == 'fifo':
+            source.unlink(); os.mkfifo(source)
         elif action in ('valid', 'invalid'):
             replacement = source.parent / 'fabricated-replacement'
             replacement.write_text('review: [fabricated-invalid-opaque' if action == 'invalid' else
@@ -114,6 +120,17 @@ def selection(*a, **kw):
         pathlib.Path(os.environ['RACE_MARKER']).write_text('selected')
     return path
 m.validate_local_source = selection
+identity = m.source_identity
+replaced = False
+def checked_identity(path):
+    global replaced
+    result = identity(path)
+    if path == source and not replaced and os.environ['RACE_ACTION'] == 'fifo-open' and (changed or os.environ.get('RACE_DIRECT') == '1'):
+        replaced = True
+        source.unlink(); os.mkfifo(source)
+        pathlib.Path(os.environ['RACE_MARKER']).write_text('identity-checked')
+    return result
+m.source_identity = checked_identity
 sys.exit(m.main(args[1:]))
 """)
         wrapper.chmod(0o755)
@@ -123,8 +140,21 @@ sys.exit(m.main(args[1:]))
                    PATH=str(bindir) + os.pathsep + self.env['PATH'])
         return source, wrapper, env
 
-    def selected_race_route(self, route):
-        for action in ('stable', 'remove', 'valid', 'invalid'):
+    def bounded_source(self, argv, env):
+        # Kill and reap our entire synthetic process group if the old blocking
+        # opener waits for a FIFO writer; no writer or external service exists.
+        child = subprocess.Popen(argv, env=env, text=True, stdout=subprocess.PIPE,
+                                 stderr=subprocess.PIPE, start_new_session=True)
+        try:
+            out, err = child.communicate(timeout=3)
+            return subprocess.CompletedProcess(argv, child.returncode, out, err)
+        except subprocess.TimeoutExpired:
+            os.killpg(child.pid, signal.SIGKILL)
+            out, err = child.communicate()
+            return subprocess.CompletedProcess(argv, 124, out, err)
+
+    def selected_race_route(self, route, actions=('stable', 'remove', 'valid', 'invalid')):
+        for action in actions:
             with self.subTest(route=route, action=action):
                 source, wrapper, env = self.selected_race_fixture()
                 env['RACE_ACTION'] = action
@@ -147,11 +177,16 @@ sys.exit(m.main(args[1:]))
                     # It requires an existing repo declaration to reach a valid write.
                     local.write_text('product_repos:\n  - name: synthetic\n    local_path: .\n')
                     self.write('mode: workflow_hub\nworkflow_hub:\n  product_repos:\n    - name: synthetic\n      github_repo: fabricated/synthetic\n', local=False)
+                if route in ('R12', 'R13'): env['RACE_DIRECT'] = '1'
                 if route in ('R11', 'R12'):
                     extra = function_text('coderabbit-cli-reviewer.sh', 'rate_limit_policy_from_file') + '\n' + function_text('coderabbit-cli-reviewer.sh', 'rate_limit_policy_from_config')
-                    result = self.bash('rate_limit_policy_from_config' if route == 'R11' else 'rate_limit_policy_from_file "$RACE_SOURCE"', extra=extra, env=env)
+                    expression = 'rate_limit_policy_from_config' if route == 'R11' else 'rate_limit_policy_from_file "$RACE_SOURCE"'
+                    script = f'source {shlex.quote(str(SCRIPTS / "workflow-lib.sh"))}\nworkflow_repo_root() {{ printf "%s\\n" {shlex.quote(str(self.checkout))}; }}\n' + extra + '\n' + expression
+                    result = self.bounded_source(['/bin/bash', '-c', script], env)
                 else:
-                    result = subprocess.run([str(wrapper), str(RESOLVER), *commands[route], '--repo-root', str(self.checkout)], env=env, text=True, capture_output=True)
+                    args = (['yaml-source-check', '--file', str(source)] if route == 'R13' else
+                            [*commands[route], '--repo-root', str(self.checkout)])
+                    result = self.bounded_source([str(wrapper), str(RESOLVER), *args], env)
                 self.assertTrue((self.root / 'selected-marker').exists(), 'actual selected-source boundary not reached')
                 if action == 'stable':
                     self.assertEqual(result.returncode, 0, result.stderr)
@@ -164,6 +199,36 @@ sys.exit(m.main(args[1:]))
                     self.assertNotRegex(result.stdout + result.stderr, r'fabricated-|claude|ronda|bugbot|' + re.escape(str(self.root)))
                     self.assertFalse((stage / MODULE.LOCAL_CONFIG_NAME).exists())
                 (self.root / 'selected-marker').unlink()
+
+    def test_nonregular_checked_open_all_thirteen_routes(self):
+        # Replace the regular source AFTER source_identity returned its regular
+        # stamp, BEFORE the open. A pre-open is_file check alone cannot pass.
+        for number in range(1, 14):
+            self.selected_race_route(f'R{number:02d}', actions=('fifo-open',))
+
+    def test_nonregular_initial_and_post_validation(self):
+        source = self.external / 'fabricated-fifo-opaque'
+        os.mkfifo(source)
+        for path in (source, self.external):
+            result = self.bounded_source([sys.executable, str(RESOLVER), 'yaml-source-check', '--file', str(path)], self.env)
+            self.assertEqual((result.returncode, result.stdout), (2, ''))
+            self.assertNotRegex(result.stdout + result.stderr, 'fabricated-|'+re.escape(str(self.root)))
+        source.unlink()
+        self.selected_race_route('R09', actions=('fifo',))
+
+    def test_nonregular_three_bash_buckets(self):
+        for shell in ('/bin/bash', '/opt/homebrew/bin/bash'):
+            if not Path(shell).exists(): continue
+            for getter in ('workflow_config_review_on_draft_runner', 'workflow_config_review_on_draft_github', 'workflow_config_review_on_ready_github'):
+                with self.subTest(shell=shell, getter=getter):
+                    source, wrapper, env = self.selected_race_fixture()
+                    env['RACE_ACTION'] = 'fifo-open'
+                    script = f'source {shlex.quote(str(SCRIPTS / "workflow-lib.sh"))}\nworkflow_repo_root() {{ printf "%s\\n" {shlex.quote(str(self.checkout))}; }}\n{getter}'
+                    result = self.bounded_source([shell, '-c', script], env)
+                    self.assertEqual((result.returncode, result.stdout, result.stderr),
+                                     (2, '', 'ERROR: configuration: selected source changed during capture\n'))
+                    self.assertEqual((self.root / 'selected-marker').read_text(), 'identity-checked')
+                    (self.root / 'selected-marker').unlink()
 
     def test_selected_capture_R01_legacy(self): self.selected_race_route('R01')
     def test_selected_capture_R02_runner_effective(self): self.selected_race_route('R02')
@@ -222,6 +287,8 @@ m.validate_selected_yaml = validated""")
                     text = wrapper.read_text()
                     hook = r"""
 original_open = pathlib.Path.open
+import builtins
+original_builtin_open = builtins.open
 def mutate():
     if os.environ['DURING_ACTION'] == 'remove': source.unlink()
     else:
@@ -241,9 +308,10 @@ def opened(path, *args, **kw):
     mode = kw.get('mode', args[0] if args else 'r')
     if path == source and mode in ('r', 'rb'):
         if os.environ['DURING_TIMING'] == 'open': mutate()
-        return Reading(original_open(path, *args, **kw))
-    return original_open(path, *args, **kw)
+        return Reading(original_builtin_open(path, *args, **kw))
+    return original_builtin_open(path, *args, **kw)
 pathlib.Path.open = opened
+builtins.open = opened
 """
                     wrapper.write_text(text.replace('sys.exit(m.main(args[1:]))', hook + '\nsys.exit(m.main(args[1:]))'))
                     read_marker = source.parent / 'captured-read-marker'
@@ -541,13 +609,12 @@ if not args or not args[0].endswith('workflow-config-resolver.py') or (len(args)
 spec = importlib.util.spec_from_file_location('isolated_resolver', args[0])
 module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
 reads = []
-source_open = pathlib.Path.open
+source_open = os.open
 source = pathlib.Path(os.environ['SYNTHETIC_SOURCE'])
-def spy(path, *a, **kw):
-    mode = kw.get('mode', a[0] if a else 'r')
-    if path == source and 'r' in mode: reads.append(str(path))
-    return source_open(path, *a, **kw)
-pathlib.Path.open = spy
+def spy(path, flags, *a, **kw):
+    if pathlib.Path(path) == source and (flags & os.O_ACCMODE) == os.O_RDONLY: reads.append(str(path))
+    return source_open(path, flags, *a, **kw)
+os.open = spy
 capture = io.StringIO()
 with contextlib.redirect_stdout(capture):
     rc = module.main(args[1:])

@@ -248,6 +248,11 @@ def selected_source_present(path: Path) -> bool:
     return selected[1] is not None if selected and selected[0] is path else path.is_file()
 
 
+def open_config_nonblocking(path: str, flags: int) -> int:
+    """Never wait for a FIFO writer if a selected path changes before open."""
+    return os.open(path, flags | os.O_NONBLOCK)
+
+
 def capture_config_bytes(path: Path, *, required: bool = False) -> bytes | None:
     """Read once from the selected identity, checking path and FD around capture.
 
@@ -263,7 +268,9 @@ def capture_config_bytes(path: Path, *, required: bool = False) -> bytes | None:
             raise SourceIntegrityError()
         if before is None:
             return None
-        with path.open('rb') as stream:
+        if not stat.S_ISREG(before[1][2]):
+            raise SourceIntegrityError()
+        with open(path, 'rb', opener=open_config_nonblocking) as stream:
             opened = os.fstat(stream.fileno())
             identity = (opened.st_dev, opened.st_ino, opened.st_mode, opened.st_size,
                         opened.st_mtime_ns, opened.st_ctime_ns)
