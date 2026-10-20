@@ -212,8 +212,8 @@ flow: {name: value, nested: [x, y]}
     def test_P11_pinned_develop_fixture_syntax_parity_without_pyyaml(self):
         corpus = json.loads((Path(__file__).parent / 'fixtures/1993-selected-yaml-parity.json').read_text())
         self.assertEqual(corpus['base'], '25e702d2cf8ea5c7d97c9080a44fec84a3607a63')
-        self.assertEqual(len(corpus['cases']), 992)
-        self.assertEqual(sum(len(case['origins']) for case in corpus['cases']), 2088)
+        self.assertEqual(len(corpus['cases']), 1020)
+        self.assertEqual(sum(len(case['origins']) for case in corpus['cases']), 2117)
         for case in corpus['cases']:
             with self.subTest(origins=case['origins']):
                 self.parse(case['raw'])

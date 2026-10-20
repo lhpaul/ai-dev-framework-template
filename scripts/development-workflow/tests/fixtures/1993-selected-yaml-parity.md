@@ -2,9 +2,9 @@
 
 `1993-selected-yaml-parity.json` freezes the public repository fixture corpus at
 `25e702d2cf8ea5c7d97c9080a44fec84a3607a63`. P11 in
-`test_selected_private_yaml.py` passes each of its 992 distinct documents through
+`test_selected_private_yaml.py` passes each of its 1020 distinct documents through
 both the own parser and the actual `yaml-source-check` CLI with PyYAML unavailable.
-The corpus records 2088 origins (test file, source line, extraction kind/context).
+The corpus records 2117 origins (test file, source line, extraction kind/context).
 This is syntax compatibility before independent schema/preference validation.
 P12 explicitly preserves malformed reviewer-schema rejection for YAML-valid
 nested scalars and accepts whitespace before mapping colons, including list items.
@@ -15,15 +15,14 @@ a BOM at the beginning of a YAML stream is valid syntax.
 
 The development extraction examines every tracked test Bash/Python file (141),
 all shell heredocs irrespective of delimiter, Python string constants including
-embedded Python, shell single/double/newline literals and assembled printf/write-fixture arguments, and tracked public workflow
-YAML/examples/templates. It additionally executes all 28 original DSH model tests
+embedded Python, shell single/double/newline literals and assembled printf/write-fixture arguments, and all 49 tracked public `.yaml`/`.yml` files, without filename filtering. It additionally executes all 28 original DSH model tests
 in a public base snapshot with fake HOME, denied provider commands and file-only
 Git transport, capturing all 742 assembled shared/local documents. Dynamic
 shell scalar templates are indexed as literals, not expanded using workstation
 environment or private configuration. Static fragments remain in the candidate
 index with their baseline disposition; no arbitrary sample was substituted.
 
-The overinclusive index contains 5786 candidates. Of these, 2068 origins pass
+The overinclusive index contains 5827 candidates. Of these, 2097 origins pass
 pinned develop's `parse_review_yaml` strict reader (full syntax and framework
 representation, before reviewer schema). The corpus also includes 20 individually
 classified valid legacy-context flow-mapping origins already supported by the
@@ -38,7 +37,7 @@ and a reproducible disposition in the creator's extraction manifest/index:
 - 1183 invalid-YAML/non-YAML candidates: YAML compose rejects the literal.
 - 1640 nonmapping candidates: not a workflow configuration document.
 - 327 empty/comment/non-config candidates.
-- 441 candidates rejected by both baseline framework readers.
+- 453 candidates rejected by both baseline framework readers.
 - 127 legacy-only candidates receive individual context dispositions: explicit
   negative duplicate/metadata/complex-key cases; lexical escaped fragments or
   diagnostic literals with separately indexed decoded/AST counterparts;
@@ -55,3 +54,9 @@ The extraction script, complete per-candidate classification, baseline model
 capture and old/new CLI proofs are retained with cycle8 creator evidence. The
 fixture is pinned so tests do not depend on a shallow clone containing an old
 Git object or on runtime PyYAML; PyYAML was only a development reference oracle.
+
+The development oracle used PyYAML 6.0.3 with the pinned develop reader;
+CI keeps its existing PyYAML6.0.2 provision. The corpus test itself needs neither
+version at runtime. All49 tracked YAML files have individual reference outcomes
+in the extraction manifest; unsupported platform/Actions multiline formats are
+classified by their actual consumer grammar, not silently dropped.
