@@ -632,15 +632,21 @@ class ModelRoutingTests(unittest.TestCase):
                                  capture_output=True, text=True, env=dict(os.environ, WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT=""))
         self.assertEqual(opted_in.returncode, 0, opted_in.stderr)
 
-    def test_selected_private_source_requires_syntax_dependency(self):
+    def test_selected_private_source_validates_syntax_without_dependency(self):
         self.write('mode: single_repo\n', 'review:\n  on_draft:\n    runner: [cursor]\n')
         result = subprocess.run([sys.executable, '-S', str(SCRIPT), 'validate', '--repo-root', str(self.root)],
                                 capture_output=True, text=True,
                                 env=dict(os.environ, WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT=''))
-        self.assertEqual(result.returncode, 2)
-        self.assertEqual(result.stdout, '')
-        self.assertIn('selected-source validation requires PyYAML', result.stderr)
-        self.assertNotIn('cursor', result.stderr)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stderr, '')
+        self.local.write_text('review:\n  on_draft:\n    runner: [fabricatedOpaque,,tail]\n')
+        invalid = subprocess.run([sys.executable, '-S', str(SCRIPT), 'validate', '--repo-root', str(self.root)],
+                                 capture_output=True, text=True,
+                                 env=dict(os.environ, WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT=''))
+        self.assertEqual(invalid.returncode, 2)
+        self.assertEqual(invalid.stdout, '')
+        self.assertIn('invalid YAML', invalid.stderr)
+        self.assertNotIn('fabricatedOpaque', invalid.stderr)
 
     def test_role_catalogue_matches_canonical_table(self):
         text = (ROOT / "docs/workflow/development-workflow/agent-model-config.md").read_text()

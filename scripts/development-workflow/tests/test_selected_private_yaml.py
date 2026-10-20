@@ -209,6 +209,51 @@ flow: {name: value, nested: [x, y]}
                     rejected += 1
         self.assertGreater(rejected, 100)
 
+    def test_P11_pinned_develop_fixture_syntax_parity_without_pyyaml(self):
+        corpus = json.loads((Path(__file__).parent / 'fixtures/1993-selected-yaml-parity.json').read_text())
+        self.assertEqual(corpus['base'], '25e702d2cf8ea5c7d97c9080a44fec84a3607a63')
+        self.assertEqual(len(corpus['cases']), 992)
+        self.assertEqual(sum(len(case['origins']) for case in corpus['cases']), 2088)
+        for case in corpus['cases']:
+            with self.subTest(origins=case['origins']):
+                self.parse(case['raw'])
+                self.f.private.write_text(case['raw'])
+                actual = self.cli('yaml-source-check', '--file', str(self.f.private))
+                self.assertEqual(actual.returncode, 0, actual.stdout + actual.stderr)
+                self.assertEqual(actual.stdout, '')
+
+    def test_P12_spaced_mapping_syntax_keeps_schema_independent(self):
+        for raw in ('review : {}\n', 'review\t: {}\n',
+                    'items:\n  - name : first\n    value : second\n'):
+            with self.subTest(raw=raw):
+                self.parse(raw)
+                self.f.private.write_text(raw)
+                actual = self.cli('review-overrides', '--repo-root', str(self.f.checkout))
+                self.assertEqual(actual.returncode, 0, actual.stdout + actual.stderr)
+        for raw in ('review:\n  broken mapping\n', 'review:\n  on_draft:\n    runner:[]\n',
+                    'review:\n  on_draft:\n    runner:null\n', 'review:\n  on_draft:{}\n',
+                    'review:\n  internal_reviewers_unavailable_policy:warn\n'):
+            with self.subTest(schema=raw):
+                self.parse(raw)
+                self.f.private.write_text(raw)
+                actual = self.cli('review-local-list', '--repo-root', str(self.f.checkout),
+                                  '--phase', 'on_draft', '--key', 'runner')
+                self.assertEqual(actual.returncode, 2)
+                self.assertEqual(actual.stdout, '')
+                self.assertIn('schema', actual.stderr)
+
+    def test_P13_baseline_quote_comment_and_flow_mapping_contracts(self):
+        self.assertEqual(self.parse('policy: "warn"#comment\n')['policy'], 'warn')
+        self.f.private.write_text('review:\n  on_draft:\n    runner: [codex, extra:]\n')
+        legacy = self.cli('review-overrides', '--repo-root', str(self.f.checkout))
+        self.assertEqual(legacy.returncode, 0, legacy.stderr)
+        self.assertIn('REVIEW_ON_DRAFT_RUNNER=codex,extra:', legacy.stdout)
+        strict = self.cli('review-local-list', '--repo-root', str(self.f.checkout),
+                          '--phase', 'on_draft', '--key', 'runner')
+        self.assertEqual(strict.returncode, 2)
+        self.assertEqual(strict.stdout, '')
+        self.assertIn('flow mapping', strict.stderr)
+
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)

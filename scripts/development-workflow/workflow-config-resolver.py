@@ -606,6 +606,8 @@ class SelectedYamlParser:
         self.lines: list[tuple[int, str, int]] = []
         for number, physical in enumerate(raw.split("\n"), 1):
             line = physical.removesuffix("\r")
+            if number == 1:
+                line = line.removeprefix("\ufeff")  # YAML stream BOM, not scalar data.
             if any((ord(c) < 32 and c != "\t") or 127 <= ord(c) <= 159
                    or 0xD800 <= ord(c) <= 0xDFFF or c in "\u2028\u2029" for c in line):
                 self.fail(number)
@@ -681,6 +683,22 @@ class SelectedYamlParser:
             if index >= len(text):
                 self.fail(line)
             char = text[index]
+            if flow and char == "?":
+                if self.review_fields:
+                    self.fail(line, "unsupported YAML flow mapping")
+                index += 1
+                spaces()
+                explicit_key = value(level + 1, True, True)
+                spaces()
+                explicit_value = None
+                if index < len(text) and text[index] == ":":
+                    index += 1
+                    spaces()
+                    if index < len(text) and text[index] not in ",]}":
+                        explicit_value = value(level + 1, True)
+                if not isinstance(explicit_key, str):
+                    self.fail(line, "unsupported YAML mapping key")
+                return {explicit_key: explicit_value}
             if char in "\"'":
                 return quoted()
             if char in "[{":
@@ -698,6 +716,15 @@ class SelectedYamlParser:
                     item = value(level + 1, True, opening == "{")
                     spaces()
                     if opening == "[":
+                        if index < len(text) and text[index] == ":":
+                            if self.review_fields or not isinstance(item, str):
+                                self.fail(line, "unsupported YAML flow mapping")
+                            index += 1
+                            spaces()
+                            mapped = (None if index == len(text) or text[index] in ",]"
+                                      else value(level + 1, True))
+                            item = {item: mapped}
+                            spaces()
                         items.append(item)
                     else:
                         if not isinstance(item, str) or index >= len(text) or text[index] != ":":
@@ -732,9 +759,11 @@ class SelectedYamlParser:
                     break
                 if key and char == ":":
                     break
+                if flow and char == ":" and (index + 1 == len(text) or
+                        text[index + 1] in " \t,[]{}"):
+                    break
                 if (flow and char in "[{") or (char == ":" and
-                        (index + 1 == len(text) or text[index + 1] in " \t" or
-                         (flow and text[index + 1] in ",[]{}"))):
+                        (index + 1 == len(text) or text[index + 1] in " \t")):
                     self.fail(line)
                 index += 1
             token = text[start:index].rstrip(" \t")
@@ -763,7 +792,8 @@ class SelectedYamlParser:
         end = index
         spaces()
         if index < len(text) and not (text[index] == "#" and
-                (index > end or (index > 0 and text[index - 1] in " \t"))):
+                (index > end or text.lstrip()[0] in "\"'[{" or
+                 (index > 0 and text[index - 1] in " \t"))):
             self.fail(line)
         return result
 
@@ -772,7 +802,7 @@ class SelectedYamlParser:
         return content == "-" or content.startswith("- ")
 
     def mapping_entry(self, content: str, number: int) -> tuple[str, str]:
-        match = re.fullmatch(r"([A-Za-z0-9_.-]+):(?:[ \t]+(.*))?", content)
+        match = re.fullmatch(r"([A-Za-z0-9_.-]+)[ \t]*:(?:[ \t]+(.*))?", content)
         if not match:
             self.fail(number)
         return match[1], match[2] or ""
@@ -781,6 +811,11 @@ class SelectedYamlParser:
         if depth > 100:
             self.fail(self.lines[index][2], "unsupported YAML nesting")
         sequence = self.sequence(self.lines[index][1])
+        if not sequence and not re.match(r"[A-Za-z0-9_.-]+[ \t]*:(?:[ \t]|$)", self.lines[index][1]):
+            # A nested plain scalar is valid YAML even when its eventual
+            # reviewer-field schema is invalid (e.g. ``runner:[]``). Syntax
+            # validation must leave that independent decision to the caller.
+            return self.scalar(self.lines[index][1], self.lines[index][2], depth=depth), index + 1
         result: Any = [] if sequence else {}
         while index < len(self.lines) and self.lines[index][0] == indent:
             _, content, number = self.lines[index]
@@ -790,7 +825,7 @@ class SelectedYamlParser:
             mapping_item = False
             if sequence:
                 content = content[1:].lstrip(" ")
-                mapping_item = bool(re.match(r"[A-Za-z0-9_.-]+:(?:[ \t]|$)", content))
+                mapping_item = bool(re.match(r"[A-Za-z0-9_.-]+[ \t]*:(?:[ \t]|$)", content))
                 target: Any = {} if mapping_item else result
             else:
                 target = result
@@ -831,6 +866,8 @@ class SelectedYamlParser:
         if self.lines[0][0] != 0 or self.sequence(self.lines[0][1]):
             self.fail(self.lines[0][2], "selected source must be a mapping")
         data, index = self.block(0, 0)
+        if not isinstance(data, dict):
+            self.fail(self.lines[0][2], "selected source must be a mapping")
         if index != len(self.lines):
             self.fail(self.lines[index][2])
         return data
