@@ -199,13 +199,12 @@ try:
 except Exception as e:
     formatter = getattr(locals().get("resolver"), "format_config_error", None)
     print(formatter(e, key="guardrails") if formatter else "configuration: validation error", file=sys.stderr)
-    print(json.dumps({"section": "absent", "mode": "manual", "backlog_start": False}))
+    sys.exit(2)
 PYEOF
   )" || _py_exit=$?
 
   if [ "$_py_exit" -ne 0 ]; then
-    echo "run-work-router: warning: guardrails config parsing failed (exit $_py_exit); using defaults" >&2
-    return 0
+    return 2
   fi
 
   if [ -n "$py_result" ]; then
@@ -617,7 +616,7 @@ done
 # Read guardrails config (always, for reporting)
 # ---------------------------------------------------------------------------
 
-read_guardrails_config
+read_guardrails_config || exit 2
 
 # ---------------------------------------------------------------------------
 # Core routing logic

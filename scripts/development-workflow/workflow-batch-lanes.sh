@@ -237,8 +237,8 @@ read_parallelism_caps() {
     return 0
   fi
 
-  python3 - "$config_file" <<'PYEOF' || printf '{"spec":0,"plan":0,"review":0,"implementation":1}\n'
-import json, sys
+  python3 - "$config_file" "$SCRIPT_DIR/workflow-config-resolver.py" <<'PYEOF'
+import json, runpy, sys
 from pathlib import Path
 
 path = Path(sys.argv[1])
@@ -251,9 +251,10 @@ except ImportError:
 
 try:
     cfg = yaml.safe_load(path.read_text()) or {}
-except Exception:
-    print(json.dumps(defaults))
-    sys.exit(0)
+except Exception as exc:
+    formatter = runpy.run_path(sys.argv[2])["format_config_error"]
+    print(formatter(exc, key="guardrails.parallelism"), file=sys.stderr)
+    sys.exit(2)
 
 guardrails = cfg.get("guardrails") if isinstance(cfg, dict) else None
 parallelism = guardrails.get("parallelism") if isinstance(guardrails, dict) else None
@@ -310,7 +311,7 @@ fi
 repo_root="$(CDPATH='' cd -- "$repo_root" && pwd -P)" || exit 1
 cd "$repo_root" || exit 1
 
-caps_json="$(read_parallelism_caps "$repo_root")"
+caps_json="$(read_parallelism_caps "$repo_root")" || exit 2
 max_spec="$(printf '%s' "$caps_json" | jq -r '.spec')"
 max_plan="$(printf '%s' "$caps_json" | jq -r '.plan')"
 max_review="$(printf '%s' "$caps_json" | jq -r '.review')"

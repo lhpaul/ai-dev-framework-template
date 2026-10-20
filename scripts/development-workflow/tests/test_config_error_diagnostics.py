@@ -180,7 +180,7 @@ for error in (OpaqueError(), api['ConfigError']('opaqueConfigurationMaterial', k
     def test_K11_router_embedded_parser(self):
         self.f.shared.write_text('broken opaqueConfigurationMaterial\n')
         self.f.env['AI_DEV_WORKFLOW_CONFIG_FILE'] = str(self.f.shared)
-        self.safe(self.shell_function('run-work-router.sh', ['read_guardrails_config'], 'read_guardrails_config'), 0)
+        self.safe(self.shell_function('run-work-router.sh', ['read_guardrails_config'], 'read_guardrails_config'), 2)
         self.f.shared.write_text('guardrails:\n  mode: delegated\n')
         good = self.shell_function('run-work-router.sh', ['read_guardrails_config'], 'read_guardrails_config; printf "%s" "$GUARDRAILS_MODE"')
         self.assertEqual(good.stdout, 'delegated')
@@ -273,8 +273,8 @@ for error in (OpaqueError(), api['ConfigError']('opaqueConfigurationMaterial', k
     def test_K19_batch_caps_suppressed_error_and_valid_control(self):
         self.f.shared.write_text(self.bad)
         body = 'parallelism_config_file() { printf "%s\\n" ' + shlex.quote(str(self.f.shared)) + '; }; read_parallelism_caps ' + shlex.quote(str(self.f.checkout))
-        bad = self.safe(self.shell_function('workflow-batch-lanes.sh', ['read_parallelism_caps'], body), 0, locator=False)
-        self.assertEqual(json.loads(bad.stdout)['implementation'], 1)
+        bad = self.safe(self.shell_function('workflow-batch-lanes.sh', ['read_parallelism_caps'], body), 2)
+        self.assertEqual(bad.stdout, '')
         self.f.shared.write_text('guardrails:\n  parallelism:\n    max_concurrent_by_stage:\n      implementation: 9\n')
         good = self.shell_function('workflow-batch-lanes.sh', ['read_parallelism_caps'], body)
         self.assertEqual(json.loads(good.stdout)['implementation'], 9)

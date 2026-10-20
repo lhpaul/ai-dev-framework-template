@@ -408,6 +408,84 @@ workflow_hub:
     def test_S09_next_merged_handoff(self):
         self.next_suppression_case('S09')
 
+    def test_S10_router_guardrails(self):
+        opaque = 'fabricatedOpaqueSuppressionS10'
+        self.private.write_text('review: {}\n')
+        self.env['AI_DEV_WORKFLOW_CONFIG_FILE'] = str(self.shared)
+        extra = function_text('run-work-router.sh', 'read_guardrails_config') + '\nSCRIPT_DIR=' + shlex.quote(str(self.runtime)) + '\n'
+        call = 'read_guardrails_config && printf "%s/%s/%s\\n" "$GUARDRAILS_SECTION" "$GUARDRAILS_MODE" "$GUARDRAILS_BACKLOG_START"'
+        for shell in dict.fromkeys(('/bin/bash', shutil.which('bash'))):
+            with self.subTest(shell=shell):
+                self.shared.write_text('broken:\n   key: ' + opaque + '\n')
+                failed = self.suppression_shell(call, shell, extra)
+                self.assertEqual((failed.returncode, failed.stdout), (2, ''))
+                self.assertRegex(failed.stderr, r'^configuration: .*; line=2')
+                for value in (opaque, str(self.shared), str(self.checkout), 'Traceback'):
+                    self.assertNotIn(value, failed.stdout + failed.stderr)
+                self.shared.write_text('review: {}\n')
+                restored = self.suppression_shell(call, shell, extra)
+                self.assertEqual((restored.returncode, restored.stdout, restored.stderr), (0, 'absent/manual/false\n', ''))
+                self.shared.write_text('guardrails:\n  mode: assisted\n  backlog_start:\n    allow_without_confirmation: true\n')
+                present = self.suppression_shell(call, shell, extra)
+                self.assertEqual((present.returncode, present.stdout, present.stderr), (0, 'present/assisted/true\n', ''))
+                self.shared.unlink()
+                absent = self.suppression_shell(call, shell, extra)
+                self.assertEqual((absent.returncode, absent.stdout, absent.stderr), (0, 'absent/manual/false\n', ''))
+        self.assertFalse(self.log.exists())
+
+    def test_S11_batch_caps(self):
+        opaque = 'fabricatedOpaqueSuppressionS11'
+        self.private.write_text('review: {}\n')
+        self.env['AI_DEV_WORKFLOW_CONFIG_FILE'] = str(self.shared)
+        self.env['PYTHONPATH'] = os.environ.get('PYTHONPATH', '')
+        available = subprocess.run(['python3', '-c', 'import yaml'], env=self.env, capture_output=True)
+        self.assertEqual(available.returncode, 0, 'synthetic YAML parser prerequisite absent')
+        extra = function_text('workflow-batch-lanes.sh', 'parallelism_config_file') + '\n' + function_text('workflow-batch-lanes.sh', 'read_parallelism_caps') + '\nSCRIPT_DIR=' + shlex.quote(str(self.runtime)) + '\n'
+        call = 'read_parallelism_caps ' + shlex.quote(str(self.checkout))
+        default = {'spec': 0, 'plan': 0, 'review': 0, 'implementation': 1}
+        for shell in dict.fromkeys(('/bin/bash', shutil.which('bash'))):
+            with self.subTest(shell=shell):
+                self.shared.write_text('broken: [' + opaque + '\n')
+                failed = self.suppression_shell(call, shell, extra)
+                self.assertEqual((failed.returncode, failed.stdout), (2, ''))
+                self.assertRegex(failed.stderr, r'^configuration: invalid YAML;')
+                for value in (opaque, str(self.shared), str(self.checkout), 'Traceback'):
+                    self.assertNotIn(value, failed.stdout + failed.stderr)
+                self.shared.write_text('guardrails:\n  parallelism:\n    max_concurrent_by_stage:\n      implementation: 3\n')
+                restored = self.suppression_shell(call, shell, extra)
+                self.assertEqual(restored.returncode, 0, restored.stderr)
+                self.assertEqual(json.loads(restored.stdout), dict(default, implementation=3))
+                self.assertEqual(restored.stderr, '')
+                self.shared.unlink()
+                absent = self.suppression_shell(call, shell, extra)
+                self.assertEqual((absent.returncode, json.loads(absent.stdout), absent.stderr), (0, default, ''))
+        self.assertFalse(self.log.exists())
+
+    def test_S12_hub_bootstrap(self):
+        opaque = 'fabricatedOpaqueSuppressionS12'
+        extra = 'source ' + shlex.quote(str(self.runtime / 'hub-product-repo-lib.sh')) + '\n'
+        extra += function_text('hub-sync-product-repos.sh', 'sync_one_repo')
+        extra += '\nREPO_ROOT=' + shlex.quote(str(self.checkout)) + '\nBOOTSTRAP_LOCAL_PATH=true\nfailed_count=0\nskipped_count=0\n'
+        for shell in dict.fromkeys(('/bin/bash', shutil.which('bash'))):
+            with self.subTest(shell=shell):
+                self.private.write_text('review: {}\n')
+                corrupt = '\nconfirm_bootstrap() { printf "%s\\n" ' + shlex.quote('broken: [' + opaque) + ' > ' + shlex.quote(str(self.private)) + '; return 0; }\n'
+                failed = self.suppression_shell('sync_one_repo mobile', shell, extra + corrupt)
+                self.assertEqual(failed.returncode, 1, failed.stdout + failed.stderr)
+                self.assertIn('configuration:', failed.stderr)
+                self.assertNotIn('BOOTSTRAP=written', failed.stdout)
+                self.assertFalse((self.checkout / '.ai-dev-workflow.local.yaml').exists())
+                for value in (opaque, str(self.private), str(self.external), 'Traceback'):
+                    self.assertNotIn(value, failed.stdout + failed.stderr)
+                self.private.write_text('review: {}\n')
+                restored = self.suppression_shell('sync_one_repo mobile', shell, extra + '\nconfirm_bootstrap() { return 0; }\n')
+                self.assertEqual(restored.returncode, 0, restored.stderr)
+                self.assertEqual(restored.stderr, '')
+                self.assertIn('BOOTSTRAP=written', restored.stdout)
+                self.assertIn('local_path:', (self.checkout / '.ai-dev-workflow.local.yaml').read_text())
+                (self.checkout / '.ai-dev-workflow.local.yaml').unlink()
+        self.assertFalse(self.log.exists())
+
     def check_consumer(self, row):
         valid_source = '''review:
   on_draft:
