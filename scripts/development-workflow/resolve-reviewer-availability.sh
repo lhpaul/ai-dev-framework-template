@@ -223,25 +223,27 @@ config_error_report=false
 names=() statuses=() reasons=() remedies=() details=()
 add_record() {
   names[$count]=$1 statuses[$count]=$2 reasons[$count]=$3 details[$count]=$4
+  if [ "$3" = check-inconclusive ] && [ "${5:-}" = coderabbit-config ]; then
+    config_error_report=true
+  fi
+  if [ "$3" = value-not-supported ]; then
+    names[$count]=unknown
+    details[$count]='configuration: unsupported reviewer; key=review.on_draft.runner'
+  fi
   case "$3" in
     runtime-absent) remedies[$count]="Install the reviewer's runtime on this machine, or remove the reviewer from review.on_draft.runner in .ai-dev-workflow.local.yaml." ;;
     prerequisite-missing) remedies[$count]='Install or enable the review service for this repository, or remove the reviewer from review.on_draft.runner in .ai-dev-workflow.local.yaml.' ;;
     check-inconclusive)
       case "${5:-}" in
         local-runtime) remedies[$count]='Run the local runtime --version command named in the detail; repair or update that runtime, then re-run the gate.' ;;
-        coderabbit-config)
-          config_error_report=true
-          remedies[$count]='Repair the known configuration key using its safe error type and locators, then re-run the gate.' ;;
+        coderabbit-config) remedies[$count]='Repair the known configuration key using its safe error type and locators, then re-run the gate.' ;;
         coderabbit-dependency) remedies[$count]='Install PyYAML==6.0.2 for the python3 used by the gate, then re-run the gate.' ;;
         coderabbit-parser) remedies[$count]='Run the CodeRabbit configuration check with the gate python3 to diagnose the execution failure or timeout, then re-run the gate.' ;;
         hosted-activity) remedies[$count]='Check gh authentication and repository issue-comment access, inspect the reported activity coverage or API error, then re-run the gate.' ;;
         budget) remedies[$count]='Re-run the gate when the environment is responsive; diagnose earlier slow probes if the availability budget is exhausted again.' ;;
         *) fail 'missing inconclusive probe context' ;;
       esac ;;
-    value-not-supported)
-      names[$count]=unknown
-      details[$count]='configuration: unsupported reviewer; key=review.on_draft.runner'
-      remedies[$count]='Correct the known reviewer-list key and retry.' ;;
+    value-not-supported) remedies[$count]='Correct the known reviewer-list key and retry.' ;;
     '') remedies[$count]= ;;
     *) fail 'invalid internal reason' ;;
   esac

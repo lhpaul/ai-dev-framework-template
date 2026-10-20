@@ -1807,7 +1807,7 @@ substitute a reviewer while it runs. Do not provision services or write tracked 
 | `runtime-absent` | Install the reviewer's runtime on this machine, or remove the reviewer from review.on_draft.runner in .ai-dev-workflow.local.yaml. |
 | `prerequisite-missing` | Install or enable the review service for this repository, or remove the reviewer from review.on_draft.runner in .ai-dev-workflow.local.yaml. |
 | `check-inconclusive` | Use the remedy for the actual failing probe context below. |
-| `value-not-supported` | Correct the configured value to one of the supported reviewer values, or remove it from review.on_draft.runner. |
+| `value-not-supported` | Correct the known reviewer-list key and retry. |
 
 Inconclusive remedies use an explicit internal probe context, not the reviewer
 name or free-text detail. The four reason values and output keys stay unchanged.
@@ -1818,7 +1818,7 @@ CodeRabbit or gh setup guidance.
 | Probe context | Inconclusive remedy |
 | --- | --- |
 | `local-runtime` | Run the local runtime --version command named in the detail; repair or update that runtime, then re-run the gate. |
-| `coderabbit-config` | Repair .coderabbit.yaml using the reported read or syntax error, then re-run the gate. |
+| `coderabbit-config` | Repair the known configuration key using its safe error type and locators, then re-run the gate. |
 | `coderabbit-dependency` | Install PyYAML==6.0.2 for the python3 used by the gate, then re-run the gate. |
 | `coderabbit-parser` | Run the CodeRabbit configuration check with the gate python3 to diagnose the execution failure or timeout, then re-run the gate. |
 | `hosted-activity` | Check gh authentication and repository issue-comment access, inspect the reported activity coverage or API error, then re-run the gate. |
