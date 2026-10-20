@@ -2678,11 +2678,22 @@ _1789_out="$(_1789_run_gh run_pr_agent_review 2)"
 run_test "1789_T2.18_unlisted_recent_trigger_does_not_suppress_request" "1|" \
   "$(_1789_posts)|$(kv_value_default PR_AGENT_TRIGGER_SKIPPED "$_1789_out" "")"
 _1789_gh_reset
+# This is a separate recent-delivery scenario: the first invocation may have
+# consumed the two-second reuse window while rendering its diagnostic report.
+_1789_pa_now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 _1789_fx issue-comments "[{\"id\":807,\"user\":{\"login\":\"runner\"},\"created_at\":\"$_1789_pa_now\",\"updated_at\":\"$_1789_pa_now\",\"body\":\"/review\"}]"
 reviewer_loop_head_request_refs="807"
 _1789_out="$(_1789_run_gh run_pr_agent_review 2)"
 run_test "1789_T2.18_listed_recent_trigger_reused_and_recorded" "0|recent_review_trigger|${_1789_pa_now}|807" \
   "$(_1789_posts)|$(kv_value_default PR_AGENT_TRIGGER_SKIPPED "$_1789_out" "")|$(_1789_keys "$_1789_out")"
+# A listed trigger outside the same unchanged reuse window never suppresses
+# a new request. Its creation is after the synthetic head but long expired.
+_1789_gh_reset
+_1789_fx issue-comments '[{"id":807,"user":{"login":"runner"},"created_at":"2020-01-01T00:00:20Z","updated_at":"2020-01-01T00:00:20Z","body":"/review"}]'
+reviewer_loop_head_request_refs="807"
+_1789_out="$(_1789_run_gh run_pr_agent_review 2)"
+run_test "1789_T2.18_listed_expired_trigger_does_not_suppress_request" "1||9001" \
+  "$(_1789_posts)|$(kv_value_default PR_AGENT_TRIGGER_SKIPPED "$_1789_out" "")|$(kv_value_default REVIEW_REQUEST_REF "$_1789_out" "")"
 reviewer_loop_head_request_refs=""
 
 # --- T2.22 regression: a delayed older-head first summary arrives after the

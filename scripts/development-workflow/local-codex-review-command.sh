@@ -45,5 +45,5 @@ codex_args+=("$prompt")
 
 # Close stdin: `codex exec` reads extra prompt input from any non-TTY stdin and
 # blocks forever on an idle inherited pipe (e.g. a background harness, #1843).
-workflow_command_with_safe_stderr "$codex_bin" "${codex_args[@]}" </dev/null >/dev/null
+workflow_command_with_safe_stderr "$codex_bin" ${codex_args[@]+"${codex_args[@]}"} </dev/null >/dev/null
 cat "$output_file"

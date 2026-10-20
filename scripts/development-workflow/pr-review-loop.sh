@@ -13982,7 +13982,7 @@ reviewer_loop_timing_summary_section() {
       || [ "${#platform_timing_records[@]}" -eq 0 ]; then
     return 0
   fi
-  timing_lines="$(printf '%s\n' "${platform_timing_records[@]}" | jq -s . | workflow_redact_json | jq -c '.[]' | jq -r '
+  timing_lines="$(printf '%s\n' ${platform_timing_records[@]+"${platform_timing_records[@]}"} | jq -s . | workflow_redact_json | jq -c '.[]' | jq -r '
       def source_label:
         if . == "default" then "built-in default"
         elif . == "configured" then "configured"
