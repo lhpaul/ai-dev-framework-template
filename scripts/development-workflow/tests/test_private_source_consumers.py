@@ -305,6 +305,39 @@ workflow_hub:
                     absent = self.suppression_shell('workflow_product_repo_name_for_github_slug ' + root + ' fixture/not-configured', shell)
                     self.assertEqual((absent.returncode, absent.stdout, absent.stderr), (1, '', ''))
 
+    def test_lookup_nonhub_absence_and_invalid_source_are_distinct(self):
+        opaque = 'fabricatedOpaqueMappingMode'
+        root = shlex.quote(str(self.checkout))
+        call = 'workflow_product_repo_name_for_github_slug ' + root + ' fixture/mobile'
+        valid_shared = self.shared.read_text()
+        for shell in dict.fromkeys(('/bin/bash', shutil.which('bash'))):
+            for mode in ('single_repo', 'product_repo'):
+                with self.subTest(shell=shell, mode=mode):
+                    self.shared.write_text('mode: ' + mode + '\n')
+                    self.private.write_text('review: {}\n')
+                    absent = self.suppression_shell(call, shell)
+                    self.assertEqual((absent.returncode, absent.stdout, absent.stderr), (1, '', ''))
+                    self.private.write_text('review: ["' + opaque + '"\n')
+                    direct = subprocess.run(['python3', str(self.runtime / 'workflow-config-resolver.py'),
+                                             'mode', '--repo-root', str(self.checkout), '--json'],
+                                            env=self.env, capture_output=True, text=True, timeout=20)
+                    self.assertEqual(direct.returncode, 2)
+                    self.suppression_assert_metadata(self.suppression_shell(call, shell), direct.stderr, opaque)
+            for shared, command in (('mode: ' + opaque + '\n', 'mode'),
+                                    ('mode: workflow_hub\nworkflow_hub:\n  product_repos: ' + opaque + '\n', 'list-product-repos')):
+                with self.subTest(shell=shell, command=command):
+                    self.shared.write_text(shared)
+                    self.private.write_text('review: {}\n')
+                    direct = subprocess.run(['python3', str(self.runtime / 'workflow-config-resolver.py'),
+                                             command, '--repo-root', str(self.checkout)],
+                                            env=self.env, capture_output=True, text=True, timeout=20)
+                    self.assertEqual(direct.returncode, 2)
+                    self.suppression_assert_metadata(self.suppression_shell(call, shell), direct.stderr, opaque)
+            self.shared.write_text(valid_shared)
+            self.private.write_text('review: {}\n')
+            restored = self.suppression_shell(call, shell)
+            self.assertEqual((restored.returncode, restored.stdout, restored.stderr), (0, 'mobile\n', ''))
+
     def test_S01_lookup_context(self):
         self.suppression_lookup_case('S01')
 

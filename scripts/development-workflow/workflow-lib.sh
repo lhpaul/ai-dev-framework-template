@@ -356,12 +356,15 @@ workflow_github_repo_from_context() {
 workflow_product_repo_name_for_github_slug() {
   local root="${1:-}"
   local slug="$2"
-  local name context github names
+  local name context github names mode_json mode
 
   if [ -z "$root" ] || [ -z "$slug" ]; then
     return 1
   fi
   workflow_local_config_file "$root" >/dev/null || return 2
+  mode_json="$(python3 "$(workflow_config_resolver_script)" mode --repo-root "$root" --json)" || return 2
+  mode="$(printf '%s\n' "$mode_json" | jq -r '.WORKFLOW_MODE // ""')" || return 2
+  [ "$mode" = workflow_hub ] || return 1
 
   names="$(python3 "$(workflow_config_resolver_script)" list-product-repos --repo-root "$root")" || return 2
   while IFS= read -r name; do

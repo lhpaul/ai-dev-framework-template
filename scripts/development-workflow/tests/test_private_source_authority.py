@@ -171,7 +171,7 @@ builtins.open, io.open, os.open = builtin, io_open, os_open
         command = ('workflow_bind_local_config_root product\ncd product\nsource ' +
                    shlex.quote(str(self.f.runtime / 'workflow-lib.sh')) +
                    '\nworkflow_config_review_on_draft_runner "$(workflow_effective_config_file)"')
-        self.relative_override_invariant(lambda: self.bash(command, cwd=self.f.root), 'review-local-list',
+        self.relative_override_invariant(lambda: self.bash(command, cwd=self.f.root), 'review-list',
                                          check=lambda result: self.assertEqual(result.stdout.strip(), 'codex'))
         # A pure output redactor must not parse/read selected private bytes on
         # import, even when the explicitly named synthetic source is malformed.
@@ -286,7 +286,7 @@ builtins.open, io.open, os.open = builtin, io_open, os_open
         self.parser_reached(self.product, 'resolve')
         command = ['bash', str(self.f.runtime / 'pr-ci-loop.sh'), '1993', '--repo-root', 'product',
                    '--repo', 'fixture/repo', '--poll-interval', '1', '--max-wait', '1']
-        self.relative_override_invariant(lambda: self.run_command(command, cwd=self.f.root), 'review-local-list')
+        self.relative_override_invariant(lambda: self.run_command(command, cwd=self.f.root), 'review-list')
 
     def test_R13_review_loop_root_and_handoff(self):
         self.selected_entry_invariance('pr-review-loop.sh')
@@ -303,7 +303,7 @@ builtins.open, io.open, os.open = builtin, io_open, os_open
                    'reviewer_loop_repo_configured_platforms')
         self.invariant(lambda: self.review_function('pr-review-loop.sh', 'reviewer_loop_repo_configured_platforms', command),
                        lambda result: self.assertEqual(result.returncode, 0, result.stderr))
-        self.parser_reached(self.product, 'review-local-list')
+        self.parser_reached(self.product, 'review-list')
 
     def test_R15_readiness_base_snapshot(self):
         import base64
@@ -312,11 +312,11 @@ builtins.open, io.open, os.open = builtin, io_open, os_open
         self.foreign = self.f.checkout / '.ai-dev-workflow.local.yaml'
         self.invariant(lambda: self.review_function('apply-readiness-labels.sh', 'pr_head_config_ready_platforms', command),
                        lambda result: self.assertEqual(result.returncode, 0, result.stderr))
-        self.parser_reached(self.product, 'review-local-list')
+        self.parser_reached(self.product, 'review-list')
         relative = ('workflow_bind_local_config_root product\ncd product\n' +
                     fixtures.function_text('apply-readiness-labels.sh', 'pr_head_config_ready_platforms') +
                     '\n' + command)
-        self.relative_override_invariant(lambda: self.bash(relative, cwd=self.f.root), 'review-local-list')
+        self.relative_override_invariant(lambda: self.bash(relative, cwd=self.f.root), 'review-list')
 
     def test_R16_preflight_projection_handoff(self):
         # Existing pinning suite exercises both staged readers, source mutation,
@@ -410,7 +410,7 @@ builtins.open, io.open, os.open = builtin, io_open, os_open
         command = ('workflow_bind_local_config_root ' + shlex.quote(str(self.product)) +
                    '\nWORKFLOW_APPLY_LOCAL_REVIEW_OVERRIDES=1 workflow_config_review_on_draft_runner "$(workflow_effective_config_file)"')
         self.invariant(lambda: self.bash(command), lambda result: self.assertEqual(result.returncode, 0, result.stderr))
-        self.parser_reached(self.product, 'review-local-list')
+        self.parser_reached(self.product, 'review-list')
 
     def test_R23_completion_selected_root(self):
         # Relative entry roots must be bound before cd changes their meaning.
@@ -422,8 +422,8 @@ builtins.open, io.open, os.open = builtin, io_open, os_open
                    '--require-review-summary', 'true', '--require-review-threads', 'true']
         self.invariant(lambda: self.run_command(command, cwd=self.f.root), lambda result: self.assertNotIn('unreadable directory', result.stderr))
         self.parser_reached(self.product, 'local-source')
-        self.parser_reached(self.product, 'review-local-list')
-        self.relative_override_invariant(lambda: self.run_command(command, cwd=self.f.root), 'review-local-list')
+        self.parser_reached(self.product, 'review-list')
+        self.relative_override_invariant(lambda: self.run_command(command, cwd=self.f.root), 'review-list')
 
     def nested_checkouts(self, base=None):
         # Reinterpreting "product" after one or more cd/child boundaries would
