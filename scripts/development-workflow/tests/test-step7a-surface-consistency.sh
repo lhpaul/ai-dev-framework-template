@@ -206,7 +206,9 @@ if sys.argv[2]=='--prove-plants':
             ('D-22',protocol,'### Branch-type detection','Split `CONFIGURED` on commas to recover reviewer names.\n\n### Branch-type detection'),
             ('D-23',agents,'complete short page','incomplete short page'),
             ('D-24',protocol,'Where the service is not installed and reachable it is\nunavailable with a named reason.','No source condition applies when the service is absent.'),
-            ('D-25','.gitignore','.ai-dev-workflow.local.yaml.retired\n',''),
+            # Negate effective protection after the broad rule in the synthetic
+            # copy; removing the redundant specific rule is not a violation.
+            ('D-25','.gitignore','.ai-dev-workflow.local.*\n','.ai-dev-workflow.local.*\n!.ai-dev-workflow.local.yaml.retired\n'),
         ]
         if not template_mode(fixture):
             plants=[plant for plant in plants if plant[0] not in {'D-9','D-25'}]
