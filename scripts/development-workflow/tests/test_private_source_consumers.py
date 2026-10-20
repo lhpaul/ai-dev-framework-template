@@ -486,6 +486,96 @@ workflow_hub:
                 (self.checkout / '.ai-dev-workflow.local.yaml').unlink()
         self.assertFalse(self.log.exists())
 
+    def suppression_development(self):
+        development = self.checkout / 'docs/specs/developments/20261020101010_1993-fixture'
+        development.mkdir(parents=True)
+        (development / '1_1993-fixture_specs.md').write_text('# Synthetic spec\n\n**Issue**: #1993\n')
+        (development / '2_1993-fixture_implementation-plan.md').write_text('# Synthetic plan\n\n**Issue**: #1993\n')
+        self.env.update(WORKFLOW_SKIP_FETCH='1', AI_DEV_WORKFLOW_CONFIG_FILE=str(self.shared))
+        gh = self.bin / 'gh'
+        gh.write_text('#!/bin/sh\ncase "$*" in "auth status"*) exit 0;; "pr list"*) exit 0;; *) exit 99;; esac\n')
+        return development
+
+    def suppression_batch_case(self, scan):
+        opaque = 'fabricatedOpaqueSuppression' + ('S14' if scan else 'S13')
+        development = self.suppression_development()
+        self.shared.write_text('mode: single_repo\n')
+        script = 'workflow-batch-lanes.sh' if scan else 'workflow-batch-plan.sh'
+        args = [str(self.runtime / script), '--repo-root', str(self.checkout)]
+        if scan: args += ['--scan']
+        args += [str(development)]
+        for shell in dict.fromkeys(('/bin/bash', shutil.which('bash'))):
+            with self.subTest(scan=scan, shell=shell):
+                self.private.write_text('broken: [' + opaque + '\n')
+                failed = subprocess.run([shell, *args], cwd=self.checkout, env=self.env, capture_output=True, text=True, timeout=45)
+                self.assertEqual(failed.returncode, 2, failed.stdout + failed.stderr)
+                self.assertRegex(failed.stderr, r'configuration:|"CODE"')
+                self.assertNotIn('TARGET=development:', failed.stdout, 'failed validation became an abbreviated successful record')
+                for value in (opaque, str(self.private), str(self.external), 'Traceback'):
+                    self.assertNotIn(value, failed.stdout + failed.stderr)
+                self.private.write_text('review: {}\n')
+                restored = subprocess.run([shell, *args], cwd=self.checkout, env=self.env, capture_output=True, text=True, timeout=45)
+                self.assertEqual(restored.returncode, 0, restored.stderr)
+                self.assertIn('TARGET=development:', restored.stdout)
+                self.assertNotIn(opaque, restored.stdout + restored.stderr)
+                # No stage artifacts is the documented next-action missing-input status66.
+                empty = development / 'empty-1993'; empty.mkdir(exist_ok=True)
+                (empty / 'README.md').write_text('**Issue**: #1993\n')
+                no_stage = subprocess.run([shell, str(self.runtime / 'workflow-next-action.sh'), '--repo-root', str(self.checkout), '--development', str(empty)], cwd=self.checkout, env=self.env, capture_output=True, text=True, timeout=30)
+                self.assertEqual(no_stage.returncode, 66, no_stage.stdout + no_stage.stderr)
+                self.assertIn('No spec or plan file found', no_stage.stderr)
+                self.assertNotIn(opaque, no_stage.stdout + no_stage.stderr)
+                skipped_args = [str(self.runtime / script), '--repo-root', str(self.checkout)] + (['--scan'] if scan else []) + [str(empty)]
+                skipped = subprocess.run([shell, *skipped_args], cwd=self.checkout, env=self.env, capture_output=True, text=True, timeout=45)
+                self.assertEqual(skipped.returncode, 0, skipped.stdout + skipped.stderr)
+                self.assertNotIn('configuration:', skipped.stderr)
+        self.assertFalse(self.log.exists())
+
+    def test_S13_batch_plan(self):
+        self.suppression_batch_case(False)
+
+    def test_S14_batch_scan(self):
+        self.suppression_batch_case(True)
+
+    def test_S15_prelude_stage(self):
+        opaque = 'fabricatedOpaqueSuppressionS15'
+        development = self.suppression_development()
+        self.private.write_text('review:\n  on_draft:\n    runner: []\n')
+        valid_shared = 'mode: single_repo\ntemplate:\n  is_template: true\n'
+        scope = {'scopeSource': 'item', 'resolvedIssueNumber': 1993, 'trackerReadDeferred': False,
+                 'baseBranch': 'develop', 'baseAmbiguous': False, 'baseReason': 'synthetic',
+                 'policy': {'delegateReview': False, 'mayMerge': False, 'mayStartBacklog': False, 'maxRisk': 'low'},
+                 'groups': {'eligible': [], 'blocked': [], 'already_merged': [], 'in_review': [], 'ambiguous': [], 'out_of_scope': []},
+                 'items': [{'number': 1993, 'title': 'Synthetic', 'status': 'In Development', 'type': 'Feature', 'labels': [], 'body': 'synthetic', 'pullRequests': {'open': [], 'merged': []}}]}
+        scope['groups']['eligible'] = scope['items']
+        self.scope.write_text(json.dumps(scope))
+        # Fake scope transport only; real next-action, validator, gate and recommender.
+        stub = self.runtime / 'run-item-scope-resolver.sh'
+        stub.write_text('#!/bin/sh\ncat ' + shlex.quote(str(self.scope)) + '\n')
+        stub.chmod(0o755)
+        args = [str(self.runtime / 'run-bounded-prelude.sh'), '--original-command', '/run-item 1993', '--issue', '1993', '--json']
+        for shell in dict.fromkeys(('/bin/bash', shutil.which('bash'))):
+            with self.subTest(shell=shell):
+                self.shared.write_text(valid_shared + 'release: ' + opaque + '\n')
+                failed = subprocess.run([shell, *args], cwd=self.checkout, env=self.env, capture_output=True, text=True, timeout=45)
+                self.assertEqual(failed.returncode, 2, failed.stdout + failed.stderr)
+                self.assertEqual(failed.stdout, '', 'validation failure became a policy recommendation')
+                self.assertIn('configuration:', failed.stderr)
+                for value in (opaque, str(self.shared), str(self.private), str(self.external), 'Traceback'):
+                    self.assertNotIn(value, failed.stdout + failed.stderr)
+                self.shared.write_text(valid_shared)
+                restored = subprocess.run([shell, *args], cwd=self.checkout, env=self.env, capture_output=True, text=True, timeout=45)
+                self.assertEqual(restored.returncode, 0, restored.stdout + restored.stderr)
+                self.assertEqual(json.loads(restored.stdout)['scope']['resolvedIssueNumber'], 1993)
+                # A genuinely absent artifact stage still permits scope classification.
+                moved = self.root / 'temporarily-no-artifacts'
+                development.rename(moved)
+                absent = subprocess.run([shell, *args], cwd=self.checkout, env=self.env, capture_output=True, text=True, timeout=45)
+                self.assertEqual(absent.returncode, 0, absent.stdout + absent.stderr)
+                self.assertEqual(json.loads(absent.stdout)['scope']['resolvedIssueNumber'], 1993)
+                moved.rename(development)
+        self.assertFalse(self.log.exists())
+
     def check_consumer(self, row):
         valid_source = '''review:
   on_draft:

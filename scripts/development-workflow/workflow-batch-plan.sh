@@ -665,7 +665,13 @@ for development_path in "${development_paths[@]}"; do
 
   next_action_args=(--development "$development_path" --repo-root "$repo_root")
   [ -n "$target_repo" ] && next_action_args+=(--repo "$target_repo")
-  if ! next_action_output="$("$SCRIPT_DIR/workflow-next-action.sh" "${next_action_args[@]}" 2>&1)"; then
+  next_action_status=0
+  next_action_output="$("$SCRIPT_DIR/workflow-next-action.sh" "${next_action_args[@]}" 2>&1)" || next_action_status=$?
+  if [ "$next_action_status" -ne 0 ]; then
+    if [ "$next_action_status" -eq 2 ]; then
+      printf '%s\n' "$next_action_output" >&2
+      exit 2
+    fi
     # next-action failed (e.g., no merged spec/plan PR yet).  Emit an abbreviated
     # block so the orchestrator still sees TOOL_FIX for this folder.
     echo "Skipping $development_path: $next_action_output" >&2

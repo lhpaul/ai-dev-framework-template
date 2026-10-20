@@ -23,6 +23,8 @@
 # covers: scripts/development-workflow/run-epic-delegated-gate.sh
 # covers: scripts/development-workflow/run-work-router.sh
 # covers: scripts/development-workflow/workflow-batch-lanes.sh
+# covers: scripts/development-workflow/workflow-batch-plan.sh
+# covers: scripts/development-workflow/run-bounded-prelude.sh
 # covers: scripts/development-workflow/tests/test_private_source_consumers.py
 set -euo pipefail
 SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
