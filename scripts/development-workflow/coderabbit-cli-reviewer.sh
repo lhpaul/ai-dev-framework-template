@@ -137,50 +137,14 @@ case "$TIMEOUT" in
 esac
 
 rate_limit_policy_from_file() {
-  local config_file="$1"
-  local value=""
-  if [ -n "$config_file" ] && [ -f "$config_file" ]; then
-    python3 "$(workflow_config_resolver_script)" yaml-source-check --file "$config_file" || return 2
-    value="$(
-      awk '
-        function trim(v) {
-          gsub(/^[[:space:]]+|[[:space:]]+$/, "", v)
-          gsub(/^["'"'"']|["'"'"']$/, "", v)
-          return v
-        }
-        /^review:[[:space:]]*$/ { in_review=1; next }
-        in_review && /^[^[:space:]#].*:[[:space:]]*/ { in_review=0 }
-        in_review && /^[[:space:]][[:space:]]coderabbit_cli:[[:space:]]*$/ { in_cli=1; next }
-        in_cli && /^[[:space:]][[:space:]][^[:space:]#].*:[[:space:]]*/ { in_cli=0 }
-        in_cli && /^[[:space:]][[:space:]][[:space:]][[:space:]]rate_limit_policy:[[:space:]]*/ {
-          line = $0
-          sub(/^[[:space:]]*rate_limit_policy:[[:space:]]*/, "", line)
-          sub(/[[:space:]]+#.*$/, "", line)
-          print trim(line)
-          exit
-        }
-      ' "$config_file"
-    )"
-  fi
-  printf '%s' "$value"
+  python3 "$(workflow_config_resolver_script)" coderabbit-policy --file "$1"
 }
 
 rate_limit_policy_from_config() {
   local config_file
-  local local_file
-  local value=""
-
-  local_file="$(workflow_local_config_file)" || return 2
-  if [ -n "$local_file" ] && [ -f "$local_file" ]; then
-    value="$(rate_limit_policy_from_file "$local_file")" || return 2
-  fi
-
-  if [ -z "$value" ]; then
-    config_file="$(workflow_effective_config_file 2>/dev/null || true)"
-    value="$(rate_limit_policy_from_file "$config_file")" || return 2
-  fi
-
-  printf '%s' "$value"
+  config_file="$(workflow_effective_config_file 2>/dev/null || true)"
+  python3 "$(workflow_config_resolver_script)" coderabbit-policy \
+    --repo-root "$(workflow_local_config_root)" --shared-file "$config_file"
 }
 
 RATE_LIMIT_POLICY="${CODERABBIT_CLI_RATE_LIMIT_POLICY:-}"

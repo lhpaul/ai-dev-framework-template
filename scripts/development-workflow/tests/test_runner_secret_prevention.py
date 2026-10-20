@@ -83,6 +83,248 @@ class RunnerSecurityTests(unittest.TestCase):
         return subprocess.run(['bash', '-c', script + extra + '\n' + expression],
                               env=env or self.env, text=True, capture_output=True)
 
+    def selected_race_fixture(self):
+        source = self.write('review:\n  on_draft:\n    runner: [codex]\n    github: [pr-agent]\n  on_ready:\n    github: [coderabbit]\n  coderabbit_cli:\n    rate_limit_policy: strict\nignored: fabricated-original-opaque\n', self.external)
+        self.write('review:\n  on_draft:\n    runner: [claude]\n    github: [ronda]\n  on_ready:\n    github: [bugbot]\n  coderabbit_cli:\n    rate_limit_policy: warn\n', local=False)
+        bindir = self.root / 'race-bin'
+        bindir.mkdir(exist_ok=True)
+        wrapper = bindir / 'python3'
+        wrapper.write_text(f'#!{sys.executable}\n' + r"""
+import importlib.util, os, pathlib, sys
+args = sys.argv[1:]
+if not args or not args[0].endswith('workflow-config-resolver.py'):
+    os.execv(os.environ['RACE_PYTHON'], [os.environ['RACE_PYTHON'], *args])
+spec = importlib.util.spec_from_file_location('race_resolver', args[0])
+m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+source = pathlib.Path(os.environ['RACE_SOURCE'])
+original = m.validate_local_source
+changed = False
+def selection(*a, **kw):
+    global changed
+    path = original(*a, **kw)
+    if path == source and not changed:
+        changed = True
+        action = os.environ['RACE_ACTION']
+        if action == 'remove': source.unlink()
+        elif action in ('valid', 'invalid'):
+            replacement = source.parent / 'fabricated-replacement'
+            replacement.write_text('review: [fabricated-invalid-opaque' if action == 'invalid' else
+                'review:\n  on_draft:\n    runner: [fabricated-replaced-opaque]\n    github: [fabricated-replaced-opaque]\n  on_ready:\n    github: [fabricated-replaced-opaque]\n  coderabbit_cli:\n    rate_limit_policy: warn\n')
+            replacement.replace(source)
+        pathlib.Path(os.environ['RACE_MARKER']).write_text('selected')
+    return path
+m.validate_local_source = selection
+sys.exit(m.main(args[1:]))
+""")
+        wrapper.chmod(0o755)
+        env = dict(self.env, WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT=str(self.external),
+                   RACE_SOURCE=str(source), RACE_PYTHON=sys.executable,
+                   RACE_MARKER=str(self.root / 'selected-marker'),
+                   PATH=str(bindir) + os.pathsep + self.env['PATH'])
+        return source, wrapper, env
+
+    def selected_race_route(self, route):
+        for action in ('stable', 'remove', 'valid', 'invalid'):
+            with self.subTest(route=route, action=action):
+                source, wrapper, env = self.selected_race_fixture()
+                env['RACE_ACTION'] = action
+                stage = self.root / ('stage-' + action); stage.mkdir(exist_ok=True)
+                shared = self.checkout / '.ai-dev-workflow.yaml'
+                commands = {
+                    'R01': ['mode'], 'R02': ['review-effective'], 'R03': ['review-github-effective'],
+                    'R04': ['review-overrides', '--json'], 'R05': ['model-routes', '--runner', 'dsh', '--json'],
+                    'R07': ['review-snapshot', '--destination', str(stage)], 'R08': ['local-source'],
+                    'R09': ['review-list', '--apply-local', '--shared-file', str(shared), '--phase', 'on_draft', '--key', 'runner'],
+                    'R10': ['review-local-list', '--phase', 'on_draft', '--key', 'runner']}
+                if route == 'R06':
+                    # The writer's direct validate->initial capture route uses
+                    # checkout-local authority even with an external model/review
+                    # selection: this forces the writer's own initial capture.
+                    local = self.checkout / MODULE.LOCAL_CONFIG_NAME
+                    local.write_text(source.read_text())
+                    env['RACE_SOURCE'] = str(local)
+                    commands[route] = ['set-local-path', '--repo', 'synthetic', '--local-path', '.']
+                    # It requires an existing repo declaration to reach a valid write.
+                    local.write_text('product_repos:\n  - name: synthetic\n    local_path: .\n')
+                    self.write('mode: workflow_hub\nworkflow_hub:\n  product_repos:\n    - name: synthetic\n      github_repo: fabricated/synthetic\n', local=False)
+                if route in ('R11', 'R12'):
+                    extra = function_text('coderabbit-cli-reviewer.sh', 'rate_limit_policy_from_file') + '\n' + function_text('coderabbit-cli-reviewer.sh', 'rate_limit_policy_from_config')
+                    result = self.bash('rate_limit_policy_from_config' if route == 'R11' else 'rate_limit_policy_from_file "$RACE_SOURCE"', extra=extra, env=env)
+                else:
+                    result = subprocess.run([str(wrapper), str(RESOLVER), *commands[route], '--repo-root', str(self.checkout)], env=env, text=True, capture_output=True)
+                self.assertTrue((self.root / 'selected-marker').exists(), 'actual selected-source boundary not reached')
+                if action == 'stable':
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    if route in ('R09', 'R10'): self.assertEqual(result.stdout, 'codex\n')
+                    if route in ('R11', 'R12'): self.assertEqual(result.stdout, 'strict')
+                else:
+                    self.assertEqual(result.returncode, 2, result.stderr)
+                    self.assertEqual(result.stdout, '', 'partial output or shared fallback')
+                    self.assertEqual(result.stderr, 'ERROR: configuration: selected source changed during capture\n')
+                    self.assertNotRegex(result.stdout + result.stderr, r'fabricated-|claude|ronda|bugbot|' + re.escape(str(self.root)))
+                    self.assertFalse((stage / MODULE.LOCAL_CONFIG_NAME).exists())
+                (self.root / 'selected-marker').unlink()
+
+    def test_selected_capture_R01_legacy(self): self.selected_race_route('R01')
+    def test_selected_capture_R02_runner_effective(self): self.selected_race_route('R02')
+    def test_selected_capture_R03_github_effective(self): self.selected_race_route('R03')
+    def test_selected_capture_R04_overrides(self): self.selected_race_route('R04')
+    def test_selected_capture_R05_model(self): self.selected_race_route('R05')
+    def test_selected_capture_R06_writer_initial(self): self.selected_race_route('R06')
+    def test_selected_capture_R07_projection(self): self.selected_race_route('R07')
+    def test_selected_capture_R08_source(self): self.selected_race_route('R08')
+    def test_selected_capture_R09_effective_list(self): self.selected_race_route('R09')
+    def test_selected_capture_R10_local_list(self): self.selected_race_route('R10')
+    def test_selected_capture_R11_coderabbit_config(self): self.selected_race_route('R11')
+
+    def test_selected_capture_R12_coderabbit_file(self):
+        # Actual direct-file helper: mutate after validation of the captured
+        # bytes; extraction must still use that capture instead of reopening.
+        source, wrapper, env = self.selected_race_fixture()
+        text = wrapper.read_text()
+        text = text.replace('m.validate_local_source = selection', """m.validate_local_source = selection
+validate = m.validate_selected_yaml
+def validated(raw, path, **kw):
+    result = validate(raw, path, **kw)
+    if path == source:
+        source.write_text('review:\\n  coderabbit_cli:\\n    rate_limit_policy: warn\\n')
+        pathlib.Path(os.environ['RACE_MARKER']).write_text('validated')
+    return result
+m.validate_selected_yaml = validated""")
+        wrapper.write_text(text)
+        env['RACE_ACTION'] = 'stable'
+        result = self.bash('rate_limit_policy_from_file "$RACE_SOURCE"',
+                           extra=function_text('coderabbit-cli-reviewer.sh', 'rate_limit_policy_from_file'), env=env)
+        self.assertEqual((self.root / 'selected-marker').read_text(), 'validated')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, 'strict')
+        self.assertEqual(result.stderr, '')
+
+    def test_selected_capture_absence_empty_and_initial_malformed(self):
+        self.write('review:\n  on_draft:\n    runner: [codex]\n', local=False)
+        shared = str(self.checkout / '.ai-dev-workflow.yaml')
+        for local, expected in ((None, 'codex\n'), ('ignored: synthetic\n', 'codex\n'), ('review:\n  on_draft:\n    runner: []\n', '')):
+            if local is not None: self.write(local)
+            result = self.cli('review-list', '--shared-file', shared, '--apply-local', '--phase', 'on_draft', '--key', 'runner')
+            self.assertEqual((result.returncode, result.stdout, result.stderr), (0, expected, ''))
+        self.write('review: [fabricated-broken')
+        result = self.cli('review-effective')
+        self.assertEqual(result.returncode, 0)
+        data = json.loads(result.stdout)
+        self.assertEqual(data['effective_runner_state'], 'malformed')
+        self.assertNotIn('fabricated-broken', result.stdout + result.stderr)
+
+    def test_selected_capture_during_read(self, command="review-list"):
+        for action in ('remove', 'valid', 'invalid'):
+            for timing in ('open', 'read'):
+                with self.subTest(action=action, timing=timing):
+                    source, wrapper, env = self.selected_race_fixture()
+                    text = wrapper.read_text()
+                    hook = r"""
+original_open = pathlib.Path.open
+def mutate():
+    if os.environ['DURING_ACTION'] == 'remove': source.unlink()
+    else:
+        with original_open(source, 'w') as out:
+            out.write('review: [fabricated-invalid-opaque' if os.environ['DURING_ACTION'] == 'invalid' else 'review: {}\n')
+class Reading:
+    def __init__(self, stream): self.stream = stream
+    def __enter__(self): self.stream.__enter__(); return self
+    def __exit__(self, *args): return self.stream.__exit__(*args)
+    def fileno(self): return self.stream.fileno()
+    def read(self):
+        with original_open(source.parent / 'captured-read-marker', 'w') as marker: marker.write('read')
+        raw = self.stream.read()
+        if os.environ['DURING_TIMING'] == 'read': mutate()
+        return raw
+def opened(path, *args, **kw):
+    mode = kw.get('mode', args[0] if args else 'r')
+    if path == source and mode in ('r', 'rb'):
+        if os.environ['DURING_TIMING'] == 'open': mutate()
+        return Reading(original_open(path, *args, **kw))
+    return original_open(path, *args, **kw)
+pathlib.Path.open = opened
+"""
+                    wrapper.write_text(text.replace('sys.exit(m.main(args[1:]))', hook + '\nsys.exit(m.main(args[1:]))'))
+                    read_marker = source.parent / 'captured-read-marker'
+                    read_marker.unlink(missing_ok=True)
+                    env.update(RACE_ACTION='stable', DURING_ACTION=action, DURING_TIMING=timing)
+                    args = (['yaml-source-check', '--file', str(source)] if command == 'yaml-source-check' else
+                            ['review-list', '--repo-root', str(self.checkout), '--apply-local', '--shared-file',
+                             str(self.checkout / '.ai-dev-workflow.yaml'), '--phase', 'on_draft', '--key', 'runner'])
+                    result = subprocess.run([str(wrapper), str(RESOLVER), *args], env=env, text=True, capture_output=True)
+                    self.assertEqual((result.returncode, result.stdout, result.stderr),
+                                     (2, '', 'ERROR: configuration: selected source changed during capture\n'))
+                    self.assertNotIn('fabricated-', result.stdout + result.stderr)
+                    if timing == 'open': self.assertFalse(read_marker.exists(), 'changed FD was read before identity rejection')
+                    else: self.assertTrue(read_marker.exists(), 'during-read mutation not reached')
+
+    def test_selected_capture_R13_syntax_check(self):
+        source = self.write('review: {}\n', self.external)
+        result = subprocess.run([sys.executable, str(RESOLVER), 'yaml-source-check', '--file', str(source)],
+                                env=self.env, text=True, capture_output=True)
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (0, '', ''))
+        source.write_text('review: [fabricated-opaque')
+        for invalid in (source, self.external / 'fabricated-missing', self.external):
+            result = subprocess.run([sys.executable, str(RESOLVER), 'yaml-source-check', '--file', str(invalid)],
+                                    env=self.env, text=True, capture_output=True)
+            self.assertEqual((result.returncode, result.stdout), (2, ''))
+            self.assertNotRegex(result.stdout + result.stderr, 'fabricated-|'+re.escape(str(self.root)))
+        self.test_selected_capture_during_read('yaml-source-check')
+
+    def test_selected_capture_three_bash_buckets(self):
+        for shell in ('/bin/bash', '/opt/homebrew/bin/bash'):
+            if not Path(shell).exists(): continue
+            for getter in ('workflow_config_review_on_draft_runner', 'workflow_config_review_on_draft_github', 'workflow_config_review_on_ready_github'):
+                for action in ('stable', 'remove', 'valid', 'invalid'):
+                    with self.subTest(shell=shell, getter=getter, action=action):
+                        source, wrapper, env = self.selected_race_fixture()
+                        env['RACE_ACTION'] = action
+                        script = f'source {shlex.quote(str(SCRIPTS / "workflow-lib.sh"))}\nworkflow_repo_root() {{ printf "%s\\n" {shlex.quote(str(self.checkout))}; }}\n{getter}'
+                        result = subprocess.run([shell, '-c', script], env=env, text=True, capture_output=True)
+                        expected = {'workflow_config_review_on_draft_runner': 'codex\n', 'workflow_config_review_on_draft_github': 'pr-agent\n', 'workflow_config_review_on_ready_github': 'coderabbit\n'}
+                        if action == 'stable': self.assertEqual((result.returncode, result.stdout, result.stderr), (0, expected[getter], ''))
+                        else:
+                            self.assertEqual((result.returncode, result.stdout), (2, ''))
+                            self.assertIn('selected source changed during capture', result.stderr)
+                            self.assertNotRegex(result.stdout + result.stderr, 'fabricated-|claude|ronda|bugbot')
+
+    def test_selected_capture_coderabbit_optional_and_lexical(self):
+        extra = function_text('coderabbit-cli-reviewer.sh', 'rate_limit_policy_from_file') + '\n' + function_text('coderabbit-cli-reviewer.sh', 'rate_limit_policy_from_config')
+        for value in ('', str(self.root / 'missing'), str(self.root)):
+            result = self.bash('rate_limit_policy_from_file "$OPTIONAL_FILE"', extra=extra, env=dict(self.env, OPTIONAL_FILE=value))
+            self.assertEqual((result.returncode, result.stdout, result.stderr), (0, '', ''))
+        result = self.bash('rate_limit_policy_from_config', extra=extra)
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (0, '', ''))
+        for separator, expected in ((b'\n', 'strict'), (b'\r\n', 'strict'), (b'\r', '')):
+            source = self.external / MODULE.LOCAL_CONFIG_NAME
+            source.write_bytes(b'review:\n  coderabbit_cli:\n    rate_limit_policy: strict\n'.replace(b'\n', separator))
+            result = self.bash('rate_limit_policy_from_file "$OPTIONAL_FILE"', extra=extra, env=dict(self.env, OPTIONAL_FILE=str(source)))
+            self.assertEqual((result.returncode, result.stdout, result.stderr), (0, expected, ''))
+        for raw, expected in [('strict', 'strict'), ('"strict" # synthetic', 'strict'), ("'warn'", 'warn'), ('"str\\u0069ct"', 'str\\u0069ct'), ('fabricated-unknown', 'fabricated-unknown'), ('strict\u2003', 'strict\u2003')]:
+            source = self.write('review:\n  coderabbit_cli:\n    rate_limit_policy: ' + raw + '\n', self.external)
+            result = self.bash('rate_limit_policy_from_file "$OPTIONAL_FILE"', extra=extra, env=dict(self.env, OPTIONAL_FILE=str(source)))
+            self.assertEqual((result.returncode, result.stdout, result.stderr), (0, expected, ''))
+
+    def test_selected_capture_coderabbit_extractor_failure(self):
+        source = self.write('review:\n  coderabbit_cli:\n    rate_limit_policy: strict\n', self.external)
+        bindir = self.root / 'extractor-bin'; bindir.mkdir()
+        awk = bindir / 'awk'
+        awk.write_text('#!/bin/sh\nprintf "%s\\n" fabricated-child-opaque\nprintf "%s\\n" fabricated-child-opaque >&2\nexit 17\n')
+        awk.chmod(0o755)
+        env = dict(self.env, PATH=str(bindir) + os.pathsep + self.env['PATH'], OPTIONAL_FILE=str(source))
+        result = self.bash('rate_limit_policy_from_file "$OPTIONAL_FILE"',
+                           extra=function_text('coderabbit-cli-reviewer.sh', 'rate_limit_policy_from_file'), env=env)
+        self.assertEqual((result.returncode, result.stdout, result.stderr),
+                         (2, '', 'ERROR: configuration: configuration validation error\n'))
+        self.assertNotIn('fabricated-', result.stdout + result.stderr)
+        # Original Bash command substitution strips LF only. Keep CR bytes in
+        # functional output, while containing opaque child stderr on success.
+        awk.write_text('#!/bin/sh\nprintf "strict\\r\\n"\nprintf "%s\\n" fabricated-child-opaque >&2\n')
+        script = 'source ' + shlex.quote(str(SCRIPTS / 'workflow-lib.sh')) + '\n' + function_text('coderabbit-cli-reviewer.sh', 'rate_limit_policy_from_file') + '\nrate_limit_policy_from_file "$OPTIONAL_FILE"'
+        result = subprocess.run(['/bin/bash', '-c', script], env=env, capture_output=True)
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (0, b'strict\r', b''))
+
     def test_source_isolation(self):
         main = self.root / 'main'
         (main / '.git/worktrees/linked').mkdir(parents=True)

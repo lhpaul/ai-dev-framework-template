@@ -372,16 +372,17 @@ class ModelRoutingTests(unittest.TestCase):
                        self.policy(self.tier(model="local")) if active else "")
             for command in commands:
                 args = resolver.build_parser().parse_args([*command, "--repo-root", str(self.root)])
-                original_read = Path.read_bytes
+                original_read = Path.open
                 reads = []
-                def observed(path):
-                    reads.append(path)
-                    return original_read(path)
+                def observed(path, *args, **kwargs):
+                    if kwargs.get("mode", args[0] if args else "r") == "rb":
+                        reads.append(path)
+                    return original_read(path, *args, **kwargs)
                 with self.subTest(active=active, command=command), \
                         patch.object(resolver, "load_model_policy", wraps=resolver.load_model_policy) as loader, \
                         patch.object(resolver, "parse_model_mapping", wraps=resolver.parse_model_mapping) as parser, \
                         patch.object(resolver, "parse_review_yaml", side_effect=AssertionError("YAML dependency used")), \
-                        patch.object(Path, "read_bytes", observed), patch("builtins.print"):
+                        patch.object(Path, "open", observed), patch("builtins.print"):
                     self.assertEqual(args.func(args), 0)
                     loader.assert_called_once_with(self.root.resolve())
                     self.assertEqual(parser.call_count, 2 if active else 0)
@@ -525,15 +526,16 @@ class ModelRoutingTests(unittest.TestCase):
             self.write((self.policy(self.tier()) if active else "") + hub, envelope + tail)
             args = resolver.build_parser().parse_args(["set-local-path", "--repo-root", str(self.root),
                 "--repo", "app", "--local-path", "after", "--json"])
-            original_read = Path.read_bytes
+            original_read = Path.open
             reads = []
-            def observed(path):
-                reads.append(path)
-                return original_read(path)
+            def observed(path, *args, **kwargs):
+                if kwargs.get("mode", args[0] if args else "r") == "rb":
+                    reads.append(path)
+                return original_read(path, *args, **kwargs)
             with self.subTest(active=active), \
                     patch.object(resolver, "load_model_policy", wraps=resolver.load_model_policy) as loader, \
                     patch.object(resolver, "parse_yaml_subset", side_effect=AssertionError("Legacy file reload")), \
-                    patch.object(Path, "read_bytes", observed), patch("builtins.print"):
+                    patch.object(Path, "open", observed), patch("builtins.print"):
                 self.assertEqual(args.func(args), 0)
                 loader.assert_called_once_with(self.root.resolve())
                 self.assertEqual(reads, [self.shared, self.local])

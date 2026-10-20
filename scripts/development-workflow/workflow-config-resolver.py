@@ -17,6 +17,8 @@ import math
 import os
 import re
 import shlex
+import stat
+import subprocess
 import sys
 import tempfile
 import unicodedata
@@ -115,6 +117,7 @@ CONFIG_ERROR_TYPES = frozenset({
     'review-snapshot: destination already contains a local projection',
     'selected source must be a mapping',
     'selected source unreadable',
+    'selected source changed during capture',
     'selected workflow_hub.product_repos entry is missing',
     'tabs are not supported for indentation',
     'top-level keys must not be indented',
@@ -206,6 +209,83 @@ class ConfigError(Exception):
 
     def __str__(self) -> str:
         return format_config_error(self)
+
+
+class SourceIntegrityError(ConfigError):
+    """A selected source changed before its immutable capture completed."""
+
+    def __init__(self):
+        super().__init__('selected source changed during capture')
+
+
+# Preserve the public Path/origin/None tuple. Retain the Path itself so object IDs
+# cannot be reused; only filesystem identity metadata lives in this process map.
+# No private bytes or fingerprints are cached or persisted here.
+_SELECTED_SOURCES: dict[int, tuple[Path, Any]] = {}
+
+
+def source_identity(path: Path) -> Any:
+    try:
+        link = path.lstat()
+    except FileNotFoundError:
+        return None
+    target = path.stat()
+    def identity(info: os.stat_result) -> tuple[int, ...]:
+        return (info.st_dev, info.st_ino, info.st_mode, info.st_size,
+                info.st_mtime_ns, info.st_ctime_ns)
+    return (identity(link), identity(target), str(path.resolve()))
+
+
+def retain_selected_source(path: Path, expected: Any) -> Path:
+    if source_identity(path) != expected:
+        raise SourceIntegrityError()
+    _SELECTED_SOURCES[id(path)] = (path, expected)
+    return path
+
+
+def selected_source_present(path: Path) -> bool:
+    selected = _SELECTED_SOURCES.get(id(path))
+    return selected[1] is not None if selected and selected[0] is path else path.is_file()
+
+
+def capture_config_bytes(path: Path, *, required: bool = False) -> bytes | None:
+    """Read once from the selected identity, checking path and FD around capture.
+
+    Subsequent use consumes this immutable value; mutations after capture do not
+    invalidate a completed model snapshot or staged review projection.
+    """
+    selected = _SELECTED_SOURCES.get(id(path))
+    bound = selected is not None and selected[0] is path
+    try:
+        before = source_identity(path)
+        expected = selected[1] if bound else before
+        if before != expected or (required and before is None):
+            raise SourceIntegrityError()
+        if before is None:
+            return None
+        with path.open('rb') as stream:
+            opened = os.fstat(stream.fileno())
+            identity = (opened.st_dev, opened.st_ino, opened.st_mode, opened.st_size,
+                        opened.st_mtime_ns, opened.st_ctime_ns)
+            if identity != expected[1] or not stat.S_ISREG(opened.st_mode):
+                raise SourceIntegrityError()
+            raw = stream.read()
+            final = os.fstat(stream.fileno())
+            final_identity = (final.st_dev, final.st_ino, final.st_mode, final.st_size,
+                              final.st_mtime_ns, final.st_ctime_ns)
+            if final_identity != identity or source_identity(path) != expected:
+                raise SourceIntegrityError()
+        return raw
+    except (OSError, RuntimeError) as exc:
+        if bound or required:
+            raise SourceIntegrityError() from exc
+        raise ConfigError('could not read config') from exc
+
+
+def capture_config_text(path: Path, *, required: bool = False) -> str | None:
+    raw = capture_config_bytes(path, required=required)
+    # Match Path.read_text's universal-newline handling for legacy text readers.
+    return None if raw is None else raw.decode('utf-8').replace('\r\n', '\n').replace('\r', '\n')
 
 
 SENSITIVE_DIAGNOSTIC_KEY = r"(?:[A-Za-z0-9]+[_.-])*(?:token|password|passphrase|secret|api[ _.-]?key|access[ _.-]?key|private[ _.-]?key)(?:[_.-](?:value|key))?"
@@ -700,21 +780,13 @@ def parse_review_yaml(path: Path, *, raw: str | None = None) -> dict[str, Any]:
 
 
 def parse_yaml_subset(path: Path, *, preserve_empty_values: bool = False) -> dict[str, Any]:
-    if not path.exists():
+    raw = capture_config_text(path)
+    if raw is None:
         return {}
     if preserve_empty_values:
         if path.name == LOCAL_CONFIG_NAME:
-            try:
-                raw = path.read_text(encoding="utf-8")
-            except OSError as exc:
-                raise ConfigError('could not read config') from exc
             validate_selected_yaml(raw, path)
-            return parse_review_yaml(path, raw=raw)
-        return parse_review_yaml(path)
-    try:
-        raw = path.read_text(encoding="utf-8")
-    except OSError as exc:
-        raise ConfigError('could not read config') from exc
+        return parse_review_yaml(path, raw=raw)
     return parse_yaml_snapshot(raw, path)
 
 
@@ -1055,15 +1127,16 @@ def validate_local_source(repo_root: Path, *, explicit: bool = False) -> Path:
         if not root.is_dir() or not os.access(root, os.R_OK | os.X_OK):
             raise ConfigError("local-source: unreadable directory")
         path = root / LOCAL_CONFIG_NAME
+        before = source_identity(path)
         if not path.exists() and not path.is_symlink():
             if explicit:
                 raise ConfigError('local-source missing file')
-            return path
+            return retain_selected_source(path, before)
         if not path.is_file() or not os.access(path, os.R_OK):
             raise ConfigError('local-source unreadable regular file')
         if not explicit and not path.resolve().is_relative_to(root):
             raise ConfigError('local-source external indirection requires explicit selection')
-        return path
+        return retain_selected_source(path, before)
     except (OSError, RuntimeError) as exc:
         raise ConfigError("local-source: filesystem validation failed") from exc
 
@@ -1077,7 +1150,7 @@ def resolve_local_config(repo_root: Path) -> tuple[Path, str, Path | None]:
         path = validate_local_source(Path(override_root), explicit=True)
         return path, "override_root", None
     path = validate_local_source(repo_root)
-    return path, "checkout" if path.is_file() else "", None
+    return path, "checkout" if selected_source_present(path) else "", None
 
 
 def load_configs(repo_root: Path, *, policy: ModelPolicy | None = None) -> tuple[dict[str, Any], dict[str, Any], Path, Path]:
@@ -1971,7 +2044,7 @@ def resolve_review_effective(args: argparse.Namespace) -> dict[str, Any]:
 
     shared_path = repo_root / ".ai-dev-workflow.yaml"
     local_path, local_origin, main_clone_file = resolve_local_config(repo_root)
-    local_file = str(local_path) if local_path.is_file() else ""
+    local_file = str(local_path) if local_origin else ""
     if not local_file:
         local_origin = ""
 
@@ -2006,6 +2079,8 @@ def resolve_review_effective(args: argparse.Namespace) -> dict[str, Any]:
     parse_path = local_path
     try:
         local = parse_yaml_subset(local_path, preserve_empty_values=True)
+    except SourceIntegrityError:
+        raise
     except (ConfigError, UnicodeDecodeError) as exc:
         base.update({
             "effective_policy_state": "unreadable",
@@ -2131,7 +2206,7 @@ def resolve_review_github_effective(args: argparse.Namespace) -> dict[str, Any]:
 
     shared_path = repo_root / ".ai-dev-workflow.yaml"
     local_path, local_origin, main_clone_file = resolve_local_config(repo_root)
-    local_file = str(local_path) if local_path.is_file() else ""
+    local_file = str(local_path) if local_origin else ""
     if not local_file:
         local_origin = ""
 
@@ -2163,6 +2238,8 @@ def resolve_review_github_effective(args: argparse.Namespace) -> dict[str, Any]:
     parse_path = local_path
     try:
         local = parse_yaml_subset(local_path, preserve_empty_values=True)
+    except SourceIntegrityError:
+        raise
     except (ConfigError, UnicodeDecodeError) as exc:
         base.update({"unreadable_file": "", "unreadable_detail": format_config_error(exc)})
         return base
@@ -2229,7 +2306,7 @@ def resolve_review_overrides(args: argparse.Namespace) -> dict[str, str]:
     repo_root = repo_root_from_args(args.repo_root)
     local_path, local_origin, main_clone_file, local = resolve_local_review_config(repo_root)
     local = project_review_settings(local, local_path)
-    local_file = str(local_path) if local_path.is_file() else ""
+    local_file = str(local_path) if local_origin else ""
     if not local_file:
         local_origin = ""
 
@@ -2598,16 +2675,18 @@ def parse_model_mapping(lines: list[str], path: Path) -> tuple[dict[str, Any], M
 
 def read_model_snapshot(path: Path, *, legacy_error: ConfigError | None = None) -> ModelSnapshot:
     """One byte read; activation is exclusively a reserved first physical line."""
-    if not path.exists():
+    try:
+        raw_bytes = capture_config_bytes(path)
+    except SourceIntegrityError:
+        raise
+    except ConfigError:
+        if legacy_error is not None:
+            raise legacy_error
+        raise
+    if raw_bytes is None:
         if legacy_error is not None:
             raise legacy_error
         return ModelSnapshot(MappingProxyType({}), MappingProxyType({}), b"", MappingProxyType({}))
-    try:
-        raw_bytes = path.read_bytes()
-    except OSError as exc:
-        if legacy_error is not None:
-            raise legacy_error
-        raise ConfigError('could not read config') from exc
     first_bytes = raw_bytes.split(b"\n", 1)[0].rstrip(b"\r")
     active = first_bytes.startswith(MODEL_ENVELOPE_PREFIX.encode())
     bom_active = first_bytes.startswith(b"\xef\xbb\xbf" + MODEL_ENVELOPE_PREFIX.encode())
@@ -2803,8 +2882,8 @@ def cmd_review_snapshot(args: argparse.Namespace) -> int:
     if origin:
         # One source read; parser and schema projection share these exact bytes.
         try:
-            raw = path.read_text(encoding="utf-8")
-        except (OSError, UnicodeError) as exc:
+            raw = capture_config_text(path, required=True)
+        except UnicodeError as exc:
             raise ConfigError('review-snapshot source unreadable') from exc
         validate_selected_yaml(raw, path)
         projection = project_review_settings(parse_review_yaml(path, raw=raw), path)
@@ -2841,11 +2920,70 @@ def cmd_local_source(args: argparse.Namespace) -> int:
     return 0
 
 
+def coderabbit_policy_from_snapshot(raw: bytes) -> str:
+    """Run the existing lexical extractor on captured stdin, never a pathname.
+
+    Retain POSIX AWK's locale/whitespace/quote behavior exactly; Python scalar
+    decoding or Unicode trimming would change the existing policy contract.
+    """
+    program = r"""
+        function trim(v) {
+          gsub(/^[[:space:]]+|[[:space:]]+$/, "", v)
+          gsub(/^["']|["']$/, "", v)
+          return v
+        }
+        /^review:[[:space:]]*$/ { in_review=1; next }
+        in_review && /^[^[:space:]#].*:[[:space:]]*/ { in_review=0 }
+        in_review && /^[[:space:]][[:space:]]coderabbit_cli:[[:space:]]*$/ { in_cli=1; next }
+        in_cli && /^[[:space:]][[:space:]][^[:space:]#].*:[[:space:]]*/ { in_cli=0 }
+        in_cli && /^[[:space:]][[:space:]][[:space:]][[:space:]]rate_limit_policy:[[:space:]]*/ {
+          line = $0
+          sub(/^[[:space:]]*rate_limit_policy:[[:space:]]*/, "", line)
+          sub(/[[:space:]]+#.*$/, "", line)
+          print trim(line)
+          exit
+        }
+"""
+    try:
+        result = subprocess.run(['awk', program], input=raw, capture_output=True)
+    except OSError as exc:
+        raise ConfigError('configuration validation error') from exc
+    if result.returncode:
+        raise ConfigError('configuration validation error')
+    # Match Bash command substitution, which removes trailing newlines only.
+    return result.stdout.rstrip(b'\n').decode('utf-8')
+
+
+def read_coderabbit_policy(path: Path) -> str:
+    selected = _SELECTED_SOURCES.get(id(path))
+    if not (selected and selected[0] is path) and not path.is_file():
+        return ''
+    raw = capture_config_bytes(path)
+    if raw is None:
+        return ''
+    validate_selected_yaml(raw.decode('utf-8').replace('\r\n', '\n').replace('\r', '\n'), path)
+    return coderabbit_policy_from_snapshot(raw)
+
+
+def cmd_coderabbit_policy(args: argparse.Namespace) -> int:
+    # The selected source is captured and consumed here; no pathname is handed
+    # back to Bash for an unprotected second private-source read.
+    if args.file is not None:
+        value = read_coderabbit_policy(Path(args.file))
+    else:
+        path, _, _ = resolve_local_config(repo_root_from_args(args.repo_root))
+        value = read_coderabbit_policy(path)
+        if not value:
+            value = read_coderabbit_policy(Path(args.shared_file))
+    print(value, end='')
+    return 0
+
+
 def cmd_yaml_source_check(args: argparse.Namespace) -> int:
     path = Path(args.file)
     try:
-        raw = path.read_text(encoding="utf-8")
-    except (OSError, UnicodeError) as exc:
+        raw = capture_config_text(path, required=True)
+    except UnicodeError as exc:
         raise ConfigError('selected source unreadable') from exc
     validate_selected_yaml(raw, path)
     return 0
@@ -2853,12 +2991,12 @@ def cmd_yaml_source_check(args: argparse.Namespace) -> int:
 
 def read_review_list_source(path: Path) -> dict[str, Any]:
     """Decode reviewer scalars with the existing framework parser; no PyYAML dependency."""
-    if not path.is_file():
-        return {}
     try:
-        raw = path.read_text(encoding="utf-8")
-    except (OSError, UnicodeError) as exc:
+        raw = capture_config_text(path)
+    except UnicodeError as exc:
         raise ConfigError('selected source unreadable') from exc
+    if raw is None:
+        return {}
     return validate_selected_yaml(raw, path, review_fields=True)
 
 
@@ -2904,6 +3042,12 @@ def cmd_review_local_list(args: argparse.Namespace) -> int:
 def build_parser() -> argparse.ArgumentParser:
     parser = DiagnosticArgumentParser(description="Resolve AI workflow repository context")
     subcommands = parser.add_subparsers(dest="command", required=True)
+
+    policy = subcommands.add_parser("coderabbit-policy", help="read policy from one validated source capture")
+    policy.add_argument("--repo-root")
+    policy.add_argument("--shared-file", default="")
+    policy.add_argument("--file")
+    policy.set_defaults(func=cmd_coderabbit_policy)
 
     yaml_check = subcommands.add_parser("yaml-source-check", help="validate selected YAML before legacy field extraction")
     yaml_check.add_argument("--file", required=True)
