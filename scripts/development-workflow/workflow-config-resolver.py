@@ -59,8 +59,152 @@ LOCAL_ONLY_KEYS = {
 }
 
 
+# Closed metadata vocabulary: never accept parser text, source paths or unknown
+# key/value strings as an error description. Functional payloads bypass this API.
+CONFIG_ERROR_TYPES = frozenset({
+    'NUL or surrogate is not supported in review configuration',
+    'YAML nesting exceeds the supported depth',
+    'configuration unreadable',
+    'configuration validation error',
+    'contains forbidden local or secret fields',
+    'contains unknown placeholder(s)',
+    'contains unresolved placeholder text',
+    'could not parse remaining YAML',
+    'could not read config',
+    'duplicate mapping key',
+    'duplicate or invalid mapping continuation',
+    'duplicate product_repos entries cannot be updated safely',
+    'duplicate workflow_hub.product_repos name',
+    "expected '<key>: <value>'",
+    'expected child indentation of',
+    "field 'mode' must be a string",
+    "field 'mode' must be one of",
+    'field must be a list',
+    'field must be a mapping',
+    'indentation must use multiples of two spaces',
+    'invalid JSON',
+    'invalid UTF-8 encoding',
+    'invalid YAML',
+    'invalid review.. schema',
+    'invalid reviewer-field schema',
+    'invalid reviewer-field schema: review.',
+    'is not a portable branch name',
+    'list item is not valid in this mapping',
+    'local path for selected product repo is required; set product_repos[].local_path or checkout_root',
+    'local-source external indirection requires explicit selection',
+    'local-source missing file',
+    'local-source unreadable regular file',
+    'local-source: filesystem validation failed',
+    'local-source: unreadable directory',
+    'multiline flow collections are not supported',
+    'multiline scalars are not supported',
+    'must be a non-empty branch name',
+    'must be a string',
+    'must be one of',
+    'must include the {version} placeholder',
+    'non-empty flow mappings are not supported',
+    'non-finite numeric scalar is not supported',
+    'product repository selection is ambiguous; pass --repo',
+    'product_repo.workflow_hub must define github_repo or git_url in product_repo mode',
+    'product_repos[] must be a mapping',
+    'repository root is not a readable directory',
+    'review-effective requires PyYAML; install PyYAML==6.0.2 for the python3 used by the gate and re-run',
+    'review-snapshot source unreadable',
+    'review-snapshot: atomic staging failed',
+    'review-snapshot: destination already contains a local projection',
+    'selected source must be a mapping',
+    'selected source unreadable',
+    'selected workflow_hub.product_repos entry is missing',
+    'tabs are not supported for indentation',
+    'top-level keys must not be indented',
+    'unexpected indentation',
+    'unsupported YAML flow mapping',
+    'unsupported YAML mapping key',
+    'unsupported YAML metadata',
+    'unsupported YAML nesting',
+    'unsupported YAML node',
+    'unsupported YAML scalar',
+    'unsupported YAML scalar conversion',
+    'unsupported mapping key',
+    'workflow config must be a top-level mapping',
+    'workflow_hub mode is required to list product repositories',
+    'workflow_hub mode is required to write product repository local paths',
+    'workflow_hub.product_repos is required for workflow_hub mode',
+    'workflow_hub.product_repos[] contains local-only fields',
+    'workflow_hub.product_repos[] must be a mapping',
+    'workflow_hub.product_repos[] must define github_repo or git_url',
+    'workflow_hub.product_repos[].name is required',
+})
+CONFIG_ERROR_KEYS = frozenset("""schema_version mode review on_draft on_ready runner github
+internal_reviewers platforms phase_after_clean internal_reviewers_unavailable_policy
+coderabbit_cli rate_limit_policy workflow_hub product_repo product_repos name github_repo
+git_url default_branch default_branch_strategy local_path checkout_path checkout_root
+release base branch_pattern changelog_owner tag_owner github_release_owner
+deployment_evidence_owner cleanup_evidence_owner tracker_reconciliation_owner
+ci ci_policy policy required_checks github_app app_id installation_id private_key_path
+models dsh tiers roles provider model reasoning_effort role tier guardrails parallelism
+max_concurrent_by_stage spec plan implementation risk_paths category glob when_pattern
+path scope mode_scope mode_scopes categories always_sync special_handling project_specific
+required_additions must_contain sync_coverage_exemptions reason skeleton_role entries
+required_for_product_repo generated_example example_only enforce_release_runtime
+reviews auto_review enabled drafts base_branches issue_tracker project_number vcs
+repository_mode configured_product_repo_keys""".split())
+
+
+def safe_config_key(value: Any) -> str:
+    if not isinstance(value, str) or not value:
+        return ""
+    normalized = re.sub(r"\[\d+\]", "[]", value)
+    parts = re.split(r"[./]", normalized.replace("[]", ""))
+    allowed = CONFIG_ERROR_KEYS | set(globals().get("DSH_ROLE_TIERS", {})) | set(globals().get("DSH_TIERS", ()))
+    return normalized if all(part in allowed for part in parts) else "unknown"
+
+
+def _config_locator(value: Any) -> int | None:
+    return value if type(value) is int and 0 < value <= 1000000000 else None
+
+
+def format_config_error(error: BaseException | None = None, *, error_type: str = "configuration validation error",
+                        key: str = "", line: int | None = None, column: int | None = None) -> str:
+    """Only closed error type, numeric locators and a known schema key; no str(error)."""
+    if isinstance(error, ConfigError) or (error is not None and
+            type(error).__name__ == "ConfigError" and hasattr(error, "error_type")):
+        error_type, key, line, column = error.error_type, error.key or key, error.line, error.column
+    elif error is not None:
+        name = type(error).__name__
+        if name in {"ScannerError", "ParserError", "ComposerError", "ConstructorError", "ReaderError", "YAMLError"}:
+            error_type = "invalid YAML"
+            mark = getattr(error, "problem_mark", None)
+            if mark is not None:
+                line, column = mark.line + 1, mark.column + 1
+        elif isinstance(error, UnicodeError):
+            error_type = "invalid UTF-8 encoding"
+        elif isinstance(error, OSError):
+            error_type = "configuration unreadable"
+        elif isinstance(error, json.JSONDecodeError):
+            error_type, line, column = "invalid JSON", error.lineno, error.colno
+    if not isinstance(error_type, str) or error_type not in CONFIG_ERROR_TYPES:
+        error_type = "configuration validation error"
+    fields = ["configuration: " + error_type]
+    if _config_locator(line) is not None:
+        fields.append("line=" + str(line))
+    if _config_locator(column) is not None:
+        fields.append("column=" + str(column))
+    if key:
+        fields.append("key=" + safe_config_key(key))
+    return "; ".join(fields)
+
+
 class ConfigError(Exception):
-    """Configuration problem with a human-readable message."""
+    """Configuration failure retaining safe structured metadata only."""
+
+    def __init__(self, error_type: str, *, key: str = "", line: int | None = None, column: int | None = None):
+        self.error_type = error_type if error_type in CONFIG_ERROR_TYPES else "configuration validation error"
+        self.key, self.line, self.column = safe_config_key(key), _config_locator(line), _config_locator(column)
+        super().__init__(self.error_type)
+
+    def __str__(self) -> str:
+        return format_config_error(self)
 
 
 SENSITIVE_DIAGNOSTIC_KEY = r"(?:[A-Za-z0-9]+[_.-])*(?:token|password|passphrase|secret|api[ _.-]?key|access[ _.-]?key|private[ _.-]?key)(?:[_.-](?:value|key))?"
@@ -246,7 +390,7 @@ def preprocess_yaml(path: Path) -> list[tuple[int, str, int]]:
     try:
         raw_lines = path.read_text(encoding="utf-8").splitlines()
     except OSError as exc:
-        raise ConfigError(f"{path}: could not read config") from exc
+        raise ConfigError('could not read config') from exc
 
     return preprocess_yaml_snapshot("\n".join(raw_lines), path)
 
@@ -256,24 +400,24 @@ def preprocess_yaml_snapshot(raw: str, path: Path) -> list[tuple[int, str, int]]
     lines: list[tuple[int, str, int]] = []
     for line_no, raw in enumerate(raw.splitlines(), start=1):
         if "\t" in raw[: len(raw) - len(raw.lstrip(" \t"))]:
-            raise ConfigError(f"{path}:{line_no}: tabs are not supported for indentation")
+            raise ConfigError('tabs are not supported for indentation', line=line_no)
         stripped_comment = strip_inline_comment(raw)
         if not stripped_comment.strip():
             continue
         indent = len(stripped_comment) - len(stripped_comment.lstrip(" "))
         if indent % 2 != 0:
-            raise ConfigError(f"{path}:{line_no}: indentation must use multiples of two spaces")
+            raise ConfigError('indentation must use multiples of two spaces', line=line_no)
         lines.append((indent, stripped_comment.strip(), line_no))
     return lines
 
 
 def split_key_value(content: str, path: Path, line_no: int) -> tuple[str, str | None]:
     if ":" not in content:
-        raise ConfigError(f"{path}:{line_no}: expected '<key>: <value>'")
+        raise ConfigError("expected '<key>: <value>'", line=line_no)
     key, value = content.split(":", 1)
     key = key.strip()
     if not re.match(r"^[A-Za-z0-9_.-]+$", key):
-        raise ConfigError(f"{path}:{line_no}: unsupported mapping key")
+        raise ConfigError('unsupported mapping key', line=line_no)
     value = value.strip()
     return key, value if value != "" else None
 
@@ -313,7 +457,7 @@ def parse_review_numeric_scalar(value: str, path: Path, line_no: int) -> Any:
     normalized = value.replace("_", "")
     decimal = r"(?:0|[1-9](?:_?[0-9])*)"
     if re.fullmatch(r"[+-]?\.(?:inf|nan)", value, re.IGNORECASE):
-        raise ConfigError(f"{path}:{line_no}: non-finite numeric scalar is not supported")
+        raise ConfigError('non-finite numeric scalar is not supported', line=line_no)
     if re.fullmatch(r"[+-]?0[xX][0-9a-fA-F](?:_?[0-9a-fA-F])*", value):
         return int(normalized, 0)
     if re.fullmatch(r"[+-]?0[oO][0-7](?:_?[0-7])*", value):
@@ -331,7 +475,7 @@ def parse_review_numeric_scalar(value: str, path: Path, line_no: int) -> Any:
     ):
         numeric = float(normalized)
         if not math.isfinite(numeric):
-            raise ConfigError(f"{path}:{line_no}: non-finite numeric scalar is not supported")
+            raise ConfigError('non-finite numeric scalar is not supported', line=line_no)
         return numeric
     return value
 
@@ -379,9 +523,9 @@ def parse_mapping(
         if line_indent < indent:
             break
         if line_indent > indent:
-            raise ConfigError(f"{path}:{line_no}: unexpected indentation")
+            raise ConfigError('unexpected indentation', line=line_no)
         if content.startswith("- "):
-            raise ConfigError(f"{path}:{line_no}: list item is not valid in this mapping")
+            raise ConfigError('list item is not valid in this mapping', line=line_no)
         key, value = split_key_value(content, path, line_no)
         index += 1
         if value is not None:
@@ -392,7 +536,7 @@ def parse_mapping(
             continue
         child_indent, child_content, _ = lines[index]
         if child_indent != indent + 2:
-            raise ConfigError(f"{path}:{lines[index][2]}: expected child indentation of {indent + 2}")
+            raise ConfigError('expected child indentation of', line=lines[index][2])
         if child_content.startswith("- "):
             child, index = parse_list(lines, index, child_indent, path)
         else:
@@ -410,7 +554,7 @@ def parse_list(
         if line_indent < indent:
             break
         if line_indent > indent:
-            raise ConfigError(f"{path}:{line_no}: unexpected indentation")
+            raise ConfigError('unexpected indentation', line=line_no)
         if not content.startswith("- "):
             break
         item = content[2:].strip()
@@ -421,7 +565,7 @@ def parse_list(
                 continue
             child_indent, child_content, _ = lines[index]
             if child_indent != indent + 2:
-                raise ConfigError(f"{path}:{lines[index][2]}: expected child indentation of {indent + 2}")
+                raise ConfigError('expected child indentation of', line=lines[index][2])
             if child_content.startswith("- "):
                 child, index = parse_list(lines, index, child_indent, path)
             else:
@@ -462,10 +606,7 @@ def parse_review_yaml(path: Path, *, raw: str | None = None) -> dict[str, Any]:
     try:
         import yaml
     except ImportError as exc:
-        raise ConfigError(
-            f"{path}: review-effective requires PyYAML; install PyYAML==6.0.2 "
-            "for the python3 used by the gate and re-run"
-        ) from exc
+        raise ConfigError('review-effective requires PyYAML; install PyYAML==6.0.2 for the python3 used by the gate and re-run') from exc
     try:
         if raw is None:
             raw = path.read_text(encoding="utf-8")
@@ -473,21 +614,21 @@ def parse_review_yaml(path: Path, *, raw: str | None = None) -> dict[str, Any]:
             if isinstance(token, (yaml.tokens.TagToken, yaml.tokens.AnchorToken,
                                   yaml.tokens.AliasToken, yaml.tokens.DirectiveToken,
                                   yaml.tokens.DocumentStartToken, yaml.tokens.DocumentEndToken)):
-                raise ConfigError(f"{path}:{token.start_mark.line + 1}: unsupported YAML metadata")
+                raise ConfigError('unsupported YAML metadata', line=token.start_mark.line + 1)
         root = yaml.compose(raw, Loader=yaml.BaseLoader)
     except (yaml.YAMLError, OSError, RecursionError, ValueError) as exc:
         mark = getattr(exc, "problem_mark", None)
-        location = f"{path}:{mark.line + 1}" if mark is not None else str(path)
-        raise ConfigError(f"{location}: invalid YAML") from exc
+        raise ConfigError('invalid YAML', line=mark.line + 1 if mark is not None else None,
+                          column=mark.column + 1 if mark is not None else None) from exc
 
     def convert(node: Any) -> Any:
         line_no = node.start_mark.line + 1
         if isinstance(node, yaml.ScalarNode):
             if node.style in ("|", ">") or node.start_mark.line != node.end_mark.line:
-                raise ConfigError(f"{path}:{line_no}: multiline scalars are not supported")
+                raise ConfigError('multiline scalars are not supported', line=line_no)
             value = node.value
             if "\0" in value or any(0xD800 <= ord(char) <= 0xDFFF for char in value):
-                raise ConfigError(f"{path}:{line_no}: NUL or surrogate is not supported in review configuration")
+                raise ConfigError('NUL or surrogate is not supported in review configuration', line=line_no)
             if node.style in ("'", '"'):
                 return value
             if value in ("", "null", "Null", "NULL", "~"):
@@ -498,38 +639,38 @@ def parse_review_yaml(path: Path, *, raw: str | None = None) -> dict[str, Any]:
                 return False
             return parse_review_numeric_scalar(value, path, line_no)
         if node.flow_style and node.start_mark.line != node.end_mark.line:
-            raise ConfigError(f"{path}:{line_no}: multiline flow collections are not supported")
+            raise ConfigError('multiline flow collections are not supported', line=line_no)
         if not node.flow_style and node.start_mark.column % 2:
-            raise ConfigError(f"{path}:{line_no}: indentation must use multiples of two spaces")
+            raise ConfigError('indentation must use multiples of two spaces', line=line_no)
         if isinstance(node, yaml.SequenceNode):
             return [convert(child) for child in node.value]
         if isinstance(node, yaml.MappingNode):
             if node.flow_style and node.value:
-                raise ConfigError(f"{path}:{line_no}: non-empty flow mappings are not supported")
+                raise ConfigError('non-empty flow mappings are not supported', line=line_no)
             result: dict[str, Any] = {}
             for key_node, value_node in node.value:
                 if not isinstance(key_node, yaml.ScalarNode) or key_node.style is not None or not re.fullmatch(r"[A-Za-z0-9_.-]+", key_node.value):
-                    raise ConfigError(f"{path}:{line_no}: unsupported mapping key")
+                    raise ConfigError('unsupported mapping key', line=line_no)
                 key = key_node.value
                 if key in result:
-                    raise ConfigError(f"{path}:{key_node.start_mark.line + 1}: duplicate mapping key")
+                    raise ConfigError('duplicate mapping key', line=key_node.start_mark.line + 1)
                 if isinstance(value_node, (yaml.MappingNode, yaml.SequenceNode)) and not value_node.flow_style:
                     if value_node.start_mark.column != key_node.start_mark.column + 2:
-                        raise ConfigError(f"{path}:{value_node.start_mark.line + 1}: expected child indentation of {key_node.start_mark.column + 2}")
+                        raise ConfigError('expected child indentation of', line=value_node.start_mark.line + 1)
                 result[key] = convert(value_node)
             return result
-        raise ConfigError(f"{path}:{line_no}: unsupported YAML node")
+        raise ConfigError('unsupported YAML node', line=line_no)
 
     if root is None:
         return {}
     if not isinstance(root, yaml.MappingNode) or root.start_mark.column != 0:
-        raise ConfigError(f"{path}: workflow config must be a top-level mapping")
+        raise ConfigError('workflow config must be a top-level mapping')
     try:
         return convert(root)
     except RecursionError as exc:
-        raise ConfigError(f"{path}: YAML nesting exceeds the supported depth") from exc
+        raise ConfigError('YAML nesting exceeds the supported depth') from exc
     except (ValueError, OverflowError) as exc:
-        raise ConfigError(f"{path}: unsupported YAML scalar conversion") from exc
+        raise ConfigError('unsupported YAML scalar conversion') from exc
 
 
 def parse_yaml_subset(path: Path, *, preserve_empty_values: bool = False) -> dict[str, Any]:
@@ -540,14 +681,14 @@ def parse_yaml_subset(path: Path, *, preserve_empty_values: bool = False) -> dic
             try:
                 raw = path.read_text(encoding="utf-8")
             except OSError as exc:
-                raise ConfigError(f"{path}: could not read config") from exc
+                raise ConfigError('could not read config') from exc
             validate_selected_yaml(raw, path)
             return parse_review_yaml(path, raw=raw)
         return parse_review_yaml(path)
     try:
         raw = path.read_text(encoding="utf-8")
     except OSError as exc:
-        raise ConfigError(f"{path}: could not read config") from exc
+        raise ConfigError('could not read config') from exc
     return parse_yaml_snapshot(raw, path)
 
 
@@ -559,11 +700,11 @@ def parse_yaml_snapshot(raw: str, path: Path) -> dict[str, Any]:
     if not lines:
         return {}
     if lines[0][0] != 0:
-        raise ConfigError(f"{path}:{lines[0][2]}: top-level keys must not be indented")
+        raise ConfigError('top-level keys must not be indented', line=lines[0][2])
     data, index = parse_mapping(lines, 0, lines[0][0], path)
     if index != len(lines):
         _, _, line_no = lines[index]
-        raise ConfigError(f"{path}:{line_no}: could not parse remaining YAML")
+        raise ConfigError('could not parse remaining YAML', line=line_no)
     return data
 
 
@@ -577,7 +718,7 @@ def as_mapping(value: Any, path: Path, field: str) -> dict[str, Any]:
     if value is None:
         return {}
     if not isinstance(value, dict):
-        raise ConfigError(f"{path}: field '{field}' must be a mapping")
+        raise ConfigError('field must be a mapping', key=field)
     return value
 
 
@@ -585,7 +726,7 @@ def as_list(value: Any, path: Path, field: str) -> list[Any]:
     if value is None:
         return []
     if not isinstance(value, list):
-        raise ConfigError(f"{path}: field '{field}' must be a list")
+        raise ConfigError('field must be a list', key=field)
     return value
 
 
@@ -621,7 +762,7 @@ class SelectedYamlParser:
                 self.lines.append((indent, content, number))
 
     def fail(self, line: int, category: str = "invalid YAML") -> None:
-        raise ConfigError(f"{self.path}:{line}: {category}")
+        raise ConfigError(category, line=line)
 
     def scalar(self, text: str, line: int, *, depth: int = 0) -> Any:
         """Consume the complete scalar/flow value, including its comment suffix."""
@@ -878,7 +1019,7 @@ def validate_selected_yaml(raw: str, path: Path, *, review_fields: bool = False)
     try:
         return SelectedYamlParser(raw, path, review_fields=review_fields).parse()
     except (RecursionError, ValueError, OverflowError) as exc:
-        raise ConfigError(f"{path}: invalid YAML") from exc
+        raise ConfigError('invalid YAML') from exc
 
 
 def validate_local_source(repo_root: Path, *, explicit: bool = False) -> Path:
@@ -890,12 +1031,12 @@ def validate_local_source(repo_root: Path, *, explicit: bool = False) -> Path:
         path = root / LOCAL_CONFIG_NAME
         if not path.exists() and not path.is_symlink():
             if explicit:
-                raise ConfigError(f"{path}: local-source missing file")
+                raise ConfigError('local-source missing file')
             return path
         if not path.is_file() or not os.access(path, os.R_OK):
-            raise ConfigError(f"{path}: local-source unreadable regular file")
+            raise ConfigError('local-source unreadable regular file')
         if not explicit and not path.resolve().is_relative_to(root):
-            raise ConfigError(f"{path}: local-source external indirection requires explicit selection")
+            raise ConfigError('local-source external indirection requires explicit selection')
         return path
     except (OSError, RuntimeError) as exc:
         raise ConfigError("local-source: filesystem validation failed") from exc
@@ -929,11 +1070,9 @@ def mode_from_shared(shared: dict[str, Any], shared_path: Path) -> str:
     if raw_mode in {None, ""}:
         raw_mode = "single_repo"
     if not isinstance(raw_mode, str):
-        raise ConfigError(f"{shared_path}: field 'mode' must be a string")
+        raise ConfigError("field 'mode' must be a string")
     if raw_mode not in VALID_MODES:
-        raise ConfigError(
-            f"{shared_path}: field 'mode' must be one of {', '.join(sorted(VALID_MODES))}"
-        )
+        raise ConfigError("field 'mode' must be one of")
     return raw_mode
 
 
@@ -941,18 +1080,16 @@ def normalize_ci_policy(raw: Any, shared_path: Path, field_path: str) -> str:
     if raw is None or raw == "":
         return "required"
     if not isinstance(raw, str):
-        raise ConfigError(f"{shared_path}: {field_path} must be a string")
+        raise ConfigError('must be a string', key=field_path)
     value = raw.strip()
     if value not in VALID_CI_POLICIES:
-        raise ConfigError(
-            f"{shared_path}: {field_path} must be one of {', '.join(sorted(VALID_CI_POLICIES))}"
-        )
+        raise ConfigError('must be one of', key=field_path)
     return value
 
 
 def validate_branch_name(value: str, shared_path: Path, field_path: str) -> str:
     if not isinstance(value, str) or not value:
-        raise ConfigError(f"{shared_path}: {field_path} must be a non-empty branch name")
+        raise ConfigError('must be a non-empty branch name', key=field_path)
     forbidden_tokens = ["..", "@{", "//", "?", "^", "~", ":", "\\", "#"]
     if (
         value.startswith("/")
@@ -960,7 +1097,7 @@ def validate_branch_name(value: str, shared_path: Path, field_path: str) -> str:
         or re.search(r"\s", value)
         or any(token in value for token in forbidden_tokens)
     ):
-        raise ConfigError(f"{shared_path}: {field_path} is not a portable branch name")
+        raise ConfigError('is not a portable branch name', key=field_path)
     for segment in value.split("/"):
         # Mirror git's ref-format component rules (see git-check-ref-format(1))
         # beyond the plain character allowlist: a component cannot start with
@@ -975,7 +1112,7 @@ def validate_branch_name(value: str, shared_path: Path, field_path: str) -> str:
             or segment.endswith(".lock")
             or segment.endswith(".")
         ):
-            raise ConfigError(f"{shared_path}: {field_path} is not a portable branch name")
+            raise ConfigError('is not a portable branch name', key=field_path)
     return value
 
 
@@ -988,18 +1125,16 @@ def validate_release_branch_pattern(
     if raw is None or raw == "":
         return "release/v{version}"
     if not isinstance(raw, str):
-        raise ConfigError(f"{shared_path}: {field_path} must be a string")
+        raise ConfigError('must be a string', key=field_path)
     placeholders = set(re.findall(r"\{[^{}]+\}", raw))
     unknown = sorted(placeholders - {"{version}", "{product_repo}"})
     if unknown:
-        raise ConfigError(
-            f"{shared_path}: {field_path} contains unknown placeholder(s)"
-        )
+        raise ConfigError('contains unknown placeholder(s)', key=field_path)
     if "{version}" not in raw:
-        raise ConfigError(f"{shared_path}: {field_path} must include the {{version}} placeholder")
+        raise ConfigError('must include the {version} placeholder', key=field_path)
     resolved = raw.replace("{version}", "1.2.3").replace("{product_repo}", product_repo_name)
     if "{" in resolved or "}" in resolved:
-        raise ConfigError(f"{shared_path}: {field_path} contains unresolved placeholder text")
+        raise ConfigError('contains unresolved placeholder text', key=field_path)
     validate_branch_name(resolved, shared_path, field_path)
     return raw
 
@@ -1013,12 +1148,10 @@ def normalize_release_owner(
     if raw is None or raw == "":
         return default, "default"
     if not isinstance(raw, str):
-        raise ConfigError(f"{shared_path}: {field_path} must be a string")
+        raise ConfigError('must be a string', key=field_path)
     value = raw.strip()
     if value not in VALID_RELEASE_OWNER_VALUES:
-        raise ConfigError(
-            f"{shared_path}: {field_path} must be one of {', '.join(sorted(VALID_RELEASE_OWNER_VALUES))}"
-        )
+        raise ConfigError('must be one of', key=field_path)
     return value, "explicit"
 
 
@@ -1068,9 +1201,7 @@ def normalize_release_contract(
     release = as_mapping(raw, shared_path, field_path)
     forbidden_values = sorted(forbidden_release_value_paths(release))
     if forbidden_values:
-        raise ConfigError(
-            f"{shared_path}: {field_path} contains forbidden local or secret fields"
-        )
+        raise ConfigError('contains forbidden local or secret fields', key=field_path)
 
     base_source = "explicit" if release.get("base") not in {None, ""} else "default"
     base = str(release.get("base") or default_branch)
@@ -1109,26 +1240,20 @@ def product_repos(shared: dict[str, Any], shared_path: Path) -> list[dict[str, A
     seen: set[str] = set()
     for index, raw in enumerate(repos, start=1):
         if not isinstance(raw, dict):
-            raise ConfigError(f"{shared_path}: workflow_hub.product_repos[{index}] must be a mapping")
+            raise ConfigError('workflow_hub.product_repos[] must be a mapping')
         forbidden = sorted(find_local_only_keys(raw))
         if forbidden:
-            raise ConfigError(
-                f"{shared_path}: workflow_hub.product_repos[{index}] contains local-only fields"
-            )
+            raise ConfigError('workflow_hub.product_repos[] contains local-only fields')
         name = raw.get("name")
         if not isinstance(name, str) or not name:
-            raise ConfigError(f"{shared_path}: workflow_hub.product_repos[{index}].name is required")
+            raise ConfigError('workflow_hub.product_repos[].name is required')
         if name in seen:
-            raise ConfigError(
-                f"{shared_path}: duplicate workflow_hub.product_repos name"
-            )
+            raise ConfigError('duplicate workflow_hub.product_repos name')
         seen.add(name)
         github_repo = raw.get("github_repo") or ""
         git_url = raw.get("git_url") or ""
         if not github_repo and not git_url:
-            raise ConfigError(
-                f"{shared_path}: workflow_hub.product_repos[{index}] must define github_repo or git_url"
-            )
+            raise ConfigError('workflow_hub.product_repos[] must define github_repo or git_url')
         repo = dict(raw)
         repo["default_branch"] = repo.get("default_branch") or "main"
         validate_branch_name(
@@ -1176,13 +1301,11 @@ def select_product_repo(repos: list[dict[str, Any]], target: str | None, shared_
         for repo in repos:
             if repo.get("name") == target:
                 return repo
-        raise ConfigError(f"{shared_path}: selected workflow_hub.product_repos entry is missing")
+        raise ConfigError('selected workflow_hub.product_repos entry is missing')
     if not repos:
-        raise ConfigError(f"{shared_path}: workflow_hub.product_repos is required for workflow_hub mode")
+        raise ConfigError('workflow_hub.product_repos is required for workflow_hub mode')
     if len(repos) > 1:
-        raise ConfigError(
-            f"{shared_path}: product repository selection is ambiguous; pass --repo"
-        )
+        raise ConfigError('product repository selection is ambiguous; pass --repo')
     return repos[0]
 
 
@@ -1190,7 +1313,7 @@ def local_product_repo(local: dict[str, Any], local_path: Path, name: str) -> di
     repos = as_list(local.get("product_repos"), local_path, "product_repos")
     for index, raw in enumerate(repos, start=1):
         if not isinstance(raw, dict):
-            raise ConfigError(f"{local_path}: product_repos[{index}] must be a mapping")
+            raise ConfigError('product_repos[] must be a mapping')
         if raw.get("name") == name:
             return raw
     return {}
@@ -1214,9 +1337,7 @@ def resolve_local_path(
             base = (local_path.parent / base).resolve()
         return str(base / name), "checkout_root"
     if require_local:
-        raise ConfigError(
-            f"{local_path}: local path for selected product repo is required; set product_repos[].local_path or checkout_root"
-        )
+        raise ConfigError('local path for selected product repo is required; set product_repos[].local_path or checkout_root')
     return "", ""
 
 
@@ -1302,7 +1423,7 @@ def set_local_product_repo_path(repo_root: Path, repo_name: str, local_path_valu
     new_repos: list[dict[str, Any]] = []
     for index, raw in enumerate(repos, start=1):
         if not isinstance(raw, dict):
-            raise ConfigError(f"{local_path}: product_repos[{index}] must be a mapping")
+            raise ConfigError('product_repos[] must be a mapping')
         repo = dict(raw)
         if repo.get("name") == repo_name:
             match_count += 1
@@ -1311,9 +1432,7 @@ def set_local_product_repo_path(repo_root: Path, repo_name: str, local_path_valu
         new_repos.append(repo)
 
     if match_count > 1:
-        raise ConfigError(
-            f"{local_path}: duplicate product_repos entries cannot be updated safely"
-        )
+        raise ConfigError('duplicate product_repos entries cannot be updated safely')
 
     if not updated:
         new_repos.append({"name": repo_name, "local_path": normalized_path})
@@ -1562,9 +1681,7 @@ def resolve_context(args: argparse.Namespace, configs: tuple[Any, ...] | None = 
     )
     context.update(release_contract_context("TARGET", release_contract))
     if not context["WORKFLOW_HUB_GITHUB_REPO"] and not context["WORKFLOW_HUB_GIT_URL"]:
-        raise ConfigError(
-            f"{shared_path}: product_repo.workflow_hub must define github_repo or git_url in product_repo mode"
-        )
+        raise ConfigError('product_repo.workflow_hub must define github_repo or git_url in product_repo mode')
     return context
 
 
@@ -1810,7 +1927,7 @@ def resolve_review_effective(args: argparse.Namespace) -> dict[str, Any]:
     """Resolve the Step 7a config without collapsing parse-state distinctions."""
     repo_root = repo_root_from_args(args.repo_root)
     if not repo_root.is_dir() or not os.access(repo_root, os.R_OK | os.X_OK):
-        raise ConfigError(f"{repo_root}: repository root is not a readable directory")
+        raise ConfigError('repository root is not a readable directory')
 
     shared_path = repo_root / ".ai-dev-workflow.yaml"
     local_path, local_origin, main_clone_file = resolve_local_config(repo_root)
@@ -1841,8 +1958,8 @@ def resolve_review_effective(args: argparse.Namespace) -> dict[str, Any]:
     except (ConfigError, UnicodeDecodeError) as exc:
         base.update({
             "effective_policy_state": "unreadable",
-            "unreadable_file": str(shared_path),
-            "unreadable_detail": str(exc) if isinstance(exc, ConfigError) else "configuration: invalid UTF-8 encoding",
+            "unreadable_file": "",
+            "unreadable_detail": format_config_error(exc),
         })
         return base
 
@@ -1852,8 +1969,8 @@ def resolve_review_effective(args: argparse.Namespace) -> dict[str, Any]:
     except (ConfigError, UnicodeDecodeError) as exc:
         base.update({
             "effective_policy_state": "unreadable",
-            "unreadable_file": str(parse_path),
-            "unreadable_detail": str(exc) if isinstance(exc, ConfigError) else "configuration: invalid UTF-8 encoding",
+            "unreadable_file": "",
+            "unreadable_detail": format_config_error(exc),
         })
         return base
 
@@ -1925,10 +2042,10 @@ def resolve_review_effective(args: argparse.Namespace) -> dict[str, Any]:
         policy_input = None
         effective_policy = ""
         unreadable_path = str(local_path) if local_structure_error else str(shared_path)
-        base["unreadable_file"] = unreadable_path
-        base["unreadable_detail"] = f"{unreadable_path}: review section must be a mapping"
+        base["unreadable_file"] = ""
+        base["unreadable_detail"] = format_config_error(key="review")
     if effective_policy_state == "unreadable" and not policy_structure_error:
-        base["unreadable_file"] = policy_source
+        base["unreadable_file"] = ""
         base["unreadable_detail"] = (
             "review.internal_reviewers_unavailable_policy must be a scalar string; "
             f"received {type(policy_raw).__name__}"
@@ -1970,7 +2087,7 @@ def resolve_review_github_effective(args: argparse.Namespace) -> dict[str, Any]:
     """
     repo_root = repo_root_from_args(args.repo_root)
     if not repo_root.is_dir() or not os.access(repo_root, os.R_OK | os.X_OK):
-        raise ConfigError(f"{repo_root}: repository root is not a readable directory")
+        raise ConfigError('repository root is not a readable directory')
 
     shared_path = repo_root / ".ai-dev-workflow.yaml"
     local_path, local_origin, main_clone_file = resolve_local_config(repo_root)
@@ -2000,14 +2117,14 @@ def resolve_review_github_effective(args: argparse.Namespace) -> dict[str, Any]:
     try:
         shared = parse_yaml_subset(shared_path, preserve_empty_values=True)
     except (ConfigError, UnicodeDecodeError) as exc:
-        base.update({"unreadable_file": str(shared_path), "unreadable_detail": str(exc) if isinstance(exc, ConfigError) else "configuration: invalid UTF-8 encoding"})
+        base.update({"unreadable_file": "", "unreadable_detail": format_config_error(exc)})
         return base
 
     parse_path = local_path
     try:
         local = parse_yaml_subset(local_path, preserve_empty_values=True)
     except (ConfigError, UnicodeDecodeError) as exc:
-        base.update({"unreadable_file": str(parse_path), "unreadable_detail": str(exc) if isinstance(exc, ConfigError) else "configuration: invalid UTF-8 encoding"})
+        base.update({"unreadable_file": "", "unreadable_detail": format_config_error(exc)})
         return base
 
     local_review_override_applied = False
@@ -2156,7 +2273,7 @@ def cmd_list_product_repos(args: argparse.Namespace) -> int:
     shared, _, shared_path, _ = load_configs(repo_root)
     mode = mode_from_shared(shared, shared_path)
     if mode != "workflow_hub":
-        raise ConfigError(f"{shared_path}: workflow_hub mode is required to list product repositories")
+        raise ConfigError('workflow_hub mode is required to list product repositories')
     names = [str(repo.get("name")) for repo in product_repos(shared, shared_path)]
     if args.json:
         print(json.dumps(names))
@@ -2172,7 +2289,7 @@ def cmd_set_local_path(args: argparse.Namespace) -> int:
     shared, _, shared_path, _ = load_configs(repo_root, policy=policy)
     mode = mode_from_shared(shared, shared_path)
     if mode != "workflow_hub":
-        raise ConfigError(f"{shared_path}: workflow_hub mode is required to write product repository local paths")
+        raise ConfigError('workflow_hub mode is required to write product repository local paths')
     select_product_repo(product_repos(shared, shared_path), args.repo, shared_path)
     # Reuse selected checkout bytes, while keeping any external fallback read-only.
     snapshot = policy.snapshots[1] if policy.local_path == repo_root / LOCAL_CONFIG_NAME else None
@@ -2221,9 +2338,12 @@ class ModelConfigError(ConfigError):
     """Safe model diagnostic; never retain raw configuration or parser output."""
 
     def __init__(self, code: str, path: Path | str, field: str, message: str):
-        self.diagnostic = {"CODE": code, "FILE": str(path), "FIELD": field,
-                           "MESSAGE": message}
-        super().__init__(message)
+        # Error provenance is metadata-only under the current human contract.
+        # Successful model resolution still returns its functional SOURCE_FILE.
+        kind = "invalid YAML" if code == "invalid_yaml" else "configuration validation error"
+        self.diagnostic = {"CODE": code, "FILE": "", "FIELD": safe_config_key(field),
+                           "MESSAGE": format_config_error(error_type=kind, key=field)}
+        super().__init__(kind, key=field)
 
 
 def model_error(code: str, path: Path | str, field: str, message: str) -> None:
@@ -2447,7 +2567,7 @@ def read_model_snapshot(path: Path, *, legacy_error: ConfigError | None = None) 
     except OSError as exc:
         if legacy_error is not None:
             raise legacy_error
-        raise ConfigError(f"{path}: could not read config") from exc
+        raise ConfigError('could not read config') from exc
     first_bytes = raw_bytes.split(b"\n", 1)[0].rstrip(b"\r")
     active = first_bytes.startswith(MODEL_ENVELOPE_PREFIX.encode())
     bom_active = first_bytes.startswith(b"\xef\xbb\xbf" + MODEL_ENVELOPE_PREFIX.encode())
@@ -2595,7 +2715,7 @@ def project_review_settings(data: dict[str, Any], path: Path) -> dict[str, Any]:
     def selected_list(raw: Any, present: bool, invalid: bool, field: str) -> list[str] | None:
         values, state = review_runner_state(raw, present)
         if invalid or state == "malformed":
-            raise ConfigError(f"{path}: invalid reviewer-field schema: {field}")
+            raise ConfigError('invalid reviewer-field schema', key=field)
         return values if present and raw is not None else None
 
     raw, present, invalid = review_runner_value(data)
@@ -2611,7 +2731,7 @@ def project_review_settings(data: dict[str, Any], path: Path) -> dict[str, Any]:
     raw, present, invalid = review_effective_value_from_path(data, ["review", field])
     _, _, state = review_policy_state(raw, present)
     if invalid or state in ("unreadable", "unsupported"):
-        raise ConfigError(f"{path}: invalid reviewer-field schema: review.{field}")
+        raise ConfigError('invalid reviewer-field schema: review.', key=field)
     if present:
         review[field] = raw
     return {"review": review} if review else {}
@@ -2645,7 +2765,7 @@ def cmd_review_snapshot(args: argparse.Namespace) -> int:
         try:
             raw = path.read_text(encoding="utf-8")
         except (OSError, UnicodeError) as exc:
-            raise ConfigError(f"{path}: review-snapshot source unreadable") from exc
+            raise ConfigError('review-snapshot source unreadable') from exc
         validate_selected_yaml(raw, path)
         projection = project_review_settings(parse_review_yaml(path, raw=raw), path)
     destination = Path(args.destination)
@@ -2686,7 +2806,7 @@ def cmd_yaml_source_check(args: argparse.Namespace) -> int:
     try:
         raw = path.read_text(encoding="utf-8")
     except (OSError, UnicodeError) as exc:
-        raise ConfigError(f"{path}: selected source unreadable") from exc
+        raise ConfigError('selected source unreadable') from exc
     validate_selected_yaml(raw, path)
     return 0
 
@@ -2697,13 +2817,13 @@ def cmd_review_local_list(args: argparse.Namespace) -> int:
         try:
             data = validate_selected_yaml(path.read_text(encoding="utf-8"), path, review_fields=True)
         except OSError as exc:
-            raise ConfigError(f"{path}: selected source unreadable") from exc
+            raise ConfigError('selected source unreadable') from exc
     else:
         data = {}
     value, present, invalid = local_review_list_value(data, args.phase, args.key)
     values, state = review_runner_state(value, present)
     if invalid or state == "malformed":
-        raise ConfigError(f"{path}: invalid review.{args.phase}.{args.key} schema")
+        raise ConfigError('invalid review.. schema')
     if not present or value is None:
         return 1
     for item in values:
@@ -2819,9 +2939,14 @@ def main(argv: list[str]) -> int:
         print(json.dumps(exc.diagnostic, sort_keys=True), file=sys.stderr)
         return 2
     except (ConfigError, UnicodeError) as exc:
-        detail = str(exc) if isinstance(exc, ConfigError) else "configuration: invalid UTF-8 encoding"
+        detail = format_config_error(exc)
         print(f"ERROR: {detail}", file=sys.stderr)
         return 2
+    except (OSError, ValueError, TypeError, KeyError, AttributeError, RecursionError) as exc:
+        # Unexpected malformed shapes previously exited 1 via a traceback.
+        # Retain that status while containing their diagnostic representation.
+        print("ERROR: " + format_config_error(exc), file=sys.stderr)
+        return 1
 
 
 if __name__ == "__main__":

@@ -851,7 +851,7 @@ with tempfile.TemporaryDirectory(prefix='reviewer-preflight-tests-') as tmp:
     )
     check('T-27 multi-platform report renders both rows', data.get('PLATFORM_COUNT') == '2', data)
     names = {data.get('PLATFORM_1_NAME'), data.get('PLATFORM_2_NAME')}
-    check('T-27 both platform names appear', names == {'coderabbit', 'not-a-real-reviewer'}, data)
+    check('T-27 both platform names appear', names == {'coderabbit', 'unknown'}, data)
     for n in ('1', '2'):
         name = data.get(f'PLATFORM_{n}_NAME')
         verdict = data.get(f'PLATFORM_{n}_VERDICT')

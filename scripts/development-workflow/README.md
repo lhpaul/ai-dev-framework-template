@@ -1484,6 +1484,10 @@ original attribution is separate metadata. `redact-text` sanitizes diagnostic
 stdin without loading configuration; `workflow_redact_text` exposes that boundary
 for Bash, and `workflow_redact_json` preserves structured diagnostic values.
 Functional configuration and deliberate auth transport are separate interfaces.
+Configuration parse/validation errors use the central closed type/line/column/known-key
+formatter; no source path, excerpt or exception text is emitted. Model error `FILE`
+and review `unreadable_file` remain empty. Functional authority bindings and successful
+`SOURCE_FILE` provenance remain available to their consumers.
 Complete selected-private syntax validation and legacy context/Bash policy reads
 use the framework's strict subset parser without PyYAML. Empty/missing private
 and shared-only legacy paths also remain dependency-free. The modern strict

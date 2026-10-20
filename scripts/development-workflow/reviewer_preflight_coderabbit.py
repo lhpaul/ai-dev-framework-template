@@ -28,6 +28,12 @@ from typing import Any, Iterator
 class ConfigError(ValueError):
     """Raised for a malformed or unreadable .coderabbit.yaml."""
 
+    def __init__(self, message: str):
+        # Call sites supply schema names; the formatter independently allowlists
+        # them. Never retain a rejected value or rely on exception rendering.
+        self.key = message.split(" must ", 1)[0]
+        super().__init__("configuration validation error")
+
 
 class PatternTimeoutError(RuntimeError):
     """Raised when a single base_branches regex match exceeds its bounded budget.
@@ -74,6 +80,15 @@ def diagnostic_api():
     # Reuse the injected pure sanitizer; never load workstation configuration.
     import runpy
     return runpy.run_path(str(Path(__file__).with_name("workflow-config-resolver.py")))
+
+
+def config_error_metadata(error=None, *, key=""):
+    try:
+        if isinstance(error, ConfigError):
+            return diagnostic_api()["format_config_error"](key=error.key)
+        return diagnostic_api()["format_config_error"](error, key=key)
+    except Exception:
+        return "configuration: validation error"
 
 
 def diagnostic_text(text: str) -> str:
@@ -292,13 +307,13 @@ def _cmd_enabled_bool(path: Path) -> int:
     try:
         result = load_coderabbit_config(path)
     except (OSError, UnicodeDecodeError, ValueError) as error:
-        print(diagnostic_text(str(error)), file=sys.stderr)
+        print(config_error_metadata(error), file=sys.stderr)
         return 3
     except Exception as error:  # yaml.YAMLError does not subclass ValueError on all versions
         import yaml
 
         if isinstance(error, yaml.YAMLError):
-            print(diagnostic_text(str(error)), file=sys.stderr)
+            print(config_error_metadata(error), file=sys.stderr)
             return 3
         raise
     print("true" if result["auto_review_enabled"] else "false")
@@ -333,13 +348,13 @@ def _cmd_full_json(path: Path) -> int:
     try:
         result = load_coderabbit_config(path)
     except (OSError, UnicodeDecodeError, ValueError) as error:
-        print(diagnostic_text(str(error)), file=sys.stderr)
+        print(config_error_metadata(error), file=sys.stderr)
         return 3
     except Exception as error:
         import yaml
 
         if isinstance(error, yaml.YAMLError):
-            print(diagnostic_text(str(error)), file=sys.stderr)
+            print(config_error_metadata(error), file=sys.stderr)
             return 3
         raise
     print(json.dumps(result, sort_keys=True))

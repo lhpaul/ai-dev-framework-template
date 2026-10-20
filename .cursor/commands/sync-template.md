@@ -227,11 +227,11 @@ Check for known CI/CD configuration mismatches between the template and the proj
 
    ```bash
    if command -v yamllint >/dev/null 2>&1; then
-     yamllint -d "{extends: relaxed, rules: {line-length: disable}}" "<template_workflow_file>" \
-       || echo "YAML PARSE ISSUE (template source): <template_workflow_file>"
+     yamllint -d "{extends: relaxed, rules: {line-length: disable}}" "<template_workflow_file>" >/dev/null 2>&1 \
+       || echo "YAML PARSE ISSUE (template source)"
    else
-     python3 -c "import sys, yaml; yaml.safe_load(open(sys.argv[1]))" "<template_workflow_file>" \
-       || echo "YAML PARSE ISSUE (template source): <template_workflow_file>"
+     python3 -c "import sys, yaml; yaml.safe_load(open(sys.argv[1]))" "<template_workflow_file>" >/dev/null 2>&1 \
+       || echo "YAML PARSE ISSUE (template source)"
    fi
    ```
 
@@ -310,8 +310,8 @@ Check for known patterns where the template's protocol files reference tooling o
 2. **`.ai-dev-workflow.yaml` presence and validity**: the sync Step 5 writes to this file; verify it exists and parses as valid YAML:
 
    ```bash
-   python3 -c "import sys, yaml; yaml.safe_load(open('.ai-dev-workflow.yaml'))" \
-     && echo "OK" || echo "PARSE ERROR: .ai-dev-workflow.yaml"
+   python3 -c "import sys, yaml; yaml.safe_load(open('.ai-dev-workflow.yaml'))" >/dev/null 2>&1 \
+     && echo "OK" || echo "YAML PARSE ERROR"
    ```
 
    If missing or malformed, flag: "Step 5 will fail to record the last-synced version — fix `.ai-dev-workflow.yaml` before applying."
@@ -815,11 +815,11 @@ yaml_parse_failed=0
 for f in .github/workflows/*.yml .github/workflows/*.yaml; do
   [ -f "$f" ] || continue
   if command -v yamllint >/dev/null 2>&1; then
-    yamllint -d "{extends: relaxed, rules: {line-length: disable}}" "$f" \
-      || { echo "YAML LINT ERROR: $f"; yaml_parse_failed=1; }
+    yamllint -d "{extends: relaxed, rules: {line-length: disable}}" "$f" >/dev/null 2>&1 \
+      || { echo "YAML LINT ERROR"; yaml_parse_failed=1; }
   else
-    python3 -c "import sys, yaml; yaml.safe_load(open(sys.argv[1]))" "$f" \
-      || { echo "YAML PARSE ERROR: $f"; yaml_parse_failed=1; }
+    python3 -c "import sys, yaml; yaml.safe_load(open(sys.argv[1]))" "$f" >/dev/null 2>&1 \
+      || { echo "YAML PARSE ERROR"; yaml_parse_failed=1; }
   fi
 done
 

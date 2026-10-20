@@ -15,7 +15,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from reviewer_preflight_coderabbit import DiagnosticArgumentParser, diagnostic_text
+from reviewer_preflight_coderabbit import DiagnosticArgumentParser, diagnostic_text, config_error_metadata
 
 BUCKET_MAP = {
     "on_draft.runner": "on_draft_runner",
@@ -206,7 +206,7 @@ def main(argv: list[str]) -> int:
         with open(args.output, "w", encoding="utf-8") as handle:
             json.dump(payload, handle, sort_keys=True)
     except (OSError, UnicodeError, ValueError) as error:
-        print(diagnostic_text(f"ERROR: cannot build preflight input: {error}"), file=sys.stderr)
+        print(config_error_metadata(error), file=sys.stderr)
         return 1
     return 0
 

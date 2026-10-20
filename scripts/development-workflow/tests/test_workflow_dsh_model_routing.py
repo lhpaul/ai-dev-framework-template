@@ -125,7 +125,7 @@ class ModelRoutingTests(unittest.TestCase):
             with self.assertRaises(resolver.ModelConfigError) as caught:
                 resolver.load_model_policy(self.root)
             self.assertEqual(caught.exception.diagnostic["CODE"], "incomplete_route")
-            self.assertEqual(caught.exception.diagnostic["FILE"], str(self.local))
+            self.assertEqual(caught.exception.diagnostic["FILE"], "")
 
     def test_explicit_tier_is_only_default_and_missing_tier_inherits(self):
         self.write(self.policy(self.tier("premium", "p", "premium")))
@@ -195,7 +195,7 @@ class ModelRoutingTests(unittest.TestCase):
                 result = self.cli("model-route", "--runner", "dsh", "--role", "developer", "--json")
                 self.assertEqual(result.returncode, 2)
                 self.assertNotIn("PRIVATE_TEST_SENTINEL", result.stdout + result.stderr)
-                self.assertIn("BR9 block mappings", diagnostic["MESSAGE"])
+                self.assertIn("invalid YAML", diagnostic["MESSAGE"])
                 for command in (("model-routes", "--runner", "dsh", "--json"), ("validate", "--json")):
                     parity = self.cli(*command)
                     self.assertEqual(parity.returncode, 2)
@@ -263,7 +263,7 @@ class ModelRoutingTests(unittest.TestCase):
             diagnostic = json.loads(result.stderr)
             self.assertEqual(set(diagnostic), {"CODE", "FILE", "FIELD", "MESSAGE"})
             self.assertEqual(diagnostic["CODE"], code)
-            self.assertEqual(diagnostic["FILE"], str((self.shared if text else self.local).resolve()))
+            self.assertEqual(diagnostic["FILE"], "")
             self.assertNotIn("PRIVATE_TEST_SENTINEL", result.stderr)
             if expected is None:
                 expected = diagnostic
@@ -340,7 +340,7 @@ class ModelRoutingTests(unittest.TestCase):
                         diagnostic = json.loads(result.stderr)
                         self.assertEqual(set(diagnostic), {"CODE", "FILE", "FIELD", "MESSAGE"})
                         self.assertEqual(diagnostic["CODE"], code)
-                        self.assertEqual(diagnostic["FILE"], str(self.shared if layer == "shared" else self.local))
+                        self.assertEqual(diagnostic["FILE"], "")
                         self.assertNotIn("PRIVATE_TEST_SENTINEL", result.stderr)
                         if expected is None:
                             expected = diagnostic
@@ -510,7 +510,7 @@ class ModelRoutingTests(unittest.TestCase):
                         diagnostic = json.loads(result.stderr)
                         self.assertEqual(set(diagnostic), {"CODE", "FILE", "FIELD", "MESSAGE"})
                         self.assertEqual(diagnostic["CODE"], "invalid_yaml")
-                        self.assertEqual(diagnostic["FILE"], str(self.shared if layer == "shared" else self.local))
+                        self.assertEqual(diagnostic["FILE"], "")
                         self.assertNotIn("PRIVATE_TEST_SENTINEL", result.stderr)
                         if expected is None:
                             expected = diagnostic

@@ -357,7 +357,7 @@ workflow_hub:
 YAML
 run_fails_contains \
   "workflow_hub_invalid_ci_policy" \
-  "workflow_hub.product_repos[1].ci_policy must be one of" \
+  "must be one of; key=workflow_hub.product_repos[].ci_policy" \
   python3 "$RESOLVER" resolve --repo-root "$bad_ci_dir" --repo mobile-app
 
 bad_release_branch_dir="$(fixture_dir bad-release-branch)"
@@ -374,7 +374,7 @@ workflow_hub:
 YAML
 run_fails_contains \
   "workflow_hub_release_rejects_bad_base" \
-  "workflow_hub.product_repos[1].release.base is not a portable branch name" \
+  "is not a portable branch name; key=workflow_hub.product_repos[].release.base" \
   python3 "$RESOLVER" resolve --repo-root "$bad_release_branch_dir" --repo mobile-app
 
 # git-check-ref-format(1) rejects these even though they pass a plain
@@ -394,7 +394,7 @@ workflow_hub:
 YAML
 run_fails_contains \
   "workflow_hub_release_rejects_dot_lock_suffix" \
-  "workflow_hub.product_repos[1].release.base is not a portable branch name" \
+  "is not a portable branch name; key=workflow_hub.product_repos[].release.base" \
   python3 "$RESOLVER" resolve --repo-root "$dot_lock_branch_dir" --repo mobile-app
 
 trailing_dot_branch_dir="$(fixture_dir trailing-dot-branch)"
@@ -411,7 +411,7 @@ workflow_hub:
 YAML
 run_fails_contains \
   "workflow_hub_release_rejects_trailing_dot" \
-  "workflow_hub.product_repos[1].release.base is not a portable branch name" \
+  "is not a portable branch name; key=workflow_hub.product_repos[].release.base" \
   python3 "$RESOLVER" resolve --repo-root "$trailing_dot_branch_dir" --repo mobile-app
 
 leading_dot_branch_dir="$(fixture_dir leading-dot-branch)"
@@ -428,7 +428,7 @@ workflow_hub:
 YAML
 run_fails_contains \
   "workflow_hub_release_rejects_leading_dot_segment" \
-  "workflow_hub.product_repos[1].release.base is not a portable branch name" \
+  "is not a portable branch name; key=workflow_hub.product_repos[].release.base" \
   python3 "$RESOLVER" resolve --repo-root "$leading_dot_branch_dir" --repo mobile-app
 
 valid_dotted_branch_dir="$(fixture_dir valid-dotted-branch)"
@@ -495,7 +495,7 @@ workflow_hub:
 YAML
 run_fails_contains \
   "workflow_hub_release_rejects_unknown_owner" \
-  "release.changelog_owner must be one of" \
+  "must be one of; key=workflow_hub.product_repos[].release.changelog_owner" \
   python3 "$RESOLVER" resolve --repo-root "$bad_release_owner_dir" --repo mobile-app
 
 secret_release_dir="$(fixture_dir secret-release)"
@@ -1071,7 +1071,7 @@ assert_review_effective_states "E-15 scalar parent" malformed absent
 run_test "review-effective E-15 valid YAML has no unreadable file" "" "$(review_effective_state unreadable_file)"
 write_review_effective_fixture $'review:\n\ton_draft:\n    runner: [codex]'
 assert_review_effective_states "E-16" malformed unreadable
-run_contains "review-effective E-16 detail names line" ":2:" "$(review_effective_state unreadable_detail)"
+run_contains "review-effective E-16 detail names line" "line=2" "$(review_effective_state unreadable_detail)"
 write_review_effective_fixture 'review:' '  internal_reviewers_unavailable_policy: warn'
 assert_review_effective_states "E-17" absent defined
 run_test "review-effective E-17 policy" warn "$(review_effective_state effective_policy)"
@@ -1244,7 +1244,7 @@ write_review_effective_fixture 'review:' '  on_draft:' '    runner: ~'
 assert_review_effective_states "E-29 tilde" empty absent
 write_review_effective_fixture 'review:' '  internal_reviewers_unavailable_policy: {}'
 assert_review_effective_states "E-30 mapping" absent unreadable
-run_test "review-effective E-30 type-error file" "$review_effective_dir/.ai-dev-workflow.yaml" "$(review_effective_state unreadable_file)"
+run_test "review-effective E-30 type-error file" "" "$(review_effective_state unreadable_file)"
 run_contains "review-effective E-30 type-error detail" "must be a scalar string" "$(review_effective_state unreadable_detail)"
 write_review_effective_fixture 'review:' '  internal_reviewers_unavailable_policy: {mode: warn}'
 assert_review_effective_states "E-30 flow mapping" malformed unreadable
@@ -1668,7 +1668,7 @@ utf8_json="$(review_effective_json)"
 run_test "review-effective E-36 invalid UTF-8 returns JSON" object "$(jq -r 'type' <<< "$utf8_json")"
 run_test "review-effective E-36 invalid UTF-8 policy unreadable" unreadable "$(jq -r '.effective_policy_state' <<< "$utf8_json")"
 run_test "review-effective E-36 invalid UTF-8 runner malformed" malformed "$(jq -r '.effective_runner_state' <<< "$utf8_json")"
-run_test "review-effective E-36 invalid UTF-8 source" "$review_effective_dir/.ai-dev-workflow.yaml" "$(jq -r '.unreadable_file' <<< "$utf8_json")"
+run_test "review-effective E-36 invalid UTF-8 source" "" "$(jq -r '.unreadable_file' <<< "$utf8_json")"
 write_review_effective_fixture 'review:' '  on_draft:' '    runner: [codex]'
 printf '\377' > "$review_effective_dir/.ai-dev-workflow.local.yaml"
 run_fails_contains "review-effective E-36 legacy invalid UTF-8 diagnostic is metadata-only" "invalid UTF-8 encoding" python3 "$RESOLVER" review-overrides --repo-root "$review_effective_dir"
@@ -1690,7 +1690,7 @@ write_review_effective_fixture 'review: []'
 shared_review_list_json="$(review_effective_json)"
 run_test "review-effective shared review list runner malformed" malformed "$(jq -r '.effective_runner_state' <<< "$shared_review_list_json")"
 run_test "review-effective shared review list policy unreadable" unreadable "$(jq -r '.effective_policy_state' <<< "$shared_review_list_json")"
-run_test "review-effective shared review list diagnostic" "$review_effective_dir/.ai-dev-workflow.yaml" "$(jq -r '.unreadable_file' <<< "$shared_review_list_json")"
+run_test "review-effective shared review list diagnostic" "" "$(jq -r '.unreadable_file' <<< "$shared_review_list_json")"
 write_review_effective_fixture 'review:' '  on_draft: []'
 shared_on_draft_list_json="$(review_effective_json)"
 run_test "review-effective shared on_draft list runner malformed" malformed "$(jq -r '.effective_runner_state' <<< "$shared_on_draft_list_json")"
@@ -1704,7 +1704,7 @@ printf '%s\n' 'review: []' > "$review_effective_dir/.ai-dev-workflow.local.yaml"
 local_review_list_json="$(review_effective_json)"
 run_test "review-effective local review list runner malformed" malformed "$(jq -r '.effective_runner_state' <<< "$local_review_list_json")"
 run_test "review-effective local review list policy unreadable" unreadable "$(jq -r '.effective_policy_state' <<< "$local_review_list_json")"
-run_test "review-effective local review list diagnostic" "$review_effective_dir/.ai-dev-workflow.local.yaml" "$(jq -r '.unreadable_file' <<< "$local_review_list_json")"
+run_test "review-effective local review list diagnostic" "" "$(jq -r '.unreadable_file' <<< "$local_review_list_json")"
 write_review_effective_fixture 'review:' '  on_draft:' '    runner: [codex]'
 printf '%s\n' 'review:' '  on_draft: []' > "$review_effective_dir/.ai-dev-workflow.local.yaml"
 local_on_draft_list_json="$(review_effective_json)"
@@ -1733,7 +1733,7 @@ run_test "review-effective policy-only override cannot hide malformed runner anc
 rm -f "$review_effective_dir/.ai-dev-workflow.local.yaml"
 write_review_effective_fixture 'review:' '  on_draft:' '    runner: [codex-github]' '    runner: []'
 assert_review_effective_states "duplicate runner" malformed unreadable
-run_contains "duplicate runner diagnostic identifies second key" ".ai-dev-workflow.yaml:4: duplicate mapping key" "$(review_effective_state unreadable_detail)"
+run_contains "duplicate runner diagnostic identifies second key" "duplicate mapping key; line=4" "$(review_effective_state unreadable_detail)"
 write_review_effective_fixture 'review:' '  internal_reviewers_unavailable_policy: fail-if-any-unavailable' '  internal_reviewers_unavailable_policy: warn'
 assert_review_effective_states "duplicate policy" malformed unreadable
 write_review_effective_fixture 'review:' '  on_draft:' '    runner: [codex-github]' 'review:' '  on_draft:' '    runner: []'
@@ -1745,12 +1745,12 @@ assert_review_effective_states "duplicate legacy alias" malformed unreadable
 write_review_effective_fixture 'review:' '  on_draft:' '    runner: [codex]'
 printf '%s\n' 'review:' '  on_draft:' '    runner: [codex-github]' '    runner: []' > "$review_effective_dir/.ai-dev-workflow.local.yaml"
 assert_review_effective_states "duplicate local runner" malformed unreadable
-run_test "duplicate local source" "$review_effective_dir/.ai-dev-workflow.local.yaml" "$(review_effective_state unreadable_file)"
+run_test "duplicate local source" "" "$(review_effective_state unreadable_file)"
 run_fails_contains "legacy selected duplicate runner fails before fields" "duplicate mapping key" python3 "$RESOLVER" review-overrides --repo-root "$review_effective_dir"
 rm -f "$review_effective_dir/.ai-dev-workflow.local.yaml"
 write_review_effective_fixture 'review:' '  on_draft:' '    runner:' '      - name: codex' '        name: cursor'
 assert_review_effective_states "duplicate list mapping continuation" malformed unreadable
-run_contains "duplicate continuation identifies second key" ".ai-dev-workflow.yaml:5: duplicate mapping key" "$(review_effective_state unreadable_detail)"
+run_contains "duplicate continuation identifies second key" "duplicate mapping key; line=5" "$(review_effective_state unreadable_detail)"
 write_review_effective_fixture 'review:' '  on_draft:' '    runner: [codex]' '  on_ready:' '    runner: [cursor]'
 assert_review_effective_states "same key in separate mappings is valid" defined absent
 

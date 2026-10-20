@@ -42,7 +42,7 @@ with tempfile.TemporaryDirectory(prefix='review-yaml-parser-') as tmp:
             result = effective(source, 'review:\n  on_draft:\n    runner: '+flow+'\n')
             assert result['effective_runner_state'] == 'malformed', result
             assert result['effective_policy_state'] == 'unreadable', result
-            assert result['unreadable_file'] == str(source), result
+            assert result['unreadable_file'] == '', result
             passed += 1
         for token, value in (('":bad"', ':bad'), ("':bad'", ':bad'),
                              ('"#literal"', '#literal'), ('a:b', 'a:b'),

@@ -25,7 +25,8 @@ import sys
 from typing import Any
 
 from reviewer_preflight_coderabbit import (PatternTimeoutError, base_branch_covered,
-                                          DiagnosticArgumentParser, diagnostic_json, diagnostic_text)
+                                          DiagnosticArgumentParser, diagnostic_json, diagnostic_text,
+                                          config_error_metadata)
 
 # Per-bucket supported reviewer platform lists (spec: "value-not-supported").
 # A value supported in one bucket is not automatically supported in another —
@@ -575,6 +576,25 @@ def exit_code_for_outcome(outcome: str) -> int:
     }[outcome]
 
 
+def configuration_validation_diagnostics(result):
+    # Classification consumes the original names first. Only the published
+    # error view substitutes opaque unsupported values; valid identities and
+    # functional configuration transport remain untouched.
+    for platform in result.get("platforms", []):
+        if "value-not-supported" not in platform.get("reasons", []):
+            continue
+        platform["name"] = "unknown"
+        platform["surface"] = ""
+        platform["detail"] = config_error_metadata(key=platform.get("setting", ""))
+        platform["remedy"] = "Correct the known reviewer-list key and retry."
+        for bucket in platform.get("bucket_results", []):
+            if "value-not-supported" in bucket.get("reasons", []):
+                bucket["surface"] = ""
+                bucket["detail"] = config_error_metadata(key=bucket.get("setting", ""))
+                bucket["remedy"] = "Correct the known reviewer-list key and retry."
+    return result
+
+
 def main(argv: list[str]) -> int:
     parser = DiagnosticArgumentParser(description="Reviewer preflight cross-check engine")
     parser.add_argument("--input-json", required=True, help="path to the input JSON payload")
@@ -582,8 +602,13 @@ def main(argv: list[str]) -> int:
     try:
         with open(args.input_json, encoding="utf-8") as handle:
             payload = json.load(handle)
+    except UnicodeError as error:
+        # This previously escaped as an exception (exit1); sanitize without
+        # changing its failure outcome to the existing read/JSON status3.
+        print(config_error_metadata(error), file=sys.stderr)
+        return 1
     except (OSError, json.JSONDecodeError) as error:
-        print(diagnostic_text(f"ERROR: cannot read input JSON: {error}"), file=sys.stderr)
+        print(config_error_metadata(error), file=sys.stderr)
         return 3
     try:
         result = classify(payload)
@@ -598,7 +623,7 @@ def main(argv: list[str]) -> int:
             "prerequisite_detail": failure.detail,
         }
     try:
-        rendered = json.dumps(diagnostic_json(result), sort_keys=True)
+        rendered = json.dumps(diagnostic_json(configuration_validation_diagnostics(result)), sort_keys=True)
     except Exception:
         print("ERROR: diagnostic sanitization failed", file=sys.stderr)
         return 2

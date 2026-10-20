@@ -190,7 +190,7 @@ class RunnerSecurityTests(unittest.TestCase):
             scope.write_text('{"groups":{},"items":[],"policy":{}}')
             result = subprocess.run(['bash', str(scripts / 'run-epic-policy-recommender.sh'), '--scope', str(scope), '--original-command', '/run-item 1993', '--json'], env=script_env, capture_output=True, text=True)
             self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
-            self.assertIn('failed to read review.on_draft.runner', result.stderr)
+            self.assertIn('reviewer-list read error; key=review.on_draft.runner', result.stderr)
             self.assertFalse((self.root / 'mutations').exists())
         # Earlier bucket failure cannot be hidden by a later successful bucket.
         result = self.bash('if out="$(workflow_config_review_platforms)"; then exit 90; else [ "$?" -eq 2 ] && [ -z "$out" ]; fi',

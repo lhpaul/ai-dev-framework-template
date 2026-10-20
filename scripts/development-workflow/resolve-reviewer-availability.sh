@@ -219,6 +219,7 @@ policy= policy_input= policy_source= policy_state=not-evaluated
 unreadable_file= unreadable_detail= list_state=not-evaluated list_source=
 local_state=none configured= excluded= reachable= unreachable=
 fallback=false outcome=blocked block_cause=none count=0 reachable_count=0 unavailable_count=0
+config_error_report=false
 names=() statuses=() reasons=() remedies=() details=()
 add_record() {
   names[$count]=$1 statuses[$count]=$2 reasons[$count]=$3 details[$count]=$4
@@ -228,19 +229,25 @@ add_record() {
     check-inconclusive)
       case "${5:-}" in
         local-runtime) remedies[$count]='Run the local runtime --version command named in the detail; repair or update that runtime, then re-run the gate.' ;;
-        coderabbit-config) remedies[$count]='Repair .coderabbit.yaml using the reported read or syntax error, then re-run the gate.' ;;
+        coderabbit-config)
+          config_error_report=true
+          remedies[$count]='Repair the known configuration key using its safe error type and locators, then re-run the gate.' ;;
         coderabbit-dependency) remedies[$count]='Install PyYAML==6.0.2 for the python3 used by the gate, then re-run the gate.' ;;
         coderabbit-parser) remedies[$count]='Run the CodeRabbit configuration check with the gate python3 to diagnose the execution failure or timeout, then re-run the gate.' ;;
         hosted-activity) remedies[$count]='Check gh authentication and repository issue-comment access, inspect the reported activity coverage or API error, then re-run the gate.' ;;
         budget) remedies[$count]='Re-run the gate when the environment is responsive; diagnose earlier slow probes if the availability budget is exhausted again.' ;;
         *) fail 'missing inconclusive probe context' ;;
       esac ;;
-    value-not-supported) remedies[$count]='Correct the configured value to one of the supported reviewer values, or remove it from review.on_draft.runner.' ;;
+    value-not-supported)
+      names[$count]=unknown
+      details[$count]='configuration: unsupported reviewer; key=review.on_draft.runner'
+      remedies[$count]='Correct the known reviewer-list key and retry.' ;;
     '') remedies[$count]= ;;
     *) fail 'invalid internal reason' ;;
   esac
   count=$((count + 1))
   local display=$1
+  [ "$3" != value-not-supported ] || display=unknown
   if ! [[ "$display" =~ ^[a-z][a-z0-9-]*$ ]]; then display="<entry $count>"; fi
   case "$2" in
     reachable) reachable="${reachable:+$reachable,}$display"; reachable_count=$((reachable_count + 1)) ;;
@@ -251,6 +258,19 @@ add_record() {
 }
 report_unredacted() {
   local i=0 n
+  case "$block_cause" in
+    policy-unreadable|policy-unsupported|list-malformed)
+      policy_source= list_source= unreadable_file= local_state= ;;
+  esac
+  if [ "$config_error_report" = true ]; then
+    policy_source= list_source= unreadable_file= local_state=
+  fi
+  for ((i=0; i<count; i++)); do
+    if [ "${reasons[$i]}" = value-not-supported ]; then
+      policy_source= list_source= unreadable_file= local_state=
+    fi
+  done
+  i=0
   # Include temporary-file cleanup in the reported determination duration.
   rm -rf -- "$work_dir"
   work_dir=
@@ -385,7 +405,7 @@ sys.exit(_rpc.main(["--mode", "enabled-bool", sys.argv[1]]))
     fi
     if [ "$rc" = 3 ]; then
       probe_context=coderabbit-config
-      detail=".coderabbit.yaml could not be read: $(cat "$work_dir/probe.err")"
+      detail="$(cat "$work_dir/probe.err")"
       return
     fi
     if [ "$rc" != 0 ]; then detail='CodeRabbit enablement check did not complete'; return; fi

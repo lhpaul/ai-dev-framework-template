@@ -11,7 +11,7 @@ policy source. The source must be a readable directory containing a readable
 regular `.ai-dev-workflow.local.yaml`; relative roots resolve from the process's
 working directory. Missing, unreadable or malformed selected sources stop the
 operation without substituting shared or default settings. Do not print private
-configuration values while diagnosing the named source and safe error category.
+configuration values while diagnosing the safe error category and numeric locators.
 
 Selected private sources are validated in full by the framework's strict,
 dependency-free YAML subset parser before any legacy field is extracted, including
@@ -113,3 +113,7 @@ universal enforcement. Agents must not inspect private files manually; authorize
 protocol scripts retain deliberate selected-source access. Verify controls with
 fabricated values in disposable repositories, without launching a real review
 service or copying workstation configuration.
+
+Configuration parse and validation errors expose only the error type, line, column, and known schema key. Unknown keys, source excerpts, exception text, and source paths are excluded. Error payloads retain their schema with an empty `FILE` or `unreadable_file`; successful functional `SOURCE_FILE` and projection provenance remain available. Selected private-source syntax validation uses the framework's strict parser without PyYAML; modern review parsing retains its existing dependency.
+
+A review-state payload keeps functional source bindings such as `local_override_file` and `effective_*_source`, including an unreadable selected source, so callers preserve source authority and never substitute shared policy. These bindings are separate from metadata-only error fields and must not be copied into diagnostic error reports.

@@ -197,7 +197,8 @@ try:
 
     print(json.dumps({"section": "present", "mode": mode, "backlog_start": allow}))
 except Exception as e:
-    sys.stderr.write("run-work-router: warning: YAML parse error: {}\n".format(e))
+    formatter = getattr(locals().get("resolver"), "format_config_error", None)
+    print(formatter(e, key="guardrails") if formatter else "configuration: validation error", file=sys.stderr)
     print(json.dumps({"section": "absent", "mode": "manual", "backlog_start": False}))
 PYEOF
   )" || _py_exit=$?

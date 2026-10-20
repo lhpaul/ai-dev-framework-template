@@ -96,19 +96,8 @@ require_value() {
 }
 
 sanitize_guardrails_parse_detail() {
-  local detail="$1"
-  local schema_detail
-
-  schema_detail="${detail#*: }"
-  case "$schema_detail" in
-    guardrails.mode\ must\ be\ manual,\ assisted,\ delegated,\ or\ autonomous,*|\
-    guardrails.stages.*.max_merge_risk\ must\ be\ low,\ medium,\ or\ high,*)
-      printf '%s\n' "$schema_detail"
-      ;;
-    *)
-      printf 'failed to parse guardrails from workflow config\n'
-      ;;
-  esac
+  # This is an error boundary, not a configuration/source-content transport.
+  printf 'configuration: guardrails validation error; key=guardrails\n'
 }
 
 read_guardrails_json() {
@@ -219,7 +208,8 @@ try:
         "audit": audit,
     }))
 except Exception as exc:
-    print(f"failed to parse guardrails from {sys.argv[1]}: {exc}", file=sys.stderr)
+    formatter = getattr(locals().get("resolver"), "format_config_error", None)
+    print(formatter(exc, key="guardrails") if formatter else "configuration: validation error", file=sys.stderr)
     sys.exit(2)
 PYEOF
   )" || _py_exit=$?

@@ -10,6 +10,16 @@ from pathlib import Path
 from typing import Any
 
 
+
+def config_error_metadata(error=None, *, key=""):
+    """Use the existing pure formatter without reading any configuration."""
+    try:
+        import runpy
+        api = runpy.run_path(str(Path(__file__).with_name("workflow-config-resolver.py")))
+        return api["format_config_error"](error, key=key)
+    except Exception:
+        return "configuration: validation error"
+
 ALLOWED_SCOPES = {"shared", "hub_only", "product_repo_injection"}
 SKELETON_MANIFESTS = (
     "template/workflow-hub/skeleton-manifest.yaml",
@@ -252,6 +262,6 @@ def main(argv: list[str] | None = None) -> int:
 if __name__ == "__main__":
     try:
         raise SystemExit(main())
-    except ValidationError as exc:
-        print(f"ERROR: {exc}", file=sys.stderr)
+    except Exception as exc:
+        print(config_error_metadata(exc), file=sys.stderr)
         raise SystemExit(1)
