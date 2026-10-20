@@ -657,6 +657,46 @@ api=runpy.run_path(sys.argv[1]); print(json.dumps(api['dependency_fields'](sys.a
             batch.write_text(original)
 
 
+    def classifier_execution(self, status):
+        development, valid, _ = self.classifier_fixture(); self.prelude_scope()
+        self.f.shared.write_text(valid)
+        classifier = self.f.runtime / 'work-item-repository-routing.py'; original = classifier.read_text()
+        classifier.write_text('import sys\nprint(' + repr('{"opaqueUnknownKey":"' + self.opaque + '"}') + ')\nprint(' + repr(self.opaque) + ',file=sys.stderr)\nsys.exit(' + str(status) + ')\n')
+        direct = self.cli('work-item-repository-routing.py')
+        self.assertEqual(direct.returncode, status)
+        self.assertIn(self.opaque, direct.stdout)
+        self.assertIn(self.opaque, direct.stderr)
+        entries = [
+            ('next-development', 'workflow-next-action.sh', ['--development', str(development)]),
+            ('next-branch', 'workflow-next-action.sh', ['--branch', 'feature/1993-fixture', '--repo', self.selected]),
+            ('next-pr', 'workflow-next-action.sh', ['--pr', '1993']),
+            ('batch', 'workflow-batch-plan.sh', [str(development)]),
+            ('scan', 'workflow-batch-lanes.sh', ['--scan', str(development)]),
+            ('prelude', 'run-bounded-prelude.sh', ['--original-command', '/run-item 1993', '--issue', '1993', '--json']),
+        ]
+        self.late_gh()  # PR probe is a fake read; no actual provider.
+        try:
+            for name, script, args in entries:
+                with self.subTest(entry=name, child_status=status):
+                    if name != 'next-pr':
+                        (self.f.bin / 'gh').write_text('#!/bin/sh\nexit 99\n')
+                    else:
+                        self.late_gh()
+                    result = (self.run_command([TEST_BASH, str(self.f.runtime / script), *args])
+                              if script == 'run-bounded-prelude.sh' else self.late_cli(script, *args))
+                    self.late_safe(result)
+        finally:
+            classifier.write_text(original)
+        negative = self.late_cli('workflow-next-action.sh', '--development', str(development))
+        self.assertEqual(negative.returncode, 0, negative.stdout + negative.stderr)
+        self.assertIn('NEXT_ACTION=resolve-repository-selection\n', negative.stdout)
+        self.assertIn('ROUTING_CONTINUE_ALLOWED=false\n', negative.stdout)
+        self.assertEqual(negative.stderr, '')
+
+    def test_A06_classifier_execution(self): self.classifier_execution(17)
+    def test_A07_classifier_response(self): self.classifier_execution(0)
+
+
 def consumer_test(row):
     def test(self):
         self.f.private.write_text(self.bad)

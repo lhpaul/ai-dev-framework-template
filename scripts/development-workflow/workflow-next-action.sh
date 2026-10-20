@@ -234,14 +234,16 @@ repository_context_for_action() {
         set -e
         case "$hub_only_status" in
           0) routing_args+=(--hub-only) ;;
-          2) return 1 ;;
+          2) return 3 ;;
         esac
-        routing_json="$("${routing_args[@]}")" || routing_status=$?
+        routing_json="$( ${routing_args[@]+"${routing_args[@]}"} 2>&1)" || routing_status=$?
         if [ "$routing_status" -ne 0 ]; then
-          # The classifier reports invalid configuration as2. Keep that fatal
-          # state distinct from selection-required2 inside this function.
-          [ "$routing_status" -ne 2 ] || return 3
-          return 1
+          # Every classifier execution failure is fatal. Selection-required is
+          # a well-formed status0 JSON decision, never a failed child process.
+          # Captured output can mix functional data and diagnostics, so do not
+          # publish it on failure, even when the child failed unexpectedly.
+          printf 'configuration: configuration validation error\n' >&2
+          return 3
         fi
         if ! printf '%s\n' "$routing_json" | jq -e '
           .schema_version == "work_item_repository_routing.v1"
@@ -256,8 +258,8 @@ repository_context_for_action() {
           and (.selected_product_repo_keys | type == "array")
           and (.fingerprint | type == "string" and test("^sha256:[0-9a-f]{64}$"))
         ' >/dev/null 2>&1; then
-          print_kv ROUTING_INTERNAL_ERROR "invalid_classifier_response"
-          return 1
+          printf 'configuration: configuration validation error\n' >&2
+          return 3
         fi
         routing_outcome="$(printf '%s\n' "$routing_json" | jq -r '.outcome_code')"
         routing_continue="$(printf '%s\n' "$routing_json" | jq -r '.continue_allowed')"
