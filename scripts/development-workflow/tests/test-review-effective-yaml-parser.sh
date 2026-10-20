@@ -49,8 +49,12 @@ with tempfile.TemporaryDirectory(prefix='review-yaml-parser-') as tmp:
                              ('a#b', 'a#b'), ('foo "', 'foo "'),
                              ('"a\\e[2J"', 'a\x1b[2J')):
             result = effective(source, 'review:\n  on_draft:\n    runner: [codex,'+token+'] # comment\n')
-            assert result['effective_runner'] == ['codex', value], result
-            assert result['effective_runner_state'] == 'defined', result
+            if value == 'a\x1b[2J':
+                assert result['effective_runner'] == [], result
+                assert result['effective_runner_state'] == 'malformed', result
+            else:
+                assert result['effective_runner'] == ['codex', value], result
+                assert result['effective_runner_state'] == 'defined', result
             passed += 1
         for invalid in ('broken: "unterminated', 'broken: a: b', 'broken: %reserved',
                         'broken: [a[b]', 'broken: \x07', '# comment \x00'):

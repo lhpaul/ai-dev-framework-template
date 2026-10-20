@@ -1190,8 +1190,13 @@ for e_case in 23 24 25 26 27; do
   else
     write_review_effective_fixture 'review:' '  on_draft:' "    runner: [\"$entry\"]"
   fi
-  assert_review_effective_states "E-$e_case" defined absent
-  run_test "review-effective E-$e_case one verbatim entry" "[\"$entry\"]" "$(review_effective_json | jq -c '.effective_runner')"
+  if [ "$e_case" = 26 ]; then
+    assert_review_effective_states "E-$e_case" malformed absent
+    run_test "review-effective E-$e_case empty name is not an identity" '[]' "$(review_effective_json | jq -c '.effective_runner')"
+  else
+    assert_review_effective_states "E-$e_case" defined absent
+    run_test "review-effective E-$e_case one verbatim entry" "[\"$entry\"]" "$(review_effective_json | jq -c '.effective_runner')"
+  fi
 done
 write_review_effective_fixture 'review:' '  on_draft:' '    runner: [codex]'
 printf '%s\n' 'review:' '  on_draft:' '    runner: [it'\''s, codex]' > "$review_effective_dir/.ai-dev-workflow.local.yaml"

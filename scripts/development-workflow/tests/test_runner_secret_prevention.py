@@ -685,5 +685,153 @@ sys.exit(rc)
             self.assertIn(phrase, note)
 
 
+
+    NAME_BUCKETS = (
+        ('on_draft', 'runner', 'review-effective', 'effective_runner', 'workflow_config_review_on_draft_runner'),
+        ('on_draft', 'github', 'review-github-effective', 'effective_on_draft_github', 'workflow_config_review_on_draft_github'),
+        ('on_ready', 'github', 'review-github-effective', 'effective_on_ready_github', 'workflow_config_review_on_ready_github'),
+    )
+
+    def name_document(self, bucket, names, legacy=False):
+        phase, key = bucket[:2]
+        if legacy:
+            review = ({'internal_reviewers': names} if key == 'runner' else
+                      {'platforms': names, 'phase_after_clean': ['separate-ready']} if phase == 'on_draft' else
+                      {'platforms': ['separate-draft'], 'phase_after_clean': names})
+        else:
+            review = {phase: {key: names}}
+        return '\n'.join(MODULE.dump_review_projection({'review': review})) + '\n'
+
+    def names_from_bash(self, bucket, shell='/bin/bash', env=None, root=None):
+        root = root or self.checkout
+        script = 'source ' + shlex.quote(str(SCRIPTS / 'workflow-lib.sh')) + '\n'
+        script += 'workflow_repo_root() { printf "%s\\n" ' + shlex.quote(str(root)) + '; }\n'
+        script += bucket[4] + ' ' + shlex.quote(str(root / '.ai-dev-workflow.yaml'))
+        return subprocess.run([shell, '-c', script], env=env or self.env, text=True, capture_output=True, timeout=20)
+
+    def name_case(self, bucket, names, *, local=True, valid=False, legacy=False, shells=('/bin/bash',)):
+        self.write('review:\n  on_draft:\n    runner: [codex]\n    github: [bugbot]\n  on_ready:\n    github: [pr-agent]\n', local=False)
+        local_path = self.checkout / MODULE.LOCAL_CONFIG_NAME
+        local_path.unlink(missing_ok=True)
+        self.write(self.name_document(bucket, names, legacy), local=local)
+        result = self.cli(bucket[2]); self.assertEqual(result.returncode, 0, result.stderr)
+        payload = json.loads(result.stdout)
+        self.assertEqual(payload[bucket[3] + '_state'], 'defined' if valid else 'malformed')
+        expected = names if valid else []
+        self.assertEqual(payload[bucket[3]], expected)
+        if not valid:
+            self.assertNotIn('fabricatedOpaqueReviewer', result.stdout + result.stderr)
+        for shell in dict.fromkeys(shells):
+            bash = self.names_from_bash(bucket, shell)
+            self.assertEqual(bash.returncode, 0 if valid else 2, bash.stdout + bash.stderr)
+            if valid:
+                self.assertEqual(bash.stdout.splitlines(), names)
+                self.assertEqual(len(bash.stdout.splitlines()), len(payload[bucket[3]]))
+                self.assertEqual(bash.stderr, '')
+            else:
+                self.assertEqual(bash.stdout, '')
+                self.assertRegex(bash.stderr, 'configuration:')
+                self.assertNotIn('fabricatedOpaqueReviewer', bash.stdout + bash.stderr)
+
+    def test_reviewer_name_newline_rejected_before_bash(self):
+        shells = ('/bin/bash', shutil.which('bash'))
+        for bucket in self.NAME_BUCKETS:
+            for local in (False, True):
+                with self.subTest(bucket=bucket[:2], local=local):
+                    self.name_case(bucket, ['codex', 'fabricatedOpaqueReviewer\nclaude'], local=local, shells=shells)
+
+    def test_reviewer_name_controls_rejected(self):
+        for control in ('\r', '\t', '\x1b', '\x7f', '\x85', '\u2028', '\u2029', '\u200b'):
+            for bucket in self.NAME_BUCKETS:
+                with self.subTest(control=repr(control), bucket=bucket[:2]):
+                    self.name_case(bucket, ['codex', 'fabricatedOpaqueReviewer' + control + 'codex'])
+
+    def test_reviewer_name_blank_or_trimmed_rejected(self):
+        for bad in ('', ' ', ' codex', 'codex '):
+            for bucket in self.NAME_BUCKETS:
+                with self.subTest(value=repr(bad), bucket=bucket[:2]):
+                    self.name_case(bucket, ['codex', bad])
+
+    def test_reviewer_name_printable_cardinality(self):
+        names = ['codex', 'unknown reviewer, with "quotes" and \\ slash', 'opaque-ñ-工']
+        for bucket in self.NAME_BUCKETS:
+            for local in (False, True):
+                with self.subTest(bucket=bucket[:2], local=local):
+                    self.name_case(bucket, names, local=local, valid=True, shells=('/bin/bash', shutil.which('bash')))
+
+    def test_reviewer_name_legacy_precedence_and_empty(self):
+        valid_names = ['codex', 'printable-unknown-reviewer']
+        for bucket in self.NAME_BUCKETS:
+            for local in (False, True):
+                with self.subTest(bucket=bucket[:2], local=local):
+                    self.name_case(bucket, ['codex', 'fabricatedOpaqueReviewer\nclaude'], local=local, legacy=True)
+                    self.name_case(bucket, valid_names, local=local, valid=True, legacy=True)
+        # A selected modern declaration is validated; shadowed legacy values
+        # do not add an independent provider-name policy or reject the source.
+        self.write('review:\n  on_draft:\n    runner: [codex]\n    github: [bugbot]\n  on_ready:\n    github: [pr-agent]\n', local=False)
+        for empty in (False, True):
+            values = [] if empty else valid_names
+            review = {'internal_reviewers': ['fabricatedOpaqueReviewer\nclaude'],
+                      'platforms': ['fabricatedOpaqueReviewer\nclaude'],
+                      'phase_after_clean': ['fabricatedOpaqueReviewer\nclaude'],
+                      'on_draft': {'runner': values, 'github': values}, 'on_ready': {'github': values}}
+            self.write('\n'.join(MODULE.dump_review_projection({'review': review})) + '\n')
+            for bucket in self.NAME_BUCKETS:
+                json_result = self.cli(bucket[2]); data = json.loads(json_result.stdout)
+                bash = self.names_from_bash(bucket)
+                self.assertEqual(bash.returncode, 0, bash.stderr)
+                self.assertEqual(bash.stdout.splitlines(), values)
+                self.assertEqual(data[bucket[3]], values)
+
+    def test_reviewer_name_dependency_free_and_shared_fallback(self):
+        blocked = self.root / 'blocked-name-yaml'; blocked.mkdir()
+        (blocked / 'yaml.py').write_text('raise ImportError("synthetic parser unavailable")\n')
+        env = dict(self.env, PYTHONPATH=str(blocked))
+        for bucket in self.NAME_BUCKETS:
+            names = ['codex', 'unknown reviewer, punctuation']
+            self.write(self.name_document(bucket, names), local=False)
+            for local in (None, 'review: {}\n', self.name_document(bucket, [])):
+                path = self.checkout / MODULE.LOCAL_CONFIG_NAME
+                if local is None: path.unlink(missing_ok=True)
+                else: path.write_text(local)
+                bash = self.names_from_bash(bucket, env=env)
+                self.assertEqual(bash.returncode, 0, bash.stderr)
+                self.assertEqual(bash.stdout.splitlines(), [] if local and '[]' in local else names)
+        # Existing shared-empty->legacy and local-declared-empty->disabled
+        # behavior remains distinct under the common selected-list validator.
+        for bucket in self.NAME_BUCKETS:
+            modern = {'on_draft': {'runner': [], 'github': []}, 'on_ready': {'github': []}}
+            modern.update({'internal_reviewers': ['codex'], 'platforms': ['codex'], 'phase_after_clean': ['codex']})
+            self.write('\n'.join(MODULE.dump_review_projection({'review': modern})) + '\n', local=False)
+            (self.checkout / MODULE.LOCAL_CONFIG_NAME).unlink(missing_ok=True)
+            bash = self.names_from_bash(bucket, env=env)
+            self.assertEqual(bash.returncode, 0, bash.stderr)
+            expected = [] if bucket[:2] == ('on_draft', 'github') else ['codex']
+            self.assertEqual(bash.stdout.splitlines(), expected)
+
+    def test_reviewer_name_three_bucket_projection(self):
+        valid = ['codex', 'unknown reviewer, quoted "value"']
+        for bucket in self.NAME_BUCKETS:
+            self.write(self.name_document(bucket, ['codex', 'fabricatedOpaqueReviewer\nclaude']))
+            stage = self.root / ('reject-' + '-'.join(bucket[:2])); stage.mkdir()
+            result = self.cli('review-snapshot', '--destination', str(stage))
+            self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+            self.assertEqual(result.stdout, '')
+            self.assertNotIn('fabricatedOpaqueReviewer', result.stderr)
+            self.assertFalse((stage / MODULE.LOCAL_CONFIG_NAME).exists())
+        self.write('\n'.join(MODULE.dump_review_projection({'review': {
+            'on_draft': {'runner': valid, 'github': valid}, 'on_ready': {'github': valid}}})) + '\n')
+        stage = self.root / 'accepted-stage'; stage.mkdir()
+        result = self.cli('review-snapshot', '--destination', str(stage))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        for bucket in self.NAME_BUCKETS:
+            effective = subprocess.run([sys.executable, str(RESOLVER), bucket[2], '--repo-root', str(stage)], env=self.env, text=True, capture_output=True)
+            self.assertEqual(effective.returncode, 0, effective.stderr)
+            names = json.loads(effective.stdout)[bucket[3]]
+            bash = self.names_from_bash(bucket, root=stage)
+            self.assertEqual((bash.returncode, bash.stdout.splitlines()), (0, names), bash.stderr)
+            self.assertEqual(names, valid)
+
+
 if __name__ == '__main__':
     unittest.main()

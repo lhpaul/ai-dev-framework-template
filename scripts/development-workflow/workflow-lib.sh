@@ -1141,78 +1141,27 @@ workflow_config_review_local_list_if_declared() {
   return "$status"
 }
 
+# Decode/validate selected names before newline transport. One invocation retains
+# local declared-empty precedence and shared legacy fallback without AWK splitting.
+workflow_config_review_list() {
+  local config_file="$1" phase="$2" key="$3"
+  local args=(review-list --repo-root "$(workflow_local_config_root)" --shared-file "$config_file" --phase "$phase" --key "$key")
+  if workflow_is_default_config_file "$config_file"; then
+    args+=(--apply-local)
+  fi
+  python3 "$(workflow_config_resolver_script)" ${args[@]+"${args[@]}"}
+}
+
 workflow_config_review_on_draft_runner() {
-  local config_file="${1:-$(workflow_config_file)}"
-
-  local status=0
-  if workflow_config_review_local_list_if_declared "$config_file" on_draft runner; then
-    return 0
-  else
-    status=$?
-    [ "$status" -eq 1 ] || return 2
-  fi
-
-  [ -f "$config_file" ] || return 0
-
-  if workflow_config_review_nested_list "$config_file" on_draft runner | grep -q .; then
-    workflow_config_review_nested_list "$config_file" on_draft runner
-  else
-    workflow_config_review_legacy_list "$config_file" internal_reviewers
-  fi
+  workflow_config_review_list "${1:-$(workflow_config_file)}" on_draft runner
 }
 
 workflow_config_review_on_draft_github() {
-  local config_file="${1:-$(workflow_config_file)}"
-
-  local status=0
-  if workflow_config_review_local_list_if_declared "$config_file" on_draft github; then
-    return 0
-  else
-    status=$?
-    [ "$status" -eq 1 ] || return 2
-  fi
-
-  [ -f "$config_file" ] || return 0
-
-  if workflow_config_review_nested_list "$config_file" on_draft github | grep -q .; then
-    workflow_config_review_nested_list "$config_file" on_draft github
-    return 0
-  fi
-
-  if workflow_config_review_legacy_list "$config_file" phase_after_clean | grep -q .; then
-    awk '
-      NR == FNR {
-        exclude[$0] = 1
-        next
-      }
-
-      !($0 in exclude)
-    ' \
-      <(workflow_config_review_legacy_list "$config_file" phase_after_clean) \
-      <(workflow_config_review_legacy_list "$config_file" platforms)
-  fi
+  workflow_config_review_list "${1:-$(workflow_config_file)}" on_draft github
 }
 
 workflow_config_review_on_ready_github() {
-  local config_file="${1:-$(workflow_config_file)}"
-
-  local status=0
-  if workflow_config_review_local_list_if_declared "$config_file" on_ready github; then
-    return 0
-  else
-    status=$?
-    [ "$status" -eq 1 ] || return 2
-  fi
-
-  [ -f "$config_file" ] || return 0
-
-  if workflow_config_review_nested_list "$config_file" on_ready github | grep -q .; then
-    workflow_config_review_nested_list "$config_file" on_ready github
-  elif workflow_config_review_legacy_list "$config_file" phase_after_clean | grep -q .; then
-    workflow_config_review_legacy_list "$config_file" phase_after_clean
-  else
-    workflow_config_review_legacy_list "$config_file" platforms
-  fi
+  workflow_config_review_list "${1:-$(workflow_config_file)}" on_ready github
 }
 
 workflow_config_review_platforms() {

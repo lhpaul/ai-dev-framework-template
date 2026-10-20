@@ -19,6 +19,7 @@ import re
 import shlex
 import sys
 import tempfile
+import unicodedata
 from collections import namedtuple
 from collections.abc import Mapping
 from types import MappingProxyType
@@ -1773,6 +1774,16 @@ def review_effective_value_from_path(
     return value, True, False
 
 
+def valid_reviewer_name(value: Any) -> bool:
+    """Keep one decoded name equal to one trimmed Bash record, without a provider allowlist."""
+    return (
+        isinstance(value, str)
+        and bool(value)
+        and value == value.strip()
+        and all(unicodedata.category(char) not in {"Cc", "Cf", "Cs", "Zl", "Zp"} for char in value)
+    )
+
+
 def review_runner_state(value: Any, present: bool) -> tuple[list[str], str]:
     if not present:
         return [], "absent"
@@ -1780,7 +1791,7 @@ def review_runner_state(value: Any, present: bool) -> tuple[list[str], str]:
         return [], "empty"
     if not isinstance(value, list):
         return [], "malformed"
-    if not all(isinstance(item, str) for item in value):
+    if not all(valid_reviewer_name(item) for item in value):
         return [], "malformed"
     return value, "defined"
 
@@ -1876,6 +1887,10 @@ def review_github_legacy_derived_value(data: dict[str, Any], bucket: str) -> tup
     structure_error = (
         platforms_error or phase_error or platforms_state == "malformed" or phase_state == "malformed"
     )
+    if structure_error:
+        # An invalid selected alias is not an empty declaration. Do not derive
+        # additional identities from another list while reporting malformed.
+        return [], present, True
     if bucket == "on_draft_github":
         # workflow_config_review_on_draft_github only emits anything when
         # `phase_after_clean` itself has entries; an empty/absent
@@ -2836,20 +2851,50 @@ def cmd_yaml_source_check(args: argparse.Namespace) -> int:
     return 0
 
 
+def read_review_list_source(path: Path) -> dict[str, Any]:
+    """Decode reviewer scalars with the existing framework parser; no PyYAML dependency."""
+    if not path.is_file():
+        return {}
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as exc:
+        raise ConfigError('selected source unreadable') from exc
+    return validate_selected_yaml(raw, path, review_fields=True)
+
+
+def selected_review_list(data: dict[str, Any], phase: str, key: str, *, shared: bool = False) -> tuple[list[str], bool]:
+    if shared:
+        raw, present, invalid = (
+            review_runner_shared_value(data) if key == "runner" else
+            review_github_value(data, phase + "_github", ["review", phase, key])
+        )
+    else:
+        raw, present, invalid = local_review_list_value(data, phase, key)
+    values, state = review_runner_state(raw, present)
+    if invalid or state == "malformed":
+        raise ConfigError('invalid reviewer-field schema', key=f"review.{phase}.{key}")
+    return values, present and raw is not None
+
+
+def cmd_review_list(args: argparse.Namespace) -> int:
+    """Resolve local precedence before decoding/emitting a complete shared list."""
+    if args.apply_local:
+        path, _, _ = resolve_local_config(repo_root_from_args(args.repo_root))
+        values, declared = selected_review_list(read_review_list_source(path), args.phase, args.key)
+        if declared:
+            for item in values:
+                print(item)
+            return 0
+    values, _ = selected_review_list(read_review_list_source(Path(args.shared_file)), args.phase, args.key, shared=True)
+    for item in values:
+        print(item)
+    return 0
+
+
 def cmd_review_local_list(args: argparse.Namespace) -> int:
     path, _, _ = resolve_local_config(repo_root_from_args(args.repo_root))
-    if path.is_file():
-        try:
-            data = validate_selected_yaml(path.read_text(encoding="utf-8"), path, review_fields=True)
-        except OSError as exc:
-            raise ConfigError('selected source unreadable') from exc
-    else:
-        data = {}
-    value, present, invalid = local_review_list_value(data, args.phase, args.key)
-    values, state = review_runner_state(value, present)
-    if invalid or state == "malformed":
-        raise ConfigError('invalid review.. schema')
-    if not present or value is None:
+    values, declared = selected_review_list(read_review_list_source(path), args.phase, args.key)
+    if not declared:
         return 1
     for item in values:
         print(item)
@@ -2883,6 +2928,14 @@ def build_parser() -> argparse.ArgumentParser:
     local_list.add_argument("--phase", choices=("on_draft", "on_ready"), required=True)
     local_list.add_argument("--key", choices=("runner", "github"), required=True)
     local_list.set_defaults(func=cmd_review_local_list)
+
+    review_list = subcommands.add_parser("review-list", help="emit decoded validated effective reviewer names")
+    review_list.add_argument("--repo-root")
+    review_list.add_argument("--shared-file", required=True)
+    review_list.add_argument("--apply-local", action="store_true")
+    review_list.add_argument("--phase", choices=("on_draft", "on_ready"), required=True)
+    review_list.add_argument("--key", choices=("runner", "github"), required=True)
+    review_list.set_defaults(func=cmd_review_list)
 
     mode = subcommands.add_parser("mode", help="print the effective workflow mode")
     mode.add_argument("--repo-root")
