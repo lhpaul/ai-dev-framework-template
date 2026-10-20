@@ -17,6 +17,7 @@ SPEC = importlib.util.spec_from_file_location('config_fixtures', Path(__file__).
 fixtures = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(fixtures)
 ROOT = Path(__file__).resolve().parents[3]
+TEST_BASH = os.environ.get('CONFIG_DIAGNOSTIC_BASH', '/bin/bash')
 
 
 def function(file, name):
@@ -166,7 +167,7 @@ for error in (OpaqueError(), api['ConfigError']('opaqueConfigurationMaterial', k
     def shell_function(self, file, names, body):
         definitions = '\n'.join(function(self.f.runtime / file, name) for name in names)
         prefix = 'source ' + shlex.quote(str(self.f.runtime / 'workflow-lib.sh')) + '\nSCRIPT_DIR=' + shlex.quote(str(self.f.runtime)) + '\n'
-        return self.run_command(['/bin/bash', '-c', prefix + definitions + '\n' + body])
+        return self.run_command([TEST_BASH, '-c', prefix + definitions + '\n' + body])
 
     def test_K10_prelude_embedded_parser(self):
         self.f.shared.write_text('opaqueConfigurationMaterial\n')
@@ -282,7 +283,7 @@ for error in (OpaqueError(), api['ConfigError']('opaqueConfigurationMaterial', k
     def test_K20_functional_config_transport(self):
         self.f.shared.write_text('vcs:\n  provider: opaqueConfigurationMaterial\n')
         body = 'source ' + shlex.quote(str(self.f.runtime / 'workflow-lib.sh')) + '; workflow_config_provider vcs ' + shlex.quote(str(self.f.shared))
-        result = self.run_command(['/bin/bash', '-c', body])
+        result = self.run_command([TEST_BASH, '-c', body])
         self.assertEqual(result.returncode, 0)
         self.assertEqual(result.stdout.strip(), self.opaque)
         self.assertEqual(result.stderr, '')
@@ -389,6 +390,200 @@ api=runpy.run_path(sys.argv[1]); print(json.dumps(api['dependency_fields'](sys.a
         good = self.run_command(args)
         self.assertEqual(good.returncode, 0, good.stdout + good.stderr)
         self.assertIn('OUTCOME=passed', good.stdout)
+
+
+    def late_setup(self, *, single=False, plan=True):
+        self.selected = 'opaqueSelectedRoutingMaterial'
+        self.f.private.write_text('review: {}\n')
+        self.f.shared.write_text(('mode: single_repo\n' if single else
+            'mode: workflow_hub\nissue_tracker:\n  provider: linear\nworkflow_hub:\n  product_repos:\n    - name: ' + self.selected + '\n      github_repo: fixture/mobile\n'))
+        self.f.env.update(WORKFLOW_SKIP_FETCH='1', AI_DEV_WORKFLOW_CONFIG_FILE=str(self.f.shared))
+        d = self.f.checkout / 'docs/specs/developments/20261020101010_1993-fixture'
+        d.mkdir(parents=True)
+        (d / '1_1993-fixture_specs.md').write_text('**Issue**: #1993\n')
+        if plan:
+            (d / '2_1993-fixture_implementation-plan.md').write_text('**Issue**: #1993\n')
+        return d
+
+    def late_schema(self):
+        self.f.private.write_text('product_repos: ' + self.opaque + '\n')
+
+    def late_gh(self, *, mutate=False):
+        # Synthetic read transport: mutation models a source changing between
+        # the validated argument handoff and the later context validation.
+        change = ('printf "%s\\n" ' + shlex.quote('product_repos: ' + self.opaque) +
+                  ' > ' + shlex.quote(str(self.f.private)) + '\n') if mutate else ''
+        (self.f.bin / 'gh').write_text('#!/bin/sh\ncase "$*" in\n'
+            ' "auth status"*) exit 0;;\n "pr view"*)\n' + change +
+            'cat "$SYNTHETIC_PR";;\n "pr list"*)\n' + change +
+            'case "$*" in *"--jq length"*) echo 0;; *) echo "[]";; esac;;\n *) exit 99;;\nesac\n')
+
+    def late_cli(self, file, *args):
+        return self.run_command([TEST_BASH, str(self.f.runtime / file), *args,
+                                 '--repo-root', str(self.f.checkout)])
+
+    def late_safe(self, result, status=2):
+        self.safe(result, status)
+        self.assertEqual(result.stdout, '', 'fatal validation published a functional payload')
+        self.assertNotIn(self.selected, result.stdout + result.stderr)
+        self.assertNotIn('ROUTING_', result.stdout + result.stderr)
+        self.assertNotIn('ACTION_', result.stdout + result.stderr)
+        for line in result.stderr.splitlines():
+            self.assertRegex(line, r'^(ERROR: )?configuration: [a-zA-Z -]+(?:; (?:line|column)=\d+|; key=[a-zA-Z_.\[\]]+)*$')
+        return result
+
+    def test_T01_context_atomic(self):
+        self.late_setup(); self.late_schema()
+        setup = ('repo_root=' + shlex.quote(str(self.f.checkout)) + '\nworkflow_mode=workflow_hub\n'
+                 'target_repo=' + shlex.quote(self.selected) + '\nbranch_name=feature/1993-fixture\n'
+                 'implementation_item_is_hub_only_cached() { return 1; }\n')
+        def run(tail=''):
+            return self.shell_function('workflow-next-action.sh', ['repository_context_for_action'],
+                                       setup + tail + '\nrepository_context_for_action implementation')
+        self.late_safe(run(), 3)
+        self.f.private.write_text('review: {}\n')
+        valid = run(); self.assertEqual(valid.returncode, 0, valid.stderr)
+        self.assertIn('ROUTING_OUTCOME_CODE=product_owned\n', valid.stdout)
+        self.assertIn('ROUTING_SELECTED_PRODUCT_REPO_KEY=' + self.selected + '\n', valid.stdout)
+        self.assertIn('ACTION_GITHUB_REPO=fixture/mobile\n', valid.stdout)
+        negative = run('target_repo=unknown-product')
+        self.assertEqual(negative.returncode, 2, negative.stderr)
+        self.assertIn('ROUTING_CONTINUE_ALLOWED=false\n', negative.stdout)
+        self.assertIn('ROUTING_OUTCOME_CODE=ambiguous_target\n', negative.stdout)
+        self.assertEqual(negative.stderr, '')
+
+    def test_T02_pr_probe(self):
+        self.late_setup(); self.late_gh()
+        valid_shared = self.f.shared.read_text()
+        self.f.shared.write_text('mode: workflow_hub\nissue_tracker:\n  provider: linear\nworkflow_hub:\n  product_repos: ' + self.opaque + '\n')
+        self.late_safe(self.late_cli('workflow-next-action.sh', '--pr', '1993'))
+        self.f.shared.write_text(valid_shared)
+        rejected = self.late_cli('workflow-next-action.sh', '--pr', '1993')
+        self.assertEqual(rejected.returncode, 0, rejected.stderr)
+        self.assertIn('NEXT_ACTION=resolve-repository-selection\n', rejected.stdout)
+        self.assertIn('ROUTING_CONTINUE_ALLOWED=false', rejected.stdout)
+        self.assertEqual(rejected.stderr, '')
+
+    def test_T03_pr_context(self):
+        self.late_setup(); self.late_gh(mutate=True)
+        self.late_safe(self.late_cli('workflow-next-action.sh', '--pr', '1993', '--repo', self.selected))
+        self.f.private.write_text('review: {}\n'); self.late_gh()
+        good = self.late_cli('workflow-next-action.sh', '--pr', '1993', '--repo', self.selected)
+        self.assertEqual(good.returncode, 0, good.stderr)
+        self.assertIn('NEXT_ACTION=resolve-pr-readiness\n', good.stdout)
+        self.assertIn('ROUTING_CONTINUE_ALLOWED=true\n', good.stdout)
+
+    def test_T04_branch_context(self):
+        self.late_setup(); self.late_schema()
+        self.late_safe(self.late_cli('workflow-next-action.sh', '--branch', 'feature/1993-fixture', '--repo', self.selected))
+        self.f.private.write_text('review: {}\n')
+        negative = self.late_cli('workflow-next-action.sh', '--branch', 'feature/1993-fixture')
+        self.assertEqual(negative.returncode, 0, negative.stderr)
+        self.assertIn('NEXT_ACTION=resolve-repository-selection\n', negative.stdout)
+        self.assertIn('ROUTING_CONTINUE_ALLOWED=false', negative.stdout)
+        self.assertEqual(negative.stderr, '')
+
+    def test_T05_development_context(self):
+        development = self.late_setup(); self.late_gh(mutate=True)
+        self.late_safe(self.late_cli('workflow-next-action.sh', '--development', str(development), '--repo', self.selected))
+        self.f.private.write_text('review: {}\n'); self.late_gh()
+        good = self.late_cli('workflow-next-action.sh', '--development', str(development), '--repo', self.selected)
+        self.assertEqual(good.returncode, 0, good.stderr)
+        self.assertIn('NEXT_ACTION=implement\n', good.stdout)
+        self.assertIn('ROUTING_OUTCOME_CODE=product_owned\n', good.stdout)
+
+    def test_T06_development_hub(self):
+        development = self.late_setup(single=True, plan=False)
+        self.f.shared.write_text('mode: single_repo\nrelease: ' + self.opaque + '\n')
+        self.late_safe(self.late_cli('workflow-next-action.sh', '--development', str(development)))
+        self.f.shared.write_text('mode: single_repo\n')
+        good = self.late_cli('workflow-next-action.sh', '--development', str(development))
+        self.assertEqual(good.returncode, 0, good.stderr)
+        self.assertIn('NEXT_ACTION=write-plan\n', good.stdout)
+        self.assertIn('ACTION_REPOSITORY_KIND=single_repo_context\n', good.stdout)
+
+    def test_T10_tracker_provider(self):
+        self.late_setup()
+        body = ('repo_root=' + shlex.quote(str(self.f.checkout)) + '\n'
+                'workflow_config_provider() { printf "%s\\n" "opaqueConfigurationMaterial"; printf "%s\\n" "opaqueConfigurationMaterial" >&2; return 2; }\n'
+                'repo_root_tracker_provider')
+        self.late_safe(self.shell_function('workflow-next-action.sh', ['repo_root_tracker_provider'], body))
+        body = body.replace('printf "%s\\n" "opaqueConfigurationMaterial"; printf "%s\\n" "opaqueConfigurationMaterial" >&2; return 2;', 'printf "linear\\n";')
+        good = self.shell_function('workflow-next-action.sh', ['repo_root_tracker_provider'], body)
+        self.assertEqual((good.returncode, good.stdout, good.stderr), (0, 'linear', ''))
+
+
+    def classifier_fixture(self):
+        development = self.late_setup()
+        valid = self.f.shared.read_text() + 'template:\n  is_template: true\n'
+        bad = ('mode: workflow_hub\nissue_tracker:\n  provider: linear\n'
+               'template:\n  is_template: true\nworkflow_hub:\n  product_repos: ' + self.opaque + '\n')
+        (self.f.bin / 'gh').write_text('#!/bin/sh\nexit 99\n')
+        self.f.shared.write_text(bad)
+        # Syntax and mode succeed before the real classifier rejects the shape.
+        mode = self.cli('workflow-config-resolver.py', 'mode', '--repo-root', str(self.f.checkout))
+        self.assertEqual(mode.returncode, 0, mode.stderr)
+        self.assertIn('workflow_hub', mode.stdout)
+        return development, valid, bad
+
+    def test_A01_classifier(self):
+        _, valid, _ = self.classifier_fixture()
+        args = ('--repo-root', str(self.f.checkout), '--repository-mode', 'workflow_hub', '--stage', 'implementation', '--json')
+        self.late_safe(self.cli('work-item-repository-routing.py', *args))
+        self.f.shared.write_text(valid)
+        good = self.cli('work-item-repository-routing.py', *args)
+        self.assertEqual(good.returncode, 0, good.stderr)
+        payload = json.loads(good.stdout)
+        self.assertEqual((payload['outcome_code'], payload['continue_allowed']), ('missing_target', False))
+        self.assertEqual(payload['configured_product_repo_keys'], [self.selected])
+        self.assertEqual(good.stderr, '')
+
+    def classifier_entry(self, script, scan=False):
+        development, valid, _ = self.classifier_fixture()
+        args = [str(development)] if script != 'workflow-next-action.sh' else ['--development', str(development)]
+        if scan: args.insert(0, '--scan')
+        self.late_safe(self.late_cli(script, *args))
+        self.f.shared.write_text(valid)
+        negative = self.late_cli(script, *args)
+        self.assertEqual(negative.returncode, 0, negative.stdout + negative.stderr)
+        self.assertIn('NEXT_ACTION=resolve-repository-selection\n', negative.stdout)
+        self.assertNotIn(self.opaque, negative.stdout + negative.stderr)
+        # Documented absent stage input66 is not a validation failure.
+        absent = development / 'no-stage'; absent.mkdir()
+        (absent / 'README.md').write_text('**Issue**: #1993\n')
+        no_stage = self.late_cli('workflow-next-action.sh', '--development', str(absent))
+        self.assertEqual(no_stage.returncode, 66, no_stage.stdout + no_stage.stderr)
+        self.assertIn('No spec or plan file found', no_stage.stderr)
+        if script != 'workflow-next-action.sh':
+            skipped = self.late_cli(script, *(['--scan'] if scan else []), str(absent))
+            self.assertEqual(skipped.returncode, 0, skipped.stdout + skipped.stderr)
+            self.assertIn('Skipping ', skipped.stderr)
+            self.assertNotIn('configuration:', skipped.stderr)
+            self.assertNotIn(self.opaque, skipped.stdout + skipped.stderr)
+
+    def test_A02_next_classifier(self): self.classifier_entry('workflow-next-action.sh')
+    def test_A03_batch_classifier(self): self.classifier_entry('workflow-batch-plan.sh')
+    def test_A04_scan_classifier(self): self.classifier_entry('workflow-batch-lanes.sh', True)
+
+    def prelude_scope(self):
+        scope = {'scopeSource': 'item', 'resolvedIssueNumber': 1993, 'trackerReadDeferred': False,
+                 'baseBranch': 'develop', 'baseAmbiguous': False, 'baseReason': 'synthetic',
+                 'policy': {'delegateReview': False, 'mayMerge': False, 'mayStartBacklog': False, 'maxRisk': 'low'},
+                 'groups': {'eligible': [], 'blocked': [], 'already_merged': [], 'in_review': [], 'ambiguous': [], 'out_of_scope': []},
+                 'items': [{'number': 1993, 'title': 'Synthetic', 'status': 'In Development', 'type': 'Feature', 'labels': [], 'body': 'synthetic', 'pullRequests': {'open': [], 'merged': []}}]}
+        scope['groups']['eligible'] = scope['items']
+        self.f.scope.write_text(json.dumps(scope))
+        stub = self.f.runtime / 'run-item-scope-resolver.sh'
+        stub.write_text('#!/bin/sh\ncat ' + shlex.quote(str(self.f.scope)) + '\n'); stub.chmod(0o755)
+
+    def test_A05_prelude_classifier(self):
+        _, valid, _ = self.classifier_fixture(); self.prelude_scope()
+        args = ('--original-command', '/run-item 1993', '--issue', '1993', '--json')
+        self.late_safe(self.run_command([TEST_BASH, str(self.f.runtime / 'run-bounded-prelude.sh'), *args]))
+        self.f.shared.write_text(valid)
+        good = self.run_command([TEST_BASH, str(self.f.runtime / 'run-bounded-prelude.sh'), *args])
+        self.assertEqual(good.returncode, 0, good.stdout + good.stderr)
+        self.assertEqual(json.loads(good.stdout)['scope']['resolvedIssueNumber'], 1993)
 
 
 def consumer_test(row):

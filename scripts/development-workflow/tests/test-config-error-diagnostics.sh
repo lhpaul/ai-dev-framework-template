@@ -18,6 +18,8 @@
 # covers: scripts/development-workflow/workflow-project-reader.py
 # covers: scripts/development-workflow/run-epic-policy-recommender.sh
 # covers: scripts/development-workflow/reviewer-preflight.sh
+# covers: scripts/development-workflow/workflow-batch-plan.sh
+# covers: scripts/development-workflow/workflow-next-action.sh
 # covers: scripts/development-workflow/workflow-lib.sh
 # covers: scripts/development-workflow/tests/test_config_error_diagnostics.py
 # covers: scripts/development-workflow/tests/test_private_source_consumers.py

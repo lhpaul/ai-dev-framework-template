@@ -323,12 +323,6 @@ if [ -n "${WORKFLOW_MAX_CONCURRENT_PLAN:-}" ]; then max_plan="$WORKFLOW_MAX_CONC
 if [ -n "${WORKFLOW_MAX_CONCURRENT_REVIEW:-}" ]; then max_review="$WORKFLOW_MAX_CONCURRENT_REVIEW"; fi
 if [ -n "${WORKFLOW_MAX_CONCURRENT_IMPLEMENTATION:-}" ]; then max_implementation="$WORKFLOW_MAX_CONCURRENT_IMPLEMENTATION"; fi
 
-print_kv MAX_CONCURRENT_SPEC "$max_spec"
-print_kv MAX_CONCURRENT_PLAN "$max_plan"
-print_kv MAX_CONCURRENT_REVIEW "$max_review"
-print_kv MAX_CONCURRENT_IMPLEMENTATION "$max_implementation"
-echo
-
 batch_input=""
 if [ "$scan_mode" -eq 1 ]; then
   if [ "${#development_paths[@]}" -gt 0 ]; then
@@ -339,6 +333,14 @@ if [ "$scan_mode" -eq 1 ]; then
 else
   batch_input="$(cat)"
 fi
+
+# Publish functional caps only after a scan has acquired its validated input.
+# A fatal child error must not leave a partial successful report on stdout.
+print_kv MAX_CONCURRENT_SPEC "$max_spec"
+print_kv MAX_CONCURRENT_PLAN "$max_plan"
+print_kv MAX_CONCURRENT_REVIEW "$max_review"
+print_kv MAX_CONCURRENT_IMPLEMENTATION "$max_implementation"
+echo
 
 if [ -z "${batch_input//[[:space:]]/}" ]; then
   echo "(none)"
