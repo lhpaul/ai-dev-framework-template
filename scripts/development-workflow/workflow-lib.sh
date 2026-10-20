@@ -442,10 +442,7 @@ workflow_merge_ci_policy_into_json() {
     return 0
   fi
 
-  if ! context="$(workflow_repository_context "$repo_name" "$root" 2>/dev/null)"; then
-    printf '%s\n' "$json"
-    return 0
-  fi
+  context="$(workflow_repository_context "$repo_name" "$root")" || return 2
 
   local resolved_github
   resolved_github="$(workflow_github_repo_from_context "$context")"

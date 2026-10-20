@@ -211,6 +211,49 @@ esac
             command = ['bash', '-c', script]
         return subprocess.run(command, cwd=self.checkout, env=self.env, capture_output=True, text=True, timeout=25)
 
+    def test_L17_schema_validation_failure_preserves_safe_error(self):
+        """Valid YAML with an invalid selected-source schema must not mean absence."""
+        opaque = 'opaqueSelectedSchemaMaterial1993'
+        self.shared.write_text('''mode: workflow_hub
+workflow_hub:
+  product_repos:
+    - name: mobile
+      github_repo: fixture/mobile
+      ci_policy: none
+''')
+        self.private.write_text('product_repos: ' + opaque + '\n')
+        expected_error = 'ERROR: configuration: field must be a list; key=product_repos\n'
+        direct = subprocess.run(
+            ['python3', str(self.runtime / 'workflow-config-resolver.py'), 'resolve',
+             '--repo-root', str(self.checkout), '--repo', 'mobile', '--json'],
+            cwd=self.checkout, env=self.env, capture_output=True, text=True, timeout=25)
+        self.assertEqual(direct.returncode, 2)
+        self.assertEqual(direct.stdout, '')
+        self.assertEqual(direct.stderr, expected_error)
+        script = 'source ' + shlex.quote(str(self.runtime / 'workflow-lib.sh')) + '\n'
+        # The conditional also proves propagation without relying on errexit.
+        script += 'if workflow_merge_ci_policy_into_json \'{"risk":"low"}\' '
+        script += shlex.quote(str(self.checkout)) + ' mobile; then exit 0; else exit "$?"; fi\n'
+        for shell in dict.fromkeys(('/bin/bash', shutil.which('bash'))):
+            with self.subTest(shell=shell):
+                failed = subprocess.run([shell, '-c', script], cwd=self.checkout,
+                                        env=self.env, capture_output=True, text=True, timeout=25)
+                self.assertEqual(failed.returncode, 2)
+                self.assertEqual(failed.stdout, '')
+                self.assertEqual(failed.stderr, expected_error)
+                output = failed.stdout + failed.stderr
+                for forbidden in (opaque, str(self.private), str(self.external), str(self.checkout)):
+                    self.assertNotIn(forbidden, output)
+                self.private.write_text('review:\n  on_draft:\n    runner: []\n')
+                restored = subprocess.run([shell, '-c', script], cwd=self.checkout,
+                                          env=self.env, capture_output=True, text=True, timeout=25)
+                self.assertEqual(restored.returncode, 0)
+                self.assertEqual(json.loads(restored.stdout), {'risk': 'low', 'ciPolicy': 'none'})
+                self.assertEqual(restored.stderr, '')
+                self.assertNotIn(opaque, restored.stdout + restored.stderr)
+                self.private.write_text('product_repos: ' + opaque + '\n')
+        self.assertFalse(self.log.exists(), 'unexpected external runtime or mutation')
+
     def check_consumer(self, row):
         valid_source = '''review:
   on_draft:
