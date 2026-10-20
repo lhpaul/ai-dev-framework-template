@@ -315,6 +315,9 @@ api=runpy.run_path(sys.argv[1]); print(json.dumps(api['dependency_fields'](sys.a
         self.assertEqual(json.loads(result.stdout), [self.opaque])
 
     def test_K23_guidance_parser_and_linter_channels(self):
+        import shutil
+        import textwrap
+        shells = list(dict.fromkeys(filter(None, ('/bin/bash', shutil.which('bash')))))
         for name in ('.claude/commands/sync-template.md', '.claude/skills/sync-template.md', '.cursor/commands/sync-template.md'):
             text = (ROOT / name).read_text()
             snippets = [x for x in re.findall(r'```bash\n(.*?)```', text, re.S) if 'yaml.safe_load' in x]
@@ -328,9 +331,13 @@ api=runpy.run_path(sys.argv[1]); print(json.dumps(api['dependency_fields'](sys.a
                     fake.write_text('#!/bin/sh\necho opaqueConfigurationMaterial; echo opaqueConfigurationMaterial >&2; exit 7\n'); fake.chmod(0o755)
                 elif fake.exists():fake.unlink()
                 for index, snippet in enumerate(snippets):
-                    snippet = snippet.replace('<template_workflow_file>', str(source))
-                    result = self.safe(self.run_command(['/bin/bash', '-c', snippet]), 1 if index == 2 else 0, locator=False)
-                    self.assertIn('YAML', result.stdout)
+                    # Markdown removes the list indentation from fenced code.
+                    # Retaining it makes Bash treat the heredoc terminator as a command.
+                    snippet = textwrap.dedent(snippet).replace('<template_workflow_file>', str(source))
+                    for shell in shells:
+                        result = self.safe(self.run_command([shell, '-c', snippet]), 1 if index == 2 else 0, locator=False)
+                        self.assertIn('YAML', result.stdout)
+                        self.assertEqual(result.stderr, '')
             # Check the remaining command spellings after the real executions;
             # an old-head failure must first expose the fabricated excerpt.
             for snippet in snippets:
