@@ -246,3 +246,22 @@ auto-applied label may be present while the template placeholder remains
 inactive. That is expected: the label preserves staged workflow semantics, while
 explicitly enabled placeholder or real regression workflows decide whether
 expensive checks run.
+
+---
+
+## Path-filtered harness check (`workflow-tests.yml`)
+
+`.github/workflows/workflow-tests.yml` (check name **workflow test harnesses**)
+limits `pull_request` to `scripts/development-workflow/**` and
+`.github/workflows/workflow-tests.yml` (#1997). Docs-only PRs start no harness
+jobs; GitHub evaluates the filter against the whole PR diff, so a PR that once
+touches a covered path keeps running. The template nightly and
+`workflow_dispatch` remain the full-run backstop.
+
+This repository does not require that check on `develop` / `main`. Consumers
+that require **workflow test harnesses** in branch protection must not treat a
+path-filtered skip as success: the check stays pending when the filter does not
+match, so either drop the requirement or add a matching no-op that always
+passes when the harness is skipped. `pr-ci-loop.sh` also reports
+`expected_checks_missing` when a workflow ran on a previous head but not the
+current one.

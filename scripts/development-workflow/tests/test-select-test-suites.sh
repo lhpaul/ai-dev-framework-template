@@ -370,6 +370,15 @@ if [ -f "$WORKFLOW_FILE" ]; then
   # The hard-coded per-suite 'run:' steps this issue removed must not come back.
   hardcoded="$(grep -cE '^\s+run: bash scripts/development-workflow/tests/test-' "$WORKFLOW_FILE" || true)"
   run_test "workflow_has_no_hardcoded_suite_steps" "0" "$hardcoded"
+  # #1997: pull_request must stay path-filtered (exact list asserted in
+  # test-workflow-tests-nightly-gate.sh; here we only prove the wiring exists).
+  if grep -qF "scripts/development-workflow/**" "$WORKFLOW_FILE" \
+    && grep -qF ".github/workflows/workflow-tests.yml" "$WORKFLOW_FILE" \
+    && grep -qE '^[[:space:]]*paths:' "$WORKFLOW_FILE"; then
+    PASS_COUNT=$((PASS_COUNT + 1)); echo "PASS: workflow_has_pr_path_filter"
+  else
+    FAIL_COUNT=$((FAIL_COUNT + 1)); echo "FAIL: workflow_has_pr_path_filter — paths filter missing"
+  fi
 else
   FAIL_COUNT=$((FAIL_COUNT + 1))
   echo "FAIL: workflow_exists — $WORKFLOW_FILE not found"

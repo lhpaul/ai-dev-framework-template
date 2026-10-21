@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# test-workflow-tests-nightly-gate.sh - schedule gate for workflow-tests.yml (#1996).
+# test-workflow-tests-nightly-gate.sh - schedule gate + PR path filter for
+# workflow-tests.yml (#1996, #1997).
 # covers: .github/workflows/workflow-tests.yml
 # covers: sync-manifest.yaml
 #
@@ -9,6 +10,11 @@
 # (true/True/TRUE opt in; any other value or absence keeps the nightly off).
 # This suite parses the workflow YAML and evaluates the job `if:` expressions
 # across event × repository × variable cases.
+#
+# #1997: pull_request must be path-filtered to exactly
+# scripts/development-workflow/** and .github/workflows/workflow-tests.yml
+# (branches unchanged; schedule / workflow_dispatch untouched). A docs-only
+# change set must match no filter; covered scripts and this workflow must.
 
 set -euo pipefail
 
@@ -64,7 +70,145 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# sync-manifest note mentions the gate / opt-in variable
+# pull_request path filter (#1997): exactly two paths; branches unchanged
+# ---------------------------------------------------------------------------
+if ! python3 -c 'import yaml' 2>/dev/null; then
+  echo "FAIL: PyYAML required to parse pull_request paths"
+  fail=$((fail + 1))
+  echo ""
+  echo "Results: $pass passed, $fail failed"
+  exit 1
+fi
+
+path_filter_out="$(python3 - "$WORKFLOW_FILE" <<'PYPATH'
+import sys
+
+try:
+    import yaml
+except ImportError:
+    print("ERROR: PyYAML missing", file=sys.stderr)
+    sys.exit(3)
+
+path = sys.argv[1]
+with open(path, encoding="utf-8") as fh:
+    doc = yaml.safe_load(fh)
+
+if not isinstance(doc, dict):
+    print("ERROR: workflow is not a mapping", file=sys.stderr)
+    sys.exit(4)
+
+triggers = doc.get("on", doc.get(True, {}))
+if not isinstance(triggers, dict):
+    print("ERROR: on: missing", file=sys.stderr)
+    sys.exit(4)
+
+pr = triggers.get("pull_request")
+if not isinstance(pr, dict):
+    print("ERROR: pull_request block missing or not a mapping", file=sys.stderr)
+    sys.exit(4)
+
+expected_branches = ["develop", "develop-**", "main"]
+branches = list(pr.get("branches") or [])
+paths = list(pr.get("paths") or [])
+expected_paths = [
+    "scripts/development-workflow/**",
+    ".github/workflows/workflow-tests.yml",
+]
+
+print("BRANCHES\t%s" % ("|".join(branches)))
+print("BRANCHES_OK\t%s" % ("yes" if branches == expected_branches else "no"))
+print("PATHS\t%s" % ("|".join(paths)))
+print("PATHS_OK\t%s" % ("yes" if paths == expected_paths else "no"))
+print("PATHS_COUNT\t%d" % len(paths))
+
+# schedule / workflow_dispatch must remain present and not gain a paths key.
+# A bare `workflow_dispatch:` parses as None; key presence is what matters.
+sched_present = "schedule" in triggers
+dispatch_present = "workflow_dispatch" in triggers
+sched = triggers.get("schedule")
+dispatch = triggers.get("workflow_dispatch")
+print("SCHEDULE_OK\t%s" % ("yes" if sched_present else "no"))
+print("DISPATCH_OK\t%s" % ("yes" if dispatch_present else "no"))
+
+# Neither schedule nor workflow_dispatch should carry pull_request-style paths
+# (schedule is a list of cron maps; dispatch is null or a mapping without paths).
+sched_has_paths = False
+if isinstance(sched, list):
+    for item in sched:
+        if isinstance(item, dict) and "paths" in item:
+            sched_has_paths = True
+elif isinstance(sched, dict) and "paths" in sched:
+    sched_has_paths = True
+dispatch_has_paths = isinstance(dispatch, dict) and "paths" in dispatch
+print("SCHEDULE_NO_PATHS\t%s" % ("yes" if not sched_has_paths else "no"))
+print("DISPATCH_NO_PATHS\t%s" % ("yes" if not dispatch_has_paths else "no"))
+
+# Behavioral: GitHub path filters use fnmatch-style ** (minimatch).
+# Model: a change set starts the workflow iff any changed path matches any
+# filter pattern.
+import fnmatch
+
+
+def matches_any(changed_path, patterns):
+    for pat in patterns:
+        if fnmatch.fnmatch(changed_path, pat):
+            return True
+        # Exact file patterns also match when equal.
+        if changed_path == pat:
+            return True
+    return False
+
+
+docs_only = [
+    "docs/workflow/x.md",
+    "docs/specs/developments/a/b.md",
+    "CHANGELOG.md",
+]
+covered = [
+    "scripts/development-workflow/foo.sh",
+    "scripts/development-workflow/tests/test-foo.sh",
+    ".github/workflows/workflow-tests.yml",
+]
+other_workflow = [".github/workflows/shellcheck.yml"]
+manifest_only = ["sync-manifest.yaml", ".ai-dev-workflow.yaml"]
+
+docs_match = any(matches_any(p, expected_paths) for p in docs_only)
+covered_match = all(matches_any(p, expected_paths) for p in covered)
+other_wf_match = any(matches_any(p, expected_paths) for p in other_workflow)
+manifest_match = any(matches_any(p, expected_paths) for p in manifest_only)
+
+print("DOCS_ONLY_MATCH\t%s" % ("yes" if docs_match else "no"))
+print("COVERED_MATCH\t%s" % ("yes" if covered_match else "no"))
+print("OTHER_WF_MATCH\t%s" % ("yes" if other_wf_match else "no"))
+print("MANIFEST_MATCH\t%s" % ("yes" if manifest_match else "no"))
+PYPATH
+)" || {
+  echo "FAIL: path-filter parser exited non-zero"
+  fail=$((fail + 1))
+  echo "$path_filter_out"
+  echo ""
+  echo "Results: $pass passed, $fail failed"
+  exit 1
+}
+
+kv() {
+  printf '%s\n' "$path_filter_out" | awk -F'\t' -v k="$1" '$1 == k { print $2; exit }'
+}
+
+run_test "pr_branches_unchanged" "yes" "$(kv BRANCHES_OK)"
+run_test "pr_paths_exact_two" "yes" "$(kv PATHS_OK)"
+run_test "pr_paths_count" "2" "$(kv PATHS_COUNT)"
+run_test "schedule_untouched_present" "yes" "$(kv SCHEDULE_OK)"
+run_test "workflow_dispatch_untouched_present" "yes" "$(kv DISPATCH_OK)"
+run_test "schedule_has_no_paths" "yes" "$(kv SCHEDULE_NO_PATHS)"
+run_test "workflow_dispatch_has_no_paths" "yes" "$(kv DISPATCH_NO_PATHS)"
+run_test "docs_only_matches_no_filter" "no" "$(kv DOCS_ONLY_MATCH)"
+run_test "covered_scripts_match_filter" "yes" "$(kv COVERED_MATCH)"
+run_test "other_workflow_matches_no_filter" "no" "$(kv OTHER_WF_MATCH)"
+run_test "manifest_only_matches_no_filter" "no" "$(kv MANIFEST_MATCH)"
+
+# ---------------------------------------------------------------------------
+# sync-manifest note mentions the gate / opt-in variable and PR path filter
 # ---------------------------------------------------------------------------
 manifest_has_gate=no
 if grep -qF "WORKFLOW_TESTS_NIGHTLY_ENABLED" "$MANIFEST_FILE" \
@@ -73,9 +217,17 @@ if grep -qF "WORKFLOW_TESTS_NIGHTLY_ENABLED" "$MANIFEST_FILE" \
 fi
 run_test "sync_manifest_note_mentions_gate" "yes" "$manifest_has_gate"
 
+manifest_has_path_filter=no
+if grep -qF "path filter" "$MANIFEST_FILE" \
+  && grep -qF "scripts/development-workflow/**" "$MANIFEST_FILE"; then
+  manifest_has_path_filter=yes
+fi
+run_test "sync_manifest_note_mentions_path_filter" "yes" "$manifest_has_path_filter"
+
 migration_has_gate=no
 if grep -qF 'version: "0.48.5"' "$MANIFEST_FILE" \
-  && grep -qF "WORKFLOW_TESTS_NIGHTLY_ENABLED" "$MANIFEST_FILE"; then
+  && grep -qF "WORKFLOW_TESTS_NIGHTLY_ENABLED" "$MANIFEST_FILE" \
+  && grep -qE 'path-filtered|path filter' "$MANIFEST_FILE"; then
   migration_has_gate=yes
 fi
 run_test "sync_manifest_migration_0_48_5" "yes" "$migration_has_gate"
