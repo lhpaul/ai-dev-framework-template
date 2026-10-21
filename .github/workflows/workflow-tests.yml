@@ -23,9 +23,10 @@ name: workflow test harnesses
 # scheduled nightly full run is the backstop for cross-suite and mapping
 # regressions the subset cannot see.
 #
-# Nightly schedule gate (#1996): `on.schedule` cannot be conditioned, so every
-# job skips schedule events unless this is lhpaul/ai-dev-framework-template or
-# the repository variable WORKFLOW_TESTS_NIGHTLY_ENABLED is exactly 'true'.
+# Nightly schedule gate (#1996): `on.schedule` cannot be conditioned, so a
+# schedule-only gate job skips downstream work unless this is
+# lhpaul/ai-dev-framework-template or WORKFLOW_TESTS_NIGHTLY_ENABLED is exactly
+# 'true' (bash equality — Actions `==` is case-insensitive).
 # Consumers that sync this file keep the cron entry but do not start runners
 # (absent/anything else = off). pull_request and workflow_dispatch are unchanged.
 # Opt in: Settings → Secrets and variables → Actions → Variables →
@@ -85,13 +86,34 @@ env:
   SUITE_TIMEOUT_KILL_AFTER_SECONDS: '30'
 
 jobs:
+  # Schedule-only gate (#1996): job `if:` cannot case-sensitively compare repo
+  # variables (GitHub Actions `==` ignores case), so evaluate opt-in with bash.
+  nightly-schedule-allowed:
+    name: nightly schedule allow
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    outputs:
+      allowed: ${{ steps.eval.outputs.allowed }}
+    steps:
+      - id: eval
+        shell: bash
+        env:
+          NIGHTLY_VAR: ${{ vars.WORKFLOW_TESTS_NIGHTLY_ENABLED }}
+        run: |
+          set -euo pipefail
+          allowed=false
+          if [ "${GITHUB_REPOSITORY}" = "lhpaul/ai-dev-framework-template" ] || [ "${NIGHTLY_VAR}" = "true" ]; then
+            allowed=true
+          fi
+          echo "allowed=${allowed}" >> "$GITHUB_OUTPUT"
+
   select:
     name: select suites
-    # Schedule: template repo, or explicit opt-in. Other events always run.
+    needs: nightly-schedule-allowed
+    # Schedule: template repo or exact opt-in via gate job. Other events always run.
     if: >-
       github.event_name != 'schedule' ||
-      github.repository == 'lhpaul/ai-dev-framework-template' ||
-      vars.WORKFLOW_TESTS_NIGHTLY_ENABLED == 'true'
+      needs.nightly-schedule-allowed.outputs.allowed == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -177,13 +199,12 @@ jobs:
 
   test:
     name: shard ${{ matrix.shard.id }}
-    needs: select
+    needs: [nightly-schedule-allowed, select]
     if: >-
       needs.select.outputs.count != '0' &&
       (
         github.event_name != 'schedule' ||
-        github.repository == 'lhpaul/ai-dev-framework-template' ||
-        vars.WORKFLOW_TESTS_NIGHTLY_ENABLED == 'true'
+        needs.nightly-schedule-allowed.outputs.allowed == 'true'
       )
     runs-on: ubuntu-latest
     permissions:
@@ -364,15 +385,14 @@ jobs:
   # names change with the selection, so they cannot be required directly.
   result:
     name: workflow test harnesses
-    needs: [select, test]
+    needs: [nightly-schedule-allowed, select, test]
     # always() alone would start a runner after gated schedule skips; keep the
     # same schedule allow-list as select/test (#1996).
     if: >-
       always() &&
       (
         github.event_name != 'schedule' ||
-        github.repository == 'lhpaul/ai-dev-framework-template' ||
-        vars.WORKFLOW_TESTS_NIGHTLY_ENABLED == 'true'
+        needs.nightly-schedule-allowed.outputs.allowed == 'true'
       )
     runs-on: ubuntu-latest
     # No checkout and no API calls — this job only reads job results.

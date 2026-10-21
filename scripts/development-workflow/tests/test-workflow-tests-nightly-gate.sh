@@ -113,7 +113,7 @@ if not isinstance(triggers, dict) or "schedule" not in triggers:
     sys.exit(4)
 
 jobs = doc.get("jobs") or {}
-required = ("select", "test", "result")
+required = ("nightly-schedule-allowed", "select", "test", "result")
 missing = [name for name in required if name not in jobs]
 if missing:
     print("ERROR: missing jobs: %s" % ",".join(missing), file=sys.stderr)
@@ -123,8 +123,12 @@ TEMPLATE = "lhpaul/ai-dev-framework-template"
 VAR = "WORKFLOW_TESTS_NIGHTLY_ENABLED"
 ALLOW_NEEDLES = (
     "github.event_name != 'schedule'",
-    "github.repository == 'lhpaul/ai-dev-framework-template'",
-    "vars.WORKFLOW_TESTS_NIGHTLY_ENABLED == 'true'",
+    "needs.nightly-schedule-allowed.outputs.allowed == 'true'",
+)
+GATE_BASH_NEEDLES = (
+    'GITHUB_REPOSITORY',
+    'lhpaul/ai-dev-framework-template',
+    '[ "${NIGHTLY_VAR}" = "true" ]',
 )
 
 
@@ -136,9 +140,22 @@ def normalize_if(expr):
     return text
 
 
-job_ifs = {name: normalize_if(jobs[name].get("if")) for name in required}
+job_ifs = {name: normalize_if(jobs[name].get("if")) for name in ("select", "test", "result")}
 
-# Every job must carry the schedule allow-list.
+gate_job = jobs.get("nightly-schedule-allowed") or {}
+gate_if = normalize_if(gate_job.get("if"))
+if gate_if != "github.event_name == 'schedule'":
+    print("STRUCT\tgate\tunexpected_if\t%s" % gate_if)
+gate_run = ""
+for step in gate_job.get("steps") or []:
+    if isinstance(step, dict) and step.get("id") == "eval":
+        gate_run = str(step.get("run") or "")
+        break
+for needle in GATE_BASH_NEEDLES:
+    if needle not in gate_run:
+        print("STRUCT\tgate\tmissing_bash_needle\t%s" % needle)
+
+# Every downstream job must carry the schedule allow-list.
 for name, expr in job_ifs.items():
     for needle in ALLOW_NEEDLES:
         if needle not in expr:
@@ -157,7 +174,7 @@ def tokenize(expr):
         r"\(|\)|"
         r"!=|==|"
         r"'[^']*'|"
-        r"[A-Za-z_][A-Za-z0-9_\.]*"
+        r"[A-Za-z_][A-Za-z0-9_\.\-]*"
         r")"
     )
     pos = 0
@@ -222,6 +239,13 @@ class Parser:
         if op in ("==", "!="):
             self.eat(op)
             right = self.parse_atom()
+            # GitHub Actions string comparisons ignore case (#1996).
+            if isinstance(left, str) and isinstance(right, str):
+                left_cmp = left.casefold()
+                right_cmp = right.casefold()
+                if op == "==":
+                    return left_cmp == right_cmp
+                return left_cmp != right_cmp
             if op == "==":
                 return left == right
             return left != right
@@ -237,8 +261,8 @@ class Parser:
             return self.ctx["event_name"]
         if tok == "github.repository":
             return self.ctx["repository"]
-        if tok == "vars.WORKFLOW_TESTS_NIGHTLY_ENABLED":
-            return self.ctx["var"]
+        if tok == "needs.nightly-schedule-allowed.outputs.allowed":
+            return self.ctx["gate_allowed"]
         if tok == "needs.select.outputs.count":
             return self.ctx["select_count"]
         raise ValueError("unknown atom %r" % tok)
@@ -250,6 +274,11 @@ def eval_expr(expr, ctx):
     return Parser(tokenize(expr), ctx).parse()
 
 
+def gate_allowed_for_schedule(repo, var_value):
+    # Mirrors nightly-schedule-allowed bash (case-sensitive var match).
+    return repo == TEMPLATE or var_value == "true"
+
+
 cases = []
 for event in ("schedule", "pull_request", "workflow_dispatch"):
     for repo in (TEMPLATE, "acme/product-repo"):
@@ -257,16 +286,20 @@ for event in ("schedule", "pull_request", "workflow_dispatch"):
             ("unset", ""),
             ("true", "true"),
             ("false", "false"),
+            ("True", "True"),
+            ("TRUE", "TRUE"),
         ):
             cases.append((event, repo, var_label, var_value))
 
 print("STRUCT\tok")
 for event, repo, var_label, var_value in cases:
+    gate_allowed = "true" if gate_allowed_for_schedule(repo, var_value) else "false"
     ctx_base = {
         "event_name": event,
         "repository": repo,
         "var": var_value,
         "select_count": "8",
+        "gate_allowed": gate_allowed,
     }
     select_runs = eval_expr(job_ifs["select"], ctx_base)
     # Dependent jobs without always() do not start when select is skipped.
@@ -275,8 +308,8 @@ for event, repo, var_label, var_value in cases:
     test_runs = bool(select_runs and test_would)
     result_runs = eval_expr(job_ifs["result"], ctx_base)
 
-    # Expected policy.
-    schedule_allowed = repo == TEMPLATE or var_value == "true"
+    # Expected policy (gate bash is case-sensitive on the repo variable).
+    schedule_allowed = gate_allowed_for_schedule(repo, var_value)
     if event != "schedule":
         expect_select = True
         expect_test = True  # count is non-zero in this matrix
@@ -340,6 +373,8 @@ want = {
     ("schedule", "acme/product-repo", "unset"): False,
     ("schedule", "acme/product-repo", "false"): False,
     ("schedule", "acme/product-repo", "true"): True,
+    ("schedule", "acme/product-repo", "True"): False,
+    ("schedule", "acme/product-repo", "TRUE"): False,
     ("schedule", "lhpaul/ai-dev-framework-template", "unset"): True,
     ("pull_request", "acme/product-repo", "unset"): True,
     ("workflow_dispatch", "acme/product-repo", "unset"): True,
