@@ -201,6 +201,7 @@ JSON
     esac
     ;;
   "pr list --state merged --base develop-test --limit 1000 --json number,title,body")
+    # GitHub Projects / GitHub Issues keyword-scan path (unchanged).
     case "${MOCK_PR_MODE:-single_ref}" in
       fail)
         printf 'mock pr list failure\n' >&2
@@ -214,9 +215,37 @@ JSON
 [{"number":21,"title":"Closes #301 and fixes #302","body":"(Resolves issue #303.)\n- closed #304\nDisclose #398\nhotfix #399\nnot closing #397\nowner/repo#396\nCloses owner/repo#395\nfixes #302"}]
 JSON
         ;;
+      fenced_example)
+        # Body-only example that would falsely authorize #326 if scanned raw.
+        cat <<'JSON'
+[{"number":11,"title":"Graduate wave","body":"See example:\n```\nCloses #326\n```\nNo live closing keywords."}]
+JSON
+        ;;
       *)
         cat <<'JSON'
 [{"number":11,"title":"Deliver extra item","body":"Closes #105"}]
+JSON
+        ;;
+    esac
+    ;;
+  "pr list --state merged --base develop-test --limit 1000 --json number,closingIssuesReferences")
+    # Linear structured-link path.
+    case "${MOCK_PR_MODE:-single_ref}" in
+      fail)
+        printf 'mock pr list failure\n' >&2
+        exit 46
+        ;;
+      none)
+        printf '[]\n'
+        ;;
+      fenced_example)
+        # Body has ```Closes #326``` (see title,body mock), but GitHub recorded
+        # no structured closing reference — Linear must leave #326 alone.
+        printf '[{"number":11,"closingIssuesReferences":[]}]\n'
+        ;;
+      *)
+        cat <<'JSON'
+[{"number":11,"closingIssuesReferences":[{"number":105}]}]
 JSON
         ;;
     esac
@@ -774,8 +803,29 @@ run_test "linear_linked_105_closed" "CLOSED" "$(python3 -c 'import json; print(j
 run_test "linear_linked_326_open" "OPEN" "$(python3 -c 'import json; print(json.load(open("'"$MOCK_STATE_DIR"'/326.json"))["state"])')"
 run_test "linear_linked_101_open" "OPEN" "$(python3 -c 'import json; print(json.load(open("'"$MOCK_STATE_DIR"'/101.json"))["state"])')"
 run_contains "linear_linked_deferred" "TRACKER_ACTION_REQUIRED=set_status issue=LEA-326" "$linked_body"
+run_contains "linear_linked_source" "closingIssuesReferences" "$linked_body"
 run_test "linear_linked_no_subissues_326" "0" "$(grep -c '^326$' "$MOCK_GRAPHQL_LOG" || true)"
 run_test "linear_linked_no_subissues_any" "" "$(cat "$MOCK_GRAPHQL_LOG")"
+run_not_contains "linear_linked_no_body_scan" "--json number,title,body" "$(cat "$MOCK_GH_LOG")"
+
+echo ""
+echo "=== graduation closeout: Linear ignores fenced example Closes #326 (#1984 Pass 2) ==="
+reset_fixture
+write_tracker_config linear
+export MOCK_NATIVE_MODE=empty
+export MOCK_PR_MODE=fenced_example
+write_issue 326 "Unrelated GitHub issue" OPEN
+CLOSEOUT_EPIC=LEA-326
+fenced_result="$(run_closeout)"
+unset CLOSEOUT_EPIC
+fenced_body="$(last_output_body "$fenced_result")"
+run_test "linear_fenced_exit_zero" "0" "$(last_output_status "$fenced_result")"
+run_contains "linear_fenced_pass" "GRADUATION_CLOSEOUT_RESULT=pass" "$fenced_body"
+run_contains "linear_fenced_deferred" "TRACKER_ACTION_REQUIRED=set_status issue=LEA-326" "$fenced_body"
+run_test "linear_fenced_326_untouched" "OPEN" "$(python3 -c 'import json; print(json.load(open("'"$MOCK_STATE_DIR"'/326.json"))["state"])')"
+run_test "linear_fenced_no_close_log" "" "$(cat "$MOCK_CLOSE_LOG")"
+run_not_contains "linear_fenced_no_body_scan" "--json number,title,body" "$(cat "$MOCK_GH_LOG")"
+run_contains "linear_fenced_uses_structured" "--json number,closingIssuesReferences" "$(cat "$MOCK_GH_LOG")"
 
 echo ""
 echo "=== graduation closeout: github_projects behavior unchanged with explicit config (#1984) ==="

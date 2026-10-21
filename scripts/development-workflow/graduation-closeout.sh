@@ -453,6 +453,9 @@ discover_label_subitems() {
 }
 
 discover_closing_keyword_refs() {
+  # GitHub Projects / GitHub Issues path only. Scans raw PR title+body for
+  # closing keywords (including text inside fenced examples). Linear must not
+  # call this — see discover_structured_closing_issue_refs.
   local prs_json
   if ! prs_json="$(gh pr list --state merged --base "$INTEGRATION_BRANCH" --limit 1000 --json number,title,body 2>/dev/null)"; then
     return 1
@@ -477,6 +480,35 @@ for pr in prs or []:
       append_candidate "$issue" "pr:${pr_number}"
     done < "$TMP_DIR/pr-${pr_number}-issues.txt"
   done < "$TMP_DIR/merged-prs.tsv"
+}
+
+discover_structured_closing_issue_refs() {
+  # Linear path: only GitHub's structured closingIssuesReferences count as an
+  # explicit PR link. Fenced example text such as ```Closes #326``` never
+  # appears here, so it cannot authorize closing an unrelated GitHub issue.
+  local prs_json
+  if ! prs_json="$(gh pr list --state merged --base "$INTEGRATION_BRANCH" --limit 1000 --json number,closingIssuesReferences 2>/dev/null)"; then
+    return 1
+  fi
+  printf '%s' "$prs_json" | python3 -c '
+import json, sys
+try:
+    prs = json.load(sys.stdin)
+except Exception:
+    sys.exit(1)
+for pr in prs or []:
+    pr_number = pr.get("number")
+    if not pr_number:
+        continue
+    for ref in pr.get("closingIssuesReferences") or []:
+        issue = ref.get("number")
+        if issue:
+            print("{}\t{}".format(pr_number, issue))
+' > "$TMP_DIR/structured-closing-refs.tsv" || return 1
+  while IFS="$(printf '\t')" read -r pr_number issue; do
+    [ -z "$issue" ] && continue
+    append_candidate "$issue" "pr:${pr_number}:closingIssuesReferences"
+  done < "$TMP_DIR/structured-closing-refs.tsv"
 }
 
 issue_source_summary() {
@@ -712,10 +744,11 @@ validate_graduation_pr
 
 if [ "$TRACKER_PROVIDER" = "linear" ]; then
   # Linear sub-items are not GitHub subIssues. Never query subIssues with the
-  # Linear ID or its numeric suffix. Only PR-linked GitHub issues may be closed.
-  echo "TRACKER_PROVIDER=linear — skipping GitHub subIssues and label fallback; discovering only PR-linked GitHub issues."
-  if ! discover_closing_keyword_refs; then
-    echo "Warning: could not read merged PR closing-keyword references for ${INTEGRATION_BRANCH}." >&2
+  # Linear ID or its numeric suffix. Only GitHub issues in structured
+  # closingIssuesReferences may be closed (never raw-body / fenced examples).
+  echo "TRACKER_PROVIDER=linear — skipping GitHub subIssues and label fallback; discovering only structured PR closingIssuesReferences."
+  if ! discover_structured_closing_issue_refs; then
+    echo "Warning: could not read structured closingIssuesReferences for merged PRs targeting ${INTEGRATION_BRANCH}." >&2
     record_result "$FAILED_FILE" "discovery" "Candidate discovery" "pr:${INTEGRATION_BRANCH}" "merged_pr_discovery_failed"
   fi
   if [ ! -s "$CANDIDATES_FILE" ] && [ ! -s "$FAILED_FILE" ]; then
