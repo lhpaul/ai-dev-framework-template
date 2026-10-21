@@ -121,8 +121,9 @@ Before running this smoke test:
 *Posted automatically by \`pr-review-loop.sh\`.*"
    ```
 
-2. Wait for the guard's `issue_comment` event path to complete, then re-check
-   the commit status:
+2. Wait for the `pr-policy.yml` `workflow_dispatch` run that
+   `pr-review-loop.sh` requests after posting the summary (`PR_POLICY_DISPATCH=requested`),
+   then re-check the commit status:
 
    ```bash
    HEAD_SHA=$(gh pr view "$PR_NUM" --json headRefOid --jq '.headRefOid')
@@ -133,9 +134,10 @@ Before running this smoke test:
 **Expected result**:
 
 - `state` is `"success"`.
-- `description` indicates the reviewer-loop summary is present.
-- No extra push is required; the summary comment event refreshes readiness for
-  the current PR head SHA.
+- `description` indicates the reviewer-loop summary is present (and clean for
+  the current head when history is recorded).
+- No extra push is required; the summary-driven `workflow_dispatch` refreshes
+  readiness for the current PR head SHA (#1998).
 - **Maps to**: Acceptance Criterion #6 (guard passes once the summary comment is present).
 
 ---
@@ -287,7 +289,7 @@ No seed data is required. The smoke test uses fixture branches and PRs created i
 | --- | --- | --- |
 | PR policy workflow fails with "Label not found" | The `ready-for-regression` label does not exist in the repo and label creation was not included | Verify the workflow includes the `gh label create` step before `gh pr edit --add-label` |
 | Guard workflow fails with a GitHub API error instead of a status check | `statuses: write` permission missing from the workflow | Add `statuses: write` under `permissions` in `pr-policy.yml` |
-| Guard reports "failure" even after posting the summary comment | Comment body does not contain both required markers, or the `issue_comment` workflow did not run | Confirm the comment contains exactly `### Automated Reviewer Loop Summary` and `*Posted automatically by \`pr-review-loop.sh\`.*`; inspect the guard workflow run for the comment event |
+| Guard reports "failure" even after posting the summary comment | Comment body does not contain both required markers, or `pr-policy.yml` was not dispatched after the summary | Confirm the comment contains exactly `### Automated Reviewer Loop Summary` and `*Posted automatically by \`pr-review-loop.sh\`.*`; confirm `PR_POLICY_DISPATCH=requested` and inspect the `workflow_dispatch` run (#1998) |
 | Out-of-scope branch (`spec/*`) receives the label | `IN_SCOPE_PREFIXES` env var contains an unexpected value | Check the env var default in `pr-policy.yml`; ensure `spec/` is not included |
 | `actionlint` reports warnings on the workflow file | YAML syntax issue or unsupported action reference | Fix the reported lines; re-run `actionlint` |
 

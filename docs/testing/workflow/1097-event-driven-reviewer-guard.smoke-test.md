@@ -122,10 +122,10 @@ the fork-head pull request, matching the existing same-repository restriction.
 
 2. Run markdown and workflow shell validation.
 
-**Expected result**: The focused test passes and covers the configured triggers,
-absence of default polling, summary marker matching, non-summary comment skips,
-fork-head skips, out-of-scope success, and the unchanged PR-scoped status
-context.
+**Expected result**: The focused test passes and covers the configured triggers
+(`pull_request_target` plus `workflow_dispatch`, no `issue_comment`), absence of
+default polling, summary marker matching, fork-head skips, out-of-scope success,
+and the unchanged PR-scoped status context (#1998).
 
 ---
 
@@ -152,8 +152,8 @@ context.
 
 | Symptom | Likely cause | Action |
 | --- | --- | --- |
-| Missing-summary status remains after the summary comment is posted | The issue-comment workflow did not run or could not fetch the PR head SHA | Rerun the guard workflow and inspect the Actions logs for API failures. |
-| A normal comment marks readiness passing | The comment-event path is not checking both canonical summary markers | Tighten marker matching and add a regression test for non-summary comments. |
-| Fork-head PR receives a reviewer-loop readiness status | The comment-event path did not preserve the same-repository head guard | Fetch head repository metadata before posting statuses and skip fork heads. |
+| Missing-summary status remains after the summary comment is posted | `pr-policy.yml` was not dispatched after the summary, or the dispatch run could not fetch the PR head SHA | Confirm `PR_POLICY_DISPATCH=requested`, rerun `workflow_dispatch` with `pr_number`, and inspect Actions logs (#1998). |
+| A normal comment starts a PR policy runner | An `issue_comment` trigger was re-added to `pr-policy.yml` | Remove `issue_comment` from the workflow; summary refresh is via `workflow_dispatch` only. |
+| Fork-head PR receives a reviewer-loop readiness status | The dispatch or PR-event path did not preserve the same-repository head guard | Fetch head repository metadata before posting statuses and skip fork heads. |
 | Out-of-scope branches fail the guard | Branch-prefix detection changed | Verify the configured in-scope prefixes and expected branch name. |
 | Branch protection no longer recognizes the guard | Required status pattern points at an obsolete context | Use the documented `Reviewer-loop completion guard (#*)` pattern or repository-supported equivalent. |
