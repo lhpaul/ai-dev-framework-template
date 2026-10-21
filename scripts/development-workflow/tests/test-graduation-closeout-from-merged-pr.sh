@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 # test-graduation-closeout-from-merged-pr.sh - merge-time graduation closeout wrapper tests.
 #
+# covers: scripts/development-workflow/graduation-closeout-from-merged-pr.sh
+# covers: scripts/development-workflow/graduation-closeout-lib.sh
+#         (Linear tracker safety with graduation-closeout.sh)
+#
 # Usage: bash scripts/development-workflow/tests/test-graduation-closeout-from-merged-pr.sh
 
 set -euo pipefail
@@ -13,6 +17,8 @@ MOCK_BIN="$TMP_ROOT/bin"
 FIXTURE_REPO="$TMP_ROOT/repo"
 MOCK_STATE_DIR="$TMP_ROOT/state"
 CHILD_ARGV_LOG="$TMP_ROOT/child-argv.log"
+MOCK_GH_LOG="$TMP_ROOT/gh-invocations.log"
+MOCK_GRAPHQL_LOG="$TMP_ROOT/graphql.log"
 PASS_COUNT=0
 FAIL_COUNT=0
 
@@ -30,6 +36,10 @@ mkdir -p "$MOCK_BIN" "$FIXTURE_REPO/scripts/development-workflow" "$MOCK_STATE_D
 
 cp "$REPO_ROOT/scripts/development-workflow/graduation-closeout-from-merged-pr.sh" \
   "$FIXTURE_REPO/scripts/development-workflow/graduation-closeout-from-merged-pr.sh"
+cp "$REPO_ROOT/scripts/development-workflow/closing-keyword-lib.sh" \
+  "$FIXTURE_REPO/scripts/development-workflow/closing-keyword-lib.sh"
+cp "$REPO_ROOT/scripts/development-workflow/graduation-closeout-lib.sh" \
+  "$FIXTURE_REPO/scripts/development-workflow/graduation-closeout-lib.sh"
 chmod +x "$FIXTURE_REPO/scripts/development-workflow/graduation-closeout-from-merged-pr.sh"
 
 # Stub child reconciler — assert argv, do not re-test full closeout matrix.
@@ -47,24 +57,20 @@ exit 0
 CHILD
 chmod +x "$FIXTURE_REPO/scripts/development-workflow/graduation-closeout.sh"
 
-cat > "$FIXTURE_REPO/scripts/development-workflow/workflow-lib.sh" <<'STUB_LIB'
-#!/usr/bin/env bash
+# Real workflow-lib for shared + closeout-local provider resolution.
+cp "$REPO_ROOT/scripts/development-workflow/workflow-lib.sh" \
+  "$FIXTURE_REPO/scripts/development-workflow/workflow-lib.sh"
+cat >> "$FIXTURE_REPO/scripts/development-workflow/workflow-lib.sh" <<'FIXTURE_OVERRIDES'
 
-cd_workflow_repo_root() {
-  cd "$WORKFLOW_FIXTURE_REPO"
-}
-
-require_gh() {
-  gh auth status >/dev/null
-}
-
+# --- fixture overrides ---
 repo_slug() {
   printf 'lhpaul/ai-dev-framework-template\n'
 }
-STUB_LIB
+FIXTURE_OVERRIDES
 
 cat > "$MOCK_BIN/gh" <<'MOCK_GH'
 #!/usr/bin/env bash
+printf 'gh %s\n' "$*" >> "${MOCK_GH_LOG:?}"
 case "$*" in
   "auth status")
     exit 0
@@ -105,7 +111,10 @@ case "$*" in
         next=$((idx + 1))
         val="${!next:-}"
         case "$val" in
-          number=*) child="${val#number=}" ;;
+          number=*)
+            child="${val#number=}"
+            printf '%s\n' "$child" >> "${MOCK_GRAPHQL_LOG:?}"
+            ;;
         esac
       fi
       idx=$((idx + 1))
@@ -145,7 +154,7 @@ chmod +x "$MOCK_BIN/gh"
 
 export PATH="$MOCK_BIN:$PATH"
 export WORKFLOW_FIXTURE_REPO="$FIXTURE_REPO"
-export MOCK_STATE_DIR CHILD_ARGV_LOG
+export MOCK_STATE_DIR CHILD_ARGV_LOG MOCK_GH_LOG MOCK_GRAPHQL_LOG
 
 run_test() {
   local name="$1"
@@ -174,6 +183,20 @@ run_contains() {
   fi
 }
 
+run_not_contains() {
+  local name="$1"
+  local unexpected="$2"
+  local actual="$3"
+  if grep -Fq -- "$unexpected" <<< "$actual"; then
+    echo "FAIL: $name - output unexpectedly contained '${unexpected}'"
+    printf 'Actual output:\n%s\n' "$actual"
+    FAIL_COUNT=$((FAIL_COUNT + 1))
+  else
+    echo "PASS: $name"
+    PASS_COUNT=$((PASS_COUNT + 1))
+  fi
+}
+
 write_pr() {
   local number="$1"
   local head="$2"
@@ -198,8 +221,19 @@ json.dump(payload, open(path, "w"))
 PY
 }
 
+write_tracker_config() {
+  local provider="$1"
+  cat > "$FIXTURE_REPO/.ai-dev-workflow.yaml" <<EOF
+issue_tracker:
+  provider: ${provider}
+EOF
+}
+
 reset_fixture() {
-  rm -f "$MOCK_STATE_DIR"/* "$CHILD_ARGV_LOG"
+  rm -f "$MOCK_STATE_DIR"/* "$CHILD_ARGV_LOG" "$MOCK_GH_LOG" "$MOCK_GRAPHQL_LOG"
+  rm -f "$FIXTURE_REPO/.ai-dev-workflow.yaml"
+  : > "$MOCK_GH_LOG"
+  : > "$MOCK_GRAPHQL_LOG"
   unset MOCK_LABEL_PARENT_MODE MOCK_PARENT_DEFAULT MOCK_CHILD_FAIL
   export MOCK_LABEL_PARENT_MODE=empty
 }
@@ -350,6 +384,110 @@ result="$(run_wrapper --graduation-pr 88)"
 body="$(last_body "$result")"
 run_test "unmerged_exit_one" "1" "$(last_status "$result")"
 run_contains "unmerged_reason" "graduation_pr_not_merged" "$body"
+
+echo ""
+echo "=== wrapper: Linear epic LEA-326 from PR body; no GH #326 mutations (#1984) ==="
+reset_fixture
+write_tracker_config linear
+export MOCK_LABEL_PARENT_MODE=ok
+export MOCK_PARENT_DEFAULT=326
+write_pr 90 "develop-test-1984" "develop" "true" "Graduate" "Epic LEA-326"
+result="$(run_wrapper --graduation-pr 90)"
+body="$(last_body "$result")"
+run_test "linear_wrapper_exit_zero" "0" "$(last_status "$result")"
+run_contains "linear_wrapper_epic" "EPIC_ISSUE=LEA-326" "$body"
+run_contains "linear_wrapper_provider" "TRACKER_PROVIDER=linear" "$body"
+run_contains "linear_child_epic" "--epic LEA-326" "$(cat "$CHILD_ARGV_LOG")"
+run_test "linear_wrapper_no_parent_graphql" "" "$(cat "$MOCK_GRAPHQL_LOG")"
+run_not_contains "linear_wrapper_no_issue_view_326" "issue view 326" "$(cat "$MOCK_GH_LOG")"
+
+echo ""
+echo "=== wrapper: Linear bare --epic 326 fails closed (#1984) ==="
+reset_fixture
+write_tracker_config linear
+write_pr 91 "develop-test-1984" "develop" "true" "Graduate" "Epic LEA-326"
+result="$(run_wrapper --graduation-pr 91 --epic 326)"
+body="$(last_body "$result")"
+run_test "linear_wrapper_bare_exit_64" "64" "$(last_status "$result")"
+run_contains "linear_wrapper_bare_error" "native Linear ID" "$body"
+run_test "linear_wrapper_bare_no_child" "missing" "$( [ -f "$CHILD_ARGV_LOG" ] && echo present || echo missing )"
+
+echo ""
+echo "=== wrapper: Linear --dry-run forwarded to child (#1984) ==="
+reset_fixture
+write_tracker_config linear
+write_pr 92 "develop-test-1984" "develop" "true" "Graduate" "Epic LEA-326"
+result="$(run_wrapper --graduation-pr 92 --dry-run)"
+body="$(last_body "$result")"
+run_test "linear_wrapper_dry_exit_zero" "0" "$(last_status "$result")"
+run_contains "linear_wrapper_dry_flag" "DRY_RUN=1" "$body"
+run_contains "linear_wrapper_dry_child" "--dry-run" "$(cat "$CHILD_ARGV_LOG")"
+
+echo ""
+echo "=== wrapper: Linear ignores tilde-fenced example Epic LEA-999 (#1984 Pass 2) ==="
+reset_fixture
+write_tracker_config linear
+export MOCK_LABEL_PARENT_MODE=empty
+write_pr 94 "develop-test-1984" "develop" "true" "Graduate" $'Example only:\n~~~\nEpic LEA-999\n~~~\nNo live epic.'
+result="$(run_wrapper --graduation-pr 94)"
+body="$(last_body "$result")"
+run_test "linear_tilde_fence_exit_one" "1" "$(last_status "$result")"
+run_contains "linear_tilde_fence_reason" "epic_discovery_failed" "$body"
+run_test "linear_tilde_fence_no_child" "missing" "$( [ -f "$CHILD_ARGV_LOG" ] && echo present || echo missing )"
+run_not_contains "linear_tilde_fence_no_lea999" "LEA-999" "$( [ -f "$CHILD_ARGV_LOG" ] && cat "$CHILD_ARGV_LOG" || true )"
+
+echo ""
+echo "=== wrapper: Linear ignores unclosed-fence example Epic LEA-999 (#1984 Pass 2) ==="
+reset_fixture
+write_tracker_config linear
+export MOCK_LABEL_PARENT_MODE=empty
+write_pr 95 "develop-test-1984" "develop" "true" "Graduate" $'Example only:\n```text\nEpic LEA-999\n'
+result="$(run_wrapper --graduation-pr 95)"
+body="$(last_body "$result")"
+run_test "linear_unclosed_fence_exit_one" "1" "$(last_status "$result")"
+run_contains "linear_unclosed_fence_reason" "epic_discovery_failed" "$body"
+run_test "linear_unclosed_fence_no_child" "missing" "$( [ -f "$CHILD_ARGV_LOG" ] && echo present || echo missing )"
+run_not_contains "linear_unclosed_fence_no_lea999" "LEA-999" "$( [ -f "$CHILD_ARGV_LOG" ] && cat "$CHILD_ARGV_LOG" || true )"
+
+echo ""
+echo "=== wrapper: Linear ignores indented-code Epic LEA-999 (#1984 Pass 1) ==="
+reset_fixture
+write_tracker_config linear
+export MOCK_LABEL_PARENT_MODE=empty
+write_pr 96 "develop-test-1984" "develop" "true" "Graduate" $'Example only:\n    Epic LEA-999\nNo live epic.'
+result="$(run_wrapper --graduation-pr 96)"
+body="$(last_body "$result")"
+run_test "linear_indented_epic_exit_one" "1" "$(last_status "$result")"
+run_contains "linear_indented_epic_reason" "epic_discovery_failed" "$body"
+run_test "linear_indented_epic_no_child" "missing" "$( [ -f "$CHILD_ARGV_LOG" ] && echo present || echo missing )"
+run_not_contains "linear_indented_epic_no_lea999" "LEA-999" "$( [ -f "$CHILD_ARGV_LOG" ] && cat "$CHILD_ARGV_LOG" || true )"
+
+echo ""
+echo "=== wrapper: commented header + linear fails closed before child (#1984) ==="
+reset_fixture
+cat > "$FIXTURE_REPO/.ai-dev-workflow.yaml" <<'EOF'
+issue_tracker: # native tracker
+  provider: linear
+EOF
+write_pr 97 "develop-test-1984" "develop" "true" "Graduate" "Epic LEA-326"
+result="$(run_wrapper --graduation-pr 97)"
+body="$(last_body "$result")"
+run_test "commented_linear_wrapper_exit_64" "64" "$(last_status "$result")"
+run_contains "commented_linear_wrapper_remediation" "tracker bridge cannot read it" "$body"
+run_test "commented_linear_wrapper_no_child" "missing" "$( [ -f "$CHILD_ARGV_LOG" ] && echo present || echo missing )"
+
+echo ""
+echo "=== wrapper: github_projects discovery unchanged with explicit config (#1984) ==="
+reset_fixture
+write_tracker_config github_projects
+export MOCK_LABEL_PARENT_MODE=empty
+write_pr 93 "develop-test-1984" "develop" "true" "Graduate" "Epic #900"
+result="$(run_wrapper --graduation-pr 93)"
+body="$(last_body "$result")"
+run_test "gh_proj_wrapper_exit_zero" "0" "$(last_status "$result")"
+run_contains "gh_proj_wrapper_epic" "EPIC_ISSUE=900" "$body"
+run_contains "gh_proj_wrapper_provider" "TRACKER_PROVIDER=github_projects" "$body"
+run_contains "gh_proj_child_epic" "--epic 900" "$(cat "$CHILD_ARGV_LOG")"
 
 echo ""
 echo "Graduation closeout-from-merged-pr tests: $PASS_COUNT passed, $FAIL_COUNT failed."
