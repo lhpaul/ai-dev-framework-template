@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Binding D01-D49: synthetic paired-channel runtime/publication diagnostics."""
+"""Binding D01-D51: synthetic paired-channel runtime/publication diagnostics."""
 from __future__ import annotations
 
 import importlib.util
@@ -810,6 +810,145 @@ exit "$status"
                     self.assertIn('RESULT=' + ('escalate' if post_status else 'skipped'), result.stdout)
                     if not post_status:
                         self.assertIn('PLATFORM_1_REASON=no_review', result.stdout)
+
+
+    def test_D50_pr_policy_dispatch_captured_child_channels(self):
+        '''Real best-effort dispatch redacts captured errors before flattening.'''
+        source = shlex.quote(str(self.f.runtime / 'pr-review-loop.sh'))
+        calls = self.f.root / 'policy-dispatch-calls'
+        for shell in ('/bin/bash', '/opt/homebrew/bin/bash'):
+            if not Path(shell).exists():
+                continue
+            for state in ('stdout', 'stderr', 'mixed', 'private_key', 'empty',
+                          'success', 'default_failure', 'absent', 'opt_out',
+                          'missing_pr', 'sanitizer_failure'):
+                with self.subTest(shell=shell, state=state):
+                    calls.write_text('')
+                    body = r'''repo_slug() { printf 'fixture/repo\n'; }
+eval "$(declare -f workflow_command_with_safe_stderr | sed '1s/workflow_command_with_safe_stderr/original_safe_stderr/')"
+workflow_command_with_safe_stderr() {
+  printf 'safe-stderr\n' >>CALLS
+  original_safe_stderr "$@"
+}
+STATE=STATE_VALUE
+gh() {
+  if [ "$1" = api ] && [ "$2" = repos/fixture/repo ]; then
+    printf 'default\n' >>CALLS
+    printf 'Authorization: Bearer SECRET\n' >&2
+    if [ "$STATE" = default_failure ]; then
+      printf 'token=SECRET\n'
+      return 17
+    fi
+    printf 'main\n'
+  elif [ "$1" = api ] && [ "$2" = 'repos/fixture/repo/contents/.github/workflows/pr-policy.yml?ref=main' ]; then
+    printf 'contents\n' >>CALLS
+    printf 'password: SECRET\n' >&2
+    if [ "$STATE" = absent ]; then
+      printf 'token=SECRET\n'
+      return 17
+    fi
+    printf '.github/workflows/pr-policy.yml\n'
+  elif [ "$1:$2:$3" = workflow:run:pr-policy.yml ]; then
+    [ "$#" -eq 9 ] && [ "$4:$5:$6:$7:$8:$9" = '--repo:fixture/repo:--ref:main:-f:pr_number=1993' ] || return 99
+    printf 'dispatch\n' >>CALLS
+    case "$STATE" in
+      stdout) printf 'policy synthetic context\ntoken=SECRET\n' ;;
+      stderr) printf 'policy synthetic context\nAuthorization: Bearer SECRET\n' >&2 ;;
+      mixed|sanitizer_failure|success)
+        printf 'policy synthetic context\npassword: SECRET\n'
+        printf 'Authorization: Bearer SECRET\n' >&2 ;;
+      private_key)
+        printf 'policy synthetic context\n-----BEGIN PRIVATE KEY-----\nSECRET\n'
+        printf 'SECRET\n-----END PRIVATE KEY-----\n' >&2 ;;
+      empty) : ;;
+      *) return 99 ;;
+    esac
+    [ "$STATE" = success ] && return 0
+    return 17
+  else
+    printf 'unexpected\n' >>CALLS
+    return 99
+  fi
+}
+if [ "$STATE" = sanitizer_failure ]; then
+  workflow_redact_text() { return 2; }
+fi
+if [ "$STATE" = opt_out ]; then
+  PR_REVIEW_LOOP_POLICY_DISPATCH=0
+fi
+pr=1993
+[ "$STATE" != missing_pr ] || pr=''
+reviewer_loop_dispatch_pr_policy "$pr" fixture/repo
+status=$?
+printf 'RESULT=clean\nREASON=none\nDISPATCH_RETURN=%s\n' "$status"
+exit "$status"
+'''.replace('STATE_VALUE', shlex.quote(state)).replace('CALLS', shlex.quote(str(calls)))
+                    body = body.replace('SECRET', self.secret)
+                    result = self.safe(self.run_command([shell, '-c', 'HARNESS_MODE=1 source ' + source + '\n' + body]), 0)
+                    self.assertEqual(result.stderr, '')
+                    self.assertIn('RESULT=clean\nREASON=none\nDISPATCH_RETURN=0\n', result.stdout)
+                    events = calls.read_text().splitlines()
+                    if state in ('missing_pr', 'opt_out'):
+                        self.assertEqual(events, [])
+                        self.assertIn('PR_POLICY_DISPATCH=skipped reason=' +
+                                      ('missing_pr_number' if state == 'missing_pr' else 'opt_out'), result.stdout)
+                    elif state == 'default_failure':
+                        self.assertEqual(events, ['default'])
+                        self.assertIn('PR_POLICY_DISPATCH=failed reason=default_branch_unresolved', result.stdout)
+                    elif state == 'absent':
+                        self.assertEqual(events, ['default', 'contents'])
+                        self.assertIn('PR_POLICY_DISPATCH=skipped reason=pr_policy_workflow_absent', result.stdout)
+                    else:
+                        self.assertEqual(events, ['default', 'contents', 'safe-stderr', 'dispatch'])
+                        if state == 'success':
+                            self.assertEqual(result.stdout.splitlines()[0], 'PR_POLICY_DISPATCH=requested')
+                            self.assertNotIn('policy synthetic context', result.stdout)
+                        elif state in ('empty', 'sanitizer_failure'):
+                            self.assertEqual(result.stdout.splitlines()[0],
+                                             'PR_POLICY_DISPATCH=failed reason=workflow_dispatch_failed')
+                        else:
+                            diagnostic = result.stdout.splitlines()[0]
+                            self.assertTrue(diagnostic.startswith('PR_POLICY_DISPATCH=failed reason='))
+                            self.assertIn('policy synthetic context', diagnostic)
+                            self.assertIn('[REDACTED]', diagnostic)
+
+
+    def test_D51_settle_review_probe_actual_callsite_bash32_cardinality(self):
+        '''Execute the actual production argument expansion under nounset.'''
+        source = (self.f.runtime / 'pr-review-loop.sh').read_text()
+        lines = [line.strip() for line in source.splitlines()
+                 if line.strip().startswith('settle_review_probe="$(_bot_review_submitted_since ')]
+        self.assertEqual(len(lines), 1)
+        args_file = self.f.root / 'settle-probe-args'
+        for shell in ('/bin/bash', '/opt/homebrew/bin/bash'):
+            if not Path(shell).exists():
+                continue
+            for reviewers in ([], ['one reviewer'], ['one reviewer', 'second-reviewer']):
+                for probe in ('0', '1', '-1'):
+                    with self.subTest(shell=shell, reviewers=len(reviewers), probe=probe):
+                        body = '''set -euo pipefail
+settle_repo=fixture/repo
+pr_number=1993
+settle_head_iso=2026-10-21T00:00:00Z
+settle_head_sha=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+declare -a unresolved_bot_logins=(REVIEWERS)
+_bot_review_submitted_since() {
+  printf '%s\\0' "$@" >ARGS_FILE
+  printf '%s' PROBE
+}
+CALLSITE
+printf 'PROBE=%s\\n' "$settle_review_probe"
+'''.replace('REVIEWERS', ' '.join(shlex.quote(value) for value in reviewers))
+                        body = body.replace('ARGS_FILE', shlex.quote(str(args_file)))
+                        body = body.replace('PROBE\n', shlex.quote(probe) + '\n')
+                        body = body.replace('CALLSITE', lines[0])
+                        result = self.safe(self.run_command([shell, '-c', body]), 0)
+                        self.assertEqual(result.stdout, 'PROBE=' + probe + '\n')
+                        self.assertEqual(result.stderr, '')
+                        actual = args_file.read_bytes().split(b'\0')
+                        self.assertEqual(actual[-1], b'')
+                        self.assertEqual([value.decode() for value in actual[:-1]],
+                                         ['fixture/repo', '1993', '2026-10-21T00:00:00Z', 'a' * 40, *reviewers])
 
 
 if __name__ == '__main__':

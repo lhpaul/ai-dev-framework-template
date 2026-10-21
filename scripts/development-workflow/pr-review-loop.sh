@@ -14843,7 +14843,7 @@ reviewer_loop_dispatch_pr_policy() {
   fi
 
   if dispatch_err="$(
-      gh workflow run pr-policy.yml \
+      workflow_command_with_safe_stderr gh workflow run pr-policy.yml \
         --repo "$repo_arg" \
         --ref "$default_branch" \
         -f "pr_number=${pr_number_arg}" 2>&1
@@ -14852,6 +14852,9 @@ reviewer_loop_dispatch_pr_policy() {
     return 0
   fi
 
+  # Both captured streams become diagnostics on failure. Redact complete values
+  # before collapsing whitespace (including multi-line private-key blocks).
+  dispatch_err="$(printf '%s' "$dispatch_err" | workflow_redact_text)" || dispatch_err="workflow_dispatch_failed"
   # Collapse multi-line gh errors into one loggable reason token.
   dispatch_err="$(printf '%s' "$dispatch_err" | tr '\n' ' ' | sed 's/[[:space:]]\{1,\}/ /g')"
   echo "PR_POLICY_DISPATCH=failed reason=${dispatch_err:-workflow_dispatch_failed}"
@@ -16661,7 +16664,7 @@ if [ "$aggregate_result" = "clean" ] \
     elif [ "$settle_require_review" -eq 1 ] && [ "$settle_review_seen" -eq 0 ]; then
       # Silence before the review lands is the platform thinking, not finishing.
       # Do not let it accumulate toward the quiet period.
-      settle_review_probe="$(_bot_review_submitted_since "$settle_repo" "$pr_number" "$settle_head_iso" "$settle_head_sha" "${unresolved_bot_logins[@]}")"
+      settle_review_probe="$(_bot_review_submitted_since "$settle_repo" "$pr_number" "$settle_head_iso" "$settle_head_sha" ${unresolved_bot_logins[@]+"${unresolved_bot_logins[@]}"})"
       if [ "$settle_review_probe" = "1" ]; then
         settle_review_seen=1
         workflow_diagnostic "INFO: post-clean settle — submitted review detected at ${settle_elapsed}s; quiet period starts now" >&2
