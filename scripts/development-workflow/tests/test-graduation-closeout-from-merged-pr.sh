@@ -35,6 +35,8 @@ mkdir -p "$MOCK_BIN" "$FIXTURE_REPO/scripts/development-workflow" "$MOCK_STATE_D
 
 cp "$REPO_ROOT/scripts/development-workflow/graduation-closeout-from-merged-pr.sh" \
   "$FIXTURE_REPO/scripts/development-workflow/graduation-closeout-from-merged-pr.sh"
+cp "$REPO_ROOT/scripts/development-workflow/closing-keyword-lib.sh" \
+  "$FIXTURE_REPO/scripts/development-workflow/closing-keyword-lib.sh"
 chmod +x "$FIXTURE_REPO/scripts/development-workflow/graduation-closeout-from-merged-pr.sh"
 
 # Stub child reconciler — assert argv, do not re-test full closeout matrix.
@@ -446,6 +448,32 @@ body="$(last_body "$result")"
 run_test "linear_wrapper_dry_exit_zero" "0" "$(last_status "$result")"
 run_contains "linear_wrapper_dry_flag" "DRY_RUN=1" "$body"
 run_contains "linear_wrapper_dry_child" "--dry-run" "$(cat "$CHILD_ARGV_LOG")"
+
+echo ""
+echo "=== wrapper: Linear ignores tilde-fenced example Epic LEA-999 (#1984 Pass 2) ==="
+reset_fixture
+write_tracker_config linear
+export MOCK_LABEL_PARENT_MODE=empty
+write_pr 94 "develop-test-1984" "develop" "true" "Graduate" $'Example only:\n~~~\nEpic LEA-999\n~~~\nNo live epic.'
+result="$(run_wrapper --graduation-pr 94)"
+body="$(last_body "$result")"
+run_test "linear_tilde_fence_exit_one" "1" "$(last_status "$result")"
+run_contains "linear_tilde_fence_reason" "epic_discovery_failed" "$body"
+run_test "linear_tilde_fence_no_child" "missing" "$( [ -f "$CHILD_ARGV_LOG" ] && echo present || echo missing )"
+run_not_contains "linear_tilde_fence_no_lea999" "LEA-999" "$( [ -f "$CHILD_ARGV_LOG" ] && cat "$CHILD_ARGV_LOG" || true )"
+
+echo ""
+echo "=== wrapper: Linear ignores unclosed-fence example Epic LEA-999 (#1984 Pass 2) ==="
+reset_fixture
+write_tracker_config linear
+export MOCK_LABEL_PARENT_MODE=empty
+write_pr 95 "develop-test-1984" "develop" "true" "Graduate" $'Example only:\n```text\nEpic LEA-999\n'
+result="$(run_wrapper --graduation-pr 95)"
+body="$(last_body "$result")"
+run_test "linear_unclosed_fence_exit_one" "1" "$(last_status "$result")"
+run_contains "linear_unclosed_fence_reason" "epic_discovery_failed" "$body"
+run_test "linear_unclosed_fence_no_child" "missing" "$( [ -f "$CHILD_ARGV_LOG" ] && echo present || echo missing )"
+run_not_contains "linear_unclosed_fence_no_lea999" "LEA-999" "$( [ -f "$CHILD_ARGV_LOG" ] && cat "$CHILD_ARGV_LOG" || true )"
 
 echo ""
 echo "=== wrapper: github_projects discovery unchanged with explicit config (#1984) ==="

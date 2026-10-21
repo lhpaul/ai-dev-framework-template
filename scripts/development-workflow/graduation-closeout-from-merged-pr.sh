@@ -29,6 +29,9 @@ SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)"
 # shellcheck source=./workflow-lib.sh
 # shellcheck disable=SC1091
 . "$SCRIPT_DIR/workflow-lib.sh"
+# shellcheck source=./closing-keyword-lib.sh
+# shellcheck disable=SC1091
+. "$SCRIPT_DIR/closing-keyword-lib.sh"
 
 GRADUATION_PR=""
 SLUG_OVERRIDE=""
@@ -193,7 +196,11 @@ fail_closed() {
   exit 1
 }
 
-# Strip fenced code blocks so example closing keywords are not treated as live refs.
+# Legacy fence stripper for github_projects / github_issues discovery only.
+# Handles paired triple-backtick fences; does not handle tilde fences or
+# unclosed fences. Linear discovery must use strip_fenced_pr_body_blocks from
+# closing-keyword-lib.sh instead — do not route github call sites through that
+# canonical filter in this change (behavior freeze for non-Linear trackers).
 strip_fenced_blocks() {
   python3 -c '
 import re, sys
@@ -284,11 +291,16 @@ sys.stdout.write(body)
 
 collect_pr_epic_candidates() {
   local text
-  text="$(strip_fenced_blocks < "$TMP_DIR/pr-text.txt")"
   if [ "$TRACKER_PROVIDER" = "linear" ]; then
+    # Canonical GFM fence filter (``` / ~~~, length >= 3, unclosed → EOF).
+    if ! text="$(strip_fenced_pr_body_blocks < "$TMP_DIR/pr-text.txt")"; then
+      fail_closed "could_not_strip_fenced_blocks"
+    fi
     printf '%s\n' "$text" | extract_linear_epic_refs | sort -u > "$TMP_DIR/pr-epic-candidates.txt"
     return 0
   fi
+  # github_projects / github_issues: keep legacy strip_fenced_blocks.
+  text="$(strip_fenced_blocks < "$TMP_DIR/pr-text.txt")"
   {
     printf '%s\n' "$text" | extract_epic_parent_refs
     printf '%s\n' "$text" | extract_closing_issue_numbers

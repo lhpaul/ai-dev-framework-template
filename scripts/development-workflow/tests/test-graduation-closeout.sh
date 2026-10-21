@@ -244,6 +244,16 @@ JSON
 [{"number":11,"title":"Graduate wave","body":"See example:\n```\nCloses #326\n```\nNo live closing keywords.","closingIssuesReferences":[]}]
 JSON
         ;;
+      tilde_fenced_example)
+        cat <<'JSON'
+[{"number":11,"title":"Graduate wave","body":"See example:\n~~~\nCloses #326\n~~~\nNo live closing keywords.","closingIssuesReferences":[]}]
+JSON
+        ;;
+      unclosed_fenced_example)
+        cat <<'JSON'
+[{"number":11,"title":"Graduate wave","body":"See example:\n```text\nCloses #326\n","closingIssuesReferences":[]}]
+JSON
+        ;;
       foreign_repo)
         cat <<'JSON'
 [{"number":11,"title":"Deliver extra item","body":"No live closing keywords in this PR body.","closingIssuesReferences":[{"number":326,"repository":{"nameWithOwner":"other/repo"},"url":"https://github.com/other/repo/issues/326"}]}]
@@ -836,6 +846,38 @@ run_contains "linear_fenced_deferred" "TRACKER_ACTION_REQUIRED=set_status issue=
 run_test "linear_fenced_326_untouched" "OPEN" "$(python3 -c 'import json; print(json.load(open("'"$MOCK_STATE_DIR"'/326.json"))["state"])')"
 run_test "linear_fenced_no_close_log" "" "$(cat "$MOCK_CLOSE_LOG")"
 run_contains "linear_fenced_combined_pr_query" "--json number,title,body,closingIssuesReferences" "$(cat "$MOCK_GH_LOG")"
+
+echo ""
+echo "=== graduation closeout: Linear ignores tilde-fenced example Closes #326 (#1984 Pass 2) ==="
+reset_fixture
+write_tracker_config linear
+export MOCK_NATIVE_MODE=empty
+export MOCK_PR_MODE=tilde_fenced_example
+write_issue 326 "Unrelated GitHub issue" OPEN
+CLOSEOUT_EPIC=LEA-326
+tilde_result="$(run_closeout)"
+unset CLOSEOUT_EPIC
+tilde_body="$(last_output_body "$tilde_result")"
+run_test "linear_tilde_exit_zero" "0" "$(last_output_status "$tilde_result")"
+run_contains "linear_tilde_pass" "GRADUATION_CLOSEOUT_RESULT=pass" "$tilde_body"
+run_test "linear_tilde_326_untouched" "OPEN" "$(python3 -c 'import json; print(json.load(open("'"$MOCK_STATE_DIR"'/326.json"))["state"])')"
+run_test "linear_tilde_no_close_log" "" "$(cat "$MOCK_CLOSE_LOG")"
+
+echo ""
+echo "=== graduation closeout: Linear ignores unclosed-fence example Closes #326 (#1984 Pass 2) ==="
+reset_fixture
+write_tracker_config linear
+export MOCK_NATIVE_MODE=empty
+export MOCK_PR_MODE=unclosed_fenced_example
+write_issue 326 "Unrelated GitHub issue" OPEN
+CLOSEOUT_EPIC=LEA-326
+unclosed_result="$(run_closeout)"
+unset CLOSEOUT_EPIC
+unclosed_body="$(last_output_body "$unclosed_result")"
+run_test "linear_unclosed_exit_zero" "0" "$(last_output_status "$unclosed_result")"
+run_contains "linear_unclosed_pass" "GRADUATION_CLOSEOUT_RESULT=pass" "$unclosed_body"
+run_test "linear_unclosed_326_untouched" "OPEN" "$(python3 -c 'import json; print(json.load(open("'"$MOCK_STATE_DIR"'/326.json"))["state"])')"
+run_test "linear_unclosed_no_close_log" "" "$(cat "$MOCK_CLOSE_LOG")"
 
 echo ""
 echo "=== graduation closeout: Linear fence-aware keyword when structured refs empty (#1984) ==="
