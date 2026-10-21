@@ -292,8 +292,11 @@ and then transition every listed `TRACKER_ISSUES` item from `Merged` to
 `Released` before reporting the release as complete.
 
 When cleanup is invoked with `--from-changelog`, Linear scope is **not** the set
-of IDs matched in the CHANGELOG version section alone (#1982). The CHANGELOG is
-only a complement: a missing `CHANGELOG.md` or version section prints
+of IDs matched in the CHANGELOG version section alone (#1982). The canonical
+**consistency matrix** (gate inputs, allowed outcomes, required next actions,
+and operator signals) lives in
+[`05-prepare-release-protocol.md`](../protocols/05-prepare-release-protocol.md)
+Step 9.1. The CHANGELOG is only a complement: a missing `CHANGELOG.md` or version section prints
 `CHANGELOG_SECTION_UNAVAILABLE version=vX.Y.Z (Linear scope derived from merged
 PRs only)` and scope still comes from merged PRs. The helper derives scope from
 merged PRs in the release git range (previous tag → verified release tag or

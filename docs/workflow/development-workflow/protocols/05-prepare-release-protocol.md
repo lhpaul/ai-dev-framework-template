@@ -589,6 +589,27 @@ Explicit `--issue` / `--issues` are unioned with the derived scope and never
 filtered. GitHub Projects / GitHub Issues `--from-changelog` behavior is
 unchanged (missing CHANGELOG file/section still fails closed).
 
+#### Linear release scope decision gate (consistency matrix)
+
+Mirror surfaces: this subsection, [`integrations/linear.md`](../integrations/linear.md)
+(Release Stamping / `--from-changelog`), and
+`prepare-release-post-merge-cleanup.sh` filter helper stdout/stderr. Examples
+live in `scripts/development-workflow/tests/test-prepare-release-tracker-cleanup.sh`
+(Linear `#1982` block).
+
+| Gate input / condition | Allowed outcome | Required next action | Operator signal |
+| --- | --- | --- | --- |
+| `--from-changelog` with missing CHANGELOG file or version section (Linear only) | Scope derivation continues from merged PRs; changelog IDs treated as complement | Run merged-PR filter; do not treat changelog regex as authoritative | `CHANGELOG_SECTION_UNAVAILABLE version=vX.Y.Z (Linear scope derived from merged PRs only)` on stderr |
+| Previous semver tag boundary unavailable (shallow clone, remote tag-list failure, unfetchable preceding tag) | Incomplete scope; no Released transitions on inferred IDs | Fix git depth/remotes or pass explicit `--issue` / `--issues`; do not stamp | `RELEASE_SCOPE_INCOMPLETE reason=previous_release_boundary_unavailable`; exit non-zero unless `--best-effort` |
+| Release tip ref unavailable (`--release-head` absent and tag/ref cannot be verified) | Incomplete scope | Supply verified `--release-head` or fix tags; or pass explicit issues | `RELEASE_SCOPE_INCOMPLETE reason=release_ref_unavailable`; exit non-zero unless `--best-effort` |
+| Any commit in range: `commits/<sha>/pulls` fails, returns empty/malformed JSON, or non-object entries | Incomplete scope (fail closed) | Investigate GitHub/API evidence; pass explicit `--issue` / `--issues` for known shippers | `RELEASE_SCOPE_INCOMPLETE unresolved_shas=<sha[,…]>`; exit non-zero unless `--best-effort` |
+| Merged PR in range with only `spec/*` or `implementation-plan/*` head branch | ID omitted from Released scope | None if documentation-only; use explicit `--issue` if it truly shipped | `RELEASE_SCOPE_SKIPPED issue=<ID> reason=documentation_stage_pr_only` |
+| Changelog or range-expanded mention without merged implementation PR evidence | ID omitted | Confirm item did not ship; add `--issue` only when human confirms shipment | `RELEASE_SCOPE_SKIPPED issue=<ID> reason=changelog_mention_without_merged_pr` |
+| Merged implementation-stage PR in verified range (`feature/*`, `fix/*`, `refactor/*`, `hotfix/*`) with Linear token in head ref/title | ID kept in proposed scope | Proceed with tracker transitions when rest of cleanup gates pass | `TRACKER_ISSUES=<ID[,…]>` / filter `KEEP` lines |
+| Fully resolved range with zero Linear IDs | Empty scope success (not incomplete) | Pass `--issue` / `--issues` or accept no tracker transitions | Filter ends with `OK`; may surface `TRACKER_INCOMPLETE=1 REASON=no_issue_scope` when no explicit issues |
+| Explicit `--issue` / `--issues` on CLI | Always unioned; never SKIP-filtered | Treat as human-confirmed scope regardless of changelog/PR filter | Listed IDs remain in `ISSUE_NUMBERS` even when filter skips changelog-only IDs |
+| `--best-effort` accepted | Incomplete/empty scope may exit 0 without blocking cleanup | Operator must read `RELEASE_SCOPE_*` / `TRACKER_INCOMPLETE` logs; do not assume full scope stamped | Non-zero paths above may downgrade to logged incomplete + exit 0 |
+
 ### 9.2 Preferred command (single entry point)
 
 Use the helper script:
