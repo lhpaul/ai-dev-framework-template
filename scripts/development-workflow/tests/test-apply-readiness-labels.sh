@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
+# shellcheck shell=bash
 # test-apply-readiness-labels.sh - readiness-label gate tests (#1408).
+# covers: scripts/development-workflow/workflow-config-resolver.py
 # covers: scripts/development-workflow/apply-readiness-labels.sh
 # covers: scripts/development-workflow/workflow-lib.sh
 # covers: docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md
@@ -17,542 +19,16 @@
 # Access" can make Bugbot refuse to run, and treating "no check run" as
 # "reviewer clean" is the exact defect this helper exists to prevent.
 
-set -euo pipefail
+# covers: scripts/development-workflow/tests/lib/readiness-label-fixture.sh
+# duration: 120
 
-SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)"
-REPO_ROOT="$(CDPATH='' cd -- "$SCRIPT_DIR/../../.." && pwd)"
-HELPER="$REPO_ROOT/scripts/development-workflow/apply-readiness-labels.sh"
-# shellcheck source=scripts/development-workflow/workflow-lib.sh
-source "$REPO_ROOT/scripts/development-workflow/workflow-lib.sh"
-
-TMP_ROOT="$(mktemp -d)"
-trap 'rm -rf "$TMP_ROOT"' EXIT
-
-# Fixtures own reviewer policy. A valid synthetic source without declarations
-# prevents workstation overrides from replacing the mocked base policy.
-ISOLATED_OVERRIDE_ROOT="$TMP_ROOT/no-local-overrides"
-mkdir -p "$ISOLATED_OVERRIDE_ROOT"
-printf 'review: {}\n' >"$ISOLATED_OVERRIDE_ROOT/.ai-dev-workflow.local.yaml"
-export WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT="$ISOLATED_OVERRIDE_ROOT"
-unset AI_DEV_WORKFLOW_CONFIG_FILE
-
-pass=0
-fail=0
-
-run_test() {
-  local name="$1" expected="$2" actual="$3"
-  if [ "$actual" = "$expected" ]; then
-    echo "PASS: $name"
-    pass=$((pass + 1))
-  else
-    echo "FAIL: $name - expected '$expected', got '$actual'"
-    fail=$((fail + 1))
-  fi
-}
-
-_BIN="$TMP_ROOT/bin"
-mkdir -p "$_BIN"
-
-cat > "$_BIN/gh" <<'GH'
-#!/usr/bin/env bash
-# gh stub. Payloads come from MOCK_PR_JSON / MOCK_CHECK_RUNS / MOCK_COMMENTS /
-# MOCK_REVIEWS; every `pr edit` invocation is appended to MOCK_GH_LOG so a test
-# can prove the label was NOT applied.
-# Defaults are plain variables: a ${VAR:-{...}} default containing braces does
-# not survive bash parameter expansion and silently yields invalid JSON.
-labels_default='{"labels":[]}'
-# Same SHA as the test-scope BASE_SHA; duplicated here because the quoted
-# heredoc does not expand the test script's variables.
-_BASE_SHA_STUB='dddd444000000000000'
-pr_default='{"headRefOid":"aaaa111000000000000","headRefName":"fix/1408-demo","baseRefOid":"'"$_BASE_SHA_STUB"'","labels":[],"statusCheckRollup":[]}'
-check_runs_default='{"check_runs":[]}'
-empty_array='[]'
-jq_filter=""
-prev=""
-for arg in "$@"; do
-  [ "$prev" = "--jq" ] && jq_filter="$arg"
-  prev="$arg"
-done
-emit() {
-  if [ -n "$jq_filter" ]; then
-    printf '%s\n' "$1" | jq -r "$jq_filter"
-  else
-    printf '%s\n' "$1"
-  fi
-}
-case "$*" in
-  *"auth status"*) exit 0 ;;
-  *"api user"*)
-    # Round 18 (PRRT_kwDORWAxaM6m36Wn): the invoker's own login — the login
-    # pr-review-loop.sh posts the summary comment under (gh pr comment /
-    # gh api --method PATCH via the same token). The ledger trust filter
-    # accepts a comment authored by this login. Cached per run so several
-    # `gh api user` calls do not consume awk's global state; MOCK_GH_USER
-    # overrides it (default: the test's operator fixture login).
-    printf '%s\n' "$*" >>"${MOCK_CALL_LOG:-/dev/null}" 2>/dev/null || true
-    _uc="${MOCK_TMP_ROOT:-${TMP_ROOT:-/tmp}}/gh-user.cache"
-    # The helper calls `gh api user --jq '.login // ""'`: emit the bare
-    # login, as gh does once --jq is applied.
-    [ -s "$_uc" ] && { cat "$_uc"; exit 0; }
-    printf '%s\n' "${MOCK_GH_USER:-loop-runner}" >"$_uc" 2>/dev/null || true
-    cat "$_uc" 2>/dev/null || printf '%s\n' 'loop-runner'
-    exit 0
-    ;;
-  *"pr edit"*)
-    printf '%s\n' "$*" >>"${MOCK_GH_LOG:?}"
-    # Also logged to the shared call log so ordering assertions can prove the
-    # mutation's position relative to every other API call (PR #1818 finding
-    # 2, round 9).
-    printf '%s\n' "$*" >>"${MOCK_CALL_LOG:-/dev/null}" 2>/dev/null || true
-    # Record the applied label so the helper's own post-apply verification reads
-    # back what this stub stored, not a canned response. MOCK_DROP_LABEL=1
-    # simulates a label the API accepts and then quietly discards.
-    added=""
-    prev_add=""
-    for arg in "$@"; do
-      [ "$prev_add" = "--add-label" ] && added="$arg"
-      prev_add="$arg"
-    done
-    if [ "${MOCK_DROP_LABEL:-0}" != "1" ] && [ -n "${MOCK_LABEL_STATE:-}" ] && [ -n "$added" ]; then
-      printf '%s\n' "$added" >>"$MOCK_LABEL_STATE"
-    fi
-    if grep -q -- "--remove-label" <<< "$*"; then
-      exit "${MOCK_REMOVE_LABEL_EXIT:-0}"
-    fi
-    exit "${MOCK_GH_EDIT_EXIT:-0}"
-    ;;
-  *"pr view"*"--json headRefOid --jq"*)
-    # Pre-apply head revalidation — after round 9 there is exactly ONE
-    # re-fetch, the final pre-mutation head check (the last API call before
-    # `pr edit`). MOCK_FINAL_REVALIDATE_HEAD simulates a push landing during
-    # the final-block revalidations/rescans; MOCK_REVALIDATE_HEAD serves on
-    # the same call (kept as an alias for the older tests).
-    # Logged to a separate call log (not MOCK_GH_LOG, which counts `pr edit`
-    # calls only) so the later arms can tell the revalidation fetches from the
-    # first.
-    printf '%s\n' "$*" >>"${MOCK_CALL_LOG:-/dev/null}" 2>/dev/null || true
-    if [ -n "${MOCK_FINAL_REVALIDATE_HEAD:-}" ]; then
-      printf '%s\n' "$MOCK_FINAL_REVALIDATE_HEAD"
-    elif [ -n "${MOCK_REVALIDATE_HEAD:-}" ]; then
-      printf '%s\n' "$MOCK_REVALIDATE_HEAD"
-    else
-      emit "${MOCK_PR_JSON:-$pr_default}"
-    fi
-    exit 0
-    ;;
-  *"pr view"*"--json labels,headRefOid"*)
-    # Post-apply verification. MOCK_POST_APPLY_HEAD simulates a push landing
-    # during the mutation itself; MOCK_POST_VIEW_EXIT simulates the read
-    # failing after `--add-label` already succeeded (PR #1818 finding 3,
-    # round 5).
-    [ "${MOCK_POST_VIEW_EXIT:-0}" = "0" ] || exit 1
-    if [ -n "${MOCK_LABEL_STATE:-}" ] && [ -s "$MOCK_LABEL_STATE" ]; then
-      labels_json="$(jq -R -s '{labels: [split("\n")[] | select(. != "") | {name: .}]}' <"$MOCK_LABEL_STATE")"
-    else
-      labels_json="${MOCK_LABELS:-$labels_default}"
-    fi
-    head_ref="${MOCK_POST_APPLY_HEAD:-$(printf '%s\n' "${MOCK_PR_JSON:-$pr_default}" | jq -r '.headRefOid // ""')}"
-    printf '%s\n' "$labels_json" | jq --arg h "$head_ref" '. + {headRefOid: $h}'
-    exit 0
-    ;;
-  *"pr view"*"--json labels"*)
-    if [ -n "${MOCK_LABEL_STATE:-}" ] && [ -s "$MOCK_LABEL_STATE" ]; then
-      emit "$(jq -R -s '{labels: [split("\n")[] | select(. != "") | {name: .}]}' <"$MOCK_LABEL_STATE")"
-    else
-      emit "${MOCK_LABELS:-$labels_default}"
-    fi
-    exit 0
-    ;;
-  *"pr view"*"--json headRefOid,headRefName,baseRefOid,labels,statusCheckRollup"*)
-    # MOCK_PR_JSON_EXIT fails the initial state read itself (PR #1818
-    # finding 1, round 9): an unavailable PR read escalates
-    # pr-state-unavailable BEFORE the label-presence capture, so no removal
-    # must be attempted on that path.
-    [ "${MOCK_PR_JSON_EXIT:-0}" = "0" ] || exit 1
-    # First fetch (state read) vs the final-block CI re-read: from the SECOND
-    # full-state fetch on, MOCK_REVALIDATE_PR_JSON (if set) replaces the
-    # payload — it simulates a CI check re-triggered on the same head after
-    # the verdicts were read (PR #1818 findings 2 and 3, rounds 5 and 9: the
-    # switch is keyed on the fetch count, not on the head-revalidate call
-    # having run, because the reviewer rescan now precedes the CI re-read).
-    # MOCK_LATE_CI_PR_JSON (PR #1818 finding 3, round 9) additionally replaces
-    # the payload only once the reviewer finding rescan has run (the SECOND
-    # comments fetch: main-gate scan, final-block revalidation rescan) — it
-    # simulates a CI rerun to pending/failure DURING the rescan window,
-    # which a CI read taken before the rescan never sees.
-    _s_calls="$(grep -c -- '--json headRefOid,headRefName,baseRefOid,labels,statusCheckRollup' "${MOCK_CALL_LOG:-/dev/null}" 2>/dev/null || true)"
-    _c2="$(grep -c -- 'pulls/42/comments' "${MOCK_CALL_LOG:-/dev/null}" 2>/dev/null || true)"
-    if [ -n "${MOCK_LATE_CI_PR_JSON:-}" ] && [ "${_c2:-0}" -ge 2 ]; then
-      emit "$MOCK_LATE_CI_PR_JSON"
-    elif [ "${_s_calls:-0}" -ge 1 ] && [ -n "${MOCK_REVALIDATE_PR_JSON:-}" ]; then
-      emit "$MOCK_REVALIDATE_PR_JSON"
-    else
-      emit "${MOCK_PR_JSON:-$pr_default}"
-    fi
-    printf '%s\n' "$*" >>"${MOCK_CALL_LOG:-/dev/null}" 2>/dev/null || true
-    exit 0
-    ;;
-  *"actions/runs"*)
-    # Round 16 (thread PRRT_kwDORWAxaM6m2OtD): Claude Code Action completion
-    # evidence — the workflow_dispatch runs list. MOCK_WORKFLOW_RUNS carries
-    # the workflow_runs array (empty for "no run").
-    printf '%s\n' "$*" >>"${MOCK_CALL_LOG:-/dev/null}" 2>/dev/null || true
-    emit "[{\"total_count\":1,\"workflow_runs\":[${MOCK_WORKFLOW_RUNS:-}]}]"
-    exit 0
-    ;;
-  *"runs/"*"/logs"*)
-    # Round 17 (PRRT_kwDORWAxaM6m260z): run-log positive-execution check —
-    # MOCK_RUN_LOG_EXIT=1 fails the fetch (no positive evidence); an empty
-    # MOCK_RUN_LOG is a no-op log (grep matches nothing → refuse).
-    printf '%s\n' "$*" >>"${MOCK_CALL_LOG:-/dev/null}" 2>/dev/null || true
-    [ "${MOCK_RUN_LOG_EXIT:-0}" = "0" ] || exit 1
-    printf '%s\n' "${MOCK_RUN_LOG:-}"
-    exit 0
-    ;;
-  *"commits/"*"--jq"*)
-    # Round 17 (PRRT_kwDORWAxaM6m2607): head push time for the greptile
-    # cycle binding — `gh api repos/<r>/commits/<sha> --jq .commit.committer.date`.
-    printf '%s\n' "$*" >>"${MOCK_CALL_LOG:-/dev/null}" 2>/dev/null || true
-    emit "${MOCK_HEAD_COMMIT_JSON:-{\"commit\":{\"committer\":{\"date\":\"2026-01-05T00:00:00Z\"}}}}"
-    exit 0
-    ;;
-  *"HeadRefForcePushedEvent"*)
-    # Round 31 (PRRT_kwDORWAxaM6nCTd8): head-occupancy timeline. When
-    # MOCK_OCC_TIMELINE is set it is served verbatim as the nodes array;
-    # otherwise the stub synthesizes the ordinary single-occupancy history:
-    # the head commit node followed by every MOCK_ISSUE_COMMENTS comment.
-    printf '%s\n' "$*" >>"${MOCK_CALL_LOG:-/dev/null}" 2>/dev/null || true
-    [ "${MOCK_OCC_TIMELINE_EXIT:-0}" = "0" ] || exit 1
-    if [ -n "${MOCK_OCC_TIMELINE:-}" ]; then
-      _nodes="$MOCK_OCC_TIMELINE"
-    else
-      _nodes="$(jq -cn --argjson ic "[${MOCK_ISSUE_COMMENTS:-[]}]" --argjson rv "[${MOCK_REVIEWS:-[]}]" '[{"__typename":"PullRequestCommit","commit":{"oid":"aaaa111000000000000"}}] + [ $rv[][]? | {"__typename":"PullRequestReview","databaseId":(.id // 0)} ] + [ $ic[][]? | {"__typename":"IssueComment","databaseId":(.id // 0)} ]')"
-    fi
-    if [ -n "${MOCK_OCC_TIMELINE_PAGE2:-}" ]; then
-      printf '%s\n' "[{\"data\":{\"repository\":{\"pullRequest\":{\"timelineItems\":{\"nodes\":${_nodes}}}}}},{\"data\":{\"repository\":{\"pullRequest\":{\"timelineItems\":{\"nodes\":${MOCK_OCC_TIMELINE_PAGE2}}}}}}]"
-    else
-      printf '%s\n' "[{\"data\":{\"repository\":{\"pullRequest\":{\"timelineItems\":{\"nodes\":${_nodes}}}}}}]"
-    fi
-    exit 0
-    ;;
-  *"reviewThreads"*)
-    # Round 27 (PRRT_kwDORWAxaM6m7SZu): unresolved bot review threads.
-    # MOCK_REVIEW_THREADS carries the thread nodes array (default none);
-    # MOCK_REVIEW_THREADS_EXIT=1 fails the read. Emitted as a slurped page
-    # array, the shape --paginate --slurp yields.
-    printf '%s\n' "$*" >>"${MOCK_CALL_LOG:-/dev/null}" 2>/dev/null || true
-    [ "${MOCK_REVIEW_THREADS_EXIT:-0}" = "0" ] || exit 1
-    printf '%s\n' "[{\"data\":{\"repository\":{\"pullRequest\":{\"reviewThreads\":{\"nodes\":${MOCK_REVIEW_THREADS:-[]}}}}}}]"
-    exit 0
-    ;;
-  *"api graphql"*)
-    # Round 18 (PRRT_kwDORWAxaM6m36Wu): greptile's push-observation binding —
-    # the PR timeline (PullRequestCommit / IssueComment nodes in server
-    # order). MOCK_OCC_TIMELINE carries the timelineItems nodes array; the
-    # stub applies the caller's --jq filter itself (emit would re-apply it
-    # to the already-filtered nodes).
-    printf '%s\n' "$*" >>"${MOCK_CALL_LOG:-/dev/null}" 2>/dev/null || true
-    [ "${MOCK_OCC_TIMELINE_EXIT:-0}" = "0" ] || exit 1
-    # Round 19 (PRRT_kwDORWAxaM6m5slK): the helper now paginates (--paginate
-    # --slurp), so the stub emits an ARRAY OF PAGES. MOCK_OCC_TIMELINE_PAGE2,
-    # when set, is a second page's nodes (the head commit can sit on page 1
-    # with the trigger only on page 2).
-    if [ -n "${MOCK_OCC_TIMELINE_PAGE2:-}" ]; then
-      printf '%s\n' "[{\"data\":{\"repository\":{\"pullRequest\":{\"timelineItems\":{\"nodes\":${MOCK_OCC_TIMELINE:-[]}}}}}},{\"data\":{\"repository\":{\"pullRequest\":{\"timelineItems\":{\"nodes\":${MOCK_OCC_TIMELINE_PAGE2}}}}}}]"
-    else
-      printf '%s\n' "[{\"data\":{\"repository\":{\"pullRequest\":{\"timelineItems\":{\"nodes\":${MOCK_OCC_TIMELINE:-[]}}}}}}]"
-    fi
-    exit 0
-    ;;
-  *"collaborators/"*"/permission"*)
-    # Round 19 (PRRT_kwDORWAxaM6m5slC): repository-permission lookup for the
-    # ledger author trust check. MOCK_PERMS is a space-separated list of
-    # login=permission pairs; an unlisted login has no access (exit 1, as
-    # the API 404s for a non-collaborator).
-    printf '%s\n' "$*" >>"${MOCK_CALL_LOG:-/dev/null}" 2>/dev/null || true
-    _pl="$(printf '%s' "$*" | sed -n 's#.*collaborators/\([^/]*\)/permission.*#\1#p')"
-    for _kv in ${MOCK_PERMS:-}; do
-      if [ "${_kv%%=*}" = "$_pl" ]; then printf '%s\n' "${_kv#*=}"; exit 0; fi
-    done
-    exit 1
-    ;;
-  *"run view"*)
-    # Round 17 (PRRT_kwDORWAxaM6m260z): the claude-action run log fetch.
-    printf '%s\n' "$*" >>"${MOCK_CALL_LOG:-/dev/null}" 2>/dev/null || true
-    [ "${MOCK_RUN_LOG_EXIT:-0}" = "0" ] || exit 1
-    printf '%s\n' "${MOCK_RUN_LOG:-}"
-    exit 0
-    ;;
-  *"issues/comments/"*"/reactions"*)
-    # Round 15 (thread PRRT_kwDORWAxaM6m1pF_): Greptile completion evidence —
-    # a bot +1 on the trigger comment. MOCK_GREPTILE_REACTION carries the
-    # reaction list payload (bot login + content "+1").
-    printf '%s\n' "$*" >>"${MOCK_CALL_LOG:-/dev/null}" 2>/dev/null || true
-    emit "${MOCK_GREPTILE_REACTION:-[]}"
-    exit 0
-    ;;
-  *"pr view"*"--json headRefName,headRepositoryOwner,headRepository,isCrossRepository"*)
-    # PR ownership guard (#1837, pr-ownership-guard.sh via apply-readiness-labels.sh).
-    # MOCK_OWNERSHIP_PR_JSON overrides the whole payload for dedicated ownership
-    # tests; otherwise the default derives headRefName from MOCK_PR_JSON so every
-    # pre-existing readiness fixture's ownership check passes by construction
-    # (it reports the same branch the readiness fixture already declares) and
-    # the owning repository matches the default acme/widgets fixture repo.
-    printf '%s\n' "$*" >>"${MOCK_CALL_LOG:-/dev/null}" 2>/dev/null || true
-    if [ -n "${MOCK_OWNERSHIP_PR_JSON:-}" ]; then
-      emit "$MOCK_OWNERSHIP_PR_JSON"
-    else
-      _own_branch="$(printf '%s\n' "${MOCK_PR_JSON:-$pr_default}" | jq -r '.headRefName // empty' 2>/dev/null)"
-      [ -n "$_own_branch" ] || _own_branch='fix/1408-demo'
-      printf '{"headRefName":"%s","headRepositoryOwner":{"login":"acme"},"headRepository":{"name":"widgets"},"isCrossRepository":%s}\n' \
-        "$_own_branch" "${MOCK_OWNERSHIP_CROSS:-false}"
-    fi
-    exit 0
-    ;;
-  *"pr view"*)
-    emit "${MOCK_PR_JSON:-$pr_default}"
-    exit 0
-    ;;
-  *"/check-runs"*)
-    # The helper fetches with `--paginate --slurp`, so gh returns an array of
-    # pages. MOCK_CHECK_RUNS may carry several comma-separated page objects.
-    # From the second fetch on (the pre-apply revalidation),
-    # MOCK_REVALIDATE_CHECK_RUNS (if set) replaces the payload — it simulates a
-    # check run re-triggered on the same head after the verdicts were read
-    # (PR #1818 finding 2, round 5) — and MOCK_REVALIDATE_CHECK_RUNS_EXIT (if
-    # nonzero) fails the revalidation fetch itself (PR #1818 finding 1,
-    # round 6).
-    # Decide BEFORE appending this call to the log, so the first fetch always
-    # sees a log with no prior /check-runs call and gets MOCK_CHECK_RUNS.
-    if grep -q '/check-runs' "${MOCK_CALL_LOG:-/dev/null}" 2>/dev/null; then
-      [ "${MOCK_REVALIDATE_CHECK_RUNS_EXIT:-0}" = "0" ] || exit 1
-      if [ -n "${MOCK_REVALIDATE_CHECK_RUNS:-}" ]; then
-        payload="[${MOCK_REVALIDATE_CHECK_RUNS}]"
-      else
-        payload="[${MOCK_CHECK_RUNS:-$check_runs_default}]"
-      fi
-    else
-      [ "${MOCK_CHECK_RUNS_EXIT:-0}" = "0" ] || exit 1
-      payload="[${MOCK_CHECK_RUNS:-$check_runs_default}]"
-    fi
-    printf '%s\n' "$*" >>"${MOCK_CALL_LOG:-/dev/null}" 2>/dev/null || true
-    emit "$payload"
-    exit 0
-    ;;
-  *"/pulls/"*"/comments"*)
-    # MOCK_REVALIDATE_COMMENTS (if set) replaces the payload from the second
-    # fetch on — the final-block finding rescan must be able to see findings
-    # that did not exist (or were not yet posted) at the first scan (PR #1818
-    # finding 2, round 6). MOCK_RERUN_COMMENTS additionally simulates a
-    # blocking comment posted by a same-SHA rerun after the first scan (PR
-    # #1818 finding 2, rounds 8-9): from the SECOND comments fetch on (the
-    # final-block rescan, the last reviewer read before the mutation) the
-    # payload gains the rerun's comments, so the rescan still sees them.
-    # Decide BEFORE appending to the call log.
-    _c_calls="$(grep -c -- 'pulls/42/comments' "${MOCK_CALL_LOG:-/dev/null}" 2>/dev/null || true)"
-    if [ -n "${MOCK_REVALIDATE_COMMENTS:-}" ] \
-        && grep -q '/pulls/42/comments' "${MOCK_CALL_LOG:-/dev/null}" 2>/dev/null; then
-      emit "[${MOCK_REVALIDATE_COMMENTS}]"
-    elif [ "${_c_calls:-0}" -ge 1 ] && [ -n "${MOCK_RERUN_COMMENTS:-}" ]; then
-      _base="${MOCK_COMMENTS:-$empty_array}"
-      if [ "$_base" = "[]" ]; then
-        emit "[[${MOCK_RERUN_COMMENTS}]]"
-      else
-        emit "[${_base%,}]},${MOCK_RERUN_COMMENTS}]"
-      fi
-    else
-      emit "[${MOCK_COMMENTS:-$empty_array}]"
-    fi
-    printf '%s\n' "$*" >>"${MOCK_CALL_LOG:-/dev/null}" 2>/dev/null || true
-    exit 0
-    ;;
-  *"/pulls/"*"/reviews"*)
-    emit "[${MOCK_REVIEWS:-$empty_array}]"
-    printf '%s\n' "$*" >>"${MOCK_CALL_LOG:-/dev/null}" 2>/dev/null || true
-    exit 0
-    ;;
-  *"/issues/"*"/comments"*)
-    # Round 18 (threads PRRT_kwDORWAxaM6m36Wn/Wu): the issue-comments read
-    # itself is paginated+slurped by the helper, so the stub emits a page
-    # array. MOCK_ISSUE_COMMENTS carries ONE page's array; each comment may
-    # additionally carry an author_association (the real REST payload does)
-    # for the ledger trust filter, and MOCK_LEDGER_ASSEDGE_* fixtures append
-    # it here when the raw fixture lacks it.
-    emit "[${MOCK_ISSUE_COMMENTS:-$empty_array}]"
-    printf '%s\n' "$*" >>"${MOCK_CALL_LOG:-/dev/null}" 2>/dev/null || true
-    exit 0
-    ;;
-  *"repo view"*)
-    emit '{"nameWithOwner":"acme/widgets"}'
-    exit 0
-    ;;
-  *"/contents/.ai-dev-workflow.yaml?ref=$MOCK_BASE_SHA"*)
-    # Base-branch configuration fetch (PR #1818 finding 1, round 4). A distinct
-    # variable so head and base payloads differ in one invocation.
-    # `tr -d '\n'`: GNU coreutils base64 wraps at 76 columns by default, which
-    # would embed literal newlines in the JSON content string and fail the
-    # suite on Linux with base-config-unreadable (PR #1818 finding 3, round 7).
-    [ "${MOCK_BASE_CONFIG_EXIT:-0}" = "0" ] || exit 1
-    content="$(printf '%s\n' "${MOCK_BASE_CONFIG:-review:
-  on_ready:
-    github: []}" | base64 | tr -d '\n')"
-    emit "{\"content\":\"$content\"}"
-    exit 0
-    ;;
-  *"/contents/.ai-dev-workflow.yaml"*)
-    # PR-head configuration fetch (#1408 finding 1). MOCK_HEAD_CONFIG carries
-    # the raw YAML body; MOCK_HEAD_CONFIG_EXIT simulates the API failure.
-    # Same `tr -d '\n'` wrap guard as the base-config arm above.
-    [ "${MOCK_HEAD_CONFIG_EXIT:-0}" = "0" ] || exit 1
-    content="$(printf '%s\n' "${MOCK_HEAD_CONFIG:-review:
-  on_ready:
-    github:
-      - bugbot}" | base64 | tr -d '\n')"
-    emit "{\"content\":\"$content\"}"
-    exit 0
-    ;;
-esac
-exit 0
-GH
-chmod +x "$_BIN/gh"
-
-# A minimal workflow config: bugbot is the ready-phase reviewer, so the helper
-# gates on the "Cursor Bugbot" check run and on cursor[bot] findings only.
-cat > "$TMP_ROOT/workflow.yaml" <<'YAML'
-review:
-  on_ready:
-    github:
-      - bugbot
-YAML
-
-HEAD='aaaa111000000000000'
-BASE_SHA='dddd444000000000000'
-_BRANCH='fix/1408-demo'
-_LABEL_LOG="$TMP_ROOT/gh-calls.log"
-_CALL_LOG="$TMP_ROOT/gh-all-calls.log"
-_LABEL_STATE="$TMP_ROOT/label-state"
-
-# run_helper — prints "<exit_code>|<stdout>". Payloads come from the MOCK_*
-# variables the caller set; a `${VAR:-{...}}` default here would not survive
-# parameter expansion, so the fallbacks are plain names.
-# order_log — after a run_helper call, prints one line per API call with the
-# call class substituted (head / check-runs / comments / reviews / issue-comments /
-# rollup-pr / edit), in call order. Ordering invariants (PR #1818 findings 2
-# and 3, round 9) are asserted against this: every revalidation/rescan call
-# must precede the final headRefOid re-fetch, which must precede `pr edit`.
-order_log() {
-  sed -e 's|.*--json headRefOid --jq.*|head|' \
-      -e 's|.*commits/[^ ]*/check-runs.*|check-runs|' \
-      -e 's|.*pulls/42/comments.*|comments|' \
-      -e 's|.*pulls/42/reviews.*|reviews|' \
-      -e 's|.*issues/42/comments.*|issue-comments|' \
-      -e 's|.*--json headRefOid,headRefName,baseRefOid,labels,statusCheckRollup.*|rollup-pr|' \
-      -e 's|.*pr edit.*|edit|' \
-      "$_CALL_LOG"
-}
-
-run_helper() {
-  local default_labels='{"labels":[]}'
-  local label="${MOCK_LABEL:-ready-for-human-review}"
-  # Ownership branch: derived from MOCK_PR_JSON's own headRefName (falling
-  # back to $_BRANCH) so the ownership guard (#1837) matches every fixture's
-  # own PR state by construction — the gate this wrapper exercises is the
-  # reviewer/CI gate, not ownership. MOCK_OWNERSHIP_BRANCH overrides it for
-  # dedicated ownership-mismatch tests.
-  local _ownership_branch="${MOCK_OWNERSHIP_BRANCH:-}"
-  if [ -z "$_ownership_branch" ]; then
-    _ownership_branch="$(printf '%s\n' "${MOCK_PR_JSON:-}" | jq -r '.headRefName // empty' 2>/dev/null)"
-    [ -n "$_ownership_branch" ] || _ownership_branch="$_BRANCH"
-  fi
-  local _dry_run_flag=()
-  [ "${MOCK_DRY_RUN:-false}" = "true" ] && _dry_run_flag=(--dry-run)
-  : >"$_LABEL_LOG"
-  : >"$_LABEL_STATE"
-  : >"$_CALL_LOG"
-  set +e
-  out="$(
-    PATH="$_BIN:$PATH" \
-    AI_DEV_WORKFLOW_CONFIG_FILE="$TMP_ROOT/workflow.yaml" \
-    MOCK_GH_LOG="$_LABEL_LOG" \
-    MOCK_CALL_LOG="$_CALL_LOG" \
-    MOCK_LABEL_STATE="$_LABEL_STATE" \
-    MOCK_PR_JSON="${MOCK_PR_JSON:-}" \
-    MOCK_OWNERSHIP_PR_JSON="${MOCK_OWNERSHIP_PR_JSON:-}" \
-    MOCK_CHECK_RUNS="${MOCK_CHECK_RUNS:-}" \
-    MOCK_COMMENTS="${MOCK_COMMENTS:-[]}" \
-    MOCK_REVIEWS="${MOCK_REVIEWS:-[]}" \
-    MOCK_LABELS="${MOCK_LABELS:-$default_labels}" \
-    MOCK_ISSUE_COMMENTS="${MOCK_ISSUE_COMMENTS:-[]}" \
-    MOCK_REVALIDATE_HEAD="${MOCK_REVALIDATE_HEAD:-}" \
-    MOCK_POST_APPLY_HEAD="${MOCK_POST_APPLY_HEAD:-}" \
-    MOCK_DROP_LABEL="${MOCK_DROP_LABEL:-0}" \
-    MOCK_HEAD_CONFIG="${MOCK_HEAD_CONFIG:-}" \
-    MOCK_HEAD_CONFIG_EXIT="${MOCK_HEAD_CONFIG_EXIT:-0}" \
-    MOCK_BASE_SHA="$BASE_SHA" \
-    MOCK_BASE_CONFIG="${MOCK_BASE_CONFIG:-}" \
-    MOCK_BASE_CONFIG_EXIT="${MOCK_BASE_CONFIG_EXIT:-0}" \
-    MOCK_REVALIDATE_CHECK_RUNS="${MOCK_REVALIDATE_CHECK_RUNS:-}" \
-    MOCK_REVALIDATE_PR_JSON="${MOCK_REVALIDATE_PR_JSON:-}" \
-    MOCK_REVALIDATE_COMMENTS="${MOCK_REVALIDATE_COMMENTS:-}" \
-    MOCK_REVALIDATE_CHECK_RUNS_EXIT="${MOCK_REVALIDATE_CHECK_RUNS_EXIT:-0}" \
-    MOCK_POST_VIEW_EXIT="${MOCK_POST_VIEW_EXIT:-0}" \
-    MOCK_CHECK_RUNS_EXIT="${MOCK_CHECK_RUNS_EXIT:-0}" \
-    MOCK_PR_JSON_EXIT="${MOCK_PR_JSON_EXIT:-0}" \
-    MOCK_LATE_CI_PR_JSON="${MOCK_LATE_CI_PR_JSON:-}" \
-    MOCK_FINAL_REVALIDATE_HEAD="${MOCK_FINAL_REVALIDATE_HEAD:-}" \
-    MOCK_RERUN_COMMENTS="${MOCK_RERUN_COMMENTS:-}" \
-    MOCK_REMOVE_LABEL_EXIT="${MOCK_REMOVE_LABEL_EXIT:-0}" \
-    MOCK_WORKFLOW_RUNS="${MOCK_WORKFLOW_RUNS:-}" \
-    MOCK_GH_USER="${MOCK_GH_USER:-}" \
-    MOCK_TMP_ROOT="$TMP_ROOT" \
-    MOCK_OCC_TIMELINE="${MOCK_OCC_TIMELINE:-}" \
-    MOCK_OCC_TIMELINE_PAGE2="${MOCK_OCC_TIMELINE_PAGE2:-}" \
-    MOCK_REVIEW_THREADS="${MOCK_REVIEW_THREADS:-}" \
-    MOCK_REVIEW_THREADS_EXIT="${MOCK_REVIEW_THREADS_EXIT:-0}" \
-    MOCK_OCC_TIMELINE_EXIT="${MOCK_OCC_TIMELINE_EXIT:-0}" \
-    MOCK_PERMS="${MOCK_PERMS:-}" \
-    PR_AGENT_BOT_LOGIN="${PR_AGENT_BOT_LOGIN:-github-actions[bot]}" \
-    "$HELPER" --pr 42 --repo acme/widgets --branch "$_ownership_branch" --label "$label" "${_dry_run_flag[@]+"${_dry_run_flag[@]}"}" 2>/dev/null
-  )"
-  code=$?
-  set -e
-  printf '%s|%s\n' "$code" "$out"
-}
-
-field() {
-  printf '%s\n' "${1#*|}" | sed -n "s/^$2=//p" | tail -1
-}
-
-edit_count() {
-  if [ -s "$_LABEL_LOG" ]; then wc -l <"$_LABEL_LOG" | tr -d ' '; else printf '0'; fi
-}
-
-# call_count <pattern> — number of calls in the shared call log matching the
-# pattern (pattern must not start with a dash). Used for the round-9
-# CI-revalidation repeat and escalate-cleanup assertions (PR #1818 findings 1
-# and 3, round 9).
-call_count() {
-  grep -c "$1" "$_CALL_LOG" 2>/dev/null || printf '0'
-}
-
-_empty_rollup='{"headRefOid":"'"$HEAD"'","headRefName":"'"$_BRANCH"'","baseRefOid":"'"$BASE_SHA"'","labels":[],"statusCheckRollup":[]}'
-_bugbot_ok='{"check_runs":[{"name":"Cursor Bugbot","status":"completed","conclusion":"success","started_at":"2026-01-01T00:00:00Z"}]}'
-_bugbot_running='{"check_runs":[{"name":"Cursor Bugbot","status":"in_progress","conclusion":null,"started_at":"2026-01-01T00:00:00Z"}]}'
-_bugbot_failed='{"check_runs":[{"name":"Cursor Bugbot","status":"completed","conclusion":"failure","started_at":"2026-01-01T00:00:00Z"}]}'
-# A duplicate historical run must not shadow the latest one (#1408 reuses the
-# rollup dedupe; this asserts the check-run read picks the newest by started_at).
-_bugbot_dup='{"check_runs":[{"name":"Cursor Bugbot","status":"completed","conclusion":"failure","started_at":"2026-01-01T00:00:00Z"},{"name":"Cursor Bugbot","status":"completed","conclusion":"success","started_at":"2026-02-01T00:00:00Z"}]}'
-# Bugbot's quota refusal: a `neutral` check run plus a usage-limit issue comment.
-# Observed on PR #1818; a bare `neutral` previously read as clean.
-_bugbot_neutral='{"check_runs":[{"name":"Cursor Bugbot","status":"completed","conclusion":"neutral","started_at":"2026-01-01T00:00:00Z"}]}'
-_usage_limit_comment='[{"user":{"login":"cursor[bot]"},"created_at":"2026-01-02T00:00:00Z","body":"<h3>Bugbot couldn'\''t run - usage limit reached</h3>"}]'
-_with_ci() {
-  printf '{"headRefOid":"%s","headRefName":"%s","labels":[],"statusCheckRollup":[{"__typename":"CheckRun","name":"ShellCheck","workflowName":"ShellCheck","status":"COMPLETED","conclusion":"%s"}]}' "$HEAD" "$_BRANCH" "$1"
-}
+# shellcheck source=scripts/development-workflow/tests/lib/readiness-label-fixture.sh
+source "$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)/lib/readiness-label-fixture.sh"
 
 echo "=== Area 1: refuse on incomplete reviewer verdict ==="
 
 # Planted failing case: reviewer never published a check run for this head.
+# shellcheck disable=SC2154 # Provided by the shared readiness fixture or its caller.
 MOCK_PR_JSON="$_empty_rollup"
 MOCK_CHECK_RUNS='{"check_runs":[]}'
 result="$(run_helper)"
@@ -562,6 +38,7 @@ run_test "absent_reviewer_check_result" "refused" "$(field "$result" RESULT)"
 run_test "absent_reviewer_check_no_label_applied" "0" "$(edit_count)"
 
 # Reviewer started but has not finished.
+# shellcheck disable=SC2154 # Provided by the shared readiness fixture or its caller.
 MOCK_CHECK_RUNS="$_bugbot_running"
 result="$(run_helper)"
 run_test "reviewer_not_completed_exit" "1" "${result%%|*}"
@@ -569,6 +46,7 @@ run_test "reviewer_not_completed_reason" "reviewer-check-not-completed" "$(field
 run_test "reviewer_not_completed_no_label_applied" "0" "$(edit_count)"
 
 # Reviewer completed with blocking findings.
+# shellcheck disable=SC2154 # Provided by the shared readiness fixture or its caller.
 MOCK_CHECK_RUNS="$_bugbot_failed"
 MOCK_COMMENTS='[{"user":{"login":"cursor[bot]"},"commit_id":"'"$HEAD"'","in_reply_to_id":null,"body":"**High Severity** leak in the reject path"}]'
 result="$(run_helper)"
@@ -579,6 +57,7 @@ run_test "blocking_findings_marked_needs_fixes" "1" "$(grep -c 'add-label needs-
 run_test "blocking_findings_no_readiness_label" "0" "$(grep -c 'add-label ready-for-human-review' "$_LABEL_LOG" || true)"
 
 # A CHANGES_REQUESTED review is blocking regardless of body text.
+# shellcheck disable=SC2154 # Provided by the shared readiness fixture or its caller.
 MOCK_CHECK_RUNS="$_bugbot_ok"
 MOCK_COMMENTS='[]'
 MOCK_REVIEWS='[{"user":{"login":"cursor[bot]"},"commit_id":"'"$HEAD"'","state":"CHANGES_REQUESTED","body":"","submitted_at":"2026-01-02T00:00:00Z"}]'
@@ -643,6 +122,7 @@ run_test "reviewer_check_not_counted_as_ci" "refused" "$(field "$result" RESULT)
 run_test "reviewer_check_excluded_from_ci_counts" "0" "$(field "$result" FAILING_CHECK_COUNT)"
 
 # Latest check-run wins when duplicates exist for the same name.
+# shellcheck disable=SC2154 # Provided by the shared readiness fixture or its caller.
 MOCK_CHECK_RUNS="$_bugbot_dup"
 MOCK_PR_JSON="$(_with_ci SUCCESS)"
 result="$(run_helper)"
@@ -656,7 +136,9 @@ run_test "queued_rerun_beats_older_success_reason" "reviewer-check-not-completed
 # A `neutral` Bugbot check is clean ONLY when no unavailable notice exists for
 # the head. These two assertions are the planted failing case for PR #1818,
 # where a bare `neutral` was read as a clean reviewer verdict.
+# shellcheck disable=SC2154 # Provided by the shared readiness fixture or its caller.
 MOCK_CHECK_RUNS="$_bugbot_neutral"
+# shellcheck disable=SC2154 # Provided by the shared readiness fixture or its caller.
 MOCK_ISSUE_COMMENTS="$_usage_limit_comment"
 MOCK_PR_JSON="$(_with_ci SUCCESS)"
 result="$(run_helper)"
@@ -856,6 +338,7 @@ run_test "regression_label_allows_pending_ci_result" "labeled" "$(field "$result
 MOCK_PR_JSON="$(_with_ci FAILURE)"
 result="$(run_helper)"
 run_test "regression_label_still_refuses_failing_ci" "ci-failing" "$(field "$result" REASON)"
+# shellcheck disable=SC2034 # Assigned for functions in the sourced readiness fixture.
 MOCK_LABEL=''
 
 echo ""
@@ -953,55 +436,7 @@ echo "=== Area 7: PR #1818 Codex findings, round 2 ==="
 # review" (present and clean → labeled). run_helper keeps
 # AI_DEV_WORKFLOW_CONFIG_FILE set for the other areas; here it is unset so the
 # head-config path runs.
-run_helper_no_local_config() {
-  local label="${MOCK_LABEL:-ready-for-human-review}"
-  local _ownership_branch="${MOCK_OWNERSHIP_BRANCH:-}"
-  if [ -z "$_ownership_branch" ]; then
-    _ownership_branch="$(printf '%s\n' "${MOCK_PR_JSON:-}" | jq -r '.headRefName // empty' 2>/dev/null)"
-    [ -n "$_ownership_branch" ] || _ownership_branch="$_BRANCH"
-  fi
-  : >"$_LABEL_LOG"
-  : >"$_LABEL_STATE"
-  : >"$_CALL_LOG"
-  set +e
-  out="$(
-    PATH="$_BIN:$PATH" \
-    WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT="${MOCK_LOCAL_OVERRIDE_ROOT:-$ISOLATED_OVERRIDE_ROOT}" \
-    MOCK_GH_LOG="$_LABEL_LOG" \
-    MOCK_CALL_LOG="$_CALL_LOG" \
-    MOCK_LABEL_STATE="$_LABEL_STATE" \
-    MOCK_PR_JSON="${MOCK_PR_JSON:-}" \
-    MOCK_OWNERSHIP_PR_JSON="${MOCK_OWNERSHIP_PR_JSON:-}" \
-    MOCK_CHECK_RUNS="${MOCK_CHECK_RUNS:-}" \
-    MOCK_COMMENTS="${MOCK_COMMENTS:-[]}" \
-    MOCK_REVIEWS="${MOCK_REVIEWS:-[]}" \
-    MOCK_LABELS='{"labels":[]}' \
-    MOCK_ISSUE_COMMENTS="${MOCK_ISSUE_COMMENTS:-[]}" \
-    MOCK_REVALIDATE_HEAD="${MOCK_REVALIDATE_HEAD:-}" \
-    MOCK_POST_APPLY_HEAD="${MOCK_POST_APPLY_HEAD:-}" \
-    MOCK_DROP_LABEL="${MOCK_DROP_LABEL:-0}" \
-    MOCK_HEAD_CONFIG="${MOCK_HEAD_CONFIG:-}" \
-    MOCK_HEAD_CONFIG_EXIT="${MOCK_HEAD_CONFIG_EXIT:-0}" \
-    MOCK_BASE_SHA="$BASE_SHA" \
-    MOCK_BASE_CONFIG="${MOCK_BASE_CONFIG:-}" \
-    MOCK_BASE_CONFIG_EXIT="${MOCK_BASE_CONFIG_EXIT:-0}" \
-    MOCK_REVALIDATE_CHECK_RUNS="${MOCK_REVALIDATE_CHECK_RUNS:-}" \
-    MOCK_REVALIDATE_PR_JSON="${MOCK_REVALIDATE_PR_JSON:-}" \
-    MOCK_REVALIDATE_COMMENTS="${MOCK_REVALIDATE_COMMENTS:-}" \
-    MOCK_REVALIDATE_CHECK_RUNS_EXIT="${MOCK_REVALIDATE_CHECK_RUNS_EXIT:-0}" \
-    MOCK_POST_VIEW_EXIT="${MOCK_POST_VIEW_EXIT:-0}" \
-    MOCK_CHECK_RUNS_EXIT="${MOCK_CHECK_RUNS_EXIT:-0}" \
-    MOCK_PR_JSON_EXIT="${MOCK_PR_JSON_EXIT:-0}" \
-    MOCK_LATE_CI_PR_JSON="${MOCK_LATE_CI_PR_JSON:-}" \
-    MOCK_FINAL_REVALIDATE_HEAD="${MOCK_FINAL_REVALIDATE_HEAD:-}" \
-    MOCK_RERUN_COMMENTS="${MOCK_RERUN_COMMENTS:-}" \
-    MOCK_REMOVE_LABEL_EXIT="${MOCK_REMOVE_LABEL_EXIT:-0}" \
-    "$HELPER" --pr 42 --repo acme/widgets --branch "$_ownership_branch" --label "$label" 2>/dev/null
-  )"
-  code=$?
-  set -e
-  printf '%s|%s\n' "$code" "$out"
-}
+
 
 MOCK_PR_JSON="$_empty_rollup"
 MOCK_CHECK_RUNS='{"check_runs":[{"name":"Ronda review","status":"completed","conclusion":"success","started_at":"2026-01-01T00:00:00Z"}]}'
@@ -1022,6 +457,7 @@ run_test "pr_head_config_platforms_result" "labeled" "$(field "$result" RESULT)"
 MOCK_CHECK_RUNS="$_bugbot_ok"
 MOCK_HEAD_CONFIG_EXIT=1
 result="$(run_helper_no_local_config)"
+# shellcheck disable=SC2034 # Assigned for functions in the sourced readiness fixture.
 MOCK_HEAD_CONFIG_EXIT=0
 run_test "head_config_unreadable_escalates_exit" "2" "${result%%|*}"
 run_test "head_config_unreadable_reason" "ready-config-unreadable" "$(field "$result" REASON)"
@@ -1063,7 +499,9 @@ run_test "outdated_and_addressed_threads_do_not_block_result" "labeled" "$(field
 MOCK_REVIEW_THREADS_EXIT=1
 result="$(run_helper)"
 run_test "thread_fetch_failure_escalates_reason" "review-thread-fetch-failed" "$(field "$result" REASON)"
+# shellcheck disable=SC2034 # Assigned for functions in the sourced readiness fixture.
 MOCK_REVIEW_THREADS_EXIT=0
+# shellcheck disable=SC2034 # Assigned for functions in the sourced readiness fixture.
 MOCK_REVIEW_THREADS=''
 MOCK_COMMENTS='[{"user":{"login":"cursor[bot]"},"commit_id":"'"$HEAD"'","in_reply_to_id":null,"created_at":"2026-03-02T00:00:00Z","body":"**High Severity** fresh finding"}]'
 result="$(run_helper)"
@@ -1240,6 +678,7 @@ run_test "base_policy_names_base_only" "Ronda review" "$(field "$result" REVIEWE
 MOCK_CHECK_RUNS="$_bugbot_ok"
 MOCK_BASE_CONFIG_EXIT=1
 result="$(run_helper_no_local_config)"
+# shellcheck disable=SC2034 # Assigned for functions in the sourced readiness fixture.
 MOCK_BASE_CONFIG_EXIT=0
 run_test "nonempty_head_base_fetch_failure_escalates_exit" "2" "${result%%|*}"
 run_test "nonempty_head_base_fetch_failure_reason" "base-config-unreadable" "$(field "$result" REASON)"
@@ -1518,7 +957,9 @@ MOCK_RERUN_COMMENTS=''
 MOCK_REVALIDATE_CHECK_RUNS=''
 MOCK_REVALIDATE_PR_JSON=''
 MOCK_REVALIDATE_COMMENTS=''
+# shellcheck disable=SC2034 # Assigned for functions in the sourced readiness fixture.
 MOCK_POST_VIEW_EXIT=0
+# shellcheck disable=SC2034 # Assigned for functions in the sourced readiness fixture.
 MOCK_POST_APPLY_HEAD=''
 MOCK_REVALIDATE_HEAD=''
 MOCK_DROP_LABEL=0
@@ -1549,6 +990,7 @@ MOCK_PR_JSON="$_label_present_pr"
 MOCK_CHECK_RUNS="$_bugbot_ok"
 MOCK_REVALIDATE_HEAD='bbbb222000000000000'
 result="$(run_helper)"
+# shellcheck disable=SC2034 # Assigned for functions in the sourced readiness fixture.
 MOCK_REVALIDATE_HEAD=''
 run_test "head_drift_refusal_removes_stale_label" "1" "$(grep -c -- '--remove-label ready-for-human-review' "$_LABEL_LOG" || true)"
 run_test "head_drift_refusal_reason" "head-changed-before-apply" "$(field "$result" REASON)"
@@ -1578,6 +1020,7 @@ MOCK_PR_JSON="$_pre_remove_fail_pr"
 MOCK_CHECK_RUNS='{"check_runs":[]}'
 MOCK_REMOVE_LABEL_EXIT=1
 result="$(run_helper)"
+# shellcheck disable=SC2034 # Assigned for functions in the sourced readiness fixture.
 MOCK_REMOVE_LABEL_EXIT=0
 run_test "removal_failure_still_refuses" "reviewer-check-absent" "$(field "$result" REASON)"
 run_test "removal_failure_no_add" "0" "$(grep -c -- '--add-label ready-for-human-review' "$_LABEL_LOG" || true)"
@@ -1662,6 +1105,7 @@ MOCK_DROP_LABEL=0
 MOCK_PR_JSON="$_label_present_pr"
 MOCK_REVALIDATE_CHECK_RUNS_EXIT=1
 result="$(run_helper)"
+# shellcheck disable=SC2034 # Assigned for functions in the sourced readiness fixture.
 MOCK_REVALIDATE_CHECK_RUNS_EXIT=0
 run_test "escalate_unreadable_removes_stale_label" "1" "$(grep -c -- '--remove-label ready-for-human-review' "$_LABEL_LOG" || true)"
 run_test "escalate_unreadable_reason" "revalidation-unreadable" "$(field "$result" REASON)"
@@ -1672,6 +1116,7 @@ run_test "escalate_unreadable_exit" "2" "${result%%|*}"
 # fetch fails.
 MOCK_CHECK_RUNS_EXIT=1
 result="$(run_helper)"
+# shellcheck disable=SC2034 # Assigned for functions in the sourced readiness fixture.
 MOCK_CHECK_RUNS_EXIT=0
 run_test "escalate_main_gate_fetch_removes_stale_label" "1" "$(grep -c -- '--remove-label ready-for-human-review' "$_LABEL_LOG" || true)"
 run_test "escalate_main_gate_fetch_reason" "check-run-fetch-failed" "$(field "$result" REASON)"
@@ -1683,6 +1128,7 @@ run_test "escalate_main_gate_fetch_reason" "check-run-fetch-failed" "$(field "$r
 MOCK_PR_JSON=''
 MOCK_PR_JSON_EXIT=1
 result="$(run_helper)"
+# shellcheck disable=SC2034 # Assigned for functions in the sourced readiness fixture.
 MOCK_PR_JSON_EXIT=0
 MOCK_PR_JSON="$_empty_rollup"
 run_test "escalate_before_presence_no_removal" "0" "$(grep -c -- '--remove-label ready-for-human-review' "$_LABEL_LOG" || true)"
@@ -1722,6 +1168,7 @@ run_test "order_final_head_is_last_call_before_edit" "1" "$(
 # first read. Planted failing case for PR #1818 finding 3, round 9.
 MOCK_LATE_CI_PR_JSON='{"headRefOid":"'"$HEAD"'","headRefName":"'"$_BRANCH"'","labels":[],"statusCheckRollup":[{"__typename":"CheckRun","name":"ShellCheck","workflowName":"ShellCheck","status":"IN_PROGRESS","conclusion":null}]}'
 result="$(run_helper)"
+# shellcheck disable=SC2034 # Assigned for functions in the sourced readiness fixture.
 MOCK_LATE_CI_PR_JSON=''
 run_test "ci_rerun_during_rescan_window_refuses_reason" "reviewer-state-changed" "$(field "$result" REASON)"
 run_test "ci_rerun_during_rescan_window_no_add" "0" "$(grep -c -- '--add-label ready-for-human-review' "$_LABEL_LOG" || true)"
@@ -1750,12 +1197,19 @@ MOCK_REVIEWS='[]'
 MOCK_ISSUE_COMMENTS='[]'
 MOCK_HEAD_CONFIG=''
 MOCK_BASE_CONFIG=''
+# shellcheck disable=SC2034 # Assigned for functions in the sourced readiness fixture.
 MOCK_REVALIDATE_PR_JSON=''
+# shellcheck disable=SC2034 # Assigned for functions in the sourced readiness fixture.
 MOCK_REVALIDATE_COMMENTS=''
+# shellcheck disable=SC2034 # Assigned for functions in the sourced readiness fixture.
 MOCK_REVALIDATE_CHECK_RUNS=''
+# shellcheck disable=SC2034 # Assigned for functions in the sourced readiness fixture.
 MOCK_FINAL_REVALIDATE_HEAD=''
+# shellcheck disable=SC2034 # Assigned for functions in the sourced readiness fixture.
 MOCK_RERUN_COMMENTS=''
+# shellcheck disable=SC2034 # Assigned for functions in the sourced readiness fixture.
 MOCK_DROP_LABEL=0
+# shellcheck disable=SC2034 # Assigned for functions in the sourced readiness fixture.
 MOCK_LOCAL_OVERRIDE_ROOT=''
 
 _codex_config="$TMP_ROOT/codex-github-config"
@@ -1770,70 +1224,7 @@ YAML
 # clean COMMENTED review by chatgpt-codex-connector[bot] on the head SHA —
 # pre-fix the helper refused reviewer-check-name-unresolved before ever
 # reading the review surface.
-run_helper_platform() {
-  local label="${MOCK_LABEL:-ready-for-human-review}"
-  local _ownership_branch="${MOCK_OWNERSHIP_BRANCH:-}"
-  if [ -z "$_ownership_branch" ]; then
-    _ownership_branch="$(printf '%s\n' "${MOCK_PR_JSON:-}" | jq -r '.headRefName // empty' 2>/dev/null)"
-    [ -n "$_ownership_branch" ] || _ownership_branch="$_BRANCH"
-  fi
-  : >"$_LABEL_LOG"
-  : >"$_LABEL_STATE"
-  : >"$_CALL_LOG"
-  : >"${TMP_ROOT:-/tmp}/gh-user.cache"
-  set +e
-  out="$(
-    PATH="$_BIN:$PATH" \
-    WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT="$ISOLATED_OVERRIDE_ROOT" \
-    MOCK_GH_LOG="$_LABEL_LOG" \
-    MOCK_CALL_LOG="$_CALL_LOG" \
-    MOCK_LABEL_STATE="$_LABEL_STATE" \
-    MOCK_PR_JSON="${MOCK_PR_JSON:-}" \
-    MOCK_OWNERSHIP_PR_JSON="${MOCK_OWNERSHIP_PR_JSON:-}" \
-    MOCK_CHECK_RUNS="${MOCK_CHECK_RUNS:-}" \
-    MOCK_COMMENTS="${MOCK_COMMENTS:-[]}" \
-    MOCK_REVIEWS="${MOCK_REVIEWS:-[]}" \
-    MOCK_LABELS='{"labels":[]}' \
-    MOCK_ISSUE_COMMENTS="${MOCK_ISSUE_COMMENTS:-[]}" \
-    MOCK_REVALIDATE_HEAD="" \
-    MOCK_POST_APPLY_HEAD="" \
-    MOCK_DROP_LABEL="0" \
-    MOCK_HEAD_CONFIG="${MOCK_HEAD_CONFIG:-}" \
-    MOCK_HEAD_CONFIG_EXIT="${MOCK_HEAD_CONFIG_EXIT:-0}" \
-    MOCK_BASE_SHA="$BASE_SHA" \
-    MOCK_BASE_CONFIG="${MOCK_BASE_CONFIG:-}" \
-    MOCK_BASE_CONFIG_EXIT="${MOCK_BASE_CONFIG_EXIT:-0}" \
-    MOCK_REVALIDATE_CHECK_RUNS="" \
-    MOCK_REVALIDATE_PR_JSON="" \
-    MOCK_REVALIDATE_COMMENTS="" \
-    MOCK_REVALIDATE_CHECK_RUNS_EXIT="0" \
-    MOCK_POST_VIEW_EXIT="0" \
-    MOCK_CHECK_RUNS_EXIT="0" \
-    MOCK_PR_JSON_EXIT="0" \
-    MOCK_LATE_CI_PR_JSON="" \
-    MOCK_FINAL_REVALIDATE_HEAD="" \
-    MOCK_RERUN_COMMENTS="" \
-    MOCK_REMOVE_LABEL_EXIT="0" \
-    MOCK_GREPTILE_REACTION="${MOCK_GREPTILE_REACTION:-}" \
-    MOCK_WORKFLOW_RUNS="${MOCK_WORKFLOW_RUNS:-}" \
-    MOCK_RUN_LOG="${MOCK_RUN_LOG:-}" \
-    MOCK_RUN_LOG_EXIT="${MOCK_RUN_LOG_EXIT:-0}" \
-    MOCK_HEAD_COMMIT_JSON="${MOCK_HEAD_COMMIT_JSON:-}" \
-    MOCK_GH_USER="${MOCK_GH_USER:-}" \
-    MOCK_TMP_ROOT="$TMP_ROOT" \
-    MOCK_OCC_TIMELINE="${MOCK_OCC_TIMELINE:-}" \
-    MOCK_OCC_TIMELINE_PAGE2="${MOCK_OCC_TIMELINE_PAGE2:-}" \
-    MOCK_REVIEW_THREADS="${MOCK_REVIEW_THREADS:-}" \
-    MOCK_REVIEW_THREADS_EXIT="${MOCK_REVIEW_THREADS_EXIT:-0}" \
-    MOCK_OCC_TIMELINE_EXIT="${MOCK_OCC_TIMELINE_EXIT:-0}" \
-    MOCK_PERMS="${MOCK_PERMS:-}" \
-    PR_AGENT_BOT_LOGIN="${PR_AGENT_BOT_LOGIN:-github-actions[bot]}" \
-    "$HELPER" --pr 42 --repo acme/widgets --branch "$_ownership_branch" --label "$label" 2>/dev/null
-  )"
-  code=$?
-  set -e
-  printf '%s|%s\n' "$code" "$out"
-}
+
 
 _codex_platform_yaml='review:
   on_ready:
@@ -2083,6 +1474,7 @@ run_test "greptile_post_push_trigger_labels_result" "labeled" "$(field "$result"
 # last:100 omitted the anchor once >100 later events accumulated).
 MOCK_OCC_TIMELINE='[{"__typename":"PullRequestCommit","commit":{"oid":"'"$HEAD"'"}}]'
 MOCK_OCC_TIMELINE_PAGE2='[{"__typename":"IssueComment","databaseId":901,"createdAt":"2026-01-05T00:00:00Z","body":"@greptile review"}]'
+# shellcheck disable=SC2034 # Assigned for functions in the sourced readiness fixture.
 MOCK_GREPTILE_REACTION="$_greptile_reaction_json"
 MOCK_ISSUE_COMMENTS='[{"user":{"login":"agent"},"created_at":"2026-01-05T00:00:00Z","id":901,"body":"@greptile review"}]'
 result="$(run_helper_platform "$_codex_config")"
@@ -2095,7 +1487,9 @@ MOCK_OCC_TIMELINE_PAGE2=''
 result="$(run_helper_platform "$_codex_config")"
 run_test "greptile_first_occupancy_trigger_refuses_reason" "reviewer-check-absent" "$(field "$result" REASON)"
 MOCK_OCC_TIMELINE=''
+# shellcheck disable=SC2034 # Assigned for functions in the sourced readiness fixture.
 MOCK_OCC_TIMELINE_PAGE2=''
+# shellcheck disable=SC2034 # Assigned for functions in the sourced readiness fixture.
 MOCK_HEAD_COMMIT_JSON=''
 MOCK_OCC_TIMELINE=""
 MOCK_ISSUE_COMMENTS='[]'
@@ -2135,6 +1529,7 @@ MOCK_HEAD_CONFIG="$_codex_platform_yaml"
 MOCK_BASE_CONFIG="$_codex_platform_yaml"
 MOCK_PR_JSON="$_empty_rollup"
 MOCK_CHECK_RUNS='{"check_runs":[]}'
+# shellcheck disable=SC2034 # Assigned for functions in the sourced readiness fixture.
 MOCK_COMMENTS='[]'
 MOCK_REVIEWS='[]'
 MOCK_ISSUE_COMMENTS='[{"user":{"login":"chatgpt-codex-connector[bot]"},"created_at":"2026-01-03T00:00:00Z","id":910,"body":"Codex Review: Needs fixes. Must fix the guard before merge. **Reviewed commit:** `'"$HEAD"'`"}]'
@@ -2210,6 +1605,7 @@ run_test "codex_current_occupancy_root_is_evidence_result" "labeled" "$(field "$
 MOCK_OCC_TIMELINE_EXIT=1
 result="$(run_helper_platform "$_codex_config")"
 run_test "codex_occupancy_fetch_failure_escalates_reason" "codex-occupancy-timeline-fetch-failed" "$(field "$result" REASON)"
+# shellcheck disable=SC2034 # Assigned for functions in the sourced readiness fixture.
 MOCK_OCC_TIMELINE_EXIT=0
 MOCK_OCC_TIMELINE=''
 # Round 32 (PRRT_kwDORWAxaM6nCoxI): a formal review from the head's FIRST
@@ -2223,6 +1619,7 @@ run_test "codex_first_occupancy_review_not_verdict_reason" "reviewer-check-absen
 MOCK_OCC_TIMELINE='[{"__typename":"HeadRefForcePushedEvent","afterCommit":{"oid":"'"$HEAD"'"}},{"__typename":"PullRequestReview","databaseId":950}]'
 result="$(run_helper_platform "$_codex_config")"
 run_test "codex_current_occupancy_review_is_verdict_result" "labeled" "$(field "$result" RESULT)"
+# shellcheck disable=SC2034 # Assigned for functions in the sourced readiness fixture.
 MOCK_OCC_TIMELINE=''
 MOCK_REVIEWS='[]'
 MOCK_REVIEWS='[]'
@@ -2343,6 +1740,7 @@ MOCK_REVIEWS='[{"user":{"login":"github-actions[bot]"},"id":530,"commit_id":"'"$
 MOCK_ISSUE_COMMENTS='[]'
 result="$(run_helper_platform "$_codex_config")"
 run_test "pr_agent_unrelated_shared_login_review_refuses_reason" "reviewer-check-absent" "$(field "$result" REASON)"
+# shellcheck disable=SC2034 # Assigned for functions in the sourced readiness fixture.
 MOCK_REVIEWS='[]'
 MOCK_ISSUE_COMMENTS='[{"user":{"login":"github-actions[bot]"},"created_at":"2026-01-08T00:00:00Z","id":920,"body":"## PR Reviewer Guide\n\ncommit: '"$HEAD"'\nNo major issues detected"}]'
 result="$(run_helper_platform "$_codex_config")"
@@ -2363,539 +1761,8 @@ run_test "pr_agent_no_comment_refuses_reason" "reviewer-check-absent" "$(field "
 
 # #1946: the readiness adapter must agree with the loop for complete current
 # ticket reviews, and refuse truncated, ambiguous or historically clean ones.
-_ticket_body_1946=$'## PR Reviewer Guide\ncommit: '"$HEAD"$'\n<table>\n<tr><td>\n**🎫 Ticket compliance analysis ✅**\n**[42](https://example.test/issues/42) - Fully compliant**\nCompliant requirements:\n- All required behavior is implemented.\n</td></tr>\n</table>\n'
-readiness_fixture_1946() {
-  local name="$1" expected="$2" body="$3" output expected_reason="${4:-}" expected_classifier="${5:-escalate}"
-  MOCK_ISSUE_COMMENTS="$(jq -nc --arg body "$body" '[{user:{login:"github-actions[bot]"},created_at:"2026-01-08T00:00:00Z",id:923,body:$body}]')"
-  output="$(run_helper_platform "$_codex_config")"
-  run_test "1946_${name}_readiness" "$expected" "$(field "$output" RESULT)"
-  if [ -n "$expected_reason" ]; then
-    run_test "1946_${name}_reason" "$expected_reason" "$(field "$output" REASON)"
-    run_test "1946_${name}_classifier" "$expected_classifier" "$(printf '%s' "$body" | bash "$REPO_ROOT/scripts/development-workflow/apply-readiness-labels.sh" --classify-pr-agent)"
-  fi
-  if [ "$expected" = refused ]; then
-    run_test "1946_${name}_no_readiness_write" "0" "$(grep -c 'add-label ready-for-human-review' "$_LABEL_LOG" || true)"
-  fi
-}
-readiness_fixture_1946 complete labeled "$_ticket_body_1946"
-readiness_fixture_1946 partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"
-readiness_fixture_1946 human_verification refused "${_ticket_body_1946/Fully compliant/PR Code Verified}"
-readiness_fixture_1946 truncated refused "${_ticket_body_1946%</table>*}"
-readiness_fixture_1946 unknown refused $'## PR Reviewer Guide\ncommit: '"$HEAD"$'\n**Ticket compliance analysis ✅**\n'
-readiness_fixture_1946 hidden_clean refused $'## PR Reviewer Guide\ncommit: '"$HEAD"$'\n<!-- pr-agent-review-state:v1\n{"body":"No major issues detected"}\n-->\n'
-readiness_fixture_1946 hidden_blocker labeled "${_ticket_body_1946}"$'<!-- pr-agent-review-state:v1\n{"body":"Recommended focus areas for review\\n<strong>Critical</strong>"}\n-->\n'
-readiness_fixture_1946 hidden_current_head refused $'## PR Reviewer Guide\ncommit: stalehead\nNo major issues detected\n<!-- pr-agent-review-state:v1\n{"last_seen_head_sha":"'"$HEAD"$'"}\n-->\n'
-readiness_fixture_1946 visible_current_marker labeled "${_ticket_body_1946/commit: $HEAD/#### (Review updated until commit https:\/\/github.com\/owner\/repo\/commit\/$HEAD)}"
-readiness_fixture_1946 empty_markdown_analysis refused $'## PR Reviewer Guide\ncommit: '"$HEAD"$'\n**Ticket compliance analysis ✅**\n**[42](url) - Fully compliant**\nCompliant requirements:\n\n---\n'
-readiness_fixture_1946 malformed_second_ticket refused "${_ticket_body_1946/<\/td>/$'**[43](url) - Not compliant*\n</td>'}"
-readiness_fixture_1946 legacy_truncated refused $'## PR Reviewer Guide\ncommit: '"$HEAD"$'\n<table>\n<tr><td>Recommended focus areas for review\n<strong>Possible Issue</strong>\n'
-readiness_fixture_1946 tableless_unclosed_details refused $'## PR Reviewer Guide\ncommit: '"$HEAD"$'\n### Recommended focus areas for review\n<details><summary><strong>Possible Issue</strong></summary>\nAdvisory text\n'
-readiness_fixture_1946 indented_malformed_ticket refused $'## PR Reviewer Guide\ncommit: '"$HEAD"$'\n**Ticket compliance analysis ✅**\n**[42](url) - Fully compliant**\nCompliant requirements:\n- Done.\n  **[43](url) - Not compliant*\nNon-compliant requirements:\n- Missing.\n'
-readiness_fixture_1946 blank_focus_label refused $'## PR Reviewer Guide\ncommit: '"$HEAD"$'\n### Recommended focus areas for review\n<strong> </strong><br>Unknown issue.\n'
-readiness_fixture_1946 code_example_html labeled "${_ticket_body_1946}"$'\n\n```html\n<table><tr><td>Example only.\n```\n'
-readiness_fixture_1946 code_example_not_verdict refused $'## PR Reviewer Guide\ncommit: '"$HEAD"$'\n```markdown\nNo major issues detected\n```\n'
-readiness_fixture_1946 inline_code_html labeled "${_ticket_body_1946}"$'\nInline example: `<table><td>` is code, not layout.\n'
-# #1959: Luis authorizes simple one-line code only; ambiguity escalates.
-readiness_fixture_1946 markdown_code_inline_head labeled "${_ticket_body_1946}"$'\nRead `git show <head>:CHANGELOG.md`.\n'
-readiness_fixture_1946 markdown_code_outside_blocker refused "${_ticket_body_1946}"$'\n`<head>`\n### Recommended focus areas for review\n<strong>Critical</strong>\n\n' blocking-findings needs_fixes
-readiness_fixture_1946 markdown_code_raw_head refused "${_ticket_body_1946}"$'\nRead <head> outside code.\n' reviewer-check-absent escalate
-readiness_fixture_1946 markdown_code_longer_fence labeled "${_ticket_body_1946}"$'\n````html\n```\n<head>\n`````\n\n'
-readiness_fixture_1946 markdown_code_tilde_fence labeled "${_ticket_body_1946}"$'\n~~~~html\n<head>\n~~~~\n\n'
-readiness_fixture_1946 markdown_code_unclosed_fence refused "${_ticket_body_1946}"$'\n```html\n<head>\n' reviewer-check-absent escalate
-readiness_fixture_1946 markdown_code_invalid_fence refused "${_ticket_body_1946}"$'\n```invalid`info\n<strong>Critical</strong>\n```\n' reviewer-check-absent escalate
-readiness_fixture_1946 markdown_code_indented_fence refused "${_ticket_body_1946}"$'\n    ```html\n<strong>Critical</strong>\n```\n' reviewer-check-absent escalate
-readiness_fixture_1946 markdown_code_double_backtick refused "${_ticket_body_1946}"$'\nRead ``git `<head>`:CHANGELOG.md``.\n' reviewer-check-absent escalate
-readiness_fixture_1946 markdown_code_comment_example labeled "${_ticket_body_1946}"$'\nRead `<!--`.\n'
-for _boundary_1959 in $'\n' $'\n\n' $'\r\n' $'\n---\n' $'\n***\n' $'\n- item\n' $'\n1. item\n' $'\n> quote\n' $'\n### Heading\n' $'\n~~~text\nsample\n~~~\n' $'\n```text\nsample\n```\n' $'\n<span>\n' $'\f' $'\v' $'\u2028'; do
-  for _ticks_1959 in '`' '``'; do
-    readiness_fixture_1946 conservative_boundary refused "${_ticket_body_1946}"$'\n'"Unmatched ${_ticks_1959} example.${_boundary_1959}"$'Recommended focus areas for review\n<strong>Critical</strong>'$'\n'"Later ${_ticks_1959} prose." reviewer-check-absent escalate
-    readiness_fixture_1946 conservative_boundary refused "${_ticket_body_1946}"$'\n'"Unmatched ${_ticks_1959} example.${_boundary_1959}"'<span title="a" title="b">bad</span>'$'\n'"Later ${_ticks_1959} prose." reviewer-check-absent escalate
-  done
-done
-for _tag_1959 in div pre style script textarea blockquote span custom details summary table td; do
-  # #1967: quoted HTML is literal only in the admitted table context. Real
-  # malformed HTML and every unsupported raw wrapper retain refusal below.
-  _html_result_1967=refused
-  _html_reason_1967=reviewer-check-absent
-  _html_classifier_1967=escalate
-  if [ "$_tag_1959" = table ]; then
-    _html_result_1967=labeled
-    _html_reason_1967=gate-passed
-    _html_classifier_1967=clean
-  fi
-  readiness_fixture_1946 conservative_html "$_html_result_1967" "${_ticket_body_1946}"$'\n'"<${_tag_1959}>"$'\n`<strong>Critical</strong>`\n'"</${_tag_1959}>" "$_html_reason_1967" "$_html_classifier_1967"
-  if [ "$_tag_1959" = table ]; then
-    run_test "1946_conservative_html_readiness_write" "1" "$(grep -c 'add-label ready-for-human-review' "$_LABEL_LOG" || true)"
-  fi
-  readiness_fixture_1946 conservative_html_same_line "$_html_result_1967" "${_ticket_body_1946}"$'\n'"<${_tag_1959}>"'`<span title="a" title="b">bad</span>`'"</${_tag_1959}>" "$_html_reason_1967" "$_html_classifier_1967"
-  if [ "$_tag_1959" = table ]; then
-    run_test "1946_conservative_html_same_line_readiness_write" "1" "$(grep -c 'add-label ready-for-human-review' "$_LABEL_LOG" || true)"
-  fi
-done
-unset _boundary_1959 _ticks_1959 _tag_1959 _html_result_1967 _html_reason_1967 _html_classifier_1967
-readiness_fixture_1946 conservative_attribute refused "${_ticket_body_1946}"$'\n<span title="`">Text</span>\n' reviewer-check-absent escalate
-readiness_fixture_1946 conservative_comment labeled "${_ticket_body_1946}"$'\n<!-- `Critical` -->\n'
-readiness_fixture_1946 conservative_unmatched refused "${_ticket_body_1946}"$'\nUnmatched ` example.\n' reviewer-check-absent escalate
+# The complete #1946 matrix runs in four independent suites.
 
-readiness_fixture_1946 inline_code_not_verdict refused $'## PR Reviewer Guide\ncommit: '"$HEAD"$'\n`No major issues detected` is an example.\n'
-readiness_fixture_1946 mixed_empty_focus_label refused $'## PR Reviewer Guide\ncommit: '"$HEAD"$'\n### Recommended focus areas for review\n<strong>Possible Issue</strong><br>Advisory text.\n<strong></strong><br>Unknown issue.\n'
-readiness_fixture_1946 mixed_unclosed_focus_label refused $'## PR Reviewer Guide\ncommit: '"$HEAD"$'\n### Recommended focus areas for review\n<strong>Possible Issue</strong><br>Advisory text.\n<strong>Critical\n'
-readiness_fixture_1946 mixed_truncated_html_tag refused $'## PR Reviewer Guide\ncommit: '"$HEAD"$'\n### Recommended focus areas for review\n<strong>Possible Issue</strong><br>Advisory text.\n<strong\n'
-readiness_fixture_1946 mixed_unclosed_markdown_label refused $'## PR Reviewer Guide\ncommit: '"$HEAD"$'\n### Recommended focus areas for review\n<strong>Possible Issue</strong><br>Advisory text.\n**Critical\n'
-readiness_fixture_1946 encoded_blocker_label refused $'## PR Reviewer Guide\ncommit: '"$HEAD"$'\n### Recommended focus areas for review\n<strong>Possible Issue</strong><br>Advisory text.\n<strong>Security&#32;Concern</strong>\n'
-readiness_fixture_1946 encoded_empty_label refused $'## PR Reviewer Guide\ncommit: '"$HEAD"$'\n### Recommended focus areas for review\n<strong>Possible Issue</strong><br>Advisory text.\n<strong>&nbsp;</strong>\n'
-readiness_fixture_1946 encoded_empty_analysis refused $'## PR Reviewer Guide\ncommit: '"$HEAD"$'\n**Ticket compliance analysis ✅**\n**[42](url) - Fully compliant**\nCompliant requirements:\n&nbsp;\n'
-readiness_fixture_1946 prose_marker_not_verdict refused $'## PR Reviewer Guide\ncommit: '"$HEAD"$'\nThe phrase No major issues detected is an example.\n'
-readiness_fixture_1946 prose_ticket_not_section labeled $'## PR Reviewer Guide\ncommit: '"$HEAD"$'\n### Recommended focus areas for review\n<strong>Possible Issue</strong><br>The phrase Ticket compliance analysis names another format.\n'
-readiness_fixture_1946 quoted_attribute_blocker refused $'## PR Reviewer Guide\ncommit: '"$HEAD"$'\n### Recommended focus areas for review\n<strong title=">">Security Concern</strong>\n'
-readiness_fixture_1946 colon_focus_blocker refused "${_ticket_body_1946}"$'### Key issues to review:\n<strong>Critical</strong>\n'
-readiness_fixture_1946 duplicate_security_sections refused "${_ticket_body_1946}"$'<tr><td><strong>Security concerns</strong><br>No security concerns identified.</td></tr>\n<tr><td><strong>Security concerns</strong><br>Unsafe input execution.</td></tr>\n'
-readiness_fixture_1946 invalid_fence_closer refused $'## PR Reviewer Guide\ncommit: '"$HEAD"$'\n```markdown\n```example\nNo major issues detected\n'
-readiness_fixture_1946 valid_then_unknown_focus refused $'## PR Reviewer Guide\ncommit: '"$HEAD"$'\n### Recommended focus areas for review\n<strong>Possible Issue</strong><br>Advisory text.\n### Review Key issues to review\n<strong>Critical</strong>\n'
-readiness_fixture_1946 same_line_html_blocker refused $'## PR Reviewer Guide\ncommit: '"$HEAD"$'\n<strong>Key issues to review</strong><br><strong>Critical</strong>\n<strong>Possible Issue</strong>\n'
-readiness_fixture_1946 nonbreaking_space_blocker refused $'## PR Reviewer Guide\ncommit: '"$HEAD"$'\n### Recommended focus areas for review\n<strong>Security&nbsp;Concern</strong>\n'
-readiness_fixture_1946 unparsed_verification_heading refused "${_ticket_body_1946}"$'Requires further human verification\n- Authorization must be checked manually.\n'
-MOCK_ISSUE_COMMENTS='[]'
-readiness_fixture_1946 extra_rendered_human refused "${_ticket_body_1946}"$'<strong>Requires further human verification</strong><br>\n- Verify authorization manually.\n'
-readiness_fixture_1946 extra_malformed_second_section refused "${_ticket_body_1946}"$'**Ticket compliance analysis ❌*\n**[43](url) - Not compliant**\nNon-compliant requirements:\n- Missing.\n'
-readiness_fixture_1946 extra_partial_bold_focus refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'**Recommended focus areas for review**\n<strong>Critical</strong>\n'
-readiness_fixture_1946 extra_partial_human_ticket refused "commit: $HEAD"$'\n**Ticket compliance analysis 🔶**\n**[42](url) - Partially compliant**\nNon-compliant requirements:\n- Missing.\n**[43](url) - PR Code Verified**\nCompliant requirements:\n- Implemented; human verification pending.\n'
-readiness_fixture_1946 extra2_unreadable_legacy_focus refused "commit: $HEAD"$'\n### Recommended focus areas for review\nNo parseable labels\n' reviewer-check-absent
-readiness_fixture_1946 extra2_empty_security refused "${_ticket_body_1946}"$'<strong>Security concerns</strong><br>\n' reviewer-check-absent
-readiness_fixture_1946 extra2_blank_security refused "${_ticket_body_1946}"$'<tr><td><strong>Security concerns</strong><br><span> &nbsp; </span></td></tr>\n' reviewer-check-absent
-readiness_fixture_1946 extra2_markup_only_security refused "${_ticket_body_1946}"$'<strong>Security concerns</strong><br>\n- ** **\n' reviewer-check-absent
-readiness_fixture_1946 extra2_partial_empty_security refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<strong>Security concerns</strong><br>\n' reviewer-check-absent
-readiness_fixture_1946 extra2_security_fix_unreadable_focus refused "${_ticket_body_1946}"$'<tr><td><strong>Security concerns</strong><br>Unsafe input execution.</td></tr>\n### Recommended focus areas for review\nNo parseable labels\n' reviewer-check-absent
-# Closed-set policy: every verdict branch rejects unknown values (#1946).
-readiness_fixture_1946 closed_security_negative labeled "${_ticket_body_1946}"$'<tr><td><strong>Security concerns</strong><br>None</td></tr>\n'
-readiness_fixture_1946 closed_security_finding refused "${_ticket_body_1946}"$'<tr><td><strong>Security concerns</strong><br>Yes</td></tr>\n'
-readiness_fixture_1946 closed_security_unknown refused "${_ticket_body_1946}"$'<tr><td><strong>Security concerns</strong><br>Unknown</td></tr>\n' reviewer-check-absent
-readiness_fixture_1946 closed_security_unlisted refused "${_ticket_body_1946}"$'<tr><td><strong>Security concerns</strong><br>Unrecognized vulnerability status</td></tr>\n' reviewer-check-absent
-readiness_fixture_1946 closed_security_unknown_after_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<tr><td><strong>Security concerns</strong><br>Unknown</td></tr>\n' reviewer-check-absent
-readiness_fixture_1946 closed_focus_negative labeled "${_ticket_body_1946}"$'### Key issues to review\n<strong>No major issues detected</strong>\n'
-readiness_fixture_1946 closed_focus_advisory labeled "${_ticket_body_1946}"$'### Key issues to review\n<strong>Possible Issue</strong>\n'
-readiness_fixture_1946 closed_focus_finding refused "${_ticket_body_1946}"$'### Key issues to review\n<strong>Critical</strong>\n'
-readiness_fixture_1946 closed_focus_unknown refused "${_ticket_body_1946}"$'### Key issues to review\n<strong>Unknown</strong>\n' reviewer-check-absent
-readiness_fixture_1946 closed_focus_unlisted refused "${_ticket_body_1946}"$'### Key issues to review\n<strong>Unexpected Label</strong>\n' reviewer-check-absent
-readiness_fixture_1946 closed_focus_mixed_unknown refused "${_ticket_body_1946}"$'### Key issues to review\n<strong>Critical</strong>\n<strong>Unknown</strong>\n' reviewer-check-absent
-readiness_fixture_1946 closed_compliance_unknown refused "${_ticket_body_1946/Fully compliant/Unknown}" reviewer-check-absent
-readiness_fixture_1946 closed_compliance_unlisted refused "${_ticket_body_1946/Fully compliant/Newly approved}" reviewer-check-absent
-readiness_fixture_1946 closed_analysis_unknown refused "commit: $HEAD"$'\n## PR Reviewer Guide\n**Ticket compliance analysis ✅**\n**[42](url) - Fully compliant**\nCompliant requirements:\nUnknown\n' reviewer-check-absent
-readiness_fixture_1946 closed_analysis_bullet_unknown refused "commit: $HEAD"$'\n## PR Reviewer Guide\n**Ticket compliance analysis ✅**\n**[42](url) - Fully compliant**\nCompliant requirements:\n- Unknown\n' reviewer-check-absent
-readiness_fixture_1946 closed_analysis_unknown_heading refused "commit: $HEAD"$'\n## PR Reviewer Guide\n**Ticket compliance analysis ✅**\n**[42](url) - Fully compliant**\nCompliant requirements:\n- Implemented.\nUnknown requirements:\n- Not known.\n' reviewer-check-absent
-readiness_fixture_1946 closed_verification_negative labeled "${_ticket_body_1946}"$'<tr><td><strong>Verification status</strong><br>None</td></tr>\n'
-readiness_fixture_1946 closed_verification_request refused "${_ticket_body_1946}"$'<tr><td><strong>Verification status</strong><br>Required</td></tr>\n' reviewer-check-absent
-readiness_fixture_1946 closed_verification_unknown refused "${_ticket_body_1946}"$'<tr><td><strong>Verification status</strong><br>Unknown</td></tr>\n' reviewer-check-absent
-readiness_fixture_1946 closed_verification_unlisted refused "${_ticket_body_1946}"$'<tr><td><strong>Verification status</strong><br>Unexpected</td></tr>\n' reviewer-check-absent
-readiness_fixture_1946 closed_verification_after_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<tr><td><strong>Verification status</strong><br>Unknown</td></tr>\n' reviewer-check-absent
-readiness_fixture_1946 closed_legacy_unknown refused "commit: $HEAD"$'\n## PR Reviewer Guide\nReview complete: Unknown\n' reviewer-check-absent
-readiness_fixture_1946 closed_bare_security_unknown refused "${_ticket_body_1946}"$'Security concerns: Unknown\n' reviewer-check-absent
-readiness_fixture_1946 closed_malformed_verification_unknown refused "${_ticket_body_1946}"$'### Verification status Unknown\n' reviewer-check-absent
-readiness_fixture_1946 scoped_human_no_colon refused "commit: $HEAD"$'\n## PR Reviewer Guide\n**Ticket compliance analysis ✅**\n**[42](url) - Fully compliant**\nCompliant requirements:\n- Requires further human verification\n' reviewer-check-absent
-readiness_fixture_1946 scoped_human_colon refused "commit: $HEAD"$'\n## PR Reviewer Guide\n**Ticket compliance analysis ✅**\n**[42](url) - Fully compliant**\nCompliant requirements:\n- Requires further human verification:\n' reviewer-check-absent
-readiness_fixture_1946 scoped_human_rendered refused "commit: $HEAD"$'\n## PR Reviewer Guide\n**Ticket compliance analysis ✅**\n**[42](url) - Fully compliant**\nCompliant requirements:\n- Requires&nbsp;further <em>human</em> verification\n' reviewer-check-absent
-readiness_fixture_1946 scoped_partial_human_no_colon refused "commit: $HEAD"$'\n## PR Reviewer Guide\n**Ticket compliance analysis ✅**\n**[42](url) - Partially compliant**\nCompliant requirements:\n- Requires further human verification\n' reviewer-check-absent
-# Raw HTML attributes remain opaque while Markdown code is masked.
-readiness_fixture_1946 raw_structure_h1_full refused "${_ticket_body_1946}"$'<h1 data-note=pre`bad`post>Reviewer notes</h1>\n' reviewer-check-absent
-readiness_fixture_1946 raw_structure_h1_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h1 data-note=pre`bad`post>Reviewer notes</h1>\n' reviewer-check-absent
-readiness_fixture_1946 raw_structure_h2_full refused "${_ticket_body_1946}"$'<h2 data-note=pre`bad`post>Reviewer notes</h2>\n' reviewer-check-absent
-readiness_fixture_1946 raw_structure_h2_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h2 data-note=pre`bad`post>Reviewer notes</h2>\n' reviewer-check-absent
-readiness_fixture_1946 raw_structure_h3_full refused "${_ticket_body_1946}"$'<h3 data-note=pre`bad`post>Reviewer notes</h3>\n' reviewer-check-absent
-readiness_fixture_1946 raw_structure_h3_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h3 data-note=pre`bad`post>Reviewer notes</h3>\n' reviewer-check-absent
-readiness_fixture_1946 raw_structure_h4_full refused "${_ticket_body_1946}"$'<h4 data-note=pre`bad`post>Reviewer notes</h4>\n' reviewer-check-absent
-readiness_fixture_1946 raw_structure_h4_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h4 data-note=pre`bad`post>Reviewer notes</h4>\n' reviewer-check-absent
-readiness_fixture_1946 raw_structure_h5_full refused "${_ticket_body_1946}"$'<h5 data-note=pre`bad`post>Reviewer notes</h5>\n' reviewer-check-absent
-readiness_fixture_1946 raw_structure_h5_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h5 data-note=pre`bad`post>Reviewer notes</h5>\n' reviewer-check-absent
-readiness_fixture_1946 raw_structure_h6_full refused "${_ticket_body_1946}"$'<h6 data-note=pre`bad`post>Reviewer notes</h6>\n' reviewer-check-absent
-readiness_fixture_1946 raw_structure_h6_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h6 data-note=pre`bad`post>Reviewer notes</h6>\n' reviewer-check-absent
-readiness_fixture_1946 raw_structure_strong_full refused "${_ticket_body_1946}"$'<strong data-note=pre`bad`post>Reviewer notes</strong>\n' reviewer-check-absent
-readiness_fixture_1946 raw_structure_strong_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<strong data-note=pre`bad`post>Reviewer notes</strong>\n' reviewer-check-absent
-readiness_fixture_1946 raw_structure_b_full refused "${_ticket_body_1946}"$'<b data-note=pre`bad`post>Reviewer notes</b>\n' reviewer-check-absent
-readiness_fixture_1946 raw_structure_b_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<b data-note=pre`bad`post>Reviewer notes</b>\n' reviewer-check-absent
-readiness_fixture_1946 raw_structure_span_full refused "${_ticket_body_1946}"$'<span data-note=pre`bad`post>Reviewer notes</span>\n' reviewer-check-absent
-readiness_fixture_1946 raw_structure_span_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<span data-note=pre`bad`post>Reviewer notes</span>\n' reviewer-check-absent
-readiness_fixture_1946 raw_structure_p_full refused "${_ticket_body_1946}"$'<p data-note=pre`bad`post>Reviewer notes</p>\n' reviewer-check-absent
-readiness_fixture_1946 raw_structure_p_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<p data-note=pre`bad`post>Reviewer notes</p>\n' reviewer-check-absent
-readiness_fixture_1946 raw_structure_div_full refused "${_ticket_body_1946}"$'<div data-note=pre`bad`post>Reviewer notes</div>\n' reviewer-check-absent
-readiness_fixture_1946 raw_structure_div_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<div data-note=pre`bad`post>Reviewer notes</div>\n' reviewer-check-absent
-readiness_fixture_1946 raw_structure_fenced_bad_attribute_full labeled "${_ticket_body_1946}"$'```html\n<h3 data-note=pre`bad`post>Reviewer notes</h3>\n```\n'
-readiness_fixture_1946 raw_structure_fenced_bad_attribute_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'```html\n<h3 data-note=pre`bad`post>Reviewer notes</h3>\n```\n' blocking-findings needs_fixes
-readiness_fixture_1946 raw_structure_inline_bad_attribute_full refused "${_ticket_body_1946}"$'``<h3 data-note=pre`bad`post>Reviewer notes</h3>``\n' reviewer-check-absent escalate
-readiness_fixture_1946 raw_structure_inline_bad_attribute_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'``<h3 data-note=pre`bad`post>Reviewer notes</h3>``\n' reviewer-check-absent escalate
-readiness_fixture_1946 raw_structure_fenced_unclosed_full labeled "${_ticket_body_1946}"$'```html\n<h3>Reviewer notes\n```\n'
-readiness_fixture_1946 raw_structure_fenced_unclosed_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'```html\n<h3>Reviewer notes\n```\n' blocking-findings needs_fixes
-readiness_fixture_1946 raw_structure_inline_unclosed_full labeled "${_ticket_body_1946}"$'\n`<h3>Reviewer notes`\n'
-readiness_fixture_1946 raw_structure_inline_unclosed_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'\n`<h3>Reviewer notes`\n' blocking-findings needs_fixes
-readiness_fixture_1946 raw_structure_quoted_backticks refused "${_ticket_body_1946}"$'<h3 data-note="pre`bad`post">Reviewer notes</h3>\n' reviewer-check-absent escalate
-readiness_fixture_1946 raw_structure_quoted_spaced_literal labeled "${_ticket_body_1946}"$'<h3 title="< h3">Reviewer notes</h3>\n'
-readiness_fixture_1946 raw_structure_opaque_history labeled "${_ticket_body_1946}"$'<!-- <h3 data-note=pre`bad`post>old malformed sample -->\n'
-readiness_fixture_1946 raw_structure_opaque_spaced_literal labeled "${_ticket_body_1946}"$'<!-- < h3>old malformed sample -->\n'
-readiness_fixture_1946 raw_structure_complete_fenced labeled "${_ticket_body_1946}"$'```html\n<h3>Recommended focus areas for review</h3><strong>Critical</strong>\n```\n'
-readiness_fixture_1946 raw_structure_complete_inline labeled "${_ticket_body_1946}"$'\n`<h3>Recommended focus areas for review</h3><strong>Critical</strong>`\n'
-readiness_fixture_1946 raw_structure_ordinary_inline labeled "${_ticket_body_1946}"$'\nUse `known_helper()` for this operation.\n'
-# Malformed HTML headers/children cannot hide behind compliant evidence.
-readiness_fixture_1946 html_structure_unknown_decl_full refused "${_ticket_body_1946}"$'<h3><![invalid[header]]></h3>\n' reviewer-check-absent
-readiness_fixture_1946 html_structure_unknown_decl_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h3><![invalid[header]]></h3>\n' reviewer-check-absent
-readiness_fixture_1946 html_structure_bogus_comment_full refused "${_ticket_body_1946}"$'<h3><!bogus>Reviewer notes</h3>\n' reviewer-check-absent
-readiness_fixture_1946 html_structure_bogus_comment_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h3><!bogus>Reviewer notes</h3>\n' reviewer-check-absent
-readiness_fixture_1946 html_structure_doctype_inside_full refused "${_ticket_body_1946}"$'<h3><!DOCTYPE html>Reviewer notes</h3>\n' reviewer-check-absent
-readiness_fixture_1946 html_structure_doctype_inside_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h3><!DOCTYPE html>Reviewer notes</h3>\n' reviewer-check-absent
-readiness_fixture_1946 html_structure_processing_instruction_full refused "${_ticket_body_1946}"$'<h3><?unknown?>Reviewer notes</h3>\n' reviewer-check-absent
-readiness_fixture_1946 html_structure_processing_instruction_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h3><?unknown?>Reviewer notes</h3>\n' reviewer-check-absent
-readiness_fixture_1946 html_structure_unclosed_h1_full refused "${_ticket_body_1946}"$'<h1>Recommended focus areas for review<strong>Critical</strong>\n' reviewer-check-absent
-readiness_fixture_1946 html_structure_unclosed_h1_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h1>Recommended focus areas for review<strong>Critical</strong>\n' reviewer-check-absent
-readiness_fixture_1946 html_structure_unclosed_h2_full refused "${_ticket_body_1946}"$'<h2>Recommended focus areas for review<strong>Critical</strong>\n' reviewer-check-absent
-readiness_fixture_1946 html_structure_unclosed_h2_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h2>Recommended focus areas for review<strong>Critical</strong>\n' reviewer-check-absent
-readiness_fixture_1946 html_structure_unclosed_h3_full refused "${_ticket_body_1946}"$'<h3>Recommended focus areas for review<strong>Critical</strong>\n' reviewer-check-absent
-readiness_fixture_1946 html_structure_unclosed_h3_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h3>Recommended focus areas for review<strong>Critical</strong>\n' reviewer-check-absent
-readiness_fixture_1946 html_structure_unclosed_h4_full refused "${_ticket_body_1946}"$'<h4>Recommended focus areas for review<strong>Critical</strong>\n' reviewer-check-absent
-readiness_fixture_1946 html_structure_unclosed_h4_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h4>Recommended focus areas for review<strong>Critical</strong>\n' reviewer-check-absent
-readiness_fixture_1946 html_structure_unclosed_h5_full refused "${_ticket_body_1946}"$'<h5>Recommended focus areas for review<strong>Critical</strong>\n' reviewer-check-absent
-readiness_fixture_1946 html_structure_unclosed_h5_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h5>Recommended focus areas for review<strong>Critical</strong>\n' reviewer-check-absent
-readiness_fixture_1946 html_structure_unclosed_h6_full refused "${_ticket_body_1946}"$'<h6>Recommended focus areas for review<strong>Critical</strong>\n' reviewer-check-absent
-readiness_fixture_1946 html_structure_unclosed_h6_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h6>Recommended focus areas for review<strong>Critical</strong>\n' reviewer-check-absent
-readiness_fixture_1946 html_structure_unclosed_strong_full refused "${_ticket_body_1946}"$'<strong>Recommended focus areas for review<strong>Critical</strong>\n' reviewer-check-absent
-readiness_fixture_1946 html_structure_unclosed_strong_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<strong>Recommended focus areas for review<strong>Critical</strong>\n' reviewer-check-absent
-readiness_fixture_1946 html_structure_unclosed_b_full refused "${_ticket_body_1946}"$'<b>Recommended focus areas for review<strong>Critical</strong>\n' reviewer-check-absent
-readiness_fixture_1946 html_structure_unclosed_b_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<b>Recommended focus areas for review<strong>Critical</strong>\n' reviewer-check-absent
-readiness_fixture_1946 html_structure_unclosed_em_full refused "${_ticket_body_1946}"$'<em>Recommended focus areas for review<strong>Critical</strong>\n' reviewer-check-absent
-readiness_fixture_1946 html_structure_unclosed_em_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<em>Recommended focus areas for review<strong>Critical</strong>\n' reviewer-check-absent
-readiness_fixture_1946 html_structure_unclosed_span_full refused "${_ticket_body_1946}"$'<span>Recommended focus areas for review<strong>Critical</strong>\n' reviewer-check-absent
-readiness_fixture_1946 html_structure_unclosed_span_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<span>Recommended focus areas for review<strong>Critical</strong>\n' reviewer-check-absent
-readiness_fixture_1946 html_structure_unclosed_div_full refused "${_ticket_body_1946}"$'<div>Recommended focus areas for review<strong>Critical</strong>\n' reviewer-check-absent
-readiness_fixture_1946 html_structure_unclosed_div_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<div>Recommended focus areas for review<strong>Critical</strong>\n' reviewer-check-absent
-readiness_fixture_1946 html_structure_unclosed_summary_full refused "${_ticket_body_1946}"$'<summary>Recommended focus areas for review<strong>Critical</strong>\n' reviewer-check-absent
-readiness_fixture_1946 html_structure_unclosed_summary_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<summary>Recommended focus areas for review<strong>Critical</strong>\n' reviewer-check-absent
-readiness_fixture_1946 html_structure_unclosed_header_full refused "${_ticket_body_1946}"$'<header>Recommended focus areas for review<strong>Critical</strong>\n' reviewer-check-absent
-readiness_fixture_1946 html_structure_unclosed_header_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<header>Recommended focus areas for review<strong>Critical</strong>\n' reviewer-check-absent
-readiness_fixture_1946 html_structure_unclosed_prefixed_h3_full refused "${_ticket_body_1946}"$'<h3>Custom Recommended focus areas for review<strong>Critical</strong>\n' reviewer-check-absent
-readiness_fixture_1946 html_structure_unclosed_prefixed_h3_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h3>Custom Recommended focus areas for review<strong>Critical</strong>\n' reviewer-check-absent
-readiness_fixture_1946 html_structure_mismatched_full refused "${_ticket_body_1946}"$'<h3>Reviewer notes</h4>\n' reviewer-check-absent
-readiness_fixture_1946 html_structure_mismatched_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h3>Reviewer notes</h4>\n' reviewer-check-absent
-readiness_fixture_1946 html_structure_crossed_full refused "${_ticket_body_1946}"$'<h3><strong>Reviewer notes</h3></strong>\n' reviewer-check-absent
-readiness_fixture_1946 html_structure_crossed_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h3><strong>Reviewer notes</h3></strong>\n' reviewer-check-absent
-readiness_fixture_1946 html_structure_unclosed_child_full refused "${_ticket_body_1946}"$'<h3><a href="url">Reviewer notes</h3>\n' reviewer-check-absent
-readiness_fixture_1946 html_structure_unclosed_child_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h3><a href="url">Reviewer notes</h3>\n' reviewer-check-absent
-readiness_fixture_1946 html_structure_orphan_close_full refused "${_ticket_body_1946}"$'</h3>\n' reviewer-check-absent
-readiness_fixture_1946 html_structure_orphan_close_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'</h3>\n' reviewer-check-absent
-readiness_fixture_1946 html_structure_self_closed_full refused "${_ticket_body_1946}"$'<h3/>\n' reviewer-check-absent
-readiness_fixture_1946 html_structure_self_closed_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h3/>\n' reviewer-check-absent
-readiness_fixture_1946 html_structure_bad_self_close_full refused "${_ticket_body_1946}"$'<h3/ >\n' reviewer-check-absent
-readiness_fixture_1946 html_structure_bad_self_close_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h3/ >\n' reviewer-check-absent
-readiness_fixture_1946 html_structure_bad_attribute_full refused "${_ticket_body_1946}"$'<h3 data-note=<oops>>Reviewer notes</h3>\n' reviewer-check-absent
-readiness_fixture_1946 html_structure_bad_attribute_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h3 data-note=<oops>>Reviewer notes</h3>\n' reviewer-check-absent
-readiness_fixture_1946 html_structure_missing_attribute_value_full refused "${_ticket_body_1946}"$'<h3 data-note=>Reviewer notes</h3>\n' reviewer-check-absent
-readiness_fixture_1946 html_structure_missing_attribute_value_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h3 data-note=>Reviewer notes</h3>\n' reviewer-check-absent
-readiness_fixture_1946 html_structure_unterminated_attribute_full refused "${_ticket_body_1946}"$'<h3 data-note="unterminated>Reviewer notes</h3>\n' reviewer-check-absent
-readiness_fixture_1946 html_structure_unterminated_attribute_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h3 data-note="unterminated>Reviewer notes</h3>\n' reviewer-check-absent
-readiness_fixture_1946 html_structure_duplicate_attribute_full refused "${_ticket_body_1946}"$'<h3 class="a" class="b">Reviewer notes</h3>\n' reviewer-check-absent
-readiness_fixture_1946 html_structure_duplicate_attribute_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h3 class="a" class="b">Reviewer notes</h3>\n' reviewer-check-absent
-readiness_fixture_1946 html_structure_bad_end_attribute_full refused "${_ticket_body_1946}"$'<h3>Reviewer notes</h3 extra>\n' reviewer-check-absent
-readiness_fixture_1946 html_structure_bad_end_attribute_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h3>Reviewer notes</h3 extra>\n' reviewer-check-absent
-readiness_fixture_1946 html_structure_bad_end_slash_full refused "${_ticket_body_1946}"$'<h3>Reviewer notes</h3/>\n' reviewer-check-absent
-readiness_fixture_1946 html_structure_bad_end_slash_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h3>Reviewer notes</h3/>\n' reviewer-check-absent
-readiness_fixture_1946 html_structure_spaced_open_full refused "${_ticket_body_1946}"$'< h3>Reviewer notes\n' reviewer-check-absent
-readiness_fixture_1946 html_structure_spaced_open_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'< h3>Reviewer notes\n' reviewer-check-absent
-readiness_fixture_1946 html_structure_spaced_slash_full refused "${_ticket_body_1946}"$'< /h3>Reviewer notes\n' reviewer-check-absent
-readiness_fixture_1946 html_structure_spaced_slash_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'< /h3>Reviewer notes\n' reviewer-check-absent
-readiness_fixture_1946 html_structure_truncated_open_full refused "${_ticket_body_1946}"$'<h3\n' reviewer-check-absent
-readiness_fixture_1946 html_structure_truncated_open_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h3\n' reviewer-check-absent
-readiness_fixture_1946 html_structure_truncated_end_full refused "${_ticket_body_1946}"$'<h3>Reviewer notes</h3\n' reviewer-check-absent
-readiness_fixture_1946 html_structure_truncated_end_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h3>Reviewer notes</h3\n' reviewer-check-absent
-readiness_fixture_1946 html_structure_complete_h1 labeled "${_ticket_body_1946}"$'<h1>Reviewer notes</h1>\n'
-readiness_fixture_1946 html_structure_complete_h6 labeled "${_ticket_body_1946}"$'<h6><span>Reviewer notes</span></h6>\n'
-readiness_fixture_1946 html_structure_valid_inline_child labeled "${_ticket_body_1946}"$'<h3><a href="url" title="notes">Reviewer notes</a></h3>\n'
-readiness_fixture_1946 html_structure_valid_boolean_attribute labeled "${_ticket_body_1946}"$'<h3 hidden>Reviewer notes</h3>\n'
-readiness_fixture_1946 html_structure_valid_quoted_gt labeled "${_ticket_body_1946}"$'<h3 title=">">Reviewer notes</h3>\n'
-readiness_fixture_1946 html_structure_valid_voids labeled "${_ticket_body_1946}"$'<h3>Reviewer notes<br><img src="x" /></h3><hr/>\n'
-readiness_fixture_1946 html_structure_closed_focus refused "${_ticket_body_1946}"$'<h3>Recommended focus areas for review</h3><strong>Critical</strong>\n' blocking-findings needs_fixes
-readiness_fixture_1946 html_structure_escaped_literal labeled "${_ticket_body_1946}"$'&lt; h3&gt; is a literal example.\n'
-readiness_fixture_1946 html_structure_hidden labeled "${_ticket_body_1946}"$'<!-- <h3>Reviewer notes -->\n'
-readiness_fixture_1946 html_structure_fenced labeled "${_ticket_body_1946}"$'```html\n<h3>Reviewer notes\n```\n'
-# Hard focus blockers override compliant tickets, even with heading prefixes.
-readiness_fixture_1946 focus_hard_h3_bare_full refused "${_ticket_body_1946}"$'<h3>Recommended focus areas for review</h3>\n<strong>Critical</strong>\n' blocking-findings needs_fixes
-readiness_fixture_1946 focus_hard_h3_bare_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h3>Recommended focus areas for review</h3>\n<strong>Critical</strong>\n' blocking-findings needs_fixes
-readiness_fixture_1946 focus_hard_h3_prefix_full refused "${_ticket_body_1946}"$'<h3>Custom Recommended focus areas for review</h3>\n<strong>Critical</strong>\n' blocking-findings needs_fixes
-readiness_fixture_1946 focus_hard_h3_prefix_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h3>Custom Recommended focus areas for review</h3>\n<strong>Critical</strong>\n' blocking-findings needs_fixes
-readiness_fixture_1946 focus_hard_strong_bare_full refused "${_ticket_body_1946}"$'<strong>Recommended focus areas for review</strong>\n<strong>Critical</strong>\n' blocking-findings needs_fixes
-readiness_fixture_1946 focus_hard_strong_bare_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<strong>Recommended focus areas for review</strong>\n<strong>Critical</strong>\n' blocking-findings needs_fixes
-readiness_fixture_1946 focus_hard_strong_prefix_full refused "${_ticket_body_1946}"$'<strong>Custom Recommended focus areas for review</strong>\n<strong>Critical</strong>\n' blocking-findings needs_fixes
-readiness_fixture_1946 focus_hard_strong_prefix_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<strong>Custom Recommended focus areas for review</strong>\n<strong>Critical</strong>\n' blocking-findings needs_fixes
-readiness_fixture_1946 focus_hard_h1_bare_full refused "${_ticket_body_1946}"$'<h1>Recommended focus areas for review</h1>\n<strong>Critical</strong>\n' blocking-findings needs_fixes
-readiness_fixture_1946 focus_hard_h1_bare_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h1>Recommended focus areas for review</h1>\n<strong>Critical</strong>\n' blocking-findings needs_fixes
-readiness_fixture_1946 focus_hard_h1_prefix_full refused "${_ticket_body_1946}"$'<h1>Custom Recommended focus areas for review</h1>\n<strong>Critical</strong>\n' blocking-findings needs_fixes
-readiness_fixture_1946 focus_hard_h1_prefix_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h1>Custom Recommended focus areas for review</h1>\n<strong>Critical</strong>\n' blocking-findings needs_fixes
-readiness_fixture_1946 focus_hard_h6_bare_full refused "${_ticket_body_1946}"$'<h6>Recommended focus areas for review</h6>\n<strong>Critical</strong>\n' blocking-findings needs_fixes
-readiness_fixture_1946 focus_hard_h6_bare_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h6>Recommended focus areas for review</h6>\n<strong>Critical</strong>\n' blocking-findings needs_fixes
-readiness_fixture_1946 focus_hard_h6_prefix_full refused "${_ticket_body_1946}"$'<h6>Custom Recommended focus areas for review</h6>\n<strong>Critical</strong>\n' blocking-findings needs_fixes
-readiness_fixture_1946 focus_hard_h6_prefix_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h6>Custom Recommended focus areas for review</h6>\n<strong>Critical</strong>\n' blocking-findings needs_fixes
-readiness_fixture_1946 focus_hard_b_bare_full refused "${_ticket_body_1946}"$'<b>Recommended focus areas for review</b>\n<strong>Critical</strong>\n' blocking-findings needs_fixes
-readiness_fixture_1946 focus_hard_b_bare_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<b>Recommended focus areas for review</b>\n<strong>Critical</strong>\n' blocking-findings needs_fixes
-readiness_fixture_1946 focus_hard_b_prefix_full refused "${_ticket_body_1946}"$'<b>Custom Recommended focus areas for review</b>\n<strong>Critical</strong>\n' blocking-findings needs_fixes
-readiness_fixture_1946 focus_hard_b_prefix_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<b>Custom Recommended focus areas for review</b>\n<strong>Critical</strong>\n' blocking-findings needs_fixes
-readiness_fixture_1946 focus_hard_span_bare_full refused "${_ticket_body_1946}"$'<span>Recommended focus areas for review</span>\n<strong>Critical</strong>\n' blocking-findings needs_fixes
-readiness_fixture_1946 focus_hard_span_bare_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<span>Recommended focus areas for review</span>\n<strong>Critical</strong>\n' blocking-findings needs_fixes
-readiness_fixture_1946 focus_hard_span_prefix_full refused "${_ticket_body_1946}"$'<span>Custom Recommended focus areas for review</span>\n<strong>Critical</strong>\n' blocking-findings needs_fixes
-readiness_fixture_1946 focus_hard_span_prefix_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<span>Custom Recommended focus areas for review</span>\n<strong>Critical</strong>\n' blocking-findings needs_fixes
-readiness_fixture_1946 focus_hard_div_bare_full refused "${_ticket_body_1946}"$'<div>Recommended focus areas for review</div>\n<strong>Critical</strong>\n' blocking-findings needs_fixes
-readiness_fixture_1946 focus_hard_div_bare_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<div>Recommended focus areas for review</div>\n<strong>Critical</strong>\n' blocking-findings needs_fixes
-readiness_fixture_1946 focus_hard_div_prefix_full refused "${_ticket_body_1946}"$'<div>Custom Recommended focus areas for review</div>\n<strong>Critical</strong>\n' blocking-findings needs_fixes
-readiness_fixture_1946 focus_hard_div_prefix_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<div>Custom Recommended focus areas for review</div>\n<strong>Critical</strong>\n' blocking-findings needs_fixes
-readiness_fixture_1946 focus_hard_attributes_bare_full refused "${_ticket_body_1946}"$'<h3 class="focus">Recommended focus areas for review:</h3>\n<strong>Critical</strong>\n' blocking-findings needs_fixes
-readiness_fixture_1946 focus_hard_attributes_bare_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h3 class="focus">Recommended focus areas for review:</h3>\n<strong>Critical</strong>\n' blocking-findings needs_fixes
-readiness_fixture_1946 focus_hard_attributes_prefix_full refused "${_ticket_body_1946}"$'<h3 class="focus">Custom Recommended focus areas for review:</h3>\n<strong>Critical</strong>\n' blocking-findings needs_fixes
-readiness_fixture_1946 focus_hard_attributes_prefix_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h3 class="focus">Custom Recommended focus areas for review:</h3>\n<strong>Critical</strong>\n' blocking-findings needs_fixes
-readiness_fixture_1946 focus_hard_nested_bare_full refused "${_ticket_body_1946}"$'<h3><strong>Recommended focus areas for review</strong></h3>\n<strong>Critical</strong>\n' blocking-findings needs_fixes
-readiness_fixture_1946 focus_hard_nested_bare_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h3><strong>Recommended focus areas for review</strong></h3>\n<strong>Critical</strong>\n' blocking-findings needs_fixes
-readiness_fixture_1946 focus_hard_nested_prefix_full refused "${_ticket_body_1946}"$'<h3>Custom <strong>Recommended focus areas for review</strong></h3>\n<strong>Critical</strong>\n' blocking-findings needs_fixes
-readiness_fixture_1946 focus_hard_nested_prefix_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h3>Custom <strong>Recommended focus areas for review</strong></h3>\n<strong>Critical</strong>\n' blocking-findings needs_fixes
-readiness_fixture_1946 focus_hard_fragmented_bare_full refused "${_ticket_body_1946}"$'<h3>Recommended focus <em>areas</em> for review</h3>\n<strong>Critical</strong>\n' blocking-findings needs_fixes
-readiness_fixture_1946 focus_hard_fragmented_bare_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h3>Recommended focus <em>areas</em> for review</h3>\n<strong>Critical</strong>\n' blocking-findings needs_fixes
-readiness_fixture_1946 focus_hard_fragmented_prefix_full refused "${_ticket_body_1946}"$'<h3>Custom Recommended focus <em>areas</em> for review</h3>\n<strong>Critical</strong>\n' blocking-findings needs_fixes
-readiness_fixture_1946 focus_hard_fragmented_prefix_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h3>Custom Recommended focus <em>areas</em> for review</h3>\n<strong>Critical</strong>\n' blocking-findings needs_fixes
-readiness_fixture_1946 focus_hard_markdown_bare_full refused "${_ticket_body_1946}"$'### Recommended focus areas for review\n<strong>Critical</strong>\n' blocking-findings needs_fixes
-readiness_fixture_1946 focus_hard_markdown_bare_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'### Recommended focus areas for review\n<strong>Critical</strong>\n' blocking-findings needs_fixes
-readiness_fixture_1946 focus_hard_markdown_prefix_full refused "${_ticket_body_1946}"$'### Custom Recommended focus areas for review\n<strong>Critical</strong>\n' blocking-findings needs_fixes
-readiness_fixture_1946 focus_hard_markdown_prefix_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'### Custom Recommended focus areas for review\n<strong>Critical</strong>\n' blocking-findings needs_fixes
-readiness_fixture_1946 focus_hard_bold_bare_full refused "${_ticket_body_1946}"$'**Recommended focus areas for review**\n<strong>Critical</strong>\n' blocking-findings needs_fixes
-readiness_fixture_1946 focus_hard_bold_bare_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'**Recommended focus areas for review**\n<strong>Critical</strong>\n' blocking-findings needs_fixes
-readiness_fixture_1946 focus_hard_bold_prefix_full refused "${_ticket_body_1946}"$'**Custom Recommended focus areas for review**\n<strong>Critical</strong>\n' blocking-findings needs_fixes
-readiness_fixture_1946 focus_hard_bold_prefix_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'**Custom Recommended focus areas for review**\n<strong>Critical</strong>\n' blocking-findings needs_fixes
-readiness_fixture_1946 focus_hard_plain_bare_full refused "${_ticket_body_1946}"$'Recommended focus areas for review\n<strong>Critical</strong>\n' blocking-findings needs_fixes
-readiness_fixture_1946 focus_hard_plain_bare_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'Recommended focus areas for review\n<strong>Critical</strong>\n' blocking-findings needs_fixes
-readiness_fixture_1946 focus_hard_plain_prefix_full refused "${_ticket_body_1946}"$'Custom Recommended focus areas for review\n<strong>Critical</strong>\n' blocking-findings needs_fixes
-readiness_fixture_1946 focus_hard_plain_prefix_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'Custom Recommended focus areas for review\n<strong>Critical</strong>\n' blocking-findings needs_fixes
-readiness_fixture_1946 focus_hard_unknown refused "${_ticket_body_1946}"$'<h3>Custom Recommended focus areas for review</h3>\n<strong>Unknown</strong>\n' reviewer-check-absent
-readiness_fixture_1946 focus_hard_mixed_unknown refused "${_ticket_body_1946}"$'<h3>Recommended focus areas for review</h3>\n<strong>Critical</strong>\n<strong>Unknown</strong>\n' reviewer-check-absent
-readiness_fixture_1946 focus_hard_advisory labeled "${_ticket_body_1946}"$'<h3>Custom Recommended focus areas for review</h3>\n<strong>Possible Issue</strong>\n'
-readiness_fixture_1946 focus_hard_negative labeled "${_ticket_body_1946}"$'<h3>Custom Recommended focus areas for review</h3>\n<strong>No major issues detected</strong>\n'
-readiness_fixture_1946 focus_hard_empty refused "${_ticket_body_1946}"$'<h3>Custom Recommended focus areas for review</h3>\n' reviewer-check-absent
-readiness_fixture_1946 focus_hard_duplicate refused "${_ticket_body_1946}"$'<h3>Recommended focus areas for review</h3>\n<strong>Possible Issue</strong>\n<h3>Custom Recommended focus areas for review</h3>\n<strong>Critical</strong>\n' reviewer-check-absent
-readiness_fixture_1946 focus_hard_wrapper_duplicate refused "${_ticket_body_1946}"$'<div><h3>Recommended focus areas for review</h3><strong>Critical</strong><h3>Recommended focus areas for review</h3></div>\n' reviewer-check-absent
-readiness_fixture_1946 focus_hard_hidden labeled "${_ticket_body_1946}"$'<!-- <h3>Recommended focus areas for review</h3><strong>Critical</strong> -->\n'
-readiness_fixture_1946 focus_hard_code labeled "${_ticket_body_1946}"$'```html\n<h3>Recommended focus areas for review</h3><strong>Critical</strong>\n```\n'
-# HTML security headings use the same explicit value lists (#1946).
-readiness_fixture_1946 html_security_h1_negative_full labeled "${_ticket_body_1946}"$'<h1>Security concerns</h1><p>None</p>\n'
-readiness_fixture_1946 html_security_h1_negative_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h1>Security concerns</h1><p>None</p>\n' blocking-findings needs_fixes
-readiness_fixture_1946 html_security_h1_finding_full refused "${_ticket_body_1946}"$'<h1>Security concerns</h1><p>Unsafe input execution.</p>\n' blocking-findings needs_fixes
-readiness_fixture_1946 html_security_h1_finding_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h1>Security concerns</h1><p>Unsafe input execution.</p>\n' blocking-findings needs_fixes
-readiness_fixture_1946 html_security_h1_unknown_full refused "${_ticket_body_1946}"$'<h1>Security concerns</h1><p>Unknown</p>\n' reviewer-check-absent escalate
-readiness_fixture_1946 html_security_h1_unknown_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h1>Security concerns</h1><p>Unknown</p>\n' reviewer-check-absent escalate
-readiness_fixture_1946 html_security_h2_negative_full labeled "${_ticket_body_1946}"$'<h2>Security concerns</h2><p>None</p>\n'
-readiness_fixture_1946 html_security_h2_negative_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h2>Security concerns</h2><p>None</p>\n' blocking-findings needs_fixes
-readiness_fixture_1946 html_security_h2_finding_full refused "${_ticket_body_1946}"$'<h2>Security concerns</h2><p>Unsafe input execution.</p>\n' blocking-findings needs_fixes
-readiness_fixture_1946 html_security_h2_finding_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h2>Security concerns</h2><p>Unsafe input execution.</p>\n' blocking-findings needs_fixes
-readiness_fixture_1946 html_security_h2_unknown_full refused "${_ticket_body_1946}"$'<h2>Security concerns</h2><p>Unknown</p>\n' reviewer-check-absent escalate
-readiness_fixture_1946 html_security_h2_unknown_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h2>Security concerns</h2><p>Unknown</p>\n' reviewer-check-absent escalate
-readiness_fixture_1946 html_security_h3_negative_full labeled "${_ticket_body_1946}"$'<h3>Security concerns</h3><p>None</p>\n'
-readiness_fixture_1946 html_security_h3_negative_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h3>Security concerns</h3><p>None</p>\n' blocking-findings needs_fixes
-readiness_fixture_1946 html_security_h3_finding_full refused "${_ticket_body_1946}"$'<h3>Security concerns</h3><p>Unsafe input execution.</p>\n' blocking-findings needs_fixes
-readiness_fixture_1946 html_security_h3_finding_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h3>Security concerns</h3><p>Unsafe input execution.</p>\n' blocking-findings needs_fixes
-readiness_fixture_1946 html_security_h3_unknown_full refused "${_ticket_body_1946}"$'<h3>Security concerns</h3><p>Unknown</p>\n' reviewer-check-absent escalate
-readiness_fixture_1946 html_security_h3_unknown_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h3>Security concerns</h3><p>Unknown</p>\n' reviewer-check-absent escalate
-readiness_fixture_1946 html_security_h4_negative_full labeled "${_ticket_body_1946}"$'<h4>Security concerns</h4><p>None</p>\n'
-readiness_fixture_1946 html_security_h4_negative_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h4>Security concerns</h4><p>None</p>\n' blocking-findings needs_fixes
-readiness_fixture_1946 html_security_h4_finding_full refused "${_ticket_body_1946}"$'<h4>Security concerns</h4><p>Unsafe input execution.</p>\n' blocking-findings needs_fixes
-readiness_fixture_1946 html_security_h4_finding_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h4>Security concerns</h4><p>Unsafe input execution.</p>\n' blocking-findings needs_fixes
-readiness_fixture_1946 html_security_h4_unknown_full refused "${_ticket_body_1946}"$'<h4>Security concerns</h4><p>Unknown</p>\n' reviewer-check-absent escalate
-readiness_fixture_1946 html_security_h4_unknown_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h4>Security concerns</h4><p>Unknown</p>\n' reviewer-check-absent escalate
-readiness_fixture_1946 html_security_h5_negative_full labeled "${_ticket_body_1946}"$'<h5>Security concerns</h5><p>None</p>\n'
-readiness_fixture_1946 html_security_h5_negative_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h5>Security concerns</h5><p>None</p>\n' blocking-findings needs_fixes
-readiness_fixture_1946 html_security_h5_finding_full refused "${_ticket_body_1946}"$'<h5>Security concerns</h5><p>Unsafe input execution.</p>\n' blocking-findings needs_fixes
-readiness_fixture_1946 html_security_h5_finding_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h5>Security concerns</h5><p>Unsafe input execution.</p>\n' blocking-findings needs_fixes
-readiness_fixture_1946 html_security_h5_unknown_full refused "${_ticket_body_1946}"$'<h5>Security concerns</h5><p>Unknown</p>\n' reviewer-check-absent escalate
-readiness_fixture_1946 html_security_h5_unknown_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h5>Security concerns</h5><p>Unknown</p>\n' reviewer-check-absent escalate
-readiness_fixture_1946 html_security_h6_negative_full labeled "${_ticket_body_1946}"$'<h6>Security concerns</h6><p>None</p>\n'
-readiness_fixture_1946 html_security_h6_negative_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h6>Security concerns</h6><p>None</p>\n' blocking-findings needs_fixes
-readiness_fixture_1946 html_security_h6_finding_full refused "${_ticket_body_1946}"$'<h6>Security concerns</h6><p>Unsafe input execution.</p>\n' blocking-findings needs_fixes
-readiness_fixture_1946 html_security_h6_finding_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h6>Security concerns</h6><p>Unsafe input execution.</p>\n' blocking-findings needs_fixes
-readiness_fixture_1946 html_security_h6_unknown_full refused "${_ticket_body_1946}"$'<h6>Security concerns</h6><p>Unknown</p>\n' reviewer-check-absent escalate
-readiness_fixture_1946 html_security_h6_unknown_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h6>Security concerns</h6><p>Unknown</p>\n' reviewer-check-absent escalate
-readiness_fixture_1946 html_security_strong_negative_full labeled "${_ticket_body_1946}"$'<strong>Security concerns</strong><p>None</p>\n'
-readiness_fixture_1946 html_security_strong_negative_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<strong>Security concerns</strong><p>None</p>\n' blocking-findings needs_fixes
-readiness_fixture_1946 html_security_strong_finding_full refused "${_ticket_body_1946}"$'<strong>Security concerns</strong><p>Unsafe input execution.</p>\n' blocking-findings needs_fixes
-readiness_fixture_1946 html_security_strong_finding_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<strong>Security concerns</strong><p>Unsafe input execution.</p>\n' blocking-findings needs_fixes
-readiness_fixture_1946 html_security_strong_unknown_full refused "${_ticket_body_1946}"$'<strong>Security concerns</strong><p>Unknown</p>\n' reviewer-check-absent escalate
-readiness_fixture_1946 html_security_strong_unknown_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<strong>Security concerns</strong><p>Unknown</p>\n' reviewer-check-absent escalate
-readiness_fixture_1946 html_security_b_negative_full labeled "${_ticket_body_1946}"$'<b>Security concerns</b><p>None</p>\n'
-readiness_fixture_1946 html_security_b_negative_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<b>Security concerns</b><p>None</p>\n' blocking-findings needs_fixes
-readiness_fixture_1946 html_security_b_finding_full refused "${_ticket_body_1946}"$'<b>Security concerns</b><p>Unsafe input execution.</p>\n' blocking-findings needs_fixes
-readiness_fixture_1946 html_security_b_finding_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<b>Security concerns</b><p>Unsafe input execution.</p>\n' blocking-findings needs_fixes
-readiness_fixture_1946 html_security_b_unknown_full refused "${_ticket_body_1946}"$'<b>Security concerns</b><p>Unknown</p>\n' reviewer-check-absent escalate
-readiness_fixture_1946 html_security_b_unknown_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<b>Security concerns</b><p>Unknown</p>\n' reviewer-check-absent escalate
-readiness_fixture_1946 html_security_em_negative_full labeled "${_ticket_body_1946}"$'<em>Security concerns</em><p>None</p>\n'
-readiness_fixture_1946 html_security_em_negative_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<em>Security concerns</em><p>None</p>\n' blocking-findings needs_fixes
-readiness_fixture_1946 html_security_em_finding_full refused "${_ticket_body_1946}"$'<em>Security concerns</em><p>Unsafe input execution.</p>\n' blocking-findings needs_fixes
-readiness_fixture_1946 html_security_em_finding_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<em>Security concerns</em><p>Unsafe input execution.</p>\n' blocking-findings needs_fixes
-readiness_fixture_1946 html_security_em_unknown_full refused "${_ticket_body_1946}"$'<em>Security concerns</em><p>Unknown</p>\n' reviewer-check-absent escalate
-readiness_fixture_1946 html_security_em_unknown_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<em>Security concerns</em><p>Unknown</p>\n' reviewer-check-absent escalate
-readiness_fixture_1946 html_security_span_negative_full labeled "${_ticket_body_1946}"$'<span>Security concerns</span><p>None</p>\n'
-readiness_fixture_1946 html_security_span_negative_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<span>Security concerns</span><p>None</p>\n' blocking-findings needs_fixes
-readiness_fixture_1946 html_security_span_finding_full refused "${_ticket_body_1946}"$'<span>Security concerns</span><p>Unsafe input execution.</p>\n' blocking-findings needs_fixes
-readiness_fixture_1946 html_security_span_finding_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<span>Security concerns</span><p>Unsafe input execution.</p>\n' blocking-findings needs_fixes
-readiness_fixture_1946 html_security_span_unknown_full refused "${_ticket_body_1946}"$'<span>Security concerns</span><p>Unknown</p>\n' reviewer-check-absent escalate
-readiness_fixture_1946 html_security_span_unknown_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<span>Security concerns</span><p>Unknown</p>\n' reviewer-check-absent escalate
-readiness_fixture_1946 html_security_div_negative_full labeled "${_ticket_body_1946}"$'<div>Security concerns</div><p>None</p>\n'
-readiness_fixture_1946 html_security_div_negative_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<div>Security concerns</div><p>None</p>\n' blocking-findings needs_fixes
-readiness_fixture_1946 html_security_div_finding_full refused "${_ticket_body_1946}"$'<div>Security concerns</div><p>Unsafe input execution.</p>\n' blocking-findings needs_fixes
-readiness_fixture_1946 html_security_div_finding_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<div>Security concerns</div><p>Unsafe input execution.</p>\n' blocking-findings needs_fixes
-readiness_fixture_1946 html_security_div_unknown_full refused "${_ticket_body_1946}"$'<div>Security concerns</div><p>Unknown</p>\n' reviewer-check-absent escalate
-readiness_fixture_1946 html_security_div_unknown_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<div>Security concerns</div><p>Unknown</p>\n' reviewer-check-absent escalate
-readiness_fixture_1946 html_security_p_negative_full labeled "${_ticket_body_1946}"$'<p>Security concerns</p><p>None</p>\n'
-readiness_fixture_1946 html_security_p_negative_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<p>Security concerns</p><p>None</p>\n' blocking-findings needs_fixes
-readiness_fixture_1946 html_security_p_finding_full refused "${_ticket_body_1946}"$'<p>Security concerns</p><p>Unsafe input execution.</p>\n' blocking-findings needs_fixes
-readiness_fixture_1946 html_security_p_finding_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<p>Security concerns</p><p>Unsafe input execution.</p>\n' blocking-findings needs_fixes
-readiness_fixture_1946 html_security_p_unknown_full refused "${_ticket_body_1946}"$'<p>Security concerns</p><p>Unknown</p>\n' reviewer-check-absent escalate
-readiness_fixture_1946 html_security_p_unknown_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<p>Security concerns</p><p>Unknown</p>\n' reviewer-check-absent escalate
-readiness_fixture_1946 html_security_summary_negative_full labeled "${_ticket_body_1946}"$'<summary>Security concerns</summary><p>None</p>\n'
-readiness_fixture_1946 html_security_summary_negative_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<summary>Security concerns</summary><p>None</p>\n' blocking-findings needs_fixes
-readiness_fixture_1946 html_security_summary_finding_full refused "${_ticket_body_1946}"$'<summary>Security concerns</summary><p>Unsafe input execution.</p>\n' blocking-findings needs_fixes
-readiness_fixture_1946 html_security_summary_finding_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<summary>Security concerns</summary><p>Unsafe input execution.</p>\n' blocking-findings needs_fixes
-readiness_fixture_1946 html_security_summary_unknown_full refused "${_ticket_body_1946}"$'<summary>Security concerns</summary><p>Unknown</p>\n' reviewer-check-absent escalate
-readiness_fixture_1946 html_security_summary_unknown_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<summary>Security concerns</summary><p>Unknown</p>\n' reviewer-check-absent escalate
-readiness_fixture_1946 html_security_attributes_negative_full labeled "${_ticket_body_1946}"$'<h3 class="security">Security concerns:</h3><p>None</p>\n'
-readiness_fixture_1946 html_security_attributes_negative_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h3 class="security">Security concerns:</h3><p>None</p>\n' blocking-findings needs_fixes
-readiness_fixture_1946 html_security_attributes_finding_full refused "${_ticket_body_1946}"$'<h3 class="security">Security concerns:</h3><p>Unsafe input execution.</p>\n' blocking-findings needs_fixes
-readiness_fixture_1946 html_security_attributes_finding_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h3 class="security">Security concerns:</h3><p>Unsafe input execution.</p>\n' blocking-findings needs_fixes
-readiness_fixture_1946 html_security_attributes_unknown_full refused "${_ticket_body_1946}"$'<h3 class="security">Security concerns:</h3><p>Unknown</p>\n' reviewer-check-absent escalate
-readiness_fixture_1946 html_security_attributes_unknown_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h3 class="security">Security concerns:</h3><p>Unknown</p>\n' reviewer-check-absent escalate
-readiness_fixture_1946 html_security_nested_negative_full labeled "${_ticket_body_1946}"$'<h3><strong>Security concerns</strong></h3><p>None</p>\n'
-readiness_fixture_1946 html_security_nested_negative_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h3><strong>Security concerns</strong></h3><p>None</p>\n' blocking-findings needs_fixes
-readiness_fixture_1946 html_security_nested_finding_full refused "${_ticket_body_1946}"$'<h3><strong>Security concerns</strong></h3><p>Unsafe input execution.</p>\n' blocking-findings needs_fixes
-readiness_fixture_1946 html_security_nested_finding_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h3><strong>Security concerns</strong></h3><p>Unsafe input execution.</p>\n' blocking-findings needs_fixes
-readiness_fixture_1946 html_security_nested_unknown_full refused "${_ticket_body_1946}"$'<h3><strong>Security concerns</strong></h3><p>Unknown</p>\n' reviewer-check-absent escalate
-readiness_fixture_1946 html_security_nested_unknown_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h3><strong>Security concerns</strong></h3><p>Unknown</p>\n' reviewer-check-absent escalate
-readiness_fixture_1946 html_security_fragmented_negative_full labeled "${_ticket_body_1946}"$'<h3>Secu<em>rity</em> con<strong>cerns</strong></h3><p>None</p>\n'
-readiness_fixture_1946 html_security_fragmented_negative_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h3>Secu<em>rity</em> con<strong>cerns</strong></h3><p>None</p>\n' blocking-findings needs_fixes
-readiness_fixture_1946 html_security_fragmented_finding_full refused "${_ticket_body_1946}"$'<h3>Secu<em>rity</em> con<strong>cerns</strong></h3><p>Unsafe input execution.</p>\n' blocking-findings needs_fixes
-readiness_fixture_1946 html_security_fragmented_finding_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h3>Secu<em>rity</em> con<strong>cerns</strong></h3><p>Unsafe input execution.</p>\n' blocking-findings needs_fixes
-readiness_fixture_1946 html_security_fragmented_unknown_full refused "${_ticket_body_1946}"$'<h3>Secu<em>rity</em> con<strong>cerns</strong></h3><p>Unknown</p>\n' reviewer-check-absent escalate
-readiness_fixture_1946 html_security_fragmented_unknown_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h3>Secu<em>rity</em> con<strong>cerns</strong></h3><p>Unknown</p>\n' reviewer-check-absent escalate
-readiness_fixture_1946 html_security_empty refused "${_ticket_body_1946}"$'<h3>Security concerns</h3>\n' reviewer-check-absent
-readiness_fixture_1946 html_security_unclosed refused "${_ticket_body_1946}"$'<h3>Security concerns<p>Unknown</p>\n' reviewer-check-absent
-readiness_fixture_1946 html_security_duplicate refused "${_ticket_body_1946}"$'<h3>Security concerns</h3><p>None</p><h3>Security concerns</h3><p>Unknown</p>\n' reviewer-check-absent
-readiness_fixture_1946 html_security_next_heading labeled "${_ticket_body_1946}"$'<h3>Security concerns</h3><p>None</p><h3>Review metadata</h3><p>Effort 2/5</p>\n'
-readiness_fixture_1946 html_security_prefix labeled "${_ticket_body_1946}"$'<h3>Custom Security concerns</h3><p>Unknown</p>\n'
-readiness_fixture_1946 html_security_prose labeled "${_ticket_body_1946}"$'<p>Document Security concerns in the user guide.</p>\n'
-readiness_fixture_1946 html_security_hidden labeled "${_ticket_body_1946}"$'<!-- <h3>Security concerns</h3><p>Unknown</p> -->\n'
-readiness_fixture_1946 html_security_code labeled "${_ticket_body_1946}"$'```html\n<h3>Security concerns</h3><p>Unknown</p>\n```\n'
-# Unprefixed rendered manual-request headings outrank compliance (#1946).
-readiness_fixture_1946 html_human_h3_full refused "${_ticket_body_1946}"$'<h3>Requires further human verification</h3><p>Verify authorization manually.</p>\n' reviewer-check-absent
-readiness_fixture_1946 html_human_h3_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h3>Requires further human verification</h3><p>Verify authorization manually.</p>\n' reviewer-check-absent
-readiness_fixture_1946 html_human_h1_colon_full refused "${_ticket_body_1946}"$'<h1>Requires further human verification:</h1>\n' reviewer-check-absent
-readiness_fixture_1946 html_human_h1_colon_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h1>Requires further human verification:</h1>\n' reviewer-check-absent
-readiness_fixture_1946 html_human_h6_full refused "${_ticket_body_1946}"$'<h6>Requires further human verification</h6>\n' reviewer-check-absent
-readiness_fixture_1946 html_human_h6_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h6>Requires further human verification</h6>\n' reviewer-check-absent
-readiness_fixture_1946 html_human_strong_full refused "${_ticket_body_1946}"$'<strong>Requires further human verification</strong><br>Verify authorization manually.\n' reviewer-check-absent
-readiness_fixture_1946 html_human_strong_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<strong>Requires further human verification</strong><br>Verify authorization manually.\n' reviewer-check-absent
-readiness_fixture_1946 html_human_b_full refused "${_ticket_body_1946}"$'<b>Requires further human verification</b><br>Verify authorization manually.\n' reviewer-check-absent
-readiness_fixture_1946 html_human_b_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<b>Requires further human verification</b><br>Verify authorization manually.\n' reviewer-check-absent
-readiness_fixture_1946 html_human_em_full refused "${_ticket_body_1946}"$'<em>Requires further human verification</em>\n' reviewer-check-absent
-readiness_fixture_1946 html_human_em_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<em>Requires further human verification</em>\n' reviewer-check-absent
-readiness_fixture_1946 html_human_span_full refused "${_ticket_body_1946}"$'<span>Requires further human verification</span>\n' reviewer-check-absent
-readiness_fixture_1946 html_human_span_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<span>Requires further human verification</span>\n' reviewer-check-absent
-readiness_fixture_1946 html_human_div_full refused "${_ticket_body_1946}"$'<div>Requires further human verification</div>\n' reviewer-check-absent
-readiness_fixture_1946 html_human_div_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<div>Requires further human verification</div>\n' reviewer-check-absent
-readiness_fixture_1946 html_human_p_full refused "${_ticket_body_1946}"$'<p>Requires further human verification</p>\n' reviewer-check-absent
-readiness_fixture_1946 html_human_p_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<p>Requires further human verification</p>\n' reviewer-check-absent
-readiness_fixture_1946 html_human_summary_full refused "${_ticket_body_1946}"$'<details><summary>Requires further human verification</summary>Verify authorization manually.</details>\n' reviewer-check-absent
-readiness_fixture_1946 html_human_summary_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<details><summary>Requires further human verification</summary>Verify authorization manually.</details>\n' reviewer-check-absent
-readiness_fixture_1946 html_human_fragmented_full refused "${_ticket_body_1946}"$'<h3 class="verification"> Requires&nbsp;further <em>human</em> <strong>verification</strong>: </h3>\n' reviewer-check-absent
-readiness_fixture_1946 html_human_fragmented_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h3 class="verification"> Requires&nbsp;further <em>human</em> <strong>verification</strong>: </h3>\n' reviewer-check-absent
-readiness_fixture_1946 html_human_custom_prefix labeled "${_ticket_body_1946}"$'<h3>Custom Requires further human verification</h3>\n'
-readiness_fixture_1946 html_human_prose labeled "${_ticket_body_1946}"$'<p>Support Requires further human verification descriptions.</p>\n'
-readiness_fixture_1946 html_human_hidden labeled "${_ticket_body_1946}"$'<!-- <h3>Requires further human verification</h3> -->\n'
-readiness_fixture_1946 html_human_code labeled "${_ticket_body_1946}"$'```html\n<h3>Requires further human verification</h3>\n```\n'
-# Verification status is independent of presentation and compliance verdict.
-readiness_fixture_1946 format_plain_colon_required_full refused "${_ticket_body_1946}"$'Verification status: Required\n' reviewer-check-absent
-readiness_fixture_1946 format_plain_colon_required_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'Verification status: Required\n' reviewer-check-absent
-readiness_fixture_1946 format_plain_colon_unknown_full refused "${_ticket_body_1946}"$'Verification status: Unknown\n' reviewer-check-absent
-readiness_fixture_1946 format_plain_colon_unknown_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'Verification status: Unknown\n' reviewer-check-absent
-readiness_fixture_1946 format_plain_no_colon_required_full refused "${_ticket_body_1946}"$'Verification status Required\n' reviewer-check-absent
-readiness_fixture_1946 format_plain_no_colon_required_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'Verification status Required\n' reviewer-check-absent
-readiness_fixture_1946 format_plain_no_colon_unknown_full refused "${_ticket_body_1946}"$'Verification status Unknown\n' reviewer-check-absent
-readiness_fixture_1946 format_plain_no_colon_unknown_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'Verification status Unknown\n' reviewer-check-absent
-readiness_fixture_1946 format_bold_colon_required_full refused "${_ticket_body_1946}"$'**Verification status**: Required\n' reviewer-check-absent
-readiness_fixture_1946 format_bold_colon_required_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'**Verification status**: Required\n' reviewer-check-absent
-readiness_fixture_1946 format_bold_colon_unknown_full refused "${_ticket_body_1946}"$'**Verification status**: Unknown\n' reviewer-check-absent
-readiness_fixture_1946 format_bold_colon_unknown_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'**Verification status**: Unknown\n' reviewer-check-absent
-readiness_fixture_1946 format_bold_no_colon_required_full refused "${_ticket_body_1946}"$'**Verification status** Required\n' reviewer-check-absent
-readiness_fixture_1946 format_bold_no_colon_required_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'**Verification status** Required\n' reviewer-check-absent
-readiness_fixture_1946 format_bold_no_colon_unknown_full refused "${_ticket_body_1946}"$'**Verification status** Unknown\n' reviewer-check-absent
-readiness_fixture_1946 format_bold_no_colon_unknown_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'**Verification status** Unknown\n' reviewer-check-absent
-readiness_fixture_1946 format_bold_value_required_full refused "${_ticket_body_1946}"$'**Verification status** : **Required**\n' reviewer-check-absent
-readiness_fixture_1946 format_bold_value_required_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'**Verification status** : **Required**\n' reviewer-check-absent
-readiness_fixture_1946 format_bold_value_unknown_full refused "${_ticket_body_1946}"$'**Verification status** : **Unknown**\n' reviewer-check-absent
-readiness_fixture_1946 format_bold_value_unknown_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'**Verification status** : **Unknown**\n' reviewer-check-absent
-readiness_fixture_1946 format_bold_entire_required_full refused "${_ticket_body_1946}"$'**Verification status: Required**\n' reviewer-check-absent
-readiness_fixture_1946 format_bold_entire_required_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'**Verification status: Required**\n' reviewer-check-absent
-readiness_fixture_1946 format_bold_entire_unknown_full refused "${_ticket_body_1946}"$'**Verification status: Unknown**\n' reviewer-check-absent
-readiness_fixture_1946 format_bold_entire_unknown_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'**Verification status: Unknown**\n' reviewer-check-absent
-readiness_fixture_1946 format_html_colon_required_full refused "${_ticket_body_1946}"$'<tr><td><strong>Verification status</strong>: Required</td></tr>\n' reviewer-check-absent
-readiness_fixture_1946 format_html_colon_required_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<tr><td><strong>Verification status</strong>: Required</td></tr>\n' reviewer-check-absent
-readiness_fixture_1946 format_html_colon_unknown_full refused "${_ticket_body_1946}"$'<tr><td><strong>Verification status</strong>: Unknown</td></tr>\n' reviewer-check-absent
-readiness_fixture_1946 format_html_colon_unknown_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<tr><td><strong>Verification status</strong>: Unknown</td></tr>\n' reviewer-check-absent
-readiness_fixture_1946 format_html_no_colon_required_full refused "${_ticket_body_1946}"$'<tr><td><strong>Verification status</strong> Required</td></tr>\n' reviewer-check-absent
-readiness_fixture_1946 format_html_no_colon_required_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<tr><td><strong>Verification status</strong> Required</td></tr>\n' reviewer-check-absent
-readiness_fixture_1946 format_html_no_colon_unknown_full refused "${_ticket_body_1946}"$'<tr><td><strong>Verification status</strong> Unknown</td></tr>\n' reviewer-check-absent
-readiness_fixture_1946 format_html_no_colon_unknown_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<tr><td><strong>Verification status</strong> Unknown</td></tr>\n' reviewer-check-absent
-readiness_fixture_1946 format_html_break_required_full refused "${_ticket_body_1946}"$'<tr><td><strong>Verification status</strong><br>Required</td></tr>\n' reviewer-check-absent
-readiness_fixture_1946 format_html_break_required_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<tr><td><strong>Verification status</strong><br>Required</td></tr>\n' reviewer-check-absent
-readiness_fixture_1946 format_html_break_unknown_full refused "${_ticket_body_1946}"$'<tr><td><strong>Verification status</strong><br>Unknown</td></tr>\n' reviewer-check-absent
-readiness_fixture_1946 format_html_break_unknown_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<tr><td><strong>Verification status</strong><br>Unknown</td></tr>\n' reviewer-check-absent
-readiness_fixture_1946 format_html_attributes_required_full refused "${_ticket_body_1946}"$'<tr><td><strong class="field" title=">">Verification status</strong><br><span>Required</span></td></tr>\n' reviewer-check-absent
-readiness_fixture_1946 format_html_attributes_required_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<tr><td><strong class="field" title=">">Verification status</strong><br><span>Required</span></td></tr>\n' reviewer-check-absent
-readiness_fixture_1946 format_html_attributes_unknown_full refused "${_ticket_body_1946}"$'<tr><td><strong class="field" title=">">Verification status</strong><br><span>Unknown</span></td></tr>\n' reviewer-check-absent
-readiness_fixture_1946 format_html_attributes_unknown_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<tr><td><strong class="field" title=">">Verification status</strong><br><span>Unknown</span></td></tr>\n' reviewer-check-absent
-readiness_fixture_1946 format_spaces_required_full refused "${_ticket_body_1946}"$'  ** Verification\tstatus **  :  ** Required ** \n' reviewer-check-absent
-readiness_fixture_1946 format_spaces_required_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'  ** Verification\tstatus **  :  ** Required ** \n' reviewer-check-absent
-readiness_fixture_1946 format_spaces_unknown_full refused "${_ticket_body_1946}"$'  ** Verification\tstatus **  :  ** Unknown ** \n' reviewer-check-absent
-readiness_fixture_1946 format_spaces_unknown_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'  ** Verification\tstatus **  :  ** Unknown ** \n' reviewer-check-absent
-readiness_fixture_1946 format_entities_required_full refused "${_ticket_body_1946}"$'<tr><td><strong>Verification&nbsp;status</strong>&nbsp;:&nbsp;Required</td></tr>\n' reviewer-check-absent
-readiness_fixture_1946 format_entities_required_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<tr><td><strong>Verification&nbsp;status</strong>&nbsp;:&nbsp;Required</td></tr>\n' reviewer-check-absent
-readiness_fixture_1946 format_entities_unknown_full refused "${_ticket_body_1946}"$'<tr><td><strong>Verification&nbsp;status</strong>&nbsp;:&nbsp;Unknown</td></tr>\n' reviewer-check-absent
-readiness_fixture_1946 format_entities_unknown_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<tr><td><strong>Verification&nbsp;status</strong>&nbsp;:&nbsp;Unknown</td></tr>\n' reviewer-check-absent
-readiness_fixture_1946 format_multiline_required_full refused "${_ticket_body_1946}"$'**Verification status**\n:\nRequired\n' reviewer-check-absent
-readiness_fixture_1946 format_multiline_required_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'**Verification status**\n:\nRequired\n' reviewer-check-absent
-readiness_fixture_1946 format_multiline_unknown_full refused "${_ticket_body_1946}"$'**Verification status**\n:\nUnknown\n' reviewer-check-absent
-readiness_fixture_1946 format_multiline_unknown_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'**Verification status**\n:\nUnknown\n' reviewer-check-absent
-readiness_fixture_1946 format_inline_bold_required_full refused "${_ticket_body_1946}"$'Review metadata: **Verification status**: Required\n' reviewer-check-absent
-readiness_fixture_1946 format_inline_bold_required_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'Review metadata: **Verification status**: Required\n' reviewer-check-absent
-readiness_fixture_1946 format_inline_bold_unknown_full refused "${_ticket_body_1946}"$'Review metadata: **Verification status**: Unknown\n' reviewer-check-absent
-readiness_fixture_1946 format_inline_bold_unknown_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'Review metadata: **Verification status**: Unknown\n' reviewer-check-absent
-readiness_fixture_1946 format_inline_html_required_full refused "${_ticket_body_1946}"$'<tr><td>Review metadata: <strong>Verification status</strong>: Required</td></tr>\n' reviewer-check-absent
-readiness_fixture_1946 format_inline_html_required_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<tr><td>Review metadata: <strong>Verification status</strong>: Required</td></tr>\n' reviewer-check-absent
-readiness_fixture_1946 format_inline_html_unknown_full refused "${_ticket_body_1946}"$'<tr><td>Review metadata: <strong>Verification status</strong>: Unknown</td></tr>\n' reviewer-check-absent
-readiness_fixture_1946 format_inline_html_unknown_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<tr><td>Review metadata: <strong>Verification status</strong>: Unknown</td></tr>\n' reviewer-check-absent
-readiness_fixture_1946 format_html_heading_required_full refused "${_ticket_body_1946}"$'<h3>Verification status</h3><p>Required</p>\n' reviewer-check-absent
-readiness_fixture_1946 format_html_heading_required_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h3>Verification status</h3><p>Required</p>\n' reviewer-check-absent
-readiness_fixture_1946 format_html_heading_unknown_full refused "${_ticket_body_1946}"$'<h3>Verification status</h3><p>Unknown</p>\n' reviewer-check-absent
-readiness_fixture_1946 format_html_heading_unknown_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<h3>Verification status</h3><p>Unknown</p>\n' reviewer-check-absent
-readiness_fixture_1946 format_markdown_heading_required_full refused "${_ticket_body_1946}"$'### Verification status\nRequired\n' reviewer-check-absent
-readiness_fixture_1946 format_markdown_heading_required_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'### Verification status\nRequired\n' reviewer-check-absent
-readiness_fixture_1946 format_markdown_heading_unknown_full refused "${_ticket_body_1946}"$'### Verification status\nUnknown\n' reviewer-check-absent
-readiness_fixture_1946 format_markdown_heading_unknown_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'### Verification status\nUnknown\n' reviewer-check-absent
-readiness_fixture_1946 format_emoji_heading_required_full refused "${_ticket_body_1946}"$'### 👤 Verification status: Required\n' reviewer-check-absent
-readiness_fixture_1946 format_emoji_heading_required_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'### 👤 Verification status: Required\n' reviewer-check-absent
-readiness_fixture_1946 format_emoji_heading_unknown_full refused "${_ticket_body_1946}"$'### 👤 Verification status: Unknown\n' reviewer-check-absent
-readiness_fixture_1946 format_emoji_heading_unknown_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'### 👤 Verification status: Unknown\n' reviewer-check-absent
-readiness_fixture_1946 format_decorated_plain_required_full refused "${_ticket_body_1946}"$'Review status — Verification status Required\n' reviewer-check-absent
-readiness_fixture_1946 format_decorated_plain_required_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'Review status — Verification status Required\n' reviewer-check-absent
-readiness_fixture_1946 format_decorated_plain_unknown_full refused "${_ticket_body_1946}"$'Review status — Verification status Unknown\n' reviewer-check-absent
-readiness_fixture_1946 format_decorated_plain_unknown_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'Review status — Verification status Unknown\n' reviewer-check-absent
-readiness_fixture_1946 format_unknown_heading_required refused "${_ticket_body_1946}"$'### Custom Verification status: Required\n' reviewer-check-absent
-readiness_fixture_1946 descriptive_status_reference labeled "${_ticket_body_1946/All required behavior is implemented./Support Verification status Required values.}"
-readiness_fixture_1946 descriptive_styled_status_reference labeled "${_ticket_body_1946/All required behavior is implemented./<strong>Support Verification status Required values.<\/strong>}"
-readiness_fixture_1946 format_fragmented_label_required_full refused "${_ticket_body_1946}"$'Verifi<strong>cation</strong> status: Required\n' reviewer-check-absent
-readiness_fixture_1946 format_fragmented_label_required_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'Verifi<strong>cation</strong> status: Required\n' reviewer-check-absent
-readiness_fixture_1946 format_fragmented_label_unknown_full refused "${_ticket_body_1946}"$'Verifi<strong>cation</strong> status: Unknown\n' reviewer-check-absent
-readiness_fixture_1946 format_fragmented_label_unknown_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'Verifi<strong>cation</strong> status: Unknown\n' reviewer-check-absent
-readiness_fixture_1946 format_fragmented_value_required_full refused "${_ticket_body_1946}"$'<strong>Verification status</strong>: <span>Req</span><em>uired</em>\n' reviewer-check-absent
-readiness_fixture_1946 format_fragmented_value_required_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<strong>Verification status</strong>: <span>Req</span><em>uired</em>\n' reviewer-check-absent
-readiness_fixture_1946 format_fragmented_value_unknown_full refused "${_ticket_body_1946}"$'<strong>Verification status</strong>: <span>Unk</span><em>nown</em>\n' reviewer-check-absent
-readiness_fixture_1946 format_fragmented_value_unknown_partial refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'<strong>Verification status</strong>: <span>Unk</span><em>nown</em>\n' reviewer-check-absent
-unset _ticket_body_1946
-unset -f readiness_fixture_1946
 
 # coderabbit-cli / local-ai-reviewer (PRRT_kwDORWAxaM6m260s): these
 # reviewers are pure CLI (no check run, no review, no issue comment), so
@@ -3036,8 +1903,11 @@ MOCK_BASE_CONFIG='review:
 MOCK_ISSUE_COMMENTS="$(_ledger_comment loop-runner OWNER 940 "$(_ledger_entry no_verdict_yet "$HEAD" 3)")"
 result="$(run_helper_platform "$_codex_config")"
 run_test "1789_coderabbit_cli_no_verdict_yet_ledger_refuses_reason" "reviewer-check-absent" "$(field "$result" REASON)"
+# shellcheck disable=SC2034 # Assigned for functions in the sourced readiness fixture.
 MOCK_ISSUE_COMMENTS='[]'
+# shellcheck disable=SC2034 # Assigned for functions in the sourced readiness fixture.
 MOCK_GH_USER=''
+# shellcheck disable=SC2034 # Assigned for functions in the sourced readiness fixture.
 MOCK_PERMS=''
 
 echo ""
@@ -3076,6 +1946,7 @@ MOCK_PR_JSON="$_label_present_pr"
 MOCK_CHECK_RUNS='{"check_runs":[]}'
 MOCK_DRY_RUN=true
 result="$(run_helper)"
+# shellcheck disable=SC2034 # Assigned for functions in the sourced readiness fixture.
 MOCK_DRY_RUN=false
 run_test "dry_run_refused_no_stale_label_removed" "0" \
   "$(grep -c -- '--remove-label ready-for-human-review' "$_LABEL_LOG" || true)"
@@ -3123,6 +1994,7 @@ MOCK_PR_JSON="$_empty_rollup"
 MOCK_CHECK_RUNS="$_bugbot_ok"
 MOCK_OWNERSHIP_PR_JSON='{"headRefName":"'"$_BRANCH"'"}'
 result="$(run_helper)"
+# shellcheck disable=SC2034 # Assigned for functions in the sourced readiness fixture.
 MOCK_OWNERSHIP_PR_JSON=''
 run_test "ownership_unresolved_exit" "2" "${result%%|*}"
 run_test "ownership_unresolved_result" "escalate" "$(field "$result" RESULT)"
@@ -3132,10 +2004,13 @@ run_test "ownership_unresolved_applies_nothing" "0" "$(edit_count)"
 # The matching-branch case (every other test in this file) proves the
 # positive path: an explicit --branch that DOES match the PR's own head
 # branch proceeds to the reviewer/CI gate as before.
+# shellcheck disable=SC2034 # Assigned for functions in the sourced readiness fixture.
 MOCK_PR_JSON="$_empty_rollup"
+# shellcheck disable=SC2034 # Assigned for functions in the sourced readiness fixture.
 MOCK_CHECK_RUNS="$_bugbot_ok"
 MOCK_OWNERSHIP_BRANCH="$_BRANCH"
 result="$(run_helper)"
+# shellcheck disable=SC2034 # Assigned for functions in the sourced readiness fixture.
 MOCK_OWNERSHIP_BRANCH=''
 run_test "ownership_match_proceeds_result" "labeled" "$(field "$result" RESULT)"
 run_test "ownership_match_reports_owned" "owned" \
@@ -3244,6 +2119,7 @@ run_test "graphql_literal_scan_finds_queries" "yes" \
   "$(grep -c "query='" "$HELPER" | awk '$1 > 0 {print "yes"}')"
 
 echo ""
+# shellcheck disable=SC2154 # Provided by the shared readiness fixture or its caller.
 echo "$pass passed, $fail failed"
 
 if [ "$fail" -ne 0 ]; then
