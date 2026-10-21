@@ -2,7 +2,7 @@
 # Best-effort pr-policy.yml workflow_dispatch after summary post (#1998).
 # covers: scripts/development-workflow/pr-review-loop.sh
 #
-# Usage: bash scripts/development-workflow/tests/test-pr-review-loop-pr-policy-dispatch.sh
+# Usage: bash scripts/development-workflow/tests/test-reviewer-loop-pr-policy-dispatch.sh
 
 set -euo pipefail
 
