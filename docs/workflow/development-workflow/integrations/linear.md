@@ -298,8 +298,9 @@ release tag or `--release-head`; never checkout `HEAD`): for each commit it
 resolves associated PRs only through GitHub `commits/<sha>/pulls` (subject
 `(#N)` is never sufficient evidence). A PR is accepted when it is merged and
 its merge/head commit is in the range (or the associating range SHA when those
-fields are absent). Linear IDs come from each PR’s `headRefName` / REST
-`head.ref` and `title` (not commit text or PR body). Changelog-only mentions —
+fields are absent), regardless of the PR base branch (including nested
+`feature/*` or `develop-<slug>` parents). Linear IDs come from each PR’s
+`headRefName` / REST `head.ref` and `title` (not commit text or PR body). Changelog-only mentions —
 including cross-references such as “did not ship LEA-298” and expanded ranges —
 are skipped with
 `RELEASE_SCOPE_SKIPPED issue=<ID> reason=changelog_mention_without_merged_pr`

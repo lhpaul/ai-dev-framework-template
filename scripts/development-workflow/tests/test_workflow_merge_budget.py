@@ -1791,21 +1791,26 @@ class ReleasePair(unittest.TestCase):
         self.command(['git','branch','-m','release/v1.2.3'])
         (self.repo/'CHANGELOG.md').write_text('# Changes\n\n## [1.2.3] - 2026-10-10\n- Shipped #12, #13 (ENG-12, ENG-13).\n')
         self.command(['git','add','CHANGELOG.md','.ai-dev-workflow.yaml'])
-        # Linear --from-changelog (#1982) resolves IDs from PR headRefName/title
-        # via PR number fast path + gh pr view (not from commit subject text).
+        # Linear --from-changelog (#1982) resolves IDs only via commits/<sha>/pulls
+        # associations (not subject PR numbers). Populate commitPulls for eng12/eng13.
         self.command(['git','commit','-qm','Merge pull request #112 from org/fix/ENG-12-item'])
         eng12 = self.command(['git','rev-parse','HEAD']).stdout.strip()
         self.command(['git','commit','--allow-empty','-qm','Merge pull request #113 from org/fix/ENG-13-item'])
         eng13 = self.command(['git','rev-parse','HEAD']).stdout.strip()
         self.head = eng13
-        self.data.setdefault('prs', {})['112'] = dict(
+        self.eng12 = eng12
+        self.eng13 = eng13
+        pr112 = dict(
             number=112, state='MERGED', headRefName='fix/ENG-12-item',
             title='fix: ENG-12', mergedAt='2026-10-10T12:00:00Z', baseRefName='develop',
-            headRefOid=eng12, isInMergeQueue=False, autoMergeRequest=None)
-        self.data['prs']['113'] = dict(
+            headRefOid=eng12, mergeCommitOid=eng12, isInMergeQueue=False, autoMergeRequest=None)
+        pr113 = dict(
             number=113, state='MERGED', headRefName='fix/ENG-13-item',
             title='fix: ENG-13', mergedAt='2026-10-10T12:00:00Z', baseRefName='develop',
-            headRefOid=eng13, isInMergeQueue=False, autoMergeRequest=None)
+            headRefOid=eng13, mergeCommitOid=eng13, isInMergeQueue=False, autoMergeRequest=None)
+        self.data.setdefault('prs', {})['112'] = pr112
+        self.data['prs']['113'] = pr113
+        self.data['commitPulls'] = {eng12: [pr112], eng13: [pr113]}
         self.command(['git','push','-q','origin','release/v1.2.3'])
         base = self.command(['git','rev-parse','develop']).stdout.strip()
         tree = self.command(['git','rev-parse','HEAD^{tree}']).stdout.strip()
@@ -2622,6 +2627,10 @@ class ReleasePair(unittest.TestCase):
         config=self.repo/'.ai-dev-workflow.yaml'
         original='issue_tracker:\n  provider: linear\n  custom_fields:\n    release_field: Release\n'
         config.write_text(original);self.both()
+        state=json.loads(Path(self.session).read_text())
+        self.assertEqual([i['id'] for i in state['prs'][1]['issues']],['ENG-12','ENG-13'])
+        self.assertIn('release_stamp:ENG-12',state['prs'][1]['steps'])
+        self.assertIn('release_stamp:ENG-13',state['prs'][1]['steps'])
         for phase in ('remote_delete','local_cleanup'):
             self.step(13,'policy_skip',key=phase)
         config.write_text(original.replace('release_field: Release','release_field: Other'))
@@ -2670,6 +2679,10 @@ class ReleasePair(unittest.TestCase):
     def test_release_pair_linear_stamp_bridge_preserves_deferred_work(self):
         (self.repo/'.ai-dev-workflow.yaml').write_text('issue_tracker:\n  provider: linear\n  custom_fields:\n    release_field: Release\n')
         self.both()
+        state=json.loads(Path(self.session).read_text())
+        self.assertEqual([i['id'] for i in state['prs'][1]['issues']],['ENG-12','ENG-13'])
+        self.assertIn('release_stamp:ENG-12',state['prs'][1]['steps'])
+        self.assertIn('release_stamp:ENG-13',state['prs'][1]['steps'])
         self.cleanup(success=False)
         state=json.loads(Path(self.session).read_text())
         stamp=state['prs'][1]['steps']['release_stamp:ENG-12']

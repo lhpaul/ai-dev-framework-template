@@ -565,8 +565,9 @@ PRs** in the previous-tag..verified-release-ref commit range (release tag or
 `--release-head`; never checkout `HEAD`): each commit is resolved to its PR(s)
 only via GitHub `commits/<sha>/pulls` (subject `#N` / `Merge pull request #N`
 is never sufficient evidence). A PR is accepted when merged and its merge/head
-commit is in the range. IDs are taken from each PR's `headRefName` / REST
-`head.ref` and `title` — not from commit text or PR body. Changelog-only
+commit is in the range, regardless of base branch. IDs are taken from each
+PR's `headRefName` / REST `head.ref` and `title` — not from commit text or PR
+body. Changelog-only
 mentions (including expanded ranges such as `LEA-298–LEA-301`) are omitted as
 `RELEASE_SCOPE_SKIPPED issue=<ID> reason=changelog_mention_without_merged_pr`.
 A fully resolved range with zero Linear IDs is an empty scope (not

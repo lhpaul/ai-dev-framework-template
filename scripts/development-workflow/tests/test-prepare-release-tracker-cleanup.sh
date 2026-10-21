@@ -1258,19 +1258,33 @@ MAP_FILE="${LINEAR_SCOPE_MAP_FILE:?}"
 map_uses_rest_format() {
   grep -qx 'format:rest' "$MAP_FILE" 2>/dev/null
 }
+# Map line: pr_number|headRefName|title[|baseRefName]
+parse_pr_map_line() {
+  local rest="$1"
+  MAP_HEAD="${rest%%|*}"
+  rest="${rest#*|}"
+  case "$rest" in
+    *\|*)
+      MAP_TITLE="${rest%%|*}"
+      MAP_BASE="${rest#*|}"
+      ;;
+    *)
+      MAP_TITLE="$rest"
+      MAP_BASE="develop"
+      ;;
+  esac
+}
 lookup_pr() {
-  local num="$1" line rest head title
+  local num="$1" line rest
   while IFS= read -r line || [ -n "$line" ]; do
     case "$line" in
       commit:*|format:*) continue ;;
     esac
     case "$line" in
       "${num}|"*)
-        rest="${line#*|}"
-        head="${rest%%|*}"
-        title="${rest#*|}"
-        printf '{"number":%s,"headRefName":"%s","title":"%s","mergedAt":"2026-10-14T12:00:00Z","baseRefName":"develop"}\n' \
-          "$num" "$head" "$title"
+        parse_pr_map_line "${line#*|}"
+        printf '{"number":%s,"headRefName":"%s","title":"%s","mergedAt":"2026-10-14T12:00:00Z","baseRefName":"%s"}\n' \
+          "$num" "$MAP_HEAD" "$MAP_TITLE" "$MAP_BASE"
         return 0
         ;;
     esac
@@ -1278,22 +1292,20 @@ lookup_pr() {
   return 1
 }
 lookup_pr_rest() {
-  local num="$1" merge_sha="${2:-}" line rest head title
+  local num="$1" merge_sha="${2:-}" line rest
   while IFS= read -r line || [ -n "$line" ]; do
     case "$line" in
       commit:*|format:*) continue ;;
     esac
     case "$line" in
       "${num}|"*)
-        rest="${line#*|}"
-        head="${rest%%|*}"
-        title="${rest#*|}"
+        parse_pr_map_line "${line#*|}"
         if [ -n "$merge_sha" ]; then
-          printf '{"number":%s,"head":{"ref":"%s","sha":"%s"},"title":"%s","merged_at":"2026-10-14T12:00:00Z","base":{"ref":"main"},"merge_commit_sha":"%s"}\n' \
-            "$num" "$head" "$merge_sha" "$title" "$merge_sha"
+          printf '{"number":%s,"head":{"ref":"%s","sha":"%s"},"title":"%s","merged_at":"2026-10-14T12:00:00Z","base":{"ref":"%s"},"merge_commit_sha":"%s"}\n' \
+            "$num" "$MAP_HEAD" "$merge_sha" "$MAP_TITLE" "$MAP_BASE" "$merge_sha"
         else
-          printf '{"number":%s,"head":{"ref":"%s"},"title":"%s","merged_at":"2026-10-14T12:00:00Z","base":{"ref":"main"}}\n' \
-            "$num" "$head" "$title"
+          printf '{"number":%s,"head":{"ref":"%s"},"title":"%s","merged_at":"2026-10-14T12:00:00Z","base":{"ref":"%s"}}\n' \
+            "$num" "$MAP_HEAD" "$MAP_TITLE" "$MAP_BASE"
         fi
         return 0
         ;;
@@ -1733,6 +1745,45 @@ status="$(printf '%s\n' "$result" | sed -n '1p')"
 output="$(printf '%s\n' "$result" | sed '1d')"
 run_test "linear_1982_zero_ids_best_effort_exits_zero" "0" "$status"
 run_not_contains "linear_1982_zero_ids_best_effort_no_incomplete" "RELEASE_SCOPE_INCOMPLETE" "$output"
+
+# --- Nested feature-base PR: base is not develop/main but merge is in range ---
+repo_feature_base="$TMP_ROOT/linear-1982-feature-base"
+init_linear_git_repo "$repo_feature_base"
+cat > "$repo_feature_base/CHANGELOG.md" <<'MD'
+# Changelog
+
+## [Unreleased]
+
+## [1.29.0] - 2026-10-15
+
+- Nested feature work shipped via parent feature branch.
+
+## [1.28.0] - 2026-10-01
+
+- Older.
+MD
+"$REAL_GIT" -C "$repo_feature_base" add CHANGELOG.md .ai-dev-workflow.yaml scripts
+"$REAL_GIT" -C "$repo_feature_base" commit -q -m "chore: baseline before v1.28.0"
+"$REAL_GIT" -C "$repo_feature_base" tag v1.28.0
+"$REAL_GIT" -C "$repo_feature_base" commit -q --allow-empty \
+  -m "Merge pull request #301 from example/fix/LEA-301-nested"
+sha_301="$("$REAL_GIT" -C "$repo_feature_base" rev-parse HEAD)"
+"$REAL_GIT" -C "$repo_feature_base" commit -q --allow-empty \
+  -m "Merge pull request #400 from example/feature/billing"
+sha_400="$("$REAL_GIT" -C "$repo_feature_base" rev-parse HEAD)"
+"$REAL_GIT" -C "$repo_feature_base" tag v1.29.0
+write_linear_scope_gh \
+  "301|fix/LEA-301-nested|fix: LEA-301 nested|feature/billing" \
+  "400|feature/billing|feat: billing parent|develop" \
+  "commit:${sha_301}|301" \
+  "commit:${sha_400}|400"
+result="$(run_linear_scope_cleanup "$repo_feature_base" v1.29.0 --from-changelog --best-effort)"
+status="$(printf '%s\n' "$result" | sed -n '1p')"
+output="$(printf '%s\n' "$result" | sed '1d')"
+run_test "linear_1982_feature_base_exits_zero" "0" "$status"
+run_contains "linear_1982_feature_base_proposes_301" "LEA-301" "$output"
+run_contains "linear_1982_feature_base_tracker_issues" "TRACKER_ISSUES=" "$output"
+run_contains "linear_1982_feature_base_action" "TRACKER_ACTION=linear_mcp_or_api_required" "$output"
 
 # github_projects --from-changelog still extracts #NNN from changelog text alone.
 repo_github_unchanged="$(fixture_github_projects_repo github-1982-unchanged)"

@@ -675,7 +675,6 @@ filter_linear_changelog_scope_by_merged_prs() {
 
   filter_out="$(
     RELEASE_HEAD_FOR_FILTER="${RELEASE_HEAD:-}" \
-    BACKPORT_BASE_FOR_FILTER="${BACKPORT_BASE:-develop}" \
     python3 - "$version" "$git_root" "$changelog_csv" <<'PY'
 import json
 import os
@@ -687,7 +686,6 @@ version = sys.argv[1]
 git_root = sys.argv[2]
 changelog_csv = sys.argv[3]
 head = os.environ.get("RELEASE_HEAD_FOR_FILTER", "").strip()
-backport_base = os.environ.get("BACKPORT_BASE_FOR_FILTER", "develop").strip() or "develop"
 
 LINEAR_RE = re.compile(r"\b([A-Z][A-Z0-9_]*-\d+)\b")
 
@@ -777,16 +775,6 @@ def resolve_repo_slug():
     if match:
         return match.group(1)
     return None
-
-
-def acceptable_base(base_ref):
-    if not base_ref:
-        return False
-    if base_ref in ("main", "master", "develop", backport_base):
-        return True
-    if base_ref.startswith("release/") or base_ref.startswith("develop-"):
-        return True
-    return False
 
 
 def normalize_pr_payload(payload):
@@ -906,9 +894,9 @@ def collect_merged_pr_linear_ids(range_spec, repo_slug):
         for payload in pulls:
             if not payload.get("mergedAt"):
                 continue
-            base_ref = payload.get("baseRefName") or ""
-            if base_ref and not acceptable_base(base_ref):
-                continue
+            # Base branch is irrelevant: evidence is a merged PR whose
+            # merge/head (or associating) commit is in the release range —
+            # including PRs that targeted feature/* or develop-<slug> parents.
             if not pr_belongs_to_range(payload, range_shas, sha):
                 continue
             pr_num = payload.get("number")
