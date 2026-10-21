@@ -370,6 +370,10 @@ class ModelRoutingTests(unittest.TestCase):
         for active in (False, True):
             self.write(self.policy(self.tier()) if active else "mode: single_repo\n",
                        self.policy(self.tier(model="local")) if active else "")
+            before = (self.shared.read_bytes(), self.local.read_bytes())
+            # The active model envelope has already been validated by its own
+            # reader; its blank projection keeps legacy error line numbers.
+            expected_private_projection = "\n" * before[1].count(b"\n") if active else ""
             for command in commands:
                 args = resolver.build_parser().parse_args([*command, "--repo-root", str(self.root)])
                 original_read = os.open
@@ -381,12 +385,16 @@ class ModelRoutingTests(unittest.TestCase):
                 with self.subTest(active=active, command=command), \
                         patch.object(resolver, "load_model_policy", wraps=resolver.load_model_policy) as loader, \
                         patch.object(resolver, "parse_model_mapping", wraps=resolver.parse_model_mapping) as parser, \
-                        patch.object(resolver, "parse_review_yaml", side_effect=AssertionError("YAML dependency used")), \
+                        patch.object(resolver, "parse_review_yaml", wraps=resolver.parse_review_yaml) as strict_reader, \
                         patch.object(os, "open", observed), patch("builtins.print"):
                     self.assertEqual(args.func(args), 0)
                     loader.assert_called_once_with(self.root.resolve())
                     self.assertEqual(parser.call_count, 2 if active else 0)
+                    strict_reader.assert_called_once_with(self.local.resolve(),
+                                                          raw=expected_private_projection,
+                                                          review_fields=False)
                     self.assertEqual(reads, [self.shared.resolve(), self.local.resolve()])
+                    self.assertEqual((self.shared.read_bytes(), self.local.read_bytes()), before)
         self.write(self.policy(self.tier()))
         policy = resolver.load_model_policy(self.root)
         self.assertEqual(policy.positions[0]["models.dsh.tiers.balanced.model"], 7)
