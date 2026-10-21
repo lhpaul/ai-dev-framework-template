@@ -2575,6 +2575,116 @@ output="$(printf '%s\n' "$result" | sed '1d')"
 run_test "linear_1982_rh_bare_rc_exits_zero" "0" "$status"
 run_contains "linear_1982_rh_bare_rc_still_proposes_302" "LEA-302" "$output"
 
+# --- Bare-tag namespace (1.0.0 / 1.1.0): identical boundary with and without --release-head ---
+# Regression: shell may normalize the version arg to v1.1.0; --release-head must
+# still adopt the repo's bare tag namespace so previous=1.0.0 (not first_release).
+repo_bare="$TMP_ROOT/linear-1982-bare-tag-namespace"
+init_linear_git_repo "$repo_bare"
+cat > "$repo_bare/CHANGELOG.md" <<'MD'
+# Changelog
+
+## [Unreleased]
+
+## [1.1.0] - 2026-10-15
+
+- Bare tags 1.0.0 → 1.1.0; LEA-500 prior, LEA-510 in range.
+MD
+"$REAL_GIT" -C "$repo_bare" add CHANGELOG.md .ai-dev-workflow.yaml scripts
+"$REAL_GIT" -C "$repo_bare" commit -q -m "chore: bare baseline"
+"$REAL_GIT" -C "$repo_bare" commit -q --allow-empty \
+  -m "Merge pull request #130 from example/fix/LEA-500-bare-prior"
+sha_bare_500="$("$REAL_GIT" -C "$repo_bare" rev-parse HEAD)"
+"$REAL_GIT" -C "$repo_bare" tag 1.0.0
+"$REAL_GIT" -C "$repo_bare" commit -q --allow-empty \
+  -m "Merge pull request #131 from example/fix/LEA-510-bare-current"
+sha_bare_510="$("$REAL_GIT" -C "$repo_bare" rev-parse HEAD)"
+"$REAL_GIT" -C "$repo_bare" tag 1.1.0
+write_linear_scope_gh \
+  "130|fix/LEA-500-bare-prior|fix: LEA-500" \
+  "131|fix/LEA-510-bare-current|fix: LEA-510" \
+  "commit:${sha_bare_500}|130" \
+  "commit:${sha_bare_510}|131"
+
+# Cleanup without --release-head (tip = refs/tags/1.1.0 → previous 1.0.0).
+result="$(run_linear_scope_cleanup "$repo_bare" 1.1.0 --from-changelog --best-effort)"
+status="$(printf '%s\n' "$result" | sed -n '1p')"
+output="$(printf '%s\n' "$result" | sed '1d')"
+run_test "linear_1982_bare_cleanup_exits_zero" "0" "$status"
+run_contains "linear_1982_bare_cleanup_proposes_510" "TRACKER_ISSUES=LEA-510" "$output"
+run_not_contains "linear_1982_bare_cleanup_no_500_tracker" "TRACKER_ISSUES=LEA-500" "$output"
+run_not_contains "linear_1982_bare_cleanup_no_incomplete" "previous_release_boundary_unavailable" "$output"
+run_not_contains "linear_1982_bare_cleanup_no_ambiguous" "ambiguous_release_tag_namespace" "$output"
+
+# Inspect with --release-head (same bare namespace / previous=1.0.0; not first_release).
+result="$(run_linear_scope_inspect "$repo_bare" 1.1.0 "$sha_bare_510")"
+status="$(printf '%s\n' "$result" | sed -n '1p')"
+output="$(printf '%s\n' "$result" | sed '1d')"
+run_test "linear_1982_bare_inspect_rh_exits_zero" "0" "$status"
+run_contains "linear_1982_bare_inspect_rh_proposes_510" \
+  "Linear --from-changelog scope from merged PRs in release range: LEA-510" "$output"
+run_contains "linear_1982_bare_inspect_rh_skips_500" \
+  "RELEASE_SCOPE_SKIPPED issue=LEA-500 reason=changelog_mention_without_merged_pr" "$output"
+run_not_contains "linear_1982_bare_inspect_rh_no_incomplete" "previous_release_boundary_unavailable" "$output"
+
+# Shell-normalized v1.1.0 spelling against bare tags must still bind previous=1.0.0.
+result="$(run_linear_scope_inspect "$repo_bare" v1.1.0 "$sha_bare_510")"
+status="$(printf '%s\n' "$result" | sed -n '1p')"
+output="$(printf '%s\n' "$result" | sed '1d')"
+run_test "linear_1982_bare_inspect_varg_exits_zero" "0" "$status"
+run_contains "linear_1982_bare_inspect_varg_proposes_510" \
+  "Linear --from-changelog scope from merged PRs in release range: LEA-510" "$output"
+run_contains "linear_1982_bare_inspect_varg_skips_500" \
+  "RELEASE_SCOPE_SKIPPED issue=LEA-500 reason=changelog_mention_without_merged_pr" "$output"
+
+# --- Ambiguous bare + v tags at different SHAs → fail closed ---
+repo_ambig="$TMP_ROOT/linear-1982-ambiguous-tag-namespace"
+init_linear_git_repo "$repo_ambig"
+cat > "$repo_ambig/CHANGELOG.md" <<'MD'
+# Changelog
+
+## [Unreleased]
+
+## [1.1.0] - 2026-10-15
+
+- Both 1.1.0 and v1.1.0 exist on different commits.
+MD
+"$REAL_GIT" -C "$repo_ambig" add CHANGELOG.md .ai-dev-workflow.yaml scripts
+"$REAL_GIT" -C "$repo_ambig" commit -q -m "chore: ambig baseline"
+"$REAL_GIT" -C "$repo_ambig" commit -q --allow-empty \
+  -m "Merge pull request #140 from example/fix/LEA-600-ambig-a"
+sha_ambig_a="$("$REAL_GIT" -C "$repo_ambig" rev-parse HEAD)"
+"$REAL_GIT" -C "$repo_ambig" tag 1.1.0
+"$REAL_GIT" -C "$repo_ambig" commit -q --allow-empty \
+  -m "Merge pull request #141 from example/fix/LEA-610-ambig-b"
+sha_ambig_b="$("$REAL_GIT" -C "$repo_ambig" rev-parse HEAD)"
+"$REAL_GIT" -C "$repo_ambig" tag v1.1.0
+write_linear_scope_gh \
+  "140|fix/LEA-600-ambig-a|fix: LEA-600" \
+  "141|fix/LEA-610-ambig-b|fix: LEA-610" \
+  "commit:${sha_ambig_a}|140" \
+  "commit:${sha_ambig_b}|141"
+# Cleanup path (tip resolves a tag, then counterpart SHA disagrees).
+result="$(run_linear_scope_cleanup "$repo_ambig" 1.1.0 --from-changelog --best-effort)"
+status="$(printf '%s\n' "$result" | sed -n '1p')"
+output="$(printf '%s\n' "$result" | sed '1d')"
+run_test "linear_1982_ambiguous_cleanup_best_effort_exits_zero" "0" "$status"
+run_contains "linear_1982_ambiguous_cleanup_incomplete" \
+  "RELEASE_SCOPE_INCOMPLETE reason=ambiguous_release_tag_namespace" "$output"
+run_not_contains "linear_1982_ambiguous_cleanup_no_tracker" "TRACKER_ISSUES=" "$output"
+result="$(run_linear_scope_cleanup "$repo_ambig" 1.1.0 --from-changelog)"
+status="$(printf '%s\n' "$result" | sed -n '1p')"
+output="$(printf '%s\n' "$result" | sed '1d')"
+run_test "linear_1982_ambiguous_cleanup_exits_nonzero" "1" "$status"
+run_contains "linear_1982_ambiguous_cleanup_hard_incomplete" \
+  "RELEASE_SCOPE_INCOMPLETE reason=ambiguous_release_tag_namespace" "$output"
+# Inspect + --release-head path (same fail-closed reason).
+result="$(run_linear_scope_inspect "$repo_ambig" 1.1.0 "$sha_ambig_b")"
+status="$(printf '%s\n' "$result" | sed -n '1p')"
+output="$(printf '%s\n' "$result" | sed '1d')"
+run_test "linear_1982_ambiguous_inspect_exits_nonzero" "1" "$status"
+run_contains "linear_1982_ambiguous_inspect_incomplete" \
+  "RELEASE_SCOPE_INCOMPLETE reason=ambiguous_release_tag_namespace" "$output"
+
 # --- Invalid SemVer prerelease tags cannot define the boundary ---
 repo_bad_pre="$TMP_ROOT/linear-1982-invalid-prerelease-tag"
 init_linear_git_repo "$repo_bad_pre"

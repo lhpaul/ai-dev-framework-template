@@ -922,16 +922,82 @@ def resolve_current_ref():
     return None
 
 
-def release_tag_name_for_boundary(current_ref, version_arg):
-    """Release identity (prefix + SemVer) from the requested version/tag only.
+def release_namespace_spellings(version_arg):
+    """Ordered spellings: as-given, then v/bare counterpart (empty/v prefix only).
 
-    When current_ref is refs/tags/<name>, that name is authoritative. When it is
-    an authorized --release-head SHA, use version_arg — never a co-pointing tag
-    that happens to share the commit (e.g. mobile-v1.1.0 vs requested v1.1.0).
+    Component-prefixed versions (mobile-v1.1.0) have no v/bare counterpart.
     """
-    if current_ref.startswith("refs/tags/"):
-        return current_ref[len("refs/tags/") :]
-    return version_arg
+    if not version_arg:
+        return []
+    spellings = [version_arg]
+    prefix, key = split_tag_prefix_and_semver(version_arg)
+    if key is None:
+        return spellings
+    if prefix == "v":
+        alt = version_arg[1:]
+        if alt and alt not in spellings:
+            spellings.append(alt)
+    elif prefix == "":
+        alt = "v" + version_arg
+        if alt not in spellings:
+            spellings.append(alt)
+    return spellings
+
+
+def _local_tag_sha(name):
+    probe = run_git("rev-parse", "--verify", "--quiet", "refs/tags/%s^{commit}" % name)
+    if probe.returncode == 0 and probe.stdout.strip():
+        return probe.stdout.strip()
+    return None
+
+
+def resolve_release_tag_identity(version_arg, current_ref, remote_tags):
+    """Choose the release tag spelling that matches the repository namespace.
+
+    Prefer refs/tags/<as-given>, then the v/bare counterpart (local or remote).
+    When current_ref is already refs/tags/<name>, that name is the tip spelling
+    but a disagreeing v/bare counterpart still fails closed. Never invent a v-
+    prefix when no matching tag exists — keep the caller spelling. If both bare
+    and v tags exist with different SHAs, return status ambiguous.
+    """
+    tip_tag = (
+        current_ref[len("refs/tags/") :]
+        if current_ref.startswith("refs/tags/")
+        else None
+    )
+    spellings = release_namespace_spellings(tip_tag or version_arg)
+    if not spellings:
+        return "ok", tip_tag or version_arg
+
+    found = {}
+    for name in spellings:
+        sha = _local_tag_sha(name)
+        if sha is None:
+            sha = remote_tags.get(name)
+        if sha is None:
+            continue
+        if name in found and found[name] != sha:
+            # Local vs remote disagreement for one spelling — prefer local.
+            continue
+        found.setdefault(name, sha)
+
+    if len(found) > 1 and len(set(found.values())) != 1:
+        return "ambiguous", None
+
+    if tip_tag is not None:
+        return "ok", tip_tag
+
+    if not found:
+        # No tag yet: preserve the spelling the caller passed (no silent v).
+        return "ok", version_arg
+
+    if len(found) == 1:
+        return "ok", next(iter(found))
+
+    # Same commit under both spellings: prefer as-given when present.
+    if version_arg in found:
+        return "ok", version_arg
+    return "ok", spellings[0]
 
 
 def _boundary_unavailable_fetch_instruction(detail):
@@ -950,6 +1016,7 @@ def resolve_previous_boundary(current_version, current_ref):
       ok — preceding same-prefix SemVer tag from the remote; peeled commit
         available locally and any local tag of that name matches remote
       first_release — remote listing succeeded; no same-prefix tag is lower
+      ambiguous — bare and v-prefixed tags for this version disagree on SHA
       unavailable — remote listing failed, preceding commit unavailable or local
         tag disagrees, shallow clone, or version unparseable (fail closed; never
         git fetch — read-only inspection must not write refs/FETCH_HEAD)
@@ -960,13 +1027,6 @@ def resolve_previous_boundary(current_version, current_ref):
             "PREVIOUS_RELEASE_BOUNDARY: shallow clone cannot verify the "
             "preceding release tag commit."
         )
-        return "unavailable", None
-
-    # Identity is always the requested version/tag name (or the resolved
-    # refs/tags/<name>), never a co-pointing tag discovered via --release-head.
-    release_tag = release_tag_name_for_boundary(current_ref, current_version)
-    release_prefix, current_key = split_tag_prefix_and_semver(release_tag)
-    if current_key is None:
         return "unavailable", None
 
     remotes = run_git("remote")
@@ -981,8 +1041,8 @@ def resolve_previous_boundary(current_version, current_ref):
     if listing.returncode != 0:
         return "unavailable", None
 
-    # name -> (precedence_key, commit_sha, name); prefer peeled (^{}) commit SHAs
-    candidates = {}
+    # name -> peeled commit SHA from remote (^{} preferred).
+    remote_tags = {}
     for line in listing.stdout.splitlines():
         line = line.strip()
         if not line or "\t" not in line:
@@ -994,14 +1054,37 @@ def resolve_previous_boundary(current_version, current_ref):
         name = ref[len("refs/tags/") :]
         if peeled:
             name = name[:-3]
+        prior = remote_tags.get(name)
+        if prior is None or peeled:
+            remote_tags[name] = sha
+
+    # Identity uses the repo's actual tag namespace, identically with and without
+    # --release-head. Never adopt a co-pointing component tag (mobile-v…).
+    id_status, release_tag = resolve_release_tag_identity(
+        current_version, current_ref, remote_tags
+    )
+    if id_status == "ambiguous":
+        print(
+            "ambiguous_release_tag_namespace version=%s "
+            "(bare and v-prefixed tags exist with different SHAs)"
+            % current_version,
+            file=sys.stderr,
+        )
+        return "ambiguous", None
+
+    release_prefix, current_key = split_tag_prefix_and_semver(release_tag)
+    if current_key is None:
+        return "unavailable", None
+
+    # name -> (precedence_key, commit_sha, name) for preceding same-prefix tags.
+    candidates = {}
+    for name, sha in remote_tags.items():
         prefix, key = split_tag_prefix_and_semver(name, report_invalid=True)
         if key is None or prefix != release_prefix:
             continue
         if key >= current_key:
             continue
-        prior = candidates.get(name)
-        if prior is None or peeled:
-            candidates[name] = (key, sha, name)
+        candidates[name] = (key, sha, name)
 
     if not candidates:
         return "first_release", None
@@ -1265,6 +1348,9 @@ boundary_status, prev_tag = resolve_previous_boundary(version, current_ref)
 if boundary_status == "unavailable":
     print("INCOMPLETE\tprevious_release_boundary_unavailable")
     sys.exit(0)
+if boundary_status == "ambiguous":
+    print("INCOMPLETE\tambiguous_release_tag_namespace")
+    sys.exit(0)
 if boundary_status == "ok":
     range_spec = "%s..%s" % (prev_tag, current_ref)
 else:
@@ -1371,6 +1457,9 @@ PY
       previous_release_boundary_unavailable)
         cleanup_log "RELEASE_SCOPE_INCOMPLETE reason=previous_release_boundary_unavailable"
         cleanup_log "Fetch preceding release tags into this checkout (git fetch --tags origin) and rerun."
+        ;;
+      ambiguous_release_tag_namespace)
+        cleanup_log "RELEASE_SCOPE_INCOMPLETE reason=ambiguous_release_tag_namespace"
         ;;
       *)
         cleanup_log "RELEASE_SCOPE_INCOMPLETE unresolved_shas=${unresolved}"
