@@ -249,7 +249,12 @@ categories:
       mode_scope: hub_only
       note: >
         runs the workflow test suites chosen by select-test-suites.sh; replaces the
-        legacy test-pr-review-loop.yml, which a consumer adopting this file should delete (#1537, #1834, #1874)
+        legacy test-pr-review-loop.yml, which a consumer adopting this file should delete (#1537, #1834, #1874).
+        When merging into a consumer, preserve the job-level schedule gate and
+        WORKFLOW_TESTS_NIGHTLY_ENABLED opt-in (#1996): adopting the template version
+        keeps the cron entry but does not start nightly runners unless the repository
+        variable compares equal to 'true' under Actions' case-insensitive `==`
+        (true/True/TRUE opt in; any other value or absence keeps the nightly off).
     - path: .github/workflows/markdown-lint.yml
       mode_scope: hub_only
       note: >
@@ -354,6 +359,23 @@ categories:
 #   applies_if_syncing_from_before - show this note when last_synced_version < this value
 #   manual_steps                  - ordered list of shell commands or instructions the maintainer must run
 migration_notes:
+  - version: "0.48.5"
+    title: "workflow-tests.yml nightly is template-only unless opted in"
+    description: >
+      From #1996, the scheduled nightly in .github/workflows/workflow-tests.yml
+      is gated at job level: runners start only in lhpaul/ai-dev-framework-template
+      or when the repository variable WORKFLOW_TESTS_NIGHTLY_ENABLED compares
+      equal to 'true' under GitHub Actions' case-insensitive `==` (true/True/TRUE
+      opt in; any other value or absence keeps the nightly off). Consumers that
+      already carry an ungated copy keep billing minutes until they merge the
+      gated file (or delete the schedule). Adopting the template version preserves
+      the cron entry but leaves the nightly off by default; syncing does not
+      re-enable it.
+    applies_if_syncing_from_before: "0.48.5"
+    manual_steps:
+      - "If the consumer has .github/workflows/workflow-tests.yml, merge the template schedule gate on jobs select, test, and result (or replace the file with the template version while preserving any approved project-specific customizations)."
+      - "Confirm no repository variable WORKFLOW_TESTS_NIGHTLY_ENABLED is set to true unless the maintainer explicitly wants the nightly full suite in that consumer."
+      - "Optional opt-in: Settings → Secrets and variables → Actions → Variables → WORKFLOW_TESTS_NIGHTLY_ENABLED = true."
   - version: "0.45.1"
     title: "Replace the legacy workflow test harness before adopting workflow-tests.yml"
     description: >
