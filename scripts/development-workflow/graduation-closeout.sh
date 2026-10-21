@@ -485,26 +485,63 @@ for pr in prs or []:
 discover_structured_closing_issue_refs() {
   # Linear path: only GitHub's structured closingIssuesReferences count as an
   # explicit PR link. Fenced example text such as ```Closes #326``` never
-  # appears here, so it cannot authorize closing an unrelated GitHub issue.
+  # appears here. Cross-repo refs (other/repo#326) must not authorize closing
+  # local issue #326 — accept only when repository.nameWithOwner matches
+  # REPO_SLUG (case-insensitive).
   local prs_json
   if ! prs_json="$(gh pr list --state merged --base "$INTEGRATION_BRANCH" --limit 1000 --json number,closingIssuesReferences 2>/dev/null)"; then
     return 1
   fi
   printf '%s' "$prs_json" | python3 -c '
-import json, sys
+import json, re, sys
+
+expected = (sys.argv[1] or "").strip().lower()
 try:
     prs = json.load(sys.stdin)
 except Exception:
     sys.exit(1)
+
+def ref_repo(ref):
+    repo = ((ref.get("repository") or {}).get("nameWithOwner") or "").strip()
+    if repo:
+        return repo
+    url = (ref.get("url") or "").strip()
+    match = re.match(r"https?://github\.com/([^/]+/[^/]+)/issues/\d+", url, re.I)
+    if match:
+        return match.group(1)
+    return ""
+
 for pr in prs or []:
     pr_number = pr.get("number")
     if not pr_number:
         continue
     for ref in pr.get("closingIssuesReferences") or []:
         issue = ref.get("number")
-        if issue:
-            print("{}\t{}".format(pr_number, issue))
-' > "$TMP_DIR/structured-closing-refs.tsv" || return 1
+        if not issue:
+            continue
+        repo = ref_repo(ref)
+        if not repo:
+            print(
+                "FOREIGN_CLOSING_REF\t{}\t{}\t(missing repository identity)".format(
+                    pr_number, issue
+                ),
+                file=sys.stderr,
+            )
+            continue
+        if repo.lower() != expected:
+            print(
+                "FOREIGN_CLOSING_REF\t{}\t{}\t{}".format(pr_number, issue, repo),
+                file=sys.stderr,
+            )
+            continue
+        print("{}\t{}".format(pr_number, issue))
+' "$REPO_SLUG" > "$TMP_DIR/structured-closing-refs.tsv" 2> "$TMP_DIR/structured-closing-refs.err" || return 1
+  if [ -s "$TMP_DIR/structured-closing-refs.err" ]; then
+    while IFS="$(printf '\t')" read -r marker pr_number issue repo_or_reason; do
+      [ "$marker" = "FOREIGN_CLOSING_REF" ] || continue
+      echo "Warning: skipping foreign closingIssuesReferences from PR #${pr_number}: #${issue} in ${repo_or_reason} (local repo is ${REPO_SLUG})." >&2
+    done < "$TMP_DIR/structured-closing-refs.err"
+  fi
   while IFS="$(printf '\t')" read -r pr_number issue; do
     [ -z "$issue" ] && continue
     append_candidate "$issue" "pr:${pr_number}:closingIssuesReferences"

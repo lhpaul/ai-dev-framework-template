@@ -243,9 +243,15 @@ JSON
         # no structured closing reference — Linear must leave #326 alone.
         printf '[{"number":11,"closingIssuesReferences":[]}]\n'
         ;;
+      foreign_repo)
+        # Structured link to other/repo#326 must not close local #326.
+        cat <<'JSON'
+[{"number":11,"closingIssuesReferences":[{"number":326,"repository":{"nameWithOwner":"other/repo"},"url":"https://github.com/other/repo/issues/326"}]}]
+JSON
+        ;;
       *)
         cat <<'JSON'
-[{"number":11,"closingIssuesReferences":[{"number":105}]}]
+[{"number":11,"closingIssuesReferences":[{"number":105,"repository":{"nameWithOwner":"lhpaul/ai-dev-framework-template"},"url":"https://github.com/lhpaul/ai-dev-framework-template/issues/105"}]}]
 JSON
         ;;
     esac
@@ -826,6 +832,26 @@ run_test "linear_fenced_326_untouched" "OPEN" "$(python3 -c 'import json; print(
 run_test "linear_fenced_no_close_log" "" "$(cat "$MOCK_CLOSE_LOG")"
 run_not_contains "linear_fenced_no_body_scan" "--json number,title,body" "$(cat "$MOCK_GH_LOG")"
 run_contains "linear_fenced_uses_structured" "--json number,closingIssuesReferences" "$(cat "$MOCK_GH_LOG")"
+
+echo ""
+echo "=== graduation closeout: Linear ignores foreign-repo closingIssuesReferences #326 (#1984 Pass 1 c2) ==="
+reset_fixture
+write_tracker_config linear
+export MOCK_NATIVE_MODE=empty
+export MOCK_PR_MODE=foreign_repo
+write_issue 326 "Unrelated local GitHub issue" OPEN
+CLOSEOUT_EPIC=LEA-326
+foreign_result="$(run_closeout)"
+unset CLOSEOUT_EPIC
+foreign_body="$(last_output_body "$foreign_result")"
+run_test "linear_foreign_exit_zero" "0" "$(last_output_status "$foreign_result")"
+run_contains "linear_foreign_pass" "GRADUATION_CLOSEOUT_RESULT=pass" "$foreign_body"
+run_contains "linear_foreign_deferred" "TRACKER_ACTION_REQUIRED=set_status issue=LEA-326" "$foreign_body"
+run_contains "linear_foreign_skipped_warning" "skipping foreign closingIssuesReferences" "$foreign_body"
+run_contains "linear_foreign_skipped_repo" "other/repo" "$foreign_body"
+run_test "linear_foreign_326_untouched" "OPEN" "$(python3 -c 'import json; print(json.load(open("'"$MOCK_STATE_DIR"'/326.json"))["state"])')"
+run_test "linear_foreign_no_close_log" "" "$(cat "$MOCK_CLOSE_LOG")"
+run_not_contains "linear_foreign_no_close_326" "issue close 326" "$(cat "$MOCK_GH_LOG")"
 
 echo ""
 echo "=== graduation closeout: github_projects behavior unchanged with explicit config (#1984) ==="
