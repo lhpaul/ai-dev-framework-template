@@ -1648,6 +1648,39 @@ run_not_contains "linear_1982_missing_tag_no_999" "LEA-999" "$output"
 run_not_contains "linear_1982_missing_tag_no_302_issues" "TRACKER_ISSUES=LEA-302" "$output"
 run_not_contains "linear_1982_missing_tag_no_tracker_action" "TRACKER_ACTION=linear_mcp_or_api_required" "$output"
 
+# --- Branch named like the release version must not satisfy release-ref ---
+repo_branch_named="$TMP_ROOT/linear-1982-branch-named-version"
+init_linear_git_repo "$repo_branch_named"
+cat > "$repo_branch_named/CHANGELOG.md" <<'MD'
+# Changelog
+
+## [Unreleased]
+
+## [1.29.0] - 2026-10-15
+
+- Branch v1.29.0 must not stand in for the missing release tag.
+MD
+"$REAL_GIT" -C "$repo_branch_named" add CHANGELOG.md .ai-dev-workflow.yaml scripts
+"$REAL_GIT" -C "$repo_branch_named" commit -q -m "chore: baseline before v1.28.0"
+"$REAL_GIT" -C "$repo_branch_named" tag v1.28.0
+"$REAL_GIT" -C "$repo_branch_named" commit -q --allow-empty \
+  -m "Merge pull request #88 from example/fix/LEA-302-billing-fix"
+sha_branch_named="$("$REAL_GIT" -C "$repo_branch_named" rev-parse HEAD)"
+# Same-named branch only — no refs/tags/v1.29.0.
+"$REAL_GIT" -C "$repo_branch_named" branch v1.29.0 HEAD
+write_linear_scope_gh \
+  "88|fix/LEA-302-billing-fix|fix(billing): LEA-302" \
+  "commit:${sha_branch_named}|88"
+result="$(run_linear_scope_cleanup "$repo_branch_named" v1.29.0 --from-changelog --best-effort)"
+status="$(printf '%s\n' "$result" | sed -n '1p')"
+output="$(printf '%s\n' "$result" | sed '1d')"
+run_test "linear_1982_branch_named_version_exits_zero" "0" "$status"
+run_contains "linear_1982_branch_named_version_incomplete" \
+  "RELEASE_SCOPE_INCOMPLETE reason=release_ref_unavailable" "$output"
+run_not_contains "linear_1982_branch_named_version_no_302" "TRACKER_ISSUES=LEA-302" "$output"
+run_not_contains "linear_1982_branch_named_version_no_action" \
+  "TRACKER_ACTION=linear_mcp_or_api_required" "$output"
+
 # --- (c) Commit mentions LEA-298 but PR branch/title do not → not proposed ---
 repo_commit_mentions="$TMP_ROOT/linear-1982-commit-mention"
 init_linear_git_repo "$repo_commit_mentions"
@@ -2061,7 +2094,191 @@ status="$(printf '%s\n' "$result" | sed -n '1p')"
 output="$(printf '%s\n' "$result" | sed '1d')"
 run_test "linear_1982_shallow_best_effort_exits_zero" "0" "$status"
 run_contains "linear_1982_shallow_incomplete" "RELEASE_SCOPE_INCOMPLETE reason=previous_release_boundary_unavailable" "$output"
+run_contains "linear_1982_shallow_fetch_instruction" "git fetch --tags origin" "$output"
 run_not_contains "linear_1982_shallow_no_302" "TRACKER_ISSUES=LEA-302" "$output"
+
+# --- Local preceding tag disagrees with remote peeled SHA → incomplete ---
+repo_tag_mismatch_src="$TMP_ROOT/linear-1982-tag-mismatch-src"
+repo_tag_mismatch_bare="$TMP_ROOT/linear-1982-tag-mismatch-bare.git"
+repo_tag_mismatch="$TMP_ROOT/linear-1982-tag-mismatch"
+init_linear_git_repo "$repo_tag_mismatch_src"
+cat > "$repo_tag_mismatch_src/CHANGELOG.md" <<'MD'
+# Changelog
+
+## [Unreleased]
+
+## [1.29.0] - 2026-10-15
+
+- Ships LEA-302.
+MD
+"$REAL_GIT" -C "$repo_tag_mismatch_src" add CHANGELOG.md .ai-dev-workflow.yaml scripts
+"$REAL_GIT" -C "$repo_tag_mismatch_src" commit -q -m "chore: baseline"
+"$REAL_GIT" -C "$repo_tag_mismatch_src" commit -q --allow-empty -m "historical before v1.28.0"
+"$REAL_GIT" -C "$repo_tag_mismatch_src" tag v1.28.0
+"$REAL_GIT" -C "$repo_tag_mismatch_src" commit -q --allow-empty \
+  -m "Merge pull request #88 from example/fix/LEA-302-billing-fix"
+sha_mismatch_302="$("$REAL_GIT" -C "$repo_tag_mismatch_src" rev-parse HEAD)"
+"$REAL_GIT" -C "$repo_tag_mismatch_src" tag v1.29.0
+"$REAL_GIT" clone -q --bare "file://${repo_tag_mismatch_src}" "$repo_tag_mismatch_bare"
+"$REAL_GIT" clone -q "file://${repo_tag_mismatch_bare}" "$repo_tag_mismatch"
+# Point local v1.28.0 at the release tip (disagrees with remote peeled SHA).
+"$REAL_GIT" -C "$repo_tag_mismatch" tag -d v1.28.0 >/dev/null
+"$REAL_GIT" -C "$repo_tag_mismatch" tag v1.28.0 "$sha_mismatch_302"
+mkdir -p "$repo_tag_mismatch/scripts/development-workflow"
+cp "$REPO_ROOT/scripts/development-workflow/workflow-lib.sh" \
+  "$repo_tag_mismatch/scripts/development-workflow/workflow-lib.sh"
+cp "$REPO_ROOT/scripts/development-workflow/prepare-release-post-merge-cleanup.sh" \
+  "$repo_tag_mismatch/scripts/development-workflow/prepare-release-post-merge-cleanup.sh"
+chmod +x "$repo_tag_mismatch/scripts/development-workflow/prepare-release-post-merge-cleanup.sh"
+cat > "$repo_tag_mismatch/.ai-dev-workflow.yaml" <<'YAML'
+schema_version: 2
+issue_tracker:
+  provider: linear
+YAML
+write_linear_scope_gh \
+  "88|fix/LEA-302-billing-fix|fix(billing): LEA-302" \
+  "commit:${sha_mismatch_302}|88"
+result="$(run_linear_scope_cleanup "$repo_tag_mismatch" v1.29.0 --from-changelog --best-effort)"
+status="$(printf '%s\n' "$result" | sed -n '1p')"
+output="$(printf '%s\n' "$result" | sed '1d')"
+run_test "linear_1982_tag_mismatch_exits_zero" "0" "$status"
+run_contains "linear_1982_tag_mismatch_incomplete" \
+  "RELEASE_SCOPE_INCOMPLETE reason=previous_release_boundary_unavailable" "$output"
+run_contains "linear_1982_tag_mismatch_fetch_instruction" "git fetch --tags origin" "$output"
+run_not_contains "linear_1982_tag_mismatch_no_302" "TRACKER_ISSUES=LEA-302" "$output"
+
+# --- Preceding commit missing locally (non-shallow) → incomplete + fetch instruction ---
+repo_missing_prev_src="$TMP_ROOT/linear-1982-missing-prev-src"
+repo_missing_prev_bare="$TMP_ROOT/linear-1982-missing-prev-bare.git"
+repo_missing_prev="$TMP_ROOT/linear-1982-missing-prev"
+init_linear_git_repo "$repo_missing_prev_src"
+cat > "$repo_missing_prev_src/CHANGELOG.md" <<'MD'
+# Changelog
+
+## [Unreleased]
+
+## [1.29.0] - 2026-10-15
+
+- Ships LEA-302.
+MD
+"$REAL_GIT" -C "$repo_missing_prev_src" add CHANGELOG.md .ai-dev-workflow.yaml scripts
+"$REAL_GIT" -C "$repo_missing_prev_src" commit -q -m "chore: baseline"
+"$REAL_GIT" -C "$repo_missing_prev_src" commit -q --allow-empty \
+  -m "Merge pull request #77 from example/fix/LEA-200-historical"
+"$REAL_GIT" -C "$repo_missing_prev_src" tag v1.28.0
+"$REAL_GIT" -C "$repo_missing_prev_src" commit -q --allow-empty \
+  -m "Merge pull request #88 from example/fix/LEA-302-billing-fix"
+sha_missing_prev_302="$("$REAL_GIT" -C "$repo_missing_prev_src" rev-parse HEAD)"
+"$REAL_GIT" -C "$repo_missing_prev_src" tag v1.29.0
+"$REAL_GIT" clone -q --bare "file://${repo_missing_prev_src}" "$repo_missing_prev_bare"
+# Local checkout: orphan tip with only the release tag — previous commit absent.
+"$REAL_GIT" init -q -b main "$repo_missing_prev"
+"$REAL_GIT" -C "$repo_missing_prev" config user.email test@example.com
+"$REAL_GIT" -C "$repo_missing_prev" config user.name test
+"$REAL_GIT" -C "$repo_missing_prev" remote add origin "$repo_missing_prev_bare"
+"$REAL_GIT" -C "$repo_missing_prev" commit -q --allow-empty -m "orphan release tip"
+"$REAL_GIT" -C "$repo_missing_prev" tag v1.29.0
+mkdir -p "$repo_missing_prev/scripts/development-workflow"
+cp "$REPO_ROOT/scripts/development-workflow/workflow-lib.sh" \
+  "$repo_missing_prev/scripts/development-workflow/workflow-lib.sh"
+cp "$REPO_ROOT/scripts/development-workflow/prepare-release-post-merge-cleanup.sh" \
+  "$repo_missing_prev/scripts/development-workflow/prepare-release-post-merge-cleanup.sh"
+chmod +x "$repo_missing_prev/scripts/development-workflow/prepare-release-post-merge-cleanup.sh"
+cat > "$repo_missing_prev/.ai-dev-workflow.yaml" <<'YAML'
+schema_version: 2
+issue_tracker:
+  provider: linear
+YAML
+cat > "$repo_missing_prev/CHANGELOG.md" <<'MD'
+# Changelog
+
+## [Unreleased]
+
+## [1.29.0] - 2026-10-15
+
+- Ships LEA-302.
+MD
+write_linear_scope_gh \
+  "88|fix/LEA-302-billing-fix|fix(billing): LEA-302" \
+  "commit:${sha_missing_prev_302}|88"
+result="$(run_linear_scope_cleanup "$repo_missing_prev" v1.29.0 --from-changelog --best-effort)"
+status="$(printf '%s\n' "$result" | sed -n '1p')"
+output="$(printf '%s\n' "$result" | sed '1d')"
+run_test "linear_1982_missing_prev_commit_exits_zero" "0" "$status"
+run_contains "linear_1982_missing_prev_commit_incomplete" \
+  "RELEASE_SCOPE_INCOMPLETE reason=previous_release_boundary_unavailable" "$output"
+run_contains "linear_1982_missing_prev_commit_fetch_instruction" "git fetch --tags origin" "$output"
+run_not_contains "linear_1982_missing_prev_commit_no_302" "TRACKER_ISSUES=LEA-302" "$output"
+
+# --- --inspect-targets must not mutate refs / create FETCH_HEAD ---
+repo_inspect_src="$TMP_ROOT/linear-1982-inspect-src"
+repo_inspect_bare="$TMP_ROOT/linear-1982-inspect-bare.git"
+repo_inspect="$TMP_ROOT/linear-1982-inspect"
+init_linear_git_repo "$repo_inspect_src"
+cat > "$repo_inspect_src/CHANGELOG.md" <<'MD'
+# Changelog
+
+## [Unreleased]
+
+## [1.29.0] - 2026-10-15
+
+- Ships LEA-302.
+MD
+"$REAL_GIT" -C "$repo_inspect_src" add CHANGELOG.md .ai-dev-workflow.yaml scripts
+"$REAL_GIT" -C "$repo_inspect_src" commit -q -m "chore: baseline before v1.28.0"
+"$REAL_GIT" -C "$repo_inspect_src" tag v1.28.0
+"$REAL_GIT" -C "$repo_inspect_src" commit -q --allow-empty \
+  -m "Merge pull request #88 from example/fix/LEA-302-billing-fix"
+sha_inspect="$("$REAL_GIT" -C "$repo_inspect_src" rev-parse HEAD)"
+"$REAL_GIT" -C "$repo_inspect_src" tag v1.29.0
+"$REAL_GIT" clone -q --bare "file://${repo_inspect_src}" "$repo_inspect_bare"
+"$REAL_GIT" clone -q "file://${repo_inspect_bare}" "$repo_inspect"
+mkdir -p "$repo_inspect/scripts/development-workflow"
+cp "$REPO_ROOT/scripts/development-workflow/workflow-lib.sh" \
+  "$repo_inspect/scripts/development-workflow/workflow-lib.sh"
+cp "$REPO_ROOT/scripts/development-workflow/prepare-release-post-merge-cleanup.sh" \
+  "$repo_inspect/scripts/development-workflow/prepare-release-post-merge-cleanup.sh"
+chmod +x "$repo_inspect/scripts/development-workflow/prepare-release-post-merge-cleanup.sh"
+# Stub merge-budget so inspect exits after Linear scope resolution without
+# requiring a live Project/Linear projection.
+cat > "$repo_inspect/scripts/development-workflow/workflow-merge-budget.py" <<'PY'
+#!/usr/bin/env python3
+import sys
+print("INSPECT_STUB_OK")
+sys.exit(0)
+PY
+chmod +x "$repo_inspect/scripts/development-workflow/workflow-merge-budget.py"
+cat > "$repo_inspect/.ai-dev-workflow.yaml" <<'YAML'
+schema_version: 2
+issue_tracker:
+  provider: linear
+YAML
+write_linear_scope_gh \
+  "88|fix/LEA-302-billing-fix|fix(billing): LEA-302" \
+  "commit:${sha_inspect}|88"
+rm -f "$repo_inspect/.git/FETCH_HEAD"
+inspect_refs_before="$("$REAL_GIT" -C "$repo_inspect" for-each-ref --format='%(refname) %(objectname)' | LC_ALL=C sort)"
+result="$(
+  set +e
+  output="$(
+    cd "$repo_inspect" && PATH="$LINEAR_SCOPE_BIN:$(dirname "$REAL_GIT"):$PATH" \
+      LINEAR_SCOPE_MAP_FILE="$LINEAR_SCOPE_MAP_FILE" \
+      WORKFLOW_SKIP_FETCH=1 \
+      ./scripts/development-workflow/prepare-release-post-merge-cleanup.sh \
+      v1.29.0 --from-changelog --inspect-targets --release-head "$sha_inspect" 2>&1
+  )"
+  rc=$?
+  set -e
+  printf '%s\n%s\n' "$rc" "$output"
+)"
+status="$(printf '%s\n' "$result" | sed -n '1p')"
+output="$(printf '%s\n' "$result" | sed '1d')"
+inspect_refs_after="$("$REAL_GIT" -C "$repo_inspect" for-each-ref --format='%(refname) %(objectname)' | LC_ALL=C sort)"
+run_test "linear_1982_inspect_exits_zero" "0" "$status"
+run_contains "linear_1982_inspect_stub_ok" "INSPECT_STUB_OK" "$output"
+run_test "linear_1982_inspect_refs_unchanged" "$inspect_refs_before" "$inspect_refs_after"
+run_test "linear_1982_inspect_no_fetch_head" "0" \
+  "$([ -e "$repo_inspect/.git/FETCH_HEAD" ] && echo 1 || echo 0)"
 
 # --- Linear: missing CHANGELOG version section → still derive from merged PRs ---
 repo_miss_section="$TMP_ROOT/linear-1982-missing-section"

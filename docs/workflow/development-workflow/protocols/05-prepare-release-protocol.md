@@ -565,13 +565,14 @@ missing file or version section prints
 `CHANGELOG_SECTION_UNAVAILABLE version=vX.Y.Z (Linear scope derived from merged
 PRs only)` and does not block scope derivation. Scope is Linear IDs from
 **merged PRs** in the previous-tag..verified-release-ref commit range (release
-tag or `--release-head`; never checkout `HEAD`): each commit is resolved to its
-PR(s) only via GitHub `commits/<sha>/pulls` against the checkout/component
-repository (not an inherited `GH_REPO` override; subject `#N` / `Merge pull
-request #N` is never sufficient evidence). A PR is accepted when merged and its
-merge/head commit is in the range, regardless of base branch. Only
-implementation-stage head branches (`feature/*`, `fix/*`, `refactor/*`,
-`hotfix/*`) count as Released shipping evidence; merged `spec/*` /
+tag as `refs/tags/...` or `--release-head`; never checkout `HEAD` or
+unqualified names that could resolve a same-named branch): each commit is
+resolved to its PR(s) only via GitHub `commits/<sha>/pulls` against the
+checkout/component repository (not an inherited `GH_REPO` override; subject
+`#N` / `Merge pull request #N` is never sufficient evidence). A PR is accepted
+when merged and its merge/head commit is in the range, regardless of base
+branch. Only implementation-stage head branches (`feature/*`, `fix/*`,
+`refactor/*`, `hotfix/*`) count as Released shipping evidence; merged `spec/*` /
 `implementation-plan/*` PRs are skipped as `documentation_stage_pr_only` when
 that is the only evidence. IDs are taken from each PR's `headRefName` / REST
 `head.ref` and `title` — not from commit text or PR body. Changelog-only
@@ -579,15 +580,17 @@ mentions (including expanded ranges such as `LEA-298–LEA-301`) are omitted as
 `RELEASE_SCOPE_SKIPPED issue=<ID> reason=changelog_mention_without_merged_pr`.
 A verified first release (successful remote `git ls-remote --tags` with no
 preceding semver tag) may scan tip history; shallow clones, remote tag-list
-failures, or an unfetchable preceding tag emit
-`RELEASE_SCOPE_INCOMPLETE reason=previous_release_boundary_unavailable`. A fully
-resolved range with zero Linear IDs is an empty scope (not
-`RELEASE_SCOPE_INCOMPLETE`). If the release ref is unavailable or PR resolution
-fails for any commit in range, the helper emits `RELEASE_SCOPE_INCOMPLETE`
-(`reason=release_ref_unavailable` or `unresolved_shas=...`) and fails closed.
-Explicit `--issue` / `--issues` are unioned with the derived scope and never
-filtered. GitHub Projects / GitHub Issues `--from-changelog` behavior is
-unchanged (missing CHANGELOG file/section still fails closed).
+failures, or a preceding remote tag whose peeled commit is missing locally or
+disagrees with a local tag of the same name emit
+`RELEASE_SCOPE_INCOMPLETE reason=previous_release_boundary_unavailable` (scope
+resolution never `git fetch`es — fetch tags and rerun). A fully resolved range
+with zero Linear IDs is an empty scope (not `RELEASE_SCOPE_INCOMPLETE`). If the
+release ref is unavailable or PR resolution fails for any commit in range, the
+helper emits `RELEASE_SCOPE_INCOMPLETE` (`reason=release_ref_unavailable` or
+`unresolved_shas=...`) and fails closed. Explicit `--issue` / `--issues` are
+unioned with the derived scope and never filtered. GitHub Projects / GitHub
+Issues `--from-changelog` behavior is unchanged (missing CHANGELOG file/section
+still fails closed).
 
 #### Linear release scope decision gate (consistency matrix)
 
@@ -600,8 +603,8 @@ live in `scripts/development-workflow/tests/test-prepare-release-tracker-cleanup
 | Gate input / condition | Allowed outcome | Required next action | Operator signal |
 | --- | --- | --- | --- |
 | `--from-changelog` with missing CHANGELOG file or version section (Linear only) | Scope derivation continues from merged PRs; changelog IDs treated as complement | Run merged-PR filter; do not treat changelog regex as authoritative | `CHANGELOG_SECTION_UNAVAILABLE version=vX.Y.Z (Linear scope derived from merged PRs only)` on stderr |
-| Previous semver tag boundary unavailable (shallow clone, remote tag-list failure, unfetchable preceding tag) | Incomplete scope; no Released transitions on inferred IDs | Fix git depth/remotes or pass explicit `--issue` / `--issues`; do not stamp | `RELEASE_SCOPE_INCOMPLETE reason=previous_release_boundary_unavailable`; exit non-zero unless `--best-effort` |
-| Release tip ref unavailable (`--release-head` absent and tag/ref cannot be verified) | Incomplete scope | Supply verified `--release-head` or fix tags; or pass explicit issues | `RELEASE_SCOPE_INCOMPLETE reason=release_ref_unavailable`; exit non-zero unless `--best-effort` |
+| Previous semver tag boundary unavailable (shallow clone, remote tag-list failure, preceding commit missing locally or local tag disagrees with remote peeled SHA; never fetch during resolution) | Incomplete scope; no Released transitions on inferred IDs | `git fetch --tags origin` (or fix depth/remotes) and rerun, or pass explicit `--issue` / `--issues`; do not stamp | `RELEASE_SCOPE_INCOMPLETE reason=previous_release_boundary_unavailable` (+ fetch-tags instruction); exit non-zero unless `--best-effort` |
+| Release tip ref unavailable (`--release-head` absent and `refs/tags/...` cannot be verified; unqualified names are not accepted) | Incomplete scope | Supply verified `--release-head` or fix tags; or pass explicit issues | `RELEASE_SCOPE_INCOMPLETE reason=release_ref_unavailable`; exit non-zero unless `--best-effort` |
 | Any commit in range: `commits/<sha>/pulls` fails, returns empty/malformed JSON, or non-object entries | Incomplete scope (fail closed) | Investigate GitHub/API evidence; pass explicit `--issue` / `--issues` for known shippers | `RELEASE_SCOPE_INCOMPLETE unresolved_shas=<sha[,…]>`; exit non-zero unless `--best-effort` |
 | Merged PR in range with only `spec/*` or `implementation-plan/*` head branch | ID omitted from Released scope | None if documentation-only; use explicit `--issue` if it truly shipped | `RELEASE_SCOPE_SKIPPED issue=<ID> reason=documentation_stage_pr_only` |
 | Changelog or range-expanded mention without merged implementation PR evidence | ID omitted | Confirm item did not ship; add `--issue` only when human confirms shipment | `RELEASE_SCOPE_SKIPPED issue=<ID> reason=changelog_mention_without_merged_pr` |

@@ -24,13 +24,16 @@
 #   from commit text or PR body. Documentation-stage head branches (spec/*,
 #   implementation-plan/*) are not shipping evidence (RELEASE_SCOPE_SKIPPED
 #   reason=documentation_stage_pr_only when that is the only evidence).
-#   Preceding-tag boundary must be verified (shallow / remote tag-list failure
-#   → RELEASE_SCOPE_INCOMPLETE reason=previous_release_boundary_unavailable); a
-#   true first release (remote ls-remote --tags has no preceding semver tag)
-#   may scan the tip history. Changelog-only mentions are
-#   RELEASE_SCOPE_SKIPPED. Never fall back to checkout HEAD. Zero Linear IDs
-#   after complete resolution is empty scope success. Explicit --issue/--issues
-#   are unioned and never filtered.
+#   Preceding-tag boundary must be verified from remote ls-remote --tags without
+#   fetching (shallow / remote tag-list failure / missing or disagreeing local
+#   preceding commit → RELEASE_SCOPE_INCOMPLETE
+#   reason=previous_release_boundary_unavailable); a true first release (remote
+#   ls-remote --tags has no preceding semver tag) may scan the tip history.
+#   Release tip is only refs/tags/vX.Y.Z, refs/tags/X.Y.Z, or authorized
+#   --release-head SHA (never unqualified names that could resolve a branch).
+#   Changelog-only mentions are RELEASE_SCOPE_SKIPPED. Never fall back to
+#   checkout HEAD. Zero Linear IDs after complete resolution is empty scope
+#   success. Explicit --issue/--issues are unioned and never filtered.
 #
 # Examples:
 #   ./scripts/development-workflow/prepare-release-post-merge-cleanup.sh 1.2.3
@@ -754,10 +757,10 @@ def normalize_version(value):
 
 
 def resolve_current_ref():
-    """Verified release tip only: --release-head SHA or the release tag.
+    """Verified release tip only: --release-head SHA or refs/tags/<version>.
 
-    Never falls back to checkout HEAD — a newer develop tip would silently
-    enlarge scope past what shipped in the requested release.
+    Never falls back to checkout HEAD or unqualified names (vX.Y.Z / X.Y.Z)
+    that could resolve a same-named branch when the tag is absent.
     """
     if head and re.fullmatch(r"[0-9a-f]{40}", head):
         probe = run_git("rev-parse", "--verify", "--quiet", head + "^{commit}")
@@ -765,25 +768,39 @@ def resolve_current_ref():
             return head
         return None
     bare = normalize_version(version)
-    for candidate in ("refs/tags/v" + bare, "refs/tags/" + bare, "v" + bare, bare):
+    for candidate in ("refs/tags/v" + bare, "refs/tags/" + bare):
         probe = run_git("rev-parse", "--verify", "--quiet", candidate + "^{commit}")
         if probe.returncode == 0:
             return candidate
     return None
 
 
+def _boundary_unavailable_fetch_instruction(detail):
+    print(detail, file=sys.stderr)
+    print(
+        "Fetch preceding release tags into this checkout "
+        "(git fetch --tags origin) and rerun.",
+        file=sys.stderr,
+    )
+
+
 def resolve_previous_boundary(current_version):
     """Return (status, previous_ref_or_None).
 
     status:
-      ok — preceding semver tag from the remote, commit available locally
+      ok — preceding semver tag from the remote; peeled commit available locally
+        and any local tag of that name matches the remote peeled SHA
       first_release — remote tag listing succeeded; no remote semver tag precedes
-      unavailable — remote listing failed, preceding commit unavailable, shallow
-        clone, or version unparseable (fail closed; do not treat missing local
-        tags alone as a first release)
+      unavailable — remote listing failed, preceding commit unavailable or local
+        tag disagrees, shallow clone, or version unparseable (fail closed; never
+        git fetch — read-only inspection must not write refs/FETCH_HEAD)
     """
     shallow = run_git("rev-parse", "--is-shallow-repository")
     if shallow.returncode == 0 and shallow.stdout.strip() == "true":
+        _boundary_unavailable_fetch_instruction(
+            "PREVIOUS_RELEASE_BOUNDARY: shallow clone cannot verify the "
+            "preceding release tag commit."
+        )
         return "unavailable", None
     current_tuple = parse_semver(current_version)
     if current_tuple is None:
@@ -801,7 +818,7 @@ def resolve_previous_boundary(current_version):
     if listing.returncode != 0:
         return "unavailable", None
 
-    # name -> (semver_tuple, commit_sha); prefer peeled (^{}) commit SHAs
+    # name -> (semver_tuple, commit_sha, name); prefer peeled (^{}) commit SHAs
     candidates = {}
     for line in listing.stdout.splitlines():
         line = line.strip()
@@ -828,25 +845,38 @@ def resolve_previous_boundary(current_version):
         candidates.values(), key=lambda item: item[0], reverse=True
     )[0]
 
-    probe = run_git("rev-parse", "--verify", "--quiet", tag_name + "^{commit}")
-    if probe.returncode != 0:
-        fetch = run_git(
-            "fetch",
-            "--no-tags",
-            remote,
-            "refs/tags/%s:refs/tags/%s" % (tag_name, tag_name),
+    # Never fetch: require the remote peeled commit already in the object store.
+    cat = run_git("cat-file", "-e", commit_sha + "^{commit}")
+    if cat.returncode != 0:
+        _boundary_unavailable_fetch_instruction(
+            "PREVIOUS_RELEASE_BOUNDARY: commit %s for preceding tag %s is not "
+            "available locally." % (commit_sha, tag_name)
         )
-        if fetch.returncode != 0:
-            return "unavailable", None
-        probe = run_git("rev-parse", "--verify", "--quiet", tag_name + "^{commit}")
-        if probe.returncode != 0:
-            sha_probe = run_git(
-                "rev-parse", "--verify", "--quiet", commit_sha + "^{commit}"
+        return "unavailable", None
+
+    remote_full = run_git("rev-parse", "--verify", "--quiet", commit_sha + "^{commit}")
+    if remote_full.returncode != 0 or not remote_full.stdout.strip():
+        _boundary_unavailable_fetch_instruction(
+            "PREVIOUS_RELEASE_BOUNDARY: could not resolve remote peeled commit "
+            "%s for preceding tag %s." % (commit_sha, tag_name)
+        )
+        return "unavailable", None
+    remote_sha = remote_full.stdout.strip()
+
+    local_tag = run_git(
+        "rev-parse", "--verify", "--quiet", "refs/tags/%s^{commit}" % tag_name
+    )
+    if local_tag.returncode == 0:
+        local_sha = local_tag.stdout.strip()
+        if local_sha != remote_sha:
+            _boundary_unavailable_fetch_instruction(
+                "PREVIOUS_RELEASE_BOUNDARY: local tag %s (%s) disagrees with "
+                "remote peeled commit %s." % (tag_name, local_sha, remote_sha)
             )
-            if sha_probe.returncode != 0:
-                return "unavailable", None
-            return "ok", commit_sha
-    return "ok", tag_name
+            return "unavailable", None
+        return "ok", "refs/tags/%s" % tag_name
+
+    return "ok", remote_sha
 
 
 # Documentation-stage branches are not Released shipping evidence (#1982).
@@ -1156,6 +1186,7 @@ PY
         ;;
       previous_release_boundary_unavailable)
         cleanup_log "RELEASE_SCOPE_INCOMPLETE reason=previous_release_boundary_unavailable"
+        cleanup_log "Fetch preceding release tags into this checkout (git fetch --tags origin) and rerun."
         ;;
       *)
         cleanup_log "RELEASE_SCOPE_INCOMPLETE unresolved_shas=${unresolved}"

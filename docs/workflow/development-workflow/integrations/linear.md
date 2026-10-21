@@ -299,8 +299,9 @@ and operator signals) lives in
 Step 9.1. The CHANGELOG is only a complement: a missing `CHANGELOG.md` or version section prints
 `CHANGELOG_SECTION_UNAVAILABLE version=vX.Y.Z (Linear scope derived from merged
 PRs only)` and scope still comes from merged PRs. The helper derives scope from
-merged PRs in the release git range (previous tag → verified release tag or
-`--release-head`; never checkout `HEAD`): for each commit it resolves associated
+merged PRs in the release git range (previous tag → verified release tag
+`refs/tags/...` or `--release-head`; never checkout `HEAD` or unqualified names
+that could resolve a same-named branch): for each commit it resolves associated
 PRs only through GitHub `commits/<sha>/pulls` (subject `(#N)` is never
 sufficient evidence), against the checkout/component repository (not an
 inherited `GH_REPO` override). A PR is accepted when it is merged and its
@@ -318,10 +319,12 @@ are skipped with
 (and appear under `release_scope_skipped` in component `--json` output). A
 verified first release (successful remote `git ls-remote --tags` with no
 preceding semver tag) may scan tip history; shallow clones, remote tag-list
-failures, or an unfetchable preceding tag emit
-`RELEASE_SCOPE_INCOMPLETE reason=previous_release_boundary_unavailable`. A fully
-resolved range with zero Linear IDs is an empty scope (not incomplete). If the
-release ref is unavailable or PR resolution fails for any commit, the helper
+failures, or a preceding remote tag whose peeled commit is missing locally or
+disagrees with a local tag of the same name emit
+`RELEASE_SCOPE_INCOMPLETE reason=previous_release_boundary_unavailable` (the
+helper never `git fetch`es during scope resolution — fetch tags and rerun). A
+fully resolved range with zero Linear IDs is an empty scope (not incomplete). If
+the release ref is unavailable or PR resolution fails for any commit, the helper
 emits `RELEASE_SCOPE_INCOMPLETE` (`reason=release_ref_unavailable` or
 `unresolved_shas=...`) and fails closed. Explicit `--issue` / `--issues` are
 unioned with the derived scope and are never filtered.
