@@ -11,6 +11,15 @@
 # Usage:
 #   ./scripts/development-workflow/prepare-release-post-merge-cleanup.sh <version|release-branch> [--repo NAME --repo-root PATH --evidence-file PATH] [--backport-base BRANCH] [--from-changelog] [--issue N]... [--issues N,N,...] [--best-effort]
 #
+# --from-changelog:
+#   GitHub Projects / GitHub Issues: extract #NNN references from the CHANGELOG
+#   version section (unchanged). Linear: CHANGELOG text alone does NOT define
+#   release scope. Scope is the Linear IDs carried by merged PR branch names /
+#   titles / merge-commit subjects between the previous release tag and the
+#   release head; changelog-only mentions are reported as
+#   RELEASE_SCOPE_SKIPPED and omitted. Explicit --issue/--issues are unchanged
+#   for every provider.
+#
 # Examples:
 #   ./scripts/development-workflow/prepare-release-post-merge-cleanup.sh 1.2.3
 #   ./scripts/development-workflow/prepare-release-post-merge-cleanup.sh v1.2.3 --issue 232 --issue 240
@@ -75,6 +84,27 @@ declare -a ISSUE_NUMBERS=()
 
 usage() {
   echo "Usage: $0 <version|release-branch> [--repo NAME --repo-root PATH --evidence-file PATH] [--backport-base BRANCH] [--from-changelog] [--issue N]... [--issues N,N,...] [--best-effort] [--json] [--inspect-targets --release-head SHA [--target-root PATH]] [--merge-session PATH]" >&2
+  echo "  --from-changelog  GitHub: scope from CHANGELOG #NNN refs. Linear: scope from" >&2
+  echo "                    merged-PR evidence in the release tag range; changelog-only" >&2
+  echo "                    Linear IDs are skipped (RELEASE_SCOPE_SKIPPED)." >&2
+}
+
+# Parallel arrays populated when Linear --from-changelog omits changelog-only IDs.
+declare -a RELEASE_SCOPE_SKIPPED_ISSUES=()
+declare -a RELEASE_SCOPE_SKIPPED_REASONS=()
+
+record_release_scope_skip() {
+  local issue="$1"
+  local reason="$2"
+  local i
+  for i in ${RELEASE_SCOPE_SKIPPED_ISSUES[@]+"${RELEASE_SCOPE_SKIPPED_ISSUES[@]}"}; do
+    if [ "$i" = "$issue" ]; then
+      return 0
+    fi
+  done
+  RELEASE_SCOPE_SKIPPED_ISSUES+=("$issue")
+  RELEASE_SCOPE_SKIPPED_REASONS+=("$reason")
+  cleanup_log "RELEASE_SCOPE_SKIPPED issue=${issue} reason=${reason}"
 }
 
 normalize_release_branch() {
@@ -152,11 +182,24 @@ emit_component_cleanup_json() {
   local after_product_cleanup="$2"
   local cleanup_evidence_status="$3"
   local required_next_action="${4:-}"
-  local lock_key issues_csv already_complete
+  local lock_key issues_csv already_complete skipped_json
+  local idx skipped_issue skipped_reason
   lock_key="$(json_field "$COMPONENT_TARGET_FILE" '.release_correlation_key')"
   issues_csv=""
   if [ "${#ISSUE_NUMBERS[@]}" -gt 0 ]; then
     issues_csv="$(IFS=,; printf '%s' "${ISSUE_NUMBERS[*]}")"
+  fi
+  skipped_json="[]"
+  if [ "${#RELEASE_SCOPE_SKIPPED_ISSUES[@]}" -gt 0 ]; then
+    skipped_json="$(
+      idx=0
+      while [ "$idx" -lt "${#RELEASE_SCOPE_SKIPPED_ISSUES[@]}" ]; do
+        skipped_issue="${RELEASE_SCOPE_SKIPPED_ISSUES[$idx]}"
+        skipped_reason="${RELEASE_SCOPE_SKIPPED_REASONS[$idx]}"
+        printf '%s\t%s\n' "$skipped_issue" "$skipped_reason"
+        idx=$((idx + 1))
+      done | jq -Rsc 'split("\n") | map(select(length>0) | split("\t") | {issue:.[0], reason:.[1]})'
+    )"
   fi
   already_complete="false"
   if [ "${REMOTE_BRANCH_DELETED:-false}" != "true" ] && [ "${LOCAL_BRANCH_DELETED:-false}" != "true" ]; then
@@ -173,6 +216,7 @@ emit_component_cleanup_json() {
     --arg release_correlation_key "$lock_key" \
     --arg tracker_owner "hub_repository" \
     --arg issues_csv "$issues_csv" \
+    --argjson release_scope_skipped "$skipped_json" \
     --argjson after_product_cleanup "$after_product_cleanup" \
     --arg cleanup_evidence_status "$cleanup_evidence_status" \
     --arg required_next_action "$required_next_action" \
@@ -194,6 +238,7 @@ emit_component_cleanup_json() {
         issues:(if ($issues_csv|length) > 0 then ($issues_csv | split(",")) else [] end),
         after_product_cleanup:$after_product_cleanup
       },
+      release_scope_skipped:$release_scope_skipped,
       cleanup_evidence:{
         status:$cleanup_evidence_status
       }
@@ -508,7 +553,10 @@ def add(value: str) -> None:
         issues.append(value)
 
 if provider == "linear":
-    range_re = re.compile(r"\b([A-Z][A-Z0-9_]*-)(\d+)\s*[\u2013-]\s*(?:[A-Z][A-Z0-9_]*-)?(\d+)\b")
+    # En-dash, ASCII hyphen, or ".." range forms (e.g. LEA-298–LEA-301, LEA-298..LEA-301).
+    range_re = re.compile(
+        r"\b([A-Z][A-Z0-9_]*-)(\d+)\s*(?:[\u2013-]|\.\.)\s*(?:[A-Z][A-Z0-9_]*-)?(\d+)\b"
+    )
     for item in range_re.finditer(section):
         prefix = item.group(1)
         start = int(item.group(2))
@@ -542,6 +590,247 @@ PY
     fi
     ISSUE_NUMBERS+=("$issue")
   done <<< "$extracted"
+
+  # Linear: changelog text is not authoritative for Released transitions (#1982).
+  if [ "$TRACKER_PROVIDER" = "linear" ]; then
+    filter_linear_changelog_scope_by_merged_prs "$version" "$changelog_root"
+  fi
+}
+
+# filter_linear_changelog_scope_by_merged_prs <version> <git_root>
+#
+# Replaces ISSUE_NUMBERS (changelog-extracted Linear IDs) with the Linear IDs
+# carried by merged PRs in the release git range (previous semver tag → release
+# tag / RELEASE_HEAD / HEAD). Evidence comes from merge-commit subjects and
+# optional `gh pr view` headRefName/title — not from free-form commit/PR bodies,
+# so cross-references like "did not ship LEA-298" cannot define scope.
+# Changelog-only IDs are omitted and reported via RELEASE_SCOPE_SKIPPED.
+filter_linear_changelog_scope_by_merged_prs() {
+  local version="$1"
+  local git_root="$2"
+  local changelog_csv=""
+  local filter_out=""
+  local line issue reason proposed
+  local -a kept=()
+
+  if [ "${#ISSUE_NUMBERS[@]}" -gt 0 ]; then
+    changelog_csv="$(IFS=,; printf '%s' "${ISSUE_NUMBERS[*]}")"
+  fi
+
+  filter_out="$(
+    RELEASE_HEAD_FOR_FILTER="${RELEASE_HEAD:-}" \
+    python3 - "$version" "$git_root" "$changelog_csv" <<'PY'
+import os
+import re
+import subprocess
+import sys
+
+version = sys.argv[1]
+git_root = sys.argv[2]
+changelog_csv = sys.argv[3]
+head = os.environ.get("RELEASE_HEAD_FOR_FILTER", "").strip()
+
+LINEAR_RE = re.compile(r"\b([A-Z][A-Z0-9_]*-\d+)\b")
+PR_MERGE_RE = re.compile(
+    r"Merge pull request #(\d+) from \S+?/([^\s]+)",
+    re.IGNORECASE,
+)
+PR_PARENS_RE = re.compile(r"\(#(\d+)\)\s*$")
+
+
+def run_git(*args):
+    return subprocess.run(
+        ["git", "-C", git_root, *args],
+        text=True,
+        capture_output=True,
+    )
+
+
+def parse_semver(tag):
+    raw = tag.lstrip("v")
+    match = re.match(r"^(\d+)\.(\d+)\.(\d+)", raw)
+    if not match:
+        return None
+    return tuple(int(part) for part in match.groups())
+
+
+def normalize_version(value):
+    return value[1:] if value.startswith("v") else value
+
+
+def resolve_current_ref():
+    if head and re.fullmatch(r"[0-9a-f]{40}", head):
+        probe = run_git("rev-parse", "--verify", "--quiet", head + "^{commit}")
+        if probe.returncode == 0:
+            return head
+    bare = normalize_version(version)
+    for candidate in ("refs/tags/v" + bare, "refs/tags/" + bare, "v" + bare, bare):
+        probe = run_git("rev-parse", "--verify", "--quiet", candidate + "^{commit}")
+        if probe.returncode == 0:
+            return candidate
+    # Last resort: HEAD of the checkout (release cleanup usually runs after tags exist).
+    probe = run_git("rev-parse", "--verify", "--quiet", "HEAD")
+    if probe.returncode == 0 and probe.stdout.strip():
+        return "HEAD"
+    return None
+
+
+def resolve_previous_tag(current_version):
+    listing = run_git("tag", "-l")
+    if listing.returncode != 0:
+        return None
+    current_tuple = parse_semver(current_version)
+    if current_tuple is None:
+        return None
+    candidates = []
+    for line in listing.stdout.splitlines():
+        tag = line.strip()
+        parsed = parse_semver(tag)
+        if parsed and parsed < current_tuple:
+            candidates.append((parsed, tag))
+    if not candidates:
+        return None
+    return sorted(candidates, reverse=True)[0][1]
+
+
+def extract_from_branch_or_title(text):
+    found = []
+    seen = set()
+    for match in LINEAR_RE.finditer(text or ""):
+        token = match.group(1)
+        if token not in seen:
+            seen.add(token)
+            found.append(token)
+    return found
+
+
+def collect_merged_pr_linear_ids(range_spec):
+    ids = set()
+    log = run_git("log", range_spec, "--pretty=format:%s")
+    if log.returncode != 0:
+        return ids
+
+    pr_numbers = []
+    seen_prs = set()
+    for subject in log.stdout.splitlines():
+        subject = subject.strip()
+        if not subject:
+            continue
+        merge = PR_MERGE_RE.search(subject)
+        if merge:
+            pr_num = merge.group(1)
+            branch = merge.group(2)
+            ids.update(extract_from_branch_or_title(branch))
+            if pr_num not in seen_prs:
+                seen_prs.add(pr_num)
+                pr_numbers.append(pr_num)
+            continue
+        paren = PR_PARENS_RE.search(subject)
+        if paren:
+            pr_num = paren.group(1)
+            if pr_num not in seen_prs:
+                seen_prs.add(pr_num)
+                pr_numbers.append(pr_num)
+            # Squash subjects may embed the primary Linear ID beside (#N).
+            ids.update(extract_from_branch_or_title(subject))
+
+    for pr_num in pr_numbers:
+        view = subprocess.run(
+            [
+                "gh",
+                "pr",
+                "view",
+                pr_num,
+                "--json",
+                "headRefName,title,mergedAt",
+            ],
+            text=True,
+            capture_output=True,
+        )
+        if view.returncode != 0 or not view.stdout.strip():
+            continue
+        try:
+            import json
+
+            payload = json.loads(view.stdout)
+        except Exception:
+            continue
+        if not payload.get("mergedAt"):
+            continue
+        ids.update(extract_from_branch_or_title(payload.get("headRefName") or ""))
+        ids.update(extract_from_branch_or_title(payload.get("title") or ""))
+    return ids
+
+
+changelog_ids = [part for part in changelog_csv.split(",") if part]
+current_ref = resolve_current_ref()
+if current_ref is None:
+    for issue in changelog_ids:
+        print(f"SKIP\t{issue}\trelease_range_unavailable")
+    sys.exit(0)
+
+prev_tag = resolve_previous_tag(version)
+if prev_tag:
+    range_spec = f"{prev_tag}..{current_ref}"
+else:
+    # No prior tag: use the full history ending at the release ref.
+    range_spec = current_ref
+
+merged_ids = collect_merged_pr_linear_ids(range_spec)
+if not merged_ids and current_ref == "HEAD" and not head:
+    # HEAD fallback with zero evidence is ambiguous — do not trust changelog text.
+    for issue in changelog_ids:
+        print(f"SKIP\t{issue}\trelease_range_unavailable")
+    sys.exit(0)
+
+for issue in changelog_ids:
+    if issue in merged_ids:
+        print(f"KEEP\t{issue}")
+    else:
+        print(f"SKIP\t{issue}\tchangelog_mention_without_merged_pr")
+
+# Preferred: PR-derived IDs define scope even when absent from CHANGELOG text.
+for issue in sorted(merged_ids):
+    if issue not in changelog_ids:
+        print(f"KEEP\t{issue}")
+PY
+  )" || filter_out=""
+
+  if [ -z "$filter_out" ]; then
+    for issue in ${ISSUE_NUMBERS[@]+"${ISSUE_NUMBERS[@]}"}; do
+      record_release_scope_skip "$issue" "merged_pr_evidence_unavailable"
+    done
+    ISSUE_NUMBERS=()
+    return 0
+  fi
+
+  ISSUE_NUMBERS=()
+  while IFS= read -r line; do
+    [ -z "$line" ] && continue
+    case "$line" in
+      KEEP$'\t'*)
+        proposed="${line#KEEP	}"
+        if is_valid_issue_token "$proposed"; then
+          kept+=("$proposed")
+        else
+          record_release_scope_skip "$proposed" "invalid_linear_token"
+        fi
+        ;;
+      SKIP$'\t'*)
+        issue="$(printf '%s\n' "$line" | cut -f2)"
+        reason="$(printf '%s\n' "$line" | cut -f3)"
+        [ -n "$reason" ] || reason="changelog_mention_without_merged_pr"
+        record_release_scope_skip "$issue" "$reason"
+        ;;
+    esac
+  done <<< "$filter_out"
+
+  ISSUE_NUMBERS=("${kept[@]+"${kept[@]}"}")
+  if [ "${#ISSUE_NUMBERS[@]}" -gt 0 ]; then
+    cleanup_log "Linear --from-changelog scope from merged PRs in release range: $(IFS=,; printf '%s' "${ISSUE_NUMBERS[*]}")"
+  else
+    cleanup_log "Linear --from-changelog: no merged-PR-backed Linear IDs in the release range."
+  fi
 }
 
 dedupe_issue_numbers() {
