@@ -96,8 +96,13 @@ _mock_fail="$(_make_gh_mock dispatch_fail)"
 _out="$(PATH="${_mock_fail}:$PATH" reviewer_loop_dispatch_pr_policy 42 owner/repo)"
 _rc=0
 PATH="${_mock_fail}:$PATH" reviewer_loop_dispatch_pr_policy 42 owner/repo >/dev/null || _rc=$?
-run_test "dispatch_failed_prints_failed" "yes" \
-  "$(printf '%s\n' "$_out" | grep -Eq '^PR_POLICY_DISPATCH=failed reason=' && echo yes || echo no)"
+if grep -Eq '^PR_POLICY_DISPATCH=failed reason=' <<<"$_out"; then
+  _failed_line=yes
+else
+  _failed_line=no
+fi
+run_test "dispatch_failed_prints_failed" "yes" "$_failed_line"
+unset _failed_line
 run_test "dispatch_failed_exit_zero" "0" "$_rc"
 rm -rf "$_mock_fail"
 
