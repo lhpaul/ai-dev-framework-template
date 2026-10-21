@@ -1430,6 +1430,28 @@ run_linear_scope_cleanup() {
   printf '%s\n%s\n' "$rc" "$output"
 }
 
+# --inspect-targets + --release-head (requires stub merge-budget in the fixture).
+ensure_inspect_merge_budget_stub() {
+  local repo="$1"
+  cat > "$repo/scripts/development-workflow/workflow-merge-budget.py" <<'PY'
+#!/usr/bin/env python3
+import sys
+print("INSPECT_STUB_OK")
+sys.exit(0)
+PY
+  chmod +x "$repo/scripts/development-workflow/workflow-merge-budget.py"
+}
+
+run_linear_scope_inspect() {
+  local repo="$1"
+  local version="$2"
+  local release_head="$3"
+  shift 3
+  ensure_inspect_merge_budget_stub "$repo"
+  run_linear_scope_cleanup "$repo" "$version" --from-changelog --inspect-targets \
+    --release-head "$release_head" "$@"
+}
+
 # --- Original three cases + explicit --issue control ---
 fixture_linear_scope_repo() {
   local name="$1"
@@ -2458,6 +2480,148 @@ run_contains "linear_1982_spec_still_excluded" \
   "RELEASE_SCOPE_SKIPPED issue=LEA-298 reason=documentation_stage_pr_only" "$output"
 run_not_contains "linear_1982_chore_no_999_in_issues" "TRACKER_ISSUES=LEA-999" "$output"
 run_not_contains "linear_1982_chore_no_298_in_issues" "TRACKER_ISSUES=LEA-298" "$output"
+
+# --- --release-head: identity from requested version, not co-pointing mobile tag ---
+repo_rh_mobile="$TMP_ROOT/linear-1982-release-head-mobile"
+init_linear_git_repo "$repo_rh_mobile"
+cat > "$repo_rh_mobile/CHANGELOG.md" <<'MD'
+# Changelog
+
+## [Unreleased]
+
+## [1.1.0] - 2026-10-15
+
+- Requested v1.1.0 must not adopt co-pointing mobile-v1.1.0 identity.
+MD
+"$REAL_GIT" -C "$repo_rh_mobile" add CHANGELOG.md .ai-dev-workflow.yaml scripts
+"$REAL_GIT" -C "$repo_rh_mobile" commit -q -m "chore: baseline"
+"$REAL_GIT" -C "$repo_rh_mobile" commit -q --allow-empty \
+  -m "Merge pull request #100 from example/fix/LEA-100-v10"
+sha_rh_v10="$("$REAL_GIT" -C "$repo_rh_mobile" rev-parse HEAD)"
+"$REAL_GIT" -C "$repo_rh_mobile" tag v1.0.0
+"$REAL_GIT" -C "$repo_rh_mobile" commit -q --allow-empty \
+  -m "Merge pull request #101 from example/fix/LEA-200-between"
+sha_rh_200="$("$REAL_GIT" -C "$repo_rh_mobile" rev-parse HEAD)"
+"$REAL_GIT" -C "$repo_rh_mobile" commit -q --allow-empty \
+  -m "Merge pull request #102 from example/fix/LEA-400-mobile10"
+sha_rh_m10="$("$REAL_GIT" -C "$repo_rh_mobile" rev-parse HEAD)"
+"$REAL_GIT" -C "$repo_rh_mobile" tag mobile-v1.0.0
+"$REAL_GIT" -C "$repo_rh_mobile" commit -q --allow-empty \
+  -m "Merge pull request #103 from example/fix/LEA-410-tip"
+sha_rh_tip="$("$REAL_GIT" -C "$repo_rh_mobile" rev-parse HEAD)"
+# Co-pointing tags at the release tip — buggy code adopted mobile-v1.1.0.
+"$REAL_GIT" -C "$repo_rh_mobile" tag v1.1.0
+"$REAL_GIT" -C "$repo_rh_mobile" tag mobile-v1.1.0
+write_linear_scope_gh \
+  "100|fix/LEA-100-v10|fix: LEA-100" \
+  "101|fix/LEA-200-between|fix: LEA-200" \
+  "102|fix/LEA-400-mobile10|fix: LEA-400" \
+  "103|fix/LEA-410-tip|fix: LEA-410" \
+  "commit:${sha_rh_v10}|100" \
+  "commit:${sha_rh_200}|101" \
+  "commit:${sha_rh_m10}|102" \
+  "commit:${sha_rh_tip}|103"
+result="$(run_linear_scope_inspect "$repo_rh_mobile" v1.1.0 "$sha_rh_tip")"
+status="$(printf '%s\n' "$result" | sed -n '1p')"
+output="$(printf '%s\n' "$result" | sed '1d')"
+run_test "linear_1982_rh_mobile_exits_zero" "0" "$status"
+# v-prefix previous is v1.0.0 → LEA-200 is in range (would be excluded if mobile-v1.0.0 bound).
+run_contains "linear_1982_rh_mobile_proposes_200" "LEA-200" "$output"
+run_contains "linear_1982_rh_mobile_proposes_410" "LEA-410" "$output"
+run_not_contains "linear_1982_rh_mobile_no_incomplete" "previous_release_boundary_unavailable" "$output"
+
+# --- --release-head: ignore co-pointing same-core tag that drops prerelease ---
+repo_rh_pre="$TMP_ROOT/linear-1982-release-head-prerelease"
+init_linear_git_repo "$repo_rh_pre"
+cat > "$repo_rh_pre/CHANGELOG.md" <<'MD'
+# Changelog
+
+## [Unreleased]
+
+## [1.2.3] - 2026-10-15
+
+- Requested v1.2.3-rc.2 must not adopt co-pointing v1.2.3 identity.
+MD
+"$REAL_GIT" -C "$repo_rh_pre" add CHANGELOG.md .ai-dev-workflow.yaml scripts
+"$REAL_GIT" -C "$repo_rh_pre" commit -q -m "chore: baseline"
+"$REAL_GIT" -C "$repo_rh_pre" tag v1.2.2
+"$REAL_GIT" -C "$repo_rh_pre" commit -q --allow-empty \
+  -m "Merge pull request #110 from example/fix/LEA-301-rc1"
+sha_rh_rc1="$("$REAL_GIT" -C "$repo_rh_pre" rev-parse HEAD)"
+"$REAL_GIT" -C "$repo_rh_pre" tag v1.2.3-rc.1
+"$REAL_GIT" -C "$repo_rh_pre" commit -q --allow-empty \
+  -m "Merge pull request #111 from example/fix/LEA-302-rc2"
+sha_rh_rc2="$("$REAL_GIT" -C "$repo_rh_pre" rev-parse HEAD)"
+"$REAL_GIT" -C "$repo_rh_pre" tag v1.2.3-rc.2
+# Same commit also has stable v1.2.3 (same MAJOR.MINOR.PATCH core) — must not win.
+"$REAL_GIT" -C "$repo_rh_pre" tag v1.2.3
+write_linear_scope_gh \
+  "110|fix/LEA-301-rc1|fix: LEA-301" \
+  "111|fix/LEA-302-rc2|fix: LEA-302" \
+  "commit:${sha_rh_rc1}|110" \
+  "commit:${sha_rh_rc2}|111"
+result="$(run_linear_scope_inspect "$repo_rh_pre" v1.2.3-rc.2 "$sha_rh_rc2")"
+status="$(printf '%s\n' "$result" | sed -n '1p')"
+output="$(printf '%s\n' "$result" | sed '1d')"
+run_test "linear_1982_rh_prerelease_exits_zero" "0" "$status"
+# --inspect-targets may not emit TRACKER_ISSUES=; scope appears in merge-budget args / logs.
+run_contains "linear_1982_rh_prerelease_proposes_302" "LEA-302" "$output"
+run_not_contains "linear_1982_rh_prerelease_no_301" "LEA-301" "$output"
+# Bare version argument (no leading v): must not adopt co-pointing v1.2.3 via
+# points-at (that bound previous=rc.2 at the tip and emptied the range).
+result="$(run_linear_scope_inspect "$repo_rh_pre" 1.2.3-rc.2 "$sha_rh_rc2")"
+status="$(printf '%s\n' "$result" | sed -n '1p')"
+output="$(printf '%s\n' "$result" | sed '1d')"
+run_test "linear_1982_rh_bare_rc_exits_zero" "0" "$status"
+run_contains "linear_1982_rh_bare_rc_still_proposes_302" "LEA-302" "$output"
+
+# --- Invalid SemVer prerelease tags cannot define the boundary ---
+repo_bad_pre="$TMP_ROOT/linear-1982-invalid-prerelease-tag"
+init_linear_git_repo "$repo_bad_pre"
+cat > "$repo_bad_pre/CHANGELOG.md" <<'MD'
+# Changelog
+
+## [Unreleased]
+
+## [1.2.3] - 2026-10-15
+
+- Invalid leading-zero prerelease tags are ignored.
+MD
+"$REAL_GIT" -C "$repo_bad_pre" add CHANGELOG.md .ai-dev-workflow.yaml scripts
+"$REAL_GIT" -C "$repo_bad_pre" commit -q -m "chore: baseline"
+"$REAL_GIT" -C "$repo_bad_pre" commit -q --allow-empty \
+  -m "Merge pull request #120 from example/fix/LEA-280-valid-prior"
+sha_bad_280="$("$REAL_GIT" -C "$repo_bad_pre" rev-parse HEAD)"
+"$REAL_GIT" -C "$repo_bad_pre" tag v1.2.2
+"$REAL_GIT" -C "$repo_bad_pre" commit -q --allow-empty \
+  -m "Merge pull request #121 from example/fix/LEA-290-invalid-pre"
+sha_bad_290="$("$REAL_GIT" -C "$repo_bad_pre" rev-parse HEAD)"
+# Invalid numeric prerelease (leading zero) — must not become the boundary.
+"$REAL_GIT" -C "$repo_bad_pre" tag v1.2.3-01
+"$REAL_GIT" -C "$repo_bad_pre" tag v1.2.3-alpha.01
+"$REAL_GIT" -C "$repo_bad_pre" commit -q --allow-empty \
+  -m "Merge pull request #122 from example/fix/LEA-302-release"
+sha_bad_302="$("$REAL_GIT" -C "$repo_bad_pre" rev-parse HEAD)"
+"$REAL_GIT" -C "$repo_bad_pre" tag v1.2.3
+write_linear_scope_gh \
+  "120|fix/LEA-280-valid-prior|fix: LEA-280" \
+  "121|fix/LEA-290-invalid-pre|fix: LEA-290" \
+  "122|fix/LEA-302-release|fix: LEA-302" \
+  "commit:${sha_bad_280}|120" \
+  "commit:${sha_bad_290}|121" \
+  "commit:${sha_bad_302}|122"
+result="$(run_linear_scope_cleanup "$repo_bad_pre" v1.2.3 --from-changelog --best-effort)"
+status="$(printf '%s\n' "$result" | sed -n '1p')"
+output="$(printf '%s\n' "$result" | sed '1d')"
+run_test "linear_1982_invalid_pre_exits_zero" "0" "$status"
+run_contains "linear_1982_invalid_pre_ignored_01" \
+  "SEMVER_TAG_IGNORED tag=v1.2.3-01 reason=invalid_prerelease_identifier" "$output"
+run_contains "linear_1982_invalid_pre_ignored_alpha" \
+  "SEMVER_TAG_IGNORED tag=v1.2.3-alpha.01 reason=invalid_prerelease_identifier" "$output"
+# Boundary is v1.2.2 (not the invalid tags) → LEA-290 and LEA-302 in range.
+run_contains "linear_1982_invalid_pre_proposes_302" "LEA-302" "$output"
+run_contains "linear_1982_invalid_pre_includes_290" "LEA-290" "$output"
+run_not_contains "linear_1982_invalid_pre_no_280" "LEA-280" "$output"
 
 # --- Linear: missing CHANGELOG version section → still derive from merged PRs ---
 repo_miss_section="$TMP_ROOT/linear-1982-missing-section"

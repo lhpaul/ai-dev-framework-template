@@ -318,9 +318,12 @@ cross-references such as “did not ship LEA-298” and expanded ranges — are
 skipped with
 `RELEASE_SCOPE_SKIPPED issue=<ID> reason=changelog_mention_without_merged_pr`
 (and appear under `release_scope_skipped` in component `--json` output). The
-previous-tag boundary uses the release tag’s PREFIX (`v`, `mobile-v`, …) and
-full SemVer 2.0.0 precedence (prerelease < release; build metadata ignored);
-`first_release` only when no same-prefix remote tag is strictly lower. Shallow
+previous-tag boundary uses the requested release version/tag’s PREFIX (`v`,
+`mobile-v`, …) and full SemVer 2.0.0 precedence (prerelease < release; build
+metadata ignored) — never a co-pointing tag discovered via `--release-head`;
+invalid prerelease identifiers (e.g. leading zeros) are ignored with
+`SEMVER_TAG_IGNORED`; `first_release` only when no same-prefix remote tag is
+strictly lower. Shallow
 clones, remote tag-list failures, or a preceding remote tag whose peeled commit
 is missing locally or disagrees with a local tag of the same name emit
 `RELEASE_SCOPE_INCOMPLETE reason=previous_release_boundary_unavailable` (the

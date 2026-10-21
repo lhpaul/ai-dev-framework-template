@@ -758,19 +758,63 @@ _SEMVER_TAG_RE = re.compile(
     r"(?:\+(?P<build>[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$"
 )
 
+# Tags that looked SemVer-shaped but failed prerelease/build validation — emit
+# one SEMVER_TAG_IGNORED diagnostic per name during boundary discovery.
+_SEMVER_IGNORED_TAGS = set()
 
-def split_tag_prefix_and_semver(tag_name):
+
+def _valid_prerelease_idents(prerelease):
+    """SemVer 2.0.0: non-empty [0-9A-Za-z-]+ idents; numeric idents no leading zeros."""
+    if not prerelease:
+        return False
+    for ident in prerelease.split("."):
+        if not ident or not re.fullmatch(r"[0-9A-Za-z-]+", ident):
+            return False
+        if re.fullmatch(r"\d+", ident) and not re.fullmatch(r"0|[1-9]\d*", ident):
+            return False
+    return True
+
+
+def _valid_build_idents(build):
+    """Build metadata: non-empty [0-9A-Za-z-]+ identifiers (leading zeros allowed)."""
+    if not build:
+        return False
+    for ident in build.split("."):
+        if not ident or not re.fullmatch(r"[0-9A-Za-z-]+", ident):
+            return False
+    return True
+
+
+def split_tag_prefix_and_semver(tag_name, report_invalid=False):
     """Return (prefix, precedence_key) or (None, None) for a tag/version name."""
     if not tag_name:
         return None, None
     match = _SEMVER_TAG_RE.match(tag_name)
     if not match:
         return None, None
+    pre = match.group("pre")
+    build = match.group("build")
+    if pre is not None and not _valid_prerelease_idents(pre):
+        if report_invalid and tag_name not in _SEMVER_IGNORED_TAGS:
+            _SEMVER_IGNORED_TAGS.add(tag_name)
+            print(
+                "SEMVER_TAG_IGNORED tag=%s reason=invalid_prerelease_identifier"
+                % tag_name,
+                file=sys.stderr,
+            )
+        return None, None
+    if build is not None and not _valid_build_idents(build):
+        if report_invalid and tag_name not in _SEMVER_IGNORED_TAGS:
+            _SEMVER_IGNORED_TAGS.add(tag_name)
+            print(
+                "SEMVER_TAG_IGNORED tag=%s reason=invalid_build_identifier" % tag_name,
+                file=sys.stderr,
+            )
+        return None, None
     prefix = match.group("prefix")
     major = int(match.group("major"))
     minor = int(match.group("minor"))
     patch = int(match.group("patch"))
-    pre = match.group("pre")
     return prefix, semver_precedence_key(major, minor, patch, pre)
 
 
@@ -826,24 +870,14 @@ def resolve_current_ref():
 
 
 def release_tag_name_for_boundary(current_ref, version_arg):
-    """Tag name used to derive the SemVer prefix for previous-boundary selection."""
+    """Release identity (prefix + SemVer) from the requested version/tag only.
+
+    When current_ref is refs/tags/<name>, that name is authoritative. When it is
+    an authorized --release-head SHA, use version_arg — never a co-pointing tag
+    that happens to share the commit (e.g. mobile-v1.1.0 vs requested v1.1.0).
+    """
     if current_ref.startswith("refs/tags/"):
         return current_ref[len("refs/tags/") :]
-    if re.fullmatch(r"[0-9a-f]{40}", current_ref):
-        pointing = run_git("tag", "-l", "--points-at", current_ref)
-        if pointing.returncode == 0:
-            names = [line.strip() for line in pointing.stdout.splitlines() if line.strip()]
-            # Prefer a tag whose SemVer core matches the version argument.
-            arg_prefix, arg_key = split_tag_prefix_and_semver(version_arg)
-            for name in names:
-                prefix, key = split_tag_prefix_and_semver(name)
-                if key is None:
-                    continue
-                if arg_key is not None and key[:3] == arg_key[:3]:
-                    return name
-            for name in names:
-                if split_tag_prefix_and_semver(name)[1] is not None:
-                    return name
     return version_arg
 
 
@@ -875,11 +909,10 @@ def resolve_previous_boundary(current_version, current_ref):
         )
         return "unavailable", None
 
+    # Identity is always the requested version/tag name (or the resolved
+    # refs/tags/<name>), never a co-pointing tag discovered via --release-head.
     release_tag = release_tag_name_for_boundary(current_ref, current_version)
     release_prefix, current_key = split_tag_prefix_and_semver(release_tag)
-    if current_key is None:
-        # Fall back to the version argument alone (e.g. odd release-head labeling).
-        release_prefix, current_key = split_tag_prefix_and_semver(current_version)
     if current_key is None:
         return "unavailable", None
 
@@ -908,7 +941,7 @@ def resolve_previous_boundary(current_version, current_ref):
         name = ref[len("refs/tags/") :]
         if peeled:
             name = name[:-3]
-        prefix, key = split_tag_prefix_and_semver(name)
+        prefix, key = split_tag_prefix_and_semver(name, report_invalid=True)
         if key is None or prefix != release_prefix:
             continue
         if key >= current_key:

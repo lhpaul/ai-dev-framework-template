@@ -579,9 +579,11 @@ Released shipping evidence. IDs are taken from each PR's `headRefName` / REST
 `head.ref` and `title` — not from commit text or PR body. Changelog-only
 mentions (including expanded ranges such as `LEA-298–LEA-301`) are omitted as
 `RELEASE_SCOPE_SKIPPED issue=<ID> reason=changelog_mention_without_merged_pr`.
-Previous-tag selection uses the release tag PREFIX and SemVer 2.0.0 precedence
-(prerelease < release; build metadata ignored); `first_release` only when no
-same-prefix remote tag is strictly lower. Shallow clones, remote tag-list
+Previous-tag selection uses the requested version/tag PREFIX and SemVer 2.0.0
+precedence (prerelease < release; build metadata ignored) — not a co-pointing
+tag at `--release-head`; invalid prerelease identifiers are ignored
+(`SEMVER_TAG_IGNORED`); `first_release` only when no same-prefix remote tag is
+strictly lower. Shallow clones, remote tag-list
 failures, or a preceding remote tag whose peeled commit is missing locally or
 disagrees with a local tag of the same name emit
 `RELEASE_SCOPE_INCOMPLETE reason=previous_release_boundary_unavailable` (scope
