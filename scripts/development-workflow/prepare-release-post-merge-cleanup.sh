@@ -16,15 +16,15 @@
 #   version section (unchanged). Linear: CHANGELOG text alone does NOT define
 #   release scope. Scope is Linear IDs from merged PRs in the previous-tag..release
 #   commit range: each commit is resolved to its PR(s) via GitHub
-#   (commits/<sha>/pulls, with subject "#N" / "Merge pull request #N" only as a
-#   fast path to the PR number). IDs are taken only from each PR's headRefName /
-#   REST head.ref and title — never from commit text or PR body (avoids
-#   "related to LEA-298" false positives; hotfixes whose commits omit the ID
-#   still resolve via the PR branch). Changelog-only mentions are
-#   RELEASE_SCOPE_SKIPPED. If the verified release ref is unavailable or PR
-#   resolution fails for any commit, emit RELEASE_SCOPE_INCOMPLETE and fail
-#   closed (never fall back to checkout HEAD). Explicit --issue/--issues are
-#   unioned with the derived scope and never filtered, for every provider.
+#   (commits/<sha>/pulls only — subject "(#N)" / "Merge pull request #N" is
+#   never sufficient PR evidence). IDs are taken only from each PR's
+#   headRefName / REST head.ref and title — never from commit text or PR body.
+#   Changelog-only mentions are RELEASE_SCOPE_SKIPPED. If the verified release
+#   ref is unavailable or PR resolution fails for any commit, emit
+#   RELEASE_SCOPE_INCOMPLETE and fail closed (never fall back to checkout HEAD).
+#   A fully resolved range with zero Linear IDs is success (empty scope).
+#   Explicit --issue/--issues are unioned with the derived scope and never
+#   filtered, for every provider.
 #
 # Examples:
 #   ./scripts/development-workflow/prepare-release-post-merge-cleanup.sh 1.2.3
@@ -635,16 +635,16 @@ PY
 # the release git range (previous semver tag → verified release tag or
 # RELEASE_HEAD). Never uses checkout HEAD as the release tip.
 #
-# For every commit in the range, resolve associated merged PR(s) through
-# GitHub (`gh api repos/{owner}/{repo}/commits/<sha>/pulls`). Commit subjects
-# matching "Merge pull request #N" or trailing "(#N)" are only a fast path to
-# the PR number — never ID evidence. Linear IDs come only from each PR's
-# headRefName / REST head.ref and title (not body, not commit text) so hotfix
-# commits that omit the ID still resolve via the PR branch, while
-# "related to LEA-298" commit text cannot enlarge scope. Changelog-only IDs are
-# RELEASE_SCOPE_SKIPPED. Explicit --issue/--issues stay outside this filter and
-# are unioned afterward. If the release ref is unavailable or PR resolution
-# fails for any commit, emit RELEASE_SCOPE_INCOMPLETE and return non-zero.
+# For every commit in the range, resolve associated merged PR(s) only through
+# GitHub `commits/<sha>/pulls` (cached per SHA). Subject "(#N)" is never
+# sufficient evidence. Accept a PR only when it is merged and its merge commit
+# or head commit is in the release range (or the associating range SHA when
+# those fields are absent). Linear IDs come from PR headRefName / head.ref and
+# title only. Changelog-only IDs are RELEASE_SCOPE_SKIPPED. Explicit
+# --issue/--issues are unioned afterward. Helper stdout ends with `OK` on
+# complete resolution (including zero-ID scope); missing OK / empty stdout is
+# filter failure. RELEASE_SCOPE_INCOMPLETE on unavailable release ref or API
+# failure.
 filter_linear_changelog_scope_by_merged_prs() {
   local version="$1"
   local git_root="$2"
@@ -690,9 +690,6 @@ head = os.environ.get("RELEASE_HEAD_FOR_FILTER", "").strip()
 backport_base = os.environ.get("BACKPORT_BASE_FOR_FILTER", "develop").strip() or "develop"
 
 LINEAR_RE = re.compile(r"\b([A-Z][A-Z0-9_]*-\d+)\b")
-# Fast path to a PR number only — never treat subject text as Linear ID evidence.
-PR_MERGE_NUM_RE = re.compile(r"Merge pull request #(\d+)\b", re.IGNORECASE)
-PR_PARENS_RE = re.compile(r"\(#(\d+)\)\s*$")
 
 
 def run_git(*args):
@@ -792,75 +789,38 @@ def acceptable_base(base_ref):
     return False
 
 
-def fast_path_pr_numbers(subject):
-    numbers = []
-    seen = set()
-    for match in PR_MERGE_NUM_RE.finditer(subject or ""):
-        num = match.group(1)
-        if num not in seen:
-            seen.add(num)
-            numbers.append(num)
-    paren = PR_PARENS_RE.search(subject or "")
-    if paren and paren.group(1) not in seen:
-        numbers.append(paren.group(1))
-    return numbers
-
-
 def normalize_pr_payload(payload):
     """Normalize GraphQL (gh pr view) and REST (commits/<sha>/pulls) shapes.
 
-    REST responses expose head.ref / base.ref / merged_at; GraphQL uses
-    headRefName / baseRefName / mergedAt. Branch-only Linear IDs (hotfix
-    head.ref) must not be dropped when title omits the ID.
+    REST responses expose head.ref / base.ref / merged_at / merge_commit_sha;
+    GraphQL uses headRefName / baseRefName / mergedAt. Branch-only Linear IDs
+    (hotfix head.ref) must not be dropped when title omits the ID.
     """
     if not isinstance(payload, dict):
         return None
-    head_ref = payload.get("headRefName") or ""
-    if not head_ref:
-        head_obj = payload.get("head")
-        if isinstance(head_obj, dict):
-            head_ref = head_obj.get("ref") or ""
-    base_ref = payload.get("baseRefName") or ""
-    if not base_ref:
-        base_obj = payload.get("base")
-        if isinstance(base_obj, dict):
-            base_ref = base_obj.get("ref") or ""
+    head_obj = payload.get("head") if isinstance(payload.get("head"), dict) else {}
+    head_ref = payload.get("headRefName") or head_obj.get("ref") or ""
+    head_sha = payload.get("headRefOid") or head_obj.get("sha") or ""
+    base_obj = payload.get("base") if isinstance(payload.get("base"), dict) else {}
+    base_ref = payload.get("baseRefName") or base_obj.get("ref") or ""
     merged_at = payload.get("mergedAt") or payload.get("merged_at") or ""
+    merge_commit = (
+        payload.get("mergeCommitOid")
+        or payload.get("merge_commit_sha")
+        or ""
+    )
+    merge_obj = payload.get("mergeCommit")
+    if not merge_commit and isinstance(merge_obj, dict):
+        merge_commit = merge_obj.get("oid") or ""
     return {
         "number": payload.get("number"),
         "headRefName": head_ref,
+        "headSha": head_sha,
         "title": payload.get("title") or "",
         "mergedAt": merged_at,
         "baseRefName": base_ref,
+        "mergeCommitSha": merge_commit,
     }
-
-
-def fetch_pr(pr_num, pr_cache):
-    if pr_num in pr_cache:
-        return pr_cache[pr_num]
-    view = subprocess.run(
-        [
-            "gh",
-            "pr",
-            "view",
-            str(pr_num),
-            "--json",
-            "number,headRefName,title,mergedAt,baseRefName",
-        ],
-        cwd=git_root,
-        text=True,
-        capture_output=True,
-    )
-    if view.returncode != 0 or not view.stdout.strip():
-        pr_cache[pr_num] = None
-        return None
-    try:
-        payload = normalize_pr_payload(json.loads(view.stdout))
-    except Exception:
-        pr_cache[pr_num] = None
-        return None
-    pr_cache[pr_num] = payload
-    return payload
 
 
 def pulls_for_commit(sha, repo_slug, commit_cache):
@@ -892,47 +852,70 @@ def pulls_for_commit(sha, repo_slug, commit_cache):
     return normalized
 
 
+def pr_belongs_to_range(payload, range_shas, associating_sha):
+    """Accept only when merge/head is in range, else associating commits/<sha>/pulls.
+
+    Subject text never supplies membership. When GitHub returns merge_commit_sha
+    or head SHA, at least one must appear in the release range. When those
+    fields are absent, the associating range SHA from commits/<sha>/pulls is
+    sufficient evidence that this PR belongs to the range.
+    """
+    merge_sha = (payload.get("mergeCommitSha") or "").strip().lower()
+    head_sha = (payload.get("headSha") or "").strip().lower()
+    assoc = (associating_sha or "").strip().lower()
+    if merge_sha or head_sha:
+        return bool(
+            (merge_sha and merge_sha in range_shas)
+            or (head_sha and head_sha in range_shas)
+        )
+    return bool(assoc and assoc in range_shas)
+
+
 def collect_merged_pr_linear_ids(range_spec, repo_slug):
-    """Return (ids, unresolved_shas). IDs from PR headRefName/head.ref + title."""
+    """Return (ids, unresolved_shas). IDs from PR headRefName/head.ref + title.
+
+    PR membership comes only from commits/<sha>/pulls for SHAs in the range —
+    never from a PR number parsed out of a commit subject.
+    """
     ids = set()
     unresolved = []
-    pr_cache = {}
     commit_cache = {}
+    seen_prs = set()
 
     log = run_git("log", range_spec, "--pretty=format:%H\t%s")
     if log.returncode != 0:
         return ids, ["<git-log-failed>"]
 
+    range_entries = []
+    range_shas = set()
     for line in log.stdout.splitlines():
         line = line.strip()
         if not line or "\t" not in line:
             continue
-        sha, subject = line.split("\t", 1)
-        pr_payloads = []
-        fast_nums = fast_path_pr_numbers(subject)
-        if fast_nums:
-            for num in fast_nums:
-                payload = fetch_pr(num, pr_cache)
-                if payload is None:
-                    unresolved.append(sha)
-                    pr_payloads = None
-                    break
-                pr_payloads.append(payload)
-            if pr_payloads is None:
-                continue
-        else:
-            pulls = pulls_for_commit(sha, repo_slug, commit_cache)
-            if pulls is None:
-                unresolved.append(sha)
-                continue
-            pr_payloads = pulls
+        sha, _subject = line.split("\t", 1)
+        sha_l = sha.strip().lower()
+        range_shas.add(sha_l)
+        range_entries.append(sha_l)
 
-        for payload in pr_payloads:
+    for sha in range_entries:
+        pulls = pulls_for_commit(sha, repo_slug, commit_cache)
+        if pulls is None:
+            unresolved.append(sha)
+            continue
+
+        for payload in pulls:
             if not payload.get("mergedAt"):
                 continue
             base_ref = payload.get("baseRefName") or ""
             if base_ref and not acceptable_base(base_ref):
                 continue
+            if not pr_belongs_to_range(payload, range_shas, sha):
+                continue
+            pr_num = payload.get("number")
+            if pr_num is not None:
+                if pr_num in seen_prs:
+                    continue
+                seen_prs.add(pr_num)
             ids.update(extract_linear_ids(payload.get("headRefName") or ""))
             ids.update(extract_linear_ids(payload.get("title") or ""))
     return ids, unresolved
@@ -969,6 +952,9 @@ for issue in changelog_ids:
 for issue in sorted(merged_ids):
     if issue not in changelog_ids:
         print("KEEP\t%s" % issue)
+
+# Explicit success marker so zero-ID complete scope is not treated as helper failure.
+print("OK")
 PY
   )" || filter_status=$?
 
@@ -984,9 +970,13 @@ PY
 
   ISSUE_NUMBERS=()
   unresolved=""
+  local saw_ok=false
   while IFS= read -r line; do
     [ -z "$line" ] && continue
     case "$line" in
+      OK)
+        saw_ok=true
+        ;;
       INCOMPLETE$'\t'*)
         unresolved="${line#INCOMPLETE	}"
         ;;
@@ -1006,6 +996,16 @@ PY
         ;;
     esac
   done <<< "$filter_out"
+
+  if [ -z "$unresolved" ] && [ "$saw_ok" != true ]; then
+    for issue in ${changelog_only[@]+"${changelog_only[@]}"}; do
+      record_release_scope_skip "$issue" "merged_pr_evidence_unavailable"
+    done
+    ISSUE_NUMBERS=()
+    union_explicit_issue_numbers
+    cleanup_log "RELEASE_SCOPE_INCOMPLETE reason=filter_helper_failed"
+    return 1
+  fi
 
   if [ -n "$unresolved" ]; then
     case "$unresolved" in

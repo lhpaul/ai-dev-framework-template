@@ -1278,7 +1278,7 @@ lookup_pr() {
   return 1
 }
 lookup_pr_rest() {
-  local num="$1" line rest head title
+  local num="$1" merge_sha="${2:-}" line rest head title
   while IFS= read -r line || [ -n "$line" ]; do
     case "$line" in
       commit:*|format:*) continue ;;
@@ -1288,8 +1288,13 @@ lookup_pr_rest() {
         rest="${line#*|}"
         head="${rest%%|*}"
         title="${rest#*|}"
-        printf '{"number":%s,"head":{"ref":"%s"},"title":"%s","merged_at":"2026-10-14T12:00:00Z","base":{"ref":"main"}}\n' \
-          "$num" "$head" "$title"
+        if [ -n "$merge_sha" ]; then
+          printf '{"number":%s,"head":{"ref":"%s","sha":"%s"},"title":"%s","merged_at":"2026-10-14T12:00:00Z","base":{"ref":"main"},"merge_commit_sha":"%s"}\n' \
+            "$num" "$head" "$merge_sha" "$title" "$merge_sha"
+        else
+          printf '{"number":%s,"head":{"ref":"%s"},"title":"%s","merged_at":"2026-10-14T12:00:00Z","base":{"ref":"main"}}\n' \
+            "$num" "$head" "$title"
+        fi
         return 0
         ;;
     esac
@@ -1304,7 +1309,7 @@ lookup_commit_pulls() {
       "commit:${sha}|"*)
         pr_num="${line##*|}"
         if map_uses_rest_format; then
-          json="$(lookup_pr_rest "$pr_num")" || return 1
+          json="$(lookup_pr_rest "$pr_num" "$sha")" || return 1
         else
           json="$(lookup_pr "$pr_num")" || return 1
         fi
@@ -1316,6 +1321,7 @@ lookup_commit_pulls() {
         ;;
     esac
   done < "$MAP_FILE"
+  # Empty association list is success (no PRs for this commit) — not an API failure.
   printf '%s]\n' "$parts"
   return 0
 }
@@ -1414,13 +1420,17 @@ fixture_linear_scope_repo() {
 
 - Older entry LEA-200.
 MD
+  local merge_sha=""
   "$REAL_GIT" -C "$path" add CHANGELOG.md .ai-dev-workflow.yaml scripts
   "$REAL_GIT" -C "$path" commit -q -m "chore: baseline before v1.28.0"
   "$REAL_GIT" -C "$path" tag v1.28.0
   "$REAL_GIT" -C "$path" commit -q --allow-empty \
     -m "Merge pull request #88 from example/fix/LEA-302-billing-fix"
+  merge_sha="$("$REAL_GIT" -C "$path" rev-parse HEAD)"
   "$REAL_GIT" -C "$path" tag v1.29.0
-  write_linear_scope_gh "88|fix/LEA-302-billing-fix|fix(billing): LEA-302"
+  write_linear_scope_gh \
+    "88|fix/LEA-302-billing-fix|fix(billing): LEA-302" \
+    "commit:${merge_sha}|88"
   printf '%s\n' "$path"
 }
 
@@ -1478,15 +1488,23 @@ MD
 "$REAL_GIT" -C "$repo_pr_only" commit -q -m "chore: baseline before v1.28.0"
 "$REAL_GIT" -C "$repo_pr_only" tag v1.28.0
 "$REAL_GIT" -C "$repo_pr_only" commit -q --allow-empty -m "Merge pull request #201 from example/feature/LEA-219-import"
+sha_201="$("$REAL_GIT" -C "$repo_pr_only" rev-parse HEAD)"
 "$REAL_GIT" -C "$repo_pr_only" commit -q --allow-empty -m "Merge pull request #202 from example/feature/LEA-225-dashboard"
+sha_202="$("$REAL_GIT" -C "$repo_pr_only" rev-parse HEAD)"
 "$REAL_GIT" -C "$repo_pr_only" commit -q --allow-empty -m "Merge pull request #203 from example/fix/LEA-254-billing"
+sha_203="$("$REAL_GIT" -C "$repo_pr_only" rev-parse HEAD)"
 "$REAL_GIT" -C "$repo_pr_only" commit -q --allow-empty -m "Merge pull request #204 from example/feature/LEA-295-reports"
+sha_204="$("$REAL_GIT" -C "$repo_pr_only" rev-parse HEAD)"
 "$REAL_GIT" -C "$repo_pr_only" tag v1.29.0
 write_linear_scope_gh \
   "201|feature/LEA-219-import|feat: LEA-219 import" \
   "202|feature/LEA-225-dashboard|feat: LEA-225 dashboard" \
   "203|fix/LEA-254-billing|fix: LEA-254 billing" \
-  "204|feature/LEA-295-reports|feat: LEA-295 reports"
+  "204|feature/LEA-295-reports|feat: LEA-295 reports" \
+  "commit:${sha_201}|201" \
+  "commit:${sha_202}|202" \
+  "commit:${sha_203}|203" \
+  "commit:${sha_204}|204"
 result="$(run_linear_scope_cleanup "$repo_pr_only" v1.29.0 --from-changelog --best-effort)"
 status="$(printf '%s\n' "$result" | sed -n '1p')"
 output="$(printf '%s\n' "$result" | sed '1d')"
@@ -1624,8 +1642,11 @@ MD
   -m "Merge pull request #90 from example/fix/LEA-302-ship
 
 Also notes LEA-298 did not ship in this change."
+sha_90="$("$REAL_GIT" -C "$repo_commit_mentions" rev-parse HEAD)"
 "$REAL_GIT" -C "$repo_commit_mentions" tag v1.29.0
-write_linear_scope_gh "90|fix/LEA-302-ship|fix: ship LEA-302 only"
+write_linear_scope_gh \
+  "90|fix/LEA-302-ship|fix: ship LEA-302 only" \
+  "commit:${sha_90}|90"
 result="$(run_linear_scope_cleanup "$repo_commit_mentions" v1.29.0 --from-changelog --best-effort)"
 status="$(printf '%s\n' "$result" | sed -n '1p')"
 output="$(printf '%s\n' "$result" | sed '1d')"
@@ -1633,6 +1654,85 @@ run_test "linear_1982c_exits_zero" "0" "$status"
 run_contains "linear_1982c_proposes_302" "TRACKER_ISSUES=LEA-302" "$output"
 run_contains "linear_1982c_skips_298" "RELEASE_SCOPE_SKIPPED issue=LEA-298 reason=changelog_mention_without_merged_pr" "$output"
 run_not_contains "linear_1982c_no_298_in_issues" "LEA-298," "$output"
+
+# --- Subject (#999) is not PR evidence; historical PR must not enlarge scope ---
+repo_subject_pr="$TMP_ROOT/linear-1982-subject-pr-ref"
+init_linear_git_repo "$repo_subject_pr"
+cat > "$repo_subject_pr/CHANGELOG.md" <<'MD'
+# Changelog
+
+## [Unreleased]
+
+## [1.29.0] - 2026-10-15
+
+- Shipped LEA-302. Docs note refers to an older PR by number only.
+
+## [1.28.0] - 2026-10-01
+
+- Older.
+MD
+"$REAL_GIT" -C "$repo_subject_pr" add CHANGELOG.md .ai-dev-workflow.yaml scripts
+"$REAL_GIT" -C "$repo_subject_pr" commit -q -m "chore: baseline before v1.28.0"
+"$REAL_GIT" -C "$repo_subject_pr" tag v1.28.0
+"$REAL_GIT" -C "$repo_subject_pr" commit -q --allow-empty \
+  -m "Merge pull request #88 from example/fix/LEA-302-billing-fix"
+sha_88="$("$REAL_GIT" -C "$repo_subject_pr" rev-parse HEAD)"
+"$REAL_GIT" -C "$repo_subject_pr" commit -q --allow-empty \
+  -m "docs: refer to earlier change (#999)"
+# No commit→PR map for the docs SHA. PR #999 exists historically but is not
+# associated with any commit in this release range.
+write_linear_scope_gh \
+  "88|fix/LEA-302-billing-fix|fix(billing): LEA-302" \
+  "999|feature/LEA-999-historical|feat: LEA-999 historical" \
+  "commit:${sha_88}|88"
+"$REAL_GIT" -C "$repo_subject_pr" tag v1.29.0
+result="$(run_linear_scope_cleanup "$repo_subject_pr" v1.29.0 --from-changelog --best-effort)"
+status="$(printf '%s\n' "$result" | sed -n '1p')"
+output="$(printf '%s\n' "$result" | sed '1d')"
+run_test "linear_1982_subject_pr_ref_exits_zero" "0" "$status"
+run_contains "linear_1982_subject_pr_ref_proposes_302" "TRACKER_ISSUES=LEA-302" "$output"
+run_not_contains "linear_1982_subject_pr_ref_no_999" "LEA-999" "$output"
+run_not_contains "linear_1982_subject_pr_ref_no_incomplete" "RELEASE_SCOPE_INCOMPLETE" "$output"
+
+# --- Fully resolved release with zero Linear IDs → empty scope, not incomplete ---
+repo_zero_ids="$TMP_ROOT/linear-1982-zero-linear-ids"
+init_linear_git_repo "$repo_zero_ids"
+cat > "$repo_zero_ids/CHANGELOG.md" <<'MD'
+# Changelog
+
+## [Unreleased]
+
+## [1.29.0] - 2026-10-15
+
+- Routine docs release with no Linear identifiers.
+
+## [1.28.0] - 2026-10-01
+
+- Older.
+MD
+"$REAL_GIT" -C "$repo_zero_ids" add CHANGELOG.md .ai-dev-workflow.yaml scripts
+"$REAL_GIT" -C "$repo_zero_ids" commit -q -m "chore: baseline before v1.28.0"
+"$REAL_GIT" -C "$repo_zero_ids" tag v1.28.0
+"$REAL_GIT" -C "$repo_zero_ids" commit -q --allow-empty \
+  -m "Merge pull request #50 from example/chore/docs-typo"
+sha_50="$("$REAL_GIT" -C "$repo_zero_ids" rev-parse HEAD)"
+"$REAL_GIT" -C "$repo_zero_ids" tag v1.29.0
+write_linear_scope_gh \
+  "50|chore/docs-typo|chore: fix typo" \
+  "commit:${sha_50}|50"
+# Without --best-effort: filter succeeds (empty scope); outer script reports no_issue_scope.
+result="$(run_linear_scope_cleanup "$repo_zero_ids" v1.29.0 --from-changelog)"
+status="$(printf '%s\n' "$result" | sed -n '1p')"
+output="$(printf '%s\n' "$result" | sed '1d')"
+run_test "linear_1982_zero_ids_exits_nonzero_no_scope" "1" "$status"
+run_contains "linear_1982_zero_ids_no_issue_scope" "TRACKER_INCOMPLETE=1 REASON=no_issue_scope" "$output"
+run_not_contains "linear_1982_zero_ids_no_incomplete" "RELEASE_SCOPE_INCOMPLETE" "$output"
+run_not_contains "linear_1982_zero_ids_no_tracker_action" "TRACKER_ACTION=linear_mcp_or_api_required" "$output"
+result="$(run_linear_scope_cleanup "$repo_zero_ids" v1.29.0 --from-changelog --best-effort)"
+status="$(printf '%s\n' "$result" | sed -n '1p')"
+output="$(printf '%s\n' "$result" | sed '1d')"
+run_test "linear_1982_zero_ids_best_effort_exits_zero" "0" "$status"
+run_not_contains "linear_1982_zero_ids_best_effort_no_incomplete" "RELEASE_SCOPE_INCOMPLETE" "$output"
 
 # github_projects --from-changelog still extracts #NNN from changelog text alone.
 repo_github_unchanged="$(fixture_github_projects_repo github-1982-unchanged)"
