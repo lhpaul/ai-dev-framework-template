@@ -87,6 +87,15 @@ The consolidated `.github/workflows/pr-policy.yml` workflow is an example of a
 `replace` outcome: it preserves reviewer-loop and regression-readiness policy
 while replacing redundant lightweight PR policy fan-out with one API-only job.
 
+`.github/workflows/workflow-tests.yml` is a `make opt-in` outcome for its
+**nightly schedule** in consumer repositories (#1996). The cron entry remains
+in the synced file, but every job skips `schedule` events unless the repository
+is `lhpaul/ai-dev-framework-template` or the Actions repository variable
+`WORKFLOW_TESTS_NIGHTLY_ENABLED` is exactly `true`. `pull_request` and
+`workflow_dispatch` are unchanged. Adopting the template version during sync
+keeps the nightly off by default; set the variable only when a consumer
+intentionally wants the full harness every night.
+
 ---
 
 ## Data Limitations
