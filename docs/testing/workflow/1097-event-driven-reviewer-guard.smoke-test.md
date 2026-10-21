@@ -49,6 +49,7 @@ live head), then dispatch the workflow explicitly.
 
 1. On the same pull request, resolve the live head and post:
 
+   <!-- workflow-shell-contract: bash-zsh -->
    ```bash
    set -euo pipefail
    HEAD_SHA=$(gh pr view "$PR_NUM" --json headRefOid --jq '.headRefOid')
@@ -75,7 +76,9 @@ EOF
 
 2. Dispatch PR policy (the path `pr-review-loop.sh` uses after a real summary):
 
+   <!-- workflow-shell-contract: bash-zsh -->
    ```bash
+   set -euo pipefail
    gh workflow run pr-policy.yml \
      --ref "$DEFAULT_BRANCH" \
      -f "pr_number=${PR_NUM}"

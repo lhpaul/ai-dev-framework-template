@@ -116,6 +116,7 @@ summary).
 
 1. Resolve the live head and post a valid clean summary fixture:
 
+   <!-- workflow-shell-contract: bash-zsh -->
    ```bash
    set -euo pipefail
    HEAD_SHA=$(gh pr view "$PR_NUM" --json headRefOid --jq '.headRefOid')
@@ -144,7 +145,9 @@ EOF
 
 2. Dispatch PR policy for this PR (do not wait for an `issue_comment` run):
 
+   <!-- workflow-shell-contract: bash-zsh -->
    ```bash
+   set -euo pipefail
    gh workflow run pr-policy.yml \
      --ref "$DEFAULT_BRANCH" \
      -f "pr_number=${PR_NUM}"
@@ -153,7 +156,9 @@ EOF
 3. Wait for that `workflow_dispatch` run to finish, then re-check the commit
    status:
 
+   <!-- workflow-shell-contract: bash-zsh -->
    ```bash
+   set -euo pipefail
    HEAD_SHA=$(gh pr view "$PR_NUM" --json headRefOid --jq '.headRefOid')
    gh api "repos/$(gh repo view --json nameWithOwner --jq '.nameWithOwner')/commits/$HEAD_SHA/statuses" \
      --jq "[.[] | select(.context | startswith(\"Reviewer-loop completion guard (#\"))] | first | {state, description}"
