@@ -291,6 +291,16 @@ orchestrator or a Linear MCP runner must apply the release label/custom field
 and then transition every listed `TRACKER_ISSUES` item from `Merged` to
 `Released` before reporting the release as complete.
 
+When cleanup is invoked with `--from-changelog`, Linear scope is **not** the set
+of IDs matched in the CHANGELOG version section alone (#1982). The helper
+derives scope from merged-PR evidence in the release git range (previous tag →
+release tag/head): Linear IDs in merge-commit subjects and PR branch names /
+titles. Changelog-only mentions — including cross-references such as “did not
+ship LEA-298” and expanded ranges — are skipped with
+`RELEASE_SCOPE_SKIPPED issue=<ID> reason=changelog_mention_without_merged_pr`
+(and appear under `release_scope_skipped` in component `--json` output). Pass
+explicit `--issue` / `--issues` when you intentionally override that filter.
+
 ---
 
 ## Workflow: Advancing Statuses

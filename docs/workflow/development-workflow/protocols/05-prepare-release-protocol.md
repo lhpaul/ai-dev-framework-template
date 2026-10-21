@@ -558,6 +558,17 @@ commit being an ancestor of the release tag; anything else is reported
 than assuming the changelog-derived scope was the only thing stamped, and pass
 `--issue` / `--issues` for anything the report names that genuinely shipped.
 
+For the **Linear** provider, `--from-changelog` does **not** treat CHANGELOG
+regex matches as Released scope on their own (#1982; sibling of the GitHub
+milestone false-positive class in #1328). Scope is the Linear IDs carried by
+merged PR branch names / titles / merge-commit subjects between the previous
+release tag and the release head. IDs found only in changelog text (including
+expanded ranges such as `LEA-298–LEA-301`) are omitted and reported as
+`RELEASE_SCOPE_SKIPPED issue=<ID> reason=changelog_mention_without_merged_pr`
+(or `release_range_unavailable` when the tag range cannot be resolved). Explicit
+`--issue` / `--issues` inputs are unchanged. GitHub Projects / GitHub Issues
+`--from-changelog` behavior is unchanged.
+
 ### 9.2 Preferred command (single entry point)
 
 Use the helper script:
