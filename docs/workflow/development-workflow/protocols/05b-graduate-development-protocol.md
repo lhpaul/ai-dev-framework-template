@@ -340,31 +340,44 @@ After the human merges the graduation PR (must use a **merge commit**):
    ./scripts/development-workflow/graduation-closeout.sh \
      --slug <slug> \
      --graduation-pr <graduation-pr-number> \
-     --epic <epic-issue-number>
+     --epic <epic-id>
    ```
 
-   Add `--base <branch>` when this is a nested graduation whose PR base is a
-   parent integration branch rather than `develop` (e.g. `--base
-   develop-sales-module`) — it must match the graduation PR's actual base,
-   and it must be `develop` or a `develop-*` integration branch. Add
-   `--exclude-issue <issue-number>` for optional, deferred, cancelled, or explicitly excluded sub-items that must remain open for human disposition. Add `--defer-epic-close` only when the human explicitly requests that the parent epic remain open after the core deliverable graduates.
+   `--epic` is a GitHub issue number when `issue_tracker.provider` is
+   `github_projects` or `github_issues`. With `provider: linear`, pass a native
+   Linear ID with team prefix (e.g. `LEA-326`); a bare number fails closed and
+   never mutates the GitHub issue with that numeric suffix. Add `--base <branch>`
+   when this is a nested graduation whose PR base is a parent integration branch
+   rather than `develop` (e.g. `--base develop-sales-module`) — it must match
+   the graduation PR's actual base, and it must be `develop` or a `develop-*`
+   integration branch. Add `--exclude-issue <issue-number>` for optional,
+   deferred, cancelled, or explicitly excluded sub-items that must remain open
+   for human disposition. Add `--defer-epic-close` only when the human
+   explicitly requests that the parent epic remain open after the core
+   deliverable graduates. Add `--dry-run` to print every external mutation
+   (`DRY_RUN would: …`) without applying any of them; both
+   `graduation-closeout.sh` and `graduation-closeout-from-merged-pr.sh` support
+   the flag (the wrapper forwards it to the child).
 
    **Operator deferral durability:** `--defer-epic-close` also ensures the epic
-   carries the durable label `defer-epic-close` before closeout reports success.
-   Merge-time automation reads that label (and the existing sub-item skip labels
-   `optional`, `deferred`, `cancelled`, `excluded-from-graduation`,
-   `exclude-from-graduation`) so a later fallback run does not force-close a
-   deferred epic or excluded sub-item.
+   carries the durable label `defer-epic-close` before closeout reports success
+   (GitHub Projects / GitHub Issues only). Merge-time automation reads that
+   label (and the existing sub-item skip labels `optional`, `deferred`,
+   `cancelled`, `excluded-from-graduation`, `exclude-from-graduation`) so a
+   later fallback run does not force-close a deferred epic or excluded
+   sub-item. Under Linear, deferral is CLI-only; the helper never writes
+   GitHub labels derived from a Linear ID.
 
    The helper:
    - validates that the graduation PR is already merged from `develop-<slug>` to its expected base (`develop` by default, or the branch passed via `--base` for a nested graduation);
-   - identifies planned sub-items from native GitHub sub-issues or the `integration-branch:<slug>` label fallback;
+   - with GitHub Projects / GitHub Issues: identifies planned sub-items from native GitHub sub-issues or the `integration-branch:<slug>` label fallback;
+   - with Linear: skips GitHub `subIssues` and label fallback (Linear children are not GitHub sub-issues); emits `TRACKER_ACTION_REQUIRED=` deferred actions for the native bridge; only closes GitHub issues explicitly linked via closing keywords on merged PRs targeting `develop-<slug>`;
    - includes issue references from closing keywords in merged PRs targeting `develop-<slug>`;
-   - closes open delivered sub-items and reasserts the configured terminal Project status;
+   - closes open delivered sub-items and reasserts the configured terminal Project status (GitHub trackers) or emits Linear deferred status updates;
    - updates closed-but-non-terminal delivered sub-items to the terminal Project status;
    - reports already terminal sub-items without moving them backward;
    - skips optional/deferred/excluded sub-items and reports the required human disposition;
-   - fails closed when candidate discovery is incomplete or no delivered sub-items can be identified;
+   - fails closed when candidate discovery is incomplete or no delivered sub-items can be identified (GitHub trackers; Linear may proceed with epic-only deferred closeout when no PR-linked GitHub issues exist);
    - closes the parent epic only after delivered planned sub-items reconcile, unless epic closure is explicitly deferred.
 
    Terminal Project status is resolved in this order: `GITHUB_PROJECT_STATUS_GRADUATED`, `GITHUB_PROJECT_STATUS_MERGED`, then `Merged`.

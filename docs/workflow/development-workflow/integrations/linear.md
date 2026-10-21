@@ -293,6 +293,28 @@ and then transition every listed `TRACKER_ISSUES` item from `Merged` to
 
 ---
 
+## Graduation Closeout (Linear)
+
+`graduation-closeout.sh` and `graduation-closeout-from-merged-pr.sh` honor
+`issue_tracker.provider: linear` the same way post-merge cleanup does (#1930 /
+#1984):
+
+- `--epic` must be a native Linear ID with team prefix (e.g. `LEA-326`). A bare
+  number fails closed — the helper never treats the numeric suffix as a GitHub
+  issue.
+- GitHub `subIssues` / parent GraphQL and `defer-epic-close` label writes are
+  skipped. Epic (and other Linear) status transitions are emitted as
+  `TRACKER_ACTION_REQUIRED=` deferred actions for the orchestrator MCP bridge.
+- The only GitHub issues the helper may close are those explicitly linked via
+  closing keywords on merged PRs targeting `develop-<slug>` (never derived from
+  a Linear ID).
+- Both scripts accept `--dry-run` to print planned mutations without applying
+  them.
+
+See Protocol 05b Step 5 for the primary operator command.
+
+---
+
 ## Workflow: Advancing Statuses
 
 The **Portfolio Orchestrator**, **Work Item Runner**, or stage agent updates the
