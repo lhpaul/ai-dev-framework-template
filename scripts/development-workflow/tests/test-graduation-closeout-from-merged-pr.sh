@@ -2,6 +2,7 @@
 # test-graduation-closeout-from-merged-pr.sh - merge-time graduation closeout wrapper tests.
 #
 # covers: scripts/development-workflow/graduation-closeout-from-merged-pr.sh
+# covers: scripts/development-workflow/graduation-closeout-lib.sh
 #         (Linear tracker safety with graduation-closeout.sh)
 #
 # Usage: bash scripts/development-workflow/tests/test-graduation-closeout-from-merged-pr.sh
@@ -37,6 +38,8 @@ cp "$REPO_ROOT/scripts/development-workflow/graduation-closeout-from-merged-pr.s
   "$FIXTURE_REPO/scripts/development-workflow/graduation-closeout-from-merged-pr.sh"
 cp "$REPO_ROOT/scripts/development-workflow/closing-keyword-lib.sh" \
   "$FIXTURE_REPO/scripts/development-workflow/closing-keyword-lib.sh"
+cp "$REPO_ROOT/scripts/development-workflow/graduation-closeout-lib.sh" \
+  "$FIXTURE_REPO/scripts/development-workflow/graduation-closeout-lib.sh"
 chmod +x "$FIXTURE_REPO/scripts/development-workflow/graduation-closeout-from-merged-pr.sh"
 
 # Stub child reconciler — assert argv, do not re-test full closeout matrix.

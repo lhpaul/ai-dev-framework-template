@@ -2,6 +2,7 @@
 # test-graduation-closeout.sh - graduation closeout helper tests.
 #
 # covers: scripts/development-workflow/graduation-closeout.sh
+# covers: scripts/development-workflow/graduation-closeout-lib.sh
 #         (Linear tracker safety with graduation-closeout-from-merged-pr.sh)
 #
 # Usage: bash scripts/development-workflow/tests/test-graduation-closeout.sh
@@ -36,6 +37,8 @@ trap cleanup EXIT
 mkdir -p "$MOCK_BIN" "$FIXTURE_REPO/scripts/development-workflow" "$MOCK_STATE_DIR" "$MOCK_STATUS_DIR"
 cp "$REPO_ROOT/scripts/development-workflow/graduation-closeout.sh" "$FIXTURE_REPO/scripts/development-workflow/graduation-closeout.sh"
 cp "$REPO_ROOT/scripts/development-workflow/closing-keyword-lib.sh" "$FIXTURE_REPO/scripts/development-workflow/closing-keyword-lib.sh"
+cp "$REPO_ROOT/scripts/development-workflow/graduation-closeout-lib.sh" \
+  "$FIXTURE_REPO/scripts/development-workflow/graduation-closeout-lib.sh"
 # Real workflow-lib (Linear bridge / emit_linear_deferred_action / shared parser).
 # Append fixture overrides only — do not reimplement Linear update_tracker.
 cp "$REPO_ROOT/scripts/development-workflow/workflow-lib.sh" \

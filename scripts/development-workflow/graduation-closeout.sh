@@ -32,6 +32,9 @@ SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)"
 # shellcheck source=./workflow-lib.sh
 # shellcheck disable=SC1091
 . "$SCRIPT_DIR/workflow-lib.sh"
+# shellcheck source=./graduation-closeout-lib.sh
+# shellcheck disable=SC1091
+. "$SCRIPT_DIR/graduation-closeout-lib.sh"
 # shellcheck source=./closing-keyword-lib.sh
 # shellcheck disable=SC1091
 . "$SCRIPT_DIR/closing-keyword-lib.sh"
