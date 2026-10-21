@@ -5,8 +5,10 @@
 #
 # The nightly cron cannot be conditioned on `on.schedule`, so every job must
 # skip schedule events in consumer repos unless WORKFLOW_TESTS_NIGHTLY_ENABLED
-# is exactly 'true'. This suite parses the workflow YAML and evaluates the job
-# `if:` expressions across event × repository × variable cases.
+# compares equal to 'true' under GitHub Actions' case-insensitive `==`
+# (true/True/TRUE opt in; any other value or absence keeps the nightly off).
+# This suite parses the workflow YAML and evaluates the job `if:` expressions
+# across event × repository × variable cases.
 
 set -euo pipefail
 
@@ -136,9 +138,17 @@ def normalize_if(expr):
     return text
 
 
-job_ifs = {name: normalize_if(jobs[name].get("if")) for name in required}
+def actions_str_eq(left, right):
+    """GitHub Actions string == / != is case-insensitive."""
+    if isinstance(left, str) and isinstance(right, str):
+        return left.casefold() == right.casefold()
+    return left == right
 
-# Every job must carry the schedule allow-list.
+
+job_ifs = {name: normalize_if(jobs[name].get("if")) for name in required}
+all_job_ifs = {name: normalize_if((job or {}).get("if")) for name, job in jobs.items()}
+
+# Every required job must carry the schedule allow-list.
 for name, expr in job_ifs.items():
     for needle in ALLOW_NEEDLES:
         if needle not in expr:
@@ -222,9 +232,10 @@ class Parser:
         if op in ("==", "!="):
             self.eat(op)
             right = self.parse_atom()
+            eq = actions_str_eq(left, right)
             if op == "==":
-                return left == right
-            return left != right
+                return eq
+            return not eq
         return bool(left)
 
     def parse_atom(self):
@@ -250,13 +261,33 @@ def eval_expr(expr, ctx):
     return Parser(tokenize(expr), ctx).parse()
 
 
+def var_opts_in(var_value):
+    return actions_str_eq(var_value, "true")
+
+
+# No job may run unconditionally on a consumer schedule without opt-in
+# (blocks a schedule-only gate job that starts a runner in every repo).
+consumer_schedule_ctx = {
+    "event_name": "schedule",
+    "repository": "acme/product-repo",
+    "var": "",
+    "select_count": "8",
+}
+for name, expr in all_job_ifs.items():
+    if eval_expr(expr, consumer_schedule_ctx):
+        print("STRUCT\t%s\tunconditional_on_consumer_schedule" % name)
+
 cases = []
 for event in ("schedule", "pull_request", "workflow_dispatch"):
     for repo in (TEMPLATE, "acme/product-repo"):
         for var_label, var_value in (
             ("unset", ""),
             ("true", "true"),
+            ("True", "True"),
+            ("TRUE", "TRUE"),
             ("false", "false"),
+            ("yes", "yes"),
+            ("1", "1"),
         ):
             cases.append((event, repo, var_label, var_value))
 
@@ -275,8 +306,8 @@ for event, repo, var_label, var_value in cases:
     test_runs = bool(select_runs and test_would)
     result_runs = eval_expr(job_ifs["result"], ctx_base)
 
-    # Expected policy.
-    schedule_allowed = repo == TEMPLATE or var_value == "true"
+    # Expected policy (Actions case-insensitive == for the opt-in var).
+    schedule_allowed = repo == TEMPLATE or var_opts_in(var_value)
     if event != "schedule":
         expect_select = True
         expect_test = True  # count is non-zero in this matrix
@@ -298,7 +329,7 @@ for event, repo, var_label, var_value in cases:
         )
 
     any_job = select_runs or test_runs or result_runs
-    if event == "schedule" and repo != TEMPLATE and var_value != "true":
+    if event == "schedule" and repo != TEMPLATE and not var_opts_in(var_value):
         expect_any = False
     elif event == "schedule":
         expect_any = True
@@ -332,14 +363,18 @@ run_test "if_matrix_all_cases" "0" "$case_bad"
 any_bad="$(printf '%s\n' "$eval_out" | grep -c '^ANY	.*	bad$' || true)"
 run_test "consumer_schedule_runs_no_jobs" "0" "$any_bad"
 
-# Explicit spotlight cases for the acceptance criteria.
+# Explicit spotlight cases for the acceptance / case-fold policy.
 spotlight="$(printf '%s\n' "$eval_out" | python3 -c '
 import sys
 lines = sys.stdin.read().splitlines()
 want = {
     ("schedule", "acme/product-repo", "unset"): False,
     ("schedule", "acme/product-repo", "false"): False,
+    ("schedule", "acme/product-repo", "yes"): False,
+    ("schedule", "acme/product-repo", "1"): False,
     ("schedule", "acme/product-repo", "true"): True,
+    ("schedule", "acme/product-repo", "True"): True,
+    ("schedule", "acme/product-repo", "TRUE"): True,
     ("schedule", "lhpaul/ai-dev-framework-template", "unset"): True,
     ("pull_request", "acme/product-repo", "unset"): True,
     ("workflow_dispatch", "acme/product-repo", "unset"): True,

@@ -91,10 +91,12 @@ while replacing redundant lightweight PR policy fan-out with one API-only job.
 **nightly schedule** in consumer repositories (#1996). The cron entry remains
 in the synced file, but every job skips `schedule` events unless the repository
 is `lhpaul/ai-dev-framework-template` or the Actions repository variable
-`WORKFLOW_TESTS_NIGHTLY_ENABLED` is exactly `true`. `pull_request` and
-`workflow_dispatch` are unchanged. Adopting the template version during sync
-keeps the nightly off by default; set the variable only when a consumer
-intentionally wants the full harness every night.
+`WORKFLOW_TESTS_NIGHTLY_ENABLED` compares equal to `true` under GitHub Actions'
+case-insensitive `==` (`true` / `True` / `TRUE` opt in; any other value or
+absence keeps the nightly off). `pull_request` and `workflow_dispatch` are
+unchanged. Adopting the template version during sync keeps the nightly off by
+default; set the variable only when a consumer intentionally wants the full
+harness every night.
 
 ---
 
