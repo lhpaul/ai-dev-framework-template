@@ -86,6 +86,9 @@ path triggers, or workflows that no longer gate a meaningful decision.
 The consolidated `.github/workflows/pr-policy.yml` workflow is an example of a
 `replace` outcome: it preserves reviewer-loop and regression-readiness policy
 while replacing redundant lightweight PR policy fan-out with one API-only job.
+Issue #1998 further removed its `issue_comment` trigger so ordinary PR comments
+no longer start a runner; `pr-review-loop.sh` dispatches the workflow once per
+canonical summary instead.
 
 `.github/workflows/workflow-tests.yml` is a `make opt-in` outcome for its
 **nightly schedule** in consumer repositories (#1996). The cron entry remains

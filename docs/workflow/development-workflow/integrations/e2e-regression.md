@@ -6,9 +6,10 @@ This template includes a label-gated GitHub Actions workflow for e2e/regression 
 
 The placeholder workflow listens for PRs targeting `develop`, `develop-*`, or
 `main` when the `ready-for-regression` label is present, and it can also be
-dispatched directly for a qualifying PR head by `pr-policy.yml` after the
-reviewer-loop summary is clean or legitimately skipped for the live PR head. The
-placeholder job is disabled by default. It installs dependencies and browsers only when the
+dispatched directly for a qualifying PR head by `pr-policy.yml` when that
+workflow runs via `workflow_dispatch` after `pr-review-loop.sh` posts a clean or
+legitimately skipped summary for the live PR head (#1998). The placeholder job
+is disabled by default. It installs dependencies and browsers only when the
 repository variable
 `ENABLE_TEMPLATE_PLACEHOLDER_REGRESSION` is set to `true`.
 
