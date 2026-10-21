@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 # test-graduation-closeout.sh - graduation closeout helper tests.
 #
+# covers: scripts/development-workflow/graduation-closeout.sh
+# covers: scripts/development-workflow/graduation-closeout-lib.sh
+#         (Linear tracker safety with graduation-closeout-from-merged-pr.sh)
+#
 # Usage: bash scripts/development-workflow/tests/test-graduation-closeout.sh
 
 set -euo pipefail
@@ -15,6 +19,8 @@ MOCK_STATE_DIR="$TMP_ROOT/state"
 MOCK_STATUS_DIR="$TMP_ROOT/status"
 MOCK_CLOSE_LOG="$TMP_ROOT/close.log"
 MOCK_LABEL_LOG="$TMP_ROOT/label.log"
+MOCK_GRAPHQL_LOG="$TMP_ROOT/graphql.log"
+MOCK_GH_LOG="$TMP_ROOT/gh-invocations.log"
 PASS_COUNT=0
 FAIL_COUNT=0
 
@@ -30,55 +36,87 @@ trap cleanup EXIT
 
 mkdir -p "$MOCK_BIN" "$FIXTURE_REPO/scripts/development-workflow" "$MOCK_STATE_DIR" "$MOCK_STATUS_DIR"
 cp "$REPO_ROOT/scripts/development-workflow/graduation-closeout.sh" "$FIXTURE_REPO/scripts/development-workflow/graduation-closeout.sh"
-chmod +x "$FIXTURE_REPO/scripts/development-workflow/graduation-closeout.sh"
+cp "$REPO_ROOT/scripts/development-workflow/closing-keyword-lib.sh" "$FIXTURE_REPO/scripts/development-workflow/closing-keyword-lib.sh"
+cp "$REPO_ROOT/scripts/development-workflow/graduation-closeout-lib.sh" \
+  "$FIXTURE_REPO/scripts/development-workflow/graduation-closeout-lib.sh"
+# Real workflow-lib (Linear bridge / emit_linear_deferred_action / shared parser).
+# Append fixture overrides only — do not reimplement Linear update_tracker.
+cp "$REPO_ROOT/scripts/development-workflow/workflow-lib.sh" \
+  "$FIXTURE_REPO/scripts/development-workflow/workflow-lib.sh"
+cat >> "$FIXTURE_REPO/scripts/development-workflow/workflow-lib.sh" <<'FIXTURE_OVERRIDES'
 
-cat > "$FIXTURE_REPO/scripts/development-workflow/workflow-lib.sh" <<'STUB_LIB'
-#!/usr/bin/env bash
-
-cd_workflow_repo_root() {
-  cd "$WORKFLOW_FIXTURE_REPO"
-}
-
-require_gh() {
-  gh auth status >/dev/null
-}
-
+# --- fixture overrides (after real definitions) ---
 repo_slug() {
   printf 'lhpaul/ai-dev-framework-template\n'
 }
 
-is_terminal_tracker_status() {
-  case "$1" in
-    Done|Merged|Released|Cancelled) return 0 ;;
-    *) return 1 ;;
-  esac
-}
+_fixture_real_get_tracker_status_for_issue_body="$(declare -f get_tracker_status_for_issue)"
+_fixture_real_get_tracker_status_for_issue_body="${_fixture_real_get_tracker_status_for_issue_body/get_tracker_status_for_issue/_fixture_real_get_tracker_status_for_issue}"
+eval "$_fixture_real_get_tracker_status_for_issue_body"
+unset _fixture_real_get_tracker_status_for_issue_body
+
+_fixture_real_update_tracker_status_best_effort_body="$(declare -f update_tracker_status_best_effort)"
+_fixture_real_update_tracker_status_best_effort_body="${_fixture_real_update_tracker_status_best_effort_body/update_tracker_status_best_effort/_fixture_real_update_tracker_status_best_effort}"
+eval "$_fixture_real_update_tracker_status_best_effort_body"
+unset _fixture_real_update_tracker_status_best_effort_body
 
 get_tracker_status_for_issue() {
+  local provider
+  # Bridge readability uses the shared parser — same as production.
+  provider="$(workflow_normalize_issue_tracker_provider "$(workflow_issue_tracker_provider_raw)")"
+  if [ "$provider" = "linear" ]; then
+    _fixture_real_get_tracker_status_for_issue "$@"
+    return $?
+  fi
   local issue="$1"
-  if [ -f "$MOCK_STATUS_DIR/$issue" ]; then
+  if [ -f "${MOCK_STATUS_DIR:?}/$issue" ]; then
     cat "$MOCK_STATUS_DIR/$issue"
   fi
 }
 
 update_tracker_status_best_effort() {
+  local provider
+  provider="$(workflow_normalize_issue_tracker_provider "$(workflow_issue_tracker_provider_raw)")"
+  if [ "$provider" = "linear" ]; then
+    # Simulate merge-session / bridge skip: exit 0 with empty stdout.
+    if [ "${MOCK_LINEAR_UPDATE_EMPTY:-0}" = "1" ]; then
+      return 0
+    fi
+    _fixture_real_update_tracker_status_best_effort "$@"
+    return $?
+  fi
   local issue="$1"
   local status="$2"
   if [ "${MOCK_STATUS_FAIL_ISSUE:-}" = "$issue" ]; then
     printf 'Warning: mocked status update failure for #%s\n' "$issue" >&2
     return 0
   fi
-  printf '%s\n' "$status" > "$MOCK_STATUS_DIR/$issue"
+  printf '%s\n' "$status" > "${MOCK_STATUS_DIR:?}/$issue"
 }
-STUB_LIB
+FIXTURE_OVERRIDES
+chmod +x "$FIXTURE_REPO/scripts/development-workflow/graduation-closeout.sh"
 
 cat > "$MOCK_BIN/gh" <<'MOCK_GH'
 #!/usr/bin/env bash
+printf 'gh %s\n' "$*" >> "${MOCK_GH_LOG:?}"
 case "$*" in
   "auth status")
     exit 0
     ;;
   api\ graphql*)
+    # Record the issue number variable so Linear tests can assert #326 was
+    # never queried via subIssues.
+    idx=1
+    while [ "$idx" -le "$#" ]; do
+      if [ "${!idx}" = "-F" ]; then
+        next=$((idx + 1))
+        val="${!next:-}"
+        case "$val" in
+          number=*) printf '%s\n' "${val#number=}" >> "${MOCK_GRAPHQL_LOG:?}" ;;
+        esac
+      fi
+      idx=$((idx + 1))
+    done
     case "${MOCK_NATIVE_MODE:-children}" in
       fail)
         printf 'mock native failure\n' >&2
@@ -135,6 +173,7 @@ JSON
     esac
     ;;
   "pr list --state merged --base develop-test --limit 1000 --json number,title,body")
+    # GitHub Projects / GitHub Issues keyword-scan path (unchanged).
     case "${MOCK_PR_MODE:-single_ref}" in
       fail)
         printf 'mock pr list failure\n' >&2
@@ -148,9 +187,62 @@ JSON
 [{"number":21,"title":"Closes #301 and fixes #302","body":"(Resolves issue #303.)\n- closed #304\nDisclose #398\nhotfix #399\nnot closing #397\nowner/repo#396\nCloses owner/repo#395\nfixes #302"}]
 JSON
         ;;
+      fenced_example)
+        # Body-only example that would falsely authorize #326 if scanned raw.
+        cat <<'JSON'
+[{"number":11,"title":"Graduate wave","body":"See example:\n```\nCloses #326\n```\nNo live closing keywords."}]
+JSON
+        ;;
       *)
         cat <<'JSON'
 [{"number":11,"title":"Deliver extra item","body":"Closes #105"}]
+JSON
+        ;;
+    esac
+    ;;
+  "pr list --state merged --base develop-test --limit 1000 --json number,title,body,closingIssuesReferences")
+    # Linear merged-PR discovery (structured same-repo refs only; text keywords skipped).
+    case "${MOCK_PR_MODE:-single_ref}" in
+      fail)
+        printf 'mock pr list failure\n' >&2
+        exit 46
+        ;;
+      none)
+        printf '[]\n'
+        ;;
+      fenced_example)
+        cat <<'JSON'
+[{"number":11,"title":"Graduate wave","body":"See example:\n```\nCloses #326\n```\nNo live closing keywords.","closingIssuesReferences":[]}]
+JSON
+        ;;
+      tilde_fenced_example)
+        cat <<'JSON'
+[{"number":11,"title":"Graduate wave","body":"See example:\n~~~\nCloses #326\n~~~\nNo live closing keywords.","closingIssuesReferences":[]}]
+JSON
+        ;;
+      unclosed_fenced_example)
+        cat <<'JSON'
+[{"number":11,"title":"Graduate wave","body":"See example:\n```text\nCloses #326\n","closingIssuesReferences":[]}]
+JSON
+        ;;
+      indented_code_example)
+        cat <<'JSON'
+[{"number":11,"title":"Graduate wave","body":"See example:\n    Closes #326\nNo live structured refs.","closingIssuesReferences":[]}]
+JSON
+        ;;
+      foreign_repo)
+        cat <<'JSON'
+[{"number":11,"title":"Deliver extra item","body":"No live closing keywords in this PR body.","closingIssuesReferences":[{"number":326,"repository":{"nameWithOwner":"other/repo"},"url":"https://github.com/other/repo/issues/326"}]}]
+JSON
+        ;;
+      empty_structured_plain_keyword)
+        cat <<'JSON'
+[{"number":11,"title":"Deliver extra item","body":"Closes #326","closingIssuesReferences":[]}]
+JSON
+        ;;
+      *)
+        cat <<'JSON'
+[{"number":11,"title":"Deliver extra item","body":"Closes #105","closingIssuesReferences":[{"number":105,"repository":{"nameWithOwner":"lhpaul/ai-dev-framework-template"},"url":"https://github.com/lhpaul/ai-dev-framework-template/issues/105"}]}]
 JSON
         ;;
     esac
@@ -232,7 +324,7 @@ MOCK_GH
 chmod +x "$MOCK_BIN/gh"
 export PATH="$MOCK_BIN:$PATH"
 export WORKFLOW_FIXTURE_REPO="$FIXTURE_REPO"
-export MOCK_STATE_DIR MOCK_STATUS_DIR MOCK_CLOSE_LOG MOCK_LABEL_LOG
+export MOCK_STATE_DIR MOCK_STATUS_DIR MOCK_CLOSE_LOG MOCK_LABEL_LOG MOCK_GRAPHQL_LOG MOCK_GH_LOG
 
 run_test() {
   local name="$1"
@@ -293,17 +385,29 @@ set_status() {
   printf '%s\n' "$2" > "$MOCK_STATUS_DIR/$1"
 }
 
+write_tracker_config() {
+  local provider="$1"
+  cat > "$FIXTURE_REPO/.ai-dev-workflow.yaml" <<EOF
+issue_tracker:
+  provider: ${provider}
+EOF
+}
+
 reset_fixture() {
-  rm -f "$MOCK_STATE_DIR"/*.json "$MOCK_STATUS_DIR"/* "$MOCK_CLOSE_LOG" "$MOCK_LABEL_LOG"
+  rm -f "$MOCK_STATE_DIR"/*.json "$MOCK_STATUS_DIR"/* "$MOCK_CLOSE_LOG" "$MOCK_LABEL_LOG" "$MOCK_GRAPHQL_LOG" "$MOCK_GH_LOG"
+  rm -f "$FIXTURE_REPO/.ai-dev-workflow.yaml"
   : > "$MOCK_CLOSE_LOG"
   : > "$MOCK_LABEL_LOG"
-  unset MOCK_NATIVE_MODE MOCK_LABEL_MODE MOCK_LABEL_ISSUES MOCK_PR_MODE MOCK_GRADUATION_PR_MODE MOCK_CLOSE_FAIL_ISSUE MOCK_STATUS_FAIL_ISSUE MOCK_LABEL_ADD_FAIL MOCK_LABEL_CREATE_FAIL GITHUB_PROJECT_STATUS_GRADUATED GITHUB_PROJECT_STATUS_MERGED GRADUATION_BASE
+  : > "$MOCK_GRAPHQL_LOG"
+  : > "$MOCK_GH_LOG"
+  unset MOCK_NATIVE_MODE MOCK_LABEL_MODE MOCK_LABEL_ISSUES MOCK_PR_MODE MOCK_GRADUATION_PR_MODE MOCK_CLOSE_FAIL_ISSUE MOCK_STATUS_FAIL_ISSUE MOCK_LABEL_ADD_FAIL MOCK_LABEL_CREATE_FAIL MOCK_LINEAR_UPDATE_EMPTY GITHUB_PROJECT_STATUS_GRADUATED GITHUB_PROJECT_STATUS_MERGED GRADUATION_BASE
 }
 
 run_closeout() {
   local output status
+  local epic="${CLOSEOUT_EPIC:-900}"
   set +e
-  output="$(cd "$FIXTURE_REPO" && ./scripts/development-workflow/graduation-closeout.sh --slug test --graduation-pr 77 --epic 900 "$@" 2>&1)"
+  output="$(cd "$FIXTURE_REPO" && ./scripts/development-workflow/graduation-closeout.sh --slug test --graduation-pr 77 --epic "$epic" "$@" 2>&1)"
   status=$?
   set -e
   printf '%s\n%s\n' "$status" "$output"
@@ -595,6 +699,341 @@ run_test "rerun_exit_zero" "0" "$(last_output_status "$rerun_result")"
 run_contains "rerun_already_count" "ALREADY_TERMINAL_COUNT=1" "$rerun_body"
 run_contains "rerun_epic_already" "EPIC_RESULT=already_terminal" "$rerun_body"
 run_test "rerun_no_close_calls" "" "$(cat "$MOCK_CLOSE_LOG")"
+
+echo ""
+echo "=== graduation closeout: Linear tracker does not touch unrelated GH #326 (#1984) ==="
+reset_fixture
+write_tracker_config linear
+export MOCK_NATIVE_MODE=children
+export MOCK_PR_MODE=none
+# Unrelated GitHub issue whose number matches the Linear epic numeric suffix.
+write_issue 326 "Unrelated GitHub issue" OPEN
+set_status 326 "In Development"
+CLOSEOUT_EPIC=LEA-326
+linear_result="$(run_closeout)"
+unset CLOSEOUT_EPIC
+linear_body="$(last_output_body "$linear_result")"
+run_test "linear_epic_exit_zero" "0" "$(last_output_status "$linear_result")"
+run_contains "linear_result_pass" "GRADUATION_CLOSEOUT_RESULT=pass" "$linear_body"
+run_contains "linear_provider_reported" "TRACKER_PROVIDER=linear" "$linear_body"
+run_contains "linear_deferred_action" "TRACKER_ACTION_REQUIRED=set_status issue=LEA-326" "$linear_body"
+run_contains "linear_epic_closed_mode" "EPIC_CLOSE_MODE=linear_deferred" "$linear_body"
+run_test "linear_gh_326_stays_open" "OPEN" "$(python3 -c 'import json; print(json.load(open("'"$MOCK_STATE_DIR"'/326.json"))["state"])')"
+run_test "linear_no_close_calls" "" "$(cat "$MOCK_CLOSE_LOG")"
+run_test "linear_no_label_calls" "" "$(cat "$MOCK_LABEL_LOG")"
+run_test "linear_no_subissues_query_326" "0" "$(grep -c '^326$' "$MOCK_GRAPHQL_LOG" || true)"
+run_not_contains "linear_no_gh_issue_close_326" "issue close 326" "$(cat "$MOCK_GH_LOG")"
+run_not_contains "linear_no_gh_issue_edit_326" "issue edit 326" "$(cat "$MOCK_GH_LOG")"
+run_not_contains "linear_no_gh_issue_view_326" "issue view 326" "$(cat "$MOCK_GH_LOG")"
+
+echo ""
+echo "=== graduation closeout: Linear empty bridge emission fails closed (#1984 review) ==="
+reset_fixture
+write_tracker_config linear
+export MOCK_PR_MODE=none
+export MOCK_LINEAR_UPDATE_EMPTY=1
+write_issue 326 "Unrelated GitHub issue" OPEN
+CLOSEOUT_EPIC=LEA-326
+empty_bridge_result="$(run_closeout)"
+unset CLOSEOUT_EPIC
+empty_bridge_body="$(last_output_body "$empty_bridge_result")"
+run_test "linear_empty_bridge_exit_one" "1" "$(last_output_status "$empty_bridge_result")"
+run_contains "linear_empty_bridge_failed_result" "GRADUATION_CLOSEOUT_RESULT=failed" "$empty_bridge_body"
+run_contains "linear_empty_bridge_epic_failed" "EPIC_RESULT=failed" "$empty_bridge_body"
+run_contains "linear_empty_bridge_reason" "tracker_status_update_failed" "$empty_bridge_body"
+run_contains "linear_empty_bridge_error" "without emitting TRACKER_ACTION_REQUIRED=" "$empty_bridge_body"
+run_not_contains "linear_empty_bridge_no_false_closed" "EPIC_RESULT=closed" "$empty_bridge_body"
+run_test "linear_empty_bridge_326_intact" "OPEN" "$(python3 -c 'import json; print(json.load(open("'"$MOCK_STATE_DIR"'/326.json"))["state"])')"
+
+echo ""
+echo "=== graduation closeout: Linear bare --epic 326 fails closed (#1984) ==="
+reset_fixture
+write_tracker_config linear
+export MOCK_PR_MODE=none
+write_issue 326 "Unrelated GitHub issue" OPEN
+CLOSEOUT_EPIC=326
+bare_result="$(run_closeout)"
+unset CLOSEOUT_EPIC
+bare_body="$(last_output_body "$bare_result")"
+run_test "linear_bare_epic_exit_64" "64" "$(last_output_status "$bare_result")"
+run_contains "linear_bare_epic_error" "native Linear ID" "$bare_body"
+run_test "linear_bare_326_stays_open" "OPEN" "$(python3 -c 'import json; print(json.load(open("'"$MOCK_STATE_DIR"'/326.json"))["state"])')"
+run_test "linear_bare_no_close" "" "$(cat "$MOCK_CLOSE_LOG")"
+run_test "linear_bare_no_graphql" "" "$(cat "$MOCK_GRAPHQL_LOG")"
+run_test "linear_bare_no_gh_mutations" "0" "$(grep -cE 'issue (close|edit) ' "$MOCK_GH_LOG" || true)"
+
+echo ""
+echo "=== graduation closeout: Linear --dry-run prints mutations and applies none (#1984) ==="
+reset_fixture
+write_tracker_config linear
+export MOCK_NATIVE_MODE=empty
+export MOCK_PR_MODE=single_ref
+write_issue 105 "PR referenced child" OPEN
+write_issue 326 "Unrelated GitHub issue" OPEN
+CLOSEOUT_EPIC=LEA-326
+dry_result="$(run_closeout --dry-run)"
+unset CLOSEOUT_EPIC
+dry_body="$(last_output_body "$dry_result")"
+run_test "linear_dry_run_exit_zero" "0" "$(last_output_status "$dry_result")"
+run_contains "linear_dry_run_flag" "DRY_RUN=1" "$dry_body"
+run_contains "linear_dry_run_tracker" "DRY_RUN would: update_tracker_status LEA-326" "$dry_body"
+run_contains "linear_dry_run_gh_close" "DRY_RUN would: gh issue close #105" "$dry_body"
+run_test "linear_dry_run_105_stays_open" "OPEN" "$(python3 -c 'import json; print(json.load(open("'"$MOCK_STATE_DIR"'/105.json"))["state"])')"
+run_test "linear_dry_run_326_stays_open" "OPEN" "$(python3 -c 'import json; print(json.load(open("'"$MOCK_STATE_DIR"'/326.json"))["state"])')"
+run_test "linear_dry_run_no_close_log" "" "$(cat "$MOCK_CLOSE_LOG")"
+
+echo ""
+echo "=== graduation closeout: Linear closes only PR-linked GitHub issues (#1984) ==="
+reset_fixture
+write_tracker_config linear
+export MOCK_NATIVE_MODE=children
+export MOCK_PR_MODE=single_ref
+write_issue 105 "PR referenced child" OPEN
+write_issue 326 "Unrelated GitHub issue" OPEN
+write_issue 101 "Native child must not be discovered under linear" OPEN
+CLOSEOUT_EPIC=LEA-326
+linked_result="$(run_closeout)"
+unset CLOSEOUT_EPIC
+linked_body="$(last_output_body "$linked_result")"
+run_test "linear_linked_exit_zero" "0" "$(last_output_status "$linked_result")"
+run_test "linear_linked_105_closed" "CLOSED" "$(python3 -c 'import json; print(json.load(open("'"$MOCK_STATE_DIR"'/105.json"))["state"])')"
+run_test "linear_linked_326_open" "OPEN" "$(python3 -c 'import json; print(json.load(open("'"$MOCK_STATE_DIR"'/326.json"))["state"])')"
+run_test "linear_linked_101_open" "OPEN" "$(python3 -c 'import json; print(json.load(open("'"$MOCK_STATE_DIR"'/101.json"))["state"])')"
+run_contains "linear_linked_deferred" "TRACKER_ACTION_REQUIRED=set_status issue=LEA-326" "$linked_body"
+run_contains "linear_linked_source" "closingIssuesReferences" "$linked_body"
+run_test "linear_linked_no_subissues_326" "0" "$(grep -c '^326$' "$MOCK_GRAPHQL_LOG" || true)"
+run_test "linear_linked_no_subissues_any" "" "$(cat "$MOCK_GRAPHQL_LOG")"
+run_contains "linear_linked_combined_pr_query" "--json number,title,body,closingIssuesReferences" "$(cat "$MOCK_GH_LOG")"
+
+echo ""
+echo "=== graduation closeout: Linear ignores fenced example Closes #326 (#1984 Pass 2) ==="
+reset_fixture
+write_tracker_config linear
+export MOCK_NATIVE_MODE=empty
+export MOCK_PR_MODE=fenced_example
+write_issue 326 "Unrelated GitHub issue" OPEN
+CLOSEOUT_EPIC=LEA-326
+fenced_result="$(run_closeout)"
+unset CLOSEOUT_EPIC
+fenced_body="$(last_output_body "$fenced_result")"
+run_test "linear_fenced_exit_zero" "0" "$(last_output_status "$fenced_result")"
+run_contains "linear_fenced_pass" "GRADUATION_CLOSEOUT_RESULT=pass" "$fenced_body"
+run_contains "linear_fenced_deferred" "TRACKER_ACTION_REQUIRED=set_status issue=LEA-326" "$fenced_body"
+run_test "linear_fenced_326_untouched" "OPEN" "$(python3 -c 'import json; print(json.load(open("'"$MOCK_STATE_DIR"'/326.json"))["state"])')"
+run_test "linear_fenced_no_close_log" "" "$(cat "$MOCK_CLOSE_LOG")"
+run_contains "linear_fenced_skipped" "LINEAR_GITHUB_REF_SKIPPED issue=326 reason=not_structurally_linked" "$fenced_body"
+run_contains "linear_fenced_combined_pr_query" "--json number,title,body,closingIssuesReferences" "$(cat "$MOCK_GH_LOG")"
+
+echo ""
+echo "=== graduation closeout: Linear ignores tilde-fenced example Closes #326 (#1984 Pass 2) ==="
+reset_fixture
+write_tracker_config linear
+export MOCK_NATIVE_MODE=empty
+export MOCK_PR_MODE=tilde_fenced_example
+write_issue 326 "Unrelated GitHub issue" OPEN
+CLOSEOUT_EPIC=LEA-326
+tilde_result="$(run_closeout)"
+unset CLOSEOUT_EPIC
+tilde_body="$(last_output_body "$tilde_result")"
+run_test "linear_tilde_exit_zero" "0" "$(last_output_status "$tilde_result")"
+run_contains "linear_tilde_pass" "GRADUATION_CLOSEOUT_RESULT=pass" "$tilde_body"
+run_test "linear_tilde_326_untouched" "OPEN" "$(python3 -c 'import json; print(json.load(open("'"$MOCK_STATE_DIR"'/326.json"))["state"])')"
+run_test "linear_tilde_no_close_log" "" "$(cat "$MOCK_CLOSE_LOG")"
+run_contains "linear_tilde_skipped" "LINEAR_GITHUB_REF_SKIPPED issue=326 reason=not_structurally_linked" "$tilde_body"
+
+echo ""
+echo "=== graduation closeout: Linear ignores unclosed-fence example Closes #326 (#1984 Pass 2) ==="
+reset_fixture
+write_tracker_config linear
+export MOCK_NATIVE_MODE=empty
+export MOCK_PR_MODE=unclosed_fenced_example
+write_issue 326 "Unrelated GitHub issue" OPEN
+CLOSEOUT_EPIC=LEA-326
+unclosed_result="$(run_closeout)"
+unset CLOSEOUT_EPIC
+unclosed_body="$(last_output_body "$unclosed_result")"
+run_test "linear_unclosed_exit_zero" "0" "$(last_output_status "$unclosed_result")"
+run_contains "linear_unclosed_pass" "GRADUATION_CLOSEOUT_RESULT=pass" "$unclosed_body"
+run_test "linear_unclosed_326_untouched" "OPEN" "$(python3 -c 'import json; print(json.load(open("'"$MOCK_STATE_DIR"'/326.json"))["state"])')"
+run_test "linear_unclosed_no_close_log" "" "$(cat "$MOCK_CLOSE_LOG")"
+run_contains "linear_unclosed_skipped" "LINEAR_GITHUB_REF_SKIPPED issue=326 reason=not_structurally_linked" "$unclosed_body"
+
+echo ""
+echo "=== graduation closeout: Linear ignores indented-code Closes #326 (#1984 Pass 1) ==="
+reset_fixture
+write_tracker_config linear
+export MOCK_NATIVE_MODE=empty
+export MOCK_PR_MODE=indented_code_example
+write_issue 326 "Unrelated GitHub issue" OPEN
+CLOSEOUT_EPIC=LEA-326
+indented_result="$(run_closeout)"
+unset CLOSEOUT_EPIC
+indented_body="$(last_output_body "$indented_result")"
+run_test "linear_indented_exit_zero" "0" "$(last_output_status "$indented_result")"
+run_contains "linear_indented_pass" "GRADUATION_CLOSEOUT_RESULT=pass" "$indented_body"
+run_test "linear_indented_326_untouched" "OPEN" "$(python3 -c 'import json; print(json.load(open("'"$MOCK_STATE_DIR"'/326.json"))["state"])')"
+run_test "linear_indented_no_close_log" "" "$(cat "$MOCK_CLOSE_LOG")"
+run_contains "linear_indented_skipped" "LINEAR_GITHUB_REF_SKIPPED issue=326 reason=not_structurally_linked" "$indented_body"
+
+echo ""
+echo "=== graduation closeout: Linear skips plain body Closes #326 without structured refs (#1984) ==="
+reset_fixture
+write_tracker_config linear
+export MOCK_NATIVE_MODE=empty
+export MOCK_PR_MODE=empty_structured_plain_keyword
+write_issue 326 "Unrelated GitHub issue" OPEN
+CLOSEOUT_EPIC=LEA-326
+plain_result="$(run_closeout)"
+unset CLOSEOUT_EPIC
+plain_body="$(last_output_body "$plain_result")"
+run_test "linear_plain_text_exit_zero" "0" "$(last_output_status "$plain_result")"
+run_contains "linear_plain_text_pass" "GRADUATION_CLOSEOUT_RESULT=pass" "$plain_body"
+run_test "linear_plain_text_326_untouched" "OPEN" "$(python3 -c 'import json; print(json.load(open("'"$MOCK_STATE_DIR"'/326.json"))["state"])')"
+run_test "linear_plain_text_no_close_log" "" "$(cat "$MOCK_CLOSE_LOG")"
+run_contains "linear_plain_text_skipped" "LINEAR_GITHUB_REF_SKIPPED issue=326 reason=not_structurally_linked" "$plain_body"
+run_not_contains "linear_plain_text_no_keyword_source" "closing_keyword" "$plain_body"
+
+echo ""
+echo "=== graduation closeout: Linear ignores foreign-repo closingIssuesReferences #326 (#1984 Pass 1 c2) ==="
+reset_fixture
+write_tracker_config linear
+export MOCK_NATIVE_MODE=empty
+export MOCK_PR_MODE=foreign_repo
+write_issue 326 "Unrelated local GitHub issue" OPEN
+CLOSEOUT_EPIC=LEA-326
+foreign_result="$(run_closeout)"
+unset CLOSEOUT_EPIC
+foreign_body="$(last_output_body "$foreign_result")"
+run_test "linear_foreign_exit_zero" "0" "$(last_output_status "$foreign_result")"
+run_contains "linear_foreign_pass" "GRADUATION_CLOSEOUT_RESULT=pass" "$foreign_body"
+run_contains "linear_foreign_deferred" "TRACKER_ACTION_REQUIRED=set_status issue=LEA-326" "$foreign_body"
+run_contains "linear_foreign_skipped_warning" "skipping foreign closingIssuesReferences" "$foreign_body"
+run_contains "linear_foreign_skipped_repo" "other/repo" "$foreign_body"
+run_test "linear_foreign_326_untouched" "OPEN" "$(python3 -c 'import json; print(json.load(open("'"$MOCK_STATE_DIR"'/326.json"))["state"])')"
+run_test "linear_foreign_no_close_log" "" "$(cat "$MOCK_CLOSE_LOG")"
+run_not_contains "linear_foreign_no_close_326" "issue close 326" "$(cat "$MOCK_GH_LOG")"
+
+echo ""
+echo "=== graduation closeout: github_projects behavior unchanged with explicit config (#1984) ==="
+reset_fixture
+write_tracker_config github_projects
+write_issue 101 "Open child" OPEN
+write_issue 102 "Closed nonterminal" CLOSED
+write_issue 103 "Closed terminal" CLOSED
+write_issue 104 "Optional child" OPEN optional
+write_issue 105 "PR referenced child" OPEN
+write_issue 900 "Parent epic" OPEN
+set_status 101 "In Development"
+set_status 102 "Development in Review"
+set_status 103 "Merged"
+set_status 104 "In Development"
+set_status 105 "Plan Ready"
+set_status 900 "In Development"
+gh_proj_result="$(run_closeout)"
+gh_proj_body="$(last_output_body "$gh_proj_result")"
+run_test "github_projects_exit_zero" "0" "$(last_output_status "$gh_proj_result")"
+run_contains "github_projects_pass" "GRADUATION_CLOSEOUT_RESULT=pass" "$gh_proj_body"
+run_contains "github_projects_provider" "TRACKER_PROVIDER=github_projects" "$gh_proj_body"
+run_test "github_projects_child_closed" "CLOSED" "$(python3 -c 'import json; print(json.load(open("'"$MOCK_STATE_DIR"'/101.json"))["state"])')"
+run_contains "github_projects_epic_close" "900" "$(cat "$MOCK_CLOSE_LOG")"
+run_not_contains "github_projects_no_linear_action" "TRACKER_ACTION_REQUIRED=" "$gh_proj_body"
+
+echo ""
+echo "=== graduation closeout: commented header + github_projects keeps legacy path (#1984) ==="
+reset_fixture
+cat > "$FIXTURE_REPO/.ai-dev-workflow.yaml" <<'EOF'
+issue_tracker: # tracker
+  provider: github_projects
+EOF
+write_issue 101 "Open child" OPEN
+write_issue 102 "Closed nonterminal" CLOSED
+write_issue 103 "Closed terminal" CLOSED
+write_issue 104 "Optional child" OPEN optional
+write_issue 105 "PR referenced child" OPEN
+write_issue 900 "Parent epic" OPEN
+set_status 101 "In Development"
+set_status 102 "Development in Review"
+set_status 103 "Merged"
+set_status 104 "In Development"
+set_status 105 "Plan Ready"
+set_status 900 "In Development"
+commented_gh_result="$(run_closeout)"
+commented_gh_body="$(last_output_body "$commented_gh_result")"
+run_test "commented_gh_projects_exit_zero" "0" "$(last_output_status "$commented_gh_result")"
+run_contains "commented_gh_projects_provider" "TRACKER_PROVIDER=github_projects" "$commented_gh_body"
+run_contains "commented_gh_projects_pass" "GRADUATION_CLOSEOUT_RESULT=pass" "$commented_gh_body"
+run_test "commented_gh_projects_child_closed" "CLOSED" "$(python3 -c 'import json; print(json.load(open("'"$MOCK_STATE_DIR"'/101.json"))["state"])')"
+run_contains "commented_gh_projects_epic_close" "900" "$(cat "$MOCK_CLOSE_LOG")"
+run_not_contains "commented_gh_projects_no_linear" "TRACKER_ACTION_REQUIRED=" "$commented_gh_body"
+
+echo ""
+echo "=== graduation closeout: commented header + github_issues keeps legacy path (#1984) ==="
+reset_fixture
+cat > "$FIXTURE_REPO/.ai-dev-workflow.yaml" <<'EOF'
+issue_tracker: # tracker
+  provider: github_issues
+EOF
+write_issue 101 "Open child" OPEN
+write_issue 102 "Closed nonterminal" CLOSED
+write_issue 103 "Closed terminal" CLOSED
+write_issue 104 "Optional child" OPEN optional
+write_issue 105 "PR referenced child" OPEN
+write_issue 900 "Parent epic" OPEN
+set_status 101 "In Development"
+set_status 102 "Development in Review"
+set_status 103 "Merged"
+set_status 104 "In Development"
+set_status 105 "Plan Ready"
+set_status 900 "In Development"
+commented_issues_result="$(run_closeout)"
+commented_issues_body="$(last_output_body "$commented_issues_result")"
+run_test "commented_gh_issues_exit_zero" "0" "$(last_output_status "$commented_issues_result")"
+# Legacy shared parser sees empty under commented header → same default as develop.
+run_contains "commented_gh_issues_provider" "TRACKER_PROVIDER=github_projects" "$commented_issues_body"
+run_contains "commented_gh_issues_pass" "GRADUATION_CLOSEOUT_RESULT=pass" "$commented_issues_body"
+run_test "commented_gh_issues_child_closed" "CLOSED" "$(python3 -c 'import json; print(json.load(open("'"$MOCK_STATE_DIR"'/101.json"))["state"])')"
+run_contains "commented_gh_issues_epic_close" "900" "$(cat "$MOCK_CLOSE_LOG")"
+
+echo ""
+echo "=== graduation closeout: commented header + linear fails closed before mutation (#1984) ==="
+reset_fixture
+cat > "$FIXTURE_REPO/.ai-dev-workflow.yaml" <<'EOF'
+issue_tracker: # native tracker
+  provider: linear
+EOF
+export MOCK_NATIVE_MODE=empty
+export MOCK_PR_MODE=none
+write_issue 326 "Unrelated GitHub issue" OPEN
+CLOSEOUT_EPIC=LEA-326
+commented_lea_result="$(run_closeout)"
+unset CLOSEOUT_EPIC
+commented_lea_body="$(last_output_body "$commented_lea_result")"
+run_test "commented_linear_lea_exit_64" "64" "$(last_output_status "$commented_lea_result")"
+run_contains "commented_linear_lea_remediation" "tracker bridge cannot read it" "$commented_lea_body"
+run_contains "commented_linear_lea_fix_header" "Remove the trailing comment from the 'issue_tracker:' line" "$commented_lea_body"
+run_test "commented_linear_lea_326_untouched" "OPEN" "$(python3 -c 'import json; print(json.load(open("'"$MOCK_STATE_DIR"'/326.json"))["state"])')"
+run_test "commented_linear_lea_no_close_log" "" "$(cat "$MOCK_CLOSE_LOG")"
+run_not_contains "commented_linear_lea_no_mutation" "issue close" "$(cat "$MOCK_GH_LOG")"
+run_not_contains "commented_linear_lea_no_deferred" "TRACKER_ACTION_REQUIRED=" "$commented_lea_body"
+run_not_contains "commented_linear_lea_no_gh_api" "api graphql" "$(cat "$MOCK_GH_LOG")"
+
+echo ""
+echo "=== graduation closeout: uncommented linear + LEA-326 uses real bridge (#1984) ==="
+reset_fixture
+write_tracker_config linear
+export MOCK_NATIVE_MODE=empty
+export MOCK_PR_MODE=none
+write_issue 326 "Unrelated GitHub issue" OPEN
+CLOSEOUT_EPIC=LEA-326
+uncommented_lea_result="$(run_closeout)"
+unset CLOSEOUT_EPIC
+uncommented_lea_body="$(last_output_body "$uncommented_lea_result")"
+run_test "uncommented_linear_lea_exit_zero" "0" "$(last_output_status "$uncommented_lea_result")"
+run_contains "uncommented_linear_lea_provider" "TRACKER_PROVIDER=linear" "$uncommented_lea_body"
+run_contains "uncommented_linear_lea_deferred" "TRACKER_ACTION_REQUIRED=set_status issue=LEA-326" "$uncommented_lea_body"
+run_test "uncommented_linear_lea_326_untouched" "OPEN" "$(python3 -c 'import json; print(json.load(open("'"$MOCK_STATE_DIR"'/326.json"))["state"])')"
+run_test "uncommented_linear_lea_no_close_log" "" "$(cat "$MOCK_CLOSE_LOG")"
+run_not_contains "uncommented_linear_lea_no_mutation" "issue close" "$(cat "$MOCK_GH_LOG")"
 
 echo ""
 echo "Graduation closeout tests: $PASS_COUNT passed, $FAIL_COUNT failed."

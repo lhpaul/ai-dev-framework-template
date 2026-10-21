@@ -125,6 +125,15 @@ TRACKER_ACTION_REQUIRED=<action_type> issue=<issue_id>[ <extra_fields>]
 | `read_status` | `get_tracker_status_for_issue`       | _(none)_                                 | Status read was deferred; orchestrator supplies the value. |
 | `create_item` | `add-backlog-item.sh create`         | `title='My New Feature'`                 | New Linear item should be created via MCP.                |
 
+`set_status` is **forward-only** at the native bridge (same guarantee as
+GitHub Projects' `update_tracker_status_best_effort` order check): before
+applying, the orchestrator reads the item's current Linear status and skips
+the update when the item is already at or beyond the target in
+[`tracker-status-mapping.md`](../tracker-status-mapping.md) (e.g. target
+`Merged` while the item is `Released`), recording the skip. Helpers may still
+emit `TRACKER_ACTION_REQUIRED=set_status` on re-runs; the bridge must not
+regress status.
+
 **Quoting convention**: when a field value contains spaces, it is
 single-quoted in the output — for example, `target_status='Plan in Review'`
 rather than `target_status=Plan in Review`. Single-word values are not
@@ -134,16 +143,23 @@ for all controlled-vocabulary values in the workflow.
 
 **Orchestrator collection loop** (pseudocode):
 
-```
+```text
 for each Work Item Runner output line:
   if line starts with "TRACKER_ACTION_REQUIRED=":
     parse action_type from "TRACKER_ACTION_REQUIRED=<action_type> ..."
     parse issue from "... issue=<id> ..."
     parse extra_field value (strip single quotes if present)
-    apply via Linear MCP (e.g., updateIssue, createIssue)
+    if action_type is set_status:
+      read current Linear status via MCP
+      if current is at or beyond target_status in tracker-status-mapping:
+        record skip; do not updateIssue
+      else:
+        apply via Linear MCP updateIssue
+    else:
+      apply via Linear MCP (e.g., createIssue)
   if line starts with "TRACKER_UPDATE_REQUIRED:":
     parse issue number and target_status
-    apply via Linear MCP updateIssue
+    apply the same forward-only set_status rule via Linear MCP
 ```
 
 The `TRACKER_UPDATE_REQUIRED:` format (used in protocol 91 Step 8b) is a
@@ -290,6 +306,37 @@ and exit non-zero unless `--best-effort` was explicitly accepted. The
 orchestrator or a Linear MCP runner must apply the release label/custom field
 and then transition every listed `TRACKER_ISSUES` item from `Merged` to
 `Released` before reporting the release as complete.
+
+---
+
+## Graduation Closeout (Linear)
+
+`graduation-closeout.sh` and `graduation-closeout-from-merged-pr.sh` honor
+`issue_tracker.provider: linear` the same way post-merge cleanup does (#1930 /
+#1984):
+
+- `--epic` must be a native Linear ID with team prefix (e.g. `LEA-326`). A bare
+  number fails closed — the helper never treats the numeric suffix as a GitHub
+  issue. If `provider: linear` is only visible under a commented
+  `issue_tracker:` header, closeout fails closed before mutation — remove the
+  trailing comment so the shared tracker bridge can read the provider.
+
+- GitHub `subIssues` / parent GraphQL and `defer-epic-close` label writes are
+  skipped. Epic (and other Linear) status transitions are emitted as
+  `TRACKER_ACTION_REQUIRED=` deferred actions for the orchestrator MCP bridge.
+- GitHub issues are closed **only** via same-repo structured
+  `closingIssuesReferences` on merged PRs targeting `develop-<slug>`. Text-only
+  references (`Closes #N` in title/body, including fenced or indented examples)
+  are reported as `LINEAR_GITHUB_REF_SKIPPED issue=N reason=not_structurally_linked`
+  and never mutate GitHub. Foreign-repo structured refs are skipped. GitHub does
+  not populate `closingIssuesReferences` for many non-default-branch bases, so on
+  integration branches typically **no** GitHub issue is closed — safe by design.
+  Decision-gate outcomes are listed in Protocol 05b Step 5 **Graduation closeout
+  decision-gate consistency matrix**.
+- Both scripts accept `--dry-run` to print planned mutations without applying
+  them.
+
+See Protocol 05b Step 5 for the primary operator command.
 
 ---
 
