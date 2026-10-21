@@ -5,7 +5,8 @@
 #   1. Linear provider: --from-changelog without merged-PR evidence skips changelog IDs
 #   2. Linear provider: --best-effort with no merged-PR-backed scope exits 0 (no_issue_scope)
 #   3. Missing scope (no --issue / --from-changelog): emits no_issue_scope signal
-#   4. Missing CHANGELOG version: emits changelog_scope_unavailable signal
+#   4. Missing CHANGELOG version: GitHub providers emit changelog_scope_unavailable;
+#      Linear continues with CHANGELOG_SECTION_UNAVAILABLE + merged-PR scope
 #   5. Issue loop / TRACKER_UPDATED counting:
 #      a. update_tracker_status_best_effort emits "Updating tracker status" -> UPDATED
 #      b. update_tracker_status_best_effort emits TRACKER_ACTION_REQUIRED=set_status -> UPDATED
@@ -1342,6 +1343,12 @@ if [ "$#" -ge 2 ] && [ "$1" = "auth" ] && [ "$2" = "status" ]; then
   exit 0
 fi
 if [ "$#" -ge 2 ] && [ "$1" = "repo" ] && [ "$2" = "view" ]; then
+  # Mimic real gh: GH_REPO overrides cwd. Production unsets GH_REPO before
+  # resolve_repo_slug so component cleanups do not query the hub.
+  if [ -n "${GH_REPO:-}" ]; then
+    printf '%s\n' "$GH_REPO"
+    exit 0
+  fi
   printf 'example/repo\n'
   exit 0
 fi
@@ -2046,6 +2053,105 @@ run_test "linear_1982_shallow_best_effort_exits_zero" "0" "$status"
 run_contains "linear_1982_shallow_incomplete" "RELEASE_SCOPE_INCOMPLETE reason=previous_release_boundary_unavailable" "$output"
 run_not_contains "linear_1982_shallow_no_302" "TRACKER_ISSUES=LEA-302" "$output"
 
+# --- Linear: missing CHANGELOG version section → still derive from merged PRs ---
+repo_miss_section="$TMP_ROOT/linear-1982-missing-section"
+init_linear_git_repo "$repo_miss_section"
+cat > "$repo_miss_section/CHANGELOG.md" <<'MD'
+# Changelog
+
+## [Unreleased]
+
+## [1.28.0] - 2026-10-01
+
+- Older entry; current release section intentionally absent.
+MD
+"$REAL_GIT" -C "$repo_miss_section" add CHANGELOG.md .ai-dev-workflow.yaml scripts
+"$REAL_GIT" -C "$repo_miss_section" commit -q -m "chore: baseline before v1.28.0"
+"$REAL_GIT" -C "$repo_miss_section" tag v1.28.0
+"$REAL_GIT" -C "$repo_miss_section" commit -q --allow-empty \
+  -m "Merge pull request #88 from example/fix/LEA-302-billing-fix"
+sha_miss_section="$("$REAL_GIT" -C "$repo_miss_section" rev-parse HEAD)"
+"$REAL_GIT" -C "$repo_miss_section" tag v1.29.0
+write_linear_scope_gh \
+  "88|fix/LEA-302-billing-fix|fix(billing): LEA-302" \
+  "commit:${sha_miss_section}|88"
+result="$(run_linear_scope_cleanup "$repo_miss_section" v1.29.0 --from-changelog --best-effort)"
+status="$(printf '%s\n' "$result" | sed -n '1p')"
+output="$(printf '%s\n' "$result" | sed '1d')"
+run_test "linear_1982_missing_section_exits_zero" "0" "$status"
+run_contains "linear_1982_missing_section_diagnostic" \
+  "CHANGELOG_SECTION_UNAVAILABLE version=v1.29.0 (Linear scope derived from merged PRs only)" \
+  "$output"
+run_contains "linear_1982_missing_section_proposes_302" "TRACKER_ISSUES=LEA-302" "$output"
+run_not_contains "linear_1982_missing_section_no_changelog_unavailable" \
+  "REASON=changelog_scope_unavailable" "$output"
+
+# --- Linear: missing CHANGELOG.md file → still derive from merged PRs ---
+repo_miss_file="$TMP_ROOT/linear-1982-missing-file"
+init_linear_git_repo "$repo_miss_file"
+"$REAL_GIT" -C "$repo_miss_file" add .ai-dev-workflow.yaml scripts
+"$REAL_GIT" -C "$repo_miss_file" commit -q -m "chore: baseline before v1.28.0"
+"$REAL_GIT" -C "$repo_miss_file" tag v1.28.0
+"$REAL_GIT" -C "$repo_miss_file" commit -q --allow-empty \
+  -m "Merge pull request #88 from example/fix/LEA-302-billing-fix"
+sha_miss_file="$("$REAL_GIT" -C "$repo_miss_file" rev-parse HEAD)"
+"$REAL_GIT" -C "$repo_miss_file" tag v1.29.0
+write_linear_scope_gh \
+  "88|fix/LEA-302-billing-fix|fix(billing): LEA-302" \
+  "commit:${sha_miss_file}|88"
+result="$(run_linear_scope_cleanup "$repo_miss_file" v1.29.0 --from-changelog --best-effort)"
+status="$(printf '%s\n' "$result" | sed -n '1p')"
+output="$(printf '%s\n' "$result" | sed '1d')"
+run_test "linear_1982_missing_file_exits_zero" "0" "$status"
+run_contains "linear_1982_missing_file_diagnostic" \
+  "CHANGELOG_SECTION_UNAVAILABLE version=v1.29.0 (Linear scope derived from merged PRs only)" \
+  "$output"
+run_contains "linear_1982_missing_file_proposes_302" "TRACKER_ISSUES=LEA-302" "$output"
+run_not_contains "linear_1982_missing_file_no_changelog_unavailable" \
+  "REASON=changelog_scope_unavailable" "$output"
+
+# --- GH_REPO must not override checkout repo for Linear PR lookups ---
+repo_gh_repo="$TMP_ROOT/linear-1982-gh-repo-override"
+init_linear_git_repo "$repo_gh_repo"
+cat > "$repo_gh_repo/CHANGELOG.md" <<'MD'
+# Changelog
+
+## [Unreleased]
+
+## [1.29.0] - 2026-10-15
+
+- Ships LEA-302.
+MD
+"$REAL_GIT" -C "$repo_gh_repo" add CHANGELOG.md .ai-dev-workflow.yaml scripts
+"$REAL_GIT" -C "$repo_gh_repo" commit -q -m "chore: baseline before v1.28.0"
+"$REAL_GIT" -C "$repo_gh_repo" tag v1.28.0
+"$REAL_GIT" -C "$repo_gh_repo" commit -q --allow-empty \
+  -m "Merge pull request #88 from example/fix/LEA-302-billing-fix"
+sha_gh_repo="$("$REAL_GIT" -C "$repo_gh_repo" rev-parse HEAD)"
+"$REAL_GIT" -C "$repo_gh_repo" tag v1.29.0
+write_linear_scope_gh \
+  "88|fix/LEA-302-billing-fix|fix(billing): LEA-302" \
+  "commit:${sha_gh_repo}|88"
+result="$(
+  set +e
+  output="$(
+    cd "$repo_gh_repo" && PATH="$LINEAR_SCOPE_BIN:$(dirname "$REAL_GIT"):$PATH" \
+      LINEAR_SCOPE_MAP_FILE="$LINEAR_SCOPE_MAP_FILE" \
+      GH_REPO="hub/other-repo" \
+      WORKFLOW_SKIP_FETCH=1 \
+      ./scripts/development-workflow/prepare-release-post-merge-cleanup.sh \
+      v1.29.0 --from-changelog --best-effort 2>&1
+  )"
+  rc=$?
+  set -e
+  printf '%s\n%s\n' "$rc" "$output"
+)"
+status="$(printf '%s\n' "$result" | sed -n '1p')"
+output="$(printf '%s\n' "$result" | sed '1d')"
+run_test "linear_1982_gh_repo_override_exits_zero" "0" "$status"
+run_contains "linear_1982_gh_repo_override_proposes_302" "TRACKER_ISSUES=LEA-302" "$output"
+run_not_contains "linear_1982_gh_repo_override_no_incomplete" "RELEASE_SCOPE_INCOMPLETE" "$output"
+
 # github_projects --from-changelog still extracts #NNN from changelog text alone.
 repo_github_unchanged="$(fixture_github_projects_repo github-1982-unchanged)"
 result="$(run_cleanup_with_bin "$MILESTONE_BIN" "$repo_github_unchanged" v1.17.0 --from-changelog --best-effort)"
@@ -2054,6 +2160,17 @@ output="$(printf '%s\n' "$result" | sed '1d')"
 run_test "github_projects_from_changelog_unchanged_exits_zero" "0" "$status"
 run_contains "github_projects_from_changelog_unchanged_stamp" "RELEASE_STAMPED issue=101" "$output"
 run_not_contains "github_projects_from_changelog_no_linear_skip" "RELEASE_SCOPE_SKIPPED" "$output"
+
+# github_projects: missing CHANGELOG version section still fails closed (unchanged).
+repo_github_miss_section="$(fixture_github_projects_repo github-1982-missing-section)"
+result="$(run_cleanup_with_bin "$MILESTONE_BIN" "$repo_github_miss_section" v9.9.9 --from-changelog)"
+status="$(printf '%s\n' "$result" | sed -n '1p')"
+output="$(printf '%s\n' "$result" | sed '1d')"
+run_test "github_projects_missing_section_exits_nonzero" "1" "$status"
+run_contains "github_projects_missing_section_unavailable" \
+  "TRACKER_INCOMPLETE=1 REASON=changelog_scope_unavailable" "$output"
+run_not_contains "github_projects_missing_section_no_linear_diag" \
+  "CHANGELOG_SECTION_UNAVAILABLE" "$output"
 
 echo "Results: $PASS_COUNT passed, $FAIL_COUNT failed"
 

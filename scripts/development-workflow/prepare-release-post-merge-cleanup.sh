@@ -13,21 +13,24 @@
 #
 # --from-changelog:
 #   GitHub Projects / GitHub Issues: extract #NNN references from the CHANGELOG
-#   version section (unchanged). Linear: CHANGELOG text alone does NOT define
-#   release scope. Scope is Linear IDs from merged PRs in the previous-tag..release
-#   commit range: each commit is resolved to its PR(s) via GitHub
-#   (commits/<sha>/pulls only — subject "(#N)" / "Merge pull request #N" is
-#   never sufficient PR evidence). IDs are taken only from each PR's
-#   headRefName / REST head.ref and title — never from commit text or PR body.
-#   Documentation-stage head branches (spec/*, implementation-plan/*) are not
-#   shipping evidence (RELEASE_SCOPE_SKIPPED reason=documentation_stage_pr_only
-#   when that is the only evidence). Preceding-tag boundary must be verified
-#   (shallow / remote tag-list failure → RELEASE_SCOPE_INCOMPLETE
-#   reason=previous_release_boundary_unavailable); a true first release (remote
-#   ls-remote --tags has no preceding semver tag) may scan the tip history.
-#   Changelog-only mentions are RELEASE_SCOPE_SKIPPED. Never fall back to
-#   checkout HEAD. Zero Linear IDs after complete resolution is empty scope
-#   success. Explicit --issue/--issues are unioned and never filtered.
+#   version section (unchanged; missing file/section fails closed). Linear:
+#   CHANGELOG text alone does NOT define release scope — it is only a complement.
+#   Scope is Linear IDs from merged PRs in the previous-tag..release commit
+#   range (derived even when CHANGELOG.md or the version section is missing;
+#   that case prints CHANGELOG_SECTION_UNAVAILABLE and continues). Each commit
+#   is resolved to its PR(s) via GitHub (commits/<sha>/pulls only — subject
+#   "(#N)" / "Merge pull request #N" is never sufficient PR evidence). IDs are
+#   taken only from each PR's headRefName / REST head.ref and title — never
+#   from commit text or PR body. Documentation-stage head branches (spec/*,
+#   implementation-plan/*) are not shipping evidence (RELEASE_SCOPE_SKIPPED
+#   reason=documentation_stage_pr_only when that is the only evidence).
+#   Preceding-tag boundary must be verified (shallow / remote tag-list failure
+#   → RELEASE_SCOPE_INCOMPLETE reason=previous_release_boundary_unavailable); a
+#   true first release (remote ls-remote --tags has no preceding semver tag)
+#   may scan the tip history. Changelog-only mentions are
+#   RELEASE_SCOPE_SKIPPED. Never fall back to checkout HEAD. Zero Linear IDs
+#   after complete resolution is empty scope success. Explicit --issue/--issues
+#   are unioned and never filtered.
 #
 # Examples:
 #   ./scripts/development-workflow/prepare-release-post-merge-cleanup.sh 1.2.3
@@ -527,11 +530,12 @@ append_issues_from_changelog() {
   local version="$1"
   local changelog_path="${CHANGELOG_PATH:-CHANGELOG.md}"
   local extracted
+  local version_disp="$version"
 
-  if [ -z "$RELEASE_HEAD" ] && [ ! -f "$changelog_path" ]; then
-    echo "Could not find changelog at '$changelog_path' for --from-changelog." >&2
-    return 1
-  fi
+  case "$version_disp" in
+    v*) ;;
+    *) version_disp="v${version_disp}" ;;
+  esac
 
   local changelog_root
   changelog_root="$PWD"
@@ -541,6 +545,21 @@ append_issues_from_changelog() {
   if [ -n "$COMPONENT_TARGET_FILE" ]; then
     changelog_root="$(json_field "$COMPONENT_TARGET_FILE" '.local_checkout.path')"
   fi
+
+  # Linear: CHANGELOG is complement-only. Missing file must not block merged-PR
+  # scope derivation (GitHub providers still require the file).
+  if [ -z "$RELEASE_HEAD" ] && [ ! -f "$changelog_path" ]; then
+    if [ "$TRACKER_PROVIDER" = "linear" ]; then
+      echo "CHANGELOG_SECTION_UNAVAILABLE version=${version_disp} (Linear scope derived from merged PRs only)" >&2
+      if ! filter_linear_changelog_scope_by_merged_prs "$version" "$changelog_root"; then
+        return 1
+      fi
+      return 0
+    fi
+    echo "Could not find changelog at '$changelog_path' for --from-changelog." >&2
+    return 1
+  fi
+
   if ! extracted="$(python3 - "$version" "$changelog_path" "$TRACKER_PROVIDER" "$RELEASE_HEAD" "$changelog_root" <<'PY'
 import re
 import subprocess
@@ -553,21 +572,42 @@ if version.startswith("v"):
 path = Path(sys.argv[2])
 provider = sys.argv[3]
 head = sys.argv[4]
+
+
+def linear_changelog_unavailable():
+    print(
+        f"CHANGELOG_SECTION_UNAVAILABLE version=v{version} "
+        "(Linear scope derived from merged PRs only)",
+        file=sys.stderr,
+    )
+    # Empty stdout → no changelog-derived IDs; caller still runs merged-PR filter.
+    sys.exit(0)
+
+
 if head:
     if not re.fullmatch(r"[0-9a-f]{40}", head):
         print("CHANGELOG_REVIEWED_HEAD_INVALID", file=sys.stderr)
         sys.exit(1)
     result = subprocess.run(["git", "-C", sys.argv[5], "show", head + ":CHANGELOG.md"], text=True, capture_output=True)
     if result.returncode:
+        if provider == "linear":
+            linear_changelog_unavailable()
         print("CHANGELOG_REVIEWED_COMMIT_UNAVAILABLE", file=sys.stderr)
         sys.exit(1)
     text = result.stdout
 else:
+    if not path.is_file():
+        if provider == "linear":
+            linear_changelog_unavailable()
+        print(f"Could not find changelog at '{path}' for --from-changelog.", file=sys.stderr)
+        sys.exit(1)
     text = path.read_text(encoding="utf-8")
 
 heading = re.compile(rf"^## \[(?:v?{re.escape(version)})\].*$", re.MULTILINE)
 match = heading.search(text)
 if not match:
+    if provider == "linear":
+        linear_changelog_unavailable()
     print(f"CHANGELOG_VERSION_NOT_FOUND version=v{version}", file=sys.stderr)
     sys.exit(1)
 
@@ -838,11 +878,16 @@ def extract_linear_ids(text):
 
 
 def resolve_repo_slug():
+    # GH_REPO overrides cwd-based selection and can point at a hub repo during
+    # component cleanup; drop it so lookups follow the product checkout (#1982).
+    env = os.environ.copy()
+    env.pop("GH_REPO", None)
     view = subprocess.run(
         ["gh", "repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner"],
         cwd=git_root,
         text=True,
         capture_output=True,
+        env=env,
     )
     if view.returncode == 0 and view.stdout.strip():
         return view.stdout.strip()

@@ -560,18 +560,22 @@ than assuming the changelog-derived scope was the only thing stamped, and pass
 
 For the **Linear** provider, `--from-changelog` does **not** treat CHANGELOG
 regex matches as Released scope on their own (#1982; sibling of the GitHub
-milestone false-positive class in #1328). Scope is Linear IDs from **merged
-PRs** in the previous-tag..verified-release-ref commit range (release tag or
-`--release-head`; never checkout `HEAD`): each commit is resolved to its PR(s)
-only via GitHub `commits/<sha>/pulls` (subject `#N` / `Merge pull request #N`
-is never sufficient evidence). A PR is accepted when merged and its merge/head
-commit is in the range, regardless of base branch. Only implementation-stage
-head branches (`feature/*`, `fix/*`, `refactor/*`, `hotfix/*`) count as
-Released shipping evidence; merged `spec/*` / `implementation-plan/*` PRs are
-skipped as `documentation_stage_pr_only` when that is the only evidence. IDs
-are taken from each PR's `headRefName` / REST `head.ref` and `title` — not from
-commit text or PR body. Changelog-only mentions (including expanded ranges such
-as `LEA-298–LEA-301`) are omitted as
+milestone false-positive class in #1328). The CHANGELOG is only a complement: a
+missing file or version section prints
+`CHANGELOG_SECTION_UNAVAILABLE version=vX.Y.Z (Linear scope derived from merged
+PRs only)` and does not block scope derivation. Scope is Linear IDs from
+**merged PRs** in the previous-tag..verified-release-ref commit range (release
+tag or `--release-head`; never checkout `HEAD`): each commit is resolved to its
+PR(s) only via GitHub `commits/<sha>/pulls` against the checkout/component
+repository (not an inherited `GH_REPO` override; subject `#N` / `Merge pull
+request #N` is never sufficient evidence). A PR is accepted when merged and its
+merge/head commit is in the range, regardless of base branch. Only
+implementation-stage head branches (`feature/*`, `fix/*`, `refactor/*`,
+`hotfix/*`) count as Released shipping evidence; merged `spec/*` /
+`implementation-plan/*` PRs are skipped as `documentation_stage_pr_only` when
+that is the only evidence. IDs are taken from each PR's `headRefName` / REST
+`head.ref` and `title` — not from commit text or PR body. Changelog-only
+mentions (including expanded ranges such as `LEA-298–LEA-301`) are omitted as
 `RELEASE_SCOPE_SKIPPED issue=<ID> reason=changelog_mention_without_merged_pr`.
 A verified first release (successful remote `git ls-remote --tags` with no
 preceding semver tag) may scan tip history; shallow clones, remote tag-list
@@ -583,7 +587,7 @@ fails for any commit in range, the helper emits `RELEASE_SCOPE_INCOMPLETE`
 (`reason=release_ref_unavailable` or `unresolved_shas=...`) and fails closed.
 Explicit `--issue` / `--issues` are unioned with the derived scope and never
 filtered. GitHub Projects / GitHub Issues `--from-changelog` behavior is
-unchanged.
+unchanged (missing CHANGELOG file/section still fails closed).
 
 ### 9.2 Preferred command (single entry point)
 

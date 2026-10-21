@@ -292,12 +292,16 @@ and then transition every listed `TRACKER_ISSUES` item from `Merged` to
 `Released` before reporting the release as complete.
 
 When cleanup is invoked with `--from-changelog`, Linear scope is **not** the set
-of IDs matched in the CHANGELOG version section alone (#1982). The helper
-derives scope from merged PRs in the release git range (previous tag → verified
-release tag or `--release-head`; never checkout `HEAD`): for each commit it
-resolves associated PRs only through GitHub `commits/<sha>/pulls` (subject
-`(#N)` is never sufficient evidence). A PR is accepted when it is merged and
-its merge/head commit is in the range (or the associating range SHA when those
+of IDs matched in the CHANGELOG version section alone (#1982). The CHANGELOG is
+only a complement: a missing `CHANGELOG.md` or version section prints
+`CHANGELOG_SECTION_UNAVAILABLE version=vX.Y.Z (Linear scope derived from merged
+PRs only)` and scope still comes from merged PRs. The helper derives scope from
+merged PRs in the release git range (previous tag → verified release tag or
+`--release-head`; never checkout `HEAD`): for each commit it resolves associated
+PRs only through GitHub `commits/<sha>/pulls` (subject `(#N)` is never
+sufficient evidence), against the checkout/component repository (not an
+inherited `GH_REPO` override). A PR is accepted when it is merged and its
+merge/head commit is in the range (or the associating range SHA when those
 fields are absent), regardless of the PR base branch (including nested
 `feature/*` or `develop-<slug>` parents). Only implementation-stage head
 branches (`feature/*`, `fix/*`, `refactor/*`, `hotfix/*`) count as Released
