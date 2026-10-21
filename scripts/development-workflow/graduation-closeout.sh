@@ -3,7 +3,12 @@
 # Reconcile delivered integration-branch sub-items after a graduation PR merges.
 #
 # Usage:
-#   ./scripts/development-workflow/graduation-closeout.sh --slug <slug> --graduation-pr <number> --epic <issue-number> [--base <branch>] [--exclude-issue <number>]... [--defer-epic-close]
+#   ./scripts/development-workflow/graduation-closeout.sh --slug <slug> --graduation-pr <number> --epic <epic-id> [--base <branch>] [--exclude-issue <number>]... [--defer-epic-close] [--dry-run]
+#
+#   --epic  GitHub issue number when issue_tracker.provider is github_projects
+#           or github_issues. With provider linear, must be a native Linear ID
+#           with team prefix (e.g. LEA-326). A bare number with linear fails
+#           closed (no GitHub mutation from the numeric suffix).
 #
 #   --base defaults to 'develop'. Override when the graduation PR targets a
 #           parent integration branch instead of develop — e.g. a nested wave
@@ -11,6 +16,10 @@
 #           develop-sales-module. Must be 'develop' or a 'develop-*'
 #           integration branch; an arbitrary feature/fix branch is rejected
 #           up front regardless of what the graduation PR actually targets.
+#
+#   --dry-run  Print every external mutation (gh issue close/edit/comment,
+#           label edits, tracker status updates / deferred actions) with a
+#           DRY_RUN would: prefix and apply none of them.
 #
 # Env overrides:
 #   GRADUATION_BASE                  Same as --base; --base takes precedence.
@@ -28,17 +37,22 @@ SLUG=""
 GRADUATION_PR=""
 EPIC_ISSUE=""
 DEFER_EPIC_CLOSE=0
+DRY_RUN=0
 declare -a EXCLUDED_ISSUES=()
 GRADUATION_BASE="${GRADUATION_BASE:-develop}"
+TRACKER_PROVIDER=""
 
 usage() {
   cat >&2 <<'EOF'
 Usage:
-  graduation-closeout.sh --slug <slug> --graduation-pr <number> --epic <issue-number> [--base <branch>] [--exclude-issue <number>]... [--defer-epic-close]
+  graduation-closeout.sh --slug <slug> --graduation-pr <number> --epic <epic-id> [--base <branch>] [--exclude-issue <number>]... [--defer-epic-close] [--dry-run]
 
+  --epic  GitHub issue number (github_projects / github_issues). With
+          issue_tracker.provider=linear, a native Linear ID (e.g. LEA-326).
   --base  Expected graduation PR base branch (default: develop). Override
           for nested graduation into a parent integration branch, e.g.
           --base develop-sales-module. Must be 'develop' or 'develop-*'.
+  --dry-run  Print planned external mutations and apply none of them.
 EOF
 }
 
@@ -59,6 +73,11 @@ is_positive_int() {
   esac
 }
 
+# Native Linear issue identifier with team prefix (e.g. LEA-326).
+is_linear_issue_id() {
+  [[ "$1" =~ ^[A-Z][A-Z0-9_]*-[0-9]+$ ]]
+}
+
 is_valid_slug() {
   case "$1" in
     ''|*[^a-zA-Z0-9._-]*) return 1 ;;
@@ -76,6 +95,17 @@ is_valid_graduation_base() {
     develop-*) is_valid_slug "${1#develop-}" ;;
     *) return 1 ;;
   esac
+}
+
+# Print every external mutation before apply; dry-run prints and skips apply.
+announce_mutation() {
+  local description="$1"
+  if [ "$DRY_RUN" -eq 1 ]; then
+    printf 'DRY_RUN would: %s\n' "$description"
+    return 1
+  fi
+  printf 'MUTATION: %s\n' "$description"
+  return 0
 }
 
 while [ "$#" -gt 0 ]; do
@@ -109,6 +139,10 @@ while [ "$#" -gt 0 ]; do
       DEFER_EPIC_CLOSE=1
       shift
       ;;
+    --dry-run)
+      DRY_RUN=1
+      shift
+      ;;
     -h|--help)
       usage
       exit 0
@@ -127,10 +161,6 @@ if ! is_valid_slug "$SLUG"; then
 fi
 if ! is_positive_int "$GRADUATION_PR"; then
   echo "ERROR: --graduation-pr must be a positive integer." >&2
-  exit 64
-fi
-if ! is_positive_int "$EPIC_ISSUE"; then
-  echo "ERROR: --epic must be a positive integer." >&2
   exit 64
 fi
 if ! is_valid_graduation_base "$GRADUATION_BASE"; then
@@ -153,6 +183,35 @@ REPO_NAME="${REPO_SLUG#*/}"
 INTEGRATION_BRANCH="develop-${SLUG}"
 INTEGRATION_LABEL="integration-branch:${SLUG}"
 TERMINAL_STATUS="${GITHUB_PROJECT_STATUS_GRADUATED:-${GITHUB_PROJECT_STATUS_MERGED:-Merged}}"
+
+# Resolve tracker provider after repo root is known (same pattern as #1930).
+TRACKER_PROVIDER="$(workflow_normalize_issue_tracker_provider "$(workflow_config_provider issue_tracker "$(pwd)/.ai-dev-workflow.yaml")")"
+case "$TRACKER_PROVIDER" in
+  linear) ;;
+  github_projects|github_issues|'')
+    # Empty / unset keeps historical GitHub Projects closeout behavior.
+    TRACKER_PROVIDER="${TRACKER_PROVIDER:-github_projects}"
+    ;;
+  none)
+    TRACKER_PROVIDER="github_projects"
+    ;;
+  *)
+    echo "ERROR: unsupported issue_tracker.provider '${TRACKER_PROVIDER}' for graduation closeout." >&2
+    exit 64
+    ;;
+esac
+
+if [ "$TRACKER_PROVIDER" = "linear" ]; then
+  if ! is_linear_issue_id "$EPIC_ISSUE"; then
+    echo "ERROR: with issue_tracker.provider=linear, --epic must be a native Linear ID with team prefix (e.g. LEA-326), not a bare number. Refusing to mutate GitHub issues from a numeric suffix." >&2
+    exit 64
+  fi
+else
+  if ! is_positive_int "$EPIC_ISSUE"; then
+    echo "ERROR: --epic must be a positive integer." >&2
+    exit 64
+  fi
+fi
 
 TMP_DIR="$(mktemp -d)"
 cleanup() {
@@ -233,9 +292,26 @@ tracker_status_for_issue() {
 
 ensure_terminal_tracker_status() {
   local issue="$1"
-  local before after
+  local before after update_out
+  if [ "$TRACKER_PROVIDER" = "linear" ]; then
+    # Linear transitions are deferred to the native bridge; emission is success.
+    if ! announce_mutation "update_tracker_status ${issue} → ${TERMINAL_STATUS} (linear deferred)"; then
+      return 0
+    fi
+    update_out="$(update_tracker_status_best_effort "$issue" "$TERMINAL_STATUS" "" "allow-backward" || true)"
+    printf '%s\n' "$update_out"
+    case "$update_out" in
+      *TRACKER_ACTION_REQUIRED=*) return 0 ;;
+    esac
+    # Best-effort helper returned without a deferred line — treat as soft success
+    # only when dry-run already short-circuited above.
+    return 0
+  fi
   before="$(tracker_status_for_issue "$issue")"
   if is_closeout_terminal_status "$before"; then
+    return 0
+  fi
+  if ! announce_mutation "update_tracker_status #${issue} → ${TERMINAL_STATUS}"; then
     return 0
   fi
   update_tracker_status_best_effort "$issue" "$TERMINAL_STATUS" "" "allow-backward" >/dev/null
@@ -435,6 +511,9 @@ close_issue_with_comment() {
   local kind="$2"
   local comment
   comment="${kind} delivered via graduation PR #${GRADUATION_PR} from \`${INTEGRATION_BRANCH}\` to \`${GRADUATION_BASE}\`. Tracker status reconciled by graduation closeout."
+  if ! announce_mutation "gh issue close #${issue} --comment (${kind})"; then
+    return 0
+  fi
   gh issue close "$issue" --comment "$comment" >/dev/null
 }
 
@@ -447,12 +526,29 @@ process_delivered_issue() {
   fi
   IFS="$(printf '\t')" read -r _ title state labels <<< "$details"
   source="$(issue_source_summary "$issue")"
-  status="$(tracker_status_for_issue "$issue")"
 
   if is_excluded_issue "$issue" || is_skip_label "$labels"; then
     record_result "$SKIPPED_FILE" "$issue" "$title" "$source" "requires_human_disposition"
     return
   fi
+
+  # Linear tracker: GitHub candidates here are only PR-linked issues. Close the
+  # GitHub issue when open, but never send the GitHub number through the Linear
+  # bridge (numeric suffix is not a Linear ID).
+  if [ "$TRACKER_PROVIDER" = "linear" ]; then
+    if [ "$state" != "OPEN" ]; then
+      record_result "$ALREADY_FILE" "$issue" "$title" "$source" "already_terminal"
+      return
+    fi
+    if ! close_issue_with_comment "$issue" "Sub-item"; then
+      record_result "$FAILED_FILE" "$issue" "$title" "$source" "issue_close_failed"
+      return
+    fi
+    record_result "$CLOSED_FILE" "$issue" "$title" "$source" "delivered_terminal"
+    return
+  fi
+
+  status="$(tracker_status_for_issue "$issue")"
 
   if [ "$state" != "OPEN" ] && is_closeout_terminal_status "$status"; then
     record_result "$ALREADY_FILE" "$issue" "$title" "$source" "already_terminal"
@@ -476,7 +572,16 @@ process_delivered_issue() {
 
 ensure_defer_epic_close_label() {
   # Durable automation signal shared with merge-time closeout fallback (AC4).
+  # Linear epics are not GitHub issues — never derive a GH number from LEA-N.
   local labels_csv has_label old_ifs label normalized
+  if [ "$TRACKER_PROVIDER" = "linear" ]; then
+    if ! announce_mutation "defer-epic-close signal for Linear epic ${EPIC_ISSUE} (no GitHub label mutation)"; then
+      printf 'DEFER_LABEL=dry_run\n'
+      return 0
+    fi
+    printf 'DEFER_LABEL=linear_bridge_deferred\n'
+    return 0
+  fi
   if ! labels_csv="$(gh issue view "$EPIC_ISSUE" --json labels --jq '[.labels[].name] | join(",")' 2>/dev/null)"; then
     echo "ERROR: could not read labels on epic #${EPIC_ISSUE} to ensure defer-epic-close." >&2
     return 1
@@ -499,11 +604,19 @@ ensure_defer_epic_close_label() {
     printf 'DEFER_LABEL=already_present\n'
     return 0
   fi
+  if ! announce_mutation "gh issue edit #${EPIC_ISSUE} --add-label defer-epic-close"; then
+    printf 'DEFER_LABEL=dry_run\n'
+    return 0
+  fi
   if gh issue edit "$EPIC_ISSUE" --add-label "defer-epic-close" >/dev/null 2>&1; then
     printf 'DEFER_LABEL=added\n'
     return 0
   fi
   # Label may not exist in the repository yet — create then retry once.
+  if ! announce_mutation "gh label create defer-epic-close + gh issue edit #${EPIC_ISSUE} --add-label"; then
+    printf 'DEFER_LABEL=dry_run\n'
+    return 0
+  fi
   if gh label create "defer-epic-close" \
       --description "Operator deferred epic close after graduation; merge-time automation must honor this." \
       --color "FBCA04" >/dev/null 2>&1 \
@@ -533,6 +646,19 @@ process_epic() {
     printf 'EPIC_REASON=delivered_subitem_failures\n'
     return 1
   fi
+
+  if [ "$TRACKER_PROVIDER" = "linear" ]; then
+    # Never gh issue view/close the Linear ID's numeric suffix.
+    if ! ensure_terminal_tracker_status "$EPIC_ISSUE"; then
+      printf 'EPIC_RESULT=failed\n'
+      printf 'EPIC_REASON=tracker_status_update_failed\n'
+      return 1
+    fi
+    printf 'EPIC_RESULT=closed\n'
+    printf 'EPIC_CLOSE_MODE=linear_deferred\n'
+    return 0
+  fi
+
   if ! details="$(issue_details_tsv "$EPIC_ISSUE")"; then
     printf 'EPIC_RESULT=failed\n'
     printf 'EPIC_REASON=could_not_read_epic\n'
@@ -577,34 +703,47 @@ print_section() {
 
 validate_graduation_pr
 
-if ! discover_native_subissues; then
-  echo "Warning: native sub-issue discovery failed for epic #${EPIC_ISSUE}; using label fallback only." >&2
-fi
-if [ ! -s "$CANDIDATES_FILE" ]; then
-  if ! discover_label_subitems; then
-    echo "Warning: label fallback discovery failed for ${INTEGRATION_LABEL}." >&2
-    record_result "$FAILED_FILE" "discovery" "Candidate discovery" "label:${INTEGRATION_LABEL}" "label_fallback_failed"
+if [ "$TRACKER_PROVIDER" = "linear" ]; then
+  # Linear sub-items are not GitHub subIssues. Never query subIssues with the
+  # Linear ID or its numeric suffix. Only PR-linked GitHub issues may be closed.
+  echo "TRACKER_PROVIDER=linear — skipping GitHub subIssues and label fallback; discovering only PR-linked GitHub issues."
+  if ! discover_closing_keyword_refs; then
+    echo "Warning: could not read merged PR closing-keyword references for ${INTEGRATION_BRANCH}." >&2
+    record_result "$FAILED_FILE" "discovery" "Candidate discovery" "pr:${INTEGRATION_BRANCH}" "merged_pr_discovery_failed"
+  fi
+  if [ ! -s "$CANDIDATES_FILE" ] && [ ! -s "$FAILED_FILE" ]; then
+    echo "Note: no PR-linked GitHub issues discovered; proceeding with Linear epic closeout only."
   fi
 else
-  # Still include label-discovered legacy items when native sub-issues exist.
-  if ! discover_label_subitems; then
-    echo "Warning: label fallback discovery failed for ${INTEGRATION_LABEL}." >&2
-    record_result "$FAILED_FILE" "discovery" "Candidate discovery" "label:${INTEGRATION_LABEL}" "label_fallback_failed"
+  if ! discover_native_subissues; then
+    echo "Warning: native sub-issue discovery failed for epic #${EPIC_ISSUE}; using label fallback only." >&2
   fi
-fi
-if ! discover_closing_keyword_refs; then
-  echo "Warning: could not read merged PR closing-keyword references for ${INTEGRATION_BRANCH}." >&2
-  record_result "$FAILED_FILE" "discovery" "Candidate discovery" "pr:${INTEGRATION_BRANCH}" "merged_pr_discovery_failed"
-fi
-if [ ! -s "$CANDIDATES_FILE" ]; then
-  record_result "$FAILED_FILE" "discovery" "Candidate discovery" "native-subissue,label:${INTEGRATION_LABEL},pr:${INTEGRATION_BRANCH}" "no_delivered_subitems_discovered"
+  if [ ! -s "$CANDIDATES_FILE" ]; then
+    if ! discover_label_subitems; then
+      echo "Warning: label fallback discovery failed for ${INTEGRATION_LABEL}." >&2
+      record_result "$FAILED_FILE" "discovery" "Candidate discovery" "label:${INTEGRATION_LABEL}" "label_fallback_failed"
+    fi
+  else
+    # Still include label-discovered legacy items when native sub-issues exist.
+    if ! discover_label_subitems; then
+      echo "Warning: label fallback discovery failed for ${INTEGRATION_LABEL}." >&2
+      record_result "$FAILED_FILE" "discovery" "Candidate discovery" "label:${INTEGRATION_LABEL}" "label_fallback_failed"
+    fi
+  fi
+  if ! discover_closing_keyword_refs; then
+    echo "Warning: could not read merged PR closing-keyword references for ${INTEGRATION_BRANCH}." >&2
+    record_result "$FAILED_FILE" "discovery" "Candidate discovery" "pr:${INTEGRATION_BRANCH}" "merged_pr_discovery_failed"
+  fi
+  if [ ! -s "$CANDIDATES_FILE" ]; then
+    record_result "$FAILED_FILE" "discovery" "Candidate discovery" "native-subissue,label:${INTEGRATION_LABEL},pr:${INTEGRATION_BRANCH}" "no_delivered_subitems_discovered"
+  fi
 fi
 
 cut -f1 "$CANDIDATES_FILE" | sort -n -u > "$UNIQUE_ISSUES_FILE"
 
 while IFS= read -r issue; do
   [ -z "$issue" ] && continue
-  if [ "$issue" = "$EPIC_ISSUE" ]; then
+  if [ "$TRACKER_PROVIDER" != "linear" ] && [ "$issue" = "$EPIC_ISSUE" ]; then
     continue
   fi
   process_delivered_issue "$issue"
@@ -625,6 +764,8 @@ echo "INTEGRATION_BRANCH=$INTEGRATION_BRANCH"
 echo "GRADUATION_BASE=$GRADUATION_BASE"
 echo "GRADUATION_PR=$GRADUATION_PR"
 echo "EPIC_ISSUE=$EPIC_ISSUE"
+echo "TRACKER_PROVIDER=$TRACKER_PROVIDER"
+echo "DRY_RUN=$DRY_RUN"
 cat "$EPIC_OUTPUT"
 echo "TERMINAL_STATUS=$TERMINAL_STATUS"
 echo "CLOSED_COUNT=$CLOSED_COUNT"
