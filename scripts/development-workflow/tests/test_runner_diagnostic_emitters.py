@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Binding D01-D47: synthetic paired-channel runtime/publication diagnostics."""
+"""Binding D01-D48: synthetic paired-channel runtime/publication diagnostics."""
 from __future__ import annotations
 
 import importlib.util
@@ -702,6 +702,44 @@ esac
         self.assertIn('outside admitted session', result.stderr)
         self.assertIn('token=[REDACTED]', result.stderr)
         self.assertFalse(self.f.log.exists())  # No mutation/provider was reached.
+
+    def test_D48_reviewer_failed_label_creation_child_channels(self):
+        calls = self.f.root / 'label-calls'
+        source = shlex.quote(str(self.f.runtime / 'pr-review-loop.sh'))
+        for shell in ('/bin/bash', '/opt/homebrew/bin/bash'):
+            if not Path(shell).exists():
+                continue
+            for view_status, create_status in ((0, 0), (1, 0), (1, 17)):
+                with self.subTest(shell=shell, view_status=view_status, create_status=create_status):
+                    calls.write_text('')
+                    body = '''gh() {
+  case "$1:$2:$3" in
+    label:view:reviewer-failed)
+      printf 'view\\n' >>CALLS
+      printf 'token=fabricatedChildError\\n'
+      printf 'Authorization: Bearer SECRET\\n' >&2
+      return VIEW_STATUS ;;
+    label:create:reviewer-failed)
+      printf 'create\\n' >>CALLS
+      printf 'token=fabricatedChildError\\n'
+      printf 'Authorization: Bearer SECRET\\nlabel-create synthetic context\\n' >&2
+      return CREATE_STATUS ;;
+    *) printf 'unexpected\\n' >>CALLS; return 99 ;;
+  esac
+}
+ensure_reviewer_failed_label_exists
+'''.replace('CALLS', shlex.quote(str(calls))).replace('SECRET', self.secret)
+                    body = body.replace('VIEW_STATUS', str(view_status)).replace('CREATE_STATUS', str(create_status))
+                    result = self.safe(self.run_command([shell, '-c', 'HARNESS_MODE=1 source ' + source + '\n' + body]), 0)
+                    self.assertEqual(result.stdout, '')
+                    self.assertEqual(calls.read_text().splitlines(), ['view'] if view_status == 0 else ['view', 'create'])
+                    if view_status == 0:
+                        self.assertEqual(result.stderr, '')
+                    else:
+                        self.assertIn('[REDACTED]', result.stderr)
+                        self.assertIn('label-create synthetic context', result.stderr)
+                        self.assertEqual('WARN: failed to create reviewer-failed label' in result.stderr,
+                                         create_status != 0)
 
 
 if __name__ == '__main__':

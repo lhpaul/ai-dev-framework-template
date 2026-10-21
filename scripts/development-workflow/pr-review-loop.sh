@@ -9608,7 +9608,7 @@ ensure_reviewer_failed_label_exists() {
     return 0
   fi
 
-  if ! gh label create "$REVIEWER_FAILED_LABEL" \
+  if ! workflow_command_with_safe_stderr gh label create "$REVIEWER_FAILED_LABEL" \
       --color "$REVIEWER_FAILED_LABEL_COLOR" \
       --description "$REVIEWER_FAILED_LABEL_DESCRIPTION" >/dev/null; then
     workflow_diagnostic "WARN: failed to create ${REVIEWER_FAILED_LABEL} label; proceeding with reviewer loop" >&2
