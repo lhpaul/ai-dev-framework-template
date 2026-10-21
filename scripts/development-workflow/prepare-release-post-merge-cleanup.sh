@@ -22,9 +22,9 @@
 #   Documentation-stage head branches (spec/*, implementation-plan/*) are not
 #   shipping evidence (RELEASE_SCOPE_SKIPPED reason=documentation_stage_pr_only
 #   when that is the only evidence). Preceding-tag boundary must be verified
-#   (shallow / tag-list failure → RELEASE_SCOPE_INCOMPLETE
-#   reason=previous_release_boundary_unavailable); a true first release (no
-#   preceding semver tags after successful tag -l) may scan the tip history.
+#   (shallow / remote tag-list failure → RELEASE_SCOPE_INCOMPLETE
+#   reason=previous_release_boundary_unavailable); a true first release (remote
+#   ls-remote --tags has no preceding semver tag) may scan the tip history.
 #   Changelog-only mentions are RELEASE_SCOPE_SKIPPED. Never fall back to
 #   checkout HEAD. Zero Linear IDs after complete resolution is empty scope
 #   success. Explicit --issue/--issues are unioned and never filtered.
@@ -733,32 +733,80 @@ def resolve_current_ref():
 
 
 def resolve_previous_boundary(current_version):
-    """Return (status, previous_tag_or_None).
+    """Return (status, previous_ref_or_None).
 
     status:
-      ok — preceding semver tag found
-      first_release — tag listing succeeded; no semver tag precedes this release
-      unavailable — shallow clone, tag listing failed, or version unparseable
-        (fail closed; do not scan entire tip history)
+      ok — preceding semver tag from the remote, commit available locally
+      first_release — remote tag listing succeeded; no remote semver tag precedes
+      unavailable — remote listing failed, preceding commit unavailable, shallow
+        clone, or version unparseable (fail closed; do not treat missing local
+        tags alone as a first release)
     """
     shallow = run_git("rev-parse", "--is-shallow-repository")
     if shallow.returncode == 0 and shallow.stdout.strip() == "true":
         return "unavailable", None
-    listing = run_git("tag", "-l")
-    if listing.returncode != 0:
-        return "unavailable", None
     current_tuple = parse_semver(current_version)
     if current_tuple is None:
         return "unavailable", None
-    candidates = []
+
+    remotes = run_git("remote")
+    if remotes.returncode != 0:
+        return "unavailable", None
+    remote_names = [line.strip() for line in remotes.stdout.splitlines() if line.strip()]
+    if not remote_names:
+        return "unavailable", None
+    remote = "origin" if "origin" in remote_names else remote_names[0]
+
+    listing = run_git("ls-remote", "--tags", remote)
+    if listing.returncode != 0:
+        return "unavailable", None
+
+    # name -> (semver_tuple, commit_sha); prefer peeled (^{}) commit SHAs
+    candidates = {}
     for line in listing.stdout.splitlines():
-        tag = line.strip()
-        parsed = parse_semver(tag)
-        if parsed and parsed < current_tuple:
-            candidates.append((parsed, tag))
+        line = line.strip()
+        if not line or "\t" not in line:
+            continue
+        sha, ref = line.split("\t", 1)
+        if not ref.startswith("refs/tags/"):
+            continue
+        peeled = ref.endswith("^{}")
+        name = ref[len("refs/tags/") :]
+        if peeled:
+            name = name[:-3]
+        parsed = parse_semver(name)
+        if parsed is None or parsed >= current_tuple:
+            continue
+        prior = candidates.get(name)
+        if prior is None or peeled:
+            candidates[name] = (parsed, sha, name)
+
     if not candidates:
         return "first_release", None
-    return "ok", sorted(candidates, reverse=True)[0][1]
+
+    _parsed, commit_sha, tag_name = sorted(
+        candidates.values(), key=lambda item: item[0], reverse=True
+    )[0]
+
+    probe = run_git("rev-parse", "--verify", "--quiet", tag_name + "^{commit}")
+    if probe.returncode != 0:
+        fetch = run_git(
+            "fetch",
+            "--no-tags",
+            remote,
+            "refs/tags/%s:refs/tags/%s" % (tag_name, tag_name),
+        )
+        if fetch.returncode != 0:
+            return "unavailable", None
+        probe = run_git("rev-parse", "--verify", "--quiet", tag_name + "^{commit}")
+        if probe.returncode != 0:
+            sha_probe = run_git(
+                "rev-parse", "--verify", "--quiet", commit_sha + "^{commit}"
+            )
+            if sha_probe.returncode != 0:
+                return "unavailable", None
+            return "ok", commit_sha
+    return "ok", tag_name
 
 
 # Documentation-stage branches are not Released shipping evidence (#1982).
@@ -964,7 +1012,7 @@ if boundary_status == "unavailable":
 if boundary_status == "ok":
     range_spec = "%s..%s" % (prev_tag, current_ref)
 else:
-    # Verified first release: no preceding semver tag after a successful tag -l.
+    # Verified first release: remote ls-remote --tags found no preceding semver.
     range_spec = current_ref
 
 repo_slug = resolve_repo_slug()

@@ -309,8 +309,9 @@ including cross-references such as “did not ship LEA-298” and expanded range
 are skipped with
 `RELEASE_SCOPE_SKIPPED issue=<ID> reason=changelog_mention_without_merged_pr`
 (and appear under `release_scope_skipped` in component `--json` output). A
-verified first release (successful `git tag -l` with no preceding semver tag)
-may scan tip history; shallow clones or tag-list failures emit
+verified first release (successful remote `git ls-remote --tags` with no
+preceding semver tag) may scan tip history; shallow clones, remote tag-list
+failures, or an unfetchable preceding tag emit
 `RELEASE_SCOPE_INCOMPLETE reason=previous_release_boundary_unavailable`. A fully
 resolved range with zero Linear IDs is an empty scope (not incomplete). If the
 release ref is unavailable or PR resolution fails for any commit, the helper

@@ -573,8 +573,9 @@ are taken from each PR's `headRefName` / REST `head.ref` and `title` — not fro
 commit text or PR body. Changelog-only mentions (including expanded ranges such
 as `LEA-298–LEA-301`) are omitted as
 `RELEASE_SCOPE_SKIPPED issue=<ID> reason=changelog_mention_without_merged_pr`.
-A verified first release (successful `git tag -l` with no preceding semver tag)
-may scan tip history; shallow clones or tag-list failures emit
+A verified first release (successful remote `git ls-remote --tags` with no
+preceding semver tag) may scan tip history; shallow clones, remote tag-list
+failures, or an unfetchable preceding tag emit
 `RELEASE_SCOPE_INCOMPLETE reason=previous_release_boundary_unavailable`. A fully
 resolved range with zero Linear IDs is an empty scope (not
 `RELEASE_SCOPE_INCOMPLETE`). If the release ref is unavailable or PR resolution

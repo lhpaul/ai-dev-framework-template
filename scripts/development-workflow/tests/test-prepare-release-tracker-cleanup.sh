@@ -1896,7 +1896,62 @@ run_test "linear_1982_first_release_exits_zero" "0" "$status"
 run_contains "linear_1982_first_release_proposes_100" "TRACKER_ISSUES=LEA-100" "$output"
 run_not_contains "linear_1982_first_release_no_boundary_incomplete" "previous_release_boundary_unavailable" "$output"
 
-# --- Tag listing failure → previous_release_boundary_unavailable ---
+# --- (a) --no-tags clone with only release tag locally; remote has previous ---
+repo_notags_src="$TMP_ROOT/linear-1982-notags-src"
+repo_notags_bare="$TMP_ROOT/linear-1982-notags-bare.git"
+repo_notags="$TMP_ROOT/linear-1982-notags"
+init_linear_git_repo "$repo_notags_src"
+cat > "$repo_notags_src/CHANGELOG.md" <<'MD'
+# Changelog
+
+## [Unreleased]
+
+## [1.29.0] - 2026-10-15
+
+- Current release ships LEA-302.
+
+## [1.28.0] - 2026-10-01
+
+- Historical LEA-200.
+MD
+"$REAL_GIT" -C "$repo_notags_src" add CHANGELOG.md .ai-dev-workflow.yaml scripts
+"$REAL_GIT" -C "$repo_notags_src" commit -q -m "chore: baseline before historical"
+"$REAL_GIT" -C "$repo_notags_src" commit -q --allow-empty \
+  -m "Merge pull request #77 from example/fix/LEA-200-historical"
+sha_200="$("$REAL_GIT" -C "$repo_notags_src" rev-parse HEAD)"
+"$REAL_GIT" -C "$repo_notags_src" tag v1.28.0
+"$REAL_GIT" -C "$repo_notags_src" commit -q --allow-empty \
+  -m "Merge pull request #88 from example/fix/LEA-302-billing-fix"
+sha_302="$("$REAL_GIT" -C "$repo_notags_src" rev-parse HEAD)"
+"$REAL_GIT" -C "$repo_notags_src" tag v1.29.0
+"$REAL_GIT" clone -q --bare "file://${repo_notags_src}" "$repo_notags_bare"
+"$REAL_GIT" clone -q --no-tags "file://${repo_notags_bare}" "$repo_notags"
+"$REAL_GIT" -C "$repo_notags" fetch -q origin refs/tags/v1.29.0:refs/tags/v1.29.0
+mkdir -p "$repo_notags/scripts/development-workflow"
+cp "$REPO_ROOT/scripts/development-workflow/workflow-lib.sh" \
+  "$repo_notags/scripts/development-workflow/workflow-lib.sh"
+cp "$REPO_ROOT/scripts/development-workflow/prepare-release-post-merge-cleanup.sh" \
+  "$repo_notags/scripts/development-workflow/prepare-release-post-merge-cleanup.sh"
+chmod +x "$repo_notags/scripts/development-workflow/prepare-release-post-merge-cleanup.sh"
+cat > "$repo_notags/.ai-dev-workflow.yaml" <<'YAML'
+schema_version: 2
+issue_tracker:
+  provider: linear
+YAML
+write_linear_scope_gh \
+  "77|fix/LEA-200-historical|fix: LEA-200 historical" \
+  "88|fix/LEA-302-billing-fix|fix(billing): LEA-302" \
+  "commit:${sha_200}|77" \
+  "commit:${sha_302}|88"
+result="$(run_linear_scope_cleanup "$repo_notags" v1.29.0 --from-changelog --best-effort)"
+status="$(printf '%s\n' "$result" | sed -n '1p')"
+output="$(printf '%s\n' "$result" | sed '1d')"
+run_test "linear_1982_notags_exits_zero" "0" "$status"
+run_contains "linear_1982_notags_proposes_302" "TRACKER_ISSUES=LEA-302" "$output"
+run_not_contains "linear_1982_notags_no_200" "LEA-200" "$output"
+run_not_contains "linear_1982_notags_no_boundary_incomplete" "previous_release_boundary_unavailable" "$output"
+
+# --- (b) Remote tag listing unavailable → previous_release_boundary_unavailable ---
 repo_tag_fail="$TMP_ROOT/linear-1982-tag-list-fail"
 init_linear_git_repo "$repo_tag_fail"
 cat > "$repo_tag_fail/CHANGELOG.md" <<'MD'
@@ -1922,9 +1977,9 @@ TAG_FAIL_BIN="$TMP_ROOT/tag-fail-bin"
 mkdir -p "$TAG_FAIL_BIN"
 cat > "$TAG_FAIL_BIN/git" <<GITWRAP
 #!/usr/bin/env bash
-# Fail only the tag listing used for previous-boundary discovery.
+# Fail only the remote tag listing used for previous-boundary discovery.
 case " \$* " in
-  *" tag -l "*|*" tag --list "*) exit 1 ;;
+  *" ls-remote --tags "*|*" ls-remote "*"--tags"*) exit 1 ;;
 esac
 exec "$REAL_GIT" "\$@"
 GITWRAP
