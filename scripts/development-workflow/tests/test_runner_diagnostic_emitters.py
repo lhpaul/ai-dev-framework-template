@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Binding D01-D48: synthetic paired-channel runtime/publication diagnostics."""
+"""Binding D01-D49: synthetic paired-channel runtime/publication diagnostics."""
 from __future__ import annotations
 
 import importlib.util
@@ -740,6 +740,76 @@ ensure_reviewer_failed_label_exists
                         self.assertIn('label-create synthetic context', result.stderr)
                         self.assertEqual('WARN: failed to create reviewer-failed label' in result.stderr,
                                          create_status != 0)
+
+    def test_D49_pr_agent_active_check_child_stderr(self):
+        """Actual PR-Agent pending-count path keeps requests/counts and masks GH stderr."""
+        source = shlex.quote(str(self.f.runtime / 'pr-review-loop.sh'))
+        for shell in ['/bin/bash', '/opt/homebrew/bin/bash']:
+            if not Path(shell).exists():
+                continue
+            for state, read_status, post_status in [
+                ('active', 0, 0), ('empty', 0, 0),
+                ('read_failure', 17, 0), ('post_failure', 0, 17),
+            ]:
+                with self.subTest(shell=shell, state=state):
+                    calls = self.f.root / 'pr-agent-gh-calls'
+                    calls.write_text('')
+                    payload = self.f.root / 'pr-agent-checks.json'
+                    payload.write_text(json.dumps({'check_runs': [
+                        {'id': 1, 'name': 'PR-Agent review', 'status': 'completed',
+                         'conclusion': 'success', 'started_at': '2020-01-01T00:00:00Z'},
+                        {'id': 2, 'name': 'PR-Agent review', 'status': 'queued',
+                         'started_at': '2020-01-01T00:00:01Z'},
+                        {'id': 3, 'name': 'Unrelated check', 'status': 'queued'},
+                    ] if state == 'active' else []}))
+                    body = r'''require_gh() { :; }
+cd_workflow_repo_root() { :; }
+repo_slug() { printf 'fixture/repo\n'; }
+reviewer_for_branch() { printf 'codex\n'; }
+loop_head_sha=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+gh() {
+  printf 'Authorization: Bearer SECRET\ntoken=fabricatedChildError\nPR-Agent synthetic read context\n' >&2
+  case "$*" in
+    *'--jq .commit.committer.date'*) printf '2020-01-01T00:00:00Z\n' ;;
+    *'commits/'*'/check-runs --paginate')
+      printf 'check-runs\n' >>CALLS
+      cat PAYLOAD
+      return READ_STATUS ;;
+    *'-X POST '*'/issues/1993/comments'*)
+      printf 'post\n' >>CALLS
+      printf '{"created_at":"2020-01-01T00:00:01Z","id":42}\n'
+      return POST_STATUS ;;
+    *'/issues/1993/comments --paginate') printf '[]\n' ;;
+    *) printf 'unexpected\n' >>CALLS; return 99 ;;
+  esac
+}
+status=0
+output="$(run_pr_agent_review 1993 feature/1993-fixture 1 0)" || status=$?
+printf '%s\n' "$output"
+emit_prefixed_platform_output 1 "$output"
+exit "$status"
+'''.replace('SECRET', self.secret).replace('CALLS', shlex.quote(str(calls)))
+                    body = body.replace('PAYLOAD', shlex.quote(str(payload)))
+                    body = body.replace('READ_STATUS', str(read_status)).replace('POST_STATUS', str(post_status))
+                    result = self.safe(self.run_command([shell, '-c', 'HARNESS_MODE=1 source ' + source + '\n' + body]),
+                                       2 if post_status else 0)
+                    self.assertIn('[REDACTED]', result.stderr)
+                    self.assertIn('PR-Agent synthetic read context', result.stderr)
+                    self.assertNotIn('unexpected', calls.read_text())
+                    self.assertEqual(calls.read_text().splitlines().count('post'), 0 if state == 'active' else 1)
+                    self.assertEqual(calls.read_text().splitlines().count('check-runs'), 1 if post_status else 2)
+                    if state == 'active':
+                        self.assertIn('PLATFORM_1_PR_AGENT_TRIGGER_SKIPPED=active_review_in_progress', result.stdout)
+                        self.assertIn('PLATFORM_1_PR_AGENT_ACTIVE_CHECK_COUNT=1', result.stdout)
+                        self.assertNotIn('PR_AGENT_TRIGGER_COMMENT=/review', result.stdout)
+                    elif post_status:
+                        self.assertIn('PLATFORM_1_REASON=pr_agent_trigger_failed', result.stdout)
+                    else:
+                        self.assertIn('PLATFORM_1_PR_AGENT_TRIGGER_COMMENT=/review', result.stdout)
+                        self.assertNotIn('PR_AGENT_ACTIVE_CHECK_COUNT=', result.stdout)
+                    self.assertIn('RESULT=' + ('escalate' if post_status else 'skipped'), result.stdout)
+                    if not post_status:
+                        self.assertIn('PLATFORM_1_REASON=no_review', result.stdout)
 
 
 if __name__ == '__main__':

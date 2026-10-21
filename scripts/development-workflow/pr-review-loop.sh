@@ -6048,7 +6048,7 @@ _PR_AGENT_RULE_B_CANDIDATES_
   }
 
   _pr_agent_active_review_check_count() {
-    gh api "repos/$repo/commits/$head_sha/check-runs" --paginate \
+    workflow_command_with_safe_stderr gh api "repos/$repo/commits/$head_sha/check-runs" --paginate \
       | jq -rs "$STATUS_CHECK_ROLLUP_DEDUPE_JQ"'[.[].check_runs[]? | select(.name == "PR-Agent review")] | dedupe_status_check_rollup | map(select(.status == "queued" or .status == "in_progress" or .status == "waiting" or .status == "requested" or .status == "pending")) | length' \
       2>/dev/null \
       || printf '0'
