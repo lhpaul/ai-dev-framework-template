@@ -625,6 +625,7 @@ Use explicit issue numbers to avoid accidental broad transitions. Items not incl
 After an integration branch graduation PR merges from `develop-<slug>` to
 `develop`, Protocol 05b Step 5 remains the **primary** closeout path:
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
 ./scripts/development-workflow/graduation-closeout.sh \
   --slug <slug> \

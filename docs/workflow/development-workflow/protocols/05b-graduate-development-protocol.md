@@ -393,6 +393,7 @@ After the human merges the graduation PR (must use a **merge commit**):
    | Any provider; `--dry-run` | Prints `DRY_RUN would:` for every mutation; applies none | Re-run without `--dry-run` when ready | Both closeout scripts |
    | GitHub providers; `--defer-epic-close` / skip labels | Epic and excluded sub-items remain open; durable `defer-epic-close` label when applicable | Human disposition for deferred/skipped items | Step 5 deferral bullets, merge-time fallback labels |
    | `provider: linear`; bridge emits success without `TRACKER_ACTION_REQUIRED=` for deferred epic update | Fail closed; epic **not** reported closed | Fix bridge/orchestrator handoff | `graduation-closeout.sh`, Linear bridge tests |
+   | `provider: linear`; closeout re-run emits `set_status` toward `Merged` while epic is already `Released` (or later) | Helper may still emit `TRACKER_ACTION_REQUIRED=`; native bridge skips (forward-only) and records the skip — no regressive move | None when bridge skip is recorded | `linear.md` deferred-action / orchestrator loop, tracker-status-mapping |
    | Step 5 and merge-time automation both run | Idempotent `already_terminal`; no regressive moves | None when second run is clean | Protocol 05b Step 5, `graduation-closeout-from-merged-pr.sh`, `update-tracker-on-merge.yml` (see #1281 matrix for automation rows) |
 
    Terminal Project status is resolved in this order: `GITHUB_PROJECT_STATUS_GRADUATED`, `GITHUB_PROJECT_STATUS_MERGED`, then `Merged`.

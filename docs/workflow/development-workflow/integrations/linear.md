@@ -125,6 +125,15 @@ TRACKER_ACTION_REQUIRED=<action_type> issue=<issue_id>[ <extra_fields>]
 | `read_status` | `get_tracker_status_for_issue`       | _(none)_                                 | Status read was deferred; orchestrator supplies the value. |
 | `create_item` | `add-backlog-item.sh create`         | `title='My New Feature'`                 | New Linear item should be created via MCP.                |
 
+`set_status` is **forward-only** at the native bridge (same guarantee as
+GitHub Projects' `update_tracker_status_best_effort` order check): before
+applying, the orchestrator reads the item's current Linear status and skips
+the update when the item is already at or beyond the target in
+[`tracker-status-mapping.md`](../tracker-status-mapping.md) (e.g. target
+`Merged` while the item is `Released`), recording the skip. Helpers may still
+emit `TRACKER_ACTION_REQUIRED=set_status` on re-runs; the bridge must not
+regress status.
+
 **Quoting convention**: when a field value contains spaces, it is
 single-quoted in the output — for example, `target_status='Plan in Review'`
 rather than `target_status=Plan in Review`. Single-word values are not
@@ -140,10 +149,17 @@ for each Work Item Runner output line:
     parse action_type from "TRACKER_ACTION_REQUIRED=<action_type> ..."
     parse issue from "... issue=<id> ..."
     parse extra_field value (strip single quotes if present)
-    apply via Linear MCP (e.g., updateIssue, createIssue)
+    if action_type is set_status:
+      read current Linear status via MCP
+      if current is at or beyond target_status in tracker-status-mapping:
+        record skip; do not updateIssue
+      else:
+        apply via Linear MCP updateIssue
+    else:
+      apply via Linear MCP (e.g., createIssue)
   if line starts with "TRACKER_UPDATE_REQUIRED:":
     parse issue number and target_status
-    apply via Linear MCP updateIssue
+    apply the same forward-only set_status rule via Linear MCP
 ```
 
 The `TRACKER_UPDATE_REQUIRED:` format (used in protocol 91 Step 8b) is a
