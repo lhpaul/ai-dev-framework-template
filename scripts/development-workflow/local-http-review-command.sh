@@ -111,7 +111,7 @@ diff_exit=$?
 set -e
 if [ "$diff_exit" -ne 0 ]; then
   workflow_diagnostic "ERROR: git diff origin/${BASE_BRANCH}...HEAD failed (exit ${diff_exit})" >&2
-  workflow_redact_text <"$diff_err" >&2
+  workflow_redact_file "$diff_err" >&2
   exit 1
 fi
 if [ "${#diff_text}" -gt "$DIFF_MAX_BYTES" ]; then
@@ -188,7 +188,7 @@ if [ "$http_code" != "200" ]; then
   if grep -Eiq 'missing[[:space:]_-]+model|model[[:space:]_-]+access|model.*unavailable' "$body_file"; then
     echo "ERROR: missing model access" >&2
   fi
-  diagnostic_body="$(workflow_redact_text <"$body_file")" || exit 1
+  diagnostic_body="$(workflow_redact_file "$body_file")" || exit 1
   printf '%.2000s\n' "$diagnostic_body" >&2
   echo >&2
   exit 1
@@ -309,7 +309,7 @@ emit(obj)
 content="$(jq -r '.choices[0].message.content // empty' "$body_file")"
 if [ -z "$content" ]; then
   echo "ERROR: HTTP reviewer returned empty message content" >&2
-  diagnostic_body="$(workflow_redact_text <"$body_file")" || exit 1
+  diagnostic_body="$(workflow_redact_file "$body_file")" || exit 1
   printf '%.2000s\n' "$diagnostic_body" >&2
   echo >&2
   exit 1

@@ -629,7 +629,7 @@ while true; do
   # Log stderr output for debugging.
   if [ -s "$TRIAGE_STDERR" ]; then
     echo "INFO: haystack triage stderr output:" >&2
-    workflow_redact_text <"$TRIAGE_STDERR" >&2
+    workflow_redact_file "$TRIAGE_STDERR" >&2
   fi
 
   # ── Handle per-call timeout ─────────────────────────────────────────────────
@@ -970,7 +970,7 @@ if [ "$PR_STATUS_CHECK" != "0" ]; then
 
   if [ -s "$PR_STATUS_STDERR" ]; then
     echo "INFO: haystack pr-status stderr output:" >&2
-    workflow_redact_text <"$PR_STATUS_STDERR" >&2
+    workflow_redact_file "$PR_STATUS_STDERR" >&2
   fi
   rm -f "$PR_STATUS_STDERR"
 

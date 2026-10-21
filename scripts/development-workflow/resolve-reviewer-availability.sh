@@ -317,7 +317,7 @@ config_rc=0
 run_bounded "$bound" "$work_dir/config.json" "$work_dir/config.err" \
   python3 "$SCRIPT_DIR/workflow-config-resolver.py" review-effective --repo-root "$repo_root" || config_rc=$?
 if [ "$config_rc" = 124 ]; then block config-resolution-inconclusive; fi
-if [ "$config_rc" != 0 ]; then workflow_redact_text <"$work_dir/config.err" >&2; fail "review-effective failed (exit $config_rc)"; fi
+if [ "$config_rc" != 0 ]; then workflow_redact_file "$work_dir/config.err" >&2; fail "review-effective failed (exit $config_rc)"; fi
 # Parsing and every JSON decode share one configuration-stage deadline,
 # further constrained by the overall determination deadline.
 # Run in this shell so cancellation retains ownership of the active process.
@@ -407,7 +407,7 @@ sys.exit(_rpc.main(["--mode", "enabled-bool", sys.argv[1]]))
     fi
     if [ "$rc" = 3 ]; then
       probe_context=coderabbit-config
-      detail="$(cat "$work_dir/probe.err")"
+      detail="$(workflow_command_with_safe_stderr cat "$work_dir/probe.err")"
       return
     fi
     if [ "$rc" != 0 ]; then detail='CodeRabbit enablement check did not complete'; return; fi

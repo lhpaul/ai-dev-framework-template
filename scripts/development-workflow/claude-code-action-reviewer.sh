@@ -491,7 +491,7 @@ rm -f "$DISPATCH_STDERR"
 RUN_ID="$(claude_code_action_dispatch_run_id "$DISPATCH_RESPONSE")"
 if [ -z "$RUN_ID" ]; then
   if [ -s "$DISPATCH_RESPONSE" ]; then
-    dispatch_diagnostic="$(workflow_redact_text <"$DISPATCH_RESPONSE")" || dispatch_diagnostic="[diagnostic sanitization failed]"
+    dispatch_diagnostic="$(workflow_redact_file "$DISPATCH_RESPONSE")" || dispatch_diagnostic="[diagnostic sanitization failed]"
     # Drain the complete sanitized stream even after the byte-sized preview.
     dispatch_diagnostic="$(printf '%s' "$dispatch_diagnostic" | { head -c 300; cat >/dev/null; } | tr '\n' ' ')"
     workflow_diagnostic "WARNING: dispatch response body had no integer workflow_run_id: $dispatch_diagnostic" >&2

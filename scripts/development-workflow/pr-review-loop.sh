@@ -4723,7 +4723,7 @@ run_haystack_review() {
   # auth failure, CLI not installed).
   if [ -s "$haystack_stderr_file" ]; then
     workflow_diagnostic "INFO: haystack-reviewer.sh stderr:" >&2
-    workflow_redact_text <"$haystack_stderr_file" >&2
+    workflow_redact_file "$haystack_stderr_file" >&2
   fi
   rm -f "$haystack_stderr_file"
 
@@ -4880,7 +4880,7 @@ run_coderabbit_cli_review() {
 
   if [ -s "$coderabbit_cli_stderr_file" ]; then
     workflow_diagnostic "INFO: coderabbit-cli-reviewer.sh stderr:" >&2
-    workflow_redact_text <"$coderabbit_cli_stderr_file" >&2
+    workflow_redact_file "$coderabbit_cli_stderr_file" >&2
   fi
   rm -f "$coderabbit_cli_stderr_file"
 
@@ -5135,7 +5135,7 @@ run_local_ai_reviewer_review() {
 
   if [ -s "$local_ai_stderr_file" ]; then
     workflow_diagnostic "INFO: local-ai-reviewer.sh stderr:" >&2
-    workflow_redact_text <"$local_ai_stderr_file" >&2
+    workflow_redact_file "$local_ai_stderr_file" >&2
   fi
   rm -f "$local_ai_stderr_file"
 
@@ -9482,7 +9482,7 @@ reviewer_loop_gh_read_denied() {
   local err_file="${1:-}"
   local err_text="" detail="" error_class=""
   [ -n "$err_file" ] && [ -f "$err_file" ] || return 1
-  err_text="$(cat "$err_file")"
+  err_text="$(workflow_command_with_safe_stderr cat "$err_file")"
   error_class="$(reviewer_loop_gh_read_error_class "$err_text")"
   err_text="$(printf '%s' "$err_text" | workflow_redact_text)" || return 2
   : > "$err_file" 2>/dev/null || true
@@ -13294,7 +13294,7 @@ reviewer_loop_history_append_to_summary() {
         entries: []
       }' >"$_payload_tmp"
   fi
-  payload="$(workflow_redact_json <"$_payload_tmp")" || { rm -f "$_payload_tmp"; return 2; }
+  payload="$(workflow_redact_file "$_payload_tmp" --json)" || { workflow_remove_diagnostic_file "$_payload_tmp"; return 2; }
   rm -f "$_payload_tmp"
 
   # #1651 AC-7a: when history cannot be appended and a prior block exists,

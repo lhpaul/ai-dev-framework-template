@@ -907,7 +907,7 @@ run_bounded "$bound" "$early_output_json" "$work_dir/early-classify.err" \
 early_valid_rc=0
 bounded_jq plain "$work_dir/early-valid.out" "$work_dir/early-valid.err" -e . "$early_output_json" >/dev/null 2>&1 || early_valid_rc=$?
 if [ "$early_classify_rc" -gt 3 ] || { [ "$early_classify_rc" != 0 ] && [ "$early_valid_rc" != 0 ]; }; then
-  workflow_redact_text <"$work_dir/early-classify.err" >&2
+  workflow_redact_file "$work_dir/early-classify.err" >&2
   fail "reviewer_preflight.py failed (exit $early_classify_rc)"
 fi
 early_outcome=$(bounded_jq plain "$work_dir/early-outcome.out" "$work_dir/early-outcome.err" -er '.outcome' "$early_output_json") || fail 'cannot inspect early stage-set validation output'
@@ -919,7 +919,7 @@ fi
 # Shared settings come from the selected Git ref. The private source is read
 # once into a validated review-only projection, with original attribution separate.
 shared_dir="$work_dir/shared-config"
-mkdir -m 700 "$shared_dir"
+workflow_command_with_safe_stderr mkdir -m 700 "$shared_dir"
 shared_read_rc=0
 read_ref_file "$shared_ref" .ai-dev-workflow.yaml "$shared_dir/.ai-dev-workflow.yaml" || shared_read_rc=$?
 case "$shared_read_rc" in
@@ -1062,7 +1062,7 @@ run_bounded "$bound" "$output_json" "$work_dir/preflight.err" \
 final_valid_rc=0
 bounded_jq plain "$work_dir/final-valid.out" "$work_dir/final-valid.err" -e . "$output_json" >/dev/null 2>&1 || final_valid_rc=$?
 if [ "$preflight_rc" -gt 3 ] || { [ "$preflight_rc" != 0 ] && [ "$final_valid_rc" != 0 ]; }; then
-  workflow_redact_text <"$work_dir/preflight.err" >&2
+  workflow_redact_file "$work_dir/preflight.err" >&2
   fail "reviewer_preflight.py failed (exit $preflight_rc)"
 fi
 
@@ -1100,7 +1100,7 @@ if [ "$json_output" = true ]; then
     jq --argjson elapsed "$SECONDS" --argjson budget "$PREFLIGHT_BUDGET_SECONDS" \
     '. + {elapsed_seconds: $elapsed, budget_seconds: $budget}' "$output_json" || json_render_rc=$?
   [ "$json_render_rc" = 0 ] || fail "cannot render the JSON report (exit $json_render_rc): $(cat "$work_dir/json-report.err" 2>/dev/null)"
-  workflow_redact_json <"$work_dir/json-report.out"
+  workflow_redact_file "$work_dir/json-report.out" --json
   exit "$preflight_rc"
 fi
 

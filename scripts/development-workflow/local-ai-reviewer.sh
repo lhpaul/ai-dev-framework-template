@@ -1627,9 +1627,9 @@ write_evidence_file() {
   strict_plan_json="$(strict_build_strict_evidence_json "$strict_plan_state" "$strict_plan_count" \
     "$strict_plan_checks" "$strict_plan_applied" "$strict_plan_unknown_count" "$strict_plan_reason")"
 
-  local evidence_error
-  evidence_error="$(mktemp)" || { workflow_diagnostic "WARN: could not capture evidence diagnostics" >&2; return 0; }
-  if ! { jq -n \
+  local evidence_error evidence_capture_opened=0
+  evidence_error="$(mktemp 2>/dev/null)" || { workflow_diagnostic "WARN: could not capture evidence diagnostics" >&2; return 0; }
+  if ! { { evidence_capture_opened=1; jq -n \
     --arg schema_version "local_ai_reviewer_evidence.v1" \
     --arg result "$final_result" \
     --arg reason "$final_reason" \
@@ -1689,11 +1689,13 @@ write_evidence_file() {
       },
       strict_spec: $strict_spec,
       strict_plan: $strict_plan
-    }' | workflow_redact_json | jq '.context_summary |= (.pr_body |= .[0:20000] | .diff_name_status |= .[0:12000] | .diff_stat |= .[0:12000])' >"$LOCAL_AI_REVIEWER_EVIDENCE_FILE"; } 2>"$evidence_error"; then
-    workflow_redact_text <"$evidence_error" >&2
+    }' | workflow_redact_json | jq '.context_summary |= (.pr_body |= .[0:20000] | .diff_name_status |= .[0:12000] | .diff_stat |= .[0:12000])' >"$LOCAL_AI_REVIEWER_EVIDENCE_FILE"; } 2>"$evidence_error"; } 2>/dev/null; then
+    if [ "$evidence_capture_opened" -eq 1 ]; then
+      workflow_redact_file "$evidence_error" >&2
+    fi
     workflow_diagnostic "WARN: could not write local AI reviewer evidence file: $LOCAL_AI_REVIEWER_EVIDENCE_FILE" >&2
   fi
-  rm -f "$evidence_error"
+  workflow_remove_diagnostic_file "$evidence_error"
 }
 
 emit_ordinary_and_strict() {

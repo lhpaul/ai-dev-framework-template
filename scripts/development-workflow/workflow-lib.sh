@@ -132,7 +132,7 @@ workflow_config_resolver_script() {
 # Diagnostic-only stdin boundary. Never send functional config/auth payloads here.
 _workflow_redact_stdin() {
   local sanitized
-  sanitized="$(python3 "$(workflow_config_resolver_script)" redact-text "$@" 2>/dev/null)" || {
+  sanitized="$( { python3 "$(workflow_config_resolver_script)" redact-text "$@"; } 2>/dev/null)" || {
     printf 'ERROR: diagnostic sanitization failed\n' >&2
     return 2
   }
@@ -141,6 +141,28 @@ _workflow_redact_stdin() {
 
 workflow_redact_text() { _workflow_redact_stdin; }
 workflow_redact_json() { _workflow_redact_stdin --json; }
+
+# Group the input open so Bash cannot print a source path before sanitization.
+# Preserve a failed open (1) separately from a failed sanitizer (2).
+workflow_redact_file() {
+  local diagnostic_file="$1" diagnostic_status=0
+  shift
+  { _workflow_redact_stdin "$@" <"$diagnostic_file"; } 2>/dev/null || diagnostic_status=$?
+  if [ "$diagnostic_status" -ne 0 ]; then
+    printf 'ERROR: diagnostic sanitization failed\n' >&2
+  fi
+  return "$diagnostic_status"
+}
+
+# Keep cleanup's original status/errexit context, without replaying rm's stderr.
+workflow_remove_diagnostic_file() {
+  local diagnostic_status=0
+  rm -f "$1" 2>/dev/null || diagnostic_status=$?
+  if [ "$diagnostic_status" -ne 0 ]; then
+    printf 'ERROR: diagnostic cleanup failed\n' >&2
+  fi
+  return "$diagnostic_status"
+}
 
 # Fixed report keys and whole values, framed before any redaction/serialization.
 # One resolver process per report; this never reads or caches configuration.
@@ -163,13 +185,15 @@ workflow_diagnostic_kv_escaped() {
 # External-command boundary: keep stdout functional, sanitize stderr after the
 # command exits, and preserve its status. No background filters or lost waits.
 workflow_command_with_safe_stderr() {
-  local diagnostic_file command_status=0
-  diagnostic_file="$(mktemp)" || { printf 'ERROR: diagnostic capture failed\n' >&2; return 2; }
-  "$@" 2>"$diagnostic_file" || command_status=$?
-  if [ -s "$diagnostic_file" ]; then
-    workflow_redact_text <"$diagnostic_file" >&2 || { rm -f "$diagnostic_file"; return 2; }
+  local diagnostic_file command_status=0 capture_opened=0
+  diagnostic_file="$(mktemp 2>/dev/null)" || { printf 'ERROR: diagnostic capture failed\n' >&2; return 2; }
+  { { capture_opened=1; "$@"; } 2>"$diagnostic_file"; } 2>/dev/null || command_status=$?
+  if [ "$capture_opened" -eq 0 ]; then
+    printf 'ERROR: diagnostic capture failed\n' >&2
+  elif [ -s "$diagnostic_file" ]; then
+    workflow_redact_file "$diagnostic_file" >&2 || { workflow_remove_diagnostic_file "$diagnostic_file"; return 2; }
   fi
-  rm -f "$diagnostic_file"
+  workflow_remove_diagnostic_file "$diagnostic_file"
   return "$command_status"
 }
 

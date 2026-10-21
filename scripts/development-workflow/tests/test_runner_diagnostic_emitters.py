@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Binding D01-D60: synthetic paired-channel runtime/publication diagnostics."""
+"""Binding D01-D65: synthetic paired-channel runtime/publication diagnostics."""
 from __future__ import annotations
 
 import importlib.util
@@ -40,7 +40,7 @@ class RunnerDiagnosticEmitters(unittest.TestCase):
         return subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
 
     def entry(self, name, *args):
-        return self.run_command(['bash', str(self.f.runtime / name), *args])
+        return self.run_command([getattr(self, '_entry_shell', 'bash'), str(self.f.runtime / name), *args])
 
     def bash(self, body, *, loop=False):
         source = self.f.runtime / ('pr-review-loop.sh' if loop else 'workflow-lib.sh')
@@ -1249,6 +1249,218 @@ printf 'PROBE=%s\\n' "$settle_review_probe"
                     if stage == 'failed_merge' and kind == 'long':
                         self.assertNotIn('sixth', result.stdout)
 
+
+    def test_D61_capture_utility_boundaries_exact_status_and_argv(self):
+        # U16-U19: run the actual common command boundary in both errexit
+        # contexts; the child stdout/argv stay functional and stderr is opaque.
+        for shell in self.compatible_shells():
+            for case, expected in [('U16_mktemp', 2), ('U17_open', 1),
+                                   ('U18_read', 2), ('U19_cleanup_conditional', 17),
+                                   ('U19_cleanup_bare', 23), ('success', 0)]:
+                with self.subTest(route=case, shell=shell):
+                    capture = self.f.root / 'capture.err'; capture.write_text('')
+                    invoked = self.f.root / 'capture-child.argv'
+                    if invoked.exists(): invoked.unlink()
+                    setup = 'set -euo pipefail\nsource ' + shlex.quote(str(self.f.runtime / 'workflow-lib.sh')) + '\n'
+                    setup += 'child() { printf "%s\\0" "$@" >' + shlex.quote(str(invoked)) + '; printf "FUNCTIONAL=ok\\n"; printf "token=' + self.secret + '\\n" >&2; return ' + ('0' if case == 'success' else '17') + '; };\n'
+                    if case == 'U16_mktemp':
+                        setup += 'mktemp() { printf "token=' + self.secret + '\\n" >&2; return 29; };\n'
+                    elif case == 'U17_open':
+                        setup += 'mktemp() { printf "%s\\n" ' + shlex.quote(str(self.f.root / ('token=' + self.secret) / 'missing' / 'capture')) + '; };\n'
+                    else:
+                        setup += 'mktemp() { printf "%s\\n" ' + shlex.quote(str(capture)) + '; };\n'
+                    if case == 'U18_read':
+                        setup += 'eval "$(declare -f workflow_redact_file | sed \'1s/workflow_redact_file/actual_redact_file/\')"\n'
+                        setup += 'workflow_redact_file() { command rm -f "$1"; actual_redact_file "$@"; };\n'
+                    if case.startswith('U19_'):
+                        setup += 'rm() { printf "token=' + self.secret + '\\n" >&2; return 23; };\n'
+                    if case == 'U19_cleanup_bare':
+                        setup += 'workflow_command_with_safe_stderr child first "two words"\n'
+                    else:
+                        setup += 'status=0; workflow_command_with_safe_stderr child first "two words" || status=$?; exit "$status"\n'
+                    result = self.safe(self.run_command([shell, '-c', setup]), expected)
+                    if case in ('U16_mktemp', 'U17_open'):
+                        self.assertFalse(invoked.exists())
+                        self.assertEqual(result.stdout, '')
+                        self.assertIn('diagnostic capture failed', result.stderr)
+                    else:
+                        self.assertEqual(invoked.read_bytes().split(b'\0'), [b'first', b'two words', b''])
+                        self.assertEqual(result.stdout, 'FUNCTIONAL=ok\n')
+                    if case.startswith('U19_'):
+                        self.assertIn('diagnostic cleanup failed', result.stderr)
+
+    def test_D62_actual_diagnostic_file_callsite_matrix(self):
+        import re
+        # U25/U28-U41: execute each ORIGINAL production statement (including
+        # its original failure guard), not a reimplementation of its pipeline.
+        # The surrounding dispatch/classification is independently retained in
+        # D20/D54/D58 and the full provider/loop suites; this isolates file-open.
+        rows = [('U25', 'pr-review-loop.sh', '_payload_tmp', 0, 2),
+                ('U28', 'claude-code-action-reviewer.sh', 'DISPATCH_RESPONSE', 0, 0),
+                ('U29', 'haystack-reviewer.sh', 'TRIAGE_STDERR', 0, 1),
+                ('U30', 'haystack-reviewer.sh', 'PR_STATUS_STDERR', 0, 1),
+                ('U31', 'local-http-review-command.sh', 'diff_err', 0, 1),
+                ('U32', 'local-http-review-command.sh', 'body_file', 0, 1),
+                ('U33', 'local-http-review-command.sh', 'body_file', 1, 1),
+                ('U34', 'pr-ownership-guard.sh', 'SCRATCH_DIR/stderr', 0, 0),
+                ('U35', 'pr-review-loop.sh', 'haystack_stderr_file', 0, 1),
+                ('U36', 'pr-review-loop.sh', 'coderabbit_cli_stderr_file', 0, 1),
+                ('U37', 'pr-review-loop.sh', 'local_ai_stderr_file', 0, 1),
+                ('U38', 'resolve-reviewer-availability.sh', 'work_dir/config.err', 0, 1),
+                ('U39', 'reviewer-preflight.sh', 'work_dir/early-classify.err', 0, 1),
+                ('U40', 'reviewer-preflight.sh', 'work_dir/preflight.err', 0, 1),
+                ('U41', 'reviewer-preflight.sh', 'work_dir/json-report.out', 0, 1)]
+        for route, name, token, ordinal, failure in rows:
+            source = (self.f.runtime / name).read_text().splitlines()
+            matches = [line.strip() for line in source if re.search(r'workflow_redact_(?:text|json|file)\s+<?\"\$' + re.escape(token) + r'\"', line)]
+            statement = matches[ordinal]
+            for missing in (False, True):
+                with self.subTest(route=route, missing=missing):
+                    folder = self.f.root / ('token=' + self.secret); folder.mkdir(exist_ok=True)
+                    variable, _, tail = token.partition('/')
+                    target = folder / (tail or 'diagnostic.txt')
+                    if target.exists(): target.unlink()
+                    if not missing:
+                        target.write_text(json.dumps({'reason': 'token=' + self.secret, 'count': 4}) if route in ('U25', 'U41') else 'token=' + self.secret + '\nsecond\n\n')
+                    setup = 'set -euo pipefail\nsource ' + shlex.quote(str(self.f.runtime / 'workflow-lib.sh')) + '\n'
+                    setup += variable + '=' + shlex.quote(str(folder if tail else target)) + '\n'
+                    setup += 'config_rc=2; fail() { workflow_diagnostic "ERROR: $*" >&2; exit 2; };\n'
+                    # return in U25 belongs to its actual containing function.
+                    setup += 'actual_boundary() {\n' + statement + '\n'
+                    if route in ('U28', 'U34'):
+                        field = 'dispatch_diagnostic' if route == 'U28' else 'GH_ERROR'
+                        setup += 'workflow_diagnostic "$' + field + '" >&2\n'
+                    if route in ('U32', 'U33'):
+                        setup += next(line.strip() for line in source if "printf '%.2000s" in line) + '\n'
+                    if route == 'U25': setup += 'printf "%s\\n" "$payload"\n'
+                    setup += '}\nactual_boundary\n'
+                    result = self.safe(self.run_command(['bash', '-c', setup]), failure if missing else (2 if route == 'U38' else 0))
+                    if missing and route not in ('U28', 'U34'):
+                        self.assertEqual(result.stdout, '')
+                    if not missing:
+                        self.assertIn('[REDACTED]', result.stdout + result.stderr)
+                        if route == 'U41': self.assertEqual(json.loads(result.stdout)['count'], 4)
+
+    def test_D63_file_boundary_stream_and_errexit_contract(self):
+        for shell in self.compatible_shells():
+            for mode, expected in [('text', 0), ('json', 0), ('missing', 1), ('sanitizer', 2)]:
+                with self.subTest(shell=shell, mode=mode):
+                    path = self.f.root / ('token=' + self.secret)
+                    if path.exists(): path.unlink()
+                    raw = 'first\n\nsecond\n\n' if mode != 'json' else '{"count":4,"reason":"token=' + self.secret + '"}'
+                    if mode != 'missing': path.write_text(raw)
+                    setup = 'set -euo pipefail\nsource ' + shlex.quote(str(self.f.runtime / 'workflow-lib.sh')) + '\n'
+                    if mode == 'sanitizer': setup += '_workflow_redact_stdin() { printf "token=' + self.secret + '\\n" >&2; return 2; };\n'
+                    setup += 'workflow_redact_file ' + shlex.quote(str(path)) + (' --json' if mode == 'json' else '') + '\n'
+                    result = self.safe(self.run_command([shell, '-c', setup]), expected)
+                    if mode == 'text': self.assertEqual(result.stdout, 'first\n\nsecond\n')
+                    if mode == 'json': self.assertEqual(json.loads(result.stdout)['count'], 4)
+                    if expected: self.assertEqual(result.stdout, '')
+
+
+    def test_D64_writer_staging_and_raw_capture_actual_routes(self):
+        # U20-U23: actual local-AI CLI, not a mirrored evidence writer.
+        for writer_shell in self.compatible_shells():
+            self._entry_shell = writer_shell
+            for route, expected in [('U20', 0), ('U21', 0), ('U22', 1), ('writer_sanitizer', 2), ('U23', 23), ('writer_success', 0)]:
+                with self.subTest(route=route, shell=writer_shell):
+                    record = self.f.root / 'writer-capture-path'
+                    evidence = self.f.root / 'class-evidence.json'
+                    if evidence.exists(): evidence.unlink()
+                    bash_env = self.f.root / 'class-utility-functions.sh'
+                    body = 'mktemp() { case " ${FUNCNAME[*]} " in *write_evidence_file*) '
+                    if route == 'U20':
+                        body += 'printf "token=' + self.secret + '\\n" >&2; return 17; '
+                    elif route == 'U21':
+                        body += 'printf "%s\\n" ' + shlex.quote(str(self.f.root / ('token=' + self.secret) / 'absent-parent' / 'capture')) + '; '
+                    else:
+                        body += 'local path; path="$(command mktemp "$@")"; printf "%s" "$path" >' + shlex.quote(str(record)) + '; printf "%s\\n" "$path"; '
+                    body += ';; *) command mktemp "$@";; esac; }\n'
+                    if route == 'U23':
+                        body += 'rm() { if [ "$#" = 2 ] && [ "$1" = -f ] && [ "$2" = "$(command cat ' + shlex.quote(str(record)) + ' 2>/dev/null)" ]; then printf "token=' + self.secret + '\\n" >&2; return 23; fi; command rm "$@"; }\n'
+                    if route in ('U22', 'writer_sanitizer'):
+                        body += 'jq() { case " ${FUNCNAME[*]} " in *write_evidence_file*) if [ "${1:-}" = -n ] && [ -n "${evidence_error:-}" ]; then '
+                        if route == 'U22': body += 'command rm -f "$evidence_error"; '
+                        body += 'printf "token=' + self.secret + '\n" >&2; return 7; fi;; esac; command jq "$@"; };\n'
+                    if route == 'writer_sanitizer':
+                        body += 'python3() { case " ${FUNCNAME[*]}:$* " in *write_evidence_file*redact-text*) case " $* " in *" --json "*) command python3 "$@"; return $?;; esac; printf "token=' + self.secret + '\n" >&2; return 17;; esac; command python3 "$@"; };\n'
+                    bash_env.write_text(body)
+                    self.f.env['BASH_ENV'] = str(bash_env)
+                    result = self.safe(self.local_entry({'result': 'clean', 'comments': 0}, LOCAL_AI_REVIEWER_EVIDENCE_FILE=str(evidence)), expected)
+                    self.f.env.pop('BASH_ENV', None)
+                    if route == 'U20':
+                        self.assertIn('could not capture evidence diagnostics', result.stderr)
+                        self.assertIn('RESULT=clean', result.stdout)
+                        self.assertFalse(evidence.exists())
+                    elif route in ('U21', 'U22', 'writer_sanitizer'):
+                        # Preserve the actual writer's original open-failure best-effort
+                        # contract, independently of sanitizer and cleanup failures.
+                        self.assertIn('REVIEWED_HEAD=' + json.loads(self.f.pr.read_text())['headRefOid'], result.stdout)
+                        self.assertIn('BASE_BRANCH=develop', result.stdout)
+                        if route in ('U22', 'writer_sanitizer'): self.assertNotIn('RESULT=clean', result.stdout)
+                        else: self.assertIn('RESULT=clean', result.stdout)
+                        if route == 'U21': self.assertFalse(evidence.exists())
+                        if route == 'U22':
+                            self.assertIn('diagnostic sanitization failed', result.stderr)
+                            self.assertNotIn(record.read_text(), result.stderr)
+                        if route == 'U21': self.assertIn('could not write local AI reviewer evidence', result.stderr)
+                    else:
+                        data = json.loads(evidence.read_text())
+                        self.assertEqual(data['counts'], {'comments': 0, 'blocking': 0, 'suggestions': 0})
+                        self.assertEqual(data['schema_version'], 'local_ai_reviewer_evidence.v1')
+                        if route == 'U23': self.assertIn('diagnostic cleanup failed', result.stderr)
+                        else: self.assertIn('RESULT=clean', result.stdout)
+        del self._entry_shell
+        # U24: actual changed staging command, exact mode/path argv, plus success.
+        line = next(line.strip() for line in (self.f.runtime / 'reviewer-preflight.sh').read_text().splitlines() if 'mkdir -m 700 "$shared_dir"' in line)
+        for fail in (False, True):
+            with self.subTest(route='U24', fail=fail):
+                path = self.f.root / ('token=' + self.secret) / ('staging-fail' if fail else 'staging-ok')
+                path.parent.mkdir(exist_ok=True)
+                args = self.f.root / 'mkdir-args'
+                body = 'shared_dir=' + shlex.quote(str(path)) + '\nmkdir() { printf "%s\\n" "$@" >' + shlex.quote(str(args)) + '; '
+                body += ('printf "token=' + self.secret + '\\n" >&2; return 19;' if fail else 'command mkdir "$@";') + ' };\n' + line
+                result = self.safe(self.bash(body), 19 if fail else 0)
+                self.assertEqual(result.stdout, '')
+                self.assertEqual(args.read_text().splitlines(), ['-m', '700', str(path)])
+                if not fail: self.assertEqual(path.stat().st_mode & 0o777, 0o700)
+        # U26: retain raw CodeRabbit classifier detail before report promotion.
+        source = (self.f.runtime / 'resolve-reviewer-availability.sh').read_text().splitlines()
+        line = next(line.strip() for line in source if line.strip().startswith('detail="$(') and '"$work_dir/probe.err"' in line)
+        for fail in (False, True):
+            with self.subTest(route='U26', fail=fail):
+                args = self.f.root / 'cat-args'
+                body = 'work_dir=' + shlex.quote(str(self.f.root)) + '\ncat() { printf "%s\\n" "$@" >' + shlex.quote(str(args)) + '; '
+                body += ('printf "token=' + self.secret + '\\n" >&2; return 21;' if fail else 'printf "configuration: invalid YAML; key=review\\n";') + ' };\n'
+                body += line + '\nprintf "%s" "$detail"\n'
+                result = self.safe(self.bash(body), 21 if fail else 0)
+                self.assertEqual(args.read_text().splitlines(), [str(self.f.root / 'probe.err')])
+                self.assertEqual(result.stdout, '' if fail else 'configuration: invalid YAML; key=review')
+        # U27: full actual loop classifier+publisher, raw class before redaction.
+        for fail in (False, True):
+            with self.subTest(route='U27', fail=fail):
+                error = self.f.root / 'polling-error'; error.write_text('HTTP 403 forbidden token=' + self.secret)
+                body = 'cat() { ' + ('printf "token=' + self.secret + '\\n" >&2; return 21;' if fail else 'command cat "$@";') + ' };\n'
+                body += 'reviewer_loop_gh_read_denied ' + shlex.quote(str(error))
+                result = self.safe(self.bash(body, loop=True), 21 if fail else 0)
+                if fail: self.assertEqual(result.stdout, '')
+                else: self.assertIn('HTTP 403 forbidden token=[REDACTED]', result.stdout)
+
+
+    def test_D65_redactor_argument_expansion_is_inside_stderr_boundary(self):
+        # U42: actual newly-added redactor calls a legacy path helper; its
+        # command substitution runs before Python's own redirection is applied.
+        for shell in self.compatible_shells():
+            for fail in (False, True):
+                with self.subTest(route='U42', shell=shell, fail=fail):
+                    resolver = self.f.runtime / 'workflow-config-resolver.py'
+                    body = 'source ' + shlex.quote(str(self.f.runtime / 'workflow-lib.sh')) + '\n'
+                    body += 'workflow_config_resolver_script() { printf "token=' + self.secret + '\\n" >&2; '
+                    body += ('printf "%s\\n" /synthetic/missing-resolver; return 17;' if fail else 'printf "%s\\n" ' + shlex.quote(str(resolver)) + ';') + ' };\n'
+                    body += 'printf "FUNCTIONAL=ok\\n" | workflow_redact_text\n'
+                    result = self.safe(self.run_command([shell, '-c', body]), 2 if fail else 0)
+                    self.assertEqual(result.stdout, '' if fail else 'FUNCTIONAL=ok\n')
+                    self.assertEqual(result.stderr, 'ERROR: diagnostic sanitization failed\n' if fail else '')
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)
