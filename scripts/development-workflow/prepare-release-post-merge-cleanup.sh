@@ -19,12 +19,15 @@
 #   (commits/<sha>/pulls only — subject "(#N)" / "Merge pull request #N" is
 #   never sufficient PR evidence). IDs are taken only from each PR's
 #   headRefName / REST head.ref and title — never from commit text or PR body.
-#   Changelog-only mentions are RELEASE_SCOPE_SKIPPED. If the verified release
-#   ref is unavailable or PR resolution fails for any commit, emit
-#   RELEASE_SCOPE_INCOMPLETE and fail closed (never fall back to checkout HEAD).
-#   A fully resolved range with zero Linear IDs is success (empty scope).
-#   Explicit --issue/--issues are unioned with the derived scope and never
-#   filtered, for every provider.
+#   Documentation-stage head branches (spec/*, implementation-plan/*) are not
+#   shipping evidence (RELEASE_SCOPE_SKIPPED reason=documentation_stage_pr_only
+#   when that is the only evidence). Preceding-tag boundary must be verified
+#   (shallow / tag-list failure → RELEASE_SCOPE_INCOMPLETE
+#   reason=previous_release_boundary_unavailable); a true first release (no
+#   preceding semver tags after successful tag -l) may scan the tip history.
+#   Changelog-only mentions are RELEASE_SCOPE_SKIPPED. Never fall back to
+#   checkout HEAD. Zero Linear IDs after complete resolution is empty scope
+#   success. Explicit --issue/--issues are unioned and never filtered.
 #
 # Examples:
 #   ./scripts/development-workflow/prepare-release-post-merge-cleanup.sh 1.2.3
@@ -729,13 +732,24 @@ def resolve_current_ref():
     return None
 
 
-def resolve_previous_tag(current_version):
+def resolve_previous_boundary(current_version):
+    """Return (status, previous_tag_or_None).
+
+    status:
+      ok — preceding semver tag found
+      first_release — tag listing succeeded; no semver tag precedes this release
+      unavailable — shallow clone, tag listing failed, or version unparseable
+        (fail closed; do not scan entire tip history)
+    """
+    shallow = run_git("rev-parse", "--is-shallow-repository")
+    if shallow.returncode == 0 and shallow.stdout.strip() == "true":
+        return "unavailable", None
     listing = run_git("tag", "-l")
     if listing.returncode != 0:
-        return None
+        return "unavailable", None
     current_tuple = parse_semver(current_version)
     if current_tuple is None:
-        return None
+        return "unavailable", None
     candidates = []
     for line in listing.stdout.splitlines():
         tag = line.strip()
@@ -743,8 +757,25 @@ def resolve_previous_tag(current_version):
         if parsed and parsed < current_tuple:
             candidates.append((parsed, tag))
     if not candidates:
-        return None
-    return sorted(candidates, reverse=True)[0][1]
+        return "first_release", None
+    return "ok", sorted(candidates, reverse=True)[0][1]
+
+
+# Documentation-stage branches are not Released shipping evidence (#1982).
+# Implementation prefixes match docs/best-practices/2-version-control.md and
+# Protocol 91 Step 8a (feature/fix/refactor/hotfix).
+DOCUMENTATION_STAGE_PREFIXES = ("spec/", "implementation-plan/")
+IMPLEMENTATION_STAGE_PREFIXES = ("feature/", "fix/", "refactor/", "hotfix/")
+
+
+def is_documentation_stage_branch(head_ref):
+    ref = (head_ref or "").strip()
+    return any(ref.startswith(prefix) for prefix in DOCUMENTATION_STAGE_PREFIXES)
+
+
+def is_implementation_stage_branch(head_ref):
+    ref = (head_ref or "").strip()
+    return any(ref.startswith(prefix) for prefix in IMPLEMENTATION_STAGE_PREFIXES)
 
 
 def extract_linear_ids(text):
@@ -860,19 +891,21 @@ def pr_belongs_to_range(payload, range_shas, associating_sha):
 
 
 def collect_merged_pr_linear_ids(range_spec, repo_slug):
-    """Return (ids, unresolved_shas). IDs from PR headRefName/head.ref + title.
+    """Return (implementation_ids, documentation_only_ids, unresolved_shas).
 
     PR membership comes only from commits/<sha>/pulls for SHAs in the range —
-    never from a PR number parsed out of a commit subject.
+    never from a PR number parsed out of a commit subject. Documentation-stage
+    head branches (spec/*, implementation-plan/*) are not shipping evidence.
     """
-    ids = set()
+    implementation_ids = set()
+    documentation_ids = set()
     unresolved = []
     commit_cache = {}
     seen_prs = set()
 
     log = run_git("log", range_spec, "--pretty=format:%H\t%s")
     if log.returncode != 0:
-        return ids, ["<git-log-failed>"]
+        return implementation_ids, documentation_ids, ["<git-log-failed>"]
 
     range_entries = []
     range_shas = set()
@@ -904,9 +937,18 @@ def collect_merged_pr_linear_ids(range_spec, repo_slug):
                 if pr_num in seen_prs:
                     continue
                 seen_prs.add(pr_num)
-            ids.update(extract_linear_ids(payload.get("headRefName") or ""))
-            ids.update(extract_linear_ids(payload.get("title") or ""))
-    return ids, unresolved
+            head_ref = payload.get("headRefName") or ""
+            pr_ids = set(extract_linear_ids(head_ref))
+            pr_ids.update(extract_linear_ids(payload.get("title") or ""))
+            if not pr_ids:
+                continue
+            if is_documentation_stage_branch(head_ref):
+                documentation_ids.update(pr_ids)
+            elif is_implementation_stage_branch(head_ref):
+                implementation_ids.update(pr_ids)
+            # Other prefixes (release/, chore/, …) are not Released evidence.
+    documentation_only = documentation_ids - implementation_ids
+    return implementation_ids, documentation_only, unresolved
 
 
 changelog_ids = [part for part in changelog_csv.split(",") if part]
@@ -915,10 +957,14 @@ if current_ref is None:
     print("INCOMPLETE\trelease_ref_unavailable")
     sys.exit(0)
 
-prev_tag = resolve_previous_tag(version)
-if prev_tag:
+boundary_status, prev_tag = resolve_previous_boundary(version)
+if boundary_status == "unavailable":
+    print("INCOMPLETE\tprevious_release_boundary_unavailable")
+    sys.exit(0)
+if boundary_status == "ok":
     range_spec = "%s..%s" % (prev_tag, current_ref)
 else:
+    # Verified first release: no preceding semver tag after a successful tag -l.
     range_spec = current_ref
 
 repo_slug = resolve_repo_slug()
@@ -926,7 +972,9 @@ if not repo_slug:
     print("INCOMPLETE\t<repo-slug-unavailable>")
     sys.exit(0)
 
-merged_ids, unresolved = collect_merged_pr_linear_ids(range_spec, repo_slug)
+merged_ids, documentation_only_ids, unresolved = collect_merged_pr_linear_ids(
+    range_spec, repo_slug
+)
 if unresolved:
     print("INCOMPLETE\t%s" % ",".join(unresolved))
     sys.exit(0)
@@ -934,12 +982,18 @@ if unresolved:
 for issue in changelog_ids:
     if issue in merged_ids:
         print("KEEP\t%s" % issue)
+    elif issue in documentation_only_ids:
+        print("SKIP\t%s\tdocumentation_stage_pr_only" % issue)
     else:
         print("SKIP\t%s\tchangelog_mention_without_merged_pr" % issue)
 
 for issue in sorted(merged_ids):
     if issue not in changelog_ids:
         print("KEEP\t%s" % issue)
+
+for issue in sorted(documentation_only_ids):
+    if issue not in changelog_ids:
+        print("SKIP\t%s\tdocumentation_stage_pr_only" % issue)
 
 # Explicit success marker so zero-ID complete scope is not treated as helper failure.
 print("OK")
@@ -999,6 +1053,9 @@ PY
     case "$unresolved" in
       release_ref_unavailable)
         cleanup_log "RELEASE_SCOPE_INCOMPLETE reason=release_ref_unavailable"
+        ;;
+      previous_release_boundary_unavailable)
+        cleanup_log "RELEASE_SCOPE_INCOMPLETE reason=previous_release_boundary_unavailable"
         ;;
       *)
         cleanup_log "RELEASE_SCOPE_INCOMPLETE unresolved_shas=${unresolved}"

@@ -299,12 +299,19 @@ resolves associated PRs only through GitHub `commits/<sha>/pulls` (subject
 `(#N)` is never sufficient evidence). A PR is accepted when it is merged and
 its merge/head commit is in the range (or the associating range SHA when those
 fields are absent), regardless of the PR base branch (including nested
-`feature/*` or `develop-<slug>` parents). Linear IDs come from each PR’s
-`headRefName` / REST `head.ref` and `title` (not commit text or PR body). Changelog-only mentions —
+`feature/*` or `develop-<slug>` parents). Only implementation-stage head
+branches (`feature/*`, `fix/*`, `refactor/*`, `hotfix/*`) count as Released
+shipping evidence; merged `spec/*` and `implementation-plan/*` PRs are
+`RELEASE_SCOPE_SKIPPED issue=<ID> reason=documentation_stage_pr_only` when that
+is the only evidence. Linear IDs come from each PR’s `headRefName` / REST
+`head.ref` and `title` (not commit text or PR body). Changelog-only mentions —
 including cross-references such as “did not ship LEA-298” and expanded ranges —
 are skipped with
 `RELEASE_SCOPE_SKIPPED issue=<ID> reason=changelog_mention_without_merged_pr`
-(and appear under `release_scope_skipped` in component `--json` output). A fully
+(and appear under `release_scope_skipped` in component `--json` output). A
+verified first release (successful `git tag -l` with no preceding semver tag)
+may scan tip history; shallow clones or tag-list failures emit
+`RELEASE_SCOPE_INCOMPLETE reason=previous_release_boundary_unavailable`. A fully
 resolved range with zero Linear IDs is an empty scope (not incomplete). If the
 release ref is unavailable or PR resolution fails for any commit, the helper
 emits `RELEASE_SCOPE_INCOMPLETE` (`reason=release_ref_unavailable` or

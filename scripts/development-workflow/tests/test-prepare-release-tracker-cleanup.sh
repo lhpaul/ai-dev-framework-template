@@ -1785,6 +1785,212 @@ run_contains "linear_1982_feature_base_proposes_301" "LEA-301" "$output"
 run_contains "linear_1982_feature_base_tracker_issues" "TRACKER_ISSUES=" "$output"
 run_contains "linear_1982_feature_base_action" "TRACKER_ACTION=linear_mcp_or_api_required" "$output"
 
+# --- Documentation-stage PRs are not shipping evidence; fix/feature are ---
+repo_doc_stage="$TMP_ROOT/linear-1982-doc-stage"
+init_linear_git_repo "$repo_doc_stage"
+cat > "$repo_doc_stage/CHANGELOG.md" <<'MD'
+# Changelog
+
+## [Unreleased]
+
+## [1.29.0] - 2026-10-15
+
+- Mentions LEA-298 from docs-stage merges; also ships LEA-302 via fix PR.
+
+## [1.28.0] - 2026-10-01
+
+- Older.
+MD
+"$REAL_GIT" -C "$repo_doc_stage" add CHANGELOG.md .ai-dev-workflow.yaml scripts
+"$REAL_GIT" -C "$repo_doc_stage" commit -q -m "chore: baseline before v1.28.0"
+"$REAL_GIT" -C "$repo_doc_stage" tag v1.28.0
+"$REAL_GIT" -C "$repo_doc_stage" commit -q --allow-empty \
+  -m "Merge pull request #501 from example/spec/LEA-298-new-feature"
+sha_spec="$("$REAL_GIT" -C "$repo_doc_stage" rev-parse HEAD)"
+"$REAL_GIT" -C "$repo_doc_stage" commit -q --allow-empty \
+  -m "Merge pull request #502 from example/implementation-plan/LEA-298-new-feature"
+sha_plan="$("$REAL_GIT" -C "$repo_doc_stage" rev-parse HEAD)"
+"$REAL_GIT" -C "$repo_doc_stage" commit -q --allow-empty \
+  -m "Merge pull request #503 from example/fix/LEA-302-billing"
+sha_fix="$("$REAL_GIT" -C "$repo_doc_stage" rev-parse HEAD)"
+"$REAL_GIT" -C "$repo_doc_stage" tag v1.29.0
+write_linear_scope_gh \
+  "501|spec/LEA-298-new-feature|spec: LEA-298 new feature" \
+  "502|implementation-plan/LEA-298-new-feature|plan: LEA-298 new feature" \
+  "503|fix/LEA-302-billing|fix: LEA-302 billing" \
+  "commit:${sha_spec}|501" \
+  "commit:${sha_plan}|502" \
+  "commit:${sha_fix}|503"
+result="$(run_linear_scope_cleanup "$repo_doc_stage" v1.29.0 --from-changelog --best-effort)"
+status="$(printf '%s\n' "$result" | sed -n '1p')"
+output="$(printf '%s\n' "$result" | sed '1d')"
+run_test "linear_1982_doc_stage_exits_zero" "0" "$status"
+run_contains "linear_1982_doc_stage_skip_298" "RELEASE_SCOPE_SKIPPED issue=LEA-298 reason=documentation_stage_pr_only" "$output"
+run_contains "linear_1982_doc_stage_proposes_302" "TRACKER_ISSUES=LEA-302" "$output"
+run_not_contains "linear_1982_doc_stage_no_298_in_issues" "LEA-298," "$output"
+run_not_contains "linear_1982_doc_stage_no_298_alone" "TRACKER_ISSUES=LEA-298" "$output"
+
+# Same ID with an implementation PR → proposed even if docs-stage PRs also exist.
+repo_doc_and_impl="$TMP_ROOT/linear-1982-doc-and-impl"
+init_linear_git_repo "$repo_doc_and_impl"
+cat > "$repo_doc_and_impl/CHANGELOG.md" <<'MD'
+# Changelog
+
+## [Unreleased]
+
+## [1.29.0] - 2026-10-15
+
+- LEA-298 shipped after docs-stage then feature PR.
+
+## [1.28.0] - 2026-10-01
+
+- Older.
+MD
+"$REAL_GIT" -C "$repo_doc_and_impl" add CHANGELOG.md .ai-dev-workflow.yaml scripts
+"$REAL_GIT" -C "$repo_doc_and_impl" commit -q -m "chore: baseline before v1.28.0"
+"$REAL_GIT" -C "$repo_doc_and_impl" tag v1.28.0
+"$REAL_GIT" -C "$repo_doc_and_impl" commit -q --allow-empty \
+  -m "Merge pull request #511 from example/spec/LEA-298-new-feature"
+sha_spec2="$("$REAL_GIT" -C "$repo_doc_and_impl" rev-parse HEAD)"
+"$REAL_GIT" -C "$repo_doc_and_impl" commit -q --allow-empty \
+  -m "Merge pull request #512 from example/feature/LEA-298-new-feature"
+sha_feat="$("$REAL_GIT" -C "$repo_doc_and_impl" rev-parse HEAD)"
+"$REAL_GIT" -C "$repo_doc_and_impl" tag v1.29.0
+write_linear_scope_gh \
+  "511|spec/LEA-298-new-feature|spec: LEA-298 new feature" \
+  "512|feature/LEA-298-new-feature|feat: LEA-298 new feature" \
+  "commit:${sha_spec2}|511" \
+  "commit:${sha_feat}|512"
+result="$(run_linear_scope_cleanup "$repo_doc_and_impl" v1.29.0 --from-changelog --best-effort)"
+status="$(printf '%s\n' "$result" | sed -n '1p')"
+output="$(printf '%s\n' "$result" | sed '1d')"
+run_test "linear_1982_doc_plus_impl_exits_zero" "0" "$status"
+run_contains "linear_1982_doc_plus_impl_proposes_298" "TRACKER_ISSUES=LEA-298" "$output"
+run_not_contains "linear_1982_doc_plus_impl_no_doc_skip" "RELEASE_SCOPE_SKIPPED issue=LEA-298 reason=documentation_stage_pr_only" "$output"
+
+# --- First release (no preceding semver tag) may scan tip history ---
+repo_first="$TMP_ROOT/linear-1982-first-release"
+init_linear_git_repo "$repo_first"
+cat > "$repo_first/CHANGELOG.md" <<'MD'
+# Changelog
+
+## [Unreleased]
+
+## [1.0.0] - 2026-10-15
+
+- First release ships LEA-100.
+MD
+"$REAL_GIT" -C "$repo_first" add CHANGELOG.md .ai-dev-workflow.yaml scripts
+"$REAL_GIT" -C "$repo_first" commit -q -m "chore: initial"
+"$REAL_GIT" -C "$repo_first" commit -q --allow-empty \
+  -m "Merge pull request #10 from example/feature/LEA-100-first"
+sha_first="$("$REAL_GIT" -C "$repo_first" rev-parse HEAD)"
+"$REAL_GIT" -C "$repo_first" tag v1.0.0
+write_linear_scope_gh \
+  "10|feature/LEA-100-first|feat: LEA-100 first" \
+  "commit:${sha_first}|10"
+result="$(run_linear_scope_cleanup "$repo_first" v1.0.0 --from-changelog --best-effort)"
+status="$(printf '%s\n' "$result" | sed -n '1p')"
+output="$(printf '%s\n' "$result" | sed '1d')"
+run_test "linear_1982_first_release_exits_zero" "0" "$status"
+run_contains "linear_1982_first_release_proposes_100" "TRACKER_ISSUES=LEA-100" "$output"
+run_not_contains "linear_1982_first_release_no_boundary_incomplete" "previous_release_boundary_unavailable" "$output"
+
+# --- Tag listing failure → previous_release_boundary_unavailable ---
+repo_tag_fail="$TMP_ROOT/linear-1982-tag-list-fail"
+init_linear_git_repo "$repo_tag_fail"
+cat > "$repo_tag_fail/CHANGELOG.md" <<'MD'
+# Changelog
+
+## [Unreleased]
+
+## [1.29.0] - 2026-10-15
+
+- Would ship LEA-302 if boundary were available.
+MD
+"$REAL_GIT" -C "$repo_tag_fail" add CHANGELOG.md .ai-dev-workflow.yaml scripts
+"$REAL_GIT" -C "$repo_tag_fail" commit -q -m "chore: baseline before v1.28.0"
+"$REAL_GIT" -C "$repo_tag_fail" tag v1.28.0
+"$REAL_GIT" -C "$repo_tag_fail" commit -q --allow-empty \
+  -m "Merge pull request #88 from example/fix/LEA-302-billing-fix"
+sha_tag_fail="$("$REAL_GIT" -C "$repo_tag_fail" rev-parse HEAD)"
+"$REAL_GIT" -C "$repo_tag_fail" tag v1.29.0
+write_linear_scope_gh \
+  "88|fix/LEA-302-billing-fix|fix(billing): LEA-302" \
+  "commit:${sha_tag_fail}|88"
+TAG_FAIL_BIN="$TMP_ROOT/tag-fail-bin"
+mkdir -p "$TAG_FAIL_BIN"
+cat > "$TAG_FAIL_BIN/git" <<GITWRAP
+#!/usr/bin/env bash
+# Fail only the tag listing used for previous-boundary discovery.
+case " \$* " in
+  *" tag -l "*|*" tag --list "*) exit 1 ;;
+esac
+exec "$REAL_GIT" "\$@"
+GITWRAP
+chmod +x "$TAG_FAIL_BIN/git"
+result="$(
+  set +e
+  output="$(
+    cd "$repo_tag_fail" && PATH="$TAG_FAIL_BIN:$LINEAR_SCOPE_BIN:$(dirname "$REAL_GIT"):$PATH" \
+      LINEAR_SCOPE_MAP_FILE="$LINEAR_SCOPE_MAP_FILE" \
+      WORKFLOW_SKIP_FETCH=1 \
+      ./scripts/development-workflow/prepare-release-post-merge-cleanup.sh \
+      v1.29.0 --from-changelog --best-effort 2>&1
+  )"
+  rc=$?
+  set -e
+  printf '%s\n%s\n' "$rc" "$output"
+)"
+status="$(printf '%s\n' "$result" | sed -n '1p')"
+output="$(printf '%s\n' "$result" | sed '1d')"
+run_test "linear_1982_tag_list_fail_best_effort_exits_zero" "0" "$status"
+run_contains "linear_1982_tag_list_fail_incomplete" "RELEASE_SCOPE_INCOMPLETE reason=previous_release_boundary_unavailable" "$output"
+run_not_contains "linear_1982_tag_list_fail_no_302" "TRACKER_ISSUES=LEA-302" "$output"
+
+# --- Shallow clone → previous_release_boundary_unavailable ---
+repo_shallow_src="$TMP_ROOT/linear-1982-shallow-src"
+repo_shallow="$TMP_ROOT/linear-1982-shallow"
+init_linear_git_repo "$repo_shallow_src"
+cat > "$repo_shallow_src/CHANGELOG.md" <<'MD'
+# Changelog
+
+## [Unreleased]
+
+## [1.29.0] - 2026-10-15
+
+- Shallow tip must not invent historical scope.
+MD
+"$REAL_GIT" -C "$repo_shallow_src" add CHANGELOG.md .ai-dev-workflow.yaml scripts
+"$REAL_GIT" -C "$repo_shallow_src" commit -q -m "chore: baseline before v1.28.0"
+"$REAL_GIT" -C "$repo_shallow_src" tag v1.28.0
+"$REAL_GIT" -C "$repo_shallow_src" commit -q --allow-empty \
+  -m "Merge pull request #88 from example/fix/LEA-302-billing-fix"
+sha_shallow="$("$REAL_GIT" -C "$repo_shallow_src" rev-parse HEAD)"
+"$REAL_GIT" -C "$repo_shallow_src" tag v1.29.0
+write_linear_scope_gh \
+  "88|fix/LEA-302-billing-fix|fix(billing): LEA-302" \
+  "commit:${sha_shallow}|88"
+"$REAL_GIT" clone -q --depth 1 "file://${repo_shallow_src}" "$repo_shallow"
+# Ensure cleanup script + config exist in the shallow checkout.
+mkdir -p "$repo_shallow/scripts/development-workflow"
+cp "$REPO_ROOT/scripts/development-workflow/workflow-lib.sh" \
+  "$repo_shallow/scripts/development-workflow/workflow-lib.sh"
+cp "$REPO_ROOT/scripts/development-workflow/prepare-release-post-merge-cleanup.sh" \
+  "$repo_shallow/scripts/development-workflow/prepare-release-post-merge-cleanup.sh"
+chmod +x "$repo_shallow/scripts/development-workflow/prepare-release-post-merge-cleanup.sh"
+cat > "$repo_shallow/.ai-dev-workflow.yaml" <<'YAML'
+schema_version: 2
+issue_tracker:
+  provider: linear
+YAML
+result="$(run_linear_scope_cleanup "$repo_shallow" v1.29.0 --from-changelog --best-effort)"
+status="$(printf '%s\n' "$result" | sed -n '1p')"
+output="$(printf '%s\n' "$result" | sed '1d')"
+run_test "linear_1982_shallow_best_effort_exits_zero" "0" "$status"
+run_contains "linear_1982_shallow_incomplete" "RELEASE_SCOPE_INCOMPLETE reason=previous_release_boundary_unavailable" "$output"
+run_not_contains "linear_1982_shallow_no_302" "TRACKER_ISSUES=LEA-302" "$output"
+
 # github_projects --from-changelog still extracts #NNN from changelog text alone.
 repo_github_unchanged="$(fixture_github_projects_repo github-1982-unchanged)"
 result="$(run_cleanup_with_bin "$MILESTONE_BIN" "$repo_github_unchanged" v1.17.0 --from-changelog --best-effort)"
