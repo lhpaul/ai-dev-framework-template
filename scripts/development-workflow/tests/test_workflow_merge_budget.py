@@ -1791,11 +1791,21 @@ class ReleasePair(unittest.TestCase):
         self.command(['git','branch','-m','release/v1.2.3'])
         (self.repo/'CHANGELOG.md').write_text('# Changes\n\n## [1.2.3] - 2026-10-10\n- Shipped #12, #13 (ENG-12, ENG-13).\n')
         self.command(['git','add','CHANGELOG.md','.ai-dev-workflow.yaml'])
-        # Linear --from-changelog (#1982) requires merged-PR evidence in the
-        # release range; mirror GitHub merge subjects so ENG-* IDs stay in scope.
+        # Linear --from-changelog (#1982) resolves IDs from PR headRefName/title
+        # via PR number fast path + gh pr view (not from commit subject text).
         self.command(['git','commit','-qm','Merge pull request #112 from org/fix/ENG-12-item'])
+        eng12 = self.command(['git','rev-parse','HEAD']).stdout.strip()
         self.command(['git','commit','--allow-empty','-qm','Merge pull request #113 from org/fix/ENG-13-item'])
-        self.head = self.command(['git','rev-parse','HEAD']).stdout.strip()
+        eng13 = self.command(['git','rev-parse','HEAD']).stdout.strip()
+        self.head = eng13
+        self.data.setdefault('prs', {})['112'] = dict(
+            number=112, state='MERGED', headRefName='fix/ENG-12-item',
+            title='fix: ENG-12', mergedAt='2026-10-10T12:00:00Z', baseRefName='develop',
+            headRefOid=eng12, isInMergeQueue=False, autoMergeRequest=None)
+        self.data['prs']['113'] = dict(
+            number=113, state='MERGED', headRefName='fix/ENG-13-item',
+            title='fix: ENG-13', mergedAt='2026-10-10T12:00:00Z', baseRefName='develop',
+            headRefOid=eng13, isInMergeQueue=False, autoMergeRequest=None)
         self.command(['git','push','-q','origin','release/v1.2.3'])
         base = self.command(['git','rev-parse','develop']).stdout.strip()
         tree = self.command(['git','rev-parse','HEAD^{tree}']).stdout.strip()

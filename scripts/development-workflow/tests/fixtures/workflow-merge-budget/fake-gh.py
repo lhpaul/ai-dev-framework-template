@@ -110,8 +110,14 @@ if args[:2] == ['api', 'graphql']:
         emit({'data': {'user': {'projectV2': {'id': project_id}}, 'organization': {'projectV2': {'id': project_id}}}})
     sys.exit(1)
 if args[:2] == ['pr', 'view']:
+    if str(args[2]) not in state.get('prs', {}):
+        sys.exit(1)
     value = dict(state['prs'][str(args[2])])
-    value.update(body=state.get('body', ''), title=state.get('title', ''), commits=[],
+    value.setdefault('title', state.get('title', value.get('title', '')))
+    value.setdefault('mergedAt', value.get('mergedAt') or value.get('merged_at'))
+    value.setdefault('baseRefName', value.get('baseRefName', 'develop'))
+    value.setdefault('headRefName', value.get('headRefName', ''))
+    value.update(body=state.get('body', value.get('body', '')), commits=[],
                  isCrossRepository=state.get('fork', False), labels=[], isDraft=False)
     emit(value)
 if args[:2] == ['pr', 'merge']:
@@ -211,6 +217,11 @@ if args[:1] == ['api']:
             sys.exit(1)
         emit({'number': int(match[2]), 'title': 'Fixture issue #'+match[2], 'state': 'closed',
               'milestone': state.get('issueMilestones', {}).get(match[2])})
+    commit_pulls = re.fullmatch(r'repos/([^/]+/[^/]+)/commits/([0-9a-f]{40})/pulls', endpoint)
+    if commit_pulls:
+        if state.get('commitPullsOutage'):
+            sys.exit(1)
+        emit(state.get('commitPulls', {}).get(commit_pulls[2], []))
     commit = re.fullmatch(r'repos/([^/]+/[^/]+)/git/commits/([0-9a-f]{40})', endpoint)
     if commit and commit[2] in state.get('gitCommits', {}):
         emit(state['gitCommits'][commit[2]])
