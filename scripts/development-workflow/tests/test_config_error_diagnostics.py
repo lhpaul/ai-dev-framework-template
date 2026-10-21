@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""AC4 binding K01-K26 plus55 real consumers; fabricated opaque content only."""
+"""AC4 binding K01-K28 plus55 real consumers; fabricated opaque content only."""
 from __future__ import annotations
 
 import importlib.util
@@ -695,6 +695,43 @@ api=runpy.run_path(sys.argv[1]); print(json.dumps(api['dependency_fields'](sys.a
 
     def test_A06_classifier_execution(self): self.classifier_execution(17)
     def test_A07_classifier_response(self): self.classifier_execution(0)
+
+
+    def rejected_graduation_provider(self, script):
+        '''Reach the real shared-provider rejection before any remote operation.'''
+        self.opaque = 'opaqueconfigurationmaterial'
+        self.f.shared.write_text('issue_tracker:\n  provider: ' + self.opaque + '\n')
+        syntax = self.cli('workflow-config-resolver.py', 'yaml-source-check', '--file', str(self.f.shared))
+        self.assertEqual(syntax.returncode, 0, syntax.stdout + syntax.stderr)
+        self.f.env['WORKFLOW_TARGET_GITHUB_REPO'] = 'fixture/repo'
+        auth_calls = self.f.root / 'graduation-auth-calls'
+        provider_calls = self.f.root / 'graduation-provider-calls'
+        gh = self.f.bin / 'gh'
+        gh.write_text('#!/bin/sh\nif [ "$1:$2" = auth:status ]; then\n' +
+                      '  printf "auth\\n" >>' + shlex.quote(str(auth_calls)) + '\n  exit 0\nfi\n' +
+                      'printf "unexpected-provider\\n" >>' + shlex.quote(str(provider_calls)) + '\nexit 99\n')
+        gh.chmod(0o755)
+        args = ['--graduation-pr', '1993', '--epic', '1993']
+        if script == 'graduation-closeout.sh':
+            args += ['--slug', 'synthetic']
+        for shell in ('/bin/bash', '/opt/homebrew/bin/bash'):
+            if not Path(shell).exists():
+                continue
+            with self.subTest(shell=shell, entry=script):
+                auth_calls.write_text('')
+                result = self.safe(self.run_command([shell, str(self.f.runtime / script), *args]), 64)
+                self.assertEqual(result.stdout, '')
+                self.assertEqual(result.stderr,
+                                 'configuration: configuration validation error; key=issue_tracker.provider\n')
+                self.assertEqual(auth_calls.read_text().splitlines(), ['auth'])
+                self.assertFalse(provider_calls.exists(), 'remote provider operation reached')
+                self.assertFalse(self.f.log.exists(), 'unexpected mutation')
+
+    def test_K27_graduation_rejected_provider_metadata(self):
+        self.rejected_graduation_provider('graduation-closeout.sh')
+
+    def test_K28_graduation_merged_pr_rejected_provider_metadata(self):
+        self.rejected_graduation_provider('graduation-closeout-from-merged-pr.sh')
 
 
 def consumer_test(row):

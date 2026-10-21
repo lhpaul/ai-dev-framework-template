@@ -21,6 +21,8 @@
 # covers: scripts/development-workflow/workflow-batch-plan.sh
 # covers: scripts/development-workflow/workflow-next-action.sh
 # covers: scripts/development-workflow/workflow-lib.sh
+# covers: scripts/development-workflow/graduation-closeout.sh
+# covers: scripts/development-workflow/graduation-closeout-from-merged-pr.sh
 # covers: scripts/development-workflow/tests/test_config_error_diagnostics.py
 # covers: scripts/development-workflow/tests/test_private_source_consumers.py
 # covers: .claude/commands/sync-template.md
