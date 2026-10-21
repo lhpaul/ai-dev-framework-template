@@ -363,11 +363,11 @@ repo_from_changelog="$(fixture_repo from-changelog)"
 result="$(run_cleanup "$repo_from_changelog" v1.17.0 --from-changelog)"
 status="$(printf '%s\n' "$result" | sed -n '1p')"
 output="$(printf '%s\n' "$result" | sed '1d')"
-# Without a release git range / merged-PR evidence, Linear changelog IDs are
-# skipped rather than proposed as Released (#1982).
+# Without a verified release tag / --release-head, Linear --from-changelog fails
+# closed rather than falling back to checkout HEAD (#1982 Step 7a).
 run_test "linear_from_changelog_exits_nonzero" "1" "$status"
-run_contains "linear_from_changelog_skips_without_pr" "RELEASE_SCOPE_SKIPPED issue=LEA-132 reason=release_range_unavailable" "$output"
-run_contains "linear_from_changelog_no_scope" "TRACKER_INCOMPLETE=1 REASON=no_issue_scope" "$output"
+run_contains "linear_from_changelog_incomplete_without_release_ref" "RELEASE_SCOPE_INCOMPLETE reason=release_ref_unavailable" "$output"
+run_contains "linear_from_changelog_scope_unavailable" "TRACKER_INCOMPLETE=1 REASON=changelog_scope_unavailable" "$output"
 run_not_contains "linear_from_changelog_does_not_propose_changelog_only" "TRACKER_ISSUES=LEA-132,LEA-133,LEA-134,LEA-140" "$output"
 
 repo_best_effort="$(fixture_repo best-effort)"
@@ -375,7 +375,8 @@ result="$(run_cleanup "$repo_best_effort" v1.17.0 --from-changelog --best-effort
 status="$(printf '%s\n' "$result" | sed -n '1p')"
 output="$(printf '%s\n' "$result" | sed '1d')"
 run_test "linear_best_effort_exits_zero" "0" "$status"
-run_contains "linear_best_effort_no_scope" "TRACKER_INCOMPLETE=1 REASON=no_issue_scope" "$output"
+run_contains "linear_best_effort_incomplete_ref" "RELEASE_SCOPE_INCOMPLETE reason=release_ref_unavailable" "$output"
+run_contains "linear_best_effort_scope_unavailable" "TRACKER_INCOMPLETE=1 REASON=changelog_scope_unavailable" "$output"
 run_not_contains "linear_best_effort_no_false_released_handoff" "TRACKER_ACTION=linear_mcp_or_api_required" "$output"
 
 repo_custom_branch="$(fixture_repo custom-branch)"
@@ -1244,6 +1245,8 @@ export LINEAR_SCOPE_MAP_FILE
 
 write_linear_scope_gh() {
   # Args: "pr_number|headRefName|title" and optional "commit:<sha>|pr_number".
+  # Optional leading "format:rest" makes commits/<sha>/pulls return REST-shaped
+  # JSON (head.ref / base.ref / merged_at) so branch-only IDs are exercised.
   : > "$LINEAR_SCOPE_MAP_FILE"
   local entry
   for entry in "$@"; do
@@ -1252,11 +1255,14 @@ write_linear_scope_gh() {
   cat > "$LINEAR_SCOPE_BIN/gh" <<'MOCK_GH_LINEAR_SCOPE'
 #!/usr/bin/env bash
 MAP_FILE="${LINEAR_SCOPE_MAP_FILE:?}"
+map_uses_rest_format() {
+  grep -qx 'format:rest' "$MAP_FILE" 2>/dev/null
+}
 lookup_pr() {
   local num="$1" line rest head title
   while IFS= read -r line || [ -n "$line" ]; do
     case "$line" in
-      commit:*) continue ;;
+      commit:*|format:*) continue ;;
     esac
     case "$line" in
       "${num}|"*)
@@ -1271,6 +1277,25 @@ lookup_pr() {
   done < "$MAP_FILE"
   return 1
 }
+lookup_pr_rest() {
+  local num="$1" line rest head title
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in
+      commit:*|format:*) continue ;;
+    esac
+    case "$line" in
+      "${num}|"*)
+        rest="${line#*|}"
+        head="${rest%%|*}"
+        title="${rest#*|}"
+        printf '{"number":%s,"head":{"ref":"%s"},"title":"%s","merged_at":"2026-10-14T12:00:00Z","base":{"ref":"main"}}\n' \
+          "$num" "$head" "$title"
+        return 0
+        ;;
+    esac
+  done < "$MAP_FILE"
+  return 1
+}
 lookup_commit_pulls() {
   local sha="$1" line pr_num json parts
   parts="["
@@ -1278,7 +1303,11 @@ lookup_commit_pulls() {
     case "$line" in
       "commit:${sha}|"*)
         pr_num="${line##*|}"
-        json="$(lookup_pr "$pr_num")" || return 1
+        if map_uses_rest_format; then
+          json="$(lookup_pr_rest "$pr_num")" || return 1
+        else
+          json="$(lookup_pr "$pr_num")" || return 1
+        fi
         if [ "$parts" = "[" ]; then
           parts="${parts}${json}"
         else
@@ -1418,6 +1447,17 @@ run_test "linear_explicit_issue_exits_zero" "0" "$status"
 run_contains "linear_explicit_issue_still_proposed" "TRACKER_ISSUES=LEA-298" "$output"
 run_not_contains "linear_explicit_issue_not_filtered" "RELEASE_SCOPE_SKIPPED issue=LEA-298" "$output"
 
+# Combined --from-changelog --issue: explicit override is unioned, never filtered.
+repo_linear_combined="$(fixture_linear_scope_repo linear-1982-combined)"
+result="$(run_linear_scope_cleanup "$repo_linear_combined" v1.29.0 --from-changelog --issue LEA-298 --best-effort)"
+status="$(printf '%s\n' "$result" | sed -n '1p')"
+output="$(printf '%s\n' "$result" | sed '1d')"
+run_test "linear_1982_combined_exits_zero" "0" "$status"
+run_contains "linear_1982_combined_keeps_explicit_298" "LEA-298" "$output"
+run_contains "linear_1982_combined_keeps_merged_302" "LEA-302" "$output"
+run_contains "linear_1982_combined_tracker_issues" "TRACKER_ISSUES=" "$output"
+run_not_contains "linear_1982_combined_no_skip_explicit" "RELEASE_SCOPE_SKIPPED issue=LEA-298" "$output"
+
 # --- (a) Leasity false negatives: PR-only IDs with no CHANGELOG entry ---
 repo_pr_only="$TMP_ROOT/linear-1982-pr-only"
 init_linear_git_repo "$repo_pr_only"
@@ -1490,6 +1530,76 @@ output="$(printf '%s\n' "$result" | sed '1d')"
 run_test "linear_1982b_hotfix_exits_zero" "0" "$status"
 run_contains "linear_1982b_proposes_346" "TRACKER_ISSUES=LEA-346" "$output"
 run_contains "linear_1982b_action" "TRACKER_ACTION=linear_mcp_or_api_required" "$output"
+
+# --- REST-shaped commits/<sha>/pulls: ID only in head.ref, title has no ID ---
+repo_rest_hotfix="$TMP_ROOT/linear-1982-rest-head-ref"
+init_linear_git_repo "$repo_rest_hotfix"
+cat > "$repo_rest_hotfix/CHANGELOG.md" <<'MD'
+# Changelog
+
+## [Unreleased]
+
+## [1.29.1] - 2026-10-16
+
+- Hotfix release notes (no Linear ID for the ship).
+
+## [1.29.0] - 2026-10-15
+
+- Prior release.
+MD
+"$REAL_GIT" -C "$repo_rest_hotfix" add CHANGELOG.md .ai-dev-workflow.yaml scripts
+"$REAL_GIT" -C "$repo_rest_hotfix" commit -q -m "chore: baseline v1.29.0"
+"$REAL_GIT" -C "$repo_rest_hotfix" tag v1.29.0
+"$REAL_GIT" -C "$repo_rest_hotfix" commit -q --allow-empty \
+  -m "hotfix: stabilize billing calculator under empty invoice lines"
+rest_hotfix_sha="$("$REAL_GIT" -C "$repo_rest_hotfix" rev-parse HEAD)"
+"$REAL_GIT" -C "$repo_rest_hotfix" tag v1.29.1
+write_linear_scope_gh \
+  "format:rest" \
+  "782|hotfix/LEA-346-billing-calculator|hotfix: stabilize billing calculator" \
+  "commit:${rest_hotfix_sha}|782"
+result="$(run_linear_scope_cleanup "$repo_rest_hotfix" v1.29.1 --from-changelog --best-effort)"
+status="$(printf '%s\n' "$result" | sed -n '1p')"
+output="$(printf '%s\n' "$result" | sed '1d')"
+run_test "linear_1982_rest_head_ref_exits_zero" "0" "$status"
+run_contains "linear_1982_rest_head_ref_proposes_346" "TRACKER_ISSUES=LEA-346" "$output"
+run_contains "linear_1982_rest_head_ref_action" "TRACKER_ACTION=linear_mcp_or_api_required" "$output"
+
+# --- Missing release tag: never fall back to HEAD (later develop PR not proposed) ---
+repo_missing_tag="$TMP_ROOT/linear-1982-missing-tag"
+init_linear_git_repo "$repo_missing_tag"
+cat > "$repo_missing_tag/CHANGELOG.md" <<'MD'
+# Changelog
+
+## [Unreleased]
+
+## [1.29.0] - 2026-10-15
+
+- Changelog names LEA-302 but the release tag is absent from this checkout.
+
+## [1.28.0] - 2026-10-01
+
+- Older.
+MD
+"$REAL_GIT" -C "$repo_missing_tag" add CHANGELOG.md .ai-dev-workflow.yaml scripts
+"$REAL_GIT" -C "$repo_missing_tag" commit -q -m "chore: baseline before v1.28.0"
+"$REAL_GIT" -C "$repo_missing_tag" tag v1.28.0
+"$REAL_GIT" -C "$repo_missing_tag" commit -q --allow-empty \
+  -m "Merge pull request #88 from example/fix/LEA-302-billing-fix"
+"$REAL_GIT" -C "$repo_missing_tag" commit -q --allow-empty \
+  -m "Merge pull request #99 from example/feature/LEA-999-later-develop"
+# Deliberately omit v1.29.0 so a HEAD fallback would see LEA-999.
+write_linear_scope_gh \
+  "88|fix/LEA-302-billing-fix|fix(billing): LEA-302" \
+  "99|feature/LEA-999-later-develop|feat: LEA-999 later develop"
+result="$(run_linear_scope_cleanup "$repo_missing_tag" v1.29.0 --from-changelog --best-effort)"
+status="$(printf '%s\n' "$result" | sed -n '1p')"
+output="$(printf '%s\n' "$result" | sed '1d')"
+run_test "linear_1982_missing_tag_best_effort_exits_zero" "0" "$status"
+run_contains "linear_1982_missing_tag_incomplete" "RELEASE_SCOPE_INCOMPLETE reason=release_ref_unavailable" "$output"
+run_not_contains "linear_1982_missing_tag_no_999" "LEA-999" "$output"
+run_not_contains "linear_1982_missing_tag_no_302_issues" "TRACKER_ISSUES=LEA-302" "$output"
+run_not_contains "linear_1982_missing_tag_no_tracker_action" "TRACKER_ACTION=linear_mcp_or_api_required" "$output"
 
 # --- (c) Commit mentions LEA-298 but PR branch/title do not → not proposed ---
 repo_commit_mentions="$TMP_ROOT/linear-1982-commit-mention"

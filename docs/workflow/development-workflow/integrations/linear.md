@@ -293,18 +293,21 @@ and then transition every listed `TRACKER_ISSUES` item from `Merged` to
 
 When cleanup is invoked with `--from-changelog`, Linear scope is **not** the set
 of IDs matched in the CHANGELOG version section alone (#1982). The helper
-derives scope from merged PRs in the release git range (previous tag → release
-tag/head): for each commit it resolves associated PRs through GitHub
-(`commits/<sha>/pulls`; commit subjects may identify a PR number only). Linear
-IDs come only from each PR’s `headRefName` and `title` (not commit text or PR
-body), so hotfixes whose commits omit the ID still resolve via the PR.
-Changelog-only mentions — including cross-references such as “did not ship
-LEA-298” and expanded ranges — are skipped with
+derives scope from merged PRs in the release git range (previous tag → verified
+release tag or `--release-head`; never checkout `HEAD`): for each commit it
+resolves associated PRs through GitHub (`commits/<sha>/pulls`; commit subjects
+may identify a PR number only). Linear IDs come from each PR’s `headRefName` /
+REST `head.ref` and `title` (not commit text or PR body), so hotfixes whose
+commits omit the ID still resolve via the PR branch even when the REST payload
+has no GraphQL `headRefName`. Changelog-only mentions — including
+cross-references such as “did not ship LEA-298” and expanded ranges — are
+skipped with
 `RELEASE_SCOPE_SKIPPED issue=<ID> reason=changelog_mention_without_merged_pr`
-(and appear under `release_scope_skipped` in component `--json` output). If PR
-resolution fails for any commit, the helper emits `RELEASE_SCOPE_INCOMPLETE`
-and fails closed. Pass explicit `--issue` / `--issues` when you intentionally
-override that filter.
+(and appear under `release_scope_skipped` in component `--json` output). If the
+release ref is unavailable or PR resolution fails for any commit, the helper
+emits `RELEASE_SCOPE_INCOMPLETE` (`reason=release_ref_unavailable` or
+`unresolved_shas=...`) and fails closed. Explicit `--issue` / `--issues` are
+unioned with the derived scope and are never filtered.
 
 ---
 

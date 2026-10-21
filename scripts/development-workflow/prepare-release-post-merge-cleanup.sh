@@ -17,12 +17,14 @@
 #   release scope. Scope is Linear IDs from merged PRs in the previous-tag..release
 #   commit range: each commit is resolved to its PR(s) via GitHub
 #   (commits/<sha>/pulls, with subject "#N" / "Merge pull request #N" only as a
-#   fast path to the PR number). IDs are taken only from each PR's headRefName
-#   and title — never from commit text or PR body (avoids "related to LEA-298"
-#   false positives; hotfixes whose commits omit the ID still resolve via the
-#   PR). Changelog-only mentions are RELEASE_SCOPE_SKIPPED. If PR resolution
-#   fails for any commit, emit RELEASE_SCOPE_INCOMPLETE and fail closed.
-#   Explicit --issue/--issues are unchanged for every provider.
+#   fast path to the PR number). IDs are taken only from each PR's headRefName /
+#   REST head.ref and title — never from commit text or PR body (avoids
+#   "related to LEA-298" false positives; hotfixes whose commits omit the ID
+#   still resolve via the PR branch). Changelog-only mentions are
+#   RELEASE_SCOPE_SKIPPED. If the verified release ref is unavailable or PR
+#   resolution fails for any commit, emit RELEASE_SCOPE_INCOMPLETE and fail
+#   closed (never fall back to checkout HEAD). Explicit --issue/--issues are
+#   unioned with the derived scope and never filtered, for every provider.
 #
 # Examples:
 #   ./scripts/development-workflow/prepare-release-post-merge-cleanup.sh 1.2.3
@@ -85,12 +87,16 @@ COMPONENT_LOCK_CREATED=false
 # component-release smoke flow parses with jq -- see cleanup_log() below.
 COMPONENT_JSON_MODE=false
 declare -a ISSUE_NUMBERS=()
+# Explicit --issue/--issues captured at parse time; Linear --from-changelog
+# filter must never drop these (unioned after derived scope).
+declare -a EXPLICIT_ISSUE_NUMBERS=()
 
 usage() {
   echo "Usage: $0 <version|release-branch> [--repo NAME --repo-root PATH --evidence-file PATH] [--backport-base BRANCH] [--from-changelog] [--issue N]... [--issues N,N,...] [--best-effort] [--json] [--inspect-targets --release-head SHA [--target-root PATH]] [--merge-session PATH]" >&2
   echo "  --from-changelog  GitHub: scope from CHANGELOG #NNN refs. Linear: scope from" >&2
   echo "                    merged PRs in the release commit range (IDs from PR" >&2
-  echo "                    headRefName/title only); changelog-only IDs are skipped." >&2
+  echo "                    headRefName/head.ref and title); changelog-only IDs" >&2
+  echo "                    are skipped. Explicit --issue/--issues are always kept." >&2
 }
 
 # Parallel arrays populated when Linear --from-changelog omits changelog-only IDs.
@@ -492,8 +498,26 @@ parse_issue_csv() {
       exit 2
     fi
     ISSUE_NUMBERS+=("$part")
+    EXPLICIT_ISSUE_NUMBERS+=("$part")
   done
   IFS="$old_ifs"
+}
+
+# Append explicit --issue/--issues into ISSUE_NUMBERS without filtering them.
+union_explicit_issue_numbers() {
+  local issue existing candidate
+  for issue in ${EXPLICIT_ISSUE_NUMBERS[@]+"${EXPLICIT_ISSUE_NUMBERS[@]}"}; do
+    existing=false
+    for candidate in ${ISSUE_NUMBERS[@]+"${ISSUE_NUMBERS[@]}"}; do
+      if [ "$candidate" = "$issue" ]; then
+        existing=true
+        break
+      fi
+    done
+    if [ "$existing" = false ]; then
+      ISSUE_NUMBERS+=("$issue")
+    fi
+  done
 }
 
 append_issues_from_changelog() {
@@ -607,18 +631,20 @@ PY
 
 # filter_linear_changelog_scope_by_merged_prs <version> <git_root>
 #
-# Replaces ISSUE_NUMBERS with Linear IDs from merged PRs in the release git
-# range (previous semver tag → release tag / RELEASE_HEAD / HEAD).
+# Replaces changelog-derived ISSUE_NUMBERS with Linear IDs from merged PRs in
+# the release git range (previous semver tag → verified release tag or
+# RELEASE_HEAD). Never uses checkout HEAD as the release tip.
 #
 # For every commit in the range, resolve associated merged PR(s) through
 # GitHub (`gh api repos/{owner}/{repo}/commits/<sha>/pulls`). Commit subjects
 # matching "Merge pull request #N" or trailing "(#N)" are only a fast path to
 # the PR number — never ID evidence. Linear IDs come only from each PR's
-# headRefName and title (not body, not commit text) so hotfix commits that omit
-# the ID still resolve via the PR, while "related to LEA-298" commit text cannot
-# enlarge scope. Changelog-only IDs are RELEASE_SCOPE_SKIPPED. If PR resolution
-# fails for any commit, emit RELEASE_SCOPE_INCOMPLETE and return non-zero
-# (fail closed; operator may pass --issue/--issues).
+# headRefName / REST head.ref and title (not body, not commit text) so hotfix
+# commits that omit the ID still resolve via the PR branch, while
+# "related to LEA-298" commit text cannot enlarge scope. Changelog-only IDs are
+# RELEASE_SCOPE_SKIPPED. Explicit --issue/--issues stay outside this filter and
+# are unioned afterward. If the release ref is unavailable or PR resolution
+# fails for any commit, emit RELEASE_SCOPE_INCOMPLETE and return non-zero.
 filter_linear_changelog_scope_by_merged_prs() {
   local version="$1"
   local git_root="$2"
@@ -626,10 +652,25 @@ filter_linear_changelog_scope_by_merged_prs() {
   local filter_out=""
   local line issue reason proposed unresolved
   local -a kept=()
+  local -a changelog_only=()
   local filter_status=0
+  local candidate is_explicit
 
-  if [ "${#ISSUE_NUMBERS[@]}" -gt 0 ]; then
-    changelog_csv="$(IFS=,; printf '%s' "${ISSUE_NUMBERS[*]}")"
+  # Changelog-derived IDs only — explicit CLI overrides are never SKIP-filtered.
+  for candidate in ${ISSUE_NUMBERS[@]+"${ISSUE_NUMBERS[@]}"}; do
+    is_explicit=false
+    for issue in ${EXPLICIT_ISSUE_NUMBERS[@]+"${EXPLICIT_ISSUE_NUMBERS[@]}"}; do
+      if [ "$issue" = "$candidate" ]; then
+        is_explicit=true
+        break
+      fi
+    done
+    if [ "$is_explicit" = false ]; then
+      changelog_only+=("$candidate")
+    fi
+  done
+  if [ "${#changelog_only[@]}" -gt 0 ]; then
+    changelog_csv="$(IFS=,; printf '%s' "${changelog_only[*]}")"
   fi
 
   filter_out="$(
@@ -675,18 +716,21 @@ def normalize_version(value):
 
 
 def resolve_current_ref():
+    """Verified release tip only: --release-head SHA or the release tag.
+
+    Never falls back to checkout HEAD — a newer develop tip would silently
+    enlarge scope past what shipped in the requested release.
+    """
     if head and re.fullmatch(r"[0-9a-f]{40}", head):
         probe = run_git("rev-parse", "--verify", "--quiet", head + "^{commit}")
         if probe.returncode == 0:
             return head
+        return None
     bare = normalize_version(version)
     for candidate in ("refs/tags/v" + bare, "refs/tags/" + bare, "v" + bare, bare):
         probe = run_git("rev-parse", "--verify", "--quiet", candidate + "^{commit}")
         if probe.returncode == 0:
             return candidate
-    probe = run_git("rev-parse", "--verify", "--quiet", "HEAD")
-    if probe.returncode == 0 and probe.stdout.strip():
-        return "HEAD"
     return None
 
 
@@ -762,6 +806,35 @@ def fast_path_pr_numbers(subject):
     return numbers
 
 
+def normalize_pr_payload(payload):
+    """Normalize GraphQL (gh pr view) and REST (commits/<sha>/pulls) shapes.
+
+    REST responses expose head.ref / base.ref / merged_at; GraphQL uses
+    headRefName / baseRefName / mergedAt. Branch-only Linear IDs (hotfix
+    head.ref) must not be dropped when title omits the ID.
+    """
+    if not isinstance(payload, dict):
+        return None
+    head_ref = payload.get("headRefName") or ""
+    if not head_ref:
+        head_obj = payload.get("head")
+        if isinstance(head_obj, dict):
+            head_ref = head_obj.get("ref") or ""
+    base_ref = payload.get("baseRefName") or ""
+    if not base_ref:
+        base_obj = payload.get("base")
+        if isinstance(base_obj, dict):
+            base_ref = base_obj.get("ref") or ""
+    merged_at = payload.get("mergedAt") or payload.get("merged_at") or ""
+    return {
+        "number": payload.get("number"),
+        "headRefName": head_ref,
+        "title": payload.get("title") or "",
+        "mergedAt": merged_at,
+        "baseRefName": base_ref,
+    }
+
+
 def fetch_pr(pr_num, pr_cache):
     if pr_num in pr_cache:
         return pr_cache[pr_num]
@@ -782,7 +855,7 @@ def fetch_pr(pr_num, pr_cache):
         pr_cache[pr_num] = None
         return None
     try:
-        payload = json.loads(view.stdout)
+        payload = normalize_pr_payload(json.loads(view.stdout))
     except Exception:
         pr_cache[pr_num] = None
         return None
@@ -810,12 +883,17 @@ def pulls_for_commit(sha, repo_slug, commit_cache):
     if not isinstance(payload, list):
         commit_cache[sha] = None
         return None
-    commit_cache[sha] = payload
-    return payload
+    normalized = []
+    for item in payload:
+        norm = normalize_pr_payload(item)
+        if norm is not None:
+            normalized.append(norm)
+    commit_cache[sha] = normalized
+    return normalized
 
 
 def collect_merged_pr_linear_ids(range_spec, repo_slug):
-    """Return (ids, unresolved_shas). IDs come only from PR headRefName/title."""
+    """Return (ids, unresolved_shas). IDs from PR headRefName/head.ref + title."""
     ids = set()
     unresolved = []
     pr_cache = {}
@@ -850,12 +928,9 @@ def collect_merged_pr_linear_ids(range_spec, repo_slug):
             pr_payloads = pulls
 
         for payload in pr_payloads:
-            merged_at = payload.get("mergedAt") or payload.get("merged_at")
-            if not merged_at:
+            if not payload.get("mergedAt"):
                 continue
-            base_ref = payload.get("baseRefName") or (
-                (payload.get("base") or {}).get("ref") if isinstance(payload.get("base"), dict) else ""
-            )
+            base_ref = payload.get("baseRefName") or ""
             if base_ref and not acceptable_base(base_ref):
                 continue
             ids.update(extract_linear_ids(payload.get("headRefName") or ""))
@@ -866,8 +941,7 @@ def collect_merged_pr_linear_ids(range_spec, repo_slug):
 changelog_ids = [part for part in changelog_csv.split(",") if part]
 current_ref = resolve_current_ref()
 if current_ref is None:
-    for issue in changelog_ids:
-        print("SKIP\t%s\trelease_range_unavailable" % issue)
+    print("INCOMPLETE\trelease_ref_unavailable")
     sys.exit(0)
 
 prev_tag = resolve_previous_tag(version)
@@ -886,11 +960,6 @@ if unresolved:
     print("INCOMPLETE\t%s" % ",".join(unresolved))
     sys.exit(0)
 
-if not merged_ids and current_ref == "HEAD" and not head:
-    for issue in changelog_ids:
-        print("SKIP\t%s\trelease_range_unavailable" % issue)
-    sys.exit(0)
-
 for issue in changelog_ids:
     if issue in merged_ids:
         print("KEEP\t%s" % issue)
@@ -904,10 +973,11 @@ PY
   )" || filter_status=$?
 
   if [ "$filter_status" -ne 0 ] || [ -z "$filter_out" ]; then
-    for issue in ${ISSUE_NUMBERS[@]+"${ISSUE_NUMBERS[@]}"}; do
+    for issue in ${changelog_only[@]+"${changelog_only[@]}"}; do
       record_release_scope_skip "$issue" "merged_pr_evidence_unavailable"
     done
     ISSUE_NUMBERS=()
+    union_explicit_issue_numbers
     cleanup_log "RELEASE_SCOPE_INCOMPLETE reason=filter_helper_failed"
     return 1
   fi
@@ -938,7 +1008,14 @@ PY
   done <<< "$filter_out"
 
   if [ -n "$unresolved" ]; then
-    cleanup_log "RELEASE_SCOPE_INCOMPLETE unresolved_shas=${unresolved}"
+    case "$unresolved" in
+      release_ref_unavailable)
+        cleanup_log "RELEASE_SCOPE_INCOMPLETE reason=release_ref_unavailable"
+        ;;
+      *)
+        cleanup_log "RELEASE_SCOPE_INCOMPLETE unresolved_shas=${unresolved}"
+        ;;
+    esac
     if [ -n "$changelog_csv" ]; then
       local old_ifs="$IFS" part
       IFS=','
@@ -950,10 +1027,12 @@ PY
       IFS="$old_ifs"
     fi
     ISSUE_NUMBERS=()
+    union_explicit_issue_numbers
     return 1
   fi
 
   ISSUE_NUMBERS=("${kept[@]+"${kept[@]}"}")
+  union_explicit_issue_numbers
   if [ "${#ISSUE_NUMBERS[@]}" -gt 0 ]; then
     cleanup_log "Linear --from-changelog scope from merged PRs in release range: $(IFS=,; printf '%s' "${ISSUE_NUMBERS[*]}")"
   else
@@ -1506,6 +1585,7 @@ while [ $# -gt 0 ]; do
         exit 2
       fi
       ISSUE_NUMBERS+=("$2")
+      EXPLICIT_ISSUE_NUMBERS+=("$2")
       shift 2
       ;;
     --issues)
