@@ -79,8 +79,8 @@ workflow_config_provider() {
   local config_file="${2:-$WORKFLOW_FIXTURE_REPO/.ai-dev-workflow.yaml}"
   [ -f "$config_file" ] || return 0
   awk -v section="$section" '
-    $0 ~ ("^" section ":[[:space:]]*$") { in_section = 1; next }
-    in_section && /^[^[:space:]#].*:[[:space:]]*$/ { exit }
+    $0 ~ ("^" section ":[[:space:]]*(#.*)?$") { in_section = 1; next }
+    in_section && /^[^[:space:]#].*:[[:space:]]*(#.*)?$/ { exit }
     in_section && /^[[:space:]][[:space:]]provider:[[:space:]]*/ {
       line = $0
       sub(/^[[:space:]]*provider:[[:space:]]*/, "", line)
@@ -91,6 +91,39 @@ workflow_config_provider() {
       exit
     }
   ' "$config_file"
+}
+
+workflow_issue_tracker_provider_declared_in_file() {
+  local config_file="$1"
+  [ -f "$config_file" ] || return 1
+  awk '
+    /^issue_tracker:[[:space:]]*(#.*)?$/ { in_section = 1; next }
+    in_section && /^[^[:space:]#]/ { exit 1 }
+    in_section && /^[[:space:]][[:space:]]provider:[[:space:]]*/ { found = 1; exit }
+    END { exit(found ? 0 : 1) }
+  ' "$config_file"
+}
+
+workflow_graduation_closeout_tracker_provider_raw() {
+  local repo_root="${1:-$WORKFLOW_FIXTURE_REPO}"
+  local shared="$repo_root/.ai-dev-workflow.yaml"
+  local local_cfg="$repo_root/.ai-dev-workflow.local.yaml"
+  local raw="" config_file=""
+  for config_file in "$shared" "$local_cfg"; do
+    [ -f "$config_file" ] || continue
+    raw="$(workflow_config_provider issue_tracker "$config_file")"
+    if [ -n "$raw" ]; then
+      printf '%s' "$raw"
+      return 0
+    fi
+  done
+  for config_file in "$shared" "$local_cfg"; do
+    if workflow_issue_tracker_provider_declared_in_file "$config_file"; then
+      echo "ERROR: issue_tracker.provider is declared in ${config_file} but could not be parsed; refusing to default to github_projects." >&2
+      return 64
+    fi
+  done
+  return 0
 }
 STUB_LIB
 

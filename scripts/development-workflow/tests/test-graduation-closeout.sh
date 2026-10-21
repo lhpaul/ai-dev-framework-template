@@ -63,8 +63,8 @@ workflow_config_provider() {
   local config_file="${2:-$WORKFLOW_FIXTURE_REPO/.ai-dev-workflow.yaml}"
   [ -f "$config_file" ] || return 0
   awk -v section="$section" '
-    $0 ~ ("^" section ":[[:space:]]*$") { in_section = 1; next }
-    in_section && /^[^[:space:]#].*:[[:space:]]*$/ { exit }
+    $0 ~ ("^" section ":[[:space:]]*(#.*)?$") { in_section = 1; next }
+    in_section && /^[^[:space:]#].*:[[:space:]]*(#.*)?$/ { exit }
     in_section && /^[[:space:]][[:space:]]provider:[[:space:]]*/ {
       line = $0
       sub(/^[[:space:]]*provider:[[:space:]]*/, "", line)
@@ -75,6 +75,39 @@ workflow_config_provider() {
       exit
     }
   ' "$config_file"
+}
+
+workflow_issue_tracker_provider_declared_in_file() {
+  local config_file="$1"
+  [ -f "$config_file" ] || return 1
+  awk '
+    /^issue_tracker:[[:space:]]*(#.*)?$/ { in_section = 1; next }
+    in_section && /^[^[:space:]#]/ { exit 1 }
+    in_section && /^[[:space:]][[:space:]]provider:[[:space:]]*/ { found = 1; exit }
+    END { exit(found ? 0 : 1) }
+  ' "$config_file"
+}
+
+workflow_graduation_closeout_tracker_provider_raw() {
+  local repo_root="${1:-$WORKFLOW_FIXTURE_REPO}"
+  local shared="$repo_root/.ai-dev-workflow.yaml"
+  local local_cfg="$repo_root/.ai-dev-workflow.local.yaml"
+  local raw="" config_file=""
+  for config_file in "$shared" "$local_cfg"; do
+    [ -f "$config_file" ] || continue
+    raw="$(workflow_config_provider issue_tracker "$config_file")"
+    if [ -n "$raw" ]; then
+      printf '%s' "$raw"
+      return 0
+    fi
+  done
+  for config_file in "$shared" "$local_cfg"; do
+    if workflow_issue_tracker_provider_declared_in_file "$config_file"; then
+      echo "ERROR: issue_tracker.provider is declared in ${config_file} but could not be parsed; refusing to default to github_projects." >&2
+      return 64
+    fi
+  done
+  return 0
 }
 
 is_terminal_tracker_status() {
@@ -966,6 +999,22 @@ run_contains "github_projects_provider" "TRACKER_PROVIDER=github_projects" "$gh_
 run_test "github_projects_child_closed" "CLOSED" "$(python3 -c 'import json; print(json.load(open("'"$MOCK_STATE_DIR"'/101.json"))["state"])')"
 run_contains "github_projects_epic_close" "900" "$(cat "$MOCK_CLOSE_LOG")"
 run_not_contains "github_projects_no_linear_action" "TRACKER_ACTION_REQUIRED=" "$gh_proj_body"
+
+echo ""
+echo "=== graduation closeout: issue_tracker commented header resolves provider (#1984) ==="
+commented_repo="$TMP_ROOT/commented-repo"
+mkdir -p "$commented_repo/scripts/development-workflow"
+cp "$FIXTURE_REPO/scripts/development-workflow/workflow-lib.sh" "$commented_repo/scripts/development-workflow/workflow-lib.sh"
+cat > "$commented_repo/.ai-dev-workflow.yaml" <<'EOF'
+issue_tracker: # native tracker
+  provider: linear
+EOF
+commented_provider="$(cd "$commented_repo" && WORKFLOW_FIXTURE_REPO="$commented_repo" bash -c '
+  # shellcheck source=scripts/development-workflow/workflow-lib.sh
+  source scripts/development-workflow/workflow-lib.sh
+  workflow_normalize_issue_tracker_provider "$(workflow_graduation_closeout_tracker_provider_raw "$(pwd)")"
+')"
+run_test "commented_issue_tracker_header_linear" "linear" "$commented_provider"
 
 echo ""
 echo "Graduation closeout tests: $PASS_COUNT passed, $FAIL_COUNT failed."

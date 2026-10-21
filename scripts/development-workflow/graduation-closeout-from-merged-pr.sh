@@ -155,7 +155,9 @@ REPO_SLUG="$(repo_slug)"
 REPO_OWNER="${REPO_SLUG%%/*}"
 REPO_NAME="${REPO_SLUG#*/}"
 
-TRACKER_PROVIDER="$(workflow_normalize_issue_tracker_provider "$(workflow_config_provider issue_tracker "$(pwd)/.ai-dev-workflow.yaml")")"
+TRACKER_PROVIDER_RAW=""
+TRACKER_PROVIDER_RAW="$(workflow_graduation_closeout_tracker_provider_raw "$(pwd)")" || exit $?
+TRACKER_PROVIDER="$(workflow_normalize_issue_tracker_provider "$TRACKER_PROVIDER_RAW")"
 case "$TRACKER_PROVIDER" in
   linear) ;;
   github_projects|github_issues|'')

@@ -1554,12 +1554,12 @@ workflow_config_provider() {
       return value
     }
 
-    $0 ~ ("^" section ":[[:space:]]*$") {
+    $0 ~ ("^" section ":[[:space:]]*(#.*)?$") {
       in_section = 1
       next
     }
 
-    in_section && /^[^[:space:]#].*:[[:space:]]*$/ {
+    in_section && /^[^[:space:]#].*:[[:space:]]*(#.*)?$/ {
       exit
     }
 
@@ -1895,6 +1895,48 @@ workflow_issue_tracker_custom_field() {
 
 workflow_issue_tracker_provider_raw() {
   workflow_config_provider issue_tracker
+}
+
+# workflow_issue_tracker_provider_declared_in_file <config_file>
+# True when issue_tracker.provider appears under an issue_tracker section.
+workflow_issue_tracker_provider_declared_in_file() {
+  local config_file="$1"
+  [ -f "$config_file" ] || return 1
+  awk '
+    /^issue_tracker:[[:space:]]*(#.*)?$/ { in_section = 1; next }
+    in_section && /^[^[:space:]#]/ { exit 1 }
+    in_section && /^[[:space:]][[:space:]]provider:[[:space:]]*/ { found = 1; exit }
+    END { exit(found ? 0 : 1) }
+  ' "$config_file"
+}
+
+# workflow_graduation_closeout_tracker_provider_raw
+# Resolve issue_tracker.provider for graduation closeout. Reads shared config,
+# then local override. Fail closed when provider is declared but unreadable —
+# never default to github_projects on a parse miss.
+workflow_graduation_closeout_tracker_provider_raw() {
+  local repo_root="${1:-$(workflow_repo_root)}"
+  local shared="$repo_root/.ai-dev-workflow.yaml"
+  local local_cfg="$repo_root/.ai-dev-workflow.local.yaml"
+  local raw="" config_file=""
+
+  for config_file in "$shared" "$local_cfg"; do
+    [ -f "$config_file" ] || continue
+    raw="$(workflow_config_provider issue_tracker "$config_file")"
+    if [ -n "$raw" ]; then
+      printf '%s' "$raw"
+      return 0
+    fi
+  done
+
+  for config_file in "$shared" "$local_cfg"; do
+    if workflow_issue_tracker_provider_declared_in_file "$config_file"; then
+      echo "ERROR: issue_tracker.provider is declared in ${config_file} but could not be parsed; refusing to default to github_projects." >&2
+      return 64
+    fi
+  done
+
+  return 0
 }
 
 workflow_normalize_issue_tracker_provider() {
