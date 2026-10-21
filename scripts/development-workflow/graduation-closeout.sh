@@ -292,20 +292,27 @@ tracker_status_for_issue() {
 
 ensure_terminal_tracker_status() {
   local issue="$1"
-  local before after update_out
+  local before after update_out update_rc
   if [ "$TRACKER_PROVIDER" = "linear" ]; then
-    # Linear transitions are deferred to the native bridge; emission is success.
+    # Linear transitions are deferred to the native bridge. Success requires an
+    # observed TRACKER_ACTION_REQUIRED= line for this issue — a silent skip
+    # (e.g. merge-session binding failure that returns 0 with empty stdout)
+    # must not report EPIC_RESULT=closed.
     if ! announce_mutation "update_tracker_status ${issue} → ${TERMINAL_STATUS} (linear deferred)"; then
       return 0
     fi
-    update_out="$(update_tracker_status_best_effort "$issue" "$TERMINAL_STATUS" "" "allow-backward" || true)"
+    update_rc=0
+    update_out="$(update_tracker_status_best_effort "$issue" "$TERMINAL_STATUS" "" "allow-backward")" || update_rc=$?
     printf '%s\n' "$update_out"
+    if [ "$update_rc" -ne 0 ]; then
+      echo "ERROR: Linear tracker update for ${issue} → ${TERMINAL_STATUS} failed (exit ${update_rc}); no deferred action observed." >&2
+      return 1
+    fi
     case "$update_out" in
-      *TRACKER_ACTION_REQUIRED=*) return 0 ;;
+      *TRACKER_ACTION_REQUIRED=*"issue=${issue}"*) return 0 ;;
     esac
-    # Best-effort helper returned without a deferred line — treat as soft success
-    # only when dry-run already short-circuited above.
-    return 0
+    echo "ERROR: Linear tracker update for ${issue} → ${TERMINAL_STATUS} returned success without emitting TRACKER_ACTION_REQUIRED= for that issue; refusing to report closed." >&2
+    return 1
   fi
   before="$(tracker_status_for_issue "$issue")"
   if is_closeout_terminal_status "$before"; then

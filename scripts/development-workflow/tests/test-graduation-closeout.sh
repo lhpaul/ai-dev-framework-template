@@ -102,6 +102,10 @@ update_tracker_status_best_effort() {
   local provider
   provider="$(workflow_normalize_issue_tracker_provider "$(workflow_config_provider issue_tracker "$WORKFLOW_FIXTURE_REPO/.ai-dev-workflow.yaml")")"
   if [ "$provider" = "linear" ]; then
+    # Simulate merge-session / bridge skip: exit 0 with empty stdout.
+    if [ "${MOCK_LINEAR_UPDATE_EMPTY:-0}" = "1" ]; then
+      return 0
+    fi
     case "$status" in
       *' '*)
         printf "TRACKER_ACTION_REQUIRED=set_status issue=%s target_status='%s'\n" "$issue" "$status"
@@ -370,7 +374,7 @@ reset_fixture() {
   : > "$MOCK_LABEL_LOG"
   : > "$MOCK_GRAPHQL_LOG"
   : > "$MOCK_GH_LOG"
-  unset MOCK_NATIVE_MODE MOCK_LABEL_MODE MOCK_LABEL_ISSUES MOCK_PR_MODE MOCK_GRADUATION_PR_MODE MOCK_CLOSE_FAIL_ISSUE MOCK_STATUS_FAIL_ISSUE MOCK_LABEL_ADD_FAIL MOCK_LABEL_CREATE_FAIL GITHUB_PROJECT_STATUS_GRADUATED GITHUB_PROJECT_STATUS_MERGED GRADUATION_BASE
+  unset MOCK_NATIVE_MODE MOCK_LABEL_MODE MOCK_LABEL_ISSUES MOCK_PR_MODE MOCK_GRADUATION_PR_MODE MOCK_CLOSE_FAIL_ISSUE MOCK_STATUS_FAIL_ISSUE MOCK_LABEL_ADD_FAIL MOCK_LABEL_CREATE_FAIL MOCK_LINEAR_UPDATE_EMPTY GITHUB_PROJECT_STATUS_GRADUATED GITHUB_PROJECT_STATUS_MERGED GRADUATION_BASE
 }
 
 run_closeout() {
@@ -695,6 +699,25 @@ run_test "linear_no_subissues_query_326" "0" "$(grep -c '^326$' "$MOCK_GRAPHQL_L
 run_not_contains "linear_no_gh_issue_close_326" "issue close 326" "$(cat "$MOCK_GH_LOG")"
 run_not_contains "linear_no_gh_issue_edit_326" "issue edit 326" "$(cat "$MOCK_GH_LOG")"
 run_not_contains "linear_no_gh_issue_view_326" "issue view 326" "$(cat "$MOCK_GH_LOG")"
+
+echo ""
+echo "=== graduation closeout: Linear empty bridge emission fails closed (#1984 review) ==="
+reset_fixture
+write_tracker_config linear
+export MOCK_PR_MODE=none
+export MOCK_LINEAR_UPDATE_EMPTY=1
+write_issue 326 "Unrelated GitHub issue" OPEN
+CLOSEOUT_EPIC=LEA-326
+empty_bridge_result="$(run_closeout)"
+unset CLOSEOUT_EPIC
+empty_bridge_body="$(last_output_body "$empty_bridge_result")"
+run_test "linear_empty_bridge_exit_one" "1" "$(last_output_status "$empty_bridge_result")"
+run_contains "linear_empty_bridge_failed_result" "GRADUATION_CLOSEOUT_RESULT=failed" "$empty_bridge_body"
+run_contains "linear_empty_bridge_epic_failed" "EPIC_RESULT=failed" "$empty_bridge_body"
+run_contains "linear_empty_bridge_reason" "tracker_status_update_failed" "$empty_bridge_body"
+run_contains "linear_empty_bridge_error" "without emitting TRACKER_ACTION_REQUIRED=" "$empty_bridge_body"
+run_not_contains "linear_empty_bridge_no_false_closed" "EPIC_RESULT=closed" "$empty_bridge_body"
+run_test "linear_empty_bridge_326_intact" "OPEN" "$(python3 -c 'import json; print(json.load(open("'"$MOCK_STATE_DIR"'/326.json"))["state"])')"
 
 echo ""
 echo "=== graduation closeout: Linear bare --epic 326 fails closed (#1984) ==="
