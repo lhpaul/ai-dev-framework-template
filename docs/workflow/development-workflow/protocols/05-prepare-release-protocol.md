@@ -571,15 +571,17 @@ resolved to its PR(s) only via GitHub `commits/<sha>/pulls` against the
 checkout/component repository (not an inherited `GH_REPO` override; subject
 `#N` / `Merge pull request #N` is never sufficient evidence). A PR is accepted
 when merged and its merge/head commit is in the range, regardless of base
-branch. Only implementation-stage head branches (`feature/*`, `fix/*`,
-`refactor/*`, `hotfix/*`) count as Released shipping evidence; merged `spec/*` /
-`implementation-plan/*` PRs are skipped as `documentation_stage_pr_only` when
-that is the only evidence. IDs are taken from each PR's `headRefName` / REST
+branch. Documentation-stage (`spec/*`, `implementation-plan/*`) and
+release/backport branches are skipped
+(`documentation_stage_pr_only` / `release_or_backport_branch_pr`); all other
+merged prefixes (including `chore/`, `ci/`, `feature/`, `fix/`, …) count as
+Released shipping evidence. IDs are taken from each PR's `headRefName` / REST
 `head.ref` and `title` — not from commit text or PR body. Changelog-only
 mentions (including expanded ranges such as `LEA-298–LEA-301`) are omitted as
 `RELEASE_SCOPE_SKIPPED issue=<ID> reason=changelog_mention_without_merged_pr`.
-A verified first release (successful remote `git ls-remote --tags` with no
-preceding semver tag) may scan tip history; shallow clones, remote tag-list
+Previous-tag selection uses the release tag PREFIX and SemVer 2.0.0 precedence
+(prerelease < release; build metadata ignored); `first_release` only when no
+same-prefix remote tag is strictly lower. Shallow clones, remote tag-list
 failures, or a preceding remote tag whose peeled commit is missing locally or
 disagrees with a local tag of the same name emit
 `RELEASE_SCOPE_INCOMPLETE reason=previous_release_boundary_unavailable` (scope

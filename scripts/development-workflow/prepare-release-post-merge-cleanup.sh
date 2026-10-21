@@ -25,15 +25,19 @@
 #   implementation-plan/*) are not shipping evidence (RELEASE_SCOPE_SKIPPED
 #   reason=documentation_stage_pr_only when that is the only evidence).
 #   Preceding-tag boundary must be verified from remote ls-remote --tags without
-#   fetching (shallow / remote tag-list failure / missing or disagreeing local
-#   preceding commit → RELEASE_SCOPE_INCOMPLETE
-#   reason=previous_release_boundary_unavailable); a true first release (remote
-#   ls-remote --tags has no preceding semver tag) may scan the tip history.
-#   Release tip is only refs/tags/vX.Y.Z, refs/tags/X.Y.Z, or authorized
-#   --release-head SHA (never unqualified names that could resolve a branch).
-#   Changelog-only mentions are RELEASE_SCOPE_SKIPPED. Never fall back to
-#   checkout HEAD. Zero Linear IDs after complete resolution is empty scope
-#   success. Explicit --issue/--issues are unioned and never filtered.
+#   fetching, using the same tag PREFIX as the release (v / mobile-v / empty) and
+#   full SemVer 2.0.0 precedence including prerelease (build metadata ignored).
+#   first_release only when no same-prefix tag is strictly lower. Shallow /
+#   remote tag-list failure / missing or disagreeing local preceding commit →
+#   RELEASE_SCOPE_INCOMPLETE reason=previous_release_boundary_unavailable.
+#   Release tip is only refs/tags/<name> or authorized --release-head SHA (never
+#   unqualified names that could resolve a branch). Merged PR prefixes other
+#   than documentation-stage and release/backport count as shipping evidence
+#   (chore/ci/… included; spec/implementation-plan and release/backport skipped
+#   with RELEASE_SCOPE_SKIPPED). Changelog-only mentions are
+#   RELEASE_SCOPE_SKIPPED. Never fall back to checkout HEAD. Zero Linear IDs
+#   after complete resolution is empty scope success. Explicit --issue/--issues
+#   are unioned and never filtered.
 #
 # Examples:
 #   ./scripts/development-workflow/prepare-release-post-merge-cleanup.sh 1.2.3
@@ -686,7 +690,9 @@ PY
 # sufficient evidence. Accept a PR only when it is merged and its merge commit
 # or head commit is in the release range (or the associating range SHA when
 # those fields are absent). Linear IDs come from PR headRefName / head.ref and
-# title only. Changelog-only IDs are RELEASE_SCOPE_SKIPPED. Explicit
+# title only. Documentation-stage and release/backport branches are
+# RELEASE_SCOPE_SKIPPED; other prefixes (including chore/) are shipping
+# evidence. Changelog-only IDs are RELEASE_SCOPE_SKIPPED. Explicit
 # --issue/--issues are unioned afterward. Helper stdout ends with `OK` on
 # complete resolution (including zero-ID scope); missing OK / empty stdout is
 # filter failure. RELEASE_SCOPE_INCOMPLETE on unavailable release ref or API
@@ -744,12 +750,43 @@ def run_git(*args):
     )
 
 
-def parse_semver(tag):
-    raw = tag.lstrip("v")
-    match = re.match(r"^(\d+)\.(\d+)\.(\d+)", raw)
+# SemVer 2.0.0 core + optional prerelease + optional build (build ignored for
+# precedence). Captures an optional non-digit prefix (v, mobile-v, …).
+_SEMVER_TAG_RE = re.compile(
+    r"^(?P<prefix>.*?)(?P<major>0|[1-9]\d*)\.(?P<minor>0|[1-9]\d*)\.(?P<patch>0|[1-9]\d*)"
+    r"(?:-(?P<pre>[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?"
+    r"(?:\+(?P<build>[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$"
+)
+
+
+def split_tag_prefix_and_semver(tag_name):
+    """Return (prefix, precedence_key) or (None, None) for a tag/version name."""
+    if not tag_name:
+        return None, None
+    match = _SEMVER_TAG_RE.match(tag_name)
     if not match:
-        return None
-    return tuple(int(part) for part in match.groups())
+        return None, None
+    prefix = match.group("prefix")
+    major = int(match.group("major"))
+    minor = int(match.group("minor"))
+    patch = int(match.group("patch"))
+    pre = match.group("pre")
+    return prefix, semver_precedence_key(major, minor, patch, pre)
+
+
+def semver_precedence_key(major, minor, patch, prerelease):
+    """Sort key: lower means lower SemVer precedence (build metadata ignored)."""
+    if prerelease is None:
+        # Normal version > any prerelease with the same MAJOR.MINOR.PATCH.
+        return (major, minor, patch, 1, ())
+    idents = []
+    for ident in prerelease.split("."):
+        if re.fullmatch(r"0|[1-9]\d*", ident):
+            # Numeric identifiers rank below non-numeric (SemVer 11.4.3).
+            idents.append((0, int(ident)))
+        else:
+            idents.append((1, ident))
+    return (major, minor, patch, 0, tuple(idents))
 
 
 def normalize_version(value):
@@ -767,12 +804,47 @@ def resolve_current_ref():
         if probe.returncode == 0:
             return head
         return None
+    # Prefer the version argument as a full tag name (v1.29.0, mobile-v1.1.0).
+    candidates = ["refs/tags/" + version]
     bare = normalize_version(version)
-    for candidate in ("refs/tags/v" + bare, "refs/tags/" + bare):
+    if bare != version:
+        candidates.append("refs/tags/" + bare)
+    if not version.startswith("v") and re.match(r"^\d+\.\d+\.\d+", version):
+        candidates.append("refs/tags/v" + version)
+    # De-dupe while preserving order.
+    seen = set()
+    ordered = []
+    for candidate in candidates:
+        if candidate not in seen:
+            seen.add(candidate)
+            ordered.append(candidate)
+    for candidate in ordered:
         probe = run_git("rev-parse", "--verify", "--quiet", candidate + "^{commit}")
         if probe.returncode == 0:
             return candidate
     return None
+
+
+def release_tag_name_for_boundary(current_ref, version_arg):
+    """Tag name used to derive the SemVer prefix for previous-boundary selection."""
+    if current_ref.startswith("refs/tags/"):
+        return current_ref[len("refs/tags/") :]
+    if re.fullmatch(r"[0-9a-f]{40}", current_ref):
+        pointing = run_git("tag", "-l", "--points-at", current_ref)
+        if pointing.returncode == 0:
+            names = [line.strip() for line in pointing.stdout.splitlines() if line.strip()]
+            # Prefer a tag whose SemVer core matches the version argument.
+            arg_prefix, arg_key = split_tag_prefix_and_semver(version_arg)
+            for name in names:
+                prefix, key = split_tag_prefix_and_semver(name)
+                if key is None:
+                    continue
+                if arg_key is not None and key[:3] == arg_key[:3]:
+                    return name
+            for name in names:
+                if split_tag_prefix_and_semver(name)[1] is not None:
+                    return name
+    return version_arg
 
 
 def _boundary_unavailable_fetch_instruction(detail):
@@ -784,13 +856,13 @@ def _boundary_unavailable_fetch_instruction(detail):
     )
 
 
-def resolve_previous_boundary(current_version):
+def resolve_previous_boundary(current_version, current_ref):
     """Return (status, previous_ref_or_None).
 
     status:
-      ok — preceding semver tag from the remote; peeled commit available locally
-        and any local tag of that name matches the remote peeled SHA
-      first_release — remote tag listing succeeded; no remote semver tag precedes
+      ok — preceding same-prefix SemVer tag from the remote; peeled commit
+        available locally and any local tag of that name matches remote
+      first_release — remote listing succeeded; no same-prefix tag is lower
       unavailable — remote listing failed, preceding commit unavailable or local
         tag disagrees, shallow clone, or version unparseable (fail closed; never
         git fetch — read-only inspection must not write refs/FETCH_HEAD)
@@ -802,8 +874,13 @@ def resolve_previous_boundary(current_version):
             "preceding release tag commit."
         )
         return "unavailable", None
-    current_tuple = parse_semver(current_version)
-    if current_tuple is None:
+
+    release_tag = release_tag_name_for_boundary(current_ref, current_version)
+    release_prefix, current_key = split_tag_prefix_and_semver(release_tag)
+    if current_key is None:
+        # Fall back to the version argument alone (e.g. odd release-head labeling).
+        release_prefix, current_key = split_tag_prefix_and_semver(current_version)
+    if current_key is None:
         return "unavailable", None
 
     remotes = run_git("remote")
@@ -818,7 +895,7 @@ def resolve_previous_boundary(current_version):
     if listing.returncode != 0:
         return "unavailable", None
 
-    # name -> (semver_tuple, commit_sha, name); prefer peeled (^{}) commit SHAs
+    # name -> (precedence_key, commit_sha, name); prefer peeled (^{}) commit SHAs
     candidates = {}
     for line in listing.stdout.splitlines():
         line = line.strip()
@@ -831,17 +908,19 @@ def resolve_previous_boundary(current_version):
         name = ref[len("refs/tags/") :]
         if peeled:
             name = name[:-3]
-        parsed = parse_semver(name)
-        if parsed is None or parsed >= current_tuple:
+        prefix, key = split_tag_prefix_and_semver(name)
+        if key is None or prefix != release_prefix:
+            continue
+        if key >= current_key:
             continue
         prior = candidates.get(name)
         if prior is None or peeled:
-            candidates[name] = (parsed, sha, name)
+            candidates[name] = (key, sha, name)
 
     if not candidates:
         return "first_release", None
 
-    _parsed, commit_sha, tag_name = sorted(
+    _key, commit_sha, tag_name = sorted(
         candidates.values(), key=lambda item: item[0], reverse=True
     )[0]
 
@@ -879,11 +958,8 @@ def resolve_previous_boundary(current_version):
     return "ok", remote_sha
 
 
-# Documentation-stage branches are not Released shipping evidence (#1982).
-# Implementation prefixes match docs/best-practices/2-version-control.md and
-# Protocol 91 Step 8a (feature/fix/refactor/hotfix).
+# Documentation-stage branches are not Released shipping evidence (#1982 / #2014).
 DOCUMENTATION_STAGE_PREFIXES = ("spec/", "implementation-plan/")
-IMPLEMENTATION_STAGE_PREFIXES = ("feature/", "fix/", "refactor/", "hotfix/")
 
 
 def is_documentation_stage_branch(head_ref):
@@ -891,9 +967,16 @@ def is_documentation_stage_branch(head_ref):
     return any(ref.startswith(prefix) for prefix in DOCUMENTATION_STAGE_PREFIXES)
 
 
-def is_implementation_stage_branch(head_ref):
+def is_release_or_backport_branch(head_ref):
+    """Release/backport branches re-carry already-shipped work — not new evidence."""
     ref = (head_ref or "").strip()
-    return any(ref.startswith(prefix) for prefix in IMPLEMENTATION_STAGE_PREFIXES)
+    if not ref:
+        return False
+    if ref.startswith("release/") or ref.startswith("backport/"):
+        return True
+    if "/release/" in ref or "/backport/" in ref:
+        return True
+    return False
 
 
 def extract_linear_ids(text):
@@ -1021,21 +1104,24 @@ def pr_belongs_to_range(payload, range_shas, associating_sha):
 
 
 def collect_merged_pr_linear_ids(range_spec, repo_slug):
-    """Return (implementation_ids, documentation_only_ids, unresolved_shas).
+    """Return (shipped_ids, documentation_only_ids, release_backport_only_ids, unresolved).
 
     PR membership comes only from commits/<sha>/pulls for SHAs in the range —
     never from a PR number parsed out of a commit subject. Documentation-stage
-    head branches (spec/*, implementation-plan/*) are not shipping evidence.
+    and release/backport head branches are excluded with explicit skip reasons;
+    all other merged PR prefixes (feature/fix/refactor/hotfix/chore/ci/…) count
+    as shipping evidence (#2014).
     """
-    implementation_ids = set()
+    shipped_ids = set()
     documentation_ids = set()
+    release_backport_ids = set()
     unresolved = []
     commit_cache = {}
     seen_prs = set()
 
     log = run_git("log", range_spec, "--pretty=format:%H\t%s")
     if log.returncode != 0:
-        return implementation_ids, documentation_ids, ["<git-log-failed>"]
+        return shipped_ids, documentation_ids, release_backport_ids, ["<git-log-failed>"]
 
     range_entries = []
     range_shas = set()
@@ -1074,11 +1160,13 @@ def collect_merged_pr_linear_ids(range_spec, repo_slug):
                 continue
             if is_documentation_stage_branch(head_ref):
                 documentation_ids.update(pr_ids)
-            elif is_implementation_stage_branch(head_ref):
-                implementation_ids.update(pr_ids)
-            # Other prefixes (release/, chore/, …) are not Released evidence.
-    documentation_only = documentation_ids - implementation_ids
-    return implementation_ids, documentation_only, unresolved
+            elif is_release_or_backport_branch(head_ref):
+                release_backport_ids.update(pr_ids)
+            else:
+                shipped_ids.update(pr_ids)
+    documentation_only = documentation_ids - shipped_ids
+    release_backport_only = release_backport_ids - shipped_ids - documentation_only
+    return shipped_ids, documentation_only, release_backport_only, unresolved
 
 
 changelog_ids = [part for part in changelog_csv.split(",") if part]
@@ -1087,14 +1175,15 @@ if current_ref is None:
     print("INCOMPLETE\trelease_ref_unavailable")
     sys.exit(0)
 
-boundary_status, prev_tag = resolve_previous_boundary(version)
+boundary_status, prev_tag = resolve_previous_boundary(version, current_ref)
 if boundary_status == "unavailable":
     print("INCOMPLETE\tprevious_release_boundary_unavailable")
     sys.exit(0)
 if boundary_status == "ok":
     range_spec = "%s..%s" % (prev_tag, current_ref)
 else:
-    # Verified first release: remote ls-remote --tags found no preceding semver.
+    # Verified first release: remote ls-remote --tags found no preceding
+    # same-prefix SemVer tag.
     range_spec = current_ref
 
 repo_slug = resolve_repo_slug()
@@ -1102,9 +1191,12 @@ if not repo_slug:
     print("INCOMPLETE\t<repo-slug-unavailable>")
     sys.exit(0)
 
-merged_ids, documentation_only_ids, unresolved = collect_merged_pr_linear_ids(
-    range_spec, repo_slug
-)
+(
+    merged_ids,
+    documentation_only_ids,
+    release_backport_only_ids,
+    unresolved,
+) = collect_merged_pr_linear_ids(range_spec, repo_slug)
 if unresolved:
     print("INCOMPLETE\t%s" % ",".join(unresolved))
     sys.exit(0)
@@ -1114,6 +1206,8 @@ for issue in changelog_ids:
         print("KEEP\t%s" % issue)
     elif issue in documentation_only_ids:
         print("SKIP\t%s\tdocumentation_stage_pr_only" % issue)
+    elif issue in release_backport_only_ids:
+        print("SKIP\t%s\trelease_or_backport_branch_pr" % issue)
     else:
         print("SKIP\t%s\tchangelog_mention_without_merged_pr" % issue)
 
@@ -1124,6 +1218,10 @@ for issue in sorted(merged_ids):
 for issue in sorted(documentation_only_ids):
     if issue not in changelog_ids:
         print("SKIP\t%s\tdocumentation_stage_pr_only" % issue)
+
+for issue in sorted(release_backport_only_ids):
+    if issue not in changelog_ids:
+        print("SKIP\t%s\trelease_or_backport_branch_pr" % issue)
 
 # Explicit success marker so zero-ID complete scope is not treated as helper failure.
 print("OK")

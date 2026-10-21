@@ -2280,6 +2280,185 @@ run_test "linear_1982_inspect_refs_unchanged" "$inspect_refs_before" "$inspect_r
 run_test "linear_1982_inspect_no_fetch_head" "0" \
   "$([ -e "$repo_inspect/.git/FETCH_HEAD" ] && echo 1 || echo 0)"
 
+# --- Component tag prefix: mobile-v1.0.0 → mobile-v1.1.0; bare v2.0.0 ignored ---
+repo_mobile="$TMP_ROOT/linear-1982-mobile-prefix"
+init_linear_git_repo "$repo_mobile"
+cat > "$repo_mobile/CHANGELOG.md" <<'MD'
+# Changelog
+
+## [Unreleased]
+
+## [mobile-v1.1.0] - 2026-10-15
+
+- Component release ships LEA-410.
+MD
+"$REAL_GIT" -C "$repo_mobile" add CHANGELOG.md .ai-dev-workflow.yaml scripts
+"$REAL_GIT" -C "$repo_mobile" commit -q -m "chore: mobile baseline"
+"$REAL_GIT" -C "$repo_mobile" commit -q --allow-empty \
+  -m "Merge pull request #70 from example/fix/LEA-200-unrelated-v2"
+sha_v2="$("$REAL_GIT" -C "$repo_mobile" rev-parse HEAD)"
+"$REAL_GIT" -C "$repo_mobile" tag v2.0.0
+"$REAL_GIT" -C "$repo_mobile" commit -q --allow-empty \
+  -m "Merge pull request #71 from example/fix/LEA-400-mobile-prior"
+sha_mobile_400="$("$REAL_GIT" -C "$repo_mobile" rev-parse HEAD)"
+"$REAL_GIT" -C "$repo_mobile" tag mobile-v1.0.0
+"$REAL_GIT" -C "$repo_mobile" commit -q --allow-empty \
+  -m "Merge pull request #72 from example/fix/LEA-410-mobile-current"
+sha_mobile_410="$("$REAL_GIT" -C "$repo_mobile" rev-parse HEAD)"
+"$REAL_GIT" -C "$repo_mobile" tag mobile-v1.1.0
+write_linear_scope_gh \
+  "70|fix/LEA-200-unrelated-v2|fix: LEA-200 v2" \
+  "71|fix/LEA-400-mobile-prior|fix: LEA-400 mobile" \
+  "72|fix/LEA-410-mobile-current|fix: LEA-410 mobile" \
+  "commit:${sha_v2}|70" \
+  "commit:${sha_mobile_400}|71" \
+  "commit:${sha_mobile_410}|72"
+result="$(run_linear_scope_cleanup "$repo_mobile" mobile-v1.1.0 --from-changelog --best-effort)"
+status="$(printf '%s\n' "$result" | sed -n '1p')"
+output="$(printf '%s\n' "$result" | sed '1d')"
+run_test "linear_1982_mobile_prefix_exits_zero" "0" "$status"
+run_contains "linear_1982_mobile_prefix_proposes_410" "TRACKER_ISSUES=LEA-410" "$output"
+run_not_contains "linear_1982_mobile_prefix_no_400" "LEA-400" "$output"
+run_not_contains "linear_1982_mobile_prefix_no_200" "LEA-200" "$output"
+run_not_contains "linear_1982_mobile_prefix_no_boundary_incomplete" \
+  "previous_release_boundary_unavailable" "$output"
+
+# --- Prerelease SemVer: rc.1 → rc.2 → stable ---
+repo_pre="$TMP_ROOT/linear-1982-prerelease-semver"
+init_linear_git_repo "$repo_pre"
+cat > "$repo_pre/CHANGELOG.md" <<'MD'
+# Changelog
+
+## [Unreleased]
+
+## [1.29.0] - 2026-10-20
+
+- Stable ships LEA-303.
+MD
+"$REAL_GIT" -C "$repo_pre" add CHANGELOG.md .ai-dev-workflow.yaml scripts
+"$REAL_GIT" -C "$repo_pre" commit -q -m "chore: baseline before rc"
+"$REAL_GIT" -C "$repo_pre" tag v1.28.0
+"$REAL_GIT" -C "$repo_pre" commit -q --allow-empty \
+  -m "Merge pull request #80 from example/fix/LEA-301-rc1"
+sha_rc1="$("$REAL_GIT" -C "$repo_pre" rev-parse HEAD)"
+"$REAL_GIT" -C "$repo_pre" tag v1.29.0-rc.1
+"$REAL_GIT" -C "$repo_pre" commit -q --allow-empty \
+  -m "Merge pull request #81 from example/fix/LEA-302-rc2"
+sha_rc2="$("$REAL_GIT" -C "$repo_pre" rev-parse HEAD)"
+"$REAL_GIT" -C "$repo_pre" tag v1.29.0-rc.2
+"$REAL_GIT" -C "$repo_pre" commit -q --allow-empty \
+  -m "Merge pull request #82 from example/fix/LEA-303-stable"
+sha_stable="$("$REAL_GIT" -C "$repo_pre" rev-parse HEAD)"
+"$REAL_GIT" -C "$repo_pre" tag v1.29.0
+write_linear_scope_gh \
+  "80|fix/LEA-301-rc1|fix: LEA-301 rc1" \
+  "81|fix/LEA-302-rc2|fix: LEA-302 rc2" \
+  "82|fix/LEA-303-stable|fix: LEA-303 stable" \
+  "commit:${sha_rc1}|80" \
+  "commit:${sha_rc2}|81" \
+  "commit:${sha_stable}|82"
+result="$(run_linear_scope_cleanup "$repo_pre" v1.29.0-rc.2 --from-changelog --best-effort)"
+status="$(printf '%s\n' "$result" | sed -n '1p')"
+output="$(printf '%s\n' "$result" | sed '1d')"
+run_test "linear_1982_prerelease_rc2_exits_zero" "0" "$status"
+run_contains "linear_1982_prerelease_rc2_proposes_302" "TRACKER_ISSUES=LEA-302" "$output"
+run_not_contains "linear_1982_prerelease_rc2_no_301" "LEA-301" "$output"
+run_not_contains "linear_1982_prerelease_rc2_no_stable" "LEA-303" "$output"
+result="$(run_linear_scope_cleanup "$repo_pre" v1.29.0 --from-changelog --best-effort)"
+status="$(printf '%s\n' "$result" | sed -n '1p')"
+output="$(printf '%s\n' "$result" | sed '1d')"
+run_test "linear_1982_prerelease_to_stable_exits_zero" "0" "$status"
+run_contains "linear_1982_prerelease_to_stable_proposes_303" "TRACKER_ISSUES=LEA-303" "$output"
+run_not_contains "linear_1982_prerelease_to_stable_no_rc1" "LEA-301" "$output"
+run_not_contains "linear_1982_prerelease_to_stable_no_rc2" "LEA-302" "$output"
+
+# --- Build metadata ignored for SemVer precedence ---
+repo_build="$TMP_ROOT/linear-1982-build-metadata"
+init_linear_git_repo "$repo_build"
+cat > "$repo_build/CHANGELOG.md" <<'MD'
+# Changelog
+
+## [Unreleased]
+
+## [1.29.0] - 2026-10-15
+
+- Build metadata must not invent a prior boundary.
+MD
+"$REAL_GIT" -C "$repo_build" add CHANGELOG.md .ai-dev-workflow.yaml scripts
+"$REAL_GIT" -C "$repo_build" commit -q -m "chore: baseline"
+"$REAL_GIT" -C "$repo_build" commit -q --allow-empty \
+  -m "Merge pull request #85 from example/fix/LEA-280-prior"
+sha_build_280="$("$REAL_GIT" -C "$repo_build" rev-parse HEAD)"
+"$REAL_GIT" -C "$repo_build" tag v1.28.0
+"$REAL_GIT" -C "$repo_build" commit -q --allow-empty \
+  -m "Merge pull request #86 from example/fix/LEA-290-buildmeta"
+sha_build_290="$("$REAL_GIT" -C "$repo_build" rev-parse HEAD)"
+"$REAL_GIT" -C "$repo_build" tag v1.29.0+build.1
+"$REAL_GIT" -C "$repo_build" commit -q --allow-empty \
+  -m "Merge pull request #87 from example/fix/LEA-302-release"
+sha_build_302="$("$REAL_GIT" -C "$repo_build" rev-parse HEAD)"
+"$REAL_GIT" -C "$repo_build" tag v1.29.0+build.5
+write_linear_scope_gh \
+  "85|fix/LEA-280-prior|fix: LEA-280" \
+  "86|fix/LEA-290-buildmeta|fix: LEA-290" \
+  "87|fix/LEA-302-release|fix: LEA-302" \
+  "commit:${sha_build_280}|85" \
+  "commit:${sha_build_290}|86" \
+  "commit:${sha_build_302}|87"
+result="$(run_linear_scope_cleanup "$repo_build" v1.29.0+build.5 --from-changelog --best-effort)"
+status="$(printf '%s\n' "$result" | sed -n '1p')"
+output="$(printf '%s\n' "$result" | sed '1d')"
+run_test "linear_1982_build_meta_exits_zero" "0" "$status"
+run_contains "linear_1982_build_meta_proposes_302" "LEA-302" "$output"
+run_contains "linear_1982_build_meta_tracker_issues" "TRACKER_ISSUES=" "$output"
+# Equal-precedence build.1 must not bound the range; prior stable is v1.28.0.
+run_contains "linear_1982_build_meta_includes_290_in_range" "LEA-290" "$output"
+run_not_contains "linear_1982_build_meta_no_280" "LEA-280" "$output"
+
+# --- chore/ merged PR is shipping evidence; release/ branch is skipped ---
+repo_chore="$TMP_ROOT/linear-1982-chore-and-release"
+init_linear_git_repo "$repo_chore"
+cat > "$repo_chore/CHANGELOG.md" <<'MD'
+# Changelog
+
+## [Unreleased]
+
+## [1.29.0] - 2026-10-15
+
+- Ships chore work and a release branch merge.
+MD
+"$REAL_GIT" -C "$repo_chore" add CHANGELOG.md .ai-dev-workflow.yaml scripts
+"$REAL_GIT" -C "$repo_chore" commit -q -m "chore: baseline before v1.28.0"
+"$REAL_GIT" -C "$repo_chore" tag v1.28.0
+"$REAL_GIT" -C "$repo_chore" commit -q --allow-empty \
+  -m "Merge pull request #90 from example/chore/LEA-346-dependency-fix"
+sha_chore="$("$REAL_GIT" -C "$repo_chore" rev-parse HEAD)"
+"$REAL_GIT" -C "$repo_chore" commit -q --allow-empty \
+  -m "Merge pull request #91 from example/release/v1.29.0"
+sha_rel="$("$REAL_GIT" -C "$repo_chore" rev-parse HEAD)"
+"$REAL_GIT" -C "$repo_chore" commit -q --allow-empty \
+  -m "Merge pull request #92 from example/spec/LEA-298-docs"
+sha_spec_chore="$("$REAL_GIT" -C "$repo_chore" rev-parse HEAD)"
+"$REAL_GIT" -C "$repo_chore" tag v1.29.0
+write_linear_scope_gh \
+  "90|chore/LEA-346-dependency-fix|chore: LEA-346 dependency bump" \
+  "91|release/v1.29.0|Release v1.29.0 LEA-999" \
+  "92|spec/LEA-298-docs|docs: LEA-298" \
+  "commit:${sha_chore}|90" \
+  "commit:${sha_rel}|91" \
+  "commit:${sha_spec_chore}|92"
+result="$(run_linear_scope_cleanup "$repo_chore" v1.29.0 --from-changelog --best-effort)"
+status="$(printf '%s\n' "$result" | sed -n '1p')"
+output="$(printf '%s\n' "$result" | sed '1d')"
+run_test "linear_1982_chore_exits_zero" "0" "$status"
+run_contains "linear_1982_chore_proposes_346" "TRACKER_ISSUES=LEA-346" "$output"
+run_contains "linear_1982_release_branch_skipped" \
+  "RELEASE_SCOPE_SKIPPED issue=LEA-999 reason=release_or_backport_branch_pr" "$output"
+run_contains "linear_1982_spec_still_excluded" \
+  "RELEASE_SCOPE_SKIPPED issue=LEA-298 reason=documentation_stage_pr_only" "$output"
+run_not_contains "linear_1982_chore_no_999_in_issues" "TRACKER_ISSUES=LEA-999" "$output"
+run_not_contains "linear_1982_chore_no_298_in_issues" "TRACKER_ISSUES=LEA-298" "$output"
+
 # --- Linear: missing CHANGELOG version section → still derive from merged PRs ---
 repo_miss_section="$TMP_ROOT/linear-1982-missing-section"
 init_linear_git_repo "$repo_miss_section"

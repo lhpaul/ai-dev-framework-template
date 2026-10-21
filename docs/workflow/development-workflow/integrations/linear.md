@@ -307,20 +307,22 @@ sufficient evidence), against the checkout/component repository (not an
 inherited `GH_REPO` override). A PR is accepted when it is merged and its
 merge/head commit is in the range (or the associating range SHA when those
 fields are absent), regardless of the PR base branch (including nested
-`feature/*` or `develop-<slug>` parents). Only implementation-stage head
-branches (`feature/*`, `fix/*`, `refactor/*`, `hotfix/*`) count as Released
-shipping evidence; merged `spec/*` and `implementation-plan/*` PRs are
-`RELEASE_SCOPE_SKIPPED issue=<ID> reason=documentation_stage_pr_only` when that
-is the only evidence. Linear IDs come from each PR’s `headRefName` / REST
-`head.ref` and `title` (not commit text or PR body). Changelog-only mentions —
-including cross-references such as “did not ship LEA-298” and expanded ranges —
-are skipped with
+`feature/*` or `develop-<slug>` parents). Documentation-stage head branches
+(`spec/*`, `implementation-plan/*`) and release/backport branches are
+`RELEASE_SCOPE_SKIPPED` (`documentation_stage_pr_only` /
+`release_or_backport_branch_pr`); every other merged prefix (including
+`chore/`, `ci/`, `feature/`, `fix/`, …) counts as Released shipping evidence.
+Linear IDs come from each PR’s `headRefName` / REST `head.ref` and `title`
+(not commit text or PR body). Changelog-only mentions — including
+cross-references such as “did not ship LEA-298” and expanded ranges — are
+skipped with
 `RELEASE_SCOPE_SKIPPED issue=<ID> reason=changelog_mention_without_merged_pr`
-(and appear under `release_scope_skipped` in component `--json` output). A
-verified first release (successful remote `git ls-remote --tags` with no
-preceding semver tag) may scan tip history; shallow clones, remote tag-list
-failures, or a preceding remote tag whose peeled commit is missing locally or
-disagrees with a local tag of the same name emit
+(and appear under `release_scope_skipped` in component `--json` output). The
+previous-tag boundary uses the release tag’s PREFIX (`v`, `mobile-v`, …) and
+full SemVer 2.0.0 precedence (prerelease < release; build metadata ignored);
+`first_release` only when no same-prefix remote tag is strictly lower. Shallow
+clones, remote tag-list failures, or a preceding remote tag whose peeled commit
+is missing locally or disagrees with a local tag of the same name emit
 `RELEASE_SCOPE_INCOMPLETE reason=previous_release_boundary_unavailable` (the
 helper never `git fetch`es during scope resolution — fetch tags and rerun). A
 fully resolved range with zero Linear IDs is an empty scope (not incomplete). If
