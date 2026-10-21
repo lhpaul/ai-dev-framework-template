@@ -75,8 +75,9 @@ with tempfile.TemporaryDirectory(prefix='review-yaml-parser-') as tmp:
             assert 'scalar conversion' in result['unreadable_detail'], result
             passed += 1
         result = effective(source, valid, {**os.environ, 'PYTHONPATH': str(missing)})
-        assert result['effective_policy_state'] == 'unreadable', result
-        assert 'install PyYAML==6.0.2' in result['unreadable_detail'], result
+        assert result['effective_runner_state'] == 'defined', result
+        assert result['effective_runner'] == ['codex'], result
+        assert result['unreadable_detail'] == '', result
         legacy = subprocess.check_output([
             sys.executable, sys.argv[1], 'review-overrides', '--repo-root', tmp,
         ], env={**os.environ, 'PYTHONPATH': str(missing)}, text=True)
@@ -85,7 +86,7 @@ with tempfile.TemporaryDirectory(prefix='review-yaml-parser-') as tmp:
             assert 'REVIEW_ON_DRAFT_RUNNER=codex' in legacy, legacy
         passed += 1
 
-    # AC3 source validation is independent of the modern reader's dependency.
+    # The common strict reader and all selected-source validation are dependency-free.
     # Use distinct selected/shared policy so a fallback cannot satisfy this case.
     dependency_env = {**os.environ, 'PYTHONPATH': str(missing)}
     dependency_env.pop('WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT', None)

@@ -19,9 +19,10 @@ context/auth commands and Bash policy readers. Malformed unrelated or trailing
 sections cannot become absent fields and activate shared/default policy. Missing,
 empty and shared-only legacy paths also require no PyYAML. Syntax checking remains
 separate from field/schema validation and does not expand the supported YAML
-features. Modern strict `review-effective`, `review-github-effective` and review
-projection retain their existing PyYAML dependency; this is separate from source
-validation and legacy policy reading.
+features. Modern strict `review-effective`, `review-github-effective`, selected
+source validation and review projection share one dependency-free strict reader.
+Review-specific schema and scalar conversion remain separate from syntax. Provider
+configuration readers, such as CodeRabbit's, retain their own dependencies.
 
 CI-policy enrichment also stays in the selected checkout. It no longer scans
 sibling directories or follows an inherited `WORKFLOW_HUB_REPO_ROOT` to read a
@@ -114,6 +115,6 @@ protocol scripts retain deliberate selected-source access. Verify controls with
 fabricated values in disposable repositories, without launching a real review
 service or copying workstation configuration.
 
-Configuration parse and validation errors expose only the error type, line, column, and known schema key. Unknown keys, source excerpts, exception text, and source paths are excluded. Error payloads retain their schema with an empty `FILE` or `unreadable_file`; successful functional `SOURCE_FILE` and projection provenance remain available. Selected private-source syntax validation uses the framework's strict parser without PyYAML; modern review parsing retains its existing dependency.
+Configuration parse and validation errors expose only the error type, line, column, and known schema key. Unknown keys, source excerpts, exception text, and source paths are excluded. Error payloads retain their schema with an empty `FILE` or `unreadable_file`; successful functional `SOURCE_FILE` and projection provenance remain available. Selected private-source validation and modern review parsing use the same strict framework reader without PyYAML; review-specific schema and conversion restrictions remain separate. Provider-specific configuration readers retain their own dependencies.
 
 A review-state payload keeps functional source bindings such as `local_override_file` and `effective_*_source`, including an unreadable selected source, so callers preserve source authority and never substitute shared policy. These bindings are separate from metadata-only error fields and must not be copied into diagnostic error reports.

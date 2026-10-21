@@ -72,6 +72,24 @@ def indicator_context_cases():
         yield 'explicit_key_position', 'nested_entry_or_value', raw
 
 
+def modern_reader_cases():
+    """Pinned public fixtures plus pre-change strict-reader scalar/Unicode controls."""
+    corpus = json.loads((Path(__file__).parent / 'fixtures/1993-selected-yaml-parity.json').read_text())
+    for index, case in enumerate(corpus['cases'], 1):
+        yield f'F{index:04}', case['raw']
+    raws=[
+     'other: "literal \\"quotes\\" \\\\ tail"\n', "other: 'literal it''s tail'\n", 'other: [a:b, a#b, "a,b", [true, null, 0x10]]\n',
+     'other:\n  - name: first\n    value: [1, -2, 3.5]\n', 'other: {a: value}\n',
+     'other: .inf\n','other: '+('1'*4400)+'\n', 'other: ["\\uFFFE", "\\uFFFF", "\\U0001FFFF"]\n',
+    ]
+    for c in ['\x7f','\x85','\u2028','\u2029','\ufffe','\uffff','\ufeff','\U0001fffe','\U0001ffff','\U0010ffff']:
+     for template in ['other: fabricatedOpaque'+c+'tail\n','other: "fabricatedOpaque'+c+'tail"\n','# fabricatedOpaque'+c+'tail\nother: valid\n','other: first'+c+'next: second\n']:
+      raws.append(template)
+    for index, raw in enumerate(raws, 1):
+        if index != 7:  # Runtime integer digit limits are covered by the existing modern harness.
+            yield f'U{index:03}', raw
+
+
 class SelectedPrivateYaml(unittest.TestCase):
     def setUp(self):
         self.f = fixtures.PrivateSourceConsumers(methodName='runTest')
@@ -246,12 +264,14 @@ flow: {name: value, nested: [x, y]}
         self.assertEqual(result.returncode, 2)
         self.assertIn('unsupported YAML', result.stderr)
 
-    def test_P08_modern_review_dependency_is_separate(self):
+    def test_P08_modern_review_uses_same_dependency_free_reader(self):
         result = self.cli('review-effective', '--repo-root', str(self.f.checkout))
         self.assertEqual(result.returncode, 0, result.stderr)
         report = json.loads(result.stdout)
-        self.assertEqual(report['effective_policy_state'], 'unreadable')
-        self.assertIn('PyYAML', report['unreadable_detail'])
+        self.assertEqual(report['effective_runner'], ['codex'])
+        self.assertEqual(report['effective_runner_state'], 'defined')
+        self.assertEqual(report['unreadable_detail'], '')
+        self.assertEqual(result.stderr, '')
 
     def test_P10_generated_invalid_flow_syntax_cannot_be_accepted(self):
         # The existing test dependency is an oracle, never the implementation.
@@ -385,8 +405,14 @@ flow: {name: value, nested: [x, y]}
         self.assertEqual(rejected, 4775)
         # Baseline5d94 accepted IDs among syntax-valid cases, frozen independently
         # of the corrected parser. Bind every supported valid form, not only quotes.
-        self.assertEqual(len(supported_valid_ids), 3457)
-        self.assertEqual(hashlib.sha256(json.dumps(supported_valid_ids, separators=(',', ':')).encode()).hexdigest(),
+        # The common reader also preserves four old-modern-supported compact
+        # block collections that the former selected-only grammar rejected.
+        additions = {248, 267, 268, 647}
+        self.assertEqual(len(supported_valid_ids), 3461)
+        self.assertTrue(additions.issubset(supported_valid_ids))
+        baseline_ids = [index for index in supported_valid_ids if index not in additions]
+        self.assertEqual(len(baseline_ids), 3457)
+        self.assertEqual(hashlib.sha256(json.dumps(baseline_ids, separators=(',', ':')).encode()).hexdigest(),
                          'd165665d3e57457d99e44b4302101efdbf02456f6f794ee9c8df913b38ba9a7b')
         # A leading '?' can introduce an entry, not a mapping's value. Valid
         # explicit sequence entries and nested entries keep their existing shape.
@@ -440,6 +466,151 @@ flow: {name: value, nested: [x, y]}
                                       '--phase', phase, '--key', key)
                     self.assertEqual((result.returncode, result.stdout, result.stderr),
                                      (0, 'shared-policy-sentinel\n' if shared_present else '', ''))
+        self.f.shared.write_text(shared)
+
+    def test_P17_complete_forbidden_character_matrix_and_escaped_controls(self):
+        import yaml
+        forbidden = ([code for code in range(32) if code not in (9, 10, 13)] +
+                     [code for code in range(127, 160) if code != 133] +
+                     list(range(0xD800, 0xE000)) + [0xFFFE, 0xFFFF])
+        self.assertEqual(len(forbidden), 2111)
+        templates = ('other: fabricatedOpaque{}tail\n', 'other: "fabricatedOpaque{}tail"\n',
+                     "other: 'fabricatedOpaque{}tail'\n", '# fabricatedOpaque{}tail\nother: valid\n')
+        for code in forbidden:
+            for context, template in enumerate(templates):
+                raw = template.format(chr(code))
+                with self.subTest(code=code, context=context):
+                    with self.assertRaises(yaml.YAMLError):
+                        yaml.compose(raw, Loader=yaml.BaseLoader)
+                    with self.assertRaises(resolver.ConfigError):
+                        resolver.parse_review_yaml(self.path, raw=raw)
+                    with self.assertRaises(resolver.ConfigError):
+                        self.parse(raw)
+            escaped = 'other: "\\u' + f'{code:04X}' + '"\n'
+            with self.subTest(escaped_code=code):
+                yaml.compose(escaped, Loader=yaml.BaseLoader)
+                if code == 0 or 0xD800 <= code <= 0xDFFF:
+                    for reader in (self.parse, lambda raw: resolver.parse_review_yaml(self.path, raw=raw)):
+                        with self.assertRaises(resolver.ConfigError):
+                            reader(escaped)
+                else:
+                    self.assertEqual(self.parse(escaped)['other'], chr(code))
+                    self.assertEqual(resolver.parse_review_yaml(self.path, raw=escaped)['other'], chr(code))
+        for code in (0x1FFFE, 0x1FFFF, 0x10FFFE, 0x10FFFF):
+            raw = 'other: "' + chr(code) + '"\n'
+            yaml.compose(raw, Loader=yaml.BaseLoader)
+            self.assertEqual(self.parse(raw)['other'], chr(code))
+            self.assertEqual(resolver.parse_review_yaml(self.path, raw=raw)['other'], chr(code))
+
+    def test_P18_frozen_modern_reader_support_and_single_authority(self):
+        from unittest import mock
+        accepted = []
+        for case, raw in modern_reader_cases():
+            with self.subTest(case=case):
+                try:
+                    value = resolver.parse_review_yaml(self.path, raw=raw)
+                except resolver.ConfigError:
+                    continue
+                accepted.append((case, value))
+        # Frozen a447 strict-reader accepted values, independent of the replacement.
+        self.assertEqual(len(accepted), 1025)
+        self.assertEqual(hashlib.sha256(json.dumps(accepted, ensure_ascii=True, sort_keys=True,
+                                                   separators=(',', ':')).encode()).hexdigest(),
+                         '53aaa7b9285e9be3bd25a865628cb40cb56b69df35625c6701f22e24f5e8aba7')
+        # Frozen old strict-reader support beyond the former selected-only cap.
+        # Malformed counterparts still fail; Python recursion exhaustion is safe.
+        for depth in (101, 110, 150):
+            raw = 'other: ' + '[' * depth + 'tail' + ']' * depth + '\n'
+            expected = 'tail'
+            for _ in range(depth):
+                expected = [expected]
+            self.assertEqual(resolver.parse_review_yaml(self.path, raw=raw), {'other': expected})
+            self.assertEqual(self.parse(raw), {'other': expected})
+            for malformed in (raw.replace(']', '', 1), raw.rstrip() + ']\n'):
+                with self.assertRaises(resolver.ConfigError):
+                    resolver.parse_review_yaml(self.path, raw=malformed)
+                with self.assertRaises(resolver.ConfigError):
+                    self.parse(malformed)
+        with self.assertRaises(resolver.ConfigError):
+            self.parse('other: ' + '[' * 2000 + 'tail' + ']' * 2000 + '\n')
+        # These exact AST shapes are frozen from the old modern strict reader.
+        for raw, expected in [('other:\n  - -\n', {'other': [[None]]}),
+                              ('other:\n  - - key: tail\n', {'other': [[{'key': 'tail'}]]}),
+                              ('other:\n  - ? codex\n', {'other': [{'codex': None}]}),
+                              ('other:\n  - - codex\n', {'other': [['codex']]})]:
+            self.assertEqual(resolver.parse_review_yaml(self.path, raw=raw), expected)
+            self.assertEqual(self.parse(raw), expected)
+        for raw, expected in [
+                ('other:\n  - - first\n    - second\n', {'other': [['first', 'second']]}),
+                ('? key\n: value\n', {'key': 'value'}),
+                ('other:\n  ? key\n  : value\n', {'other': {'key': 'value'}}),
+                ('other:\n  - ? key\n    : value\n', {'other': [{'key': 'value'}]}),
+                ('other:\n  - ? key\n    : value\n    extra: tail\n', {'other': [{'key': 'value', 'extra': 'tail'}]})]:
+            self.assertEqual(resolver.parse_review_yaml(self.path, raw=raw), expected)
+            self.assertEqual(self.parse(raw), expected)
+        for raw in ('? "key"\n: value\n', 'other:\n  - ? key\n    :\n      - first\n      - second\n'):
+            with self.assertRaises(resolver.ConfigError):
+                resolver.parse_review_yaml(self.path, raw=raw)
+        raw = 'review:\n  on_draft:\n    runner:\n      - name: codex\n        name: cursor\n'
+        with self.assertRaises(resolver.ConfigError) as duplicate:
+            resolver.parse_review_yaml(self.path, raw=raw)
+        self.assertEqual((duplicate.exception.error_type, duplicate.exception.line), ('duplicate mapping key', 5))
+        raw = 'other: ["quoted", 0x10, true, null]\n'
+        with mock.patch.object(resolver, 'parse_review_yaml', wraps=resolver.parse_review_yaml) as reader:
+            self.assertEqual(self.parse(raw)['other'], ['quoted', 16, True, None])
+            reader.assert_called_once_with(self.path, raw=raw, review_fields=False)
+        for linebreak in ('\r', '\r\n', '\x85', '\u2028', '\u2029'):
+            raw = 'first: value' + linebreak + 'second: tail\n'
+            self.assertEqual(resolver.parse_review_yaml(self.path, raw=raw), {'first': 'value', 'second': 'tail'})
+        self.assertEqual(resolver.parse_review_yaml(self.path, raw='items:\n  -\tvalue\n'), {'items': ['value']})
+        for space in ('\u00a0', '\u2000', '\u3000'):
+            with self.assertRaises(resolver.ConfigError):
+                resolver.parse_review_yaml(self.path, raw=space + '\n')
+
+    def test_P19_literal_noncharacters_cannot_reach_legacy_or_shared_fallback(self):
+        shared = self.f.shared.read_text()  # Synthetic fixture only.
+        buckets = (('on_draft', 'runner'), ('on_draft', 'github'), ('on_ready', 'github'))
+        templates = ('other: fabricatedOpaque{}tail\n', 'other: "fabricatedOpaque{}tail"\n',
+                     "other: 'fabricatedOpaque{}tail'\n", '# fabricatedOpaque{}tail\n')
+        for shared_present in (True, False):
+            if shared_present:
+                self.f.shared.write_text(shared)
+            else:
+                self.f.shared.unlink()
+            for code in (0xFFFE, 0xFFFF):
+                for context, template in enumerate(templates):
+                    self.f.private.write_text(template.format(chr(code)) + self.valid)
+                    commands = [('mode', '--repo-root', str(self.f.checkout)),
+                                ('review-overrides', '--repo-root', str(self.f.checkout))]
+                    commands += [('review-list', '--repo-root', str(self.f.checkout),
+                                  '--shared-file', str(self.f.shared), '--apply-local',
+                                  '--phase', phase, '--key', key) for phase, key in buckets]
+                    for arguments in commands:
+                        with self.subTest(code=code, context=context, shared=shared_present, command=arguments[0], bucket=arguments[-1]):
+                            result = self.cli(*arguments)
+                            self.assertEqual((result.returncode, result.stdout), (2, ''))
+                            self.assertRegex(result.stderr, r'^ERROR: configuration: invalid YAML; line=1; column=[0-9]+\n$')
+                            self.assertNotIn('fabricatedOpaque', result.stdout + result.stderr)
+                            self.assertNotIn(chr(code), result.stdout + result.stderr)
+                            self.assertNotIn('shared-policy-sentinel', result.stdout + result.stderr)
+                    # Ordinary malformed config keeps the modern structured report/status0.
+                    with self.subTest(code=code, context=context, shared=shared_present, modern=True):
+                        modern = self.cli('review-effective', '--repo-root', str(self.f.checkout))
+                        self.assertEqual(modern.returncode, 0)
+                        data = json.loads(modern.stdout)
+                        self.assertEqual(data['effective_policy_state'], 'unreadable')
+                        self.assertEqual(data['effective_runner'], [])
+                        self.assertRegex(data['unreadable_detail'], r'^configuration: invalid YAML; line=1; column=[0-9]+$')
+                        self.assertEqual(modern.stderr, '')
+                        self.assertNotIn(chr(code), modern.stdout + modern.stderr)
+                        self.assertNotIn('fabricatedOpaque', modern.stdout + modern.stderr)
+            with self.subTest(shared=shared_present, valid_escaped_control=True):
+                self.f.private.write_text(self.valid + 'other: ["\\uFFFE", "\\uFFFF"]\n')
+                result = self.cli('review-effective', '--repo-root', str(self.f.checkout))
+                self.assertEqual(result.returncode, 0)
+                data = json.loads(result.stdout)
+                self.assertEqual(data['effective_runner'], ['codex'])
+                self.assertEqual(data['unreadable_detail'], '')
         self.f.shared.write_text(shared)
 
 
