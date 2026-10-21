@@ -29,6 +29,11 @@
 # covers: scripts/development-workflow/local-ai-reviewer-findings.py
 # covers: scripts/development-workflow/tests/test_runner_diagnostic_emitters.py
 # covers: scripts/development-workflow/tests/test_private_source_consumers.py
+# covers: scripts/development-workflow/post-merge-cleanup.sh
+# covers: scripts/development-workflow/discover-workflow-state.sh
+# covers: scripts/development-workflow/workflow-batch-lanes.sh
+# covers: scripts/development-workflow/workflow-batch-plan.sh
+# covers: scripts/development-workflow/workflow-next-action.sh
 set -euo pipefail
 SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 exec python3 "$SCRIPT_DIR/test_runner_diagnostic_emitters.py"
