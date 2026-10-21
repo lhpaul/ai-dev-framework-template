@@ -169,7 +169,7 @@ esac
             entries = {
                 'coderabbit-cli-reviewer.sh': ['1993', 'fixture', 'repo', *common],
                 'pr-review-loop.sh': ['1993', '--repo', 'fixture/repo', *common],
-                'apply-readiness-labels.sh': ['1993', '--repo', 'fixture/repo'],
+                'apply-readiness-labels.sh': ['--pr', '1993', '--repo', 'fixture/repo', '--label', 'ready-for-human-review', *common],
                 'pr-ci-loop.sh': ['1993', '--repo', 'fixture/repo', *common],
                 'item-completion-self-check.sh': ['--issue', '1993', '--branch', 'feature/1993-fixture', '--stage', 'synthetic', '--worktree-path', str(self.checkout), *common, '--pr', '1993', '--expected-base', 'develop', '--require-clean', 'false', '--require-ci-green', 'false', '--require-review-summary', 'true', '--require-review-threads', 'true'],
                 'run-epic-policy-recommender.sh': ['--scope', str(self.scope), '--original-command', '/run-item 1993', '--json'],

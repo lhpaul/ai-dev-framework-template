@@ -466,6 +466,153 @@ builtins.open, io.open, os.open = builtin, io_open, os_open
         (development / '1_specs.md').write_text('**Issue**: #1993\n')
         self.relative_entry('workflow-batch-lanes.sh', ['--scan', str(development)])
 
+    def readiness_handoff_fixture(self):
+        """Only GH transport is fake; reader, ownership and child entry are real."""
+        import sys
+        home = self.f.root / 'readiness-home'; home.mkdir()
+        self.f.env['HOME'] = str(home)
+        self.child_events = self.f.root / 'readiness-children.jsonl'
+        self.f.env.update(GH_REPO='fixture/repo', SYNTHETIC_CHILD_EVENTS=str(self.child_events))
+        pr = json.loads(self.f.pr.read_text())
+        # Intentional ownership rejection is a valid gate outcome after source
+        # selection, distinct from selected-source failure2 or argument errors.
+        pr.update(headRefName='feature/1993-other', isCrossRepository=False,
+                  headRepositoryOwner={'login': 'fixture'}, headRepository={'name': 'repo'})
+        self.f.pr.write_text(json.dumps(pr))
+        (self.f.bin / 'gh').write_text('''#!PYTHON
+import json, os, subprocess, sys
+args = sys.argv[1:]
+if args[:2] == ['auth', 'status']:
+    raise SystemExit(0)
+if args[:2] == ['repo', 'view']:
+    print('fixture/repo'); raise SystemExit(0)
+if args[:2] == ['pr', 'view']:
+    data = json.load(open(os.environ['SYNTHETIC_PR']))
+    if '--json' in args and args[args.index('--json') + 1] == 'labels':
+        data = {'labels': [{'name': 'ready-for-regression'}] if os.environ.get('SYNTHETIC_LABEL_PRESENT') == '1' else []}
+    raw = json.dumps(data)
+    if '--jq' in args:
+        result = subprocess.run(['jq', '-r', args[args.index('--jq') + 1]], input=raw, text=True, capture_output=True)
+        sys.stdout.write(result.stdout); raise SystemExit(result.returncode)
+    print(raw); raise SystemExit(0)
+if args[:2] == ['pr', 'edit']:
+    with open(os.environ['SYNTHETIC_MUTATIONS'], 'a') as out: out.write('unexpected-label-write\\n')
+raise SystemExit(99)
+'''.replace('PYTHON', sys.executable))
+        (self.f.bin / 'bash').write_text('''#!PYTHON
+import json, os, subprocess, sys
+args = sys.argv[1:]
+result = subprocess.run([os.environ['SYNTHETIC_BASH'], *args])
+if args and args[0].endswith('/apply-readiness-labels.sh'):
+    root = args[args.index('--repo-root') + 1] if '--repo-root' in args else None
+    with open(os.environ['SYNTHETIC_CHILD_EVENTS'], 'a') as out:
+        out.write(json.dumps({'status': result.returncode, 'repo_root': root, 'cwd': os.getcwd()}) + '\\n')
+raise SystemExit(result.returncode)
+'''.replace('PYTHON', sys.executable))
+        (self.f.bin / 'bash').chmod(0o755)
+
+    def readiness_handoff_case(self, route):
+        self.readiness_handoff_fixture()
+        selected = self.product / '.ai-dev-workflow.local.yaml'
+        tool_private = self.f.checkout / '.ai-dev-workflow.local.yaml'
+        shells = [path for path in ('/bin/bash', '/opt/homebrew/bin/bash') if Path(path).is_file()]
+        for shell in shells:
+            self.f.env['SYNTHETIC_BASH'] = shell
+            for declaration in (None, 'product_repos: []\n'):
+                if declaration is None:
+                    selected.unlink(missing_ok=True)
+                else:
+                    selected.write_text(declaration)
+                baseline = None
+                for state, text in [('absent', None),
+                                    ('created', 'review:\n  on_ready:\n    github: [synthetic-opaque-created]\n'),
+                                    ('changed', 'product_repos:\n  - name: synthetic-opaque-changed\n'),
+                                    ('invalid', 'broken: [synthetic-opaque-invalid\n')]:
+                    with self.subTest(route=route, shell=shell, selected=declaration is not None, tooling=state):
+                        if text is None:
+                            tool_private.unlink(missing_ok=True)
+                        else:
+                            tool_private.write_text(text)
+                        self.reads.unlink(missing_ok=True)
+                        self.child_events.unlink(missing_ok=True)
+                        if route == 'direct':
+                            result = self.run_command([shell, str(self.f.runtime / 'apply-readiness-labels.sh'),
+                                                       '--pr', '1993', '--repo', 'fixture/repo',
+                                                       '--branch', 'feature/1993-fixture', '--repo-root', str(self.product),
+                                                       '--label', 'ready-for-regression', '--dry-run'], cwd=self.f.runtime)
+                            self.assertEqual(result.returncode, 1)
+                        else:
+                            self.f.env['SYNTHETIC_LABEL_PRESENT'] = '1' if route == 'revalidate' else '0'
+                            command = ('SCRIPT_DIR=' + shlex.quote(str(self.f.runtime)) + '\n' +
+                                       fixtures.function_text('pr-review-loop.sh', 'restore_regression_label_if_missing') + '\n' +
+                                       'repo_root=' + shlex.quote(str(self.product)) + '\n' +
+                                       'workflow_bind_local_config_root "$repo_root" || exit 2\n' +
+                                       'restore_regression_label_if_missing 1993 feature/1993-fixture\n')
+                            result = self.bash(command, cwd=self.f.runtime)
+                            self.assertEqual(result.returncode, 0)  # Existing best-effort contract.
+                            events = [json.loads(line) for line in self.child_events.read_text().splitlines()]
+                            self.assertEqual(len(events), 1)
+                            self.assertEqual(events[0]['status'], 1)
+                            self.assertEqual(events[0]['repo_root'], str(self.product))
+                            self.assertIn('WARN: apply-readiness-labels.sh refused or failed', result.stderr)
+                        self.assertIn('REASON=ownership-mismatch', result.stdout)
+                        self.assertIn('OWNERSHIP_EXPECTED_BRANCH=feature/1993-fixture', result.stdout)
+                        self.assertNotIn('synthetic-opaque', result.stdout + result.stderr)
+                        current = (result.returncode, result.stdout, result.stderr)
+                        if baseline is None:
+                            baseline = current
+                        else:
+                            self.assertEqual(current, baseline)
+                        self.no_foreign_reads((selected,))
+                        if selected.exists():
+                            self.assertIn(str(selected.resolve()), self.reads.read_text().splitlines())
+                        self.assertFalse(self.f.log.exists(), 'readiness rejection must not mutate or run a reviewer')
+
+    def test_R28_readiness_explicit_root_real_subprocess(self):
+        self.readiness_handoff_case('direct')
+
+    def test_R29_readiness_restore_root_real_subprocess(self):
+        self.readiness_handoff_case('restore')
+
+    def test_R30_readiness_revalidate_root_real_subprocess(self):
+        self.readiness_handoff_case('revalidate')
+
+    def test_R31_readiness_source_failure_and_explicit_tool_checkout(self):
+        self.readiness_handoff_fixture()
+        self.f.env['SYNTHETIC_BASH'] = '/bin/bash'
+        selected = self.product / '.ai-dev-workflow.local.yaml'
+        selected.write_text('broken: [synthetic-opaque-selected\n')
+        arguments = ['--pr', '1993', '--repo', 'fixture/repo', '--branch', 'feature/1993-fixture',
+                     '--label', 'ready-for-regression', '--dry-run']
+        result = self.run_command(['/bin/bash', str(self.f.runtime / 'apply-readiness-labels.sh'),
+                                   *arguments, '--repo-root', str(self.product)], cwd=self.f.runtime)
+        self.assertEqual((result.returncode, result.stdout), (2, ''))
+        self.assertRegex(result.stderr, r'^ERROR: configuration: invalid YAML; line=1\n$')
+        self.assertNotIn('synthetic-opaque', result.stdout + result.stderr)
+        self.no_foreign_reads((selected,))
+        # Explicit selection of the tooling checkout remains legitimate.
+        tool_private = self.f.checkout / '.ai-dev-workflow.local.yaml'
+        tool_private.write_text('product_repos: []\n')
+        self.reads.unlink(missing_ok=True)
+        result = self.run_command(['/bin/bash', str(self.f.runtime / 'apply-readiness-labels.sh'),
+                                   *arguments, '--repo-root', str(self.f.checkout)], cwd=self.product)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn('REASON=ownership-mismatch', result.stdout)
+        self.no_foreign_reads((tool_private,))
+        self.assertIn(str(tool_private.resolve()), self.reads.read_text().splitlines())
+        # The existing no-flag default still deliberately selects that tool root.
+        result = self.run_command(['/bin/bash', str(self.f.runtime / 'apply-readiness-labels.sh'),
+                                   *arguments], cwd=self.product)
+        self.assertEqual(result.returncode, 1)
+        self.no_foreign_reads((tool_private,))
+        for flag in ('--classify-pr-agent', '--pr-agent-focus-labels'):
+            self.reads.unlink(missing_ok=True)
+            result = subprocess.run(['/bin/bash', str(self.f.runtime / 'apply-readiness-labels.sh'), flag],
+                                    env=self.f.env, cwd=self.f.runtime, input='No major issues detected\n',
+                                    text=True, capture_output=True, timeout=30)
+            self.assertEqual(result.returncode, 0)
+            self.assertFalse(self.reads.exists(), 'stdin-only classifier must not read configuration')
+
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)

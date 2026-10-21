@@ -416,15 +416,12 @@ source "$SCRIPT_DIR/workflow-lib.sh"
 # This entry emits diagnostic reports; shared config/control transport stays raw.
 print_kv() { workflow_diagnostic_kv "$@"; }
 
-# Validate the selected source before CI/reviewer/readiness operations.
-workflow_local_config_file >/dev/null || exit 2
-
 usage() {
   cat <<'USAGE'
 Usage: apply-readiness-labels.sh --classify-pr-agent|--pr-agent-focus-labels < review.txt
        apply-readiness-labels.sh --pr <number> [--repo <owner/repo>] \
   --label <ready-for-human-review|ready-for-regression> \
-  [--branch <branch>] [--dry-run] [--json]
+  [--branch <branch>] [--repo-root <path>] [--dry-run] [--json]
 
 Refuses to apply the label unless every configured ready-phase reviewer check
 run is `completed` for the current head SHA, the reviewer posted no blocking
@@ -492,6 +489,7 @@ label=""
 json_output="false"
 branch_name=""
 dry_run="false"
+repo_root=""
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -505,6 +503,12 @@ while [ "$#" -gt 0 ]; do
       [ "$#" -ge 2 ] && [ -n "${2:-}" ] || { workflow_diagnostic_printf 'ERROR: missing value for --repo\n' >&2; exit 2; }
       [ -z "$repo" ] || { workflow_diagnostic_printf 'ERROR: repeated option: --repo\n' >&2; exit 2; }
       repo="$2"
+      shift 2
+      ;;
+    --repo-root)
+      [ "$#" -ge 2 ] && [ -n "${2:-}" ] || { workflow_diagnostic_printf 'ERROR: missing value for --repo-root\n' >&2; exit 2; }
+      [ -z "$repo_root" ] || { workflow_diagnostic_printf 'ERROR: repeated option: --repo-root\n' >&2; exit 2; }
+      repo_root="$2"
       shift 2
       ;;
     --label)
@@ -538,8 +542,14 @@ case "$pr_number" in
   ''|*[!0-9]*) workflow_diagnostic_printf 'ERROR: --pr must be a number\n' >&2; exit 2 ;;
 esac
 
+# Bind explicit checkout authority before any private-source or remote operation.
+# The default remains this tool checkout; children pass their selected root.
+[ -n "$repo_root" ] || repo_root="$(workflow_repo_root)"
+workflow_bind_local_config_root "$repo_root" || exit 2
+repo_root="$(workflow_local_config_root)"
+
 require_gh
-cd_workflow_repo_root
+cd -- "$repo_root"
 [ -n "$repo" ] || repo="$(repo_slug)"
 
 # Readiness gate verdict.
