@@ -36,133 +36,62 @@ trap cleanup EXIT
 mkdir -p "$MOCK_BIN" "$FIXTURE_REPO/scripts/development-workflow" "$MOCK_STATE_DIR" "$MOCK_STATUS_DIR"
 cp "$REPO_ROOT/scripts/development-workflow/graduation-closeout.sh" "$FIXTURE_REPO/scripts/development-workflow/graduation-closeout.sh"
 cp "$REPO_ROOT/scripts/development-workflow/closing-keyword-lib.sh" "$FIXTURE_REPO/scripts/development-workflow/closing-keyword-lib.sh"
-chmod +x "$FIXTURE_REPO/scripts/development-workflow/graduation-closeout.sh"
+# Real workflow-lib (Linear bridge / emit_linear_deferred_action / shared parser).
+# Append fixture overrides only — do not reimplement Linear update_tracker.
+cp "$REPO_ROOT/scripts/development-workflow/workflow-lib.sh" \
+  "$FIXTURE_REPO/scripts/development-workflow/workflow-lib.sh"
+cat >> "$FIXTURE_REPO/scripts/development-workflow/workflow-lib.sh" <<'FIXTURE_OVERRIDES'
 
-cat > "$FIXTURE_REPO/scripts/development-workflow/workflow-lib.sh" <<'STUB_LIB'
-#!/usr/bin/env bash
-
-cd_workflow_repo_root() {
-  cd "$WORKFLOW_FIXTURE_REPO"
-}
-
-require_gh() {
-  gh auth status >/dev/null
-}
-
+# --- fixture overrides (after real definitions) ---
 repo_slug() {
   printf 'lhpaul/ai-dev-framework-template\n'
 }
 
-workflow_normalize_issue_tracker_provider() {
-  local raw="$1"
-  printf '%s' "$raw" | tr '[:upper:]' '[:lower:]' | tr '-' '_'
-}
+_fixture_real_get_tracker_status_for_issue_body="$(declare -f get_tracker_status_for_issue)"
+_fixture_real_get_tracker_status_for_issue_body="${_fixture_real_get_tracker_status_for_issue_body/get_tracker_status_for_issue/_fixture_real_get_tracker_status_for_issue}"
+eval "$_fixture_real_get_tracker_status_for_issue_body"
+unset _fixture_real_get_tracker_status_for_issue_body
 
-workflow_config_provider() {
-  # Mirror shared workflow-lib.sh (no comment-tolerant section headers).
-  local section="$1"
-  local config_file="${2:-$WORKFLOW_FIXTURE_REPO/.ai-dev-workflow.yaml}"
-  [ -f "$config_file" ] || return 0
-  awk -v section="$section" '
-    $0 ~ ("^" section ":[[:space:]]*$") { in_section = 1; next }
-    in_section && /^[^[:space:]#].*:[[:space:]]*$/ { exit }
-    in_section && /^[[:space:]][[:space:]]provider:[[:space:]]*/ {
-      line = $0
-      sub(/^[[:space:]]*provider:[[:space:]]*/, "", line)
-      sub(/[[:space:]]+#.*$/, "", line)
-      gsub(/^[[:space:]]+|[[:space:]]+$/, "", line)
-      gsub(/^["'"'"']|["'"'"']$/, "", line)
-      print line
-      exit
-    }
-  ' "$config_file"
-}
-
-workflow_graduation_closeout_issue_tracker_provider_in_file() {
-  local config_file="$1"
-  [ -f "$config_file" ] || return 0
-  awk '
-    /^issue_tracker:[[:space:]]*(#.*)?$/ { in_section = 1; next }
-    in_section && /^[^[:space:]#]/ { exit }
-    in_section && /^[[:space:]][[:space:]]provider:[[:space:]]*/ {
-      line = $0
-      sub(/^[[:space:]]*provider:[[:space:]]*/, "", line)
-      sub(/[[:space:]]+#.*$/, "", line)
-      gsub(/^[[:space:]]+|[[:space:]]+$/, "", line)
-      gsub(/^["'"'"']|["'"'"']$/, "", line)
-      print line
-      exit
-    }
-  ' "$config_file"
-}
-
-workflow_graduation_closeout_tracker_provider_raw() {
-  local repo_root="${1:-$WORKFLOW_FIXTURE_REPO}"
-  local shared="$repo_root/.ai-dev-workflow.yaml"
-  local legacy="" local_raw="" local_norm=""
-  [ -f "$shared" ] || return 0
-  legacy="$(workflow_config_provider issue_tracker "$shared")"
-  if [ -n "$legacy" ]; then
-    printf '%s' "$legacy"
-    return 0
-  fi
-  local_raw="$(workflow_graduation_closeout_issue_tracker_provider_in_file "$shared")"
-  local_norm="$(workflow_normalize_issue_tracker_provider "$local_raw")"
-  if [ "$local_norm" = "linear" ]; then
-    printf '%s' "$local_raw"
-    return 0
-  fi
-  printf '%s' "$legacy"
-  return 0
-}
-
-is_terminal_tracker_status() {
-  case "$1" in
-    Done|Merged|Released|Cancelled) return 0 ;;
-    *) return 1 ;;
-  esac
-}
+_fixture_real_update_tracker_status_best_effort_body="$(declare -f update_tracker_status_best_effort)"
+_fixture_real_update_tracker_status_best_effort_body="${_fixture_real_update_tracker_status_best_effort_body/update_tracker_status_best_effort/_fixture_real_update_tracker_status_best_effort}"
+eval "$_fixture_real_update_tracker_status_best_effort_body"
+unset _fixture_real_update_tracker_status_best_effort_body
 
 get_tracker_status_for_issue() {
-  local issue="$1"
   local provider
-  provider="$(workflow_normalize_issue_tracker_provider "$(workflow_graduation_closeout_tracker_provider_raw "$WORKFLOW_FIXTURE_REPO")")"
+  # Bridge readability uses the shared parser — same as production.
+  provider="$(workflow_normalize_issue_tracker_provider "$(workflow_issue_tracker_provider_raw)")"
   if [ "$provider" = "linear" ]; then
-    printf 'TRACKER_ACTION_REQUIRED=read_status issue=%s\n' "$issue"
-    return 0
+    _fixture_real_get_tracker_status_for_issue "$@"
+    return $?
   fi
-  if [ -f "$MOCK_STATUS_DIR/$issue" ]; then
+  local issue="$1"
+  if [ -f "${MOCK_STATUS_DIR:?}/$issue" ]; then
     cat "$MOCK_STATUS_DIR/$issue"
   fi
 }
 
 update_tracker_status_best_effort() {
-  local issue="$1"
-  local status="$2"
   local provider
-  provider="$(workflow_normalize_issue_tracker_provider "$(workflow_graduation_closeout_tracker_provider_raw "$WORKFLOW_FIXTURE_REPO")")"
+  provider="$(workflow_normalize_issue_tracker_provider "$(workflow_issue_tracker_provider_raw)")"
   if [ "$provider" = "linear" ]; then
     # Simulate merge-session / bridge skip: exit 0 with empty stdout.
     if [ "${MOCK_LINEAR_UPDATE_EMPTY:-0}" = "1" ]; then
       return 0
     fi
-    case "$status" in
-      *' '*)
-        printf "TRACKER_ACTION_REQUIRED=set_status issue=%s target_status='%s'\n" "$issue" "$status"
-        ;;
-      *)
-        printf 'TRACKER_ACTION_REQUIRED=set_status issue=%s target_status=%s\n' "$issue" "$status"
-        ;;
-    esac
-    return 0
+    _fixture_real_update_tracker_status_best_effort "$@"
+    return $?
   fi
+  local issue="$1"
+  local status="$2"
   if [ "${MOCK_STATUS_FAIL_ISSUE:-}" = "$issue" ]; then
     printf 'Warning: mocked status update failure for #%s\n' "$issue" >&2
     return 0
   fi
-  printf '%s\n' "$status" > "$MOCK_STATUS_DIR/$issue"
+  printf '%s\n' "$status" > "${MOCK_STATUS_DIR:?}/$issue"
 }
-STUB_LIB
+FIXTURE_OVERRIDES
+chmod +x "$FIXTURE_REPO/scripts/development-workflow/graduation-closeout.sh"
 
 cat > "$MOCK_BIN/gh" <<'MOCK_GH'
 #!/usr/bin/env bash
@@ -1063,25 +992,7 @@ run_test "commented_gh_issues_child_closed" "CLOSED" "$(python3 -c 'import json;
 run_contains "commented_gh_issues_epic_close" "900" "$(cat "$MOCK_CLOSE_LOG")"
 
 echo ""
-echo "=== graduation closeout: commented header + linear rejects bare --epic 326 (#1984) ==="
-reset_fixture
-cat > "$FIXTURE_REPO/.ai-dev-workflow.yaml" <<'EOF'
-issue_tracker: # native tracker
-  provider: linear
-EOF
-write_issue 326 "Unrelated GitHub issue" OPEN
-CLOSEOUT_EPIC=326
-commented_bare_result="$(run_closeout)"
-unset CLOSEOUT_EPIC
-commented_bare_body="$(last_output_body "$commented_bare_result")"
-run_test "commented_linear_bare_epic_exit_64" "64" "$(last_output_status "$commented_bare_result")"
-run_contains "commented_linear_bare_epic_error" "native Linear ID" "$commented_bare_body"
-run_test "commented_linear_bare_epic_326_untouched" "OPEN" "$(python3 -c 'import json; print(json.load(open("'"$MOCK_STATE_DIR"'/326.json"))["state"])')"
-run_test "commented_linear_bare_epic_no_close_log" "" "$(cat "$MOCK_CLOSE_LOG")"
-run_not_contains "commented_linear_bare_epic_no_mutation" "issue close" "$(cat "$MOCK_GH_LOG")"
-
-echo ""
-echo "=== graduation closeout: commented header + linear + LEA-326 uses Linear path (#1984) ==="
+echo "=== graduation closeout: commented header + linear fails closed before mutation (#1984) ==="
 reset_fixture
 cat > "$FIXTURE_REPO/.ai-dev-workflow.yaml" <<'EOF'
 issue_tracker: # native tracker
@@ -1094,12 +1005,32 @@ CLOSEOUT_EPIC=LEA-326
 commented_lea_result="$(run_closeout)"
 unset CLOSEOUT_EPIC
 commented_lea_body="$(last_output_body "$commented_lea_result")"
-run_test "commented_linear_lea_exit_zero" "0" "$(last_output_status "$commented_lea_result")"
-run_contains "commented_linear_lea_provider" "TRACKER_PROVIDER=linear" "$commented_lea_body"
-run_contains "commented_linear_lea_deferred" "TRACKER_ACTION_REQUIRED=set_status issue=LEA-326" "$commented_lea_body"
+run_test "commented_linear_lea_exit_64" "64" "$(last_output_status "$commented_lea_result")"
+run_contains "commented_linear_lea_remediation" "tracker bridge cannot read it" "$commented_lea_body"
+run_contains "commented_linear_lea_fix_header" "Remove the trailing comment from the 'issue_tracker:' line" "$commented_lea_body"
 run_test "commented_linear_lea_326_untouched" "OPEN" "$(python3 -c 'import json; print(json.load(open("'"$MOCK_STATE_DIR"'/326.json"))["state"])')"
 run_test "commented_linear_lea_no_close_log" "" "$(cat "$MOCK_CLOSE_LOG")"
 run_not_contains "commented_linear_lea_no_mutation" "issue close" "$(cat "$MOCK_GH_LOG")"
+run_not_contains "commented_linear_lea_no_deferred" "TRACKER_ACTION_REQUIRED=" "$commented_lea_body"
+run_not_contains "commented_linear_lea_no_gh_api" "api graphql" "$(cat "$MOCK_GH_LOG")"
+
+echo ""
+echo "=== graduation closeout: uncommented linear + LEA-326 uses real bridge (#1984) ==="
+reset_fixture
+write_tracker_config linear
+export MOCK_NATIVE_MODE=empty
+export MOCK_PR_MODE=none
+write_issue 326 "Unrelated GitHub issue" OPEN
+CLOSEOUT_EPIC=LEA-326
+uncommented_lea_result="$(run_closeout)"
+unset CLOSEOUT_EPIC
+uncommented_lea_body="$(last_output_body "$uncommented_lea_result")"
+run_test "uncommented_linear_lea_exit_zero" "0" "$(last_output_status "$uncommented_lea_result")"
+run_contains "uncommented_linear_lea_provider" "TRACKER_PROVIDER=linear" "$uncommented_lea_body"
+run_contains "uncommented_linear_lea_deferred" "TRACKER_ACTION_REQUIRED=set_status issue=LEA-326" "$uncommented_lea_body"
+run_test "uncommented_linear_lea_326_untouched" "OPEN" "$(python3 -c 'import json; print(json.load(open("'"$MOCK_STATE_DIR"'/326.json"))["state"])')"
+run_test "uncommented_linear_lea_no_close_log" "" "$(cat "$MOCK_CLOSE_LOG")"
+run_not_contains "uncommented_linear_lea_no_mutation" "issue close" "$(cat "$MOCK_GH_LOG")"
 
 echo ""
 echo "Graduation closeout tests: $PASS_COUNT passed, $FAIL_COUNT failed."

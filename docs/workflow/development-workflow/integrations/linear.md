@@ -301,7 +301,10 @@ and then transition every listed `TRACKER_ISSUES` item from `Merged` to
 
 - `--epic` must be a native Linear ID with team prefix (e.g. `LEA-326`). A bare
   number fails closed — the helper never treats the numeric suffix as a GitHub
-  issue.
+  issue. If `provider: linear` is only visible under a commented
+  `issue_tracker:` header, closeout fails closed before mutation — remove the
+  trailing comment so the shared tracker bridge can read the provider.
+
 - GitHub `subIssues` / parent GraphQL and `defer-epic-close` label writes are
   skipped. Epic (and other Linear) status transitions are emitted as
   `TRACKER_ACTION_REQUIRED=` deferred actions for the orchestrator MCP bridge.

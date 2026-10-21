@@ -206,6 +206,18 @@ case "$TRACKER_PROVIDER" in
     ;;
 esac
 
+# Shared parser (workflow_config_provider) must also see linear — the tracker
+# bridge uses that path. A commented `issue_tracker:` header can make the
+# closeout-local reader say linear while the bridge still defaults to
+# github_projects; fail closed before any mutation.
+if [ "$TRACKER_PROVIDER" = "linear" ]; then
+  SHARED_TRACKER_PROVIDER="$(workflow_normalize_issue_tracker_provider "$(workflow_config_provider issue_tracker "$(pwd)/.ai-dev-workflow.yaml")")"
+  if [ "$SHARED_TRACKER_PROVIDER" != "linear" ]; then
+    echo "ERROR: issue_tracker.provider is linear but the tracker bridge cannot read it (commented section header?). Remove the trailing comment from the 'issue_tracker:' line in .ai-dev-workflow.yaml and rerun." >&2
+    exit 64
+  fi
+fi
+
 if [ "$TRACKER_PROVIDER" = "linear" ]; then
   if ! is_linear_issue_id "$EPIC_ISSUE"; then
     echo "ERROR: with issue_tracker.provider=linear, --epic must be a native Linear ID with team prefix (e.g. LEA-326), not a bare number. Refusing to mutate GitHub issues from a numeric suffix." >&2

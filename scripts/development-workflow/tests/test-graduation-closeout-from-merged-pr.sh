@@ -54,84 +54,16 @@ exit 0
 CHILD
 chmod +x "$FIXTURE_REPO/scripts/development-workflow/graduation-closeout.sh"
 
-cat > "$FIXTURE_REPO/scripts/development-workflow/workflow-lib.sh" <<'STUB_LIB'
-#!/usr/bin/env bash
+# Real workflow-lib for shared + closeout-local provider resolution.
+cp "$REPO_ROOT/scripts/development-workflow/workflow-lib.sh" \
+  "$FIXTURE_REPO/scripts/development-workflow/workflow-lib.sh"
+cat >> "$FIXTURE_REPO/scripts/development-workflow/workflow-lib.sh" <<'FIXTURE_OVERRIDES'
 
-cd_workflow_repo_root() {
-  cd "$WORKFLOW_FIXTURE_REPO"
-}
-
-require_gh() {
-  gh auth status >/dev/null
-}
-
+# --- fixture overrides ---
 repo_slug() {
   printf 'lhpaul/ai-dev-framework-template\n'
 }
-
-workflow_normalize_issue_tracker_provider() {
-  local raw="$1"
-  printf '%s' "$raw" | tr '[:upper:]' '[:lower:]' | tr '-' '_'
-}
-
-workflow_config_provider() {
-  # Mirror shared workflow-lib.sh (no comment-tolerant section headers).
-  local section="$1"
-  local config_file="${2:-$WORKFLOW_FIXTURE_REPO/.ai-dev-workflow.yaml}"
-  [ -f "$config_file" ] || return 0
-  awk -v section="$section" '
-    $0 ~ ("^" section ":[[:space:]]*$") { in_section = 1; next }
-    in_section && /^[^[:space:]#].*:[[:space:]]*$/ { exit }
-    in_section && /^[[:space:]][[:space:]]provider:[[:space:]]*/ {
-      line = $0
-      sub(/^[[:space:]]*provider:[[:space:]]*/, "", line)
-      sub(/[[:space:]]+#.*$/, "", line)
-      gsub(/^[[:space:]]+|[[:space:]]+$/, "", line)
-      gsub(/^["'"'"']|["'"'"']$/, "", line)
-      print line
-      exit
-    }
-  ' "$config_file"
-}
-
-workflow_graduation_closeout_issue_tracker_provider_in_file() {
-  local config_file="$1"
-  [ -f "$config_file" ] || return 0
-  awk '
-    /^issue_tracker:[[:space:]]*(#.*)?$/ { in_section = 1; next }
-    in_section && /^[^[:space:]#]/ { exit }
-    in_section && /^[[:space:]][[:space:]]provider:[[:space:]]*/ {
-      line = $0
-      sub(/^[[:space:]]*provider:[[:space:]]*/, "", line)
-      sub(/[[:space:]]+#.*$/, "", line)
-      gsub(/^[[:space:]]+|[[:space:]]+$/, "", line)
-      gsub(/^["'"'"']|["'"'"']$/, "", line)
-      print line
-      exit
-    }
-  ' "$config_file"
-}
-
-workflow_graduation_closeout_tracker_provider_raw() {
-  local repo_root="${1:-$WORKFLOW_FIXTURE_REPO}"
-  local shared="$repo_root/.ai-dev-workflow.yaml"
-  local legacy="" local_raw="" local_norm=""
-  [ -f "$shared" ] || return 0
-  legacy="$(workflow_config_provider issue_tracker "$shared")"
-  if [ -n "$legacy" ]; then
-    printf '%s' "$legacy"
-    return 0
-  fi
-  local_raw="$(workflow_graduation_closeout_issue_tracker_provider_in_file "$shared")"
-  local_norm="$(workflow_normalize_issue_tracker_provider "$local_raw")"
-  if [ "$local_norm" = "linear" ]; then
-    printf '%s' "$local_raw"
-    return 0
-  fi
-  printf '%s' "$legacy"
-  return 0
-}
-STUB_LIB
+FIXTURE_OVERRIDES
 
 cat > "$MOCK_BIN/gh" <<'MOCK_GH'
 #!/usr/bin/env bash
@@ -526,6 +458,20 @@ run_test "linear_indented_epic_exit_one" "1" "$(last_status "$result")"
 run_contains "linear_indented_epic_reason" "epic_discovery_failed" "$body"
 run_test "linear_indented_epic_no_child" "missing" "$( [ -f "$CHILD_ARGV_LOG" ] && echo present || echo missing )"
 run_not_contains "linear_indented_epic_no_lea999" "LEA-999" "$( [ -f "$CHILD_ARGV_LOG" ] && cat "$CHILD_ARGV_LOG" || true )"
+
+echo ""
+echo "=== wrapper: commented header + linear fails closed before child (#1984) ==="
+reset_fixture
+cat > "$FIXTURE_REPO/.ai-dev-workflow.yaml" <<'EOF'
+issue_tracker: # native tracker
+  provider: linear
+EOF
+write_pr 97 "develop-test-1984" "develop" "true" "Graduate" "Epic LEA-326"
+result="$(run_wrapper --graduation-pr 97)"
+body="$(last_body "$result")"
+run_test "commented_linear_wrapper_exit_64" "64" "$(last_status "$result")"
+run_contains "commented_linear_wrapper_remediation" "tracker bridge cannot read it" "$body"
+run_test "commented_linear_wrapper_no_child" "missing" "$( [ -f "$CHILD_ARGV_LOG" ] && echo present || echo missing )"
 
 echo ""
 echo "=== wrapper: github_projects discovery unchanged with explicit config (#1984) ==="

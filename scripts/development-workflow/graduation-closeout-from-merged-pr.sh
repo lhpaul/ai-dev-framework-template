@@ -172,6 +172,16 @@ case "$TRACKER_PROVIDER" in
     ;;
 esac
 
+# Shared parser must also see linear — update_tracker_status_best_effort uses
+# that path. Fail closed before epic discovery or child closeout mutations.
+if [ "$TRACKER_PROVIDER" = "linear" ]; then
+  SHARED_TRACKER_PROVIDER="$(workflow_normalize_issue_tracker_provider "$(workflow_config_provider issue_tracker "$(pwd)/.ai-dev-workflow.yaml")")"
+  if [ "$SHARED_TRACKER_PROVIDER" != "linear" ]; then
+    echo "ERROR: issue_tracker.provider is linear but the tracker bridge cannot read it (commented section header?). Remove the trailing comment from the 'issue_tracker:' line in .ai-dev-workflow.yaml and rerun." >&2
+    exit 64
+  fi
+fi
+
 if [ -n "$EPIC_OVERRIDE" ]; then
   if [ "$TRACKER_PROVIDER" = "linear" ]; then
     if ! is_linear_issue_id "$EPIC_OVERRIDE"; then
