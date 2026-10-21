@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# covers: scripts/development-workflow/batch-merge.sh
+# covers: scripts/development-workflow/run-work-router.sh
 # covers: scripts/development-workflow/workflow-config-resolver.py
 # covers: scripts/development-workflow/workflow-lib.sh
 # covers: scripts/development-workflow/pr-review-loop.sh

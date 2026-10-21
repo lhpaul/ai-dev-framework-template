@@ -1981,7 +1981,7 @@ emit_reviewed_head_if_known
   [ -n "$EXISTING_BOT_RESPONSE_TIME" ] || return 1
 
   codex_require_current_head
-  response_display=$(printf '%s' "$EXISTING_BOT_RESPONSE" | jq -Rrs '.[0:10000]')  # workflow-shell-guard: allow SH003 - jq reads raw text for display truncation only.
+  response_display=$(printf '%s' "$EXISTING_BOT_RESPONSE" | workflow_redact_text | jq -Rrs '.[0:10000]')  # workflow-shell-guard: allow SH003 - jq reads raw text for display truncation only.
 
   if [ "$EXISTING_BOT_RESPONSE_SOURCE" = "review" ] && [ "$cleared_thread_count" -gt 0 ] && \
     [ "$EXISTING_BOT_RESPONSE_REVIEW_STATE" != "CHANGES_REQUESTED" ] && \
@@ -2328,7 +2328,7 @@ while true; do
   # (printf) is always fully drained and can never receive SIGPIPE, unlike
   # a piped `head -c N` which can close early on long input (fresh evidence
   # from PR #1490 finding 3787868733).
-  BOT_RESPONSE=$(printf '%s' "$BOT_RESPONSE" | jq -Rrs '.[0:10000]')  # workflow-shell-guard: allow SH003 - jq -R treats input as raw text (not JSON), so it cannot fail on malformed content; a genuine jq internal failure still trips `set -e` since this is a bare assignment, which is the desired fail-closed behavior
+  BOT_RESPONSE=$(printf '%s' "$BOT_RESPONSE" | workflow_redact_text | jq -Rrs '.[0:10000]')  # workflow-shell-guard: allow SH003 - jq -R treats input as raw text (not JSON), so it cannot fail on malformed content; a genuine jq internal failure still trips `set -e` since this is a bare assignment, which is the desired fail-closed behavior
 
   if ! INLINE_REVIEW_COMMENT_COUNT=$(codex_inline_review_comment_count_since "$TRIGGER_TIME"); then
     echo "VERDICT: TIMED_OUT — failed to fetch Codex inline review comments (treated as unavailable)"
@@ -2628,7 +2628,7 @@ ASYNC_BOT_RESPONSE_FULL="$ASYNC_BOT_RESPONSE"
 # `jq -Rs` slurps its entire stdin before producing output, avoiding
 # SIGPIPE on long root-comment-sourced bodies (see rationale above the
 # main-loop equivalent).
-ASYNC_BOT_RESPONSE=$(printf '%s' "$ASYNC_BOT_RESPONSE" | jq -Rrs '.[0:10000]')  # workflow-shell-guard: allow SH003 - jq -R treats input as raw text (not JSON), so it cannot fail on malformed content; a genuine jq internal failure still trips `set -e` since this is a bare assignment, which is the desired fail-closed behavior
+ASYNC_BOT_RESPONSE=$(printf '%s' "$ASYNC_BOT_RESPONSE" | workflow_redact_text | jq -Rrs '.[0:10000]')  # workflow-shell-guard: allow SH003 - jq -R treats input as raw text (not JSON), so it cannot fail on malformed content; a genuine jq internal failure still trips `set -e` since this is a bare assignment, which is the desired fail-closed behavior
 
 if [ -n "$ASYNC_BOT_RESPONSE_TIME" ]; then
   echo "INFO: async-arrival bot response detected during grace period"
@@ -2746,7 +2746,7 @@ emit_reviewed_head_if_known
     # `jq -Rs` slurps its entire stdin before producing output, avoiding
     # SIGPIPE on long root-comment-sourced bodies (see rationale above the
     # main-loop equivalent).
-    ASYNC_FINAL_BOT_RESPONSE=$(printf '%s' "$ASYNC_FINAL_BOT_RESPONSE" | jq -Rrs '.[0:10000]')  # workflow-shell-guard: allow SH003 - jq -R treats input as raw text (not JSON), so it cannot fail on malformed content; a genuine jq internal failure still trips `set -e` since this is a bare assignment, which is the desired fail-closed behavior
+    ASYNC_FINAL_BOT_RESPONSE=$(printf '%s' "$ASYNC_FINAL_BOT_RESPONSE" | workflow_redact_text | jq -Rrs '.[0:10000]')  # workflow-shell-guard: allow SH003 - jq -R treats input as raw text (not JSON), so it cannot fail on malformed content; a genuine jq internal failure still trips `set -e` since this is a bare assignment, which is the desired fail-closed behavior
 
     if [ -n "$ASYNC_FINAL_BOT_RESPONSE_TIME" ]; then
       echo "INFO: final async bot response detected after acknowledgement wait"
@@ -2903,7 +2903,7 @@ emit_reviewed_head_if_known
   # `jq -Rs` slurps its entire stdin before producing output, avoiding
   # SIGPIPE on long root-comment-sourced bodies (see rationale above the
   # main-loop equivalent).
-  ASYNC_REACTION_FINAL_BOT_RESPONSE=$(printf '%s' "$ASYNC_REACTION_FINAL_BOT_RESPONSE" | jq -Rrs '.[0:10000]')  # workflow-shell-guard: allow SH003 - jq -R treats input as raw text (not JSON), so it cannot fail on malformed content; a genuine jq internal failure still trips `set -e` since this is a bare assignment, which is the desired fail-closed behavior
+  ASYNC_REACTION_FINAL_BOT_RESPONSE=$(printf '%s' "$ASYNC_REACTION_FINAL_BOT_RESPONSE" | workflow_redact_text | jq -Rrs '.[0:10000]')  # workflow-shell-guard: allow SH003 - jq -R treats input as raw text (not JSON), so it cannot fail on malformed content; a genuine jq internal failure still trips `set -e` since this is a bare assignment, which is the desired fail-closed behavior
 
   if [ -n "$ASYNC_REACTION_FINAL_BOT_RESPONSE_TIME" ]; then
     codex_require_current_head

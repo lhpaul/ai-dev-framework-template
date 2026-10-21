@@ -456,7 +456,8 @@ gh_rate_limit_reset_info() {
 # ---------------------------------------------------------------------------
 
 build_probe_fail_reason() {
-  local kind="$1" token="$2" err="$3"
+  local kind="$1" token="$2" err="$3" diagnostic_error
+  diagnostic_error="$(printf '%s' "$err" | workflow_redact_text)" || diagnostic_error="[diagnostic sanitization failed]"
   case "$kind" in
     rate_limited)
       local reset_info
@@ -474,10 +475,10 @@ build_probe_fail_reason() {
       printf "Network error contacting GitHub while resolving target '%s'; check connectivity and retry" "$token"
       ;;
     local_config_error)
-      printf "gh could not determine which repository to query while resolving target '%s' (gh reported: %s); run 'gh repo set-default' in this checkout — retrying will not help until the default repository is configured" "$token" "$(printf '%s' "$err" | head -n1)"
+      printf "gh could not determine which repository to query while resolving target '%s' (gh reported: %s); run 'gh repo set-default' in this checkout — retrying will not help until the default repository is configured" "$token" "$(printf '%s' "$diagnostic_error" | sed -n '1p')"
       ;;
     github_unavailable)
-      printf "GitHub appears unavailable while resolving target '%s' (gh reported: %s); retry shortly" "$token" "$(printf '%s' "$err" | head -n1)"
+      printf "GitHub appears unavailable while resolving target '%s' (gh reported: %s); retry shortly" "$token" "$(printf '%s' "$diagnostic_error" | sed -n '1p')"
       ;;
     *)
       printf "gh probe failed while resolving target '%s'" "$token"

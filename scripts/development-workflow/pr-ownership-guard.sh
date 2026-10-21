@@ -237,7 +237,8 @@ wait "$GH_PID" || GH_STATUS=$?
 if [ "$GH_STATUS" -ne 0 ]; then
   GH_ERROR=""
   if [ -s "$SCRATCH_DIR/stderr" ]; then
-    GH_ERROR="$(head -n 1 "$SCRATCH_DIR/stderr")"
+    GH_ERROR="$(workflow_redact_text <"$SCRATCH_DIR/stderr")" || GH_ERROR="[diagnostic sanitization failed]"
+    GH_ERROR="$(printf '%s' "$GH_ERROR" | sed -n '1p')"
   fi
   refuse 3 pr_unresolved "gh pr view exited $GH_STATUS: ${GH_ERROR:-no error output}" \
     "Confirm the PR number and repository, then re-run the guard before mutating the PR."

@@ -1187,9 +1187,13 @@ fi
 if git rev-parse --verify "origin/$BASE_BRANCH" >/dev/null 2>&1; then
   if diff_name_status_full="$(git diff --name-status --find-renames --find-copies "origin/$BASE_BRANCH...HEAD" 2>/dev/null)"; then
     diff_name_status="${diff_name_status_full:0:12000}"
+  else
+    diff_name_status_full=""
   fi
   if diff_stat_full="$(git diff --stat --find-renames --find-copies "origin/$BASE_BRANCH...HEAD" 2>/dev/null)"; then
     diff_stat="${diff_stat_full:0:12000}"
+  else
+    diff_stat_full=""
   fi
 fi
 
@@ -1408,8 +1412,9 @@ fi
 if [ -n "$setup_probe_output" ] && grep -Eiq 'usage[[:space:]_-]*limit|quota[[:space:]_-]*(exhaust|exceed)|out of (quota|credits)|hit your usage' <<< "$setup_probe_output"; then
   quota_reset_at="$(
     printf '%s\n' "$setup_probe_output" \
+      | workflow_redact_text \
       | grep -Ei 'try again at .+' \
-      | head -n1 \
+      | sed -n '1p' \
       | sed -E 's/^.*[Tt]ry again at[[:space:]]+//; s/[[:space:].]+$//' \
       || true
   )"
@@ -1636,8 +1641,8 @@ write_evidence_file() {
     --arg reviewed_head "$HEAD_SHA" \
     --arg graph_context "$graph_context" \
     --arg pr_body "$PR_BODY" \
-    --arg diff_name_status "$diff_name_status" \
-    --arg diff_stat "$diff_stat" \
+    --arg diff_name_status "${diff_name_status_full:-}" \
+    --arg diff_stat "${diff_stat_full:-}" \
     --arg review_stage "$review_stage" \
     --arg review_stage_source "$review_stage_source" \
     --arg review_checklists "$review_checklists_csv" \
@@ -1684,7 +1689,7 @@ write_evidence_file() {
       },
       strict_spec: $strict_spec,
       strict_plan: $strict_plan
-    }' | workflow_redact_json | jq '.context_summary.pr_body |= .[0:20000]' >"$LOCAL_AI_REVIEWER_EVIDENCE_FILE"; } 2>"$evidence_error"; then
+    }' | workflow_redact_json | jq '.context_summary |= (.pr_body |= .[0:20000] | .diff_name_status |= .[0:12000] | .diff_stat |= .[0:12000])' >"$LOCAL_AI_REVIEWER_EVIDENCE_FILE"; } 2>"$evidence_error"; then
     workflow_redact_text <"$evidence_error" >&2
     workflow_diagnostic "WARN: could not write local AI reviewer evidence file: $LOCAL_AI_REVIEWER_EVIDENCE_FILE" >&2
   fi

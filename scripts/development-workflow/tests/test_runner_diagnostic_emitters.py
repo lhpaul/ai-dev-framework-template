@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Binding D01-D52: synthetic paired-channel runtime/publication diagnostics."""
+"""Binding D01-D60: synthetic paired-channel runtime/publication diagnostics."""
 from __future__ import annotations
 
 import importlib.util
@@ -257,11 +257,11 @@ esac
         path.write_text('#!/bin/sh\n' + text.replace('SECRET', self.secret))
         path.chmod(0o755)
 
-    def local_entry(self, payload, stderr=None, status=0, **env):
+    def local_entry(self, payload, stderr=None, status=0, context_capture=None, **env):
         (self.f.checkout / 'REVIEW.md').write_text('# Synthetic reviewer contract\n')
         self.gh_script('case "$*" in "pr diff"*) echo README.md;; "repo view"*) echo fixture/repo;; "pr view"*) cat "$SYNTHETIC_PR";; "auth status"*) exit 0;; *) exit 99;; esac\n')
         command = self.f.bin / 'synthetic-review'
-        command.write_text('#!/bin/sh\nprintf "%s\\n" ' + shlex.quote(json.dumps(payload) if isinstance(payload, dict) else payload) + '\n' +
+        command.write_text('#!/bin/sh\n' + (('cp "$CONTEXT_BUNDLE_PATH" ' + shlex.quote(str(context_capture)) + '\n') if context_capture else '') + 'printf "%s\\n" ' + shlex.quote(json.dumps(payload) if isinstance(payload, dict) else payload) + '\n' +
                            'printf "%s\\n" ' + shlex.quote(stderr or 'token=' + self.secret) + ' >&2\nexit ' + str(status) + '\n')
         command.chmod(0o755)
         self.f.env.update(LOCAL_AI_REVIEWER_COMMAND=str(command), LOCAL_AI_REVIEWER_GRAPH_STRATEGY='none', **env)
@@ -993,6 +993,261 @@ printf 'PROBE=%s\\n' "$settle_review_probe"
                     self.assertEqual(captured, body[:20000])
                 self.assertIn('strict_spec', data)
                 self.assertIn('strict_plan', data)
+
+    def cutoff_url(self, cap):
+        prefix = 'CutoffQXYZ'
+        password = prefix + 'r' * 22
+        body = 'x' * (cap - 21) + ' https://u:' + password + '@fixture.invalid tail'
+        self.assertIn(prefix, body[:cap])
+        self.assertNotIn('@', body[:cap])
+        return prefix, body
+
+    def compatible_shells(self):
+        return [p for p in ('/bin/bash', '/opt/homebrew/bin/bash') if Path(p).is_file()]
+
+    def test_D53_five_codex_display_branches_redact_before_character_cap(self):
+        import re
+        source = (self.f.runtime / 'codex-github-reviewer.sh').read_text()
+        for display, raw in [('response_display', 'EXISTING_BOT_RESPONSE'),
+                             ('BOT_RESPONSE', 'BOT_RESPONSE'),
+                             ('ASYNC_BOT_RESPONSE', 'ASYNC_BOT_RESPONSE'),
+                             ('ASYNC_FINAL_BOT_RESPONSE', 'ASYNC_FINAL_BOT_RESPONSE'),
+                             ('ASYNC_REACTION_FINAL_BOT_RESPONSE', 'ASYNC_REACTION_FINAL_BOT_RESPONSE')]:
+            # Execute the production assignment AND its actual failed-verdict
+            # publisher. Fake evidence/classifier isolates each of five callers;
+            # the raw classifier input is checked independently of the display.
+            cap = next(line.strip() for line in source.splitlines()
+                       if line.strip().startswith(display + '=$(') and '10000' in line)
+            offset = source.index(cap)
+            start = source.index('if ! codex_finalize_verdict ', offset)
+            end = source.index('elif codex_response_is_usage_limit ', start)
+            publisher = source[start:end] + 'fi\n'
+            variables = sorted(set(re.findall(r'\$([A-Z][A-Z0-9_]*)', cap + publisher)))
+            prefix, crossing = self.cutoff_url(10000)
+            for shell in self.compatible_shells():
+                for kind, body in [('url', crossing), ('pem', '-----BEGIN PRIVATE KEY-----\n' + self.secret + '\n-----END PRIVATE KEY-----'),
+                                   ('long', 'h' * 100000)]:
+                    with self.subTest(display=display, shell=shell, kind=kind):
+                        captured = self.f.root / 'raw-classifier.txt'
+                        prelude = 'set -euo pipefail\nsource ' + shlex.quote(str(self.f.runtime / 'workflow-lib.sh')) + '\n'
+                        prelude += ''.join(name + '=\'\'\n' for name in variables)
+                        prelude += raw + '=' + shlex.quote(body) + '\n' + raw + '_FULL="$' + raw + '"\n'
+                        prelude += 'codex_finalize_verdict() { printf "%s" "$2" >' + shlex.quote(str(captured)) + '; return 1; }\n'
+                        prelude += 'emit_reviewed_head_if_known() { printf "REVIEWED_HEAD=%s\\n" ' + 'a' * 40 + '; }\n'
+                        result = self.safe(self.run_command([shell, '-c', prelude + cap + '\n' + publisher]), 1)
+                        self.assertNotIn(prefix, result.stdout + result.stderr)
+                        self.assertEqual(captured.read_text(), body)
+                        self.assertIn('VERDICT: NEEDS_REVISION', result.stdout)
+                        self.assertIn('REVIEWED_HEAD=' + 'a' * 40, result.stdout)
+                        displayed = result.stdout.split('---BEGIN BOT RESPONSE---\n')[1].split('\n---END BOT RESPONSE---')[0]
+                        decoded = displayed  # jq -Rrs keeps a raw string display.
+                        self.assertLessEqual(len(decoded), 10000)
+                        if kind == 'long':
+                            self.assertEqual(decoded, body[:10000])
+                        else:
+                            self.assertIn('[REDACTED]', decoded)
+
+    def test_D54_claude_dispatch_byte_preview_preserves_status_and_drains(self):
+        prefix, crossing = self.cutoff_url(300)
+        response = self.f.root / 'dispatch-response.txt'
+        self.f.env['SYNTHETIC_DISPATCH_RESPONSE'] = str(response)
+        self.gh_script('case "$*" in "auth status"*) exit 0;; *"pr view"*"baseRefName"*) echo develop;; '
+                       '*"repo view"*"defaultBranchRef"*) echo main;; *"/dispatches"*) cat "$SYNTHETIC_DISPATCH_RESPONSE";; *) exit 99;; esac\n')
+        for kind, body in [('url', crossing), ('pem', '-----BEGIN PRIVATE KEY-----\n' + self.secret + '\n-----END PRIVATE KEY-----'),
+                           ('long', 'h' * 100000), ('unicode', '界' * 1000)]:
+            with self.subTest(kind=kind):
+                response.write_text(body)
+                result = self.safe(self.entry('claude-code-action-reviewer.sh', '1993', 'fixture', 'repo',
+                                              '--max-wait', '1', '--poll-interval', '1'), 3)
+                self.assertNotIn(prefix, result.stdout + result.stderr)
+                self.assertIn('DISPATCH_RESULT=no_workflow_run_id', result.stdout)
+                marker = 'WARNING: dispatch response body had no integer workflow_run_id: '
+                preview = result.stderr.split(marker)[1].split('\n')[0]
+                if kind == 'long':
+                    self.assertEqual(preview, 'h' * 300)
+                elif kind == 'unicode':
+                    self.assertEqual(preview, '界' * 100)
+                    self.assertEqual(len(preview.encode()), 300)
+                else:
+                    self.assertIn('[REDACTED]', preview)
+
+    def test_D55_three_blocking_title_consumers_redact_complete_body(self):
+        names = ['reviewer_loop_print_blocking_from_unreplied_rest_comments',
+                 'reviewer_loop_print_blocking_from_unresolved_bot_threads',
+                 'reviewer_loop_append_late_thread_missed_findings']
+        prefix, crossing = self.cutoff_url(120)
+        for shell in self.compatible_shells():
+            for name in names:
+                for kind, body in [('fallback', crossing), ('heading', '### -----BEGIN PRIVATE KEY----- ' + self.secret + '\ncontinued\n-----END PRIVATE KEY-----'),
+                                   ('long', 'h' * 100000)]:
+                    with self.subTest(shell=shell, consumer=name, kind=kind):
+                        row = {'body': body, 'path': 'fixture.py', 'line': 4, 'commit': 'a' * 40}
+                        lines = self.f.root / 'blocking.jsonl'; lines.write_text(json.dumps(row) + '\n')
+                        array = self.f.root / 'blocking.json'; array.write_text(json.dumps([row]))
+                        text = fixtures.function_text('pr-review-loop.sh', name)
+                        setup = 'set -euo pipefail\nHARNESS_MODE=1 source ' + shlex.quote(str(self.f.runtime / 'pr-review-loop.sh')) + '\n' + text + '\n'
+                        setup += '_unreplied_rest_blocking_comment_json_lines() { cat ' + shlex.quote(str(lines)) + '; }\n'
+                        setup += '_reviewer_loop_blocking_unresolved_bot_threads_json() { cat ' + shlex.quote(str(array)) + '; }\n'
+                        setup += 'reviewer_loop_print_reviewed_head_from_json_lines() { printf "REVIEWED_HEAD=%s\\n" ' + 'a' * 40 + '; }\n'
+                        setup += 'bot_login_for_platform() { echo fixture-bot; }; check_unresolved_threads() { echo 1; };\n'
+                        setup += 'reviewer_loop_platform_result_record_json() { echo \'{"result":"needs_fixes"}\'; }; platforms=(codex);\n'
+                        setup += 'platform_blocking_outputs=(); platform_result_records=(); platform_reviewed_heads=();\n'
+                        setup += name + ' 1993 fixture/repo fixture-bot\n'
+                        if name == names[2]:
+                            setup += 'printf "%s\\n" "${platform_blocking_outputs[0]}"\n'
+                        result = self.safe(self.run_command([shell, '-c', setup]), 0)
+                        self.assertNotIn(prefix, result.stdout + result.stderr)
+                        self.assertIn('BLOCKING_1_PATH=fixture.py', result.stdout)
+                        self.assertIn('BLOCKING_1_LINE=4', result.stdout)
+                        title = next(line.split('BODY=', 1)[1] for line in result.stdout.splitlines() if 'BLOCKING_1_BODY=' in line)
+                        if kind == 'long':
+                            self.assertEqual(title, 'h' * 120)
+                        else:
+                            self.assertIn('[REDACTED]', title)
+
+    def test_D56_evidence_diff_caps_are_separate_from_functional_context(self):
+        import shutil
+        prefix, crossing = self.cutoff_url(12000)
+        real_git = shutil.which('git', path=self.f.env['PATH'])
+        fake_git = self.f.bin / 'git'
+        value = self.f.root / 'diff-output.txt'
+        self.f.env['SYNTHETIC_DIFF_OUTPUT'] = str(value)
+        fake_git.write_text('#!/bin/sh\ncase "$*" in "diff --name-status"*|"diff --stat"*) cat "$SYNTHETIC_DIFF_OUTPUT"; exit "${SYNTHETIC_DIFF_STATUS:-0}";; esac\nexec ' + shlex.quote(real_git) + ' "$@"\n')
+        fake_git.chmod(0o755)
+        subprocess.run(['git', 'update-ref', 'refs/remotes/origin/develop', 'HEAD'], cwd=self.f.checkout,
+                       env=self.f.env, check=True, capture_output=True)
+        for kind, body in [('crossing', crossing), ('long', 'h' * 14000), ('unicode', '界' * 14000),
+                           ('short', 'M\tfixture.py'), ('failed', crossing)]:
+            with self.subTest(kind=kind):
+                value.write_text(body)
+                self.f.env['SYNTHETIC_DIFF_STATUS'] = '7' if kind == 'failed' else '0'
+                evidence = self.f.root / 'diff-evidence.json'
+                context = self.f.root / 'functional-context.json'
+                result = self.safe(self.local_entry({'result': 'clean', 'comments': 0}, context_capture=context,
+                                                   LOCAL_AI_REVIEWER_EVIDENCE_FILE=str(evidence)), 0)
+                raw = evidence.read_text()
+                self.assertNotIn(prefix, raw + result.stdout + result.stderr)
+                data = json.loads(raw)
+                functional = json.loads(context.read_text())
+                self.assertEqual(data['counts'], {'comments': 0, 'blocking': 0, 'suggestions': 0})
+                for field in ('diff_name_status', 'diff_stat'):
+                    if kind == 'failed':
+                        self.assertEqual(functional[field], '')
+                        self.assertEqual(data['context_summary'][field], '')
+                        continue
+                    self.assertEqual(functional[field], body[:12000])
+                    self.assertEqual(len(data['context_summary'][field]), min(len(body), 12000))
+                    if kind == 'crossing':
+                        self.assertIn('https://[REDACTED]@', data['context_summary'][field])
+                    else:
+                        self.assertEqual(data['context_summary'][field], body[:12000])
+
+    def test_D57_quota_reset_selection_uses_complete_redacted_diagnostic(self):
+        for body, expected in [('quota exceeded\n-----BEGIN PRIVATE KEY-----\ntry again at ' + self.secret + '\n-----END PRIVATE KEY-----', None),
+                               ('quota exceeded; try again at 2030-01-01T00:00:00Z', '2030-01-01T00:00:00Z')]:
+            with self.subTest(reset=expected):
+                result = self.safe(self.local_entry('', body, 7), 2)
+                self.assertIn('REASON=quota_exhausted', result.stdout)
+                if expected is None:
+                    self.assertNotIn('QUOTA_RESET_AT=', result.stdout)
+                else:
+                    self.assertIn('QUOTA_RESET_AT=' + expected, result.stdout)
+
+    def sanitizer_input_spy(self):
+        import shutil
+        real_python = shutil.which('python3', path=self.f.env['PATH'])
+        spy = self.f.root / 'sanitizer-inputs.jsonl'
+        self.f.env['SYNTHETIC_SPY'] = str(spy)
+        wrapper = self.f.bin / 'python3'
+        wrapper.write_text('#!' + real_python + '\nimport os,sys,subprocess,json,hashlib\n'
+                           'if len(sys.argv)>2 and sys.argv[1].endswith("workflow-config-resolver.py") and sys.argv[2:] == ["redact-text"]:\n'
+                           ' raw=sys.stdin.buffer.read()\n'
+                           ' with open(os.environ["SYNTHETIC_SPY"],"a") as f:f.write(json.dumps({"length":len(raw),"sha256":hashlib.sha256(raw).hexdigest()})+"\\n")\n'
+                           ' p=subprocess.run([' + repr(real_python) + ']+sys.argv[1:],input=raw);sys.exit(p.returncode)\n'
+                           'os.execv(' + repr(real_python) + ',[' + repr(real_python) + ']+sys.argv[1:])\n')
+        wrapper.chmod(0o755)
+        return spy
+
+    def assert_first_sanitizer_input(self, spy, source):
+        import hashlib
+        rows = spy.read_text().splitlines() if spy.exists() else []
+        self.assertTrue(rows, 'complete diagnostic sanitizer was not reached')
+        self.assertEqual(json.loads(rows[0]), {'length': len(source.encode()),
+                                              'sha256': hashlib.sha256(source.encode()).hexdigest()})
+
+    def test_D58_ownership_first_line_redacts_full_error_before_selection(self):
+        # The complete-input spy is intentional: legacy EOF-PEM redaction could
+        # already protect a retained first line, but selection must not precede
+        # sanitization. The public entrypoint and real formatter still execute.
+        error = self.f.root / 'ownership.err'
+        source = 'first harmless line\n-----BEGIN PRIVATE KEY-----\n' + self.secret + '\n-----END PRIVATE KEY-----'
+        error.write_text(source)
+        self.f.env['SYNTHETIC_ERROR'] = str(error)
+        self.gh_script('cat "$SYNTHETIC_ERROR" >&2\nexit 7\n')
+        spy = self.sanitizer_input_spy()
+        result = self.safe(self.entry('pr-ownership-guard.sh', '--pr', '1993', '--repo-root', str(self.f.checkout),
+                                      '--expected-branch', 'feature/1993-fixture', '--repo', 'fixture/repo'), 3)
+        self.assertIn('RESULT=pr_unresolved', result.stdout)
+        self.assertIn('first harmless line', result.stderr)
+        self.assert_first_sanitizer_input(spy, source)
+
+    def test_D59_router_both_error_preview_classes_and_long_input(self):
+        spy = self.sanitizer_input_spy()
+        for category, first in [('local_config_error', 'no default remote repository has been set'),
+                                ('github_unavailable', 'HTTP 500 internal server error')]:
+            for kind, error in [('url', first + ' https://u:' + self.secret + '@fixture.invalid\nsecond line'),
+                                ('pem', first + ' -----BEGIN PRIVATE KEY----- ' + self.secret + '\ncontinued\n-----END PRIVATE KEY-----'),
+                                ('long', first + ' ' + 'h' * 100000)]:
+                with self.subTest(category=category, kind=kind):
+                    spy.write_text('')
+                    self.gh_script('case "$*" in "auth status"*) exit 0;; *) printf "%s\\n" ' + shlex.quote(error) + ' >&2; exit 1;; esac\n')
+                    result = self.safe(self.entry('run-work-router.sh', '1993', '--json'), 0)
+                    self.assert_first_sanitizer_input(spy, error)
+                    self.assertIn('MODE=tracker_unavailable', result.stdout)
+                    self.assertIn('gh reported:', result.stdout)
+                    self.assertIn('default repository is configured' if category == 'local_config_error'
+                                  else 'retry shortly', result.stdout)
+                    if kind == 'long':
+                        self.assertIn('h' * 100000, result.stdout)
+                    else:
+                        self.assertIn('[REDACTED]', result.stdout)
+
+    def test_D60_batch_merge_error_and_conflict_previews_are_diagnostic_only(self):
+        # Real cmd_merge, fixed valid metadata and explicitly fake budget/git:
+        # no remote merge/session or real checkout mutation is performed.
+        spy = self.sanitizer_input_spy()
+        command = fixtures.function_text('batch-merge.sh', 'cmd_merge')
+        pr = json.loads(self.f.pr.read_text()); pr.update(headRefOid='a' * 40, labels=[])
+        for stage in ('failed_merge', 'prior_conflict'):
+            for kind, error in [('url', 'operation https://u:' + self.secret + '@fixture.invalid failed\n' + 'h\n' * 10),
+                                ('pem', '-----BEGIN PRIVATE KEY-----\n' + self.secret + '\n' + 'h\n' * 8 + '-----END PRIVATE KEY-----'),
+                                ('long', 'h' * 100000 + '\nsecond\nthird\nfourth\nfifth\nsixth')]:
+                with self.subTest(stage=stage, kind=kind):
+                    spy.write_text('')
+                    content = self.f.root / 'merge-error.txt'; content.write_text(error)
+                    if stage == 'prior_conflict':
+                        # A recognized assignment in the filename is diagnostic
+                        # source text, while the structured path API is untouched.
+                        content.write_text('UU ' + ('h' * 100000 if kind == 'long' else
+                                           'https://u:' + self.secret + '@fixture.invalid' if kind == 'url' else
+                                           '-----BEGIN PRIVATE KEY----- ' + self.secret + '\ncontinued\n-----END PRIVATE KEY-----') + '\n')
+                    setup = 'set -euo pipefail\n' + command + '\nTARGET_BASE=develop; merge_session=synthetic;\n'
+                    setup += 'require_gh() { :; }; repo_slug() { echo fixture/repo; }; gh() { printf "%s" ' + shlex.quote(json.dumps(pr)) + '; };\n'
+                    setup += 'workflow_merge_budget_helper() { echo \'{"stepId":"synthetic","nestedExecutionAuthorized":true}\'; };\n'
+                    setup += 'git() { case "$*" in "status --porcelain") '
+                    setup += ('cat ' + shlex.quote(str(content)) if stage == 'prior_conflict' else ':') + ';; '
+                    setup += '"rev-parse "*) printf "%s\\n" ' + 'a' * 40 + ';; "merge --no-ff"*) cat ' + shlex.quote(str(content)) + '; return 7;; '
+                    setup += '"checkout "*|"pull "*|"fetch "*|"merge --abort"|"diff "*) return 0;; *) return 99;; esac; };\n'
+                    setup += 'cmd_merge --merge-session synthetic --pr 1993 --expected-head-sha ' + 'a' * 40
+                    result = self.safe(self.bash(setup), 2)
+                    expected_input = content.read_text().rstrip('\n')
+                    if stage == 'prior_conflict':
+                        expected_input = '\n'.join(line for line in expected_input.splitlines() if line.startswith(('UU', 'AA', 'DD', 'AU', 'UA', 'DU', 'UD')))
+                    self.assert_first_sanitizer_input(spy, expected_input)
+                    self.assertIn('MERGE_RESULT=failed', result.stdout)
+                    self.assertIn('[REDACTED]' if kind != 'long' else 'h' * 100000, result.stdout)
+                    if stage == 'failed_merge' and kind == 'long':
+                        self.assertNotIn('sixth', result.stdout)
 
 
 if __name__ == '__main__':

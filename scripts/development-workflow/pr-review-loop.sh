@@ -6640,7 +6640,7 @@ reviewer_loop_print_blocking_from_unreplied_rest_comments() {
   local repo="$2"
   local bot_login="$3"
   local resolved_ids_json="${4:-[]}"
-  local blocking_file idx=0 blocking_json path line body title
+  local blocking_file idx=0 blocking_json path line body title diagnostic_body
 
   blocking_file="$(mktemp)"
   if ! _unreplied_rest_blocking_comment_json_lines \
@@ -6655,9 +6655,10 @@ reviewer_loop_print_blocking_from_unreplied_rest_comments() {
     path="$(printf '%s\n' "$blocking_json" | jq -r '.path // ""')"
     line="$(printf '%s\n' "$blocking_json" | jq -r '.line // 0')"
     body="$(printf '%s\n' "$blocking_json" | jq -r '.body // ""')"
-    title="$(printf '%s\n' "$body" | sed -n 's/^### //p;q')"
+    diagnostic_body="$(printf '%s' "$body" | workflow_redact_text)" || diagnostic_body="[diagnostic sanitization failed]"
+    title="$(printf '%s\n' "$diagnostic_body" | sed -n 's/^### //p;q')"
     if [ -z "$title" ]; then
-      title="$(printf '%.120s' "$(printf '%s\n' "$body" | tr '\n' ' ')")"
+      title="$(printf '%.120s' "$(printf '%s\n' "$diagnostic_body" | tr '\n' ' ')")"
     fi
     print_kv "BLOCKING_${idx}_PATH" "${path:-unknown}"
     print_kv "BLOCKING_${idx}_LINE" "$line"
@@ -11838,7 +11839,7 @@ reviewer_loop_print_blocking_from_unresolved_bot_threads() {
   local pr_number="$1"
   local repo="$2"
   local graphql_bot_login="$3"
-  local json st idx=0 path line body title row
+  local json st idx=0 path line body title row diagnostic_body
 
   set +e
   json="$(_reviewer_loop_blocking_unresolved_bot_threads_json \
@@ -11855,9 +11856,10 @@ reviewer_loop_print_blocking_from_unresolved_bot_threads() {
     path="$(printf '%s' "$row" | jq -r '.path // ""')"
     line="$(printf '%s' "$row" | jq -r '.line // 0')"
     body="$(printf '%s' "$row" | jq -r '.body // ""')"
-    title="$(printf '%s\n' "$body" | sed -n 's/^### //p;q')"
+    diagnostic_body="$(printf '%s' "$body" | workflow_redact_text)" || diagnostic_body="[diagnostic sanitization failed]"
+    title="$(printf '%s\n' "$diagnostic_body" | sed -n 's/^### //p;q')"
     if [ -z "$title" ]; then
-      title="$(printf '%.120s' "$(printf '%s\n' "$body" | tr '\n' ' ')")"
+      title="$(printf '%.120s' "$(printf '%s\n' "$diagnostic_body" | tr '\n' ' ')")"
     fi
     print_kv "BLOCKING_${idx}_PATH" "${path:-unknown}"
     print_kv "BLOCKING_${idx}_LINE" "$line"
@@ -11893,7 +11895,7 @@ reviewer_loop_append_late_thread_missed_findings() {
   local pr_number="$1"
   local repo="$2"
   local platform_name bot_login graphql_bot_login count json head output_blob
-  local idx=0 row path line body title
+  local idx=0 row path line body title diagnostic_body
 
   for platform_name in "${platforms[@]:-}"; do
     bot_login="$(bot_login_for_platform "$platform_name")"
@@ -11932,9 +11934,10 @@ reviewer_loop_append_late_thread_missed_findings() {
       path="$(printf '%s' "$row" | jq -r '.path // ""')"
       line="$(printf '%s' "$row" | jq -r '.line // 0')"
       body="$(printf '%s' "$row" | jq -r '.body // ""')"
-      title="$(printf '%s\n' "$body" | sed -n 's/^### //p;q')"
+      diagnostic_body="$(printf '%s' "$body" | workflow_redact_text)" || diagnostic_body="[diagnostic sanitization failed]"
+      title="$(printf '%s\n' "$diagnostic_body" | sed -n 's/^### //p;q')"
       if [ -z "$title" ]; then
-        title="$(printf '%.120s' "$(printf '%s\n' "$body" | tr '\n' ' ')")"
+        title="$(printf '%.120s' "$(printf '%s\n' "$diagnostic_body" | tr '\n' ' ')")"
       fi
       output_blob="${output_blob}BLOCKING_${idx}_PATH=${path:-unknown}"$'\n'
       output_blob="${output_blob}BLOCKING_${idx}_LINE=${line}"$'\n'
