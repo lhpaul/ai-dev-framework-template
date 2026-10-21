@@ -560,14 +560,20 @@ than assuming the changelog-derived scope was the only thing stamped, and pass
 
 For the **Linear** provider, `--from-changelog` does **not** treat CHANGELOG
 regex matches as Released scope on their own (#1982; sibling of the GitHub
-milestone false-positive class in #1328). Scope is the Linear IDs carried by
-merged PR branch names / titles / merge-commit subjects between the previous
-release tag and the release head. IDs found only in changelog text (including
-expanded ranges such as `LEA-298–LEA-301`) are omitted and reported as
-`RELEASE_SCOPE_SKIPPED issue=<ID> reason=changelog_mention_without_merged_pr`
-(or `release_range_unavailable` when the tag range cannot be resolved). Explicit
-`--issue` / `--issues` inputs are unchanged. GitHub Projects / GitHub Issues
-`--from-changelog` behavior is unchanged.
+milestone false-positive class in #1328). Scope is Linear IDs from **merged
+PRs** in the previous-tag..release commit range: each commit is resolved to its
+PR(s) via GitHub (`commits/<sha>/pulls`; subject `#N` / `Merge pull request #N`
+is only a fast path to the PR number). IDs are taken only from each PR's
+`headRefName` and `title` — not from commit text or PR body — so hotfix commits
+that omit the ID still resolve via the PR, while “related to LEA-298” commit
+text cannot enlarge scope. Changelog-only mentions (including expanded ranges
+such as `LEA-298–LEA-301`) are omitted as
+`RELEASE_SCOPE_SKIPPED issue=<ID> reason=changelog_mention_without_merged_pr`.
+If PR resolution fails for any commit in range, the helper emits
+`RELEASE_SCOPE_INCOMPLETE unresolved_shas=...` and fails closed (pass explicit
+`--issue` / `--issues`). Explicit `--issue` / `--issues` inputs are otherwise
+unchanged. GitHub Projects / GitHub Issues `--from-changelog` behavior is
+unchanged.
 
 ### 9.2 Preferred command (single entry point)
 
