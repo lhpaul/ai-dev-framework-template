@@ -1693,6 +1693,48 @@ class ReleaseScope(unittest.TestCase):
         )
         self.assertEqual(projection['issues'][0]['id'], 'LEA-12')
 
+    def test_project_release_accepts_component_prefixed_semver(self):
+        # REAL workflow-merge-budget.py project-release path (not the inspect stub).
+        shutil.copyfile(self.source / 'workflow-merge-budget.py', self.scripts / 'workflow-merge-budget.py')
+        (self.repo / '.ai-dev-workflow.yaml').write_text('issue_tracker:\n  provider: linear\n')
+        (self.repo / 'CHANGELOG.md').write_text(
+            '# Changes\n\n## [mobile-v1.1.0] - 2026-10-10\n- LEA-12\n\n## [1.2.3] - 2026-10-09\n- LEA-12\n'
+        )
+        self.command(['git', 'add', '.ai-dev-workflow.yaml', 'CHANGELOG.md'])
+        self.command(['git', 'commit', '-qm', 'component-prefixed release projection'])
+        head = self.command(['git', 'rev-parse', 'HEAD']).stdout.strip()
+        digest = hashlib.sha256(
+            self.command(['git', 'show', head + ':CHANGELOG.md']).stdout.encode()
+        ).hexdigest()
+        helper = str(self.scripts / 'workflow-merge-budget.py')
+        cases = (
+            ('mobile-v1.1.0', 'release/mobile-v1.1.0', 'mobile-v1.1.0'),
+            ('v1.2.3', 'release/v1.2.3', 'v1.2.3'),
+            ('1.2.3', 'release/v1.2.3', '1.2.3'),
+        )
+        for version, branch, expected_version in cases:
+            with self.subTest(version=version):
+                result = subprocess.run(
+                    [sys.executable, helper, 'project-release',
+                     '--repo', 'org/repo', '--repo-root', str(self.repo),
+                     '--target-root', str(self.repo), '--version', version,
+                     '--branch', branch, '--head', head, '--base', 'develop',
+                     '--provider', 'linear', '--issue-repo', 'org/repo',
+                     '--scope-issue', 'LEA-12'],
+                    cwd=self.repo, env=self.env, text=True, capture_output=True,
+                )
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                projection = json.loads(result.stdout)
+                self.assertEqual(projection['version'], expected_version)
+                self.assertEqual(projection['branch'], branch)
+                self.assertEqual(projection['head'], head)
+                self.assertEqual(projection['changelogDigest'], digest)
+                self.assertEqual(projection['issues'][0]['id'], 'LEA-12')
+                self.assertEqual(
+                    projection['linearMarker'],
+                    {'kind': 'label', 'name': 'release/' + expected_version},
+                )
+
     def test_release_scope_boundary_references(self):
         self.assertEqual([i['id'] for i in self.scope('(#12), #13.\n')['issues']],['12','13'])
 

@@ -420,9 +420,50 @@ def release_changelog_digest(checkout, head, provider):
     raise Stop("finalized changelog fingerprint unavailable")
 
 
+# SemVer 2.0.0 with optional non-digit prefix (bare, v, mobile-v, …). Same
+# identifier rules as prepare-release-post-merge-cleanup.sh's tag parser.
+_RELEASE_VERSION_RE = re.compile(
+    r"^(?P<prefix>.*?)(?P<major>0|[1-9]\d*)\.(?P<minor>0|[1-9]\d*)\.(?P<patch>0|[1-9]\d*)"
+    r"(?:-(?P<pre>[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?"
+    r"(?:\+(?P<build>[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$"
+)
+
+
+def _release_version_idents_ok(value, *, numeric_no_leading_zeros):
+    if not value:
+        return False
+    for ident in value.split("."):
+        if not ident or not re.fullmatch(r"[0-9A-Za-z-]+", ident):
+            return False
+        if numeric_no_leading_zeros and re.fullmatch(r"\d+", ident) and not re.fullmatch(r"0|[1-9]\d*", ident):
+            return False
+    return True
+
+
+def release_version_accepted(version):
+    """True when version is bare, v-prefixed, or component-prefixed SemVer 2.0.0."""
+    if not isinstance(version, str) or not version:
+        return False
+    match = _RELEASE_VERSION_RE.fullmatch(version)
+    if not match:
+        return False
+    prefix = match.group("prefix")
+    # Reject absorbed leading zeros (v01.0.0 → prefix "v0"). Bare/v keep
+    # prefix ""/"v"; component prefixes must not end mid-number.
+    if prefix not in ("", "v") and prefix[-1].isdigit():
+        return False
+    pre = match.group("pre")
+    build = match.group("build")
+    if pre is not None and not _release_version_idents_ok(pre, numeric_no_leading_zeros=True):
+        return False
+    if build is not None and not _release_version_idents_ok(build, numeric_no_leading_zeros=False):
+        return False
+    return True
+
+
 def project_release(args):
     checkout = root(args.target_root or args.repo_root or Path.cwd())
-    if not isinstance(args.version, str) or not re.fullmatch(r"v?[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.-]+)?(?:\+[A-Za-z0-9.-]+)?", args.version):
+    if not release_version_accepted(args.version):
         raise Stop("release version unavailable or malformed")
     for value in (args.branch, args.base):
         if not isinstance(value, str) or not value:

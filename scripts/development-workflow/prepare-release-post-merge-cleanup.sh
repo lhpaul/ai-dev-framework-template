@@ -132,14 +132,26 @@ record_release_scope_skip() {
 
 normalize_release_branch() {
   local value="$1"
+  local rest
   value="${value#refs/heads/}"
   case "$value" in
     release/v*) printf '%s\n' "$value" ;;
     release/*/*) printf '%s\n' "$value" ;;
-    release/*) printf 'release/v%s\n' "${value#release/}" ;;
+    release/*)
+      rest="${value#release/}"
+      # Bare SemVer on release/* still gets the conventional v prefix.
+      # Component tags (mobile-v1.1.0) already encode their prefix — do not
+      # inject another v (release/vmobile-v1.1.0 would break identity).
+      case "$rest" in
+        [0-9]*) printf 'release/v%s\n' "$rest" ;;
+        *) printf 'release/%s\n' "$rest" ;;
+      esac
+      ;;
     */*) printf '%s\n' "$value" ;;
     v*) printf 'release/%s\n' "$value" ;;
-    *) printf 'release/v%s\n' "$value" ;;
+    [0-9]*) printf 'release/v%s\n' "$value" ;;
+    # Component-prefixed SemVer tags (mobile-v1.1.0): keep spelling as-is.
+    *) printf 'release/%s\n' "$value" ;;
   esac
 }
 
@@ -539,9 +551,10 @@ append_issues_from_changelog() {
   local extracted
   local version_disp="$version"
 
+  # Bare SemVer gets a conventional v for diagnostics; component-prefixed
+  # tokens (mobile-v1.1.0) keep their spelling (do not become vmobile-…).
   case "$version_disp" in
-    v*) ;;
-    *) version_disp="v${version_disp}" ;;
+    [0-9]*.[0-9]*.[0-9]*) version_disp="v${version_disp}" ;;
   esac
 
   local changelog_root
@@ -573,17 +586,51 @@ import subprocess
 import sys
 from pathlib import Path
 
-version = sys.argv[1]
-if version.startswith("v"):
-    version = version[1:]
+raw_version = sys.argv[1]
 path = Path(sys.argv[2])
 provider = sys.argv[3]
 head = sys.argv[4]
 
+# SemVer 2.0.0 with optional prefix (bare / v / mobile-v / …).
+_VERSION_RE = re.compile(
+    r"^(?P<prefix>.*?)(?P<major>0|[1-9]\d*)\.(?P<minor>0|[1-9]\d*)\.(?P<patch>0|[1-9]\d*)"
+    r"(?:-(?P<pre>[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?"
+    r"(?:\+(?P<build>[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$"
+)
+match_version = _VERSION_RE.fullmatch(raw_version or "")
+if not match_version:
+    print(f"CHANGELOG_VERSION_MALFORMED version={raw_version}", file=sys.stderr)
+    sys.exit(1)
+prefix = match_version.group("prefix")
+# Same absorption guard as workflow-merge-budget.release_version_accepted.
+if prefix not in ("", "v") and prefix[-1].isdigit():
+    print(f"CHANGELOG_VERSION_MALFORMED version={raw_version}", file=sys.stderr)
+    sys.exit(1)
+core = "%s.%s.%s" % (
+    match_version.group("major"),
+    match_version.group("minor"),
+    match_version.group("patch"),
+)
+if match_version.group("pre"):
+    core += "-" + match_version.group("pre")
+if match_version.group("build"):
+    core += "+" + match_version.group("build")
+if prefix in ("", "v"):
+    # Bare / v-prefixed: section may be ## [1.2.3] or ## [v1.2.3].
+    version = core
+    version_disp = "v" + core
+    heading = re.compile(rf"^## \[(?:v?{re.escape(version)})\].*$", re.MULTILINE)
+else:
+    # Component-prefixed: CHANGELOG must use the exact token (## [mobile-v1.1.0]).
+    # A bare ## [1.1.0] section cannot represent this component release.
+    version = raw_version
+    version_disp = raw_version
+    heading = re.compile(rf"^## \[{re.escape(version)}\].*$", re.MULTILINE)
+
 
 def linear_changelog_unavailable():
     print(
-        f"CHANGELOG_SECTION_UNAVAILABLE version=v{version} "
+        f"CHANGELOG_SECTION_UNAVAILABLE version={version_disp} "
         "(Linear scope derived from merged PRs only)",
         file=sys.stderr,
     )
@@ -610,12 +657,18 @@ else:
         sys.exit(1)
     text = path.read_text(encoding="utf-8")
 
-heading = re.compile(rf"^## \[(?:v?{re.escape(version)})\].*$", re.MULTILINE)
 match = heading.search(text)
 if not match:
     if provider == "linear":
         linear_changelog_unavailable()
-    print(f"CHANGELOG_VERSION_NOT_FOUND version=v{version}", file=sys.stderr)
+    if prefix not in ("", "v"):
+        print(
+            f"CHANGELOG_VERSION_NOT_FOUND version={version_disp} "
+            f"(component-prefixed releases require ## [{version_disp}] in CHANGELOG)",
+            file=sys.stderr,
+        )
+    else:
+        print(f"CHANGELOG_VERSION_NOT_FOUND version={version_disp}", file=sys.stderr)
     sys.exit(1)
 
 next_heading = re.search(r"^## \[", text[match.end():], re.MULTILINE)
@@ -636,13 +689,13 @@ if provider == "linear":
         r"\b([A-Z][A-Z0-9_]*-)(\d+)\s*(?:[\u2013-]|\.\.)\s*(?:[A-Z][A-Z0-9_]*-)?(\d+)\b"
     )
     for item in range_re.finditer(section):
-        prefix = item.group(1)
+        issue_prefix = item.group(1)
         start = int(item.group(2))
         end = int(item.group(3))
         if end < start:
             start, end = end, start
         for number in range(start, end + 1):
-            add(f"{prefix}{number}")
+            add(f"{issue_prefix}{number}")
 
     for item in re.finditer(r"\b[A-Z][A-Z0-9_]*-\d+\b", section):
         add(item.group(0))
@@ -653,7 +706,7 @@ else:
 if not issues:
     # Linear may still derive scope from merged PRs when the section cites none.
     if provider != "linear":
-        print(f"CHANGELOG_NO_ISSUES_FOUND version=v{version}", file=sys.stderr)
+        print(f"CHANGELOG_NO_ISSUES_FOUND version={version_disp}", file=sys.stderr)
         sys.exit(1)
 
 print("\n".join(issues))
