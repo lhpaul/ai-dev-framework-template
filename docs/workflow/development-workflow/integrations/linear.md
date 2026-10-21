@@ -143,7 +143,7 @@ for all controlled-vocabulary values in the workflow.
 
 **Orchestrator collection loop** (pseudocode):
 
-```
+```text
 for each Work Item Runner output line:
   if line starts with "TRACKER_ACTION_REQUIRED=":
     parse action_type from "TRACKER_ACTION_REQUIRED=<action_type> ..."
