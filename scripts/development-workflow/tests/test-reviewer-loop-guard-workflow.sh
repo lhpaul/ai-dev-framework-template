@@ -71,11 +71,14 @@ else
   echo "SKIP: template legacy policy workflow removal - consumer-owned adoption"
 fi
 run_test "pull_request_target_trigger_present" "yes" "$(contains "pull_request_target:")"
-run_test "issue_comment_trigger_present" "yes" "$(contains "issue_comment:")"
-run_test "issue_comment_created_edited" "yes" "$(contains "types: [created, edited]")"
+run_test "issue_comment_trigger_absent" "yes" "$(not_contains "issue_comment:")"
+run_test "workflow_dispatch_trigger_present" "yes" "$(contains "workflow_dispatch:")"
+run_test "workflow_dispatch_pr_number_input_present" "yes" "$(contains "pr_number:")"
+run_test "workflow_dispatch_pr_number_required" "yes" "$(contains "required: true")"
+run_test "pr_number_positive_integer_validated" "yes" "$(contains 'pr_number must be a positive integer')"
 run_test "pr_event_types_preserved" "yes" "$(contains "types: [opened, reopened, ready_for_review, synchronize]")"
-run_test "summary_comments_get_separate_concurrency" "yes" "$(contains "'summary-comment' ||")"
-run_test "non_summary_comments_get_separate_concurrency" "yes" "$(contains "'non-summary' ||")"
+run_test "summary_dispatch_gets_separate_concurrency" "yes" "$(contains "'summary-dispatch' ||")"
+run_test "dispatch_concurrency_uses_pr_number_input" "yes" "$(contains "github.event.inputs.pr_number")"
 run_test "synchronize_events_get_separate_concurrency" "yes" "$(contains "'pr-synchronize' ||")"
 run_test "pr_lifecycle_events_get_separate_concurrency" "yes" "$(contains "'pr-label-and-guard' ||")"
 run_test "pr_events_get_separate_concurrency" "yes" "$(contains "'pr-event'")"
@@ -103,8 +106,11 @@ run_test "missing_summary_fails_without_elapsed_wait" "yes" "$(contains "No revi
 run_test "summary_marker_one_checked" "yes" "$(contains "MARKER1=\"### Automated Reviewer Loop Summary\"")"
 run_test "summary_marker_two_checked" "yes" "$(contains "MARKER2='*Posted automatically by \`pr-review-loop.sh\`.*'")"
 run_test "summary_marker_two_required_in_comment_scan" "yes" "$(contains '(.body // "" | contains($m2))')"
-run_test "non_summary_comment_skips" "yes" "$(contains "Issue comment does not contain the canonical reviewer-loop summary markers; skipping.")"
-run_test "summary_comment_payload_is_counted" "yes" "$(contains "Fresh comment listing did not include triggering summary comment; counting event payload.")"
+run_test "no_comment_body_payload_branch" "yes" "$(not_contains "COMMENT_BODY")"
+run_test "no_non_summary_comment_skip_branch" "yes" "$(not_contains "Issue comment does not contain the canonical reviewer-loop summary markers; skipping.")"
+run_test "no_summary_comment_payload_fallback" "yes" "$(not_contains "Fresh comment listing did not include triggering summary comment; counting event payload.")"
+run_test "dispatch_path_applies_regression_policy" "yes" "$(contains 'EVENT_NAME" = "workflow_dispatch"')"
+run_test "dispatch_path_calls_regression_helper" "yes" "$(contains "apply_regression_policy_after_clean_summary")"
 run_test "comment_path_fetches_current_pr" "yes" "$(contains 'gh api "repos/$REPO/pulls/$PR_NUMBER"')"
 run_test "comment_path_fetches_current_comments" "yes" "$(contains 'gh api "repos/$REPO/issues/$PR_NUMBER/comments"')"
 run_test "metadata_fetch_failure_posts_status" "yes" "$(contains "Could not fetch PR metadata. Re-run the workflow to retry.")"
@@ -175,7 +181,7 @@ run_test "permissions_include_contents_read" "yes" "$(contains "contents: read")
 # Thread PRRT_kwDORWAxaM6nBzBW: the readiness helper reads
 # commits/<sha>/check-runs for check-run reviewers (bugbot, ronda, haystack);
 # without checks: read that read 403s and escalates check-run-fetch-failed,
-# so the issue_comment path could never apply ready-for-regression.
+# so the workflow_dispatch summary path could never apply ready-for-regression.
 run_test "permissions_include_checks_read" "yes" "$(contains "checks: read")"
 
 echo ""

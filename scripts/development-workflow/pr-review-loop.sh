@@ -14782,6 +14782,82 @@ _bot_activity_since() {
   printf '%s' "$(( issue_n + comment_n + review_n ))"
 }
 
+# reviewer_loop_dispatch_pr_policy <pr_number> [repo_slug]
+#
+# After the canonical Automated Reviewer Loop Summary is posted or updated,
+# best-effort dispatch `.github/workflows/pr-policy.yml` via workflow_dispatch
+# so the Reviewer-loop completion guard and regression-readiness path refresh
+# without an issue_comment trigger (#1998). Never fails the loop: prints
+# PR_POLICY_DISPATCH=requested|skipped|failed and returns 0.
+#
+# Opt out with PR_REVIEW_LOOP_POLICY_DISPATCH=0. Skips when the target repo has
+# no pr-policy.yml on its default branch. Until the workflow on the default
+# branch gains workflow_dispatch, gh may fail with a missing-trigger error —
+# that is logged as failed and ignored (the old issue_comment path still works
+# on unreleased consumers).
+reviewer_loop_dispatch_pr_policy() {
+  local pr_number_arg="${1:-}"
+  local repo_arg="${2:-}"
+  local default_branch=""
+  local workflow_path=".github/workflows/pr-policy.yml"
+  local workflow_path_found=""
+  local dispatch_err=""
+  local opt_out="${PR_REVIEW_LOOP_POLICY_DISPATCH:-1}"
+
+  if [ -z "$pr_number_arg" ]; then
+    echo "PR_POLICY_DISPATCH=skipped reason=missing_pr_number"
+    return 0
+  fi
+
+  case "$opt_out" in
+    0|false|FALSE|no|NO)
+      echo "PR_POLICY_DISPATCH=skipped reason=opt_out"
+      return 0
+      ;;
+  esac
+
+  if [ -z "$repo_arg" ]; then
+    repo_arg="$(repo_slug 2>/dev/null)" || repo_arg=""
+  fi
+  if [ -z "$repo_arg" ]; then
+    echo "PR_POLICY_DISPATCH=skipped reason=repo_unresolved"
+    return 0
+  fi
+
+  if ! default_branch="$(gh api "repos/${repo_arg}" --jq '.default_branch' 2>/dev/null)" \
+      || [ -z "$default_branch" ] \
+      || ! [[ "$default_branch" =~ ^[A-Za-z0-9._/-]+$ ]]; then
+    echo "PR_POLICY_DISPATCH=failed reason=default_branch_unresolved"
+    return 0
+  fi
+
+  # Require the contents API to name the workflow path (not merely exit 0):
+  # stubbed gh harnesses often return [] for unmatched calls.
+  workflow_path_found="$(
+    gh api "repos/${repo_arg}/contents/${workflow_path}?ref=${default_branch}" \
+      --jq '.path' 2>/dev/null
+  )" || workflow_path_found=""
+  if [ "$workflow_path_found" != "$workflow_path" ]; then
+    echo "PR_POLICY_DISPATCH=skipped reason=pr_policy_workflow_absent"
+    return 0
+  fi
+
+  if dispatch_err="$(
+      gh workflow run pr-policy.yml \
+        --repo "$repo_arg" \
+        --ref "$default_branch" \
+        -f "pr_number=${pr_number_arg}" 2>&1
+    )"; then
+    echo "PR_POLICY_DISPATCH=requested"
+    return 0
+  fi
+
+  # Collapse multi-line gh errors into one loggable reason token.
+  dispatch_err="$(printf '%s' "$dispatch_err" | tr '\n' ' ' | sed 's/[[:space:]]\{1,\}/ /g')"
+  echo "PR_POLICY_DISPATCH=failed reason=${dispatch_err:-workflow_dispatch_failed}"
+  return 0
+}
+
 [ "$_HARNESS_MODE_EFFECTIVE" -eq 1 ] && return 0 2>/dev/null || true
 
 if [ "$#" -lt 1 ]; then
@@ -15203,6 +15279,8 @@ EOF
   if [ "$_comment_posted" -eq 0 ]; then
     return 1
   fi
+  # Refresh PR policy (guard + regression) without an issue_comment trigger (#1998).
+  reviewer_loop_dispatch_pr_policy "$_pr_number" "${_repo:-}"
   return 0
 }
 
@@ -16249,6 +16327,13 @@ EOF
   # refuses to append onto) even though the comment POST succeeded — the
   # write succeeding is not sufficient evidence that this cycle is
   # actually countable.
+  #
+  # When the summary comment was written, refresh PR policy via
+  # workflow_dispatch (#1998) even if ledger persistence later fails closed:
+  # the comment on the PR is what the guard reads.
+  if [ "$_comment_posted" -eq 1 ]; then
+    reviewer_loop_dispatch_pr_policy "$pr_number" "${_repo:-}"
+  fi
   if [ "$_comment_posted" -eq 0 ] || [ "$_existing_read_failed" -eq 1 ]; then
     return 1
   fi
