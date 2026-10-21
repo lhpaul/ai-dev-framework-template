@@ -458,7 +458,7 @@ discover_label_subitems() {
 discover_closing_keyword_refs() {
   # GitHub Projects / GitHub Issues path only. Scans raw PR title+body for
   # closing keywords (including text inside fenced examples). Linear must not
-  # call this — see discover_structured_closing_issue_refs.
+  # call this — see discover_linear_merged_pr_issue_refs.
   local prs_json
   if ! prs_json="$(gh pr list --state merged --base "$INTEGRATION_BRANCH" --limit 1000 --json number,title,body 2>/dev/null)"; then
     return 1
@@ -486,11 +486,11 @@ for pr in prs or []:
 }
 
 discover_linear_merged_pr_issue_refs() {
-  # Linear path: GitHub closingIssuesReferences when present, plus fence-aware
-  # closing-keyword parsing of merged PR title/body. Non-default integration
-  # branches often leave closingIssuesReferences empty even when the PR body
-  # declares Closes #N; the keyword pass covers that gap. Fenced examples and
-  # foreign-repo structured refs are never treated as local links.
+  # Linear path: mutate GitHub issues ONLY via same-repo structured
+  # closingIssuesReferences. Text-only closing keywords (plain, fenced,
+  # indented, etc.) are reported and skipped — never mutation candidates.
+  # Integration-branch PRs often leave structured refs empty; that means no
+  # GitHub issue is closed (safe by design).
   local prs_json
   if ! prs_json="$(gh pr list --state merged --base "$INTEGRATION_BRANCH" --limit 1000 --json number,title,body,closingIssuesReferences 2>/dev/null)"; then
     return 1
@@ -515,10 +515,16 @@ def ref_repo(ref):
         return match.group(1)
     return ""
 
+keyword_re = re.compile(
+    r"(^|[^A-Za-z0-9_])(close[sd]?|fix(?:es|ed)?|resolve[sd]?)\s+(?:issue\s+)?#(\d+)",
+    re.I,
+)
+
 for pr in prs or []:
     pr_number = pr.get("number")
     if not pr_number:
         continue
+    accepted = set()
     for ref in pr.get("closingIssuesReferences") or []:
         issue = ref.get("number")
         if not issue:
@@ -538,11 +544,17 @@ for pr in prs or []:
                 file=sys.stderr,
             )
             continue
+        accepted.add(int(issue))
         print("STRUCTURED\t{}\t{}".format(pr_number, issue))
-    title = (pr.get("title") or "").replace("\t", " ")
-    body = (pr.get("body") or "").replace("\t", " ")
+    title = pr.get("title") or ""
+    body = pr.get("body") or ""
     text = title + "\n" + body
-    print("PR_TEXT\t{}\t{}".format(pr_number, text.replace("\n", RS)))
+    # Reporting-only scan of raw text (including fences/indent). Never mutate.
+    for match in keyword_re.finditer(text):
+        issue = int(match.group(3))
+        if issue in accepted:
+            continue
+        print("TEXT_ONLY\t{}\t{}".format(pr_number, issue))
 ' "$REPO_SLUG" > "$TMP_DIR/linear-pr-discovery.tsv" 2> "$TMP_DIR/structured-closing-refs.err" || return 1
   if [ -s "$TMP_DIR/structured-closing-refs.err" ]; then
     while IFS="$(printf '\t')" read -r marker pr_number issue repo_or_reason; do
@@ -557,13 +569,10 @@ for pr in prs or []:
         [ -z "$payload" ] && continue
         append_candidate "$payload" "pr:${pr_number}:closingIssuesReferences"
         ;;
-      PR_TEXT)
-        printf '%s' "$payload" | tr "$(printf '\036')" '\n' | closing_keyword_live_refs \
-          > "$TMP_DIR/pr-${pr_number}-live-keywords.txt" || return 1
-        while IFS= read -r issue; do
-          [ -z "$issue" ] && continue
-          append_candidate "$issue" "pr:${pr_number}:closing_keyword"
-        done < "$TMP_DIR/pr-${pr_number}-live-keywords.txt"
+      TEXT_ONLY)
+        [ -z "$payload" ] && continue
+        printf 'LINEAR_GITHUB_REF_SKIPPED issue=%s reason=not_structurally_linked pr=%s\n' \
+          "$payload" "$pr_number"
         ;;
     esac
   done < "$TMP_DIR/linear-pr-discovery.tsv"
@@ -802,15 +811,15 @@ validate_graduation_pr
 
 if [ "$TRACKER_PROVIDER" = "linear" ]; then
   # Linear sub-items are not GitHub subIssues. Never query subIssues with the
-  # Linear ID or its numeric suffix. Discover structured closingIssuesReferences
-  # plus fence-aware closing keywords in merged PR title/body.
-  echo "TRACKER_PROVIDER=linear — skipping GitHub subIssues and label fallback; discovering structured PR links and fence-aware closing keywords."
+  # Linear ID or its numeric suffix. Mutate GitHub issues only via same-repo
+  # structured closingIssuesReferences; text-only keywords are reported/skipped.
+  echo "TRACKER_PROVIDER=linear — skipping GitHub subIssues and label fallback; discovering same-repo structured closingIssuesReferences only."
   if ! discover_linear_merged_pr_issue_refs; then
-    echo "Warning: could not read merged PR closing references for ${INTEGRATION_BRANCH}." >&2
+    echo "Warning: could not read structured closingIssuesReferences for merged PRs targeting ${INTEGRATION_BRANCH}." >&2
     record_result "$FAILED_FILE" "discovery" "Candidate discovery" "pr:${INTEGRATION_BRANCH}" "merged_pr_discovery_failed"
   fi
   if [ ! -s "$CANDIDATES_FILE" ] && [ ! -s "$FAILED_FILE" ]; then
-    echo "Note: no PR-linked GitHub issues discovered; proceeding with Linear epic closeout only."
+    echo "Note: no structured same-repo GitHub closing refs discovered; proceeding with Linear epic closeout only."
   fi
 else
   if ! discover_native_subissues; then

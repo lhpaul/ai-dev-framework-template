@@ -289,12 +289,32 @@ sys.stdout.write(body)
   printf '%s\n%s\n' "$title" "$body" > "$TMP_DIR/pr-text.txt"
 }
 
+# Drop indented Markdown code lines (4+ spaces or a leading tab) after fence
+# stripping. Used only for Linear epic-ID text discovery (deferred tracker
+# action), never for GitHub issue mutation.
+strip_indented_code_lines() {
+  python3 -c '
+import sys
+for line in sys.stdin:
+    if line.startswith("\t"):
+        continue
+    leading = len(line) - len(line.lstrip(" "))
+    if leading >= 4:
+        continue
+    sys.stdout.write(line)
+'
+}
+
 collect_pr_epic_candidates() {
   local text
   if [ "$TRACKER_PROVIDER" = "linear" ]; then
-    # Canonical GFM fence filter (``` / ~~~, length >= 3, unclosed → EOF).
+    # Canonical GFM fence filter + indented-code strip. Epic IDs drive Linear
+    # deferred actions only — never GitHub issue mutations.
     if ! text="$(strip_fenced_pr_body_blocks < "$TMP_DIR/pr-text.txt")"; then
       fail_closed "could_not_strip_fenced_blocks"
+    fi
+    if ! text="$(printf '%s' "$text" | strip_indented_code_lines)"; then
+      fail_closed "could_not_strip_indented_code"
     fi
     printf '%s\n' "$text" | extract_linear_epic_refs | sort -u > "$TMP_DIR/pr-epic-candidates.txt"
     return 0

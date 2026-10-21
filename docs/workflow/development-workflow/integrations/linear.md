@@ -305,12 +305,15 @@ and then transition every listed `TRACKER_ISSUES` item from `Merged` to
 - GitHub `subIssues` / parent GraphQL and `defer-epic-close` label writes are
   skipped. Epic (and other Linear) status transitions are emitted as
   `TRACKER_ACTION_REQUIRED=` deferred actions for the orchestrator MCP bridge.
-- The only GitHub issues the helper may close are those explicitly linked on
-  merged PRs targeting `develop-<slug>` via structured `closingIssuesReferences`
-  and, when structured refs are empty, fence-aware closing keywords in PR
-  title/body (never derived from a Linear ID, never raw fenced examples, never
-  foreign-repo structured refs). Decision-gate outcomes are listed in Protocol
-  05b Step 5 **Graduation closeout decision-gate consistency matrix**.
+- GitHub issues are closed **only** via same-repo structured
+  `closingIssuesReferences` on merged PRs targeting `develop-<slug>`. Text-only
+  references (`Closes #N` in title/body, including fenced or indented examples)
+  are reported as `LINEAR_GITHUB_REF_SKIPPED issue=N reason=not_structurally_linked`
+  and never mutate GitHub. Foreign-repo structured refs are skipped. GitHub does
+  not populate `closingIssuesReferences` for many non-default-branch bases, so on
+  integration branches typically **no** GitHub issue is closed — safe by design.
+  Decision-gate outcomes are listed in Protocol 05b Step 5 **Graduation closeout
+  decision-gate consistency matrix**.
 - Both scripts accept `--dry-run` to print planned mutations without applying
   them.
 

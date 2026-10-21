@@ -476,6 +476,19 @@ run_test "linear_unclosed_fence_no_child" "missing" "$( [ -f "$CHILD_ARGV_LOG" ]
 run_not_contains "linear_unclosed_fence_no_lea999" "LEA-999" "$( [ -f "$CHILD_ARGV_LOG" ] && cat "$CHILD_ARGV_LOG" || true )"
 
 echo ""
+echo "=== wrapper: Linear ignores indented-code Epic LEA-999 (#1984 Pass 1) ==="
+reset_fixture
+write_tracker_config linear
+export MOCK_LABEL_PARENT_MODE=empty
+write_pr 96 "develop-test-1984" "develop" "true" "Graduate" $'Example only:\n    Epic LEA-999\nNo live epic.'
+result="$(run_wrapper --graduation-pr 96)"
+body="$(last_body "$result")"
+run_test "linear_indented_epic_exit_one" "1" "$(last_status "$result")"
+run_contains "linear_indented_epic_reason" "epic_discovery_failed" "$body"
+run_test "linear_indented_epic_no_child" "missing" "$( [ -f "$CHILD_ARGV_LOG" ] && echo present || echo missing )"
+run_not_contains "linear_indented_epic_no_lea999" "LEA-999" "$( [ -f "$CHILD_ARGV_LOG" ] && cat "$CHILD_ARGV_LOG" || true )"
+
+echo ""
 echo "=== wrapper: github_projects discovery unchanged with explicit config (#1984) ==="
 reset_fixture
 write_tracker_config github_projects

@@ -230,7 +230,7 @@ JSON
     esac
     ;;
   "pr list --state merged --base develop-test --limit 1000 --json number,title,body,closingIssuesReferences")
-    # Linear merged-PR discovery (structured refs + fence-aware keywords).
+    # Linear merged-PR discovery (structured same-repo refs only; text keywords skipped).
     case "${MOCK_PR_MODE:-single_ref}" in
       fail)
         printf 'mock pr list failure\n' >&2
@@ -254,14 +254,19 @@ JSON
 [{"number":11,"title":"Graduate wave","body":"See example:\n```text\nCloses #326\n","closingIssuesReferences":[]}]
 JSON
         ;;
+      indented_code_example)
+        cat <<'JSON'
+[{"number":11,"title":"Graduate wave","body":"See example:\n    Closes #326\nNo live structured refs.","closingIssuesReferences":[]}]
+JSON
+        ;;
       foreign_repo)
         cat <<'JSON'
 [{"number":11,"title":"Deliver extra item","body":"No live closing keywords in this PR body.","closingIssuesReferences":[{"number":326,"repository":{"nameWithOwner":"other/repo"},"url":"https://github.com/other/repo/issues/326"}]}]
 JSON
         ;;
-      empty_structured_live_keyword)
+      empty_structured_plain_keyword)
         cat <<'JSON'
-[{"number":11,"title":"Deliver extra item","body":"Closes #105","closingIssuesReferences":[]}]
+[{"number":11,"title":"Deliver extra item","body":"Closes #326","closingIssuesReferences":[]}]
 JSON
         ;;
       *)
@@ -845,6 +850,7 @@ run_contains "linear_fenced_pass" "GRADUATION_CLOSEOUT_RESULT=pass" "$fenced_bod
 run_contains "linear_fenced_deferred" "TRACKER_ACTION_REQUIRED=set_status issue=LEA-326" "$fenced_body"
 run_test "linear_fenced_326_untouched" "OPEN" "$(python3 -c 'import json; print(json.load(open("'"$MOCK_STATE_DIR"'/326.json"))["state"])')"
 run_test "linear_fenced_no_close_log" "" "$(cat "$MOCK_CLOSE_LOG")"
+run_contains "linear_fenced_skipped" "LINEAR_GITHUB_REF_SKIPPED issue=326 reason=not_structurally_linked" "$fenced_body"
 run_contains "linear_fenced_combined_pr_query" "--json number,title,body,closingIssuesReferences" "$(cat "$MOCK_GH_LOG")"
 
 echo ""
@@ -862,6 +868,7 @@ run_test "linear_tilde_exit_zero" "0" "$(last_output_status "$tilde_result")"
 run_contains "linear_tilde_pass" "GRADUATION_CLOSEOUT_RESULT=pass" "$tilde_body"
 run_test "linear_tilde_326_untouched" "OPEN" "$(python3 -c 'import json; print(json.load(open("'"$MOCK_STATE_DIR"'/326.json"))["state"])')"
 run_test "linear_tilde_no_close_log" "" "$(cat "$MOCK_CLOSE_LOG")"
+run_contains "linear_tilde_skipped" "LINEAR_GITHUB_REF_SKIPPED issue=326 reason=not_structurally_linked" "$tilde_body"
 
 echo ""
 echo "=== graduation closeout: Linear ignores unclosed-fence example Closes #326 (#1984 Pass 2) ==="
@@ -878,23 +885,42 @@ run_test "linear_unclosed_exit_zero" "0" "$(last_output_status "$unclosed_result
 run_contains "linear_unclosed_pass" "GRADUATION_CLOSEOUT_RESULT=pass" "$unclosed_body"
 run_test "linear_unclosed_326_untouched" "OPEN" "$(python3 -c 'import json; print(json.load(open("'"$MOCK_STATE_DIR"'/326.json"))["state"])')"
 run_test "linear_unclosed_no_close_log" "" "$(cat "$MOCK_CLOSE_LOG")"
+run_contains "linear_unclosed_skipped" "LINEAR_GITHUB_REF_SKIPPED issue=326 reason=not_structurally_linked" "$unclosed_body"
 
 echo ""
-echo "=== graduation closeout: Linear fence-aware keyword when structured refs empty (#1984) ==="
+echo "=== graduation closeout: Linear ignores indented-code Closes #326 (#1984 Pass 1) ==="
 reset_fixture
 write_tracker_config linear
 export MOCK_NATIVE_MODE=empty
-export MOCK_PR_MODE=empty_structured_live_keyword
-write_issue 105 "PR referenced child" OPEN
+export MOCK_PR_MODE=indented_code_example
 write_issue 326 "Unrelated GitHub issue" OPEN
 CLOSEOUT_EPIC=LEA-326
-keyword_result="$(run_closeout)"
+indented_result="$(run_closeout)"
 unset CLOSEOUT_EPIC
-keyword_body="$(last_output_body "$keyword_result")"
-run_test "linear_empty_structured_exit_zero" "0" "$(last_output_status "$keyword_result")"
-run_test "linear_empty_structured_105_closed" "CLOSED" "$(python3 -c 'import json; print(json.load(open("'"$MOCK_STATE_DIR"'/105.json"))["state"])')"
-run_contains "linear_empty_structured_source" "closing_keyword" "$keyword_body"
-run_test "linear_empty_structured_326_open" "OPEN" "$(python3 -c 'import json; print(json.load(open("'"$MOCK_STATE_DIR"'/326.json"))["state"])')"
+indented_body="$(last_output_body "$indented_result")"
+run_test "linear_indented_exit_zero" "0" "$(last_output_status "$indented_result")"
+run_contains "linear_indented_pass" "GRADUATION_CLOSEOUT_RESULT=pass" "$indented_body"
+run_test "linear_indented_326_untouched" "OPEN" "$(python3 -c 'import json; print(json.load(open("'"$MOCK_STATE_DIR"'/326.json"))["state"])')"
+run_test "linear_indented_no_close_log" "" "$(cat "$MOCK_CLOSE_LOG")"
+run_contains "linear_indented_skipped" "LINEAR_GITHUB_REF_SKIPPED issue=326 reason=not_structurally_linked" "$indented_body"
+
+echo ""
+echo "=== graduation closeout: Linear skips plain body Closes #326 without structured refs (#1984) ==="
+reset_fixture
+write_tracker_config linear
+export MOCK_NATIVE_MODE=empty
+export MOCK_PR_MODE=empty_structured_plain_keyword
+write_issue 326 "Unrelated GitHub issue" OPEN
+CLOSEOUT_EPIC=LEA-326
+plain_result="$(run_closeout)"
+unset CLOSEOUT_EPIC
+plain_body="$(last_output_body "$plain_result")"
+run_test "linear_plain_text_exit_zero" "0" "$(last_output_status "$plain_result")"
+run_contains "linear_plain_text_pass" "GRADUATION_CLOSEOUT_RESULT=pass" "$plain_body"
+run_test "linear_plain_text_326_untouched" "OPEN" "$(python3 -c 'import json; print(json.load(open("'"$MOCK_STATE_DIR"'/326.json"))["state"])')"
+run_test "linear_plain_text_no_close_log" "" "$(cat "$MOCK_CLOSE_LOG")"
+run_contains "linear_plain_text_skipped" "LINEAR_GITHUB_REF_SKIPPED issue=326 reason=not_structurally_linked" "$plain_body"
+run_not_contains "linear_plain_text_no_keyword_source" "closing_keyword" "$plain_body"
 
 echo ""
 echo "=== graduation closeout: Linear ignores foreign-repo closingIssuesReferences #326 (#1984 Pass 1 c2) ==="
