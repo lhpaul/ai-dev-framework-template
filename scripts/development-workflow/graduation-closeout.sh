@@ -32,6 +32,9 @@ SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)"
 # shellcheck source=./workflow-lib.sh
 # shellcheck disable=SC1091
 . "$SCRIPT_DIR/workflow-lib.sh"
+# shellcheck source=./closing-keyword-lib.sh
+# shellcheck disable=SC1091
+. "$SCRIPT_DIR/closing-keyword-lib.sh"
 
 SLUG=""
 GRADUATION_PR=""
@@ -482,19 +485,20 @@ for pr in prs or []:
   done < "$TMP_DIR/merged-prs.tsv"
 }
 
-discover_structured_closing_issue_refs() {
-  # Linear path: only GitHub's structured closingIssuesReferences count as an
-  # explicit PR link. Fenced example text such as ```Closes #326``` never
-  # appears here. Cross-repo refs (other/repo#326) must not authorize closing
-  # local issue #326 — accept only when repository.nameWithOwner matches
-  # REPO_SLUG (case-insensitive).
+discover_linear_merged_pr_issue_refs() {
+  # Linear path: GitHub closingIssuesReferences when present, plus fence-aware
+  # closing-keyword parsing of merged PR title/body. Non-default integration
+  # branches often leave closingIssuesReferences empty even when the PR body
+  # declares Closes #N; the keyword pass covers that gap. Fenced examples and
+  # foreign-repo structured refs are never treated as local links.
   local prs_json
-  if ! prs_json="$(gh pr list --state merged --base "$INTEGRATION_BRANCH" --limit 1000 --json number,closingIssuesReferences 2>/dev/null)"; then
+  if ! prs_json="$(gh pr list --state merged --base "$INTEGRATION_BRANCH" --limit 1000 --json number,title,body,closingIssuesReferences 2>/dev/null)"; then
     return 1
   fi
   printf '%s' "$prs_json" | python3 -c '
 import json, re, sys
 
+RS = chr(30)
 expected = (sys.argv[1] or "").strip().lower()
 try:
     prs = json.load(sys.stdin)
@@ -534,18 +538,35 @@ for pr in prs or []:
                 file=sys.stderr,
             )
             continue
-        print("{}\t{}".format(pr_number, issue))
-' "$REPO_SLUG" > "$TMP_DIR/structured-closing-refs.tsv" 2> "$TMP_DIR/structured-closing-refs.err" || return 1
+        print("STRUCTURED\t{}\t{}".format(pr_number, issue))
+    title = (pr.get("title") or "").replace("\t", " ")
+    body = (pr.get("body") or "").replace("\t", " ")
+    text = title + "\n" + body
+    print("PR_TEXT\t{}\t{}".format(pr_number, text.replace("\n", RS)))
+' "$REPO_SLUG" > "$TMP_DIR/linear-pr-discovery.tsv" 2> "$TMP_DIR/structured-closing-refs.err" || return 1
   if [ -s "$TMP_DIR/structured-closing-refs.err" ]; then
     while IFS="$(printf '\t')" read -r marker pr_number issue repo_or_reason; do
       [ "$marker" = "FOREIGN_CLOSING_REF" ] || continue
       echo "Warning: skipping foreign closingIssuesReferences from PR #${pr_number}: #${issue} in ${repo_or_reason} (local repo is ${REPO_SLUG})." >&2
     done < "$TMP_DIR/structured-closing-refs.err"
   fi
-  while IFS="$(printf '\t')" read -r pr_number issue; do
-    [ -z "$issue" ] && continue
-    append_candidate "$issue" "pr:${pr_number}:closingIssuesReferences"
-  done < "$TMP_DIR/structured-closing-refs.tsv"
+  while IFS="$(printf '\t')" read -r kind pr_number payload; do
+    [ -n "$kind" ] || continue
+    case "$kind" in
+      STRUCTURED)
+        [ -z "$payload" ] && continue
+        append_candidate "$payload" "pr:${pr_number}:closingIssuesReferences"
+        ;;
+      PR_TEXT)
+        printf '%s' "$payload" | tr "$(printf '\036')" '\n' | closing_keyword_live_refs \
+          > "$TMP_DIR/pr-${pr_number}-live-keywords.txt" || return 1
+        while IFS= read -r issue; do
+          [ -z "$issue" ] && continue
+          append_candidate "$issue" "pr:${pr_number}:closing_keyword"
+        done < "$TMP_DIR/pr-${pr_number}-live-keywords.txt"
+        ;;
+    esac
+  done < "$TMP_DIR/linear-pr-discovery.tsv"
 }
 
 issue_source_summary() {
@@ -781,11 +802,11 @@ validate_graduation_pr
 
 if [ "$TRACKER_PROVIDER" = "linear" ]; then
   # Linear sub-items are not GitHub subIssues. Never query subIssues with the
-  # Linear ID or its numeric suffix. Only GitHub issues in structured
-  # closingIssuesReferences may be closed (never raw-body / fenced examples).
-  echo "TRACKER_PROVIDER=linear — skipping GitHub subIssues and label fallback; discovering only structured PR closingIssuesReferences."
-  if ! discover_structured_closing_issue_refs; then
-    echo "Warning: could not read structured closingIssuesReferences for merged PRs targeting ${INTEGRATION_BRANCH}." >&2
+  # Linear ID or its numeric suffix. Discover structured closingIssuesReferences
+  # plus fence-aware closing keywords in merged PR title/body.
+  echo "TRACKER_PROVIDER=linear — skipping GitHub subIssues and label fallback; discovering structured PR links and fence-aware closing keywords."
+  if ! discover_linear_merged_pr_issue_refs; then
+    echo "Warning: could not read merged PR closing references for ${INTEGRATION_BRANCH}." >&2
     record_result "$FAILED_FILE" "discovery" "Candidate discovery" "pr:${INTEGRATION_BRANCH}" "merged_pr_discovery_failed"
   fi
   if [ ! -s "$CANDIDATES_FILE" ] && [ ! -s "$FAILED_FILE" ]; then

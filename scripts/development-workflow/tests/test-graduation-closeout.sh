@@ -35,6 +35,7 @@ trap cleanup EXIT
 
 mkdir -p "$MOCK_BIN" "$FIXTURE_REPO/scripts/development-workflow" "$MOCK_STATE_DIR" "$MOCK_STATUS_DIR"
 cp "$REPO_ROOT/scripts/development-workflow/graduation-closeout.sh" "$FIXTURE_REPO/scripts/development-workflow/graduation-closeout.sh"
+cp "$REPO_ROOT/scripts/development-workflow/closing-keyword-lib.sh" "$FIXTURE_REPO/scripts/development-workflow/closing-keyword-lib.sh"
 chmod +x "$FIXTURE_REPO/scripts/development-workflow/graduation-closeout.sh"
 
 cat > "$FIXTURE_REPO/scripts/development-workflow/workflow-lib.sh" <<'STUB_LIB'
@@ -228,8 +229,8 @@ JSON
         ;;
     esac
     ;;
-  "pr list --state merged --base develop-test --limit 1000 --json number,closingIssuesReferences")
-    # Linear structured-link path.
+  "pr list --state merged --base develop-test --limit 1000 --json number,title,body,closingIssuesReferences")
+    # Linear merged-PR discovery (structured refs + fence-aware keywords).
     case "${MOCK_PR_MODE:-single_ref}" in
       fail)
         printf 'mock pr list failure\n' >&2
@@ -239,19 +240,23 @@ JSON
         printf '[]\n'
         ;;
       fenced_example)
-        # Body has ```Closes #326``` (see title,body mock), but GitHub recorded
-        # no structured closing reference — Linear must leave #326 alone.
-        printf '[{"number":11,"closingIssuesReferences":[]}]\n'
+        cat <<'JSON'
+[{"number":11,"title":"Graduate wave","body":"See example:\n```\nCloses #326\n```\nNo live closing keywords.","closingIssuesReferences":[]}]
+JSON
         ;;
       foreign_repo)
-        # Structured link to other/repo#326 must not close local #326.
         cat <<'JSON'
-[{"number":11,"closingIssuesReferences":[{"number":326,"repository":{"nameWithOwner":"other/repo"},"url":"https://github.com/other/repo/issues/326"}]}]
+[{"number":11,"title":"Deliver extra item","body":"No live closing keywords in this PR body.","closingIssuesReferences":[{"number":326,"repository":{"nameWithOwner":"other/repo"},"url":"https://github.com/other/repo/issues/326"}]}]
+JSON
+        ;;
+      empty_structured_live_keyword)
+        cat <<'JSON'
+[{"number":11,"title":"Deliver extra item","body":"Closes #105","closingIssuesReferences":[]}]
 JSON
         ;;
       *)
         cat <<'JSON'
-[{"number":11,"closingIssuesReferences":[{"number":105,"repository":{"nameWithOwner":"lhpaul/ai-dev-framework-template"},"url":"https://github.com/lhpaul/ai-dev-framework-template/issues/105"}]}]
+[{"number":11,"title":"Deliver extra item","body":"Closes #105","closingIssuesReferences":[{"number":105,"repository":{"nameWithOwner":"lhpaul/ai-dev-framework-template"},"url":"https://github.com/lhpaul/ai-dev-framework-template/issues/105"}]}]
 JSON
         ;;
     esac
@@ -812,7 +817,7 @@ run_contains "linear_linked_deferred" "TRACKER_ACTION_REQUIRED=set_status issue=
 run_contains "linear_linked_source" "closingIssuesReferences" "$linked_body"
 run_test "linear_linked_no_subissues_326" "0" "$(grep -c '^326$' "$MOCK_GRAPHQL_LOG" || true)"
 run_test "linear_linked_no_subissues_any" "" "$(cat "$MOCK_GRAPHQL_LOG")"
-run_not_contains "linear_linked_no_body_scan" "--json number,title,body" "$(cat "$MOCK_GH_LOG")"
+run_contains "linear_linked_combined_pr_query" "--json number,title,body,closingIssuesReferences" "$(cat "$MOCK_GH_LOG")"
 
 echo ""
 echo "=== graduation closeout: Linear ignores fenced example Closes #326 (#1984 Pass 2) ==="
@@ -830,8 +835,24 @@ run_contains "linear_fenced_pass" "GRADUATION_CLOSEOUT_RESULT=pass" "$fenced_bod
 run_contains "linear_fenced_deferred" "TRACKER_ACTION_REQUIRED=set_status issue=LEA-326" "$fenced_body"
 run_test "linear_fenced_326_untouched" "OPEN" "$(python3 -c 'import json; print(json.load(open("'"$MOCK_STATE_DIR"'/326.json"))["state"])')"
 run_test "linear_fenced_no_close_log" "" "$(cat "$MOCK_CLOSE_LOG")"
-run_not_contains "linear_fenced_no_body_scan" "--json number,title,body" "$(cat "$MOCK_GH_LOG")"
-run_contains "linear_fenced_uses_structured" "--json number,closingIssuesReferences" "$(cat "$MOCK_GH_LOG")"
+run_contains "linear_fenced_combined_pr_query" "--json number,title,body,closingIssuesReferences" "$(cat "$MOCK_GH_LOG")"
+
+echo ""
+echo "=== graduation closeout: Linear fence-aware keyword when structured refs empty (#1984) ==="
+reset_fixture
+write_tracker_config linear
+export MOCK_NATIVE_MODE=empty
+export MOCK_PR_MODE=empty_structured_live_keyword
+write_issue 105 "PR referenced child" OPEN
+write_issue 326 "Unrelated GitHub issue" OPEN
+CLOSEOUT_EPIC=LEA-326
+keyword_result="$(run_closeout)"
+unset CLOSEOUT_EPIC
+keyword_body="$(last_output_body "$keyword_result")"
+run_test "linear_empty_structured_exit_zero" "0" "$(last_output_status "$keyword_result")"
+run_test "linear_empty_structured_105_closed" "CLOSED" "$(python3 -c 'import json; print(json.load(open("'"$MOCK_STATE_DIR"'/105.json"))["state"])')"
+run_contains "linear_empty_structured_source" "closing_keyword" "$keyword_body"
+run_test "linear_empty_structured_326_open" "OPEN" "$(python3 -c 'import json; print(json.load(open("'"$MOCK_STATE_DIR"'/326.json"))["state"])')"
 
 echo ""
 echo "=== graduation closeout: Linear ignores foreign-repo closingIssuesReferences #326 (#1984 Pass 1 c2) ==="
