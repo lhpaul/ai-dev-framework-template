@@ -359,19 +359,19 @@ for key, expect in want.items():
     print("%s|%s|%s|%s|%s" % (key[0], key[1], key[2], expect, "yes" if ok else "no"))
 ')"
 
-while IFS='|' read -r event repo var expect ok; do
+while IFS='|' read -r event repo var _expect ok; do
   run_test "spotlight_${event}_${repo##*/}_${var}" "yes" "$ok"
 done <<< "$spotlight"
 
 # pull_request / workflow_dispatch must not be schedule-gated away in consumers
 pr_gated=no
-if printf '%s\n' "$eval_out" | grep -q '^ANY	pull_request	acme/product-repo	unset	True	True	ok$'; then
+if grep -q '^ANY	pull_request	acme/product-repo	unset	True	True	ok$' <<< "$eval_out"; then
   pr_gated=yes
 fi
 run_test "pull_request_not_gated_in_consumer" "yes" "$pr_gated"
 
 dispatch_ok=no
-if printf '%s\n' "$eval_out" | grep -q '^ANY	workflow_dispatch	acme/product-repo	unset	True	True	ok$'; then
+if grep -q '^ANY	workflow_dispatch	acme/product-repo	unset	True	True	ok$' <<< "$eval_out"; then
   dispatch_ok=yes
 fi
 run_test "workflow_dispatch_not_gated_in_consumer" "yes" "$dispatch_ok"
@@ -380,7 +380,7 @@ echo ""
 echo "Results: $pass passed, $fail failed"
 if [ "$fail" -ne 0 ]; then
   echo "---- evaluator transcript (truncated) ----"
-  printf '%s\n' "$eval_out" | head -80
+  head -80 <<< "$eval_out" || true
   exit 1
 fi
 exit 0
