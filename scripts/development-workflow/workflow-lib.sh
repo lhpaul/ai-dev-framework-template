@@ -1554,12 +1554,12 @@ workflow_config_provider() {
       return value
     }
 
-    $0 ~ ("^" section ":[[:space:]]*(#.*)?$") {
+    $0 ~ ("^" section ":[[:space:]]*$") {
       in_section = 1
       next
     }
 
-    in_section && /^[^[:space:]#].*:[[:space:]]*(#.*)?$/ {
+    in_section && /^[^[:space:]#].*:[[:space:]]*$/ {
       exit
     }
 
@@ -1898,7 +1898,9 @@ workflow_issue_tracker_provider_raw() {
 }
 
 # workflow_issue_tracker_provider_declared_in_file <config_file>
-# True when issue_tracker.provider appears under an issue_tracker section.
+# Closeout-only helper. True when issue_tracker.provider appears under an
+# issue_tracker section, including a commented section header
+# (`issue_tracker: # ...`). Does not change workflow_config_provider.
 workflow_issue_tracker_provider_declared_in_file() {
   local config_file="$1"
   [ -f "$config_file" ] || return 1
@@ -1910,31 +1912,28 @@ workflow_issue_tracker_provider_declared_in_file() {
   ' "$config_file"
 }
 
-# workflow_graduation_closeout_tracker_provider_raw
-# Resolve issue_tracker.provider for graduation closeout. Reads shared config,
-# then local override. Fail closed when provider is declared but unreadable —
-# never default to github_projects on a parse miss.
+# workflow_graduation_closeout_tracker_provider_raw [repo_root]
+# Resolve issue_tracker.provider for graduation closeout exactly like
+# post-merge-cleanup.sh: shared .ai-dev-workflow.yaml via
+# workflow_config_provider only (no .ai-dev-workflow.local.yaml).
+# Fail closed when provider is declared but unreadable — never default to
+# github_projects on a parse miss (e.g. commented issue_tracker: header).
 workflow_graduation_closeout_tracker_provider_raw() {
   local repo_root="${1:-$(workflow_repo_root)}"
   local shared="$repo_root/.ai-dev-workflow.yaml"
-  local local_cfg="$repo_root/.ai-dev-workflow.local.yaml"
-  local raw="" config_file=""
+  local raw=""
 
-  for config_file in "$shared" "$local_cfg"; do
-    [ -f "$config_file" ] || continue
-    raw="$(workflow_config_provider issue_tracker "$config_file")"
+  if [ -f "$shared" ]; then
+    raw="$(workflow_config_provider issue_tracker "$shared")"
     if [ -n "$raw" ]; then
       printf '%s' "$raw"
       return 0
     fi
-  done
-
-  for config_file in "$shared" "$local_cfg"; do
-    if workflow_issue_tracker_provider_declared_in_file "$config_file"; then
-      echo "ERROR: issue_tracker.provider is declared in ${config_file} but could not be parsed; refusing to default to github_projects." >&2
+    if workflow_issue_tracker_provider_declared_in_file "$shared"; then
+      echo "ERROR: issue_tracker.provider is declared in ${shared} but could not be parsed; refusing to default to github_projects." >&2
       return 64
     fi
-  done
+  fi
 
   return 0
 }
