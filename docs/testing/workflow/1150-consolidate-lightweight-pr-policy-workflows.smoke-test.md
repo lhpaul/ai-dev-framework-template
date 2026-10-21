@@ -54,13 +54,16 @@ shape.
 1. Inspect `.github/workflows/pr-policy.yml`.
 2. Confirm it handles `pull_request_target` events for `opened`, `reopened`,
    `ready_for_review`, and `synchronize`.
-3. Confirm it handles `issue_comment` events for `created` and `edited`.
-4. Confirm non-summary comments exit without changing labels or statuses.
+3. Confirm it has `workflow_dispatch` with required `pr_number` and does **not**
+   declare an `issue_comment` trigger (#1998).
+4. Confirm the dispatch path validates `pr_number` as a positive integer, fetches
+   the PR and latest canonical summary from comments, applies regression policy,
+   and posts the Reviewer-loop completion guard status.
 5. Confirm summary comments are recognized only when they include both canonical
    reviewer-loop summary markers.
 
-**Expected result**: The workflow covers the full trigger matrix and preserves
-the summary-comment readiness path.
+**Expected result**: The workflow covers the PR-event and summary-dispatch
+trigger matrix without comment-triggered runners.
 
 ### Step 3: Validate implementation branch scoping and label lifecycle
 
