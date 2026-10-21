@@ -947,8 +947,12 @@ def pulls_for_commit(sha, repo_slug, commit_cache):
     if api.returncode != 0:
         commit_cache[sha] = None
         return None
+    stripped = api.stdout.strip()
+    if not stripped:
+        commit_cache[sha] = None
+        return None
     try:
-        payload = json.loads(api.stdout) if api.stdout.strip() else []
+        payload = json.loads(stripped)
     except Exception:
         commit_cache[sha] = None
         return None
@@ -957,6 +961,9 @@ def pulls_for_commit(sha, repo_slug, commit_cache):
         return None
     normalized = []
     for item in payload:
+        if not isinstance(item, dict):
+            commit_cache[sha] = None
+            return None
         norm = normalize_pr_payload(item)
         if norm is not None:
             normalized.append(norm)

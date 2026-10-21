@@ -406,6 +406,20 @@ def release_omitted(checkout, head, issue_repo, release_repo, project_id, merged
     return included, read_cost
 
 
+def release_changelog_digest(checkout, head, provider):
+    result = subprocess.run(
+        ["git", "-C", str(checkout), "show", head + ":CHANGELOG.md"],
+        text=True,
+        capture_output=True,
+    )
+    if result.returncode == 0:
+        return hashlib.sha256(result.stdout.encode()).hexdigest()
+    if provider == "linear":
+        # Linear release scope may derive from merged PRs when CHANGELOG is absent.
+        return hashlib.sha256(b"").hexdigest()
+    raise Stop("finalized changelog fingerprint unavailable")
+
+
 def project_release(args):
     checkout = root(args.target_root or args.repo_root or Path.cwd())
     if not isinstance(args.version, str) or not re.fullmatch(r"v?[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.-]+)?(?:\+[A-Za-z0-9.-]+)?", args.version):
@@ -455,7 +469,7 @@ def project_release(args):
             "markerRepo": issue_repo, "markerProvider": args.provider,
             "projectId": args.project_id if args.provider == "github_projects" else None,
             "mergedStatus": args.merged_status,
-            "changelogDigest": hashlib.sha256(call(["git", "-C", str(checkout), "show", head + ":CHANGELOG.md"]).encode()).hexdigest()}
+            "changelogDigest": release_changelog_digest(checkout, head, args.provider)}
     if args.evidence:
         evidence = decode(Path(args.evidence).read_text())
         if not isinstance(evidence, dict) or not isinstance(evidence.get("target_binding"), dict):

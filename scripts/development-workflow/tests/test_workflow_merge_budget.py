@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """#1890 durable admission proofs; no remote requests or user-resource cleanup."""
 import argparse
+import hashlib
 import importlib.util
 import json
 import os
@@ -1672,6 +1673,25 @@ class ReleaseScope(unittest.TestCase):
                 self.assertNotIn('CHANGELOG_',result.stderr)
                 self.assertEqual(json.loads(self.fixture.read_text())['events'],[['auth','status']])
                 self.assertEqual(self.command(['git','show-ref']).stdout,before)
+
+    def test_linear_release_projection_missing_changelog_digest(self):
+        shutil.copyfile(self.source / 'workflow-merge-budget.py', self.scripts / 'workflow-merge-budget.py')
+        (self.repo / '.ai-dev-workflow.yaml').write_text('issue_tracker:\n  provider: linear\n')
+        self.command(['git', 'add', '.ai-dev-workflow.yaml'])
+        self.command(['git', 'commit', '-qm', 'linear release without changelog'])
+        self.release_head = self.command(['git', 'rev-parse', 'HEAD']).stdout.strip()
+        result = subprocess.run(
+            ['bash', str(self.scripts / 'prepare-release-post-merge-cleanup.sh'), 'v1.2.3',
+             '--inspect-targets', '--release-head', self.release_head, '--issue', 'LEA-12'],
+            cwd=self.repo, env=self.env, text=True, capture_output=True,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        projection = json.loads(result.stdout)
+        self.assertEqual(
+            projection['changelogDigest'],
+            hashlib.sha256(b'').hexdigest(),
+        )
+        self.assertEqual(projection['issues'][0]['id'], 'LEA-12')
 
     def test_release_scope_boundary_references(self):
         self.assertEqual([i['id'] for i in self.scope('(#12), #13.\n')['issues']],['12','13'])

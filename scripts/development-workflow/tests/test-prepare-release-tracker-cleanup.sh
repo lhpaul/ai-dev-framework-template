@@ -1321,6 +1321,16 @@ lookup_commit_pulls() {
     case "$line" in
       "commit:${sha}|"*)
         pr_num="${line##*|}"
+        case "$pr_num" in
+          malformed:empty)
+            printf '\n'
+            return 0
+            ;;
+          malformed:null)
+            printf '[null]\n'
+            return 0
+            ;;
+        esac
         if map_uses_rest_format; then
           json="$(lookup_pr_rest "$pr_num" "$sha")" || return 1
         else
@@ -2109,6 +2119,47 @@ run_contains "linear_1982_missing_file_diagnostic" \
 run_contains "linear_1982_missing_file_proposes_302" "TRACKER_ISSUES=LEA-302" "$output"
 run_not_contains "linear_1982_missing_file_no_changelog_unavailable" \
   "REASON=changelog_scope_unavailable" "$output"
+
+# --- Malformed commits/<sha>/pulls evidence fails closed (unresolved SHAs) ---
+repo_malformed_pulls="$TMP_ROOT/linear-1982-malformed-pulls"
+init_linear_git_repo "$repo_malformed_pulls"
+cat > "$repo_malformed_pulls/CHANGELOG.md" <<'MD'
+# Changelog
+
+## [Unreleased]
+
+## [1.29.0] - 2026-10-15
+
+- Ships LEA-302.
+MD
+"$REAL_GIT" -C "$repo_malformed_pulls" add CHANGELOG.md .ai-dev-workflow.yaml scripts
+"$REAL_GIT" -C "$repo_malformed_pulls" commit -q -m "chore: baseline before v1.28.0"
+"$REAL_GIT" -C "$repo_malformed_pulls" tag v1.28.0
+"$REAL_GIT" -C "$repo_malformed_pulls" commit -q --allow-empty \
+  -m "Merge pull request #88 from example/fix/LEA-302-billing-fix"
+sha_malformed="$("$REAL_GIT" -C "$repo_malformed_pulls" rev-parse HEAD)"
+"$REAL_GIT" -C "$repo_malformed_pulls" tag v1.29.0
+write_linear_scope_gh \
+  "88|fix/LEA-302-billing-fix|fix(billing): LEA-302" \
+  "commit:${sha_malformed}|malformed:empty"
+result="$(run_linear_scope_cleanup "$repo_malformed_pulls" v1.29.0 --from-changelog --best-effort)"
+status="$(printf '%s\n' "$result" | sed -n '1p')"
+output="$(printf '%s\n' "$result" | sed '1d')"
+run_test "linear_1982_malformed_empty_pulls_exits_zero" "0" "$status"
+run_contains "linear_1982_malformed_empty_incomplete" \
+  "RELEASE_SCOPE_INCOMPLETE unresolved_shas=${sha_malformed}" "$output"
+run_not_contains "linear_1982_malformed_empty_no_ok_scope" "TRACKER_ISSUES=LEA-302" "$output"
+
+write_linear_scope_gh \
+  "88|fix/LEA-302-billing-fix|fix(billing): LEA-302" \
+  "commit:${sha_malformed}|malformed:null"
+result="$(run_linear_scope_cleanup "$repo_malformed_pulls" v1.29.0 --from-changelog --best-effort)"
+status="$(printf '%s\n' "$result" | sed -n '1p')"
+output="$(printf '%s\n' "$result" | sed '1d')"
+run_test "linear_1982_malformed_null_pulls_exits_zero" "0" "$status"
+run_contains "linear_1982_malformed_null_incomplete" \
+  "RELEASE_SCOPE_INCOMPLETE unresolved_shas=${sha_malformed}" "$output"
+run_not_contains "linear_1982_malformed_null_no_ok_scope" "TRACKER_ISSUES=LEA-302" "$output"
 
 # --- GH_REPO must not override checkout repo for Linear PR lookups ---
 repo_gh_repo="$TMP_ROOT/linear-1982-gh-repo-override"
