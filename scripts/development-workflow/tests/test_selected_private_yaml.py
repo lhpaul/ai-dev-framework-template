@@ -261,6 +261,49 @@ flow: {name: value, nested: [x, y]}
         self.assertEqual(strict.stdout, '')
         self.assertIn('flow mapping', strict.stderr)
 
+    def test_P14_internal_flow_indicators_cannot_fall_back_to_shared(self):
+        buckets = (('on_draft', 'runner'), ('on_draft', 'github'), ('on_ready', 'github'))
+        # No local reviewer declaration: accepting the unrelated malformed
+        # scalar would otherwise emit the different shared policy successfully.
+        for token in ('fabricatedOpaqueFlow?value', 'fabricatedOpaqueFlow??value',
+                      'fabricatedOpaqueFlow? tail'):
+            raw = 'other: [' + token + ']\n'
+            with self.assertRaises(resolver.ConfigError):
+                resolver.parse_review_yaml(self.path, raw=raw)
+            self.f.private.write_text(raw)
+            for phase, key in buckets:
+                with self.subTest(invalid=token, phase=phase, key=key):
+                    result = self.cli('review-list', '--repo-root', str(self.f.checkout),
+                                      '--shared-file', str(self.f.shared), '--apply-local',
+                                      '--phase', phase, '--key', key)
+                    self.assertEqual(result.returncode, 2)
+                    self.assertEqual(result.stdout, '')
+                    self.assertEqual(result.stderr, 'ERROR: configuration: invalid YAML; line=1\n')
+                    self.assertNotIn('fabricatedOpaqueFlow', result.stdout + result.stderr)
+                    self.assertNotIn('shared-policy-sentinel', result.stdout + result.stderr)
+        # Quoted punctuation, nonflow plain punctuation and valid flow
+        # separators retain their syntax and legitimate shared fallback.
+        for raw in ("other: ['fabricatedOpaqueFlow?value']\n",
+                    'other: ["fabricatedOpaqueFlow?,[]{}:value"]\n',
+                    'other: fabricatedOpaqueFlow?,[]{}:value\n',
+                    'other: [first, second, a:b]\n'):
+            resolver.parse_review_yaml(self.path, raw=raw)
+            self.f.private.write_text(raw)
+            for phase, key in buckets:
+                with self.subTest(valid=raw, phase=phase, key=key):
+                    result = self.cli('review-list', '--repo-root', str(self.f.checkout),
+                                      '--shared-file', str(self.f.shared), '--apply-local',
+                                      '--phase', phase, '--key', key)
+                    self.assertEqual((result.returncode, result.stdout, result.stderr),
+                                     (0, 'shared-policy-sentinel\n', ''))
+                    self.assertNotIn('fabricatedOpaqueFlow', result.stdout + result.stderr)
+        for declaration, expected in (('[codex]', 'codex\n'), ('[]', '')):
+            self.f.private.write_text('review:\n  on_draft:\n    runner: ' + declaration + '\n')
+            result = self.cli('review-list', '--repo-root', str(self.f.checkout),
+                              '--shared-file', str(self.f.shared), '--apply-local',
+                              '--phase', 'on_draft', '--key', 'runner')
+            self.assertEqual((result.returncode, result.stdout, result.stderr), (0, expected, ''))
+
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)

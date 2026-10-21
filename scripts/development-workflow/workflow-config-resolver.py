@@ -1008,7 +1008,7 @@ class SelectedYamlParser:
                 if flow and char == ":" and (index + 1 == len(text) or
                         text[index + 1] in " \t,[]{}"):
                     break
-                if (flow and char in "[{") or (char == ":" and
+                if (flow and char in "[{?") or (char == ":" and
                         (index + 1 == len(text) or text[index + 1] in " \t")):
                     self.fail(line)
                 index += 1
