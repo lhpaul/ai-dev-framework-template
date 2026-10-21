@@ -371,14 +371,27 @@ After the human merges the graduation PR (must use a **merge commit**):
    The helper:
    - validates that the graduation PR is already merged from `develop-<slug>` to its expected base (`develop` by default, or the branch passed via `--base` for a nested graduation);
    - with GitHub Projects / GitHub Issues: identifies planned sub-items from native GitHub sub-issues or the `integration-branch:<slug>` label fallback;
-   - with Linear: skips GitHub `subIssues` and label fallback (Linear children are not GitHub sub-issues); emits `TRACKER_ACTION_REQUIRED=` deferred actions for the native bridge; only closes GitHub issues explicitly linked via closing keywords on merged PRs targeting `develop-<slug>`;
-   - includes issue references from closing keywords in merged PRs targeting `develop-<slug>`;
+   - with Linear: skips GitHub `subIssues` and label fallback (Linear children are not GitHub sub-issues); emits `TRACKER_ACTION_REQUIRED=` deferred actions for the native bridge; closes GitHub issues linked via structured `closingIssuesReferences` on merged PRs targeting `develop-<slug>` **and**, when GitHub leaves structured refs empty on non-default integration targets, via fence-aware closing keywords in those PR titles/bodies (never raw fenced examples or foreign-repo structured refs);
+   - with GitHub Projects / GitHub Issues: includes issue references from closing keywords in merged PRs targeting `develop-<slug>` (native sub-issues and label fallback as above);
    - closes open delivered sub-items and reasserts the configured terminal Project status (GitHub trackers) or emits Linear deferred status updates;
    - updates closed-but-non-terminal delivered sub-items to the terminal Project status;
    - reports already terminal sub-items without moving them backward;
    - skips optional/deferred/excluded sub-items and reports the required human disposition;
    - fails closed when candidate discovery is incomplete or no delivered sub-items can be identified (GitHub trackers; Linear may proceed with epic-only deferred closeout when no PR-linked GitHub issues exist);
    - closes the parent epic only after delivered planned sub-items reconcile, unless epic closure is explicitly deferred.
+
+   **Graduation closeout decision-gate consistency matrix** (#1984; complex workflow decision gate — mirror surfaces must stay aligned):
+
+   | Gate inputs | Allowed outcomes | Required next actions | Mirror surfaces |
+   | --- | --- | --- | --- |
+   | `provider: github_projects` or `github_issues`; valid GitHub epic `#`; discovery succeeds | `GRADUATION_CLOSEOUT_RESULT=pass`; delivered sub-items closed/terminal; epic closed unless deferred | Report cleanup complete; surface `skipped_optional` to human | This Step 5 section, `graduation-closeout.sh`, `docs/workflow/development-workflow/integrations/github-projects.md` |
+   | Same providers; discovery incomplete or zero delivered candidates | `GRADUATION_CLOSEOUT_RESULT=failed`; epic held open | Repair discovery/delivered items before claiming graduation complete | Helper stdout/stderr, Step 5 failure guidance above |
+   | `provider: linear`; native epic ID (e.g. `LEA-326`) | Pass/fail as above for PR-linked GitHub issues; Linear epic/sub-item status via `TRACKER_ACTION_REQUIRED=` only | Orchestrator bridge applies deferred Linear transitions; do not mutate GitHub issues from Linear numeric suffix | This matrix, `docs/workflow/development-workflow/integrations/linear.md`, `graduation-closeout.sh` |
+   | `provider: linear`; bare numeric `--epic` | Fail closed (usage exit); **no** GitHub issue mutation | Fix `--epic` to native Linear ID | `graduation-closeout.sh` usage, unit tests |
+   | Any provider; `--dry-run` | Prints `DRY_RUN would:` for every mutation; applies none | Re-run without `--dry-run` when ready | Both closeout scripts |
+   | GitHub providers; `--defer-epic-close` / skip labels | Epic and excluded sub-items remain open; durable `defer-epic-close` label when applicable | Human disposition for deferred/skipped items | Step 5 deferral bullets, merge-time fallback labels |
+   | `provider: linear`; bridge emits success without `TRACKER_ACTION_REQUIRED=` for deferred epic update | Fail closed; epic **not** reported closed | Fix bridge/orchestrator handoff | `graduation-closeout.sh`, Linear bridge tests |
+   | Step 5 and merge-time automation both run | Idempotent `already_terminal`; no regressive moves | None when second run is clean | Protocol 05b Step 5, `graduation-closeout-from-merged-pr.sh`, `update-tracker-on-merge.yml` (see #1281 matrix for automation rows) |
 
    Terminal Project status is resolved in this order: `GITHUB_PROJECT_STATUS_GRADUATED`, `GITHUB_PROJECT_STATUS_MERGED`, then `Merged`.
 
