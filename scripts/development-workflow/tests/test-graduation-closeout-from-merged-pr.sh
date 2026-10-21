@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # test-graduation-closeout-from-merged-pr.sh - merge-time graduation closeout wrapper tests.
 #
+# covers: scripts/development-workflow/graduation-closeout-from-merged-pr.sh
+#         (Linear tracker safety with graduation-closeout.sh)
+#
 # Usage: bash scripts/development-workflow/tests/test-graduation-closeout-from-merged-pr.sh
 
 set -euo pipefail
@@ -13,6 +16,8 @@ MOCK_BIN="$TMP_ROOT/bin"
 FIXTURE_REPO="$TMP_ROOT/repo"
 MOCK_STATE_DIR="$TMP_ROOT/state"
 CHILD_ARGV_LOG="$TMP_ROOT/child-argv.log"
+MOCK_GH_LOG="$TMP_ROOT/gh-invocations.log"
+MOCK_GRAPHQL_LOG="$TMP_ROOT/graphql.log"
 PASS_COUNT=0
 FAIL_COUNT=0
 
@@ -61,10 +66,35 @@ require_gh() {
 repo_slug() {
   printf 'lhpaul/ai-dev-framework-template\n'
 }
+
+workflow_normalize_issue_tracker_provider() {
+  local raw="$1"
+  printf '%s' "$raw" | tr '[:upper:]' '[:lower:]' | tr '-' '_'
+}
+
+workflow_config_provider() {
+  local section="$1"
+  local config_file="${2:-$WORKFLOW_FIXTURE_REPO/.ai-dev-workflow.yaml}"
+  [ -f "$config_file" ] || return 0
+  awk -v section="$section" '
+    $0 ~ ("^" section ":[[:space:]]*$") { in_section = 1; next }
+    in_section && /^[^[:space:]#].*:[[:space:]]*$/ { exit }
+    in_section && /^[[:space:]][[:space:]]provider:[[:space:]]*/ {
+      line = $0
+      sub(/^[[:space:]]*provider:[[:space:]]*/, "", line)
+      sub(/[[:space:]]+#.*$/, "", line)
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", line)
+      gsub(/^["'"'"']|["'"'"']$/, "", line)
+      print line
+      exit
+    }
+  ' "$config_file"
+}
 STUB_LIB
 
 cat > "$MOCK_BIN/gh" <<'MOCK_GH'
 #!/usr/bin/env bash
+printf 'gh %s\n' "$*" >> "${MOCK_GH_LOG:?}"
 case "$*" in
   "auth status")
     exit 0
@@ -105,7 +135,10 @@ case "$*" in
         next=$((idx + 1))
         val="${!next:-}"
         case "$val" in
-          number=*) child="${val#number=}" ;;
+          number=*)
+            child="${val#number=}"
+            printf '%s\n' "$child" >> "${MOCK_GRAPHQL_LOG:?}"
+            ;;
         esac
       fi
       idx=$((idx + 1))
@@ -145,7 +178,7 @@ chmod +x "$MOCK_BIN/gh"
 
 export PATH="$MOCK_BIN:$PATH"
 export WORKFLOW_FIXTURE_REPO="$FIXTURE_REPO"
-export MOCK_STATE_DIR CHILD_ARGV_LOG
+export MOCK_STATE_DIR CHILD_ARGV_LOG MOCK_GH_LOG MOCK_GRAPHQL_LOG
 
 run_test() {
   local name="$1"
@@ -174,6 +207,20 @@ run_contains() {
   fi
 }
 
+run_not_contains() {
+  local name="$1"
+  local unexpected="$2"
+  local actual="$3"
+  if grep -Fq -- "$unexpected" <<< "$actual"; then
+    echo "FAIL: $name - output unexpectedly contained '${unexpected}'"
+    printf 'Actual output:\n%s\n' "$actual"
+    FAIL_COUNT=$((FAIL_COUNT + 1))
+  else
+    echo "PASS: $name"
+    PASS_COUNT=$((PASS_COUNT + 1))
+  fi
+}
+
 write_pr() {
   local number="$1"
   local head="$2"
@@ -198,8 +245,19 @@ json.dump(payload, open(path, "w"))
 PY
 }
 
+write_tracker_config() {
+  local provider="$1"
+  cat > "$FIXTURE_REPO/.ai-dev-workflow.yaml" <<EOF
+issue_tracker:
+  provider: ${provider}
+EOF
+}
+
 reset_fixture() {
-  rm -f "$MOCK_STATE_DIR"/* "$CHILD_ARGV_LOG"
+  rm -f "$MOCK_STATE_DIR"/* "$CHILD_ARGV_LOG" "$MOCK_GH_LOG" "$MOCK_GRAPHQL_LOG"
+  rm -f "$FIXTURE_REPO/.ai-dev-workflow.yaml"
+  : > "$MOCK_GH_LOG"
+  : > "$MOCK_GRAPHQL_LOG"
   unset MOCK_LABEL_PARENT_MODE MOCK_PARENT_DEFAULT MOCK_CHILD_FAIL
   export MOCK_LABEL_PARENT_MODE=empty
 }
@@ -350,6 +408,57 @@ result="$(run_wrapper --graduation-pr 88)"
 body="$(last_body "$result")"
 run_test "unmerged_exit_one" "1" "$(last_status "$result")"
 run_contains "unmerged_reason" "graduation_pr_not_merged" "$body"
+
+echo ""
+echo "=== wrapper: Linear epic LEA-326 from PR body; no GH #326 mutations (#1984) ==="
+reset_fixture
+write_tracker_config linear
+export MOCK_LABEL_PARENT_MODE=ok
+export MOCK_PARENT_DEFAULT=326
+write_pr 90 "develop-test-1984" "develop" "true" "Graduate" "Epic LEA-326"
+result="$(run_wrapper --graduation-pr 90)"
+body="$(last_body "$result")"
+run_test "linear_wrapper_exit_zero" "0" "$(last_status "$result")"
+run_contains "linear_wrapper_epic" "EPIC_ISSUE=LEA-326" "$body"
+run_contains "linear_wrapper_provider" "TRACKER_PROVIDER=linear" "$body"
+run_contains "linear_child_epic" "--epic LEA-326" "$(cat "$CHILD_ARGV_LOG")"
+run_test "linear_wrapper_no_parent_graphql" "" "$(cat "$MOCK_GRAPHQL_LOG")"
+run_not_contains "linear_wrapper_no_issue_view_326" "issue view 326" "$(cat "$MOCK_GH_LOG")"
+
+echo ""
+echo "=== wrapper: Linear bare --epic 326 fails closed (#1984) ==="
+reset_fixture
+write_tracker_config linear
+write_pr 91 "develop-test-1984" "develop" "true" "Graduate" "Epic LEA-326"
+result="$(run_wrapper --graduation-pr 91 --epic 326)"
+body="$(last_body "$result")"
+run_test "linear_wrapper_bare_exit_64" "64" "$(last_status "$result")"
+run_contains "linear_wrapper_bare_error" "native Linear ID" "$body"
+run_test "linear_wrapper_bare_no_child" "missing" "$( [ -f "$CHILD_ARGV_LOG" ] && echo present || echo missing )"
+
+echo ""
+echo "=== wrapper: Linear --dry-run forwarded to child (#1984) ==="
+reset_fixture
+write_tracker_config linear
+write_pr 92 "develop-test-1984" "develop" "true" "Graduate" "Epic LEA-326"
+result="$(run_wrapper --graduation-pr 92 --dry-run)"
+body="$(last_body "$result")"
+run_test "linear_wrapper_dry_exit_zero" "0" "$(last_status "$result")"
+run_contains "linear_wrapper_dry_flag" "DRY_RUN=1" "$body"
+run_contains "linear_wrapper_dry_child" "--dry-run" "$(cat "$CHILD_ARGV_LOG")"
+
+echo ""
+echo "=== wrapper: github_projects discovery unchanged with explicit config (#1984) ==="
+reset_fixture
+write_tracker_config github_projects
+export MOCK_LABEL_PARENT_MODE=empty
+write_pr 93 "develop-test-1984" "develop" "true" "Graduate" "Epic #900"
+result="$(run_wrapper --graduation-pr 93)"
+body="$(last_body "$result")"
+run_test "gh_proj_wrapper_exit_zero" "0" "$(last_status "$result")"
+run_contains "gh_proj_wrapper_epic" "EPIC_ISSUE=900" "$body"
+run_contains "gh_proj_wrapper_provider" "TRACKER_PROVIDER=github_projects" "$body"
+run_contains "gh_proj_child_epic" "--epic 900" "$(cat "$CHILD_ARGV_LOG")"
 
 echo ""
 echo "Graduation closeout-from-merged-pr tests: $PASS_COUNT passed, $FAIL_COUNT failed."

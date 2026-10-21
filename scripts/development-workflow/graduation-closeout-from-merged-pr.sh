@@ -8,8 +8,15 @@
 # Usage:
 #   ./scripts/development-workflow/graduation-closeout-from-merged-pr.sh \
 #     --graduation-pr <number> \
-#     [--epic <number>] [--slug <slug>] \
-#     [--exclude-issue <number>]... [--defer-epic-close]
+#     [--epic <epic-id>] [--slug <slug>] \
+#     [--exclude-issue <number>]... [--defer-epic-close] [--dry-run]
+#
+#   --epic  Optional override. GitHub issue number when tracker is
+#           github_projects / github_issues. With provider linear, a native
+#           Linear ID (e.g. LEA-326). A bare number with linear fails closed.
+#
+#   --dry-run  Forwarded to graduation-closeout.sh; prints planned mutations
+#           and applies none.
 #
 # Exit codes:
 #   0 — discovery succeeded and graduation-closeout.sh passed
@@ -27,6 +34,7 @@ GRADUATION_PR=""
 SLUG_OVERRIDE=""
 EPIC_OVERRIDE=""
 DEFER_EPIC_CLOSE=0
+DRY_RUN=0
 declare -a EXCLUDED_ISSUES=()
 
 # Populated during discovery for the summary.
@@ -35,14 +43,19 @@ DISCOVERED_EPIC=""
 EPIC_SOURCE=""
 SLUG_SOURCE=""
 DEFER_SOURCE="none"
+TRACKER_PROVIDER=""
 CHILD_ARGV=()
 
 usage() {
   cat >&2 <<'EOF'
 Usage:
   graduation-closeout-from-merged-pr.sh --graduation-pr <number> \
-    [--epic <number>] [--slug <slug>] \
-    [--exclude-issue <number>]... [--defer-epic-close]
+    [--epic <epic-id>] [--slug <slug>] \
+    [--exclude-issue <number>]... [--defer-epic-close] [--dry-run]
+
+  --epic  GitHub issue number, or with issue_tracker.provider=linear a native
+          Linear ID (e.g. LEA-326). Bare numbers fail closed under linear.
+  --dry-run  Forwarded to graduation-closeout.sh (print mutations, apply none).
 EOF
 }
 
@@ -61,6 +74,10 @@ is_positive_int() {
     0*) return 1 ;;
     *) return 0 ;;
   esac
+}
+
+is_linear_issue_id() {
+  [[ "$1" =~ ^[A-Z][A-Z0-9_]*-[0-9]+$ ]]
 }
 
 is_valid_slug() {
@@ -97,6 +114,10 @@ while [ "$#" -gt 0 ]; do
       DEFER_SOURCE="cli"
       shift
       ;;
+    --dry-run)
+      DRY_RUN=1
+      shift
+      ;;
     -h|--help)
       usage
       exit 0
@@ -117,10 +138,6 @@ if [ -n "$SLUG_OVERRIDE" ] && ! is_valid_slug "$SLUG_OVERRIDE"; then
   echo "ERROR: --slug must be non-empty and contain only letters, numbers, dot, underscore, or hyphen." >&2
   exit 64
 fi
-if [ -n "$EPIC_OVERRIDE" ] && ! is_positive_int "$EPIC_OVERRIDE"; then
-  echo "ERROR: --epic must be a positive integer." >&2
-  exit 64
-fi
 for excluded in ${EXCLUDED_ISSUES[@]+"${EXCLUDED_ISSUES[@]}"}; do
   if ! is_positive_int "$excluded"; then
     echo "ERROR: --exclude-issue must be a positive integer." >&2
@@ -134,6 +151,33 @@ require_gh
 REPO_SLUG="$(repo_slug)"
 REPO_OWNER="${REPO_SLUG%%/*}"
 REPO_NAME="${REPO_SLUG#*/}"
+
+TRACKER_PROVIDER="$(workflow_normalize_issue_tracker_provider "$(workflow_config_provider issue_tracker "$(pwd)/.ai-dev-workflow.yaml")")"
+case "$TRACKER_PROVIDER" in
+  linear) ;;
+  github_projects|github_issues|'')
+    TRACKER_PROVIDER="${TRACKER_PROVIDER:-github_projects}"
+    ;;
+  none)
+    TRACKER_PROVIDER="github_projects"
+    ;;
+  *)
+    echo "ERROR: unsupported issue_tracker.provider '${TRACKER_PROVIDER}' for graduation closeout." >&2
+    exit 64
+    ;;
+esac
+
+if [ -n "$EPIC_OVERRIDE" ]; then
+  if [ "$TRACKER_PROVIDER" = "linear" ]; then
+    if ! is_linear_issue_id "$EPIC_OVERRIDE"; then
+      echo "ERROR: with issue_tracker.provider=linear, --epic must be a native Linear ID with team prefix (e.g. LEA-326), not a bare number. Refusing to mutate GitHub issues from a numeric suffix." >&2
+      exit 64
+    fi
+  elif ! is_positive_int "$EPIC_OVERRIDE"; then
+    echo "ERROR: --epic must be a positive integer." >&2
+    exit 64
+  fi
+fi
 
 TMP_DIR="$(mktemp -d)"
 cleanup() {
@@ -169,6 +213,13 @@ extract_epic_parent_refs() {
   grep -ioE '(^|[^[:alnum:]_])(epic|parent)[[:space:]]*#[0-9]+' \
     | grep -oE '[0-9]+$' \
     | sort -un || true
+}
+
+# Linear epic / parent refs: "Epic LEA-326", "Parent LEA-326", bare "LEA-326".
+extract_linear_epic_refs() {
+  grep -ioE '(^|[^[:alnum:]_])((epic|parent)[[:space:]]+)?[A-Z][A-Z0-9_]*-[0-9]+' \
+    | grep -oE '[A-Z][A-Z0-9_]*-[0-9]+' \
+    | sort -u || true
 }
 
 read_merged_graduation_pr() {
@@ -234,6 +285,10 @@ sys.stdout.write(body)
 collect_pr_epic_candidates() {
   local text
   text="$(strip_fenced_blocks < "$TMP_DIR/pr-text.txt")"
+  if [ "$TRACKER_PROVIDER" = "linear" ]; then
+    printf '%s\n' "$text" | extract_linear_epic_refs | sort -u > "$TMP_DIR/pr-epic-candidates.txt"
+    return 0
+  fi
   {
     printf '%s\n' "$text" | extract_epic_parent_refs
     printf '%s\n' "$text" | extract_closing_issue_numbers
@@ -321,6 +376,15 @@ resolve_epic() {
     return 0
   fi
 
+  # Linear epics are not GitHub issues — never discover via GitHub parent GraphQL
+  # or treat a numeric suffix as the epic.
+  if [ "$TRACKER_PROVIDER" = "linear" ]; then
+    if [ "$count" -gt 1 ]; then
+      fail_closed "ambiguous_epic_candidates"
+    fi
+    fail_closed "epic_discovery_failed"
+  fi
+
   if parent_epic="$(discover_epic_via_label_parents)"; then
     if [ "$count" -gt 1 ]; then
       # Ambiguous PR refs: accept parent convergence only when it matches exactly
@@ -345,6 +409,10 @@ resolve_epic() {
 
 epic_has_defer_label() {
   local labels_csv old_ifs label normalized
+  # Linear epics have no GitHub issue labels; defer only via CLI.
+  if [ "$TRACKER_PROVIDER" = "linear" ]; then
+    return 1
+  fi
   if ! labels_csv="$(gh issue view "$DISCOVERED_EPIC" --json labels --jq '[.labels[].name] | join(",")' 2>/dev/null)"; then
     return 1
   fi
@@ -383,6 +451,9 @@ done
 if [ "$DEFER_EPIC_CLOSE" -eq 1 ]; then
   CHILD_ARGV+=(--defer-epic-close)
 fi
+if [ "$DRY_RUN" -eq 1 ]; then
+  CHILD_ARGV+=(--dry-run)
+fi
 
 echo "GRADUATION_CLOSEOUT_FROM_MERGED_PR_RESULT=running"
 echo "GRADUATION_PR=$GRADUATION_PR"
@@ -390,6 +461,8 @@ echo "SLUG=$DISCOVERED_SLUG"
 echo "SLUG_SOURCE=$SLUG_SOURCE"
 echo "EPIC_ISSUE=$DISCOVERED_EPIC"
 echo "EPIC_SOURCE=$EPIC_SOURCE"
+echo "TRACKER_PROVIDER=$TRACKER_PROVIDER"
+echo "DRY_RUN=$DRY_RUN"
 echo "DEFER_EPIC_CLOSE=$DEFER_EPIC_CLOSE"
 echo "DEFER_SOURCE=$DEFER_SOURCE"
 echo "CHILD_COMMAND=${CHILD_ARGV[*]}"
