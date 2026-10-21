@@ -921,7 +921,7 @@ class SelectedYamlParser:
                 output.append(char)
             self.fail(line)
 
-        def value(level: int, flow: bool = False, key: bool = False) -> Any:
+        def value(level: int, flow: bool = False, key: bool = False, *, entry: bool = False) -> Any:
             nonlocal index
             if level > 100:
                 self.fail(line, "unsupported YAML nesting")
@@ -929,7 +929,7 @@ class SelectedYamlParser:
             if index >= len(text):
                 self.fail(line)
             char = text[index]
-            if flow and char == "?":
+            if flow and entry and char == "?":
                 if self.review_fields:
                     self.fail(line, "unsupported YAML flow mapping")
                 index += 1
@@ -959,7 +959,7 @@ class SelectedYamlParser:
                 if opening == "{" and self.review_fields:
                     self.fail(line, "unsupported YAML flow mapping")
                 while True:
-                    item = value(level + 1, True, opening == "{")
+                    item = value(level + 1, True, opening == "{", entry=True)
                     spaces()
                     if opening == "[":
                         if index < len(text) and text[index] == ":":

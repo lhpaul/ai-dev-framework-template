@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import hashlib
 import itertools
 import json
 from pathlib import Path
@@ -16,6 +17,59 @@ SPEC.loader.exec_module(fixtures)
 RESOLVER_SPEC = importlib.util.spec_from_file_location('private_parser', fixtures.SCRIPTS / 'workflow-config-resolver.py')
 resolver = importlib.util.module_from_spec(RESOLVER_SPEC)
 RESOLVER_SPEC.loader.exec_module(resolver)
+
+
+INDICATORS = '-?:,[]{}#&*!|>\'"%@`'
+
+
+def indicator_context_cases():
+    """Finite syntax-oracle matrix, independent of the framework parser."""
+    contexts = {
+        'block_value': 'other: TOKEN\n',
+        'block_sequence': 'other:\n  - TOKEN\n',
+        'block_mapping_key': 'TOKEN: tail\n',
+        'block_sequence_mapping_key': 'other:\n  - TOKEN: tail\n',
+        'flow_sequence': 'other: [TOKEN]\n',
+        'flow_mapping_key': 'other: {TOKEN: tail}\n',
+        'flow_mapping_value': 'other: {a: TOKEN}\n',
+        'nested_flow_sequence': 'other: [{a: [TOKEN]}]\n',
+        'nested_flow_mapping': 'other: {a: {b: TOKEN}}\n',
+        'implicit_pair_sequence_value': 'other: [a: TOKEN]\n',
+        'explicit_pair_sequence_value': 'other: [? a: TOKEN]\n',
+        'explicit_mapping_key': 'other: {? TOKEN: tail}\n',
+    }
+    positions = {
+        'start': lambda c: c + 'fabricatedOpaqueIndicator',
+        'internal': lambda c: 'fabricatedOpaqueIndicator' + c + 'tail',
+        'end': lambda c: 'fabricatedOpaqueIndicator' + c,
+        'alone': lambda c: c,
+        'start_space': lambda c: c + ' fabricatedOpaqueIndicator',
+        'space_before': lambda c: 'fabricatedOpaqueIndicator ' + c + 'tail',
+        'space_after': lambda c: 'fabricatedOpaqueIndicator' + c + ' tail',
+        'single_quoted': lambda c: "'fabricatedOpaqueIndicator" + c.replace("'", "''") + "tail'",
+        'double_quoted': lambda c: json.dumps('fabricatedOpaqueIndicator' + c + 'tail'),
+        'double_escaped': lambda c: '"fabricatedOpaqueIndicator\\' + c + 'tail"',
+    }
+    for context, wrapper in contexts.items():
+        for position, token in positions.items():
+            for indicator in INDICATORS:
+                yield context, position + ':' + indicator, wrapper.replace('TOKEN', token(indicator))
+    # Adjacent indicators exercise dispatch, separators and plain-scalar scanning
+    # at collection keys, values and nested entry/value boundaries.
+    for context in ('block_value', 'flow_sequence', 'flow_mapping_key',
+                    'flow_mapping_value', 'nested_flow_mapping', 'explicit_pair_sequence_value'):
+        for left, right in itertools.product(INDICATORS, repeat=2):
+            pair = left + right
+            for position, token in (('pair_start', pair + 'fabricatedOpaqueIndicator'),
+                                    ('pair_internal', 'fabricatedOpaqueIndicator' + pair + 'tail'),
+                                    ('pair_end', 'fabricatedOpaqueIndicator' + pair)):
+                yield context, position + ':' + pair, contexts[context].replace('TOKEN', token)
+    for raw in ('other: {a: ?b}\n', 'other: {a: ? b}\n',
+                'other: [a: ?b]\n', 'other: [? a: ?b]\n',
+                'other: [? a: [? b: c]]\n', 'other: [? a: b]\n',
+                'other: [?a]\n', 'other: {a: [?b]}\n',
+                'other: {a: {?b: c}}\n', 'other: {a: [key: ?b]}\n'):
+        yield 'explicit_key_position', 'nested_entry_or_value', raw
 
 
 class SelectedPrivateYaml(unittest.TestCase):
@@ -303,6 +357,90 @@ flow: {name: value, nested: [x, y]}
                               '--shared-file', str(self.f.shared), '--apply-local',
                               '--phase', 'on_draft', '--key', 'runner')
             self.assertEqual((result.returncode, result.stdout, result.stderr), (0, expected, ''))
+
+    def test_P15_all_indicator_positions_and_adjacencies_match_strict_syntax(self):
+        # Existing test-only PyYAML is the syntax oracle, not a runtime dependency.
+        import yaml
+        rejected = 0
+        supported_valid_ids = []
+        for index, (context, position, raw) in enumerate(indicator_context_cases(), 1):
+            try:
+                yaml.compose(raw, Loader=yaml.BaseLoader)
+                syntax_valid = True
+            except yaml.YAMLError:
+                syntax_valid = False
+            with self.subTest(case=index, context=context, position=position):
+                if not syntax_valid:
+                    rejected += 1
+                    with self.assertRaises(resolver.ConfigError):
+                        self.parse(raw)
+                else:
+                    try:
+                        self.parse(raw)
+                    except resolver.ConfigError:
+                        pass  # Existing unsupported-valid grammar remains outside this subset.
+                    else:
+                        supported_valid_ids.append(index)
+        self.assertEqual(index, 8788)
+        self.assertEqual(rejected, 4775)
+        # Baseline5d94 accepted IDs among syntax-valid cases, frozen independently
+        # of the corrected parser. Bind every supported valid form, not only quotes.
+        self.assertEqual(len(supported_valid_ids), 3457)
+        self.assertEqual(hashlib.sha256(json.dumps(supported_valid_ids, separators=(',', ':')).encode()).hexdigest(),
+                         'd165665d3e57457d99e44b4302101efdbf02456f6f794ee9c8df913b38ba9a7b')
+        # A leading '?' can introduce an entry, not a mapping's value. Valid
+        # explicit sequence entries and nested entries keep their existing shape.
+        for raw, expected in [('other: [?a]\n', [{'a': None}]),
+                              ('other: [? a: b]\n', [{'a': 'b'}]),
+                              ('other: {a: [?b]}\n', {'a': [{'b': None}]})]:
+            self.assertEqual(self.parse(raw)['other'], expected)
+
+    def test_P16_invalid_entry_indicators_fail_before_legacy_and_shared_policy(self):
+        # Frozen pre-correction syntax mismatches from the complete P15 matrix.
+        # These are invalid YAML, independently of review-field shape/schema.
+        regression_ids = {1142, 1218, 1522, 1598, 1712, 1788, 1902, 1978,
+                          4565, 5587, 6670, 7753, 8779, 8780, 8781, 8782, 8788}
+        regressions = [(index, raw) for index, (_, _, raw) in
+                       enumerate(indicator_context_cases(), 1) if index in regression_ids]
+        self.assertEqual(len(regressions), 17)
+        shared = self.f.shared.read_text()  # This file is exclusively synthetic.
+        buckets = (('on_draft', 'runner'), ('on_draft', 'github'), ('on_ready', 'github'))
+        for shared_present in (True, False):
+            if shared_present:
+                self.f.shared.write_text(shared)
+            else:
+                self.f.shared.unlink()
+            for index, raw in regressions:
+                with self.assertRaises(resolver.ConfigError):
+                    resolver.parse_review_yaml(self.path, raw=raw)
+                self.f.private.write_text(raw + 'sentinel: fabricatedOpaqueIndicator\n')
+                commands = [('mode', '--repo-root', str(self.f.checkout)),
+                            ('review-overrides', '--repo-root', str(self.f.checkout))]
+                commands += [('review-list', '--repo-root', str(self.f.checkout),
+                              '--shared-file', str(self.f.shared), '--apply-local',
+                              '--phase', phase, '--key', key) for phase, key in buckets]
+                for arguments in commands:
+                    with self.subTest(case=index, shared=shared_present, command=arguments[0],
+                                      bucket=arguments[-1]):
+                        result = self.cli(*arguments)
+                        self.assertEqual(result.returncode, 2)
+                        self.assertEqual(result.stdout, '')
+                        self.assertRegex(result.stderr, r'^ERROR: configuration: (invalid YAML|unsupported YAML flow mapping); line=1\n$')
+                        self.assertNotIn('fabricatedOpaqueIndicator', result.stdout + result.stderr)
+                        self.assertNotIn('shared-policy-sentinel', result.stdout + result.stderr)
+            # Valid unrelated syntax preserves existing shared/default behavior.
+            for raw in ('other: ?valid\n', 'other: ["?quoted", "a:b", "a#b"]\n'):
+                self.f.private.write_text(raw)
+                mode = self.cli('mode', '--repo-root', str(self.f.checkout))
+                self.assertEqual((mode.returncode, mode.stdout, mode.stderr),
+                                 (0, 'WORKFLOW_MODE=workflow_hub\n' if shared_present else 'WORKFLOW_MODE=single_repo\n', ''))
+                for phase, key in buckets:
+                    result = self.cli('review-list', '--repo-root', str(self.f.checkout),
+                                      '--shared-file', str(self.f.shared), '--apply-local',
+                                      '--phase', phase, '--key', key)
+                    self.assertEqual((result.returncode, result.stdout, result.stderr),
+                                     (0, 'shared-policy-sentinel\n' if shared_present else '', ''))
+        self.f.shared.write_text(shared)
 
 
 if __name__ == '__main__':
