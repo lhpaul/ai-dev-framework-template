@@ -94,32 +94,41 @@ workflow_config_provider() {
   ' "$config_file"
 }
 
-workflow_issue_tracker_provider_declared_in_file() {
+workflow_graduation_closeout_issue_tracker_provider_in_file() {
   local config_file="$1"
-  [ -f "$config_file" ] || return 1
+  [ -f "$config_file" ] || return 0
   awk '
     /^issue_tracker:[[:space:]]*(#.*)?$/ { in_section = 1; next }
-    in_section && /^[^[:space:]#]/ { exit 1 }
-    in_section && /^[[:space:]][[:space:]]provider:[[:space:]]*/ { found = 1; exit }
-    END { exit(found ? 0 : 1) }
+    in_section && /^[^[:space:]#]/ { exit }
+    in_section && /^[[:space:]][[:space:]]provider:[[:space:]]*/ {
+      line = $0
+      sub(/^[[:space:]]*provider:[[:space:]]*/, "", line)
+      sub(/[[:space:]]+#.*$/, "", line)
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", line)
+      gsub(/^["'"'"']|["'"'"']$/, "", line)
+      print line
+      exit
+    }
   ' "$config_file"
 }
 
 workflow_graduation_closeout_tracker_provider_raw() {
   local repo_root="${1:-$WORKFLOW_FIXTURE_REPO}"
   local shared="$repo_root/.ai-dev-workflow.yaml"
-  local raw=""
-  if [ -f "$shared" ]; then
-    raw="$(workflow_config_provider issue_tracker "$shared")"
-    if [ -n "$raw" ]; then
-      printf '%s' "$raw"
-      return 0
-    fi
-    if workflow_issue_tracker_provider_declared_in_file "$shared"; then
-      echo "ERROR: issue_tracker.provider is declared in ${shared} but could not be parsed; refusing to default to github_projects." >&2
-      return 64
-    fi
+  local legacy="" local_raw="" local_norm=""
+  [ -f "$shared" ] || return 0
+  legacy="$(workflow_config_provider issue_tracker "$shared")"
+  if [ -n "$legacy" ]; then
+    printf '%s' "$legacy"
+    return 0
   fi
+  local_raw="$(workflow_graduation_closeout_issue_tracker_provider_in_file "$shared")"
+  local_norm="$(workflow_normalize_issue_tracker_provider "$local_raw")"
+  if [ "$local_norm" = "linear" ]; then
+    printf '%s' "$local_raw"
+    return 0
+  fi
+  printf '%s' "$legacy"
   return 0
 }
 STUB_LIB

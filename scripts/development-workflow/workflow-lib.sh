@@ -1897,44 +1897,61 @@ workflow_issue_tracker_provider_raw() {
   workflow_config_provider issue_tracker
 }
 
-# workflow_issue_tracker_provider_declared_in_file <config_file>
-# Closeout-only helper. True when issue_tracker.provider appears under an
-# issue_tracker section, including a commented section header
-# (`issue_tracker: # ...`). Does not change workflow_config_provider.
-workflow_issue_tracker_provider_declared_in_file() {
+# workflow_graduation_closeout_issue_tracker_provider_in_file <config_file>
+# Closeout-only: read issue_tracker.provider under a section header that may
+# carry a trailing comment (`issue_tracker: # ...`). Does not change
+# workflow_config_provider (shared callers keep develop behavior).
+workflow_graduation_closeout_issue_tracker_provider_in_file() {
   local config_file="$1"
-  [ -f "$config_file" ] || return 1
+  [ -f "$config_file" ] || return 0
   awk '
+    function trim(value) {
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", value)
+      gsub(/^["'"'"']|["'"'"']$/, "", value)
+      return value
+    }
     /^issue_tracker:[[:space:]]*(#.*)?$/ { in_section = 1; next }
-    in_section && /^[^[:space:]#]/ { exit 1 }
-    in_section && /^[[:space:]][[:space:]]provider:[[:space:]]*/ { found = 1; exit }
-    END { exit(found ? 0 : 1) }
+    in_section && /^[^[:space:]#]/ { exit }
+    in_section && /^[[:space:]][[:space:]]provider:[[:space:]]*/ {
+      line = $0
+      sub(/^[[:space:]]*provider:[[:space:]]*/, "", line)
+      sub(/[[:space:]]+#.*$/, "", line)
+      print trim(line)
+      exit
+    }
   ' "$config_file"
 }
 
 # workflow_graduation_closeout_tracker_provider_raw [repo_root]
-# Resolve issue_tracker.provider for graduation closeout exactly like
-# post-merge-cleanup.sh: shared .ai-dev-workflow.yaml via
-# workflow_config_provider only (no .ai-dev-workflow.local.yaml).
-# Fail closed when provider is declared but unreadable — never default to
-# github_projects on a parse miss (e.g. commented issue_tracker: header).
+# Resolve issue_tracker.provider for graduation closeout.
+# - Prefer shared .ai-dev-workflow.yaml via workflow_config_provider (same as
+#   post-merge-cleanup; no .ai-dev-workflow.local.yaml).
+# - If that is empty, a closeout-local comment-tolerant read may recover
+#   provider: linear so Linear safety still applies under commented headers.
+# - Non-Linear (github_*, none, other, undeclared) always returns the legacy
+#   workflow_config_provider result — never exit 64 — so GitHub closeout stays
+#   byte-identical to develop.
 workflow_graduation_closeout_tracker_provider_raw() {
   local repo_root="${1:-$(workflow_repo_root)}"
   local shared="$repo_root/.ai-dev-workflow.yaml"
-  local raw=""
+  local legacy="" local_raw="" local_norm=""
 
-  if [ -f "$shared" ]; then
-    raw="$(workflow_config_provider issue_tracker "$shared")"
-    if [ -n "$raw" ]; then
-      printf '%s' "$raw"
-      return 0
-    fi
-    if workflow_issue_tracker_provider_declared_in_file "$shared"; then
-      echo "ERROR: issue_tracker.provider is declared in ${shared} but could not be parsed; refusing to default to github_projects." >&2
-      return 64
-    fi
+  [ -f "$shared" ] || return 0
+
+  legacy="$(workflow_config_provider issue_tracker "$shared")"
+  if [ -n "$legacy" ]; then
+    printf '%s' "$legacy"
+    return 0
   fi
 
+  local_raw="$(workflow_graduation_closeout_issue_tracker_provider_in_file "$shared")"
+  local_norm="$(workflow_normalize_issue_tracker_provider "$local_raw")"
+  if [ "$local_norm" = "linear" ]; then
+    printf '%s' "$local_raw"
+    return 0
+  fi
+
+  printf '%s' "$legacy"
   return 0
 }
 

@@ -78,32 +78,41 @@ workflow_config_provider() {
   ' "$config_file"
 }
 
-workflow_issue_tracker_provider_declared_in_file() {
+workflow_graduation_closeout_issue_tracker_provider_in_file() {
   local config_file="$1"
-  [ -f "$config_file" ] || return 1
+  [ -f "$config_file" ] || return 0
   awk '
     /^issue_tracker:[[:space:]]*(#.*)?$/ { in_section = 1; next }
-    in_section && /^[^[:space:]#]/ { exit 1 }
-    in_section && /^[[:space:]][[:space:]]provider:[[:space:]]*/ { found = 1; exit }
-    END { exit(found ? 0 : 1) }
+    in_section && /^[^[:space:]#]/ { exit }
+    in_section && /^[[:space:]][[:space:]]provider:[[:space:]]*/ {
+      line = $0
+      sub(/^[[:space:]]*provider:[[:space:]]*/, "", line)
+      sub(/[[:space:]]+#.*$/, "", line)
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", line)
+      gsub(/^["'"'"']|["'"'"']$/, "", line)
+      print line
+      exit
+    }
   ' "$config_file"
 }
 
 workflow_graduation_closeout_tracker_provider_raw() {
   local repo_root="${1:-$WORKFLOW_FIXTURE_REPO}"
   local shared="$repo_root/.ai-dev-workflow.yaml"
-  local raw=""
-  if [ -f "$shared" ]; then
-    raw="$(workflow_config_provider issue_tracker "$shared")"
-    if [ -n "$raw" ]; then
-      printf '%s' "$raw"
-      return 0
-    fi
-    if workflow_issue_tracker_provider_declared_in_file "$shared"; then
-      echo "ERROR: issue_tracker.provider is declared in ${shared} but could not be parsed; refusing to default to github_projects." >&2
-      return 64
-    fi
+  local legacy="" local_raw="" local_norm=""
+  [ -f "$shared" ] || return 0
+  legacy="$(workflow_config_provider issue_tracker "$shared")"
+  if [ -n "$legacy" ]; then
+    printf '%s' "$legacy"
+    return 0
   fi
+  local_raw="$(workflow_graduation_closeout_issue_tracker_provider_in_file "$shared")"
+  local_norm="$(workflow_normalize_issue_tracker_provider "$local_raw")"
+  if [ "$local_norm" = "linear" ]; then
+    printf '%s' "$local_raw"
+    return 0
+  fi
+  printf '%s' "$legacy"
   return 0
 }
 
@@ -117,7 +126,7 @@ is_terminal_tracker_status() {
 get_tracker_status_for_issue() {
   local issue="$1"
   local provider
-  provider="$(workflow_normalize_issue_tracker_provider "$(workflow_config_provider issue_tracker "$WORKFLOW_FIXTURE_REPO/.ai-dev-workflow.yaml")")"
+  provider="$(workflow_normalize_issue_tracker_provider "$(workflow_graduation_closeout_tracker_provider_raw "$WORKFLOW_FIXTURE_REPO")")"
   if [ "$provider" = "linear" ]; then
     printf 'TRACKER_ACTION_REQUIRED=read_status issue=%s\n' "$issue"
     return 0
@@ -131,7 +140,7 @@ update_tracker_status_best_effort() {
   local issue="$1"
   local status="$2"
   local provider
-  provider="$(workflow_normalize_issue_tracker_provider "$(workflow_config_provider issue_tracker "$WORKFLOW_FIXTURE_REPO/.ai-dev-workflow.yaml")")"
+  provider="$(workflow_normalize_issue_tracker_provider "$(workflow_graduation_closeout_tracker_provider_raw "$WORKFLOW_FIXTURE_REPO")")"
   if [ "$provider" = "linear" ]; then
     # Simulate merge-session / bridge skip: exit 0 with empty stdout.
     if [ "${MOCK_LINEAR_UPDATE_EMPTY:-0}" = "1" ]; then
@@ -998,7 +1007,63 @@ run_contains "github_projects_epic_close" "900" "$(cat "$MOCK_CLOSE_LOG")"
 run_not_contains "github_projects_no_linear_action" "TRACKER_ACTION_REQUIRED=" "$gh_proj_body"
 
 echo ""
-echo "=== graduation closeout: commented issue_tracker header fails closed (bare epic) (#1984) ==="
+echo "=== graduation closeout: commented header + github_projects keeps legacy path (#1984) ==="
+reset_fixture
+cat > "$FIXTURE_REPO/.ai-dev-workflow.yaml" <<'EOF'
+issue_tracker: # tracker
+  provider: github_projects
+EOF
+write_issue 101 "Open child" OPEN
+write_issue 102 "Closed nonterminal" CLOSED
+write_issue 103 "Closed terminal" CLOSED
+write_issue 104 "Optional child" OPEN optional
+write_issue 105 "PR referenced child" OPEN
+write_issue 900 "Parent epic" OPEN
+set_status 101 "In Development"
+set_status 102 "Development in Review"
+set_status 103 "Merged"
+set_status 104 "In Development"
+set_status 105 "Plan Ready"
+set_status 900 "In Development"
+commented_gh_result="$(run_closeout)"
+commented_gh_body="$(last_output_body "$commented_gh_result")"
+run_test "commented_gh_projects_exit_zero" "0" "$(last_output_status "$commented_gh_result")"
+run_contains "commented_gh_projects_provider" "TRACKER_PROVIDER=github_projects" "$commented_gh_body"
+run_contains "commented_gh_projects_pass" "GRADUATION_CLOSEOUT_RESULT=pass" "$commented_gh_body"
+run_test "commented_gh_projects_child_closed" "CLOSED" "$(python3 -c 'import json; print(json.load(open("'"$MOCK_STATE_DIR"'/101.json"))["state"])')"
+run_contains "commented_gh_projects_epic_close" "900" "$(cat "$MOCK_CLOSE_LOG")"
+run_not_contains "commented_gh_projects_no_linear" "TRACKER_ACTION_REQUIRED=" "$commented_gh_body"
+
+echo ""
+echo "=== graduation closeout: commented header + github_issues keeps legacy path (#1984) ==="
+reset_fixture
+cat > "$FIXTURE_REPO/.ai-dev-workflow.yaml" <<'EOF'
+issue_tracker: # tracker
+  provider: github_issues
+EOF
+write_issue 101 "Open child" OPEN
+write_issue 102 "Closed nonterminal" CLOSED
+write_issue 103 "Closed terminal" CLOSED
+write_issue 104 "Optional child" OPEN optional
+write_issue 105 "PR referenced child" OPEN
+write_issue 900 "Parent epic" OPEN
+set_status 101 "In Development"
+set_status 102 "Development in Review"
+set_status 103 "Merged"
+set_status 104 "In Development"
+set_status 105 "Plan Ready"
+set_status 900 "In Development"
+commented_issues_result="$(run_closeout)"
+commented_issues_body="$(last_output_body "$commented_issues_result")"
+run_test "commented_gh_issues_exit_zero" "0" "$(last_output_status "$commented_issues_result")"
+# Legacy shared parser sees empty under commented header → same default as develop.
+run_contains "commented_gh_issues_provider" "TRACKER_PROVIDER=github_projects" "$commented_issues_body"
+run_contains "commented_gh_issues_pass" "GRADUATION_CLOSEOUT_RESULT=pass" "$commented_issues_body"
+run_test "commented_gh_issues_child_closed" "CLOSED" "$(python3 -c 'import json; print(json.load(open("'"$MOCK_STATE_DIR"'/101.json"))["state"])')"
+run_contains "commented_gh_issues_epic_close" "900" "$(cat "$MOCK_CLOSE_LOG")"
+
+echo ""
+echo "=== graduation closeout: commented header + linear rejects bare --epic 326 (#1984) ==="
 reset_fixture
 cat > "$FIXTURE_REPO/.ai-dev-workflow.yaml" <<'EOF'
 issue_tracker: # native tracker
@@ -1009,29 +1074,32 @@ CLOSEOUT_EPIC=326
 commented_bare_result="$(run_closeout)"
 unset CLOSEOUT_EPIC
 commented_bare_body="$(last_output_body "$commented_bare_result")"
-run_test "commented_header_bare_epic_exit_64" "64" "$(last_output_status "$commented_bare_result")"
-run_contains "commented_header_bare_epic_error" "refusing to default to github_projects" "$commented_bare_body"
-run_test "commented_header_bare_epic_326_untouched" "OPEN" "$(python3 -c 'import json; print(json.load(open("'"$MOCK_STATE_DIR"'/326.json"))["state"])')"
-run_test "commented_header_bare_epic_no_close_log" "" "$(cat "$MOCK_CLOSE_LOG")"
-run_not_contains "commented_header_bare_epic_no_mutation" "issue close" "$(cat "$MOCK_GH_LOG")"
+run_test "commented_linear_bare_epic_exit_64" "64" "$(last_output_status "$commented_bare_result")"
+run_contains "commented_linear_bare_epic_error" "native Linear ID" "$commented_bare_body"
+run_test "commented_linear_bare_epic_326_untouched" "OPEN" "$(python3 -c 'import json; print(json.load(open("'"$MOCK_STATE_DIR"'/326.json"))["state"])')"
+run_test "commented_linear_bare_epic_no_close_log" "" "$(cat "$MOCK_CLOSE_LOG")"
+run_not_contains "commented_linear_bare_epic_no_mutation" "issue close" "$(cat "$MOCK_GH_LOG")"
 
 echo ""
-echo "=== graduation closeout: commented issue_tracker header fails closed (LEA epic) (#1984) ==="
+echo "=== graduation closeout: commented header + linear + LEA-326 uses Linear path (#1984) ==="
 reset_fixture
 cat > "$FIXTURE_REPO/.ai-dev-workflow.yaml" <<'EOF'
 issue_tracker: # native tracker
   provider: linear
 EOF
+export MOCK_NATIVE_MODE=empty
+export MOCK_PR_MODE=none
 write_issue 326 "Unrelated GitHub issue" OPEN
 CLOSEOUT_EPIC=LEA-326
 commented_lea_result="$(run_closeout)"
 unset CLOSEOUT_EPIC
 commented_lea_body="$(last_output_body "$commented_lea_result")"
-run_test "commented_header_lea_epic_exit_64" "64" "$(last_output_status "$commented_lea_result")"
-run_contains "commented_header_lea_epic_error" "refusing to default to github_projects" "$commented_lea_body"
-run_test "commented_header_lea_epic_326_untouched" "OPEN" "$(python3 -c 'import json; print(json.load(open("'"$MOCK_STATE_DIR"'/326.json"))["state"])')"
-run_test "commented_header_lea_epic_no_close_log" "" "$(cat "$MOCK_CLOSE_LOG")"
-run_not_contains "commented_header_lea_epic_no_mutation" "issue close" "$(cat "$MOCK_GH_LOG")"
+run_test "commented_linear_lea_exit_zero" "0" "$(last_output_status "$commented_lea_result")"
+run_contains "commented_linear_lea_provider" "TRACKER_PROVIDER=linear" "$commented_lea_body"
+run_contains "commented_linear_lea_deferred" "TRACKER_ACTION_REQUIRED=set_status issue=LEA-326" "$commented_lea_body"
+run_test "commented_linear_lea_326_untouched" "OPEN" "$(python3 -c 'import json; print(json.load(open("'"$MOCK_STATE_DIR"'/326.json"))["state"])')"
+run_test "commented_linear_lea_no_close_log" "" "$(cat "$MOCK_CLOSE_LOG")"
+run_not_contains "commented_linear_lea_no_mutation" "issue close" "$(cat "$MOCK_GH_LOG")"
 
 echo ""
 echo "Graduation closeout tests: $PASS_COUNT passed, $FAIL_COUNT failed."
