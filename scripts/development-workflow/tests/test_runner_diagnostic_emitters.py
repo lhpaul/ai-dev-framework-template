@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Binding D01-D51: synthetic paired-channel runtime/publication diagnostics."""
+"""Binding D01-D52: synthetic paired-channel runtime/publication diagnostics."""
 from __future__ import annotations
 
 import importlib.util
@@ -949,6 +949,50 @@ printf 'PROBE=%s\\n' "$settle_review_probe"
                         self.assertEqual(actual[-1], b'')
                         self.assertEqual([value.decode() for value in actual[:-1]],
                                          ['fixture/repo', '1993', '2026-10-21T00:00:00Z', 'a' * 40, *reviewers])
+
+
+    def test_D52_local_evidence_redacts_complete_value_before_cap(self):
+        '''Real CLI evidence never persists the credential prefix cut before @.'''
+        prefix = 'EvidenceQX'
+        password = prefix + 'r' * 22
+        padding = 'x' * 19979 + ' '
+        crossing = padding + 'https://u:' + password + '@fixture.invalid ' + 'z' * 500
+        self.assertEqual(len(prefix), 10)
+        self.assertEqual(len(password), 32)
+        self.assertEqual(crossing.index('@'), 20022)
+        self.assertIn(prefix, crossing[:20000])
+        self.assertNotIn('@', crossing[:20000])
+        for kind, body in [('crossing', crossing), ('plain_long', 'q' * 20123),
+                           ('unicode_long', '界' * 20123), ('short', 'synthetic short context')]:
+            with self.subTest(kind=kind):
+                evidence = self.f.root / ('evidence-' + kind + '.json')
+                pr = json.loads(self.f.pr.read_text()); pr['body'] = body
+                self.f.pr.write_text(json.dumps(pr))
+                result = self.safe(self.local_entry({'result': 'clean', 'comments': 0},
+                                   LOCAL_AI_REVIEWER_EVIDENCE_FILE=str(evidence)), 0)
+                self.assertIn('RESULT=clean', result.stdout)
+                raw = evidence.read_text()
+                combined = result.stdout + result.stderr + raw
+                self.assertNotIn(prefix, combined)
+                self.assertNotIn(password, combined)
+                data = json.loads(raw)
+                self.assertEqual(data['schema_version'], 'local_ai_reviewer_evidence.v1')
+                self.assertEqual(data['result'], 'clean')
+                self.assertEqual(data['counts'], {'comments': 0, 'blocking': 0, 'suggestions': 0})
+                self.assertEqual(data['pr_number'], 1993)
+                self.assertEqual(data['reviewed_head'], pr['headRefOid'])
+                self.assertEqual(set(data['context_summary']),
+                                 {'changed_files', 'pr_body', 'diff_name_status', 'diff_stat'})
+                self.assertEqual(data['context_summary']['changed_files'], ['README.md'])
+                captured = data['context_summary']['pr_body']
+                self.assertEqual(len(captured), min(len(body), 20000))
+                if kind == 'crossing':
+                    self.assertTrue(captured.startswith(padding))
+                    self.assertIn('https://[REDACTED]@', captured)
+                else:
+                    self.assertEqual(captured, body[:20000])
+                self.assertIn('strict_spec', data)
+                self.assertIn('strict_plan', data)
 
 
 if __name__ == '__main__':

@@ -1668,7 +1668,7 @@ write_evidence_file() {
       },
       context_summary: {
         changed_files: $changed_files,
-        pr_body: ($pr_body[0:20000]),
+        pr_body: $pr_body,
         diff_name_status: $diff_name_status,
         diff_stat: $diff_stat
       },
@@ -1684,7 +1684,7 @@ write_evidence_file() {
       },
       strict_spec: $strict_spec,
       strict_plan: $strict_plan
-    }' | workflow_redact_json >"$LOCAL_AI_REVIEWER_EVIDENCE_FILE"; } 2>"$evidence_error"; then
+    }' | workflow_redact_json | jq '.context_summary.pr_body |= .[0:20000]' >"$LOCAL_AI_REVIEWER_EVIDENCE_FILE"; } 2>"$evidence_error"; then
     workflow_redact_text <"$evidence_error" >&2
     workflow_diagnostic "WARN: could not write local AI reviewer evidence file: $LOCAL_AI_REVIEWER_EVIDENCE_FILE" >&2
   fi
