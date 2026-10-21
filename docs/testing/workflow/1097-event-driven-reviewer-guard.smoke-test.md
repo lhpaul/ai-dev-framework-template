@@ -41,38 +41,65 @@ minutes sleeping by default.
 
 ---
 
-## Scenario 2: Summary comment event posts readiness success
+## Scenario 2: Summary fixture + workflow_dispatch posts readiness success
 
-1. On the same pull request, post a comment containing the canonical reviewer-loop
-   summary markers:
+Comments no longer start `pr-policy.yml` (#1998). Post a current-head clean
+summary fixture (both canonical markers plus history `head_sha` equal to the
+live head), then dispatch the workflow explicitly.
 
-   ```markdown
-   ### Automated Reviewer Loop Summary
+1. On the same pull request, resolve the live head and post:
 
-   **Result:** clean - no blocking findings
+   ```bash
+   set -euo pipefail
+   HEAD_SHA=$(gh pr view "$PR_NUM" --json headRefOid --jq '.headRefOid')
+   DEFAULT_BRANCH=$(gh repo view --json defaultBranchRef --jq '.defaultBranchRef.name')
+   BODY_FILE=$(mktemp)
+   cat > "$BODY_FILE" <<EOF
+### Automated Reviewer Loop Summary
 
-   *Posted automatically by `pr-review-loop.sh`.*
+**Result:** clean — no blocking findings
+
+<details>
+
+\`\`\`json
+{"schema":"reviewer_loop_history.v1","entries":[{"head_sha":"${HEAD_SHA}"}]}
+\`\`\`
+
+</details>
+
+*Posted automatically by \`pr-review-loop.sh\`.*
+EOF
+   gh pr comment "$PR_NUM" --body-file "$BODY_FILE"
+   rm -f "$BODY_FILE"
    ```
 
-2. Wait for the guard's comment-event path to complete.
-3. Inspect the PR-scoped status context again.
+2. Dispatch PR policy (the path `pr-review-loop.sh` uses after a real summary):
+
+   ```bash
+   gh workflow run pr-policy.yml \
+     --ref "$DEFAULT_BRANCH" \
+     -f "pr_number=${PR_NUM}"
+   ```
+
+3. Wait for that `workflow_dispatch` run to finish, then inspect the PR-scoped
+   status context again.
 
 **Expected result**: The status becomes passing for the pull request head SHA and
-the description indicates the reviewer-loop summary is present.
+the description indicates the reviewer loop ran clean for the current head.
 
 ---
 
-## Scenario 3: Non-summary comments do not mark readiness
+## Scenario 3: Ordinary comments do not start PR policy
 
 1. Push a new commit to the implementation pull request or otherwise inspect a
    pull request head without a valid summary status.
 2. Post a normal PR comment that does not include the canonical summary markers.
-3. Wait long enough for issue-comment workflows to enqueue if they are going to
-   run.
+3. Confirm no new `pr-policy.yml` run is created for that comment (the workflow
+   has no `issue_comment` trigger).
 4. Inspect the PR-scoped status context.
 
-**Expected result**: The normal comment does not mark reviewer-loop readiness as
-passing.
+**Expected result**: The normal comment does not start a PR policy runner and
+does not mark reviewer-loop readiness as passing.
 
 ---
 
@@ -103,8 +130,8 @@ branch and exits quickly with the existing non-blocking behavior.
 
 1. Open or inspect a pull request whose head repository differs from the base
    repository.
-2. Trigger the pull request path and, if possible, post a comment containing the
-   reviewer-loop summary markers.
+2. Trigger the pull request path and, if possible, dispatch
+   `pr-policy.yml` with that PR's number after posting a summary fixture.
 3. Inspect the guard workflow logs and PR-scoped status contexts.
 
 **Expected result**: The guard does not post reviewer-loop readiness statuses for
