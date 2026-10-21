@@ -314,11 +314,6 @@ ensure_terminal_tracker_status() {
   local issue="$1"
   local before after update_out update_rc
   if [ "$TRACKER_PROVIDER" = "linear" ]; then
-    # Preserve already-terminal native states (e.g. Released after release closeout).
-    before="$(graduation_closeout_linear_native_status "$issue")"
-    if [ -n "$before" ] && is_closeout_terminal_status "$before"; then
-      return 0
-    fi
     # Linear transitions are deferred to the native bridge. Success requires an
     # observed TRACKER_ACTION_REQUIRED= line for this issue — a silent skip
     # (e.g. merge-session binding failure that returns 0 with empty stdout)
@@ -777,12 +772,6 @@ process_epic() {
 
   if [ "$TRACKER_PROVIDER" = "linear" ]; then
     # Never gh issue view/close the Linear ID's numeric suffix.
-    local linear_before=""
-    linear_before="$(graduation_closeout_linear_native_status "$EPIC_ISSUE")"
-    if [ -n "$linear_before" ] && is_closeout_terminal_status "$linear_before"; then
-      printf 'EPIC_RESULT=already_terminal\n'
-      return 0
-    fi
     if ! ensure_terminal_tracker_status "$EPIC_ISSUE"; then
       printf 'EPIC_RESULT=failed\n'
       printf 'EPIC_REASON=tracker_status_update_failed\n'

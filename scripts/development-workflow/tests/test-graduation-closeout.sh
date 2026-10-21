@@ -995,23 +995,6 @@ run_test "commented_gh_issues_child_closed" "CLOSED" "$(python3 -c 'import json;
 run_contains "commented_gh_issues_epic_close" "900" "$(cat "$MOCK_CLOSE_LOG")"
 
 echo ""
-echo "=== graduation closeout: Linear epic already Released skips backward set_status (#1984) ==="
-reset_fixture
-write_tracker_config linear
-export MOCK_NATIVE_MODE=empty
-export MOCK_PR_MODE=none
-export MOCK_LINEAR_STATUS_DIR="$TMP_ROOT/linear-status"
-mkdir -p "$MOCK_LINEAR_STATUS_DIR"
-printf 'Released\n' > "$MOCK_LINEAR_STATUS_DIR/LEA-326"
-CLOSEOUT_EPIC=LEA-326
-released_result="$(run_closeout)"
-unset CLOSEOUT_EPIC MOCK_LINEAR_STATUS_DIR
-released_body="$(last_output_body "$released_result")"
-run_test "linear_released_epic_exit_zero" "0" "$(last_output_status "$released_result")"
-run_contains "linear_released_epic_already_terminal" "EPIC_RESULT=already_terminal" "$released_body"
-run_not_contains "linear_released_no_set_status" "TRACKER_ACTION_REQUIRED=set_status issue=LEA-326" "$released_body"
-
-echo ""
 echo "=== graduation closeout: commented header + linear fails closed before mutation (#1984) ==="
 reset_fixture
 cat > "$FIXTURE_REPO/.ai-dev-workflow.yaml" <<'EOF'

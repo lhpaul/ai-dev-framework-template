@@ -79,25 +79,3 @@ workflow_graduation_closeout_issue_tracker_provider_in_file() {
 workflow_graduation_closeout_tracker_provider_raw() {
   graduation_closeout_tracker_provider_raw "$@"
 }
-
-# graduation_closeout_linear_native_status <linear_issue_id>
-# Native Linear status when the orchestrator bridge (or test fixture) supplies it.
-# Env: WORKFLOW_LINEAR_NATIVE_STATUS_<ID> (non-alnum → underscore, uppercased).
-# Tests: MOCK_LINEAR_STATUS_DIR/<linear_issue_id> file contents.
-graduation_closeout_linear_native_status() {
-  local issue_id="$1"
-  local sanitized key value
-
-  sanitized="$(printf '%s' "$issue_id" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9' '_')"
-  key="WORKFLOW_LINEAR_NATIVE_STATUS_$(printf '%s' "$sanitized" | tr '[:lower:]' '[:upper:]')"
-  value="${!key-}"
-  if [ -n "$value" ]; then
-    printf '%s' "$value"
-    return 0
-  fi
-  if [ -n "${MOCK_LINEAR_STATUS_DIR:-}" ] && [ -f "${MOCK_LINEAR_STATUS_DIR}/${issue_id}" ]; then
-    cat "${MOCK_LINEAR_STATUS_DIR}/${issue_id}"
-    return 0
-  fi
-  return 0
-}
