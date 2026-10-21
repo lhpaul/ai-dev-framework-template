@@ -38,6 +38,15 @@ and their approved revisions are present on the selected implementation base. If
 fails, stop and report the missing dependency to the parent; do not substitute
 an unapproved or absent spec.
 
+## Current reader dependency clarification
+
+The parser-dependency observations below are historical evidence at the recorded
+revisions. The later #1993 sole-reader design supersedes only the former modern
+workflow reader's PyYAML assumption: complete selected-source validation, modern
+review and projection now share the dependency-free strict framework reader.
+This does not amend this plan's DSH activation, model-policy parsing, scope or
+approval history. See the [current reader contract](../../../workflow/development-workflow/integrations/runner-secret-prevention.md).
+
 ## Amendment Verification Log
 
 Evidence below is from develop `98f5de0d7d72748abced53c9a36dc461934f8ef0`,

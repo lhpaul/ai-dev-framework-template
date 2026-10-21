@@ -10,7 +10,7 @@
 
 - [ ] Implementation branch has the resolver, tests and documented dispatch contract.
 - [ ] Both strict-subset document amendments are merged and the implementation follows spec BR9.
-- [ ] Python3 is available; model-policy parsing needs no PyYAML/ruamel. Other review readers keep their own prerequisites.
+- [ ] Python3 is available; model-policy parsing needs no PyYAML/ruamel. Framework review readers also need no PyYAML; provider-specific checks retain their own prerequisites.
 - [ ] Local DSH supports the verified child-selection contract; record dsh --version.
 - [ ] Operator already has working permitted routes for different balanced/premium models. Provider/account setup is excluded.
 - [ ] Use a temporary workspace, shared/local YAML fixtures and a temporary host overlay. Do not change the repository's real local YAML/env or checkpoint-policy.json.

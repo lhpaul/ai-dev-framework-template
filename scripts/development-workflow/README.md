@@ -1216,8 +1216,8 @@ its own built-in categories, immutable sensitive/tooling floors and PR gates.
 
 Arguments are `--repo-root <project-policy-root>` and optional
 `--product-repo <stable-product-name>`. Policy comes only from the shared
-`.ai-dev-workflow.yaml`, using the existing strict YAML reader and PyYAML
-toolchain. Hub product rules are selected in the hub's shared product entry;
+`.ai-dev-workflow.yaml`, using the same dependency-free strict framework YAML
+reader as selected-source validation and modern review. Hub product rules are selected in the hub's shared product entry;
 they do not require a local product checkout or inherit the hub's map.
 
 See [Project Path Risk Maps](../../docs/workflow/development-workflow/guardrails.md#project-path-risk-maps)
@@ -1491,11 +1491,14 @@ Configuration parse/validation errors use the central closed type/line/column/kn
 formatter; no source path, excerpt or exception text is emitted. Model error `FILE`
 and review `unreadable_file` remain empty. Functional authority bindings and successful
 `SOURCE_FILE` provenance remain available to their consumers.
-Complete selected-private syntax validation and legacy context/Bash policy reads
-use the framework's strict subset parser without PyYAML. Empty/missing private
-and shared-only legacy paths also remain dependency-free. The modern strict
-review-effective/GitHub readers and projection retain their existing PyYAML
-requirement; unsupported YAML still fails closed before legacy field selection.
+Complete selected-private syntax validation, modern review-effective/GitHub
+readers and review projection share one strict framework reader without PyYAML.
+Review-specific conversion/shape checks remain separate from complete-source
+syntax; legacy field extraction retains its existing semantics. Empty/missing
+private and shared-only legacy paths also remain dependency-free. Unsupported
+selected YAML fails before field selection: legacy/Bash readers exit `2` with
+metadata-only diagnostics and never substitute shared/default policy.
+Provider-specific configuration readers retain their own dependencies.
 
 See the [consumer upgrade and prevention guide](../../docs/workflow/development-workflow/integrations/runner-secret-prevention.md).
 Reversal to implicit inheritance or conflated Bash failure/absence statuses is not
