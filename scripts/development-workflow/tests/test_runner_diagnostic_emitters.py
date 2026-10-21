@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Binding D01-D65: synthetic paired-channel runtime/publication diagnostics."""
+"""Binding D01-D68: synthetic paired-channel runtime/publication diagnostics."""
 from __future__ import annotations
 
 import importlib.util
@@ -1461,6 +1461,143 @@ printf 'PROBE=%s\\n' "$settle_review_probe"
                     result = self.safe(self.run_command([shell, '-c', body]), 2 if fail else 0)
                     self.assertEqual(result.stdout, '' if fail else 'FUNCTIONAL=ok\n')
                     self.assertEqual(result.stderr, 'ERROR: diagnostic sanitization failed\n' if fail else '')
+
+    def test_D66_root_utility_boundaries_preserve_cwd_status_and_argv(self):
+        rows = [('U02', 'apply-readiness-labels.sh', 'repo_root', 19),
+                ('U03', 'discover-workflow-state.sh', 'repo_root', 2),
+                ('U04', 'post-merge-cleanup.sh', 'repo_root', 2),
+                ('U05', 'workflow-batch-lanes.sh', 'repo_root', 1),
+                ('U06', 'workflow-batch-plan.sh', 'repo_root', 1),
+                ('U07', 'workflow-next-action.sh', 'repo_root', 2),
+                ('U08', 'post-merge-cleanup.sh', 'dir', 19),
+                ('U09', 'post-merge-cleanup.sh', 'source_caller_worktree_root', 0)]
+        for route, name, variable, failed_status in rows:
+            lines = (self.f.runtime / name).read_text().splitlines()
+            if route == 'U02': statement = next(x.strip() for x in lines if x.startswith('cd -- "$repo_root"'))
+            elif route == 'U08': statement = next(x.strip() for x in fixtures.function_text(name, 'private_source_common_dir').splitlines() if '(CDPATH=' in x and 'cd -- "$dir"' in x)
+            else: statement = next(x.strip() for x in lines if x.strip().startswith(variable + '=') and 'cd -- "$' + variable + '"' in x)
+            for shell in self.compatible_shells():
+                for failure in ('success', 'cd', 'pwd'):
+                    if route == 'U02' and failure == 'pwd': continue
+                    fail = failure != 'success'
+                    with self.subTest(route=route, shell=shell, failure=failure):
+                        args = self.f.root / 'cd-argv'
+                        path = self.f.root / (('token=' + self.secret) if fail else 'safe-checkout')
+                        path.mkdir(exist_ok=True)
+                        body = 'set -euo pipefail\n' + variable + '=' + shlex.quote(str(path)) + '\n'
+                        body += 'cd() { printf "%s\\0" "$@" >' + shlex.quote(str(args)) + '; '
+                        body += ('printf "token=' + self.secret + '\\n" >&2; return 19;' if failure == 'cd' else 'builtin cd "$@";') + ' };\n'
+                        if failure == 'pwd': body += 'pwd() { printf "token=' + self.secret + '\\n" >&2; return 29; };\n'
+                        body += 'actual_boundary() {\n' + statement + '\n};\nactual_boundary\n'
+                        body += 'printf "ROOT=%s\\nCWD=%s\\n" "$' + variable + '" "$PWD"\n'
+                        result = self.safe(self.run_command([shell, '-c', body]), (29 if route == 'U08' and failure == 'pwd' else failed_status) if fail else 0)
+                        self.assertEqual(args.read_bytes().split(b'\0'), [b'--', str(path).encode(), b''])
+                        if fail:
+                            if route == 'U09': self.assertEqual(result.stdout, 'ROOT=\nCWD=' + str(self.f.checkout) + '\n')
+                            else: self.assertEqual(result.stdout, '')
+                            self.assertEqual(result.stderr, 'configuration: checkout access error\n')
+                        else:
+                            self.assertIn('ROOT=' + str(path), result.stdout)
+                            # Only the original bare cd changes the caller CWD.
+                            self.assertIn('CWD=' + str(path if route == 'U02' else self.f.checkout), result.stdout)
+                            self.assertEqual(result.stderr, '')
+        # U01 informational diagnostic promotion uses the exact production line.
+        line = next(x.strip() for x in (self.f.runtime / 'post-merge-cleanup.sh').read_text().splitlines() if 'Using the calling working tree' in x)
+        result = self.safe(self.bash('source_caller_worktree_root="token=' + self.secret + '"\n' + line), 0)
+        self.assertIn('Using the calling working tree', result.stdout)
+        self.assertIn('token=[REDACTED]', result.stdout)
+        valid = self.safe(self.bash('source_caller_worktree_root=/synthetic/checkout\n' + line), 0)
+        self.assertEqual(valid.stdout, "Using the calling working tree '/synthetic/checkout' as --repo-root (no --repo-root was passed).\n")
+
+    def test_D67_bootstrap_plain_source_preserves_initializer_errexit(self):
+        # U10-U15: execute each actual script prefix up through its real source
+        # statement in an isolated tooling directory; no provider body runs.
+        names = ['claude-code-action-reviewer.sh', 'codex-github-reviewer.sh',
+                 'local-codex-review-command.sh', 'local-http-review-command.sh',
+                 'pr-ownership-guard.sh', 'resolve-reviewer-availability.sh']
+        for index, name in enumerate(names, 10):
+            lines = (self.f.runtime / name).read_text().splitlines()
+            end = next(i for i, line in enumerate(lines) if line.startswith('source ') and '/workflow-lib.sh"' in line)
+            prefix = '\n'.join(lines[:end + 1]) + '\nprintf "IMPORTED=%s\\n" "$BOOTSTRAP_IMPORTED"\n'
+            for shell in self.compatible_shells():
+                for mode, expected in [('success', 0), ('canonical', 19), ('missing', 1), ('initializer', 17), ('errexit', 1)]:
+                    with self.subTest(route='U' + str(index), shell=shell, mode=mode):
+                        folder = self.f.root / ('bootstrap-' + str(index)); folder.mkdir(exist_ok=True)
+                        script = folder / name; script.write_text(prefix)
+                        library = folder / 'workflow-lib.sh'
+                        if library.exists(): library.unlink()
+                        if mode != 'missing':
+                            library.write_text('BOOTSTRAP_IMPORTED=present\n' if mode == 'success' else 'printf "token=' + self.secret + '\\n" >&2\n' + ('return 17\n' if mode == 'initializer' else 'false\nprintf "SHOULD_NOT_RUN\\n"\n'))
+                        init = self.f.root / 'bootstrap-env'
+                        init.write_text('cd() { printf "token=' + self.secret + '\\n" >&2; return 19; }\n' if mode == 'canonical' else ':\n')
+                        self.f.env['BASH_ENV'] = str(init)
+                        try: result = self.safe(self.run_command([shell, str(script)]), expected)
+                        finally: self.f.env.pop('BASH_ENV', None)
+                        self.assertEqual(result.stdout, 'IMPORTED=present\n' if mode == 'success' else '')
+                        self.assertEqual(result.stderr, 'configuration: tooling initialization error\n' if mode == 'canonical' else '')
+
+    def test_D68_resolver_argument_helper_matrix_and_real_policy_diagnostics(self):
+        # U43-U53: exact eleven new/modified resolver invocations, including
+        # their original command continuations and return/exit guards.
+        counts = {'coderabbit-cli-reviewer.sh': 2, 'discover-workflow-state.sh': 1,
+                  'pr-review-loop.sh': 1, 'workflow-lib.sh': 7}
+        route = 43
+        for name, expected_count in counts.items():
+            functions = {'coderabbit-cli-reviewer.sh': ['rate_limit_policy_from_file', 'rate_limit_policy_from_config'],
+                         'pr-review-loop.sh': ['resolve_local_review_override_root'],
+                         'workflow-lib.sh': ['workflow_local_config_file', 'workflow_product_repo_name_for_github_slug',
+                                             'workflow_hub_root_for_ci_policy', 'workflow_merge_ci_policy_into_json',
+                                             'workflow_config_review_local_list_if_declared', 'workflow_config_review_list']}
+            source = ('\n'.join(fixtures.function_text(name, function) for function in functions[name]).splitlines()
+                      if name in functions else (self.f.runtime / name).read_text().splitlines())
+            starts = [i for i, line in enumerate(source) if '$(workflow_config_resolver_script' in line]
+            self.assertEqual(len(starts), expected_count)
+            for start in starts:
+                end = start
+                while source[end].rstrip().endswith('\\'): end += 1
+                if '|| status=$?' in source[end]: end += 1
+                statement = '\n'.join(source[start:end + 1]).strip()
+                for shell in self.compatible_shells():
+                    for fail in (False, True):
+                        with self.subTest(route='U' + str(route), shell=shell, fail=fail):
+                            args = self.f.root / 'resolver-argv'
+                            resolver = self.f.runtime / 'workflow-config-resolver.py'
+                            body = 'set -euo pipefail\n'
+                            body += 'root=' + shlex.quote(str(self.f.checkout)) + '; repo_root="$root"; initiating_root="$root"; config_file="$root/.ai-dev-workflow.yaml"; phase=on_draft; key=runner; status=0; args=(review-list --repo-root "$root" --phase on_draft --key runner)\n'
+                            body += 'workflow_effective_config_file() { printf "%s\\n" "$config_file"; }; workflow_local_config_root() { printf "%s\\n" "$root"; };\n'
+                            body += 'workflow_config_resolver_script() { printf "token=' + self.secret + '\\n" >&2; printf "%s\\n" ' + shlex.quote(str(resolver)) + '; };\n'
+                            body += 'python3() { printf "%s\\0" "$@" >' + shlex.quote(str(args)) + '; '
+                            body += ('printf "configuration: invalid YAML; line=1; column=1\\n" >&2; return 17;' if fail else 'printf "FUNCTIONAL=ok\\n";') + ' };\n'
+                            body += 'actual_boundary() {\n' + statement + '\n'
+                            if statement.startswith('configured_repos='): body += 'printf "%s\\n" "$configured_repos"\n'
+                            elif statement.startswith('selected_file='): body += 'printf "%s\\n" "$selected_file"\n'
+                            elif statement.startswith('mode_json='): body += 'printf "%s\\n" "$mode_json"\n'
+                            elif statement.startswith('names='): body += 'printf "%s\\n" "$names"\n'
+                            body += '}\nactual_boundary ' + shlex.quote(str(self.f.private)) + '\n'
+                            guarded = '|| return 2' in statement or '|| exit 2' in statement
+                            result = self.safe(self.run_command([shell, '-c', body]), (2 if guarded else 17) if fail else 0)
+                            captured = args.read_bytes().split(b'\0')
+                            self.assertEqual(captured[0], str(resolver).encode())
+                            self.assertEqual(captured[-1], b'')
+                            self.assertEqual(captured.count(str(self.f.checkout).encode()), 0 if '--file' in statement else 1)
+                            self.assertEqual(result.stdout, '' if fail else 'FUNCTIONAL=ok\n')
+                            self.assertEqual(result.stderr, 'configuration: invalid YAML; line=1; column=1\n' if fail else '')
+                route += 1
+        self.assertEqual(route, 54)
+        # Real Python diagnostics are not swallowed by the nested helper's
+        # stderr suppression: the existing strict reader and policy argv run.
+        function = fixtures.function_text('coderabbit-cli-reviewer.sh', 'rate_limit_policy_from_file')
+        for shell in self.compatible_shells():
+            for invalid in (False, True):
+                with self.subTest(route='real-policy', shell=shell, invalid=invalid):
+                    self.f.private.write_text('review:\n  coderabbit_cli:\n    rate_limit_policy: strict\n' + ('other: [bad?token=' + self.secret + ']\n' if invalid else ''))
+                    body = 'source ' + shlex.quote(str(self.f.runtime / 'workflow-lib.sh')) + '\n'
+                    body += 'workflow_config_resolver_script() { printf "token=' + self.secret + '\\n" >&2; printf "%s\\n" ' + shlex.quote(str(self.f.runtime / 'workflow-config-resolver.py')) + '; };\n'
+                    body += function + '\nrate_limit_policy_from_file ' + shlex.quote(str(self.f.private))
+                    result = self.safe(self.run_command([shell, '-c', body]), 2 if invalid else 0)
+                    self.assertEqual(result.stdout, '' if invalid else 'strict')
+                    if invalid: self.assertRegex(result.stderr, r'^ERROR: configuration: [A-Za-z ]+(?:; (?:line|column)=[0-9]+)*(?:; key=[A-Za-z_.]+)?\n$')
+                    else: self.assertEqual(result.stderr, '')
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)

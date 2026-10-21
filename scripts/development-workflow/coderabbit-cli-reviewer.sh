@@ -137,13 +137,13 @@ case "$TIMEOUT" in
 esac
 
 rate_limit_policy_from_file() {
-  python3 "$(workflow_config_resolver_script)" coderabbit-policy --file "$1"
+  python3 "$(workflow_config_resolver_script 2>/dev/null)" coderabbit-policy --file "$1"
 }
 
 rate_limit_policy_from_config() {
   local config_file
   config_file="$(workflow_effective_config_file 2>/dev/null || true)"
-  python3 "$(workflow_config_resolver_script)" coderabbit-policy \
+  python3 "$(workflow_config_resolver_script 2>/dev/null)" coderabbit-policy \
     --repo-root "$(workflow_local_config_root)" --shared-file "$config_file"
 }
 

@@ -8,10 +8,10 @@ LOCAL_PROBE_CAP_SECONDS=3
 HOSTED_PROBE_CAP_SECONDS=4
 set -euo pipefail
 
-SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+{ SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd); } 2>/dev/null || { bootstrap_status=$?; printf 'configuration: tooling initialization error\n' >&2; exit "$bootstrap_status"; }
 export REVIEWER_PREFLIGHT_CODERABBIT_MODULE_DIR="$SCRIPT_DIR"
 # shellcheck source=scripts/development-workflow/workflow-lib.sh
-source "$SCRIPT_DIR/workflow-lib.sh"
+source "$SCRIPT_DIR/workflow-lib.sh" 2>/dev/null
 
 fail() { workflow_diagnostic "ERROR: $*" >&2; exit 2; }
 if [ "${WORKFLOW_REVIEWER_AVAILABILITY_TEST_MODE:-0}" = 1 ]; then

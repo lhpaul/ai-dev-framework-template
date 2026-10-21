@@ -14542,7 +14542,7 @@ resolve_local_review_override_root() {
 
   if [ -n "$caller_override_root" ]; then
     local selected_file
-    selected_file="$(python3 "$(workflow_config_resolver_script)" local-source --repo-root "$initiating_root")" || return 2
+    selected_file="$(python3 "$(workflow_config_resolver_script 2>/dev/null)" local-source --repo-root "$initiating_root")" || return 2
     dirname -- "$selected_file"
     return 0
   fi

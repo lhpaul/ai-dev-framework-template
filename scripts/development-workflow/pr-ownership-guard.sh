@@ -17,9 +17,9 @@
 
 set -euo pipefail
 
-DIAGNOSTIC_SCRIPT_DIR="$(CDPATH='' cd -- "${BASH_SOURCE[0]%/*}" && pwd)"
+{ DIAGNOSTIC_SCRIPT_DIR="$(CDPATH='' cd -- "${BASH_SOURCE[0]%/*}" && pwd)"; } 2>/dev/null || { bootstrap_status=$?; printf 'configuration: tooling initialization error\n' >&2; exit "$bootstrap_status"; }
 # shellcheck source=scripts/development-workflow/workflow-lib.sh
-source "$DIAGNOSTIC_SCRIPT_DIR/workflow-lib.sh"
+source "$DIAGNOSTIC_SCRIPT_DIR/workflow-lib.sh" 2>/dev/null
 
 usage() {
   cat <<'USAGE'

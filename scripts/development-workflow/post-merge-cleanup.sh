@@ -147,7 +147,7 @@ private_source_common_dir() {
   local root="$1" dir
   dir="$(private_source_git -C "$root" rev-parse --git-common-dir 2>/dev/null)" || return 1
   case "$dir" in /*) ;; *) dir="$root/$dir" ;; esac
-  (CDPATH='' cd -- "$dir" && pwd -P)
+  (CDPATH='' cd -- "$dir" && pwd -P) 2>/dev/null || { root_status=$?; printf 'configuration: checkout access error\n' >&2; return "$root_status"; }
 }
 
 CALLER_WORKTREE_ROOT=""
@@ -169,7 +169,7 @@ source_caller_worktree_root=""
 if [ "$repo_root_explicit" -eq 0 ] && [ -n "$CALLER_PWD" ]; then
   source_caller_worktree_root="$(private_source_git -C "$CALLER_PWD" rev-parse --show-toplevel 2>/dev/null)" || source_caller_worktree_root=""
   if [ -n "$source_caller_worktree_root" ]; then
-    source_caller_worktree_root="$(CDPATH='' cd -- "$source_caller_worktree_root" && pwd -P)" || source_caller_worktree_root=""
+    source_caller_worktree_root="$( { CDPATH='' cd -- "$source_caller_worktree_root" && pwd -P; } 2>/dev/null)" || { printf 'configuration: checkout access error\n' >&2; source_caller_worktree_root=""; }
     case "$CALLER_PWD/" in "$source_caller_worktree_root/"*) ;; *) source_caller_worktree_root="" ;; esac
   fi
 fi
@@ -179,7 +179,7 @@ if [ "$repo_root_explicit" -eq 0 ] && [ -n "$source_caller_worktree_root" ]; the
     caller_common_dir="$(private_source_common_dir "$source_caller_worktree_root" || true)"
     default_common_dir="$(private_source_common_dir "$default_repo_root_real" || true)"
     if [ -n "$caller_common_dir" ] && [ "$caller_common_dir" = "$default_common_dir" ]; then
-      echo "Using the calling working tree '$source_caller_worktree_root' as --repo-root (no --repo-root was passed)."
+      workflow_diagnostic "Using the calling working tree '$source_caller_worktree_root' as --repo-root (no --repo-root was passed)."
       repo_root="$source_caller_worktree_root"
     fi
   fi
@@ -224,7 +224,7 @@ is_caller_worktree() {
   grep -Fqx -- "$candidate" <<<"$CALLER_WORKTREES"
 }
 
-repo_root="$(CDPATH='' cd -- "$repo_root" && pwd -P)" || exit 2
+repo_root="$( { CDPATH='' cd -- "$repo_root" && pwd -P; } 2>/dev/null)" || { printf 'configuration: checkout access error\n' >&2; exit 2; }
 HUB_REPO_ROOT="$repo_root"
 cd "$HUB_REPO_ROOT" || exit 1
 

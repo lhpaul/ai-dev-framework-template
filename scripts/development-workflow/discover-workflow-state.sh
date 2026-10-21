@@ -70,7 +70,7 @@ print_filtered_refs() {
   esac
 }
 
-repo_root="$(CDPATH='' cd -- "$repo_root" && pwd -P)" || exit 2
+repo_root="$( { CDPATH='' cd -- "$repo_root" && pwd -P; } 2>/dev/null)" || { printf 'configuration: checkout access error\n' >&2; exit 2; }
 cd "$repo_root"
 
 mode_context="$(workflow_repository_mode "$repo_root")"
@@ -83,7 +83,7 @@ target_default_branch=""
 
 if [ "$workflow_mode" = "workflow_hub" ]; then
   # Optional selection is distinct from a selected context failing validation.
-  configured_repos="$(python3 "$(workflow_config_resolver_script)" list-product-repos --repo-root "$repo_root")" || exit 2
+  configured_repos="$(python3 "$(workflow_config_resolver_script 2>/dev/null)" list-product-repos --repo-root "$repo_root")" || exit 2
   selected_for_context="$target_repo"
   if [ -z "$selected_for_context" ]; then
     selected_for_context="$(printf '%s\n' "$configured_repos" | awk 'NF { name=$0; count++ } END { if (count == 1) print name }')"

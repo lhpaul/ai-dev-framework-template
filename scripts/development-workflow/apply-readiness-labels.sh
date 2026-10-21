@@ -549,7 +549,7 @@ workflow_bind_local_config_root "$repo_root" || exit 2
 repo_root="$(workflow_local_config_root)"
 
 require_gh
-cd -- "$repo_root"
+cd -- "$repo_root" 2>/dev/null || { root_status=$?; printf 'configuration: checkout access error\n' >&2; exit "$root_status"; }
 [ -n "$repo" ] || repo="$(repo_slug)"
 
 # Readiness gate verdict.
