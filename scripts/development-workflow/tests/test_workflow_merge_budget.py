@@ -1791,7 +1791,10 @@ class ReleasePair(unittest.TestCase):
         self.command(['git','branch','-m','release/v1.2.3'])
         (self.repo/'CHANGELOG.md').write_text('# Changes\n\n## [1.2.3] - 2026-10-10\n- Shipped #12, #13 (ENG-12, ENG-13).\n')
         self.command(['git','add','CHANGELOG.md','.ai-dev-workflow.yaml'])
-        self.command(['git','commit','-qm','reviewed release'])
+        # Linear --from-changelog (#1982) requires merged-PR evidence in the
+        # release range; mirror GitHub merge subjects so ENG-* IDs stay in scope.
+        self.command(['git','commit','-qm','Merge pull request #112 from org/fix/ENG-12-item'])
+        self.command(['git','commit','--allow-empty','-qm','Merge pull request #113 from org/fix/ENG-13-item'])
         self.head = self.command(['git','rev-parse','HEAD']).stdout.strip()
         self.command(['git','push','-q','origin','release/v1.2.3'])
         base = self.command(['git','rev-parse','develop']).stdout.strip()
