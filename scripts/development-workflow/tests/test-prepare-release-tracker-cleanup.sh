@@ -2,14 +2,16 @@
 # test-prepare-release-tracker-cleanup.sh - release cleanup tracker scope tests.
 #
 # Covers:
-#   1. Linear provider: --from-changelog extracts issues and emits action signal
-#   2. Linear provider: --best-effort exits 0 but still emits action signal
+#   1. Linear provider: --from-changelog without merged-PR evidence skips changelog IDs
+#   2. Linear provider: --best-effort with no merged-PR-backed scope exits 0 (no_issue_scope)
 #   3. Missing scope (no --issue / --from-changelog): emits no_issue_scope signal
 #   4. Missing CHANGELOG version: emits changelog_scope_unavailable signal
 #   5. Issue loop / TRACKER_UPDATED counting:
 #      a. update_tracker_status_best_effort emits "Updating tracker status" -> UPDATED
 #      b. update_tracker_status_best_effort emits TRACKER_ACTION_REQUIRED=set_status -> UPDATED
 #      c. update_tracker_status_best_effort emits Warning: -> SKIPPED
+#   6. Linear #1982: changelog-only / range-expanded IDs skipped; merged-PR IDs proposed
+#   7. github_projects --from-changelog behavior unchanged
 #
 # Usage: bash scripts/development-workflow/tests/test-prepare-release-tracker-cleanup.sh
 # covers: scripts/development-workflow/prepare-release-post-merge-cleanup.sh
@@ -360,17 +362,20 @@ repo_from_changelog="$(fixture_repo from-changelog)"
 result="$(run_cleanup "$repo_from_changelog" v1.17.0 --from-changelog)"
 status="$(printf '%s\n' "$result" | sed -n '1p')"
 output="$(printf '%s\n' "$result" | sed '1d')"
+# Without a release git range / merged-PR evidence, Linear changelog IDs are
+# skipped rather than proposed as Released (#1982).
 run_test "linear_from_changelog_exits_nonzero" "1" "$status"
-run_contains "linear_from_changelog_action" "TRACKER_ACTION=linear_mcp_or_api_required" "$output"
-run_contains "linear_from_changelog_incomplete" "TRACKER_INCOMPLETE=1 REASON=linear_status_transition_required" "$output"
-run_contains "linear_from_changelog_issues" "TRACKER_ISSUES=LEA-132,LEA-133,LEA-134,LEA-140" "$output"
+run_contains "linear_from_changelog_skips_without_pr" "RELEASE_SCOPE_SKIPPED issue=LEA-132 reason=release_range_unavailable" "$output"
+run_contains "linear_from_changelog_no_scope" "TRACKER_INCOMPLETE=1 REASON=no_issue_scope" "$output"
+run_not_contains "linear_from_changelog_does_not_propose_changelog_only" "TRACKER_ISSUES=LEA-132,LEA-133,LEA-134,LEA-140" "$output"
 
 repo_best_effort="$(fixture_repo best-effort)"
 result="$(run_cleanup "$repo_best_effort" v1.17.0 --from-changelog --best-effort)"
 status="$(printf '%s\n' "$result" | sed -n '1p')"
 output="$(printf '%s\n' "$result" | sed '1d')"
 run_test "linear_best_effort_exits_zero" "0" "$status"
-run_contains "linear_best_effort_still_reports_action" "TRACKER_ACTION=linear_mcp_or_api_required" "$output"
+run_contains "linear_best_effort_no_scope" "TRACKER_INCOMPLETE=1 REASON=no_issue_scope" "$output"
+run_not_contains "linear_best_effort_no_false_released_handoff" "TRACKER_ACTION=linear_mcp_or_api_required" "$output"
 
 repo_custom_branch="$(fixture_repo custom-branch)"
 result="$(run_cleanup "$repo_custom_branch" mobile-app/release/v1.18.0 --backport-base release-base --issue LEA-200 --best-effort)"
@@ -1223,6 +1228,130 @@ for session_value in "" "--best-effort"; do
   run_not_contains "session_invalid_${session_value}_no_branch_delete" "Deleting remote branch" "$output"
   run_not_contains "session_invalid_${session_value}_no_stamp_mutation" "RELEASE_STAMPED " "$output"
 done
+
+echo ""
+echo "=== Linear #1982 release-scope filter (merged PR range) ==="
+
+# Real git fixture: previous tag v1.28.0, release tag v1.29.0.
+# Merge commit for LEA-302 only. Changelog cites LEA-298/LEA-301 as not shipped
+# and expands LEA-298–LEA-301 / LEA-298..LEA-301 style ranges.
+fixture_linear_scope_repo() {
+  local name="$1"
+  local path="$TMP_ROOT/$name"
+  mkdir -p "$path/scripts/development-workflow"
+  cp "$REPO_ROOT/scripts/development-workflow/workflow-lib.sh" "$path/scripts/development-workflow/workflow-lib.sh"
+  cp "$REPO_ROOT/scripts/development-workflow/prepare-release-post-merge-cleanup.sh" "$path/scripts/development-workflow/prepare-release-post-merge-cleanup.sh"
+  chmod +x "$path/scripts/development-workflow/prepare-release-post-merge-cleanup.sh"
+  cat > "$path/.ai-dev-workflow.yaml" <<'YAML'
+schema_version: 2
+issue_tracker:
+  provider: linear
+YAML
+  cat > "$path/CHANGELOG.md" <<'MD'
+# Changelog
+
+## [Unreleased]
+
+## [1.29.0] - 2026-10-15
+
+- Shipped LEA-302 billing fix. Did not ship LEA-298 or LEA-301 (still Spec Ready).
+- Mentioned expanded range LEA-298–LEA-301 and alternate LEA-298..LEA-301 for context only.
+
+## [1.28.0] - 2026-10-01
+
+- Older entry LEA-200.
+MD
+  "$REAL_GIT" -C "$path" init -q -b main
+  "$REAL_GIT" -C "$path" config user.email test@example.com
+  "$REAL_GIT" -C "$path" config user.name test
+  "$REAL_GIT" -C "$path" remote add origin "$path"
+  "$REAL_GIT" -C "$path" add CHANGELOG.md .ai-dev-workflow.yaml scripts
+  "$REAL_GIT" -C "$path" commit -q -m "chore: baseline before v1.28.0"
+  "$REAL_GIT" -C "$path" tag v1.28.0
+  # Simulate a GitHub merge commit whose head branch carries LEA-302 only.
+  "$REAL_GIT" -C "$path" commit -q --allow-empty \
+    -m "Merge pull request #88 from example/fix/LEA-302-billing-fix"
+  "$REAL_GIT" -C "$path" tag v1.29.0
+  printf '%s\n' "$path"
+}
+
+LINEAR_SCOPE_BIN="$TMP_ROOT/linear-scope-bin"
+mkdir -p "$LINEAR_SCOPE_BIN"
+cat > "$LINEAR_SCOPE_BIN/gh" <<'MOCK_GH_LINEAR_SCOPE'
+#!/usr/bin/env bash
+case "$*" in
+  "auth status") exit 0 ;;
+  "pr list --state merged --head release/v1.29.0 --base main --json number --jq .[0].number // empty")
+    printf '881\n' ;;
+  "pr list --state merged --head release/v1.29.0 --base develop --json number --jq .[0].number // empty")
+    printf '882\n' ;;
+  "pr list --state open --head release/v1.29.0 --base main --json number --jq .[0].number // empty")
+    printf '\n' ;;
+  "pr list --state open --head release/v1.29.0 --base develop --json number --jq .[0].number // empty")
+    printf '\n' ;;
+  # Optional enrichment; branch evidence already comes from the merge subject.
+  "pr view 88 --json headRefName,title,mergedAt")
+    printf '{"headRefName":"fix/LEA-302-billing-fix","title":"fix(billing): LEA-302","mergedAt":"2026-10-14T12:00:00Z"}\n' ;;
+  *)
+    printf 'unexpected gh invocation: gh %s\n' "$*" >&2
+    exit 64
+    ;;
+esac
+MOCK_GH_LINEAR_SCOPE
+chmod +x "$LINEAR_SCOPE_BIN/gh"
+
+run_linear_scope_cleanup() {
+  local repo="$1"
+  shift
+  local output="" status=0
+  set +e
+  # Prefer stubbed gh, but use the real git binary for tag/range inspection.
+  output="$(
+    cd "$repo" && PATH="$LINEAR_SCOPE_BIN:$(dirname "$REAL_GIT"):$PATH" \
+      WORKFLOW_SKIP_FETCH=1 \
+      ./scripts/development-workflow/prepare-release-post-merge-cleanup.sh "$@" 2>&1
+  )"
+  status=$?
+  set -e
+  printf '%s\n%s\n' "$status" "$output"
+}
+
+repo_linear_scope="$(fixture_linear_scope_repo linear-1982-scope)"
+result="$(run_linear_scope_cleanup "$repo_linear_scope" v1.29.0 --from-changelog --best-effort)"
+status="$(printf '%s\n' "$result" | sed -n '1p')"
+output="$(printf '%s\n' "$result" | sed '1d')"
+
+run_test "linear_1982_exits_zero_best_effort" "0" "$status"
+# Case 1: Spec Ready / no merged PR citations are skipped with a reason.
+run_contains "linear_1982_skip_298" "RELEASE_SCOPE_SKIPPED issue=LEA-298 reason=changelog_mention_without_merged_pr" "$output"
+run_contains "linear_1982_skip_301" "RELEASE_SCOPE_SKIPPED issue=LEA-301 reason=changelog_mention_without_merged_pr" "$output"
+# Case 2: expanded ranges do not propose non-merged members (LEA-299/LEA-300).
+run_contains "linear_1982_skip_299_from_range" "RELEASE_SCOPE_SKIPPED issue=LEA-299 reason=changelog_mention_without_merged_pr" "$output"
+run_contains "linear_1982_skip_300_from_range" "RELEASE_SCOPE_SKIPPED issue=LEA-300 reason=changelog_mention_without_merged_pr" "$output"
+# Case 3: merged-PR-backed ID is proposed for Released handoff.
+run_contains "linear_1982_proposes_merged_302" "TRACKER_ISSUES=LEA-302" "$output"
+run_contains "linear_1982_action_for_merged" "TRACKER_ACTION=linear_mcp_or_api_required" "$output"
+run_not_contains "linear_1982_does_not_list_298" "TRACKER_ISSUES=LEA-298" "$output"
+run_not_contains "linear_1982_does_not_list_301_in_issues" "LEA-301," "$output"
+
+# Explicit --issue remains unfiltered (control).
+repo_linear_explicit="$(fixture_linear_scope_repo linear-1982-explicit)"
+result="$(run_linear_scope_cleanup "$repo_linear_explicit" v1.29.0 --issue LEA-298 --best-effort)"
+status="$(printf '%s\n' "$result" | sed -n '1p')"
+output="$(printf '%s\n' "$result" | sed '1d')"
+run_test "linear_explicit_issue_exits_zero" "0" "$status"
+run_contains "linear_explicit_issue_still_proposed" "TRACKER_ISSUES=LEA-298" "$output"
+run_not_contains "linear_explicit_issue_not_filtered" "RELEASE_SCOPE_SKIPPED issue=LEA-298" "$output"
+
+# github_projects --from-changelog still extracts #NNN from changelog text alone
+# (no Linear merged-PR filter).
+repo_github_unchanged="$(fixture_github_projects_repo github-1982-unchanged)"
+result="$(run_cleanup_with_bin "$MILESTONE_BIN" "$repo_github_unchanged" v1.17.0 --from-changelog --best-effort)"
+status="$(printf '%s\n' "$result" | sed -n '1p')"
+output="$(printf '%s\n' "$result" | sed '1d')"
+run_test "github_projects_from_changelog_unchanged_exits_zero" "0" "$status"
+run_contains "github_projects_from_changelog_unchanged_stamp" "RELEASE_STAMPED issue=101" "$output"
+run_not_contains "github_projects_from_changelog_no_linear_skip" "RELEASE_SCOPE_SKIPPED" "$output"
 
 echo "Results: $PASS_COUNT passed, $FAIL_COUNT failed"
 
