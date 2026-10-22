@@ -406,10 +406,90 @@ def release_omitted(checkout, head, issue_repo, release_repo, project_id, merged
     return included, read_cost
 
 
+def release_changelog_digest(checkout, head, provider):
+    # Branch on provider BEFORE hashing. GitHub providers keep origin/develop's
+    # fingerprint (call() strips whitespace); Linear may hash raw stdout or empty.
+    if provider != "linear":
+        return hashlib.sha256(
+            call(["git", "-C", str(checkout), "show", head + ":CHANGELOG.md"]).encode()
+        ).hexdigest()
+    result = subprocess.run(
+        ["git", "-C", str(checkout), "show", head + ":CHANGELOG.md"],
+        text=True,
+        capture_output=True,
+    )
+    if result.returncode == 0:
+        return hashlib.sha256(result.stdout.encode()).hexdigest()
+    # Linear release scope may derive from merged PRs when CHANGELOG is absent.
+    return hashlib.sha256(b"").hexdigest()
+
+
+# SemVer 2.0.0 with optional non-digit prefix (bare, v, mobile-v, ...). Linear-only.
+# GitHub providers keep develop's v?[0-9]+.[0-9]+.[0-9]+... regex in project_release.
+_RELEASE_VERSION_RE = re.compile(
+    r"^(?P<prefix>.*?)(?P<major>0|[1-9]\d*)\.(?P<minor>0|[1-9]\d*)\.(?P<patch>0|[1-9]\d*)"
+    r"(?:-(?P<pre>[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?"
+    r"(?:\+(?P<build>[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$"
+)
+
+# origin/develop project_release version pattern (GitHub / none providers).
+_GITHUB_RELEASE_VERSION_RE = re.compile(
+    r"v?[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.-]+)?(?:\+[A-Za-z0-9.-]+)?"
+)
+
+
+def _release_version_idents_ok(value, *, numeric_no_leading_zeros):
+    if not value:
+        return False
+    for ident in value.split("."):
+        if not ident or not re.fullmatch(r"[0-9A-Za-z-]+", ident):
+            return False
+        if numeric_no_leading_zeros and re.fullmatch(r"\d+", ident) and not re.fullmatch(r"0|[1-9]\d*", ident):
+            return False
+    return True
+
+
+def release_version_accepted(version, provider="linear"):
+    """Version gate for project_release.
+
+    Linear: bare / v / component-prefixed SemVer 2.0.0 (stricter prerelease idents).
+    GitHub providers and none: origin/develop's v?[digits].[digits].[digits]... regex
+    verbatim (accepts v1.2.3-rc.01; rejects vmobile-v1.1.0 / mobile-v1.1.0).
+    """
+    if provider != "linear":
+        return isinstance(version, str) and bool(_GITHUB_RELEASE_VERSION_RE.fullmatch(version))
+    if not isinstance(version, str) or not version:
+        return False
+    match = _RELEASE_VERSION_RE.fullmatch(version)
+    if not match:
+        return False
+    prefix = match.group("prefix")
+    # Reject absorbed leading zeros (v01.0.0 → prefix "v0"). Bare/v keep
+    # prefix ""/"v"; component prefixes must not end mid-number.
+    if prefix not in ("", "v") and prefix[-1].isdigit():
+        return False
+    pre = match.group("pre")
+    build = match.group("build")
+    if pre is not None and not _release_version_idents_ok(pre, numeric_no_leading_zeros=True):
+        return False
+    if build is not None and not _release_version_idents_ok(build, numeric_no_leading_zeros=False):
+        return False
+    return True
+
+
 def project_release(args):
     checkout = root(args.target_root or args.repo_root or Path.cwd())
-    if not isinstance(args.version, str) or not re.fullmatch(r"v?[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.-]+)?(?:\+[A-Za-z0-9.-]+)?", args.version):
-        raise Stop("release version unavailable or malformed")
+    # Branch on provider BEFORE version validation so GitHub stays develop-identical.
+    if args.provider == "linear":
+        if not release_version_accepted(args.version, provider="linear"):
+            raise Stop("release version unavailable or malformed")
+    else:
+        # origin/develop project_release version check (verbatim).
+        if not isinstance(args.version, str) or not re.fullmatch(
+            r"v?[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.-]+)?(?:\+[A-Za-z0-9.-]+)?",
+            args.version,
+        ):
+            raise Stop("release version unavailable or malformed")
     for value in (args.branch, args.base):
         if not isinstance(value, str) or not value:
             raise Stop("release branch/base unavailable")
@@ -455,7 +535,7 @@ def project_release(args):
             "markerRepo": issue_repo, "markerProvider": args.provider,
             "projectId": args.project_id if args.provider == "github_projects" else None,
             "mergedStatus": args.merged_status,
-            "changelogDigest": hashlib.sha256(call(["git", "-C", str(checkout), "show", head + ":CHANGELOG.md"]).encode()).hexdigest()}
+            "changelogDigest": release_changelog_digest(checkout, head, args.provider)}
     if args.evidence:
         evidence = decode(Path(args.evidence).read_text())
         if not isinstance(evidence, dict) or not isinstance(evidence.get("target_binding"), dict):
