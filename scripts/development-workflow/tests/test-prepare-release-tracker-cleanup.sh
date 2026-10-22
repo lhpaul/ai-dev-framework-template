@@ -2775,6 +2775,149 @@ run_contains "linear_1982_build_meta_ambig_ord2_incomplete" \
 run_not_contains "linear_1982_build_meta_ambig_ord2_no_tracker" "TRACKER_ISSUES=" "$output"
 run_not_contains "linear_1982_build_meta_ambig_ord2_no_850" "LEA-850" "$output"
 
+# --- Linear component: tip/previous from evidence.component_tag, not branch suffix ---
+# Branch product/release/v1.2.3 with tags product-v1.1.0 / product-v1.2.3 must bound
+# at product-v1.1.0 (± --release-head / --inspect-targets). Missing component_tag fails closed.
+repo_comp_tag_hub="$TMP_ROOT/linear-1982-comp-tag-hub"
+repo_comp_tag_product="$TMP_ROOT/linear-1982-comp-tag-product"
+mkdir -p "$repo_comp_tag_hub/scripts/development-workflow" "$repo_comp_tag_product"
+cp "$REPO_ROOT/scripts/development-workflow/workflow-lib.sh" \
+  "$repo_comp_tag_hub/scripts/development-workflow/workflow-lib.sh"
+cp "$REPO_ROOT/scripts/development-workflow/prepare-release-post-merge-cleanup.sh" \
+  "$repo_comp_tag_hub/scripts/development-workflow/prepare-release-post-merge-cleanup.sh"
+cp "$REPO_ROOT/scripts/development-workflow/component-release-target.sh" \
+  "$repo_comp_tag_hub/scripts/development-workflow/component-release-target.sh"
+cp "$REPO_ROOT/scripts/development-workflow/workflow-config-resolver.py" \
+  "$repo_comp_tag_hub/scripts/development-workflow/workflow-config-resolver.py"
+chmod +x "$repo_comp_tag_hub/scripts/development-workflow/"*.sh
+cat > "$repo_comp_tag_hub/.ai-dev-workflow.yaml" <<'YAML'
+schema_version: 2
+mode: workflow_hub
+issue_tracker:
+  provider: linear
+
+workflow_hub:
+  product_repos:
+    - name: product
+      github_repo: example/product
+      default_branch: release-base
+      release:
+        base: release-base
+        branch_pattern: "{product_repo}/release/v{version}"
+        changelog_owner: product_repo
+        tag_owner: product_repo
+        github_release_owner: product_repo
+        deployment_evidence_owner: product_repo
+        cleanup_evidence_owner: product_repo
+        tracker_reconciliation_owner: hub
+YAML
+cat > "$repo_comp_tag_hub/.ai-dev-workflow.local.yaml" <<YAML
+product_repos:
+  - name: product
+    local_path: $repo_comp_tag_product
+YAML
+"$REAL_GIT" -C "$repo_comp_tag_hub" init -q -b main
+"$REAL_GIT" -C "$repo_comp_tag_hub" config user.email test@example.com
+"$REAL_GIT" -C "$repo_comp_tag_hub" config user.name test
+"$REAL_GIT" -C "$repo_comp_tag_hub" commit -q --allow-empty -m "chore: hub baseline"
+# Product checkout: product-v1.1.0 (prior) → in-range LEA-910 → product-v1.2.3 tip.
+"$REAL_GIT" -C "$repo_comp_tag_product" init -q -b main
+"$REAL_GIT" -C "$repo_comp_tag_product" config user.email test@example.com
+"$REAL_GIT" -C "$repo_comp_tag_product" config user.name test
+"$REAL_GIT" -C "$repo_comp_tag_product" remote add origin "$repo_comp_tag_product"
+mkdir -p "$repo_comp_tag_product/scripts/development-workflow"
+cat > "$repo_comp_tag_product/CHANGELOG.md" <<'MD'
+# Changelog
+
+## [Unreleased]
+
+## [product-v1.2.3] - 2026-10-15
+
+- Component release ships LEA-910.
+MD
+"$REAL_GIT" -C "$repo_comp_tag_product" add CHANGELOG.md
+"$REAL_GIT" -C "$repo_comp_tag_product" commit -q -m "chore: product baseline"
+"$REAL_GIT" -C "$repo_comp_tag_product" commit -q --allow-empty \
+  -m "Merge pull request #180 from example/fix/LEA-900-prior"
+sha_comp_tag_900="$("$REAL_GIT" -C "$repo_comp_tag_product" rev-parse HEAD)"
+"$REAL_GIT" -C "$repo_comp_tag_product" tag product-v1.1.0
+"$REAL_GIT" -C "$repo_comp_tag_product" commit -q --allow-empty \
+  -m "Merge pull request #181 from example/fix/LEA-910-current"
+sha_comp_tag_910="$("$REAL_GIT" -C "$repo_comp_tag_product" rev-parse HEAD)"
+"$REAL_GIT" -C "$repo_comp_tag_product" tag product-v1.2.3
+"$REAL_GIT" -C "$repo_comp_tag_product" checkout -q -b release-base
+"$REAL_GIT" -C "$repo_comp_tag_product" checkout -q -b product/release/v1.2.3
+"$REAL_GIT" -C "$repo_comp_tag_product" checkout -q main
+(
+  cd "$repo_comp_tag_hub"
+  target_json="$(./scripts/development-workflow/component-release-target.sh \
+    --repo-root "$repo_comp_tag_hub" --repo product \
+    --release-branch product/release/v1.2.3 --json)"
+  jq -nS --argjson target "$target_json" \
+    '{
+      schema_version:"component_release_evidence.v1",
+      target_binding:$target,
+      release_branch:"product/release/v1.2.3",
+      release_outcome:"completed",
+      ci_outcome:"passed",
+      deployment_outcome:"recorded",
+      cleanup_outcome:"not_started",
+      hub_tracker_ref:"#1982",
+      component_tag:"product-v1.2.3"
+    }' > "$repo_comp_tag_hub/component-release-evidence.json"
+)
+write_linear_scope_gh \
+  "180|fix/LEA-900-prior|fix: LEA-900" \
+  "181|fix/LEA-910-current|fix: LEA-910" \
+  "commit:${sha_comp_tag_900}|180" \
+  "commit:${sha_comp_tag_910}|181"
+# Without --release-head: tip resolves product-v1.2.3 via component_tag.
+result="$(run_linear_scope_cleanup "$repo_comp_tag_hub" product/release/v1.2.3 \
+  --repo product --repo-root "$repo_comp_tag_hub" \
+  --evidence-file "$repo_comp_tag_hub/component-release-evidence.json" \
+  --from-changelog --best-effort)"
+status="$(printf '%s\n' "$result" | sed -n '1p')"
+output="$(printf '%s\n' "$result" | sed '1d')"
+run_test "linear_1982_component_tag_cleanup_exits_zero" "0" "$status"
+run_contains "linear_1982_component_tag_cleanup_proposes_910" "TRACKER_ISSUES=LEA-910" "$output"
+run_not_contains "linear_1982_component_tag_cleanup_no_900" "LEA-900" "$output"
+run_not_contains "linear_1982_component_tag_cleanup_no_first_release_false" \
+  "release_ref_unavailable" "$output"
+run_contains "linear_1982_component_tag_cleanup_version_basename" \
+  "Release version: v1.2.3" "$output"
+# --inspect-targets + --release-head: same product-v boundary.
+result="$(run_linear_scope_inspect "$repo_comp_tag_hub" product/release/v1.2.3 \
+  "$sha_comp_tag_910" --repo product --repo-root "$repo_comp_tag_hub" \
+  --evidence-file "$repo_comp_tag_hub/component-release-evidence.json")"
+status="$(printf '%s\n' "$result" | sed -n '1p')"
+output="$(printf '%s\n' "$result" | sed '1d')"
+run_test "linear_1982_component_tag_inspect_exits_zero" "0" "$status"
+run_contains "linear_1982_component_tag_inspect_proposes_910" \
+  "Linear --from-changelog scope from merged PRs in release range: LEA-910" "$output"
+run_not_contains "linear_1982_component_tag_inspect_no_900" "LEA-900" "$output"
+run_contains "linear_1982_component_tag_inspect_stub" "INSPECT_STUB_OK" "$output"
+# Missing component_tag → fail closed (do not fall back to branch-suffix v1.2.3).
+jq 'del(.component_tag)' "$repo_comp_tag_hub/component-release-evidence.json" \
+  > "$repo_comp_tag_hub/component-release-evidence-no-tag.json"
+result="$(run_linear_scope_cleanup "$repo_comp_tag_hub" product/release/v1.2.3 \
+  --repo product --repo-root "$repo_comp_tag_hub" \
+  --evidence-file "$repo_comp_tag_hub/component-release-evidence-no-tag.json" \
+  --from-changelog --best-effort)"
+status="$(printf '%s\n' "$result" | sed -n '1p')"
+output="$(printf '%s\n' "$result" | sed '1d')"
+run_test "linear_1982_component_tag_missing_best_effort_exits_zero" "0" "$status"
+run_contains "linear_1982_component_tag_missing_incomplete" \
+  "RELEASE_SCOPE_INCOMPLETE reason=component_tag_unavailable" "$output"
+run_not_contains "linear_1982_component_tag_missing_no_tracker" "TRACKER_ISSUES=" "$output"
+result="$(run_linear_scope_inspect "$repo_comp_tag_hub" product/release/v1.2.3 \
+  "$sha_comp_tag_910" --repo product --repo-root "$repo_comp_tag_hub" \
+  --evidence-file "$repo_comp_tag_hub/component-release-evidence-no-tag.json")"
+status="$(printf '%s\n' "$result" | sed -n '1p')"
+output="$(printf '%s\n' "$result" | sed '1d')"
+run_test "linear_1982_component_tag_missing_inspect_exits_nonzero" "1" "$status"
+run_contains "linear_1982_component_tag_missing_inspect_incomplete" \
+  "RELEASE_SCOPE_INCOMPLETE reason=component_tag_unavailable" "$output"
+
 # --- chore/ merged PR is shipping evidence; release/ branch is skipped ---
 repo_chore="$TMP_ROOT/linear-1982-chore-and-release"
 init_linear_git_repo "$repo_chore"

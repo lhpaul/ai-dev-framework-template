@@ -176,6 +176,31 @@ release_tag_request_from_input() {
   esac
 }
 
+# Linear component tip/previous identity: validated evidence.component_tag only
+# (never the branch-suffix spelling). Charset matches workflow-merge-budget
+# publicationTag; SemVer shape matches Linear CHANGELOG / boundary parsing.
+validate_linear_component_release_tag() {
+  local tag="$1"
+  case "$tag" in
+    ''|*[!A-Za-z0-9._-]*) return 1 ;;
+  esac
+  python3 -c '
+import re, sys
+tag = sys.argv[1]
+match = re.fullmatch(
+    r"^(?P<prefix>.*?)(?P<major>0|[1-9]\d*)\.(?P<minor>0|[1-9]\d*)\.(?P<patch>0|[1-9]\d*)"
+    r"(?:-(?P<pre>[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?"
+    r"(?:\+(?P<build>[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$",
+    tag,
+)
+if not match:
+    sys.exit(1)
+prefix = match.group("prefix")
+if prefix not in ("", "v") and (not prefix or prefix[-1].isdigit()):
+    sys.exit(1)
+' "$tag"
+}
+
 validate_portable_branch_name() {
   local label="$1"
   local value="$2"
@@ -2426,10 +2451,27 @@ cleanup_log "Backport base: $BACKPORT_BASE"
 
 if [ "$FROM_CHANGELOG" = "true" ]; then
   changelog_scope_version="$RELEASE_VERSION"
+  linear_scope_ready=true
   if [ "$TRACKER_PROVIDER" = "linear" ]; then
     changelog_scope_version="$RELEASE_REQUESTED_TAG_SPELLING"
+    # Component mode: tip/previous discovery uses validated evidence.component_tag
+    # (e.g. product-v1.2.3), not the branch suffix (product/release/v1.2.3 → v1.2.3).
+    # Tracker RELEASE_VERSION / RELEASE_BRANCH stay unchanged for stamps/projection.
+    if [ -n "$COMPONENT_TARGET_FILE" ] || [ -n "$EVIDENCE_FILE" ]; then
+      linear_component_release_tag=""
+      if [ -n "$EVIDENCE_FILE" ] && [ -f "$EVIDENCE_FILE" ]; then
+        linear_component_release_tag="$(json_field "$EVIDENCE_FILE" '.component_tag')"
+      fi
+      if ! validate_linear_component_release_tag "$linear_component_release_tag"; then
+        cleanup_log "RELEASE_SCOPE_INCOMPLETE reason=component_tag_unavailable"
+        linear_scope_ready=false
+      else
+        changelog_scope_version="$linear_component_release_tag"
+      fi
+    fi
   fi
-  if ! append_issues_from_changelog "$changelog_scope_version"; then
+  if [ "$linear_scope_ready" != "true" ] || \
+    ! append_issues_from_changelog "$changelog_scope_version"; then
     cleanup_log "TRACKER_INCOMPLETE=1 REASON=changelog_scope_unavailable"
     if [ "$BEST_EFFORT" != "true" ] || [ "$INSPECT_TARGETS" = "true" ]; then
       exit 1
