@@ -1832,7 +1832,8 @@ expensive_gate_deferral_count() {
 
 # expensive_reviewer_gate <pr_number> <platform> <head_sha> [peer_scope]
 #
-# Returns 0 to dispatch, 1 to defer/escalate. Emits EXPENSIVE_GATE_* keys.
+# Returns 0 to dispatch, 1 to defer/escalate, 2 on failed configuration lookup
+# before evidence/force policy. Emits EXPENSIVE_GATE_* keys for valid inputs.
 # Stops at the first unmet condition so the reason names a single cause.
 # peer_scope: full (default) | earlier_buckets (ready-phase preflight).
 expensive_reviewer_gate() {
@@ -1856,7 +1857,7 @@ expensive_reviewer_gate() {
   expensive_gate_last_reason=""
   expensive_gate_last_result=""
 
-  configured="$(expensive_gate_local_ai_configured)"
+  configured="$(expensive_gate_local_ai_configured)" || return 2
   head_current="$(expensive_gate_local_ai_head_current "$head_sha")"
   result_clean="$(expensive_gate_local_ai_result_clean)"
 
@@ -10871,6 +10872,7 @@ reviewer_loop_repo_configured_platforms() {
     line="$(trim "$line")"
     [ -n "$line" ] && printf '%s\n' "$line"
   done <<< "$resolved_platforms"
+  return 0
 }
 
 # reviewer_loop_compose_current_round_payload <history_payload> <iteration>
@@ -11340,7 +11342,15 @@ reviewer_loop_second_local_pass_before_ready_gate() {
   _sl_prior_payload="$(reviewer_loop_prior_history_payload_from_pr "$pr_number_arg")"
   _sl_next_iteration="$(printf '%s\n' "$_sl_prior_payload" | jq '(.entries // []) | length + 1' 2>/dev/null)" || _sl_next_iteration=1
   [[ "$_sl_next_iteration" =~ ^[0-9]+$ ]] || _sl_next_iteration=1
-  _sl_configured="$(reviewer_loop_repo_configured_platforms)" || return 2
+  _sl_configured="$(reviewer_loop_repo_configured_platforms)" || {
+    local_second_pass_reason="local_pass_unavailable"
+    aggregate_result="escalate"
+    aggregate_reason="local_pass_unavailable"
+    aggregate_output="$(printf 'RESULT=escalate\nREASON=local_pass_unavailable\nCOMMENT_COUNT=0\nBLOCKING_COUNT=0\nSUGGESTION_COUNT=0\n')"
+    aggregate_status=2
+    last_platform="local-ai-reviewer"
+    return 1
+  }
   _sl_composed="$(reviewer_loop_compose_current_round_payload "$_sl_prior_payload" "$_sl_next_iteration")"
   _sl_required="$(reviewer_loop_local_pass_required "$_sl_composed" "$loop_head_sha" "$_sl_configured")"
   local_second_pass_reason="$_sl_required"
@@ -12773,7 +12783,9 @@ reviewer_loop_emit_local_ai_head_evidence_keys() {
   local local_ai_head_current=""
   local entry platform_name reviewed_head classification state
 
-  if [ "$(expensive_gate_local_ai_configured)" = "1" ]; then
+  local configured
+  configured="$(expensive_gate_local_ai_configured)" || return 2
+  if [ "$configured" = "1" ]; then
     local_ai_configured=1
   fi
 
@@ -16347,6 +16359,10 @@ EOF
 }
 
 if [ -z "$last_platform" ]; then
+  local_ai_head_evidence_output="$(reviewer_loop_emit_local_ai_head_evidence_keys)" || {
+    printf 'configuration: configuration validation error; key=review.on_draft.runner\n' >&2
+    exit 2
+  }
   print_kv LOCAL_SECOND_PASS 0
   print_kv LOCAL_SECOND_PASS_REASON not_required
   print_kv STAGE_SKIPPED_PLATFORMS ""
@@ -16359,7 +16375,7 @@ if [ -z "$last_platform" ]; then
   print_kv UNRESOLVED_THREAD_COUNT 0
   _post_review_summary "skipped" "not_configured" "none" "0" "0" "" "" "0" "" "0" "0" "" "0"
   sync_reviewer_failed_label "$pr_number" 0
-  reviewer_loop_emit_local_ai_head_evidence_keys
+  printf '%s\n' "$local_ai_head_evidence_output"
   exit 0
 fi
 
@@ -16860,6 +16876,10 @@ fi
 #
 # Skipped for "skipped" (no ledger entry is ever written for that result —
 # see the not-configured early-exit path above, which never reaches here).
+local_ai_head_evidence_output="$(reviewer_loop_emit_local_ai_head_evidence_keys)" || {
+  printf 'configuration: configuration validation error; key=review.on_draft.runner\n' >&2
+  exit 2
+}
 if [ "$aggregate_result" != "skipped" ]; then
   _post_summary_exit=0
   _post_review_summary "$aggregate_result" "$aggregate_reason" \
@@ -16938,7 +16958,7 @@ if [ -n "$aggregate_output" ]; then
   [ -n "$review_comment_id" ] && print_kv REVIEW_COMMENT_ID "$review_comment_id"
 fi
 
-reviewer_loop_emit_local_ai_head_evidence_keys
+printf '%s\n' "$local_ai_head_evidence_output"
 
 # _post_review_summary has already run above (using the pre-correction
 # aggregate_result as its own "result"/"reason" arguments intentionally —

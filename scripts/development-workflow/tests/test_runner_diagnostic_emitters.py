@@ -2711,5 +2711,170 @@ printf 'PROBE=%s\\n' "$settle_review_probe"
                 # Existing Bash PR_BODY capture strips terminal LF before the functional cap.
                 self.assertEqual(json.loads(context.read_text())['pr_body'], source.rstrip('\n')[:20000])
 
+    def configured_source_case(self, state):
+        self.f.shared.write_text('review:\n  on_draft:\n    github: [local-ai-reviewer]\n  on_ready:\n    github: []\n')
+        self.f.env['WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT'] = str(self.f.external)
+        if state == 'malformed':
+            self.f.private.write_text('other: [' + self.secret + '\n')
+        elif state == 'missing':
+            self.f.env['WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT'] = str(self.f.root / 'missing-selected')
+            self.f.private.write_text('review:\n  on_draft:\n    github: []\n')
+        elif state == 'configured':
+            self.f.private.write_text('review:\n  on_draft:\n    github: [local-ai-reviewer]\n  on_ready:\n    github: []\n')
+        elif state == 'nonempty':
+            self.f.private.write_text('review:\n  on_draft:\n    github: [pr-agent]\n  on_ready:\n    github: [haystack]\n')
+        elif state == 'absent':
+            self.f.private.write_text('other: true\n')
+            self.f.shared.write_text('review:\n  on_draft:\n    github: []\n  on_ready:\n    github: []\n')
+        else:
+            self.assertEqual(state, 'empty')
+            self.f.private.write_text('review:\n  on_draft:\n    github: []\n  on_ready:\n    github: []\n')
+        return ('HARNESS_MODE=1 source ' + shlex.quote(str(self.f.runtime / 'pr-review-loop.sh')) + '\n'
+                'unset repo_review_platforms platforms\nconfig_file=' + shlex.quote(str(self.f.shared)) + '\n'
+                'loop_head_sha=' + 'a' * 40 + '\n')
+
+    def test_D90_configured_platform_success_and_real_source_failures(self):
+        for shell in self.compatible_shells():
+            for state in ('absent', 'empty', 'nonempty', 'malformed', 'missing'):
+                with self.subTest(shell=shell, state=state):
+                    body = self.configured_source_case(state)
+                    result = self.run_command([shell, '-c', body + 'reviewer_loop_repo_configured_platforms'])
+                    self.safe(result, 2 if state in ('malformed', 'missing') else 0)
+                    self.assertEqual(result.stdout, 'pr-agent\nhaystack\n' if state == 'nonempty' else '')
+                    if state not in ('malformed', 'missing'): self.assertEqual(result.stderr, '')
+                    else: self.assertIn('configuration:', result.stderr)
+            with self.subTest(shell=shell, state='cached-list'):
+                body = self.configured_source_case('empty')
+                result = self.safe(self.run_command([shell, '-c', body + 'repo_review_platforms=(local-ai-reviewer pr-agent); reviewer_loop_repo_configured_platforms']), 0)
+                self.assertEqual(result.stdout, 'local-ai-reviewer\npr-agent\n')
+
+    def test_D91_expensive_gate_source_failure_precedes_force_policy(self):
+        controls = r'''
+expensive_gate_local_ai_head_current() { printf '1\n'; }
+expensive_gate_local_ai_result_clean() { printf '1\n'; }
+expensive_gate_check_peers() { :; }
+expensive_gate_unresolved_threads_status() { printf 'ok 0 %s\n' "$loop_head_sha"; }
+expensive_gate_baseline_checks_status() { printf 'green %s\n' "$loop_head_sha"; }
+expensive_gate_deferral_count() { printf '0\n'; }
+expensive_gate_max_deferrals=3
+'''
+        for shell in self.compatible_shells():
+            for state in ('empty', 'configured', 'malformed', 'missing'):
+                for force in (0, 1):
+                    with self.subTest(shell=shell, state=state, force=force):
+                        body = self.configured_source_case(state) + controls
+                        body += 'PR_REVIEW_LOOP_FORCE_EXPENSIVE_REVIEWERS=' + str(force) + '\ngate_status=0\nexpensive_reviewer_gate 1993 codex-github "$loop_head_sha" || gate_status=$?\nexit "$gate_status"'
+                        result = self.run_command([shell, '-c', body])
+                        expected = 2 if state in ('malformed', 'missing') else (1 if state == 'empty' and not force else 0)
+                        self.safe(result, expected)
+                        if expected == 2:
+                            self.assertEqual(result.stdout, '')
+                            self.assertIn('configuration:', result.stderr)
+                        else:
+                            values = dict(line.split('=', 1) for line in result.stdout.splitlines())
+                            self.assertEqual(values['EXPENSIVE_GATE_RESULT'], 'forced' if state == 'empty' and force else ('deferred' if state == 'empty' else 'dispatched'))
+                            self.assertEqual(values['EXPENSIVE_GATE_REASON'], 'local_reviewer_not_configured' if state == 'empty' else '')
+
+    def test_D92_actual_platform_loop_empty_ready_and_failed_selected_source(self):
+        source = (self.f.runtime / 'pr-review-loop.sh').read_text()
+        begin = source.index('for index in "${!platforms[@]}"; do')
+        end = source.index('\n# --- Automated Reviewer Loop Summary comment ---', begin)
+        actual_loop = source[begin:end]
+        executable = self.f.bin / 'synthetic-ready-reviewer'
+        executable.write_text('#!/bin/sh\nprintf "%s\\0" "$@" >> "$SYNTHETIC_DISPATCH_ARGS"\n'
+                              'if [ "$1" = pr-agent ]; then case "$SYNTHETIC_SOURCE_STATE" in\n'
+                              'malformed) printf "other: [%s\\n" "$SYNTHETIC_OPAQUE" > "$SYNTHETIC_SELECTED";;\n'
+                              'missing) rm "$SYNTHETIC_SELECTED";; esac; fi\n'
+                              'printf "RESULT=clean\\nCOMMENT_COUNT=0\\nBLOCKING_COUNT=0\\nSUGGESTION_COUNT=0\\n"\n')
+        executable.chmod(0o755)
+        for shell in self.compatible_shells():
+            for state in ('absent', 'empty', 'malformed', 'missing'):
+                with self.subTest(shell=shell, state=state):
+                    body = self.configured_source_case('absent' if state == 'absent' else 'empty')
+                    log = self.f.root / 'ready-dispatch-argv.bin'; log.unlink(missing_ok=True)
+                    ready = self.f.root / 'ready-transition'; ready.unlink(missing_ok=True)
+                    self.f.env.update(SYNTHETIC_DISPATCH_ARGS=str(log), SYNTHETIC_SOURCE_STATE=state,
+                                      SYNTHETIC_SELECTED=str(self.f.private), SYNTHETIC_OPAQUE=self.secret)
+                    body += r'''
+repo_review_platforms=()
+platforms=(pr-agent haystack)
+phase_after_clean_platforms=(haystack)
+phase_after_clean_enabled=1; phase_after_clean_started=0
+compare_mode=0; compare_first_blocking_result=
+pr_number=1993; branch_name=feature/1993-fixture
+aggregate_result=clean; aggregate_status=0; aggregate_reason=; aggregate_output=
+platform_result_records=(); platform_reviewed_heads=(); platform_result_tokens=()
+reviewer_loop_prior_history_payload_from_pr() { printf '{"entries":[]}\n'; }
+reviewer_loop_second_local_pass_confirm_live_head() { return 0; }
+reviewer_loop_platform_pre_dispatch() { reviewer_loop_pre_dispatch_action=dispatch; }
+reviewer_wait_budget_for_platform() { printf '1 synthetic unchanged\n'; }
+reviewer_poll_interval_resolve() { printf '1\n'; }
+reviewer_loop_rewait_prepare_platform() { :; }
+reviewer_loop_head_refs_prepare_platform() { :; }
+reviewer_loop_timing_begin() { :; }
+reviewer_loop_timing_end() { :; }
+reviewer_loop_process_platform_output() { aggregate_result=clean; aggregate_status=0; last_platform="$1"; }
+run_platform_review() { synthetic-ready-reviewer "$@"; }
+'''
+                    body += 'ensure_pr_ready_for_ready_phase() { touch ' + shlex.quote(str(ready)) + '; }\n'
+                    body += actual_loop + '\nprintf "RESULT=%s\\nSTATUS=%s\\n" "$aggregate_result" "$aggregate_status"\nexit "$aggregate_status"\n'
+                    result = self.run_command([shell, '-c', body])
+                    self.safe(result, 2 if state in ('malformed', 'missing') else 0)
+                    items = log.read_bytes().split(b'\0')[:-1]
+                    expected = [b'pr-agent', b'1993', b'feature/1993-fixture', b'1', b'1']
+                    if state not in ('malformed', 'missing'):
+                        expected += [b'haystack', b'1993', b'feature/1993-fixture', b'1', b'1']
+                    self.assertEqual(items, expected)
+                    self.assertEqual(ready.exists(), state not in ('malformed', 'missing'))
+                    self.assertIn('RESULT=escalate\n' if state in ('malformed', 'missing') else 'RESULT=clean\n', result.stdout)
+                    if state in ('malformed', 'missing'): self.assertNotIn('RESULT=clean\n', result.stdout)
+
+    def test_D93_head_evidence_and_terminal_publication_fail_closed(self):
+        source = (self.f.runtime / 'pr-review-loop.sh').read_text()
+        skipped_start = source.index('if [ -z "$last_platform" ]; then\n')
+        skipped = source[skipped_start:source.index('\n# --- Compare mode:', skipped_start)]
+        normal_start = source.index("# Persist this cycle's reviewer_loop_history.v1 ledger entry BEFORE")
+        normal = source[normal_start:source.index('\n# Append compare-mode metrics row', normal_start)]
+        tail_start = source.index('print_kv LOCAL_SECOND_PASS "${local_second_pass:-0}"', normal_start)
+        final = normal + '\n' + source[tail_start:]
+        for shell in self.compatible_shells():
+            for state in ('empty', 'configured', 'malformed', 'missing'):
+                for boundary, actual in (('renderer', 'render_status=0\nreviewer_loop_emit_local_ai_head_evidence_keys || render_status=$?\nexit "$render_status"'), ('skipped', skipped), ('final', final)):
+                    with self.subTest(shell=shell, state=state, boundary=boundary):
+                        body = self.configured_source_case(state)
+                        summary = self.f.root / 'owned-summary-argv.bin'; summary.unlink(missing_ok=True)
+                        body += 'platform_reviewed_heads=("local-ai-reviewer:$loop_head_sha")\n'
+                        body += '_post_review_summary() { printf "%s\\0" "$@" >> ' + shlex.quote(str(summary)) + '; }\n'
+                        body += r'''
+sync_reviewer_failed_label() { :; }
+reviewer_loop_persist_failure_should_escalate() { return 1; }
+pr_number=1993; last_platform=pr-agent
+aggregate_result=clean; aggregate_reason=; aggregate_output=
+total_comment_count=0; total_blocking_count=0; total_suggestion_count=0
+_summary_platform_list=pr-agent; aggregate_advisory_labels=; aggregate_possible_issue_eval_outcome=
+phase_after_clean_enabled=1; phase_after_clean_platform_list=haystack
+phase_after_clean_started=1; phase_after_clean_net_new_blocker=0; phase_after_clean_blocking_platform=
+pre_after_clean_only=0; advisory_checks_section=
+'''
+                        if boundary == 'skipped': body += 'last_platform=\n'
+                        result = self.run_command([shell, '-c', body + actual])
+                        for stream in (result.stdout, result.stderr): self.assertNotIn(self.secret, stream)
+                        if state in ('malformed', 'missing'):
+                            self.assertFalse(summary.exists(), 'configuration failure must precede owned summary publication')
+                            self.assertNotIn('LOCAL_AI_CONFIGURED=0', result.stdout)
+                            self.assertNotIn('RESULT=clean', result.stdout)
+                            self.assertNotIn('RESULT=skipped', result.stdout)
+                            self.assertEqual(result.returncode, 2)
+                            self.assertEqual(result.stdout, '')
+                            self.assertIn('configuration:', result.stderr)
+                        else:
+                            self.safe(result, 0)
+                            self.assertEqual(summary.exists(), boundary != 'renderer')
+                            self.assertIn('LOCAL_AI_CONFIGURED=' + ('1' if state == 'configured' else '0') + '\n', result.stdout)
+                            self.assertIn('LOCAL_AI_HEAD_CURRENT=' + ('1' if state == 'configured' else '') + '\n', result.stdout)
+                            if boundary == 'renderer': self.assertEqual(len(result.stdout.splitlines()), 3)
+                            else: self.assertIn('RESULT=' + ('skipped' if boundary == 'skipped' else 'clean') + '\n', result.stdout)
+
+
 if __name__ == '__main__':
     unittest.main(verbosity=2)
