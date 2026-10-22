@@ -346,12 +346,6 @@ ensure_terminal_tracker_status() {
   is_closeout_terminal_status "$after"
 }
 
-extract_closing_issue_numbers() {
-  grep -ioE '(^|[^[:alnum:]_])(close[sd]?|fix(es|ed)?|resolve[sd]?)[[:space:]]+(issue[[:space:]]+)?#[0-9]+' \
-    | grep -oE '[0-9]+$' \
-    | sort -un || true
-}
-
 validate_graduation_pr() {
   local pr_json parsed state merged_at base_ref head_ref
   if ! pr_json="$(gh pr view "$GRADUATION_PR" --json number,state,mergedAt,baseRefName,headRefName 2>/dev/null)"; then
@@ -473,9 +467,11 @@ discover_label_subitems() {
 }
 
 discover_closing_keyword_refs() {
-  # GitHub Projects / GitHub Issues path only. Scans raw PR title+body for
-  # closing keywords (including text inside fenced examples). Linear must not
-  # call this — see discover_linear_merged_pr_issue_refs.
+  # GitHub Projects / GitHub Issues path only. Scans PR title+body for live
+  # closing keywords via closing_keyword_live_refs (canonical fence / indent /
+  # inline / blockquote filter). Cross-repo forms like owner/repo#N never match
+  # the keyword pattern. Linear must not call this — see
+  # discover_linear_merged_pr_issue_refs.
   local prs_json
   if ! prs_json="$(gh pr list --state merged --base "$INTEGRATION_BRANCH" --limit 1000 --json number,title,body 2>/dev/null)"; then
     return 1
@@ -488,13 +484,19 @@ except Exception:
     sys.exit(1)
 for pr in prs or []:
     number = pr.get("number")
-    text = ((pr.get("title") or "") + "\n" + (pr.get("body") or "")).replace("\t", " ")
+    # Tabs become four spaces so TSV transport cannot break columns while
+    # indented-code detection (tab or 4+ spaces) still sees indent.
+    text = ((pr.get("title") or "") + "\n" + (pr.get("body") or "")).replace("\t", "    ")
     if number:
         print(f"PR\t{number}\t{text.replace(chr(10), chr(30))}")
 ' > "$TMP_DIR/merged-prs.tsv"
   while IFS="$(printf '\t')" read -r marker pr_number text; do
     [ "$marker" = "PR" ] || continue
-    printf '%s' "$text" | tr "$(printf '\036')" '\n' | extract_closing_issue_numbers > "$TMP_DIR/pr-${pr_number}-issues.txt"
+    if ! printf '%s' "$text" | tr "$(printf '\036')" '\n' \
+      | closing_keyword_live_refs \
+      | sort -un > "$TMP_DIR/pr-${pr_number}-issues.txt"; then
+      return 1
+    fi
     while IFS= read -r issue; do
       [ -z "$issue" ] && continue
       append_candidate "$issue" "pr:${pr_number}"
