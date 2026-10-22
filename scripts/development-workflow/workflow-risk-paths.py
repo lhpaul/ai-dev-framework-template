@@ -201,7 +201,11 @@ def main() -> int:
         result = evaluate(Path(args.repo_root).resolve(), args.product_repo, evidence)
     except (RiskPathError, OSError, ValueError, TypeError, KeyError, RecursionError) as exc:
         if isinstance(exc, RiskPathError):
-            print("ERROR: " + config_reader().format_config_error(exc.__cause__ or exc, key="guardrails.risk_paths"), file=sys.stderr)
+            try:
+                detail = config_reader().format_config_error(exc.__cause__ or exc, key="guardrails.risk_paths")
+            except Exception:
+                detail = "configuration: configuration validation error; key=guardrails.risk_paths"
+            print("ERROR: " + detail, file=sys.stderr)
         else:
             print("ERROR: unreadable project configuration or classifier evidence", file=sys.stderr)
         return 2

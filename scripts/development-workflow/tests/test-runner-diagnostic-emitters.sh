@@ -33,6 +33,7 @@
 # covers: scripts/development-workflow/post-merge-cleanup.sh
 # covers: scripts/development-workflow/discover-workflow-state.sh
 # covers: scripts/development-workflow/workflow-batch-lanes.sh
+# covers: scripts/development-workflow/workflow-risk-paths.py
 # covers: scripts/development-workflow/workflow-batch-plan.sh
 # covers: scripts/development-workflow/workflow-next-action.sh
 set -euo pipefail

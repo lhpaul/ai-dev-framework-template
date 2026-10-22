@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Binding D01-D72: synthetic paired-channel runtime/publication diagnostics."""
+"""Binding D01-D74: synthetic paired-channel runtime/publication diagnostics."""
 from __future__ import annotations
 
 import importlib.util
@@ -1803,6 +1803,74 @@ printf 'PROBE=%s\\n' "$settle_review_probe"
                         self.assertEqual(result.stdout, 'SYNTHETIC_OK\n' if mode == 'success' else '')
                         self.assertEqual(result.stderr, '' if mode == 'success' else 'ERROR: diagnostic sanitization failed\n')
                         self.assertNotIn(str(locator_dir), result.stdout + result.stderr)
+
+    def test_D73_parallelism_error_formatter_failure_is_metadata_only(self):
+        function = fixtures.function_text('workflow-batch-lanes.sh', 'read_parallelism_caps')
+        target = self.f.root / ('token=' + self.secret); target.mkdir()
+        missing_config = target / 'missing-selected.yaml'
+        malformed = target / 'malformed-selected.yaml'; malformed.write_text('other: [' + self.secret + '\n')
+        valid = self.f.root / 'caps.yaml'
+        valid.write_text('guardrails:\n  parallelism:\n    max_concurrent_by_stage:\n      spec: 2\n      plan: 3\n      review: 4\n      implementation: 5\n')
+        raising = self.f.root / 'raising-formatter'; raising.mkdir()
+        (raising / 'workflow-config-resolver.py').write_text('def format_config_error(*args, **kwargs):\n    raise RuntimeError("' + self.secret + '")\n')
+        availability = self.f.root / 'yaml-available'; availability.mkdir()
+        (availability / 'yaml.py').write_text('def safe_load(text):\n    raise AssertionError("real Path.read_text must fail before parsing")\n')
+        absent = self.f.root / 'yaml-absent'; absent.mkdir()
+        (absent / 'yaml.py').write_text('raise ImportError("synthetic dependency absence")\n')
+        original_path = self.f.env['PYTHONPATH']
+        defaults = {'spec': 0, 'plan': 0, 'review': 0, 'implementation': 1}
+        cases = [('missing-formatter', missing_config, target, availability, 2,
+                  'configuration: configuration validation error; key=guardrails.parallelism\n'),
+                 ('raising-formatter', missing_config, raising, availability, 2,
+                  'configuration: configuration validation error; key=guardrails.parallelism\n'),
+                 ('normal-formatter', missing_config, self.f.runtime, availability, 2,
+                  'configuration: configuration unreadable; key=guardrails.parallelism\n'),
+                 ('malformed-source-missing-formatter', malformed, target, None, 2,
+                  'configuration: configuration validation error; key=guardrails.parallelism\n'),
+                 ('valid-caps', valid, self.f.runtime, None, 0, ''),
+                 ('legacy-no-yaml-default', missing_config, target, absent, 0, '')]
+        for shell in self.compatible_shells():
+            for name, config, formatter_dir, stub, status, stderr in cases:
+                with self.subTest(case=name, shell=shell):
+                    self.f.env['PYTHONPATH'] = str(stub) + os.pathsep + original_path if stub else original_path
+                    body = 'set -euo pipefail\nSCRIPT_DIR=' + shlex.quote(str(formatter_dir)) + '\n'
+                    body += 'parallelism_config_file() { printf "%s\\n" ' + shlex.quote(str(config)) + '; };\n'
+                    body += function + '\nread_parallelism_caps ' + shlex.quote(str(self.f.checkout)) + '\n'
+                    try: result = self.safe(self.run_command([shell, '-c', body]), status)
+                    finally: self.f.env['PYTHONPATH'] = original_path
+                    self.assertEqual(result.stderr, stderr)
+                    self.assertNotIn('Traceback', result.stdout + result.stderr)
+                    self.assertNotIn(str(target), result.stdout + result.stderr)
+                    if status: self.assertEqual(result.stdout, '')
+                    else: self.assertEqual(json.loads(result.stdout), defaults if stub else {'spec': 2, 'plan': 3, 'review': 4, 'implementation': 5})
+
+    def test_D74_risk_error_formatter_failure_is_metadata_only(self):
+        # Actual CLI rejects [] evidence before config reads; only its renderer
+        # then attempts the sibling loader. No actual PR risk is classified.
+        source = (self.f.runtime / 'workflow-risk-paths.py').read_bytes()
+        target = self.f.root / ('token=' + self.secret); target.mkdir()
+        missing_script = target / 'workflow-risk-paths.py'; missing_script.write_bytes(source)
+        raising = self.f.root / 'raising-risk-formatter'; raising.mkdir()
+        raising_script = raising / 'workflow-risk-paths.py'; raising_script.write_bytes(source)
+        (raising / 'workflow-config-resolver.py').write_text('def format_config_error(*args, **kwargs):\n    raise RuntimeError("' + self.secret + '")\n')
+        self.f.shared.write_text('mode: single_repo\n')
+        cases = [('missing-formatter', missing_script, '[]', 2,
+                  'ERROR: configuration: configuration validation error; key=guardrails.risk_paths\n'),
+                 ('raising-formatter', raising_script, '[]', 2,
+                  'ERROR: configuration: configuration validation error; key=guardrails.risk_paths\n'),
+                 ('normal-formatter', self.f.runtime / 'workflow-risk-paths.py', '[]', 2,
+                  'ERROR: configuration: configuration validation error; key=guardrails.risk_paths\n'),
+                 ('normal-json-error', missing_script, self.secret, 2,
+                  'ERROR: unreadable project configuration or classifier evidence\n'),
+                 ('valid-no-map', self.f.runtime / 'workflow-risk-paths.py', '{}', 0, '')]
+        for name, script, evidence, status, stderr in cases:
+            with self.subTest(case=name):
+                result = self.safe(self.run_command(['python3', str(script), '--repo-root', str(self.f.checkout)], input=evidence), status)
+                self.assertEqual(result.stderr, stderr)
+                self.assertNotIn('Traceback', result.stdout + result.stderr)
+                self.assertNotIn(str(target), result.stdout + result.stderr)
+                if status: self.assertEqual(result.stdout, '')
+                else: self.assertEqual(json.loads(result.stdout), {'matches': {}})
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)

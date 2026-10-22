@@ -252,8 +252,12 @@ except ImportError:
 try:
     cfg = yaml.safe_load(path.read_text()) or {}
 except Exception as exc:
-    formatter = runpy.run_path(sys.argv[2])["format_config_error"]
-    print(formatter(exc, key="guardrails.parallelism"), file=sys.stderr)
+    try:
+        formatter = runpy.run_path(sys.argv[2])["format_config_error"]
+        detail = formatter(exc, key="guardrails.parallelism")
+    except Exception:
+        detail = "configuration: configuration validation error; key=guardrails.parallelism"
+    print(detail, file=sys.stderr)
     sys.exit(2)
 
 guardrails = cfg.get("guardrails") if isinstance(cfg, dict) else None
