@@ -95,7 +95,7 @@ fi
 workflow_bind_local_config_root "$repo_root" || exit 2
 repo_root="$(workflow_local_config_root)"
 require_gh
-cd "$repo_root"
+workflow_command_with_safe_stderr cd "$repo_root"
 
 elapsed=0
 if [ -n "$repo_selector" ] && workflow_is_valid_github_repo_slug "$repo_selector"; then

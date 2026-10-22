@@ -326,22 +326,22 @@ fi
 
 case "$POLL_INTERVAL" in
   ''|0|*[!0-9]*)
-    workflow_diagnostic "ERROR: --poll-interval value '$POLL_INTERVAL' is not a positive integer (must be >= 1)" >&2
+    workflow_diagnostic "ERROR: configuration validation error; key=--poll-interval" >&2
     exit 2
     ;;
 esac
 if [ "$POLL_INTERVAL" -gt 300 ]; then
-  workflow_diagnostic "ERROR: --poll-interval value '$POLL_INTERVAL' exceeds maximum of 300 seconds (5 minutes)" >&2
+  workflow_diagnostic "ERROR: configuration validation error; key=--poll-interval" >&2
   exit 2
 fi
 case "$MAX_WAIT" in
   ''|0|*[!0-9]*)
-    workflow_diagnostic "ERROR: --max-wait value '$MAX_WAIT' is not a positive integer (must be >= 1)" >&2
+    workflow_diagnostic "ERROR: configuration validation error; key=--max-wait" >&2
     exit 2
     ;;
 esac
 if [ "$MAX_WAIT" -gt 3600 ]; then
-  workflow_diagnostic "ERROR: --max-wait value '$MAX_WAIT' exceeds maximum of 3600 seconds (1 hour)" >&2
+  workflow_diagnostic "ERROR: configuration validation error; key=--max-wait" >&2
   exit 2
 fi
 

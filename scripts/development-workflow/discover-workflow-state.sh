@@ -71,7 +71,7 @@ print_filtered_refs() {
 }
 
 repo_root="$( { CDPATH='' cd -- "$repo_root" && pwd -P; } 2>/dev/null)" || { printf 'configuration: checkout access error\n' >&2; exit 2; }
-cd "$repo_root"
+workflow_command_with_safe_stderr cd "$repo_root"
 
 mode_context="$(workflow_repository_mode "$repo_root")"
 workflow_mode="$(workflow_context_value WORKFLOW_MODE "$mode_context")"

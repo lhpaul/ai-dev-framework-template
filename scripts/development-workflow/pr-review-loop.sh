@@ -145,17 +145,15 @@ _check_execution_budget() {
   local max_budget=604800       # one week of wall clock
   local bound_error=""
   if [ "${#retries}" -gt 10 ] || [ "$(( 10#$retries ))" -gt "$max_retries" ]; then
-    bound_error="CODERABBIT_RATE_LIMIT_MAX_RETRIES=$retries exceeds the maximum of $max_retries"
+    bound_error="configuration validation error; key=CODERABBIT_RATE_LIMIT_MAX_RETRIES"
   elif [ "${#wait_s}" -gt 10 ] || [ "$(( 10#$wait_s ))" -gt "$max_wait" ]; then
-    bound_error="CODERABBIT_RATE_LIMIT_WAIT=$wait_s exceeds the maximum of $max_wait"
+    bound_error="configuration validation error; key=CODERABBIT_RATE_LIMIT_WAIT"
   elif [ "${#budget}" -gt 10 ] || [ "$(( 10#$budget ))" -gt "$max_budget" ]; then
-    bound_error="PR_REVIEW_LOOP_EXECUTION_BUDGET=$budget exceeds the maximum of $max_budget"
+    bound_error="configuration validation error; key=PR_REVIEW_LOOP_EXECUTION_BUDGET"
   fi
   if [ -n "$bound_error" ]; then
     print_kv BUDGET_INVARIANT violated
     workflow_diagnostic "ERROR: $bound_error." >&2
-    workflow_diagnostic "  Values beyond these bounds overflow 64-bit arithmetic and would make" >&2
-    workflow_diagnostic "  the budget comparison meaningless." >&2
     print_kv RESULT escalate
     print_kv REASON execution_budget_misconfigured
     return 1
@@ -174,11 +172,7 @@ _check_execution_budget() {
 
   if [ "$worst" -ge "$budget" ]; then
     print_kv BUDGET_INVARIANT violated
-    workflow_diagnostic "ERROR: worst-case rate-limit wait (${retries} x ${wait_s}s = ${worst}s) is not less than" >&2
-    workflow_diagnostic "  the execution budget (${budget}s). A rate-limited PR could not finish waiting" >&2
-    workflow_diagnostic "  inside the budget this run declares, so it would be truncated rather than" >&2
-    workflow_diagnostic "  reviewed. Raise PR_REVIEW_LOOP_EXECUTION_BUDGET, or lower" >&2
-    workflow_diagnostic "  CODERABBIT_RATE_LIMIT_MAX_RETRIES / CODERABBIT_RATE_LIMIT_WAIT." >&2
+    workflow_diagnostic "ERROR: configuration validation error; key=PR_REVIEW_LOOP_EXECUTION_BUDGET" >&2
     print_kv RESULT escalate
     print_kv REASON execution_budget_misconfigured
     return 1
@@ -1312,7 +1306,7 @@ expensive_gate_resolve_max_deferrals() {
     source="default"
   fi
   if ! [[ "$configured" =~ ^[1-9][0-9]{0,5}$ ]]; then
-    workflow_diagnostic "WARN: PR_REVIEW_LOOP_MAX_EXPENSIVE_DEFERRALS value '$configured' (source: $source) is not a positive integer within the supported range (1-999999); defaulting to 3" >&2
+    workflow_diagnostic "WARN: configuration validation error; key=PR_REVIEW_LOOP_MAX_EXPENSIVE_DEFERRALS" >&2
     configured=3
   fi
   printf '%s\n' "$configured"
@@ -2019,7 +2013,7 @@ emit_review_lifecycle_duplicate_warnings() {
 
   while IFS= read -r duplicate; do
     [ -z "$duplicate" ] && continue
-    printf 'WARN: review lifecycle config lists reviewer "%s" in more than one bucket; each reviewer should appear only once across on_draft.runner, on_draft.github, and on_ready.github.\n' "$duplicate" | workflow_redact_text >&2
+    printf 'WARN: configuration validation error; key=review\n' | workflow_redact_text >&2
   done <<_REVIEW_DUPLICATE_LINES_
 $duplicates
 _REVIEW_DUPLICATE_LINES_
@@ -4859,7 +4853,7 @@ run_coderabbit_cli_review() {
   require_gh
   reviewer_script="$(workflow_repo_root)/scripts/development-workflow/coderabbit-cli-reviewer.sh"
   review_repo_root="${repo_root:-$(workflow_repo_root)}"
-  cd "$review_repo_root"
+  workflow_command_with_safe_stderr cd "$review_repo_root"
 
   local owner repo_name repo
   repo="$(repo_slug)"
@@ -5114,7 +5108,7 @@ run_local_ai_reviewer_review() {
   require_gh
   reviewer_script="$(workflow_repo_root)/scripts/development-workflow/local-ai-reviewer.sh"
   review_repo_root="${repo_root:-$(workflow_repo_root)}"
-  cd "$review_repo_root"
+  workflow_command_with_safe_stderr cd "$review_repo_root"
 
   local owner repo_name repo
   repo="$(repo_slug)"
@@ -10222,7 +10216,7 @@ reviewer_wait_budget_config_warnings() {
       continue
     fi
     if ! reviewer_loop_is_supported_platform "$key"; then
-      workflow_diagnostic "WARN: review.wait_budgets.${key} is not a supported platform; ignored" >&2
+      workflow_diagnostic "WARN: configuration validation error; key=review.wait_budgets" >&2
     fi
   done < <(workflow_config_review_wait_budget_keys "$cfg" 2>/dev/null || true)
   return 0
@@ -10242,7 +10236,7 @@ reviewer_wait_budget_configured() {
       return 0
     fi
     if [[ "$CODEX_GITHUB_MAX_WAIT" =~ ^[1-9][0-9]*$ ]]; then
-      workflow_diagnostic "WARN: CODEX_GITHUB_MAX_WAIT value '${CODEX_GITHUB_MAX_WAIT}' is not a positive whole number of seconds (1-999999); ignored" >&2
+      workflow_diagnostic "WARN: configuration validation error; key=CODEX_GITHUB_MAX_WAIT" >&2
     else
       # Existing warning, emitted by the unchanged value source.
       codex_github_default_max_wait >/dev/null
@@ -10263,11 +10257,11 @@ reviewer_wait_budget_configured() {
     [ "$present" -eq 1 ] || return 0
   fi
   if ! reviewer_wait_seconds_is_valid "$value"; then
-    workflow_diagnostic "WARN: review.wait_budgets.${platform} value '${value}' is not a positive whole number of seconds (1-999999); using the built-in default" >&2
+    workflow_diagnostic "WARN: configuration validation error; key=review.wait_budgets" >&2
     return 0
   fi
   if [ "$platform" = "claude-code-action" ] && [ "$value" -gt "$REVIEWER_LOOP_CLAUDE_CODE_ACTION_MAX_WAIT" ]; then
-    workflow_diagnostic "WARN: review.wait_budgets.claude-code-action value '${value}' exceeds the companion's ${REVIEWER_LOOP_CLAUDE_CODE_ACTION_MAX_WAIT}-second maximum; using the built-in default" >&2
+    workflow_diagnostic "WARN: configuration validation error; key=review.wait_budgets.claude-code-action" >&2
     return 0
   fi
   printf '%s\n' "$value"
@@ -14209,7 +14203,7 @@ reviewer_loop_resolve_max_cycles() {
     source="default"
   fi
   if ! [[ "$configured" =~ ^[1-9][0-9]{0,5}$ ]]; then
-    workflow_diagnostic "WARN: max_cycles value '$configured' (source: $source) is not a positive integer within the supported range (1-999999); defaulting to 10" >&2
+    workflow_diagnostic "WARN: configuration validation error; key=review.max_cycles" >&2
     configured=10
   fi
   printf '%s\n' "$configured"
@@ -14240,7 +14234,7 @@ reviewer_loop_resolve_max_total_cycles() {
     source="default"
   fi
   if ! [[ "$configured" =~ ^[1-9][0-9]{0,5}$ ]]; then
-    workflow_diagnostic "WARN: max_total_cycles value '$configured' (source: $source) is not a positive integer within the supported range (1-999999); defaulting to 25" >&2
+    workflow_diagnostic "WARN: configuration validation error; key=review.max_total_cycles" >&2
     configured=25
   fi
   printf '%s\n' "$configured"
@@ -15008,7 +15002,7 @@ done
 # before any gh call, so no review request is posted for a run that could
 # never wait correctly. 1-999999 keeps the budget inside bash integer tests.
 if [ -n "$max_wait_override" ] && ! reviewer_wait_seconds_is_valid "$max_wait_override"; then
-  workflow_diagnostic "--max-wait must be a positive whole number of seconds (1-999999) (got '${max_wait_override}')." >&2
+  workflow_diagnostic "ERROR: configuration validation error; key=--max-wait" >&2
   usage >&2
   exit 64
 fi
@@ -15398,7 +15392,7 @@ reorder_expensive_reviewers_last
 
 if [ "${#platforms[@]}" -gt 0 ]; then
   require_gh
-  cd "$repo_root" || exit 1
+  workflow_command_with_safe_stderr cd "$repo_root" || exit 1
 
   if [ -z "$branch_name" ]; then
     if ! branch_name="$(workflow_command_with_safe_stderr gh pr view "$pr_number" --json headRefName --jq '.headRefName')"; then

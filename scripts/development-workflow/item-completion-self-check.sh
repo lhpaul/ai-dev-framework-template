@@ -161,7 +161,7 @@ is_true() {
     true|1|yes) return 0 ;;
     false|0|no|"") return 1 ;;
     *)
-      workflow_diagnostic "Boolean option must be true or false, got '$1'." >&2
+      workflow_diagnostic "ERROR: configuration validation error" >&2
       exit 64
       ;;
   esac
@@ -173,7 +173,7 @@ validate_bool_option() {
   case "${value:-}" in
     true|1|yes|false|0|no|"") ;;
     *)
-      workflow_diagnostic "$option must be true or false, got '$value'." >&2
+      workflow_diagnostic "ERROR: configuration validation error; key=$option" >&2
       exit 64
       ;;
   esac
@@ -537,7 +537,7 @@ worktree_path_for_branch() {
 
 workflow_bind_local_config_root "$repo_root" || exit 2
 repo_root="$(workflow_local_config_root)"
-cd "$repo_root"
+workflow_command_with_safe_stderr cd "$repo_root"
 
 resolved_repo_root="$(pwd -P)"
 resolved_worktree_path="$(CDPATH='' cd -- "$worktree_path" 2>/dev/null && pwd -P || printf '%s' "$worktree_path")"

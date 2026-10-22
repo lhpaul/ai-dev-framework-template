@@ -313,7 +313,7 @@ if [ -z "$repo_root" ]; then
 fi
 
 repo_root="$( { CDPATH='' cd -- "$repo_root" && pwd -P; } 2>/dev/null)" || { printf 'configuration: checkout access error\n' >&2; exit 1; }
-cd "$repo_root" || exit 1
+workflow_command_with_safe_stderr cd "$repo_root" || exit 1
 
 caps_json="$(read_parallelism_caps "$repo_root")" || exit 2
 max_spec="$(printf '%s' "$caps_json" | jq -r '.spec')"

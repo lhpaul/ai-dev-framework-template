@@ -190,20 +190,20 @@ done
 
 case "$POLL_INTERVAL" in
   ''|0|*[!0-9]*)
-    workflow_diagnostic "ERROR: --poll-interval value '$POLL_INTERVAL' is not a positive integer (must be >= 1)" >&2
+    workflow_diagnostic "ERROR: configuration validation error; key=--poll-interval" >&2
     exit 2
     ;;
 esac
 case "$MAX_WAIT" in
   ''|0|*[!0-9]*)
-    workflow_diagnostic "ERROR: --max-wait value '$MAX_WAIT' is not a positive integer (must be >= 1)" >&2
+    workflow_diagnostic "ERROR: configuration validation error; key=--max-wait" >&2
     exit 2
     ;;
 esac
 # PRE_TRIGGER_WAIT may be 0 (skip the pre-trigger check) but must be non-negative.
 case "$PRE_TRIGGER_WAIT" in
   ''|*[!0-9]*)
-    workflow_diagnostic "ERROR: --pre-trigger-wait value '$PRE_TRIGGER_WAIT' is not a non-negative integer (must be >= 0)" >&2
+    workflow_diagnostic "ERROR: configuration validation error; key=--pre-trigger-wait" >&2
     exit 2
     ;;
 esac
@@ -211,7 +211,7 @@ PRE_TRIGGER_WAIT=$((10#$PRE_TRIGGER_WAIT))
 # MAX_RETRIGGERS may be 0 (disable retriggering) but must be a non-negative integer.
 case "$MAX_RETRIGGERS" in
   ''|*[!0-9]*)
-    workflow_diagnostic "ERROR: --max-retriggers value '$MAX_RETRIGGERS' is not a non-negative integer (must be >= 0)" >&2
+    workflow_diagnostic "ERROR: configuration validation error; key=--max-retriggers" >&2
     exit 2
     ;;
 esac

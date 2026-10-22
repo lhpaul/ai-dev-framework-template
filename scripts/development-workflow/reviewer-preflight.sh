@@ -380,8 +380,8 @@ case "$mode" in pre-dispatch|branch-resume|pr-resume) ;; *) fail '--mode must be
 # resolved with `pwd -P` first so a symlinked TMPDIR (e.g. macOS's
 # /var -> /private/var) cannot hide the containment. The EXIT trap already
 # removes work_dir on this path, so the rejected scratch tree does not leak.
-repo_root_physical=$(cd -- "$repo_root" && pwd -P) || fail 'cannot resolve --repo-root to a physical path'
-work_dir_physical=$(cd -- "$work_dir" && pwd -P) || fail 'cannot resolve the scratch directory to a physical path'
+repo_root_physical=$( { cd -- "$repo_root" && pwd -P; } 2>/dev/null) || fail 'cannot resolve --repo-root to a physical path'
+work_dir_physical=$( { cd -- "$work_dir" && pwd -P; } 2>/dev/null) || fail 'cannot resolve the scratch directory to a physical path'
 case "$work_dir_physical/" in
   "$repo_root_physical"/*) fail "refusing to run with a scratch directory inside --repo-root ($work_dir_physical); set TMPDIR to a location outside the repository so the read-only side-effect check stays meaningful" ;;
 esac

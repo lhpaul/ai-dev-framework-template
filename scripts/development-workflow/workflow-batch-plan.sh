@@ -508,7 +508,7 @@ while [ "$#" -gt 0 ]; do
 done
 
 repo_root="$( { CDPATH='' cd -- "$repo_root" && pwd -P; } 2>/dev/null)" || { printf 'configuration: checkout access error\n' >&2; exit 1; }
-cd "$repo_root" || exit 1
+workflow_command_with_safe_stderr cd "$repo_root" || exit 1
 if [ -n "$scan_snapshot" ]; then
   python3 "$SCRIPT_DIR/workflow-portfolio-scan.py" --repo-root "$repo_root" \
     --scan-snapshot "$scan_snapshot" --mode validate

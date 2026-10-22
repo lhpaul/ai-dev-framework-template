@@ -193,7 +193,7 @@ done
 # Validate timeout
 case "$TIMEOUT" in
   ''|0|*[!0-9]*)
-    workflow_diagnostic "ERROR: --timeout value '$TIMEOUT' is not a positive integer (must be >= 1)" >&2
+    workflow_diagnostic "ERROR: configuration validation error; key=--timeout" >&2
     exit 3
     ;;
 esac
@@ -201,7 +201,7 @@ esac
 # Validate poll interval
 case "$POLL_INTERVAL" in
   ''|0|*[!0-9]*)
-    workflow_diagnostic "ERROR: HAYSTACK_POLL_INTERVAL value '$POLL_INTERVAL' is not a positive integer (must be >= 1)" >&2
+    workflow_diagnostic "ERROR: configuration validation error; key=HAYSTACK_POLL_INTERVAL" >&2
     exit 3
     ;;
 esac

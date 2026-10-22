@@ -118,7 +118,7 @@ resolve_local_ai_reviewer_command() {
       preset_label="Codex"
       ;;
     *)
-      workflow_diagnostic "ERROR: unknown LOCAL_AI_REVIEWER_BACKEND '$backend' (expected codex or http)" >&2
+      workflow_diagnostic "ERROR: configuration validation error; key=LOCAL_AI_REVIEWER_BACKEND" >&2
       return 1
       ;;
   esac
@@ -1084,7 +1084,7 @@ done
 
 case "$TIMEOUT" in
   ''|0|*[!0-9]*)
-    workflow_diagnostic "ERROR: --timeout value '$TIMEOUT' is not a positive integer" >&2
+    workflow_diagnostic "ERROR: configuration validation error; key=--timeout" >&2
     exit 2
     ;;
 esac
@@ -1154,13 +1154,13 @@ if [ "$diff_fetch_failed" -ne 0 ]; then
 fi
 
 if [ -n "$REPO_ROOT" ]; then
-  if ! REPO_ROOT="$(CDPATH='' cd -- "$REPO_ROOT" && pwd -P)"; then
-    workflow_diagnostic "ERROR: --repo-root is not a Git checkout: $REPO_ROOT" >&2
+  if ! REPO_ROOT="$( { CDPATH='' cd -- "$REPO_ROOT" && pwd -P; } 2>/dev/null)"; then
+    workflow_diagnostic "ERROR: configuration validation error; key=--repo-root" >&2
     print_result escalate 0 0 0 invalid_repo_root invalid_repo_root
     exit 2
   fi
   if [ ! -d "$REPO_ROOT/.git" ] && ! git -C "$REPO_ROOT" rev-parse --git-dir >/dev/null 2>&1; then
-    workflow_diagnostic "ERROR: --repo-root is not a Git checkout: $REPO_ROOT" >&2
+    workflow_diagnostic "ERROR: configuration validation error; key=--repo-root" >&2
     print_result escalate 0 0 0 invalid_repo_root invalid_repo_root
     exit 2
   fi
@@ -1238,7 +1238,7 @@ case "$graph_strategy" in
     command -v graphify >/dev/null 2>&1 && graph_context="graphify" || graph_context="skipped"
     ;;
   *)
-    workflow_diagnostic "ERROR: invalid LOCAL_AI_REVIEWER_GRAPH_STRATEGY '$graph_strategy'" >&2
+    workflow_diagnostic "ERROR: configuration validation error; key=LOCAL_AI_REVIEWER_GRAPH_STRATEGY" >&2
     print_result escalate 0 0 0 malformed_output malformed_output
     exit 2
     ;;

@@ -3035,5 +3035,230 @@ issue=1993; stage=fixture; expected_branch=feature/1993-fake; resolved_worktree_
                         self.assertIn('| pull_request.local_reviewer_head | ' + ('verified | ledger head matches live headRefOid' if state == 'configured' else ('unavailable_optional | not claimed' if state == 'not-claimed' else 'unavailable_optional | local-ai-reviewer not configured')), result.stdout)
 
 
+    def diagnostic_actual_function(self, file, name):
+        source = (self.f.runtime / file).read_text()
+        start = source.index(name + '() {')
+        return source[start:source.index('\n}', start) + 2]
+
+    def test_D96_actual_local_root_native_failure_and_success(self):
+        import shutil
+        (self.f.checkout / 'REVIEW.md').write_text('# Synthetic contract\n')
+        self.gh_script('case "$*" in "pr diff"*) echo REVIEW.md;; "repo view"*) echo fixture/repo;; "pr view"*) cat "$SYNTHETIC_PR";; "auth status"*) exit 0;; *) exit 99;; esac\n')
+        capture = self.f.root / 'root-review-capture.json'
+        command = self.f.bin / 'root-review-command'
+        command.write_text('#!/usr/bin/env python3\nimport json,os,sys\nopen(os.environ["ROOT_CAPTURE"],"w").write(json.dumps({"cwd":os.getcwd(),"args":sys.argv[1:]}))\nprint(json.dumps({"result":"clean","comments":[]}))\n')
+        command.chmod(0o755)
+        real_git = shutil.which('git', path=self.f.env['PATH'])
+        git = self.f.bin / 'git'
+        git.write_text('#!/bin/sh\ncase "$*" in *"remote get-url origin"*) echo https://github.com/fixture/repo.git; exit 0;; esac\nexec ' + shlex.quote(real_git) + ' "$@"\n'); git.chmod(0o755)
+        self.f.env.update(LOCAL_AI_REVIEWER_COMMAND=shlex.quote(str(command)) + ' first ' + shlex.quote('two words'),
+                          LOCAL_AI_REVIEWER_GRAPH_STRATEGY='none', ROOT_CAPTURE=str(capture))
+        for shell in self.compatible_shells():
+            for state in ('missing', 'valid'):
+                with self.subTest(shell=shell, state=state):
+                    capture.unlink(missing_ok=True)
+                    root = self.f.root / ('password=' + self.secret) / 'missing' if state == 'missing' else self.f.checkout
+                    result = self.safe(self.run_command([shell, str(self.f.runtime / 'local-ai-reviewer.sh'), '1993', 'fixture', 'repo', '--repo-root', str(root)]), 2 if state == 'missing' else 0)
+                    self.assertFalse(self.f.log.exists())
+                    if state == 'missing':
+                        self.assertFalse(capture.exists())
+                        self.assertIn('invalid_repo_root', result.stdout)
+                        self.assertIn('configuration validation error', result.stderr)
+                    else:
+                        self.assertIn('RESULT=clean\n', result.stdout)
+                        payload = json.loads(capture.read_text())
+                        self.assertEqual(payload, {'cwd': str(self.f.checkout.resolve()), 'args': ['first', 'two words']})
+
+    def test_D97_all_changed_native_root_statements(self):
+        import re
+        cases = [('N02', 'coderabbit-cli-reviewer.sh', 'REPO_ROOT', 0, 'cwd'), ('N03', 'item-completion-self-check.sh', 'repo_root', 0, 'cwd'), ('N04', 'pr-ci-loop.sh', 'repo_root', 0, 'cwd'), ('N05', 'pr-review-loop.sh', 'repo_root', 0, 'cwd'), ('N06', 'pr-review-loop.sh', 'review_repo_root', 0, 'cwd'), ('N07', 'pr-review-loop.sh', 'review_repo_root', 1, 'cwd'), ('N08', 'discover-workflow-state.sh', 'repo_root', 1, 'cwd'), ('N09', 'workflow-next-action.sh', 'repo_root', 1, 'cwd'), ('N10', 'workflow-batch-plan.sh', 'repo_root', 1, 'cwd'), ('N11', 'workflow-batch-lanes.sh', 'repo_root', 1, 'cwd'), ('N12', 'reviewer-preflight.sh', 'repo_root', 0, 'preflight'), ('N13', 'reviewer-preflight.sh', 'work_dir', 0, 'preflight'), ('N14', 'post-merge-cleanup.sh', 'top', 0, 'physical'), ('N15', 'post-merge-cleanup.sh', 'dir', 0, 'physical'), ('N16', 'post-merge-cleanup.sh', 'HUB_REPO_ROOT', 0, 'cwd'), ('N17', 'post-merge-cleanup.sh', 'CLEANUP_REPO_ROOT', 0, 'cwd'), ('N18', 'post-merge-cleanup.sh', 'CLEANUP_REPO_ROOT', 1, 'physical'), ('N19', 'post-merge-cleanup.sh', 'base_worktree', 0, 'physical'), ('N20', 'post-merge-cleanup.sh', 'tracker_repo_root', 0, 'physical'), ('N21', 'post-merge-cleanup.sh', 'HUB_REPO_ROOT', 1, 'slug'), ('N22', 'post-merge-cleanup.sh', 'HUB_REPO_ROOT', 2, 'cwd'), ('N23', 'post-merge-cleanup.sh', 'HUB_REPO_ROOT', 3, 'cwd'), ('N24', 'post-merge-cleanup.sh', 'HUB_REPO_ROOT', 4, 'cwd')]
+        for shell in self.compatible_shells():
+            for name, file, variable, ordinal, transport in cases:
+                source = (self.f.runtime / file).read_text().splitlines()
+                statements = [s for s in source if re.search(r'\bcd\s+(?:--\s+)?"\$' + re.escape(variable) + '"', s)]
+                statement = statements[ordinal]
+                for state in ('missing', 'valid'):
+                    for context in ('errexit', 'conditional'):
+                        with self.subTest(shell=shell, site=name, state=state, context=context):
+                            root = self.f.root / ('password=' + self.secret) / 'missing' if state == 'missing' else self.f.root / 'valid directory with spaces'
+                            if state == 'valid': root.mkdir(exist_ok=True)
+                            argv = self.f.root / 'native-root-argv.bin'; argv.write_bytes(b'')
+                            cwd = self.f.root / 'native-root-cwd'; cwd.unlink(missing_ok=True)
+                            self.f.env.update(NATIVE_TARGET=str(root), NATIVE_ARGV=str(argv), NATIVE_CWD=str(cwd))
+                            body = 'set -euo pipefail\nsource ' + shlex.quote(str(self.f.runtime / 'workflow-lib.sh')) + '\n'
+                            body += r'''
+trap 'exit_status=$?; builtin pwd -P > "$NATIVE_CWD"; exit "$exit_status"' EXIT
+cd() {
+  local arg matched=0
+  for arg in "$@"; do [ "$arg" != "$NATIVE_TARGET" ] || matched=1; done
+  if [ "$matched" -eq 1 ]; then printf '%s\0' "$@" >> "$NATIVE_ARGV"; fi
+  builtin cd "$@"
+}
+fail() { printf 'configuration: checkout access error\n' >&2; return 3; }
+gh() { printf 'fixture/repo\n'; }
+'''
+                            body += variable + '=' + shlex.quote(str(root)) + '\n'
+                            body += 'actual_boundary() {\n' + statement + '\n}\n'
+                            if context == 'conditional':
+                                body += 'status=0\nactual_boundary || status=$?\n[ "$status" -eq 0 ] || exit "$status"\n'
+                            else: body += 'actual_boundary\n'
+                            if transport == 'preflight' or (transport == 'physical' and not statement.lstrip().startswith('(')):
+                                output_variable = statement.strip().split('=', 1)[0]
+                                body += 'printf "%s\\n" "$' + output_variable + '"\n'
+                            elif transport == 'slug': body += 'printf "%s\\n" "$slug"\n'
+                            elif transport == 'cwd': body += 'builtin pwd -P\n'
+                            expected = 0 if state == 'valid' else (3 if transport == 'preflight' else 1)
+                            result = self.safe(self.run_command([shell, '-c', body]), expected)
+                            expected_args = ([b'--'] if re.search(r'\bcd\s+--\s+', statement) else []) + [str(root).encode()]
+                            self.assertEqual(argv.read_bytes().split(b'\0')[:-1], expected_args)
+                            self.assertEqual(cwd.read_text().strip(), str(root.resolve()) if state == 'valid' and transport == 'cwd' else str(self.f.checkout))
+                            self.assertEqual(result.stdout, '' if state == 'missing' else ('fixture/repo\n' if transport == 'slug' else str(root.resolve()) + '\n'))
+                            if state == 'valid': self.assertEqual(result.stderr, '')
+                            self.assertFalse(self.f.log.exists())
+
+    def test_D98_loop_rejected_settings_preserve_numeric_payloads(self):
+        prefix = 'HARNESS_MODE=1 source ' + shlex.quote(str(self.f.runtime / 'pr-review-loop.sh')) + '\n'
+        for shell in self.compatible_shells():
+            for function, envkey, default in (
+                    ('reviewer_loop_resolve_max_cycles', 'PR_REVIEW_LOOP_MAX_CYCLES', '10'),
+                    ('reviewer_loop_resolve_max_total_cycles', 'PR_REVIEW_LOOP_MAX_TOTAL_CYCLES', '25'),
+                    ('expensive_gate_resolve_max_deferrals', 'PR_REVIEW_LOOP_MAX_EXPENSIVE_DEFERRALS', '3')):
+                for state in ('invalid-config', 'invalid-env', 'valid', 'empty'):
+                    with self.subTest(shell=shell, function=function, state=state):
+                        value = self.secret if state.startswith('invalid') else ('7' if state == 'valid' else '')
+                        body = prefix + envkey + '=' + shlex.quote(value if state == 'invalid-env' or function == 'expensive_gate_resolve_max_deferrals' else '') + '\n'
+                        body += function + (' ' + shlex.quote(value) if function != 'expensive_gate_resolve_max_deferrals' else '')
+                        result = self.safe(self.run_command([shell, '-c', body]), 0)
+                        self.assertEqual(result.stdout, ('7' if state == 'valid' else default) + '\n')
+                        self.assertEqual(bool(result.stderr), state.startswith('invalid'))
+                        if result.stderr: self.assertRegex(result.stderr, r'^WARN: configuration validation error; key=[A-Za-z0-9_.-]+\n$')
+            for state, settings, stdout in (
+                    ('retries-bound', 'CODERABBIT_RATE_LIMIT_MAX_RETRIES=12345678901234567', 'BUDGET_INVARIANT=violated\nRESULT=escalate\nREASON=execution_budget_misconfigured\n'),
+                    ('wait-bound', 'CODERABBIT_RATE_LIMIT_WAIT=23456789012345678', 'BUDGET_INVARIANT=violated\nRESULT=escalate\nREASON=execution_budget_misconfigured\n'),
+                    ('budget-bound', 'PR_REVIEW_LOOP_EXECUTION_BUDGET=34567890123456789', 'BUDGET_INVARIANT=violated\nRESULT=escalate\nREASON=execution_budget_misconfigured\n'),
+                    ('combination', 'CODERABBIT_RATE_LIMIT_MAX_RETRIES=0000000004\nCODERABBIT_RATE_LIMIT_WAIT=0000000900\nPR_REVIEW_LOOP_EXECUTION_BUDGET=0000001800', 'BUDGET_EXECUTION_SECONDS=1800\nBUDGET_WORST_CASE_RATE_LIMIT_WAIT_SECONDS=3600\nBUDGET_INVARIANT=violated\nRESULT=escalate\nREASON=execution_budget_misconfigured\n'),
+                    ('valid', 'CODERABBIT_RATE_LIMIT_MAX_RETRIES=4\nCODERABBIT_RATE_LIMIT_WAIT=900\nPR_REVIEW_LOOP_EXECUTION_BUDGET=5400', 'BUDGET_EXECUTION_SECONDS=5400\nBUDGET_WORST_CASE_RATE_LIMIT_WAIT_SECONDS=3600\nBUDGET_INVARIANT=ok\n')):
+                with self.subTest(shell=shell, budget=state):
+                    result = self.safe(self.run_command([shell, '-c', prefix + settings + '\n_check_execution_budget']), 0 if state == 'valid' else 1)
+                    self.assertEqual(result.stdout, stdout)
+                    if state != 'valid':
+                        self.assertRegex(result.stderr, r'^ERROR: configuration validation error; key=[A-Z_]+\.?\n$')
+                        for line in settings.splitlines(): self.assertNotIn(line.split('=', 1)[1], result.stdout + result.stderr)
+                    else: self.assertEqual(result.stderr, '')
+            for state, text, call, expected, warns in (
+                    ('invalid-value', 'review:\n  wait_budgets:\n    bugbot: OPAQUE\n', 'reviewer_wait_budget_resolve bugbot', '2400 default none\n', True),
+                    ('unknown-key', 'review:\n  wait_budgets:\n    OPAQUE: 77\n    bugbot: 77\n', 'reviewer_wait_budget_config_warnings', '', True),
+                    ('empty', 'review:\n  wait_budgets:\n    bugbot:\n', 'reviewer_wait_budget_resolve bugbot', '2400 default none\n', True),
+                    ('flow', 'review:\n  wait_budgets: {bugbot: 77}\n', 'reviewer_wait_budget_config_warnings', '', True),
+                    ('claude-cap', 'review:\n  wait_budgets:\n    claude-code-action: 54321\n', 'reviewer_wait_budget_resolve claude-code-action', '1200 default none\n', True),
+                    ('valid', 'review:\n  wait_budgets:\n    bugbot: 77\n', 'reviewer_wait_budget_resolve bugbot', '77 configured none\n', False),
+                    ('missing', 'review:\n  wait_budgets:\n    bugbot: 77\n', 'reviewer_wait_budget_configured devin', '', False)):
+                with self.subTest(shell=shell, wait=state):
+                    self.f.shared.write_text(text.replace('OPAQUE', self.secret))
+                    result = self.safe(self.run_command([shell, '-c', prefix + 'config_file=' + shlex.quote(str(self.f.shared)) + '\n' + call]), 0)
+                    self.assertEqual(result.stdout, expected)
+                    self.assertEqual(bool(result.stderr), warns)
+                    self.assertNotIn('54321', result.stdout + result.stderr)
+                    if warns and state != 'flow': self.assertRegex(result.stderr, r'^WARN: configuration validation error; key=[A-Za-z0-9_.-]+\n$')
+            result = self.safe(self.run_command([shell, '-c', prefix + 'config_file=/dev/null\nCODEX_GITHUB_MAX_WAIT=456789012345\nreviewer_wait_budget_configured codex-github']), 0)
+            self.assertEqual(result.stdout, ''); self.assertNotIn('456789012345', result.stderr)
+            self.assertIn('configuration validation error; key=CODEX_GITHUB_MAX_WAIT', result.stderr)
+            result = self.safe(self.run_command([shell, str(self.f.runtime / 'pr-review-loop.sh'), '1993', '--max-wait', self.secret]), 64)
+            self.assertIn('configuration validation error; key=--max-wait', result.stderr)
+
+    def test_D99_companion_rejected_setting_emitters(self):
+        cases = [
+            ('local-ai-reviewer.sh', '--timeout', self.secret, 2),
+            ('coderabbit-cli-reviewer.sh', '--timeout', self.secret, 3),
+            ('haystack-reviewer.sh', '--timeout', self.secret, 3),
+            ('codex-github-reviewer.sh', '--poll-interval', self.secret, 2),
+            ('codex-github-reviewer.sh', '--max-wait', self.secret, 2),
+            ('codex-github-reviewer.sh', '--pre-trigger-wait', self.secret, 2),
+            ('codex-github-reviewer.sh', '--max-retriggers', self.secret, 2),
+            ('claude-code-action-reviewer.sh', '--poll-interval', self.secret, 2),
+            ('claude-code-action-reviewer.sh', '--poll-interval', '54321', 2),
+            ('claude-code-action-reviewer.sh', '--max-wait', self.secret, 2),
+            ('claude-code-action-reviewer.sh', '--max-wait', '65432', 2)]
+        for shell in self.compatible_shells():
+            for file, option, value, status in cases:
+                with self.subTest(shell=shell, file=file, option=option, value_kind='opaque' if value == self.secret else 'numeric-bound'):
+                    result = self.safe(self.run_command([shell, str(self.f.runtime / file), '1993', 'fixture', 'repo', option, value]), status)
+                    self.assertNotIn(value, result.stdout + result.stderr)
+                    self.assertIn('configuration validation error; key=' + option, result.stderr)
+                    self.assertFalse(self.f.log.exists())
+            for file, variable, key, status in (
+                    ('local-ai-reviewer.sh', 'LOCAL_AI_REVIEWER_TIMEOUT', '--timeout', 2),
+                    ('coderabbit-cli-reviewer.sh', 'CODERABBIT_CLI_REVIEW_TIMEOUT', '--timeout', 3),
+                    ('haystack-reviewer.sh', 'HAYSTACK_REVIEWER_TIMEOUT', '--timeout', 3),
+                    ('haystack-reviewer.sh', 'HAYSTACK_POLL_INTERVAL', 'HAYSTACK_POLL_INTERVAL', 3),
+                    ('codex-github-reviewer.sh', 'CODEX_GITHUB_PRE_TRIGGER_WAIT', '--pre-trigger-wait', 2)):
+                with self.subTest(shell=shell, setting=variable):
+                    previous = self.f.env.get(variable); self.f.env[variable] = self.secret
+                    try: result = self.safe(self.run_command([shell, str(self.f.runtime / file), '1993', 'fixture', 'repo']), status)
+                    finally:
+                        if previous is None: self.f.env.pop(variable, None)
+                        else: self.f.env[variable] = previous
+                    self.assertIn('configuration validation error; key=' + key, result.stderr)
+            prefix = 'HARNESS_MODE=1 source ' + shlex.quote(str(self.f.runtime / 'local-ai-reviewer.sh')) + '\n'
+            result = self.safe(self.run_command([shell, '-c', prefix + 'LOCAL_AI_REVIEWER_COMMAND=\nLOCAL_AI_REVIEWER_DISABLE_DEFAULT=0\nLOCAL_AI_REVIEWER_BACKEND=' + shlex.quote(self.secret) + '\nresolve_local_ai_reviewer_command']), 1)
+            self.assertIn('configuration validation error; key=LOCAL_AI_REVIEWER_BACKEND', result.stderr)
+            for backend in ('codex', 'http'):
+                with self.subTest(shell=shell, backend=backend):
+                    body = prefix + 'LOCAL_AI_REVIEWER_COMMAND=\nLOCAL_AI_REVIEWER_DISABLE_DEFAULT=0\nLOCAL_AI_REVIEWER_BACKEND=' + backend + '\nresolve_local_ai_reviewer_command\n'
+                    body += 'test -n "$LOCAL_AI_REVIEWER_COMMAND"\nprintf "BACKEND_RESOLVED\\n"\n'
+                    result = self.safe(self.run_command([shell, '-c', body]), 0)
+                    self.assertEqual(result.stdout, 'BACKEND_RESOLVED\n')
+                    self.assertIn('defaulted to bundled', result.stderr)
+            self.gh_script('case "$*" in "pr diff"*) echo REVIEW.md;; "repo view"*) echo fixture/repo;; "pr view"*) cat "$SYNTHETIC_PR";; "auth status"*) exit 0;; *) exit 99;; esac\n')
+            (self.f.checkout / 'REVIEW.md').write_text('# Synthetic contract\n')
+            command = self.f.bin / 'never-review'
+            command.write_text('#!/bin/sh\nexit 99\n'); command.chmod(0o755)
+            self.f.env.update(LOCAL_AI_REVIEWER_COMMAND=str(command), LOCAL_AI_REVIEWER_GRAPH_STRATEGY=self.secret)
+            try: result = self.safe(self.run_command([shell, str(self.f.runtime / 'local-ai-reviewer.sh'), '1993', 'fixture', 'repo']), 2)
+            finally: self.f.env.pop('LOCAL_AI_REVIEWER_GRAPH_STRATEGY', None)
+            self.assertIn('configuration validation error; key=LOCAL_AI_REVIEWER_GRAPH_STRATEGY', result.stderr)
+            self.assertFalse(self.f.log.exists())
+            # Success controls use the actual validation regions, without invoking a real reviewer.
+            for file, begin, end, setup in (
+                    ('codex-github-reviewer.sh', 'case "$POLL_INTERVAL" in', '# ── Pre-flight', 'POLL_INTERVAL=1; MAX_WAIT=1; PRE_TRIGGER_WAIT=0; MAX_RETRIGGERS=0'),
+                    ('claude-code-action-reviewer.sh', 'case "$POLL_INTERVAL" in', '# ── Pre-flight', 'POLL_INTERVAL=300; MAX_WAIT=3600'),
+                    ('haystack-reviewer.sh', 'case "$TIMEOUT" in', '# ── GitHub App', 'TIMEOUT=1; POLL_INTERVAL=1'),
+                    ('coderabbit-cli-reviewer.sh', 'case "$TIMEOUT" in', 'rate_limit_policy_from_file()', 'TIMEOUT=1')):
+                with self.subTest(shell=shell, valid_region=file):
+                    source = (self.f.runtime / file).read_text(); start = source.index(begin); region = source[start:source.index(end, start)]
+                    result = self.safe(self.run_command([shell, '-c', 'source ' + shlex.quote(str(self.f.runtime / 'workflow-lib.sh')) + '\n' + setup + '\n' + region + '\nprintf "VALID_UNCHANGED\\n"']), 0)
+                    self.assertEqual(result.stdout, 'VALID_UNCHANGED\n'); self.assertEqual(result.stderr, '')
+
+    def test_D100_boolean_and_lifecycle_metadata_preserve_policy(self):
+        self.f.private.unlink(missing_ok=True)  # This shared-policy control starts with no private override.
+        self.f.env.pop("WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT", None)
+        prefix = 'source ' + shlex.quote(str(self.f.runtime / 'workflow-lib.sh')) + '\n'
+        boolean_defs = self.diagnostic_actual_function('item-completion-self-check.sh', 'is_true') + '\n' + self.diagnostic_actual_function('item-completion-self-check.sh', 'validate_bool_option')
+        for shell in self.compatible_shells():
+            result = self.safe(self.run_command([shell, str(self.f.runtime / 'item-completion-self-check.sh'),
+                '--issue', '1993', '--branch', 'feature/1993-fixture', '--stage', 'synthetic',
+                '--worktree-path', str(self.f.checkout), '--repo-root', str(self.f.checkout), '--require-clean', self.secret]), 64)
+            self.assertIn('configuration validation error; key=--require-clean', result.stderr)
+            for function in ('is_true', 'validate_bool_option'):
+                for value in (self.secret, 'true', 'false', ''):
+                    with self.subTest(shell=shell, function=function, value_kind='opaque' if value == self.secret else value):
+                        call = function + (' --require-clean ' if function == 'validate_bool_option' else ' ') + shlex.quote(value)
+                        expected = 64 if value == self.secret else (1 if function == 'is_true' and value in ('false', '') else 0)
+                        result = self.safe(self.run_command([shell, '-c', prefix + boolean_defs + '\n' + call]), expected)
+                        self.assertEqual(result.stdout, '')
+                        if value == self.secret: self.assertRegex(result.stderr, r'^ERROR: configuration validation error(?:; key=--require-clean)?\n$')
+                        else: self.assertEqual(result.stderr, '')
+            for duplicate in (False, True):
+                with self.subTest(shell=shell, duplicate=duplicate):
+                    self.f.shared.write_text('review:\n  on_draft:\n    runner: [' + self.secret + ']\n    github: [' + (self.secret if duplicate else 'pr-agent') + ']\n  on_ready:\n    github: []\n')
+                    loop = 'HARNESS_MODE=1 source ' + shlex.quote(str(self.f.runtime / 'pr-review-loop.sh')) + '\n'
+                    result = self.safe(self.run_command([shell, '-c', loop + 'emit_review_lifecycle_duplicate_warnings ' + shlex.quote(str(self.f.shared))]), 0)
+                    self.assertEqual(result.stdout, '')
+                    self.assertEqual(result.stderr, 'WARN: configuration validation error; key=review\n' if duplicate else '')
+                    # Configuration payload remains functional and unmasked when explicitly requested.
+                    result = self.run_command([shell, '-c', prefix + 'workflow_config_review_on_draft_runner ' + shlex.quote(str(self.f.shared))])
+                    self.assertEqual(result.returncode, 0); self.assertEqual(result.stdout, self.secret + '\n'); self.assertEqual(result.stderr, '')
+
+
 if __name__ == '__main__':
     unittest.main(verbosity=2)

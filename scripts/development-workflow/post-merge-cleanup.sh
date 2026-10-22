@@ -120,7 +120,7 @@ physical_worktree_root() {
   [ -n "${1:-}" ] && [ -d "$1" ] || return 1
   top="$(git -C "$1" rev-parse --show-toplevel 2>/dev/null)" || return 1
   [ -n "$top" ] || return 1
-  (CDPATH='' cd -- "$top" && pwd -P)
+  (CDPATH='' workflow_command_with_safe_stderr cd -- "$top" && pwd -P)
 }
 
 # physical_git_common_dir <path>
@@ -134,7 +134,7 @@ physical_git_common_dir() {
     /*) ;;
     *) dir="$1/$dir" ;;
   esac
-  (CDPATH='' cd -- "$dir" && pwd -P)
+  (CDPATH='' workflow_command_with_safe_stderr cd -- "$dir" && pwd -P)
 }
 
 # Source authority uses actual caller identity, independently of operation
@@ -226,7 +226,7 @@ is_caller_worktree() {
 
 repo_root="$( { CDPATH='' cd -- "$repo_root" && pwd -P; } 2>/dev/null)" || { printf 'configuration: checkout access error\n' >&2; exit 2; }
 HUB_REPO_ROOT="$repo_root"
-cd "$HUB_REPO_ROOT" || exit 1
+workflow_command_with_safe_stderr cd "$HUB_REPO_ROOT" || exit 1
 
 if [ -z "$TO_DELETE" ]; then
   TO_DELETE="$(git branch --show-current)"
@@ -471,7 +471,7 @@ case "$branch_owner_kind" in
     ;;
 esac
 
-cd "$CLEANUP_REPO_ROOT" || exit 1
+workflow_command_with_safe_stderr cd "$CLEANUP_REPO_ROOT" || exit 1
 
 # Remember where this repository was pointing before we move it.
 #
@@ -695,14 +695,14 @@ reenter_base_worktree_if_needed() {
   # Git refuses to check out a branch that is already checked out in another
   # linked worktree. When cleanup is invoked from a merged PR worktree, continue
   # from the existing base-branch worktree instead of failing on checkout.
-  current_root="$(CDPATH='' cd -- "$CLEANUP_REPO_ROOT" && pwd -P)" || return 1
+  current_root="$(CDPATH='' workflow_command_with_safe_stderr cd -- "$CLEANUP_REPO_ROOT" && pwd -P)" || return 1
   base_worktree="$(git -C "$CLEANUP_REPO_ROOT" worktree list --porcelain | awk -v branch="branch refs/heads/$DEVELOP_BRANCH" '
     /^worktree / { wt = substr($0, 10) }
     $0 == branch  { print wt; exit }
   ' || true)"
 
   [ -n "$base_worktree" ] || return 0
-  base_worktree="$(CDPATH='' cd -- "$base_worktree" && pwd -P)" || return 1
+  base_worktree="$(CDPATH='' workflow_command_with_safe_stderr cd -- "$base_worktree" && pwd -P)" || return 1
   [ "$base_worktree" != "$current_root" ] || return 0
 
   if [ "${POST_MERGE_CLEANUP_REENTERED:-}" = "1" ]; then
@@ -735,7 +735,7 @@ reenter_base_worktree_if_needed() {
     reenter_args+=(--repo "$target_repo")
   fi
   tracker_repo_root="$HUB_REPO_ROOT"
-  tracker_repo_root_real="$(CDPATH='' cd -- "$tracker_repo_root" && pwd -P)" || return 1
+  tracker_repo_root_real="$(CDPATH='' workflow_command_with_safe_stderr cd -- "$tracker_repo_root" && pwd -P)" || return 1
   if [ "$tracker_repo_root_real" = "$current_root" ]; then
     tracker_repo_root="$base_worktree"
   fi
@@ -1004,7 +1004,7 @@ ${stripped_pr_commit_text}"
 # Returns 1 when the slug cannot be resolved.
 hub_github_repo_slug() {
   local slug
-  slug="$(cd "$HUB_REPO_ROOT" && gh repo view --json nameWithOwner --jq '.nameWithOwner' 2>/dev/null)" || return 1
+  slug="$(workflow_command_with_safe_stderr cd "$HUB_REPO_ROOT" && gh repo view --json nameWithOwner --jq '.nameWithOwner' 2>/dev/null)" || return 1
   [ -n "$slug" ] || return 1
   printf '%s\n' "$slug"
 }
@@ -1275,7 +1275,7 @@ fi
 
 cleanup_tracker_provider="$(workflow_normalize_issue_tracker_provider "$(workflow_config_provider issue_tracker "$HUB_REPO_ROOT/.ai-dev-workflow.yaml")")"
 if [ "$cleanup_tracker_provider" = linear ]; then
-  cd "$HUB_REPO_ROOT"
+  workflow_command_with_safe_stderr cd "$HUB_REPO_ROOT"
   # Native Linear duties belong to the frozen owning tracker, not a same-number
   # GitHub issue. The existing bridge emits work while the journal stays pending.
   while IFS=$'\t' read -r cleanup_linear_step cleanup_linear_issue cleanup_linear_status; do
@@ -1292,7 +1292,7 @@ if [ "$cleanup_tracker_provider" = linear ]; then
     }
   done < <(printf '%s' "$cleanup_binding" | jq -r --arg repo "$cleanup_budget_repo" --argjson pr "$merged_pr_number" '.prs[] | select(.repo==$repo and .pr==$pr) | . as $target | .steps | to_entries[] | select(.value.phase=="tracker") | .value.issue as $issue | [.key,$issue,($target.issues[] | select(.id==$issue and .provider=="linear") | .status)] | @tsv')
 elif [ -n "$ISSUE_IDENTIFIER" ]; then
-  cd "$HUB_REPO_ROOT"
+  workflow_command_with_safe_stderr cd "$HUB_REPO_ROOT"
   # For team-prefixed identifiers, log the extraction result.
   # All `gh issue` and `update_tracker_status_best_effort` calls use ISSUE_NUMBER
   # (the numeric part) because:
@@ -1451,7 +1451,7 @@ else
         fi
         if [ -n "$CLOSES_ISSUES" ]; then
           echo "Found closing keyword refs in PR #${CLOSING_PR}: issues $(printf '%s' "$CLOSES_ISSUES" | tr '\n' ' ')"
-          cd "$HUB_REPO_ROOT"
+          workflow_command_with_safe_stderr cd "$HUB_REPO_ROOT"
           close_issues_from_pr "$CLOSING_PR" "$CLOSES_ISSUES" "$pr_closes_repo" || exit 1
           warn_unprocessed_title_refs "$pr_closes_repo" "$CLOSING_PR" "$CLOSES_ISSUES"
         else

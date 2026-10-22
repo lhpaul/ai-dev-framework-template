@@ -135,7 +135,7 @@ fi
 
 case "$TIMEOUT" in
   ''|0|*[!0-9]*)
-    workflow_diagnostic "ERROR: --timeout value '$TIMEOUT' is not a positive integer" >&2
+    workflow_diagnostic "ERROR: configuration validation error; key=--timeout" >&2
     exit 3
     ;;
 esac
@@ -247,7 +247,7 @@ if [ -n "$REPO_ROOT" ]; then
     print_result escalate 0 0 0 checkout_head_mismatch "checkout_head_mismatch"
     exit 2
   fi
-  cd "$REPO_ROOT"
+  workflow_command_with_safe_stderr cd "$REPO_ROOT"
 fi
 
 if command -v cr >/dev/null 2>&1; then

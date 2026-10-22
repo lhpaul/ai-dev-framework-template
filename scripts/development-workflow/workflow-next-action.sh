@@ -100,7 +100,7 @@ if [ "$targets" -ne 1 ]; then
 fi
 
 repo_root="$( { CDPATH='' cd -- "$repo_root" && pwd -P; } 2>/dev/null)" || { printf 'configuration: checkout access error\n' >&2; exit 2; }
-cd "$repo_root"
+workflow_command_with_safe_stderr cd "$repo_root"
 if [ -n "$scan_snapshot" ]; then
   snapshot_args=(--repo-root "$repo_root" --scan-snapshot "$scan_snapshot" --mode next)
   [ -n "$target_repo" ] && snapshot_args+=(--repo "$target_repo")
