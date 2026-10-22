@@ -482,7 +482,8 @@ discover_closing_keyword_refs() {
   fi
   printf '%s' "$prs_json" | python3 -c '
 import json, sys
-RS = chr(30)
+RS = chr(30)  # record newline
+US = chr(31)  # record tab (must survive TSV; GFM cares about real tabs)
 try:
     prs = json.load(sys.stdin)
 except Exception:
@@ -491,15 +492,19 @@ for pr in prs or []:
     number = pr.get("number")
     if not number:
         continue
-    title = (pr.get("title") or "").replace("\t", " ").replace("\n", RS)
-    body = (pr.get("body") or "").replace("\t", " ").replace("\n", RS)
+    title = (pr.get("title") or "").replace("\t", US).replace("\n", RS)
+    body = (pr.get("body") or "").replace("\t", US).replace("\n", RS)
     print("%s\t%s\t%s" % (number, title, body))
 ' > "$TMP_DIR/merged-prs.tsv"
   while IFS="$(printf '\t')" read -r pr_number title_enc body_enc; do
     [ -n "$pr_number" ] || continue
     local title body title_refs body_refs
-    title="$(printf '%s' "$title_enc" | tr "$(printf '\036')" '\n')"
-    body="$(printf '%s' "$body_enc" | tr "$(printf '\036')" '\n')"
+    # Preserve trailing newlines: $(...) strips them; append a sentinel.
+    # Map RS→newline and US→tab so GFM sees real indentation.
+    title="$(printf '%s' "$title_enc" | tr "$(printf '\036\037')" "$(printf '\n\t')"; printf x)"
+    title="${title%x}"
+    body="$(printf '%s' "$body_enc" | tr "$(printf '\036\037')" "$(printf '\n\t')"; printf x)"
+    body="${body%x}"
     : > "$TMP_DIR/pr-${pr_number}-issues.txt"
     local need_title=0 need_body=0
     if printf '%s' "$title" | graduation_closeout_raw_has_closing_keyword_candidate; then

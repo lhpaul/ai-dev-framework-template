@@ -170,9 +170,9 @@ print(json.dumps({"text": sys.stdin.read(), "mode": "gfm", "context": sys.argv[1
   fi
   set +e
   html="$(printf '%s' "$payload" | gh api markdown --input - 2>/dev/null)"
-  local status=$?
+  local api_status=$?
   set -e
-  if [ "$status" -ne 0 ] || [ -z "$html" ]; then
+  if [ "$api_status" -ne 0 ] || [ -z "$html" ]; then
     return 1
   fi
   printf '%s' "$html"
