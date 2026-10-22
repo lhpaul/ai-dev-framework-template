@@ -507,6 +507,26 @@ JSON
 [{"number":11,"title":"Deliver item","body":"- Closes #341"}]
 JSON
         ;;
+      nested_same_line_marker_fence_326)
+        cat <<'JSON'
+[{"number":11,"title":"Graduate wave","body":"- - ~~~text\n    Closes #326\n    ~~~\nNo live closing keywords."}]
+JSON
+        ;;
+      nested_same_line_marker_closes_342)
+        cat <<'JSON'
+[{"number":11,"title":"Deliver item","body":"- - Closes #342"}]
+JSON
+        ;;
+      ordered_nested_marker_tick_fence_343)
+        cat <<'JSON'
+[{"number":11,"title":"Graduate wave","body":"1. - ```\n     Closes #343\n     ```\nNo live closing keywords."}]
+JSON
+        ;;
+      nested_same_line_blank_prose_344)
+        cat <<'JSON'
+[{"number":11,"title":"Deliver item","body":"- - item\n\n    prose Closes #344"}]
+JSON
+        ;;
       foreign_repo_text)
         cat <<'JSON'
 [{"number":11,"title":"Graduate wave","body":"Closes other/repo#326\nNo local closing keywords."}]
@@ -1646,6 +1666,16 @@ for provider in github_projects github_issues; do
   echo "=== graduation closeout: ${provider} keeps marker-line two-space / one-space prose (#2016) ==="
   assert_github_keyword_issue_closed "$provider" marker_two_space_closes_340 340 "${provider}_marker_two_space"
   assert_github_keyword_issue_closed "$provider" marker_one_space_closes_341 341 "${provider}_marker_one_space"
+
+  echo ""
+  echo "=== graduation closeout: ${provider} strips same-line nested marker fences (#2016) ==="
+  assert_github_example_326_untouched "$provider" nested_same_line_marker_fence_326 "${provider}_nested_same_line_fence"
+  assert_github_example_326_untouched "$provider" ordered_nested_marker_tick_fence_343 "${provider}_ordered_nested_tick" 343
+
+  echo ""
+  echo "=== graduation closeout: ${provider} keeps same-line nested marker prose (#2016) ==="
+  assert_github_keyword_issue_closed "$provider" nested_same_line_marker_closes_342 342 "${provider}_nested_same_line_prose"
+  assert_github_keyword_issue_closed "$provider" nested_same_line_blank_prose_344 344 "${provider}_nested_same_line_blank_prose"
 
   echo ""
   echo "=== graduation closeout: ${provider} keeps nested-list Closes #123 (#2016) ==="

@@ -1244,6 +1244,56 @@ for provider in github_projects github_issues; do
   run_contains "${provider}_wrap_marker_one_space_epic" "EPIC_ISSUE=341" "$body"
 
   echo ""
+  echo "=== wrapper: ${provider} strips same-line nested marker fence (#2016) ==="
+  reset_fixture
+  write_tracker_config "$provider"
+  export MOCK_LABEL_PARENT_MODE=empty
+  write_pr 171 "develop-test-2016" "develop" "true" "Graduate wave" \
+    $'- - ~~~text\n    Closes #326\n    ~~~\nEpic #900'
+  result="$(run_wrapper --graduation-pr 171)"
+  body="$(last_body "$result")"
+  run_test "${provider}_wrap_nested_same_line_fence_exit_zero" "0" "$(last_status "$result")"
+  run_contains "${provider}_wrap_nested_same_line_fence_epic" "EPIC_ISSUE=900" "$body"
+  run_not_contains "${provider}_wrap_nested_same_line_fence_no_326" "--epic 326" "$(cat "$CHILD_ARGV_LOG")"
+
+  echo ""
+  echo "=== wrapper: ${provider} keeps same-line nested marker Closes #342 (#2016) ==="
+  reset_fixture
+  write_tracker_config "$provider"
+  export MOCK_LABEL_PARENT_MODE=empty
+  write_pr 172 "develop-test-2016" "develop" "true" "Graduate wave" \
+    $'- - Closes #342'
+  result="$(run_wrapper --graduation-pr 172)"
+  body="$(last_body "$result")"
+  run_test "${provider}_wrap_nested_same_line_prose_exit_zero" "0" "$(last_status "$result")"
+  run_contains "${provider}_wrap_nested_same_line_prose_epic" "EPIC_ISSUE=342" "$body"
+
+  echo ""
+  echo "=== wrapper: ${provider} strips ordered+unordered same-line marker fence (#2016) ==="
+  reset_fixture
+  write_tracker_config "$provider"
+  export MOCK_LABEL_PARENT_MODE=empty
+  write_pr 173 "develop-test-2016" "develop" "true" "Graduate wave" \
+    "$(printf -- '1. - %s%s%s\n     Closes #343\n     %s%s%s\nEpic #900' '`' '`' '`' '`' '`' '`')"
+  result="$(run_wrapper --graduation-pr 173)"
+  body="$(last_body "$result")"
+  run_test "${provider}_wrap_ordered_nested_tick_exit_zero" "0" "$(last_status "$result")"
+  run_contains "${provider}_wrap_ordered_nested_tick_epic" "EPIC_ISSUE=900" "$body"
+  run_not_contains "${provider}_wrap_ordered_nested_tick_no_343" "--epic 343" "$(cat "$CHILD_ARGV_LOG")"
+
+  echo ""
+  echo "=== wrapper: ${provider} keeps nested same-line then blank prose Closes #344 (#2016) ==="
+  reset_fixture
+  write_tracker_config "$provider"
+  export MOCK_LABEL_PARENT_MODE=empty
+  write_pr 174 "develop-test-2016" "develop" "true" "Graduate wave" \
+    $'- - item\n\n    prose Closes #344'
+  result="$(run_wrapper --graduation-pr 174)"
+  body="$(last_body "$result")"
+  run_test "${provider}_wrap_nested_same_line_blank_prose_exit_zero" "0" "$(last_status "$result")"
+  run_contains "${provider}_wrap_nested_same_line_blank_prose_epic" "EPIC_ISSUE=344" "$body"
+
+  echo ""
   echo "=== wrapper: ${provider} keeps nested-list Closes #123 with Epic #900 (#2016) ==="
   # Nested list keyword is live but Epic #900 is the sole epic/parent ref style
   # candidate preferred when both exist — assert 123 is not chosen as epic and

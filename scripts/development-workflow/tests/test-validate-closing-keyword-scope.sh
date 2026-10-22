@@ -459,6 +459,10 @@ marker_five_space_code_cont||-     Example\n      Closes #123
 marker_heading_then_code||- ## Example\n      Closes #326
 marker_two_space_prose|340|-  Closes #340
 marker_one_space_prose|341|- Closes #341
+nested_same_line_marker_fence||- - ~~~text\n    Closes #326\n    ~~~
+nested_same_line_marker_prose|342|- - Closes #342
+ordered_nested_marker_tick_fence||1. - ```\n     Closes #343\n     ```
+nested_same_line_then_blank_prose|344|- - item\n\n    prose Closes #344
 CLOSEOUT_TABLE
 
 # Explicit regressions for fence precedence (list markers inside fences must not leak).
@@ -515,6 +519,14 @@ check "closeout_marker_two_space_prose_keeps" "340" \
   "$(closeout_refs_of "$(printf -- '-  Closes #340')")"
 check "closeout_marker_one_space_prose_keeps" "341" \
   "$(closeout_refs_of "$(printf -- '- Closes #341')")"
+check "closeout_nested_same_line_marker_fence_strips" "" \
+  "$(closeout_refs_of "$(printf -- '- - ~~~text\n    Closes #326\n    ~~~')")"
+check "closeout_nested_same_line_marker_prose_keeps" "342" \
+  "$(closeout_refs_of "$(printf -- '- - Closes #342')")"
+check "closeout_ordered_nested_marker_tick_fence_strips" "" \
+  "$(closeout_refs_of "$(printf -- '1. - %s%s%s\n     Closes #343\n     %s%s%s' '`' '`' '`' '`' '`' '`')")"
+check "closeout_nested_same_line_then_blank_prose_keeps" "344" \
+  "$(closeout_refs_of "$(printf -- '- - item\n\n    prose Closes #344')")"
 
 # ---------------------------------------------------------------------------
 # Differential attribution
