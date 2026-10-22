@@ -397,6 +397,26 @@ JSON
 [{"number":11,"title":"Graduate wave","body":"~~~\n## Example\n~~~\n\n    Closes #326\nNo live closing keywords."}]
 JSON
         ;;
+      tab_marker_tilde_fence_326)
+        cat <<'JSON'
+[{"number":11,"title":"Graduate wave","body":"-\t~~~text\n\tCloses #326\n\t~~~\nNo live closing keywords."}]
+JSON
+        ;;
+      tab_marker_tilde_unclosed_326)
+        cat <<'JSON'
+[{"number":11,"title":"Graduate wave","body":"-\t~~~text\n\tCloses #326\nNo live closing keywords."}]
+JSON
+        ;;
+      tab_ordered_tick_fence_326)
+        cat <<'JSON'
+[{"number":11,"title":"Graduate wave","body":"1.\t```text\n\tCloses #326\n\t```\nNo live closing keywords."}]
+JSON
+        ;;
+      tab_nested_list_prose_331)
+        cat <<'JSON'
+[{"number":11,"title":"Deliver item","body":"\t- item\n\t\tCloses #331"}]
+JSON
+        ;;
       foreign_repo_text)
         cat <<'JSON'
 [{"number":11,"title":"Graduate wave","body":"Closes other/repo#326\nNo local closing keywords."}]
@@ -1466,6 +1486,16 @@ for provider in github_projects github_issues; do
   assert_github_example_326_untouched "$provider" toplevel_fence_list_no_leak_326 "${provider}_fence_list_no_leak"
   assert_github_example_326_untouched "$provider" toplevel_tick_fence_list_no_leak_327 "${provider}_tick_fence_list_no_leak" 327
   assert_github_example_326_untouched "$provider" heading_inside_fence_326 "${provider}_heading_inside_fence"
+
+  echo ""
+  echo "=== graduation closeout: ${provider} strips tab-after-marker fences Closes #326 (#2016) ==="
+  assert_github_example_326_untouched "$provider" tab_marker_tilde_fence_326 "${provider}_tab_marker_tilde"
+  assert_github_example_326_untouched "$provider" tab_marker_tilde_unclosed_326 "${provider}_tab_marker_tilde_unclosed"
+  assert_github_example_326_untouched "$provider" tab_ordered_tick_fence_326 "${provider}_tab_ordered_tick"
+
+  echo ""
+  echo "=== graduation closeout: ${provider} keeps tab-indented nested list prose Closes #331 (#2016) ==="
+  assert_github_keyword_issue_closed "$provider" tab_nested_list_prose_331 331 "${provider}_tab_nested_prose"
 
   echo ""
   echo "=== graduation closeout: ${provider} keeps nested-list Closes #123 (#2016) ==="

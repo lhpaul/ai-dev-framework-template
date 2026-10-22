@@ -436,6 +436,11 @@ toplevel_fence_list_no_leak||~~~\n- example\n~~~\n\n    Closes #326
 toplevel_tick_fence_list_no_leak||```\n- example\n```\n\n    Closes #327
 heading_inside_fence_ignored||~~~\n## Example\n~~~\n\n    Closes #326
 heading_inside_fence_then_prose|328|~~~\n## Example\n~~~\nCloses #328
+tab_marker_tilde_fence||-\t~~~text\n\tCloses #326\n\t~~~
+tab_marker_tilde_unclosed||-\t~~~text\n\tCloses #326
+tab_ordered_tick_fence||1.\t```text\n\tCloses #326\n\t```
+tab_nested_list_prose|331|\t- item\n\t\tCloses #331
+tab_blank_indent_code||See:\n\n\tCloses #326
 CLOSEOUT_TABLE
 
 # Explicit regressions for fence precedence (list markers inside fences must not leak).
@@ -445,6 +450,17 @@ check "closeout_toplevel_tick_fence_list_marker_no_leak" "" \
   "$(closeout_refs_of "$(printf -- '%s%s%stext\n- example\n%s%s%s\n\n    Closes #327' '`' '`' '`' '`' '`' '`')")"
 check "closeout_heading_inside_fence_ignored" "" \
   "$(closeout_refs_of "$(printf -- '~~~\n## Example\n~~~\n\n    Closes #326')")"
+# Tab after list marker / leading tabs (expanded before parse).
+check "closeout_tab_marker_tilde_fence_strips" "" \
+  "$(closeout_refs_of "$(printf -- '-\t~~~text\n\tCloses #326\n\t~~~')")"
+check "closeout_tab_marker_tilde_unclosed_strips" "" \
+  "$(closeout_refs_of "$(printf -- '-\t~~~text\n\tCloses #326')")"
+check "closeout_tab_ordered_tick_fence_strips" "" \
+  "$(closeout_refs_of "$(printf -- '1.\t%s%s%stext\n\tCloses #326\n\t%s%s%s' '`' '`' '`' '`' '`' '`')")"
+check "closeout_tab_nested_list_prose_keeps" "331" \
+  "$(closeout_refs_of "$(printf -- '\t- item\n\t\tCloses #331')")"
+check "closeout_tab_blank_indent_code_strips" "" \
+  "$(closeout_refs_of "$(printf -- 'See:\n\n\tCloses #326')")"
 
 # ---------------------------------------------------------------------------
 # Differential attribution

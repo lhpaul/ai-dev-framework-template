@@ -193,6 +193,9 @@ closing_keyword_live_refs() {
 # residual top-level fences). Prefer keeping prose over stripping.
 #
 # Supported CommonMark subset (closeout-only; not a full parser):
+# - Tab expansion (first): every line's leading whitespace, and whitespace
+#   immediately after a list marker, is expanded to spaces with tab stops of 4
+#   before any other parsing, so indentation/list/fence logic sees only spaces.
 # - Fences (``` / ~~~, length ≥3, same char; closer length ≥ opener, trailing
 #   whitespace only): while inside a fence, only look for the matching closer
 #   (indent 0–3 relative to the fence's container indent) and drop every other
@@ -201,13 +204,14 @@ closing_keyword_live_refs() {
 #   list-relative at content_indent+0..3; or on a list-marker line remainder.
 #   Content inside fences never changes list context. Closing a top-level fence
 #   restores the list context saved when it opened. Unclosed → EOF.
-# - Indented code (tab stops of 4): outside lists, indent ≥4 after blank /
-#   document start / ATX / setext / thematic (or continuing code). Inside lists,
-#   indent ≥ content_indent+4 after a blank (or continuing code).
-# - Lists: marker indent 0–3 starts list context. content_indent = marker indent
-#   + marker width + following spaces (1–4; if more than 4, padding is 1).
-#   Nested markers (indent < content_indent+4) update content_indent. List ends
-#   on indent-0 non-marker after a blank, or on thematic / ATX / setext.
+# - Indented code: outside lists, indent ≥4 after blank / document start / ATX /
+#   setext / thematic (or continuing code), when the line is not a list marker.
+#   Inside lists, indent ≥ content_indent+4 after a blank (or continuing code).
+# - Lists: content_indent = marker indent + marker width + following spaces
+#   (1–4; if more than 4, padding is 1). A list-marker line is preferred over
+#   indented code (closeout prefer-prose). Nested markers (indent <
+#   content_indent+4) update content_indent. List ends on indent-0 non-marker
+#   after a blank, or on thematic / ATX / setext.
 # - ATX headings / setext underlines / thematic breaks: block boundaries as before.
 #
 # Do not use this from post-merge cleanup or validate-closing-keyword-scope —
@@ -217,26 +221,53 @@ strip_markdown_code_for_closeout() {
   if ! staged="$(python3 -c '
 import re, sys
 
-def leading_indent_columns(line):
-    col = 0
-    i = 0
-    while i < len(line):
-        ch = line[i]
-        if ch == " ":
-            col += 1
-            i += 1
-        elif ch == "\t":
-            col = (col // 4 + 1) * 4
-            i += 1
-        else:
-            break
-    return col, i
-
 THEMATIC_BREAK_RE = re.compile(r"^([-*_])(?:[ \t]*\1){2,}[ \t]*$")
-LIST_MARKER_RE = re.compile(r"^([-*+]|\d+[.)])([ \t]+|$)")
+LIST_MARKER_ONLY_RE = re.compile(r"^([-*+]|\d+[.)])")
+LIST_MARKER_RE = re.compile(r"^([-*+]|\d+[.)])( +|$)")
 ATX_HEADING_RE = re.compile(r"^#{1,6}(?:[ \t]+|$)")
 SETEXT_RE = re.compile(r"^(?:=+|-+)[ \t]*$")
 FENCE_MARKER_RE = re.compile(r"^(`{3,}|~{3,})(.*)$")
+
+def expand_tabs_closeout(line):
+    """Expand tabs in leading whitespace and list-marker padding (tab stop 4)."""
+    out = []
+    col = 0
+    i = 0
+    n = len(line)
+
+    def emit_ws_run():
+        nonlocal col, i
+        while i < n and line[i] in " \t":
+            if line[i] == " ":
+                out.append(" ")
+                col += 1
+            else:
+                add = 4 - (col % 4)
+                out.append(" " * add)
+                col += add
+            i += 1
+
+    emit_ws_run()
+    if i >= n:
+        return "".join(out)
+    m = LIST_MARKER_ONLY_RE.match(line[i:])
+    if not m:
+        out.append(line[i:])
+        return "".join(out)
+    marker = m.group(1)
+    out.append(marker)
+    col += len(marker)
+    i += len(marker)
+    emit_ws_run()
+    out.append(line[i:])
+    return "".join(out)
+
+def leading_indent_columns(line):
+    # Tabs already expanded; count leading spaces only.
+    i = 0
+    while i < len(line) and line[i] == " ":
+        i += 1
+    return i, i
 
 def list_marker_parts(line):
     cols, start = leading_indent_columns(line)
@@ -285,7 +316,7 @@ def is_setext_underline_body(body):
 def is_atx_heading_body(body):
     return ATX_HEADING_RE.match(body) is not None
 
-lines = sys.stdin.read().split("\n")
+lines = [expand_tabs_closeout(line) for line in sys.stdin.read().split("\n")]
 out = []
 in_list = False
 content_indent = 0
@@ -397,8 +428,10 @@ for line in lines:
             out.append(line)
             continue
 
-    parts = list_marker_parts(line) if cols < 4 else None
-    if parts is not None and cols < 4 and not in_list:
+    # Prefer list-marker lines over indented code (after tab expansion a
+    # leading tab yields four spaces before "- item").
+    parts = list_marker_parts(line) if not in_list else None
+    if parts is not None and not in_list:
         content_indent, remainder = parts
         in_list = True
         in_indented_code = False

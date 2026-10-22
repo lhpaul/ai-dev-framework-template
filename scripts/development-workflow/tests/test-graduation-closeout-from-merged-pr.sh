@@ -966,6 +966,57 @@ for provider in github_projects github_issues; do
   run_not_contains "${provider}_wrap_heading_inside_fence_no_326" "--epic 326" "$(cat "$CHILD_ARGV_LOG")"
 
   echo ""
+  echo "=== wrapper: ${provider} strips tab-after-marker tilde fence Closes #326 (#2016) ==="
+  reset_fixture
+  write_tracker_config "$provider"
+  export MOCK_LABEL_PARENT_MODE=empty
+  write_pr 149 "develop-test-2016" "develop" "true" "Graduate wave" \
+    "$(printf -- '-\t~~~text\n\tCloses #326\n\t~~~\nEpic #900')"
+  result="$(run_wrapper --graduation-pr 149)"
+  body="$(last_body "$result")"
+  run_test "${provider}_wrap_tab_marker_tilde_exit_zero" "0" "$(last_status "$result")"
+  run_contains "${provider}_wrap_tab_marker_tilde_epic" "EPIC_ISSUE=900" "$body"
+  run_not_contains "${provider}_wrap_tab_marker_tilde_no_326" "--epic 326" "$(cat "$CHILD_ARGV_LOG")"
+
+  echo ""
+  echo "=== wrapper: ${provider} strips tab-after-marker unclosed tilde fence Closes #326 (#2016) ==="
+  reset_fixture
+  write_tracker_config "$provider"
+  export MOCK_LABEL_PARENT_MODE=empty
+  write_pr 150 "develop-test-2016" "develop" "true" "Graduate wave" \
+    "$(printf -- 'Epic #900\n-\t~~~text\n\tCloses #326')"
+  result="$(run_wrapper --graduation-pr 150)"
+  body="$(last_body "$result")"
+  run_test "${provider}_wrap_tab_marker_tilde_unclosed_exit_zero" "0" "$(last_status "$result")"
+  run_contains "${provider}_wrap_tab_marker_tilde_unclosed_epic" "EPIC_ISSUE=900" "$body"
+  run_not_contains "${provider}_wrap_tab_marker_tilde_unclosed_no_326" "--epic 326" "$(cat "$CHILD_ARGV_LOG")"
+
+  echo ""
+  echo "=== wrapper: ${provider} strips ordered tab-after-marker tick fence Closes #326 (#2016) ==="
+  reset_fixture
+  write_tracker_config "$provider"
+  export MOCK_LABEL_PARENT_MODE=empty
+  write_pr 151 "develop-test-2016" "develop" "true" "Graduate wave" \
+    "$(printf -- '1.\t```text\n\tCloses #326\n\t```\nEpic #900')"
+  result="$(run_wrapper --graduation-pr 151)"
+  body="$(last_body "$result")"
+  run_test "${provider}_wrap_tab_ordered_tick_exit_zero" "0" "$(last_status "$result")"
+  run_contains "${provider}_wrap_tab_ordered_tick_epic" "EPIC_ISSUE=900" "$body"
+  run_not_contains "${provider}_wrap_tab_ordered_tick_no_326" "--epic 326" "$(cat "$CHILD_ARGV_LOG")"
+
+  echo ""
+  echo "=== wrapper: ${provider} keeps tab-indented nested list prose Closes #331 (#2016) ==="
+  reset_fixture
+  write_tracker_config "$provider"
+  export MOCK_LABEL_PARENT_MODE=empty
+  write_pr 152 "develop-test-2016" "develop" "true" "Graduate wave" \
+    "$(printf -- '\t- item\n\t\tCloses #331')"
+  result="$(run_wrapper --graduation-pr 152)"
+  body="$(last_body "$result")"
+  run_test "${provider}_wrap_tab_nested_prose_exit_zero" "0" "$(last_status "$result")"
+  run_contains "${provider}_wrap_tab_nested_prose_epic" "EPIC_ISSUE=331" "$body"
+
+  echo ""
   echo "=== wrapper: ${provider} keeps nested-list Closes #123 with Epic #900 (#2016) ==="
   # Nested list keyword is live but Epic #900 is the sole epic/parent ref style
   # candidate preferred when both exist — assert 123 is not chosen as epic and
