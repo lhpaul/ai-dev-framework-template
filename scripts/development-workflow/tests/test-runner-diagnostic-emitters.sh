@@ -29,6 +29,7 @@
 # covers: scripts/development-workflow/local-ai-reviewer-findings.py
 # covers: scripts/development-workflow/tests/test_runner_diagnostic_emitters.py
 # covers: scripts/development-workflow/tests/test_private_source_consumers.py
+# covers: scripts/development-workflow/tests/test_private_source_authority.py
 # covers: scripts/development-workflow/post-merge-cleanup.sh
 # covers: scripts/development-workflow/discover-workflow-state.sh
 # covers: scripts/development-workflow/workflow-batch-lanes.sh

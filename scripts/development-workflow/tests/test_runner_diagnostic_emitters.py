@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Binding D01-D68: synthetic paired-channel runtime/publication diagnostics."""
+"""Binding D01-D71: synthetic paired-channel runtime/publication diagnostics."""
 from __future__ import annotations
 
 import importlib.util
@@ -1563,7 +1563,7 @@ printf 'PROBE=%s\\n' "$settle_review_probe"
                             args = self.f.root / 'resolver-argv'
                             resolver = self.f.runtime / 'workflow-config-resolver.py'
                             body = 'set -euo pipefail\n'
-                            body += 'root=' + shlex.quote(str(self.f.checkout)) + '; repo_root="$root"; initiating_root="$root"; config_file="$root/.ai-dev-workflow.yaml"; phase=on_draft; key=runner; status=0; args=(review-list --repo-root "$root" --phase on_draft --key runner)\n'
+                            body += 'root=' + shlex.quote(str(self.f.checkout)) + '; repo_root="$root"; initiating_root="$root"; config_file="$root/.ai-dev-workflow.yaml"; policy_root="$root"; review_root="$root"; phase=on_draft; key=runner; status=0; args=(review-list --repo-root "$root" --phase on_draft --key runner)\n'
                             body += 'workflow_effective_config_file() { printf "%s\\n" "$config_file"; }; workflow_local_config_root() { printf "%s\\n" "$root"; };\n'
                             body += 'workflow_config_resolver_script() { printf "token=' + self.secret + '\\n" >&2; printf "%s\\n" ' + shlex.quote(str(resolver)) + '; };\n'
                             body += 'python3() { printf "%s\\0" "$@" >' + shlex.quote(str(args)) + '; '
@@ -1598,6 +1598,141 @@ printf 'PROBE=%s\\n' "$settle_review_probe"
                     self.assertEqual(result.stdout, '' if invalid else 'strict')
                     if invalid: self.assertRegex(result.stderr, r'^ERROR: configuration: [A-Za-z ]+(?:; (?:line|column)=[0-9]+)*(?:; key=[A-Za-z_.]+)?\n$')
                     else: self.assertEqual(result.stderr, '')
+
+    def test_D69_supported_unbound_root_apis_fail_before_reader(self):
+        # U56/U59-U65: real supported APIs, without an entry binding, and the
+        # same APIs with an actual binding. Poison ONLY the legacy fallback
+        # reached from the real getter; unrelated inherited root calls remain.
+        rows = [('U56', 'rate_limit_policy_from_config', ''),
+                ('U59', 'workflow_local_config_file', ''),
+                ('U60', 'workflow_config_review_local_list_if_declared', 'SHARED on_draft runner'),
+                ('U61', 'workflow_config_review_list', 'SHARED on_draft runner'),
+                ('U62', 'workflow_repository_mode', ''),
+                ('U63', 'workflow_repository_context', 'mobile'),
+                ('U64', 'workflow_validate_repository_context', 'mobile'),
+                ('U65', 'workflow_review_override_context', '')]
+        for route, function, arguments in rows:
+            for shell in self.compatible_shells():
+                baseline = None
+                for mode in ('unbound', 'bound', 'fault'):
+                    with self.subTest(route=route, shell=shell, mode=mode):
+                        reads = self.f.root / 'root-api-reader-argv'
+                        fallback = self.f.root / 'root-api-fallback'
+                        for path in (reads, fallback): path.unlink(missing_ok=True)
+                        body = 'set -euo pipefail\nsource ' + shlex.quote(str(self.f.runtime / 'workflow-lib.sh')) + '\n'
+                        if function == 'rate_limit_policy_from_config': body += fixtures.function_text('coderabbit-cli-reviewer.sh', function) + '\n'
+                        if mode == 'bound': body += 'workflow_bind_local_config_root ' + shlex.quote(str(self.f.checkout)) + '\n'
+                        if mode != 'unbound':
+                            body += 'eval "$(declare -f workflow_repo_root | sed \'1s/workflow_repo_root/actual_workflow_repo_root/\')"\n'
+                            body += 'workflow_repo_root() { case " ${FUNCNAME[*]} " in *workflow_local_config_root*) printf x >' + shlex.quote(str(fallback)) + '; printf "token=' + self.secret + '\\n" >&2; return 17;; esac; actual_workflow_repo_root "$@"; };\n'
+                        body += 'python3() { if [ "${1##*/}" = workflow-config-resolver.py ]; then printf "%s\\0" "$@" >' + shlex.quote(str(reads)) + '; fi; command python3 "$@"; };\n'
+                        call = function + ' ' + arguments.replace('SHARED', shlex.quote(str(self.f.shared)))
+                        # Conditional callers disable errexit in their producer:
+                        # the new guard must prevent a later reader/default0.
+                        body += 'status=0; ' + call + ' || status=$?; exit "$status"\n'
+                        result = self.safe(self.run_command([shell, '-c', body]), 2 if mode == 'fault' else 0)
+                        self.assertEqual(result.stderr, '')
+                        if mode == 'fault':
+                            self.assertEqual(result.stdout, '')
+                            self.assertTrue(fallback.exists())
+                            self.assertFalse(reads.exists())
+                        else:
+                            self.assertFalse(fallback.exists())
+                            argv = reads.read_bytes().split(b'\0')
+                            self.assertEqual(argv[-1], b'')
+                            root_index = argv.index(b'--repo-root')
+                            self.assertEqual(argv[root_index + 1], str(self.f.checkout).encode())
+                            self.assertTrue(result.stdout)
+                            current = (result.stdout, argv)
+                            if baseline is None: baseline = current
+                            else: self.assertEqual(current, baseline)
+
+    def test_D70_entry_defaults_and_real_readiness_fallback_subprocess(self):
+        # U54/U55: actual module setup statements; failed default lookup never
+        # reaches a binder/reader, and REPO_ROOT's original empty value survives.
+        apply = (self.f.runtime / 'apply-readiness-labels.sh').read_text().splitlines()
+        readiness_line = next(line for line in apply if line.startswith('[ -n "$repo_root" ] || repo_root='))
+        source = (self.f.runtime / 'coderabbit-cli-reviewer.sh').read_text()
+        start = source.index('# Bind only after argument parsing')
+        end = source.index('\nif [ -n "$REPO_ROOT" ]; then', start)
+        binding = source[start:end]
+        for shell in self.compatible_shells():
+            for route, statement, failure_status in [('U54', readiness_line, 17), ('U55', binding, 2)]:
+                for mode in ('default', 'explicit', 'fault'):
+                    with self.subTest(route=route, shell=shell, mode=mode):
+                        trace = self.f.root / 'entry-default-binder'; trace.unlink(missing_ok=True)
+                        body = 'set -euo pipefail\nsource ' + shlex.quote(str(self.f.runtime / 'workflow-lib.sh')) + '\n'
+                        initial = str(self.f.checkout) if mode == 'explicit' else ''
+                        body += 'repo_root=' + shlex.quote(initial) + '; REPO_ROOT="$repo_root"\n'
+                        body += 'workflow_repo_root() { printf "token=' + self.secret + '\\n" >&2; ' + ('return 17;' if mode == 'fault' else 'printf "%s\\n" ' + shlex.quote(str(self.f.checkout)) + ';') + ' };\n'
+                        body += 'eval "$(declare -f workflow_bind_local_config_root | sed \'1s/workflow_bind_local_config_root/actual_bind/\')"\n'
+                        body += 'workflow_bind_local_config_root() { printf "%s\\0" "$@" >' + shlex.quote(str(trace)) + '; actual_bind "$@"; };\n'
+                        body += statement + '\n'
+                        if route == 'U54': body += 'workflow_bind_local_config_root "$repo_root"\n'
+                        body += 'printf "BOUND=%s\\nREPO_ROOT=%s\\n" "$(workflow_local_config_root)" "$REPO_ROOT"\n'
+                        result = self.safe(self.run_command([shell, '-c', body]), failure_status if mode == 'fault' else 0)
+                        if mode == 'fault':
+                            self.assertEqual(result.stdout, '')
+                            self.assertFalse(trace.exists())
+                            self.assertEqual(result.stderr, 'configuration: checkout access error\n' if route == 'U55' else '')
+                        else:
+                            self.assertEqual(trace.read_bytes().split(b'\0'), [str(self.f.checkout).encode(), b''])
+                            self.assertEqual(result.stdout, 'BOUND=' + str(self.f.checkout) + '\nREPO_ROOT=' + initial + '\n')
+                            self.assertEqual(result.stderr, '')
+        # U57/U58: reuse only the established fake GH/child observer. The actual
+        # restore/revalidate function and actual readiness subprocess both run.
+        spec = importlib.util.spec_from_file_location('root_handoff_fixtures', Path(__file__).with_name('test_private_source_authority.py'))
+        authority = importlib.util.module_from_spec(spec); spec.loader.exec_module(authority)
+        holder = type('SyntheticFixtureState', (), {})(); holder.f = self.f
+        authority.PrivateSourceAuthority.readiness_handoff_fixture(holder)
+        for shell in self.compatible_shells():
+            self.f.env['SYNTHETIC_BASH'] = shell
+            for route in ('restore', 'revalidate'):
+                self.f.env['SYNTHETIC_LABEL_PRESENT'] = '1' if route == 'revalidate' else '0'
+                for mode in ('unbound', 'bound', 'fault'):
+                    with self.subTest(route=route, shell=shell, mode=mode):
+                        holder.child_events.unlink(missing_ok=True)
+                        body = 'SCRIPT_DIR=' + shlex.quote(str(self.f.runtime)) + '\nrepo_root=""\n'
+                        if mode == 'bound': body += 'workflow_bind_local_config_root ' + shlex.quote(str(self.f.checkout)) + '\n'
+                        body += 'eval "$(declare -f workflow_local_config_root | sed \'1s/workflow_local_config_root/actual_local_root/\')"\n'
+                        body += 'workflow_local_config_root() { printf "token=' + self.secret + '\\n" >&2; ' + ('return 17;' if mode == 'fault' else 'actual_local_root "$@";') + ' };\n'
+                        body += 'restore_regression_label_if_missing 1993 feature/1993-fixture\n'
+                        prefix = 'HARNESS_MODE=1 source ' + shlex.quote(str(self.f.runtime / 'pr-review-loop.sh')) + '\n'
+                        result = self.safe(self.run_command([shell, '-c', prefix + body]), 0)
+                        events = [json.loads(line) for line in holder.child_events.read_text().splitlines()]
+                        self.assertEqual(len(events), 1)
+                        self.assertEqual(events[0]['repo_root'], '' if mode == 'fault' else str(self.f.checkout))
+                        self.assertEqual(events[0]['status'], 2 if mode == 'fault' else 1)
+                        self.assertIn('WARN: apply-readiness-labels.sh refused or failed', result.stderr)
+                        if mode == 'fault': self.assertIn('missing value for --repo-root', result.stderr)
+                        else: self.assertIn('REASON=ownership-mismatch', result.stdout)
+        self.assertFalse(self.f.log.exists())
+
+    def test_D71_new_default_classifier_and_complete_binder_boundary(self):
+        # U66: boolean classifier0/1 still chooses exact private/shared names.
+        for shell in self.compatible_shells():
+            for default in (True, False):
+                with self.subTest(route='U66', shell=shell, default=default):
+                    body = 'source ' + shlex.quote(str(self.f.runtime / 'workflow-lib.sh')) + '\n'
+                    body += 'workflow_bind_local_config_root ' + shlex.quote(str(self.f.checkout)) + '\n'
+                    body += 'workflow_is_default_config_file() { printf "token=' + self.secret + '\\n" >&2; return ' + ('0' if default else '1') + '; };\n'
+                    body += 'workflow_config_review_list ' + shlex.quote(str(self.f.shared)) + ' on_draft runner\n'
+                    result = self.safe(self.run_command([shell, '-c', body]), 0)
+                    self.assertEqual(result.stdout, 'codex\n' if default else 'shared-policy-sentinel\n')
+                    self.assertEqual(result.stderr, '')
+            # U67: real binder, both canonicalization producers, before reading.
+            for failure in ('success', 'cd', 'pwd'):
+                with self.subTest(route='U67', shell=shell, failure=failure):
+                    trace = self.f.root / 'binder-reader'; trace.unlink(missing_ok=True)
+                    body = 'source ' + shlex.quote(str(self.f.runtime / 'workflow-lib.sh')) + '\n'
+                    body += 'eval "$(declare -f workflow_local_config_file | sed \'1s/workflow_local_config_file/actual_local_file/\')"\n'
+                    body += 'workflow_local_config_file() { printf x >' + shlex.quote(str(trace)) + '; actual_local_file "$@"; };\n'
+                    if failure != 'success': body += failure + '() { printf "token=' + self.secret + '\\n" >&2; return 29; };\n'
+                    body += 'workflow_bind_local_config_root ' + shlex.quote(str(self.f.checkout)) + '\nworkflow_local_config_root\n'
+                    result = self.safe(self.run_command([shell, '-c', body]), 0 if failure == 'success' else 2)
+                    self.assertEqual(trace.exists(), failure == 'success')
+                    self.assertEqual(result.stdout, str(self.f.checkout) + '\n' if failure == 'success' else '')
+                    self.assertEqual(result.stderr, '' if failure == 'success' else 'ERROR: local-source unreadable directory\n')
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)

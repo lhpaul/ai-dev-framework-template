@@ -544,7 +544,7 @@ esac
 
 # Bind explicit checkout authority before any private-source or remote operation.
 # The default remains this tool checkout; children pass their selected root.
-[ -n "$repo_root" ] || repo_root="$(workflow_repo_root)"
+[ -n "$repo_root" ] || repo_root="$(workflow_repo_root 2>/dev/null)"
 workflow_bind_local_config_root "$repo_root" || exit 2
 repo_root="$(workflow_local_config_root)"
 

@@ -65,7 +65,7 @@ workflow_local_config_root() {
 workflow_bind_local_config_root() {
   local root="${1:-}" selected_file
   [ -n "$root" ] || return 2
-  if ! root="$(CDPATH='' cd -- "$root" 2>/dev/null && pwd -P)"; then
+  if ! root="$( { CDPATH='' cd -- "$root" && pwd -P; } 2>/dev/null)"; then
     printf 'ERROR: local-source unreadable directory\n' >&2
     return 2
   fi
@@ -109,7 +109,7 @@ workflow_local_config_file() {
     [ -n "$1" ] || return 2
     root="$1"
   else
-    root="$(workflow_local_config_root)"
+    root="$(workflow_local_config_root 2>/dev/null)" || return 2
   fi
   python3 "$(workflow_config_resolver_script 2>/dev/null)" local-source --repo-root "$root"
 }
@@ -1161,19 +1161,21 @@ workflow_config_review_nested_list_declared() {
 
 # 0 = declaration (including []), 1 = absent, 2 = source/schema failure.
 workflow_config_review_local_list_if_declared() {
-  local config_file="$1" phase="$2" key="$3" status=0
+  local config_file="$1" phase="$2" key="$3" status=0 review_root
   workflow_is_default_config_file "$config_file" || return 1
+  review_root="$(workflow_local_config_root 2>/dev/null)" || return 2
   python3 "$(workflow_config_resolver_script 2>/dev/null)" review-local-list \
-    --repo-root "$(workflow_local_config_root)" --phase "$phase" --key "$key" || status=$?
+    --repo-root "$review_root" --phase "$phase" --key "$key" || status=$?
   return "$status"
 }
 
 # Decode/validate selected names before newline transport. One invocation retains
 # local declared-empty precedence and shared legacy fallback without AWK splitting.
 workflow_config_review_list() {
-  local config_file="$1" phase="$2" key="$3"
-  local args=(review-list --repo-root "$(workflow_local_config_root)" --shared-file "$config_file" --phase "$phase" --key "$key")
-  if workflow_is_default_config_file "$config_file"; then
+  local config_file="$1" phase="$2" key="$3" review_root
+  review_root="$(workflow_local_config_root 2>/dev/null)" || return 2
+  local args=(review-list --repo-root "$review_root" --shared-file "$config_file" --phase "$phase" --key "$key")
+  if workflow_is_default_config_file "$config_file" 2>/dev/null; then
     args+=(--apply-local)
   fi
   python3 "$(workflow_config_resolver_script 2>/dev/null)" ${args[@]+"${args[@]}"}
@@ -1481,7 +1483,7 @@ workflow_repository_mode() {
     [ -n "$1" ] || return 2
     repo_root="$1"
   else
-    repo_root="$(workflow_local_config_root)"
+    repo_root="$(workflow_local_config_root 2>/dev/null)" || return 2
   fi
 
   python3 "$(workflow_config_resolver_script)" mode --repo-root "$repo_root"
@@ -1494,7 +1496,7 @@ workflow_repository_context() {
     [ -n "$2" ] || return 2
     repo_root="$2"
   else
-    repo_root="$(workflow_local_config_root)"
+    repo_root="$(workflow_local_config_root 2>/dev/null)" || return 2
   fi
   local args=(resolve --repo-root "$repo_root")
 
@@ -1512,7 +1514,7 @@ workflow_validate_repository_context() {
     [ -n "$2" ] || return 2
     repo_root="$2"
   else
-    repo_root="$(workflow_local_config_root)"
+    repo_root="$(workflow_local_config_root 2>/dev/null)" || return 2
   fi
   local require_local="${3:-}"
   local args=(validate --repo-root "$repo_root")
@@ -1533,7 +1535,7 @@ workflow_review_override_context() {
     [ -n "$1" ] || return 2
     repo_root="$1"
   else
-    repo_root="$(workflow_local_config_root)"
+    repo_root="$(workflow_local_config_root 2>/dev/null)" || return 2
   fi
 
   python3 "$(workflow_config_resolver_script)" review-overrides --repo-root "$repo_root"

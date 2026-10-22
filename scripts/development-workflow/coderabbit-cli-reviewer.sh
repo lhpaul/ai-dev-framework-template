@@ -124,7 +124,11 @@ while [ "$#" -gt 0 ]; do
 done
 
 # Bind only after argument parsing, before any policy/private-source read.
-workflow_bind_local_config_root "${REPO_ROOT:-$(workflow_repo_root)}" || exit 2
+config_source_root="$REPO_ROOT"
+if [ -z "$config_source_root" ]; then
+  config_source_root="$(workflow_repo_root 2>/dev/null)" || { printf 'configuration: checkout access error\n' >&2; exit 2; }
+fi
+workflow_bind_local_config_root "$config_source_root" || exit 2
 if [ -n "$REPO_ROOT" ]; then
   REPO_ROOT="$(workflow_local_config_root)"
 fi
@@ -141,10 +145,11 @@ rate_limit_policy_from_file() {
 }
 
 rate_limit_policy_from_config() {
-  local config_file
+  local config_file policy_root
   config_file="$(workflow_effective_config_file 2>/dev/null || true)"
+  policy_root="$(workflow_local_config_root 2>/dev/null)" || return 2
   python3 "$(workflow_config_resolver_script 2>/dev/null)" coderabbit-policy \
-    --repo-root "$(workflow_local_config_root)" --shared-file "$config_file"
+    --repo-root "$policy_root" --shared-file "$config_file"
 }
 
 RATE_LIMIT_POLICY="${CODERABBIT_CLI_RATE_LIMIT_POLICY:-}"
