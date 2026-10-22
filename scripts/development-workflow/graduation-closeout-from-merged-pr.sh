@@ -287,7 +287,11 @@ sys.stdout.write(body)
     SLUG_SOURCE="cli_override"
   fi
 
+  # Combined text is for Linear only (unchanged join). GitHub closeout filters
+  # title and body as independent documents — see collect_pr_epic_candidates.
   printf '%s\n%s\n' "$title" "$body" > "$TMP_DIR/pr-text.txt"
+  printf '%s' "$title" > "$TMP_DIR/pr-title.txt"
+  printf '%s' "$body" > "$TMP_DIR/pr-body.txt"
 }
 
 # Drop indented Markdown code lines (4+ spaces or a leading tab) after fence
@@ -321,14 +325,21 @@ collect_pr_epic_candidates() {
     printf '%s\n' "$text" | extract_linear_epic_refs | sort -u > "$TMP_DIR/pr-epic-candidates.txt"
     return 0
   fi
-  # github_projects / github_issues: closeout-only filter (fences + list-aware
-  # indented code). Preserves nested-list / paragraph-continuation keywords.
-  if ! text="$(strip_markdown_code_for_closeout < "$TMP_DIR/pr-text.txt")"; then
+  # github_projects / github_issues: filter title and body independently so a
+  # body that starts with indented code is not a continuation of the title,
+  # then union epic/closing refs.
+  local title_text body_text
+  if ! title_text="$(strip_markdown_code_for_closeout < "$TMP_DIR/pr-title.txt")"; then
+    fail_closed "could_not_strip_fenced_blocks"
+  fi
+  if ! body_text="$(strip_markdown_code_for_closeout < "$TMP_DIR/pr-body.txt")"; then
     fail_closed "could_not_strip_fenced_blocks"
   fi
   {
-    printf '%s\n' "$text" | extract_epic_parent_refs
-    printf '%s\n' "$text" | extract_closing_issue_numbers
+    printf '%s\n' "$title_text" | extract_epic_parent_refs
+    printf '%s\n' "$title_text" | extract_closing_issue_numbers
+    printf '%s\n' "$body_text" | extract_epic_parent_refs
+    printf '%s\n' "$body_text" | extract_closing_issue_numbers
   } | sort -un > "$TMP_DIR/pr-epic-candidates.txt"
 }
 

@@ -467,12 +467,12 @@ discover_label_subitems() {
 }
 
 discover_closing_keyword_refs() {
-  # GitHub Projects / GitHub Issues path only. Scans PR title+body for live
-  # closing keywords via closing_keyword_live_refs_for_closeout (shared fence
-  # filter plus CommonMark indented-code stripping that preserves list /
-  # paragraph continuations). Cross-repo forms like owner/repo#N never match
-  # the keyword pattern. Linear must not call this — see
-  # discover_linear_merged_pr_issue_refs.
+  # GitHub Projects / GitHub Issues path only. Scans PR title and body as
+  # independent documents via closing_keyword_live_refs_for_closeout, then
+  # unions the results. Joining title+"\n"+body would make a body that starts
+  # with indented code look like a paragraph continuation of the title.
+  # Cross-repo forms like owner/repo#N never match the keyword pattern. Linear
+  # must not call this — see discover_linear_merged_pr_issue_refs.
   local prs_json
   if ! prs_json="$(gh pr list --state merged --base "$INTEGRATION_BRANCH" --limit 1000 --json number,title,body 2>/dev/null)"; then
     return 1
@@ -503,21 +503,27 @@ except Exception:
     sys.exit(1)
 for pr in prs or []:
     number = pr.get("number")
-    text = expand_tabs((pr.get("title") or "") + "\n" + (pr.get("body") or ""))
-    if number:
-        print(f"PR\t{number}\t{text.replace(chr(10), chr(30))}")
+    if not number:
+        continue
+    title = expand_tabs(pr.get("title") or "")
+    body = expand_tabs(pr.get("body") or "")
+    print(f"TITLE\t{number}\t{title.replace(chr(10), chr(30))}")
+    print(f"BODY\t{number}\t{body.replace(chr(10), chr(30))}")
 ' > "$TMP_DIR/merged-prs.tsv"
   while IFS="$(printf '\t')" read -r marker pr_number text; do
-    [ "$marker" = "PR" ] || continue
+    case "$marker" in
+      TITLE|BODY) ;;
+      *) continue ;;
+    esac
     if ! printf '%s' "$text" | tr "$(printf '\036')" '\n' \
       | closing_keyword_live_refs_for_closeout \
-      | sort -un > "$TMP_DIR/pr-${pr_number}-issues.txt"; then
+      > "$TMP_DIR/pr-${pr_number}-${marker}-issues.txt"; then
       return 1
     fi
     while IFS= read -r issue; do
       [ -z "$issue" ] && continue
       append_candidate "$issue" "pr:${pr_number}"
-    done < "$TMP_DIR/pr-${pr_number}-issues.txt"
+    done < "$TMP_DIR/pr-${pr_number}-${marker}-issues.txt"
   done < "$TMP_DIR/merged-prs.tsv"
 }
 

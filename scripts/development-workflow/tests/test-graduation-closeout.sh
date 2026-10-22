@@ -235,6 +235,27 @@ JSON
 [{"number":11,"title":"Graduate wave","body":"See example:\n\n    Closes #326\nNo live closing keywords."}]
 JSON
         ;;
+      body_starts_four_space_326)
+        # Body begins with indented code; non-empty title must not make it live.
+        cat <<'JSON'
+[{"number":11,"title":"Graduate wave","body":"    Closes #326\nNo live closing keywords."}]
+JSON
+        ;;
+      body_starts_tab_326)
+        cat <<'JSON'
+[{"number":11,"title":"Graduate wave","body":"\tCloses #326\nNo live closing keywords."}]
+JSON
+        ;;
+      body_starts_space_tab_326)
+        cat <<'JSON'
+[{"number":11,"title":"Graduate wave","body":" \tCloses #326\nNo live closing keywords."}]
+JSON
+        ;;
+      title_closes_327_body_indent_326)
+        cat <<'JSON'
+[{"number":11,"title":"Closes #327","body":"    Closes #326\nNo live body keyword."}]
+JSON
+        ;;
       foreign_repo_text)
         cat <<'JSON'
 [{"number":11,"title":"Graduate wave","body":"Closes other/repo#326\nNo local closing keywords."}]
@@ -1188,6 +1209,39 @@ for provider in github_projects github_issues; do
   echo ""
   echo "=== graduation closeout: ${provider} ignores space+tab mixed-indent Closes #326 (#2016) ==="
   assert_github_example_326_untouched "$provider" mixed_indent_example "${provider}_mixed_indent"
+
+  echo ""
+  echo "=== graduation closeout: ${provider} ignores body-start 4-space Closes #326 with title (#2016) ==="
+  assert_github_example_326_untouched "$provider" body_starts_four_space_326 "${provider}_body_start_spaces"
+
+  echo ""
+  echo "=== graduation closeout: ${provider} ignores body-start tab Closes #326 with title (#2016) ==="
+  assert_github_example_326_untouched "$provider" body_starts_tab_326 "${provider}_body_start_tab"
+
+  echo ""
+  echo "=== graduation closeout: ${provider} ignores body-start space+tab Closes #326 with title (#2016) ==="
+  assert_github_example_326_untouched "$provider" body_starts_space_tab_326 "${provider}_body_start_mixed"
+
+  echo ""
+  echo "=== graduation closeout: ${provider} closes title Closes #327; body-start indent #326 untouched (#2016) ==="
+  reset_fixture
+  write_tracker_config "$provider"
+  export MOCK_NATIVE_MODE=empty
+  export MOCK_PR_MODE=title_closes_327_body_indent_326
+  write_issue 326 "Example-only body indent" OPEN
+  write_issue 327 "Live title keyword" OPEN
+  write_issue 900 "Parent epic" OPEN
+  set_status 326 "In Development"
+  set_status 327 "In Development"
+  set_status 900 "In Development"
+  result="$(run_closeout)"
+  body="$(last_output_body "$result")"
+  run_test "${provider}_title_327_exit_zero" "0" "$(last_output_status "$result")"
+  run_contains "${provider}_title_327_pass" "GRADUATION_CLOSEOUT_RESULT=pass" "$body"
+  run_test "${provider}_title_327_closed" "CLOSED" "$(python3 -c 'import json; print(json.load(open("'"$MOCK_STATE_DIR"'/327.json"))["state"])')"
+  run_test "${provider}_title_327_326_untouched" "OPEN" "$(python3 -c 'import json; print(json.load(open("'"$MOCK_STATE_DIR"'/326.json"))["state"])')"
+  run_not_contains "${provider}_title_327_no_close_326" "issue close 326" "$(cat "$MOCK_GH_LOG")"
+  run_contains "${provider}_title_327_close_log" "327" "$(cat "$MOCK_CLOSE_LOG")"
 
   echo ""
   echo "=== graduation closeout: ${provider} keeps nested-list Closes #123 (#2016) ==="
