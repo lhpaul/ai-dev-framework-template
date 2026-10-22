@@ -342,6 +342,23 @@ check "closeout_list_multi_cont_keeps_later_indent" "124" \
 # After list ends (blank + indent-0 paragraph), indented code is stripped.
 check "closeout_list_then_paragraph_then_code_strips" "" \
   "$(closeout_refs_of "$(printf -- '- item\n\nParagraph outside list.\n\n    Closes #326')")"
+# Inside a list item, indent >= content_indent+4 after a blank is indented code.
+check "closeout_list_item_six_space_code_strips" "" \
+  "$(closeout_refs_of "$(printf -- '- Example:\n\n      Closes #326')")"
+# Ordered list content_indent=3 → 7 spaces is code.
+check "closeout_ordered_list_seven_space_code_strips" "" \
+  "$(closeout_refs_of "$(printf -- '1. Item\n\n       Closes #327')")"
+# ATX heading is a block boundary: next ≥4-indent line is code without a blank.
+check "closeout_atx_heading_then_indent_strips" "" \
+  "$(closeout_refs_of "$(printf -- '## Example\n    Closes #326')")"
+# Setext underline ends the paragraph the same way.
+check "closeout_setext_dashes_then_indent_strips" "" \
+  "$(closeout_refs_of "$(printf -- 'Paragraph\n---\n    Closes #326')")"
+check "closeout_setext_equals_then_indent_strips" "" \
+  "$(closeout_refs_of "$(printf -- 'Paragraph\n===\n    Closes #326')")"
+# Heading then blank then unindented prose stays live.
+check "closeout_atx_heading_blank_prose_keeps" "328" \
+  "$(closeout_refs_of "$(printf -- '## Example\n\nCloses #328')")"
 
 # ---------------------------------------------------------------------------
 # Differential attribution

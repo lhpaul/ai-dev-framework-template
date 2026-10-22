@@ -302,6 +302,31 @@ JSON
 [{"number":11,"title":"Graduate wave","body":"- item\n\nParagraph outside list.\n\n    Closes #326\nNo live closing keywords."}]
 JSON
         ;;
+      list_item_six_space_code_326)
+        cat <<'JSON'
+[{"number":11,"title":"Graduate wave","body":"- Example:\n\n      Closes #326\nNo live closing keywords."}]
+JSON
+        ;;
+      ordered_list_seven_space_327)
+        cat <<'JSON'
+[{"number":11,"title":"Graduate wave","body":"1. Item\n\n       Closes #327\nNo live closing keywords."}]
+JSON
+        ;;
+      atx_heading_then_indent_326)
+        cat <<'JSON'
+[{"number":11,"title":"Graduate wave","body":"## Example\n    Closes #326\nNo live closing keywords."}]
+JSON
+        ;;
+      setext_dashes_then_indent_326)
+        cat <<'JSON'
+[{"number":11,"title":"Graduate wave","body":"Paragraph\n---\n    Closes #326\nNo live closing keywords."}]
+JSON
+        ;;
+      atx_heading_blank_prose_328)
+        cat <<'JSON'
+[{"number":11,"title":"Deliver item","body":"## Example\n\nCloses #328"}]
+JSON
+        ;;
       foreign_repo_text)
         cat <<'JSON'
 [{"number":11,"title":"Graduate wave","body":"Closes other/repo#326\nNo local closing keywords."}]
@@ -1162,6 +1187,7 @@ assert_github_example_326_untouched() {
   local provider="$1"
   local mode="$2"
   local label="$3"
+  local issue="${4:-326}"
   reset_fixture
   write_tracker_config "$provider"
   export MOCK_NATIVE_MODE=children
@@ -1170,13 +1196,13 @@ assert_github_example_326_untouched() {
   write_issue 102 "Closed nonterminal" CLOSED
   write_issue 103 "Closed terminal" CLOSED
   write_issue 104 "Optional child" OPEN optional
-  write_issue 326 "Example-only issue" OPEN
+  write_issue "$issue" "Example-only issue" OPEN
   write_issue 900 "Parent epic" OPEN
   set_status 101 "In Development"
   set_status 102 "Development in Review"
   set_status 103 "Merged"
   set_status 104 "In Development"
-  set_status 326 "In Development"
+  set_status "$issue" "In Development"
   set_status 900 "In Development"
   local result body
   result="$(run_closeout)"
@@ -1185,10 +1211,10 @@ assert_github_example_326_untouched() {
   run_contains "${label}_pass" "GRADUATION_CLOSEOUT_RESULT=pass" "$body"
   run_contains "${label}_provider" "TRACKER_PROVIDER=${provider}" "$body"
   run_test "${label}_child_closed" "CLOSED" "$(python3 -c 'import json; print(json.load(open("'"$MOCK_STATE_DIR"'/101.json"))["state"])')"
-  run_test "${label}_326_untouched" "OPEN" "$(python3 -c 'import json; print(json.load(open("'"$MOCK_STATE_DIR"'/326.json"))["state"])')"
-  run_not_contains "${label}_no_close_326" "issue close 326" "$(cat "$MOCK_GH_LOG")"
-  run_not_contains "${label}_no_edit_326" "issue edit 326" "$(cat "$MOCK_GH_LOG")"
-  run_not_contains "${label}_no_close_log_326" $'326\t' "$(cat "$MOCK_CLOSE_LOG")"
+  run_test "${label}_${issue}_untouched" "OPEN" "$(python3 -c 'import json; print(json.load(open("'"$MOCK_STATE_DIR"'/'"$issue"'.json"))["state"])')"
+  run_not_contains "${label}_no_close_${issue}" "issue close ${issue}" "$(cat "$MOCK_GH_LOG")"
+  run_not_contains "${label}_no_edit_${issue}" "issue edit ${issue}" "$(cat "$MOCK_GH_LOG")"
+  run_not_contains "${label}_no_close_log_${issue}" "${issue}"$'\t' "$(cat "$MOCK_CLOSE_LOG")"
 }
 
 assert_github_plain_326_closed() {
@@ -1312,6 +1338,26 @@ for provider in github_projects github_issues; do
   echo ""
   echo "=== graduation closeout: ${provider} strips code after list ends with indent-0 paragraph (#2016) ==="
   assert_github_example_326_untouched "$provider" list_then_para_then_indent_326 "${provider}_list_then_para_code"
+
+  echo ""
+  echo "=== graduation closeout: ${provider} strips list-item six-space indented code Closes #326 (#2016) ==="
+  assert_github_example_326_untouched "$provider" list_item_six_space_code_326 "${provider}_list_item_code"
+
+  echo ""
+  echo "=== graduation closeout: ${provider} strips ordered-list seven-space code Closes #327 (#2016) ==="
+  assert_github_example_326_untouched "$provider" ordered_list_seven_space_327 "${provider}_ordered_list_code" 327
+
+  echo ""
+  echo "=== graduation closeout: ${provider} strips ATX-heading then indented Closes #326 (#2016) ==="
+  assert_github_example_326_untouched "$provider" atx_heading_then_indent_326 "${provider}_atx_indent"
+
+  echo ""
+  echo "=== graduation closeout: ${provider} strips setext then indented Closes #326 (#2016) ==="
+  assert_github_example_326_untouched "$provider" setext_dashes_then_indent_326 "${provider}_setext_indent"
+
+  echo ""
+  echo "=== graduation closeout: ${provider} keeps ATX-heading then blank prose Closes #328 (#2016) ==="
+  assert_github_keyword_issue_closed "$provider" atx_heading_blank_prose_328 328 "${provider}_atx_blank_prose"
 
   echo ""
   echo "=== graduation closeout: ${provider} keeps nested-list Closes #123 (#2016) ==="

@@ -189,21 +189,23 @@ closing_keyword_live_refs() {
 # strip_markdown_code_for_closeout
 # Opt-in filter for graduation closeout GitHub-provider paths only. Applies the
 # shared strip_fenced_pr_body_blocks filter, then drops CommonMark-style indented
-# code blocks without removing list content or paragraph continuations.
+# code blocks without removing list/paragraph prose. Prefer keeping prose.
 #
-# Indented code (leading whitespace ≥4 columns with tab stops of 4) is removed
-# only outside list context, when a run starts after a blank line or at text
-# start. Prefer keeping prose over stripping.
-#
-# List context starts on a list-marker line (indent 0–3, not a thematic break)
-# and persists through any indented line (indent ≥1) and blank lines. It ends
-# only on a non-blank indent-0 line that is neither a list marker nor a lazy
-# continuation directly following a non-blank list line (after a blank line,
-# an indent-0 non-marker ends the list). A thematic break also ends it.
-# While in list context, nothing is treated as indented code.
-#
-# CommonMark thematic breaks (--- / *** / ___ / - - - / * * *, indent 0–3) are
-# recognized before list markers and clear list context.
+# Supported CommonMark subset (closeout-only; not a full parser):
+# - Fences: handled by strip_fenced_pr_body_blocks first.
+# - Indented code (tab stops of 4): outside lists, a run with indent ≥4 that
+#   starts after a blank / document start / ATX heading / setext underline /
+#   thematic break (or continues a prior code line).
+# - Lists: marker indent 0–3 starts list context. content_indent = marker indent
+#   + marker width + following spaces (1–4; if more than 4, padding is 1).
+#   Inside a list item, indent ≥ content_indent+4 after a blank (or continuing
+#   code) is indented code; indent < content_indent+4 stays prose. Nested list
+#   markers (indent < content_indent+4) update content_indent. List ends on an
+#   indent-0 non-marker after a blank, or on thematic / ATX / setext.
+# - ATX headings (#{1,6} + space/end, indent 0–3) and setext underlines
+#   (=== / --- under a paragraph line) are block boundaries: the next ≥4-indent
+#   line may start indented code without a blank. After a paragraph, --- is
+#   setext (not a thematic break); thematic breaks still match - - - / *** / etc.
 #
 # Do not use this from post-merge cleanup or validate-closing-keyword-scope —
 # those consumers keep strip_fenced_pr_body_blocks / closing_keyword_live_refs.
@@ -230,82 +232,134 @@ def leading_indent_columns(line):
             break
     return col, i
 
-# CommonMark thematic break: 3+ matching -/*/_, optional spaces/tabs between,
-# optional trailing whitespace; indent already limited to 0–3 columns.
 THEMATIC_BREAK_RE = re.compile(r"^([-*_])(?:[ \t]*\1){2,}[ \t]*$")
-LIST_MARKER_RE = re.compile(r"^([-*+]|\d+[.)])(\s+|$)")
+LIST_MARKER_RE = re.compile(r"^([-*+]|\d+[.)])([ \t]+|$)")
+ATX_HEADING_RE = re.compile(r"^#{1,6}(?:[ \t]+|$)")
+SETEXT_RE = re.compile(r"^(?:=+|-+)[ \t]*$")
 
-def is_thematic_break_line(line):
+def list_item_content_indent(line):
+    """Return content_indent for a list-marker line, or None."""
     cols, start = leading_indent_columns(line)
-    if cols >= 4:
-        return False
-    return THEMATIC_BREAK_RE.match(line[start:]) is not None
+    m = LIST_MARKER_RE.match(line[start:])
+    if not m:
+        return None
+    marker = m.group(1)
+    rest = line[start + len(marker):]
+    spaces = 0
+    for ch in rest:
+        if ch == " ":
+            spaces += 1
+        else:
+            break
+    if spaces == 0:
+        padding = 1
+    elif spaces <= 4:
+        padding = spaces
+    else:
+        padding = 1
+    return cols + len(marker) + padding
 
-def is_list_marker_line(line):
-    cols, start = leading_indent_columns(line)
-    if cols >= 4:
-        return False
-    return LIST_MARKER_RE.match(line[start:]) is not None
+def is_thematic_break_body(body):
+    return THEMATIC_BREAK_RE.match(body) is not None
+
+def is_setext_underline_body(body):
+    return SETEXT_RE.match(body) is not None
+
+def is_atx_heading_body(body):
+    return ATX_HEADING_RE.match(body) is not None
 
 lines = sys.stdin.read().split("\n")
 out = []
 in_list = False
+content_indent = 0
 in_indented_code = False
 at_block_start = True
+prev_was_paragraph = False
 for line in lines:
     if line.strip() == "":
         out.append(line)
         at_block_start = True
         in_indented_code = False
-        # in_list persists through blank lines
+        prev_was_paragraph = False
         continue
 
-    cols, _start = leading_indent_columns(line)
+    cols, start = leading_indent_columns(line)
+    body = line[start:]
 
-    if cols < 4 and is_thematic_break_line(line):
+    # Setext underline ends the preceding paragraph (--- after prose ≠ thematic).
+    if prev_was_paragraph and cols < 4 and is_setext_underline_body(body):
         in_list = False
+        content_indent = 0
         in_indented_code = False
         at_block_start = True
+        prev_was_paragraph = False
+        out.append(line)
+        continue
+
+    if cols < 4 and is_thematic_break_body(body):
+        in_list = False
+        content_indent = 0
+        in_indented_code = False
+        at_block_start = True
+        prev_was_paragraph = False
+        out.append(line)
+        continue
+
+    if cols < 4 and is_atx_heading_body(body):
+        in_list = False
+        content_indent = 0
+        in_indented_code = False
+        at_block_start = True
+        prev_was_paragraph = False
         out.append(line)
         continue
 
     if in_list:
-        if cols >= 1:
-            # Indented continuation (incl. nested markers) — stay in list
+        code_threshold = content_indent + 4
+        marker_ci = list_item_content_indent(line)
+        if marker_ci is not None and cols < code_threshold:
+            content_indent = marker_ci
+            in_indented_code = False
+            at_block_start = False
+            prev_was_paragraph = True
+            out.append(line)
+            continue
+        if cols >= code_threshold and (at_block_start or in_indented_code):
+            in_indented_code = True
+            at_block_start = False
+            prev_was_paragraph = False
+            continue
+        if cols == 0 and at_block_start:
+            in_list = False
+            content_indent = 0
+            # fall through — reclassify as outside-list line
+        else:
             out.append(line)
             at_block_start = False
             in_indented_code = False
+            prev_was_paragraph = True
             continue
-        if is_list_marker_line(line):
-            out.append(line)
-            at_block_start = False
-            in_indented_code = False
-            continue
-        if not at_block_start:
-            # Lazy continuation of the previous non-blank list line
-            out.append(line)
-            at_block_start = False
-            in_indented_code = False
-            continue
-        # After a blank: indent-0 non-marker ends the list
-        in_list = False
 
-    # Outside list context
-    if cols < 4 and is_list_marker_line(line):
+    marker_ci = list_item_content_indent(line)
+    if marker_ci is not None and cols < 4:
         in_list = True
+        content_indent = marker_ci
         in_indented_code = False
-        out.append(line)
         at_block_start = False
+        prev_was_paragraph = True
+        out.append(line)
         continue
 
     if cols >= 4 and (at_block_start or in_indented_code):
         in_indented_code = True
         at_block_start = False
+        prev_was_paragraph = False
         continue
 
     out.append(line)
     at_block_start = False
     in_indented_code = False
+    prev_was_paragraph = True
 sys.stdout.write("\n".join(out))
 '
 }
