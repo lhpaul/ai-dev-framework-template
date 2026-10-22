@@ -1848,7 +1848,7 @@ expensive_reviewer_gate() {
   local result_clean=""
   local peer_reason=""
   local threads_status="" threads_count="" threads_head=""
-  local checks_state="" checks_head=""
+  local checks_state="" checks_head="" checks_snapshot=""
   local gate_result=""
   local escalation=""
 
@@ -1896,7 +1896,8 @@ expensive_reviewer_gate() {
   fi
 
   if [ -z "$reason" ]; then
-    read -r checks_state checks_head < <(expensive_gate_baseline_checks_status "$pr_number_arg" "$head_sha") || true
+    checks_snapshot="$(expensive_gate_baseline_checks_status "$pr_number_arg" "$head_sha")" || return 2
+    read -r checks_state checks_head <<< "$checks_snapshot" || true
     if [ -z "${checks_state:-}" ] || [ "$checks_state" = "unavailable" ]; then
       reason="evidence_unavailable_checks"
     elif [ -z "${checks_head:-}" ] || [ "$checks_head" != "$head_sha" ]; then

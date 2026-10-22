@@ -2875,6 +2875,165 @@ pre_after_clean_only=0; advisory_checks_section=
                             if boundary == 'renderer': self.assertEqual(len(result.stdout.splitlines()), 3)
                             else: self.assertIn('RESULT=' + ('skipped' if boundary == 'skipped' else 'clean') + '\n', result.stdout)
 
+    def test_D94_cached_expensive_gate_preserves_baseline_source_errors(self):
+        source = (self.f.runtime / 'pr-review-loop.sh').read_text()
+        begin = source.index('for index in "${!platforms[@]}"; do')
+        end = source.index('\n# --- Automated Reviewer Loop Summary comment ---', begin)
+        actual_loop = source[begin:end]
+        head = 'a' * 40
+        payload = self.f.root / 'baseline-checks.json'
+        payload.write_text(json.dumps({'headRefOid': head, 'statusCheckRollup': [
+            {'__typename': 'CheckRun', 'name': 'Haystack / Review', 'status': 'COMPLETED',
+             'conclusion': 'FAILURE', 'workflowName': 'review'},
+            {'__typename': 'CheckRun', 'name': 'unit-tests', 'status': 'COMPLETED',
+             'conclusion': 'SUCCESS', 'workflowName': 'tests'},
+        ]}))
+        for shell in self.compatible_shells():
+            for state in ('configured', 'empty', 'malformed', 'missing', 'unavailable'):
+                for force in (0, 1):
+                    for boundary in ('gate', 'predispatch', 'ready-loop'):
+                        with self.subTest(shell=shell, state=state, force=force, boundary=boundary):
+                            body = self.configured_source_case(state if state != 'unavailable' else 'configured')
+                            self.f.shared.write_text('review:\n  on_draft:\n    github: [bugbot]\n  on_ready:\n    github: []\n')
+                            if state in ('configured', 'unavailable'):
+                                self.f.private.write_text('review:\n  on_draft:\n    github: [haystack]\n  on_ready:\n    github: []\n')
+                            calls = self.f.root / 'baseline-argv.bin'; calls.unlink(missing_ok=True)
+                            dispatch = self.f.root / 'cached-dispatch-argv.bin'; dispatch.unlink(missing_ok=True)
+                            ready = self.f.root / 'cached-ready-argv.bin'; ready.unlink(missing_ok=True)
+                            body += 'gh() { printf "%s\\0" "$@" >> ' + shlex.quote(str(calls)) + '; '
+                            body += ('return 1; }\n' if state == 'unavailable' else 'cat ' + shlex.quote(str(payload)) + '; }\n')
+                            body += r'''
+repo_review_platforms=(local-ai-reviewer pr-agent)
+platforms=(codex-github)
+EXPENSIVE_REVIEWER_PLATFORMS=(codex-github)
+platform_reviewed_heads=("local-ai-reviewer:$loop_head_sha")
+platform_peer_evidence=("local-ai-reviewer|clean|")
+expensive_gate_check_peers() { :; }
+expensive_gate_unresolved_threads_status() { printf 'ok 0 %s\n' "$loop_head_sha"; }
+expensive_gate_deferral_count() { printf '0\n'; }
+expensive_gate_max_deferrals=3
+pr_number=1993; branch_name=feature/1993-fixture
+stage_skip_enabled=0
+aggregate_result=clean; aggregate_status=0; aggregate_reason=; aggregate_output=
+platform_result_records=(); platform_result_tokens=()
+phase_after_clean_enabled=1; phase_after_clean_started=0
+phase_after_clean_platforms=(codex-github)
+compare_mode=0; compare_first_blocking_result=
+reviewer_loop_second_local_pass_before_ready_gate() { return 0; }
+reviewer_wait_budget_for_platform() { printf '1 synthetic unchanged\n'; }
+reviewer_poll_interval_resolve() { printf '1\n'; }
+reviewer_loop_rewait_prepare_platform() { :; }
+reviewer_loop_head_refs_prepare_platform() { :; }
+reviewer_loop_timing_begin() { :; }
+reviewer_loop_timing_end() { :; }
+reviewer_loop_process_platform_output() { aggregate_result=clean; aggregate_status=0; last_platform="$1"; }
+'''
+                            body += 'PR_REVIEW_LOOP_FORCE_EXPENSIVE_REVIEWERS=' + str(force) + '\n'
+                            body += 'run_platform_review() { printf "%s\\0" "$@" >> ' + shlex.quote(str(dispatch)) + '; printf "RESULT=clean\\nCOMMENT_COUNT=0\\nBLOCKING_COUNT=0\\nSUGGESTION_COUNT=0\\n"; }\n'
+                            body += 'ensure_pr_ready_for_ready_phase() { printf "%s\\0" "$@" >> ' + shlex.quote(str(ready)) + '; }\n'
+                            if boundary == 'gate':
+                                body += 'gate_status=0\nexpensive_reviewer_gate 1993 codex-github "$loop_head_sha" || gate_status=$?\nexit "$gate_status"\n'
+                            elif boundary == 'predispatch':
+                                body += 'reviewer_loop_platform_pre_dispatch codex-github 1\nprintf "ACTION=%s\\nAGGREGATE=%s\\n" "$reviewer_loop_pre_dispatch_action" "$aggregate_result"\nexit "$aggregate_status"\n'
+                            else:
+                                body += actual_loop + '\nprintf "AGGREGATE=%s\\n" "$aggregate_result"\nexit "$aggregate_status"\n'
+                            result = self.run_command([shell, '-c', body])
+                            source_error = state in ('malformed', 'missing')
+                            permitted = state == 'configured' or (not source_error and force == 1)
+                            expected = 2 if source_error and boundary == 'gate' else (0 if permitted else 1)
+                            self.safe(result, expected)
+                            self.assertEqual(self.f.log.exists(), False)
+                            args = calls.read_bytes().split(b'\0')[:-1]
+                            one_call = [b'pr', b'view', b'1993', b'--json', b'statusCheckRollup,headRefOid']
+                            self.assertEqual(args, one_call * (2 if boundary == 'ready-loop' and permitted else 1))
+                            if source_error:
+                                self.assertIn('configuration:', result.stderr)
+                                self.assertNotIn('EXPENSIVE_GATE_RESULT=forced', result.stdout)
+                                self.assertNotIn('EXPENSIVE_GATE_RESULT=dispatched', result.stdout)
+                                if boundary == 'gate': self.assertEqual(result.stdout, '')
+                                else: self.assertIn('AGGREGATE=needs_fixes\n', result.stdout)
+                            else:
+                                self.assertEqual(result.stderr, '' if boundary != 'ready-loop' or not permitted else 'INFO: expensive-gate ready preflight passed for codex-github (earlier_buckets); full gate still runs before dispatch\n')
+                                values = dict(line.split('=', 1) for line in result.stdout.splitlines() if '=' in line)
+                                self.assertEqual(values['EXPENSIVE_GATE_RESULT'], 'dispatched' if state == 'configured' else ('forced' if force else 'deferred'))
+                                self.assertEqual(values['EXPENSIVE_GATE_REASON'], '' if state == 'configured' else ('baseline_checks_not_green' if state == 'empty' else 'evidence_unavailable_checks'))
+                            self.assertEqual(ready.exists(), boundary == 'ready-loop' and permitted)
+                            self.assertEqual(dispatch.exists(), boundary == 'ready-loop' and permitted)
+                            if dispatch.exists():
+                                self.assertEqual(dispatch.read_bytes().split(b'\0')[:-1], [b'codex-github', b'1993', b'feature/1993-fixture', b'1', b'1'])
+                                self.assertEqual(ready.read_bytes(), b'1993\0')
+
+    def test_D95_completion_report_retains_late_selected_source_failure(self):
+        source = (self.f.runtime / 'item-completion-self-check.sh').read_text()
+        def actual_function(name):
+            start = source.index(name + '() {')
+            return source[start:source.index('\n}', start) + 2]
+        start = source.index('      if ! is_true "$require_review_summary"; then')
+        branch = source[start:source.index('\n      if is_true "$require_review_threads"; then', start)]
+        terminal = source[source.index('if [ "$unavailable_required_count" -gt 0 ]; then'):]
+        definitions = '\n'.join(actual_function(n) for n in ('is_true', 'md_escape', 'add_row'))
+        definitions += '\n' + actual_function('local_ai_reviewer_configured').replace('local_ai_reviewer_configured()', 'original_local_ai_reviewer_configured()', 1)
+        original = actual_function('configured_review_platforms').replace('configured_review_platforms()', 'original_configured_review_platforms()', 1)
+        for shell in self.compatible_shells():
+            for state in ('configured', 'empty', 'late-malformed', 'late-missing', 'not-claimed'):
+                with self.subTest(shell=shell, state=state):
+                    self.configured_source_case('empty' if state == 'empty' else 'configured')
+                    self.f.shared.write_text('review:\n  on_draft:\n    github: [pr-agent]\n  on_ready:\n    github: []\n')
+                    statuses = self.f.root / 'completion-reader-statuses'; statuses.write_text('')
+                    argv = self.f.root / 'completion-reader-argv.bin'; argv.write_bytes(b'')
+                    helper = self.f.root / 'completion-helper-status'; helper.unlink(missing_ok=True)
+                    self.f.env.update(SYNTHETIC_SELECTED=str(self.f.private), SYNTHETIC_OPAQUE=self.secret,
+                                      SYNTHETIC_COMPLETION_STATE=state, SYNTHETIC_COMPLETION_STATUSES=str(statuses),
+                                      SYNTHETIC_COMPLETION_ARGV=str(argv), SYNTHETIC_COMPLETION_HELPER=str(helper))
+                    body = 'source ' + shlex.quote(str(self.f.runtime / 'workflow-lib.sh')) + '\n' + definitions + '\n' + original + '\n'
+                    body += r'''
+local_ai_reviewer_configured() {
+  local helper_status=0
+  original_local_ai_reviewer_configured || helper_status=$?
+  printf '%s' "$helper_status" > "$SYNTHETIC_COMPLETION_HELPER"
+  return "$helper_status"
+}
+configured_review_platforms() {
+  local reader_status=0 count
+  printf '%s\0' "$@" >> "$SYNTHETIC_COMPLETION_ARGV"
+  original_configured_review_platforms "$@" || reader_status=$?
+  printf '%s\n' "$reader_status" >> "$SYNTHETIC_COMPLETION_STATUSES"
+  count="$(wc -l < "$SYNTHETIC_COMPLETION_STATUSES")"
+  if [ "$count" -eq 1 ]; then
+    case "$SYNTHETIC_COMPLETION_STATE" in
+      late-missing) rm "$SYNTHETIC_SELECTED" ;;
+      late-malformed) printf 'other: [%s\n' "$SYNTHETIC_OPAQUE" > "$SYNTHETIC_SELECTED" ;;
+    esac
+  fi
+  return "$reader_status"
+}
+fetch_latest_review_summary() { printf 'synthetic-evidence\n'; }
+extract_reviewer_loop_history_json() { printf '{"entries":[{"platform_results":[{"platform":"local-ai-reviewer","result":"clean"}],"reviewed_heads":[{"platform":"local-ai-reviewer","reviewed_head":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]}]}\n'; }
+rows=(); failure_count=0; discrepancy_count=0; unavailable_required_count=0
+require_review_summary=true; require_review_threads=false
+pr_repo=fixture/public; pr_number=1993; pr_head_oid=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+issue=1993; stage=fixture; expected_branch=feature/1993-fake; resolved_worktree_path=fake
+'''
+                    if state == 'not-claimed': body += 'require_review_summary=false\n'
+                    body += branch + '\n' + terminal
+                    result = self.run_command([shell, '-c', body])
+                    error = state.startswith('late-')
+                    self.safe(result, 1 if error else 0)
+                    self.assertEqual([int(v) for v in statuses.read_text().splitlines()], [0, 2] if error else ([] if state == 'not-claimed' else [0, 0]))
+                    self.assertEqual(argv.read_bytes().split(b'\0')[:-1], [] if state == 'not-claimed' else [str(self.f.shared).encode()] * 2)
+                    self.assertEqual(helper.read_text() if helper.exists() else 'not_called', '2' if error else ('1' if state == 'empty' else ('not_called' if state == 'not-claimed' else '0')))
+                    self.assertFalse(self.f.log.exists())
+                    if error:
+                        self.assertIn('- Result: unavailable_required\n', result.stdout)
+                        self.assertIn('| pull_request.local_reviewer_head | unavailable_required | source resolution failed |', result.stdout)
+                        self.assertNotIn('- Result: verified', result.stdout)
+                        self.assertNotIn('unavailable_optional', result.stdout)
+                        self.assertIn('configuration:', result.stderr)
+                    else:
+                        self.assertIn('- Result: verified\n', result.stdout)
+                        self.assertEqual(result.stderr, '')
+                        self.assertIn('| pull_request.local_reviewer_head | ' + ('verified | ledger head matches live headRefOid' if state == 'configured' else ('unavailable_optional | not claimed' if state == 'not-claimed' else 'unavailable_optional | local-ai-reviewer not configured')), result.stdout)
+
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)

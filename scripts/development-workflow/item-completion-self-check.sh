@@ -779,8 +779,14 @@ if [ -n "$pr_number" ]; then
         add_row "pull_request.local_reviewer_head" "unavailable_optional" "not claimed" "--require-review-summary not set"
       elif ! configured_review_platforms "$(workflow_effective_config_file 2>/dev/null || workflow_config_file)" >/dev/null; then
         add_row "pull_request.local_reviewer_head" "unavailable_required" "source resolution failed" "configured review platforms"
-      elif ! local_ai_reviewer_configured; then
-        add_row "pull_request.local_reviewer_head" "unavailable_optional" "local-ai-reviewer not configured" "resolved platform list"
+      elif local_ai_configured_status=0
+        local_ai_reviewer_configured || local_ai_configured_status=$?
+        [ "$local_ai_configured_status" -ne 0 ]; then
+        if [ "$local_ai_configured_status" -eq 1 ]; then
+          add_row "pull_request.local_reviewer_head" "unavailable_optional" "local-ai-reviewer not configured" "resolved platform list"
+        else
+          add_row "pull_request.local_reviewer_head" "unavailable_required" "source resolution failed" "configured review platforms"
+        fi
       elif latest_review_summary="$(fetch_latest_review_summary "$pr_repo" "$pr_number" 2>&1)"; then
         if [ -n "$latest_review_summary" ]; then
           ledger_json="$(printf '%s\n' "$latest_review_summary" | extract_reviewer_loop_history_json)"
