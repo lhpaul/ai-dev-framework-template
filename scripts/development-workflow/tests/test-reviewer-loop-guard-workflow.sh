@@ -211,7 +211,18 @@ STALE_HEAD="2222222222222222222222222222222222222222"
 summary_fixture() {
   local result="$1"
   local head="$2"
+  local padding_bytes="${3:-0}"
   printf '### Automated Reviewer Loop Summary\n\n**Result:** %s\n' "$result"
+  # Synthetic prose after the early marker exceeds the pipe buffer. Keep the
+  # history at the end, as in reviewer-loop summaries; never use real PR data.
+  awk -v bytes="$padding_bytes" 'BEGIN {
+    line="synthetic padding with spaces * [ ] ? / and no result marker here"
+    while (bytes > 0) {
+      n = bytes < length(line) ? bytes : length(line)
+      print substr(line, 1, n)
+      bytes -= n
+    }
+  }'
   if [ -n "$head" ]; then
     printf '\n<details>\n```json\n{"entries":[{"head_sha":"%s"}]}\n```\n</details>\n' "$head"
   fi
@@ -248,6 +259,55 @@ run_test "guard_missing_summary_fails" "failure" \
   "$(guard_state_for 0 "")"
 run_test "guard_no_longer_passes_on_presence_alone" "yes" \
   "$(not_contains 'DESCRIPTION="Reviewer-loop summary present."')"
+
+echo ""
+echo "=== Summary parsing under pipefail, synthetic bodies (#2019) ==="
+
+summary_observation() {
+  # Isolated subshells make concurrent test invocations safe: no shared writes
+  # or GitHub calls. Explicit pipefail also applies inside command substitution.
+  # shellcheck disable=SC2034 # read by the eval'd workflow functions
+  (
+    set -euo pipefail
+    HEAD_SHA="$LIVE_HEAD"
+    FOUND=1
+    LATEST_SUMMARY_BODY="$1"
+    if [ "$2" = unset ]; then
+      unset LATEST_SUMMARY_BODY
+    fi
+    summarize_reviewer_loop_result
+    reviewer_loop_guard_verdict
+    printf '%s|%s|%s|%s' "$LATEST_SUMMARY_RESULT" \
+      "$LATEST_SUMMARY_HEAD_SHA" "$LATEST_SUMMARY_HEAD_MATCHES" "$STATE"
+  )
+}
+
+for padding_bytes in 0 54013 1048576; do
+  for result in clean skipped needs_fixes escalate pending_timeout unclean clean_extra skipped_extra; do
+    expected_result=non_clean
+    expected_state=failure
+    case "$result" in
+      clean|skipped) expected_result="$result"; expected_state=success ;;
+    esac
+    run_test "summary_${result}_padding_${padding_bytes}" \
+      "${expected_result}|${LIVE_HEAD}|true|${expected_state}" \
+      "$(summary_observation "$(summary_fixture "$result" "$LIVE_HEAD" "$padding_bytes")" set)"
+  done
+done
+
+# A clean result grants success only for the exact full current head. Exercise
+# stale, abbreviated, extended and absent history, including a large body.
+for history_head in "$STALE_HEAD" "${LIVE_HEAD%1}" "${LIVE_HEAD}1" ""; do
+  run_test "summary_clean_rejects_head_${history_head:-absent}" \
+    "clean|${history_head}|false|failure" \
+    "$(summary_observation "$(summary_fixture clean "$history_head" 1048576)" set)"
+done
+run_test "summary_empty" "missing||false|failure" "$(summary_observation "" set)"
+run_test "summary_unset" "missing||false|failure" "$(summary_observation "" unset)"
+run_test "summary_whitespace_only" "non_clean||false|failure" \
+  "$(summary_observation $' \t\n ' set)"
+run_test "summary_case_insensitive_clean" "clean|${LIVE_HEAD}|true|success" \
+  "$(summary_observation "$(summary_fixture CLEAN "$LIVE_HEAD" 1048576)" set)"
 
 echo ""
 echo "Results: ${PASS_COUNT} passed, ${FAIL_COUNT} failed"
