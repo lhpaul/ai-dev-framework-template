@@ -256,6 +256,37 @@ JSON
 [{"number":11,"title":"Closes #327","body":"    Closes #326\nNo live body keyword."}]
 JSON
         ;;
+      thematic_break_then_indent_326)
+        # Thematic break must not open list context; indented #326 stays code.
+        cat <<'JSON'
+[{"number":11,"title":"Graduate wave","body":"- - -\n\n    Closes #326\nNo live closing keywords."}]
+JSON
+        ;;
+      thematic_hr_dashes_then_indent_326)
+        cat <<'JSON'
+[{"number":11,"title":"Graduate wave","body":"---\n\n    Closes #326\nNo live closing keywords."}]
+JSON
+        ;;
+      thematic_stars_then_indent_326)
+        cat <<'JSON'
+[{"number":11,"title":"Graduate wave","body":"* * *\n\n    Closes #326\nNo live closing keywords."}]
+JSON
+        ;;
+      thematic_hr_stars_then_indent_326)
+        cat <<'JSON'
+[{"number":11,"title":"Graduate wave","body":"***\n\n    Closes #326\nNo live closing keywords."}]
+JSON
+        ;;
+      thematic_underscores_then_indent_326)
+        cat <<'JSON'
+[{"number":11,"title":"Graduate wave","body":"___\n\n    Closes #326\nNo live closing keywords."}]
+JSON
+        ;;
+      list_item_then_indent_123)
+        cat <<'JSON'
+[{"number":11,"title":"Deliver item","body":"- item\n    Closes #123"}]
+JSON
+        ;;
       foreign_repo_text)
         cat <<'JSON'
 [{"number":11,"title":"Graduate wave","body":"Closes other/repo#326\nNo local closing keywords."}]
@@ -1242,6 +1273,18 @@ for provider in github_projects github_issues; do
   run_test "${provider}_title_327_326_untouched" "OPEN" "$(python3 -c 'import json; print(json.load(open("'"$MOCK_STATE_DIR"'/326.json"))["state"])')"
   run_not_contains "${provider}_title_327_no_close_326" "issue close 326" "$(cat "$MOCK_GH_LOG")"
   run_contains "${provider}_title_327_close_log" "327" "$(cat "$MOCK_CLOSE_LOG")"
+
+  echo ""
+  echo "=== graduation closeout: ${provider} ignores thematic-break then indented Closes #326 (#2016) ==="
+  assert_github_example_326_untouched "$provider" thematic_break_then_indent_326 "${provider}_thematic_spaced"
+  assert_github_example_326_untouched "$provider" thematic_hr_dashes_then_indent_326 "${provider}_thematic_hr_dashes"
+  assert_github_example_326_untouched "$provider" thematic_stars_then_indent_326 "${provider}_thematic_stars"
+  assert_github_example_326_untouched "$provider" thematic_hr_stars_then_indent_326 "${provider}_thematic_hr_stars"
+  assert_github_example_326_untouched "$provider" thematic_underscores_then_indent_326 "${provider}_thematic_underscores"
+
+  echo ""
+  echo "=== graduation closeout: ${provider} keeps real list then indented Closes #123 (#2016) ==="
+  assert_github_keyword_issue_closed "$provider" list_item_then_indent_123 123 "${provider}_list_then_indent"
 
   echo ""
   echo "=== graduation closeout: ${provider} keeps nested-list Closes #123 (#2016) ==="

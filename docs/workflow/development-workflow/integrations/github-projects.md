@@ -656,10 +656,13 @@ The helper validates that the graduation PR already merged from
 before closing the parent epic. Under GitHub Projects it discovers planned work
 from native GitHub sub-issues, the legacy `integration-branch:<slug>` label
 fallback, and **live** closing keywords in merged PRs that targeted
-`develop-<slug>` (canonical Markdown filter: ignore keywords inside fenced or
-indented code examples and cross-repo `owner/repo#N`; plain-prose `Closes #N`
-still counts). If discovery is incomplete or no delivered sub-items can be
-identified, closeout fails and holds the parent epic open.
+`develop-<slug>` (shared fence/inline/blockquote filtering as in post-merge
+cleanup and closing-keyword scope validation, plus closeout-only list-aware
+indented-code filtering on the GitHub provider paths — post-merge cleanup is
+unchanged; ignore keywords inside fenced or indented code examples and
+cross-repo `owner/repo#N`; plain-prose `Closes #N` still counts). If discovery
+is incomplete or no delivered sub-items can be identified, closeout fails and
+holds the parent epic open.
 
 For each delivered sub-item, it closes the GitHub issue when needed and then
 reasserts the terminal Project status so built-in GitHub Projects close

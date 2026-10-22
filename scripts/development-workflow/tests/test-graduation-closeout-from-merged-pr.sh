@@ -613,6 +613,76 @@ for provider in github_projects github_issues; do
   run_not_contains "${provider}_wrap_title_327_no_326" "--epic 326" "$(cat "$CHILD_ARGV_LOG")"
 
   echo ""
+  echo "=== wrapper: ${provider} ignores thematic-break then indented Closes #326 (#2016) ==="
+  reset_fixture
+  write_tracker_config "$provider"
+  export MOCK_LABEL_PARENT_MODE=empty
+  write_pr 121 "develop-test-2016" "develop" "true" "Graduate wave" \
+    $'- - -\n\n    Closes #326\nEpic #900'
+  result="$(run_wrapper --graduation-pr 121)"
+  body="$(last_body "$result")"
+  run_test "${provider}_wrap_thematic_spaced_exit_zero" "0" "$(last_status "$result")"
+  run_contains "${provider}_wrap_thematic_spaced_epic" "EPIC_ISSUE=900" "$body"
+  run_not_contains "${provider}_wrap_thematic_spaced_no_326" "--epic 326" "$(cat "$CHILD_ARGV_LOG")"
+
+  reset_fixture
+  write_tracker_config "$provider"
+  export MOCK_LABEL_PARENT_MODE=empty
+  write_pr 122 "develop-test-2016" "develop" "true" "Graduate wave" \
+    $'---\n\n    Closes #326\nEpic #900'
+  result="$(run_wrapper --graduation-pr 122)"
+  body="$(last_body "$result")"
+  run_test "${provider}_wrap_thematic_hr_dashes_exit_zero" "0" "$(last_status "$result")"
+  run_contains "${provider}_wrap_thematic_hr_dashes_epic" "EPIC_ISSUE=900" "$body"
+  run_not_contains "${provider}_wrap_thematic_hr_dashes_no_326" "--epic 326" "$(cat "$CHILD_ARGV_LOG")"
+
+  reset_fixture
+  write_tracker_config "$provider"
+  export MOCK_LABEL_PARENT_MODE=empty
+  write_pr 123 "develop-test-2016" "develop" "true" "Graduate wave" \
+    $'* * *\n\n    Closes #326\nEpic #900'
+  result="$(run_wrapper --graduation-pr 123)"
+  body="$(last_body "$result")"
+  run_test "${provider}_wrap_thematic_stars_exit_zero" "0" "$(last_status "$result")"
+  run_contains "${provider}_wrap_thematic_stars_epic" "EPIC_ISSUE=900" "$body"
+  run_not_contains "${provider}_wrap_thematic_stars_no_326" "--epic 326" "$(cat "$CHILD_ARGV_LOG")"
+
+  reset_fixture
+  write_tracker_config "$provider"
+  export MOCK_LABEL_PARENT_MODE=empty
+  write_pr 124 "develop-test-2016" "develop" "true" "Graduate wave" \
+    $'***\n\n    Closes #326\nEpic #900'
+  result="$(run_wrapper --graduation-pr 124)"
+  body="$(last_body "$result")"
+  run_test "${provider}_wrap_thematic_hr_stars_exit_zero" "0" "$(last_status "$result")"
+  run_contains "${provider}_wrap_thematic_hr_stars_epic" "EPIC_ISSUE=900" "$body"
+  run_not_contains "${provider}_wrap_thematic_hr_stars_no_326" "--epic 326" "$(cat "$CHILD_ARGV_LOG")"
+
+  reset_fixture
+  write_tracker_config "$provider"
+  export MOCK_LABEL_PARENT_MODE=empty
+  write_pr 125 "develop-test-2016" "develop" "true" "Graduate wave" \
+    $'___\n\n    Closes #326\nEpic #900'
+  result="$(run_wrapper --graduation-pr 125)"
+  body="$(last_body "$result")"
+  run_test "${provider}_wrap_thematic_underscores_exit_zero" "0" "$(last_status "$result")"
+  run_contains "${provider}_wrap_thematic_underscores_epic" "EPIC_ISSUE=900" "$body"
+  run_not_contains "${provider}_wrap_thematic_underscores_no_326" "--epic 326" "$(cat "$CHILD_ARGV_LOG")"
+
+  echo ""
+  echo "=== wrapper: ${provider} keeps real list then indented Closes #123 (#2016) ==="
+  reset_fixture
+  write_tracker_config "$provider"
+  export MOCK_LABEL_PARENT_MODE=empty
+  write_pr 126 "develop-test-2016" "develop" "true" "Graduate wave" \
+    $'- item\n    Closes #123'
+  result="$(run_wrapper --graduation-pr 126)"
+  body="$(last_body "$result")"
+  run_test "${provider}_wrap_list_then_indent_exit_zero" "0" "$(last_status "$result")"
+  run_contains "${provider}_wrap_list_then_indent_epic" "EPIC_ISSUE=123" "$body"
+  run_contains "${provider}_wrap_list_then_indent_child" "--epic 123" "$(cat "$CHILD_ARGV_LOG")"
+
+  echo ""
   echo "=== wrapper: ${provider} keeps nested-list Closes #123 with Epic #900 (#2016) ==="
   # Nested list keyword is live but Epic #900 is the sole epic/parent ref style
   # candidate preferred when both exist — assert 123 is not chosen as epic and

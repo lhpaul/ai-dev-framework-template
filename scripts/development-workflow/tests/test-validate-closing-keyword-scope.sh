@@ -321,6 +321,19 @@ check "closeout_keeps_plain_prose" "326" \
   "$(closeout_refs_of 'Closes #326')"
 check "closeout_ignores_cross_repo_form" "" \
   "$(closeout_refs_of 'Closes other/repo#326')"
+# Thematic breaks are not list markers; indented code after them is stripped.
+check "closeout_thematic_dash_spaced_clears_list" "" \
+  "$(closeout_refs_of "$(printf -- '- - -\n\n    Closes #326')")"
+check "closeout_thematic_hr_dashes_clears_list" "" \
+  "$(closeout_refs_of "$(printf -- '---\n\n    Closes #326')")"
+check "closeout_thematic_stars_spaced_clears_list" "" \
+  "$(closeout_refs_of "$(printf -- '* * *\n\n    Closes #326')")"
+check "closeout_thematic_hr_stars_clears_list" "" \
+  "$(closeout_refs_of "$(printf -- '***\n\n    Closes #326')")"
+check "closeout_thematic_hr_underscores_clears_list" "" \
+  "$(closeout_refs_of "$(printf -- '___\n\n    Closes #326')")"
+check "closeout_real_list_keeps_indented_continuation" "123" \
+  "$(closeout_refs_of "$(printf -- '- item\n    Closes #123')")"
 
 # ---------------------------------------------------------------------------
 # Differential attribution

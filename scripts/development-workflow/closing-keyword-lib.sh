@@ -196,8 +196,11 @@ closing_keyword_live_refs() {
 # list item. List context begins on a line whose first non-space token (indent
 # 0–3) is a list marker (- * + / N. / N)) and continues through indented lines
 # and blank lines until a non-blank line at indent <4 that is not a list marker.
-# An indented line that follows non-blank prose with no blank line between is a
-# paragraph continuation and is never treated as code.
+# CommonMark thematic breaks (--- / *** / ___ / - - - / * * *, indent 0–3) are
+# recognized before list markers and clear list context (they are block
+# boundaries, not list items). An indented line that follows non-blank prose
+# with no blank line between is a paragraph continuation and is never treated
+# as code.
 #
 # Do not use this from post-merge cleanup or validate-closing-keyword-scope —
 # those consumers keep strip_fenced_pr_body_blocks / closing_keyword_live_refs.
@@ -224,7 +227,16 @@ def leading_indent_columns(line):
             break
     return col, i
 
+# CommonMark thematic break: 3+ matching -/*/_, optional spaces/tabs between,
+# optional trailing whitespace; indent already limited to 0–3 columns.
+THEMATIC_BREAK_RE = re.compile(r"^([-*_])(?:[ \t]*\1){2,}[ \t]*$")
 LIST_MARKER_RE = re.compile(r"^([-*+]|\d+[.)])(\s+|$)")
+
+def is_thematic_break_line(line):
+    cols, start = leading_indent_columns(line)
+    if cols >= 4:
+        return False
+    return THEMATIC_BREAK_RE.match(line[start:]) is not None
 
 def is_list_marker_line(line):
     cols, start = leading_indent_columns(line)
@@ -246,6 +258,12 @@ for line in lines:
     cols, _start = leading_indent_columns(line)
     if cols < 4:
         in_indented_code = False
+        # Thematic breaks before list markers: "- - -" must not open a list.
+        if is_thematic_break_line(line):
+            in_list = False
+            at_block_start = True
+            out.append(line)
+            continue
         if is_list_marker_line(line):
             in_list = True
         else:
