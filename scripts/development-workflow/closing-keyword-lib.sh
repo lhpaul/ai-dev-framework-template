@@ -17,7 +17,8 @@
 # strip_fenced_pr_body_blocks
 # Removes quoted/example PR body text from stdin before it is scanned for
 # closing keywords, so an example like "Closes #999" inside a code sample,
-# inline code span, or blockquote is not treated as a live closing reference.
+# inline code span, blockquote, or indented code block is not treated as a
+# live closing reference.
 # Handles both backtick (```) and tilde (~~~) fence styles, and treats an
 # unclosed opening fence as extending to end of input (rather than leaving the
 # rest of the body unfiltered). Matches GitHub-Flavored Markdown's
@@ -30,7 +31,9 @@
 # whitespace makes it indented code instead, so the raw line (not a fully
 # whitespace-stripped line) is matched to preserve that boundary — otherwise a
 # 4-space-indented "```" could be mistaken for a real fence and hide a live
-# closing reference.
+# closing reference. Outside fences, lines that are themselves indented code
+# (leading tab, or 4+ leading spaces) are dropped so example-only keywords in
+# indented blocks are not live either.
 strip_fenced_pr_body_blocks() {
   python3 -c '
 import re, sys
@@ -70,6 +73,11 @@ def strip_inline_code_spans_by_paragraph(lines):
         out_lines.extend(strip_inline_code_spans("\n".join(paragraph)).split("\n"))
     return "\n".join(out_lines)
 
+def is_indented_code_line(line):
+    if line.startswith("\t"):
+        return True
+    return (len(line) - len(line.lstrip(" "))) >= 4
+
 lines = sys.stdin.read().split("\n")
 out = []
 fence_char = None
@@ -83,6 +91,8 @@ for line in lines:
             fence_len = len(match.group(1))
             continue
         if re.match(r"^\s*>", line):
+            continue
+        if is_indented_code_line(line):
             continue
         out.append(line)
     else:
