@@ -249,19 +249,16 @@ jobs:
               return 0
             fi
 
-            if printf '%s\n' "$LATEST_SUMMARY_BODY" |
-              grep -Ei '(^|[ *[:space:]])Result:([ *[:space:]])*(clean)([^[:alnum:]_]|$)' >/dev/null; then
+            if grep -Eiq '(^|[ *[:space:]])Result:([ *[:space:]])*(clean)([^[:alnum:]_]|$)' <<<"$LATEST_SUMMARY_BODY"; then
               LATEST_SUMMARY_RESULT="clean"
-            elif printf '%s\n' "$LATEST_SUMMARY_BODY" |
-              grep -Ei '(^|[ *[:space:]])Result:([ *[:space:]])*(skipped)([^[:alnum:]_]|$)' >/dev/null; then
+            elif grep -Eiq '(^|[ *[:space:]])Result:([ *[:space:]])*(skipped)([^[:alnum:]_]|$)' <<<"$LATEST_SUMMARY_BODY"; then
               LATEST_SUMMARY_RESULT="skipped"
             else
               LATEST_SUMMARY_RESULT="non_clean"
             fi
 
             LATEST_SUMMARY_HEAD_SHA="$(
-              printf '%s\n' "$LATEST_SUMMARY_BODY" |
-                awk 'in_json && /^```/ {exit} in_json {print} /^```json$/ {in_json=1}' |
+              awk 'in_json && /^```/ {exit} in_json {print} /^```json$/ {in_json=1}' <<<"$LATEST_SUMMARY_BODY" |
                 jq -r '.entries[-1].head_sha // ""' 2>/dev/null || true
             )"
 

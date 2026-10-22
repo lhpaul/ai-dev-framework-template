@@ -310,6 +310,36 @@ run_test "summary_case_insensitive_clean" "clean|${LIVE_HEAD}|true|success" \
   "$(summary_observation "$(summary_fixture CLEAN "$LIVE_HEAD" 1048576)" set)"
 
 echo ""
+echo "=== Early JSON fence under pipefail, synthetic bodies (#2022) ==="
+
+# Put the history before a large suffix: awk exits at the first closing fence
+# while a piped printf still has more than a pipe buffer left to write.
+for result in clean skipped needs_fixes; do
+  expected_result="$result"
+  expected_state=success
+  if [ "$result" = needs_fixes ]; then
+    expected_result=non_clean
+    expected_state=failure
+  fi
+  for padding_bytes in 54013 1048576; do
+    body="$(
+      summary_fixture "$result" "$LIVE_HEAD"
+      awk -v bytes="$padding_bytes" 'BEGIN {
+        while (bytes-- > 0) printf "x"
+        print ""
+      }'
+      # A later JSON block must not replace the first history block.
+      printf '\n```json\n{"entries":[{"head_sha":"%s"}]}\n```\n' "$STALE_HEAD"
+    )"
+    # Ignoring PIPE exposes EPIPE diagnostics even when the existing || true
+    # masks the failed producer's status. Include stderr in the assertion.
+    run_test "summary_${result}_early_fence_suffix_${padding_bytes}" \
+      "${expected_result}|${LIVE_HEAD}|true|${expected_state}" \
+      "$(trap '' PIPE; summary_observation "$body" set 2>&1)"
+  done
+done
+
+echo ""
 echo "Results: ${PASS_COUNT} passed, ${FAIL_COUNT} failed"
 if [ "$FAIL_COUNT" -ne 0 ]; then
   exit 1
