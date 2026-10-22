@@ -914,6 +914,8 @@ changelog_csv = sys.argv[3]
 head = os.environ.get("RELEASE_HEAD_FOR_FILTER", "").strip()
 
 LINEAR_RE = re.compile(r"\b([A-Z][A-Z0-9_]*-\d+)\b")
+# Full object id from git log --format=%H / ls-remote (never shorten).
+_FULL_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 
 
 def run_git(*args):
@@ -1169,12 +1171,19 @@ def resolve_previous_boundary(current_version, current_ref):
         return "unavailable", None
 
     # name -> peeled commit SHA from remote (^{} preferred).
+    # Fail closed on any non-empty ls-remote line that is not sha\\trefs/tags/...
+    # with a 40-hex SHA — do not silently skip malformed rows.
     remote_tags = {}
     for line in listing.stdout.splitlines():
-        line = line.strip()
-        if not line or "\t" not in line:
+        raw = line.rstrip("\n\r")
+        if not raw.strip():
             continue
-        sha, ref = line.split("\t", 1)
+        if "\t" not in raw:
+            return "unavailable", None
+        sha, ref = raw.split("\t", 1)
+        sha = sha.strip().lower()
+        if not _FULL_SHA_RE.fullmatch(sha):
+            return "unavailable", None
         if not ref.startswith("refs/tags/"):
             continue
         peeled = ref.endswith("^{}")
@@ -1467,18 +1476,25 @@ def collect_merged_pr_linear_ids(range_spec, repo_slug):
     commit_cache = {}
     seen_prs = set()
 
-    log = run_git("log", range_spec, "--pretty=format:%H\t%s")
+    # Subjects are unused. Do not use %H\\t%s: strip() on an empty subject
+    # removes the trailing tab and the collector would silently skip that SHA.
+    log = run_git("log", range_spec, "--format=%H")
     if log.returncode != 0:
         return shipped_ids, documentation_ids, release_backport_ids, ["<git-log-failed>"]
 
     range_entries = []
     range_shas = set()
     for line in log.stdout.splitlines():
-        line = line.strip()
-        if not line or "\t" not in line:
+        sha_l = line.strip().lower()
+        if not sha_l:
             continue
-        sha, _subject = line.split("\t", 1)
-        sha_l = sha.strip().lower()
+        if not _FULL_SHA_RE.fullmatch(sha_l):
+            return (
+                shipped_ids,
+                documentation_ids,
+                release_backport_ids,
+                [sha_l],
+            )
         range_shas.add(sha_l)
         range_entries.append(sha_l)
 

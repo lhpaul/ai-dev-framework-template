@@ -3271,6 +3271,57 @@ run_contains "linear_1982_paginate_error_incomplete" \
   "RELEASE_SCOPE_INCOMPLETE unresolved_shas=${sha_paginate}" "$output"
 run_not_contains "linear_1982_paginate_error_no_346" "TRACKER_ISSUES=LEA-346" "$output"
 
+# --- Empty commit subject must still collect the SHA and query pulls ---
+# git log %H\\t%s + strip() used to drop SHAs whose subject is empty (trailing
+# tab removed). Use commit-tree -m '' so hooks cannot inject a subject.
+repo_empty_subj="$TMP_ROOT/linear-1982-empty-subject"
+init_linear_git_repo "$repo_empty_subj"
+cat > "$repo_empty_subj/CHANGELOG.md" <<'MD'
+# Changelog
+
+## [Unreleased]
+
+## [1.29.0] - 2026-10-15
+
+- Ships LEA-12 via a rebased commit with an empty subject.
+MD
+"$REAL_GIT" -C "$repo_empty_subj" add CHANGELOG.md .ai-dev-workflow.yaml scripts
+"$REAL_GIT" -C "$repo_empty_subj" commit -q -m "chore: baseline before v1.28.0"
+"$REAL_GIT" -C "$repo_empty_subj" tag v1.28.0
+empty_tree="$("$REAL_GIT" -C "$repo_empty_subj" write-tree)"
+empty_parent="$("$REAL_GIT" -C "$repo_empty_subj" rev-parse HEAD)"
+sha_empty_subj="$("$REAL_GIT" -C "$repo_empty_subj" commit-tree "$empty_tree" -p "$empty_parent" -m '')"
+"$REAL_GIT" -C "$repo_empty_subj" update-ref HEAD "$sha_empty_subj"
+# Prove the historical strip bug would have dropped this SHA.
+empty_subj_log="$("$REAL_GIT" -C "$repo_empty_subj" log -1 --pretty=format:%H%x09%s "$sha_empty_subj")"
+case "$empty_subj_log" in
+  *$'\t') ;;
+  *)
+    echo "FAIL: fixture empty-subject log line lacks trailing tab: $(printf '%q' "$empty_subj_log")" >&2
+    FAIL_COUNT=$((FAIL_COUNT + 1))
+    ;;
+esac
+stripped_empty_subj="$(printf '%s' "$empty_subj_log" | python3 -c 'import sys; print(sys.stdin.read().strip())')"
+case "$stripped_empty_subj" in
+  *$'\t'*)
+    echo "FAIL: expected strip() to remove trailing tab from empty-subject log line" >&2
+    FAIL_COUNT=$((FAIL_COUNT + 1))
+    ;;
+esac
+"$REAL_GIT" -C "$repo_empty_subj" tag v1.29.0
+write_linear_scope_gh \
+  "12|fix/LEA-12-empty-subject|fix: LEA-12 empty subject" \
+  "commit:${sha_empty_subj}|12"
+result="$(run_linear_scope_cleanup "$repo_empty_subj" v1.29.0 --from-changelog --best-effort)"
+status="$(printf '%s\n' "$result" | sed -n '1p')"
+output="$(printf '%s\n' "$result" | sed '1d')"
+run_test "linear_1982_empty_subject_exits_zero" "0" "$status"
+run_contains "linear_1982_empty_subject_proposes_12" "TRACKER_ISSUES=LEA-12" "$output"
+run_not_contains "linear_1982_empty_subject_not_incomplete" \
+  "RELEASE_SCOPE_INCOMPLETE unresolved_shas=" "$output"
+# Fake gh must have been queried for this SHA (call logged via map hit → PR 12).
+run_contains "linear_1982_empty_subject_queried_sha" "LEA-12" "$output"
+
 # --- GH_REPO must not override checkout repo for Linear PR lookups ---
 repo_gh_repo="$TMP_ROOT/linear-1982-gh-repo-override"
 init_linear_git_repo "$repo_gh_repo"
