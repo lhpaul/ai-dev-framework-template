@@ -3174,6 +3174,115 @@ for provider in github_projects github_issues; do
     "RELEASE_STAMPED issue=101 version=v1.2.3 provider=${provider}" "$output"
 done
 
+# --- GitHub RELEASE_BRANCH / RELEASE_VERSION byte-identical to origin/develop ---
+# Hard-coded develop outputs (computed once from origin/develop's
+# normalize_release_branch + release_version_from_branch).
+echo ""
+echo "=== GitHub normalize parity with origin/develop ==="
+NORM_HELPER="$TMP_ROOT/normalize-parity-helper.sh"
+# Extract the shared functions from the script under test (must match develop).
+{
+  sed -n '/^normalize_release_branch()/,/^}/p' \
+    "$REPO_ROOT/scripts/development-workflow/prepare-release-post-merge-cleanup.sh"
+  sed -n '/^release_version_from_branch()/,/^}/p' \
+    "$REPO_ROOT/scripts/development-workflow/prepare-release-post-merge-cleanup.sh"
+  cat <<'HELPER'
+while IFS=$'\t' read -r input want_branch want_version; do
+  [ -n "$input" ] || continue
+  got_branch="$(normalize_release_branch "$input")"
+  got_version="$(release_version_from_branch "$got_branch")"
+  printf '%s\t%s\t%s\t%s\t%s\n' "$input" "$want_branch" "$want_version" "$got_branch" "$got_version"
+done <<'MATRIX'
+1.2.3	release/v1.2.3	v1.2.3
+v1.2.3	release/v1.2.3	v1.2.3
+release/v1.2.3	release/v1.2.3	v1.2.3
+mobile-v1.1.0	release/vmobile-v1.1.0	vmobile-v1.1.0
+release/mobile-v1.1.0	release/vmobile-v1.1.0	vmobile-v1.1.0
+1.2.3-rc.1	release/v1.2.3-rc.1	v1.2.3-rc.1
+MATRIX
+HELPER
+} > "$NORM_HELPER"
+
+norm_rows="$(bash "$NORM_HELPER")"
+while IFS=$'\t' read -r input want_branch want_version got_branch got_version; do
+  [ -n "$input" ] || continue
+  safe="$(printf '%s' "$input" | tr '/.' '__')"
+  run_test "normalize_parity_branch_${safe}" "$want_branch" "$got_branch"
+  run_test "normalize_parity_version_${safe}" "$want_version" "$got_version"
+done <<< "$norm_rows"
+
+# Provider-visible logs for component-looking input (develop injects vmobile-…).
+MOBILE_NORM_BIN="$TMP_ROOT/mobile-norm-bin"
+mkdir -p "$MOBILE_NORM_BIN"
+cat > "$MOBILE_NORM_BIN/gh" <<'MOCK_GH_MOBILE_NORM'
+#!/usr/bin/env bash
+case "$*" in
+  "auth status") exit 0 ;;
+  "api --paginate --slurp repos/test-owner/test-repo/milestones?state=all&per_page=100")
+    printf '[{"number":88,"title":"vmobile-v1.1.0","state":"closed"}]\n' ;;
+  "repo view --json owner --jq .owner.login") printf 'test-owner\n' ;;
+  "repo view --json name --jq .name") printf 'test-repo\n' ;;
+  "api -X PATCH repos/test-owner/test-repo/issues/101 -F milestone=88")
+    printf '{"number":101,"milestone":{"number":88,"title":"vmobile-v1.1.0"}}\n' ;;
+  "api -X POST repos/test-owner/test-repo/milestones"*)
+    printf 'unexpected milestone create: gh %s\n' "$*" >&2; exit 64 ;;
+  "issue view 101 --json state --jq .state") printf 'closed\n' ;;
+  "pr list --state merged --head release/vmobile-v1.1.0 --base main --json number --jq .[0].number // empty")
+    printf '333\n' ;;
+  "pr list --state merged --head release/vmobile-v1.1.0 --base develop --json number --jq .[0].number // empty")
+    printf '334\n' ;;
+  "pr list --state open --head release/vmobile-v1.1.0 --base main --json number --jq .[0].number // empty")
+    printf '\n' ;;
+  "pr list --state open --head release/vmobile-v1.1.0 --base develop --json number --jq .[0].number // empty")
+    printf '\n' ;;
+  *"user(login"*"projectV2"*)
+    printf '{"data":{"user":{"projectV2":{"id":"PVT_test000001"}}}}\n' ;;
+  *"organization(login"*"projectV2"*)
+    printf '{"data":{"organization":{"projectV2":{"id":"PVT_test000001"}}}}\n' ;;
+  *"projectId"*"ProjectV2"*"items"*)
+    printf '{"data":{"node":{"items":{"nodes":[],"pageInfo":{"hasNextPage":false,"endCursor":""}}}}}\n' ;;
+  "api graphql"*)
+    printf '{"data":{"repository":{"issue":{"projectItems":{"nodes":[],"pageInfo":{"hasNextPage":false,"endCursor":""}}}}}}\n' ;;
+  "api repos/test-owner/test-repo/releases/tags/"*)
+    printf '2026-06-11T12:00:00Z\n' ;;
+  "api repos/test-owner/test-repo/tags?per_page=100"*)
+    printf 'vmobile-v1.1.0\n' ;;
+  *)
+    printf 'unexpected gh invocation: gh %s\n' "$*" >&2
+    exit 64
+    ;;
+esac
+MOCK_GH_MOBILE_NORM
+chmod +x "$MOBILE_NORM_BIN/gh"
+cat > "$MOBILE_NORM_BIN/git" <<'MOCK_GIT_MOBILE_NORM'
+#!/usr/bin/env bash
+case "$*" in
+  "fetch origin --prune") exit 0 ;;
+  "ls-remote --exit-code --heads origin release/vmobile-v1.1.0") exit 2 ;;
+  "show-ref --quiet refs/heads/release/vmobile-v1.1.0") exit 1 ;;
+  "remote get-url origin") printf 'https://github.com/test-owner/test-repo.git\n' ;;
+  *) exit 0 ;;
+esac
+MOCK_GIT_MOBILE_NORM
+chmod +x "$MOBILE_NORM_BIN/git"
+
+for provider in github_projects github_issues; do
+  repo_mobile_norm="$(fixture_github_bare_milestone_repo "$provider" "mobile-norm-${provider}")"
+  # Explicit --issue avoids CHANGELOG section title coupling to vmobile-… spelling.
+  result="$(run_cleanup_with_bin "$MOBILE_NORM_BIN" "$repo_mobile_norm" mobile-v1.1.0 --issue 101 --best-effort)"
+  status="$(printf '%s\n' "$result" | sed -n '1p')"
+  output="$(printf '%s\n' "$result" | sed '1d')"
+  run_test "${provider}_mobile_input_exits_zero" "0" "$status"
+  run_contains "${provider}_mobile_input_branch_vmobile" \
+    "Release branch: release/vmobile-v1.1.0" "$output"
+  run_contains "${provider}_mobile_input_version_vmobile" \
+    "Release version: vmobile-v1.1.0" "$output"
+  run_contains "${provider}_mobile_input_stamp_vmobile" \
+    "RELEASE_STAMPED issue=101 version=vmobile-v1.1.0 provider=${provider}" "$output"
+  run_not_contains "${provider}_mobile_input_no_bare_mobile_version" \
+    "Release version: mobile-v1.1.0" "$output"
+done
+
 echo "Results: $PASS_COUNT passed, $FAIL_COUNT failed"
 
 if [ "$FAIL_COUNT" -ne 0 ]; then

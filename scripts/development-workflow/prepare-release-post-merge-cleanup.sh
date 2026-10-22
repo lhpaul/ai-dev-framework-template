@@ -132,26 +132,14 @@ record_release_scope_skip() {
 
 normalize_release_branch() {
   local value="$1"
-  local rest
   value="${value#refs/heads/}"
   case "$value" in
     release/v*) printf '%s\n' "$value" ;;
     release/*/*) printf '%s\n' "$value" ;;
-    release/*)
-      rest="${value#release/}"
-      # Bare SemVer on release/* still gets the conventional v prefix.
-      # Component tags (mobile-v1.1.0) already encode their prefix — do not
-      # inject another v (release/vmobile-v1.1.0 would break identity).
-      case "$rest" in
-        [0-9]*) printf 'release/v%s\n' "$rest" ;;
-        *) printf 'release/%s\n' "$rest" ;;
-      esac
-      ;;
+    release/*) printf 'release/v%s\n' "${value#release/}" ;;
     */*) printf '%s\n' "$value" ;;
     v*) printf 'release/%s\n' "$value" ;;
-    [0-9]*) printf 'release/v%s\n' "$value" ;;
-    # Component-prefixed SemVer tags (mobile-v1.1.0): keep spelling as-is.
-    *) printf 'release/%s\n' "$value" ;;
+    *) printf 'release/v%s\n' "$value" ;;
   esac
 }
 
@@ -2223,10 +2211,9 @@ if [ -z "$RELEASE_INPUT" ]; then
 fi
 
 RELEASE_BRANCH="$(normalize_release_branch "$RELEASE_INPUT")"
-# Provider-visible version identity (milestones, stamps, markers, projection):
-# same as origin/develop — branch basename after normalize (bare 1.2.3 → v1.2.3).
 RELEASE_VERSION="$(release_version_from_branch "$RELEASE_BRANCH")"
-# Linear-only: requested tag spelling for namespace/boundary + CHANGELOG lookup.
+# Linear-only requested tag spelling (raw CLI). Does not alter RELEASE_BRANCH /
+# RELEASE_VERSION, which stay byte-identical to origin/develop for GitHub.
 RELEASE_REQUESTED_TAG_SPELLING="$(release_tag_request_from_input "$RELEASE_INPUT")"
 validate_portable_branch_name "release" "$RELEASE_BRANCH"
 validate_portable_branch_name "backport base" "$BACKPORT_BASE"
