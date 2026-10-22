@@ -694,6 +694,9 @@ for provider in github_projects github_issues; do
   assert_wrapper_gfm_epic_fail "$provider" cross_repo "${provider}_wrap_foreign"
   assert_wrapper_gfm_epic_fail "$provider" example_only_fenced "${provider}_wrap_ex_fence"
   assert_wrapper_gfm_epic_fail "$provider" example_only_indented "${provider}_wrap_ex_indent"
+  assert_wrapper_gfm_epic "$provider" closes_code_repo_then_prose 123 "${provider}_wrap_code_repo_prose"
+  assert_wrapper_gfm_epic_fail "$provider" fixes_code_between_keyword_ref "${provider}_wrap_fixes_code_gap"
+  assert_wrapper_gfm_epic "$provider" see_code_then_closes 328 "${provider}_wrap_see_code_closes"
 done
 
 

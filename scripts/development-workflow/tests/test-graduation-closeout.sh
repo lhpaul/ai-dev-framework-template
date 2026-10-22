@@ -1604,6 +1604,21 @@ run_test "planted_raw_finds_326" "326" "$(printf '%s' "$raw_refs" | head -n1)"
 run_test "planted_rendered_strips_326" "" "$(printf '%s' "$vis_refs")"
 
 echo ""
+echo "=== graduation closeout: code-boundary placeholder prevents Closes+code+# fusion (#2016) ==="
+fusion_html="$(cat "$GFM_FIXTURE_DIR/closes_code_repo_then_prose.html")"
+fusion_vis="$(printf '%s' "$fusion_html" | graduation_closeout_html_visible_text)"
+fusion_refs="$(printf '%s' "$fusion_vis" | closing_keyword_live_refs | tr '\n' ' ')"
+run_contains "code_boundary_vis_has_placeholder" "[code]" "$fusion_vis"
+run_not_contains "code_boundary_vis_not_fused_closes_326" "Closes #326" "$(printf '%s' "$fusion_vis" | tr '\n' ' ')"
+run_test "code_boundary_refs_only_123" "123" "$(printf '%s' "$fusion_refs" | awk '{print $1}')"
+run_not_contains "code_boundary_refs_no_326" "326" "$fusion_refs"
+gap_refs="$(cat "$GFM_FIXTURE_DIR/fixes_code_between_keyword_ref.html" | graduation_closeout_html_visible_text | closing_keyword_live_refs || true)"
+run_test "code_gap_fixes_not_selected" "" "$(printf '%s' "$gap_refs")"
+see_refs="$(cat "$GFM_FIXTURE_DIR/see_code_then_closes.html" | graduation_closeout_html_visible_text | closing_keyword_live_refs | tr '\n' ' ')"
+run_test "see_code_then_closes_328" "328" "$(printf '%s' "$see_refs" | awk '{print $1}')"
+
+
+echo ""
 echo "=== graduation closeout: markdown API failure fail-closes text refs (#2016) ==="
 for provider in github_projects github_issues; do
   reset_fixture

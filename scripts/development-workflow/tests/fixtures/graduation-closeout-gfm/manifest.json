@@ -284,5 +284,27 @@
     "expected_refs": [],
     "md_file": "epic_with_fenced_999.md",
     "html_file": "epic_with_fenced_999.html"
+  },
+  {
+    "name": "closes_code_repo_then_prose",
+    "expected_refs": [
+      "123"
+    ],
+    "md_file": "closes_code_repo_then_prose.md",
+    "html_file": "closes_code_repo_then_prose.html"
+  },
+  {
+    "name": "fixes_code_between_keyword_ref",
+    "expected_refs": [],
+    "md_file": "fixes_code_between_keyword_ref.md",
+    "html_file": "fixes_code_between_keyword_ref.html"
+  },
+  {
+    "name": "see_code_then_closes",
+    "expected_refs": [
+      "328"
+    ],
+    "md_file": "see_code_then_closes.md",
+    "html_file": "see_code_then_closes.html"
   }
 ]

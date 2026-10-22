@@ -113,7 +113,10 @@ graduation_closeout_raw_has_epic_or_parent_ref() {
 
 # graduation_closeout_html_visible_text
 # stdin: HTML from GitHub's markdown API. stdout: visible text outside
-# <pre> and <code> (stdlib html.parser). Block boundaries become newlines.
+# <pre> and <code> (stdlib html.parser). Excluded code/pre runs are replaced
+# with a spaced non-matching placeholder so adjacent prose cannot fuse into a
+# closing keyword (e.g. Closes <code>other/repo</code>#326). Block boundaries
+# become newlines.
 graduation_closeout_html_visible_text() {
   python3 -c '
 import sys
@@ -132,6 +135,10 @@ class VisibleTextExtractor(HTMLParser):
     def handle_starttag(self, tag, attrs):
         name = tag.lower()
         if name in ("pre", "code"):
+            # One placeholder per outermost excluded run — never delete without
+            # a boundary (that can join "Closes " to a following "#N").
+            if self._skip == 0:
+                self._parts.append(" [code] ")
             self._skip += 1
             return
         if self._skip:
