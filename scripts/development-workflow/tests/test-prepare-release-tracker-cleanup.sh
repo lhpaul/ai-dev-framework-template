@@ -1349,8 +1349,13 @@ lookup_commit_pulls() {
             return 0
             ;;
           empty:array)
+            # Caller wraps with --slurp → [[]]
             printf '[]\n'
             return 0
+            ;;
+          paginate:error_page2|paginate:page2_shipping:*)
+            # Handled by the api dispatcher (multi-page slurp / hard failure).
+            return 1
             ;;
         esac
         if map_uses_rest_format; then
@@ -1369,6 +1374,31 @@ lookup_commit_pulls() {
   # Empty association list is success (no PRs for this commit) — not an API failure.
   printf '%s]\n' "$parts"
   return 0
+}
+
+# Build a two-page commits/<sha>/pulls payload (slurp shape): page 1 has 30
+# filler PRs, page 2 has the shipping PR (number|head|title from map).
+emit_paginated_commit_pulls_page2_shipping() {
+  local shipping_pr="$1"
+  local sha="$2"
+  local i filler shipping_json
+  if map_uses_rest_format; then
+    shipping_json="$(lookup_pr_rest "$shipping_pr" "$sha")" || return 1
+  else
+    shipping_json="$(lookup_pr "$shipping_pr")" || return 1
+  fi
+  printf '['
+  printf '['
+  i=1
+  while [ "$i" -le 30 ]; do
+    [ "$i" -gt 1 ] && printf ','
+    printf '{"number":%s,"headRefName":"chore/filler-%s","title":"chore: filler %s","mergedAt":"2026-10-14T12:00:00Z","baseRefName":"develop"}' \
+      "$((9000 + i))" "$i" "$i"
+    i=$((i + 1))
+  done
+  printf '],'
+  printf '[%s]' "$shipping_json"
+  printf ']\n'
 }
 
 if [ "$#" -ge 2 ] && [ "$1" = "auth" ] && [ "$2" = "status" ]; then
@@ -1404,11 +1434,50 @@ if [ "$#" -ge 3 ] && [ "$1" = "pr" ] && [ "$2" = "view" ]; then
   exit 0
 fi
 if [ "$#" -ge 2 ] && [ "$1" = "api" ]; then
-  case "$2" in
-    repos/example/repo/commits/*/pulls)
-      sha="${2#repos/example/repo/commits/}"
-      sha="${sha%/pulls}"
-      lookup_commit_pulls "$sha" || { printf 'commit pulls failed for %s\n' "$sha" >&2; exit 1; }
+  # Support: gh api [--paginate] [--slurp] repos/.../commits/<sha>/pulls[?per_page=N]
+  endpoint=""
+  use_slurp=false
+  for arg in "$@"; do
+    case "$arg" in
+      --paginate) ;;
+      --slurp) use_slurp=true ;;
+      repos/*) endpoint="$arg" ;;
+    esac
+  done
+  case "$endpoint" in
+    repos/example/repo/commits/*/pulls*)
+      sha="${endpoint#repos/example/repo/commits/}"
+      sha="${sha%%/*}"
+      # Special pagination fixtures (multi-page slurp body or hard failure).
+      page2_pr=""
+      while IFS= read -r line || [ -n "$line" ]; do
+        case "$line" in
+          "commit:${sha}|paginate:error_page2")
+            printf 'paginate page 2 failed for %s\n' "$sha" >&2
+            exit 1
+            ;;
+          "commit:${sha}|paginate:page2_shipping:"*)
+            page2_pr="${line##*paginate:page2_shipping:}"
+            ;;
+        esac
+      done < "$MAP_FILE"
+      if [ -n "$page2_pr" ]; then
+        emit_paginated_commit_pulls_page2_shipping "$page2_pr" "$sha" \
+          || { printf 'commit pulls paginate failed for %s\n' "$sha" >&2; exit 1; }
+        exit 0
+      fi
+      body="$(lookup_commit_pulls "$sha")" || { printf 'commit pulls failed for %s\n' "$sha" >&2; exit 1; }
+      if [ "$use_slurp" = true ]; then
+        # --slurp wraps each page; single-page responses become [[...]].
+        # Empty body stays malformed (not wrapped).
+        if [ -z "$(printf '%s' "$body" | tr -d '[:space:]')" ]; then
+          printf '\n'
+          exit 0
+        fi
+        printf '[%s]\n' "$body"
+      else
+        printf '%s\n' "$body"
+      fi
       exit 0
       ;;
   esac
@@ -3159,6 +3228,48 @@ run_contains "linear_1982_empty_array_diagnostic" \
 run_contains "linear_1982_empty_array_still_proposes_302" "TRACKER_ISSUES=LEA-302" "$output"
 run_not_contains "linear_1982_empty_array_not_incomplete" \
   "RELEASE_SCOPE_INCOMPLETE unresolved_shas=" "$output"
+
+# --- Pagination: shipping PR only on page 2 (31 associations) → still proposed ---
+repo_paginate="$TMP_ROOT/linear-1982-paginate-page2"
+init_linear_git_repo "$repo_paginate"
+cat > "$repo_paginate/CHANGELOG.md" <<'MD'
+# Changelog
+
+## [Unreleased]
+
+## [1.29.0] - 2026-10-15
+
+- Ships chore LEA-346 (must not be omitted when only on page 2 of pulls).
+MD
+"$REAL_GIT" -C "$repo_paginate" add CHANGELOG.md .ai-dev-workflow.yaml scripts
+"$REAL_GIT" -C "$repo_paginate" commit -q -m "chore: baseline before v1.28.0"
+"$REAL_GIT" -C "$repo_paginate" tag v1.28.0
+"$REAL_GIT" -C "$repo_paginate" commit -q --allow-empty \
+  -m "Merge pull request #90 from example/chore/LEA-346-dependency-bump"
+sha_paginate="$("$REAL_GIT" -C "$repo_paginate" rev-parse HEAD)"
+"$REAL_GIT" -C "$repo_paginate" tag v1.29.0
+write_linear_scope_gh \
+  "90|chore/LEA-346-dependency-bump|chore: LEA-346 dependency bump" \
+  "commit:${sha_paginate}|paginate:page2_shipping:90"
+result="$(run_linear_scope_cleanup "$repo_paginate" v1.29.0 --from-changelog --best-effort)"
+status="$(printf '%s\n' "$result" | sed -n '1p')"
+output="$(printf '%s\n' "$result" | sed '1d')"
+run_test "linear_1982_paginate_page2_exits_zero" "0" "$status"
+run_contains "linear_1982_paginate_page2_proposes_346" "TRACKER_ISSUES=LEA-346" "$output"
+run_not_contains "linear_1982_paginate_page2_not_incomplete" \
+  "RELEASE_SCOPE_INCOMPLETE unresolved_shas=" "$output"
+
+# Page-2 error → RELEASE_SCOPE_INCOMPLETE for that SHA (fail closed).
+write_linear_scope_gh \
+  "90|chore/LEA-346-dependency-bump|chore: LEA-346 dependency bump" \
+  "commit:${sha_paginate}|paginate:error_page2"
+result="$(run_linear_scope_cleanup "$repo_paginate" v1.29.0 --from-changelog --best-effort)"
+status="$(printf '%s\n' "$result" | sed -n '1p')"
+output="$(printf '%s\n' "$result" | sed '1d')"
+run_test "linear_1982_paginate_error_exits_zero" "0" "$status"
+run_contains "linear_1982_paginate_error_incomplete" \
+  "RELEASE_SCOPE_INCOMPLETE unresolved_shas=${sha_paginate}" "$output"
+run_not_contains "linear_1982_paginate_error_no_346" "TRACKER_ISSUES=LEA-346" "$output"
 
 # --- GH_REPO must not override checkout repo for Linear PR lookups ---
 repo_gh_repo="$TMP_ROOT/linear-1982-gh-repo-override"

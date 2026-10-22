@@ -1362,14 +1362,25 @@ def _pr_element_has_merged_field(item):
 def pulls_for_commit(sha, repo_slug, commit_cache):
     """Return normalized PR list, [] for well-formed empty, or None if unresolved.
 
-    [] is a valid GitHub answer (commit has no associated PR). Empty body,
-    non-array JSON, [null], [{}], or any element missing an integer ``number``
-    or a merged_at/merged/mergedAt field is unresolved (None).
+    Fetches every page via ``gh api --paginate --slurp`` (``per_page=100``).
+    Any page error, empty body, non-array JSON, or non-list page is unresolved
+    (None → RELEASE_SCOPE_INCOMPLETE). After pages are combined, [] is a valid
+    GitHub answer (commit has no associated PR). [null], [{}], or any element
+    missing an integer ``number`` or a merged_at/merged/mergedAt field is
+    unresolved (None).
     """
     if sha in commit_cache:
         return commit_cache[sha]
+    # --paginate --slurp yields a JSON array of page arrays; flatten before
+    # the same malformed-evidence validation used for a single page.
     api = subprocess.run(
-        ["gh", "api", "repos/%s/commits/%s/pulls" % (repo_slug, sha)],
+        [
+            "gh",
+            "api",
+            "--paginate",
+            "--slurp",
+            "repos/%s/commits/%s/pulls?per_page=100" % (repo_slug, sha),
+        ],
         cwd=git_root,
         text=True,
         capture_output=True,
@@ -1383,14 +1394,20 @@ def pulls_for_commit(sha, repo_slug, commit_cache):
         commit_cache[sha] = None
         return None
     try:
-        payload = json.loads(stripped)
+        pages = json.loads(stripped)
     except Exception:
         commit_cache[sha] = None
         return None
-    if not isinstance(payload, list):
+    if not isinstance(pages, list):
         commit_cache[sha] = None
         return None
-    # Well-formed empty array: commit has no associated PR.
+    payload = []
+    for page in pages:
+        if not isinstance(page, list):
+            commit_cache[sha] = None
+            return None
+        payload.extend(page)
+    # Well-formed empty array (no pages or only empty pages): no associated PR.
     if len(payload) == 0:
         commit_cache[sha] = []
         return []
