@@ -582,6 +582,69 @@ assert_wrapper_gfm_epic_fail() {
   run_test "${label}_no_child" "missing" "$( [ -f "$CHILD_ARGV_LOG" ] && echo present || echo missing )"
 }
 
+
+echo ""
+echo "=== wrapper: long Unicode body after prose keyword (#2016 Pass 1) ==="
+long_unicode_body="$(python3 -c 'import sys; sys.stdout.write("Epic #900\nCloses #123" + ("あ" * 60000))')"
+set +e
+printf '%s' "$long_unicode_body" | graduation_closeout_raw_has_closing_keyword_candidate
+prefilter_status=$?
+set -e
+run_test "wrap_long_unicode_prefilter_exit_zero" "0" "$prefilter_status"
+
+echo ""
+echo "=== wrapper: render_gfm preserves caller \$- (#2016 Pass 1) ==="
+assert_wrap_render_gfm_preserves_shell_opts() {
+  local mode="$1"  # errexit_on | errexit_off
+  local expect_ok="$2"  # 1=success path, 0=API failure path
+  local before after status
+  if [ "$mode" = "errexit_on" ]; then
+    set -e
+  else
+    set +e
+  fi
+  before=$-
+  if [ "$expect_ok" = "1" ]; then
+    unset MOCK_MARKDOWN_FAIL
+  else
+    export MOCK_MARKDOWN_FAIL=1
+  fi
+  # Capture status via if only — do not toggle set ±e around the helper.
+  if printf '%s' 'Closes #326' | graduation_closeout_render_gfm lhpaul/ai-dev-framework-template >/dev/null; then
+    status=0
+  else
+    status=$?
+  fi
+  after=$-
+  unset MOCK_MARKDOWN_FAIL
+  if [ "$expect_ok" = "1" ]; then
+    run_test "wrap_render_opts_${mode}_success_status" "0" "$status"
+  else
+    run_test "wrap_render_opts_${mode}_fail_status" "1" "$status"
+  fi
+  run_test "wrap_render_opts_${mode}_expect${expect_ok}_dollar_unchanged" "$before" "$after"
+  set -e
+}
+assert_wrap_render_gfm_preserves_shell_opts errexit_on 1
+assert_wrap_render_gfm_preserves_shell_opts errexit_on 0
+assert_wrap_render_gfm_preserves_shell_opts errexit_off 1
+assert_wrap_render_gfm_preserves_shell_opts errexit_off 0
+
+echo ""
+echo "=== wrapper: long Unicode prose still discovers epic (#2016 Pass 1) ==="
+for provider in github_projects github_issues; do
+  reset_fixture
+  write_tracker_config "$provider"
+  export MOCK_LABEL_PARENT_MODE=empty
+  long_body="$(python3 -c 'import sys; sys.stdout.write("Epic #900\n" + ("あ" * 60000))')"
+  write_pr 119 "develop-test-2016" "develop" "true" "Graduate wave" "$long_body"
+  result="$(run_wrapper --graduation-pr 119)"
+  body="$(last_body "$result")"
+  run_test "${provider}_wrap_long_unicode_exit_zero" "0" "$(last_status "$result")"
+  run_contains "${provider}_wrap_long_unicode_epic" "EPIC_ISSUE=900" "$body"
+  run_contains "${provider}_wrap_long_unicode_child" "--epic 900" "$(cat "$CHILD_ARGV_LOG")"
+done
+
 echo ""
 echo "=== wrapper: planted violation — raw fenced text would keep #326 (#2016) ==="
 planted_md="$(cat "$GFM_FIXTURE_DIR/fenced_tick.md")"

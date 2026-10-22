@@ -206,6 +206,13 @@ JSON
   "pr list --state merged --base develop-test --limit 1000 --json number,title,body")
     # GitHub Projects / GitHub Issues keyword-scan path (GFM fixtures).
     case "${MOCK_PR_MODE:-single_ref}" in
+      long_unicode_prose)
+        python3 <<'PYLU'
+import json
+body = "Closes #326" + ("あ" * 60000)
+print(json.dumps([{"number": 11, "title": "Graduate wave", "body": body}]))
+PYLU
+        ;;
       gfm_fixture)
         python3 - "$GFM_FIXTURE_DIR" "${MOCK_GFM_FIXTURE:?}" <<'PYGFM'
 import json, pathlib, sys
@@ -1514,6 +1521,76 @@ assert_gfm_fixture_closed() {
   run_test "${label}_issue_closed" "CLOSED" "$(python3 -c 'import json; print(json.load(open("'"$MOCK_STATE_DIR"'/'"$issue"'.json"))["state"])')"
   run_contains "${label}_close_log" "$issue" "$(cat "$MOCK_CLOSE_LOG")"
 }
+
+
+echo ""
+echo "=== graduation closeout: long Unicode body after prose keyword (#2016 Pass 1) ==="
+# pipefail is on; prefilter must not SIGPIPE (141) when the keyword is early
+# and a huge Unicode tail follows.
+long_unicode_body="$(python3 -c 'import sys; sys.stdout.write("Closes #326" + ("あ" * 60000))')"
+set +e
+printf '%s' "$long_unicode_body" | graduation_closeout_raw_has_closing_keyword_candidate
+prefilter_status=$?
+set -e
+run_test "long_unicode_prefilter_exit_zero" "0" "$prefilter_status"
+
+echo ""
+echo "=== graduation closeout: render_gfm preserves caller \$- (#2016 Pass 1) ==="
+assert_render_gfm_preserves_shell_opts() {
+  local mode="$1"  # errexit_on | errexit_off
+  local expect_ok="$2"  # 1=success path, 0=API failure path
+  local before after status
+  if [ "$mode" = "errexit_on" ]; then
+    set -e
+  else
+    set +e
+  fi
+  before=$-
+  if [ "$expect_ok" = "1" ]; then
+    unset MOCK_MARKDOWN_FAIL
+  else
+    export MOCK_MARKDOWN_FAIL=1
+  fi
+  # Capture status via if only — do not toggle set ±e around the helper.
+  if printf '%s' 'Closes #326' | graduation_closeout_render_gfm lhpaul/ai-dev-framework-template >/dev/null; then
+    status=0
+  else
+    status=$?
+  fi
+  after=$-
+  unset MOCK_MARKDOWN_FAIL
+  if [ "$expect_ok" = "1" ]; then
+    run_test "render_opts_${mode}_success_status" "0" "$status"
+  else
+    run_test "render_opts_${mode}_fail_status" "1" "$status"
+  fi
+  run_test "render_opts_${mode}_expect${expect_ok}_dollar_unchanged" "$before" "$after"
+  set -e
+}
+# Need mock gh on PATH for render_gfm — already installed for the suite.
+assert_render_gfm_preserves_shell_opts errexit_on 1
+assert_render_gfm_preserves_shell_opts errexit_on 0
+assert_render_gfm_preserves_shell_opts errexit_off 1
+assert_render_gfm_preserves_shell_opts errexit_off 0
+
+echo ""
+echo "=== graduation closeout: long Unicode prose still closes #326 (#2016 Pass 1) ==="
+for provider in github_projects github_issues; do
+  reset_fixture
+  write_tracker_config "$provider"
+  export MOCK_NATIVE_MODE=empty
+  export MOCK_PR_MODE=long_unicode_prose
+  write_issue 326 "Live closing keyword" OPEN
+  write_issue 900 "Parent epic" OPEN
+  set_status 326 "In Development"
+  set_status 900 "In Development"
+  result="$(run_closeout)"
+  body="$(last_output_body "$result")"
+  run_test "${provider}_long_unicode_exit_zero" "0" "$(last_output_status "$result")"
+  run_contains "${provider}_long_unicode_pass" "GRADUATION_CLOSEOUT_RESULT=pass" "$body"
+  run_test "${provider}_long_unicode_issue_closed" "CLOSED" "$(python3 -c 'import json; print(json.load(open("'"$MOCK_STATE_DIR"'/326.json"))["state"])')"
+  run_contains "${provider}_long_unicode_close_log" "326" "$(cat "$MOCK_CLOSE_LOG")"
+done
 
 echo ""
 echo "=== graduation closeout: planted violation — raw fenced text would keep #326 (#2016) ==="

@@ -335,7 +335,7 @@ collect_pr_epic_candidates() {
   title_text=""
   body_text=""
   if printf '%s' "$title_raw" | graduation_closeout_raw_has_closing_keyword_candidate \
-    || printf '%s' "$title_raw" | grep -iqE '(^|[^[:alnum:]_])(epic|parent)[[:space:]]*#[0-9]+'; then
+    || printf '%s' "$title_raw" | graduation_closeout_raw_has_epic_or_parent_ref; then
     if ! title_text="$(printf '%s' "$title_raw" | graduation_closeout_github_visible_text_from_markdown "$context")"; then
       echo "CLOSEOUT_TEXT_REFS_UNAVAILABLE pr=${GRADUATION_PR} reason=gfm_render_or_extract_failed" >&2
       : > "$TMP_DIR/pr-epic-candidates.txt"
@@ -343,7 +343,7 @@ collect_pr_epic_candidates() {
     fi
   fi
   if printf '%s' "$body_raw" | graduation_closeout_raw_has_closing_keyword_candidate \
-    || printf '%s' "$body_raw" | grep -iqE '(^|[^[:alnum:]_])(epic|parent)[[:space:]]*#[0-9]+'; then
+    || printf '%s' "$body_raw" | graduation_closeout_raw_has_epic_or_parent_ref; then
     if ! body_text="$(printf '%s' "$body_raw" | graduation_closeout_github_visible_text_from_markdown "$context")"; then
       echo "CLOSEOUT_TEXT_REFS_UNAVAILABLE pr=${GRADUATION_PR} reason=gfm_render_or_extract_failed" >&2
       : > "$TMP_DIR/pr-epic-candidates.txt"

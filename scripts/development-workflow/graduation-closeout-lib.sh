@@ -95,7 +95,20 @@ graduation_closeout_raw_has_closing_keyword_candidate() {
   local raw
   raw="$(cat)"
   [ -n "$raw" ] || return 1
-  printf '%s' "$raw" | grep -iqE "$CLOSING_KEYWORD_REGEX"
+  # Do not use grep -q: under pipefail a quiet early exit SIGPIPEs printf
+  # (exit 141) on large bodies and drops a real prose keyword. Consume all
+  # input; discard match text.
+  printf '%s' "$raw" | grep -iE "$CLOSING_KEYWORD_REGEX" >/dev/null
+}
+
+# graduation_closeout_raw_has_epic_or_parent_ref
+# stdin: raw markdown. Exit 0 if Epic/Parent #N appears (cheap prefilter).
+graduation_closeout_raw_has_epic_or_parent_ref() {
+  local raw
+  raw="$(cat)"
+  [ -n "$raw" ] || return 1
+  # Same no-grep -q rule as the closing-keyword prefilter (pipefail / SIGPIPE).
+  printf '%s' "$raw" | grep -iE '(^|[^[:alnum:]_])(epic|parent)[[:space:]]*#[0-9]+' >/dev/null
 }
 
 # graduation_closeout_html_visible_text
@@ -168,15 +181,14 @@ print(json.dumps({"text": sys.stdin.read(), "mode": "gfm", "context": sys.argv[1
 ' "$context")"; then
     return 1
   fi
-  set +e
-  html="$(printf '%s' "$payload" | gh api markdown --input - 2>/dev/null)"
-  local api_status=$?
-  set -e
-  if [ "$api_status" -ne 0 ] || [ -z "$html" ]; then
-    return 1
+  # Capture API failure via if-assignment only — never toggle set -e/+e
+  # (that would leak into the caller's shell options).
+  if html="$(printf '%s' "$payload" | gh api markdown --input - 2>/dev/null)" \
+    && [ -n "$html" ]; then
+    printf '%s' "$html"
+    return 0
   fi
-  printf '%s' "$html"
-  return 0
+  return 1
 }
 
 # graduation_closeout_github_live_refs_from_markdown <owner/repo>
