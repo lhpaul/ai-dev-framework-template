@@ -17,8 +17,7 @@
 # strip_fenced_pr_body_blocks
 # Removes quoted/example PR body text from stdin before it is scanned for
 # closing keywords, so an example like "Closes #999" inside a code sample,
-# inline code span, blockquote, or indented code block is not treated as a
-# live closing reference.
+# inline code span, or blockquote is not treated as a live closing reference.
 # Handles both backtick (```) and tilde (~~~) fence styles, and treats an
 # unclosed opening fence as extending to end of input (rather than leaving the
 # rest of the body unfiltered). Matches GitHub-Flavored Markdown's
@@ -27,12 +26,11 @@
 # after the fence marker — a shorter, differently-charactered, or
 # content-suffixed line (e.g. a nested example fence, or "``` end of block") is
 # treated as still being inside the fence rather than closing it. A fence
-# delimiter may be indented up to 3 columns per CommonMark/GFM; 4+ columns of
-# leading whitespace makes it indented code instead. Leading spaces and tabs
-# are measured with tab stops of 4 columns before that decision (and before
-# fence recognition), so mixed prefixes like space+tab count as indent 4 and
-# are not treated as live prose. Outside fences, indented-code lines are
-# dropped so example-only keywords in those blocks are not live either.
+# delimiter may be indented up to 3 spaces per GFM; 4+ spaces of leading
+# whitespace makes it indented code instead, so the raw line (not a fully
+# whitespace-stripped line) is matched to preserve that boundary — otherwise a
+# 4-space-indented "```" could be mistaken for a real fence and hide a live
+# closing reference.
 strip_fenced_pr_body_blocks() {
   python3 -c '
 import re, sys
@@ -72,49 +70,19 @@ def strip_inline_code_spans_by_paragraph(lines):
         out_lines.extend(strip_inline_code_spans("\n".join(paragraph)).split("\n"))
     return "\n".join(out_lines)
 
-def leading_indent_columns(line):
-    """CommonMark: spaces + tabs with tab stops of 4 columns."""
-    col = 0
-    i = 0
-    while i < len(line):
-        ch = line[i]
-        if ch == " ":
-            col += 1
-            i += 1
-        elif ch == "\t":
-            col = (col // 4 + 1) * 4
-            i += 1
-        else:
-            break
-    return col, i
-
-def is_indented_code_line(line):
-    cols, _ = leading_indent_columns(line)
-    return cols >= 4
-
-def match_fence(line):
-    cols, start = leading_indent_columns(line)
-    if cols >= 4:
-        return None
-    match = re.match(r"(`{3,}|~{3,})(.*)$", line[start:])
-    if not match:
-        return None
-    return match
-
 lines = sys.stdin.read().split("\n")
 out = []
 fence_char = None
 fence_len = 0
+fence_re = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
 for line in lines:
-    match = match_fence(line)
+    match = fence_re.match(line)
     if fence_char is None:
         if match:
             fence_char = match.group(1)[0]
             fence_len = len(match.group(1))
             continue
         if re.match(r"^\s*>", line):
-            continue
-        if is_indented_code_line(line):
             continue
         out.append(line)
     else:
@@ -190,6 +158,125 @@ closing_keyword_live_refs() {
   raw="$(cat)"
   if ! filtered="$(printf '%s' "$raw" | strip_fenced_pr_body_blocks)"; then
     echo "ERROR: could not strip fenced blocks while reading closing references." >&2
+    return 1
+  fi
+  set +e
+  keyword_lines="$(printf '%s' "$filtered" | grep -ioE "$CLOSING_KEYWORD_REGEX")"
+  stage_status=$?
+  set -e
+  if [ "$stage_status" -gt 1 ]; then
+    echo "ERROR: failed to scan text for closing keywords (grep exit ${stage_status})." >&2
+    return 1
+  fi
+  if [ "$stage_status" -eq 1 ] || [ -z "$keyword_lines" ]; then
+    return 0
+  fi
+  set +e
+  refs="$(printf '%s' "$keyword_lines" | grep -oE '[0-9]+$')"
+  stage_status=$?
+  set -e
+  if [ "$stage_status" -gt 1 ]; then
+    echo "ERROR: failed to extract issue numbers from closing-keyword matches (grep exit ${stage_status})." >&2
+    return 1
+  fi
+  if [ "$stage_status" -eq 1 ] || [ -z "$refs" ]; then
+    return 0
+  fi
+  printf '%s\n' "$refs"
+  return 0
+}
+
+# strip_markdown_code_for_closeout
+# Opt-in filter for graduation closeout GitHub-provider paths only. Applies the
+# shared strip_fenced_pr_body_blocks filter, then drops CommonMark-style indented
+# code blocks without removing list content or paragraph continuations.
+#
+# Indented code (leading whitespace ≥4 columns with tab stops of 4) is removed
+# only when a run starts after a blank line or at text start and is not inside a
+# list item. List context begins on a line whose first non-space token (indent
+# 0–3) is a list marker (- * + / N. / N)) and continues through indented lines
+# and blank lines until a non-blank line at indent <4 that is not a list marker.
+# An indented line that follows non-blank prose with no blank line between is a
+# paragraph continuation and is never treated as code.
+#
+# Do not use this from post-merge cleanup or validate-closing-keyword-scope —
+# those consumers keep strip_fenced_pr_body_blocks / closing_keyword_live_refs.
+strip_markdown_code_for_closeout() {
+  local staged
+  if ! staged="$(strip_fenced_pr_body_blocks)"; then
+    return 1
+  fi
+  printf '%s' "$staged" | python3 -c '
+import re, sys
+
+def leading_indent_columns(line):
+    col = 0
+    i = 0
+    while i < len(line):
+        ch = line[i]
+        if ch == " ":
+            col += 1
+            i += 1
+        elif ch == "\t":
+            col = (col // 4 + 1) * 4
+            i += 1
+        else:
+            break
+    return col, i
+
+LIST_MARKER_RE = re.compile(r"^([-*+]|\d+[.)])(\s+|$)")
+
+def is_list_marker_line(line):
+    cols, start = leading_indent_columns(line)
+    if cols >= 4:
+        return False
+    return LIST_MARKER_RE.match(line[start:]) is not None
+
+lines = sys.stdin.read().split("\n")
+out = []
+in_list = False
+in_indented_code = False
+at_block_start = True
+for line in lines:
+    if line.strip() == "":
+        out.append(line)
+        at_block_start = True
+        in_indented_code = False
+        continue
+    cols, _start = leading_indent_columns(line)
+    if cols < 4:
+        in_indented_code = False
+        if is_list_marker_line(line):
+            in_list = True
+        else:
+            in_list = False
+        out.append(line)
+        at_block_start = False
+        continue
+    # cols >= 4
+    if in_list:
+        out.append(line)
+        at_block_start = False
+        continue
+    if in_indented_code or at_block_start:
+        in_indented_code = True
+        at_block_start = False
+        continue
+    # Paragraph continuation (indented line with no preceding blank).
+    out.append(line)
+    at_block_start = False
+sys.stdout.write("\n".join(out))
+'
+}
+
+# closing_keyword_live_refs_for_closeout
+# Same contract as closing_keyword_live_refs, but uses
+# strip_markdown_code_for_closeout. Graduation closeout GitHub providers only.
+closing_keyword_live_refs_for_closeout() {
+  local raw filtered keyword_lines refs stage_status
+  raw="$(cat)"
+  if ! filtered="$(printf '%s' "$raw" | strip_markdown_code_for_closeout)"; then
+    echo "ERROR: could not strip markdown code while reading closing references." >&2
     return 1
   fi
   set +e

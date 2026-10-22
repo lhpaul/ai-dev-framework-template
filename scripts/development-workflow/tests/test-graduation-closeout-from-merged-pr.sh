@@ -547,16 +547,69 @@ for provider in github_projects github_issues; do
     "${provider}_wrap_unclosed"
 
   echo ""
-  echo "=== wrapper: ${provider} ignores indented-code Closes #326 (#2016) ==="
+  echo "=== wrapper: ${provider} ignores blank+indented Closes #326 (#2016) ==="
   assert_wrapper_github_example_ignored "$provider" \
-    $'Epic #900\n    Closes #326\n' \
+    $'Epic #900\n\n    Closes #326\n' \
     "${provider}_wrap_indented"
 
   echo ""
   echo "=== wrapper: ${provider} ignores space+tab mixed-indent Closes #326 (#2016) ==="
   assert_wrapper_github_example_ignored "$provider" \
-    "$(printf 'Epic #900\n \tCloses #326\n')" \
+    "$(printf 'Epic #900\n\n \tCloses #326\n')" \
     "${provider}_wrap_mixed_indent"
+
+  echo ""
+  echo "=== wrapper: ${provider} keeps nested-list Closes #123 with Epic #900 (#2016) ==="
+  # Nested list keyword is live but Epic #900 is the sole epic/parent ref style
+  # candidate preferred when both exist — assert 123 is not chosen as epic and
+  # discovery still succeeds via Epic #900 (keyword may add a second candidate).
+  reset_fixture
+  write_tracker_config "$provider"
+  export MOCK_LABEL_PARENT_MODE=empty
+  write_pr 113 "develop-test-2016" "develop" "true" "Graduate" \
+    $'Epic #900\n- Delivered work:\n    - Closes #123'
+  result="$(run_wrapper --graduation-pr 113)"
+  body="$(last_body "$result")"
+  # Epic #900 + Closes #123 → two candidates → ambiguous without parents
+  run_test "${provider}_wrap_nested_list_exit_one" "1" "$(last_status "$result")"
+  run_contains "${provider}_wrap_nested_list_ambiguous" "ambiguous_epic_candidates" "$body"
+
+  echo ""
+  echo "=== wrapper: ${provider} selects nested-list Closes #123 as sole epic (#2016) ==="
+  reset_fixture
+  write_tracker_config "$provider"
+  export MOCK_LABEL_PARENT_MODE=empty
+  write_pr 114 "develop-test-2016" "develop" "true" "Graduate" \
+    $'- Delivered work:\n    - Closes #123'
+  result="$(run_wrapper --graduation-pr 114)"
+  body="$(last_body "$result")"
+  run_test "${provider}_wrap_nested_sole_exit_zero" "0" "$(last_status "$result")"
+  run_contains "${provider}_wrap_nested_sole_epic" "EPIC_ISSUE=123" "$body"
+  run_contains "${provider}_wrap_nested_sole_child" "--epic 123" "$(cat "$CHILD_ARGV_LOG")"
+
+  echo ""
+  echo "=== wrapper: ${provider} selects list-continuation Closes #124 (#2016) ==="
+  reset_fixture
+  write_tracker_config "$provider"
+  export MOCK_LABEL_PARENT_MODE=empty
+  write_pr 115 "develop-test-2016" "develop" "true" "Graduate" \
+    $'- Delivered work:\n    Closes #124'
+  result="$(run_wrapper --graduation-pr 115)"
+  body="$(last_body "$result")"
+  run_test "${provider}_wrap_list_cont_exit_zero" "0" "$(last_status "$result")"
+  run_contains "${provider}_wrap_list_cont_epic" "EPIC_ISSUE=124" "$body"
+
+  echo ""
+  echo "=== wrapper: ${provider} selects paragraph-continuation Closes #125 (#2016) ==="
+  reset_fixture
+  write_tracker_config "$provider"
+  export MOCK_LABEL_PARENT_MODE=empty
+  write_pr 116 "develop-test-2016" "develop" "true" "Graduate" \
+    $'Some prose about the change.\n    Closes #125'
+  result="$(run_wrapper --graduation-pr 116)"
+  body="$(last_body "$result")"
+  run_test "${provider}_wrap_para_cont_exit_zero" "0" "$(last_status "$result")"
+  run_contains "${provider}_wrap_para_cont_epic" "EPIC_ISSUE=125" "$body"
 
   echo ""
   echo "=== wrapper: ${provider} ignores Closes other/repo#326 (#2016) ==="

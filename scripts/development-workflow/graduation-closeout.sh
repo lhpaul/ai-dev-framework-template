@@ -468,8 +468,9 @@ discover_label_subitems() {
 
 discover_closing_keyword_refs() {
   # GitHub Projects / GitHub Issues path only. Scans PR title+body for live
-  # closing keywords via closing_keyword_live_refs (canonical fence / indent /
-  # inline / blockquote filter). Cross-repo forms like owner/repo#N never match
+  # closing keywords via closing_keyword_live_refs_for_closeout (shared fence
+  # filter plus CommonMark indented-code stripping that preserves list /
+  # paragraph continuations). Cross-repo forms like owner/repo#N never match
   # the keyword pattern. Linear must not call this — see
   # discover_linear_merged_pr_issue_refs.
   local prs_json
@@ -478,22 +479,38 @@ discover_closing_keyword_refs() {
   fi
   printf '%s' "$prs_json" | python3 -c '
 import json, sys
+
+def expand_tabs(text):
+    # CommonMark tab stops of 4 — expand before TSV so columns stay intact.
+    out_lines = []
+    for line in text.split("\n"):
+        col = 0
+        buf = []
+        for ch in line:
+            if ch == "\t":
+                n = 4 - (col % 4)
+                buf.append(" " * n)
+                col += n
+            else:
+                buf.append(ch)
+                col += 1
+        out_lines.append("".join(buf))
+    return "\n".join(out_lines)
+
 try:
     prs = json.load(sys.stdin)
 except Exception:
     sys.exit(1)
 for pr in prs or []:
     number = pr.get("number")
-    # Tabs become four spaces so TSV transport cannot break columns while
-    # indented-code detection (tab or 4+ spaces) still sees indent.
-    text = ((pr.get("title") or "") + "\n" + (pr.get("body") or "")).replace("\t", "    ")
+    text = expand_tabs((pr.get("title") or "") + "\n" + (pr.get("body") or ""))
     if number:
         print(f"PR\t{number}\t{text.replace(chr(10), chr(30))}")
 ' > "$TMP_DIR/merged-prs.tsv"
   while IFS="$(printf '\t')" read -r marker pr_number text; do
     [ "$marker" = "PR" ] || continue
     if ! printf '%s' "$text" | tr "$(printf '\036')" '\n' \
-      | closing_keyword_live_refs \
+      | closing_keyword_live_refs_for_closeout \
       | sort -un > "$TMP_DIR/pr-${pr_number}-issues.txt"; then
       return 1
     fi

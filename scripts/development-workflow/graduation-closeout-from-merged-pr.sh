@@ -290,17 +290,41 @@ sys.stdout.write(body)
   printf '%s\n%s\n' "$title" "$body" > "$TMP_DIR/pr-text.txt"
 }
 
+# Drop indented Markdown code lines (4+ spaces or a leading tab) after fence
+# stripping. Used only for Linear epic-ID text discovery (deferred tracker
+# action), never for GitHub issue mutation — GitHub closeout uses
+# strip_markdown_code_for_closeout instead.
+strip_indented_code_lines() {
+  python3 -c '
+import sys
+for line in sys.stdin:
+    if line.startswith("\t"):
+        continue
+    leading = len(line) - len(line.lstrip(" "))
+    if leading >= 4:
+        continue
+    sys.stdout.write(line)
+'
+}
+
 collect_pr_epic_candidates() {
   local text
-  # Canonical GFM fence / indent / inline / blockquote filter for all providers.
-  # Linear epic IDs drive deferred tracker actions only; GitHub closing keywords
-  # and Epic/Parent # refs select local epic candidates (never owner/repo#N).
-  if ! text="$(strip_fenced_pr_body_blocks < "$TMP_DIR/pr-text.txt")"; then
-    fail_closed "could_not_strip_fenced_blocks"
-  fi
   if [ "$TRACKER_PROVIDER" = "linear" ]; then
+    # Shared fence filter + simple indented-code strip. Epic IDs drive Linear
+    # deferred actions only — never GitHub issue mutations.
+    if ! text="$(strip_fenced_pr_body_blocks < "$TMP_DIR/pr-text.txt")"; then
+      fail_closed "could_not_strip_fenced_blocks"
+    fi
+    if ! text="$(printf '%s' "$text" | strip_indented_code_lines)"; then
+      fail_closed "could_not_strip_indented_code"
+    fi
     printf '%s\n' "$text" | extract_linear_epic_refs | sort -u > "$TMP_DIR/pr-epic-candidates.txt"
     return 0
+  fi
+  # github_projects / github_issues: closeout-only filter (fences + list-aware
+  # indented code). Preserves nested-list / paragraph-continuation keywords.
+  if ! text="$(strip_markdown_code_for_closeout < "$TMP_DIR/pr-text.txt")"; then
+    fail_closed "could_not_strip_fenced_blocks"
   fi
   {
     printf '%s\n' "$text" | extract_epic_parent_refs

@@ -204,14 +204,35 @@ JSON
 JSON
         ;;
       indented_code_example)
+        # Blank before indent → CommonMark indented code (not list/paragraph).
         cat <<'JSON'
-[{"number":11,"title":"Graduate wave","body":"See example:\n    Closes #326\nNo live closing keywords."}]
+[{"number":11,"title":"Graduate wave","body":"See example:\n\n    Closes #326\nNo live closing keywords."}]
 JSON
         ;;
       mixed_indent_example)
-        # Space+tab → CommonMark indent 4; must not authorize #326.
+        # Blank then space+tab → indented code; must not authorize #326.
         cat <<'JSON'
-[{"number":11,"title":"Graduate wave","body":"See example:\n \tCloses #326\nNo live closing keywords."}]
+[{"number":11,"title":"Graduate wave","body":"See example:\n\n \tCloses #326\nNo live closing keywords."}]
+JSON
+        ;;
+      nested_list_closes_123)
+        cat <<'JSON'
+[{"number":11,"title":"Deliver item","body":"- Delivered work:\n    - Closes #123"}]
+JSON
+        ;;
+      list_continuation_closes_124)
+        cat <<'JSON'
+[{"number":11,"title":"Deliver item","body":"- Delivered work:\n    Closes #124"}]
+JSON
+        ;;
+      paragraph_continuation_closes_125)
+        cat <<'JSON'
+[{"number":11,"title":"Deliver item","body":"Some prose about the change.\n    Closes #125"}]
+JSON
+        ;;
+      blank_then_indented_326)
+        cat <<'JSON'
+[{"number":11,"title":"Graduate wave","body":"See example:\n\n    Closes #326\nNo live closing keywords."}]
 JSON
         ;;
       foreign_repo_text)
@@ -1124,6 +1145,28 @@ assert_github_plain_326_closed() {
   run_contains "${label}_close_log_326" "326" "$(cat "$MOCK_CLOSE_LOG")"
 }
 
+assert_github_keyword_issue_closed() {
+  local provider="$1"
+  local mode="$2"
+  local issue="$3"
+  local label="$4"
+  reset_fixture
+  write_tracker_config "$provider"
+  export MOCK_NATIVE_MODE=empty
+  export MOCK_PR_MODE="$mode"
+  write_issue "$issue" "Live closing keyword" OPEN
+  write_issue 900 "Parent epic" OPEN
+  set_status "$issue" "In Development"
+  set_status 900 "In Development"
+  local result body
+  result="$(run_closeout)"
+  body="$(last_output_body "$result")"
+  run_test "${label}_exit_zero" "0" "$(last_output_status "$result")"
+  run_contains "${label}_pass" "GRADUATION_CLOSEOUT_RESULT=pass" "$body"
+  run_test "${label}_issue_closed" "CLOSED" "$(python3 -c 'import json; print(json.load(open("'"$MOCK_STATE_DIR"'/'"$issue"'.json"))["state"])')"
+  run_contains "${label}_close_log" "$issue" "$(cat "$MOCK_CLOSE_LOG")"
+}
+
 for provider in github_projects github_issues; do
   echo ""
   echo "=== graduation closeout: ${provider} ignores fenced example Closes #326 (#2016) ==="
@@ -1138,12 +1181,25 @@ for provider in github_projects github_issues; do
   assert_github_example_326_untouched "$provider" unclosed_fenced_example "${provider}_unclosed"
 
   echo ""
-  echo "=== graduation closeout: ${provider} ignores indented-code Closes #326 (#2016) ==="
+  echo "=== graduation closeout: ${provider} ignores blank+indented Closes #326 (#2016) ==="
+  assert_github_example_326_untouched "$provider" blank_then_indented_326 "${provider}_blank_indent"
   assert_github_example_326_untouched "$provider" indented_code_example "${provider}_indented"
 
   echo ""
   echo "=== graduation closeout: ${provider} ignores space+tab mixed-indent Closes #326 (#2016) ==="
   assert_github_example_326_untouched "$provider" mixed_indent_example "${provider}_mixed_indent"
+
+  echo ""
+  echo "=== graduation closeout: ${provider} keeps nested-list Closes #123 (#2016) ==="
+  assert_github_keyword_issue_closed "$provider" nested_list_closes_123 123 "${provider}_nested_list"
+
+  echo ""
+  echo "=== graduation closeout: ${provider} keeps list-continuation Closes #124 (#2016) ==="
+  assert_github_keyword_issue_closed "$provider" list_continuation_closes_124 124 "${provider}_list_cont"
+
+  echo ""
+  echo "=== graduation closeout: ${provider} keeps paragraph-continuation Closes #125 (#2016) ==="
+  assert_github_keyword_issue_closed "$provider" paragraph_continuation_closes_125 125 "${provider}_para_cont"
 
   echo ""
   echo "=== graduation closeout: ${provider} ignores Closes other/repo#326 (#2016) ==="

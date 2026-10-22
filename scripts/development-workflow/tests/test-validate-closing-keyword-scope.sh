@@ -275,21 +275,6 @@ Closes #49')"
 check "four_space_indent_is_indented_code" "50" \
   "$(refs_of '    ```
 Closes #50')"
-# A keyword on an indented-code line itself is not live (#2016).
-check "indented_code_line_keyword_not_reported" "" \
-  "$(refs_of '    Closes #53')"
-check "tab_indented_code_line_keyword_not_reported" "" \
-  "$(refs_of "$(printf '\tCloses #54')")"
-# CommonMark tab stops of 4: mixed leading whitespace still counts as indent ≥4.
-check "space_tab_mixed_indent_keyword_not_reported" "" \
-  "$(refs_of "$(printf ' \tCloses #55')")"
-check "two_space_tab_mixed_indent_keyword_not_reported" "" \
-  "$(refs_of "$(printf '  \tCloses #56')")"
-check "four_space_indent_keyword_not_reported" "" \
-  "$(refs_of '    Closes #57')"
-# Three spaces is not indented code; a three-space-indented fence still opens.
-check "three_space_indent_fence_still_suppresses" "" \
-  "$(refs_of "$(printf '   %s\nCloses #58' "$BT")")"
 check "multiline_inline_span_within_paragraph" "" \
   "$(refs_of 'open `span
 Closes #51` close')"
@@ -297,6 +282,45 @@ check "paragraph_break_ends_span_scope" "52" \
   "$(refs_of 'open `span
 
 Closes #52')"
+
+# ---------------------------------------------------------------------------
+# Graduation closeout opt-in filter (#2016)
+# Shared strip_fenced_pr_body_blocks / closing_keyword_live_refs stay on the
+# develop contract above. These checks exercise
+# closing_keyword_live_refs_for_closeout only.
+# ---------------------------------------------------------------------------
+
+closeout_refs_of() {
+  printf '%s' "$1" | closing_keyword_live_refs_for_closeout | tr '\n' ' ' | sed 's/ $//'
+}
+
+check "closeout_keeps_nested_list_keyword" "123" \
+  "$(closeout_refs_of '- Delivered work:
+    - Closes #123')"
+check "closeout_keeps_list_continuation_paragraph" "124" \
+  "$(closeout_refs_of '- Delivered work:
+    Closes #124')"
+check "closeout_keeps_paragraph_continuation_indent" "125" \
+  "$(closeout_refs_of 'Some prose about the change.
+    Closes #125')"
+check "closeout_strips_blank_then_four_space_code" "" \
+  "$(closeout_refs_of 'Some prose about the change.
+
+    Closes #326')"
+check "closeout_strips_blank_then_tab_code" "" \
+  "$(closeout_refs_of "$(printf 'Some prose.\n\n\tCloses #326')")"
+check "closeout_strips_blank_then_space_tab_code" "" \
+  "$(closeout_refs_of "$(printf 'Some prose.\n\n \tCloses #326')")"
+check "closeout_strips_fenced_example" "" \
+  "$(closeout_refs_of "$(printf '%s\nCloses #326\n%s' "$BT" "$BT")")"
+check "closeout_strips_tilde_fenced_example" "" \
+  "$(closeout_refs_of "$(printf '%s\nCloses #326\n%s' "$TT" "$TT")")"
+check "closeout_strips_unclosed_fence" "" \
+  "$(closeout_refs_of "$(printf '%s\nCloses #326\n' "${BT}text")")"
+check "closeout_keeps_plain_prose" "326" \
+  "$(closeout_refs_of 'Closes #326')"
+check "closeout_ignores_cross_repo_form" "" \
+  "$(closeout_refs_of 'Closes other/repo#326')"
 
 # ---------------------------------------------------------------------------
 # Differential attribution
