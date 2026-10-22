@@ -2917,6 +2917,71 @@ run_test "linear_1982_local_mask_remote_inspect_exits_nonzero" "1" "$status"
 run_contains "linear_1982_local_mask_remote_inspect_incomplete" \
   "RELEASE_SCOPE_INCOMPLETE reason=ambiguous_release_tag_namespace" "$output"
 
+# --- Missing local release tags must not bypass remote namespace conflicts ---
+# remote 1.1.0=A, v1.1.0=B; no local tags → ambiguous with and without --release-head
+# (not release_ref_unavailable on the cleanup path).
+repo_nolt_src="$TMP_ROOT/linear-1982-no-local-tags-src"
+repo_nolt_bare="$TMP_ROOT/linear-1982-no-local-tags-bare.git"
+repo_nolt="$TMP_ROOT/linear-1982-no-local-tags"
+init_linear_git_repo "$repo_nolt_src"
+cat > "$repo_nolt_src/CHANGELOG.md" <<'MD'
+# Changelog
+
+## [Unreleased]
+
+## [1.1.0] - 2026-10-15
+
+- Conflicting remote bare/v tags; working tree has no release tags.
+MD
+"$REAL_GIT" -C "$repo_nolt_src" add CHANGELOG.md .ai-dev-workflow.yaml scripts
+"$REAL_GIT" -C "$repo_nolt_src" commit -q -m "chore: no-local-tags baseline"
+"$REAL_GIT" -C "$repo_nolt_src" commit -q --allow-empty \
+  -m "Merge pull request #160 from example/fix/LEA-640-nolt-a"
+sha_nolt_a="$("$REAL_GIT" -C "$repo_nolt_src" rev-parse HEAD)"
+"$REAL_GIT" -C "$repo_nolt_src" tag 1.1.0
+"$REAL_GIT" -C "$repo_nolt_src" commit -q --allow-empty \
+  -m "Merge pull request #161 from example/fix/LEA-650-nolt-b"
+sha_nolt_b="$("$REAL_GIT" -C "$repo_nolt_src" rev-parse HEAD)"
+"$REAL_GIT" -C "$repo_nolt_src" tag v1.1.0
+"$REAL_GIT" clone -q --bare "file://${repo_nolt_src}" "$repo_nolt_bare"
+"$REAL_GIT" clone -q "file://${repo_nolt_bare}" "$repo_nolt"
+# Drop local release tags so tip resolution fails; remotes still conflict.
+"$REAL_GIT" -C "$repo_nolt" tag -d 1.1.0
+"$REAL_GIT" -C "$repo_nolt" tag -d v1.1.0
+mkdir -p "$repo_nolt/scripts/development-workflow"
+cp "$REPO_ROOT/scripts/development-workflow/workflow-lib.sh" \
+  "$repo_nolt/scripts/development-workflow/workflow-lib.sh"
+cp "$REPO_ROOT/scripts/development-workflow/prepare-release-post-merge-cleanup.sh" \
+  "$repo_nolt/scripts/development-workflow/prepare-release-post-merge-cleanup.sh"
+chmod +x "$repo_nolt/scripts/development-workflow/prepare-release-post-merge-cleanup.sh"
+cat > "$repo_nolt/.ai-dev-workflow.yaml" <<'YAML'
+schema_version: 2
+issue_tracker:
+  provider: linear
+YAML
+"$REAL_GIT" -C "$repo_nolt" add CHANGELOG.md .ai-dev-workflow.yaml scripts 2>/dev/null || true
+write_linear_scope_gh \
+  "160|fix/LEA-640-nolt-a|fix: LEA-640" \
+  "161|fix/LEA-650-nolt-b|fix: LEA-650" \
+  "commit:${sha_nolt_a}|160" \
+  "commit:${sha_nolt_b}|161"
+result="$(run_linear_scope_cleanup "$repo_nolt" 1.1.0 --from-changelog --best-effort)"
+status="$(printf '%s\n' "$result" | sed -n '1p')"
+output="$(printf '%s\n' "$result" | sed '1d')"
+run_test "linear_1982_no_local_tags_remote_conflict_best_effort_exits_zero" "0" "$status"
+run_contains "linear_1982_no_local_tags_remote_conflict_incomplete" \
+  "RELEASE_SCOPE_INCOMPLETE reason=ambiguous_release_tag_namespace" "$output"
+run_not_contains "linear_1982_no_local_tags_remote_conflict_not_unavailable" \
+  "release_ref_unavailable" "$output"
+run_not_contains "linear_1982_no_local_tags_remote_conflict_no_tracker" \
+  "TRACKER_ISSUES=" "$output"
+result="$(run_linear_scope_inspect "$repo_nolt" 1.1.0 "$sha_nolt_b")"
+status="$(printf '%s\n' "$result" | sed -n '1p')"
+output="$(printf '%s\n' "$result" | sed '1d')"
+run_test "linear_1982_no_local_tags_remote_conflict_inspect_exits_nonzero" "1" "$status"
+run_contains "linear_1982_no_local_tags_remote_conflict_inspect_incomplete" \
+  "RELEASE_SCOPE_INCOMPLETE reason=ambiguous_release_tag_namespace" "$output"
+
 # --- Both spellings remote (same SHA), only bare local: as-given namespace ± --release-head ---
 # Distinct bare vs v predecessors: v request → previous=v1.0.0 (LEA-710 only);
 # bare request → previous=1.0.0 (LEA-705 and LEA-710). Branch stays release/v1.1.0.

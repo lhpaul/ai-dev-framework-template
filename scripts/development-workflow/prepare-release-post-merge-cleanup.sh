@@ -1541,16 +1541,18 @@ def collect_merged_pr_linear_ids(range_spec, repo_slug):
 
 changelog_ids = [part for part in changelog_csv.split(",") if part]
 current_ref = resolve_current_ref()
+# Namespace (local ∪ remote, including conflicts) must run before the missing-tip
+# gate. Otherwise absent local release tags exit as release_ref_unavailable and
+# never surface ambiguous_release_tag_namespace — diverging from --release-head.
+boundary_status, prev_tag = resolve_previous_boundary(version, current_ref)
+if boundary_status == "ambiguous":
+    print("INCOMPLETE\tambiguous_release_tag_namespace")
+    sys.exit(0)
 if current_ref is None:
     print("INCOMPLETE\trelease_ref_unavailable")
     sys.exit(0)
-
-boundary_status, prev_tag = resolve_previous_boundary(version, current_ref)
 if boundary_status == "unavailable":
     print("INCOMPLETE\tprevious_release_boundary_unavailable")
-    sys.exit(0)
-if boundary_status == "ambiguous":
-    print("INCOMPLETE\tambiguous_release_tag_namespace")
     sys.exit(0)
 if boundary_status == "ok":
     range_spec = "%s..%s" % (prev_tag, current_ref)
