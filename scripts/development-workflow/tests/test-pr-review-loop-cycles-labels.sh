@@ -1589,7 +1589,12 @@ run_test "no_direct_ready_for_regression_apply_in_loop" "0" "$_direct_applies"
 # signal for whoever is watching the loop. The helper invocation spans
 # two source lines, so flatten the restore function body to one line
 # before checking for a stderr redirection on it.
-_restore_flat="$(sed -n '/restore_regression_label_if_missing()/,/^}/p' "$_loop_src" | tr '\n' ' ' | tr -s ' ')"
+# The root getter closes its own diagnostic stderr; the readiness child's stderr
+# must remain visible. Ignore only that exact nested getter, never the command's
+# own redirection (including either restore or revalidate invocation).
+_restore_flat="$(sed -n '/restore_regression_label_if_missing()/,/^}/p' "$_loop_src" \
+  | sed 's/$(workflow_local_config_root 2>\/dev\/null)/$(workflow_local_config_root)/g' \
+  | tr '\n' ' ' | tr -s ' ')"
 _helper_stderr_redirs="$(printf '%s\n' "$_restore_flat" | grep -c 'apply-readiness-labels\.sh[^;]*2>/dev/null' || true)"
 run_test "restore_path_does_not_discard_helper_stderr" "0" "$_helper_stderr_redirs"
 unset _restore_flat _helper_stderr_redirs
