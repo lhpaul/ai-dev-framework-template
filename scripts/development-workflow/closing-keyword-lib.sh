@@ -205,13 +205,15 @@ closing_keyword_live_refs() {
 #   Content inside fences never changes list context. Closing a top-level fence
 #   restores the list context saved when it opened. Unclosed → EOF.
 # - Indented code: outside lists, indent ≥4 after blank / document start / ATX /
-#   setext / thematic (or continuing code), when the line is not a list marker.
+#   setext / thematic (or continuing code) — even if the line looks like a list
+#   marker. Paragraph continuation (no preceding blank) at ≥4 stays prose.
 #   Inside lists, indent ≥ content_indent+4 after a blank (or continuing code).
-# - Lists: content_indent = marker indent + marker width + following spaces
-#   (1–4; if more than 4, padding is 1). A list-marker line is preferred over
-#   indented code (closeout prefer-prose). Nested markers (indent <
-#   content_indent+4) update content_indent. List ends on indent-0 non-marker
-#   after a blank, or on thematic / ATX / setext.
+# - Lists: a marker opens/continues a list only at indent 0–3 relative to the
+#   current container (document: cols 0–3; inside a list item: cols <
+#   content_indent+4). content_indent = marker indent + marker width + following
+#   spaces (1–4; if more than 4, padding is 1). Nested markers in
+#   content_indent..content_indent+3 are nested lists. List ends on indent-0
+#   non-marker after a blank, or on thematic / ATX / setext.
 # - ATX headings / setext underlines / thematic breaks: block boundaries as before.
 #
 # Do not use this from post-merge cleanup or validate-closing-keyword-scope —
@@ -428,10 +430,10 @@ for line in lines:
             out.append(line)
             continue
 
-    # Prefer list-marker lines over indented code (after tab expansion a
-    # leading tab yields four spaces before "- item").
+    # Document-level list markers only at indent 0–3 (CommonMark). At ≥4 after
+    # a blank / doc start, the line is indented code even if it looks like a list.
     parts = list_marker_parts(line) if not in_list else None
-    if parts is not None and not in_list:
+    if parts is not None and not in_list and cols < 4:
         content_indent, remainder = parts
         in_list = True
         in_indented_code = False

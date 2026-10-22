@@ -1005,16 +1005,80 @@ for provider in github_projects github_issues; do
   run_not_contains "${provider}_wrap_tab_ordered_tick_no_326" "--epic 326" "$(cat "$CHILD_ARGV_LOG")"
 
   echo ""
-  echo "=== wrapper: ${provider} keeps tab-indented nested list prose Closes #331 (#2016) ==="
+  echo "=== wrapper: ${provider} strips tab docstart listlike as indented code (#2016) ==="
   reset_fixture
   write_tracker_config "$provider"
   export MOCK_LABEL_PARENT_MODE=empty
   write_pr 152 "develop-test-2016" "develop" "true" "Graduate wave" \
-    "$(printf -- '\t- item\n\t\tCloses #331')"
+    "$(printf -- '\t- item\n\t\tCloses #331\nEpic #900')"
   result="$(run_wrapper --graduation-pr 152)"
   body="$(last_body "$result")"
-  run_test "${provider}_wrap_tab_nested_prose_exit_zero" "0" "$(last_status "$result")"
-  run_contains "${provider}_wrap_tab_nested_prose_epic" "EPIC_ISSUE=331" "$body"
+  run_test "${provider}_wrap_tab_docstart_listlike_exit_zero" "0" "$(last_status "$result")"
+  run_contains "${provider}_wrap_tab_docstart_listlike_epic" "EPIC_ISSUE=900" "$body"
+  run_not_contains "${provider}_wrap_tab_docstart_listlike_no_331" "--epic 331" "$(cat "$CHILD_ARGV_LOG")"
+
+  echo ""
+  echo "=== wrapper: ${provider} strips blank then four-space listlike Closes #326 (#2016) ==="
+  reset_fixture
+  write_tracker_config "$provider"
+  export MOCK_LABEL_PARENT_MODE=empty
+  write_pr 153 "develop-test-2016" "develop" "true" "Graduate wave" \
+    $'Intro\n\n    - Closes #326\nEpic #900'
+  result="$(run_wrapper --graduation-pr 153)"
+  body="$(last_body "$result")"
+  run_test "${provider}_wrap_blank_four_listlike_exit_zero" "0" "$(last_status "$result")"
+  run_contains "${provider}_wrap_blank_four_listlike_epic" "EPIC_ISSUE=900" "$body"
+  run_not_contains "${provider}_wrap_blank_four_listlike_no_326" "--epic 326" "$(cat "$CHILD_ARGV_LOG")"
+
+  echo ""
+  echo "=== wrapper: ${provider} strips docstart four-space listlike Closes #326 (#2016) ==="
+  reset_fixture
+  write_tracker_config "$provider"
+  export MOCK_LABEL_PARENT_MODE=empty
+  write_pr 154 "develop-test-2016" "develop" "true" "Graduate wave" \
+    $'    - Closes #326\nEpic #900'
+  result="$(run_wrapper --graduation-pr 154)"
+  body="$(last_body "$result")"
+  run_test "${provider}_wrap_docstart_four_listlike_exit_zero" "0" "$(last_status "$result")"
+  run_contains "${provider}_wrap_docstart_four_listlike_epic" "EPIC_ISSUE=900" "$body"
+  run_not_contains "${provider}_wrap_docstart_four_listlike_no_326" "--epic 326" "$(cat "$CHILD_ARGV_LOG")"
+
+  echo ""
+  echo "=== wrapper: ${provider} keeps nested list under item Closes #123 (#2016) ==="
+  reset_fixture
+  write_tracker_config "$provider"
+  export MOCK_LABEL_PARENT_MODE=empty
+  write_pr 155 "develop-test-2016" "develop" "true" "Graduate wave" \
+    $'- Delivered:\n    - Closes #123'
+  result="$(run_wrapper --graduation-pr 155)"
+  body="$(last_body "$result")"
+  run_test "${provider}_wrap_nested_under_delivered_exit_zero" "0" "$(last_status "$result")"
+  run_contains "${provider}_wrap_nested_under_delivered_epic" "EPIC_ISSUE=123" "$body"
+
+  echo ""
+  echo "=== wrapper: ${provider} strips deep listlike code after blank in list (#2016) ==="
+  reset_fixture
+  write_tracker_config "$provider"
+  export MOCK_LABEL_PARENT_MODE=empty
+  write_pr 156 "develop-test-2016" "develop" "true" "Graduate wave" \
+    $'- a\n\n        - Closes #332\nEpic #900'
+  result="$(run_wrapper --graduation-pr 156)"
+  body="$(last_body "$result")"
+  run_test "${provider}_wrap_deep_listlike_exit_zero" "0" "$(last_status "$result")"
+  run_contains "${provider}_wrap_deep_listlike_epic" "EPIC_ISSUE=900" "$body"
+  run_not_contains "${provider}_wrap_deep_listlike_no_332" "--epic 332" "$(cat "$CHILD_ARGV_LOG")"
+
+  echo ""
+  echo "=== wrapper: ${provider} keeps paragraph-continuation listlike Closes #333 (#2016) ==="
+  reset_fixture
+  write_tracker_config "$provider"
+  export MOCK_LABEL_PARENT_MODE=empty
+  write_pr 157 "develop-test-2016" "develop" "true" "Graduate wave" \
+    $'Para\n    - Closes #333'
+  result="$(run_wrapper --graduation-pr 157)"
+  body="$(last_body "$result")"
+  run_test "${provider}_wrap_para_cont_listlike_exit_zero" "0" "$(last_status "$result")"
+  run_contains "${provider}_wrap_para_cont_listlike_epic" "EPIC_ISSUE=333" "$body"
 
   echo ""
   echo "=== wrapper: ${provider} keeps nested-list Closes #123 with Epic #900 (#2016) ==="

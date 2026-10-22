@@ -439,8 +439,13 @@ heading_inside_fence_then_prose|328|~~~\n## Example\n~~~\nCloses #328
 tab_marker_tilde_fence||-\t~~~text\n\tCloses #326\n\t~~~
 tab_marker_tilde_unclosed||-\t~~~text\n\tCloses #326
 tab_ordered_tick_fence||1.\t```text\n\tCloses #326\n\t```
-tab_nested_list_prose|331|\t- item\n\t\tCloses #331
+tab_docstart_listlike_code||\t- item\n\t\tCloses #331
 tab_blank_indent_code||See:\n\n\tCloses #326
+blank_then_four_space_listlike_code||Intro\n\n    - Closes #326
+docstart_four_space_listlike_code||    - Closes #326
+nested_list_under_item|123|- Delivered:\n    - Closes #123
+list_blank_then_deep_listlike_code||- a\n\n        - Closes #332
+para_cont_listlike_prose|333|Para\n    - Closes #333
 CLOSEOUT_TABLE
 
 # Explicit regressions for fence precedence (list markers inside fences must not leak).
@@ -457,10 +462,20 @@ check "closeout_tab_marker_tilde_unclosed_strips" "" \
   "$(closeout_refs_of "$(printf -- '-\t~~~text\n\tCloses #326')")"
 check "closeout_tab_ordered_tick_fence_strips" "" \
   "$(closeout_refs_of "$(printf -- '1.\t%s%s%stext\n\tCloses #326\n\t%s%s%s' '`' '`' '`' '`' '`' '`')")"
-check "closeout_tab_nested_list_prose_keeps" "331" \
+check "closeout_tab_docstart_listlike_code_strips" "" \
   "$(closeout_refs_of "$(printf -- '\t- item\n\t\tCloses #331')")"
 check "closeout_tab_blank_indent_code_strips" "" \
   "$(closeout_refs_of "$(printf -- 'See:\n\n\tCloses #326')")"
+check "closeout_blank_then_four_space_listlike_strips" "" \
+  "$(closeout_refs_of "$(printf -- 'Intro\n\n    - Closes #326')")"
+check "closeout_docstart_four_space_listlike_strips" "" \
+  "$(closeout_refs_of "$(printf -- '    - Closes #326')")"
+check "closeout_nested_list_under_item_keeps" "123" \
+  "$(closeout_refs_of "$(printf -- '- Delivered:\n    - Closes #123')")"
+check "closeout_list_blank_then_deep_listlike_strips" "" \
+  "$(closeout_refs_of "$(printf -- '- a\n\n        - Closes #332')")"
+check "closeout_para_cont_listlike_keeps" "333" \
+  "$(closeout_refs_of "$(printf -- 'Para\n    - Closes #333')")"
 
 # ---------------------------------------------------------------------------
 # Differential attribution

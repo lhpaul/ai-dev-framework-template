@@ -412,9 +412,34 @@ JSON
 [{"number":11,"title":"Graduate wave","body":"1.\t```text\n\tCloses #326\n\t```\nNo live closing keywords."}]
 JSON
         ;;
-      tab_nested_list_prose_331)
+      tab_docstart_listlike_331)
         cat <<'JSON'
-[{"number":11,"title":"Deliver item","body":"\t- item\n\t\tCloses #331"}]
+[{"number":11,"title":"Graduate wave","body":"\t- item\n\t\tCloses #331\nNo live closing keywords."}]
+JSON
+        ;;
+      blank_then_four_space_listlike_326)
+        cat <<'JSON'
+[{"number":11,"title":"Graduate wave","body":"Intro\n\n    - Closes #326\nNo live closing keywords."}]
+JSON
+        ;;
+      docstart_four_space_listlike_326)
+        cat <<'JSON'
+[{"number":11,"title":"Graduate wave","body":"    - Closes #326\nNo live closing keywords."}]
+JSON
+        ;;
+      nested_list_under_delivered_123)
+        cat <<'JSON'
+[{"number":11,"title":"Deliver item","body":"- Delivered:\n    - Closes #123"}]
+JSON
+        ;;
+      list_blank_then_deep_listlike_332)
+        cat <<'JSON'
+[{"number":11,"title":"Graduate wave","body":"- a\n\n        - Closes #332\nNo live closing keywords."}]
+JSON
+        ;;
+      para_cont_listlike_333)
+        cat <<'JSON'
+[{"number":11,"title":"Deliver item","body":"Para\n    - Closes #333"}]
 JSON
         ;;
       foreign_repo_text)
@@ -1494,8 +1519,25 @@ for provider in github_projects github_issues; do
   assert_github_example_326_untouched "$provider" tab_ordered_tick_fence_326 "${provider}_tab_ordered_tick"
 
   echo ""
-  echo "=== graduation closeout: ${provider} keeps tab-indented nested list prose Closes #331 (#2016) ==="
-  assert_github_keyword_issue_closed "$provider" tab_nested_list_prose_331 331 "${provider}_tab_nested_prose"
+  echo "=== graduation closeout: ${provider} strips tab docstart listlike as indented code (#2016) ==="
+  assert_github_example_326_untouched "$provider" tab_docstart_listlike_331 "${provider}_tab_docstart_listlike" 331
+
+  echo ""
+  echo "=== graduation closeout: ${provider} strips four-space listlike indented code (#2016) ==="
+  assert_github_example_326_untouched "$provider" blank_then_four_space_listlike_326 "${provider}_blank_four_listlike"
+  assert_github_example_326_untouched "$provider" docstart_four_space_listlike_326 "${provider}_docstart_four_listlike"
+
+  echo ""
+  echo "=== graduation closeout: ${provider} keeps nested list under item Closes #123 (#2016) ==="
+  assert_github_keyword_issue_closed "$provider" nested_list_under_delivered_123 123 "${provider}_nested_under_delivered"
+
+  echo ""
+  echo "=== graduation closeout: ${provider} strips deep listlike code after blank in list (#2016) ==="
+  assert_github_example_326_untouched "$provider" list_blank_then_deep_listlike_332 "${provider}_deep_listlike" 332
+
+  echo ""
+  echo "=== graduation closeout: ${provider} keeps paragraph-continuation listlike Closes #333 (#2016) ==="
+  assert_github_keyword_issue_closed "$provider" para_cont_listlike_333 333 "${provider}_para_cont_listlike"
 
   echo ""
   echo "=== graduation closeout: ${provider} keeps nested-list Closes #123 (#2016) ==="
