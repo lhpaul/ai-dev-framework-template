@@ -2243,5 +2243,473 @@ printf 'PROBE=%s\\n' "$settle_review_probe"
                         self.assertEqual(result.stderr, b'')
 
 
+    def comment_redaction_cases(self):
+        # Frozen diagnostic fixtures; source validity is a separate contract.
+        return (('C01', 'other: { # }\n  token:\n  $OPAQUE$TAIL, public: PUBLIC_KEEP\n}\n', ('PUBLIC_KEEP',), False),
+         ('C02', 'other: [ # ]\n  {token:\n  $OPAQUE$TAIL, public: PUBLIC_KEEP}\n]\n', ('PUBLIC_KEEP',), False),
+         ('C03',
+          'other: [{ # }]]}\n  token:\n  $OPAQUE$TAIL, public: PUBLIC_KEEP\n}]\n',
+          ('PUBLIC_KEEP',),
+          False),
+         ('C04', '# {\ntoken: $OPAQUE$TAIL\npublic: PUBLIC_KEEP\n', ('PUBLIC_KEEP',), False),
+         ('C05', '# [\ntoken: $OPAQUE$TAIL\npublic: PUBLIC_KEEP\n', ('PUBLIC_KEEP',), False),
+         ('C06', '# [ { \' " } ]\ntoken: $OPAQUE$TAIL\npublic: PUBLIC_KEEP\n', ('PUBLIC_KEEP',), False),
+         ('C07', 'other: { # " }\n  token:\n  $OPAQUE$TAIL, public: PUBLIC_KEEP\n}\n', ('PUBLIC_KEEP',), False),
+         ('C08', "other: { # ' }\n  token:\n  $OPAQUE$TAIL, public: PUBLIC_KEEP\n}\n", ('PUBLIC_KEEP',), False),
+         ('C09', "# can't [\nother: {token:\n$OPAQUE$TAIL, public: PUBLIC_KEEP}\n", ('PUBLIC_KEEP',), False),
+         ('C10', 'other: public # [\ntoken: $OPAQUE$TAIL\npublic: PUBLIC_KEEP\n', ('PUBLIC_KEEP',), False),
+         ('C11', 'other: {token: # }\n$OPAQUE$TAIL, public: PUBLIC_KEEP}\n', ('PUBLIC_KEEP',), False),
+         ('C12', 'other: {token: $OPAQUE\n# ] }\n$TAIL, public: PUBLIC_KEEP}\n', ('PUBLIC_KEEP',), False),
+         ('C13', 'other: {token: "$OPAQUE$TAIL", # ] }\npublic: PUBLIC_KEEP}\n', ('PUBLIC_KEEP',), False),
+         ('C14', '# token: $OPAQUE$TAIL [\npublic: PUBLIC_KEEP\n', ('PUBLIC_KEEP',), False),
+         ('C15', 'other: { # token: $OPAQUE$TAIL }\npublic: PUBLIC_KEEP}\n', ('PUBLIC_KEEP',), False),
+         ('C16', 'other: "# [ {"\ntoken: $OPAQUE$TAIL\npublic: PUBLIC_KEEP\n', ('PUBLIC_KEEP',), False),
+         ('C17', "other: '# [ {'\ntoken: $OPAQUE$TAIL\npublic: PUBLIC_KEEP\n", ('PUBLIC_KEEP',), False),
+         ('C18', 'other: "quoted\\" # ["\ntoken: $OPAQUE$TAIL\npublic: PUBLIC_KEEP\n', ('PUBLIC_KEEP',), False),
+         ('C19', "other: 'can''t # ['\ntoken: $OPAQUE$TAIL\npublic: PUBLIC_KEEP\n", ('PUBLIC_KEEP',), False),
+         ('C20', 'other: public#value[\ntoken: $OPAQUE$TAIL\npublic: PUBLIC_KEEP\n', ('PUBLIC_KEEP',), False),
+         ('C21', 'other: {token: "$OPAQUE# } [ $TAIL", public: PUBLIC_KEEP}\n', ('PUBLIC_KEEP',), False),
+         ('C22', "other: {token: '$OPAQUE# } [ $TAIL', public: PUBLIC_KEEP}\n", ('PUBLIC_KEEP',), False),
+         ('C23', 'other: {token:\n$OPAQUE$TAIL, public: PUBLIC_KEEP}\n', ('PUBLIC_KEEP',), False),
+         ('C24', 'other: [{token: [$OPAQUE, {$TAIL: value}], public: PUBLIC_KEEP}]\n', ('PUBLIC_KEEP',), False),
+         ('C25', 'other: {note: "[}]", token:\n$OPAQUE$TAIL, public: PUBLIC_KEEP}\n', ('PUBLIC_KEEP',), False),
+         ('C26',
+          'other: {note: [public, # ] }\nvalue], token:\n$OPAQUE$TAIL, public: PUBLIC_KEEP}\n',
+          ('PUBLIC_KEEP',),
+          False),
+         ('C27', '{token:\n$OPAQUE$TAIL, public: PUBLIC_KEEP}\n', ('PUBLIC_KEEP',), False),
+         ('C28', 'other:\n  - {token:\n    $OPAQUE$TAIL, public: PUBLIC_KEEP}\n', ('PUBLIC_KEEP',), False),
+         ('C29', 'other: public [ literal\ntoken: $OPAQUE$TAIL\npublic: PUBLIC_KEEP\n', ('PUBLIC_KEEP',), False),
+         ('C30', 'other: public { literal\ntoken: $OPAQUE$TAIL\npublic: PUBLIC_KEEP\n', ('PUBLIC_KEEP',), False),
+         ('C31',
+          "other: public can't [ literal\ntoken: $OPAQUE$TAIL\npublic: PUBLIC_KEEP\n",
+          ('PUBLIC_KEEP',),
+          False),
+         ('C32', 'notice [stage] token: $OPAQUE$TAIL\npublic: PUBLIC_KEEP\n', ('PUBLIC_KEEP',), False),
+         ('C33',
+          'other: |\n  [ public literal\ntoken: $OPAQUE$TAIL\npublic: PUBLIC_KEEP\n',
+          ('PUBLIC_KEEP',),
+          False),
+         ('C34',
+          'other: >\n  # [ public literal\ntoken: $OPAQUE$TAIL\npublic: PUBLIC_KEEP\n',
+          ('PUBLIC_KEEP',),
+          False),
+         ('C35', '# [ { } ]\npublic: PUBLIC_KEEP\n', ('PUBLIC_KEEP',), True),
+         ('C36', 'other: "# [ { } ]"\npublic: PUBLIC_KEEP\n', ('PUBLIC_KEEP',), True),
+         ('C37', 'token: # [\npublic: PUBLIC_KEEP\n', ('PUBLIC_KEEP',), True),
+         ('C38', 'other: {token: "$OPAQUE\n# }\n$TAIL\n', (), False),
+         ('C39', 'other: {token: [$OPAQUE, # ] }\n$TAIL\n', (), False),
+         ('C40', 'token: $OPAQUE\n  # }\n  $TAIL\npublic: PUBLIC_KEEP\n', ('PUBLIC_KEEP',), False),
+         ('C41',
+          'other:\n  - token: # [\n      $OPAQUE$TAIL\n    public: PUBLIC_KEEP\n',
+          ('PUBLIC_KEEP',),
+          False),
+         ('C42', 'notice token: # [\n  $OPAQUE$TAIL\npublic: PUBLIC_KEEP\n', ('PUBLIC_KEEP',), False),
+         ('C43', '{\n# }\npassword:\n$OPAQUE$TAIL,\npublic: PUBLIC_KEEP\n}', ('public: PUBLIC_KEEP',), False),
+         ('C44', '{\n# ]\npassword:\n$OPAQUE$TAIL,\npublic: PUBLIC_KEEP\n}', ('public: PUBLIC_KEEP',), False),
+         ('C45', '[{\n# ]}\npassword:\n$OPAQUE$TAIL,\npublic: PUBLIC_KEEP\n}]', ('public: PUBLIC_KEEP',), False),
+         ('C46', 'password: [\n# ]\n$OPAQUE$TAIL\n]\npublic: PUBLIC_KEEP', ('public: PUBLIC_KEEP',), False),
+         ('C47',
+          'password: {\n# }\nchild: $OPAQUE$TAIL\n}\npublic: PUBLIC_KEEP',
+          ('public: PUBLIC_KEEP',),
+          False),
+         ('C48', '# [\npassword:\n  $OPAQUE$TAIL\npublic: PUBLIC_KEEP', ('public: PUBLIC_KEEP',), False),
+         ('C49', '# {\npassword:\n  $OPAQUE$TAIL\npublic: PUBLIC_KEEP', ('public: PUBLIC_KEEP',), False),
+         ('C50',
+          'label: ordinary[\npassword:\n  $OPAQUE$TAIL\npublic: PUBLIC_KEEP',
+          ('public: PUBLIC_KEEP',),
+          False),
+         ('C51',
+          'label: ordinary{\npassword:\n  $OPAQUE$TAIL\npublic: PUBLIC_KEEP',
+          ('public: PUBLIC_KEEP',),
+          False),
+         ('C52',
+          'label: ordinary#[\npassword:\n  $OPAQUE$TAIL\npublic: PUBLIC_KEEP',
+          ('public: PUBLIC_KEEP',),
+          False),
+         ('C53', 'password: [\n  # ]\n  $OPAQUE$TAIL\n]\npublic: PUBLIC_KEEP', ('public: PUBLIC_KEEP',), False),
+         ('C54', '{\n# "}\npassword:\n$OPAQUE$TAIL,\npublic: PUBLIC_KEEP\n}', ('public: PUBLIC_KEEP',), False),
+         ('C55',
+          'label: "#[{"\npassword:\n  $OPAQUE$TAIL\npublic: PUBLIC_KEEP',
+          ('public: PUBLIC_KEEP',),
+          False),
+         ('C56', 'password: "$OPAQUE$TAIL#]}"\npublic: PUBLIC_KEEP', ('public: PUBLIC_KEEP',), False),
+         ('C57', '# token: "$OPAQUE$TAIL\npublic: PUBLIC_KEEP\n', ('PUBLIC_KEEP',), False),
+         ('C58', '# token: [$OPAQUE$TAIL\npublic: PUBLIC_KEEP\n', ('PUBLIC_KEEP',), False),
+         ('C59', 'other: { # token: "$OPAQUE$TAIL\npublic: PUBLIC_KEEP}\n', ('PUBLIC_KEEP',), False),
+         ('C60', 'other: { # token: [$OPAQUE$TAIL\npublic: PUBLIC_KEEP}\n', ('PUBLIC_KEEP',), False),
+         ('C61',
+          "label: 'public\n  [ { PUBLIC_SCALAR\n  end'\ntoken: $OPAQUE$TAIL\npublic: PUBLIC_KEEP\n",
+          ('PUBLIC_KEEP', 'PUBLIC_SCALAR'),
+          False),
+         ('C62',
+          'label: "public\n  { [ PUBLIC_SCALAR\n  end"\ntoken: $OPAQUE$TAIL\npublic: PUBLIC_KEEP\n',
+          ('PUBLIC_KEEP', 'PUBLIC_SCALAR'),
+          False),
+         ('C63', 'other: {token: $OPAQUE#attached$TAIL, public: PUBLIC_KEEP}\n', ('PUBLIC_KEEP',), False),
+         ('C64', 'other: |\n  token: "$OPAQUE$TAIL\npublic: PUBLIC_KEEP\n', ('PUBLIC_KEEP',), False),
+         ('C65', 'other: |\n  token: [$OPAQUE$TAIL\npublic: PUBLIC_KEEP\n', ('PUBLIC_KEEP',), False),
+         ('C66', 'other: >\n  token: "$OPAQUE$TAIL\npublic: PUBLIC_KEEP\n', ('PUBLIC_KEEP',), False),
+         ('C67', 'other: >\n  token: [$OPAQUE$TAIL\npublic: PUBLIC_KEEP\n', ('PUBLIC_KEEP',), False),
+         ('C68',
+          '{"reason":"password: $OPAQUE, $TAIL","public":"PUBLIC_KEEP","count":17,"nested":[3,true,null]}',
+          ('PUBLIC_KEEP',),
+          False),
+         ('C69',
+          '{"reason":"notice password: $OPAQUE, [$TAIL] # '
+          'data","public":"PUBLIC_KEEP","count":17,"nested":[3,true,null]}',
+          ('PUBLIC_KEEP',),
+          False),
+         ('C70',
+          '{"reason":"password: \\"$OPAQUE, $TAIL\\" '
+          'suffix","public":"PUBLIC_KEEP","count":17,"nested":[3,true,null]}',
+          ('PUBLIC_KEEP',),
+          False),
+         ('C71',
+          '{"reason":"notice password: $OPAQUE\\n$TAIL\\" '
+          'suffix","public":"PUBLIC_KEEP","count":17,"nested":[3,true,null]}',
+          ('PUBLIC_KEEP',),
+          False),
+         ('C72', 'reason: "password: $OPAQUE, [$TAIL] # data"\npublic: PUBLIC_KEEP\n', ('PUBLIC_KEEP',), False),
+         ('C73',
+          'reason: "notice password: $OPAQUE, [$TAIL] # data"\npublic: PUBLIC_KEEP\n',
+          ('PUBLIC_KEEP',),
+          False),
+         ('C74', "reason: 'password: $OPAQUE, [$TAIL] # data'\npublic: PUBLIC_KEEP\n", ('PUBLIC_KEEP',), False),
+         ('C75',
+          "reason: 'notice password: $OPAQUE, [$TAIL] # data'\npublic: PUBLIC_KEEP\n",
+          ('PUBLIC_KEEP',),
+          False),
+         ('C76',
+          'reason:\n  - "notice password: $OPAQUE, [$TAIL] # data"\npublic: PUBLIC_KEEP\n',
+          ('PUBLIC_KEEP',),
+          False),
+         ('C77',
+          "reason:\n  - 'notice password: $OPAQUE, [$TAIL] # data'\npublic: PUBLIC_KEEP\n",
+          ('PUBLIC_KEEP',),
+          False),
+         ('C78', '"PUBLIC_PREFIX password: $OPAQUE, [$TAIL] # data"', ('PUBLIC_PREFIX',), False),
+         ('C79', "'PUBLIC_PREFIX password: $OPAQUE, [$TAIL] # data'", ('PUBLIC_PREFIX',), False),
+         ('C80',
+          '{"reason":"notice \\"password: $OPAQUE, $TAIL\\" '
+          'suffix","public":"PUBLIC_KEEP","count":17,"nested":[3,true,null]}',
+          ('PUBLIC_KEEP',),
+          False),
+         ('C81',
+          "reason: 'notice ''password: $OPAQUE, $TAIL'' suffix'\npublic: PUBLIC_KEEP\n",
+          ('PUBLIC_KEEP',),
+          False),
+         ('C82',
+          '- other: |\n    token: "$OPAQUE$TAIL\n  public: PUBLIC_KEEP\n- next: PUBLIC_NEXT\n',
+          ('public: PUBLIC_KEEP', 'next: PUBLIC_NEXT'),
+          False),
+         ('C83',
+          '-\n  other: |\n    token: "$OPAQUE$TAIL\n  public: PUBLIC_KEEP\n- next: PUBLIC_NEXT\n',
+          ('public: PUBLIC_KEEP', 'next: PUBLIC_NEXT'),
+          False),
+         ('C84',
+          '  - other: |\n      token: "$OPAQUE$TAIL\n    public: PUBLIC_KEEP\n  - next: PUBLIC_NEXT\n',
+          ('public: PUBLIC_KEEP', 'next: PUBLIC_NEXT'),
+          False),
+         ('C85',
+          '  -\n    other: |\n      token: "$OPAQUE$TAIL\n    public: PUBLIC_KEEP\n  - next: PUBLIC_NEXT\n',
+          ('public: PUBLIC_KEEP', 'next: PUBLIC_NEXT'),
+          False),
+         ('C86',
+          '- other: |\n    token: [$OPAQUE$TAIL\n  public: PUBLIC_KEEP\n- next: PUBLIC_NEXT\n',
+          ('public: PUBLIC_KEEP', 'next: PUBLIC_NEXT'),
+          False),
+         ('C87',
+          '-\n  other: |\n    token: [$OPAQUE$TAIL\n  public: PUBLIC_KEEP\n- next: PUBLIC_NEXT\n',
+          ('public: PUBLIC_KEEP', 'next: PUBLIC_NEXT'),
+          False),
+         ('C88',
+          '  - other: |\n      token: [$OPAQUE$TAIL\n    public: PUBLIC_KEEP\n  - next: PUBLIC_NEXT\n',
+          ('public: PUBLIC_KEEP', 'next: PUBLIC_NEXT'),
+          False),
+         ('C89',
+          '  -\n    other: |\n      token: [$OPAQUE$TAIL\n    public: PUBLIC_KEEP\n  - next: PUBLIC_NEXT\n',
+          ('public: PUBLIC_KEEP', 'next: PUBLIC_NEXT'),
+          False),
+         ('C90',
+          '- other: >\n    token: "$OPAQUE$TAIL\n  public: PUBLIC_KEEP\n- next: PUBLIC_NEXT\n',
+          ('public: PUBLIC_KEEP', 'next: PUBLIC_NEXT'),
+          False),
+         ('C91',
+          '-\n  other: >\n    token: "$OPAQUE$TAIL\n  public: PUBLIC_KEEP\n- next: PUBLIC_NEXT\n',
+          ('public: PUBLIC_KEEP', 'next: PUBLIC_NEXT'),
+          False),
+         ('C92',
+          '  - other: >\n      token: "$OPAQUE$TAIL\n    public: PUBLIC_KEEP\n  - next: PUBLIC_NEXT\n',
+          ('public: PUBLIC_KEEP', 'next: PUBLIC_NEXT'),
+          False),
+         ('C93',
+          '  -\n    other: >\n      token: "$OPAQUE$TAIL\n    public: PUBLIC_KEEP\n  - next: PUBLIC_NEXT\n',
+          ('public: PUBLIC_KEEP', 'next: PUBLIC_NEXT'),
+          False),
+         ('C94',
+          '- other: >\n    token: [$OPAQUE$TAIL\n  public: PUBLIC_KEEP\n- next: PUBLIC_NEXT\n',
+          ('public: PUBLIC_KEEP', 'next: PUBLIC_NEXT'),
+          False),
+         ('C95',
+          '-\n  other: >\n    token: [$OPAQUE$TAIL\n  public: PUBLIC_KEEP\n- next: PUBLIC_NEXT\n',
+          ('public: PUBLIC_KEEP', 'next: PUBLIC_NEXT'),
+          False),
+         ('C96',
+          '  - other: >\n      token: [$OPAQUE$TAIL\n    public: PUBLIC_KEEP\n  - next: PUBLIC_NEXT\n',
+          ('public: PUBLIC_KEEP', 'next: PUBLIC_NEXT'),
+          False),
+         ('C97',
+          '  -\n    other: >\n      token: [$OPAQUE$TAIL\n    public: PUBLIC_KEEP\n  - next: PUBLIC_NEXT\n',
+          ('public: PUBLIC_KEEP', 'next: PUBLIC_NEXT'),
+          False),
+         ('C98',
+          '- |\n  token: "$OPAQUE$TAIL\n- public: PUBLIC_KEEP\n- next: PUBLIC_NEXT\n',
+          ('public: PUBLIC_KEEP', 'next: PUBLIC_NEXT'),
+          False),
+         ('C99',
+          '- - |\n    token: "$OPAQUE$TAIL\n  - public: PUBLIC_KEEP\n- next: PUBLIC_NEXT\n',
+          ('public: PUBLIC_KEEP', 'next: PUBLIC_NEXT'),
+          False),
+         ('C100',
+          '- >\n  token: "$OPAQUE$TAIL\n- public: PUBLIC_KEEP\n- next: PUBLIC_NEXT\n',
+          ('public: PUBLIC_KEEP', 'next: PUBLIC_NEXT'),
+          False),
+         ('C101',
+          '- - >\n    token: "$OPAQUE$TAIL\n  - public: PUBLIC_KEEP\n- next: PUBLIC_NEXT\n',
+          ('public: PUBLIC_KEEP', 'next: PUBLIC_NEXT'),
+          False),
+         ('C102',
+          '- - other: |\n'
+          '      token: "$OPAQUE$TAIL\n'
+          '    public: PUBLIC_KEEP\n'
+          '  - inner: PUBLIC_INNER\n'
+          '- next: PUBLIC_NEXT\n',
+          ('public: PUBLIC_KEEP', 'inner: PUBLIC_INNER', 'next: PUBLIC_NEXT'),
+          False),
+         ('C103',
+          '- - other: |\n'
+          '      token: [$OPAQUE$TAIL\n'
+          '    public: PUBLIC_KEEP\n'
+          '  - inner: PUBLIC_INNER\n'
+          '- next: PUBLIC_NEXT\n',
+          ('public: PUBLIC_KEEP', 'inner: PUBLIC_INNER', 'next: PUBLIC_NEXT'),
+          False),
+         ('C104',
+          '- - other: >\n'
+          '      token: "$OPAQUE$TAIL\n'
+          '    public: PUBLIC_KEEP\n'
+          '  - inner: PUBLIC_INNER\n'
+          '- next: PUBLIC_NEXT\n',
+          ('public: PUBLIC_KEEP', 'inner: PUBLIC_INNER', 'next: PUBLIC_NEXT'),
+          False),
+         ('C105',
+          '- - other: >\n'
+          '      token: [$OPAQUE$TAIL\n'
+          '    public: PUBLIC_KEEP\n'
+          '  - inner: PUBLIC_INNER\n'
+          '- next: PUBLIC_NEXT\n',
+          ('public: PUBLIC_KEEP', 'inner: PUBLIC_INNER', 'next: PUBLIC_NEXT'),
+          False),
+         ('C106',
+          '- - token: |\n'
+          '      $OPAQUE$TAIL\n'
+          '    public: PUBLIC_KEEP\n'
+          '  - inner: PUBLIC_INNER\n'
+          '- next: PUBLIC_NEXT\n',
+          ('public: PUBLIC_KEEP', 'inner: PUBLIC_INNER', 'next: PUBLIC_NEXT'),
+          False),
+         ('C107',
+          '- -\n'
+          '    token: |\n'
+          '      $OPAQUE$TAIL\n'
+          '    public: PUBLIC_KEEP\n'
+          '  - inner: PUBLIC_INNER\n'
+          '- next: PUBLIC_NEXT\n',
+          ('public: PUBLIC_KEEP', 'inner: PUBLIC_INNER', 'next: PUBLIC_NEXT'),
+          False),
+         ('C108',
+          '  - - token: |\n'
+          '        $OPAQUE$TAIL\n'
+          '      public: PUBLIC_KEEP\n'
+          '    - inner: PUBLIC_INNER\n'
+          '  - next: PUBLIC_NEXT\n',
+          ('public: PUBLIC_KEEP', 'inner: PUBLIC_INNER', 'next: PUBLIC_NEXT'),
+          False),
+         ('C109',
+          '  - -\n'
+          '      token: |\n'
+          '        $OPAQUE$TAIL\n'
+          '      public: PUBLIC_KEEP\n'
+          '    - inner: PUBLIC_INNER\n'
+          '  - next: PUBLIC_NEXT\n',
+          ('public: PUBLIC_KEEP', 'inner: PUBLIC_INNER', 'next: PUBLIC_NEXT'),
+          False),
+         ('C110',
+          '- - token: >\n'
+          '      $OPAQUE$TAIL\n'
+          '    public: PUBLIC_KEEP\n'
+          '  - inner: PUBLIC_INNER\n'
+          '- next: PUBLIC_NEXT\n',
+          ('public: PUBLIC_KEEP', 'inner: PUBLIC_INNER', 'next: PUBLIC_NEXT'),
+          False),
+         ('C111',
+          '- -\n'
+          '    token: >\n'
+          '      $OPAQUE$TAIL\n'
+          '    public: PUBLIC_KEEP\n'
+          '  - inner: PUBLIC_INNER\n'
+          '- next: PUBLIC_NEXT\n',
+          ('public: PUBLIC_KEEP', 'inner: PUBLIC_INNER', 'next: PUBLIC_NEXT'),
+          False),
+         ('C112',
+          '  - - token: >\n'
+          '        $OPAQUE$TAIL\n'
+          '      public: PUBLIC_KEEP\n'
+          '    - inner: PUBLIC_INNER\n'
+          '  - next: PUBLIC_NEXT\n',
+          ('public: PUBLIC_KEEP', 'inner: PUBLIC_INNER', 'next: PUBLIC_NEXT'),
+          False),
+         ('C113',
+          '  - -\n'
+          '      token: >\n'
+          '        $OPAQUE$TAIL\n'
+          '      public: PUBLIC_KEEP\n'
+          '    - inner: PUBLIC_INNER\n'
+          '  - next: PUBLIC_NEXT\n',
+          ('public: PUBLIC_KEEP', 'inner: PUBLIC_INNER', 'next: PUBLIC_NEXT'),
+          False))
+
+    def test_D84_comment_and_literal_context_inventory_and_actual_cli(self):
+        module = self.multiline_redactor()
+        for case, template, public, empty in self.comment_redaction_cases():
+            for boundary in ('\n', '\r\n', '\r', '\x85', '\u2028', '\u2029'):
+                with self.subTest(case=case, boundary=repr(boundary)):
+                    source = template.replace('$OPAQUE', self.secret).replace('$TAIL', 'CommentOpaqueTail').replace('\n', boundary)
+                    output = module.redact_text(source)
+                    self.assert_multiline_diagnostic(output, public, empty)
+                    self.assertNotIn('CommentOpaqueTail', output)
+                    self.assertEqual(module.redact_text(output), output)
+                    if empty and 'token:' not in source:
+                        self.assertEqual(output, source)
+            source = template.replace('$OPAQUE', self.secret).replace('$TAIL', 'CommentOpaqueTail')
+            with self.subTest(case=case, boundary='actual-cli'):
+                result = self.safe(self.run_command(['python3', str(self.f.runtime / 'workflow-config-resolver.py'),
+                                                     'redact-text'], input=source), 0)
+                self.assert_multiline_diagnostic(result.stdout + result.stderr, public, empty)
+                self.assertNotIn('CommentOpaqueTail', result.stdout + result.stderr)
+                self.assertEqual(result.stderr, '')
+
+    def test_D85_comment_context_actual_bash_text_file_and_json(self):
+        source_file = self.f.root / 'synthetic-comment-diagnostic.txt'
+        for shell in self.compatible_shells():
+            for index, (case, template, public, empty) in enumerate(self.comment_redaction_cases()):
+                with self.subTest(case=case, shell=shell):
+                    boundary = ('\n', '\r\n', '\r', '\x85', '\u2028', '\u2029')[index % 6]
+                    source = template.replace('$OPAQUE', self.secret).replace('$TAIL', 'CommentOpaqueTail').replace('\n', boundary)
+                    source_file.write_bytes(source.encode())
+                    result = self.safe(self.run_command([shell, '-c', 'source "$1"; workflow_redact_text < "$2"; workflow_redact_file "$2" >&2',
+                                                        'synthetic', str(self.f.runtime / 'workflow-lib.sh'), str(source_file)]), 0)
+                    self.assertEqual(result.stdout, result.stderr)
+                    self.assert_multiline_diagnostic(result.stdout + result.stderr, public, empty)
+                    self.assertNotIn('CommentOpaqueTail', result.stdout + result.stderr)
+            for case, template, public, empty in self.comment_redaction_cases():
+                with self.subTest(case=case, shell=shell, mode='json-string'):
+                    source = template.replace('$OPAQUE', self.secret).replace('$TAIL', 'CommentOpaqueTail')
+                    payload = {'reason': source, 'result': 'clean', 'count': 17, 'nested': [3, True, None]}
+                    source_file.write_text(json.dumps(payload))
+                    result = self.safe(self.run_command([shell, '-c', 'source "$1"; workflow_redact_json < "$2"; workflow_redact_json < "$2" >&2',
+                                                        'synthetic', str(self.f.runtime / 'workflow-lib.sh'), str(source_file)]), 0)
+                    self.assertEqual(result.stdout, result.stderr)
+                    self.assertNotIn('CommentOpaqueTail', result.stdout + result.stderr)
+                    data = json.loads(result.stdout)
+                    self.assert_multiline_diagnostic(data['reason'], public, empty)
+                    self.assertEqual((data['result'], data['count'], data['nested']), ('clean', 17, [3, True, None]))
+
+    def test_D86_comment_context_all_existing_kv_boundaries(self):
+        tail = 'RESULT=clean\nBLOCKING_COUNT=17\nHEAD_SHA=' + 'a' * 40 + '\n'
+        for shell in self.compatible_shells():
+            for case, template, public, empty in self.comment_redaction_cases():
+                source = template.replace('$OPAQUE', self.secret).replace('$TAIL', 'CommentOpaqueTail')
+                for helper in ('workflow_diagnostic_kv', 'workflow_diagnostic_kv_escaped', 'workflow_diagnostic_kvs'):
+                    with self.subTest(case=case, shell=shell, helper=helper):
+                        body = helper + ' DETAIL "$1"; ' + helper + ' DETAIL "$1" >&2; workflow_diagnostic_kv RESULT clean; workflow_diagnostic_kv BLOCKING_COUNT 17; workflow_diagnostic_kv HEAD_SHA ' + 'a' * 40
+                        result = self.diagnostic_binary(shell, body, source)
+                        self.assertEqual(result.returncode, 0)
+                        self.assertNotIn(self.secret.encode(), result.stdout + result.stderr)
+                        self.assertNotIn(b'CommentOpaqueTail', result.stdout + result.stderr)
+                        for item in public: self.assertIn(item.encode(), result.stdout + result.stderr)
+                        self.assertTrue(result.stdout.endswith(tail.encode()))
+                        self.assertEqual(result.stdout[:-len(tail)], result.stderr)
+
+    def test_D87_comment_context_before_cap_and_actual_evidence_writer(self):
+        source = 'p' * 19940 + '\nother: {\n# }\ntoken:\n' + self.secret + 'CommentOpaqueTail' + 'x' * 100 + ',\npublic: PUBLIC_KEEP\n}\n'
+        result = self.safe(self.bash('printf %s ' + shlex.quote(source) + ' | workflow_redact_text | head -c 20000'), 0)
+        self.assertNotIn(self.secret[:12], result.stdout + result.stderr)
+        self.assertNotIn('CommentOpaqueTail', result.stdout + result.stderr)
+        self.assertLessEqual(len(result.stdout.encode()), 20000)
+        pr = json.loads(self.f.pr.read_text()); pr['body'] = source; self.f.pr.write_text(json.dumps(pr))
+        evidence = self.f.root / 'comment-evidence.json'
+        context = self.f.root / 'comment-functional.json'
+        result = self.safe(self.local_entry({'result': 'clean', 'comments': 0}, context_capture=context,
+                                           LOCAL_AI_REVIEWER_EVIDENCE_FILE=str(evidence)), 0)
+        raw = evidence.read_text()
+        self.assertNotIn(self.secret[:12], raw + result.stdout + result.stderr)
+        self.assertNotIn('CommentOpaqueTail', raw + result.stdout + result.stderr)
+        data = json.loads(raw)
+        self.assertEqual(data['counts'], {'comments': 0, 'blocking': 0, 'suggestions': 0})
+        self.assertEqual(data['result'], 'clean')
+        self.assertLessEqual(len(data['context_summary']['pr_body']), 20000)
+        self.assertEqual(json.loads(context.read_text())['pr_body'], source[:20000])
+
+    def test_D88_sensitive_assignment_inside_public_raw_json_string(self):
+        resolver = str(self.f.runtime / 'workflow-config-resolver.py')
+        for case, template, public, empty in self.comment_redaction_cases():
+            if case not in ('C68', 'C69', 'C70', 'C71', 'C80'):
+                continue
+            source = template.replace('$OPAQUE', self.secret).replace('$TAIL', 'CommentOpaqueTail')
+            original = json.loads(source)
+            for shell in self.compatible_shells():
+                with self.subTest(case=case, shell=shell):
+                    result = self.safe(self.run_command([shell, '-c', 'source "$1"; workflow_redact_text; workflow_redact_text >&2 <<< "$2"',
+                                                        'synthetic', str(self.f.runtime / 'workflow-lib.sh'), source], input=source), 0)
+                    self.assertNotIn('CommentOpaqueTail', result.stdout + result.stderr)
+                    for channel in (result.stdout, result.stderr):
+                        data = json.loads(channel)
+                        self.assertEqual((data['public'], data['count'], data['nested']),
+                                         (original['public'], original['count'], original['nested']))
+                        self.assertIn('[REDACTED]', data['reason'])
+            with self.subTest(case=case, mode='raw-json-cli'):
+                result = self.safe(self.run_command(['python3', resolver, 'redact-text'], input=source), 0)
+                data = json.loads(result.stdout)
+                self.assertEqual((data['public'], data['count'], data['nested']),
+                                 (original['public'], original['count'], original['nested']))
+                self.assertNotIn('CommentOpaqueTail', result.stdout + result.stderr)
+                self.assertEqual(result.stderr, '')
+
+    def test_D89_comment_and_block_actual_writer_independent_of_cap(self):
+        # A failed cap assertion must not prevent the actual artifact boundary
+        # from being exercised independently with its own opacity controls.
+        cases = [('flow-comment', 'p' * 19940 + '\nother: {\n# }\ntoken:\n' + self.secret + 'CommentOpaqueTail' + 'x' * 100 + ',\npublic: PUBLIC_KEEP\n}\n', ()),
+                 ('compact-block', '- other: |\n    token: "' + self.secret + 'CommentOpaqueTail\n  public: PUBLIC_KEEP\n- next: PUBLIC_NEXT\n',
+                  ('public: PUBLIC_KEEP', 'next: PUBLIC_NEXT'))]
+        for case, source, public in cases:
+            with self.subTest(case=case):
+                pr = json.loads(self.f.pr.read_text()); pr['body'] = source; self.f.pr.write_text(json.dumps(pr))
+                evidence = self.f.root / ('independent-' + case + '-evidence.json')
+                context = self.f.root / ('independent-' + case + '-functional.json')
+                result = self.safe(self.local_entry({'result': 'clean', 'comments': 0}, context_capture=context,
+                                                   LOCAL_AI_REVIEWER_EVIDENCE_FILE=str(evidence)), 0)
+                raw = evidence.read_text()
+                self.assertNotIn(self.secret[:12], raw + result.stdout + result.stderr)
+                self.assertNotIn('CommentOpaqueTail', raw + result.stdout + result.stderr)
+                data = json.loads(raw)
+                for marker in public: self.assertIn(marker, data['context_summary']['pr_body'])
+                self.assertEqual(data['counts'], {'comments': 0, 'blocking': 0, 'suggestions': 0})
+                self.assertEqual(data['result'], 'clean')
+                self.assertLessEqual(len(data['context_summary']['pr_body']), 20000)
+                # Existing Bash PR_BODY capture strips terminal LF before the functional cap.
+                self.assertEqual(json.loads(context.read_text())['pr_body'], source.rstrip('\n')[:20000])
+
 if __name__ == '__main__':
     unittest.main(verbosity=2)

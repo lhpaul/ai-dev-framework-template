@@ -312,29 +312,97 @@ def _diagnostic_assignment_spans(text: str, *, frame_separator: int | None = Non
         previous = boundary.end()
     lines.append((previous, len(text), len(text)))
 
+    def sequence_indent(prefix, *, scalar=False):
+        leading = len(prefix) - len(prefix.lstrip(" \t"))
+        sequence = re.match(r"(?:-[ \t]+)+", prefix[leading:])
+        if not sequence:
+            return None
+        end = leading + sequence.end()
+        if scalar and not prefix[end:].strip(" \t"):
+            # A bare block scalar belongs to the final dash, while a compact
+            # mapping key belongs after the complete sequence prefix.
+            return leading + re.search(r"-[ \t]+$", sequence[0]).start()
+        return end
+
     def flow_at(position):
-        depth, quote, index = 0, "", 0
-        while index < position:
-            char = text[index]
-            if quote:
-                if not depth and char in "\r\n\x85\u2028\u2029":
-                    quote = ""
-                if quote == '"' and char == "\\":
+        stack, quote, plain, block_indent = [], "", False, None
+        for line_number, (begin, finish, _) in enumerate(lines):
+            if begin > position:
+                break
+            raw = text[begin:finish]
+            indent = len(raw) - len(raw.lstrip(" \t"))
+            if block_indent is not None and not quote:
+                if not raw.strip(" \t") or indent > block_indent:
+                    if position <= finish:
+                        block_end = len(text)
+                        for following in range(line_number + 1, len(lines)):
+                            left, right, _ = lines[following]
+                            body = text[left:right]
+                            spaces = len(body) - len(body.lstrip(" \t"))
+                            if body.strip(" \t") and spaces <= block_indent:
+                                block_end = lines[following - 1][1]
+                                break
+                        return False, block_end, ""
+                    continue
+                block_indent = None
+            if not stack and not quote:
+                plain = False
+            index = begin
+            while index < min(position, finish):
+                char = text[index]
+                if quote:
+                    if quote == '"' and char == "\\":
+                        index += 2
+                        continue
+                    if char == quote:
+                        if quote == "'" and text[index + 1:index + 2] == "'":
+                            index += 2
+                            continue
+                        quote, plain = "", True
+                elif char == "#" and (not plain or index == begin or text[index - 1] in " \t"):
+                    # A sensitive assignment inside a comment still needs
+                    # redaction, but its quote/brackets cannot own a real field.
+                    if position <= finish:
+                        return False, finish, ""
+                    break
+                elif char in ('"', "'") and not plain:
+                    quote = char
+                elif char in "[{" and not plain:
+                    stack.append(char)
+                    plain = False
+                elif char in "]}" and stack:
+                    if (stack[-1], char) in (("[", "]"), ("{", "}")):
+                        stack.pop()
+                    plain = True
+                elif char == "," and stack:
+                    plain = False
+                elif char == ":" and (stack or text[index + 1:index + 2] in ("", " ", "\t")):
+                    plain = False
+                elif not stack and not plain and char in "|>":
+                    logical = sequence_indent(raw[:index - begin], scalar=True)
+                    block_indent = indent if logical is None else logical
+                    break
+                elif not stack and not plain and char == "-" and text[index + 1:index + 2] in (" ", "\t"):
+                    pass
+                elif char not in " \t":
+                    plain = True
+                index += 1
+        if quote:
+            # An assignment inside a public quoted scalar is literal payload.
+            # Its enclosing quote, rather than an inner comma, owns the end.
+            index = position
+            while index < len(text):
+                if quote == '"' and text[index] == "\\":
                     index += 2
                     continue
-                if char == quote:
+                if text[index] == quote:
                     if quote == "'" and text[index + 1:index + 2] == "'":
                         index += 2
                         continue
-                    quote = ""
-            elif char in ('"', "'") and not (char == "'" and index and text[index - 1].isalnum()):
-                quote = char
-            elif char in "[{":
-                depth += 1
-            elif char in "]}":
-                depth = max(0, depth - 1)
-            index += 1
-        return depth > 0
+                    return False, index, quote
+                index += 1
+            return False, len(text), quote
+        return bool(stack), None, ""
 
     offset = 0
     for match in assignment.finditer(text):
@@ -342,7 +410,20 @@ def _diagnostic_assignment_spans(text: str, *, frame_separator: int | None = Non
             continue
         header = start = end = match.end()
         colon = match[1].rstrip().endswith(":")
-        flow = colon and flow_at(match.start())
+        context_position = match.start()
+        header_key = match[1].rstrip(" \t")[:-1].rstrip(" \t")
+        if header_key[:1] in ('"', "'") and not header_key.endswith(header_key[0]):
+            # The optional header quote can be the PUBLIC scalar's opener,
+            # rather than one of the balanced quotes around a mapping key.
+            context_position += 1
+        flow, context_end, literal_quote = flow_at(context_position)
+        flow = colon and flow
+        scan_limit = len(text) if context_end is None else context_end
+        if literal_quote:
+            if scan_limit > start or include_empty:
+                yield match, header, start, scan_limit, False, literal_quote
+                offset = scan_limit
+            continue
         line_index = next(i for i, row in enumerate(lines) if row[0] <= match.start() <= row[1])
         line_start = lines[line_index][0]
         prefix = text[line_start:match.start()]
@@ -350,8 +431,11 @@ def _diagnostic_assignment_spans(text: str, *, frame_separator: int | None = Non
         decoration = ""
         # List mapping fields are siblings at the node after the dash. A prose
         # prefix is decoration, not the scalar's structural indentation.
-        logical = re.search(r"(?:^|[ \t])(-[ \t]+)$", prefix)
-        if logical:
+        node_indent = sequence_indent(prefix)
+        logical = re.search(r"(?:^|[ \t])((?:-[ \t]+)+)$", prefix)
+        if node_indent is not None:
+            indent = node_indent
+        elif logical:
             before = prefix[:logical.start(1)]
             decoration = before if before.strip(" \t") else ""
             indent = (len(before) - len(before.lstrip(" \t"))) + len(logical[1])
@@ -393,15 +477,15 @@ def _diagnostic_assignment_spans(text: str, *, frame_separator: int | None = Non
 
         def closed_value(position):
             following = position
-            while following < len(text) and text[following] in " \t":
+            while following < scan_limit and text[following] in " \t":
                 following += 1
             line_end = breaks.search(text, following)
             terminal_pipe = (text[following:following + 1] == "|" and
                              not text[following + 1:line_end.start() if line_end else len(text)].strip(" \t"))
-            return (following == frame_separator or following == len(text) or text[following] in "\r\n\x85\u2028\u2029#"
+            return (following == frame_separator or following == scan_limit or text[following] in "\r\n\x85\u2028\u2029#"
                     or terminal_pipe or (flow and text[following] in ",}]"))
 
-        while end < len(text):
+        while end < scan_limit:
             char = text[end]
             if char == "\\" and end + 1 < len(text) and (not colon or quote == '"'):
                 end += 2
@@ -420,6 +504,12 @@ def _diagnostic_assignment_spans(text: str, *, frame_separator: int | None = Non
                         continue
             elif char in ('"', "'") and (not colon or end == start or stack):
                 quote = char
+            elif colon and (flow or stack) and char == "#" and (end == start or text[end - 1] in " \t\r\n\x85\u2028\u2029"):
+                # Comment punctuation is never collection structure. Consume
+                # the physical comment while retaining the actual open value.
+                boundary = breaks.search(text, end)
+                end = min(scan_limit, boundary.end() if boundary else len(text))
+                continue
             elif colon and (flow or text[start:start + 1] in "[{") and char in "[{":
                 stack.append(char)
             elif colon and (flow or stack) and char in "]}":
@@ -440,14 +530,14 @@ def _diagnostic_assignment_spans(text: str, *, frame_separator: int | None = Non
                 break
             elif not colon and char in ";|&":
                 break
-            elif char in " \t" and (text[end:].lstrip(" \t").startswith("#") or (not colon and next_field.match(text, end))):
+            elif char in " \t" and ((not flow and not stack and text[end:].lstrip(" \t").startswith("#")) or (not colon and next_field.match(text, end))):
                 break
             end += 1
         if quote or stack:
-            end = len(text)
+            end = scan_limit
         # After a block/plain/quoted header, consume only owned subsequent
         # physical lines. Lookahead over blanks/comments never eats a sibling.
-        if colon and not flow and end < len(text):
+        if colon and not flow and context_end is None and end < len(text):
             last_line = next(i for i, row in enumerate(lines) if row[0] <= max(start, end - 1) <= row[1])
             remainder = text[end:lines[last_line][1]].strip(" \t")
             if not remainder or remainder.startswith("#") or remainder == "|":
@@ -460,7 +550,7 @@ def _diagnostic_assignment_spans(text: str, *, frame_separator: int | None = Non
                         break
                     end = finish
         if end > start or include_empty:
-            yield match, header, start, end, flow
+            yield match, header, start, end, flow, ""
             offset = end
 
 
@@ -487,10 +577,10 @@ def redact_text(text: str) -> str:
         pieces.append(text[offset:])
     text = "".join(pieces)
     pieces, offset = [], 0
-    for match, header, start, end, flow in _diagnostic_assignment_spans(text):
+    for match, header, start, end, flow, literal_quote in _diagnostic_assignment_spans(text):
         raw = text[start:end]
-        quote = raw[:1] if raw[:1] in ("\"", "'") else ""
-        if not quote and match[1].startswith('"'):
+        quote = raw[:1] if not literal_quote and raw[:1] in ("\"", "'") else ""
+        if not literal_quote and not quote and match[1].startswith('"'):
             quote = '"'
         trailing_space = raw[len(raw.rstrip(" \t")):]
         context = ""
@@ -536,8 +626,8 @@ def _redact_diagnostic_pair(key: str, value: str, *, escaped: bool = False) -> s
     original = key + "=" + value
     separator = len(key)
     assignments = list(_diagnostic_assignment_spans(original, frame_separator=separator, include_empty=True))
-    spans = [(match.start(), start, end) for match, _, start, end, _ in assignments]
-    headers = [match for match, _, _, end, _ in assignments if match.start() < separator and end > separator]
+    spans = [(match.start(), start, end) for match, _, start, end, _, _ in assignments]
+    headers = [match for match, _, _, end, _, _ in assignments if match.start() < separator and end > separator]
     authorization = any(re.fullmatch(r'''["']?authorization["']?[ \t]*[:=][ \t]*''', match[1], re.IGNORECASE) for match in headers)
     raw_authorization = any(re.fullmatch(r"authorization[ \t]*[:=][ \t]*", match[1], re.IGNORECASE) for match in headers)
     # These are the existing non-assignment lexical classes. Keep their original
