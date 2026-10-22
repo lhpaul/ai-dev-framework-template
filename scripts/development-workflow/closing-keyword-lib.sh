@@ -204,17 +204,18 @@ closing_keyword_live_refs() {
 #   list-relative at content_indent+0..3; or on a list-marker line remainder.
 #   Content inside fences never changes list context. Closing a top-level fence
 #   restores the list context saved when it opened. Unclosed → EOF.
-# - Indented code: outside lists, indent ≥4 after blank / document start / ATX /
-#   setext / thematic (or continuing code) — even if the line looks like a list
-#   marker. Paragraph continuation (no preceding blank) at ≥4 stays prose.
-#   Inside lists, indent ≥ content_indent+4 after a blank (or continuing code).
-# - Lists: a marker opens/continues a list only at indent 0–3 relative to the
-#   current container (document: cols 0–3; inside a list item: cols <
-#   content_indent+4). content_indent = marker indent + marker width + following
-#   spaces (1–4; if more than 4, padding is 1). Nested markers in
-#   content_indent..content_indent+3 are nested lists. List ends on indent-0
-#   non-marker after a blank, or on thematic / ATX / setext.
-# - ATX headings / setext underlines / thematic breaks: block boundaries as before.
+# - List stack: each list item is a container with content_indent. Document is
+#   the root (content_indent 0). On each non-blank line, pop containers whose
+#   content_indent > line indent (dedent restores the parent). A list marker at
+#   indent in [parent_content_indent, parent_content_indent+3] pushes a new item
+#   (dedent makes siblings replace the top). content_indent = marker indent +
+#   marker width + following spaces (1–4; if more than 4, padding is 1).
+# - Headings / thematic / setext / fences / indented code are evaluated relative
+#   to the current container's content_indent. A heading inside an item does not
+#   clear the stack — only a block boundary within that container. Indented code
+#   is cols ≥ content_indent+4 after a blank (or continuing code), even if the
+#   line looks like a list marker. Paragraph continuation (no blank) at ≥
+#   content_indent+4 stays prose.
 #
 # Do not use this from post-merge cleanup or validate-closing-keyword-scope —
 # those consumers keep strip_fenced_pr_body_blocks / closing_keyword_live_refs.
@@ -320,8 +321,8 @@ def is_atx_heading_body(body):
 
 lines = [expand_tabs_closeout(line) for line in sys.stdin.read().split("\n")]
 out = []
-in_list = False
-content_indent = 0
+# Stack of list-item content_indents; document root is implicit (0).
+stack = []
 in_indented_code = False
 at_block_start = True
 prev_was_paragraph = False
@@ -330,16 +331,16 @@ fence_kind = None  # "top" | "list"
 fence_char = None
 fence_len = 0
 fence_container_indent = 0
-fence_saved_in_list = False
-fence_saved_content_indent = 0
+fence_saved_stack = None
+
+def current_ci():
+    return stack[-1] if stack else 0
 
 def open_fence(kind, char, length, container_indent):
     global in_fence, fence_kind, fence_char, fence_len, fence_container_indent
-    global fence_saved_in_list, fence_saved_content_indent
-    global in_indented_code, at_block_start, prev_was_paragraph
+    global fence_saved_stack, in_indented_code, at_block_start, prev_was_paragraph
     if kind == "top":
-        fence_saved_in_list = in_list
-        fence_saved_content_indent = content_indent
+        fence_saved_stack = list(stack)
     in_fence = True
     fence_kind = kind
     fence_char = char
@@ -349,6 +350,10 @@ def open_fence(kind, char, length, container_indent):
     at_block_start = False
     prev_was_paragraph = False
 
+def rel_in_container(cols, ci):
+    rel = cols - ci
+    return 0 <= rel <= 3
+
 for line in lines:
     # (1) Inside a fence: only matching closer; never interpret structure.
     if in_fence:
@@ -357,9 +362,9 @@ for line in lines:
                 and info[0] == fence_char
                 and info[1] >= fence_len
                 and info[2].strip() == ""):
-            if fence_kind == "top":
-                in_list = fence_saved_in_list
-                content_indent = fence_saved_content_indent
+            if fence_kind == "top" and fence_saved_stack is not None:
+                stack[:] = fence_saved_stack
+                fence_saved_stack = None
             in_fence = False
             fence_kind = None
             fence_char = None
@@ -380,98 +385,61 @@ for line in lines:
     cols, start = leading_indent_columns(line)
     body = line[start:]
 
-    # Block boundaries that are not fences — before list-marker / fence-opener
-    # detection so "- - -" is thematic, not a list item.
-    if prev_was_paragraph and cols < 4 and is_setext_underline_body(body):
-        in_list = False
-        content_indent = 0
+    # Dedent: restore parent containers when indentation drops.
+    while stack and stack[-1] > cols:
+        stack.pop()
+    ci = current_ci()
+
+    # Block boundaries relative to the current container (do not clear stack).
+    if prev_was_paragraph and rel_in_container(cols, ci) and is_setext_underline_body(body):
         in_indented_code = False
         at_block_start = True
         prev_was_paragraph = False
         out.append(line)
         continue
 
-    if cols < 4 and is_thematic_break_body(body):
-        in_list = False
-        content_indent = 0
+    if rel_in_container(cols, ci) and is_thematic_break_body(body):
         in_indented_code = False
         at_block_start = True
         prev_was_paragraph = False
         out.append(line)
         continue
 
-    if cols < 4 and is_atx_heading_body(body):
-        in_list = False
-        content_indent = 0
+    if rel_in_container(cols, ci) and is_atx_heading_body(body):
         in_indented_code = False
         at_block_start = True
         prev_was_paragraph = False
         out.append(line)
         continue
 
-    # (2) Fence openers (list-relative, marker-line, top-level).
-    if in_list:
-        fence = fence_at_container(line, content_indent)
-        if fence is not None:
-            open_fence("list", fence[0], fence[1], content_indent)
-            continue
-        code_threshold = content_indent + 4
-        parts = list_marker_parts(line)
-        if parts is not None and cols < code_threshold:
-            content_indent, remainder = parts
-            in_list = True
-            in_indented_code = False
-            at_block_start = False
-            fence = fence_info_from_content(remainder)
-            if fence is not None:
-                open_fence("list", fence[0], fence[1], content_indent)
-                continue
-            prev_was_paragraph = True
-            out.append(line)
-            continue
+    # (2) Fence openers relative to current container.
+    fence = fence_at_container(line, ci)
+    if fence is not None:
+        kind = "list" if stack else "top"
+        open_fence(kind, fence[0], fence[1], ci)
+        continue
 
-    # Document-level list markers only at indent 0–3 (CommonMark). At ≥4 after
-    # a blank / doc start, the line is indented code even if it looks like a list.
-    parts = list_marker_parts(line) if not in_list else None
-    if parts is not None and not in_list and cols < 4:
-        content_indent, remainder = parts
-        in_list = True
+    # List marker in [parent_ci, parent_ci+3] pushes a new item.
+    parts = list_marker_parts(line)
+    if parts is not None and ci <= cols <= ci + 3:
+        new_ci, remainder = parts
+        stack.append(new_ci)
         in_indented_code = False
         at_block_start = False
         fence = fence_info_from_content(remainder)
         if fence is not None:
-            open_fence("list", fence[0], fence[1], content_indent)
+            open_fence("list", fence[0], fence[1], new_ci)
             continue
         prev_was_paragraph = True
         out.append(line)
         continue
 
-    if cols < 4:
-        fence = fence_info_from_content(body)
-        if fence is not None:
-            open_fence("top", fence[0], fence[1], 0)
-            continue
+    # Document-level fence when still at root (ci==0) and absolute indent 0–3
+    # was already handled via fence_at_container(line, 0). Nothing more here.
 
-    # (3) List continuation / indented-code / prose.
-    if in_list:
-        code_threshold = content_indent + 4
-        if cols >= code_threshold and (at_block_start or in_indented_code):
-            in_indented_code = True
-            at_block_start = False
-            prev_was_paragraph = False
-            continue
-        if cols == 0 and at_block_start:
-            in_list = False
-            content_indent = 0
-            # fall through
-        else:
-            out.append(line)
-            at_block_start = False
-            in_indented_code = False
-            prev_was_paragraph = True
-            continue
-
-    if cols >= 4 and (at_block_start or in_indented_code):
+    # (3) Indented code relative to current container, else prose.
+    code_threshold = ci + 4
+    if cols >= code_threshold and (at_block_start or in_indented_code):
         in_indented_code = True
         at_block_start = False
         prev_was_paragraph = False

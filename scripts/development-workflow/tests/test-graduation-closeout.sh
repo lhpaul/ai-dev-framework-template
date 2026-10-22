@@ -442,6 +442,31 @@ JSON
 [{"number":11,"title":"Deliver item","body":"Para\n    - Closes #333"}]
 JSON
         ;;
+      nested_list_dedent_outer_code_326)
+        cat <<'JSON'
+[{"number":11,"title":"Graduate wave","body":"- Outer item\n  - Nested item\n\n  Example command:\n\n      Closes #326\nNo live closing keywords."}]
+JSON
+        ;;
+      heading_inside_list_closes_123)
+        cat <<'JSON'
+[{"number":11,"title":"Deliver item","body":"- Delivered work\n  ## Details\n\n    Closes #123"}]
+JSON
+        ;;
+      three_level_dedent_l1_code_326)
+        cat <<'JSON'
+[{"number":11,"title":"Graduate wave","body":"- L1\n  - L2\n    - L3\n\n  Example:\n\n      Closes #326\nNo live closing keywords."}]
+JSON
+        ;;
+      dedent_to_doc_then_indent_326)
+        cat <<'JSON'
+[{"number":11,"title":"Graduate wave","body":"- L1\n  - L2\n\nParagraph\n\n    Closes #326\nNo live closing keywords."}]
+JSON
+        ;;
+      heading_inside_nested_closes_123)
+        cat <<'JSON'
+[{"number":11,"title":"Deliver item","body":"- Outer\n  - Nested\n    ## Details\n\n      Closes #123"}]
+JSON
+        ;;
       foreign_repo_text)
         cat <<'JSON'
 [{"number":11,"title":"Graduate wave","body":"Closes other/repo#326\nNo local closing keywords."}]
@@ -1538,6 +1563,26 @@ for provider in github_projects github_issues; do
   echo ""
   echo "=== graduation closeout: ${provider} keeps paragraph-continuation listlike Closes #333 (#2016) ==="
   assert_github_keyword_issue_closed "$provider" para_cont_listlike_333 333 "${provider}_para_cont_listlike"
+
+  echo ""
+  echo "=== graduation closeout: ${provider} strips nested-list dedent then outer indented code (#2016) ==="
+  assert_github_example_326_untouched "$provider" nested_list_dedent_outer_code_326 "${provider}_nested_dedent_outer_code"
+
+  echo ""
+  echo "=== graduation closeout: ${provider} keeps Closes #123 after heading inside list (#2016) ==="
+  assert_github_keyword_issue_closed "$provider" heading_inside_list_closes_123 123 "${provider}_heading_inside_list"
+
+  echo ""
+  echo "=== graduation closeout: ${provider} strips three-level dedent to L1 then code (#2016) ==="
+  assert_github_example_326_untouched "$provider" three_level_dedent_l1_code_326 "${provider}_three_level_dedent_l1"
+
+  echo ""
+  echo "=== graduation closeout: ${provider} strips dedent-to-doc then indented code (#2016) ==="
+  assert_github_example_326_untouched "$provider" dedent_to_doc_then_indent_326 "${provider}_dedent_to_doc_code"
+
+  echo ""
+  echo "=== graduation closeout: ${provider} keeps Closes #123 after heading inside nested item (#2016) ==="
+  assert_github_keyword_issue_closed "$provider" heading_inside_nested_closes_123 123 "${provider}_heading_inside_nested"
 
   echo ""
   echo "=== graduation closeout: ${provider} keeps nested-list Closes #123 (#2016) ==="

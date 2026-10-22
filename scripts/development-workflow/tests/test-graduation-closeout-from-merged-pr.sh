@@ -1081,6 +1081,69 @@ for provider in github_projects github_issues; do
   run_contains "${provider}_wrap_para_cont_listlike_epic" "EPIC_ISSUE=333" "$body"
 
   echo ""
+  echo "=== wrapper: ${provider} strips nested-list dedent then outer indented code (#2016) ==="
+  reset_fixture
+  write_tracker_config "$provider"
+  export MOCK_LABEL_PARENT_MODE=empty
+  write_pr 158 "develop-test-2016" "develop" "true" "Graduate wave" \
+    $'- Outer item\n  - Nested item\n\n  Example command:\n\n      Closes #326\nEpic #900'
+  result="$(run_wrapper --graduation-pr 158)"
+  body="$(last_body "$result")"
+  run_test "${provider}_wrap_nested_dedent_outer_code_exit_zero" "0" "$(last_status "$result")"
+  run_contains "${provider}_wrap_nested_dedent_outer_code_epic" "EPIC_ISSUE=900" "$body"
+  run_not_contains "${provider}_wrap_nested_dedent_outer_code_no_326" "--epic 326" "$(cat "$CHILD_ARGV_LOG")"
+
+  echo ""
+  echo "=== wrapper: ${provider} keeps Closes #123 after heading inside list (#2016) ==="
+  reset_fixture
+  write_tracker_config "$provider"
+  export MOCK_LABEL_PARENT_MODE=empty
+  write_pr 159 "develop-test-2016" "develop" "true" "Graduate wave" \
+    $'- Delivered work\n  ## Details\n\n    Closes #123'
+  result="$(run_wrapper --graduation-pr 159)"
+  body="$(last_body "$result")"
+  run_test "${provider}_wrap_heading_inside_list_exit_zero" "0" "$(last_status "$result")"
+  run_contains "${provider}_wrap_heading_inside_list_epic" "EPIC_ISSUE=123" "$body"
+
+  echo ""
+  echo "=== wrapper: ${provider} strips three-level dedent to L1 then code (#2016) ==="
+  reset_fixture
+  write_tracker_config "$provider"
+  export MOCK_LABEL_PARENT_MODE=empty
+  write_pr 160 "develop-test-2016" "develop" "true" "Graduate wave" \
+    $'- L1\n  - L2\n    - L3\n\n  Example:\n\n      Closes #326\nEpic #900'
+  result="$(run_wrapper --graduation-pr 160)"
+  body="$(last_body "$result")"
+  run_test "${provider}_wrap_three_level_dedent_l1_exit_zero" "0" "$(last_status "$result")"
+  run_contains "${provider}_wrap_three_level_dedent_l1_epic" "EPIC_ISSUE=900" "$body"
+  run_not_contains "${provider}_wrap_three_level_dedent_l1_no_326" "--epic 326" "$(cat "$CHILD_ARGV_LOG")"
+
+  echo ""
+  echo "=== wrapper: ${provider} strips dedent-to-doc then indented code (#2016) ==="
+  reset_fixture
+  write_tracker_config "$provider"
+  export MOCK_LABEL_PARENT_MODE=empty
+  write_pr 161 "develop-test-2016" "develop" "true" "Graduate wave" \
+    $'- L1\n  - L2\n\nParagraph\n\n    Closes #326\nEpic #900'
+  result="$(run_wrapper --graduation-pr 161)"
+  body="$(last_body "$result")"
+  run_test "${provider}_wrap_dedent_to_doc_code_exit_zero" "0" "$(last_status "$result")"
+  run_contains "${provider}_wrap_dedent_to_doc_code_epic" "EPIC_ISSUE=900" "$body"
+  run_not_contains "${provider}_wrap_dedent_to_doc_code_no_326" "--epic 326" "$(cat "$CHILD_ARGV_LOG")"
+
+  echo ""
+  echo "=== wrapper: ${provider} keeps Closes #123 after heading inside nested item (#2016) ==="
+  reset_fixture
+  write_tracker_config "$provider"
+  export MOCK_LABEL_PARENT_MODE=empty
+  write_pr 162 "develop-test-2016" "develop" "true" "Graduate wave" \
+    $'- Outer\n  - Nested\n    ## Details\n\n      Closes #123'
+  result="$(run_wrapper --graduation-pr 162)"
+  body="$(last_body "$result")"
+  run_test "${provider}_wrap_heading_inside_nested_exit_zero" "0" "$(last_status "$result")"
+  run_contains "${provider}_wrap_heading_inside_nested_epic" "EPIC_ISSUE=123" "$body"
+
+  echo ""
   echo "=== wrapper: ${provider} keeps nested-list Closes #123 with Epic #900 (#2016) ==="
   # Nested list keyword is live but Epic #900 is the sole epic/parent ref style
   # candidate preferred when both exist — assert 123 is not chosen as epic and
