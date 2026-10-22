@@ -382,6 +382,21 @@ JSON
 [{"number":11,"title":"Deliver item","body":"- ~~~text\n  Closes #326\n  ~~~\n  Closes #123"}]
 JSON
         ;;
+      toplevel_fence_list_no_leak_326)
+        cat <<'JSON'
+[{"number":11,"title":"Graduate wave","body":"~~~text\n- example\n~~~\n\n    Closes #326\nNo live closing keywords."}]
+JSON
+        ;;
+      toplevel_tick_fence_list_no_leak_327)
+        cat <<'JSON'
+[{"number":11,"title":"Graduate wave","body":"```text\n- example\n```\n\n    Closes #327\nNo live closing keywords."}]
+JSON
+        ;;
+      heading_inside_fence_326)
+        cat <<'JSON'
+[{"number":11,"title":"Graduate wave","body":"~~~\n## Example\n~~~\n\n    Closes #326\nNo live closing keywords."}]
+JSON
+        ;;
       foreign_repo_text)
         cat <<'JSON'
 [{"number":11,"title":"Graduate wave","body":"Closes other/repo#326\nNo local closing keywords."}]
@@ -1445,6 +1460,12 @@ for provider in github_projects github_issues; do
   echo ""
   echo "=== graduation closeout: ${provider} keeps prose after marker-line fence Closes #123 (#2016) ==="
   assert_github_keyword_issue_closed "$provider" marker_fence_then_prose_123 123 "${provider}_marker_fence_then_prose"
+
+  echo ""
+  echo "=== graduation closeout: ${provider} does not leak list state from top-level fence (#2016) ==="
+  assert_github_example_326_untouched "$provider" toplevel_fence_list_no_leak_326 "${provider}_fence_list_no_leak"
+  assert_github_example_326_untouched "$provider" toplevel_tick_fence_list_no_leak_327 "${provider}_tick_fence_list_no_leak" 327
+  assert_github_example_326_untouched "$provider" heading_inside_fence_326 "${provider}_heading_inside_fence"
 
   echo ""
   echo "=== graduation closeout: ${provider} keeps nested-list Closes #123 (#2016) ==="

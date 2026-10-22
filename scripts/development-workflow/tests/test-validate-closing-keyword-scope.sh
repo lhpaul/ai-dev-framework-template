@@ -432,7 +432,19 @@ marker_fence_then_prose|123|- ~~~text\n  Closes #326\n  ~~~\n  Closes #123
 nested_marker_fence||- outer\n  - ~~~text\n    Closes #326\n    ~~~
 list_then_para_then_code||- item\n\nParagraph outside list.\n\n    Closes #326
 inline_in_list_item||- use `Closes #330` in prose
+toplevel_fence_list_no_leak||~~~\n- example\n~~~\n\n    Closes #326
+toplevel_tick_fence_list_no_leak||```\n- example\n```\n\n    Closes #327
+heading_inside_fence_ignored||~~~\n## Example\n~~~\n\n    Closes #326
+heading_inside_fence_then_prose|328|~~~\n## Example\n~~~\nCloses #328
 CLOSEOUT_TABLE
+
+# Explicit regressions for fence precedence (list markers inside fences must not leak).
+check "closeout_toplevel_fence_list_marker_no_leak" "" \
+  "$(closeout_refs_of "$(printf -- '~~~text\n- example\n~~~\n\n    Closes #326')")"
+check "closeout_toplevel_tick_fence_list_marker_no_leak" "" \
+  "$(closeout_refs_of "$(printf -- '%s%s%stext\n- example\n%s%s%s\n\n    Closes #327' '`' '`' '`' '`' '`' '`')")"
+check "closeout_heading_inside_fence_ignored" "" \
+  "$(closeout_refs_of "$(printf -- '~~~\n## Example\n~~~\n\n    Closes #326')")"
 
 # ---------------------------------------------------------------------------
 # Differential attribution

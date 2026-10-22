@@ -927,6 +927,45 @@ for provider in github_projects github_issues; do
   run_contains "${provider}_wrap_marker_fence_then_prose_epic" "EPIC_ISSUE=123" "$body"
 
   echo ""
+  echo "=== wrapper: ${provider} does not leak list state from top-level tilde fence (#2016) ==="
+  reset_fixture
+  write_tracker_config "$provider"
+  export MOCK_LABEL_PARENT_MODE=empty
+  write_pr 146 "develop-test-2016" "develop" "true" "Graduate wave" \
+    $'~~~text\n- example\n~~~\n\n    Closes #326\nEpic #900'
+  result="$(run_wrapper --graduation-pr 146)"
+  body="$(last_body "$result")"
+  run_test "${provider}_wrap_fence_list_no_leak_exit_zero" "0" "$(last_status "$result")"
+  run_contains "${provider}_wrap_fence_list_no_leak_epic" "EPIC_ISSUE=900" "$body"
+  run_not_contains "${provider}_wrap_fence_list_no_leak_no_326" "--epic 326" "$(cat "$CHILD_ARGV_LOG")"
+
+  echo ""
+  echo "=== wrapper: ${provider} does not leak list state from top-level backtick fence (#2016) ==="
+  reset_fixture
+  write_tracker_config "$provider"
+  export MOCK_LABEL_PARENT_MODE=empty
+  write_pr 147 "develop-test-2016" "develop" "true" "Graduate wave" \
+    "$(printf -- '```text\n- example\n```\n\n    Closes #327\nEpic #900')"
+  result="$(run_wrapper --graduation-pr 147)"
+  body="$(last_body "$result")"
+  run_test "${provider}_wrap_tick_fence_list_no_leak_exit_zero" "0" "$(last_status "$result")"
+  run_contains "${provider}_wrap_tick_fence_list_no_leak_epic" "EPIC_ISSUE=900" "$body"
+  run_not_contains "${provider}_wrap_tick_fence_list_no_leak_no_327" "--epic 327" "$(cat "$CHILD_ARGV_LOG")"
+
+  echo ""
+  echo "=== wrapper: ${provider} ignores heading inside fence then strips indent (#2016) ==="
+  reset_fixture
+  write_tracker_config "$provider"
+  export MOCK_LABEL_PARENT_MODE=empty
+  write_pr 148 "develop-test-2016" "develop" "true" "Graduate wave" \
+    $'~~~\n## Example\n~~~\n\n    Closes #326\nEpic #900'
+  result="$(run_wrapper --graduation-pr 148)"
+  body="$(last_body "$result")"
+  run_test "${provider}_wrap_heading_inside_fence_exit_zero" "0" "$(last_status "$result")"
+  run_contains "${provider}_wrap_heading_inside_fence_epic" "EPIC_ISSUE=900" "$body"
+  run_not_contains "${provider}_wrap_heading_inside_fence_no_326" "--epic 326" "$(cat "$CHILD_ARGV_LOG")"
+
+  echo ""
   echo "=== wrapper: ${provider} keeps nested-list Closes #123 with Epic #900 (#2016) ==="
   # Nested list keyword is live but Epic #900 is the sole epic/parent ref style
   # candidate preferred when both exist — assert 123 is not chosen as epic and
