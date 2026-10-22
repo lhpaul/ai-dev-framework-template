@@ -250,10 +250,10 @@ jobs:
             fi
 
             if printf '%s\n' "$LATEST_SUMMARY_BODY" |
-              grep -Eiq '(^|[ *[:space:]])Result:([ *[:space:]])*(clean)([^[:alnum:]_]|$)'; then
+              grep -Ei '(^|[ *[:space:]])Result:([ *[:space:]])*(clean)([^[:alnum:]_]|$)' >/dev/null; then
               LATEST_SUMMARY_RESULT="clean"
             elif printf '%s\n' "$LATEST_SUMMARY_BODY" |
-              grep -Eiq '(^|[ *[:space:]])Result:([ *[:space:]])*(skipped)([^[:alnum:]_]|$)'; then
+              grep -Ei '(^|[ *[:space:]])Result:([ *[:space:]])*(skipped)([^[:alnum:]_]|$)' >/dev/null; then
               LATEST_SUMMARY_RESULT="skipped"
             else
               LATEST_SUMMARY_RESULT="non_clean"
