@@ -160,6 +160,21 @@ release_version_from_branch() {
   printf '%s\n' "${value##*/}"
 }
 
+# Tag spelling as requested by the caller (before release-branch v-injection).
+# Bare `1.1.0` stays `1.1.0` even though normalize_release_branch yields
+# release/v1.1.0 — namespace resolution and CHANGELOG lookup use this spelling.
+release_tag_request_from_input() {
+  local value="$1"
+  value="${value#refs/heads/}"
+  value="${value#refs/tags/}"
+  case "$value" in
+    release/*/*) printf '%s\n' "${value##*/}" ;;
+    release/*) printf '%s\n' "${value#release/}" ;;
+    */*) printf '%s\n' "${value##*/}" ;;
+    *) printf '%s\n' "$value" ;;
+  esac
+}
+
 validate_portable_branch_name() {
   local label="$1"
   local value="$2"
@@ -2206,7 +2221,9 @@ if [ -z "$RELEASE_INPUT" ]; then
 fi
 
 RELEASE_BRANCH="$(normalize_release_branch "$RELEASE_INPUT")"
-RELEASE_VERSION="$(release_version_from_branch "$RELEASE_BRANCH")"
+# Keep branch normalization (release/v1.1.0) separate from the requested tag
+# spelling used for namespace resolution, CHANGELOG sections, and stamps.
+RELEASE_VERSION="$(release_tag_request_from_input "$RELEASE_INPUT")"
 validate_portable_branch_name "release" "$RELEASE_BRANCH"
 validate_portable_branch_name "backport base" "$BACKPORT_BASE"
 cleanup_log "Release branch: $RELEASE_BRANCH"

@@ -2751,8 +2751,9 @@ run_test "linear_1982_local_mask_remote_inspect_exits_nonzero" "1" "$status"
 run_contains "linear_1982_local_mask_remote_inspect_incomplete" \
   "RELEASE_SCOPE_INCOMPLETE reason=ambiguous_release_tag_namespace" "$output"
 
-# --- Both spellings remote (same SHA), only bare local: same namespace ± --release-head ---
-# Distinct bare vs v predecessors prove both paths select the as-given (v) namespace.
+# --- Both spellings remote (same SHA), only bare local: as-given namespace ± --release-head ---
+# Distinct bare vs v predecessors: v request → previous=v1.0.0 (LEA-710 only);
+# bare request → previous=1.0.0 (LEA-705 and LEA-710). Branch stays release/v1.1.0.
 repo_parity_src="$TMP_ROOT/linear-1982-namespace-parity-src"
 repo_parity_bare="$TMP_ROOT/linear-1982-namespace-parity-bare.git"
 repo_parity="$TMP_ROOT/linear-1982-namespace-parity"
@@ -2804,36 +2805,42 @@ write_linear_scope_gh \
   "commit:${sha_parity_700}|160" \
   "commit:${sha_parity_705}|161" \
   "commit:${sha_parity_710}|162"
-# As-given after shell normalize is v1.1.0 → v-namespace → previous=v1.0.0
-# (LEA-710 only). Bare previous would incorrectly include LEA-705.
+# v request → v-namespace → previous=v1.0.0 → LEA-710 only.
 result="$(run_linear_scope_cleanup "$repo_parity" v1.1.0 --from-changelog --best-effort)"
 status="$(printf '%s\n' "$result" | sed -n '1p')"
 output="$(printf '%s\n' "$result" | sed '1d')"
-run_test "linear_1982_parity_cleanup_exits_zero" "0" "$status"
-run_contains "linear_1982_parity_cleanup_proposes_710" "TRACKER_ISSUES=LEA-710" "$output"
-run_not_contains "linear_1982_parity_cleanup_no_705" "TRACKER_ISSUES=LEA-705" "$output"
-run_not_contains "linear_1982_parity_cleanup_no_700" "TRACKER_ISSUES=LEA-700" "$output"
+run_test "linear_1982_parity_cleanup_v_exits_zero" "0" "$status"
+run_contains "linear_1982_parity_cleanup_v_version_spelling" "Release version: v1.1.0" "$output"
+run_contains "linear_1982_parity_cleanup_v_branch" "Release branch: release/v1.1.0" "$output"
+run_contains "linear_1982_parity_cleanup_v_proposes_710" "TRACKER_ISSUES=LEA-710" "$output"
+run_not_contains "linear_1982_parity_cleanup_v_no_705" "TRACKER_ISSUES=LEA-705" "$output"
+run_not_contains "linear_1982_parity_cleanup_v_no_700" "TRACKER_ISSUES=LEA-700" "$output"
 result="$(run_linear_scope_inspect "$repo_parity" v1.1.0 "$sha_parity_710")"
 status="$(printf '%s\n' "$result" | sed -n '1p')"
 output="$(printf '%s\n' "$result" | sed '1d')"
-run_test "linear_1982_parity_inspect_exits_zero" "0" "$status"
-run_contains "linear_1982_parity_inspect_proposes_710" \
+run_test "linear_1982_parity_inspect_v_exits_zero" "0" "$status"
+run_contains "linear_1982_parity_inspect_v_proposes_710" \
   "Linear --from-changelog scope from merged PRs in release range: LEA-710" "$output"
-run_not_contains "linear_1982_parity_inspect_no_705_scope" \
+run_not_contains "linear_1982_parity_inspect_v_no_705_scope" \
   "scope from merged PRs in release range: LEA-705" "$output"
-# Bare as-given (shell still normalizes to v1.1.0) must match the same boundary.
+# Bare request keeps spelling 1.1.0 (branch still release/v1.1.0) → bare predecessor
+# → LEA-705 and LEA-710; CHANGELOG ## [1.1.0] still resolves.
 result="$(run_linear_scope_cleanup "$repo_parity" 1.1.0 --from-changelog --best-effort)"
 status="$(printf '%s\n' "$result" | sed -n '1p')"
 output="$(printf '%s\n' "$result" | sed '1d')"
-run_test "linear_1982_parity_cleanup_bare_arg_exits_zero" "0" "$status"
-run_contains "linear_1982_parity_cleanup_bare_arg_proposes_710" "TRACKER_ISSUES=LEA-710" "$output"
-run_not_contains "linear_1982_parity_cleanup_bare_arg_no_705" "TRACKER_ISSUES=LEA-705" "$output"
+run_test "linear_1982_parity_cleanup_bare_exits_zero" "0" "$status"
+run_contains "linear_1982_parity_cleanup_bare_version_spelling" "Release version: 1.1.0" "$output"
+run_contains "linear_1982_parity_cleanup_bare_branch" "Release branch: release/v1.1.0" "$output"
+run_contains "linear_1982_parity_cleanup_bare_proposes_710" "LEA-710" "$output"
+run_contains "linear_1982_parity_cleanup_bare_proposes_705" "LEA-705" "$output"
+run_not_contains "linear_1982_parity_cleanup_bare_no_700" "TRACKER_ISSUES=LEA-700" "$output"
 result="$(run_linear_scope_inspect "$repo_parity" 1.1.0 "$sha_parity_710")"
 status="$(printf '%s\n' "$result" | sed -n '1p')"
 output="$(printf '%s\n' "$result" | sed '1d')"
-run_test "linear_1982_parity_inspect_bare_arg_exits_zero" "0" "$status"
-run_contains "linear_1982_parity_inspect_bare_arg_proposes_710" \
-  "Linear --from-changelog scope from merged PRs in release range: LEA-710" "$output"
+run_test "linear_1982_parity_inspect_bare_exits_zero" "0" "$status"
+run_contains "linear_1982_parity_inspect_bare_version_spelling" "Release version: 1.1.0" "$output"
+run_contains "linear_1982_parity_inspect_bare_proposes_710" "LEA-710" "$output"
+run_contains "linear_1982_parity_inspect_bare_proposes_705" "LEA-705" "$output"
 
 # --- Invalid SemVer prerelease tags cannot define the boundary ---
 repo_bad_pre="$TMP_ROOT/linear-1982-invalid-prerelease-tag"
