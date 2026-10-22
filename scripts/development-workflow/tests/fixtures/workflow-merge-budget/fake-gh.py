@@ -217,11 +217,17 @@ if args[:1] == ['api']:
             sys.exit(1)
         emit({'number': int(match[2]), 'title': 'Fixture issue #'+match[2], 'state': 'closed',
               'milestone': state.get('issueMilestones', {}).get(match[2])})
-    commit_pulls = re.fullmatch(r'repos/([^/]+/[^/]+)/commits/([0-9a-f]{40})/pulls', endpoint)
+    # Path and query separately: production uses pulls?per_page=100 with
+    # --paginate --slurp (array of page arrays). Flat body for non-slurp callers.
+    api_path = endpoint.split('?', 1)[0]
+    commit_pulls = re.fullmatch(
+        r'repos/([^/]+/[^/]+)/commits/([0-9a-f]{40})/pulls', api_path
+    )
     if commit_pulls:
         if state.get('commitPullsOutage'):
             sys.exit(1)
-        emit(state.get('commitPulls', {}).get(commit_pulls[2], []))
+        pulls = state.get('commitPulls', {}).get(commit_pulls[2], [])
+        emit([pulls] if '--slurp' in args else pulls)
     commit = re.fullmatch(r'repos/([^/]+/[^/]+)/git/commits/([0-9a-f]{40})', endpoint)
     if commit and commit[2] in state.get('gitCommits', {}):
         emit(state['gitCommits'][commit[2]])
