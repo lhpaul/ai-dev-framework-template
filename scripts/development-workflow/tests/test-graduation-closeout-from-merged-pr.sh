@@ -1294,6 +1294,69 @@ for provider in github_projects github_issues; do
   run_contains "${provider}_wrap_nested_same_line_blank_prose_epic" "EPIC_ISSUE=344" "$body"
 
   echo ""
+  echo "=== wrapper: ${provider} strips nested same-line tab fence (#2016) ==="
+  reset_fixture
+  write_tracker_config "$provider"
+  export MOCK_LABEL_PARENT_MODE=empty
+  write_pr 175 "develop-test-2016" "develop" "true" "Graduate wave" \
+    "$(printf -- '- -\t~~~text\n\tCloses #456\n\t~~~\nEpic #900')"
+  result="$(run_wrapper --graduation-pr 175)"
+  body="$(last_body "$result")"
+  run_test "${provider}_wrap_nested_same_line_tab_exit_zero" "0" "$(last_status "$result")"
+  run_contains "${provider}_wrap_nested_same_line_tab_epic" "EPIC_ISSUE=900" "$body"
+  run_not_contains "${provider}_wrap_nested_same_line_tab_no_456" "--epic 456" "$(cat "$CHILD_ARGV_LOG")"
+
+  echo ""
+  echo "=== wrapper: ${provider} strips ordered-2 no-interrupt indent code (#2016) ==="
+  reset_fixture
+  write_tracker_config "$provider"
+  export MOCK_LABEL_PARENT_MODE=empty
+  write_pr 176 "develop-test-2016" "develop" "true" "Graduate wave" \
+    $'Intro\n2. Example\n\n    Closes #456\nEpic #900'
+  result="$(run_wrapper --graduation-pr 176)"
+  body="$(last_body "$result")"
+  run_test "${provider}_wrap_ordered_2_no_interrupt_exit_zero" "0" "$(last_status "$result")"
+  run_contains "${provider}_wrap_ordered_2_no_interrupt_epic" "EPIC_ISSUE=900" "$body"
+  run_not_contains "${provider}_wrap_ordered_2_no_interrupt_no_456" "--epic 456" "$(cat "$CHILD_ARGV_LOG")"
+
+  echo ""
+  echo "=== wrapper: ${provider} keeps ordered-1 interrupt Closes #457 (#2016) ==="
+  reset_fixture
+  write_tracker_config "$provider"
+  export MOCK_LABEL_PARENT_MODE=empty
+  write_pr 177 "develop-test-2016" "develop" "true" "Graduate wave" \
+    $'Intro\n1. Example\n\n    Closes #457'
+  result="$(run_wrapper --graduation-pr 177)"
+  body="$(last_body "$result")"
+  run_test "${provider}_wrap_ordered_1_interrupt_exit_zero" "0" "$(last_status "$result")"
+  run_contains "${provider}_wrap_ordered_1_interrupt_epic" "EPIC_ISSUE=457" "$body"
+
+  echo ""
+  echo "=== wrapper: ${provider} keeps ordered siblings Closes #458 (#2016) ==="
+  reset_fixture
+  write_tracker_config "$provider"
+  export MOCK_LABEL_PARENT_MODE=empty
+  write_pr 178 "develop-test-2016" "develop" "true" "Graduate wave" \
+    $'1. a\n2. b\n\n     Closes #458'
+  result="$(run_wrapper --graduation-pr 178)"
+  body="$(last_body "$result")"
+  run_test "${provider}_wrap_ordered_siblings_exit_zero" "0" "$(last_status "$result")"
+  run_contains "${provider}_wrap_ordered_siblings_epic" "EPIC_ISSUE=458" "$body"
+
+  echo ""
+  echo "=== wrapper: ${provider} strips empty-item no-interrupt indent code (#2016) ==="
+  reset_fixture
+  write_tracker_config "$provider"
+  export MOCK_LABEL_PARENT_MODE=empty
+  write_pr 179 "develop-test-2016" "develop" "true" "Graduate wave" \
+    $'Intro\n-\n\n    Closes #459\nEpic #900'
+  result="$(run_wrapper --graduation-pr 179)"
+  body="$(last_body "$result")"
+  run_test "${provider}_wrap_empty_item_no_interrupt_exit_zero" "0" "$(last_status "$result")"
+  run_contains "${provider}_wrap_empty_item_no_interrupt_epic" "EPIC_ISSUE=900" "$body"
+  run_not_contains "${provider}_wrap_empty_item_no_interrupt_no_459" "--epic 459" "$(cat "$CHILD_ARGV_LOG")"
+
+  echo ""
   echo "=== wrapper: ${provider} keeps nested-list Closes #123 with Epic #900 (#2016) ==="
   # Nested list keyword is live but Epic #900 is the sole epic/parent ref style
   # candidate preferred when both exist — assert 123 is not chosen as epic and

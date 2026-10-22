@@ -194,8 +194,9 @@ closing_keyword_live_refs() {
 #
 # Supported CommonMark subset (closeout-only; not a full parser):
 # - Tab expansion (first): every line's leading whitespace, and whitespace
-#   immediately after a list marker, is expanded to spaces with tab stops of 4
-#   before any other parsing, so indentation/list/fence logic sees only spaces.
+#   immediately after every list marker on that line (successive nested markers
+#   included), is expanded to spaces with tab stops of 4 before any other
+#   parsing, so indentation/list/fence logic sees only spaces.
 # - Fences (``` / ~~~, length ≥3, same char; closer length ≥ opener, trailing
 #   whitespace only): while inside a fence, only look for the matching closer
 #   (indent 0–3 relative to the fence's container indent) and drop every other
@@ -213,7 +214,11 @@ closing_keyword_live_refs() {
 #   opener does NOT pop — it stays in the current item. Pop after a blank when
 #   indent < content_indent, or on a marker/heading/thematic/fence that exits.
 #   A list marker at indent in [parent_content_indent, parent_content_indent+3]
-#   pushes a new item (dedent makes siblings replace the top). On one line,
+#   pushes a new item (dedent makes siblings replace the top), except CommonMark
+#   paragraph-interruption rules when the previous line was a paragraph (no
+#   blank) and we are not already in a list: an ordered marker may interrupt
+#   only if it is `1.`/`1)`, and an empty item (no content after the marker)
+#   may not interrupt — those lines stay paragraph continuations. On one line,
 #   successive markers are consumed left-to-right (each pushes a nested
 #   container) until the remainder is not a marker; then the remainder is
 #   classified against the innermost content_indent. content_indent = marker
@@ -246,7 +251,7 @@ SETEXT_RE = re.compile(r"^(?:=+|-+)[ \t]*$")
 FENCE_MARKER_RE = re.compile(r"^(`{3,}|~{3,})(.*)$")
 
 def expand_tabs_closeout(line):
-    """Expand tabs in leading whitespace and list-marker padding (tab stop 4)."""
+    """Expand tabs in leading WS and after every list marker (tab stop 4)."""
     out = []
     col = 0
     i = 0
@@ -265,18 +270,16 @@ def expand_tabs_closeout(line):
             i += 1
 
     emit_ws_run()
-    if i >= n:
-        return "".join(out)
-    m = LIST_MARKER_ONLY_RE.match(line[i:])
-    if not m:
-        out.append(line[i:])
-        return "".join(out)
-    marker = m.group(1)
-    out.append(marker)
-    col += len(marker)
-    i += len(marker)
-    emit_ws_run()
-    out.append(line[i:])
+    while i < n:
+        m = LIST_MARKER_ONLY_RE.match(line[i:])
+        if not m:
+            out.append(line[i:])
+            break
+        marker = m.group(1)
+        out.append(marker)
+        col += len(marker)
+        i += len(marker)
+        emit_ws_run()
     return "".join(out)
 
 def leading_indent_columns(line):
@@ -289,7 +292,7 @@ def leading_indent_columns(line):
 def parse_marker_from(text, abs_origin):
     """Parse a list marker at the start of text (text[0] at abs_origin).
 
-    Returns (marker_abs_cols, content_indent, remainder) or None.
+    Returns (marker_abs_cols, content_indent, remainder, marker) or None.
     """
     lead, start = leading_indent_columns(text)
     abs_cols = abs_origin + lead
@@ -313,14 +316,22 @@ def parse_marker_from(text, abs_origin):
     else:
         padding = 1
         content_start = 1
-    return abs_cols, abs_cols + len(marker) + padding, rest[content_start:]
+    return abs_cols, abs_cols + len(marker) + padding, rest[content_start:], marker
 
 def list_marker_parts(line):
     parsed = parse_marker_from(line, 0)
     if parsed is None:
         return None
-    _marker_cols, content_indent, remainder = parsed
+    _marker_cols, content_indent, remainder, _marker = parsed
     return content_indent, remainder
+
+def can_interrupt_paragraph(marker, remainder):
+    """CommonMark: empty items cannot interrupt; ordered only via 1./1)."""
+    if remainder.strip() == "":
+        return False
+    if marker[0].isdigit():
+        return marker in ("1.", "1)")
+    return True
 
 def fence_info_from_content(text):
     m = FENCE_MARKER_RE.match(text)
@@ -426,6 +437,7 @@ for line in lines:
     # Dedent: pop when the line exits the item. Lazy paragraph continuation
     # (follows a paragraph with no blank, indent < content_indent, not a
     # marker/heading/thematic/fence) keeps the current container.
+    was_in_list = bool(stack)
     ci = current_ci()
     if stack and cols < ci:
         lazy = prev_was_paragraph and not is_structural_exit_body(body)
@@ -468,14 +480,23 @@ for line in lines:
     # markers on the same line, then classify the innermost remainder.
     first = parse_marker_from(line, 0)
     if first is not None and ci <= first[0] <= ci + 3:
-        _mcols, new_ci, remainder = first
+        _mcols, new_ci, remainder, marker = first
+        # Paragraph interruption when starting a list after a paragraph.
+        # Skip when we were already in a list (sibling/continuation after dedent).
+        if prev_was_paragraph and not was_in_list:
+            if not can_interrupt_paragraph(marker, remainder):
+                out.append(line)
+                at_block_start = False
+                in_indented_code = False
+                prev_was_paragraph = True
+                continue
         stack.append(new_ci)
         rem_origin = new_ci
         while True:
             nested = parse_marker_from(remainder, rem_origin)
             if nested is None:
                 break
-            nested_cols, nested_ci, nested_rem = nested
+            nested_cols, nested_ci, nested_rem, _nested_marker = nested
             parent_ci = current_ci()
             if not (parent_ci <= nested_cols <= parent_ci + 3):
                 break

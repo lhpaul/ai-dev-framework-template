@@ -463,6 +463,11 @@ nested_same_line_marker_fence||- - ~~~text\n    Closes #326\n    ~~~
 nested_same_line_marker_prose|342|- - Closes #342
 ordered_nested_marker_tick_fence||1. - ```\n     Closes #343\n     ```
 nested_same_line_then_blank_prose|344|- - item\n\n    prose Closes #344
+nested_same_line_tab_fence||- -\t~~~text\n\tCloses #456\n\t~~~
+ordered_2_no_interrupt_indent_code||Intro\n2. Example\n\n    Closes #456
+ordered_1_interrupt_keeps_prose|457|Intro\n1. Example\n\n    Closes #457
+ordered_siblings_keeps_prose|458|1. a\n2. b\n\n     Closes #458
+empty_item_no_interrupt_indent_code||Intro\n-\n\n    Closes #459
 CLOSEOUT_TABLE
 
 # Explicit regressions for fence precedence (list markers inside fences must not leak).
@@ -527,6 +532,16 @@ check "closeout_ordered_nested_marker_tick_fence_strips" "" \
   "$(closeout_refs_of "$(printf -- '1. - %s%s%s\n     Closes #343\n     %s%s%s' '`' '`' '`' '`' '`' '`')")"
 check "closeout_nested_same_line_then_blank_prose_keeps" "344" \
   "$(closeout_refs_of "$(printf -- '- - item\n\n    prose Closes #344')")"
+check "closeout_nested_same_line_tab_fence_strips" "" \
+  "$(closeout_refs_of "$(printf -- '- -\t~~~text\n\tCloses #456\n\t~~~')")"
+check "closeout_ordered_2_no_interrupt_strips" "" \
+  "$(closeout_refs_of "$(printf -- 'Intro\n2. Example\n\n    Closes #456')")"
+check "closeout_ordered_1_interrupt_keeps" "457" \
+  "$(closeout_refs_of "$(printf -- 'Intro\n1. Example\n\n    Closes #457')")"
+check "closeout_ordered_siblings_keeps" "458" \
+  "$(closeout_refs_of "$(printf -- '1. a\n2. b\n\n     Closes #458')")"
+check "closeout_empty_item_no_interrupt_strips" "" \
+  "$(closeout_refs_of "$(printf -- 'Intro\n-\n\n    Closes #459')")"
 
 # ---------------------------------------------------------------------------
 # Differential attribution

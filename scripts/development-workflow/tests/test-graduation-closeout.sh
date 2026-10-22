@@ -527,6 +527,31 @@ JSON
 [{"number":11,"title":"Deliver item","body":"- - item\n\n    prose Closes #344"}]
 JSON
         ;;
+      nested_same_line_tab_fence_456)
+        cat <<'JSON'
+[{"number":11,"title":"Graduate wave","body":"- -\t~~~text\n\tCloses #456\n\t~~~\nNo live closing keywords."}]
+JSON
+        ;;
+      ordered_2_no_interrupt_456)
+        cat <<'JSON'
+[{"number":11,"title":"Graduate wave","body":"Intro\n2. Example\n\n    Closes #456\nNo live closing keywords."}]
+JSON
+        ;;
+      ordered_1_interrupt_closes_457)
+        cat <<'JSON'
+[{"number":11,"title":"Deliver item","body":"Intro\n1. Example\n\n    Closes #457"}]
+JSON
+        ;;
+      ordered_siblings_closes_458)
+        cat <<'JSON'
+[{"number":11,"title":"Deliver item","body":"1. a\n2. b\n\n     Closes #458"}]
+JSON
+        ;;
+      empty_item_no_interrupt_459)
+        cat <<'JSON'
+[{"number":11,"title":"Graduate wave","body":"Intro\n-\n\n    Closes #459\nNo live closing keywords."}]
+JSON
+        ;;
       foreign_repo_text)
         cat <<'JSON'
 [{"number":11,"title":"Graduate wave","body":"Closes other/repo#326\nNo local closing keywords."}]
@@ -1676,6 +1701,20 @@ for provider in github_projects github_issues; do
   echo "=== graduation closeout: ${provider} keeps same-line nested marker prose (#2016) ==="
   assert_github_keyword_issue_closed "$provider" nested_same_line_marker_closes_342 342 "${provider}_nested_same_line_prose"
   assert_github_keyword_issue_closed "$provider" nested_same_line_blank_prose_344 344 "${provider}_nested_same_line_blank_prose"
+
+  echo ""
+  echo "=== graduation closeout: ${provider} strips nested same-line tab fence (#2016) ==="
+  assert_github_example_326_untouched "$provider" nested_same_line_tab_fence_456 "${provider}_nested_same_line_tab" 456
+
+  echo ""
+  echo "=== graduation closeout: ${provider} strips ordered-2 no-interrupt indent code (#2016) ==="
+  assert_github_example_326_untouched "$provider" ordered_2_no_interrupt_456 "${provider}_ordered_2_no_interrupt" 456
+  assert_github_example_326_untouched "$provider" empty_item_no_interrupt_459 "${provider}_empty_item_no_interrupt" 459
+
+  echo ""
+  echo "=== graduation closeout: ${provider} keeps ordered-1 interrupt / siblings prose (#2016) ==="
+  assert_github_keyword_issue_closed "$provider" ordered_1_interrupt_closes_457 457 "${provider}_ordered_1_interrupt"
+  assert_github_keyword_issue_closed "$provider" ordered_siblings_closes_458 458 "${provider}_ordered_siblings"
 
   echo ""
   echo "=== graduation closeout: ${provider} keeps nested-list Closes #123 (#2016) ==="
