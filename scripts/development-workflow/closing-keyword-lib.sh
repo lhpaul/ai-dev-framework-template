@@ -215,7 +215,12 @@ closing_keyword_live_refs() {
 #   A list marker at indent in [parent_content_indent, parent_content_indent+3]
 #   pushes a new item (dedent makes siblings replace the top). content_indent =
 #   marker indent + marker width + following spaces (1–4; if more than 4,
-#   padding is 1).
+#   padding is 1 and content_indent = marker_end + 1). When the marker is
+#   followed by ≥5 spaces, the remainder begins ≥4 columns past content_indent
+#   and is an indented code block inside the item (do not emit it); further
+#   lines at ≥ content_indent+4 stay code. An ATX heading on the marker-line
+#   remainder is the item's first block (block boundary), so a following line
+#   at ≥ content_indent+4 starts indented code.
 # - Headings / thematic / setext / fences / indented code are evaluated relative
 #   to the current container's content_indent. A heading inside an item does not
 #   clear the stack — only a block boundary within that container. Indented code
@@ -454,6 +459,28 @@ for line in lines:
         fence = fence_info_from_content(remainder)
         if fence is not None:
             open_fence("list", fence[0], fence[1], new_ci)
+            continue
+        # ≥5 spaces after marker → remainder starts at content_indent+4: code.
+        rem_lead = 0
+        while rem_lead < len(remainder) and remainder[rem_lead] == " ":
+            rem_lead += 1
+        if rem_lead >= 4:
+            in_indented_code = True
+            at_block_start = False
+            prev_was_paragraph = False
+            continue
+        # ATX heading as first block → block boundary (next ≥ci+4 is code).
+        if is_atx_heading_body(remainder):
+            in_indented_code = False
+            at_block_start = True
+            prev_was_paragraph = False
+            out.append(line)
+            continue
+        if is_thematic_break_body(remainder):
+            in_indented_code = False
+            at_block_start = True
+            prev_was_paragraph = False
+            out.append(line)
             continue
         prev_was_paragraph = True
         out.append(line)

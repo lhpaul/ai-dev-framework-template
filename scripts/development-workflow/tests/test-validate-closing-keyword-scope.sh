@@ -454,6 +454,11 @@ heading_inside_nested_then_prose|123|- Outer\n  - Nested\n    ## Details\n\n    
 lazy_cont_then_indent_keeps|326|- Delivered work:\nContinuation paragraph\n\n    Closes #326
 lazy_cont_then_exit_then_indent_code||- Delivered work:\nContinuation paragraph\n\nParagraph outside\n\n    Closes #334
 lazy_cont_inside_nested_keeps|123|- Outer\n  - Nested item\n  Nested continuation\n\n      Closes #123
+marker_five_space_code||-     Closes #123
+marker_five_space_code_cont||-     Example\n      Closes #123
+marker_heading_then_code||- ## Example\n      Closes #326
+marker_two_space_prose|340|-  Closes #340
+marker_one_space_prose|341|- Closes #341
 CLOSEOUT_TABLE
 
 # Explicit regressions for fence precedence (list markers inside fences must not leak).
@@ -500,6 +505,16 @@ check "closeout_lazy_cont_then_exit_then_indent_strips" "" \
   "$(closeout_refs_of "$(printf -- '- Delivered work:\nContinuation paragraph\n\nParagraph outside\n\n    Closes #334')")"
 check "closeout_lazy_cont_inside_nested_keeps" "123" \
   "$(closeout_refs_of "$(printf -- '- Outer\n  - Nested item\n  Nested continuation\n\n      Closes #123')")"
+check "closeout_marker_five_space_code_strips" "" \
+  "$(closeout_refs_of "$(printf -- '-     Closes #123')")"
+check "closeout_marker_five_space_code_cont_strips" "" \
+  "$(closeout_refs_of "$(printf -- '-     Example\n      Closes #123')")"
+check "closeout_marker_heading_then_code_strips" "" \
+  "$(closeout_refs_of "$(printf -- '- ## Example\n      Closes #326')")"
+check "closeout_marker_two_space_prose_keeps" "340" \
+  "$(closeout_refs_of "$(printf -- '-  Closes #340')")"
+check "closeout_marker_one_space_prose_keeps" "341" \
+  "$(closeout_refs_of "$(printf -- '- Closes #341')")"
 
 # ---------------------------------------------------------------------------
 # Differential attribution

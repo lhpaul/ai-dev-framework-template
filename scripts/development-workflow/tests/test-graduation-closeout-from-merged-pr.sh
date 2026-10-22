@@ -1181,6 +1181,69 @@ for provider in github_projects github_issues; do
   run_contains "${provider}_wrap_lazy_cont_nested_epic" "EPIC_ISSUE=123" "$body"
 
   echo ""
+  echo "=== wrapper: ${provider} strips marker-line five-space indented code (#2016) ==="
+  reset_fixture
+  write_tracker_config "$provider"
+  export MOCK_LABEL_PARENT_MODE=empty
+  write_pr 166 "develop-test-2016" "develop" "true" "Graduate wave" \
+    $'-     Closes #123\nEpic #900'
+  result="$(run_wrapper --graduation-pr 166)"
+  body="$(last_body "$result")"
+  run_test "${provider}_wrap_marker_five_space_exit_zero" "0" "$(last_status "$result")"
+  run_contains "${provider}_wrap_marker_five_space_epic" "EPIC_ISSUE=900" "$body"
+  run_not_contains "${provider}_wrap_marker_five_space_no_123" "--epic 123" "$(cat "$CHILD_ARGV_LOG")"
+
+  echo ""
+  echo "=== wrapper: ${provider} strips marker-line five-space code continuation (#2016) ==="
+  reset_fixture
+  write_tracker_config "$provider"
+  export MOCK_LABEL_PARENT_MODE=empty
+  write_pr 167 "develop-test-2016" "develop" "true" "Graduate wave" \
+    $'-     Example\n      Closes #123\nEpic #900'
+  result="$(run_wrapper --graduation-pr 167)"
+  body="$(last_body "$result")"
+  run_test "${provider}_wrap_marker_five_space_cont_exit_zero" "0" "$(last_status "$result")"
+  run_contains "${provider}_wrap_marker_five_space_cont_epic" "EPIC_ISSUE=900" "$body"
+  run_not_contains "${provider}_wrap_marker_five_space_cont_no_123" "--epic 123" "$(cat "$CHILD_ARGV_LOG")"
+
+  echo ""
+  echo "=== wrapper: ${provider} strips marker-line heading then indented code (#2016) ==="
+  reset_fixture
+  write_tracker_config "$provider"
+  export MOCK_LABEL_PARENT_MODE=empty
+  write_pr 168 "develop-test-2016" "develop" "true" "Graduate wave" \
+    $'- ## Example\n      Closes #326\nEpic #900'
+  result="$(run_wrapper --graduation-pr 168)"
+  body="$(last_body "$result")"
+  run_test "${provider}_wrap_marker_heading_code_exit_zero" "0" "$(last_status "$result")"
+  run_contains "${provider}_wrap_marker_heading_code_epic" "EPIC_ISSUE=900" "$body"
+  run_not_contains "${provider}_wrap_marker_heading_code_no_326" "--epic 326" "$(cat "$CHILD_ARGV_LOG")"
+
+  echo ""
+  echo "=== wrapper: ${provider} keeps marker-line two-space Closes #340 (#2016) ==="
+  reset_fixture
+  write_tracker_config "$provider"
+  export MOCK_LABEL_PARENT_MODE=empty
+  write_pr 169 "develop-test-2016" "develop" "true" "Graduate wave" \
+    $'-  Closes #340'
+  result="$(run_wrapper --graduation-pr 169)"
+  body="$(last_body "$result")"
+  run_test "${provider}_wrap_marker_two_space_exit_zero" "0" "$(last_status "$result")"
+  run_contains "${provider}_wrap_marker_two_space_epic" "EPIC_ISSUE=340" "$body"
+
+  echo ""
+  echo "=== wrapper: ${provider} keeps marker-line one-space Closes #341 (#2016) ==="
+  reset_fixture
+  write_tracker_config "$provider"
+  export MOCK_LABEL_PARENT_MODE=empty
+  write_pr 170 "develop-test-2016" "develop" "true" "Graduate wave" \
+    $'- Closes #341'
+  result="$(run_wrapper --graduation-pr 170)"
+  body="$(last_body "$result")"
+  run_test "${provider}_wrap_marker_one_space_exit_zero" "0" "$(last_status "$result")"
+  run_contains "${provider}_wrap_marker_one_space_epic" "EPIC_ISSUE=341" "$body"
+
+  echo ""
   echo "=== wrapper: ${provider} keeps nested-list Closes #123 with Epic #900 (#2016) ==="
   # Nested list keyword is live but Epic #900 is the sole epic/parent ref style
   # candidate preferred when both exist — assert 123 is not chosen as epic and

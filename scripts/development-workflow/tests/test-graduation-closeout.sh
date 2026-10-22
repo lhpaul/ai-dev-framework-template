@@ -482,6 +482,31 @@ JSON
 [{"number":11,"title":"Deliver item","body":"- Outer\n  - Nested item\n  Nested continuation\n\n      Closes #123"}]
 JSON
         ;;
+      marker_five_space_code_123)
+        cat <<'JSON'
+[{"number":11,"title":"Graduate wave","body":"-     Closes #123\nNo live closing keywords."}]
+JSON
+        ;;
+      marker_five_space_code_cont_123)
+        cat <<'JSON'
+[{"number":11,"title":"Graduate wave","body":"-     Example\n      Closes #123\nNo live closing keywords."}]
+JSON
+        ;;
+      marker_heading_then_code_326)
+        cat <<'JSON'
+[{"number":11,"title":"Graduate wave","body":"- ## Example\n      Closes #326\nNo live closing keywords."}]
+JSON
+        ;;
+      marker_two_space_closes_340)
+        cat <<'JSON'
+[{"number":11,"title":"Deliver item","body":"-  Closes #340"}]
+JSON
+        ;;
+      marker_one_space_closes_341)
+        cat <<'JSON'
+[{"number":11,"title":"Deliver item","body":"- Closes #341"}]
+JSON
+        ;;
       foreign_repo_text)
         cat <<'JSON'
 [{"number":11,"title":"Graduate wave","body":"Closes other/repo#326\nNo local closing keywords."}]
@@ -1610,6 +1635,17 @@ for provider in github_projects github_issues; do
   echo ""
   echo "=== graduation closeout: ${provider} keeps lazy continuation inside nested item (#2016) ==="
   assert_github_keyword_issue_closed "$provider" lazy_cont_inside_nested_closes_123 123 "${provider}_lazy_cont_nested"
+
+  echo ""
+  echo "=== graduation closeout: ${provider} strips marker-line five-space indented code (#2016) ==="
+  assert_github_example_326_untouched "$provider" marker_five_space_code_123 "${provider}_marker_five_space" 123
+  assert_github_example_326_untouched "$provider" marker_five_space_code_cont_123 "${provider}_marker_five_space_cont" 123
+  assert_github_example_326_untouched "$provider" marker_heading_then_code_326 "${provider}_marker_heading_code"
+
+  echo ""
+  echo "=== graduation closeout: ${provider} keeps marker-line two-space / one-space prose (#2016) ==="
+  assert_github_keyword_issue_closed "$provider" marker_two_space_closes_340 340 "${provider}_marker_two_space"
+  assert_github_keyword_issue_closed "$provider" marker_one_space_closes_341 341 "${provider}_marker_one_space"
 
   echo ""
   echo "=== graduation closeout: ${provider} keeps nested-list Closes #123 (#2016) ==="
