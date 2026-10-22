@@ -307,6 +307,69 @@ orchestrator or a Linear MCP runner must apply the release label/custom field
 and then transition every listed `TRACKER_ISSUES` item from `Merged` to
 `Released` before reporting the release as complete.
 
+When cleanup is invoked with `--from-changelog`, Linear scope is **not** the set
+of IDs matched in the CHANGELOG version section alone (#1982). The canonical
+**consistency matrix** (gate inputs, allowed outcomes, required next actions,
+and operator signals) lives in
+[`05-prepare-release-protocol.md`](../protocols/05-prepare-release-protocol.md)
+Step 9.1. The CHANGELOG is only a complement: a missing `CHANGELOG.md` or version section prints
+`CHANGELOG_SECTION_UNAVAILABLE version=vX.Y.Z (Linear scope derived from merged
+PRs only)` and scope still comes from merged PRs. The helper derives scope from
+merged PRs in the release git range (previous tag → verified release tag
+`refs/tags/...` or `--release-head`; never checkout `HEAD` or unqualified names
+that could resolve a same-named branch): for each commit it resolves associated
+PRs only through GitHub `commits/<sha>/pulls` (subject `(#N)` is never
+sufficient evidence), against the checkout/component repository (not an
+inherited `GH_REPO` override). A well-formed empty JSON array `[]` means the
+commit has no associated PR (direct push / local merge): it contributes no
+IDs, emits `RELEASE_SCOPE_COMMIT_WITHOUT_PR sha=<short>` once per SHA, and
+does **not** make the scope incomplete. Empty response body, non-array JSON,
+`[null]`, `[{}]`, or any element missing an integer `number` or a
+`merged_at` / `merged` / `mergedAt` field is malformed evidence and produces
+`RELEASE_SCOPE_INCOMPLETE` with that SHA listed. A PR is accepted when it is
+merged and its merge/head commit is in the range (or the associating range SHA
+when those fields are absent), regardless of the PR base branch (including
+nested `feature/*` or `develop-<slug>` parents). Documentation-stage head
+branches (`spec/*`, `implementation-plan/*`) and release/backport branches are
+`RELEASE_SCOPE_SKIPPED` (`documentation_stage_pr_only` /
+`release_or_backport_branch_pr`); every other merged prefix (including
+`chore/`, `ci/`, `feature/`, `fix/`, …) counts as Released shipping evidence.
+Linear IDs come from each PR’s `headRefName` / REST `head.ref` and `title`
+(not commit text or PR body). Changelog-only mentions — including
+cross-references such as “did not ship LEA-298” and expanded ranges — are
+skipped with
+`RELEASE_SCOPE_SKIPPED issue=<ID> reason=changelog_mention_without_merged_pr`
+(and appear under `release_scope_skipped` in component `--json` output). The
+previous-tag boundary first resolves a **canonical SemVer tag namespace** from
+local ∪ remote evidence for the bare/`v` spellings of the requested version
+(Linear-only requested tag spelling; component prefixes such as `mobile-v…`
+have a single spelling). Resolution is **identical with and without
+`--release-head`** (never adopt a co-pointing component tag): sole existing
+spelling → adopt it (e.g. request `v1.1.0` with only `1.1.0` → namespace
+`1.1.0`); both spellings agreeing on one SHA → keep the requested spelling;
+local↔remote or bare-vs-`v` SHA conflict →
+`RELEASE_SCOPE_INCOMPLETE reason=ambiguous_release_tag_namespace` (stderr
+`ambiguous_release_tag_namespace version=<requested> (bare/v spellings or
+local/remote tag SHAs disagree)`); neither spelling present → keep the
+requested spelling (never invent `v-`). Only then does previous-tag selection
+use **that namespace’s PREFIX** and SemVer 2.0.0 precedence (prerelease <
+release; build metadata ignored); invalid prerelease identifiers are ignored
+with `SEMVER_TAG_IGNORED`; `first_release` only when no same-prefix remote tag
+is strictly lower. Shallow clones, remote tag-list failures, or a preceding
+remote tag whose peeled commit is missing locally or disagrees with a local
+tag of the same name emit
+`RELEASE_SCOPE_INCOMPLETE reason=previous_release_boundary_unavailable` (the
+helper never `git fetch`es during scope resolution — fetch tags and rerun). A
+fully resolved range with zero Linear IDs is an empty scope (not incomplete). If
+the release ref is unavailable or PR resolution fails for any commit
+(including malformed `commits/<sha>/pulls` evidence), the helper emits
+`RELEASE_SCOPE_INCOMPLETE` (`reason=release_ref_unavailable` or
+`unresolved_shas=...`) and fails closed. Explicit `--issue` / `--issues` are
+unioned with the derived scope and are never filtered. The canonical
+consistency matrix (including namespace rows) lives in
+[`05-prepare-release-protocol.md`](../protocols/05-prepare-release-protocol.md)
+Step 9.1.
+
 ---
 
 ## Graduation Closeout (Linear)
