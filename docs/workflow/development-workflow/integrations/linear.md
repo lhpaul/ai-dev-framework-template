@@ -304,11 +304,17 @@ merged PRs in the release git range (previous tag → verified release tag
 that could resolve a same-named branch): for each commit it resolves associated
 PRs only through GitHub `commits/<sha>/pulls` (subject `(#N)` is never
 sufficient evidence), against the checkout/component repository (not an
-inherited `GH_REPO` override). A PR is accepted when it is merged and its
-merge/head commit is in the range (or the associating range SHA when those
-fields are absent), regardless of the PR base branch (including nested
-`feature/*` or `develop-<slug>` parents). Documentation-stage head branches
-(`spec/*`, `implementation-plan/*`) and release/backport branches are
+inherited `GH_REPO` override). A well-formed empty JSON array `[]` means the
+commit has no associated PR (direct push / local merge): it contributes no
+IDs, emits `RELEASE_SCOPE_COMMIT_WITHOUT_PR sha=<short>` once per SHA, and
+does **not** make the scope incomplete. Empty response body, non-array JSON,
+`[null]`, `[{}]`, or any element missing an integer `number` or a
+`merged_at` / `merged` / `mergedAt` field is malformed evidence and produces
+`RELEASE_SCOPE_INCOMPLETE` with that SHA listed. A PR is accepted when it is
+merged and its merge/head commit is in the range (or the associating range SHA
+when those fields are absent), regardless of the PR base branch (including
+nested `feature/*` or `develop-<slug>` parents). Documentation-stage head
+branches (`spec/*`, `implementation-plan/*`) and release/backport branches are
 `RELEASE_SCOPE_SKIPPED` (`documentation_stage_pr_only` /
 `release_or_backport_branch_pr`); every other merged prefix (including
 `chore/`, `ci/`, `feature/`, `fix/`, …) counts as Released shipping evidence.
@@ -329,8 +335,9 @@ is missing locally or disagrees with a local tag of the same name emit
 `RELEASE_SCOPE_INCOMPLETE reason=previous_release_boundary_unavailable` (the
 helper never `git fetch`es during scope resolution — fetch tags and rerun). A
 fully resolved range with zero Linear IDs is an empty scope (not incomplete). If
-the release ref is unavailable or PR resolution fails for any commit, the helper
-emits `RELEASE_SCOPE_INCOMPLETE` (`reason=release_ref_unavailable` or
+the release ref is unavailable or PR resolution fails for any commit
+(including malformed `commits/<sha>/pulls` evidence), the helper emits
+`RELEASE_SCOPE_INCOMPLETE` (`reason=release_ref_unavailable` or
 `unresolved_shas=...`) and fails closed. Explicit `--issue` / `--issues` are
 unioned with the derived scope and are never filtered.
 

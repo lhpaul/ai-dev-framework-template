@@ -19,7 +19,11 @@
 #   range (derived even when CHANGELOG.md or the version section is missing;
 #   that case prints CHANGELOG_SECTION_UNAVAILABLE and continues). Each commit
 #   is resolved to its PR(s) via GitHub (commits/<sha>/pulls only — subject
-#   "(#N)" / "Merge pull request #N" is never sufficient PR evidence). IDs are
+#   "(#N)" / "Merge pull request #N" is never sufficient PR evidence). A
+#   well-formed empty array [] means the commit has no associated PR
+#   (RELEASE_SCOPE_COMMIT_WITHOUT_PR; scope stays complete). Empty body,
+#   non-array JSON, [null], [{}], or any element missing an integer number or
+#   a merged_at/merged/mergedAt field is RELEASE_SCOPE_INCOMPLETE. IDs are
 #   taken only from each PR's headRefName / REST head.ref and title — never
 #   from commit text or PR body. Documentation-stage head branches (spec/*,
 #   implementation-plan/*) are not shipping evidence (RELEASE_SCOPE_SKIPPED
@@ -846,10 +850,13 @@ PY
 #
 # For every commit in the range, resolve associated merged PR(s) only through
 # GitHub `commits/<sha>/pulls` (cached per SHA). Subject "(#N)" is never
-# sufficient evidence. Accept a PR only when it is merged and its merge commit
-# or head commit is in the release range (or the associating range SHA when
-# those fields are absent). Linear IDs come from PR headRefName / head.ref and
-# title only. Documentation-stage and release/backport branches are
+# sufficient evidence. Well-formed [] → RELEASE_SCOPE_COMMIT_WITHOUT_PR (once
+# per SHA) and continue; empty body / non-array / [null] / [{}] / element
+# missing integer number or merged_at|merged|mergedAt → unresolved SHA
+# (RELEASE_SCOPE_INCOMPLETE). Accept a PR only when it is merged and its merge
+# commit or head commit is in the release range (or the associating range SHA
+# when those fields are absent). Linear IDs come from PR headRefName / head.ref
+# and title only. Documentation-stage and release/backport branches are
 # RELEASE_SCOPE_SKIPPED; other prefixes (including chore/) are shipping
 # evidence. Changelog-only IDs are RELEASE_SCOPE_SKIPPED. Explicit
 # --issue/--issues are unioned afterward. Helper stdout ends with `OK` on
@@ -862,6 +869,7 @@ filter_linear_changelog_scope_by_merged_prs() {
   local changelog_csv=""
   local filter_out=""
   local line issue reason proposed unresolved
+  local no_pr_sha no_pr_short
   local -a kept=()
   local -a changelog_only=()
   local filter_status=0
@@ -1302,6 +1310,9 @@ def normalize_pr_payload(payload):
     REST responses expose head.ref / base.ref / merged_at / merge_commit_sha;
     GraphQL uses headRefName / baseRefName / mergedAt. Branch-only Linear IDs
     (hotfix head.ref) must not be dropped when title omits the ID.
+
+    Caller must already validate that payload is a dict with an integer
+    ``number`` and a present merged_at / merged / mergedAt field.
     """
     if not isinstance(payload, dict):
         return None
@@ -1311,6 +1322,9 @@ def normalize_pr_payload(payload):
     base_obj = payload.get("base") if isinstance(payload.get("base"), dict) else {}
     base_ref = payload.get("baseRefName") or base_obj.get("ref") or ""
     merged_at = payload.get("mergedAt") or payload.get("merged_at") or ""
+    if not merged_at and payload.get("merged") is True:
+        # Boolean merged:true is sufficient "merged" evidence when timestamp absent.
+        merged_at = "true"
     merge_commit = (
         payload.get("mergeCommitOid")
         or payload.get("merge_commit_sha")
@@ -1319,8 +1333,11 @@ def normalize_pr_payload(payload):
     merge_obj = payload.get("mergeCommit")
     if not merge_commit and isinstance(merge_obj, dict):
         merge_commit = merge_obj.get("oid") or ""
+    number = payload.get("number")
+    if type(number) is not int:
+        return None
     return {
-        "number": payload.get("number"),
+        "number": number,
         "headRefName": head_ref,
         "headSha": head_sha,
         "title": payload.get("title") or "",
@@ -1330,7 +1347,18 @@ def normalize_pr_payload(payload):
     }
 
 
+def _pr_element_has_merged_field(item):
+    """True when a merged_at / mergedAt / merged key is present (value may be null/false)."""
+    return ("merged_at" in item) or ("mergedAt" in item) or ("merged" in item)
+
+
 def pulls_for_commit(sha, repo_slug, commit_cache):
+    """Return normalized PR list, [] for well-formed empty, or None if unresolved.
+
+    [] is a valid GitHub answer (commit has no associated PR). Empty body,
+    non-array JSON, [null], [{}], or any element missing an integer ``number``
+    or a merged_at/merged/mergedAt field is unresolved (None).
+    """
     if sha in commit_cache:
         return commit_cache[sha]
     api = subprocess.run(
@@ -1344,6 +1372,7 @@ def pulls_for_commit(sha, repo_slug, commit_cache):
         return None
     stripped = api.stdout.strip()
     if not stripped:
+        # Empty HTTP body is malformed evidence (distinct from well-formed []).
         commit_cache[sha] = None
         return None
     try:
@@ -1354,14 +1383,27 @@ def pulls_for_commit(sha, repo_slug, commit_cache):
     if not isinstance(payload, list):
         commit_cache[sha] = None
         return None
+    # Well-formed empty array: commit has no associated PR.
+    if len(payload) == 0:
+        commit_cache[sha] = []
+        return []
     normalized = []
     for item in payload:
         if not isinstance(item, dict):
             commit_cache[sha] = None
             return None
+        number = item.get("number")
+        if type(number) is not int:
+            commit_cache[sha] = None
+            return None
+        if not _pr_element_has_merged_field(item):
+            commit_cache[sha] = None
+            return None
         norm = normalize_pr_payload(item)
-        if norm is not None:
-            normalized.append(norm)
+        if norm is None:
+            commit_cache[sha] = None
+            return None
+        normalized.append(norm)
     commit_cache[sha] = normalized
     return normalized
 
@@ -1421,9 +1463,15 @@ def collect_merged_pr_linear_ids(range_spec, repo_slug):
         if pulls is None:
             unresolved.append(sha)
             continue
+        if len(pulls) == 0:
+            # Well-formed []: commit has no associated PR (direct push / local
+            # merge). Scope stays complete; emit once per SHA for operators.
+            print("NO_PR\t%s" % sha)
+            continue
 
         for payload in pulls:
             if not payload.get("mergedAt"):
+                # merged field present but false/null → not a merged PR; skip.
                 continue
             # Base branch is irrelevant: evidence is a merged PR whose
             # merge/head (or associating) commit is in the release range —
@@ -1548,6 +1596,12 @@ PY
         reason="$(printf '%s\n' "$line" | cut -f3)"
         [ -n "$reason" ] || reason="changelog_mention_without_merged_pr"
         record_release_scope_skip "$issue" "$reason"
+        ;;
+      NO_PR$'\t'*)
+        # Well-formed commits/<sha>/pulls → [] (no associated PR).
+        no_pr_sha="${line#NO_PR	}"
+        no_pr_short="$(printf '%s' "$no_pr_sha" | cut -c1-7)"
+        cleanup_log "RELEASE_SCOPE_COMMIT_WITHOUT_PR sha=${no_pr_short}"
         ;;
     esac
   done <<< "$filter_out"

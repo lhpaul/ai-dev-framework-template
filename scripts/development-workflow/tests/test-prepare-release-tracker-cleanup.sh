@@ -1328,11 +1328,28 @@ lookup_commit_pulls() {
         pr_num="${line##*|}"
         case "$pr_num" in
           malformed:empty)
+            # Empty HTTP body (distinct from well-formed []).
             printf '\n'
             return 0
             ;;
           malformed:null)
             printf '[null]\n'
+            return 0
+            ;;
+          malformed:empty_object)
+            printf '[{}]\n'
+            return 0
+            ;;
+          malformed:no_number)
+            printf '[{"merged_at":"2026-10-14T12:00:00Z","title":"fix","headRefName":"fix/LEA-302"}]\n'
+            return 0
+            ;;
+          malformed:no_merged)
+            printf '[{"number":88,"title":"fix(billing): LEA-302","headRefName":"fix/LEA-302-billing-fix"}]\n'
+            return 0
+            ;;
+          empty:array)
+            printf '[]\n'
             return 0
             ;;
         esac
@@ -2992,6 +3009,81 @@ run_test "linear_1982_malformed_null_pulls_exits_zero" "0" "$status"
 run_contains "linear_1982_malformed_null_incomplete" \
   "RELEASE_SCOPE_INCOMPLETE unresolved_shas=${sha_malformed}" "$output"
 run_not_contains "linear_1982_malformed_null_no_ok_scope" "TRACKER_ISSUES=LEA-302" "$output"
+
+# [{}] — empty object missing number and merged field → incomplete
+write_linear_scope_gh \
+  "88|fix/LEA-302-billing-fix|fix(billing): LEA-302" \
+  "commit:${sha_malformed}|malformed:empty_object"
+result="$(run_linear_scope_cleanup "$repo_malformed_pulls" v1.29.0 --from-changelog --best-effort)"
+status="$(printf '%s\n' "$result" | sed -n '1p')"
+output="$(printf '%s\n' "$result" | sed '1d')"
+run_test "linear_1982_malformed_empty_object_exits_zero" "0" "$status"
+run_contains "linear_1982_malformed_empty_object_incomplete" \
+  "RELEASE_SCOPE_INCOMPLETE unresolved_shas=${sha_malformed}" "$output"
+run_not_contains "linear_1982_malformed_empty_object_no_ok_scope" "TRACKER_ISSUES=LEA-302" "$output"
+
+# Element missing integer number → incomplete
+write_linear_scope_gh \
+  "88|fix/LEA-302-billing-fix|fix(billing): LEA-302" \
+  "commit:${sha_malformed}|malformed:no_number"
+result="$(run_linear_scope_cleanup "$repo_malformed_pulls" v1.29.0 --from-changelog --best-effort)"
+status="$(printf '%s\n' "$result" | sed -n '1p')"
+output="$(printf '%s\n' "$result" | sed '1d')"
+run_test "linear_1982_malformed_no_number_exits_zero" "0" "$status"
+run_contains "linear_1982_malformed_no_number_incomplete" \
+  "RELEASE_SCOPE_INCOMPLETE unresolved_shas=${sha_malformed}" "$output"
+run_not_contains "linear_1982_malformed_no_number_no_ok_scope" "TRACKER_ISSUES=LEA-302" "$output"
+
+# Element with number but no merged_at/merged/mergedAt field → incomplete
+write_linear_scope_gh \
+  "88|fix/LEA-302-billing-fix|fix(billing): LEA-302" \
+  "commit:${sha_malformed}|malformed:no_merged"
+result="$(run_linear_scope_cleanup "$repo_malformed_pulls" v1.29.0 --from-changelog --best-effort)"
+status="$(printf '%s\n' "$result" | sed -n '1p')"
+output="$(printf '%s\n' "$result" | sed '1d')"
+run_test "linear_1982_malformed_no_merged_exits_zero" "0" "$status"
+run_contains "linear_1982_malformed_no_merged_incomplete" \
+  "RELEASE_SCOPE_INCOMPLETE unresolved_shas=${sha_malformed}" "$output"
+run_not_contains "linear_1982_malformed_no_merged_no_ok_scope" "TRACKER_ISSUES=LEA-302" "$output"
+
+# --- Well-formed [] (no associated PR) + valid PR on another commit ---
+# [] must emit RELEASE_SCOPE_COMMIT_WITHOUT_PR and keep scope complete so the
+# other commit's IDs are still proposed.
+repo_empty_array="$TMP_ROOT/linear-1982-empty-array-pulls"
+init_linear_git_repo "$repo_empty_array"
+cat > "$repo_empty_array/CHANGELOG.md" <<'MD'
+# Changelog
+
+## [Unreleased]
+
+## [1.29.0] - 2026-10-15
+
+- Ships LEA-302.
+MD
+"$REAL_GIT" -C "$repo_empty_array" add CHANGELOG.md .ai-dev-workflow.yaml scripts
+"$REAL_GIT" -C "$repo_empty_array" commit -q -m "chore: baseline before v1.28.0"
+"$REAL_GIT" -C "$repo_empty_array" tag v1.28.0
+"$REAL_GIT" -C "$repo_empty_array" commit -q --allow-empty \
+  -m "chore: direct push with no associated PR"
+sha_no_pr="$("$REAL_GIT" -C "$repo_empty_array" rev-parse HEAD)"
+"$REAL_GIT" -C "$repo_empty_array" commit -q --allow-empty \
+  -m "Merge pull request #88 from example/fix/LEA-302-billing-fix"
+sha_with_pr="$("$REAL_GIT" -C "$repo_empty_array" rev-parse HEAD)"
+"$REAL_GIT" -C "$repo_empty_array" tag v1.29.0
+sha_no_pr_short="$(printf '%s' "$sha_no_pr" | cut -c1-7)"
+write_linear_scope_gh \
+  "88|fix/LEA-302-billing-fix|fix(billing): LEA-302" \
+  "commit:${sha_no_pr}|empty:array" \
+  "commit:${sha_with_pr}|88"
+result="$(run_linear_scope_cleanup "$repo_empty_array" v1.29.0 --from-changelog --best-effort)"
+status="$(printf '%s\n' "$result" | sed -n '1p')"
+output="$(printf '%s\n' "$result" | sed '1d')"
+run_test "linear_1982_empty_array_exits_zero" "0" "$status"
+run_contains "linear_1982_empty_array_diagnostic" \
+  "RELEASE_SCOPE_COMMIT_WITHOUT_PR sha=${sha_no_pr_short}" "$output"
+run_contains "linear_1982_empty_array_still_proposes_302" "TRACKER_ISSUES=LEA-302" "$output"
+run_not_contains "linear_1982_empty_array_not_incomplete" \
+  "RELEASE_SCOPE_INCOMPLETE unresolved_shas=" "$output"
 
 # --- GH_REPO must not override checkout repo for Linear PR lookups ---
 repo_gh_repo="$TMP_ROOT/linear-1982-gh-repo-override"

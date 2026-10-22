@@ -569,15 +569,22 @@ tag as `refs/tags/...` or `--release-head`; never checkout `HEAD` or
 unqualified names that could resolve a same-named branch): each commit is
 resolved to its PR(s) only via GitHub `commits/<sha>/pulls` against the
 checkout/component repository (not an inherited `GH_REPO` override; subject
-`#N` / `Merge pull request #N` is never sufficient evidence). A PR is accepted
-when merged and its merge/head commit is in the range, regardless of base
-branch. Documentation-stage (`spec/*`, `implementation-plan/*`) and
-release/backport branches are skipped
-(`documentation_stage_pr_only` / `release_or_backport_branch_pr`); all other
-merged prefixes (including `chore/`, `ci/`, `feature/`, `fix/`, …) count as
-Released shipping evidence. IDs are taken from each PR's `headRefName` / REST
-`head.ref` and `title` — not from commit text or PR body. Changelog-only
-mentions (including expanded ranges such as `LEA-298–LEA-301`) are omitted as
+`#N` / `Merge pull request #N` is never sufficient evidence). A well-formed
+empty JSON array `[]` means the commit has no associated PR (for example a
+direct push or a locally created merge commit): it contributes no IDs, emits
+`RELEASE_SCOPE_COMMIT_WITHOUT_PR sha=<short>` once per SHA, and does **not**
+make the scope incomplete. Empty response body, non-array JSON, `[null]`,
+`[{}]`, or any element missing an integer `number` or a `merged_at` /
+`merged` / `mergedAt` field is malformed evidence and produces
+`RELEASE_SCOPE_INCOMPLETE` with that SHA listed. A PR is accepted when merged
+and its merge/head commit is in the range, regardless of base branch.
+Documentation-stage (`spec/*`, `implementation-plan/*`) and release/backport
+branches are skipped (`documentation_stage_pr_only` /
+`release_or_backport_branch_pr`); all other merged prefixes (including
+`chore/`, `ci/`, `feature/`, `fix/`, …) count as Released shipping evidence.
+IDs are taken from each PR's `headRefName` / REST `head.ref` and `title` —
+not from commit text or PR body. Changelog-only mentions (including expanded
+ranges such as `LEA-298–LEA-301`) are omitted as
 `RELEASE_SCOPE_SKIPPED issue=<ID> reason=changelog_mention_without_merged_pr`.
 Previous-tag selection uses the requested version/tag PREFIX and SemVer 2.0.0
 precedence (prerelease < release; build metadata ignored) — not a co-pointing
@@ -589,8 +596,9 @@ disagrees with a local tag of the same name emit
 `RELEASE_SCOPE_INCOMPLETE reason=previous_release_boundary_unavailable` (scope
 resolution never `git fetch`es — fetch tags and rerun). A fully resolved range
 with zero Linear IDs is an empty scope (not `RELEASE_SCOPE_INCOMPLETE`). If the
-release ref is unavailable or PR resolution fails for any commit in range, the
-helper emits `RELEASE_SCOPE_INCOMPLETE` (`reason=release_ref_unavailable` or
+release ref is unavailable or PR resolution fails for any commit in range
+(including malformed `commits/<sha>/pulls` evidence), the helper emits
+`RELEASE_SCOPE_INCOMPLETE` (`reason=release_ref_unavailable` or
 `unresolved_shas=...`) and fails closed. Explicit `--issue` / `--issues` are
 unioned with the derived scope and never filtered. GitHub Projects / GitHub
 Issues `--from-changelog` behavior is unchanged (missing CHANGELOG file/section
@@ -609,7 +617,8 @@ live in `scripts/development-workflow/tests/test-prepare-release-tracker-cleanup
 | `--from-changelog` with missing CHANGELOG file or version section (Linear only) | Scope derivation continues from merged PRs; changelog IDs treated as complement | Run merged-PR filter; do not treat changelog regex as authoritative | `CHANGELOG_SECTION_UNAVAILABLE version=vX.Y.Z (Linear scope derived from merged PRs only)` on stderr |
 | Previous semver tag boundary unavailable (shallow clone, remote tag-list failure, preceding commit missing locally or local tag disagrees with remote peeled SHA; never fetch during resolution) | Incomplete scope; no Released transitions on inferred IDs | `git fetch --tags origin` (or fix depth/remotes) and rerun, or pass explicit `--issue` / `--issues`; do not stamp | `RELEASE_SCOPE_INCOMPLETE reason=previous_release_boundary_unavailable` (+ fetch-tags instruction); exit non-zero unless `--best-effort` |
 | Release tip ref unavailable (`--release-head` absent and `refs/tags/...` cannot be verified; unqualified names are not accepted) | Incomplete scope | Supply verified `--release-head` or fix tags; or pass explicit issues | `RELEASE_SCOPE_INCOMPLETE reason=release_ref_unavailable`; exit non-zero unless `--best-effort` |
-| Any commit in range: `commits/<sha>/pulls` fails, returns empty/malformed JSON, or non-object entries | Incomplete scope (fail closed) | Investigate GitHub/API evidence; pass explicit `--issue` / `--issues` for known shippers | `RELEASE_SCOPE_INCOMPLETE unresolved_shas=<sha[,…]>`; exit non-zero unless `--best-effort` |
+| Any commit in range: `commits/<sha>/pulls` returns well-formed `[]` | Scope stays complete; commit contributes no IDs (direct push / local merge) | None required; other commits' PR IDs still proposed | `RELEASE_SCOPE_COMMIT_WITHOUT_PR sha=<short>` once per SHA |
+| Any commit in range: `commits/<sha>/pulls` fails, empty body, non-array JSON, `[null]`, `[{}]`, or any element missing an integer `number` or a `merged_at`/`merged`/`mergedAt` field | Incomplete scope (fail closed) | Investigate GitHub/API evidence; pass explicit `--issue` / `--issues` for known shippers | `RELEASE_SCOPE_INCOMPLETE unresolved_shas=<sha[,…]>`; exit non-zero unless `--best-effort` |
 | Merged PR in range with only `spec/*` or `implementation-plan/*` head branch | ID omitted from Released scope | None if documentation-only; use explicit `--issue` if it truly shipped | `RELEASE_SCOPE_SKIPPED issue=<ID> reason=documentation_stage_pr_only` |
 | Changelog or range-expanded mention without merged implementation PR evidence | ID omitted | Confirm item did not ship; add `--issue` only when human confirms shipment | `RELEASE_SCOPE_SKIPPED issue=<ID> reason=changelog_mention_without_merged_pr` |
 | Merged implementation-stage PR in verified range (`feature/*`, `fix/*`, `refactor/*`, `hotfix/*`) with Linear token in head ref/title | ID kept in proposed scope | Proceed with tracker transitions when rest of cleanup gates pass | `TRACKER_ISSUES=<ID[,…]>` / filter `KEEP` lines |
