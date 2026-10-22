@@ -34,7 +34,11 @@ FAIL_COUNT=0
 
 _harness_exit() {
   local status=$?
-  rm -rf "$TMP_ROOT"
+  if [ "${KEEP_TEST_TMP:-}" = "1" ]; then
+    echo "KEEP_TEST_TMP=1: leaving $TMP_ROOT" >&2
+  else
+    rm -rf "$TMP_ROOT"
+  fi
   case "$status" in
     141) exit 0 ;;
     *)   exit "$status" ;;
@@ -3367,7 +3371,11 @@ MOCK_GIT_PARITY
 
   normalize_parity_text() {
     # Collapse absolute temp paths so fixture roots do not break equality.
-    sed -e "s|${TMP_ROOT}|TMP_ROOT|g" -e "s|${PARITY_ROOT}|PARITY_ROOT|g"
+    # Also collapse script line numbers so HEAD vs develop baseline path-length
+    # differences do not break stderr equality on shared error text.
+    sed -e "s|${TMP_ROOT}|TMP_ROOT|g" -e "s|${PARITY_ROOT}|PARITY_ROOT|g" \
+      -e 's|prepare-release-post-merge-cleanup\.sh: line [0-9][0-9]*:|prepare-release-post-merge-cleanup.sh: line N:|g' \
+      -e 's|prepare-release-post-merge-cleanup\.develop-baseline: line [0-9][0-9]*:|prepare-release-post-merge-cleanup.sh: line N:|g'
   }
 
   fixture_parity_repo() {
@@ -3542,6 +3550,315 @@ MD
       --from-changelog --best-effort --json
     run_parity_one "${provider}_issue_json" "$provider" "v1.2.3" "v1.2.3" \
       --issue 101 --best-effort --json
+  done
+
+  # --- Component --json parity (emit_component_cleanup_json GitHub shape) ---
+  # Use REAL_GIT captured before MOCK_BIN shadowed PATH (not command -v git).
+  REAL_GIT_PARITY="$REAL_GIT"
+  run_parity_component() {
+    local label="$1"
+    local provider="$2"
+    shift 2
+    # remaining: extra cleanup argv (e.g. --from-changelog)
+    local case_dir="$PARITY_ROOT/case-${label}"
+    mkdir -p "$case_dir"
+    local root="$case_dir/root"
+    rm -rf "$root"
+    mkdir -p "$root"
+
+    "$REAL_GIT_PARITY" init -q --bare "$root/origin.git"
+    mkdir -p "$root/mobile-app"
+    "$REAL_GIT_PARITY" -C "$root/mobile-app" init -q -b main
+    "$REAL_GIT_PARITY" -C "$root/mobile-app" config user.email test@example.com
+    "$REAL_GIT_PARITY" -C "$root/mobile-app" config user.name test
+    "$REAL_GIT_PARITY" -C "$root/mobile-app" commit -q --allow-empty -m init
+    "$REAL_GIT_PARITY" -C "$root/mobile-app" remote add origin "$root/origin.git"
+    "$REAL_GIT_PARITY" -C "$root/mobile-app" push -q origin main
+    "$REAL_GIT_PARITY" -C "$root/mobile-app" checkout -q -b release-base
+    "$REAL_GIT_PARITY" -C "$root/mobile-app" push -q origin release-base
+    cat > "$root/mobile-app/CHANGELOG.md" <<'MD'
+# Changelog
+
+## [Unreleased]
+
+## [1.0.0] - 2026-06-11
+
+### Fixed
+
+- Fixed some bug (#101).
+MD
+    "$REAL_GIT_PARITY" -C "$root/mobile-app" add CHANGELOG.md
+    "$REAL_GIT_PARITY" -C "$root/mobile-app" commit -q -m changelog
+    "$REAL_GIT_PARITY" -C "$root/mobile-app" checkout -q -b mobile-app/release/v1.0.0
+    "$REAL_GIT_PARITY" -C "$root/mobile-app" commit -q --allow-empty -m release
+    "$REAL_GIT_PARITY" -C "$root/mobile-app" push -q origin mobile-app/release/v1.0.0
+    local release_tip
+    release_tip="$("$REAL_GIT_PARITY" -C "$root/mobile-app" rev-parse mobile-app/release/v1.0.0)"
+    "$REAL_GIT_PARITY" -C "$root/mobile-app" checkout -q main
+
+    mkdir -p "$root/hub/scripts/development-workflow" "$root/hub/bin"
+    "$REAL_GIT_PARITY" init -q "$root/hub"
+    cp "$REPO_ROOT/scripts/development-workflow/component-release-target.sh" \
+      "$root/hub/scripts/development-workflow/component-release-target.sh"
+    cp "$REPO_ROOT/scripts/development-workflow/workflow-config-resolver.py" \
+      "$root/hub/scripts/development-workflow/workflow-config-resolver.py"
+    chmod +x "$root/hub/scripts/development-workflow/"*.sh
+
+    if [ "$provider" = "github_projects" ]; then
+      cat > "$root/hub/.ai-dev-workflow.yaml" <<'YAML'
+schema_version: 2
+mode: workflow_hub
+issue_tracker:
+  provider: github_projects
+  project_number: 1
+
+workflow_hub:
+  product_repos:
+    - name: mobile-app
+      github_repo: example/mobile-app
+      default_branch: release-base
+      release:
+        base: release-base
+        branch_pattern: "{product_repo}/release/v{version}"
+        changelog_owner: product_repo
+        tag_owner: product_repo
+        github_release_owner: product_repo
+        deployment_evidence_owner: product_repo
+        cleanup_evidence_owner: product_repo
+        tracker_reconciliation_owner: hub
+YAML
+    else
+      cat > "$root/hub/.ai-dev-workflow.yaml" <<'YAML'
+schema_version: 2
+mode: workflow_hub
+issue_tracker:
+  provider: github_issues
+
+workflow_hub:
+  product_repos:
+    - name: mobile-app
+      github_repo: example/mobile-app
+      default_branch: release-base
+      release:
+        base: release-base
+        branch_pattern: "{product_repo}/release/v{version}"
+        changelog_owner: product_repo
+        tag_owner: product_repo
+        github_release_owner: product_repo
+        deployment_evidence_owner: product_repo
+        cleanup_evidence_owner: product_repo
+        tracker_reconciliation_owner: hub
+YAML
+    fi
+    cat > "$root/hub/.ai-dev-workflow.local.yaml" <<YAML
+product_repos:
+  - name: mobile-app
+    local_path: ../mobile-app
+YAML
+    # GitHub --from-changelog checks CHANGELOG.md relative to hub CWD (develop).
+    cat > "$root/hub/CHANGELOG.md" <<'MD'
+# Changelog
+
+## [Unreleased]
+
+## [1.0.0] - 2026-06-11
+
+### Fixed
+
+- Fixed some bug (#101).
+MD
+
+    # Shared stub lib (identical for HEAD and baseline) — isolates cleanup script.
+    cat > "$root/hub/scripts/development-workflow/workflow-lib.sh" <<STUB
+#!/usr/bin/env bash
+cd_workflow_repo_root() { return 0; }
+require_gh() { return 0; }
+workflow_issue_tracker_provider_raw() { printf '%s\n' "$provider"; }
+workflow_normalize_issue_tracker_provider() { printf '%s' "\$1" | tr '[:upper:]' '[:lower:]'; }
+workflow_issue_tracker_project_number() { printf '1\n'; }
+workflow_resolve_github_repo_owner() { printf 'example\n'; }
+workflow_resolve_github_repo_name() { printf 'mobile-app\n'; }
+workflow_resolve_github_project_owner() { printf 'example\n'; }
+workflow_is_valid_github_owner() {
+  case "\$1" in ''|-*|*-|*[!A-Za-z0-9-]*) return 1 ;; esac
+  return 0
+}
+workflow_is_valid_github_repo_name() {
+  case "\$1" in ''|'.'|'..'|*[!A-Za-z0-9._-]*) return 1 ;; esac
+  return 0
+}
+workflow_is_valid_github_repo_slug() {
+  local repo_slug="\$1"
+  local owner="\${repo_slug%%/*}"
+  local repo_name="\${repo_slug#*/}"
+  [ "\$owner/\$repo_name" = "\$repo_slug" ] || return 1
+  workflow_is_valid_github_owner "\$owner" || return 1
+  workflow_is_valid_github_repo_name "\$repo_name" || return 1
+  return 0
+}
+record_release_for_issue_best_effort() {
+  printf 'RELEASE_STAMP_SKIPPED issue=%s version=%s provider=%s reason=parity_stub\n' "\$1" "\$2" "$provider"
+}
+update_tracker_status_best_effort() {
+  printf 'Updating tracker status for issue %s to Released...\n' "\$1"
+}
+STUB
+
+    local head_log="$case_dir/head.calls"
+    local base_log="$case_dir/base.calls"
+    install_component_parity_gh() {
+      local log="$1"
+      cat > "$root/hub/bin/gh" <<EOF
+#!/usr/bin/env bash
+printf 'gh %s\n' "\$*" >> "$log"
+case "\$*" in
+  "pr list --repo example/mobile-app --state merged --head mobile-app/release/v1.0.0 --base main --json number --jq .[0].number // empty")
+    printf '900\n' ;;
+  "pr list --repo example/mobile-app --state merged --head mobile-app/release/v1.0.0 --base release-base --json number --jq .[0].number // empty")
+    printf '901\n' ;;
+  "pr list --repo example/mobile-app --state open --head mobile-app/release/v1.0.0 --base main --json number --jq .[0].number // empty")
+    printf '\n' ;;
+  "pr list --repo example/mobile-app --state open --head mobile-app/release/v1.0.0 --base release-base --json number --jq .[0].number // empty")
+    printf '\n' ;;
+  issue\ view\ *\ --json\ state\ --jq\ .state) printf 'OPEN\n' ;;
+  "auth status") exit 0 ;;
+  "api repos/example/mobile-app/releases/tags/v1.0.0"*)
+    printf '\n' ;;
+  "api repos/example/mobile-app/tags?per_page=100"*)
+    printf 'v1.0.0\n' ;;
+  *"user(login"*"projectV2"*)
+    printf '{"data":{"user":{"projectV2":{"id":"PVT_test000001"}}}}\n' ;;
+  *"organization(login"*"projectV2"*)
+    printf '{"data":{"organization":{"projectV2":{"id":"PVT_test000001"}}}}\n' ;;
+  *"projectId"*"ProjectV2"*"items"*)
+    printf '{"data":{"node":{"items":{"nodes":[],"pageInfo":{"hasNextPage":false,"endCursor":""}}}}}\n' ;;
+  "api graphql"*)
+    printf '{"data":{"repository":{"issue":{"projectItems":{"nodes":[],"pageInfo":{"hasNextPage":false,"endCursor":""}}}}}}\n' ;;
+  *)
+    printf 'unexpected gh: %s\n' "\$*" >&2
+    exit 64
+    ;;
+esac
+EOF
+      chmod +x "$root/hub/bin/gh"
+    }
+
+    restore_release_branch() {
+      "$REAL_GIT_PARITY" -C "$root/mobile-app" checkout -q main 2>/dev/null || true
+      "$REAL_GIT_PARITY" -C "$root/mobile-app" branch -f mobile-app/release/v1.0.0 "$release_tip"
+      "$REAL_GIT_PARITY" -C "$root/origin.git" update-ref \
+        refs/heads/mobile-app/release/v1.0.0 "$release_tip"
+      "$REAL_GIT_PARITY" -C "$root/mobile-app" fetch -q origin \
+        mobile-app/release/v1.0.0:mobile-app/release/v1.0.0 2>/dev/null || true
+      "$REAL_GIT_PARITY" -C "$root/mobile-app" checkout -q main
+    }
+
+    run_one_side() {
+      local script_src="$1"
+      local log="$2"
+      local out_file="$3"
+      local err_file="$4"
+      local status_file="$5"
+      shift 5
+      restore_release_branch
+      cp "$script_src" \
+        "$root/hub/scripts/development-workflow/prepare-release-post-merge-cleanup.sh"
+      chmod +x "$root/hub/scripts/development-workflow/prepare-release-post-merge-cleanup.sh"
+      : > "$log"
+      install_component_parity_gh "$log"
+      (
+        cd "$root/hub"
+        target_json="$(./scripts/development-workflow/component-release-target.sh \
+          --repo-root "$PWD" --repo mobile-app \
+          --release-branch mobile-app/release/v1.0.0 --json)"
+        jq -nS --argjson target "$target_json" \
+          '{
+            schema_version:"component_release_evidence.v1",
+            target_binding:$target,
+            release_branch:"mobile-app/release/v1.0.0",
+            release_outcome:"completed",
+            ci_outcome:"passed",
+            deployment_outcome:"recorded",
+            cleanup_outcome:"not_started",
+            hub_tracker_ref:"#101"
+          }' > component-release-evidence.json
+        set +e
+        PATH="$PWD/bin:$(dirname "$REAL_GIT_PARITY"):$PATH" WORKFLOW_SKIP_FETCH=1 \
+          ./scripts/development-workflow/prepare-release-post-merge-cleanup.sh \
+          mobile-app/release/v1.0.0 \
+          --repo mobile-app --repo-root "$PWD" \
+          --evidence-file "$PWD/component-release-evidence.json" \
+          --issue 101 --best-effort --json "$@" \
+          > "$out_file" 2> "$err_file"
+        echo $? > "$status_file"
+        set -e
+      )
+    }
+
+    run_one_side \
+      "$REPO_ROOT/scripts/development-workflow/prepare-release-post-merge-cleanup.sh" \
+      "$head_log" "$case_dir/head.stdout" "$case_dir/head.stderr" \
+      "$case_dir/head.status" "$@"
+    local head_status
+    head_status="$(cat "$case_dir/head.status")"
+
+    run_one_side \
+      "$DEVELOP_BASELINE" \
+      "$base_log" "$case_dir/base.stdout" "$case_dir/base.stderr" \
+      "$case_dir/base.status" "$@"
+    local base_status
+    base_status="$(cat "$case_dir/base.status")"
+
+    run_test "parity_${label}_exit" "$base_status" "$head_status"
+
+    local head_out base_out head_err base_err
+    head_out="$(normalize_parity_text < "$case_dir/head.stdout")"
+    base_out="$(normalize_parity_text < "$case_dir/base.stdout")"
+    head_err="$(normalize_parity_text < "$case_dir/head.stderr")"
+    base_err="$(normalize_parity_text < "$case_dir/base.stderr")"
+
+    # JSON stdout: normalize then compare; also assert no release_scope_skipped.
+    if [ -n "$head_out" ] && jq empty <<<"$head_out" >/dev/null 2>&1; then
+      head_out="$(printf '%s\n' "$head_out" | jq -cS . | normalize_parity_text)"
+      base_out="$(printf '%s\n' "$base_out" | jq -cS . | normalize_parity_text)"
+      if printf '%s' "$head_out" | jq -e 'has("release_scope_skipped")' >/dev/null 2>&1; then
+        run_test "parity_${label}_no_skipped_field" "absent" "present"
+      else
+        run_test "parity_${label}_no_skipped_field" "absent" "absent"
+      fi
+    fi
+
+    if [ "$head_out" = "$base_out" ]; then
+      run_test "parity_${label}_stdout" "match" "match"
+    else
+      printf '%s\n' "$head_out" > "$case_dir/head.stdout.norm"
+      printf '%s\n' "$base_out" > "$case_dir/base.stdout.norm"
+      run_test "parity_${label}_stdout" "match" "DIFF see $case_dir/*.stdout*"
+    fi
+    if [ "$head_err" = "$base_err" ]; then
+      run_test "parity_${label}_stderr" "match" "match"
+    else
+      printf '%s\n' "$head_err" > "$case_dir/head.stderr.norm"
+      printf '%s\n' "$base_err" > "$case_dir/base.stderr.norm"
+      run_test "parity_${label}_stderr" "match" "DIFF see $case_dir/*.stderr*"
+    fi
+
+    local head_all base_all
+    head_all="$(normalize_parity_text < "$head_log")"
+    base_all="$(normalize_parity_text < "$base_log")"
+    if [ "$head_all" = "$base_all" ]; then
+      run_test "parity_${label}_calls" "match" "match"
+    else
+      printf '%s\n' "$head_all" > "$case_dir/head.calls.norm"
+      printf '%s\n' "$base_all" > "$case_dir/base.calls.norm"
+      run_test "parity_${label}_calls" "match" "DIFF see $case_dir/*.calls*"
+    fi
+    PARITY_COUNT=$((PARITY_COUNT + 1))
+  }
+
+  for provider in github_projects github_issues; do
+    run_parity_component "${provider}_component_issue_json" "$provider"
+    run_parity_component "${provider}_component_fc_json" "$provider" --from-changelog
   done
 
   echo "Differential GitHub parity cases run: $PARITY_COUNT"

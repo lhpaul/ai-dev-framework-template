@@ -229,6 +229,53 @@ emit_component_cleanup_json() {
   if [ "${#ISSUE_NUMBERS[@]}" -gt 0 ]; then
     issues_csv="$(IFS=,; printf '%s' "${ISSUE_NUMBERS[*]}")"
   fi
+  already_complete="false"
+  if [ "${REMOTE_BRANCH_DELETED:-false}" != "true" ] && [ "${LOCAL_BRANCH_DELETED:-false}" != "true" ]; then
+    already_complete="true"
+  fi
+
+  # release_scope_skipped is Linear-only. GitHub providers keep origin/develop's
+  # component JSON shape (no field) byte-identical.
+  if [ "$TRACKER_PROVIDER" != "linear" ]; then
+    jq -cnS \
+      --arg schema_version "component_release_cleanup.v1" \
+      --arg cleanup_outcome "$cleanup_outcome" \
+      --arg product_repo "$PRODUCT_REPO" \
+      --argjson remote_branch_deleted "${REMOTE_BRANCH_DELETED:-false}" \
+      --argjson local_branch_deleted "${LOCAL_BRANCH_DELETED:-false}" \
+      --argjson already_complete "$already_complete" \
+      --arg lock_owner "hub" \
+      --arg release_correlation_key "$lock_key" \
+      --arg tracker_owner "hub_repository" \
+      --arg issues_csv "$issues_csv" \
+      --argjson after_product_cleanup "$after_product_cleanup" \
+      --arg cleanup_evidence_status "$cleanup_evidence_status" \
+      --arg required_next_action "$required_next_action" \
+      '{
+        schema_version:$schema_version,
+        cleanup_outcome:$cleanup_outcome,
+        product_cleanup:{
+          repository_key:$product_repo,
+          remote_branch_deleted:$remote_branch_deleted,
+          local_branch_deleted:$local_branch_deleted,
+          already_complete:$already_complete
+        },
+        cleanup_lock:{
+          owner:$lock_owner,
+          release_correlation_key:$release_correlation_key
+        },
+        tracker_mutation:{
+          repository_owner:$tracker_owner,
+          issues:(if ($issues_csv|length) > 0 then ($issues_csv | split(",")) else [] end),
+          after_product_cleanup:$after_product_cleanup
+        },
+        cleanup_evidence:{
+          status:$cleanup_evidence_status
+        }
+      } + (if ($required_next_action|length) > 0 then {required_next_action:$required_next_action} else {} end)'
+    return 0
+  fi
+
   skipped_json="[]"
   if [ "${#RELEASE_SCOPE_SKIPPED_ISSUES[@]}" -gt 0 ]; then
     skipped_json="$(
@@ -240,10 +287,6 @@ emit_component_cleanup_json() {
         idx=$((idx + 1))
       done | jq -Rsc 'split("\n") | map(select(length>0) | split("\t") | {issue:.[0], reason:.[1]})'
     )"
-  fi
-  already_complete="false"
-  if [ "${REMOTE_BRANCH_DELETED:-false}" != "true" ] && [ "${LOCAL_BRANCH_DELETED:-false}" != "true" ]; then
-    already_complete="true"
   fi
   jq -cnS \
     --arg schema_version "component_release_cleanup.v1" \
