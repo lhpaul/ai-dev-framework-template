@@ -1009,36 +1009,23 @@ def semver_precedence_key(major, minor, patch, prerelease):
     return (major, minor, patch, 0, tuple(idents))
 
 
-def normalize_version(value):
-    return value[1:] if value.startswith("v") else value
-
-
 def resolve_current_ref():
     """Verified release tip only: --release-head SHA or refs/tags/<version>.
 
     Never falls back to checkout HEAD or unqualified names (vX.Y.Z / X.Y.Z)
     that could resolve a same-named branch when the tag is absent.
+
+    Tag candidates come only from release_namespace_spellings: bare/v aliases
+    for plain SemVer; component-prefixed names match exactly (never strip a
+    leading v from a component prefix such as vclient-v1.2.0 → client-v1.2.0).
     """
     if head and re.fullmatch(r"[0-9a-f]{40}", head):
         probe = run_git("rev-parse", "--verify", "--quiet", head + "^{commit}")
         if probe.returncode == 0:
             return head
         return None
-    # Prefer the version argument as a full tag name (v1.29.0, mobile-v1.1.0).
-    candidates = ["refs/tags/" + version]
-    bare = normalize_version(version)
-    if bare != version:
-        candidates.append("refs/tags/" + bare)
-    if not version.startswith("v") and re.match(r"^\d+\.\d+\.\d+", version):
-        candidates.append("refs/tags/v" + version)
-    # De-dupe while preserving order.
-    seen = set()
-    ordered = []
-    for candidate in candidates:
-        if candidate not in seen:
-            seen.add(candidate)
-            ordered.append(candidate)
-    for candidate in ordered:
+    for spelling in release_namespace_spellings(version):
+        candidate = "refs/tags/" + spelling
         probe = run_git("rev-parse", "--verify", "--quiet", candidate + "^{commit}")
         if probe.returncode == 0:
             return candidate

@@ -2514,6 +2514,52 @@ run_not_contains "linear_1982_mobile_prefix_no_200" "LEA-200" "$output"
 run_not_contains "linear_1982_mobile_prefix_no_boundary_incomplete" \
   "previous_release_boundary_unavailable" "$output"
 
+# --- Leading-v must not strip a component prefix (vclient-v… ≠ client-v…) ---
+# Only client-v1.2.0 exists. Requesting vclient-v1.2.0 must not resolve client-v
+# and emit KEEP/OK from unrelated shipping evidence.
+repo_vclient="$TMP_ROOT/linear-1982-vclient-prefix-strip"
+init_linear_git_repo "$repo_vclient"
+cat > "$repo_vclient/CHANGELOG.md" <<'MD'
+# Changelog
+
+## [Unreleased]
+
+## [client-v1.2.0] - 2026-10-15
+
+- Client component ships LEA-999.
+MD
+"$REAL_GIT" -C "$repo_vclient" add CHANGELOG.md .ai-dev-workflow.yaml scripts
+"$REAL_GIT" -C "$repo_vclient" commit -q -m "chore: client baseline"
+"$REAL_GIT" -C "$repo_vclient" commit -q --allow-empty \
+  -m "Merge pull request #73 from example/fix/LEA-998-client-prior"
+sha_client_998="$("$REAL_GIT" -C "$repo_vclient" rev-parse HEAD)"
+"$REAL_GIT" -C "$repo_vclient" tag client-v1.1.0
+"$REAL_GIT" -C "$repo_vclient" commit -q --allow-empty \
+  -m "Merge pull request #74 from example/fix/LEA-999-client-current"
+sha_client_999="$("$REAL_GIT" -C "$repo_vclient" rev-parse HEAD)"
+"$REAL_GIT" -C "$repo_vclient" tag client-v1.2.0
+write_linear_scope_gh \
+  "73|fix/LEA-998-client-prior|fix: LEA-998 client" \
+  "74|fix/LEA-999-client-current|fix: LEA-999 client" \
+  "commit:${sha_client_998}|73" \
+  "commit:${sha_client_999}|74"
+result="$(run_linear_scope_cleanup "$repo_vclient" vclient-v1.2.0 --from-changelog --best-effort)"
+status="$(printf '%s\n' "$result" | sed -n '1p')"
+output="$(printf '%s\n' "$result" | sed '1d')"
+run_test "linear_1982_vclient_wrong_prefix_best_effort_exits_zero" "0" "$status"
+run_contains "linear_1982_vclient_wrong_prefix_incomplete" \
+  "RELEASE_SCOPE_INCOMPLETE reason=release_ref_unavailable" "$output"
+run_not_contains "linear_1982_vclient_wrong_prefix_no_tracker" "TRACKER_ISSUES=" "$output"
+run_not_contains "linear_1982_vclient_wrong_prefix_no_keep" "KEEP LEA-999" "$output"
+run_not_contains "linear_1982_vclient_wrong_prefix_no_999" "LEA-999" "$output"
+result="$(run_linear_scope_cleanup "$repo_vclient" client-v1.2.0 --from-changelog --best-effort)"
+status="$(printf '%s\n' "$result" | sed -n '1p')"
+output="$(printf '%s\n' "$result" | sed '1d')"
+run_test "linear_1982_client_exact_prefix_exits_zero" "0" "$status"
+run_contains "linear_1982_client_exact_prefix_proposes_999" \
+  "TRACKER_ISSUES=LEA-999" "$output"
+run_not_contains "linear_1982_client_exact_prefix_no_998" "LEA-998" "$output"
+
 # --- Prerelease SemVer: rc.1 → rc.2 → stable ---
 repo_pre="$TMP_ROOT/linear-1982-prerelease-semver"
 init_linear_git_repo "$repo_pre"
