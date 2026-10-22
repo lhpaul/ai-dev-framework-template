@@ -586,13 +586,29 @@ IDs are taken from each PR's `headRefName` / REST `head.ref` and `title` —
 not from commit text or PR body. Changelog-only mentions (including expanded
 ranges such as `LEA-298–LEA-301`) are omitted as
 `RELEASE_SCOPE_SKIPPED issue=<ID> reason=changelog_mention_without_merged_pr`.
-Previous-tag selection uses the requested version/tag PREFIX and SemVer 2.0.0
-precedence (prerelease < release; build metadata ignored) — not a co-pointing
-tag at `--release-head`; invalid prerelease identifiers are ignored
-(`SEMVER_TAG_IGNORED`); `first_release` only when no same-prefix remote tag is
-strictly lower. Shallow clones, remote tag-list
-failures, or a preceding remote tag whose peeled commit is missing locally or
-disagrees with a local tag of the same name emit
+Previous-tag selection first resolves a **canonical SemVer tag namespace**
+(`resolve_release_tag_identity` in
+`prepare-release-post-merge-cleanup.sh`) from local ∪ remote evidence for the
+bare/`v` spellings of the requested version (Linear-only requested tag
+spelling from the raw CLI; component prefixes such as `mobile-v…` have a
+single spelling and no bare/`v` counterpart). That resolution is **identical
+with and without `--release-head`** (`current_ref` does not change spelling —
+never adopt a co-pointing component tag). Rules: (1) exactly one existing
+spelling among local/remote tags → adopt that spelling (e.g. request
+`v1.1.0` with only `1.1.0` present → namespace `1.1.0`); (2) both bare and
+`v` exist and every local/remote SHA agrees on one commit → keep the
+**requested** spelling; (3) local↔remote disagreement for one name, or
+bare vs `v` pointing at different SHAs →
+`RELEASE_SCOPE_INCOMPLETE reason=ambiguous_release_tag_namespace` (stderr also
+prints `ambiguous_release_tag_namespace version=<requested> (bare/v spellings
+or local/remote tag SHAs disagree)`); (4) neither spelling exists → keep the
+requested spelling (never invent a `v-` prefix). Only after that identity is
+fixed does previous-tag selection use **that namespace's PREFIX** and SemVer
+2.0.0 precedence (prerelease < release; build metadata ignored); invalid
+prerelease identifiers are ignored (`SEMVER_TAG_IGNORED`); `first_release`
+only when no same-prefix remote tag is strictly lower. Shallow clones, remote
+tag-list failures, or a preceding remote tag whose peeled commit is missing
+locally or disagrees with a local tag of the same name emit
 `RELEASE_SCOPE_INCOMPLETE reason=previous_release_boundary_unavailable` (scope
 resolution never `git fetch`es — fetch tags and rerun). A fully resolved range
 with zero Linear IDs is an empty scope (not `RELEASE_SCOPE_INCOMPLETE`). If the
@@ -615,6 +631,9 @@ live in `scripts/development-workflow/tests/test-prepare-release-tracker-cleanup
 | Gate input / condition | Allowed outcome | Required next action | Operator signal |
 | --- | --- | --- | --- |
 | `--from-changelog` with missing CHANGELOG file or version section (Linear only) | Scope derivation continues from merged PRs; changelog IDs treated as complement | Run merged-PR filter; do not treat changelog regex as authoritative | `CHANGELOG_SECTION_UNAVAILABLE version=vX.Y.Z (Linear scope derived from merged PRs only)` on stderr |
+| Canonical tag namespace: exactly one bare/`v` spelling exists in local ∪ remote tags for the requested version (e.g. request `v1.1.0`, only `1.1.0` present) | Adopt that sole existing spelling as the release namespace; then select previous same-prefix SemVer tag. **Same with and without `--release-head`.** | None when evidence is intentional; ensure the adopted spelling is the repo's real namespace | Boundary proceeds under the adopted spelling (no `ambiguous_release_tag_namespace`) |
+| Canonical tag namespace: both bare and `v` spellings exist and all local/remote evidence agrees on one SHA | Keep the **requested** spelling (as-given wins). **Same with and without `--release-head`.** | None when tags are intentionally dual-aliased to one commit | Boundary proceeds under the requested spelling |
+| Canonical tag namespace: conflicting evidence (local vs remote SHA for one spelling, or bare vs `v` pointing at different SHAs) | Incomplete scope (fail closed). **Same with and without `--release-head`.** | Align or delete conflicting tags so bare/`v` and local/remote agree on one SHA, then rerun; or pass explicit `--issue` / `--issues` and do not stamp inferred IDs | `RELEASE_SCOPE_INCOMPLETE reason=ambiguous_release_tag_namespace`; stderr `ambiguous_release_tag_namespace version=<requested> (bare/v spellings or local/remote tag SHAs disagree)`; exit non-zero unless `--best-effort` |
 | Previous semver tag boundary unavailable (shallow clone, remote tag-list failure, preceding commit missing locally or local tag disagrees with remote peeled SHA; never fetch during resolution) | Incomplete scope; no Released transitions on inferred IDs | `git fetch --tags origin` (or fix depth/remotes) and rerun, or pass explicit `--issue` / `--issues`; do not stamp | `RELEASE_SCOPE_INCOMPLETE reason=previous_release_boundary_unavailable` (+ fetch-tags instruction); exit non-zero unless `--best-effort` |
 | Release tip ref unavailable (`--release-head` absent and `refs/tags/...` cannot be verified; unqualified names are not accepted) | Incomplete scope | Supply verified `--release-head` or fix tags; or pass explicit issues | `RELEASE_SCOPE_INCOMPLETE reason=release_ref_unavailable`; exit non-zero unless `--best-effort` |
 | Any commit in range: `commits/<sha>/pulls` returns well-formed `[]` | Scope stays complete; commit contributes no IDs (direct push / local merge) | None required; other commits' PR IDs still proposed | `RELEASE_SCOPE_COMMIT_WITHOUT_PR sha=<short>` once per SHA |

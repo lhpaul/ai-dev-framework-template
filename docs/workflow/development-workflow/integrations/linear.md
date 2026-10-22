@@ -324,14 +324,24 @@ cross-references such as “did not ship LEA-298” and expanded ranges — are
 skipped with
 `RELEASE_SCOPE_SKIPPED issue=<ID> reason=changelog_mention_without_merged_pr`
 (and appear under `release_scope_skipped` in component `--json` output). The
-previous-tag boundary uses the requested release version/tag’s PREFIX (`v`,
-`mobile-v`, …) and full SemVer 2.0.0 precedence (prerelease < release; build
-metadata ignored) — never a co-pointing tag discovered via `--release-head`;
-invalid prerelease identifiers (e.g. leading zeros) are ignored with
-`SEMVER_TAG_IGNORED`; `first_release` only when no same-prefix remote tag is
-strictly lower. Shallow
-clones, remote tag-list failures, or a preceding remote tag whose peeled commit
-is missing locally or disagrees with a local tag of the same name emit
+previous-tag boundary first resolves a **canonical SemVer tag namespace** from
+local ∪ remote evidence for the bare/`v` spellings of the requested version
+(Linear-only requested tag spelling; component prefixes such as `mobile-v…`
+have a single spelling). Resolution is **identical with and without
+`--release-head`** (never adopt a co-pointing component tag): sole existing
+spelling → adopt it (e.g. request `v1.1.0` with only `1.1.0` → namespace
+`1.1.0`); both spellings agreeing on one SHA → keep the requested spelling;
+local↔remote or bare-vs-`v` SHA conflict →
+`RELEASE_SCOPE_INCOMPLETE reason=ambiguous_release_tag_namespace` (stderr
+`ambiguous_release_tag_namespace version=<requested> (bare/v spellings or
+local/remote tag SHAs disagree)`); neither spelling present → keep the
+requested spelling (never invent `v-`). Only then does previous-tag selection
+use **that namespace’s PREFIX** and SemVer 2.0.0 precedence (prerelease <
+release; build metadata ignored); invalid prerelease identifiers are ignored
+with `SEMVER_TAG_IGNORED`; `first_release` only when no same-prefix remote tag
+is strictly lower. Shallow clones, remote tag-list failures, or a preceding
+remote tag whose peeled commit is missing locally or disagrees with a local
+tag of the same name emit
 `RELEASE_SCOPE_INCOMPLETE reason=previous_release_boundary_unavailable` (the
 helper never `git fetch`es during scope resolution — fetch tags and rerun). A
 fully resolved range with zero Linear IDs is an empty scope (not incomplete). If
@@ -339,7 +349,10 @@ the release ref is unavailable or PR resolution fails for any commit
 (including malformed `commits/<sha>/pulls` evidence), the helper emits
 `RELEASE_SCOPE_INCOMPLETE` (`reason=release_ref_unavailable` or
 `unresolved_shas=...`) and fails closed. Explicit `--issue` / `--issues` are
-unioned with the derived scope and are never filtered.
+unioned with the derived scope and are never filtered. The canonical
+consistency matrix (including namespace rows) lives in
+[`05-prepare-release-protocol.md`](../protocols/05-prepare-release-protocol.md)
+Step 9.1.
 
 ---
 
