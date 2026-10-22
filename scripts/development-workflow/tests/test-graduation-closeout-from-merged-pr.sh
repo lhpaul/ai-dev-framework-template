@@ -1144,6 +1144,43 @@ for provider in github_projects github_issues; do
   run_contains "${provider}_wrap_heading_inside_nested_epic" "EPIC_ISSUE=123" "$body"
 
   echo ""
+  echo "=== wrapper: ${provider} keeps lazy-continuation then indented Closes #326 (#2016) ==="
+  reset_fixture
+  write_tracker_config "$provider"
+  export MOCK_LABEL_PARENT_MODE=empty
+  write_pr 163 "develop-test-2016" "develop" "true" "Graduate wave" \
+    $'- Delivered work:\nContinuation paragraph\n\n    Closes #326'
+  result="$(run_wrapper --graduation-pr 163)"
+  body="$(last_body "$result")"
+  run_test "${provider}_wrap_lazy_cont_indent_exit_zero" "0" "$(last_status "$result")"
+  run_contains "${provider}_wrap_lazy_cont_indent_epic" "EPIC_ISSUE=326" "$body"
+
+  echo ""
+  echo "=== wrapper: ${provider} strips code after lazy-cont then indent-0 exit (#2016) ==="
+  reset_fixture
+  write_tracker_config "$provider"
+  export MOCK_LABEL_PARENT_MODE=empty
+  write_pr 164 "develop-test-2016" "develop" "true" "Graduate wave" \
+    $'- Delivered work:\nContinuation paragraph\n\nParagraph outside\n\n    Closes #334\nEpic #900'
+  result="$(run_wrapper --graduation-pr 164)"
+  body="$(last_body "$result")"
+  run_test "${provider}_wrap_lazy_cont_exit_code_exit_zero" "0" "$(last_status "$result")"
+  run_contains "${provider}_wrap_lazy_cont_exit_code_epic" "EPIC_ISSUE=900" "$body"
+  run_not_contains "${provider}_wrap_lazy_cont_exit_code_no_334" "--epic 334" "$(cat "$CHILD_ARGV_LOG")"
+
+  echo ""
+  echo "=== wrapper: ${provider} keeps lazy continuation inside nested item (#2016) ==="
+  reset_fixture
+  write_tracker_config "$provider"
+  export MOCK_LABEL_PARENT_MODE=empty
+  write_pr 165 "develop-test-2016" "develop" "true" "Graduate wave" \
+    $'- Outer\n  - Nested item\n  Nested continuation\n\n      Closes #123'
+  result="$(run_wrapper --graduation-pr 165)"
+  body="$(last_body "$result")"
+  run_test "${provider}_wrap_lazy_cont_nested_exit_zero" "0" "$(last_status "$result")"
+  run_contains "${provider}_wrap_lazy_cont_nested_epic" "EPIC_ISSUE=123" "$body"
+
+  echo ""
   echo "=== wrapper: ${provider} keeps nested-list Closes #123 with Epic #900 (#2016) ==="
   # Nested list keyword is live but Epic #900 is the sole epic/parent ref style
   # candidate preferred when both exist — assert 123 is not chosen as epic and

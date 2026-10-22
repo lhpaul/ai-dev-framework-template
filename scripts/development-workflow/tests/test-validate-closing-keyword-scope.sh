@@ -451,6 +451,9 @@ heading_inside_list_keeps_prose|123|- Delivered work\n  ## Details\n\n    Closes
 three_level_dedent_l1_code||- L1\n  - L2\n    - L3\n\n  Example:\n\n      Closes #326
 dedent_to_doc_then_indent_code||- L1\n  - L2\n\nParagraph\n\n    Closes #326
 heading_inside_nested_then_prose|123|- Outer\n  - Nested\n    ## Details\n\n      Closes #123
+lazy_cont_then_indent_keeps|326|- Delivered work:\nContinuation paragraph\n\n    Closes #326
+lazy_cont_then_exit_then_indent_code||- Delivered work:\nContinuation paragraph\n\nParagraph outside\n\n    Closes #334
+lazy_cont_inside_nested_keeps|123|- Outer\n  - Nested item\n  Nested continuation\n\n      Closes #123
 CLOSEOUT_TABLE
 
 # Explicit regressions for fence precedence (list markers inside fences must not leak).
@@ -491,6 +494,12 @@ check "closeout_dedent_to_doc_then_indent_code_strips" "" \
   "$(closeout_refs_of "$(printf -- '- L1\n  - L2\n\nParagraph\n\n    Closes #326')")"
 check "closeout_heading_inside_nested_then_prose_keeps" "123" \
   "$(closeout_refs_of "$(printf -- '- Outer\n  - Nested\n    ## Details\n\n      Closes #123')")"
+check "closeout_lazy_cont_then_indent_keeps" "326" \
+  "$(closeout_refs_of "$(printf -- '- Delivered work:\nContinuation paragraph\n\n    Closes #326')")"
+check "closeout_lazy_cont_then_exit_then_indent_strips" "" \
+  "$(closeout_refs_of "$(printf -- '- Delivered work:\nContinuation paragraph\n\nParagraph outside\n\n    Closes #334')")"
+check "closeout_lazy_cont_inside_nested_keeps" "123" \
+  "$(closeout_refs_of "$(printf -- '- Outer\n  - Nested item\n  Nested continuation\n\n      Closes #123')")"
 
 # ---------------------------------------------------------------------------
 # Differential attribution

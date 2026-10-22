@@ -206,10 +206,16 @@ closing_keyword_live_refs() {
 #   restores the list context saved when it opened. Unclosed → EOF.
 # - List stack: each list item is a container with content_indent. Document is
 #   the root (content_indent 0). On each non-blank line, pop containers whose
-#   content_indent > line indent (dedent restores the parent). A list marker at
-#   indent in [parent_content_indent, parent_content_indent+3] pushes a new item
-#   (dedent makes siblings replace the top). content_indent = marker indent +
-#   marker width + following spaces (1–4; if more than 4, padding is 1).
+#   content_indent > line indent when the line exits the item (dedent restores
+#   the parent). Lazy paragraph continuation is the exception: a non-blank line
+#   with indent < content_indent that directly follows a paragraph line (no
+#   blank) and is not a list marker, ATX heading, thematic break, or fence
+#   opener does NOT pop — it stays in the current item. Pop after a blank when
+#   indent < content_indent, or on a marker/heading/thematic/fence that exits.
+#   A list marker at indent in [parent_content_indent, parent_content_indent+3]
+#   pushes a new item (dedent makes siblings replace the top). content_indent =
+#   marker indent + marker width + following spaces (1–4; if more than 4,
+#   padding is 1).
 # - Headings / thematic / setext / fences / indented code are evaluated relative
 #   to the current container's content_indent. A heading inside an item does not
 #   clear the stack — only a block boundary within that container. Indented code
@@ -354,6 +360,18 @@ def rel_in_container(cols, ci):
     rel = cols - ci
     return 0 <= rel <= 3
 
+def is_structural_exit_body(body):
+    """True when the line body starts a block that exits lazy continuation."""
+    if LIST_MARKER_RE.match(body) is not None:
+        return True
+    if is_atx_heading_body(body):
+        return True
+    if is_thematic_break_body(body):
+        return True
+    if fence_info_from_content(body) is not None:
+        return True
+    return False
+
 for line in lines:
     # (1) Inside a fence: only matching closer; never interpret structure.
     if in_fence:
@@ -385,10 +403,17 @@ for line in lines:
     cols, start = leading_indent_columns(line)
     body = line[start:]
 
-    # Dedent: restore parent containers when indentation drops.
-    while stack and stack[-1] > cols:
-        stack.pop()
+    # Dedent: pop when the line exits the item. Lazy paragraph continuation
+    # (follows a paragraph with no blank, indent < content_indent, not a
+    # marker/heading/thematic/fence) keeps the current container.
     ci = current_ci()
+    if stack and cols < ci:
+        lazy = prev_was_paragraph and not is_structural_exit_body(body)
+        if not lazy:
+            while stack and stack[-1] > cols:
+                stack.pop()
+            ci = current_ci()
+    # else: stay at current ci (including lazy continuation)
 
     # Block boundaries relative to the current container (do not clear stack).
     if prev_was_paragraph and rel_in_container(cols, ci) and is_setext_underline_body(body):

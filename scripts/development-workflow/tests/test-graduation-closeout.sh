@@ -467,6 +467,21 @@ JSON
 [{"number":11,"title":"Deliver item","body":"- Outer\n  - Nested\n    ## Details\n\n      Closes #123"}]
 JSON
         ;;
+      lazy_cont_then_indent_closes_326)
+        cat <<'JSON'
+[{"number":11,"title":"Deliver item","body":"- Delivered work:\nContinuation paragraph\n\n    Closes #326"}]
+JSON
+        ;;
+      lazy_cont_then_exit_indent_334)
+        cat <<'JSON'
+[{"number":11,"title":"Graduate wave","body":"- Delivered work:\nContinuation paragraph\n\nParagraph outside\n\n    Closes #334\nNo live closing keywords."}]
+JSON
+        ;;
+      lazy_cont_inside_nested_closes_123)
+        cat <<'JSON'
+[{"number":11,"title":"Deliver item","body":"- Outer\n  - Nested item\n  Nested continuation\n\n      Closes #123"}]
+JSON
+        ;;
       foreign_repo_text)
         cat <<'JSON'
 [{"number":11,"title":"Graduate wave","body":"Closes other/repo#326\nNo local closing keywords."}]
@@ -1583,6 +1598,18 @@ for provider in github_projects github_issues; do
   echo ""
   echo "=== graduation closeout: ${provider} keeps Closes #123 after heading inside nested item (#2016) ==="
   assert_github_keyword_issue_closed "$provider" heading_inside_nested_closes_123 123 "${provider}_heading_inside_nested"
+
+  echo ""
+  echo "=== graduation closeout: ${provider} keeps lazy-continuation then indented Closes #326 (#2016) ==="
+  assert_github_keyword_issue_closed "$provider" lazy_cont_then_indent_closes_326 326 "${provider}_lazy_cont_indent"
+
+  echo ""
+  echo "=== graduation closeout: ${provider} strips code after lazy-cont then indent-0 exit (#2016) ==="
+  assert_github_example_326_untouched "$provider" lazy_cont_then_exit_indent_334 "${provider}_lazy_cont_exit_code" 334
+
+  echo ""
+  echo "=== graduation closeout: ${provider} keeps lazy continuation inside nested item (#2016) ==="
+  assert_github_keyword_issue_closed "$provider" lazy_cont_inside_nested_closes_123 123 "${provider}_lazy_cont_nested"
 
   echo ""
   echo "=== graduation closeout: ${provider} keeps nested-list Closes #123 (#2016) ==="
