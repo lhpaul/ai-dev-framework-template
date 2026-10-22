@@ -952,50 +952,56 @@ def _local_tag_sha(name):
 
 
 def resolve_release_tag_identity(version_arg, current_ref, remote_tags):
-    """Choose the release tag spelling that matches the repository namespace.
+    """Canonical SemVer tag namespace for the release boundary.
 
-    Prefer refs/tags/<as-given>, then the v/bare counterpart (local or remote).
-    When current_ref is already refs/tags/<name>, that name is the tip spelling
-    but a disagreeing v/bare counterpart still fails closed. Never invent a v-
-    prefix when no matching tag exists — keep the caller spelling. If both bare
-    and v tags exist with different SHAs, return status ambiguous.
+    Identical with and without --release-head: current_ref does not affect
+    spelling. Collect every local and remote SHA for the requested version's
+    bare/v spellings (component prefixes have a single spelling).
+
+    - exactly one existing spelling → that spelling
+    - both spellings and all evidence agrees on one SHA → spelling as given
+      (version_arg), so cleanup and --release-head stay aligned
+    - any local↔remote disagreement for one name, or cross-spelling SHA
+      mismatch → ambiguous
+    - none exist → version_arg (never invent a v- prefix)
     """
-    tip_tag = (
-        current_ref[len("refs/tags/") :]
-        if current_ref.startswith("refs/tags/")
-        else None
-    )
-    spellings = release_namespace_spellings(tip_tag or version_arg)
+    _ = current_ref  # tip SHA vs refs/tags affects the range tip only
+    spellings = release_namespace_spellings(version_arg)
     if not spellings:
-        return "ok", tip_tag or version_arg
-
-    found = {}
-    for name in spellings:
-        sha = _local_tag_sha(name)
-        if sha is None:
-            sha = remote_tags.get(name)
-        if sha is None:
-            continue
-        if name in found and found[name] != sha:
-            # Local vs remote disagreement for one spelling — prefer local.
-            continue
-        found.setdefault(name, sha)
-
-    if len(found) > 1 and len(set(found.values())) != 1:
-        return "ambiguous", None
-
-    if tip_tag is not None:
-        return "ok", tip_tag
-
-    if not found:
-        # No tag yet: preserve the spelling the caller passed (no silent v).
         return "ok", version_arg
 
-    if len(found) == 1:
-        return "ok", next(iter(found))
+    # name -> set of peeled SHAs seen locally and/or remotely
+    evidence = {}
+    for name in spellings:
+        shas = set()
+        local_sha = _local_tag_sha(name)
+        if local_sha:
+            shas.add(local_sha)
+        remote_sha = remote_tags.get(name)
+        if remote_sha:
+            shas.add(remote_sha)
+        if shas:
+            evidence[name] = shas
 
-    # Same commit under both spellings: prefer as-given when present.
-    if version_arg in found:
+    if not evidence:
+        return "ok", version_arg
+
+    agreed = set()
+    for shas in evidence.values():
+        if len(shas) != 1:
+            # Same spelling disagrees between local and remote.
+            return "ambiguous", None
+        agreed |= shas
+    if len(agreed) != 1:
+        # Distinct spellings point at different commits.
+        return "ambiguous", None
+
+    existing = list(evidence.keys())
+    if len(existing) == 1:
+        return "ok", existing[0]
+
+    # Both spellings exist at the same SHA: use the caller spelling as given.
+    if version_arg in evidence:
         return "ok", version_arg
     return "ok", spellings[0]
 
@@ -1066,7 +1072,7 @@ def resolve_previous_boundary(current_version, current_ref):
     if id_status == "ambiguous":
         print(
             "ambiguous_release_tag_namespace version=%s "
-            "(bare and v-prefixed tags exist with different SHAs)"
+            "(bare/v spellings or local/remote tag SHAs disagree)"
             % current_version,
             file=sys.stderr,
         )

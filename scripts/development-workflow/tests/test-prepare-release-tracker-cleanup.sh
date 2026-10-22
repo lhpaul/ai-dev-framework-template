@@ -2193,7 +2193,9 @@ MD
 sha_missing_prev_302="$("$REAL_GIT" -C "$repo_missing_prev_src" rev-parse HEAD)"
 "$REAL_GIT" -C "$repo_missing_prev_src" tag v1.29.0
 "$REAL_GIT" clone -q --bare "file://${repo_missing_prev_src}" "$repo_missing_prev_bare"
-# Local checkout: orphan tip with only the release tag — previous commit absent.
+# Local checkout: orphan tip tagged v1.29.0 at a different SHA than remote.
+# Namespace identity now fails closed on that local/remote tip disagreement
+# (ambiguous_release_tag_namespace) before the previous-commit probe.
 "$REAL_GIT" init -q -b main "$repo_missing_prev"
 "$REAL_GIT" -C "$repo_missing_prev" config user.email test@example.com
 "$REAL_GIT" -C "$repo_missing_prev" config user.name test
@@ -2228,8 +2230,9 @@ status="$(printf '%s\n' "$result" | sed -n '1p')"
 output="$(printf '%s\n' "$result" | sed '1d')"
 run_test "linear_1982_missing_prev_commit_exits_zero" "0" "$status"
 run_contains "linear_1982_missing_prev_commit_incomplete" \
-  "RELEASE_SCOPE_INCOMPLETE reason=previous_release_boundary_unavailable" "$output"
-run_contains "linear_1982_missing_prev_commit_fetch_instruction" "git fetch --tags origin" "$output"
+  "RELEASE_SCOPE_INCOMPLETE reason=ambiguous_release_tag_namespace" "$output"
+run_contains "linear_1982_missing_prev_commit_ambiguous_diag" \
+  "ambiguous_release_tag_namespace version=v1.29.0" "$output"
 run_not_contains "linear_1982_missing_prev_commit_no_302" "TRACKER_ISSUES=LEA-302" "$output"
 
 # --- --inspect-targets must not mutate refs / create FETCH_HEAD ---
@@ -2684,6 +2687,153 @@ output="$(printf '%s\n' "$result" | sed '1d')"
 run_test "linear_1982_ambiguous_inspect_exits_nonzero" "1" "$status"
 run_contains "linear_1982_ambiguous_inspect_incomplete" \
   "RELEASE_SCOPE_INCOMPLETE reason=ambiguous_release_tag_namespace" "$output"
+
+# --- Local tags must not mask remote namespace disagreement ---
+# local 1.1.0=A, v1.1.0=A; remote 1.1.0=A, v1.1.0=B → fail closed.
+repo_mask_src="$TMP_ROOT/linear-1982-local-mask-src"
+repo_mask_bare="$TMP_ROOT/linear-1982-local-mask-bare.git"
+repo_mask="$TMP_ROOT/linear-1982-local-mask"
+repo_mask_push="$TMP_ROOT/linear-1982-local-mask-push"
+init_linear_git_repo "$repo_mask_src"
+cat > "$repo_mask_src/CHANGELOG.md" <<'MD'
+# Changelog
+
+## [Unreleased]
+
+## [1.1.0] - 2026-10-15
+
+- Local agreement must not hide a remote v-tag on a different SHA.
+MD
+"$REAL_GIT" -C "$repo_mask_src" add CHANGELOG.md .ai-dev-workflow.yaml scripts
+"$REAL_GIT" -C "$repo_mask_src" commit -q -m "chore: mask baseline"
+"$REAL_GIT" -C "$repo_mask_src" commit -q --allow-empty \
+  -m "Merge pull request #150 from example/fix/LEA-620-mask-a"
+sha_mask_a="$("$REAL_GIT" -C "$repo_mask_src" rev-parse HEAD)"
+"$REAL_GIT" -C "$repo_mask_src" tag 1.1.0
+"$REAL_GIT" -C "$repo_mask_src" tag v1.1.0
+"$REAL_GIT" clone -q --bare "file://${repo_mask_src}" "$repo_mask_bare"
+"$REAL_GIT" clone -q "file://${repo_mask_bare}" "$repo_mask"
+"$REAL_GIT" clone -q "file://${repo_mask_bare}" "$repo_mask_push"
+"$REAL_GIT" -C "$repo_mask_push" commit -q --allow-empty \
+  -m "Merge pull request #151 from example/fix/LEA-630-mask-b"
+sha_mask_b="$("$REAL_GIT" -C "$repo_mask_push" rev-parse HEAD)"
+"$REAL_GIT" -C "$repo_mask_push" tag -f v1.1.0
+"$REAL_GIT" -C "$repo_mask_push" push -q --force origin refs/tags/v1.1.0
+# Working tree still has both local tags at A; remote v1.1.0 is now B.
+mkdir -p "$repo_mask/scripts/development-workflow"
+cp "$REPO_ROOT/scripts/development-workflow/workflow-lib.sh" \
+  "$repo_mask/scripts/development-workflow/workflow-lib.sh"
+cp "$REPO_ROOT/scripts/development-workflow/prepare-release-post-merge-cleanup.sh" \
+  "$repo_mask/scripts/development-workflow/prepare-release-post-merge-cleanup.sh"
+chmod +x "$repo_mask/scripts/development-workflow/prepare-release-post-merge-cleanup.sh"
+cat > "$repo_mask/.ai-dev-workflow.yaml" <<'YAML'
+schema_version: 2
+issue_tracker:
+  provider: linear
+YAML
+"$REAL_GIT" -C "$repo_mask" add CHANGELOG.md .ai-dev-workflow.yaml scripts 2>/dev/null || true
+write_linear_scope_gh \
+  "150|fix/LEA-620-mask-a|fix: LEA-620" \
+  "151|fix/LEA-630-mask-b|fix: LEA-630" \
+  "commit:${sha_mask_a}|150" \
+  "commit:${sha_mask_b}|151"
+result="$(run_linear_scope_cleanup "$repo_mask" 1.1.0 --from-changelog --best-effort)"
+status="$(printf '%s\n' "$result" | sed -n '1p')"
+output="$(printf '%s\n' "$result" | sed '1d')"
+run_test "linear_1982_local_mask_remote_best_effort_exits_zero" "0" "$status"
+run_contains "linear_1982_local_mask_remote_incomplete" \
+  "RELEASE_SCOPE_INCOMPLETE reason=ambiguous_release_tag_namespace" "$output"
+run_not_contains "linear_1982_local_mask_remote_no_tracker" "TRACKER_ISSUES=" "$output"
+result="$(run_linear_scope_inspect "$repo_mask" 1.1.0 "$sha_mask_a")"
+status="$(printf '%s\n' "$result" | sed -n '1p')"
+output="$(printf '%s\n' "$result" | sed '1d')"
+run_test "linear_1982_local_mask_remote_inspect_exits_nonzero" "1" "$status"
+run_contains "linear_1982_local_mask_remote_inspect_incomplete" \
+  "RELEASE_SCOPE_INCOMPLETE reason=ambiguous_release_tag_namespace" "$output"
+
+# --- Both spellings remote (same SHA), only bare local: same namespace ± --release-head ---
+# Distinct bare vs v predecessors prove both paths select the as-given (v) namespace.
+repo_parity_src="$TMP_ROOT/linear-1982-namespace-parity-src"
+repo_parity_bare="$TMP_ROOT/linear-1982-namespace-parity-bare.git"
+repo_parity="$TMP_ROOT/linear-1982-namespace-parity"
+init_linear_git_repo "$repo_parity_src"
+cat > "$repo_parity_src/CHANGELOG.md" <<'MD'
+# Changelog
+
+## [Unreleased]
+
+## [1.1.0] - 2026-10-15
+
+- Local bare-only tip; remote has both spellings at the same SHA.
+MD
+"$REAL_GIT" -C "$repo_parity_src" add CHANGELOG.md .ai-dev-workflow.yaml scripts
+"$REAL_GIT" -C "$repo_parity_src" commit -q -m "chore: parity baseline"
+"$REAL_GIT" -C "$repo_parity_src" commit -q --allow-empty \
+  -m "Merge pull request #160 from example/fix/LEA-700-bare-pred"
+sha_parity_700="$("$REAL_GIT" -C "$repo_parity_src" rev-parse HEAD)"
+"$REAL_GIT" -C "$repo_parity_src" tag 1.0.0
+"$REAL_GIT" -C "$repo_parity_src" commit -q --allow-empty \
+  -m "Merge pull request #161 from example/fix/LEA-705-v-pred"
+sha_parity_705="$("$REAL_GIT" -C "$repo_parity_src" rev-parse HEAD)"
+"$REAL_GIT" -C "$repo_parity_src" tag v1.0.0
+"$REAL_GIT" -C "$repo_parity_src" commit -q --allow-empty \
+  -m "Merge pull request #162 from example/fix/LEA-710-tip"
+sha_parity_710="$("$REAL_GIT" -C "$repo_parity_src" rev-parse HEAD)"
+"$REAL_GIT" -C "$repo_parity_src" tag 1.1.0
+"$REAL_GIT" -C "$repo_parity_src" tag v1.1.0
+"$REAL_GIT" clone -q --bare "file://${repo_parity_src}" "$repo_parity_bare"
+"$REAL_GIT" clone -q "file://${repo_parity_bare}" "$repo_parity"
+# Local keeps only bare tip/predecessor spellings; remote still has both.
+"$REAL_GIT" -C "$repo_parity" tag -d v1.0.0 >/dev/null
+"$REAL_GIT" -C "$repo_parity" tag -d v1.1.0 >/dev/null
+mkdir -p "$repo_parity/scripts/development-workflow"
+cp "$REPO_ROOT/scripts/development-workflow/workflow-lib.sh" \
+  "$repo_parity/scripts/development-workflow/workflow-lib.sh"
+cp "$REPO_ROOT/scripts/development-workflow/prepare-release-post-merge-cleanup.sh" \
+  "$repo_parity/scripts/development-workflow/prepare-release-post-merge-cleanup.sh"
+chmod +x "$repo_parity/scripts/development-workflow/prepare-release-post-merge-cleanup.sh"
+cat > "$repo_parity/.ai-dev-workflow.yaml" <<'YAML'
+schema_version: 2
+issue_tracker:
+  provider: linear
+YAML
+write_linear_scope_gh \
+  "160|fix/LEA-700-bare-pred|fix: LEA-700" \
+  "161|fix/LEA-705-v-pred|fix: LEA-705" \
+  "162|fix/LEA-710-tip|fix: LEA-710" \
+  "commit:${sha_parity_700}|160" \
+  "commit:${sha_parity_705}|161" \
+  "commit:${sha_parity_710}|162"
+# As-given after shell normalize is v1.1.0 → v-namespace → previous=v1.0.0
+# (LEA-710 only). Bare previous would incorrectly include LEA-705.
+result="$(run_linear_scope_cleanup "$repo_parity" v1.1.0 --from-changelog --best-effort)"
+status="$(printf '%s\n' "$result" | sed -n '1p')"
+output="$(printf '%s\n' "$result" | sed '1d')"
+run_test "linear_1982_parity_cleanup_exits_zero" "0" "$status"
+run_contains "linear_1982_parity_cleanup_proposes_710" "TRACKER_ISSUES=LEA-710" "$output"
+run_not_contains "linear_1982_parity_cleanup_no_705" "TRACKER_ISSUES=LEA-705" "$output"
+run_not_contains "linear_1982_parity_cleanup_no_700" "TRACKER_ISSUES=LEA-700" "$output"
+result="$(run_linear_scope_inspect "$repo_parity" v1.1.0 "$sha_parity_710")"
+status="$(printf '%s\n' "$result" | sed -n '1p')"
+output="$(printf '%s\n' "$result" | sed '1d')"
+run_test "linear_1982_parity_inspect_exits_zero" "0" "$status"
+run_contains "linear_1982_parity_inspect_proposes_710" \
+  "Linear --from-changelog scope from merged PRs in release range: LEA-710" "$output"
+run_not_contains "linear_1982_parity_inspect_no_705_scope" \
+  "scope from merged PRs in release range: LEA-705" "$output"
+# Bare as-given (shell still normalizes to v1.1.0) must match the same boundary.
+result="$(run_linear_scope_cleanup "$repo_parity" 1.1.0 --from-changelog --best-effort)"
+status="$(printf '%s\n' "$result" | sed -n '1p')"
+output="$(printf '%s\n' "$result" | sed '1d')"
+run_test "linear_1982_parity_cleanup_bare_arg_exits_zero" "0" "$status"
+run_contains "linear_1982_parity_cleanup_bare_arg_proposes_710" "TRACKER_ISSUES=LEA-710" "$output"
+run_not_contains "linear_1982_parity_cleanup_bare_arg_no_705" "TRACKER_ISSUES=LEA-705" "$output"
+result="$(run_linear_scope_inspect "$repo_parity" 1.1.0 "$sha_parity_710")"
+status="$(printf '%s\n' "$result" | sed -n '1p')"
+output="$(printf '%s\n' "$result" | sed '1d')"
+run_test "linear_1982_parity_inspect_bare_arg_exits_zero" "0" "$status"
+run_contains "linear_1982_parity_inspect_bare_arg_proposes_710" \
+  "Linear --from-changelog scope from merged PRs in release range: LEA-710" "$output"
 
 # --- Invalid SemVer prerelease tags cannot define the boundary ---
 repo_bad_pre="$TMP_ROOT/linear-1982-invalid-prerelease-tag"
