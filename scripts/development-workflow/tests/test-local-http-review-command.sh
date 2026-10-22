@@ -438,7 +438,7 @@ resolve_local_ai_reviewer_command 2>"$STDERR_FILE"
 alias_rc=$?
 set -e
 run_test "backend_rejects_bare_openai_alias" "1" "$alias_rc"
-run_test "backend_alias_error_names_http" "yes" "$(grep -q 'expected codex or http' "$STDERR_FILE" && echo yes || echo no)"
+run_test "backend_alias_error_names_http" "yes" "$(grep -Fxq 'ERROR: configuration validation error; key=LOCAL_AI_REVIEWER_BACKEND' "$STDERR_FILE" && echo yes || echo no)"
 unset LOCAL_AI_REVIEWER_COMMAND
 LOCAL_AI_REVIEWER_BACKEND=chat_completions
 export LOCAL_AI_REVIEWER_BACKEND

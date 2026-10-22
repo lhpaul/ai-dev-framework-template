@@ -289,7 +289,7 @@ for _1789_v in 0 abc -5 1.5 1000000; do
   set -e
   run_test "1789_T1.8_max_wait_${_1789_n}_exit_64" "64" "$_1789_rc"
   run_contains "1789_T1.8_max_wait_${_1789_n}_message" \
-    "--max-wait must be a positive whole number of seconds (1-999999) (got '${_1789_v}')." "$_1789_err"
+    "ERROR: configuration validation error; key=--max-wait" "$_1789_err"
   run_contains "1789_T1.8_max_wait_${_1789_n}_usage" "Usage: ./scripts/development-workflow/pr-review-loop.sh" "$_1789_err"
   run_test "1789_T1.8_max_wait_${_1789_n}_no_gh_call" "0" "$(grep -c . "$_1789_log" || true)"
 done

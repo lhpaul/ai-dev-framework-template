@@ -779,7 +779,7 @@ run_test "cycles_resolve_max_invalid_config_warns" "yes" "$(
   # Capture stderr into a variable first, then grep the variable — piping
   # directly into `grep -q` risks a SIGPIPE false-negative under pipefail.
   _mc_warn_stderr="$(reviewer_loop_resolve_max_cycles "not-a-number" 2>&1 >/dev/null)"
-  if grep -q "WARN.*not a positive integer" <<< "$_mc_warn_stderr"; then
+  if grep -Fxq "WARN: configuration validation error; key=review.max_cycles" <<< "$_mc_warn_stderr"; then
     echo yes
   else
     echo no
@@ -807,7 +807,7 @@ run_test "total_cycles_resolve_max_invalid_config_defaults" "25" \
   "$(reviewer_loop_resolve_max_total_cycles "not-a-number" 2>/dev/null)"
 run_test "total_cycles_resolve_max_invalid_config_warns" "yes" "$(
   _mc_warn_stderr="$(reviewer_loop_resolve_max_total_cycles "not-a-number" 2>&1 >/dev/null)"
-  if grep -q "WARN.*not a positive integer" <<< "$_mc_warn_stderr"; then
+  if grep -Fxq "WARN: configuration validation error; key=review.max_total_cycles" <<< "$_mc_warn_stderr"; then
     echo yes
   else
     echo no
@@ -854,7 +854,7 @@ run_test "codex_cap_invalid_per_run_keeps_lifetime_warns" "yes" "$(
   unset PR_REVIEW_LOOP_MAX_CYCLES PR_REVIEW_LOOP_MAX_TOTAL_CYCLES
   _mc_warn_stderr="$(reviewer_loop_resolve_max_cycles "not-a-number" 2>&1 >/dev/null)"
   reviewer_loop_resolve_max_total_cycles "40" >/dev/null 2>/dev/null
-  if grep -q "WARN.*not a positive integer" <<< "$_mc_warn_stderr"; then
+  if grep -Fxq "WARN: configuration validation error; key=review.max_cycles" <<< "$_mc_warn_stderr"; then
     echo yes
   else
     echo no
@@ -870,7 +870,7 @@ run_test "codex_cap_invalid_lifetime_keeps_per_run_warns" "yes" "$(
   unset PR_REVIEW_LOOP_MAX_CYCLES PR_REVIEW_LOOP_MAX_TOTAL_CYCLES
   reviewer_loop_resolve_max_cycles "7" >/dev/null 2>/dev/null
   _mtc_warn_stderr="$(reviewer_loop_resolve_max_total_cycles "not-a-number" 2>&1 >/dev/null)"
-  if grep -q "WARN.*not a positive integer" <<< "$_mtc_warn_stderr"; then
+  if grep -Fxq "WARN: configuration validation error; key=review.max_total_cycles" <<< "$_mtc_warn_stderr"; then
     echo yes
   else
     echo no
