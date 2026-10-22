@@ -3486,10 +3486,16 @@ MD
     # Mutation-relevant calls: PATCH issues / POST milestones / branch deletes.
     # Empty grep is expected when a case performs no mutations.
     local head_mut base_mut
-    # workflow-shell-guard: allow SH001 - empty mutation log is a valid parity case
-    head_mut="$( { grep -E '^(gh api -X (PATCH|POST)|gh api -X DELETE|git push |git branch -D |git checkout |git switch )' "$head_log" || true; } | normalize_parity_text )"
-    # workflow-shell-guard: allow SH001 - empty mutation log is a valid parity case
-    base_mut="$( { grep -E '^(gh api -X (PATCH|POST)|gh api -X DELETE|git push |git branch -D |git checkout |git switch )' "$base_log" || true; } | normalize_parity_text )"
+    head_mut=""
+    base_mut=""
+    if grep -E '^(gh api -X (PATCH|POST)|gh api -X DELETE|git push |git branch -D |git checkout |git switch )' \
+      "$head_log" > "$case_dir/head.mut" 2>/dev/null; then
+      head_mut="$(normalize_parity_text < "$case_dir/head.mut")"
+    fi
+    if grep -E '^(gh api -X (PATCH|POST)|gh api -X DELETE|git push |git branch -D |git checkout |git switch )' \
+      "$base_log" > "$case_dir/base.mut" 2>/dev/null; then
+      base_mut="$(normalize_parity_text < "$case_dir/base.mut")"
+    fi
     # Also compare full call logs (read + mutate) for byte-identical tooling surface.
     local head_all base_all
     head_all="$(normalize_parity_text < "$head_log")"
