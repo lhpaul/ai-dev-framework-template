@@ -192,7 +192,11 @@ closing_keyword_live_refs() {
 # code blocks without removing list/paragraph prose. Prefer keeping prose.
 #
 # Supported CommonMark subset (closeout-only; not a full parser):
-# - Fences: handled by strip_fenced_pr_body_blocks first.
+# - Top-level fences: strip_fenced_pr_body_blocks first (indent 0–3 absolute).
+# - In-list fences: opener/closer (``` or ~~~, length ≥3, same char; closer
+#   length ≥ opener, trailing whitespace only) whose indent relative to the
+#   current list item's content_indent is 0–3 columns; strip until matching
+#   closer or EOF (unclosed). Shared filter ignores these (absolute indent ≥4).
 # - Indented code (tab stops of 4): outside lists, a run with indent ≥4 that
 #   starts after a blank / document start / ATX heading / setext underline /
 #   thematic break (or continues a prior code line).
@@ -236,6 +240,7 @@ THEMATIC_BREAK_RE = re.compile(r"^([-*_])(?:[ \t]*\1){2,}[ \t]*$")
 LIST_MARKER_RE = re.compile(r"^([-*+]|\d+[.)])([ \t]+|$)")
 ATX_HEADING_RE = re.compile(r"^#{1,6}(?:[ \t]+|$)")
 SETEXT_RE = re.compile(r"^(?:=+|-+)[ \t]*$")
+FENCE_MARKER_RE = re.compile(r"^(`{3,}|~{3,})(.*)$")
 
 def list_item_content_indent(line):
     """Return content_indent for a list-marker line, or None."""
@@ -268,6 +273,18 @@ def is_setext_underline_body(body):
 def is_atx_heading_body(body):
     return ATX_HEADING_RE.match(body) is not None
 
+def list_relative_fence(line, content_indent):
+    """Fence opener/closer info if indent is content_indent..content_indent+3."""
+    cols, start = leading_indent_columns(line)
+    rel = cols - content_indent
+    if rel < 0 or rel > 3:
+        return None
+    m = FENCE_MARKER_RE.match(line[start:])
+    if not m:
+        return None
+    marker = m.group(1)
+    return marker[0], len(marker), m.group(2)
+
 lines = sys.stdin.read().split("\n")
 out = []
 in_list = False
@@ -275,7 +292,24 @@ content_indent = 0
 in_indented_code = False
 at_block_start = True
 prev_was_paragraph = False
+in_list_fence = False
+list_fence_char = None
+list_fence_len = 0
 for line in lines:
+    if in_list_fence:
+        info = list_relative_fence(line, content_indent) if in_list else None
+        if (info is not None
+                and info[0] == list_fence_char
+                and info[1] >= list_fence_len
+                and info[2].strip() == ""):
+            in_list_fence = False
+            list_fence_char = None
+            list_fence_len = 0
+            in_indented_code = False
+            at_block_start = True
+            prev_was_paragraph = False
+        continue
+
     if line.strip() == "":
         out.append(line)
         at_block_start = True
@@ -315,6 +349,14 @@ for line in lines:
         continue
 
     if in_list:
+        fence = list_relative_fence(line, content_indent)
+        if fence is not None:
+            in_list_fence = True
+            list_fence_char, list_fence_len = fence[0], fence[1]
+            in_indented_code = False
+            at_block_start = False
+            prev_was_paragraph = False
+            continue
         code_threshold = content_indent + 4
         marker_ci = list_item_content_indent(line)
         if marker_ci is not None and cols < code_threshold:

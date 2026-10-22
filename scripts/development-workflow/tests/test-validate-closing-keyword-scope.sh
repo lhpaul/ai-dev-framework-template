@@ -359,6 +359,22 @@ check "closeout_setext_equals_then_indent_strips" "" \
 # Heading then blank then unindented prose stays live.
 check "closeout_atx_heading_blank_prose_keeps" "328" \
   "$(closeout_refs_of "$(printf -- '## Example\n\nCloses #328')")"
+# Fences indented relative to list content_indent (0–3) are stripped in closeout.
+check "closeout_list_tilde_fence_strips" "" \
+  "$(closeout_refs_of "$(printf -- '- Example:\n\n    ~~~text\n    Closes #326\n    ~~~')")"
+check "closeout_list_tilde_fence_unclosed_strips" "" \
+  "$(closeout_refs_of "$(printf -- '- Example:\n\n    ~~~text\n    Closes #326')")"
+check "closeout_list_backtick_fence_strips" "" \
+  "$(closeout_refs_of "$(printf -- '- Example:\n\n    %s%s%stext\n    Closes #326\n    %s%s%s' '`' '`' '`' '`' '`' '`')")"
+check "closeout_list_backtick_fence_unclosed_strips" "" \
+  "$(closeout_refs_of "$(printf -- '- Example:\n\n    %s%s%stext\n    Closes #326' '`' '`' '`')")"
+check "closeout_list_fence_then_prose_keeps" "123" \
+  "$(closeout_refs_of "$(printf -- '- Example:\n\n    ~~~text\n    Closes #326\n    ~~~\n    Closes #123')")"
+# Top-level fences still stripped (shared path unchanged).
+check "closeout_toplevel_tilde_fence_strips" "" \
+  "$(closeout_refs_of "$(printf -- 'See:\n~~~\nCloses #326\n~~~')")"
+check "closeout_toplevel_backtick_fence_strips" "" \
+  "$(closeout_refs_of "$(printf -- 'See:\n%s%s%s\nCloses #326\n%s%s%s' '`' '`' '`' '`' '`' '`')")"
 
 # ---------------------------------------------------------------------------
 # Differential attribution

@@ -327,6 +327,31 @@ JSON
 [{"number":11,"title":"Deliver item","body":"## Example\n\nCloses #328"}]
 JSON
         ;;
+      list_tilde_fence_326)
+        cat <<'JSON'
+[{"number":11,"title":"Graduate wave","body":"- Example:\n\n    ~~~text\n    Closes #326\n    ~~~\nNo live closing keywords."}]
+JSON
+        ;;
+      list_tilde_fence_unclosed_326)
+        cat <<'JSON'
+[{"number":11,"title":"Graduate wave","body":"- Example:\n\n    ~~~text\n    Closes #326\nNo live closing keywords."}]
+JSON
+        ;;
+      list_backtick_fence_326)
+        cat <<'JSON'
+[{"number":11,"title":"Graduate wave","body":"- Example:\n\n    ```text\n    Closes #326\n    ```\nNo live closing keywords."}]
+JSON
+        ;;
+      list_backtick_fence_unclosed_326)
+        cat <<'JSON'
+[{"number":11,"title":"Graduate wave","body":"- Example:\n\n    ```text\n    Closes #326\nNo live closing keywords."}]
+JSON
+        ;;
+      list_fence_then_prose_123)
+        cat <<'JSON'
+[{"number":11,"title":"Deliver item","body":"- Example:\n\n    ~~~text\n    Closes #326\n    ~~~\n    Closes #123"}]
+JSON
+        ;;
       foreign_repo_text)
         cat <<'JSON'
 [{"number":11,"title":"Graduate wave","body":"Closes other/repo#326\nNo local closing keywords."}]
@@ -1358,6 +1383,20 @@ for provider in github_projects github_issues; do
   echo ""
   echo "=== graduation closeout: ${provider} keeps ATX-heading then blank prose Closes #328 (#2016) ==="
   assert_github_keyword_issue_closed "$provider" atx_heading_blank_prose_328 328 "${provider}_atx_blank_prose"
+
+  echo ""
+  echo "=== graduation closeout: ${provider} strips list-item tilde fence Closes #326 (#2016) ==="
+  assert_github_example_326_untouched "$provider" list_tilde_fence_326 "${provider}_list_tilde_fence"
+  assert_github_example_326_untouched "$provider" list_tilde_fence_unclosed_326 "${provider}_list_tilde_fence_unclosed"
+
+  echo ""
+  echo "=== graduation closeout: ${provider} strips list-item backtick fence Closes #326 (#2016) ==="
+  assert_github_example_326_untouched "$provider" list_backtick_fence_326 "${provider}_list_tick_fence"
+  assert_github_example_326_untouched "$provider" list_backtick_fence_unclosed_326 "${provider}_list_tick_fence_unclosed"
+
+  echo ""
+  echo "=== graduation closeout: ${provider} keeps prose after list-item fence Closes #123 (#2016) ==="
+  assert_github_keyword_issue_closed "$provider" list_fence_then_prose_123 123 "${provider}_list_fence_then_prose"
 
   echo ""
   echo "=== graduation closeout: ${provider} keeps nested-list Closes #123 (#2016) ==="
