@@ -2652,6 +2652,129 @@ run_contains "linear_1982_build_meta_tracker_issues" "TRACKER_ISSUES=" "$output"
 run_contains "linear_1982_build_meta_includes_290_in_range" "LEA-290" "$output"
 run_not_contains "linear_1982_build_meta_no_280" "LEA-280" "$output"
 
+# --- Equal-precedence predecessors: co-pointing build tags → boundary OK ---
+repo_build_same="$TMP_ROOT/linear-1982-build-meta-copoint"
+init_linear_git_repo "$repo_build_same"
+cat > "$repo_build_same/CHANGELOG.md" <<'MD'
+# Changelog
+
+## [Unreleased]
+
+## [1.3.0] - 2026-10-15
+
+- Co-pointing v1.2.0+aaa / v1.2.0+bbb at one commit.
+MD
+"$REAL_GIT" -C "$repo_build_same" add CHANGELOG.md .ai-dev-workflow.yaml scripts
+"$REAL_GIT" -C "$repo_build_same" commit -q -m "chore: baseline"
+"$REAL_GIT" -C "$repo_build_same" commit -q --allow-empty \
+  -m "Merge pull request #170 from example/fix/LEA-700-prior"
+sha_build_same_a="$("$REAL_GIT" -C "$repo_build_same" rev-parse HEAD)"
+"$REAL_GIT" -C "$repo_build_same" tag 'v1.2.0+aaa'
+"$REAL_GIT" -C "$repo_build_same" tag 'v1.2.0+bbb'
+"$REAL_GIT" -C "$repo_build_same" commit -q --allow-empty \
+  -m "Merge pull request #171 from example/fix/LEA-710-current"
+sha_build_same_c="$("$REAL_GIT" -C "$repo_build_same" rev-parse HEAD)"
+"$REAL_GIT" -C "$repo_build_same" tag v1.3.0
+write_linear_scope_gh \
+  "170|fix/LEA-700-prior|fix: LEA-700" \
+  "171|fix/LEA-710-current|fix: LEA-710" \
+  "commit:${sha_build_same_a}|170" \
+  "commit:${sha_build_same_c}|171"
+result="$(run_linear_scope_cleanup "$repo_build_same" v1.3.0 --from-changelog --best-effort)"
+status="$(printf '%s\n' "$result" | sed -n '1p')"
+output="$(printf '%s\n' "$result" | sed '1d')"
+run_test "linear_1982_build_meta_copoint_exits_zero" "0" "$status"
+run_contains "linear_1982_build_meta_copoint_proposes_710" "TRACKER_ISSUES=LEA-710" "$output"
+run_not_contains "linear_1982_build_meta_copoint_no_700" "LEA-700" "$output"
+run_not_contains "linear_1982_build_meta_copoint_no_ambiguous" \
+  "ambiguous_previous_release_boundary" "$output"
+
+# --- Equal-precedence predecessors at different SHAs → fail closed (order 1) ---
+# ls-remote lists v1.2.0+aaa before v1.2.0+bbb; A earlier than B.
+repo_build_ord1="$TMP_ROOT/linear-1982-build-meta-ambig-ord1"
+init_linear_git_repo "$repo_build_ord1"
+cat > "$repo_build_ord1/CHANGELOG.md" <<'MD'
+# Changelog
+
+## [Unreleased]
+
+## [1.3.0] - 2026-10-15
+
+- Equal-precedence v1.2.0+aaa@A and v1.2.0+bbb@B must fail closed.
+MD
+"$REAL_GIT" -C "$repo_build_ord1" add CHANGELOG.md .ai-dev-workflow.yaml scripts
+"$REAL_GIT" -C "$repo_build_ord1" commit -q -m "chore: baseline"
+"$REAL_GIT" -C "$repo_build_ord1" commit -q --allow-empty \
+  -m "Merge pull request #172 from example/fix/LEA-800-at-a"
+sha_build_ord1_a="$("$REAL_GIT" -C "$repo_build_ord1" rev-parse HEAD)"
+"$REAL_GIT" -C "$repo_build_ord1" tag 'v1.2.0+aaa'
+"$REAL_GIT" -C "$repo_build_ord1" commit -q --allow-empty \
+  -m "Merge pull request #173 from example/fix/LEA-810-at-b"
+sha_build_ord1_b="$("$REAL_GIT" -C "$repo_build_ord1" rev-parse HEAD)"
+"$REAL_GIT" -C "$repo_build_ord1" tag 'v1.2.0+bbb'
+"$REAL_GIT" -C "$repo_build_ord1" commit -q --allow-empty \
+  -m "Merge pull request #174 from example/fix/LEA-820-at-c"
+sha_build_ord1_c="$("$REAL_GIT" -C "$repo_build_ord1" rev-parse HEAD)"
+"$REAL_GIT" -C "$repo_build_ord1" tag v1.3.0
+write_linear_scope_gh \
+  "172|fix/LEA-800-at-a|fix: LEA-800" \
+  "173|fix/LEA-810-at-b|fix: LEA-810" \
+  "174|fix/LEA-820-at-c|fix: LEA-820" \
+  "commit:${sha_build_ord1_a}|172" \
+  "commit:${sha_build_ord1_b}|173" \
+  "commit:${sha_build_ord1_c}|174"
+result="$(run_linear_scope_cleanup "$repo_build_ord1" v1.3.0 --from-changelog --best-effort)"
+status="$(printf '%s\n' "$result" | sed -n '1p')"
+output="$(printf '%s\n' "$result" | sed '1d')"
+run_test "linear_1982_build_meta_ambig_ord1_best_effort_exits_zero" "0" "$status"
+run_contains "linear_1982_build_meta_ambig_ord1_incomplete" \
+  "RELEASE_SCOPE_INCOMPLETE reason=ambiguous_previous_release_boundary" "$output"
+run_not_contains "linear_1982_build_meta_ambig_ord1_no_tracker" "TRACKER_ISSUES=" "$output"
+run_not_contains "linear_1982_build_meta_ambig_ord1_no_820" "LEA-820" "$output"
+
+# --- Equal-precedence predecessors at different SHAs → fail closed (order 2) ---
+# Reverse listing vs ord1: v1.2.0+aaa@B lists before v1.2.0+zzz@A alphabetically.
+repo_build_ord2="$TMP_ROOT/linear-1982-build-meta-ambig-ord2"
+init_linear_git_repo "$repo_build_ord2"
+cat > "$repo_build_ord2/CHANGELOG.md" <<'MD'
+# Changelog
+
+## [Unreleased]
+
+## [1.3.0] - 2026-10-15
+
+- Listing order must not pick a predecessor when equal-precedence SHAs differ.
+MD
+"$REAL_GIT" -C "$repo_build_ord2" add CHANGELOG.md .ai-dev-workflow.yaml scripts
+"$REAL_GIT" -C "$repo_build_ord2" commit -q -m "chore: baseline"
+"$REAL_GIT" -C "$repo_build_ord2" commit -q --allow-empty \
+  -m "Merge pull request #175 from example/fix/LEA-830-at-a"
+sha_build_ord2_a="$("$REAL_GIT" -C "$repo_build_ord2" rev-parse HEAD)"
+"$REAL_GIT" -C "$repo_build_ord2" tag 'v1.2.0+zzz'
+"$REAL_GIT" -C "$repo_build_ord2" commit -q --allow-empty \
+  -m "Merge pull request #176 from example/fix/LEA-840-at-b"
+sha_build_ord2_b="$("$REAL_GIT" -C "$repo_build_ord2" rev-parse HEAD)"
+"$REAL_GIT" -C "$repo_build_ord2" tag 'v1.2.0+aaa'
+"$REAL_GIT" -C "$repo_build_ord2" commit -q --allow-empty \
+  -m "Merge pull request #177 from example/fix/LEA-850-at-c"
+sha_build_ord2_c="$("$REAL_GIT" -C "$repo_build_ord2" rev-parse HEAD)"
+"$REAL_GIT" -C "$repo_build_ord2" tag v1.3.0
+write_linear_scope_gh \
+  "175|fix/LEA-830-at-a|fix: LEA-830" \
+  "176|fix/LEA-840-at-b|fix: LEA-840" \
+  "177|fix/LEA-850-at-c|fix: LEA-850" \
+  "commit:${sha_build_ord2_a}|175" \
+  "commit:${sha_build_ord2_b}|176" \
+  "commit:${sha_build_ord2_c}|177"
+result="$(run_linear_scope_cleanup "$repo_build_ord2" v1.3.0 --from-changelog --best-effort)"
+status="$(printf '%s\n' "$result" | sed -n '1p')"
+output="$(printf '%s\n' "$result" | sed '1d')"
+run_test "linear_1982_build_meta_ambig_ord2_best_effort_exits_zero" "0" "$status"
+run_contains "linear_1982_build_meta_ambig_ord2_incomplete" \
+  "RELEASE_SCOPE_INCOMPLETE reason=ambiguous_previous_release_boundary" "$output"
+run_not_contains "linear_1982_build_meta_ambig_ord2_no_tracker" "TRACKER_ISSUES=" "$output"
+run_not_contains "linear_1982_build_meta_ambig_ord2_no_850" "LEA-850" "$output"
+
 # --- chore/ merged PR is shipping evidence; release/ branch is skipped ---
 repo_chore="$TMP_ROOT/linear-1982-chore-and-release"
 init_linear_git_repo "$repo_chore"

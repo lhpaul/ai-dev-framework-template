@@ -1133,6 +1133,8 @@ def resolve_previous_boundary(current_version, current_ref):
         available locally and any local tag of that name matches remote
       first_release — remote listing succeeded; no same-prefix tag is lower
       ambiguous — bare and v-prefixed tags for this version disagree on SHA
+      ambiguous_previous — equal-precedence predecessors (e.g. build metadata)
+        disagree on peeled SHA
       unavailable — remote listing failed, preceding commit unavailable or local
         tag disagrees, shallow clone, or version unparseable (fail closed; never
         git fetch — read-only inspection must not write refs/FETCH_HEAD)
@@ -1213,9 +1215,19 @@ def resolve_previous_boundary(current_version, current_ref):
     if not candidates:
         return "first_release", None
 
-    _key, commit_sha, tag_name = sorted(
-        candidates.values(), key=lambda item: item[0], reverse=True
-    )[0]
+    best_key = max(item[0] for item in candidates.values())
+    top = [item for item in candidates.values() if item[0] == best_key]
+    top_shas = {item[1] for item in top}
+    if len(top_shas) > 1:
+        print(
+            "ambiguous_previous_release_boundary version=%s "
+            "(equal-precedence predecessors disagree on peeled SHA)"
+            % current_version,
+            file=sys.stderr,
+        )
+        return "ambiguous_previous", None
+    # Co-pointing equal-precedence tags (e.g. v1.2.0+aaa / v1.2.0+bbb): any name.
+    _key, commit_sha, tag_name = sorted(top, key=lambda item: item[2])[0]
 
     # Never fetch: require the remote peeled commit already in the object store.
     cat = run_git("cat-file", "-e", commit_sha + "^{commit}")
@@ -1535,6 +1547,9 @@ boundary_status, prev_tag = resolve_previous_boundary(version, current_ref)
 if boundary_status == "ambiguous":
     print("INCOMPLETE\tambiguous_release_tag_namespace")
     sys.exit(0)
+if boundary_status == "ambiguous_previous":
+    print("INCOMPLETE\tambiguous_previous_release_boundary")
+    sys.exit(0)
 if current_ref is None:
     print("INCOMPLETE\trelease_ref_unavailable")
     sys.exit(0)
@@ -1656,6 +1671,9 @@ PY
         ;;
       ambiguous_release_tag_namespace)
         cleanup_log "RELEASE_SCOPE_INCOMPLETE reason=ambiguous_release_tag_namespace"
+        ;;
+      ambiguous_previous_release_boundary)
+        cleanup_log "RELEASE_SCOPE_INCOMPLETE reason=ambiguous_previous_release_boundary"
         ;;
       *)
         cleanup_log "RELEASE_SCOPE_INCOMPLETE unresolved_shas=${unresolved}"
