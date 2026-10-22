@@ -2823,13 +2823,13 @@ run_contains "linear_1982_parity_inspect_v_proposes_710" \
   "Linear --from-changelog scope from merged PRs in release range: LEA-710" "$output"
 run_not_contains "linear_1982_parity_inspect_v_no_705_scope" \
   "scope from merged PRs in release range: LEA-705" "$output"
-# Bare request keeps spelling 1.1.0 (branch still release/v1.1.0) → bare predecessor
-# → LEA-705 and LEA-710; CHANGELOG ## [1.1.0] still resolves.
+# Bare request: RELEASE_VERSION stays v1.1.0 (GitHub-compatible), but Linear
+# namespace uses requested spelling 1.1.0 → bare predecessor → LEA-705+LEA-710.
 result="$(run_linear_scope_cleanup "$repo_parity" 1.1.0 --from-changelog --best-effort)"
 status="$(printf '%s\n' "$result" | sed -n '1p')"
 output="$(printf '%s\n' "$result" | sed '1d')"
 run_test "linear_1982_parity_cleanup_bare_exits_zero" "0" "$status"
-run_contains "linear_1982_parity_cleanup_bare_version_spelling" "Release version: 1.1.0" "$output"
+run_contains "linear_1982_parity_cleanup_bare_version_spelling" "Release version: v1.1.0" "$output"
 run_contains "linear_1982_parity_cleanup_bare_branch" "Release branch: release/v1.1.0" "$output"
 run_contains "linear_1982_parity_cleanup_bare_proposes_710" "LEA-710" "$output"
 run_contains "linear_1982_parity_cleanup_bare_proposes_705" "LEA-705" "$output"
@@ -2838,7 +2838,7 @@ result="$(run_linear_scope_inspect "$repo_parity" 1.1.0 "$sha_parity_710")"
 status="$(printf '%s\n' "$result" | sed -n '1p')"
 output="$(printf '%s\n' "$result" | sed '1d')"
 run_test "linear_1982_parity_inspect_bare_exits_zero" "0" "$status"
-run_contains "linear_1982_parity_inspect_bare_version_spelling" "Release version: 1.1.0" "$output"
+run_contains "linear_1982_parity_inspect_bare_version_spelling" "Release version: v1.1.0" "$output"
 run_contains "linear_1982_parity_inspect_bare_proposes_710" "LEA-710" "$output"
 run_contains "linear_1982_parity_inspect_bare_proposes_705" "LEA-705" "$output"
 
@@ -3049,6 +3049,130 @@ run_contains "github_projects_missing_section_unavailable" \
   "TRACKER_INCOMPLETE=1 REASON=changelog_scope_unavailable" "$output"
 run_not_contains "github_projects_missing_section_no_linear_diag" \
   "CHANGELOG_SECTION_UNAVAILABLE" "$output"
+
+# --- GitHub providers: bare input 1.2.3 must still stamp milestone title v1.2.3 ---
+# (RELEASE_VERSION stays branch-normalized; Linear-only requested spelling must
+# not leak into github_projects / github_issues milestone identity.)
+BARE_MILESTONE_BIN="$TMP_ROOT/bare-milestone-bin"
+mkdir -p "$BARE_MILESTONE_BIN"
+cat > "$BARE_MILESTONE_BIN/gh" <<'MOCK_GH_BARE_MILESTONE'
+#!/usr/bin/env bash
+case "$*" in
+  "auth status") exit 0 ;;
+  "api --paginate --slurp repos/test-owner/test-repo/milestones?state=all&per_page=100")
+    # Exact title match: only v1.2.3 exists (not bare 1.2.3).
+    printf '[{"number":77,"title":"v1.2.3","state":"closed"}]\n'
+    ;;
+  "repo view --json owner --jq .owner.login") printf 'test-owner\n' ;;
+  "repo view --json name --jq .name") printf 'test-repo\n' ;;
+  "api -X PATCH repos/test-owner/test-repo/issues/101 -F milestone=77")
+    printf '{"number":101,"milestone":{"number":77,"title":"v1.2.3"}}\n'
+    ;;
+  "api -X POST repos/test-owner/test-repo/milestones"*)
+    printf 'unexpected milestone create (title must already exist as v1.2.3): gh %s\n' "$*" >&2
+    exit 64
+    ;;
+  "issue view 101 --json state --jq .state") printf 'closed\n' ;;
+  "pr list --state merged --head release/v1.2.3 --base main --json number --jq .[0].number // empty")
+    printf '333\n' ;;
+  "pr list --state merged --head release/v1.2.3 --base develop --json number --jq .[0].number // empty")
+    printf '334\n' ;;
+  "pr list --state open --head release/v1.2.3 --base main --json number --jq .[0].number // empty")
+    printf '\n' ;;
+  "pr list --state open --head release/v1.2.3 --base develop --json number --jq .[0].number // empty")
+    printf '\n' ;;
+  *"user(login"*"projectV2"*)
+    printf '{"data":{"user":{"projectV2":{"id":"PVT_test000001"}}}}\n' ;;
+  *"organization(login"*"projectV2"*)
+    printf '{"data":{"organization":{"projectV2":{"id":"PVT_test000001"}}}}\n' ;;
+  *"projectId"*"ProjectV2"*"items"*)
+    printf '{"data":{"node":{"items":{"nodes":[],"pageInfo":{"hasNextPage":false,"endCursor":""}}}}}\n' ;;
+  "api graphql"*)
+    printf '{"data":{"repository":{"issue":{"projectItems":{"nodes":[],"pageInfo":{"hasNextPage":false,"endCursor":""}}}}}}\n' ;;
+  "api repos/test-owner/test-repo/releases/tags/v1.2.3 --jq .published_at // .created_at // empty")
+    printf '2026-06-11T12:00:00Z\n' ;;
+  "api repos/test-owner/test-repo/tags?per_page=100 --paginate --jq [.[] | select(.name | test(\"^v?[0-9]+\\.[0-9]+\\.[0-9]+\"))] | .[].name")
+    printf 'v1.2.3\nv1.2.2\n' ;;
+  "api repos/test-owner/test-repo/releases/tags/v1.2.2 --jq .published_at // .created_at // empty")
+    printf '2026-06-01T12:00:00Z\n' ;;
+  *)
+    printf 'unexpected gh invocation: gh %s\n' "$*" >&2
+    exit 64
+    ;;
+esac
+MOCK_GH_BARE_MILESTONE
+chmod +x "$BARE_MILESTONE_BIN/gh"
+cat > "$BARE_MILESTONE_BIN/git" <<'MOCK_GIT_BARE_MILESTONE'
+#!/usr/bin/env bash
+case "$*" in
+  "fetch origin --prune") exit 0 ;;
+  "ls-remote --exit-code --heads origin release/v1.2.3") exit 2 ;;
+  "show-ref --quiet refs/heads/release/v1.2.3") exit 1 ;;
+  "remote get-url origin") printf 'https://github.com/test-owner/test-repo.git\n' ;;
+  *) exit 0 ;;
+esac
+MOCK_GIT_BARE_MILESTONE
+chmod +x "$BARE_MILESTONE_BIN/git"
+
+fixture_github_bare_milestone_repo() {
+  local provider="$1"
+  local name="$2"
+  local path="$TMP_ROOT/$name"
+  mkdir -p "$path/scripts/development-workflow"
+  cp "$REPO_ROOT/scripts/development-workflow/workflow-lib.sh" \
+    "$path/scripts/development-workflow/workflow-lib.sh"
+  cp "$REPO_ROOT/scripts/development-workflow/prepare-release-post-merge-cleanup.sh" \
+    "$path/scripts/development-workflow/prepare-release-post-merge-cleanup.sh"
+  chmod +x "$path/scripts/development-workflow/prepare-release-post-merge-cleanup.sh"
+  if [ "$provider" = "github_projects" ]; then
+    cat > "$path/.ai-dev-workflow.yaml" <<'YAML'
+schema_version: 2
+issue_tracker:
+  provider: github_projects
+  project_number: 1
+YAML
+  else
+    cat > "$path/.ai-dev-workflow.yaml" <<'YAML'
+schema_version: 2
+issue_tracker:
+  provider: github_issues
+YAML
+  fi
+  cat > "$path/CHANGELOG.md" <<'MD'
+# Changelog
+
+## [Unreleased]
+
+## [1.2.3] - 2026-06-11
+
+### Fixed
+
+- Fixed some bug (#101).
+MD
+  printf '%s\n' "$path"
+}
+
+for provider in github_projects github_issues; do
+  repo_bare_ms="$(fixture_github_bare_milestone_repo "$provider" "bare-ms-${provider}")"
+  result="$(run_cleanup_with_bin "$BARE_MILESTONE_BIN" "$repo_bare_ms" 1.2.3 --from-changelog --best-effort)"
+  status="$(printf '%s\n' "$result" | sed -n '1p')"
+  output="$(printf '%s\n' "$result" | sed '1d')"
+  run_test "${provider}_bare_input_exits_zero" "0" "$status"
+  run_contains "${provider}_bare_input_release_version_v" "Release version: v1.2.3" "$output"
+  run_contains "${provider}_bare_input_branch_v" "Release branch: release/v1.2.3" "$output"
+  run_contains "${provider}_bare_input_stamp_v_milestone" \
+    "RELEASE_STAMPED issue=101 version=v1.2.3 provider=${provider}" "$output"
+  run_not_contains "${provider}_bare_input_no_bare_stamp" \
+    "RELEASE_STAMPED issue=101 version=1.2.3" "$output"
+  # v-prefixed input must remain byte-identical on the provider-visible surface.
+  result="$(run_cleanup_with_bin "$BARE_MILESTONE_BIN" "$repo_bare_ms" v1.2.3 --from-changelog --best-effort)"
+  status="$(printf '%s\n' "$result" | sed -n '1p')"
+  output="$(printf '%s\n' "$result" | sed '1d')"
+  run_test "${provider}_v_input_exits_zero" "0" "$status"
+  run_contains "${provider}_v_input_release_version" "Release version: v1.2.3" "$output"
+  run_contains "${provider}_v_input_stamp" \
+    "RELEASE_STAMPED issue=101 version=v1.2.3 provider=${provider}" "$output"
+done
 
 echo "Results: $PASS_COUNT passed, $FAIL_COUNT failed"
 

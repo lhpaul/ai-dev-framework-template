@@ -162,7 +162,9 @@ release_version_from_branch() {
 
 # Tag spelling as requested by the caller (before release-branch v-injection).
 # Bare `1.1.0` stays `1.1.0` even though normalize_release_branch yields
-# release/v1.1.0 — namespace resolution and CHANGELOG lookup use this spelling.
+# release/v1.1.0. Used only for Linear namespace/boundary resolution and Linear
+# CHANGELOG lookup — never for github_projects/github_issues RELEASE_VERSION
+# (milestones, stamps, markers, projection identity).
 release_tag_request_from_input() {
   local value="$1"
   value="${value#refs/heads/}"
@@ -2221,9 +2223,11 @@ if [ -z "$RELEASE_INPUT" ]; then
 fi
 
 RELEASE_BRANCH="$(normalize_release_branch "$RELEASE_INPUT")"
-# Keep branch normalization (release/v1.1.0) separate from the requested tag
-# spelling used for namespace resolution, CHANGELOG sections, and stamps.
-RELEASE_VERSION="$(release_tag_request_from_input "$RELEASE_INPUT")"
+# Provider-visible version identity (milestones, stamps, markers, projection):
+# same as origin/develop — branch basename after normalize (bare 1.2.3 → v1.2.3).
+RELEASE_VERSION="$(release_version_from_branch "$RELEASE_BRANCH")"
+# Linear-only: requested tag spelling for namespace/boundary + CHANGELOG lookup.
+RELEASE_REQUESTED_TAG_SPELLING="$(release_tag_request_from_input "$RELEASE_INPUT")"
 validate_portable_branch_name "release" "$RELEASE_BRANCH"
 validate_portable_branch_name "backport base" "$BACKPORT_BASE"
 cleanup_log "Release branch: $RELEASE_BRANCH"
@@ -2231,7 +2235,11 @@ cleanup_log "Release version: $RELEASE_VERSION"
 cleanup_log "Backport base: $BACKPORT_BASE"
 
 if [ "$FROM_CHANGELOG" = "true" ]; then
-  if ! append_issues_from_changelog "$RELEASE_VERSION"; then
+  changelog_scope_version="$RELEASE_VERSION"
+  if [ "$TRACKER_PROVIDER" = "linear" ]; then
+    changelog_scope_version="$RELEASE_REQUESTED_TAG_SPELLING"
+  fi
+  if ! append_issues_from_changelog "$changelog_scope_version"; then
     cleanup_log "TRACKER_INCOMPLETE=1 REASON=changelog_scope_unavailable"
     if [ "$BEST_EFFORT" != "true" ] || [ "$INSPECT_TARGETS" = "true" ]; then
       exit 1
