@@ -435,12 +435,24 @@ review:
     github: [haystack]
 YAML
 
-duplicate_warning="$(emit_review_lifecycle_duplicate_warnings "$_CONFIG_DIR/.ai-dev-workflow-duplicates.yaml" 2>&1 || true)"
-case "$duplicate_warning" in
-  *'reviewer "haystack" in more than one bucket'*) duplicate_detected=yes ;;
-  *) duplicate_detected=no ;;
-esac
-run_test "duplicate_lifecycle_reviewer_warning" "yes" "$duplicate_detected"
+_DUP_CHANNEL_DIR="$(mktemp -d)"
+duplicate_status=0
+emit_review_lifecycle_duplicate_warnings "$_CONFIG_DIR/.ai-dev-workflow-duplicates.yaml" >"$_DUP_CHANNEL_DIR/stdout" 2>"$_DUP_CHANNEL_DIR/stderr" || duplicate_status=$?
+duplicate_warning="$(cat "$_DUP_CHANNEL_DIR/stderr")"
+run_test "duplicate_lifecycle_reviewer_warning" "WARN: configuration validation error; key=review" "$duplicate_warning"
+run_test "duplicate_lifecycle_warning_status" "0" "$duplicate_status"
+run_test "duplicate_lifecycle_warning_stdout_empty" "" "$(cat "$_DUP_CHANNEL_DIR/stdout")"
+duplicate_identities_absent=yes
+if grep -Eq 'haystack|pr-agent|codex' "$_DUP_CHANNEL_DIR/stdout" "$_DUP_CHANNEL_DIR/stderr"; then
+  duplicate_identities_absent=no
+fi
+run_test "duplicate_lifecycle_warning_identities_absent_both_channels" "yes" "$duplicate_identities_absent"
+duplicate_selected_payload="$(
+  printf 'draft=%s;ready=%s' \
+    "$(workflow_config_review_on_draft_github "$_CONFIG_DIR/.ai-dev-workflow-duplicates.yaml" | paste -sd ',' -)" \
+    "$(workflow_config_review_on_ready_github "$_CONFIG_DIR/.ai-dev-workflow-duplicates.yaml" | paste -sd ',' -)"
+)"
+run_test "duplicate_lifecycle_warning_preserves_selected_payload" "draft=pr-agent,haystack;ready=haystack" "$duplicate_selected_payload"
 
 _DUP_OVERRIDE_DIR="$(mktemp -d)"
 cat > "$_DUP_OVERRIDE_DIR/.ai-dev-workflow.local.yaml" <<'YAML'
@@ -460,18 +472,33 @@ review:
   on_ready:
     github: [haystack]
 YAML
-duplicate_override_warning="$(
+duplicate_override_status=0
+(
   workflow_repo_root() { printf '%s\n' "$_DUP_OVERRIDE_DIR"; }
-  WORKFLOW_APPLY_LOCAL_REVIEW_OVERRIDES=1 emit_review_lifecycle_duplicate_warnings "$_DUP_TEMP_CONFIG" 2>&1 || true
+  WORKFLOW_APPLY_LOCAL_REVIEW_OVERRIDES=1 emit_review_lifecycle_duplicate_warnings "$_DUP_TEMP_CONFIG"
+) >"$_DUP_CHANNEL_DIR/stdout" 2>"$_DUP_CHANNEL_DIR/stderr" || duplicate_override_status=$?
+duplicate_override_warning="$(cat "$_DUP_CHANNEL_DIR/stderr")"
+run_test "duplicate_lifecycle_warning_uses_local_override_for_temp_config" "WARN: configuration validation error; key=review" "$duplicate_override_warning"
+run_test "duplicate_lifecycle_override_warning_status" "0" "$duplicate_override_status"
+run_test "duplicate_lifecycle_override_warning_stdout_empty" "" "$(cat "$_DUP_CHANNEL_DIR/stdout")"
+duplicate_override_identities_absent=yes
+if grep -Eq 'bugbot|haystack|pr-agent' "$_DUP_CHANNEL_DIR/stdout" "$_DUP_CHANNEL_DIR/stderr"; then
+  duplicate_override_identities_absent=no
+fi
+run_test "duplicate_lifecycle_override_identities_absent_both_channels" "yes" "$duplicate_override_identities_absent"
+duplicate_override_payload="$(
+  workflow_repo_root() { printf '%s\n' "$_DUP_OVERRIDE_DIR"; }
+  export WORKFLOW_APPLY_LOCAL_REVIEW_OVERRIDES=1
+  printf 'draft=%s;ready=%s' \
+    "$(workflow_config_review_on_draft_github "$_DUP_TEMP_CONFIG" | paste -sd ',' -)" \
+    "$(workflow_config_review_on_ready_github "$_DUP_TEMP_CONFIG" | paste -sd ',' -)"
 )"
-case "$duplicate_override_warning" in
-  *'reviewer "bugbot" in more than one bucket'*) duplicate_override_detected=yes ;;
-  *) duplicate_override_detected=no ;;
-esac
-run_test "duplicate_lifecycle_warning_uses_local_override_for_temp_config" "yes" "$duplicate_override_detected"
+run_test "duplicate_lifecycle_override_preserves_selected_payload" "draft=bugbot;ready=bugbot" "$duplicate_override_payload"
 rm -rf "$_DUP_OVERRIDE_DIR"
 rm -f "$_DUP_TEMP_CONFIG"
-unset _DUP_OVERRIDE_DIR _DUP_TEMP_CONFIG duplicate_override_warning duplicate_override_detected
+rm -rf "$_DUP_CHANNEL_DIR"
+unset _DUP_OVERRIDE_DIR _DUP_TEMP_CONFIG _DUP_CHANNEL_DIR duplicate_override_warning duplicate_override_status duplicate_override_identities_absent duplicate_override_payload
+unset duplicate_warning duplicate_status duplicate_identities_absent duplicate_selected_payload
 
 declare -a phase_after_clean_platforms=()
 append_phase_after_clean_platforms "coderabbit, pr-agent"
