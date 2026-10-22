@@ -17,7 +17,7 @@
 #
 # Usage: bash scripts/development-workflow/tests/test-prepare-release-tracker-cleanup.sh
 # covers: scripts/development-workflow/prepare-release-post-merge-cleanup.sh
-# covers: scripts/development-workflow/tests/fixtures/prepare-release-post-merge-cleanup.develop-baseline.sh
+# covers: scripts/development-workflow/tests/fixtures/prepare-release-post-merge-cleanup.develop-baseline
 # covers: scripts/development-workflow/component-release-target.sh
 # covers: scripts/development-workflow/workflow-config-resolver.py
 # covers: scripts/development-workflow/workflow-merge-budget.py
@@ -3290,7 +3290,7 @@ done
 # (modulo temp paths), and mutation call logs for both GitHub providers.
 echo ""
 echo "=== Differential GitHub parity vs develop baseline ==="
-DEVELOP_BASELINE="$REPO_ROOT/scripts/development-workflow/tests/fixtures/prepare-release-post-merge-cleanup.develop-baseline.sh"
+DEVELOP_BASELINE="$REPO_ROOT/scripts/development-workflow/tests/fixtures/prepare-release-post-merge-cleanup.develop-baseline"
 if [ ! -f "$DEVELOP_BASELINE" ]; then
   echo "FAIL: missing frozen develop baseline at $DEVELOP_BASELINE" >&2
   FAIL_COUNT=$((FAIL_COUNT + 1))
@@ -3484,11 +3484,12 @@ MD
       run_test "parity_${label}_stdio" "match" "DIFF see $case_dir/*.stdio"
     fi
     # Mutation-relevant calls: PATCH issues / POST milestones / branch deletes.
+    # Empty grep is expected when a case performs no mutations.
     local head_mut base_mut
-    head_mut="$(grep -E '^(gh api -X (PATCH|POST)|gh api -X DELETE|git push |git branch -D |git checkout |git switch )' "$head_log" 2>/dev/null \
-      | normalize_parity_text || true)"
-    base_mut="$(grep -E '^(gh api -X (PATCH|POST)|gh api -X DELETE|git push |git branch -D |git checkout |git switch )' "$base_log" 2>/dev/null \
-      | normalize_parity_text || true)"
+    # workflow-shell-guard: allow SH001 - empty mutation log is a valid parity case
+    head_mut="$( { grep -E '^(gh api -X (PATCH|POST)|gh api -X DELETE|git push |git branch -D |git checkout |git switch )' "$head_log" || true; } | normalize_parity_text )"
+    # workflow-shell-guard: allow SH001 - empty mutation log is a valid parity case
+    base_mut="$( { grep -E '^(gh api -X (PATCH|POST)|gh api -X DELETE|git push |git branch -D |git checkout |git switch )' "$base_log" || true; } | normalize_parity_text )"
     # Also compare full call logs (read + mutate) for byte-identical tooling surface.
     local head_all base_all
     head_all="$(normalize_parity_text < "$head_log")"

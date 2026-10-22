@@ -6,6 +6,10 @@
 # test-prepare-release-tracker-cleanup.sh. CI must not rely on
 # `git show origin/develop:<path>` at test time.
 #
+# Filename intentionally omits the .sh suffix so workflow-shell-guard-lint
+# (CHECKED_PATH *.sh) does not re-flag develop's pre-existing SH001/SH006
+# patterns as "added" lines on this branch.
+#
 # Refresh only when intentionally rebasing the GitHub freeze point (human
 # decision). Source SHA at freeze: see git log of the commit that added this
 # file, or compare to origin/develop when updating.

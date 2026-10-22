@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""#1890 durable admission proofs; no remote requests or user-resource cleanup."""
+"""#1890 durable admission proofs; no remote requests or user-resource cleanup.
+
+covers: scripts/development-workflow/workflow-merge-budget.py
+covers: scripts/development-workflow/tests/fixtures/workflow-merge-budget.develop-baseline.py
+"""
 import argparse
 import hashlib
 import importlib.util
@@ -1841,6 +1845,152 @@ class ReleaseScope(unittest.TestCase):
         result=self.command(['bash',str(self.scripts/'prepare-release-post-merge-cleanup.sh'),'v1.2.3',
             '--inspect-targets','--release-head',self.release_head],self.env)
         self.assertEqual(json.loads(result.stdout),projection)
+
+
+class DevelopGithubParity(unittest.TestCase):
+    """#1982: GitHub project_release surfaces stay byte-identical to frozen develop."""
+
+    BASELINE = (
+        Path(__file__).resolve().parents[1]
+        / 'tests/fixtures/workflow-merge-budget.develop-baseline.py'
+    )
+    HEAD = Path(__file__).resolve().parents[1] / 'workflow-merge-budget.py'
+
+    @staticmethod
+    def _load(path, name):
+        spec = importlib.util.spec_from_file_location(name, path)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+
+    def setUp(self):
+        self.assertTrue(self.BASELINE.is_file(), 'missing frozen develop baseline: %s' % self.BASELINE)
+        self.head_mod = self._load(self.HEAD, 'merge_budget_head_parity')
+        self.base_mod = self._load(self.BASELINE, 'merge_budget_develop_baseline')
+        self.temp = tempfile.TemporaryDirectory(prefix='1982-github-parity-')
+        self.addCleanup(self.temp.cleanup)
+        self.repo = Path(self.temp.name).resolve() / 'repo'
+        self.repo.mkdir()
+        subprocess.run(['git', 'init', '-q', '-b', 'develop'], cwd=self.repo, check=True)
+        subprocess.run(['git', 'config', 'user.name', 'Fixture'], cwd=self.repo, check=True)
+        subprocess.run(['git', 'config', 'user.email', 'fixture@example.invalid'], cwd=self.repo, check=True)
+
+    def _commit_changelog(self, body):
+        (self.repo / 'CHANGELOG.md').write_text(body)
+        subprocess.run(['git', 'add', 'CHANGELOG.md'], cwd=self.repo, check=True)
+        subprocess.run(['git', 'commit', '-qm', 'changelog'], cwd=self.repo, check=True)
+        return subprocess.run(
+            ['git', 'rev-parse', 'HEAD'], cwd=self.repo, text=True, capture_output=True, check=True,
+        ).stdout.strip()
+
+    def _run_project_release(self, mod, provider, version, head, *, branch=None):
+        if branch is None:
+            branch = 'release/v1.2.3' if not str(version).startswith('mobile') else 'release/vmobile-v1.1.0'
+            if str(version).startswith('vmobile'):
+                branch = 'release/vmobile-v1.1.0'
+            if 'rc' in str(version):
+                branch = 'release/' + (version if str(version).startswith('v') else 'v' + version)
+        args = argparse.Namespace(
+            target_root=str(self.repo),
+            repo_root=str(self.repo),
+            version=version,
+            branch=branch,
+            base='develop',
+            head=head,
+            provider=provider,
+            issue_repo='org/repo',
+            repo='org/repo',
+            scope_issue=['12'],
+            project_id='PVT_test000001' if provider == 'github_projects' else None,
+            merged_status='Merged',
+            released_status='Released',
+            evidence=None,
+            release_field=None,
+            release_label_prefix=None,
+        )
+        patches = [
+            patch.object(mod, 'gh', lambda *a, **k: {'number': 12, 'state': 'closed'}),
+        ]
+        if provider == 'github_projects' and hasattr(mod, 'release_omitted'):
+            patches.append(patch.object(mod, 'release_omitted', lambda *a, **k: ([], 0)))
+        for mock in patches:
+            mock.start()
+        try:
+            try:
+                return ('ok', mod.project_release(args))
+            except Exception as exc:  # noqa: BLE001 — compare Stop message across modules
+                return ('err', type(exc).__name__, str(exc))
+        finally:
+            for mock in patches:
+                mock.stop()
+
+    def test_github_project_release_matches_develop_baseline(self):
+        versions = (
+            '1.2.3',
+            'v1.2.3',
+            'vmobile-v1.1.0',
+            'mobile-v1.1.0',
+            'v1.2.3-rc.1',
+            'v1.2.3-rc.01',
+            'not-a-version',
+        )
+        changelogs = (
+            ('trailing_nl', '# Changes\n\n## [1.2.3] - 2026-10-10\n- Fixed (#12).\n'),
+            ('no_trailing_nl', '# Changes\n\n## [1.2.3] - 2026-10-10\n- Fixed (#12).'),
+            ('missing_section', '# Changes\n\n## [9.9.9] - 2026-01-01\n- Other (#99).\n'),
+        )
+        parity_cases = 0
+        for provider in ('github_projects', 'github_issues'):
+            for cl_name, body in changelogs:
+                # Fresh commit per changelog shape so digests stay independent.
+                head = self._commit_changelog(body)
+                for version in versions:
+                    with self.subTest(provider=provider, changelog=cl_name, version=version):
+                        head_result = self._run_project_release(self.head_mod, provider, version, head)
+                        base_result = self._run_project_release(self.base_mod, provider, version, head)
+                        self.assertEqual(head_result[0], base_result[0], head_result)
+                        if head_result[0] == 'err':
+                            self.assertEqual(head_result[1], base_result[1])
+                            self.assertEqual(head_result[2], base_result[2])
+                        else:
+                            self.assertEqual(
+                                head_result[1]['changelogDigest'],
+                                base_result[1]['changelogDigest'],
+                            )
+                            self.assertEqual(head_result[1]['version'], base_result[1]['version'])
+                            self.assertEqual(head_result[1]['markerProvider'], provider)
+                            # GitHub must use call()-stripped digest, not raw stdout.
+                            raw = subprocess.run(
+                                ['git', '-C', str(self.repo), 'show', head + ':CHANGELOG.md'],
+                                text=True, capture_output=True, check=True,
+                            ).stdout
+                            stripped = raw.strip()
+                            expected = hashlib.sha256(stripped.encode()).hexdigest()
+                            self.assertEqual(head_result[1]['changelogDigest'], expected)
+                            if raw != stripped:
+                                self.assertNotEqual(
+                                    head_result[1]['changelogDigest'],
+                                    hashlib.sha256(raw.encode()).hexdigest(),
+                                )
+                        parity_cases += 1
+        # 2 providers × 3 changelog shapes × 7 versions
+        self.assertEqual(parity_cases, 42)
+
+    def test_github_missing_changelog_file_matches_develop(self):
+        # Commit something else so HEAD exists, then remove CHANGELOG from that tree
+        # by never adding it — fingerprint raises via call() on both modules.
+        (self.repo / 'note.txt').write_text('x\n')
+        subprocess.run(['git', 'add', 'note.txt'], cwd=self.repo, check=True)
+        subprocess.run(['git', 'commit', '-qm', 'no changelog'], cwd=self.repo, check=True)
+        head = subprocess.run(
+            ['git', 'rev-parse', 'HEAD'], cwd=self.repo, text=True, capture_output=True, check=True,
+        ).stdout.strip()
+        for provider in ('github_projects', 'github_issues'):
+            with self.subTest(provider=provider):
+                head_result = self._run_project_release(self.head_mod, provider, 'v1.2.3', head)
+                base_result = self._run_project_release(self.base_mod, provider, 'v1.2.3', head)
+                self.assertEqual(head_result[0], 'err')
+                self.assertEqual(head_result, base_result)
 
 
 class ReleasePair(unittest.TestCase):
