@@ -124,6 +124,13 @@ record_release_scope_skip() {
   local issue="$1"
   local reason="$2"
   local i
+  # Explicit --issue/--issues are always proposed (unioned after the filter).
+  # Never report them as RELEASE_SCOPE_SKIPPED / release_scope_skipped.
+  for i in ${EXPLICIT_ISSUE_NUMBERS[@]+"${EXPLICIT_ISSUE_NUMBERS[@]}"}; do
+    if [ "$i" = "$issue" ]; then
+      return 0
+    fi
+  done
   for i in ${RELEASE_SCOPE_SKIPPED_ISSUES[@]+"${RELEASE_SCOPE_SKIPPED_ISSUES[@]}"}; do
     if [ "$i" = "$issue" ]; then
       return 0

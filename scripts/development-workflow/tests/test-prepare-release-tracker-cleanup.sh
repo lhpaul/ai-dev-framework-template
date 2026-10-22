@@ -1962,6 +1962,81 @@ run_test "linear_1982_doc_plus_impl_exits_zero" "0" "$status"
 run_contains "linear_1982_doc_plus_impl_proposes_298" "TRACKER_ISSUES=LEA-298" "$output"
 run_not_contains "linear_1982_doc_plus_impl_no_doc_skip" "RELEASE_SCOPE_SKIPPED issue=LEA-298 reason=documentation_stage_pr_only" "$output"
 
+# Explicit --issue overrides documentation-stage-only evidence: proposed once,
+# never RELEASE_SCOPE_SKIPPED (same array feeds component release_scope_skipped).
+repo_explicit_doc="$TMP_ROOT/linear-1982-explicit-doc-stage"
+init_linear_git_repo "$repo_explicit_doc"
+cat > "$repo_explicit_doc/CHANGELOG.md" <<'MD'
+# Changelog
+
+## [Unreleased]
+
+## [1.29.0] - 2026-10-15
+
+- Mentions LEA-298 (docs-stage only in this release).
+MD
+"$REAL_GIT" -C "$repo_explicit_doc" add CHANGELOG.md .ai-dev-workflow.yaml scripts
+"$REAL_GIT" -C "$repo_explicit_doc" commit -q -m "chore: baseline before v1.28.0"
+"$REAL_GIT" -C "$repo_explicit_doc" tag v1.28.0
+"$REAL_GIT" -C "$repo_explicit_doc" commit -q --allow-empty \
+  -m "Merge pull request #521 from example/spec/LEA-298-new-feature"
+sha_explicit_spec="$("$REAL_GIT" -C "$repo_explicit_doc" rev-parse HEAD)"
+"$REAL_GIT" -C "$repo_explicit_doc" commit -q --allow-empty \
+  -m "Merge pull request #522 from example/implementation-plan/LEA-298-new-feature"
+sha_explicit_plan="$("$REAL_GIT" -C "$repo_explicit_doc" rev-parse HEAD)"
+"$REAL_GIT" -C "$repo_explicit_doc" tag v1.29.0
+write_linear_scope_gh \
+  "521|spec/LEA-298-new-feature|spec: LEA-298 new feature" \
+  "522|implementation-plan/LEA-298-new-feature|plan: LEA-298 new feature" \
+  "commit:${sha_explicit_spec}|521" \
+  "commit:${sha_explicit_plan}|522"
+result="$(run_linear_scope_cleanup "$repo_explicit_doc" v1.29.0 \
+  --from-changelog --issue LEA-298 --best-effort)"
+status="$(printf '%s\n' "$result" | sed -n '1p')"
+output="$(printf '%s\n' "$result" | sed '1d')"
+run_test "linear_1982_explicit_doc_exits_zero" "0" "$status"
+run_contains "linear_1982_explicit_doc_proposes_298" "TRACKER_ISSUES=LEA-298" "$output"
+run_not_contains "linear_1982_explicit_doc_no_skip_line" \
+  "RELEASE_SCOPE_SKIPPED issue=LEA-298" "$output"
+# Proposed exactly once in TRACKER_ISSUES (no duplicate from filter KEEP + union).
+tracker_count="$(printf '%s\n' "$output" | grep -oE 'TRACKER_ISSUES=[^[:space:]]+' | \
+  tr ',' '\n' | grep -c 'LEA-298' || true)"
+run_test "linear_1982_explicit_doc_proposed_once" "1" "$tracker_count"
+
+# Explicit --issue overrides release/backport-only evidence the same way.
+repo_explicit_rel="$TMP_ROOT/linear-1982-explicit-release-branch"
+init_linear_git_repo "$repo_explicit_rel"
+cat > "$repo_explicit_rel/CHANGELOG.md" <<'MD'
+# Changelog
+
+## [Unreleased]
+
+## [1.29.0] - 2026-10-15
+
+- Mentions LEA-999 from a release-branch merge only.
+MD
+"$REAL_GIT" -C "$repo_explicit_rel" add CHANGELOG.md .ai-dev-workflow.yaml scripts
+"$REAL_GIT" -C "$repo_explicit_rel" commit -q -m "chore: baseline before v1.28.0"
+"$REAL_GIT" -C "$repo_explicit_rel" tag v1.28.0
+"$REAL_GIT" -C "$repo_explicit_rel" commit -q --allow-empty \
+  -m "Merge pull request #531 from example/release/v1.29.0"
+sha_explicit_rel="$("$REAL_GIT" -C "$repo_explicit_rel" rev-parse HEAD)"
+"$REAL_GIT" -C "$repo_explicit_rel" tag v1.29.0
+write_linear_scope_gh \
+  "531|release/v1.29.0|Release v1.29.0 LEA-999" \
+  "commit:${sha_explicit_rel}|531"
+result="$(run_linear_scope_cleanup "$repo_explicit_rel" v1.29.0 \
+  --from-changelog --issue LEA-999 --best-effort)"
+status="$(printf '%s\n' "$result" | sed -n '1p')"
+output="$(printf '%s\n' "$result" | sed '1d')"
+run_test "linear_1982_explicit_rel_exits_zero" "0" "$status"
+run_contains "linear_1982_explicit_rel_proposes_999" "TRACKER_ISSUES=LEA-999" "$output"
+run_not_contains "linear_1982_explicit_rel_no_skip_line" \
+  "RELEASE_SCOPE_SKIPPED issue=LEA-999" "$output"
+tracker_count="$(printf '%s\n' "$output" | grep -oE 'TRACKER_ISSUES=[^[:space:]]+' | \
+  tr ',' '\n' | grep -c 'LEA-999' || true)"
+run_test "linear_1982_explicit_rel_proposed_once" "1" "$tracker_count"
+
 # --- First release (no preceding semver tag) may scan tip history ---
 repo_first="$TMP_ROOT/linear-1982-first-release"
 init_linear_git_repo "$repo_first"
