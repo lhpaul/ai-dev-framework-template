@@ -211,20 +211,6 @@ fail_closed() {
   exit 1
 }
 
-# Legacy fence stripper for github_projects / github_issues discovery only.
-# Handles paired triple-backtick fences; does not handle tilde fences or
-# unclosed fences. Linear discovery must use strip_fenced_pr_body_blocks from
-# closing-keyword-lib.sh instead — do not route github call sites through that
-# canonical filter in this change (behavior freeze for non-Linear trackers).
-strip_fenced_blocks() {
-  python3 -c '
-import re, sys
-text = sys.stdin.read()
-text = re.sub(r"```.*?```", "", text, flags=re.S)
-sys.stdout.write(text)
-'
-}
-
 extract_closing_issue_numbers() {
   grep -ioE '(^|[^[:alnum:]_])(close[sd]?|fix(es|ed)?|resolve[sd]?)[[:space:]]+(issue[[:space:]]+)?#[0-9]+' \
     | grep -oE '[0-9]+$' \
@@ -301,12 +287,16 @@ sys.stdout.write(body)
     SLUG_SOURCE="cli_override"
   fi
 
+  # Combined text is for Linear only (unchanged join). GitHub closeout filters
+  # title and body as independent documents — see collect_pr_epic_candidates.
   printf '%s\n%s\n' "$title" "$body" > "$TMP_DIR/pr-text.txt"
+  printf '%s' "$title" > "$TMP_DIR/pr-title.txt"
+  printf '%s' "$body" > "$TMP_DIR/pr-body.txt"
 }
 
 # Drop indented Markdown code lines (4+ spaces or a leading tab) after fence
 # stripping. Used only for Linear epic-ID text discovery (deferred tracker
-# action), never for GitHub issue mutation.
+# action), never for GitHub issue mutation — GitHub closeout uses GFM render.
 strip_indented_code_lines() {
   python3 -c '
 import sys
@@ -323,7 +313,7 @@ for line in sys.stdin:
 collect_pr_epic_candidates() {
   local text
   if [ "$TRACKER_PROVIDER" = "linear" ]; then
-    # Canonical GFM fence filter + indented-code strip. Epic IDs drive Linear
+    # Shared fence filter + simple indented-code strip. Epic IDs drive Linear
     # deferred actions only — never GitHub issue mutations.
     if ! text="$(strip_fenced_pr_body_blocks < "$TMP_DIR/pr-text.txt")"; then
       fail_closed "could_not_strip_fenced_blocks"
@@ -334,12 +324,38 @@ collect_pr_epic_candidates() {
     printf '%s\n' "$text" | extract_linear_epic_refs | sort -u > "$TMP_DIR/pr-epic-candidates.txt"
     return 0
   fi
-  # github_projects / github_issues: keep legacy strip_fenced_blocks.
-  text="$(strip_fenced_blocks < "$TMP_DIR/pr-text.txt")"
+  # github_projects / github_issues: render title and body via GitHub GFM,
+  # extract visible text outside <pre>/<code>, then union epic/closing refs
+  # (closing via shared closing_keyword_live_refs). Fail closed for text refs
+  # when render/extract fails — never scan raw markdown.
+  local context title_raw body_raw title_text body_text
+  context="${REPO_OWNER}/${REPO_NAME}"
+  title_raw="$(cat "$TMP_DIR/pr-title.txt")"
+  body_raw="$(cat "$TMP_DIR/pr-body.txt")"
+  title_text=""
+  body_text=""
+  if printf '%s' "$title_raw" | graduation_closeout_raw_has_closing_keyword_candidate \
+    || printf '%s' "$title_raw" | graduation_closeout_raw_has_epic_or_parent_ref; then
+    if ! title_text="$(printf '%s' "$title_raw" | graduation_closeout_github_visible_text_from_markdown "$context")"; then
+      echo "CLOSEOUT_TEXT_REFS_UNAVAILABLE pr=${GRADUATION_PR} reason=gfm_render_or_extract_failed" >&2
+      : > "$TMP_DIR/pr-epic-candidates.txt"
+      return 0
+    fi
+  fi
+  if printf '%s' "$body_raw" | graduation_closeout_raw_has_closing_keyword_candidate \
+    || printf '%s' "$body_raw" | graduation_closeout_raw_has_epic_or_parent_ref; then
+    if ! body_text="$(printf '%s' "$body_raw" | graduation_closeout_github_visible_text_from_markdown "$context")"; then
+      echo "CLOSEOUT_TEXT_REFS_UNAVAILABLE pr=${GRADUATION_PR} reason=gfm_render_or_extract_failed" >&2
+      : > "$TMP_DIR/pr-epic-candidates.txt"
+      return 0
+    fi
+  fi
   {
-    printf '%s\n' "$text" | extract_epic_parent_refs
-    printf '%s\n' "$text" | extract_closing_issue_numbers
-  } | sort -un > "$TMP_DIR/pr-epic-candidates.txt"
+    printf '%s\n' "$title_text" | extract_epic_parent_refs
+    printf '%s\n' "$title_text" | closing_keyword_live_refs
+    printf '%s\n' "$body_text" | extract_epic_parent_refs
+    printf '%s\n' "$body_text" | closing_keyword_live_refs
+  } | sed '/^$/d' | sort -un > "$TMP_DIR/pr-epic-candidates.txt"
 }
 
 discover_epic_via_label_parents() {

@@ -1,0 +1,310 @@
+[
+  {
+    "name": "plain_prose",
+    "expected_refs": [
+      "326"
+    ],
+    "md_file": "plain_prose.md",
+    "html_file": "plain_prose.html"
+  },
+  {
+    "name": "fenced_tick",
+    "expected_refs": [],
+    "md_file": "fenced_tick.md",
+    "html_file": "fenced_tick.html"
+  },
+  {
+    "name": "fenced_tilde",
+    "expected_refs": [],
+    "md_file": "fenced_tilde.md",
+    "html_file": "fenced_tilde.html"
+  },
+  {
+    "name": "unclosed_fence",
+    "expected_refs": [],
+    "md_file": "unclosed_fence.md",
+    "html_file": "unclosed_fence.html"
+  },
+  {
+    "name": "indented_code",
+    "expected_refs": [],
+    "md_file": "indented_code.md",
+    "html_file": "indented_code.html"
+  },
+  {
+    "name": "docstart_indent",
+    "expected_refs": [],
+    "md_file": "docstart_indent.md",
+    "html_file": "docstart_indent.html"
+  },
+  {
+    "name": "inline_code",
+    "expected_refs": [],
+    "md_file": "inline_code.md",
+    "html_file": "inline_code.html"
+  },
+  {
+    "name": "blockquote",
+    "expected_refs": [
+      "326"
+    ],
+    "md_file": "blockquote.md",
+    "html_file": "blockquote.html"
+  },
+  {
+    "name": "cross_repo",
+    "expected_refs": [],
+    "md_file": "cross_repo.md",
+    "html_file": "cross_repo.html"
+  },
+  {
+    "name": "nested_list_prose",
+    "expected_refs": [
+      "123"
+    ],
+    "md_file": "nested_list_prose.md",
+    "html_file": "nested_list_prose.html"
+  },
+  {
+    "name": "list_continuation_prose",
+    "expected_refs": [
+      "124"
+    ],
+    "md_file": "list_continuation_prose.md",
+    "html_file": "list_continuation_prose.html"
+  },
+  {
+    "name": "para_continuation",
+    "expected_refs": [
+      "125"
+    ],
+    "md_file": "para_continuation.md",
+    "html_file": "para_continuation.html"
+  },
+  {
+    "name": "list_item_six_space_code",
+    "expected_refs": [],
+    "md_file": "list_item_six_space_code.md",
+    "html_file": "list_item_six_space_code.html"
+  },
+  {
+    "name": "marker_five_space_code",
+    "expected_refs": [],
+    "md_file": "marker_five_space_code.md",
+    "html_file": "marker_five_space_code.html"
+  },
+  {
+    "name": "marker_one_space_prose",
+    "expected_refs": [
+      "341"
+    ],
+    "md_file": "marker_one_space_prose.md",
+    "html_file": "marker_one_space_prose.html"
+  },
+  {
+    "name": "marker_two_space_prose",
+    "expected_refs": [
+      "340"
+    ],
+    "md_file": "marker_two_space_prose.md",
+    "html_file": "marker_two_space_prose.html"
+  },
+  {
+    "name": "nested_same_line_fence",
+    "expected_refs": [],
+    "md_file": "nested_same_line_fence.md",
+    "html_file": "nested_same_line_fence.html"
+  },
+  {
+    "name": "nested_same_line_prose",
+    "expected_refs": [
+      "342"
+    ],
+    "md_file": "nested_same_line_prose.md",
+    "html_file": "nested_same_line_prose.html"
+  },
+  {
+    "name": "ordered_2_no_interrupt",
+    "expected_refs": [],
+    "md_file": "ordered_2_no_interrupt.md",
+    "html_file": "ordered_2_no_interrupt.html"
+  },
+  {
+    "name": "ordered_1_interrupt",
+    "expected_refs": [
+      "457"
+    ],
+    "md_file": "ordered_1_interrupt.md",
+    "html_file": "ordered_1_interrupt.html"
+  },
+  {
+    "name": "ordered_siblings",
+    "expected_refs": [
+      "458"
+    ],
+    "md_file": "ordered_siblings.md",
+    "html_file": "ordered_siblings.html"
+  },
+  {
+    "name": "empty_item_setext",
+    "expected_refs": [],
+    "md_file": "empty_item_setext.md",
+    "html_file": "empty_item_setext.html"
+  },
+  {
+    "name": "title_closes",
+    "expected_refs": [
+      "327"
+    ],
+    "md_file": "title_closes.md",
+    "html_file": "title_closes.html"
+  },
+  {
+    "name": "lazy_cont_indent",
+    "expected_refs": [
+      "326"
+    ],
+    "md_file": "lazy_cont_indent.md",
+    "html_file": "lazy_cont_indent.html"
+  },
+  {
+    "name": "heading_then_indent_code",
+    "expected_refs": [],
+    "md_file": "heading_then_indent_code.md",
+    "html_file": "heading_then_indent_code.html"
+  },
+  {
+    "name": "thematic_then_indent",
+    "expected_refs": [],
+    "md_file": "thematic_then_indent.md",
+    "html_file": "thematic_then_indent.html"
+  },
+  {
+    "name": "foreign_and_plain",
+    "expected_refs": [
+      "123"
+    ],
+    "md_file": "foreign_and_plain.md",
+    "html_file": "foreign_and_plain.html"
+  },
+  {
+    "name": "list_rel_tilde_fence",
+    "expected_refs": [],
+    "md_file": "list_rel_tilde_fence.md",
+    "html_file": "list_rel_tilde_fence.html"
+  },
+  {
+    "name": "marker_tilde_fence",
+    "expected_refs": [],
+    "md_file": "marker_tilde_fence.md",
+    "html_file": "marker_tilde_fence.html"
+  },
+  {
+    "name": "blank_four_listlike",
+    "expected_refs": [],
+    "md_file": "blank_four_listlike.md",
+    "html_file": "blank_four_listlike.html"
+  },
+  {
+    "name": "body_start_indent_then_epic",
+    "expected_refs": [],
+    "md_file": "body_start_indent_then_epic.md",
+    "html_file": "body_start_indent_then_epic.html"
+  },
+  {
+    "name": "body_start_tab_then_epic",
+    "expected_refs": [],
+    "md_file": "body_start_tab_then_epic.md",
+    "html_file": "body_start_tab_then_epic.html"
+  },
+  {
+    "name": "epic_only_prose",
+    "expected_refs": [
+      "123"
+    ],
+    "md_file": "epic_only_prose.md",
+    "html_file": "epic_only_prose.html"
+  },
+  {
+    "name": "epic_plus_cross_repo",
+    "expected_refs": [],
+    "md_file": "epic_plus_cross_repo.md",
+    "html_file": "epic_plus_cross_repo.html"
+  },
+  {
+    "name": "epic_plus_fenced_closes",
+    "expected_refs": [],
+    "md_file": "epic_plus_fenced_closes.md",
+    "html_file": "epic_plus_fenced_closes.html"
+  },
+  {
+    "name": "epic_plus_indented",
+    "expected_refs": [],
+    "md_file": "epic_plus_indented.md",
+    "html_file": "epic_plus_indented.html"
+  },
+  {
+    "name": "epic_plus_mixed_indent",
+    "expected_refs": [],
+    "md_file": "epic_plus_mixed_indent.md",
+    "html_file": "epic_plus_mixed_indent.html"
+  },
+  {
+    "name": "epic_plus_tilde_fence",
+    "expected_refs": [],
+    "md_file": "epic_plus_tilde_fence.md",
+    "html_file": "epic_plus_tilde_fence.html"
+  },
+  {
+    "name": "epic_plus_unclosed_fence",
+    "expected_refs": [],
+    "md_file": "epic_plus_unclosed_fence.md",
+    "html_file": "epic_plus_unclosed_fence.html"
+  },
+  {
+    "name": "example_only_fenced",
+    "expected_refs": [],
+    "md_file": "example_only_fenced.md",
+    "html_file": "example_only_fenced.html"
+  },
+  {
+    "name": "example_only_indented",
+    "expected_refs": [],
+    "md_file": "example_only_indented.md",
+    "html_file": "example_only_indented.html"
+  },
+  {
+    "name": "title_closes_327_body_indent",
+    "expected_refs": [],
+    "md_file": "title_closes_327_body_indent.md",
+    "html_file": "title_closes_327_body_indent.html"
+  },
+  {
+    "name": "epic_with_fenced_999",
+    "expected_refs": [],
+    "md_file": "epic_with_fenced_999.md",
+    "html_file": "epic_with_fenced_999.html"
+  },
+  {
+    "name": "closes_code_repo_then_prose",
+    "expected_refs": [
+      "123"
+    ],
+    "md_file": "closes_code_repo_then_prose.md",
+    "html_file": "closes_code_repo_then_prose.html"
+  },
+  {
+    "name": "fixes_code_between_keyword_ref",
+    "expected_refs": [],
+    "md_file": "fixes_code_between_keyword_ref.md",
+    "html_file": "fixes_code_between_keyword_ref.html"
+  },
+  {
+    "name": "see_code_then_closes",
+    "expected_refs": [
+      "328"
+    ],
+    "md_file": "see_code_then_closes.md",
+    "html_file": "see_code_then_closes.html"
+  }
+]
