@@ -18,6 +18,8 @@ FIXTURE_REPO="$TMP_ROOT/repo"
 MOCK_STATE_DIR="$TMP_ROOT/state"
 CHILD_ARGV_LOG="$TMP_ROOT/child-argv.log"
 MOCK_GH_LOG="$TMP_ROOT/gh-invocations.log"
+GFM_FIXTURE_DIR="$REPO_ROOT/scripts/development-workflow/tests/fixtures/graduation-closeout-gfm"
+export GFM_FIXTURE_DIR
 MOCK_GRAPHQL_LOG="$TMP_ROOT/graphql.log"
 PASS_COUNT=0
 FAIL_COUNT=0
@@ -75,6 +77,35 @@ case "$*" in
   "auth status")
     exit 0
     ;;
+
+  api\ markdown*|markdown\ --input*)
+    if [ "${MOCK_MARKDOWN_FAIL:-0}" = "1" ]; then
+      printf 'mock markdown API failure\n' >&2
+      exit 43
+    fi
+    GFM_DIR="${GFM_FIXTURE_DIR:?}"
+    # Read JSON body before any heredoc steals stdin.
+    MOCK_MD_PAYLOAD="$(cat)"
+    printf '%s' "$MOCK_MD_PAYLOAD" | python3 -c '
+import html, json, pathlib, re, sys
+root = pathlib.Path(sys.argv[1])
+raw = sys.stdin.read()
+try:
+    text = json.loads(raw).get("text", "")
+except Exception:
+    text = raw
+for md_path in sorted(root.glob("*.md")):
+    if md_path.read_text().rstrip("\n") == text.rstrip("\n"):
+        sys.stdout.write(md_path.with_suffix(".html").read_text())
+        sys.exit(0)
+if "```" in text or "~~~" in text or re.search(r"(?m)^ {4,}\S", text) or "\n\n    " in text:
+    sys.stderr.write("mock markdown: no GFM fixture for code-like text\n")
+    sys.exit(45)
+sys.stdout.write("<p dir=\"auto\">" + html.escape(text).replace("\n", "<br>\n") + "</p>")
+sys.exit(0)
+' "$GFM_DIR"
+    ;;
+
   pr\ view\ *\ --json\ number,state,mergedAt,baseRefName,headRefName,title,body,merged)
     pr="$3"
     file="$MOCK_STATE_DIR/pr-${pr}.json"
@@ -305,7 +336,7 @@ result="$(run_wrapper --graduation-pr 81)"
 body="$(last_body "$result")"
 # Closing keyword Closes issue #12 and Epic #900 → two candidates → ambiguous without parents
 # Unless Epic # and closing keyword both present - that's ambiguous. Use only Epic line:
-write_pr 81 "develop-test-1281" "develop" "true" "Graduate" $'see #12\nnot closing #397\nEpic #900\n```\nCloses #999\n```'
+write_pr 81 "develop-test-1281" "develop" "true" "Graduate" "$(cat "$GFM_FIXTURE_DIR/epic_with_fenced_999.md")"
 result="$(run_wrapper --graduation-pr 81)"
 body="$(last_body "$result")"
 run_test "fence_ignored_exit_zero" "0" "$(last_status "$result")"
@@ -490,35 +521,59 @@ run_contains "gh_proj_wrapper_provider" "TRACKER_PROVIDER=github_projects" "$bod
 run_contains "gh_proj_child_epic" "--epic 900" "$(cat "$CHILD_ARGV_LOG")"
 
 # ---------------------------------------------------------------------------
-# #2016 — GitHub providers ignore example-only closing keywords in epic discovery
+# #2016 — GitHub providers use GFM fixtures for epic/closing text discovery
 # ---------------------------------------------------------------------------
 
-assert_wrapper_github_example_ignored() {
+# shellcheck disable=SC1091
+. "$REPO_ROOT/scripts/development-workflow/closing-keyword-lib.sh"
+# shellcheck disable=SC1091
+. "$REPO_ROOT/scripts/development-workflow/graduation-closeout-lib.sh"
+
+write_pr_from_gfm_fixture() {
+  local number="$1"
+  local fixture="$2"
+  local title="Graduate wave"
+  local body
+  body="$(cat "$GFM_FIXTURE_DIR/${fixture}.md"; printf x)"
+  body="${body%x}"
+  case "$fixture" in
+    title_closes)
+      title="$(printf '%s' "$body" | head -n1)"
+      body=""
+      ;;
+  esac
+  write_pr "$number" "develop-test-2016" "develop" "true" "$title" "$body"
+}
+
+assert_wrapper_gfm_epic() {
   local provider="$1"
-  local body_text="$2"
-  local label="$3"
+  local fixture="$2"
+  local expected_epic="$3"
+  local label="$4"
   reset_fixture
   write_tracker_config "$provider"
   export MOCK_LABEL_PARENT_MODE=empty
-  write_pr 110 "develop-test-2016" "develop" "true" "Graduate" "$body_text"
+  write_pr_from_gfm_fixture 110 "$fixture"
   local result body
   result="$(run_wrapper --graduation-pr 110)"
   body="$(last_body "$result")"
   run_test "${label}_exit_zero" "0" "$(last_status "$result")"
-  run_contains "${label}_epic" "EPIC_ISSUE=900" "$body"
+  run_contains "${label}_epic" "EPIC_ISSUE=${expected_epic}" "$body"
   run_contains "${label}_provider" "TRACKER_PROVIDER=${provider}" "$body"
-  run_contains "${label}_child_epic" "--epic 900" "$(cat "$CHILD_ARGV_LOG")"
-  run_not_contains "${label}_no_epic_326" "--epic 326" "$(cat "$CHILD_ARGV_LOG")"
+  run_contains "${label}_child_epic" "--epic ${expected_epic}" "$(cat "$CHILD_ARGV_LOG")"
+  if [ "$expected_epic" != "326" ]; then
+    run_not_contains "${label}_no_epic_326" "--epic 326" "$(cat "$CHILD_ARGV_LOG")"
+  fi
 }
 
-assert_wrapper_github_example_only_fails() {
+assert_wrapper_gfm_epic_fail() {
   local provider="$1"
-  local body_text="$2"
+  local fixture="$2"
   local label="$3"
   reset_fixture
   write_tracker_config "$provider"
   export MOCK_LABEL_PARENT_MODE=empty
-  write_pr 111 "develop-test-2016" "develop" "true" "Graduate" "$body_text"
+  write_pr_from_gfm_fixture 111 "$fixture"
   local result body
   result="$(run_wrapper --graduation-pr 111)"
   body="$(last_body "$result")"
@@ -527,906 +582,57 @@ assert_wrapper_github_example_only_fails() {
   run_test "${label}_no_child" "missing" "$( [ -f "$CHILD_ARGV_LOG" ] && echo present || echo missing )"
 }
 
+echo ""
+echo "=== wrapper: planted violation — raw fenced text would keep #326 (#2016) ==="
+planted_md="$(cat "$GFM_FIXTURE_DIR/fenced_tick.md")"
+planted_html="$(cat "$GFM_FIXTURE_DIR/fenced_tick.html")"
+# Planted violation: raw-text keyword scan (no GFM) still sees #326 in the fence;
+# rendered visible text + shared live_refs does not.
+raw_refs="$(printf '%s' "$planted_md" | grep -ioE "$CLOSING_KEYWORD_REGEX" | grep -oE '[0-9]+$' || true)"
+vis_refs="$(printf '%s' "$planted_html" | graduation_closeout_html_visible_text | closing_keyword_live_refs || true)"
+run_test "wrap_planted_raw_finds_326" "326" "$(printf '%s' "$raw_refs" | head -n1)"
+run_test "wrap_planted_rendered_strips_326" "" "$(printf '%s' "$vis_refs")"
+
+echo ""
+echo "=== wrapper: markdown API failure fail-closes text refs (#2016) ==="
 for provider in github_projects github_issues; do
-  echo ""
-  echo "=== wrapper: ${provider} ignores fenced Closes #326 beside Epic #900 (#2016) ==="
-  assert_wrapper_github_example_ignored "$provider" \
-    $'Epic #900\n```\nCloses #326\n```' \
-    "${provider}_wrap_fenced"
-
-  echo ""
-  echo "=== wrapper: ${provider} ignores tilde-fenced Closes #326 (#2016) ==="
-  assert_wrapper_github_example_ignored "$provider" \
-    $'Epic #900\n~~~\nCloses #326\n~~~' \
-    "${provider}_wrap_tilde"
-
-  echo ""
-  echo "=== wrapper: ${provider} ignores unclosed-fence Closes #326 (#2016) ==="
-  assert_wrapper_github_example_ignored "$provider" \
-    $'Epic #900\n```text\nCloses #326\n' \
-    "${provider}_wrap_unclosed"
-
-  echo ""
-  echo "=== wrapper: ${provider} ignores blank+indented Closes #326 (#2016) ==="
-  assert_wrapper_github_example_ignored "$provider" \
-    $'Epic #900\n\n    Closes #326\n' \
-    "${provider}_wrap_indented"
-
-  echo ""
-  echo "=== wrapper: ${provider} ignores space+tab mixed-indent Closes #326 (#2016) ==="
-  assert_wrapper_github_example_ignored "$provider" \
-    "$(printf 'Epic #900\n\n \tCloses #326\n')" \
-    "${provider}_wrap_mixed_indent"
-
-  echo ""
-  echo "=== wrapper: ${provider} ignores body-start 4-space Closes #326 with title (#2016) ==="
-  # Title is set by write_pr; body alone starts with indented code.
   reset_fixture
   write_tracker_config "$provider"
   export MOCK_LABEL_PARENT_MODE=empty
-  write_pr 117 "develop-test-2016" "develop" "true" "Graduate wave" \
-    $'    Closes #326\nEpic #900'
-  result="$(run_wrapper --graduation-pr 117)"
-  body="$(last_body "$result")"
-  run_test "${provider}_wrap_body_start_spaces_exit_zero" "0" "$(last_status "$result")"
-  run_contains "${provider}_wrap_body_start_spaces_epic" "EPIC_ISSUE=900" "$body"
-  run_not_contains "${provider}_wrap_body_start_spaces_no_326" "--epic 326" "$(cat "$CHILD_ARGV_LOG")"
-
-  echo ""
-  echo "=== wrapper: ${provider} ignores body-start tab Closes #326 with title (#2016) ==="
-  reset_fixture
-  write_tracker_config "$provider"
-  export MOCK_LABEL_PARENT_MODE=empty
-  write_pr 118 "develop-test-2016" "develop" "true" "Graduate wave" \
-    "$(printf '\tCloses #326\nEpic #900')"
+  export MOCK_MARKDOWN_FAIL=1
+  write_pr_from_gfm_fixture 118 plain_prose
   result="$(run_wrapper --graduation-pr 118)"
   body="$(last_body "$result")"
-  run_test "${provider}_wrap_body_start_tab_exit_zero" "0" "$(last_status "$result")"
-  run_contains "${provider}_wrap_body_start_tab_epic" "EPIC_ISSUE=900" "$body"
-  run_not_contains "${provider}_wrap_body_start_tab_no_326" "--epic 326" "$(cat "$CHILD_ARGV_LOG")"
-
-  echo ""
-  echo "=== wrapper: ${provider} ignores body-start space+tab Closes #326 with title (#2016) ==="
-  reset_fixture
-  write_tracker_config "$provider"
-  export MOCK_LABEL_PARENT_MODE=empty
-  write_pr 119 "develop-test-2016" "develop" "true" "Graduate wave" \
-    "$(printf ' \tCloses #326\nEpic #900')"
-  result="$(run_wrapper --graduation-pr 119)"
-  body="$(last_body "$result")"
-  run_test "${provider}_wrap_body_start_mixed_exit_zero" "0" "$(last_status "$result")"
-  run_contains "${provider}_wrap_body_start_mixed_epic" "EPIC_ISSUE=900" "$body"
-  run_not_contains "${provider}_wrap_body_start_mixed_no_326" "--epic 326" "$(cat "$CHILD_ARGV_LOG")"
-
-  echo ""
-  echo "=== wrapper: ${provider} selects title Closes #327; body-start indent #326 ignored (#2016) ==="
-  reset_fixture
-  write_tracker_config "$provider"
-  export MOCK_LABEL_PARENT_MODE=empty
-  write_pr 120 "develop-test-2016" "develop" "true" "Closes #327" \
-    $'    Closes #326'
-  result="$(run_wrapper --graduation-pr 120)"
-  body="$(last_body "$result")"
-  run_test "${provider}_wrap_title_327_exit_zero" "0" "$(last_status "$result")"
-  run_contains "${provider}_wrap_title_327_epic" "EPIC_ISSUE=327" "$body"
-  run_contains "${provider}_wrap_title_327_child" "--epic 327" "$(cat "$CHILD_ARGV_LOG")"
-  run_not_contains "${provider}_wrap_title_327_no_326" "--epic 326" "$(cat "$CHILD_ARGV_LOG")"
-
-  echo ""
-  echo "=== wrapper: ${provider} ignores thematic-break then indented Closes #326 (#2016) ==="
-  reset_fixture
-  write_tracker_config "$provider"
-  export MOCK_LABEL_PARENT_MODE=empty
-  write_pr 121 "develop-test-2016" "develop" "true" "Graduate wave" \
-    $'- - -\n\n    Closes #326\nEpic #900'
-  result="$(run_wrapper --graduation-pr 121)"
-  body="$(last_body "$result")"
-  run_test "${provider}_wrap_thematic_spaced_exit_zero" "0" "$(last_status "$result")"
-  run_contains "${provider}_wrap_thematic_spaced_epic" "EPIC_ISSUE=900" "$body"
-  run_not_contains "${provider}_wrap_thematic_spaced_no_326" "--epic 326" "$(cat "$CHILD_ARGV_LOG")"
-
-  reset_fixture
-  write_tracker_config "$provider"
-  export MOCK_LABEL_PARENT_MODE=empty
-  write_pr 122 "develop-test-2016" "develop" "true" "Graduate wave" \
-    $'---\n\n    Closes #326\nEpic #900'
-  result="$(run_wrapper --graduation-pr 122)"
-  body="$(last_body "$result")"
-  run_test "${provider}_wrap_thematic_hr_dashes_exit_zero" "0" "$(last_status "$result")"
-  run_contains "${provider}_wrap_thematic_hr_dashes_epic" "EPIC_ISSUE=900" "$body"
-  run_not_contains "${provider}_wrap_thematic_hr_dashes_no_326" "--epic 326" "$(cat "$CHILD_ARGV_LOG")"
-
-  reset_fixture
-  write_tracker_config "$provider"
-  export MOCK_LABEL_PARENT_MODE=empty
-  write_pr 123 "develop-test-2016" "develop" "true" "Graduate wave" \
-    $'* * *\n\n    Closes #326\nEpic #900'
-  result="$(run_wrapper --graduation-pr 123)"
-  body="$(last_body "$result")"
-  run_test "${provider}_wrap_thematic_stars_exit_zero" "0" "$(last_status "$result")"
-  run_contains "${provider}_wrap_thematic_stars_epic" "EPIC_ISSUE=900" "$body"
-  run_not_contains "${provider}_wrap_thematic_stars_no_326" "--epic 326" "$(cat "$CHILD_ARGV_LOG")"
-
-  reset_fixture
-  write_tracker_config "$provider"
-  export MOCK_LABEL_PARENT_MODE=empty
-  write_pr 124 "develop-test-2016" "develop" "true" "Graduate wave" \
-    $'***\n\n    Closes #326\nEpic #900'
-  result="$(run_wrapper --graduation-pr 124)"
-  body="$(last_body "$result")"
-  run_test "${provider}_wrap_thematic_hr_stars_exit_zero" "0" "$(last_status "$result")"
-  run_contains "${provider}_wrap_thematic_hr_stars_epic" "EPIC_ISSUE=900" "$body"
-  run_not_contains "${provider}_wrap_thematic_hr_stars_no_326" "--epic 326" "$(cat "$CHILD_ARGV_LOG")"
-
-  reset_fixture
-  write_tracker_config "$provider"
-  export MOCK_LABEL_PARENT_MODE=empty
-  write_pr 125 "develop-test-2016" "develop" "true" "Graduate wave" \
-    $'___\n\n    Closes #326\nEpic #900'
-  result="$(run_wrapper --graduation-pr 125)"
-  body="$(last_body "$result")"
-  run_test "${provider}_wrap_thematic_underscores_exit_zero" "0" "$(last_status "$result")"
-  run_contains "${provider}_wrap_thematic_underscores_epic" "EPIC_ISSUE=900" "$body"
-  run_not_contains "${provider}_wrap_thematic_underscores_no_326" "--epic 326" "$(cat "$CHILD_ARGV_LOG")"
-
-  echo ""
-  echo "=== wrapper: ${provider} keeps real list then indented Closes #123 (#2016) ==="
-  reset_fixture
-  write_tracker_config "$provider"
-  export MOCK_LABEL_PARENT_MODE=empty
-  write_pr 126 "develop-test-2016" "develop" "true" "Graduate wave" \
-    $'- item\n    Closes #123'
-  result="$(run_wrapper --graduation-pr 126)"
-  body="$(last_body "$result")"
-  run_test "${provider}_wrap_list_then_indent_exit_zero" "0" "$(last_status "$result")"
-  run_contains "${provider}_wrap_list_then_indent_epic" "EPIC_ISSUE=123" "$body"
-  run_contains "${provider}_wrap_list_then_indent_child" "--epic 123" "$(cat "$CHILD_ARGV_LOG")"
-
-  echo ""
-  echo "=== wrapper: ${provider} keeps list two-space continuation then Closes #123 (#2016) ==="
-  reset_fixture
-  write_tracker_config "$provider"
-  export MOCK_LABEL_PARENT_MODE=empty
-  write_pr 127 "develop-test-2016" "develop" "true" "Graduate wave" \
-    $'- Delivered work:\n  Additional details.\n\n    Closes #123'
-  result="$(run_wrapper --graduation-pr 127)"
-  body="$(last_body "$result")"
-  run_test "${provider}_wrap_list_two_space_exit_zero" "0" "$(last_status "$result")"
-  run_contains "${provider}_wrap_list_two_space_epic" "EPIC_ISSUE=123" "$body"
-  run_contains "${provider}_wrap_list_two_space_child" "--epic 123" "$(cat "$CHILD_ARGV_LOG")"
-
-  echo ""
-  echo "=== wrapper: ${provider} keeps list multi-continuation then Closes #124 (#2016) ==="
-  reset_fixture
-  write_tracker_config "$provider"
-  export MOCK_LABEL_PARENT_MODE=empty
-  write_pr 128 "develop-test-2016" "develop" "true" "Graduate wave" \
-    $'- a\n  b\n\n  c\n\n    Closes #124'
-  result="$(run_wrapper --graduation-pr 128)"
-  body="$(last_body "$result")"
-  run_test "${provider}_wrap_list_multi_cont_exit_zero" "0" "$(last_status "$result")"
-  run_contains "${provider}_wrap_list_multi_cont_epic" "EPIC_ISSUE=124" "$body"
-
-  echo ""
-  echo "=== wrapper: ${provider} strips code after list ends with indent-0 paragraph (#2016) ==="
-  reset_fixture
-  write_tracker_config "$provider"
-  export MOCK_LABEL_PARENT_MODE=empty
-  write_pr 129 "develop-test-2016" "develop" "true" "Graduate wave" \
-    $'- item\n\nParagraph outside list.\n\n    Closes #326\nEpic #900'
-  result="$(run_wrapper --graduation-pr 129)"
-  body="$(last_body "$result")"
-  run_test "${provider}_wrap_list_then_para_code_exit_zero" "0" "$(last_status "$result")"
-  run_contains "${provider}_wrap_list_then_para_code_epic" "EPIC_ISSUE=900" "$body"
-  run_not_contains "${provider}_wrap_list_then_para_code_no_326" "--epic 326" "$(cat "$CHILD_ARGV_LOG")"
-
-  echo ""
-  echo "=== wrapper: ${provider} strips list-item six-space code Closes #326 (#2016) ==="
-  reset_fixture
-  write_tracker_config "$provider"
-  export MOCK_LABEL_PARENT_MODE=empty
-  write_pr 130 "develop-test-2016" "develop" "true" "Graduate wave" \
-    $'- Example:\n\n      Closes #326\nEpic #900'
-  result="$(run_wrapper --graduation-pr 130)"
-  body="$(last_body "$result")"
-  run_test "${provider}_wrap_list_item_code_exit_zero" "0" "$(last_status "$result")"
-  run_contains "${provider}_wrap_list_item_code_epic" "EPIC_ISSUE=900" "$body"
-  run_not_contains "${provider}_wrap_list_item_code_no_326" "--epic 326" "$(cat "$CHILD_ARGV_LOG")"
-
-  echo ""
-  echo "=== wrapper: ${provider} strips ordered-list seven-space code Closes #327 (#2016) ==="
-  reset_fixture
-  write_tracker_config "$provider"
-  export MOCK_LABEL_PARENT_MODE=empty
-  write_pr 131 "develop-test-2016" "develop" "true" "Graduate wave" \
-    $'1. Item\n\n       Closes #327\nEpic #900'
-  result="$(run_wrapper --graduation-pr 131)"
-  body="$(last_body "$result")"
-  run_test "${provider}_wrap_ordered_list_code_exit_zero" "0" "$(last_status "$result")"
-  run_contains "${provider}_wrap_ordered_list_code_epic" "EPIC_ISSUE=900" "$body"
-  run_not_contains "${provider}_wrap_ordered_list_code_no_327" "--epic 327" "$(cat "$CHILD_ARGV_LOG")"
-
-  echo ""
-  echo "=== wrapper: ${provider} strips ATX-heading then indented Closes #326 (#2016) ==="
-  reset_fixture
-  write_tracker_config "$provider"
-  export MOCK_LABEL_PARENT_MODE=empty
-  write_pr 132 "develop-test-2016" "develop" "true" "Graduate wave" \
-    $'## Example\n    Closes #326\nEpic #900'
-  result="$(run_wrapper --graduation-pr 132)"
-  body="$(last_body "$result")"
-  run_test "${provider}_wrap_atx_indent_exit_zero" "0" "$(last_status "$result")"
-  run_contains "${provider}_wrap_atx_indent_epic" "EPIC_ISSUE=900" "$body"
-  run_not_contains "${provider}_wrap_atx_indent_no_326" "--epic 326" "$(cat "$CHILD_ARGV_LOG")"
-
-  echo ""
-  echo "=== wrapper: ${provider} strips setext then indented Closes #326 (#2016) ==="
-  reset_fixture
-  write_tracker_config "$provider"
-  export MOCK_LABEL_PARENT_MODE=empty
-  write_pr 133 "develop-test-2016" "develop" "true" "Graduate wave" \
-    $'Paragraph\n---\n    Closes #326\nEpic #900'
-  result="$(run_wrapper --graduation-pr 133)"
-  body="$(last_body "$result")"
-  run_test "${provider}_wrap_setext_indent_exit_zero" "0" "$(last_status "$result")"
-  run_contains "${provider}_wrap_setext_indent_epic" "EPIC_ISSUE=900" "$body"
-  run_not_contains "${provider}_wrap_setext_indent_no_326" "--epic 326" "$(cat "$CHILD_ARGV_LOG")"
-
-  echo ""
-  echo "=== wrapper: ${provider} keeps ATX-heading then blank prose Closes #328 (#2016) ==="
-  reset_fixture
-  write_tracker_config "$provider"
-  export MOCK_LABEL_PARENT_MODE=empty
-  write_pr 134 "develop-test-2016" "develop" "true" "Graduate wave" \
-    $'## Example\n\nCloses #328'
-  result="$(run_wrapper --graduation-pr 134)"
-  body="$(last_body "$result")"
-  run_test "${provider}_wrap_atx_blank_prose_exit_zero" "0" "$(last_status "$result")"
-  run_contains "${provider}_wrap_atx_blank_prose_epic" "EPIC_ISSUE=328" "$body"
-
-  echo ""
-  echo "=== wrapper: ${provider} strips list-item tilde fence Closes #326 (#2016) ==="
-  reset_fixture
-  write_tracker_config "$provider"
-  export MOCK_LABEL_PARENT_MODE=empty
-  write_pr 135 "develop-test-2016" "develop" "true" "Graduate wave" \
-    $'- Example:\n\n    ~~~text\n    Closes #326\n    ~~~\nEpic #900'
-  result="$(run_wrapper --graduation-pr 135)"
-  body="$(last_body "$result")"
-  run_test "${provider}_wrap_list_tilde_fence_exit_zero" "0" "$(last_status "$result")"
-  run_contains "${provider}_wrap_list_tilde_fence_epic" "EPIC_ISSUE=900" "$body"
-  run_not_contains "${provider}_wrap_list_tilde_fence_no_326" "--epic 326" "$(cat "$CHILD_ARGV_LOG")"
-
-  echo ""
-  echo "=== wrapper: ${provider} strips list-item unclosed tilde fence Closes #326 (#2016) ==="
-  # Epic must precede the unclosed fence (fence extends to EOF).
-  reset_fixture
-  write_tracker_config "$provider"
-  export MOCK_LABEL_PARENT_MODE=empty
-  write_pr 136 "develop-test-2016" "develop" "true" "Graduate wave" \
-    $'Epic #900\n- Example:\n\n    ~~~text\n    Closes #326'
-  result="$(run_wrapper --graduation-pr 136)"
-  body="$(last_body "$result")"
-  run_test "${provider}_wrap_list_tilde_unclosed_exit_zero" "0" "$(last_status "$result")"
-  run_contains "${provider}_wrap_list_tilde_unclosed_epic" "EPIC_ISSUE=900" "$body"
-  run_not_contains "${provider}_wrap_list_tilde_unclosed_no_326" "--epic 326" "$(cat "$CHILD_ARGV_LOG")"
-
-  echo ""
-  echo "=== wrapper: ${provider} strips list-item backtick fence Closes #326 (#2016) ==="
-  reset_fixture
-  write_tracker_config "$provider"
-  export MOCK_LABEL_PARENT_MODE=empty
-  write_pr 137 "develop-test-2016" "develop" "true" "Graduate wave" \
-    "$(printf -- '- Example:\n\n    ```text\n    Closes #326\n    ```\nEpic #900')"
-  result="$(run_wrapper --graduation-pr 137)"
-  body="$(last_body "$result")"
-  run_test "${provider}_wrap_list_tick_fence_exit_zero" "0" "$(last_status "$result")"
-  run_contains "${provider}_wrap_list_tick_fence_epic" "EPIC_ISSUE=900" "$body"
-  run_not_contains "${provider}_wrap_list_tick_fence_no_326" "--epic 326" "$(cat "$CHILD_ARGV_LOG")"
-
-  echo ""
-  echo "=== wrapper: ${provider} strips list-item unclosed backtick fence Closes #326 (#2016) ==="
-  reset_fixture
-  write_tracker_config "$provider"
-  export MOCK_LABEL_PARENT_MODE=empty
-  write_pr 138 "develop-test-2016" "develop" "true" "Graduate wave" \
-    "$(printf -- 'Epic #900\n- Example:\n\n    ```text\n    Closes #326')"
-  result="$(run_wrapper --graduation-pr 138)"
-  body="$(last_body "$result")"
-  run_test "${provider}_wrap_list_tick_unclosed_exit_zero" "0" "$(last_status "$result")"
-  run_contains "${provider}_wrap_list_tick_unclosed_epic" "EPIC_ISSUE=900" "$body"
-  run_not_contains "${provider}_wrap_list_tick_unclosed_no_326" "--epic 326" "$(cat "$CHILD_ARGV_LOG")"
-
-  echo ""
-  echo "=== wrapper: ${provider} keeps prose after list-item fence Closes #123 (#2016) ==="
-  reset_fixture
-  write_tracker_config "$provider"
-  export MOCK_LABEL_PARENT_MODE=empty
-  write_pr 139 "develop-test-2016" "develop" "true" "Graduate wave" \
-    $'- Example:\n\n    ~~~text\n    Closes #326\n    ~~~\n    Closes #123'
-  result="$(run_wrapper --graduation-pr 139)"
-  body="$(last_body "$result")"
-  run_test "${provider}_wrap_list_fence_then_prose_exit_zero" "0" "$(last_status "$result")"
-  run_contains "${provider}_wrap_list_fence_then_prose_epic" "EPIC_ISSUE=123" "$body"
-
-  echo ""
-  echo "=== wrapper: ${provider} strips marker-line tilde fence Closes #326 (#2016) ==="
-  reset_fixture
-  write_tracker_config "$provider"
-  export MOCK_LABEL_PARENT_MODE=empty
-  write_pr 140 "develop-test-2016" "develop" "true" "Graduate wave" \
-    $'- ~~~text\n  Closes #326\n  ~~~\nEpic #900'
-  result="$(run_wrapper --graduation-pr 140)"
-  body="$(last_body "$result")"
-  run_test "${provider}_wrap_marker_tilde_exit_zero" "0" "$(last_status "$result")"
-  run_contains "${provider}_wrap_marker_tilde_epic" "EPIC_ISSUE=900" "$body"
-  run_not_contains "${provider}_wrap_marker_tilde_no_326" "--epic 326" "$(cat "$CHILD_ARGV_LOG")"
-
-  echo ""
-  echo "=== wrapper: ${provider} strips marker-line unclosed tilde fence Closes #326 (#2016) ==="
-  reset_fixture
-  write_tracker_config "$provider"
-  export MOCK_LABEL_PARENT_MODE=empty
-  write_pr 141 "develop-test-2016" "develop" "true" "Graduate wave" \
-    $'Epic #900\n- ~~~text\n  Closes #326'
-  result="$(run_wrapper --graduation-pr 141)"
-  body="$(last_body "$result")"
-  run_test "${provider}_wrap_marker_tilde_unclosed_exit_zero" "0" "$(last_status "$result")"
-  run_contains "${provider}_wrap_marker_tilde_unclosed_epic" "EPIC_ISSUE=900" "$body"
-  run_not_contains "${provider}_wrap_marker_tilde_unclosed_no_326" "--epic 326" "$(cat "$CHILD_ARGV_LOG")"
-
-  echo ""
-  echo "=== wrapper: ${provider} strips marker-line backtick fence Closes #326 (#2016) ==="
-  reset_fixture
-  write_tracker_config "$provider"
-  export MOCK_LABEL_PARENT_MODE=empty
-  write_pr 142 "develop-test-2016" "develop" "true" "Graduate wave" \
-    "$(printf -- '- ```text\n  Closes #326\n  ```\nEpic #900')"
-  result="$(run_wrapper --graduation-pr 142)"
-  body="$(last_body "$result")"
-  run_test "${provider}_wrap_marker_tick_exit_zero" "0" "$(last_status "$result")"
-  run_contains "${provider}_wrap_marker_tick_epic" "EPIC_ISSUE=900" "$body"
-  run_not_contains "${provider}_wrap_marker_tick_no_326" "--epic 326" "$(cat "$CHILD_ARGV_LOG")"
-
-  echo ""
-  echo "=== wrapper: ${provider} strips marker-line unclosed backtick fence Closes #326 (#2016) ==="
-  reset_fixture
-  write_tracker_config "$provider"
-  export MOCK_LABEL_PARENT_MODE=empty
-  write_pr 143 "develop-test-2016" "develop" "true" "Graduate wave" \
-    "$(printf -- 'Epic #900\n- ```text\n  Closes #326')"
-  result="$(run_wrapper --graduation-pr 143)"
-  body="$(last_body "$result")"
-  run_test "${provider}_wrap_marker_tick_unclosed_exit_zero" "0" "$(last_status "$result")"
-  run_contains "${provider}_wrap_marker_tick_unclosed_epic" "EPIC_ISSUE=900" "$body"
-  run_not_contains "${provider}_wrap_marker_tick_unclosed_no_326" "--epic 326" "$(cat "$CHILD_ARGV_LOG")"
-
-  echo ""
-  echo "=== wrapper: ${provider} strips ordered marker-line tilde fence Closes #326 (#2016) ==="
-  reset_fixture
-  write_tracker_config "$provider"
-  export MOCK_LABEL_PARENT_MODE=empty
-  write_pr 144 "develop-test-2016" "develop" "true" "Graduate wave" \
-    $'1. ~~~\n   Closes #326\n   ~~~\nEpic #900'
-  result="$(run_wrapper --graduation-pr 144)"
-  body="$(last_body "$result")"
-  run_test "${provider}_wrap_ordered_marker_tilde_exit_zero" "0" "$(last_status "$result")"
-  run_contains "${provider}_wrap_ordered_marker_tilde_epic" "EPIC_ISSUE=900" "$body"
-  run_not_contains "${provider}_wrap_ordered_marker_tilde_no_326" "--epic 326" "$(cat "$CHILD_ARGV_LOG")"
-
-  echo ""
-  echo "=== wrapper: ${provider} keeps prose after marker-line fence Closes #123 (#2016) ==="
-  reset_fixture
-  write_tracker_config "$provider"
-  export MOCK_LABEL_PARENT_MODE=empty
-  write_pr 145 "develop-test-2016" "develop" "true" "Graduate wave" \
-    $'- ~~~text\n  Closes #326\n  ~~~\n  Closes #123'
-  result="$(run_wrapper --graduation-pr 145)"
-  body="$(last_body "$result")"
-  run_test "${provider}_wrap_marker_fence_then_prose_exit_zero" "0" "$(last_status "$result")"
-  run_contains "${provider}_wrap_marker_fence_then_prose_epic" "EPIC_ISSUE=123" "$body"
-
-  echo ""
-  echo "=== wrapper: ${provider} does not leak list state from top-level tilde fence (#2016) ==="
-  reset_fixture
-  write_tracker_config "$provider"
-  export MOCK_LABEL_PARENT_MODE=empty
-  write_pr 146 "develop-test-2016" "develop" "true" "Graduate wave" \
-    $'~~~text\n- example\n~~~\n\n    Closes #326\nEpic #900'
-  result="$(run_wrapper --graduation-pr 146)"
-  body="$(last_body "$result")"
-  run_test "${provider}_wrap_fence_list_no_leak_exit_zero" "0" "$(last_status "$result")"
-  run_contains "${provider}_wrap_fence_list_no_leak_epic" "EPIC_ISSUE=900" "$body"
-  run_not_contains "${provider}_wrap_fence_list_no_leak_no_326" "--epic 326" "$(cat "$CHILD_ARGV_LOG")"
-
-  echo ""
-  echo "=== wrapper: ${provider} does not leak list state from top-level backtick fence (#2016) ==="
-  reset_fixture
-  write_tracker_config "$provider"
-  export MOCK_LABEL_PARENT_MODE=empty
-  write_pr 147 "develop-test-2016" "develop" "true" "Graduate wave" \
-    "$(printf -- '```text\n- example\n```\n\n    Closes #327\nEpic #900')"
-  result="$(run_wrapper --graduation-pr 147)"
-  body="$(last_body "$result")"
-  run_test "${provider}_wrap_tick_fence_list_no_leak_exit_zero" "0" "$(last_status "$result")"
-  run_contains "${provider}_wrap_tick_fence_list_no_leak_epic" "EPIC_ISSUE=900" "$body"
-  run_not_contains "${provider}_wrap_tick_fence_list_no_leak_no_327" "--epic 327" "$(cat "$CHILD_ARGV_LOG")"
-
-  echo ""
-  echo "=== wrapper: ${provider} ignores heading inside fence then strips indent (#2016) ==="
-  reset_fixture
-  write_tracker_config "$provider"
-  export MOCK_LABEL_PARENT_MODE=empty
-  write_pr 148 "develop-test-2016" "develop" "true" "Graduate wave" \
-    $'~~~\n## Example\n~~~\n\n    Closes #326\nEpic #900'
-  result="$(run_wrapper --graduation-pr 148)"
-  body="$(last_body "$result")"
-  run_test "${provider}_wrap_heading_inside_fence_exit_zero" "0" "$(last_status "$result")"
-  run_contains "${provider}_wrap_heading_inside_fence_epic" "EPIC_ISSUE=900" "$body"
-  run_not_contains "${provider}_wrap_heading_inside_fence_no_326" "--epic 326" "$(cat "$CHILD_ARGV_LOG")"
-
-  echo ""
-  echo "=== wrapper: ${provider} strips tab-after-marker tilde fence Closes #326 (#2016) ==="
-  reset_fixture
-  write_tracker_config "$provider"
-  export MOCK_LABEL_PARENT_MODE=empty
-  write_pr 149 "develop-test-2016" "develop" "true" "Graduate wave" \
-    "$(printf -- '-\t~~~text\n\tCloses #326\n\t~~~\nEpic #900')"
-  result="$(run_wrapper --graduation-pr 149)"
-  body="$(last_body "$result")"
-  run_test "${provider}_wrap_tab_marker_tilde_exit_zero" "0" "$(last_status "$result")"
-  run_contains "${provider}_wrap_tab_marker_tilde_epic" "EPIC_ISSUE=900" "$body"
-  run_not_contains "${provider}_wrap_tab_marker_tilde_no_326" "--epic 326" "$(cat "$CHILD_ARGV_LOG")"
-
-  echo ""
-  echo "=== wrapper: ${provider} strips tab-after-marker unclosed tilde fence Closes #326 (#2016) ==="
-  reset_fixture
-  write_tracker_config "$provider"
-  export MOCK_LABEL_PARENT_MODE=empty
-  write_pr 150 "develop-test-2016" "develop" "true" "Graduate wave" \
-    "$(printf -- 'Epic #900\n-\t~~~text\n\tCloses #326')"
-  result="$(run_wrapper --graduation-pr 150)"
-  body="$(last_body "$result")"
-  run_test "${provider}_wrap_tab_marker_tilde_unclosed_exit_zero" "0" "$(last_status "$result")"
-  run_contains "${provider}_wrap_tab_marker_tilde_unclosed_epic" "EPIC_ISSUE=900" "$body"
-  run_not_contains "${provider}_wrap_tab_marker_tilde_unclosed_no_326" "--epic 326" "$(cat "$CHILD_ARGV_LOG")"
-
-  echo ""
-  echo "=== wrapper: ${provider} strips ordered tab-after-marker tick fence Closes #326 (#2016) ==="
-  reset_fixture
-  write_tracker_config "$provider"
-  export MOCK_LABEL_PARENT_MODE=empty
-  write_pr 151 "develop-test-2016" "develop" "true" "Graduate wave" \
-    "$(printf -- '1.\t```text\n\tCloses #326\n\t```\nEpic #900')"
-  result="$(run_wrapper --graduation-pr 151)"
-  body="$(last_body "$result")"
-  run_test "${provider}_wrap_tab_ordered_tick_exit_zero" "0" "$(last_status "$result")"
-  run_contains "${provider}_wrap_tab_ordered_tick_epic" "EPIC_ISSUE=900" "$body"
-  run_not_contains "${provider}_wrap_tab_ordered_tick_no_326" "--epic 326" "$(cat "$CHILD_ARGV_LOG")"
-
-  echo ""
-  echo "=== wrapper: ${provider} strips tab docstart listlike as indented code (#2016) ==="
-  reset_fixture
-  write_tracker_config "$provider"
-  export MOCK_LABEL_PARENT_MODE=empty
-  write_pr 152 "develop-test-2016" "develop" "true" "Graduate wave" \
-    "$(printf -- '\t- item\n\t\tCloses #331\nEpic #900')"
-  result="$(run_wrapper --graduation-pr 152)"
-  body="$(last_body "$result")"
-  run_test "${provider}_wrap_tab_docstart_listlike_exit_zero" "0" "$(last_status "$result")"
-  run_contains "${provider}_wrap_tab_docstart_listlike_epic" "EPIC_ISSUE=900" "$body"
-  run_not_contains "${provider}_wrap_tab_docstart_listlike_no_331" "--epic 331" "$(cat "$CHILD_ARGV_LOG")"
-
-  echo ""
-  echo "=== wrapper: ${provider} strips blank then four-space listlike Closes #326 (#2016) ==="
-  reset_fixture
-  write_tracker_config "$provider"
-  export MOCK_LABEL_PARENT_MODE=empty
-  write_pr 153 "develop-test-2016" "develop" "true" "Graduate wave" \
-    $'Intro\n\n    - Closes #326\nEpic #900'
-  result="$(run_wrapper --graduation-pr 153)"
-  body="$(last_body "$result")"
-  run_test "${provider}_wrap_blank_four_listlike_exit_zero" "0" "$(last_status "$result")"
-  run_contains "${provider}_wrap_blank_four_listlike_epic" "EPIC_ISSUE=900" "$body"
-  run_not_contains "${provider}_wrap_blank_four_listlike_no_326" "--epic 326" "$(cat "$CHILD_ARGV_LOG")"
-
-  echo ""
-  echo "=== wrapper: ${provider} strips docstart four-space listlike Closes #326 (#2016) ==="
-  reset_fixture
-  write_tracker_config "$provider"
-  export MOCK_LABEL_PARENT_MODE=empty
-  write_pr 154 "develop-test-2016" "develop" "true" "Graduate wave" \
-    $'    - Closes #326\nEpic #900'
-  result="$(run_wrapper --graduation-pr 154)"
-  body="$(last_body "$result")"
-  run_test "${provider}_wrap_docstart_four_listlike_exit_zero" "0" "$(last_status "$result")"
-  run_contains "${provider}_wrap_docstart_four_listlike_epic" "EPIC_ISSUE=900" "$body"
-  run_not_contains "${provider}_wrap_docstart_four_listlike_no_326" "--epic 326" "$(cat "$CHILD_ARGV_LOG")"
-
-  echo ""
-  echo "=== wrapper: ${provider} keeps nested list under item Closes #123 (#2016) ==="
-  reset_fixture
-  write_tracker_config "$provider"
-  export MOCK_LABEL_PARENT_MODE=empty
-  write_pr 155 "develop-test-2016" "develop" "true" "Graduate wave" \
-    $'- Delivered:\n    - Closes #123'
-  result="$(run_wrapper --graduation-pr 155)"
-  body="$(last_body "$result")"
-  run_test "${provider}_wrap_nested_under_delivered_exit_zero" "0" "$(last_status "$result")"
-  run_contains "${provider}_wrap_nested_under_delivered_epic" "EPIC_ISSUE=123" "$body"
-
-  echo ""
-  echo "=== wrapper: ${provider} strips deep listlike code after blank in list (#2016) ==="
-  reset_fixture
-  write_tracker_config "$provider"
-  export MOCK_LABEL_PARENT_MODE=empty
-  write_pr 156 "develop-test-2016" "develop" "true" "Graduate wave" \
-    $'- a\n\n        - Closes #332\nEpic #900'
-  result="$(run_wrapper --graduation-pr 156)"
-  body="$(last_body "$result")"
-  run_test "${provider}_wrap_deep_listlike_exit_zero" "0" "$(last_status "$result")"
-  run_contains "${provider}_wrap_deep_listlike_epic" "EPIC_ISSUE=900" "$body"
-  run_not_contains "${provider}_wrap_deep_listlike_no_332" "--epic 332" "$(cat "$CHILD_ARGV_LOG")"
-
-  echo ""
-  echo "=== wrapper: ${provider} keeps paragraph-continuation listlike Closes #333 (#2016) ==="
-  reset_fixture
-  write_tracker_config "$provider"
-  export MOCK_LABEL_PARENT_MODE=empty
-  write_pr 157 "develop-test-2016" "develop" "true" "Graduate wave" \
-    $'Para\n    - Closes #333'
-  result="$(run_wrapper --graduation-pr 157)"
-  body="$(last_body "$result")"
-  run_test "${provider}_wrap_para_cont_listlike_exit_zero" "0" "$(last_status "$result")"
-  run_contains "${provider}_wrap_para_cont_listlike_epic" "EPIC_ISSUE=333" "$body"
-
-  echo ""
-  echo "=== wrapper: ${provider} strips nested-list dedent then outer indented code (#2016) ==="
-  reset_fixture
-  write_tracker_config "$provider"
-  export MOCK_LABEL_PARENT_MODE=empty
-  write_pr 158 "develop-test-2016" "develop" "true" "Graduate wave" \
-    $'- Outer item\n  - Nested item\n\n  Example command:\n\n      Closes #326\nEpic #900'
-  result="$(run_wrapper --graduation-pr 158)"
-  body="$(last_body "$result")"
-  run_test "${provider}_wrap_nested_dedent_outer_code_exit_zero" "0" "$(last_status "$result")"
-  run_contains "${provider}_wrap_nested_dedent_outer_code_epic" "EPIC_ISSUE=900" "$body"
-  run_not_contains "${provider}_wrap_nested_dedent_outer_code_no_326" "--epic 326" "$(cat "$CHILD_ARGV_LOG")"
-
-  echo ""
-  echo "=== wrapper: ${provider} keeps Closes #123 after heading inside list (#2016) ==="
-  reset_fixture
-  write_tracker_config "$provider"
-  export MOCK_LABEL_PARENT_MODE=empty
-  write_pr 159 "develop-test-2016" "develop" "true" "Graduate wave" \
-    $'- Delivered work\n  ## Details\n\n    Closes #123'
-  result="$(run_wrapper --graduation-pr 159)"
-  body="$(last_body "$result")"
-  run_test "${provider}_wrap_heading_inside_list_exit_zero" "0" "$(last_status "$result")"
-  run_contains "${provider}_wrap_heading_inside_list_epic" "EPIC_ISSUE=123" "$body"
-
-  echo ""
-  echo "=== wrapper: ${provider} strips three-level dedent to L1 then code (#2016) ==="
-  reset_fixture
-  write_tracker_config "$provider"
-  export MOCK_LABEL_PARENT_MODE=empty
-  write_pr 160 "develop-test-2016" "develop" "true" "Graduate wave" \
-    $'- L1\n  - L2\n    - L3\n\n  Example:\n\n      Closes #326\nEpic #900'
-  result="$(run_wrapper --graduation-pr 160)"
-  body="$(last_body "$result")"
-  run_test "${provider}_wrap_three_level_dedent_l1_exit_zero" "0" "$(last_status "$result")"
-  run_contains "${provider}_wrap_three_level_dedent_l1_epic" "EPIC_ISSUE=900" "$body"
-  run_not_contains "${provider}_wrap_three_level_dedent_l1_no_326" "--epic 326" "$(cat "$CHILD_ARGV_LOG")"
-
-  echo ""
-  echo "=== wrapper: ${provider} strips dedent-to-doc then indented code (#2016) ==="
-  reset_fixture
-  write_tracker_config "$provider"
-  export MOCK_LABEL_PARENT_MODE=empty
-  write_pr 161 "develop-test-2016" "develop" "true" "Graduate wave" \
-    $'- L1\n  - L2\n\nParagraph\n\n    Closes #326\nEpic #900'
-  result="$(run_wrapper --graduation-pr 161)"
-  body="$(last_body "$result")"
-  run_test "${provider}_wrap_dedent_to_doc_code_exit_zero" "0" "$(last_status "$result")"
-  run_contains "${provider}_wrap_dedent_to_doc_code_epic" "EPIC_ISSUE=900" "$body"
-  run_not_contains "${provider}_wrap_dedent_to_doc_code_no_326" "--epic 326" "$(cat "$CHILD_ARGV_LOG")"
-
-  echo ""
-  echo "=== wrapper: ${provider} keeps Closes #123 after heading inside nested item (#2016) ==="
-  reset_fixture
-  write_tracker_config "$provider"
-  export MOCK_LABEL_PARENT_MODE=empty
-  write_pr 162 "develop-test-2016" "develop" "true" "Graduate wave" \
-    $'- Outer\n  - Nested\n    ## Details\n\n      Closes #123'
-  result="$(run_wrapper --graduation-pr 162)"
-  body="$(last_body "$result")"
-  run_test "${provider}_wrap_heading_inside_nested_exit_zero" "0" "$(last_status "$result")"
-  run_contains "${provider}_wrap_heading_inside_nested_epic" "EPIC_ISSUE=123" "$body"
-
-  echo ""
-  echo "=== wrapper: ${provider} keeps lazy-continuation then indented Closes #326 (#2016) ==="
-  reset_fixture
-  write_tracker_config "$provider"
-  export MOCK_LABEL_PARENT_MODE=empty
-  write_pr 163 "develop-test-2016" "develop" "true" "Graduate wave" \
-    $'- Delivered work:\nContinuation paragraph\n\n    Closes #326'
-  result="$(run_wrapper --graduation-pr 163)"
-  body="$(last_body "$result")"
-  run_test "${provider}_wrap_lazy_cont_indent_exit_zero" "0" "$(last_status "$result")"
-  run_contains "${provider}_wrap_lazy_cont_indent_epic" "EPIC_ISSUE=326" "$body"
-
-  echo ""
-  echo "=== wrapper: ${provider} strips code after lazy-cont then indent-0 exit (#2016) ==="
-  reset_fixture
-  write_tracker_config "$provider"
-  export MOCK_LABEL_PARENT_MODE=empty
-  write_pr 164 "develop-test-2016" "develop" "true" "Graduate wave" \
-    $'- Delivered work:\nContinuation paragraph\n\nParagraph outside\n\n    Closes #334\nEpic #900'
-  result="$(run_wrapper --graduation-pr 164)"
-  body="$(last_body "$result")"
-  run_test "${provider}_wrap_lazy_cont_exit_code_exit_zero" "0" "$(last_status "$result")"
-  run_contains "${provider}_wrap_lazy_cont_exit_code_epic" "EPIC_ISSUE=900" "$body"
-  run_not_contains "${provider}_wrap_lazy_cont_exit_code_no_334" "--epic 334" "$(cat "$CHILD_ARGV_LOG")"
-
-  echo ""
-  echo "=== wrapper: ${provider} keeps lazy continuation inside nested item (#2016) ==="
-  reset_fixture
-  write_tracker_config "$provider"
-  export MOCK_LABEL_PARENT_MODE=empty
-  write_pr 165 "develop-test-2016" "develop" "true" "Graduate wave" \
-    $'- Outer\n  - Nested item\n  Nested continuation\n\n      Closes #123'
-  result="$(run_wrapper --graduation-pr 165)"
-  body="$(last_body "$result")"
-  run_test "${provider}_wrap_lazy_cont_nested_exit_zero" "0" "$(last_status "$result")"
-  run_contains "${provider}_wrap_lazy_cont_nested_epic" "EPIC_ISSUE=123" "$body"
-
-  echo ""
-  echo "=== wrapper: ${provider} strips marker-line five-space indented code (#2016) ==="
-  reset_fixture
-  write_tracker_config "$provider"
-  export MOCK_LABEL_PARENT_MODE=empty
-  write_pr 166 "develop-test-2016" "develop" "true" "Graduate wave" \
-    $'-     Closes #123\nEpic #900'
-  result="$(run_wrapper --graduation-pr 166)"
-  body="$(last_body "$result")"
-  run_test "${provider}_wrap_marker_five_space_exit_zero" "0" "$(last_status "$result")"
-  run_contains "${provider}_wrap_marker_five_space_epic" "EPIC_ISSUE=900" "$body"
-  run_not_contains "${provider}_wrap_marker_five_space_no_123" "--epic 123" "$(cat "$CHILD_ARGV_LOG")"
-
-  echo ""
-  echo "=== wrapper: ${provider} strips marker-line five-space code continuation (#2016) ==="
-  reset_fixture
-  write_tracker_config "$provider"
-  export MOCK_LABEL_PARENT_MODE=empty
-  write_pr 167 "develop-test-2016" "develop" "true" "Graduate wave" \
-    $'-     Example\n      Closes #123\nEpic #900'
-  result="$(run_wrapper --graduation-pr 167)"
-  body="$(last_body "$result")"
-  run_test "${provider}_wrap_marker_five_space_cont_exit_zero" "0" "$(last_status "$result")"
-  run_contains "${provider}_wrap_marker_five_space_cont_epic" "EPIC_ISSUE=900" "$body"
-  run_not_contains "${provider}_wrap_marker_five_space_cont_no_123" "--epic 123" "$(cat "$CHILD_ARGV_LOG")"
-
-  echo ""
-  echo "=== wrapper: ${provider} strips marker-line heading then indented code (#2016) ==="
-  reset_fixture
-  write_tracker_config "$provider"
-  export MOCK_LABEL_PARENT_MODE=empty
-  write_pr 168 "develop-test-2016" "develop" "true" "Graduate wave" \
-    $'- ## Example\n      Closes #326\nEpic #900'
-  result="$(run_wrapper --graduation-pr 168)"
-  body="$(last_body "$result")"
-  run_test "${provider}_wrap_marker_heading_code_exit_zero" "0" "$(last_status "$result")"
-  run_contains "${provider}_wrap_marker_heading_code_epic" "EPIC_ISSUE=900" "$body"
-  run_not_contains "${provider}_wrap_marker_heading_code_no_326" "--epic 326" "$(cat "$CHILD_ARGV_LOG")"
-
-  echo ""
-  echo "=== wrapper: ${provider} keeps marker-line two-space Closes #340 (#2016) ==="
-  reset_fixture
-  write_tracker_config "$provider"
-  export MOCK_LABEL_PARENT_MODE=empty
-  write_pr 169 "develop-test-2016" "develop" "true" "Graduate wave" \
-    $'-  Closes #340'
-  result="$(run_wrapper --graduation-pr 169)"
-  body="$(last_body "$result")"
-  run_test "${provider}_wrap_marker_two_space_exit_zero" "0" "$(last_status "$result")"
-  run_contains "${provider}_wrap_marker_two_space_epic" "EPIC_ISSUE=340" "$body"
-
-  echo ""
-  echo "=== wrapper: ${provider} keeps marker-line one-space Closes #341 (#2016) ==="
-  reset_fixture
-  write_tracker_config "$provider"
-  export MOCK_LABEL_PARENT_MODE=empty
-  write_pr 170 "develop-test-2016" "develop" "true" "Graduate wave" \
-    $'- Closes #341'
-  result="$(run_wrapper --graduation-pr 170)"
-  body="$(last_body "$result")"
-  run_test "${provider}_wrap_marker_one_space_exit_zero" "0" "$(last_status "$result")"
-  run_contains "${provider}_wrap_marker_one_space_epic" "EPIC_ISSUE=341" "$body"
-
-  echo ""
-  echo "=== wrapper: ${provider} strips same-line nested marker fence (#2016) ==="
-  reset_fixture
-  write_tracker_config "$provider"
-  export MOCK_LABEL_PARENT_MODE=empty
-  write_pr 171 "develop-test-2016" "develop" "true" "Graduate wave" \
-    $'- - ~~~text\n    Closes #326\n    ~~~\nEpic #900'
-  result="$(run_wrapper --graduation-pr 171)"
-  body="$(last_body "$result")"
-  run_test "${provider}_wrap_nested_same_line_fence_exit_zero" "0" "$(last_status "$result")"
-  run_contains "${provider}_wrap_nested_same_line_fence_epic" "EPIC_ISSUE=900" "$body"
-  run_not_contains "${provider}_wrap_nested_same_line_fence_no_326" "--epic 326" "$(cat "$CHILD_ARGV_LOG")"
-
-  echo ""
-  echo "=== wrapper: ${provider} keeps same-line nested marker Closes #342 (#2016) ==="
-  reset_fixture
-  write_tracker_config "$provider"
-  export MOCK_LABEL_PARENT_MODE=empty
-  write_pr 172 "develop-test-2016" "develop" "true" "Graduate wave" \
-    $'- - Closes #342'
-  result="$(run_wrapper --graduation-pr 172)"
-  body="$(last_body "$result")"
-  run_test "${provider}_wrap_nested_same_line_prose_exit_zero" "0" "$(last_status "$result")"
-  run_contains "${provider}_wrap_nested_same_line_prose_epic" "EPIC_ISSUE=342" "$body"
-
-  echo ""
-  echo "=== wrapper: ${provider} strips ordered+unordered same-line marker fence (#2016) ==="
-  reset_fixture
-  write_tracker_config "$provider"
-  export MOCK_LABEL_PARENT_MODE=empty
-  write_pr 173 "develop-test-2016" "develop" "true" "Graduate wave" \
-    "$(printf -- '1. - %s%s%s\n     Closes #343\n     %s%s%s\nEpic #900' '`' '`' '`' '`' '`' '`')"
-  result="$(run_wrapper --graduation-pr 173)"
-  body="$(last_body "$result")"
-  run_test "${provider}_wrap_ordered_nested_tick_exit_zero" "0" "$(last_status "$result")"
-  run_contains "${provider}_wrap_ordered_nested_tick_epic" "EPIC_ISSUE=900" "$body"
-  run_not_contains "${provider}_wrap_ordered_nested_tick_no_343" "--epic 343" "$(cat "$CHILD_ARGV_LOG")"
-
-  echo ""
-  echo "=== wrapper: ${provider} keeps nested same-line then blank prose Closes #344 (#2016) ==="
-  reset_fixture
-  write_tracker_config "$provider"
-  export MOCK_LABEL_PARENT_MODE=empty
-  write_pr 174 "develop-test-2016" "develop" "true" "Graduate wave" \
-    $'- - item\n\n    prose Closes #344'
-  result="$(run_wrapper --graduation-pr 174)"
-  body="$(last_body "$result")"
-  run_test "${provider}_wrap_nested_same_line_blank_prose_exit_zero" "0" "$(last_status "$result")"
-  run_contains "${provider}_wrap_nested_same_line_blank_prose_epic" "EPIC_ISSUE=344" "$body"
-
-  echo ""
-  echo "=== wrapper: ${provider} strips nested same-line tab fence (#2016) ==="
-  reset_fixture
-  write_tracker_config "$provider"
-  export MOCK_LABEL_PARENT_MODE=empty
-  write_pr 175 "develop-test-2016" "develop" "true" "Graduate wave" \
-    "$(printf -- '- -\t~~~text\n\tCloses #456\n\t~~~\nEpic #900')"
-  result="$(run_wrapper --graduation-pr 175)"
-  body="$(last_body "$result")"
-  run_test "${provider}_wrap_nested_same_line_tab_exit_zero" "0" "$(last_status "$result")"
-  run_contains "${provider}_wrap_nested_same_line_tab_epic" "EPIC_ISSUE=900" "$body"
-  run_not_contains "${provider}_wrap_nested_same_line_tab_no_456" "--epic 456" "$(cat "$CHILD_ARGV_LOG")"
-
-  echo ""
-  echo "=== wrapper: ${provider} strips ordered-2 no-interrupt indent code (#2016) ==="
-  reset_fixture
-  write_tracker_config "$provider"
-  export MOCK_LABEL_PARENT_MODE=empty
-  write_pr 176 "develop-test-2016" "develop" "true" "Graduate wave" \
-    $'Intro\n2. Example\n\n    Closes #456\nEpic #900'
-  result="$(run_wrapper --graduation-pr 176)"
-  body="$(last_body "$result")"
-  run_test "${provider}_wrap_ordered_2_no_interrupt_exit_zero" "0" "$(last_status "$result")"
-  run_contains "${provider}_wrap_ordered_2_no_interrupt_epic" "EPIC_ISSUE=900" "$body"
-  run_not_contains "${provider}_wrap_ordered_2_no_interrupt_no_456" "--epic 456" "$(cat "$CHILD_ARGV_LOG")"
-
-  echo ""
-  echo "=== wrapper: ${provider} keeps ordered-1 interrupt Closes #457 (#2016) ==="
-  reset_fixture
-  write_tracker_config "$provider"
-  export MOCK_LABEL_PARENT_MODE=empty
-  write_pr 177 "develop-test-2016" "develop" "true" "Graduate wave" \
-    $'Intro\n1. Example\n\n    Closes #457'
-  result="$(run_wrapper --graduation-pr 177)"
-  body="$(last_body "$result")"
-  run_test "${provider}_wrap_ordered_1_interrupt_exit_zero" "0" "$(last_status "$result")"
-  run_contains "${provider}_wrap_ordered_1_interrupt_epic" "EPIC_ISSUE=457" "$body"
-
-  echo ""
-  echo "=== wrapper: ${provider} keeps ordered siblings Closes #458 (#2016) ==="
-  reset_fixture
-  write_tracker_config "$provider"
-  export MOCK_LABEL_PARENT_MODE=empty
-  write_pr 178 "develop-test-2016" "develop" "true" "Graduate wave" \
-    $'1. a\n2. b\n\n     Closes #458'
-  result="$(run_wrapper --graduation-pr 178)"
-  body="$(last_body "$result")"
-  run_test "${provider}_wrap_ordered_siblings_exit_zero" "0" "$(last_status "$result")"
-  run_contains "${provider}_wrap_ordered_siblings_epic" "EPIC_ISSUE=458" "$body"
-
-  echo ""
-  echo "=== wrapper: ${provider} strips empty-item no-interrupt indent code (#2016) ==="
-  reset_fixture
-  write_tracker_config "$provider"
-  export MOCK_LABEL_PARENT_MODE=empty
-  write_pr 179 "develop-test-2016" "develop" "true" "Graduate wave" \
-    $'Intro\n-\n\n    Closes #459\nEpic #900'
-  result="$(run_wrapper --graduation-pr 179)"
-  body="$(last_body "$result")"
-  run_test "${provider}_wrap_empty_item_no_interrupt_exit_zero" "0" "$(last_status "$result")"
-  run_contains "${provider}_wrap_empty_item_no_interrupt_epic" "EPIC_ISSUE=900" "$body"
-  run_not_contains "${provider}_wrap_empty_item_no_interrupt_no_459" "--epic 459" "$(cat "$CHILD_ARGV_LOG")"
-
-  echo ""
-  echo "=== wrapper: ${provider} keeps nested-list Closes #123 with Epic #900 (#2016) ==="
-  # Nested list keyword is live but Epic #900 is the sole epic/parent ref style
-  # candidate preferred when both exist — assert 123 is not chosen as epic and
-  # discovery still succeeds via Epic #900 (keyword may add a second candidate).
-  reset_fixture
-  write_tracker_config "$provider"
-  export MOCK_LABEL_PARENT_MODE=empty
-  write_pr 113 "develop-test-2016" "develop" "true" "Graduate" \
-    $'Epic #900\n- Delivered work:\n    - Closes #123'
-  result="$(run_wrapper --graduation-pr 113)"
-  body="$(last_body "$result")"
-  # Epic #900 + Closes #123 → two candidates → ambiguous without parents
-  run_test "${provider}_wrap_nested_list_exit_one" "1" "$(last_status "$result")"
-  run_contains "${provider}_wrap_nested_list_ambiguous" "ambiguous_epic_candidates" "$body"
-
-  echo ""
-  echo "=== wrapper: ${provider} selects nested-list Closes #123 as sole epic (#2016) ==="
-  reset_fixture
-  write_tracker_config "$provider"
-  export MOCK_LABEL_PARENT_MODE=empty
-  write_pr 114 "develop-test-2016" "develop" "true" "Graduate" \
-    $'- Delivered work:\n    - Closes #123'
-  result="$(run_wrapper --graduation-pr 114)"
-  body="$(last_body "$result")"
-  run_test "${provider}_wrap_nested_sole_exit_zero" "0" "$(last_status "$result")"
-  run_contains "${provider}_wrap_nested_sole_epic" "EPIC_ISSUE=123" "$body"
-  run_contains "${provider}_wrap_nested_sole_child" "--epic 123" "$(cat "$CHILD_ARGV_LOG")"
-
-  echo ""
-  echo "=== wrapper: ${provider} selects list-continuation Closes #124 (#2016) ==="
-  reset_fixture
-  write_tracker_config "$provider"
-  export MOCK_LABEL_PARENT_MODE=empty
-  write_pr 115 "develop-test-2016" "develop" "true" "Graduate" \
-    $'- Delivered work:\n    Closes #124'
-  result="$(run_wrapper --graduation-pr 115)"
-  body="$(last_body "$result")"
-  run_test "${provider}_wrap_list_cont_exit_zero" "0" "$(last_status "$result")"
-  run_contains "${provider}_wrap_list_cont_epic" "EPIC_ISSUE=124" "$body"
-
-  echo ""
-  echo "=== wrapper: ${provider} selects paragraph-continuation Closes #125 (#2016) ==="
-  reset_fixture
-  write_tracker_config "$provider"
-  export MOCK_LABEL_PARENT_MODE=empty
-  write_pr 116 "develop-test-2016" "develop" "true" "Graduate" \
-    $'Some prose about the change.\n    Closes #125'
-  result="$(run_wrapper --graduation-pr 116)"
-  body="$(last_body "$result")"
-  run_test "${provider}_wrap_para_cont_exit_zero" "0" "$(last_status "$result")"
-  run_contains "${provider}_wrap_para_cont_epic" "EPIC_ISSUE=125" "$body"
-
-  echo ""
-  echo "=== wrapper: ${provider} ignores Closes other/repo#326 (#2016) ==="
-  assert_wrapper_github_example_only_fails "$provider" \
-    'Closes other/repo#326' \
-    "${provider}_wrap_foreign"
-
-  echo ""
-  echo "=== wrapper: ${provider} still selects plain-prose Closes #326 as epic (#2016) ==="
-  reset_fixture
-  write_tracker_config "$provider"
-  export MOCK_LABEL_PARENT_MODE=empty
-  write_pr 112 "develop-test-2016" "develop" "true" "Graduate" "Closes #326"
-  result="$(run_wrapper --graduation-pr 112)"
-  body="$(last_body "$result")"
-  run_test "${provider}_wrap_plain_exit_zero" "0" "$(last_status "$result")"
-  run_contains "${provider}_wrap_plain_epic" "EPIC_ISSUE=326" "$body"
-  run_contains "${provider}_wrap_plain_child" "--epic 326" "$(cat "$CHILD_ARGV_LOG")"
+  unset MOCK_MARKDOWN_FAIL
+  run_test "${provider}_wrap_md_fail_exit_one" "1" "$(last_status "$result")"
+  run_contains "${provider}_wrap_md_fail_unavailable" "CLOSEOUT_TEXT_REFS_UNAVAILABLE pr=118" "$body"
+  run_contains "${provider}_wrap_md_fail_reason" "epic_discovery_failed" "$body"
+  run_test "${provider}_wrap_md_fail_no_child" "missing" "$( [ -f "$CHILD_ARGV_LOG" ] && echo present || echo missing )"
 done
+
+for provider in github_projects github_issues; do
+  echo ""
+  echo "=== wrapper: ${provider} GFM fixture matrix (#2016) ==="
+  assert_wrapper_gfm_epic "$provider" epic_plus_fenced_closes 900 "${provider}_wrap_epic_fence"
+  assert_wrapper_gfm_epic "$provider" epic_plus_tilde_fence 900 "${provider}_wrap_epic_tilde"
+  assert_wrapper_gfm_epic "$provider" epic_plus_unclosed_fence 900 "${provider}_wrap_epic_unclosed"
+  assert_wrapper_gfm_epic "$provider" epic_plus_indented 900 "${provider}_wrap_epic_indent"
+  assert_wrapper_gfm_epic "$provider" epic_plus_mixed_indent 900 "${provider}_wrap_epic_mixed"
+  assert_wrapper_gfm_epic "$provider" body_start_indent_then_epic 900 "${provider}_wrap_body_start"
+  assert_wrapper_gfm_epic "$provider" body_start_tab_then_epic 900 "${provider}_wrap_body_tab"
+  assert_wrapper_gfm_epic "$provider" epic_plus_cross_repo 900 "${provider}_wrap_cross_keeps_epic"
+  assert_wrapper_gfm_epic "$provider" nested_list_prose 123 "${provider}_wrap_nested_list"
+  assert_wrapper_gfm_epic "$provider" list_continuation_prose 124 "${provider}_wrap_list_cont"
+  assert_wrapper_gfm_epic "$provider" para_continuation 125 "${provider}_wrap_para_cont"
+  assert_wrapper_gfm_epic "$provider" plain_prose 326 "${provider}_wrap_plain"
+  assert_wrapper_gfm_epic "$provider" title_closes 327 "${provider}_wrap_title"
+  assert_wrapper_gfm_epic_fail "$provider" fenced_tick "${provider}_wrap_fenced_only"
+  assert_wrapper_gfm_epic_fail "$provider" indented_code "${provider}_wrap_indent_only"
+  assert_wrapper_gfm_epic_fail "$provider" cross_repo "${provider}_wrap_foreign"
+  assert_wrapper_gfm_epic_fail "$provider" example_only_fenced "${provider}_wrap_ex_fence"
+  assert_wrapper_gfm_epic_fail "$provider" example_only_indented "${provider}_wrap_ex_indent"
+done
+
 
 echo ""
 echo "Graduation closeout-from-merged-pr tests: $PASS_COUNT passed, $FAIL_COUNT failed."

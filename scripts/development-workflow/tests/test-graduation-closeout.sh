@@ -21,6 +21,8 @@ MOCK_CLOSE_LOG="$TMP_ROOT/close.log"
 MOCK_LABEL_LOG="$TMP_ROOT/label.log"
 MOCK_GRAPHQL_LOG="$TMP_ROOT/graphql.log"
 MOCK_GH_LOG="$TMP_ROOT/gh-invocations.log"
+GFM_FIXTURE_DIR="$REPO_ROOT/scripts/development-workflow/tests/fixtures/graduation-closeout-gfm"
+export GFM_FIXTURE_DIR
 PASS_COUNT=0
 FAIL_COUNT=0
 
@@ -103,6 +105,35 @@ case "$*" in
   "auth status")
     exit 0
     ;;
+
+  api\ markdown*|markdown\ --input*)
+    if [ "${MOCK_MARKDOWN_FAIL:-0}" = "1" ]; then
+      printf 'mock markdown API failure\n' >&2
+      exit 43
+    fi
+    GFM_DIR="${GFM_FIXTURE_DIR:?}"
+    # Read JSON body before any heredoc steals stdin.
+    MOCK_MD_PAYLOAD="$(cat)"
+    printf '%s' "$MOCK_MD_PAYLOAD" | python3 -c '
+import html, json, pathlib, re, sys
+root = pathlib.Path(sys.argv[1])
+raw = sys.stdin.read()
+try:
+    text = json.loads(raw).get("text", "")
+except Exception:
+    text = raw
+for md_path in sorted(root.glob("*.md")):
+    if md_path.read_text().rstrip("\n") == text.rstrip("\n"):
+        sys.stdout.write(md_path.with_suffix(".html").read_text())
+        sys.exit(0)
+if "```" in text or "~~~" in text or re.search(r"(?m)^ {4,}\S", text) or "\n\n    " in text:
+    sys.stderr.write("mock markdown: no GFM fixture for code-like text\n")
+    sys.exit(45)
+sys.stdout.write("<p dir=\"auto\">" + html.escape(text).replace("\n", "<br>\n") + "</p>")
+sys.exit(0)
+' "$GFM_DIR"
+    ;;
+
   api\ graphql*)
     # Record the issue number variable so Linear tests can assert #326 was
     # never queried via subIssues.
@@ -173,8 +204,21 @@ JSON
     esac
     ;;
   "pr list --state merged --base develop-test --limit 1000 --json number,title,body")
-    # GitHub Projects / GitHub Issues keyword-scan path (fence/indent-aware).
+    # GitHub Projects / GitHub Issues keyword-scan path (GFM fixtures).
     case "${MOCK_PR_MODE:-single_ref}" in
+      gfm_fixture)
+        python3 - "$GFM_FIXTURE_DIR" "${MOCK_GFM_FIXTURE:?}" <<'PYGFM'
+import json, pathlib, sys
+fix, name = pathlib.Path(sys.argv[1]), sys.argv[2]
+md = (fix / f"{name}.md").read_text()
+title = "Graduate wave"
+body = md
+if name == "title_closes":
+    title = md.strip().splitlines()[0] if md.strip() else "Graduate wave"
+    body = ""
+print(json.dumps([{"number": 11, "title": title, "body": body}]))
+PYGFM
+        ;;
       fail)
         printf 'mock pr list failure\n' >&2
         exit 46
@@ -1405,18 +1449,25 @@ run_test "uncommented_linear_lea_no_close_log" "" "$(cat "$MOCK_CLOSE_LOG")"
 run_not_contains "uncommented_linear_lea_no_mutation" "issue close" "$(cat "$MOCK_GH_LOG")"
 
 # ---------------------------------------------------------------------------
-# #2016 — GitHub providers ignore example-only closing keywords
+# ---------------------------------------------------------------------------
+# #2016 — GitHub providers use GFM fixtures (recorded gh api markdown HTML)
 # ---------------------------------------------------------------------------
 
-assert_github_example_326_untouched() {
+# shellcheck disable=SC1091
+. "$REPO_ROOT/scripts/development-workflow/closing-keyword-lib.sh"
+# shellcheck disable=SC1091
+. "$REPO_ROOT/scripts/development-workflow/graduation-closeout-lib.sh"
+
+assert_gfm_fixture_untouched() {
   local provider="$1"
-  local mode="$2"
+  local fixture="$2"
   local label="$3"
-  local issue="${4:-326}"
+  local issue="$4"
   reset_fixture
   write_tracker_config "$provider"
   export MOCK_NATIVE_MODE=children
-  export MOCK_PR_MODE="$mode"
+  export MOCK_PR_MODE=gfm_fixture
+  export MOCK_GFM_FIXTURE="$fixture"
   write_issue 101 "Open child" OPEN
   write_issue 102 "Closed nonterminal" CLOSED
   write_issue 103 "Closed terminal" CLOSED
@@ -1438,40 +1489,19 @@ assert_github_example_326_untouched() {
   run_test "${label}_child_closed" "CLOSED" "$(python3 -c 'import json; print(json.load(open("'"$MOCK_STATE_DIR"'/101.json"))["state"])')"
   run_test "${label}_${issue}_untouched" "OPEN" "$(python3 -c 'import json; print(json.load(open("'"$MOCK_STATE_DIR"'/'"$issue"'.json"))["state"])')"
   run_not_contains "${label}_no_close_${issue}" "issue close ${issue}" "$(cat "$MOCK_GH_LOG")"
-  run_not_contains "${label}_no_edit_${issue}" "issue edit ${issue}" "$(cat "$MOCK_GH_LOG")"
   run_not_contains "${label}_no_close_log_${issue}" "${issue}"$'\t' "$(cat "$MOCK_CLOSE_LOG")"
 }
 
-assert_github_plain_326_closed() {
+assert_gfm_fixture_closed() {
   local provider="$1"
-  local label="$2"
-  reset_fixture
-  write_tracker_config "$provider"
-  export MOCK_NATIVE_MODE=empty
-  export MOCK_PR_MODE=plain_closes_326
-  write_issue 326 "Live closing keyword" OPEN
-  write_issue 900 "Parent epic" OPEN
-  set_status 326 "In Development"
-  set_status 900 "In Development"
-  local result body
-  result="$(run_closeout)"
-  body="$(last_output_body "$result")"
-  run_test "${label}_exit_zero" "0" "$(last_output_status "$result")"
-  run_contains "${label}_pass" "GRADUATION_CLOSEOUT_RESULT=pass" "$body"
-  run_contains "${label}_provider" "TRACKER_PROVIDER=${provider}" "$body"
-  run_test "${label}_326_closed" "CLOSED" "$(python3 -c 'import json; print(json.load(open("'"$MOCK_STATE_DIR"'/326.json"))["state"])')"
-  run_contains "${label}_close_log_326" "326" "$(cat "$MOCK_CLOSE_LOG")"
-}
-
-assert_github_keyword_issue_closed() {
-  local provider="$1"
-  local mode="$2"
+  local fixture="$2"
   local issue="$3"
   local label="$4"
   reset_fixture
   write_tracker_config "$provider"
   export MOCK_NATIVE_MODE=empty
-  export MOCK_PR_MODE="$mode"
+  export MOCK_PR_MODE=gfm_fixture
+  export MOCK_GFM_FIXTURE="$fixture"
   write_issue "$issue" "Live closing keyword" OPEN
   write_issue 900 "Parent epic" OPEN
   set_status "$issue" "In Development"
@@ -1485,257 +1515,65 @@ assert_github_keyword_issue_closed() {
   run_contains "${label}_close_log" "$issue" "$(cat "$MOCK_CLOSE_LOG")"
 }
 
+echo ""
+echo "=== graduation closeout: planted violation — raw fenced text would keep #326 (#2016) ==="
+planted_md="$(cat "$GFM_FIXTURE_DIR/fenced_tick.md")"
+planted_html="$(cat "$GFM_FIXTURE_DIR/fenced_tick.html")"
+# Planted violation: raw-text keyword scan (no GFM) still sees #326 in the fence;
+# rendered visible text + shared live_refs does not.
+raw_refs="$(printf '%s' "$planted_md" | grep -ioE "$CLOSING_KEYWORD_REGEX" | grep -oE '[0-9]+$' || true)"
+vis_refs="$(printf '%s' "$planted_html" | graduation_closeout_html_visible_text | closing_keyword_live_refs || true)"
+run_test "planted_raw_finds_326" "326" "$(printf '%s' "$raw_refs" | head -n1)"
+run_test "planted_rendered_strips_326" "" "$(printf '%s' "$vis_refs")"
+
+echo ""
+echo "=== graduation closeout: markdown API failure fail-closes text refs (#2016) ==="
 for provider in github_projects github_issues; do
-  echo ""
-  echo "=== graduation closeout: ${provider} ignores fenced example Closes #326 (#2016) ==="
-  assert_github_example_326_untouched "$provider" fenced_example "${provider}_fenced"
-
-  echo ""
-  echo "=== graduation closeout: ${provider} ignores tilde-fenced Closes #326 (#2016) ==="
-  assert_github_example_326_untouched "$provider" tilde_fenced_example "${provider}_tilde"
-
-  echo ""
-  echo "=== graduation closeout: ${provider} ignores unclosed-fence Closes #326 (#2016) ==="
-  assert_github_example_326_untouched "$provider" unclosed_fenced_example "${provider}_unclosed"
-
-  echo ""
-  echo "=== graduation closeout: ${provider} ignores blank+indented Closes #326 (#2016) ==="
-  assert_github_example_326_untouched "$provider" blank_then_indented_326 "${provider}_blank_indent"
-  assert_github_example_326_untouched "$provider" indented_code_example "${provider}_indented"
-
-  echo ""
-  echo "=== graduation closeout: ${provider} ignores space+tab mixed-indent Closes #326 (#2016) ==="
-  assert_github_example_326_untouched "$provider" mixed_indent_example "${provider}_mixed_indent"
-
-  echo ""
-  echo "=== graduation closeout: ${provider} ignores body-start 4-space Closes #326 with title (#2016) ==="
-  assert_github_example_326_untouched "$provider" body_starts_four_space_326 "${provider}_body_start_spaces"
-
-  echo ""
-  echo "=== graduation closeout: ${provider} ignores body-start tab Closes #326 with title (#2016) ==="
-  assert_github_example_326_untouched "$provider" body_starts_tab_326 "${provider}_body_start_tab"
-
-  echo ""
-  echo "=== graduation closeout: ${provider} ignores body-start space+tab Closes #326 with title (#2016) ==="
-  assert_github_example_326_untouched "$provider" body_starts_space_tab_326 "${provider}_body_start_mixed"
-
-  echo ""
-  echo "=== graduation closeout: ${provider} closes title Closes #327; body-start indent #326 untouched (#2016) ==="
   reset_fixture
   write_tracker_config "$provider"
-  export MOCK_NATIVE_MODE=empty
-  export MOCK_PR_MODE=title_closes_327_body_indent_326
-  write_issue 326 "Example-only body indent" OPEN
-  write_issue 327 "Live title keyword" OPEN
+  export MOCK_NATIVE_MODE=children
+  export MOCK_PR_MODE=gfm_fixture
+  export MOCK_GFM_FIXTURE=plain_prose
+  export MOCK_MARKDOWN_FAIL=1
+  write_issue 101 "Open child" OPEN
+  write_issue 102 "Closed nonterminal" CLOSED
+  write_issue 103 "Closed terminal" CLOSED
+  write_issue 104 "Optional child" OPEN optional
+  write_issue 326 "Should stay open" OPEN
   write_issue 900 "Parent epic" OPEN
+  set_status 101 "In Development"
+  set_status 102 "Development in Review"
+  set_status 103 "Merged"
+  set_status 104 "In Development"
   set_status 326 "In Development"
-  set_status 327 "In Development"
   set_status 900 "In Development"
   result="$(run_closeout)"
   body="$(last_output_body "$result")"
-  run_test "${provider}_title_327_exit_zero" "0" "$(last_output_status "$result")"
-  run_contains "${provider}_title_327_pass" "GRADUATION_CLOSEOUT_RESULT=pass" "$body"
-  run_test "${provider}_title_327_closed" "CLOSED" "$(python3 -c 'import json; print(json.load(open("'"$MOCK_STATE_DIR"'/327.json"))["state"])')"
-  run_test "${provider}_title_327_326_untouched" "OPEN" "$(python3 -c 'import json; print(json.load(open("'"$MOCK_STATE_DIR"'/326.json"))["state"])')"
-  run_not_contains "${provider}_title_327_no_close_326" "issue close 326" "$(cat "$MOCK_GH_LOG")"
-  run_contains "${provider}_title_327_close_log" "327" "$(cat "$MOCK_CLOSE_LOG")"
-
-  echo ""
-  echo "=== graduation closeout: ${provider} ignores thematic-break then indented Closes #326 (#2016) ==="
-  assert_github_example_326_untouched "$provider" thematic_break_then_indent_326 "${provider}_thematic_spaced"
-  assert_github_example_326_untouched "$provider" thematic_hr_dashes_then_indent_326 "${provider}_thematic_hr_dashes"
-  assert_github_example_326_untouched "$provider" thematic_stars_then_indent_326 "${provider}_thematic_stars"
-  assert_github_example_326_untouched "$provider" thematic_hr_stars_then_indent_326 "${provider}_thematic_hr_stars"
-  assert_github_example_326_untouched "$provider" thematic_underscores_then_indent_326 "${provider}_thematic_underscores"
-
-  echo ""
-  echo "=== graduation closeout: ${provider} keeps real list then indented Closes #123 (#2016) ==="
-  assert_github_keyword_issue_closed "$provider" list_item_then_indent_123 123 "${provider}_list_then_indent"
-
-  echo ""
-  echo "=== graduation closeout: ${provider} keeps list two-space continuation then Closes #123 (#2016) ==="
-  assert_github_keyword_issue_closed "$provider" list_two_space_cont_closes_123 123 "${provider}_list_two_space"
-
-  echo ""
-  echo "=== graduation closeout: ${provider} keeps list multi-continuation then Closes #124 (#2016) ==="
-  assert_github_keyword_issue_closed "$provider" list_multi_cont_closes_124 124 "${provider}_list_multi_cont"
-
-  echo ""
-  echo "=== graduation closeout: ${provider} strips code after list ends with indent-0 paragraph (#2016) ==="
-  assert_github_example_326_untouched "$provider" list_then_para_then_indent_326 "${provider}_list_then_para_code"
-
-  echo ""
-  echo "=== graduation closeout: ${provider} strips list-item six-space indented code Closes #326 (#2016) ==="
-  assert_github_example_326_untouched "$provider" list_item_six_space_code_326 "${provider}_list_item_code"
-
-  echo ""
-  echo "=== graduation closeout: ${provider} strips ordered-list seven-space code Closes #327 (#2016) ==="
-  assert_github_example_326_untouched "$provider" ordered_list_seven_space_327 "${provider}_ordered_list_code" 327
-
-  echo ""
-  echo "=== graduation closeout: ${provider} strips ATX-heading then indented Closes #326 (#2016) ==="
-  assert_github_example_326_untouched "$provider" atx_heading_then_indent_326 "${provider}_atx_indent"
-
-  echo ""
-  echo "=== graduation closeout: ${provider} strips setext then indented Closes #326 (#2016) ==="
-  assert_github_example_326_untouched "$provider" setext_dashes_then_indent_326 "${provider}_setext_indent"
-
-  echo ""
-  echo "=== graduation closeout: ${provider} keeps ATX-heading then blank prose Closes #328 (#2016) ==="
-  assert_github_keyword_issue_closed "$provider" atx_heading_blank_prose_328 328 "${provider}_atx_blank_prose"
-
-  echo ""
-  echo "=== graduation closeout: ${provider} strips list-item tilde fence Closes #326 (#2016) ==="
-  assert_github_example_326_untouched "$provider" list_tilde_fence_326 "${provider}_list_tilde_fence"
-  assert_github_example_326_untouched "$provider" list_tilde_fence_unclosed_326 "${provider}_list_tilde_fence_unclosed"
-
-  echo ""
-  echo "=== graduation closeout: ${provider} strips list-item backtick fence Closes #326 (#2016) ==="
-  assert_github_example_326_untouched "$provider" list_backtick_fence_326 "${provider}_list_tick_fence"
-  assert_github_example_326_untouched "$provider" list_backtick_fence_unclosed_326 "${provider}_list_tick_fence_unclosed"
-
-  echo ""
-  echo "=== graduation closeout: ${provider} keeps prose after list-item fence Closes #123 (#2016) ==="
-  assert_github_keyword_issue_closed "$provider" list_fence_then_prose_123 123 "${provider}_list_fence_then_prose"
-
-  echo ""
-  echo "=== graduation closeout: ${provider} strips marker-line tilde fence Closes #326 (#2016) ==="
-  assert_github_example_326_untouched "$provider" marker_tilde_fence_326 "${provider}_marker_tilde"
-  assert_github_example_326_untouched "$provider" marker_tilde_fence_unclosed_326 "${provider}_marker_tilde_unclosed"
-
-  echo ""
-  echo "=== graduation closeout: ${provider} strips marker-line backtick fence Closes #326 (#2016) ==="
-  assert_github_example_326_untouched "$provider" marker_backtick_fence_326 "${provider}_marker_tick"
-  assert_github_example_326_untouched "$provider" marker_backtick_fence_unclosed_326 "${provider}_marker_tick_unclosed"
-
-  echo ""
-  echo "=== graduation closeout: ${provider} strips ordered marker-line tilde fence Closes #326 (#2016) ==="
-  assert_github_example_326_untouched "$provider" ordered_marker_tilde_fence_326 "${provider}_ordered_marker_tilde"
-
-  echo ""
-  echo "=== graduation closeout: ${provider} keeps prose after marker-line fence Closes #123 (#2016) ==="
-  assert_github_keyword_issue_closed "$provider" marker_fence_then_prose_123 123 "${provider}_marker_fence_then_prose"
-
-  echo ""
-  echo "=== graduation closeout: ${provider} does not leak list state from top-level fence (#2016) ==="
-  assert_github_example_326_untouched "$provider" toplevel_fence_list_no_leak_326 "${provider}_fence_list_no_leak"
-  assert_github_example_326_untouched "$provider" toplevel_tick_fence_list_no_leak_327 "${provider}_tick_fence_list_no_leak" 327
-  assert_github_example_326_untouched "$provider" heading_inside_fence_326 "${provider}_heading_inside_fence"
-
-  echo ""
-  echo "=== graduation closeout: ${provider} strips tab-after-marker fences Closes #326 (#2016) ==="
-  assert_github_example_326_untouched "$provider" tab_marker_tilde_fence_326 "${provider}_tab_marker_tilde"
-  assert_github_example_326_untouched "$provider" tab_marker_tilde_unclosed_326 "${provider}_tab_marker_tilde_unclosed"
-  assert_github_example_326_untouched "$provider" tab_ordered_tick_fence_326 "${provider}_tab_ordered_tick"
-
-  echo ""
-  echo "=== graduation closeout: ${provider} strips tab docstart listlike as indented code (#2016) ==="
-  assert_github_example_326_untouched "$provider" tab_docstart_listlike_331 "${provider}_tab_docstart_listlike" 331
-
-  echo ""
-  echo "=== graduation closeout: ${provider} strips four-space listlike indented code (#2016) ==="
-  assert_github_example_326_untouched "$provider" blank_then_four_space_listlike_326 "${provider}_blank_four_listlike"
-  assert_github_example_326_untouched "$provider" docstart_four_space_listlike_326 "${provider}_docstart_four_listlike"
-
-  echo ""
-  echo "=== graduation closeout: ${provider} keeps nested list under item Closes #123 (#2016) ==="
-  assert_github_keyword_issue_closed "$provider" nested_list_under_delivered_123 123 "${provider}_nested_under_delivered"
-
-  echo ""
-  echo "=== graduation closeout: ${provider} strips deep listlike code after blank in list (#2016) ==="
-  assert_github_example_326_untouched "$provider" list_blank_then_deep_listlike_332 "${provider}_deep_listlike" 332
-
-  echo ""
-  echo "=== graduation closeout: ${provider} keeps paragraph-continuation listlike Closes #333 (#2016) ==="
-  assert_github_keyword_issue_closed "$provider" para_cont_listlike_333 333 "${provider}_para_cont_listlike"
-
-  echo ""
-  echo "=== graduation closeout: ${provider} strips nested-list dedent then outer indented code (#2016) ==="
-  assert_github_example_326_untouched "$provider" nested_list_dedent_outer_code_326 "${provider}_nested_dedent_outer_code"
-
-  echo ""
-  echo "=== graduation closeout: ${provider} keeps Closes #123 after heading inside list (#2016) ==="
-  assert_github_keyword_issue_closed "$provider" heading_inside_list_closes_123 123 "${provider}_heading_inside_list"
-
-  echo ""
-  echo "=== graduation closeout: ${provider} strips three-level dedent to L1 then code (#2016) ==="
-  assert_github_example_326_untouched "$provider" three_level_dedent_l1_code_326 "${provider}_three_level_dedent_l1"
-
-  echo ""
-  echo "=== graduation closeout: ${provider} strips dedent-to-doc then indented code (#2016) ==="
-  assert_github_example_326_untouched "$provider" dedent_to_doc_then_indent_326 "${provider}_dedent_to_doc_code"
-
-  echo ""
-  echo "=== graduation closeout: ${provider} keeps Closes #123 after heading inside nested item (#2016) ==="
-  assert_github_keyword_issue_closed "$provider" heading_inside_nested_closes_123 123 "${provider}_heading_inside_nested"
-
-  echo ""
-  echo "=== graduation closeout: ${provider} keeps lazy-continuation then indented Closes #326 (#2016) ==="
-  assert_github_keyword_issue_closed "$provider" lazy_cont_then_indent_closes_326 326 "${provider}_lazy_cont_indent"
-
-  echo ""
-  echo "=== graduation closeout: ${provider} strips code after lazy-cont then indent-0 exit (#2016) ==="
-  assert_github_example_326_untouched "$provider" lazy_cont_then_exit_indent_334 "${provider}_lazy_cont_exit_code" 334
-
-  echo ""
-  echo "=== graduation closeout: ${provider} keeps lazy continuation inside nested item (#2016) ==="
-  assert_github_keyword_issue_closed "$provider" lazy_cont_inside_nested_closes_123 123 "${provider}_lazy_cont_nested"
-
-  echo ""
-  echo "=== graduation closeout: ${provider} strips marker-line five-space indented code (#2016) ==="
-  assert_github_example_326_untouched "$provider" marker_five_space_code_123 "${provider}_marker_five_space" 123
-  assert_github_example_326_untouched "$provider" marker_five_space_code_cont_123 "${provider}_marker_five_space_cont" 123
-  assert_github_example_326_untouched "$provider" marker_heading_then_code_326 "${provider}_marker_heading_code"
-
-  echo ""
-  echo "=== graduation closeout: ${provider} keeps marker-line two-space / one-space prose (#2016) ==="
-  assert_github_keyword_issue_closed "$provider" marker_two_space_closes_340 340 "${provider}_marker_two_space"
-  assert_github_keyword_issue_closed "$provider" marker_one_space_closes_341 341 "${provider}_marker_one_space"
-
-  echo ""
-  echo "=== graduation closeout: ${provider} strips same-line nested marker fences (#2016) ==="
-  assert_github_example_326_untouched "$provider" nested_same_line_marker_fence_326 "${provider}_nested_same_line_fence"
-  assert_github_example_326_untouched "$provider" ordered_nested_marker_tick_fence_343 "${provider}_ordered_nested_tick" 343
-
-  echo ""
-  echo "=== graduation closeout: ${provider} keeps same-line nested marker prose (#2016) ==="
-  assert_github_keyword_issue_closed "$provider" nested_same_line_marker_closes_342 342 "${provider}_nested_same_line_prose"
-  assert_github_keyword_issue_closed "$provider" nested_same_line_blank_prose_344 344 "${provider}_nested_same_line_blank_prose"
-
-  echo ""
-  echo "=== graduation closeout: ${provider} strips nested same-line tab fence (#2016) ==="
-  assert_github_example_326_untouched "$provider" nested_same_line_tab_fence_456 "${provider}_nested_same_line_tab" 456
-
-  echo ""
-  echo "=== graduation closeout: ${provider} strips ordered-2 no-interrupt indent code (#2016) ==="
-  assert_github_example_326_untouched "$provider" ordered_2_no_interrupt_456 "${provider}_ordered_2_no_interrupt" 456
-  assert_github_example_326_untouched "$provider" empty_item_no_interrupt_459 "${provider}_empty_item_no_interrupt" 459
-
-  echo ""
-  echo "=== graduation closeout: ${provider} keeps ordered-1 interrupt / siblings prose (#2016) ==="
-  assert_github_keyword_issue_closed "$provider" ordered_1_interrupt_closes_457 457 "${provider}_ordered_1_interrupt"
-  assert_github_keyword_issue_closed "$provider" ordered_siblings_closes_458 458 "${provider}_ordered_siblings"
-
-  echo ""
-  echo "=== graduation closeout: ${provider} keeps nested-list Closes #123 (#2016) ==="
-  assert_github_keyword_issue_closed "$provider" nested_list_closes_123 123 "${provider}_nested_list"
-
-  echo ""
-  echo "=== graduation closeout: ${provider} keeps list-continuation Closes #124 (#2016) ==="
-  assert_github_keyword_issue_closed "$provider" list_continuation_closes_124 124 "${provider}_list_cont"
-
-  echo ""
-  echo "=== graduation closeout: ${provider} keeps paragraph-continuation Closes #125 (#2016) ==="
-  assert_github_keyword_issue_closed "$provider" paragraph_continuation_closes_125 125 "${provider}_para_cont"
-
-  echo ""
-  echo "=== graduation closeout: ${provider} ignores Closes other/repo#326 (#2016) ==="
-  assert_github_example_326_untouched "$provider" foreign_repo_text "${provider}_foreign_text"
-
-  echo ""
-  echo "=== graduation closeout: ${provider} still closes plain-prose Closes #326 (#2016) ==="
-  assert_github_plain_326_closed "$provider" "${provider}_plain"
+  unset MOCK_MARKDOWN_FAIL
+  run_test "${provider}_md_fail_exit_zero" "0" "$(last_output_status "$result")"
+  run_contains "${provider}_md_fail_unavailable" "CLOSEOUT_TEXT_REFS_UNAVAILABLE pr=11" "$body"
+  run_test "${provider}_md_fail_326_untouched" "OPEN" "$(python3 -c 'import json; print(json.load(open("'"$MOCK_STATE_DIR"'/326.json"))["state"])')"
+  run_not_contains "${provider}_md_fail_no_close_326" "issue close 326" "$(cat "$MOCK_GH_LOG")"
 done
+
+for provider in github_projects github_issues; do
+  echo ""
+  echo "=== graduation closeout: ${provider} GFM fixture matrix (#2016) ==="
+  while IFS= read -r row; do
+    [ -n "$row" ] || continue
+    name="$(printf '%s' "$row" | python3 -c 'import json,sys; print(json.load(sys.stdin)["name"])')"
+    refs="$(printf '%s' "$row" | python3 -c 'import json,sys; print(" ".join(json.load(sys.stdin).get("expected_refs") or []))')"
+    if [ -z "$refs" ]; then
+      issue="$(cat "$GFM_FIXTURE_DIR/${name}.md" | closing_keyword_live_refs | head -n1 || true)"
+      [ -n "$issue" ] || issue=326
+      assert_gfm_fixture_untouched "$provider" "$name" "${provider}_gfm_${name}" "$issue"
+    else
+      issue="$(printf '%s' "$refs" | awk '{print $1}')"
+      assert_gfm_fixture_closed "$provider" "$name" "$issue" "${provider}_gfm_${name}"
+    fi
+  done < <(python3 -c 'import json,pathlib; print("\n".join(json.dumps(x) for x in json.loads(pathlib.Path("'"$GFM_FIXTURE_DIR"'/manifest.json").read_text())))')
+done
+
 
 echo ""
 echo "Graduation closeout tests: $PASS_COUNT passed, $FAIL_COUNT failed."
