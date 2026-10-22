@@ -208,6 +208,23 @@ MOCK_GIT
 # real git explicitly (git -C <path> ...) regardless of the mock.
 REAL_GIT="$(command -v git)"
 
+# Deterministic commit identity for every fixture (incl. clones that never run
+# `git config user.*`). CI runners have no global user.name/email; without these
+# exports, `$REAL_GIT commit` aborts the suite under `set -e` with
+# "empty ident name (for <...>) not allowed".
+export GIT_AUTHOR_NAME="${GIT_AUTHOR_NAME:-Workflow Test}"
+export GIT_AUTHOR_EMAIL="${GIT_AUTHOR_EMAIL:-workflow-test@example.invalid}"
+export GIT_COMMITTER_NAME="${GIT_COMMITTER_NAME:-Workflow Test}"
+export GIT_COMMITTER_EMAIL="${GIT_COMMITTER_EMAIL:-workflow-test@example.invalid}"
+
+# Local repo config mirrors the GIT_* exports (belt-and-suspenders for clones
+# that re-init or for tooling that ignores the environment).
+configure_fixture_git_identity() {
+  local path="$1"
+  "$REAL_GIT" -C "$path" config user.email "${GIT_AUTHOR_EMAIL}"
+  "$REAL_GIT" -C "$path" config user.name "${GIT_AUTHOR_NAME}"
+}
+
 chmod +x "$MOCK_BIN/gh" "$MOCK_BIN/git"
 export PATH="$MOCK_BIN:$PATH"
 
@@ -330,8 +347,7 @@ mkdir -p "$worktree_main"
 worktree_main="$(CDPATH='' cd -- "$worktree_main" && pwd -P)"
 worktree_linked="$(dirname "$worktree_main")/linked"
 "$REAL_GIT" -C "$worktree_main" init -q -b main
-"$REAL_GIT" -C "$worktree_main" config user.email test@example.com
-"$REAL_GIT" -C "$worktree_main" config user.name test
+configure_fixture_git_identity "$worktree_main"
 "$REAL_GIT" -C "$worktree_main" commit -q --allow-empty -m init
 "$REAL_GIT" -C "$worktree_main" worktree add -q -b worktree-branch "$worktree_linked" >/dev/null
 
@@ -693,8 +709,7 @@ mkdir -p "$e2e_root"
 "$REAL_GIT" init -q --bare "$e2e_root/origin.git"
 mkdir -p "$e2e_root/mobile-app"
 "$REAL_GIT" -C "$e2e_root/mobile-app" init -q -b main
-"$REAL_GIT" -C "$e2e_root/mobile-app" config user.email test@example.com
-"$REAL_GIT" -C "$e2e_root/mobile-app" config user.name test
+configure_fixture_git_identity "$e2e_root/mobile-app"
 "$REAL_GIT" -C "$e2e_root/mobile-app" commit -q --allow-empty -m init
 "$REAL_GIT" -C "$e2e_root/mobile-app" remote add origin "$e2e_root/origin.git"
 "$REAL_GIT" -C "$e2e_root/mobile-app" push -q origin main
@@ -1240,6 +1255,10 @@ done
 echo ""
 echo "=== Linear #1982 release-scope filter (merged PR range) ==="
 
+# Fixture setup still runs under suite-level `set -e`. A hard git failure would
+# abort the harness before run_test; GIT_* exports + configure_fixture_git_identity
+# keep commits from dying on empty global identity (the CI failure mode).
+
 # Shared Linear fixture helpers: real git for tag/range inspection; stubbed gh
 # that resolves PR numbers / commit→PR pulls to headRefName+title only.
 LINEAR_SCOPE_BIN="$TMP_ROOT/linear-scope-bin"
@@ -1500,8 +1519,7 @@ issue_tracker:
   provider: linear
 YAML
   "$REAL_GIT" -C "$path" init -q -b main
-  "$REAL_GIT" -C "$path" config user.email test@example.com
-  "$REAL_GIT" -C "$path" config user.name test
+  configure_fixture_git_identity "$path"
   "$REAL_GIT" -C "$path" remote add origin "$path"
 }
 
@@ -2363,8 +2381,7 @@ sha_missing_prev_302="$("$REAL_GIT" -C "$repo_missing_prev_src" rev-parse HEAD)"
 # Namespace identity now fails closed on that local/remote tip disagreement
 # (ambiguous_release_tag_namespace) before the previous-commit probe.
 "$REAL_GIT" init -q -b main "$repo_missing_prev"
-"$REAL_GIT" -C "$repo_missing_prev" config user.email test@example.com
-"$REAL_GIT" -C "$repo_missing_prev" config user.name test
+configure_fixture_git_identity "$repo_missing_prev"
 "$REAL_GIT" -C "$repo_missing_prev" remote add origin "$repo_missing_prev_bare"
 "$REAL_GIT" -C "$repo_missing_prev" commit -q --allow-empty -m "orphan release tip"
 "$REAL_GIT" -C "$repo_missing_prev" tag v1.29.0
@@ -2817,13 +2834,11 @@ product_repos:
     local_path: $repo_comp_tag_product
 YAML
 "$REAL_GIT" -C "$repo_comp_tag_hub" init -q -b main
-"$REAL_GIT" -C "$repo_comp_tag_hub" config user.email test@example.com
-"$REAL_GIT" -C "$repo_comp_tag_hub" config user.name test
+configure_fixture_git_identity "$repo_comp_tag_hub"
 "$REAL_GIT" -C "$repo_comp_tag_hub" commit -q --allow-empty -m "chore: hub baseline"
 # Product checkout: product-v1.1.0 (prior) → in-range LEA-910 → product-v1.2.3 tip.
 "$REAL_GIT" -C "$repo_comp_tag_product" init -q -b main
-"$REAL_GIT" -C "$repo_comp_tag_product" config user.email test@example.com
-"$REAL_GIT" -C "$repo_comp_tag_product" config user.name test
+configure_fixture_git_identity "$repo_comp_tag_product"
 "$REAL_GIT" -C "$repo_comp_tag_product" remote add origin "$repo_comp_tag_product"
 mkdir -p "$repo_comp_tag_product/scripts/development-workflow"
 cat > "$repo_comp_tag_product/CHANGELOG.md" <<'MD'
@@ -3192,6 +3207,7 @@ sha_mask_a="$("$REAL_GIT" -C "$repo_mask_src" rev-parse HEAD)"
 "$REAL_GIT" clone -q --bare "file://${repo_mask_src}" "$repo_mask_bare"
 "$REAL_GIT" clone -q "file://${repo_mask_bare}" "$repo_mask"
 "$REAL_GIT" clone -q "file://${repo_mask_bare}" "$repo_mask_push"
+configure_fixture_git_identity "$repo_mask_push"
 "$REAL_GIT" -C "$repo_mask_push" commit -q --allow-empty \
   -m "Merge pull request #151 from example/fix/LEA-630-mask-b"
 sha_mask_b="$("$REAL_GIT" -C "$repo_mask_push" rev-parse HEAD)"
