@@ -467,36 +467,22 @@ discover_label_subitems() {
 }
 
 discover_closing_keyword_refs() {
-  # GitHub Projects / GitHub Issues path only. Scans PR title and body as
-  # independent documents via closing_keyword_live_refs_for_closeout, then
-  # unions the results. Joining title+"\n"+body would make a body that starts
-  # with indented code look like a paragraph continuation of the title.
-  # Cross-repo forms like owner/repo#N never match the keyword pattern. Linear
-  # must not call this — see discover_linear_merged_pr_issue_refs.
-  local prs_json
+  # GitHub Projects / GitHub Issues path only. For each merged PR, render
+  # title and body separately via GitHub GFM (`gh api markdown`), extract
+  # visible text outside <pre>/<code>, then scan with shared
+  # closing_keyword_live_refs. Title and body stay independent documents.
+  # Fail closed per PR: any render/extract failure contributes no text-derived
+  # refs for that PR (never fall back to raw markdown). Cross-repo
+  # owner/repo#N never matches the shared keyword pattern. Linear must not
+  # call this — see discover_linear_merged_pr_issue_refs.
+  local prs_json context
+  context="${REPO_OWNER}/${REPO_NAME}"
   if ! prs_json="$(gh pr list --state merged --base "$INTEGRATION_BRANCH" --limit 1000 --json number,title,body 2>/dev/null)"; then
     return 1
   fi
   printf '%s' "$prs_json" | python3 -c '
 import json, sys
-
-def expand_tabs(text):
-    # CommonMark tab stops of 4 — expand before TSV so columns stay intact.
-    out_lines = []
-    for line in text.split("\n"):
-        col = 0
-        buf = []
-        for ch in line:
-            if ch == "\t":
-                n = 4 - (col % 4)
-                buf.append(" " * n)
-                col += n
-            else:
-                buf.append(ch)
-                col += 1
-        out_lines.append("".join(buf))
-    return "\n".join(out_lines)
-
+RS = chr(30)
 try:
     prs = json.load(sys.stdin)
 except Exception:
@@ -505,25 +491,50 @@ for pr in prs or []:
     number = pr.get("number")
     if not number:
         continue
-    title = expand_tabs(pr.get("title") or "")
-    body = expand_tabs(pr.get("body") or "")
-    print(f"TITLE\t{number}\t{title.replace(chr(10), chr(30))}")
-    print(f"BODY\t{number}\t{body.replace(chr(10), chr(30))}")
+    title = (pr.get("title") or "").replace("\t", " ").replace("\n", RS)
+    body = (pr.get("body") or "").replace("\t", " ").replace("\n", RS)
+    print("%s\t%s\t%s" % (number, title, body))
 ' > "$TMP_DIR/merged-prs.tsv"
-  while IFS="$(printf '\t')" read -r marker pr_number text; do
-    case "$marker" in
-      TITLE|BODY) ;;
-      *) continue ;;
-    esac
-    if ! printf '%s' "$text" | tr "$(printf '\036')" '\n' \
-      | closing_keyword_live_refs_for_closeout \
-      > "$TMP_DIR/pr-${pr_number}-${marker}-issues.txt"; then
-      return 1
+  while IFS="$(printf '\t')" read -r pr_number title_enc body_enc; do
+    [ -n "$pr_number" ] || continue
+    local title body title_refs body_refs
+    title="$(printf '%s' "$title_enc" | tr "$(printf '\036')" '\n')"
+    body="$(printf '%s' "$body_enc" | tr "$(printf '\036')" '\n')"
+    : > "$TMP_DIR/pr-${pr_number}-issues.txt"
+    local need_title=0 need_body=0
+    if printf '%s' "$title" | graduation_closeout_raw_has_closing_keyword_candidate; then
+      need_title=1
     fi
+    if printf '%s' "$body" | graduation_closeout_raw_has_closing_keyword_candidate; then
+      need_body=1
+    fi
+    if [ "$need_title" -eq 0 ] && [ "$need_body" -eq 0 ]; then
+      continue
+    fi
+    if [ "$need_title" -eq 1 ]; then
+      if ! title_refs="$(printf '%s' "$title" | graduation_closeout_github_live_refs_from_markdown "$context")"; then
+        echo "CLOSEOUT_TEXT_REFS_UNAVAILABLE pr=${pr_number} reason=gfm_render_or_extract_failed" >&2
+        continue
+      fi
+    else
+      title_refs=""
+    fi
+    if [ "$need_body" -eq 1 ]; then
+      if ! body_refs="$(printf '%s' "$body" | graduation_closeout_github_live_refs_from_markdown "$context")"; then
+        echo "CLOSEOUT_TEXT_REFS_UNAVAILABLE pr=${pr_number} reason=gfm_render_or_extract_failed" >&2
+        continue
+      fi
+    else
+      body_refs=""
+    fi
+    {
+      printf '%s\n' "$title_refs"
+      printf '%s\n' "$body_refs"
+    } | sed '/^$/d' > "$TMP_DIR/pr-${pr_number}-issues.txt"
     while IFS= read -r issue; do
       [ -z "$issue" ] && continue
       append_candidate "$issue" "pr:${pr_number}"
-    done < "$TMP_DIR/pr-${pr_number}-${marker}-issues.txt"
+    done < "$TMP_DIR/pr-${pr_number}-issues.txt"
   done < "$TMP_DIR/merged-prs.tsv"
 }
 
