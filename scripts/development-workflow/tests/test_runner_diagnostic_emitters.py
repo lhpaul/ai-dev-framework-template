@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Binding D01-D75: synthetic paired-channel runtime/publication diagnostics."""
+"""Binding D01-D83: synthetic paired-channel runtime/publication diagnostics."""
 from __future__ import annotations
 
 import importlib.util
@@ -15,6 +15,85 @@ SPEC = importlib.util.spec_from_file_location('diagnostic_fixtures', Path(__file
 fixtures = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(fixtures)
 
+
+# Frozen finite continuation inventory; diagnostic syntax acceptance is separate.
+MULTILINE_REDACTION_CASES = [
+    ('H01', 'token:\n  $OPAQUE\npublic: KEEP_PUBLIC', ('public: KEEP_PUBLIC',), False),
+    ('H02', 'token:\n  "$OPAQUE"\npublic: KEEP_PUBLIC', ('public: KEEP_PUBLIC',), False),
+    ('H03', "token:\n  '$OPAQUE'\npublic: KEEP_PUBLIC", ('public: KEEP_PUBLIC',), False),
+    ('H04', 'token:\n  $OPAQUE', (), False),
+    ('H05', 'token:\npublic: KEEP_PUBLIC', ('public: KEEP_PUBLIC',), True),
+    ('H06', 'token:', (), True),
+    ('Q01', "token:\n  'first''$OPAQUE'\npublic: KEEP_PUBLIC", ('public: KEEP_PUBLIC',), False),
+    ('Q02', "token:\n  'first\\$OPAQUE'\npublic: KEEP_PUBLIC", ('public: KEEP_PUBLIC',), False),
+    ('Q03', 'token:\n  "first\\"$OPAQUE"\npublic: KEEP_PUBLIC', ('public: KEEP_PUBLIC',), False),
+    ('Q04', 'token:\n  "first\\\\\\/$OPAQUE"\npublic: KEEP_PUBLIC', ('public: KEEP_PUBLIC',), False),
+    ('Q05', 'token:\n  "first\n    $OPAQUE"\npublic: KEEP_PUBLIC', ('public: KEEP_PUBLIC',), False),
+    ('Q06', 'token:\n  "first\\n$OPAQUE"\npublic: KEEP_PUBLIC', ('public: KEEP_PUBLIC',), False),
+    ('Q07', 'token:\n  "first\n  $OPAQUE\npublic: ambiguous', (), False),
+    ('Q08', "token: 'first\n  $OPAQUE\npublic: ambiguous", (), False),
+    ('I01', 'token: first\n  $OPAQUE\npublic: KEEP_PUBLIC', ('public: KEEP_PUBLIC',), False),
+    ('I02', 'token: first\n      one\n    $OPAQUE\npublic: KEEP_PUBLIC', ('public: KEEP_PUBLIC',), False),
+    ('I03', 'token: "first\n  $OPAQUE"\npublic: KEEP_PUBLIC', ('public: KEEP_PUBLIC',), False),
+    ('I04', 'token: [REDACTED]\n  $OPAQUE\npublic: KEEP_PUBLIC', ('public: KEEP_PUBLIC',), False),
+    ('N01', 'outer:\n  token:\n    $OPAQUE\n  public: KEEP_PUBLIC', ('public: KEEP_PUBLIC',), False),
+    ('N02', '- token:\n    $OPAQUE\n  public: KEEP_PUBLIC\n- next: KEEP_NEXT', ('public: KEEP_PUBLIC', 'next: KEEP_NEXT'), False),
+    ('N03', 'token:\n  child: $OPAQUE\n  other: second\npublic: KEEP_PUBLIC', ('public: KEEP_PUBLIC',), False),
+    ('N04', 'token:\n  - child: $OPAQUE\n    other: data\n  - second\npublic: KEEP_PUBLIC', ('public: KEEP_PUBLIC',), False),
+    ('N05', 'token:\n- $OPAQUE\n- second\npublic: KEEP_PUBLIC', ('public: KEEP_PUBLIC',), False),
+    ('N06', 'outer:\n  token:\n  - $OPAQUE\n  - second\n  public: KEEP_PUBLIC', ('public: KEEP_PUBLIC',), False),
+    ('N07', '- token:\n- public: KEEP_PUBLIC', ('public: KEEP_PUBLIC',), True),
+    ('B01', 'token:\n\n  # comment\n  $OPAQUE\npublic: KEEP_PUBLIC', ('public: KEEP_PUBLIC',), False),
+    ('B02', 'token: first\n  # comment\n\n  $OPAQUE\n\n# outside comment\npublic: KEEP_PUBLIC', ('public: KEEP_PUBLIC',), False),
+    ('B03', 'token: # comment\n  $OPAQUE\npublic: KEEP_PUBLIC', ('public: KEEP_PUBLIC',), False),
+    ('B04', 'token:\n  first#$OPAQUE\npublic: KEEP_PUBLIC', ('public: KEEP_PUBLIC',), False),
+    ('B05', "token:\n  '#$OPAQUE'\npublic: KEEP_PUBLIC", ('public: KEEP_PUBLIC',), False),
+    ('B06', 'token:\n # comment\npublic: KEEP_PUBLIC', ('public: KEEP_PUBLIC',), True),
+    ('L01', 'token:\n  $OPAQUE\npublic: KEEP_PUBLIC', ('public: KEEP_PUBLIC',), False),
+    ('L02', 'token:\r\n  $OPAQUE\r\npublic: KEEP_PUBLIC', ('public: KEEP_PUBLIC',), False),
+    ('L03', 'token:\r  $OPAQUE\rpublic: KEEP_PUBLIC', ('public: KEEP_PUBLIC',), False),
+    ('L04', 'token:\x85  $OPAQUE\x85public: KEEP_PUBLIC', ('public: KEEP_PUBLIC',), False),
+    ('L05', 'token:\u2028  $OPAQUE\u2028public: KEEP_PUBLIC', ('public: KEEP_PUBLIC',), False),
+    ('L06', 'token:\u2029  $OPAQUE\u2029public: KEEP_PUBLIC', ('public: KEEP_PUBLIC',), False),
+    ('L07', 'token:\n\t$OPAQUE\npublic: KEEP_PUBLIC', ('public: KEEP_PUBLIC',), False),
+    ('K01', 'token: |\n  #$OPAQUE\n  tail\npublic: KEEP_PUBLIC', ('public: KEEP_PUBLIC',), False),
+    ('K02', 'token: >\n  #$OPAQUE\n  tail\npublic: KEEP_PUBLIC', ('public: KEEP_PUBLIC',), False),
+    ('K03', 'token: |-\n  #$OPAQUE\n  tail\npublic: KEEP_PUBLIC', ('public: KEEP_PUBLIC',), False),
+    ('K04', 'token: |+2\n  #$OPAQUE\n  tail\npublic: KEEP_PUBLIC', ('public: KEEP_PUBLIC',), False),
+    ('K05', 'token: >2-\n  #$OPAQUE\n  tail\npublic: KEEP_PUBLIC', ('public: KEEP_PUBLIC',), False),
+    ('K06', 'token: |\npublic: KEEP_PUBLIC', ('public: KEEP_PUBLIC',), False),
+    ('K07', 'outer:\n  token: >+\n    $OPAQUE\n  public: KEEP_PUBLIC', ('public: KEEP_PUBLIC',), False),
+    ('F01', '{token:\n "$OPAQUE", public: KEEP_PUBLIC}', ('public: KEEP_PUBLIC',), False),
+    ('F02', "{token:\n '$OPAQUE', public: KEEP_PUBLIC}", ('public: KEEP_PUBLIC',), False),
+    ('F03', '{token:\n $OPAQUE, public: KEEP_PUBLIC}', ('public: KEEP_PUBLIC',), False),
+    ('F04', '{token:\n [$OPAQUE, {nested: second}], public: KEEP_PUBLIC}', ('public: KEEP_PUBLIC',), False),
+    ('F05', '{token:\n {nested: [$OPAQUE, second], other: third}, public: KEEP_PUBLIC}', ('public: KEEP_PUBLIC',), False),
+    ('F06', '{token:\n "first,}]$OPAQUE", public: KEEP_PUBLIC}', ('public: KEEP_PUBLIC',), False),
+    ('F07', '{token:\n $OPAQUE, password:\n $OPAQUE, public: KEEP_PUBLIC}', ('public: KEEP_PUBLIC',), False),
+    ('F08', '{token:\n [$OPAQUE, second, public: ambiguous}', (), False),
+    ('F09', '{"token":\n ["$OPAQUE", {"nested": "tail"}], "public": "KEEP_PUBLIC"}', ('"public": "KEEP_PUBLIC"',), False),
+    ('F10', '{token: "first\n$OPAQUE, public: ambiguous}', (), False),
+    ('A01', 'Access_Token:\n  $OPAQUE\npublic: KEEP_PUBLIC', ('public: KEEP_PUBLIC',), False),
+    ('A02', 'Authorization:\n  Bearer $OPAQUE\npublic: KEEP_PUBLIC', ('public: KEEP_PUBLIC',), False),
+    ('A03', 'TOKEN=first\\\n$OPAQUE; public=KEEP_PUBLIC', ('public=KEEP_PUBLIC',), False),
+    ('A04', 'TOKEN=$OPAQUE PUBLIC=KEEP_PUBLIC', ('PUBLIC=KEEP_PUBLIC',), False),
+    ('A05', 'password: first $OPAQUE third\npublic: KEEP_PUBLIC', ('public: KEEP_PUBLIC',), False),
+    ('P01', 'WARN context password:\n  $OPAQUE\npublic: KEEP_PUBLIC', ('public: KEEP_PUBLIC',), False),
+    ('P02', '[stage] password:\n[stage]   $OPAQUE\n[stage] public: KEEP_PUBLIC', ('public: KEEP_PUBLIC',), False),
+    ('P03', '[stage] - password:\n[stage]     $OPAQUE\n[stage]   public: KEEP_PUBLIC', ('public: KEEP_PUBLIC',), False),
+    ('P04', 'notice password: "first\n  $OPAQUE"\npublic: KEEP_PUBLIC', ('public: KEEP_PUBLIC',), False),
+    ('I05', 'token: [REDACTED]$OPAQUE\npublic: KEEP_PUBLIC', ('public: KEEP_PUBLIC',), False),
+    ('F11', "can't retry\n{token:\n$OPAQUE, public: KEEP_PUBLIC}", ('public: KEEP_PUBLIC',), False),
+    ('F12', 'token: [public]$OPAQUE\npublic: KEEP_PUBLIC', ('public: KEEP_PUBLIC',), False),
+    ('Q09', 'token: "public"$OPAQUE\npublic: KEEP_PUBLIC', ('public: KEEP_PUBLIC',), False),
+    ('P05', '  [stage] password:\n  [stage]   $OPAQUE\n  [stage] public: KEEP_PUBLIC', ('public: KEEP_PUBLIC',), False),
+    ('P06', '  [stage] - password:\n  [stage]     $OPAQUE\n  [stage]   public: KEEP_PUBLIC', ('public: KEEP_PUBLIC',), False),
+    ('F13', 'unclosed prose "stage\n{token:\n$OPAQUE, public: KEEP_PUBLIC}', ('public: KEEP_PUBLIC',), False),
+    ('A06', '| fixture | Authorization: [REDACTED] Bearer [REDACTED] |', ('|',), False),
+    ('A07', 'token: first|$OPAQUE, suffix ; tail\npublic: KEEP_PUBLIC', ('public: KEEP_PUBLIC',), False),
+    ('A08', 'token: [REDACTED] |\n  $OPAQUE\npublic: KEEP_PUBLIC', ('public: KEEP_PUBLIC',), False),
+    ('A09', 'token: "public"|$OPAQUE\npublic: KEEP_PUBLIC', ('public: KEEP_PUBLIC',), False),
+]
 
 class RunnerDiagnosticEmitters(unittest.TestCase):
     def setUp(self):
@@ -1923,6 +2002,246 @@ printf 'PROBE=%s\\n' "$settle_review_probe"
                         self.assertEqual(argv.read_bytes().split(b'\0'), [target.encode(), str(root).encode(), b''])
                         self.assertEqual(result.stdout, '' if failure else 'FUNCTIONAL=ok\n')
                         self.assertEqual(result.stderr, 'configuration: invalid YAML; line=1; column=1\n' if failure else '')
+
+    def multiline_redactor(self):
+        spec = importlib.util.spec_from_file_location('synthetic_continuation_redactor', self.f.runtime / 'workflow-config-resolver.py')
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
+    def assert_multiline_diagnostic(self, output, public, empty=False):
+        self.assertNotIn(self.secret, output)
+        self.assertNotIn('ContinuationOpaqueSuffix', output)
+        for item in public:
+            self.assertIn(item, output)
+        if not empty:
+            self.assertIn('[REDACTED]', output)
+
+    def test_D76_complete_multiline_scalar_inventory_and_actual_cli(self):
+        module = self.multiline_redactor()
+        for case, template, public, empty in MULTILINE_REDACTION_CASES:
+            with self.subTest(case=case):
+                source = template.replace('$OPAQUE', self.secret + 'ContinuationOpaqueSuffix')
+                output = module.redact_text(source)
+                self.assert_multiline_diagnostic(output, public, empty)
+                self.assertEqual(module.redact_text(output), output)
+                result = self.safe(self.run_command(['python3', str(self.f.runtime / 'workflow-config-resolver.py'),
+                                                     'redact-text'], input=source), 0)
+                self.assert_multiline_diagnostic(result.stdout + result.stderr, public, empty)
+                self.assertEqual(result.stderr, '')
+        # These source-valid forms remain configuration-reader controls; the
+        # diagnostic-only malformed/block/prose cases above do not add syntax.
+        for spelling in (self.secret, '"' + self.secret + '"', "'" + self.secret + "'"):
+            module.parse_review_yaml(self.f.private, raw='token:\n  ' + spelling + '\npublic: value\n', review_fields=False)
+
+    def test_D77_multiline_actual_bash_text_file_and_json_boundaries(self):
+        source_file = self.f.root / 'synthetic-diagnostic.txt'
+        for shell in self.compatible_shells():
+            for case, template, public, empty in MULTILINE_REDACTION_CASES:
+                with self.subTest(shell=shell, case=case):
+                    source = template.replace('$OPAQUE', self.secret + 'ContinuationOpaqueSuffix')
+                    source_file.write_text(source)
+                    script = 'source "$1"\nworkflow_redact_text < "$2"\nworkflow_redact_file "$2" >&2\n'
+                    result = self.safe(self.run_command([shell, '-c', script, 'synthetic',
+                                                        str(self.f.runtime / 'workflow-lib.sh'), str(source_file)]), 0)
+                    self.assertEqual(result.stdout, result.stderr)
+                    self.assert_multiline_diagnostic(result.stdout + result.stderr, public, empty)
+            value = {'reason': 'token:\n  ' + self.secret + '\npublic: KEEP_PUBLIC',
+                     'token': self.secret + '\nunindented tail', 'nested': [3, True, None], 'result': 'clean'}
+            source_file.write_text(json.dumps(value))
+            result = self.safe(self.run_command([shell, '-c', 'source "$1"; workflow_redact_json < "$2"; workflow_redact_json < "$2" >&2',
+                                                'synthetic', str(self.f.runtime / 'workflow-lib.sh'), str(source_file)]), 0)
+            self.assertEqual(result.stdout, result.stderr)
+            data = json.loads(result.stdout)
+            self.assertEqual(data['nested'], [3, True, None])
+            self.assertEqual(data['result'], 'clean')
+            self.assertEqual(data['token'], '[REDACTED]')
+            self.assertIn('public: KEEP_PUBLIC', data['reason'])
+
+    def diagnostic_binary(self, shell, body, *args, input=None):
+        return subprocess.run([shell, '-c', 'source "$1"; shift;\n' + body,
+                               'synthetic', str(self.f.runtime / 'workflow-lib.sh'), *args],
+                              input=input, capture_output=True, env=self.f.env,
+                              cwd=self.f.checkout, timeout=30)
+
+    def test_D78_sensitive_original_kv_frame_ownership_and_independent_records(self):
+        cases = [('DETAIL', 'token:\n  ' + self.secret + '\npublic: KEEP_PUBLIC', ('public: KEEP_PUBLIC',)),
+                 ('TOKEN', self.secret + '\nunindented ContinuationOpaqueSuffix', ()),
+                 *[('TOKEN', prefix + self.secret + '\nContinuationOpaqueSuffix', ()) for prefix in ('\n', '\r\n', '\n\n')],
+                 *[(key, '\n' + self.secret + '\nContinuationOpaqueSuffix', ()) for key in ('TOKEN ', ' "TOKEN" ', "'TOKEN'", 'notice TOKEN', 'Authorization ')],
+                 ('DETAIL', 'token: "unclosed\n' + self.secret + '\nContinuationOpaqueSuffix', ()),
+                 ('password=' + self.secret, self.secret + '\nContinuationOpaqueSuffix', ()),
+                 ('password="open ' + self.secret, self.secret + '\nContinuationOpaqueSuffix', ()),
+                 ('-----BEGIN PRIVATE KEY-----' + self.secret, 'ContinuationOpaqueSuffix', ()),
+                 ('https://u:' + self.secret, 'ContinuationOpaqueSuffix@fixture.invalid', ()),
+                 ('detail with spaces', 'token:\n  ' + self.secret + '\npublic: KEEP_PUBLIC', ('public: KEEP_PUBLIC',)),
+                 ('password="' + self.secret + '"', 'KEEP_VALUE', ('KEEP_VALUE',))]
+        for shell in self.compatible_shells():
+            for helper in ('workflow_diagnostic_kv', 'workflow_diagnostic_kv_escaped'):
+                for key, value, public in cases:
+                    with self.subTest(shell=shell, helper=helper, key_kind=cases.index((key, value, public))):
+                        script = helper + ' "$1" "$2"; ' + helper + ' "$1" "$2" >&2; workflow_diagnostic_kv RESULT clean; workflow_diagnostic_kv BLOCKING_COUNT 17; workflow_diagnostic_kv HEAD_SHA ' + 'a' * 40
+                        result = self.diagnostic_binary(shell, script, key, value)
+                        self.assertEqual(result.returncode, 0)
+                        combined = result.stdout + result.stderr
+                        self.assertNotIn(self.secret.encode(), combined)
+                        self.assertNotIn(b'ContinuationOpaqueSuffix', combined)
+                        for item in public:
+                            self.assertIn(item.encode(), result.stdout)
+                        self.assertTrue(result.stdout.endswith(('RESULT=clean\nBLOCKING_COUNT=17\nHEAD_SHA=' + 'a' * 40 + '\n').encode()))
+                        self.assertEqual(result.stdout[:-len(('RESULT=clean\nBLOCKING_COUNT=17\nHEAD_SHA=' + 'a' * 40 + '\n').encode())], result.stderr)
+            for key, value in [('TOKEN', self.secret + '\nunindented ContinuationOpaqueSuffix'),
+                               *[('TOKEN', prefix + self.secret + '\nContinuationOpaqueSuffix') for prefix in ('\n', '\r\n', '\n\n')],
+                               ('DETAIL', 'token: "unclosed\n' + self.secret)]:
+                result = self.diagnostic_binary(shell, 'workflow_diagnostic_kvs "$1" "$2" RESULT clean BLOCKING_COUNT 17 HEAD_SHA ' + 'a' * 40 + '; workflow_diagnostic_kvs "$1" "$2" RESULT clean BLOCKING_COUNT 17 HEAD_SHA ' + 'a' * 40 + ' >&2', key, value)
+                self.assertEqual(result.returncode, 0)
+                self.assertEqual(result.stdout, result.stderr)
+                self.assertNotIn(self.secret.encode(), result.stdout + result.stderr)
+                self.assertNotIn(b'ContinuationOpaqueSuffix', result.stdout + result.stderr)
+                self.assertIn(b'RESULT=clean\nBLOCKING_COUNT=17\nHEAD_SHA=', result.stdout)
+
+    def test_D79_kv_layout_escape_and_authorization_positive_parity(self):
+        controls = ''.join(chr(code) for code in list(range(1, 32)) + [127] + list(range(128, 160)))
+        cases = [('', ''), ('public', ''), ('arbitrary detail=key', 'two words'),
+                 ('multi\nline key\n', 'public\\literal\n\n'), ('key\r', 'public\r\n\n'),
+                 ('key', controls + '\\literal\\n界\n\n'), ('key', 'public\r'), ('key', 'public\n\r\n')]
+        for shell in self.compatible_shells():
+            for helper in ('workflow_diagnostic_kv', 'workflow_diagnostic_kv_escaped'):
+                for key, value in cases:
+                    with self.subTest(shell=shell, helper=helper, control=cases.index((key, value))):
+                        result = self.diagnostic_binary(shell, helper + ' "$1" "$2"; ' + helper + ' "$1" "$2" >&2', key, value)
+                        self.assertEqual(result.returncode, 0)
+                        expected_body = ('value="$(printf %s "$2")"; print_kv_escaped "$1" "$value"' if helper.endswith('_escaped') else 'value="$(printf "%s=%s\\n" "$1" "$2")"; printf "%s\\n" "$value"')
+                        expected = self.diagnostic_binary(shell, expected_body, key, value)
+                        self.assertEqual(expected.returncode, 0)
+                        self.assertEqual(result.stdout, expected.stdout)
+                        self.assertEqual(result.stderr, expected.stdout)
+            for helper, expected in [('workflow_diagnostic_kv', 'Authorization=[REDACTED] Bearer [REDACTED] Basic [REDACTED]\n'),
+                                     ('workflow_diagnostic_kv_escaped', 'Authorization=Bearer [REDACTED] Basic [REDACTED]\n')]:
+                result = self.diagnostic_binary(shell, helper + ' Authorization "$1"; ' + helper + ' Authorization "$1" >&2',
+                                                'Bearer ' + self.secret + ' Basic ' + self.secret + '\nContinuationOpaqueSuffix')
+                self.assertEqual(result.returncode, 0)
+                self.assertEqual(result.stdout, expected.encode())
+                self.assertEqual(result.stderr, expected.encode())
+            for key, raw_value in [('Authorization ', '[REDACTED] Bearer [REDACTED] Basic [REDACTED]'),
+                                   ('notice Authorization', '[REDACTED] Bearer [REDACTED] Basic [REDACTED]'),
+                                   ('"Authorization"', '"[REDACTED]"'), ("'Authorization'", '[REDACTED]')]:
+                for helper in ('workflow_diagnostic_kv', 'workflow_diagnostic_kv_escaped'):
+                    result = self.diagnostic_binary(shell, helper + ' "$1" "$2"; ' + helper + ' "$1" "$2" >&2',
+                                                    key, 'Bearer ' + self.secret + ' Basic ' + self.secret)
+                    expected_value = 'Bearer [REDACTED] Basic [REDACTED]' if helper.endswith('_escaped') else raw_value
+                    expected = (key + '=' + expected_value + '\n').encode()
+                    self.assertEqual(result.returncode, 0)
+                    self.assertEqual(result.stdout, expected)
+                    self.assertEqual(result.stderr, expected)
+            for quote in ('"', "'"):
+                for helper in ('workflow_diagnostic_kv', 'workflow_diagnostic_kv_escaped'):
+                    result = self.diagnostic_binary(shell, helper + ' Authorization "$1"; ' + helper + ' Authorization "$1" >&2',
+                                                    quote + 'Bearer ' + self.secret + quote)
+                    expected_value = 'Bearer [REDACTED]' if helper.endswith('_escaped') else '[REDACTED]'
+                    expected = ('Authorization=' + quote + expected_value + quote + '\n').encode()
+                    self.assertEqual(result.returncode, 0)
+                    self.assertEqual(result.stdout, expected)
+                    self.assertEqual(result.stderr, expected)
+
+    def test_D80_multiline_before_cap_actual_pipeline(self):
+        source = 'p' * 19970 + '\ntoken:\n  ' + self.secret + 'ContinuationOpaqueSuffix' + 'x' * 100 + '\npublic: KEEP_PUBLIC'
+        # Actual pipeline: full stdin is sanitized before the byte selector.
+        result = self.safe(self.bash('printf %s ' + shlex.quote(source) + ' | workflow_redact_text | head -c 20000'), 0)
+        self.assertNotIn('fabricatedDi', result.stdout + result.stderr)
+        self.assertLessEqual(len(result.stdout.encode()), 20000)
+
+    def test_D81_single_pair_framing_and_scanner_failure_are_atomic(self):
+        resolver = str(self.f.runtime / 'workflow-config-resolver.py')
+        for flag in ('--kv-pair', '--kv-escaped'):
+            for raw in (b'', b'KEY\0value', b'KEY\0value\0EXTRA\0value\0', b'KEY\0\xfffabricatedDiagnosticValue\0'):
+                with self.subTest(flag=flag, length=len(raw)):
+                    result = subprocess.run(['python3', resolver, 'redact-text', flag], input=raw,
+                                            capture_output=True, env=self.f.env, cwd=self.f.checkout, timeout=30)
+                    self.assertEqual(result.returncode, 2)
+                    self.assertEqual(result.stdout, b'')
+                    self.assertEqual(result.stderr, b'ERROR: diagnostic sanitization failed\n')
+        module = self.multiline_redactor()
+        import io
+        from unittest.mock import patch
+        for flags in ({'kv': False, 'json': False, 'kv_pair': False, 'kv_escaped': False},
+                      {'kv': True, 'json': False, 'kv_pair': False, 'kv_escaped': False}):
+            with self.subTest(mode=flags):
+                stdin = io.TextIOWrapper(io.BytesIO(b'KEY\0token: fabricatedDiagnosticValue\0'), encoding='utf-8')
+                output, error = io.StringIO(), io.StringIO()
+                with patch.object(module.sys, 'stdin', stdin), patch.object(module.sys, 'stdout', output), patch.object(module.sys, 'stderr', error), patch.object(module, '_diagnostic_assignment_spans', side_effect=RuntimeError('fabricatedDiagnosticValue')):
+                    status = module.cmd_redact_text(type('Arguments', (), flags)())
+                self.assertEqual(status, 2)
+                self.assertEqual(output.getvalue(), '')
+                self.assertEqual(error.getvalue(), 'ERROR: diagnostic sanitization failed\n')
+
+    def test_D82_actual_persisted_multiline_evidence_and_functional_body(self):
+        source = 'p' * 19970 + '\ntoken:\n  ' + self.secret + 'ContinuationOpaqueSuffix' + 'x' * 100 + '\npublic: KEEP_PUBLIC'
+        pr = json.loads(self.f.pr.read_text())
+        pr['body'] = source
+        self.f.pr.write_text(json.dumps(pr))
+        evidence = self.f.root / 'multiline-evidence.json'
+        context = self.f.root / 'multiline-functional.json'
+        result = self.safe(self.local_entry({'result': 'clean', 'comments': 0}, context_capture=context,
+                                           LOCAL_AI_REVIEWER_EVIDENCE_FILE=str(evidence)), 0)
+        raw = evidence.read_text()
+        self.assertNotIn('fabricatedDi', raw + result.stdout + result.stderr)
+        self.assertNotIn('ContinuationOpaqueSuffix', raw + result.stdout + result.stderr)
+        data = json.loads(raw)
+        self.assertEqual(data['counts'], {'comments': 0, 'blocking': 0, 'suggestions': 0})
+        self.assertEqual(data['result'], 'clean')
+        self.assertLessEqual(len(data['context_summary']['pr_body']), 20000)
+        self.assertEqual(json.loads(context.read_text())['pr_body'], source[:20000])
+
+
+    def test_D83_shared_header_grammar_with_empty_first_line_frames(self):
+        module = self.multiline_redactor()
+        names = ('token', 'ToKeN', 'Access_Token', 'workflow.api-key', 'private_key_value',
+                 'passphrase', 'api key', 'Authorization', 'password', 'secret')
+        breaks = ('\n', '\r\n', '\r', '\x85', '\u2028', '\u2029')
+        profiles = []
+        for index in range(90):
+            left = ('', "'", '"')[(index % 9) // 3]
+            right = ('', "'", '"')[index % 3]
+            prefix = ('', 'notice ', '[stage] ', '--', '  ')[index % 5]
+            spaces = ('', ' ', '\t')[index % 3]
+            separator = ('', ':', '=')[(index // 3) % 3]
+            profiles.append(prefix + left + names[index % 10] + right + spaces + separator)
+        for index, key in enumerate(profiles):
+            for boundary, newline in enumerate(breaks):
+                value = newline + self.secret + newline + 'ContinuationOpaqueSuffix'
+                for escaped in (False, True):
+                    with self.subTest(profile=index, boundary=boundary, escaped=escaped):
+                        output = module.redact_diagnostic_kv_frames(key + '\0' + value + '\0', single=True, escaped=escaped)
+                        self.assertNotIn(self.secret, output)
+                        self.assertNotIn('ContinuationOpaqueSuffix', output)
+                        self.assertIn('[REDACTED]', output)
+        tail = 'RESULT=clean\nBLOCKING_COUNT=17\nHEAD_SHA=' + 'a' * 40 + '\n'
+        for shell in self.compatible_shells():
+            # All grammar dimensions and all linebreaks reach actual supported
+            # Bash helpers, not an emulated serialization/regex implementation.
+            for index, key in enumerate(profiles[:18]):
+                for boundary, newline in enumerate(breaks):
+                    for helper in ('workflow_diagnostic_kv', 'workflow_diagnostic_kv_escaped'):
+                        with self.subTest(shell=shell, profile=index, boundary=boundary, helper=helper):
+                            script = helper + ' "$1" "$2"; workflow_diagnostic_kv RESULT clean; workflow_diagnostic_kv BLOCKING_COUNT 17; workflow_diagnostic_kv HEAD_SHA ' + 'a' * 40
+                            result = self.diagnostic_binary(shell, script, key, newline + self.secret + newline + 'ContinuationOpaqueSuffix')
+                            self.assertEqual(result.returncode, 0)
+                            self.assertNotIn(self.secret.encode(), result.stdout + result.stderr)
+                            self.assertNotIn(b'ContinuationOpaqueSuffix', result.stdout + result.stderr)
+                            self.assertTrue(result.stdout.endswith(tail.encode()))
+                            self.assertEqual(result.stderr, b'')
+            for key in ('TOKEN', 'API_KEY', 'AUTHORIZATION'):
+                for boundary, newline in enumerate(breaks):
+                    with self.subTest(shell=shell, helper='workflow_diagnostic_kvs', boundary=boundary):
+                        result = self.diagnostic_binary(shell, 'workflow_diagnostic_kvs "$1" "$2" RESULT clean BLOCKING_COUNT 17 HEAD_SHA ' + 'a' * 40,
+                                                        key, newline + self.secret + newline + 'ContinuationOpaqueSuffix')
+                        self.assertEqual(result.returncode, 0)
+                        self.assertNotIn(self.secret.encode(), result.stdout + result.stderr)
+                        self.assertNotIn(b'ContinuationOpaqueSuffix', result.stdout + result.stderr)
+                        self.assertTrue(result.stdout.endswith(tail.encode()))
+                        self.assertEqual(result.stderr, b'')
+
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)

@@ -177,9 +177,7 @@ workflow_diagnostic_kvs() {
 
 # Sanitize complete values before escaping for the line-oriented report contract.
 workflow_diagnostic_kv_escaped() {
-  local value
-  value="$(printf '%s' "$2" | workflow_redact_text)" || return 2
-  print_kv_escaped "$1" "$value"
+  printf '%s\0' "$1" "$2" | _workflow_redact_stdin --kv-escaped
 }
 
 # External-command boundary: keep stdout functional, sanitize stderr after the
@@ -226,7 +224,7 @@ workflow_diagnostic_kv() {
         printf '%s=%s\n' "$1" "$2"; return 0
       fi ;;
   esac
-  printf '%s=%s\n' "$1" "$2" | workflow_redact_text
+  printf '%s\0' "$1" "$2" | _workflow_redact_stdin --kv-pair
 }
 
 workflow_config_exists() {

@@ -299,6 +299,171 @@ def capture_config_text(path: Path, *, required: bool = False) -> str | None:
 SENSITIVE_DIAGNOSTIC_KEY = r"(?:[A-Za-z0-9]+[_.-])*(?:token|password|passphrase|secret|api[ _.-]?key|access[ _.-]?key|private[ _.-]?key)(?:[_.-](?:value|key))?"
 
 
+def _diagnostic_assignment_spans(text: str, *, frame_separator: int | None = None, include_empty: bool = False):
+    """Yield complete lexical values, without reading or parsing configuration."""
+    key = SENSITIVE_DIAGNOSTIC_KEY
+    next_field = re.compile(r'''[ \t]+(?:--?)?["']?(?:[A-Za-z_][\w.-]*|''' + key + r''')["']?[ \t]*[:=]''', re.IGNORECASE)
+    assignment = re.compile(r'''(?<![\w.])(["']?(?:''' + key + r'''|authorization)["']?[ \t]*[:=][ \t]*)''', re.IGNORECASE)
+    breaks = re.compile(r"\r\n|[\n\r\x85\u2028\u2029]")
+    lines = []
+    previous = 0
+    for boundary in breaks.finditer(text):
+        lines.append((previous, boundary.start(), boundary.end()))
+        previous = boundary.end()
+    lines.append((previous, len(text), len(text)))
+
+    def flow_at(position):
+        depth, quote, index = 0, "", 0
+        while index < position:
+            char = text[index]
+            if quote:
+                if not depth and char in "\r\n\x85\u2028\u2029":
+                    quote = ""
+                if quote == '"' and char == "\\":
+                    index += 2
+                    continue
+                if char == quote:
+                    if quote == "'" and text[index + 1:index + 2] == "'":
+                        index += 2
+                        continue
+                    quote = ""
+            elif char in ('"', "'") and not (char == "'" and index and text[index - 1].isalnum()):
+                quote = char
+            elif char in "[{":
+                depth += 1
+            elif char in "]}":
+                depth = max(0, depth - 1)
+            index += 1
+        return depth > 0
+
+    offset = 0
+    for match in assignment.finditer(text):
+        if match.start() < offset:
+            continue
+        header = start = end = match.end()
+        colon = match[1].rstrip().endswith(":")
+        flow = colon and flow_at(match.start())
+        line_index = next(i for i, row in enumerate(lines) if row[0] <= match.start() <= row[1])
+        line_start = lines[line_index][0]
+        prefix = text[line_start:match.start()]
+        indent = len(prefix) - len(prefix.lstrip(" \t"))
+        decoration = ""
+        # List mapping fields are siblings at the node after the dash. A prose
+        # prefix is decoration, not the scalar's structural indentation.
+        logical = re.search(r"(?:^|[ \t])(-[ \t]+)$", prefix)
+        if logical:
+            before = prefix[:logical.start(1)]
+            decoration = before if before.strip(" \t") else ""
+            indent = (len(before) - len(before.lstrip(" \t"))) + len(logical[1])
+        elif prefix.strip(" \t"):
+            decoration = prefix
+
+        def content(index):
+            begin, finish, after = lines[index]
+            decorated_indent = 0
+            if decoration and text.startswith(decoration, begin):
+                begin += len(decoration)
+                decorated_indent = len(decoration) - len(decoration.lstrip(" \t"))
+            raw = text[begin:finish]
+            spaces = len(raw) - len(raw.lstrip(" \t"))
+            return begin + spaces, finish, after, spaces + decorated_indent, raw[spaces:]
+
+        def owns(index):
+            _, _, _, spaces, body = content(index)
+            return spaces > indent or (spaces == indent and re.match(r"-[ \t]", body))
+
+        if colon and flow:
+            while start < len(text) and text[start] in " \t\r\n\x85\u2028\u2029":
+                start += 1
+        elif colon and (start == lines[line_index][1] or text[start:start + 1] == "#"):
+            for index in range(line_index + 1, len(lines)):
+                begin, _, _, _, body = content(index)
+                if not body or body.startswith("#"):
+                    continue
+                if owns(index):
+                    start = begin
+                break
+            # A missing value has no owned span; leave public siblings intact.
+            if start == header:
+                continue
+        end = start
+        quote = ""
+        stack = []
+        quoted_scalar = text[start:start + 1] in ('"', "'")
+
+        def closed_value(position):
+            following = position
+            while following < len(text) and text[following] in " \t":
+                following += 1
+            line_end = breaks.search(text, following)
+            terminal_pipe = (text[following:following + 1] == "|" and
+                             not text[following + 1:line_end.start() if line_end else len(text)].strip(" \t"))
+            return (following == frame_separator or following == len(text) or text[following] in "\r\n\x85\u2028\u2029#"
+                    or terminal_pipe or (flow and text[following] in ",}]"))
+
+        while end < len(text):
+            char = text[end]
+            if char == "\\" and end + 1 < len(text) and (not colon or quote == '"'):
+                end += 2
+                continue
+            if quote:
+                if char == quote:
+                    if colon and quote == "'" and text[end + 1:end + 2] == "'":
+                        end += 2
+                        continue
+                    quote = ""
+                    if quoted_scalar and not stack and (colon or end + 1 == frame_separator):
+                        end += 1
+                        if closed_value(end):
+                            break
+                        quoted_scalar = False
+                        continue
+            elif char in ('"', "'") and (not colon or end == start or stack):
+                quote = char
+            elif colon and (flow or text[start:start + 1] in "[{") and char in "[{":
+                stack.append(char)
+            elif colon and (flow or stack) and char in "]}":
+                if not stack:
+                    break
+                if (stack[-1], char) not in (("[", "]"), ("{", "}")):
+                    end = len(text)
+                    break
+                stack.pop()
+                if not stack and text[start:start + 1] in "[{":
+                    end += 1
+                    if closed_value(end):
+                        break
+                    continue
+            elif flow and char == "," and not stack:
+                break
+            elif char in "\r\n\x85\u2028\u2029" and not flow and not stack:
+                break
+            elif not colon and char in ";|&":
+                break
+            elif char in " \t" and (text[end:].lstrip(" \t").startswith("#") or (not colon and next_field.match(text, end))):
+                break
+            end += 1
+        if quote or stack:
+            end = len(text)
+        # After a block/plain/quoted header, consume only owned subsequent
+        # physical lines. Lookahead over blanks/comments never eats a sibling.
+        if colon and not flow and end < len(text):
+            last_line = next(i for i, row in enumerate(lines) if row[0] <= max(start, end - 1) <= row[1])
+            remainder = text[end:lines[last_line][1]].strip(" \t")
+            if not remainder or remainder.startswith("#") or remainder == "|":
+                block = text[start:start + 1] in "|>"
+                for index in range(last_line + 1, len(lines)):
+                    _, finish, _, _, body = content(index)
+                    if not body or (body.startswith("#") and not block):
+                        continue
+                    if not owns(index):
+                        break
+                    end = finish
+        if end > start or include_empty:
+            yield match, header, start, end, flow
+            offset = end
+
+
 def redact_text(text: str) -> str:
     """Bounded structural diagnostic sanitizer; never reads configuration."""
     marker = "[REDACTED]"
@@ -321,82 +486,15 @@ def redact_text(text: str) -> str:
     else:
         pieces.append(text[offset:])
     text = "".join(pieces)
-    key = SENSITIVE_DIAGNOSTIC_KEY
-    # A YAML line scalar can contain spaces, commas and semicolons. Shell
-    # assignment separators and mapping delimiters apply only in their context.
-    next_assignment = r'''[ \t]+(?:--?)?["']?(?:[A-Za-z_][\w.-]*|''' + key + r''')["']?[ \t]*[:=]'''
-    next_field = re.compile(next_assignment, re.IGNORECASE)
-    assignment = re.compile(r'''(?<![\w.])(["']?(?:''' + key + r'''|authorization)["']?[ \t]*[:=][ \t]*)''', re.IGNORECASE)
-
-    def in_flow_mapping(position: int) -> bool:
-        depth, quote, index = 0, "", 0
-        while index < position:
-            char = text[index]
-            if quote:
-                if quote == '"' and char == "\\":
-                    index += 2
-                    continue
-                if char == quote:
-                    if quote == "'" and text[index + 1:index + 2] == "'":
-                        index += 2
-                        continue
-                    quote = ""
-            elif char in ('"', "'"):
-                quote = char
-            elif char == "{":
-                depth += 1
-            elif char == "}":
-                depth = max(0, depth - 1)
-            index += 1
-        return depth > 0
-
     pieces, offset = [], 0
-    for match in assignment.finditer(text):
-        if match.start() < offset:
-            continue
-        start = end = match.end()
-        colon = match[1].rstrip().endswith(":")
-        flow = colon and in_flow_mapping(match.start())
-        quote = ""
-        if text.startswith(marker, start):
-            end += len(marker)
-        else:
-            while end < len(text):
-                char = text[end]
-                if char == "\\" and end + 1 < len(text) and (not colon or quote == '"'):
-                    end += 2
-                    continue
-                if quote:
-                    if char == quote:
-                        # YAML single quotes escape an apostrophe by doubling
-                        # it; a backslash inside that scalar remains literal.
-                        if colon and quote == "'" and text[end + 1:end + 2] == "'":
-                            end += 2
-                            continue
-                        quote = ""
-                        # A quoted YAML/JSON scalar ends at its closing quote.
-                        if colon and text[start:start + 1] in ('"', "'"):
-                            end += 1
-                            break
-                elif char in ('"', "'") and (not colon or end == start):
-                    quote = char
-                elif char in "\r\n" or (flow and char in ",}]") or (not colon and char in ";|&"):
-                    break
-                elif char in " \t" and (text[end:].lstrip(" \t").startswith("#") or (not colon and next_field.match(text, end))):
-                    break
-                end += 1
+    for match, header, start, end, flow in _diagnostic_assignment_spans(text):
         raw = text[start:end]
-        if not raw:
-            continue
         quote = raw[:1] if raw[:1] in ("\"", "'") else ""
         if not quote and match[1].startswith('"'):
             quote = '"'
         trailing_space = raw[len(raw.rstrip(" \t")):]
         context = ""
         if not flow and not quote and re.fullmatch(r"authorization[ \t]*[:=][ \t]*", match[1], re.IGNORECASE):
-            # Retain only known protocol labels, never any credential bytes.
-            # An adjacent Bearer/Basic credential is still wholly removed even
-            # when the Authorization value consumed the complete diagnostic line.
             schemes = dict.fromkeys(item.title() for item in re.findall(r"\b(Bearer|Basic)[ \t]+\S+", raw, re.IGNORECASE))
             context = "".join(" " + scheme + " " + marker for scheme in schemes)
         pieces.extend((text[offset:match.start()], match[1], quote + marker + quote, context, trailing_space))
@@ -433,36 +531,96 @@ class DiagnosticArgumentParser(argparse.ArgumentParser):
             super()._print_message(redact_text(message), file)
 
 
-def redact_diagnostic_kv_frames(raw: str) -> str:
-    """NUL-framed key/value records, sanitized independently before publication.
+def _redact_diagnostic_pair(key: str, value: str, *, escaped: bool = False) -> str:
+    """Classify an original frame before markers can hide separator ownership."""
+    original = key + "=" + value
+    separator = len(key)
+    assignments = list(_diagnostic_assignment_spans(original, frame_separator=separator, include_empty=True))
+    spans = [(match.start(), start, end) for match, _, start, end, _ in assignments]
+    headers = [match for match, _, _, end, _ in assignments if match.start() < separator and end > separator]
+    authorization = any(re.fullmatch(r'''["']?authorization["']?[ \t]*[:=][ \t]*''', match[1], re.IGNORECASE) for match in headers)
+    raw_authorization = any(re.fullmatch(r"authorization[ \t]*[:=][ \t]*", match[1], re.IGNORECASE) for match in headers)
+    # These are the existing non-assignment lexical classes. Keep their original
+    # positions too: a credential/PEM opened in the key may cross the separator.
+    boundaries = re.compile(r"-----((?:BEGIN|END)) (?:[A-Z0-9]+ )*PRIVATE KEY-----", re.IGNORECASE)
+    depth = 0
+    begin = 0
+    for boundary in boundaries.finditer(original):
+        if boundary[1].upper() == "BEGIN":
+            if not depth:
+                begin = boundary.start()
+            depth += 1
+        elif depth:
+            depth -= 1
+            if not depth:
+                spans.append((begin, begin, boundary.end()))
+    if depth:
+        spans.append((begin, begin, len(original)))
+    for pattern in (r"(?i)\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+",
+                    r"(?i)(\b[a-z][a-z0-9+.-]*://)[^\s/@]+(?::[^\s/@]*)?@",
+                    r"(?<![A-Za-z0-9_])(?:gh[pousr]_[A-Za-z0-9_]+|github_pat_[A-Za-z0-9_]+|sk-(?:proj-)?[A-Za-z0-9_-]+|xox[baprs]-[A-Za-z0-9-]+)(?![A-Za-z0-9_])"):
+        for match in re.finditer(pattern, original):
+            spans.append((match.start(), match.end(1) if match.lastindex else match.start(), match.end()))
+    crossing = [(start, end) for begin, start, end in spans if begin < separator and end > separator]
+    # Protect the key's part of an open span, then apply the ordinary scanner to
+    # its remaining complete content. A closed key span leaves a public value.
+    safe_key = key
+    for start, end in sorted(crossing, reverse=True):
+        if start < separator:
+            safe_key = safe_key[:start] + "[REDACTED]"
+    safe_key = redact_text(safe_key)
+    whole_key = re.fullmatch(SENSITIVE_DIAGNOSTIC_KEY, key, re.IGNORECASE) or key.lower() == "authorization"
+    if (crossing or whole_key) and value:
+        leading = value[:len(value) - len(value.lstrip(" \t"))]
+        trailing = value[len(value.rstrip(" \t")):]
+        quote = value.lstrip(" \t")[:1]
+        quote = quote if quote in ('"', "'") else ""
+        if not escaped and not quote and any(match[1].startswith('"') for match in headers):
+            quote = '"'
+        safe_value = leading + quote + "[REDACTED]" + quote
+        if authorization:
+            schemes = dict.fromkeys(item.title() for item in re.findall(r"\b(Bearer|Basic)[ \t]+\S+", value, re.IGNORECASE))
+            display = " ".join(scheme + " [REDACTED]" for scheme in schemes)
+            if escaped and display:
+                safe_value = leading + quote + display + quote
+            elif not quote and raw_authorization and display:
+                safe_value += " " + display
+        safe_value += trailing
+    else:
+        safe_value = redact_text(value)
+    if escaped:
+        safe_value = safe_value.rstrip("\n")
+        safe_value = safe_value.replace("\\", "\\\\").replace("\r", "\\r").replace("\n", "\\n").replace("\t", "\\t")
+        safe_value = "".join(("\\x%02x" % ord(char)) if ord(char) < 32 or ord(char) == 127 else
+                             ("\\u%04x" % ord(char)) if 128 <= ord(char) <= 159 else char for char in safe_value)
+        return safe_key + "=" + safe_value + "\n"
+    return (safe_key + "=" + safe_value).rstrip("\n") + "\n"
 
-    Bash variables cannot contain NUL. Framing preserves multiline values and
-    prevents an unterminated private-key block from consuming a later field.
-    Build the complete report first: malformed input cannot publish a prefix.
-    """
+
+def redact_diagnostic_kv_frames(raw: str, *, single: bool = False, escaped: bool = False) -> str:
+    """Sanitize complete NUL-framed records before atomic report publication."""
     if not raw.endswith("\0"):
         raise ValueError("invalid diagnostic framing")
     fields = raw[:-1].split("\0")
-    if not fields or len(fields) % 2:
+    if not fields or len(fields) % 2 or (single and len(fields) != 2):
         raise ValueError("invalid diagnostic pair count")
     records = []
     for index in range(0, len(fields), 2):
         key, value = fields[index:index + 2]
-        if not re.fullmatch(r"[A-Z][A-Z0-9_]*", key):
+        if not single and not re.fullmatch(r"[A-Z][A-Z0-9_]*", key):
             raise ValueError("invalid diagnostic key")
-        # Match workflow_diagnostic_kv's complete-pair sanitization and command
-        # substitution stripping; no escaping/truncation precedes this boundary.
-        records.append(redact_text(key + "=" + value + "\n").rstrip("\n") + "\n")
+        records.append(_redact_diagnostic_pair(key, value, escaped=escaped))
     return "".join(records)
 
 
 def cmd_redact_text(args: argparse.Namespace) -> int:
     try:
-        raw = sys.stdin.buffer.read().decode("utf-8") if args.kv else sys.stdin.read()
+        framed = args.kv or args.kv_pair or args.kv_escaped
+        raw = sys.stdin.buffer.read().decode("utf-8") if framed else sys.stdin.read()
         if args.json:
             output = json.dumps(redact_diagnostic_json(json.loads(raw)), sort_keys=True) + "\n"
-        elif args.kv:
-            output = redact_diagnostic_kv_frames(raw)
+        elif framed:
+            output = redact_diagnostic_kv_frames(raw, single=not args.kv, escaped=args.kv_escaped)
         else:
             output = redact_text(raw)
     except Exception:
@@ -3074,6 +3232,8 @@ def build_parser() -> argparse.ArgumentParser:
     redactor_format = redactor.add_mutually_exclusive_group()
     redactor_format.add_argument("--json", action="store_true", help="sanitize JSON string values, preserving structure")
     redactor_format.add_argument("--kv", action="store_true", help="sanitize NUL-framed diagnostic key/value pairs independently")
+    redactor_format.add_argument("--kv-pair", action="store_true", help="sanitize one arbitrary NUL-framed diagnostic pair")
+    redactor_format.add_argument("--kv-escaped", action="store_true", help="sanitize and escape one arbitrary NUL-framed diagnostic pair")
     redactor.set_defaults(func=cmd_redact_text)
 
     source = subcommands.add_parser("local-source", help="validate and print selected local source")
