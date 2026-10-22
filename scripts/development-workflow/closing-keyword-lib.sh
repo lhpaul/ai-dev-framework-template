@@ -187,24 +187,29 @@ closing_keyword_live_refs() {
 }
 
 # strip_markdown_code_for_closeout
-# Opt-in filter for graduation closeout GitHub-provider paths only. Applies the
-# shared strip_fenced_pr_body_blocks filter, then drops CommonMark-style indented
-# code blocks without removing list/paragraph prose. Prefer keeping prose.
+# Opt-in filter for graduation closeout GitHub-provider paths only. Runs the
+# closeout list/indent/fence state machine first, then the shared
+# strip_fenced_pr_body_blocks filter (top-level fences, blockquotes, inline).
+# Order matters: list-relative fence closers often sit at absolute indent 0–3
+# and would be mistaken for top-level fence openers if shared ran first.
+# Prefer keeping prose over stripping.
 #
 # Supported CommonMark subset (closeout-only; not a full parser):
-# - Top-level fences: strip_fenced_pr_body_blocks first (indent 0–3 absolute).
+# - Top-level fences / blockquotes / inline: shared filter after this pass.
 # - In-list fences: opener/closer (``` or ~~~, length ≥3, same char; closer
 #   length ≥ opener, trailing whitespace only) whose indent relative to the
 #   current list item's content_indent is 0–3 columns; strip until matching
-#   closer or EOF (unclosed). Shared filter ignores these (absolute indent ≥4).
+#   closer or EOF (unclosed). Also when the fence opens on the marker line
+#   itself (`- ~~~text` / `1. ```): after the marker+padding, the remainder is
+#   content at content_indent and is checked for a fence opener.
 # - Indented code (tab stops of 4): outside lists, a run with indent ≥4 that
 #   starts after a blank / document start / ATX heading / setext underline /
-#   thematic break (or continues a prior code line).
+#   thematic break (or continues a prior code line). Inside lists, indent ≥
+#   content_indent+4 after a blank (or continuing code).
 # - Lists: marker indent 0–3 starts list context. content_indent = marker indent
 #   + marker width + following spaces (1–4; if more than 4, padding is 1).
-#   Inside a list item, indent ≥ content_indent+4 after a blank (or continuing
-#   code) is indented code; indent < content_indent+4 stays prose. Nested list
-#   markers (indent < content_indent+4) update content_indent. List ends on an
+#   Nested list markers (indent < content_indent+4) update content_indent and
+#   re-check the marker-line remainder for a fence opener. List ends on an
 #   indent-0 non-marker after a blank, or on thematic / ATX / setext.
 # - ATX headings (#{1,6} + space/end, indent 0–3) and setext underlines
 #   (=== / --- under a paragraph line) are block boundaries: the next ≥4-indent
@@ -215,10 +220,8 @@ closing_keyword_live_refs() {
 # those consumers keep strip_fenced_pr_body_blocks / closing_keyword_live_refs.
 strip_markdown_code_for_closeout() {
   local staged
-  if ! staged="$(strip_fenced_pr_body_blocks)"; then
-    return 1
-  fi
-  printf '%s' "$staged" | python3 -c '
+  # Closeout pass first (list-relative fences), then shared fence/blockquote/inline.
+  if ! staged="$(python3 -c '
 import re, sys
 
 def leading_indent_columns(line):
@@ -242,8 +245,8 @@ ATX_HEADING_RE = re.compile(r"^#{1,6}(?:[ \t]+|$)")
 SETEXT_RE = re.compile(r"^(?:=+|-+)[ \t]*$")
 FENCE_MARKER_RE = re.compile(r"^(`{3,}|~{3,})(.*)$")
 
-def list_item_content_indent(line):
-    """Return content_indent for a list-marker line, or None."""
+def list_marker_parts(line):
+    """Return (content_indent, remainder_after_padding) for a list-marker line, or None."""
     cols, start = leading_indent_columns(line)
     m = LIST_MARKER_RE.match(line[start:])
     if not m:
@@ -258,11 +261,22 @@ def list_item_content_indent(line):
             break
     if spaces == 0:
         padding = 1
+        content_start = 0
     elif spaces <= 4:
         padding = spaces
+        content_start = spaces
     else:
         padding = 1
-    return cols + len(marker) + padding
+        content_start = 1
+    return cols + len(marker) + padding, rest[content_start:]
+
+def fence_info_from_content(text):
+    """Fence opener/closer at the start of list-item content text, or None."""
+    m = FENCE_MARKER_RE.match(text)
+    if not m:
+        return None
+    marker = m.group(1)
+    return marker[0], len(marker), m.group(2)
 
 def is_thematic_break_body(body):
     return THEMATIC_BREAK_RE.match(body) is not None
@@ -279,11 +293,27 @@ def list_relative_fence(line, content_indent):
     rel = cols - content_indent
     if rel < 0 or rel > 3:
         return None
-    m = FENCE_MARKER_RE.match(line[start:])
-    if not m:
-        return None
-    marker = m.group(1)
-    return marker[0], len(marker), m.group(2)
+    return fence_info_from_content(line[start:])
+
+def begin_list_item_from_marker_line(line):
+    """Apply a list-marker line: set list state; return True if a fence opened."""
+    global in_list, content_indent, in_indented_code, at_block_start
+    global prev_was_paragraph, in_list_fence, list_fence_char, list_fence_len
+    parts = list_marker_parts(line)
+    if parts is None:
+        return False
+    content_indent, remainder = parts
+    in_list = True
+    in_indented_code = False
+    at_block_start = False
+    fence = fence_info_from_content(remainder)
+    if fence is not None:
+        in_list_fence = True
+        list_fence_char, list_fence_len = fence[0], fence[1]
+        prev_was_paragraph = False
+        return True
+    prev_was_paragraph = True
+    return False
 
 lines = sys.stdin.read().split("\n")
 out = []
@@ -358,12 +388,9 @@ for line in lines:
             prev_was_paragraph = False
             continue
         code_threshold = content_indent + 4
-        marker_ci = list_item_content_indent(line)
-        if marker_ci is not None and cols < code_threshold:
-            content_indent = marker_ci
-            in_indented_code = False
-            at_block_start = False
-            prev_was_paragraph = True
+        if list_marker_parts(line) is not None and cols < code_threshold:
+            if begin_list_item_from_marker_line(line):
+                continue  # fence opened on marker line — suppress line
             out.append(line)
             continue
         if cols >= code_threshold and (at_block_start or in_indented_code):
@@ -382,13 +409,9 @@ for line in lines:
             prev_was_paragraph = True
             continue
 
-    marker_ci = list_item_content_indent(line)
-    if marker_ci is not None and cols < 4:
-        in_list = True
-        content_indent = marker_ci
-        in_indented_code = False
-        at_block_start = False
-        prev_was_paragraph = True
+    if list_marker_parts(line) is not None and cols < 4:
+        if begin_list_item_from_marker_line(line):
+            continue  # fence opened on marker line — suppress line
         out.append(line)
         continue
 
@@ -403,7 +426,10 @@ for line in lines:
     in_indented_code = False
     prev_was_paragraph = True
 sys.stdout.write("\n".join(out))
-'
+')"; then
+    return 1
+  fi
+  printf '%s' "$staged" | strip_fenced_pr_body_blocks
 }
 
 # closing_keyword_live_refs_for_closeout

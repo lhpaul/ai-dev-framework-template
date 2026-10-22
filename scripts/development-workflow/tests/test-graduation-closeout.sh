@@ -352,6 +352,36 @@ JSON
 [{"number":11,"title":"Deliver item","body":"- Example:\n\n    ~~~text\n    Closes #326\n    ~~~\n    Closes #123"}]
 JSON
         ;;
+      marker_tilde_fence_326)
+        cat <<'JSON'
+[{"number":11,"title":"Graduate wave","body":"- ~~~text\n  Closes #326\n  ~~~\nNo live closing keywords."}]
+JSON
+        ;;
+      marker_tilde_fence_unclosed_326)
+        cat <<'JSON'
+[{"number":11,"title":"Graduate wave","body":"- ~~~text\n  Closes #326\nNo live closing keywords."}]
+JSON
+        ;;
+      marker_backtick_fence_326)
+        cat <<'JSON'
+[{"number":11,"title":"Graduate wave","body":"- ```text\n  Closes #326\n  ```\nNo live closing keywords."}]
+JSON
+        ;;
+      marker_backtick_fence_unclosed_326)
+        cat <<'JSON'
+[{"number":11,"title":"Graduate wave","body":"- ```text\n  Closes #326\nNo live closing keywords."}]
+JSON
+        ;;
+      ordered_marker_tilde_fence_326)
+        cat <<'JSON'
+[{"number":11,"title":"Graduate wave","body":"1. ~~~\n   Closes #326\n   ~~~\nNo live closing keywords."}]
+JSON
+        ;;
+      marker_fence_then_prose_123)
+        cat <<'JSON'
+[{"number":11,"title":"Deliver item","body":"- ~~~text\n  Closes #326\n  ~~~\n  Closes #123"}]
+JSON
+        ;;
       foreign_repo_text)
         cat <<'JSON'
 [{"number":11,"title":"Graduate wave","body":"Closes other/repo#326\nNo local closing keywords."}]
@@ -1397,6 +1427,24 @@ for provider in github_projects github_issues; do
   echo ""
   echo "=== graduation closeout: ${provider} keeps prose after list-item fence Closes #123 (#2016) ==="
   assert_github_keyword_issue_closed "$provider" list_fence_then_prose_123 123 "${provider}_list_fence_then_prose"
+
+  echo ""
+  echo "=== graduation closeout: ${provider} strips marker-line tilde fence Closes #326 (#2016) ==="
+  assert_github_example_326_untouched "$provider" marker_tilde_fence_326 "${provider}_marker_tilde"
+  assert_github_example_326_untouched "$provider" marker_tilde_fence_unclosed_326 "${provider}_marker_tilde_unclosed"
+
+  echo ""
+  echo "=== graduation closeout: ${provider} strips marker-line backtick fence Closes #326 (#2016) ==="
+  assert_github_example_326_untouched "$provider" marker_backtick_fence_326 "${provider}_marker_tick"
+  assert_github_example_326_untouched "$provider" marker_backtick_fence_unclosed_326 "${provider}_marker_tick_unclosed"
+
+  echo ""
+  echo "=== graduation closeout: ${provider} strips ordered marker-line tilde fence Closes #326 (#2016) ==="
+  assert_github_example_326_untouched "$provider" ordered_marker_tilde_fence_326 "${provider}_ordered_marker_tilde"
+
+  echo ""
+  echo "=== graduation closeout: ${provider} keeps prose after marker-line fence Closes #123 (#2016) ==="
+  assert_github_keyword_issue_closed "$provider" marker_fence_then_prose_123 123 "${provider}_marker_fence_then_prose"
 
   echo ""
   echo "=== graduation closeout: ${provider} keeps nested-list Closes #123 (#2016) ==="

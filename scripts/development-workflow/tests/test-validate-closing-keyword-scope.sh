@@ -375,6 +375,64 @@ check "closeout_toplevel_tilde_fence_strips" "" \
   "$(closeout_refs_of "$(printf -- 'See:\n~~~\nCloses #326\n~~~')")"
 check "closeout_toplevel_backtick_fence_strips" "" \
   "$(closeout_refs_of "$(printf -- 'See:\n%s%s%s\nCloses #326\n%s%s%s' '`' '`' '`' '`' '`' '`')")"
+# Fence opener on the list-marker line itself.
+check "closeout_marker_tilde_fence_strips" "" \
+  "$(closeout_refs_of "$(printf -- '- ~~~text\n  Closes #326\n  ~~~')")"
+check "closeout_marker_tilde_fence_unclosed_strips" "" \
+  "$(closeout_refs_of "$(printf -- '- ~~~text\n  Closes #326')")"
+check "closeout_marker_backtick_fence_strips" "" \
+  "$(closeout_refs_of "$(printf -- '- %s%s%stext\n  Closes #326\n  %s%s%s' '`' '`' '`' '`' '`' '`')")"
+check "closeout_marker_backtick_fence_unclosed_strips" "" \
+  "$(closeout_refs_of "$(printf -- '- %s%s%stext\n  Closes #326' '`' '`' '`')")"
+check "closeout_ordered_marker_tilde_fence_strips" "" \
+  "$(closeout_refs_of "$(printf -- '1. ~~~\n   Closes #326\n   ~~~')")"
+check "closeout_marker_fence_then_prose_keeps" "123" \
+  "$(closeout_refs_of "$(printf -- '- ~~~text\n  Closes #326\n  ~~~\n  Closes #123')")"
+# Inline single-backtick spans stay on the shared path (stripped today).
+check "closeout_inline_backticks_in_list_item_strips" "" \
+  "$(closeout_refs_of "$(printf -- '- use %sCloses #330%s in prose' '`' '`')")"
+
+# Table-driven coverage of the supported closeout subset (explicit matrix).
+# Rows: name|expected|input (input may contain \n escapes).
+while IFS='|' read -r case_name case_want case_input; do
+  [ -n "$case_name" ] || continue
+  case_input="$(printf '%b' "$case_input")"
+  check "closeout_table_${case_name}" "$case_want" \
+    "$(closeout_refs_of "$case_input")"
+done <<'CLOSEOUT_TABLE'
+plain_prose|326|Closes #326
+toplevel_tilde||See:\n~~~\nCloses #326\n~~~
+toplevel_tick||See:\n```\nCloses #326\n```
+blockquote||> Closes #326
+inline_ticks||use `Closes #330` here
+blank_indent_code||See:\n\n    Closes #326
+doc_start_indent_code||    Closes #326
+atx_then_indent_code||## Example\n    Closes #326
+atx_blank_prose|328|## Example\n\nCloses #328
+setext_dashes_indent||Paragraph\n---\n    Closes #326
+setext_equals_indent||Paragraph\n===\n    Closes #326
+thematic_then_indent||- - -\n\n    Closes #326
+para_continuation|125|Some prose.\n    Closes #125
+list_cont_prose|124|- Delivered work:\n    Closes #124
+list_two_space_then_indent|123|- Delivered work:\n  Additional details.\n\n    Closes #123
+list_item_six_space_code||- Example:\n\n      Closes #326
+ordered_seven_space_code||1. Item\n\n       Closes #327
+nested_list_marker|123|- Delivered work:\n    - Closes #123
+list_rel_tilde_fence||- Example:\n\n    ~~~text\n    Closes #326\n    ~~~
+list_rel_tilde_unclosed||- Example:\n\n    ~~~text\n    Closes #326
+list_rel_tick_fence||- Example:\n\n    ```text\n    Closes #326\n    ```
+list_rel_tick_unclosed||- Example:\n\n    ```text\n    Closes #326
+list_rel_fence_then_prose|123|- Example:\n\n    ~~~text\n    Closes #326\n    ~~~\n    Closes #123
+marker_tilde_fence||- ~~~text\n  Closes #326\n  ~~~
+marker_tilde_unclosed||- ~~~text\n  Closes #326
+marker_tick_fence||- ```text\n  Closes #326\n  ```
+marker_tick_unclosed||- ```text\n  Closes #326
+ordered_marker_tilde||1. ~~~\n   Closes #326\n   ~~~
+marker_fence_then_prose|123|- ~~~text\n  Closes #326\n  ~~~\n  Closes #123
+nested_marker_fence||- outer\n  - ~~~text\n    Closes #326\n    ~~~
+list_then_para_then_code||- item\n\nParagraph outside list.\n\n    Closes #326
+inline_in_list_item||- use `Closes #330` in prose
+CLOSEOUT_TABLE
 
 # ---------------------------------------------------------------------------
 # Differential attribution

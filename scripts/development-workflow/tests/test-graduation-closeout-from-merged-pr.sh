@@ -850,6 +850,83 @@ for provider in github_projects github_issues; do
   run_contains "${provider}_wrap_list_fence_then_prose_epic" "EPIC_ISSUE=123" "$body"
 
   echo ""
+  echo "=== wrapper: ${provider} strips marker-line tilde fence Closes #326 (#2016) ==="
+  reset_fixture
+  write_tracker_config "$provider"
+  export MOCK_LABEL_PARENT_MODE=empty
+  write_pr 140 "develop-test-2016" "develop" "true" "Graduate wave" \
+    $'- ~~~text\n  Closes #326\n  ~~~\nEpic #900'
+  result="$(run_wrapper --graduation-pr 140)"
+  body="$(last_body "$result")"
+  run_test "${provider}_wrap_marker_tilde_exit_zero" "0" "$(last_status "$result")"
+  run_contains "${provider}_wrap_marker_tilde_epic" "EPIC_ISSUE=900" "$body"
+  run_not_contains "${provider}_wrap_marker_tilde_no_326" "--epic 326" "$(cat "$CHILD_ARGV_LOG")"
+
+  echo ""
+  echo "=== wrapper: ${provider} strips marker-line unclosed tilde fence Closes #326 (#2016) ==="
+  reset_fixture
+  write_tracker_config "$provider"
+  export MOCK_LABEL_PARENT_MODE=empty
+  write_pr 141 "develop-test-2016" "develop" "true" "Graduate wave" \
+    $'Epic #900\n- ~~~text\n  Closes #326'
+  result="$(run_wrapper --graduation-pr 141)"
+  body="$(last_body "$result")"
+  run_test "${provider}_wrap_marker_tilde_unclosed_exit_zero" "0" "$(last_status "$result")"
+  run_contains "${provider}_wrap_marker_tilde_unclosed_epic" "EPIC_ISSUE=900" "$body"
+  run_not_contains "${provider}_wrap_marker_tilde_unclosed_no_326" "--epic 326" "$(cat "$CHILD_ARGV_LOG")"
+
+  echo ""
+  echo "=== wrapper: ${provider} strips marker-line backtick fence Closes #326 (#2016) ==="
+  reset_fixture
+  write_tracker_config "$provider"
+  export MOCK_LABEL_PARENT_MODE=empty
+  write_pr 142 "develop-test-2016" "develop" "true" "Graduate wave" \
+    "$(printf -- '- ```text\n  Closes #326\n  ```\nEpic #900')"
+  result="$(run_wrapper --graduation-pr 142)"
+  body="$(last_body "$result")"
+  run_test "${provider}_wrap_marker_tick_exit_zero" "0" "$(last_status "$result")"
+  run_contains "${provider}_wrap_marker_tick_epic" "EPIC_ISSUE=900" "$body"
+  run_not_contains "${provider}_wrap_marker_tick_no_326" "--epic 326" "$(cat "$CHILD_ARGV_LOG")"
+
+  echo ""
+  echo "=== wrapper: ${provider} strips marker-line unclosed backtick fence Closes #326 (#2016) ==="
+  reset_fixture
+  write_tracker_config "$provider"
+  export MOCK_LABEL_PARENT_MODE=empty
+  write_pr 143 "develop-test-2016" "develop" "true" "Graduate wave" \
+    "$(printf -- 'Epic #900\n- ```text\n  Closes #326')"
+  result="$(run_wrapper --graduation-pr 143)"
+  body="$(last_body "$result")"
+  run_test "${provider}_wrap_marker_tick_unclosed_exit_zero" "0" "$(last_status "$result")"
+  run_contains "${provider}_wrap_marker_tick_unclosed_epic" "EPIC_ISSUE=900" "$body"
+  run_not_contains "${provider}_wrap_marker_tick_unclosed_no_326" "--epic 326" "$(cat "$CHILD_ARGV_LOG")"
+
+  echo ""
+  echo "=== wrapper: ${provider} strips ordered marker-line tilde fence Closes #326 (#2016) ==="
+  reset_fixture
+  write_tracker_config "$provider"
+  export MOCK_LABEL_PARENT_MODE=empty
+  write_pr 144 "develop-test-2016" "develop" "true" "Graduate wave" \
+    $'1. ~~~\n   Closes #326\n   ~~~\nEpic #900'
+  result="$(run_wrapper --graduation-pr 144)"
+  body="$(last_body "$result")"
+  run_test "${provider}_wrap_ordered_marker_tilde_exit_zero" "0" "$(last_status "$result")"
+  run_contains "${provider}_wrap_ordered_marker_tilde_epic" "EPIC_ISSUE=900" "$body"
+  run_not_contains "${provider}_wrap_ordered_marker_tilde_no_326" "--epic 326" "$(cat "$CHILD_ARGV_LOG")"
+
+  echo ""
+  echo "=== wrapper: ${provider} keeps prose after marker-line fence Closes #123 (#2016) ==="
+  reset_fixture
+  write_tracker_config "$provider"
+  export MOCK_LABEL_PARENT_MODE=empty
+  write_pr 145 "develop-test-2016" "develop" "true" "Graduate wave" \
+    $'- ~~~text\n  Closes #326\n  ~~~\n  Closes #123'
+  result="$(run_wrapper --graduation-pr 145)"
+  body="$(last_body "$result")"
+  run_test "${provider}_wrap_marker_fence_then_prose_exit_zero" "0" "$(last_status "$result")"
+  run_contains "${provider}_wrap_marker_fence_then_prose_epic" "EPIC_ISSUE=123" "$body"
+
+  echo ""
   echo "=== wrapper: ${provider} keeps nested-list Closes #123 with Epic #900 (#2016) ==="
   # Nested list keyword is live but Epic #900 is the sole epic/parent ref style
   # candidate preferred when both exist — assert 123 is not chosen as epic and
