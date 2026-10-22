@@ -554,15 +554,9 @@ append_issues_from_changelog() {
   local version="$1"
   local changelog_path="${CHANGELOG_PATH:-CHANGELOG.md}"
   local extracted
-  local version_disp="$version"
-
-  # Bare SemVer gets a conventional v for diagnostics; component-prefixed
-  # tokens (mobile-v1.1.0) keep their spelling (do not become vmobile-…).
-  case "$version_disp" in
-    [0-9]*.[0-9]*.[0-9]*) version_disp="v${version_disp}" ;;
-  esac
-
   local changelog_root
+  local version_disp
+
   changelog_root="$PWD"
   if [ -n "$RELEASE_TARGET_ROOT" ]; then
     changelog_root="$RELEASE_TARGET_ROOT"
@@ -571,18 +565,109 @@ append_issues_from_changelog() {
     changelog_root="$(json_field "$COMPONENT_TARGET_FILE" '.local_checkout.path')"
   fi
 
-  # Linear: CHANGELOG is complement-only. Missing file must not block merged-PR
-  # scope derivation (GitHub providers still require the file).
-  if [ -z "$RELEASE_HEAD" ] && [ ! -f "$changelog_path" ]; then
-    if [ "$TRACKER_PROVIDER" = "linear" ]; then
-      echo "CHANGELOG_SECTION_UNAVAILABLE version=${version_disp} (Linear scope derived from merged PRs only)" >&2
-      if ! filter_linear_changelog_scope_by_merged_prs "$version" "$changelog_root"; then
+  # Branch on provider BEFORE parsing. GitHub providers keep origin/develop's
+  # parser byte-identical; Linear-only heading/complement rules live below.
+  if [ "$TRACKER_PROVIDER" != "linear" ]; then
+    # --- github_projects / github_issues: develop append_issues_from_changelog ---
+    if [ -z "$RELEASE_HEAD" ] && [ ! -f "$changelog_path" ]; then
+      echo "Could not find changelog at '$changelog_path' for --from-changelog." >&2
+      return 1
+    fi
+
+    if ! extracted="$(python3 - "$version" "$changelog_path" "$TRACKER_PROVIDER" "$RELEASE_HEAD" "$changelog_root" <<'PY'
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+version = sys.argv[1]
+if version.startswith("v"):
+    version = version[1:]
+path = Path(sys.argv[2])
+provider = sys.argv[3]
+head = sys.argv[4]
+if head:
+    if not re.fullmatch(r"[0-9a-f]{40}", head):
+        print("CHANGELOG_REVIEWED_HEAD_INVALID", file=sys.stderr)
+        sys.exit(1)
+    result = subprocess.run(["git", "-C", sys.argv[5], "show", head + ":CHANGELOG.md"], text=True, capture_output=True)
+    if result.returncode:
+        print("CHANGELOG_REVIEWED_COMMIT_UNAVAILABLE", file=sys.stderr)
+        sys.exit(1)
+    text = result.stdout
+else:
+    text = path.read_text(encoding="utf-8")
+
+heading = re.compile(rf"^## \[(?:v?{re.escape(version)})\].*$", re.MULTILINE)
+match = heading.search(text)
+if not match:
+    print(f"CHANGELOG_VERSION_NOT_FOUND version=v{version}", file=sys.stderr)
+    sys.exit(1)
+
+next_heading = re.search(r"^## \[", text[match.end():], re.MULTILINE)
+section_end = match.end() + next_heading.start() if next_heading else len(text)
+section = text[match.end():section_end]
+
+seen = set()
+issues = []
+
+def add(value: str) -> None:
+    if value not in seen:
+        seen.add(value)
+        issues.append(value)
+
+if provider == "linear":
+    range_re = re.compile(r"\b([A-Z][A-Z0-9_]*-)(\d+)\s*[\u2013-]\s*(?:[A-Z][A-Z0-9_]*-)?(\d+)\b")
+    for item in range_re.finditer(section):
+        prefix = item.group(1)
+        start = int(item.group(2))
+        end = int(item.group(3))
+        if end < start:
+            start, end = end, start
+        for number in range(start, end + 1):
+            add(f"{prefix}{number}")
+
+    for item in re.finditer(r"\b[A-Z][A-Z0-9_]*-\d+\b", section):
+        add(item.group(0))
+else:
+    for item in re.finditer(r"(?<![\w-])#([1-9][0-9]*)\b", section):
+        add(item.group(1))
+
+if not issues:
+    print(f"CHANGELOG_NO_ISSUES_FOUND version=v{version}", file=sys.stderr)
+    sys.exit(1)
+
+print("\n".join(issues))
+PY
+    )"; then
+      return 1
+    fi
+
+    while IFS= read -r issue; do
+      [ -z "$issue" ] && continue
+      if ! is_valid_issue_token "$issue"; then
+        echo "Invalid issue token '$issue' extracted from CHANGELOG." >&2
         return 1
       fi
-      return 0
+      ISSUE_NUMBERS+=("$issue")
+    done <<< "$extracted"
+    return 0
+  fi
+
+  # --- linear: complement-only CHANGELOG + merged-PR scope (#1982) ---
+  version_disp="$version"
+  # Bare SemVer gets a conventional v for diagnostics; component-prefixed
+  # tokens (mobile-v1.1.0) keep their spelling (do not become vmobile-…).
+  case "$version_disp" in
+    [0-9]*.[0-9]*.[0-9]*) version_disp="v${version_disp}" ;;
+  esac
+
+  if [ -z "$RELEASE_HEAD" ] && [ ! -f "$changelog_path" ]; then
+    echo "CHANGELOG_SECTION_UNAVAILABLE version=${version_disp} (Linear scope derived from merged PRs only)" >&2
+    if ! filter_linear_changelog_scope_by_merged_prs "$version" "$changelog_root"; then
+      return 1
     fi
-    echo "Could not find changelog at '$changelog_path' for --from-changelog." >&2
-    return 1
+    return 0
   fi
 
   if ! extracted="$(python3 - "$version" "$changelog_path" "$TRACKER_PROVIDER" "$RELEASE_HEAD" "$changelog_root" <<'PY'
@@ -649,32 +734,16 @@ if head:
         sys.exit(1)
     result = subprocess.run(["git", "-C", sys.argv[5], "show", head + ":CHANGELOG.md"], text=True, capture_output=True)
     if result.returncode:
-        if provider == "linear":
-            linear_changelog_unavailable()
-        print("CHANGELOG_REVIEWED_COMMIT_UNAVAILABLE", file=sys.stderr)
-        sys.exit(1)
+        linear_changelog_unavailable()
     text = result.stdout
 else:
     if not path.is_file():
-        if provider == "linear":
-            linear_changelog_unavailable()
-        print(f"Could not find changelog at '{path}' for --from-changelog.", file=sys.stderr)
-        sys.exit(1)
+        linear_changelog_unavailable()
     text = path.read_text(encoding="utf-8")
 
 match = heading.search(text)
 if not match:
-    if provider == "linear":
-        linear_changelog_unavailable()
-    if prefix not in ("", "v"):
-        print(
-            f"CHANGELOG_VERSION_NOT_FOUND version={version_disp} "
-            f"(component-prefixed releases require ## [{version_disp}] in CHANGELOG)",
-            file=sys.stderr,
-        )
-    else:
-        print(f"CHANGELOG_VERSION_NOT_FOUND version={version_disp}", file=sys.stderr)
-    sys.exit(1)
+    linear_changelog_unavailable()
 
 next_heading = re.search(r"^## \[", text[match.end():], re.MULTILINE)
 section_end = match.end() + next_heading.start() if next_heading else len(text)
@@ -688,32 +757,23 @@ def add(value: str) -> None:
         seen.add(value)
         issues.append(value)
 
-if provider == "linear":
-    # En-dash, ASCII hyphen, or ".." range forms (e.g. LEA-298–LEA-301, LEA-298..LEA-301).
-    range_re = re.compile(
-        r"\b([A-Z][A-Z0-9_]*-)(\d+)\s*(?:[\u2013-]|\.\.)\s*(?:[A-Z][A-Z0-9_]*-)?(\d+)\b"
-    )
-    for item in range_re.finditer(section):
-        issue_prefix = item.group(1)
-        start = int(item.group(2))
-        end = int(item.group(3))
-        if end < start:
-            start, end = end, start
-        for number in range(start, end + 1):
-            add(f"{issue_prefix}{number}")
+# En-dash, ASCII hyphen, or ".." range forms (e.g. LEA-298–LEA-301, LEA-298..LEA-301).
+range_re = re.compile(
+    r"\b([A-Z][A-Z0-9_]*-)(\d+)\s*(?:[\u2013-]|\.\.)\s*(?:[A-Z][A-Z0-9_]*-)?(\d+)\b"
+)
+for item in range_re.finditer(section):
+    issue_prefix = item.group(1)
+    start = int(item.group(2))
+    end = int(item.group(3))
+    if end < start:
+        start, end = end, start
+    for number in range(start, end + 1):
+        add(f"{issue_prefix}{number}")
 
-    for item in re.finditer(r"\b[A-Z][A-Z0-9_]*-\d+\b", section):
-        add(item.group(0))
-else:
-    for item in re.finditer(r"(?<![\w-])#([1-9][0-9]*)\b", section):
-        add(item.group(1))
+for item in re.finditer(r"\b[A-Z][A-Z0-9_]*-\d+\b", section):
+    add(item.group(0))
 
-if not issues:
-    # Linear may still derive scope from merged PRs when the section cites none.
-    if provider != "linear":
-        print(f"CHANGELOG_NO_ISSUES_FOUND version={version_disp}", file=sys.stderr)
-        sys.exit(1)
-
+# Linear may still derive scope from merged PRs when the section cites none.
 print("\n".join(issues))
 PY
   )"; then
@@ -730,10 +790,8 @@ PY
   done <<< "$extracted"
 
   # Linear: changelog text is not authoritative for Released transitions (#1982).
-  if [ "$TRACKER_PROVIDER" = "linear" ]; then
-    if ! filter_linear_changelog_scope_by_merged_prs "$version" "$changelog_root"; then
-      return 1
-    fi
+  if ! filter_linear_changelog_scope_by_merged_prs "$version" "$changelog_root"; then
+    return 1
   fi
 }
 
@@ -960,8 +1018,8 @@ def resolve_release_tag_identity(version_arg, current_ref, remote_tags):
     """Canonical SemVer tag namespace for the release boundary.
 
     Identical with and without --release-head: current_ref does not affect
-    spelling. Collect every local and remote SHA for the requested version's
-    bare/v spellings (component prefixes have a single spelling).
+    spelling. Collect every local and remote SHA for bare/v spellings of the
+    requested version (component prefixes have a single spelling).
 
     - exactly one existing spelling → that spelling
     - both spellings and all evidence agrees on one SHA → spelling as given
@@ -1069,8 +1127,9 @@ def resolve_previous_boundary(current_version, current_ref):
         if prior is None or peeled:
             remote_tags[name] = sha
 
-    # Identity uses the repo's actual tag namespace, identically with and without
-    # --release-head. Never adopt a co-pointing component tag (mobile-v…).
+    # Identity uses the actual tag namespace of the repository, identically with
+    # and without --release-head. Never adopt a co-pointing component tag
+    # (mobile-v...).
     id_status, release_tag = resolve_release_tag_identity(
         current_version, current_ref, remote_tags
     )

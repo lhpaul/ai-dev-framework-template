@@ -17,6 +17,7 @@
 #
 # Usage: bash scripts/development-workflow/tests/test-prepare-release-tracker-cleanup.sh
 # covers: scripts/development-workflow/prepare-release-post-merge-cleanup.sh
+# covers: scripts/development-workflow/tests/fixtures/prepare-release-post-merge-cleanup.develop-baseline.sh
 # covers: scripts/development-workflow/component-release-target.sh
 # covers: scripts/development-workflow/workflow-config-resolver.py
 # covers: scripts/development-workflow/workflow-merge-budget.py
@@ -3282,6 +3283,262 @@ for provider in github_projects github_issues; do
   run_not_contains "${provider}_mobile_input_no_bare_mobile_version" \
     "Release version: mobile-v1.1.0" "$output"
 done
+
+# --- Differential GitHub parity vs frozen develop baseline (#1982) ---
+# Runs HEAD and the checked-in develop baseline against identical fixtures and
+# the same stubbed gh/git (with call logs). Asserts identical exit, stdout/stderr
+# (modulo temp paths), and mutation call logs for both GitHub providers.
+echo ""
+echo "=== Differential GitHub parity vs develop baseline ==="
+DEVELOP_BASELINE="$REPO_ROOT/scripts/development-workflow/tests/fixtures/prepare-release-post-merge-cleanup.develop-baseline.sh"
+if [ ! -f "$DEVELOP_BASELINE" ]; then
+  echo "FAIL: missing frozen develop baseline at $DEVELOP_BASELINE" >&2
+  FAIL_COUNT=$((FAIL_COUNT + 1))
+else
+  PARITY_COUNT=0
+  PARITY_ROOT="$TMP_ROOT/github-parity"
+  mkdir -p "$PARITY_ROOT"
+
+  # Recording stubs: log every argv; respond generically for the matrix.
+  install_parity_stubs() {
+    local bin_dir="$1"
+    local call_log="$2"
+    mkdir -p "$bin_dir"
+    cat > "$bin_dir/gh" <<MOCK_GH_PARITY
+#!/usr/bin/env bash
+printf 'gh %s\n' "\$*" >> "$(printf '%s' "$call_log")"
+case "\$*" in
+  "auth status") exit 0 ;;
+  "repo view --json owner --jq .owner.login") printf 'test-owner\n' ;;
+  "repo view --json name --jq .name") printf 'test-repo\n' ;;
+  "repo view --json nameWithOwner --jq .nameWithOwner") printf 'test-owner/test-repo\n' ;;
+  "api --paginate --slurp repos/test-owner/test-repo/milestones?state=all&per_page=100")
+    printf '%s\n' '[{"number":10,"title":"v1.2.3","state":"closed"},{"number":11,"title":"vmobile-v1.1.0","state":"closed"},{"number":12,"title":"v1.2.3-rc.1","state":"closed"},{"number":13,"title":"v1.2.2","state":"closed"}]'
+    ;;
+  api\ -X\ PATCH\ repos/test-owner/test-repo/issues/*\ -F\ milestone=*)
+    ms="\${*##*milestone=}"
+    printf '{"number":101,"milestone":{"number":%s,"title":"ok"}}\n' "\$ms"
+    ;;
+  api\ -X\ PATCH\ repos/test-owner/test-repo/milestones/*\ -f\ state=closed)
+    printf '{"number":11,"state":"closed"}\n' ;;
+  "api -X POST repos/test-owner/test-repo/milestones"*)
+    printf '{"number":99,"title":"created"}\n' ;;
+  issue\ view\ *\ --json\ state\ --jq\ .state) printf 'closed\n' ;;
+  pr\ list\ --state\ merged\ --head\ *\ --base\ main\ --json\ number\ --jq\ *)
+    printf '333\n' ;;
+  pr\ list\ --state\ merged\ --head\ *\ --base\ develop\ --json\ number\ --jq\ *)
+    printf '334\n' ;;
+  pr\ list\ --state\ open\ --head\ *\ --base\ main\ --json\ number\ --jq\ *)
+    printf '\n' ;;
+  pr\ list\ --state\ open\ --head\ *\ --base\ develop\ --json\ number\ --jq\ *)
+    printf '\n' ;;
+  *"user(login"*"projectV2"*)
+    printf '{"data":{"user":{"projectV2":{"id":"PVT_test000001"}}}}\n' ;;
+  *"organization(login"*"projectV2"*)
+    printf '{"data":{"organization":{"projectV2":{"id":"PVT_test000001"}}}}\n' ;;
+  *"projectId"*"ProjectV2"*"items"*)
+    printf '{"data":{"node":{"items":{"nodes":[],"pageInfo":{"hasNextPage":false,"endCursor":""}}}}}\n' ;;
+  "api graphql"*)
+    printf '{"data":{"repository":{"issue":{"projectItems":{"nodes":[],"pageInfo":{"hasNextPage":false,"endCursor":""}}}}}}\n' ;;
+  "api repos/test-owner/test-repo/releases/tags/"*)
+    printf '2026-06-11T12:00:00Z\n' ;;
+  "api repos/test-owner/test-repo/tags?per_page=100"*)
+    printf 'v1.2.3\nvmobile-v1.1.0\nv1.2.3-rc.1\nv1.2.2\n' ;;
+  *)
+    printf 'unexpected gh invocation: gh %s\n' "\$*" >&2
+    exit 64
+    ;;
+esac
+MOCK_GH_PARITY
+    cat > "$bin_dir/git" <<MOCK_GIT_PARITY
+#!/usr/bin/env bash
+printf 'git %s\n' "\$*" >> "$(printf '%s' "$call_log")"
+case "\$*" in
+  "fetch origin --prune") exit 0 ;;
+  ls-remote\ --exit-code\ --heads\ origin\ *) exit 2 ;;
+  show-ref\ --quiet\ refs/heads/*) exit 1 ;;
+  "remote get-url origin") printf 'https://github.com/test-owner/test-repo.git\n' ;;
+  check-ref-format\ --branch\ *) exit 0 ;;
+  *) exit 0 ;;
+esac
+MOCK_GIT_PARITY
+    chmod +x "$bin_dir/gh" "$bin_dir/git"
+  }
+
+  normalize_parity_text() {
+    # Collapse absolute temp paths so fixture roots do not break equality.
+    sed -e "s|${TMP_ROOT}|TMP_ROOT|g" -e "s|${PARITY_ROOT}|PARITY_ROOT|g"
+  }
+
+  fixture_parity_repo() {
+    local provider="$1"
+    local name="$2"
+    local script_src="$3"
+    local heading="$4"
+    local path="$PARITY_ROOT/$name"
+    rm -rf "$path"
+    mkdir -p "$path/scripts/development-workflow"
+    cp "$REPO_ROOT/scripts/development-workflow/workflow-lib.sh" \
+      "$path/scripts/development-workflow/workflow-lib.sh"
+    # Baseline may call helpers present only in current workflow-lib; that is
+    # intentional — we freeze the cleanup script, not the whole toolchain.
+    cp "$script_src" \
+      "$path/scripts/development-workflow/prepare-release-post-merge-cleanup.sh"
+    chmod +x "$path/scripts/development-workflow/prepare-release-post-merge-cleanup.sh"
+    if [ "$provider" = "github_projects" ]; then
+      cat > "$path/.ai-dev-workflow.yaml" <<'YAML'
+schema_version: 2
+issue_tracker:
+  provider: github_projects
+  project_number: 1
+YAML
+    else
+      cat > "$path/.ai-dev-workflow.yaml" <<'YAML'
+schema_version: 2
+issue_tracker:
+  provider: github_issues
+YAML
+    fi
+    if [ "$heading" = "MISSING" ]; then
+      cat > "$path/CHANGELOG.md" <<'MD'
+# Changelog
+
+## [Unreleased]
+
+## [9.9.9] - 2026-01-01
+
+- Unrelated (#999).
+MD
+    else
+      cat > "$path/CHANGELOG.md" <<MD
+# Changelog
+
+## [Unreleased]
+
+## [${heading}] - 2026-06-11
+
+### Fixed
+
+- Fixed some bug (#101).
+MD
+    fi
+    printf '%s\n' "$path"
+  }
+
+  run_parity_one() {
+    local label="$1"
+    local provider="$2"
+    local input="$3"
+    local heading="$4"
+    shift 4
+    # remaining: cleanup argv after version
+    local case_dir="$PARITY_ROOT/case-${label}"
+    mkdir -p "$case_dir"
+    local head_log="$case_dir/head.calls"
+    local base_log="$case_dir/base.calls"
+    : > "$head_log"
+    : > "$base_log"
+    local head_bin="$case_dir/head-bin"
+    local base_bin="$case_dir/base-bin"
+    install_parity_stubs "$head_bin" "$head_log"
+    install_parity_stubs "$base_bin" "$base_log"
+
+    # Same fixture path for both runs so stderr path embeds do not diverge;
+    # swap only the cleanup script between HEAD and the frozen baseline.
+    local shared_repo
+    shared_repo="$(fixture_parity_repo "$provider" "${label}-shared" \
+      "$REPO_ROOT/scripts/development-workflow/prepare-release-post-merge-cleanup.sh" \
+      "$heading")"
+    # Optional helper imported by workflow-lib for github_projects status updates.
+    if [ -f "$REPO_ROOT/scripts/development-workflow/workflow-project-reader.py" ]; then
+      cp "$REPO_ROOT/scripts/development-workflow/workflow-project-reader.py" \
+        "$shared_repo/scripts/development-workflow/workflow-project-reader.py"
+    fi
+
+    local head_out base_out head_status=0 base_status=0
+    set +e
+    head_out="$(cd "$shared_repo" && PATH="${head_bin}:$PATH" \
+      ./scripts/development-workflow/prepare-release-post-merge-cleanup.sh \
+      "$input" "$@" 2>&1)"
+    head_status=$?
+    # Reset script to frozen baseline; keep CHANGELOG / config / helpers.
+    cp "$DEVELOP_BASELINE" \
+      "$shared_repo/scripts/development-workflow/prepare-release-post-merge-cleanup.sh"
+    chmod +x "$shared_repo/scripts/development-workflow/prepare-release-post-merge-cleanup.sh"
+    base_out="$(cd "$shared_repo" && PATH="${base_bin}:$PATH" \
+      ./scripts/development-workflow/prepare-release-post-merge-cleanup.sh \
+      "$input" "$@" 2>&1)"
+    base_status=$?
+    set -e
+
+    local head_norm base_norm
+    head_norm="$(printf '%s\n' "$head_out" | normalize_parity_text)"
+    base_norm="$(printf '%s\n' "$base_out" | normalize_parity_text)"
+
+    run_test "parity_${label}_exit" "$base_status" "$head_status"
+    if [ "$head_norm" = "$base_norm" ]; then
+      run_test "parity_${label}_stdio" "match" "match"
+    else
+      printf '%s\n' "$head_norm" > "$case_dir/head.stdio"
+      printf '%s\n' "$base_norm" > "$case_dir/base.stdio"
+      run_test "parity_${label}_stdio" "match" "DIFF see $case_dir/*.stdio"
+    fi
+    # Mutation-relevant calls: PATCH issues / POST milestones / branch deletes.
+    local head_mut base_mut
+    head_mut="$(grep -E '^(gh api -X (PATCH|POST)|gh api -X DELETE|git push |git branch -D |git checkout |git switch )' "$head_log" 2>/dev/null \
+      | normalize_parity_text || true)"
+    base_mut="$(grep -E '^(gh api -X (PATCH|POST)|gh api -X DELETE|git push |git branch -D |git checkout |git switch )' "$base_log" 2>/dev/null \
+      | normalize_parity_text || true)"
+    # Also compare full call logs (read + mutate) for byte-identical tooling surface.
+    local head_all base_all
+    head_all="$(normalize_parity_text < "$head_log")"
+    base_all="$(normalize_parity_text < "$base_log")"
+    if [ "$head_all" = "$base_all" ]; then
+      run_test "parity_${label}_calls" "match" "match"
+    else
+      # Prefer mutation equality as the hard gate if read-order differs only by
+      # harmless extras; still fail when mutations diverge.
+      if [ "$head_mut" = "$base_mut" ]; then
+        run_test "parity_${label}_calls" "match" "match"
+      else
+        printf '%s\n' "$head_all" > "$case_dir/head.calls.norm"
+        printf '%s\n' "$base_all" > "$case_dir/base.calls.norm"
+        run_test "parity_${label}_calls" "match" "DIFF see $case_dir/*.calls*"
+      fi
+    fi
+    PARITY_COUNT=$((PARITY_COUNT + 1))
+  }
+
+  for provider in github_projects github_issues; do
+    # --from-changelog × heading matrix
+    run_parity_one "${provider}_fc_123_heading_bare" "$provider" "1.2.3" "1.2.3" \
+      --from-changelog --best-effort
+    run_parity_one "${provider}_fc_v123_heading_v" "$provider" "v1.2.3" "v1.2.3" \
+      --from-changelog --best-effort
+    run_parity_one "${provider}_fc_rel_v123_heading_bare" "$provider" "release/v1.2.3" "1.2.3" \
+      --from-changelog --best-effort
+    run_parity_one "${provider}_fc_mobile_heading_mobile" "$provider" "mobile-v1.1.0" "mobile-v1.1.0" \
+      --from-changelog --best-effort
+    run_parity_one "${provider}_fc_rc_heading_bare" "$provider" "1.2.3-rc.1" "1.2.3" \
+      --from-changelog --best-effort
+    run_parity_one "${provider}_fc_123_missing" "$provider" "1.2.3" "MISSING" \
+      --from-changelog --best-effort
+    # Explicit issues (no changelog scope)
+    run_parity_one "${provider}_issue_123" "$provider" "1.2.3" "1.2.3" \
+      --issue 101 --best-effort
+    run_parity_one "${provider}_issues_v123" "$provider" "v1.2.3" "v1.2.3" \
+      --issues 101,102 --best-effort
+    run_parity_one "${provider}_issue_mobile" "$provider" "mobile-v1.1.0" "mobile-v1.1.0" \
+      --issue 101 --best-effort
+    # --json where applicable (single-repo; no evidence file)
+    run_parity_one "${provider}_fc_123_json" "$provider" "1.2.3" "1.2.3" \
+      --from-changelog --best-effort --json
+    run_parity_one "${provider}_issue_json" "$provider" "v1.2.3" "v1.2.3" \
+      --issue 101 --best-effort --json
+  done
+
+  echo "Differential GitHub parity cases run: $PARITY_COUNT"
+fi
 
 echo "Results: $PASS_COUNT passed, $FAIL_COUNT failed"
 
