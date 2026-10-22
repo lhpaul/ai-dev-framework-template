@@ -393,7 +393,7 @@ workflow_product_repo_name_for_github_slug() {
   names="$(workflow_command_with_safe_stderr python3 "$(workflow_config_resolver_script 2>/dev/null)" list-product-repos --repo-root "$root")" || return 2
   while IFS= read -r name; do
     [ -n "$name" ] || continue
-    context="$(workflow_repository_context "$name" "$root")" || return 2
+    context="$(workflow_command_with_safe_stderr workflow_repository_context "$name" "$root")" || return 2
     github="$(workflow_github_repo_from_context "$context")"
     if [ "$github" = "$slug" ]; then
       printf '%s\n' "$name"
@@ -468,7 +468,7 @@ workflow_merge_ci_policy_into_json() {
     return 0
   fi
 
-  context="$(workflow_repository_context "$repo_name" "$root")" || return 2
+  context="$(workflow_command_with_safe_stderr workflow_repository_context "$repo_name" "$root")" || return 2
 
   local resolved_github
   resolved_github="$(workflow_github_repo_from_context "$context")"

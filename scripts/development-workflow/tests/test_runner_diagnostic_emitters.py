@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Binding D01-D74: synthetic paired-channel runtime/publication diagnostics."""
+"""Binding D01-D75: synthetic paired-channel runtime/publication diagnostics."""
 from __future__ import annotations
 
 import importlib.util
@@ -1871,6 +1871,58 @@ printf 'PROBE=%s\\n' "$settle_review_probe"
                 self.assertNotIn(str(target), result.stdout + result.stderr)
                 if status: self.assertEqual(result.stdout, '')
                 else: self.assertEqual(json.loads(result.stdout), {'matches': {}})
+
+    def test_D75_changed_context_callers_close_inherited_native_stderr(self):
+        # Isolate the later exact boundary: earlier successful resolver probes
+        # must not mask a subsequent tooling-locator IO failure.
+        routes = [
+            ('C01', 'workflow-lib.sh', 'workflow_product_repo_name_for_github_slug', 'context'),
+            ('C02', 'workflow-lib.sh', 'workflow_merge_ci_policy_into_json', 'context'),
+            ('C03', 'discover-workflow-state.sh', None, 'repo_context'),
+        ]
+        target = 'synthetic product name'
+        root = self.f.root / 'selected checkout'; root.mkdir()
+        locators = self.f.root / ('token=' + self.secret); locators.mkdir()
+        missing = locators / 'missing-resolver.py'
+        unreadable = locators / 'unreadable-resolver.py'
+        unreadable.write_text('print("UNEXPECTED_READ")\n'); unreadable.chmod(0)
+        self.addCleanup(unreadable.chmod, 0o600)
+        self.assertFalse(os.access(unreadable, os.R_OK), 'synthetic unreadable fixture must genuinely deny reads')
+        for route, name, function, variable in routes:
+            text = fixtures.function_text(name, function) if function else (self.f.runtime / name).read_text()
+            matches = [line.strip() for line in text.splitlines()
+                       if variable + '="$(' in line and 'workflow_repository_context ' in line
+                       and (function is not None or '"$selected_for_context"' in line)]
+            self.assertEqual(len(matches), 1)
+            statement = matches[0]
+            initialize = 'root=' + shlex.quote(str(root)) + '; repo_root="$root"; name=' + shlex.quote(target) + '; repo_name="$name"; selected_for_context="$name";\n'
+            for shell in self.compatible_shells():
+                for mode, locator in [('missing', missing), ('unreadable', unreadable), ('success', Path('/dev/stdin'))]:
+                    with self.subTest(route=route, shell=shell, mode=mode):
+                        argv = self.f.root / 'native-context-argv'
+                        if argv.exists(): argv.unlink()
+                        body = 'set -euo pipefail\nsource ' + shlex.quote(str(self.f.runtime / 'workflow-lib.sh')) + '\n' + initialize
+                        body += 'workflow_config_resolver_script() { printf "%s\\n" ' + shlex.quote(str(locator)) + '; };\n'
+                        body += 'actual_boundary() {\n' + statement + '\nprintf "%s\\n" "$' + variable + '"\n}\nactual_boundary\n'
+                        program = 'import pathlib,sys; pathlib.Path(' + repr(str(argv)) + ').write_bytes(b"\\0".join(arg.encode() for arg in sys.argv[1:])+b"\\0"); print("SYNTHETIC_OK")\n'
+                        result = self.safe(self.run_command([shell, '-c', body], input=program), 0 if mode == 'success' else 2)
+                        self.assertEqual(result.stdout, 'SYNTHETIC_OK\n' if mode == 'success' else '')
+                        self.assertEqual(result.stderr, '' if mode == 'success' else 'ERROR: diagnostic sanitization failed\n')
+                        self.assertNotIn(str(locators), result.stdout + result.stderr)
+                        if mode == 'success':
+                            self.assertEqual(argv.read_bytes().split(b'\0'), [b'resolve', b'--repo-root', str(root).encode(), b'--repo', target.encode(), b''])
+                        else: self.assertFalse(argv.exists())
+                for failure in [False, True]:
+                    with self.subTest(route=route, shell=shell, mode='helper-argv', failure=failure):
+                        argv = self.f.root / 'helper-context-argv'
+                        body = 'set -euo pipefail\nsource ' + shlex.quote(str(self.f.runtime / 'workflow-lib.sh')) + '\n' + initialize
+                        body += 'workflow_repository_context() { printf "%s\\0" "$@" >' + shlex.quote(str(argv)) + '; '
+                        body += ('printf "configuration: invalid YAML; line=1; column=1\\n" >&2; return 17;' if failure else 'printf "FUNCTIONAL=ok\\n";') + ' };\n'
+                        body += 'actual_boundary() {\n' + statement + '\nprintf "%s\\n" "$' + variable + '"\n}\nactual_boundary\n'
+                        result = self.safe(self.run_command([shell, '-c', body]), 2 if failure else 0)
+                        self.assertEqual(argv.read_bytes().split(b'\0'), [target.encode(), str(root).encode(), b''])
+                        self.assertEqual(result.stdout, '' if failure else 'FUNCTIONAL=ok\n')
+                        self.assertEqual(result.stderr, 'configuration: invalid YAML; line=1; column=1\n' if failure else '')
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)

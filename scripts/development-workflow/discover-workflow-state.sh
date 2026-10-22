@@ -89,7 +89,7 @@ if [ "$workflow_mode" = "workflow_hub" ]; then
     selected_for_context="$(printf '%s\n' "$configured_repos" | awk 'NF { name=$0; count++ } END { if (count == 1) print name }')"
   fi
   if [ -n "$selected_for_context" ] && grep -Fxq -- "$selected_for_context" <<< "$configured_repos"; then
-    repo_context="$(workflow_repository_context "$selected_for_context" "$repo_root")" || exit 2
+    repo_context="$(workflow_command_with_safe_stderr workflow_repository_context "$selected_for_context" "$repo_root")" || exit 2
     target_github_repo="$(workflow_github_repo_from_context "$repo_context")"
     target_local_path="$(workflow_context_value TARGET_LOCAL_PATH "$repo_context")"
     target_repo_name="$(workflow_context_value TARGET_REPO_NAME "$repo_context")"
