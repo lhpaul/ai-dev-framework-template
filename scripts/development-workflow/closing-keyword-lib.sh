@@ -192,15 +192,18 @@ closing_keyword_live_refs() {
 # code blocks without removing list content or paragraph continuations.
 #
 # Indented code (leading whitespace ≥4 columns with tab stops of 4) is removed
-# only when a run starts after a blank line or at text start and is not inside a
-# list item. List context begins on a line whose first non-space token (indent
-# 0–3) is a list marker (- * + / N. / N)) and continues through indented lines
-# and blank lines until a non-blank line at indent <4 that is not a list marker.
+# only outside list context, when a run starts after a blank line or at text
+# start. Prefer keeping prose over stripping.
+#
+# List context starts on a list-marker line (indent 0–3, not a thematic break)
+# and persists through any indented line (indent ≥1) and blank lines. It ends
+# only on a non-blank indent-0 line that is neither a list marker nor a lazy
+# continuation directly following a non-blank list line (after a blank line,
+# an indent-0 non-marker ends the list). A thematic break also ends it.
+# While in list context, nothing is treated as indented code.
+#
 # CommonMark thematic breaks (--- / *** / ___ / - - - / * * *, indent 0–3) are
-# recognized before list markers and clear list context (they are block
-# boundaries, not list items). An indented line that follows non-blank prose
-# with no blank line between is a paragraph continuation and is never treated
-# as code.
+# recognized before list markers and clear list context.
 #
 # Do not use this from post-merge cleanup or validate-closing-keyword-scope —
 # those consumers keep strip_fenced_pr_body_blocks / closing_keyword_live_refs.
@@ -254,35 +257,55 @@ for line in lines:
         out.append(line)
         at_block_start = True
         in_indented_code = False
+        # in_list persists through blank lines
         continue
+
     cols, _start = leading_indent_columns(line)
-    if cols < 4:
+
+    if cols < 4 and is_thematic_break_line(line):
+        in_list = False
         in_indented_code = False
-        # Thematic breaks before list markers: "- - -" must not open a list.
-        if is_thematic_break_line(line):
-            in_list = False
-            at_block_start = True
+        at_block_start = True
+        out.append(line)
+        continue
+
+    if in_list:
+        if cols >= 1:
+            # Indented continuation (incl. nested markers) — stay in list
             out.append(line)
+            at_block_start = False
+            in_indented_code = False
             continue
         if is_list_marker_line(line):
-            in_list = True
-        else:
-            in_list = False
+            out.append(line)
+            at_block_start = False
+            in_indented_code = False
+            continue
+        if not at_block_start:
+            # Lazy continuation of the previous non-blank list line
+            out.append(line)
+            at_block_start = False
+            in_indented_code = False
+            continue
+        # After a blank: indent-0 non-marker ends the list
+        in_list = False
+
+    # Outside list context
+    if cols < 4 and is_list_marker_line(line):
+        in_list = True
+        in_indented_code = False
         out.append(line)
         at_block_start = False
         continue
-    # cols >= 4
-    if in_list:
-        out.append(line)
-        at_block_start = False
-        continue
-    if in_indented_code or at_block_start:
+
+    if cols >= 4 and (at_block_start or in_indented_code):
         in_indented_code = True
         at_block_start = False
         continue
-    # Paragraph continuation (indented line with no preceding blank).
+
     out.append(line)
     at_block_start = False
+    in_indented_code = False
 sys.stdout.write("\n".join(out))
 '
 }

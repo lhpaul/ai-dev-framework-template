@@ -683,6 +683,44 @@ for provider in github_projects github_issues; do
   run_contains "${provider}_wrap_list_then_indent_child" "--epic 123" "$(cat "$CHILD_ARGV_LOG")"
 
   echo ""
+  echo "=== wrapper: ${provider} keeps list two-space continuation then Closes #123 (#2016) ==="
+  reset_fixture
+  write_tracker_config "$provider"
+  export MOCK_LABEL_PARENT_MODE=empty
+  write_pr 127 "develop-test-2016" "develop" "true" "Graduate wave" \
+    $'- Delivered work:\n  Additional details.\n\n    Closes #123'
+  result="$(run_wrapper --graduation-pr 127)"
+  body="$(last_body "$result")"
+  run_test "${provider}_wrap_list_two_space_exit_zero" "0" "$(last_status "$result")"
+  run_contains "${provider}_wrap_list_two_space_epic" "EPIC_ISSUE=123" "$body"
+  run_contains "${provider}_wrap_list_two_space_child" "--epic 123" "$(cat "$CHILD_ARGV_LOG")"
+
+  echo ""
+  echo "=== wrapper: ${provider} keeps list multi-continuation then Closes #124 (#2016) ==="
+  reset_fixture
+  write_tracker_config "$provider"
+  export MOCK_LABEL_PARENT_MODE=empty
+  write_pr 128 "develop-test-2016" "develop" "true" "Graduate wave" \
+    $'- a\n  b\n\n  c\n\n    Closes #124'
+  result="$(run_wrapper --graduation-pr 128)"
+  body="$(last_body "$result")"
+  run_test "${provider}_wrap_list_multi_cont_exit_zero" "0" "$(last_status "$result")"
+  run_contains "${provider}_wrap_list_multi_cont_epic" "EPIC_ISSUE=124" "$body"
+
+  echo ""
+  echo "=== wrapper: ${provider} strips code after list ends with indent-0 paragraph (#2016) ==="
+  reset_fixture
+  write_tracker_config "$provider"
+  export MOCK_LABEL_PARENT_MODE=empty
+  write_pr 129 "develop-test-2016" "develop" "true" "Graduate wave" \
+    $'- item\n\nParagraph outside list.\n\n    Closes #326\nEpic #900'
+  result="$(run_wrapper --graduation-pr 129)"
+  body="$(last_body "$result")"
+  run_test "${provider}_wrap_list_then_para_code_exit_zero" "0" "$(last_status "$result")"
+  run_contains "${provider}_wrap_list_then_para_code_epic" "EPIC_ISSUE=900" "$body"
+  run_not_contains "${provider}_wrap_list_then_para_code_no_326" "--epic 326" "$(cat "$CHILD_ARGV_LOG")"
+
+  echo ""
   echo "=== wrapper: ${provider} keeps nested-list Closes #123 with Epic #900 (#2016) ==="
   # Nested list keyword is live but Epic #900 is the sole epic/parent ref style
   # candidate preferred when both exist — assert 123 is not chosen as epic and

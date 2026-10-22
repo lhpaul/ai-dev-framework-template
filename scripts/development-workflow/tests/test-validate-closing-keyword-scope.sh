@@ -334,6 +334,14 @@ check "closeout_thematic_hr_underscores_clears_list" "" \
   "$(closeout_refs_of "$(printf -- '___\n\n    Closes #326')")"
 check "closeout_real_list_keeps_indented_continuation" "123" \
   "$(closeout_refs_of "$(printf -- '- item\n    Closes #123')")"
+# Two-space list continuation must not end list context before later prose.
+check "closeout_list_two_space_cont_keeps_later_indent" "123" \
+  "$(closeout_refs_of "$(printf -- '- Delivered work:\n  Additional details.\n\n    Closes #123')")"
+check "closeout_list_multi_cont_keeps_later_indent" "124" \
+  "$(closeout_refs_of "$(printf -- '- a\n  b\n\n  c\n\n    Closes #124')")"
+# After list ends (blank + indent-0 paragraph), indented code is stripped.
+check "closeout_list_then_paragraph_then_code_strips" "" \
+  "$(closeout_refs_of "$(printf -- '- item\n\nParagraph outside list.\n\n    Closes #326')")"
 
 # ---------------------------------------------------------------------------
 # Differential attribution

@@ -287,6 +287,21 @@ JSON
 [{"number":11,"title":"Deliver item","body":"- item\n    Closes #123"}]
 JSON
         ;;
+      list_two_space_cont_closes_123)
+        cat <<'JSON'
+[{"number":11,"title":"Deliver item","body":"- Delivered work:\n  Additional details.\n\n    Closes #123"}]
+JSON
+        ;;
+      list_multi_cont_closes_124)
+        cat <<'JSON'
+[{"number":11,"title":"Deliver item","body":"- a\n  b\n\n  c\n\n    Closes #124"}]
+JSON
+        ;;
+      list_then_para_then_indent_326)
+        cat <<'JSON'
+[{"number":11,"title":"Graduate wave","body":"- item\n\nParagraph outside list.\n\n    Closes #326\nNo live closing keywords."}]
+JSON
+        ;;
       foreign_repo_text)
         cat <<'JSON'
 [{"number":11,"title":"Graduate wave","body":"Closes other/repo#326\nNo local closing keywords."}]
@@ -1285,6 +1300,18 @@ for provider in github_projects github_issues; do
   echo ""
   echo "=== graduation closeout: ${provider} keeps real list then indented Closes #123 (#2016) ==="
   assert_github_keyword_issue_closed "$provider" list_item_then_indent_123 123 "${provider}_list_then_indent"
+
+  echo ""
+  echo "=== graduation closeout: ${provider} keeps list two-space continuation then Closes #123 (#2016) ==="
+  assert_github_keyword_issue_closed "$provider" list_two_space_cont_closes_123 123 "${provider}_list_two_space"
+
+  echo ""
+  echo "=== graduation closeout: ${provider} keeps list multi-continuation then Closes #124 (#2016) ==="
+  assert_github_keyword_issue_closed "$provider" list_multi_cont_closes_124 124 "${provider}_list_multi_cont"
+
+  echo ""
+  echo "=== graduation closeout: ${provider} strips code after list ends with indent-0 paragraph (#2016) ==="
+  assert_github_example_326_untouched "$provider" list_then_para_then_indent_326 "${provider}_list_then_para_code"
 
   echo ""
   echo "=== graduation closeout: ${provider} keeps nested-list Closes #123 (#2016) ==="
