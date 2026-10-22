@@ -208,6 +208,12 @@ JSON
 [{"number":11,"title":"Graduate wave","body":"See example:\n    Closes #326\nNo live closing keywords."}]
 JSON
         ;;
+      mixed_indent_example)
+        # Space+tab → CommonMark indent 4; must not authorize #326.
+        cat <<'JSON'
+[{"number":11,"title":"Graduate wave","body":"See example:\n \tCloses #326\nNo live closing keywords."}]
+JSON
+        ;;
       foreign_repo_text)
         cat <<'JSON'
 [{"number":11,"title":"Graduate wave","body":"Closes other/repo#326\nNo local closing keywords."}]
@@ -1134,6 +1140,10 @@ for provider in github_projects github_issues; do
   echo ""
   echo "=== graduation closeout: ${provider} ignores indented-code Closes #326 (#2016) ==="
   assert_github_example_326_untouched "$provider" indented_code_example "${provider}_indented"
+
+  echo ""
+  echo "=== graduation closeout: ${provider} ignores space+tab mixed-indent Closes #326 (#2016) ==="
+  assert_github_example_326_untouched "$provider" mixed_indent_example "${provider}_mixed_indent"
 
   echo ""
   echo "=== graduation closeout: ${provider} ignores Closes other/repo#326 (#2016) ==="

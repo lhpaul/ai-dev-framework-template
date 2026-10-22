@@ -27,13 +27,12 @@
 # after the fence marker — a shorter, differently-charactered, or
 # content-suffixed line (e.g. a nested example fence, or "``` end of block") is
 # treated as still being inside the fence rather than closing it. A fence
-# delimiter may be indented up to 3 spaces per GFM; 4+ spaces of leading
-# whitespace makes it indented code instead, so the raw line (not a fully
-# whitespace-stripped line) is matched to preserve that boundary — otherwise a
-# 4-space-indented "```" could be mistaken for a real fence and hide a live
-# closing reference. Outside fences, lines that are themselves indented code
-# (leading tab, or 4+ leading spaces) are dropped so example-only keywords in
-# indented blocks are not live either.
+# delimiter may be indented up to 3 columns per CommonMark/GFM; 4+ columns of
+# leading whitespace makes it indented code instead. Leading spaces and tabs
+# are measured with tab stops of 4 columns before that decision (and before
+# fence recognition), so mixed prefixes like space+tab count as indent 4 and
+# are not treated as live prose. Outside fences, indented-code lines are
+# dropped so example-only keywords in those blocks are not live either.
 strip_fenced_pr_body_blocks() {
   python3 -c '
 import re, sys
@@ -73,18 +72,41 @@ def strip_inline_code_spans_by_paragraph(lines):
         out_lines.extend(strip_inline_code_spans("\n".join(paragraph)).split("\n"))
     return "\n".join(out_lines)
 
+def leading_indent_columns(line):
+    """CommonMark: spaces + tabs with tab stops of 4 columns."""
+    col = 0
+    i = 0
+    while i < len(line):
+        ch = line[i]
+        if ch == " ":
+            col += 1
+            i += 1
+        elif ch == "\t":
+            col = (col // 4 + 1) * 4
+            i += 1
+        else:
+            break
+    return col, i
+
 def is_indented_code_line(line):
-    if line.startswith("\t"):
-        return True
-    return (len(line) - len(line.lstrip(" "))) >= 4
+    cols, _ = leading_indent_columns(line)
+    return cols >= 4
+
+def match_fence(line):
+    cols, start = leading_indent_columns(line)
+    if cols >= 4:
+        return None
+    match = re.match(r"(`{3,}|~{3,})(.*)$", line[start:])
+    if not match:
+        return None
+    return match
 
 lines = sys.stdin.read().split("\n")
 out = []
 fence_char = None
 fence_len = 0
-fence_re = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
 for line in lines:
-    match = fence_re.match(line)
+    match = match_fence(line)
     if fence_char is None:
         if match:
             fence_char = match.group(1)[0]

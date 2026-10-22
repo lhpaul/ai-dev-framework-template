@@ -280,6 +280,16 @@ check "indented_code_line_keyword_not_reported" "" \
   "$(refs_of '    Closes #53')"
 check "tab_indented_code_line_keyword_not_reported" "" \
   "$(refs_of "$(printf '\tCloses #54')")"
+# CommonMark tab stops of 4: mixed leading whitespace still counts as indent ≥4.
+check "space_tab_mixed_indent_keyword_not_reported" "" \
+  "$(refs_of "$(printf ' \tCloses #55')")"
+check "two_space_tab_mixed_indent_keyword_not_reported" "" \
+  "$(refs_of "$(printf '  \tCloses #56')")"
+check "four_space_indent_keyword_not_reported" "" \
+  "$(refs_of '    Closes #57')"
+# Three spaces is not indented code; a three-space-indented fence still opens.
+check "three_space_indent_fence_still_suppresses" "" \
+  "$(refs_of "$(printf '   %s\nCloses #58' "$BT")")"
 check "multiline_inline_span_within_paragraph" "" \
   "$(refs_of 'open `span
 Closes #51` close')"

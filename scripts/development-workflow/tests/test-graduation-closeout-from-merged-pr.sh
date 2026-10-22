@@ -553,6 +553,12 @@ for provider in github_projects github_issues; do
     "${provider}_wrap_indented"
 
   echo ""
+  echo "=== wrapper: ${provider} ignores space+tab mixed-indent Closes #326 (#2016) ==="
+  assert_wrapper_github_example_ignored "$provider" \
+    "$(printf 'Epic #900\n \tCloses #326\n')" \
+    "${provider}_wrap_mixed_indent"
+
+  echo ""
   echo "=== wrapper: ${provider} ignores Closes other/repo#326 (#2016) ==="
   assert_wrapper_github_example_only_fails "$provider" \
     'Closes other/repo#326' \
