@@ -213,6 +213,13 @@ body = "Closes #326" + ("あ" * 60000)
 print(json.dumps([{"number": 11, "title": "Graduate wave", "body": body}]))
 PYLU
         ;;
+      huge_body_file)
+        python3 - "${MOCK_HUGE_BODY_FILE:?}" <<'PYHUGE'
+import json, pathlib, sys
+body = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
+print(json.dumps([{"number": 11, "title": "Graduate wave", "body": body}]))
+PYHUGE
+        ;;
       gfm_fixture)
         python3 - "$GFM_FIXTURE_DIR" "${MOCK_GFM_FIXTURE:?}" <<'PYGFM'
 import json, pathlib, sys
@@ -1526,13 +1533,15 @@ assert_gfm_fixture_closed() {
 echo ""
 echo "=== graduation closeout: long Unicode body after prose keyword (#2016 Pass 1) ==="
 # pipefail is on; prefilter must not SIGPIPE (141) when the keyword is early
-# and a huge Unicode tail follows.
-long_unicode_body="$(python3 -c 'import sys; sys.stdout.write("Closes #326" + ("あ" * 60000))')"
+# and a huge Unicode tail follows. Body via file/stdin — never argv.
+long_unicode_file="$TMP_ROOT/long-unicode-prefilter.txt"
+python3 -c 'import sys; sys.stdout.write("Closes #326" + ("あ" * 60000))' >"$long_unicode_file"
 set +e
-printf '%s' "$long_unicode_body" | graduation_closeout_raw_has_closing_keyword_candidate
+graduation_closeout_raw_has_closing_keyword_candidate <"$long_unicode_file"
 prefilter_status=$?
 set -e
 run_test "long_unicode_prefilter_exit_zero" "0" "$prefilter_status"
+run_test "long_unicode_prefilter_file_over_128kib" "1" "$(python3 -c 'import pathlib,sys; print(1 if pathlib.Path(sys.argv[1]).stat().st_size > 131072 else 0)' "$long_unicode_file")"
 
 echo ""
 echo "=== graduation closeout: render_gfm preserves caller \$- (#2016 Pass 1) ==="
@@ -1591,6 +1600,104 @@ for provider in github_projects github_issues; do
   run_test "${provider}_long_unicode_issue_closed" "CLOSED" "$(python3 -c 'import json; print(json.load(open("'"$MOCK_STATE_DIR"'/326.json"))["state"])')"
   run_contains "${provider}_long_unicode_close_log" "326" "$(cat "$MOCK_CLOSE_LOG")"
 done
+
+
+echo ""
+echo "=== graduation closeout: production PR text never passed as external argv (#2016) ==="
+argv_hits="$(python3 - "$REPO_ROOT" <<'PYAUDIT'
+import pathlib, re, sys
+root = pathlib.Path(sys.argv[1])
+files = [
+    root / "scripts/development-workflow/graduation-closeout.sh",
+    root / "scripts/development-workflow/graduation-closeout-from-merged-pr.sh",
+    root / "scripts/development-workflow/graduation-closeout-lib.sh",
+]
+var_pr_text = r"\$\{?(?:body|title|text|raw|payload|title_raw|body_raw|title_enc|body_enc|visible|html)\}?"
+hits = []
+for path in files:
+    for i, line in enumerate(path.read_text().splitlines(), 1):
+        s = line.lstrip()
+        if not s or s.startswith("#"):
+            continue
+        if not re.search(r"\b(python3|jq|gh)\b", line):
+            continue
+        if not re.search(var_pr_text, line):
+            continue
+        left = line
+        for cmd in ("python3", "jq", "gh"):
+            if cmd in line:
+                left = line.split(cmd)[0]
+                break
+        if "|" in left or "--input" in line or "--rawfile" in line:
+            continue
+        hits.append(f"{path.name}:{i}:{line.strip()}")
+print("\n".join(hits))
+PYAUDIT
+)"
+if [ -n "$argv_hits" ]; then
+  echo "FAIL: production argv audit found PR-text-on-argv call sites:"
+  printf '%s\n' "$argv_hits"
+  FAIL_COUNT=$((FAIL_COUNT + 1))
+else
+  echo "PASS: production_pr_text_argv_audit_clean"
+  PASS_COUNT=$((PASS_COUNT + 1))
+fi
+
+echo ""
+echo "=== graduation closeout: >130KiB multibyte body via production stdin path (#2016) ==="
+huge_body_file="$TMP_ROOT/huge-multibyte-body.txt"
+python3 -c 'import sys; sys.stdout.write("Closes #326\n" + ("あ" * 50000))' >"$huge_body_file"
+run_test "huge_body_over_130kib" "1" "$(python3 -c 'import pathlib,sys; print(1 if pathlib.Path(sys.argv[1]).stat().st_size > 131072 else 0)' "$huge_body_file")"
+argv_guard="$TMP_ROOT/argv-guard"
+cat > "$argv_guard" <<'GUARD'
+#!/usr/bin/env bash
+python3 - "$@" <<'PY'
+import sys
+limit = 131072
+for i, a in enumerate(sys.argv[1:], 1):
+    n = len(a.encode("utf-8"))
+    if n > limit:
+        sys.stderr.write(f"argv-guard: arg {i} is {n} bytes (> {limit})\n")
+        sys.exit(99)
+sys.exit(0)
+PY
+GUARD
+chmod +x "$argv_guard"
+guard_status="$(python3 - "$argv_guard" "$huge_body_file" <<'PY'
+import os, subprocess, sys
+guard, path = sys.argv[1], sys.argv[2]
+body = open(path, encoding="utf-8").read()
+try:
+    r = subprocess.run([guard, body], capture_output=True)
+    print(r.returncode)
+except OSError as e:
+    import errno
+    print(99 if getattr(e, "errno", None) == errno.E2BIG else 1)
+PY
+)"
+run_test "argv_guard_rejects_huge_argv" "99" "$guard_status"
+set +e
+graduation_closeout_raw_has_closing_keyword_candidate <"$huge_body_file"
+huge_pre_st=$?
+set -e
+run_test "huge_stdin_prefilter_ok" "0" "$huge_pre_st"
+for provider in github_projects github_issues; do
+  reset_fixture
+  write_tracker_config "$provider"
+  export MOCK_NATIVE_MODE=empty
+  export MOCK_PR_MODE=huge_body_file
+  export MOCK_HUGE_BODY_FILE="$huge_body_file"
+  write_issue 326 "Live closing keyword" OPEN
+  write_issue 900 "Parent epic" OPEN
+  set_status 326 "In Development"
+  set_status 900 "In Development"
+  result="$(run_closeout)"
+  body="$(last_output_body "$result")"
+  run_test "${provider}_huge_stdin_exit_zero" "0" "$(last_output_status "$result")"
+  run_contains "${provider}_huge_stdin_pass" "GRADUATION_CLOSEOUT_RESULT=pass" "$body"
+  run_test "${provider}_huge_stdin_issue_closed" "CLOSED" "$(python3 -c 'import json; print(json.load(open("'"$MOCK_STATE_DIR"'/326.json"))["state"])')"
+done
+unset MOCK_HUGE_BODY_FILE
 
 echo ""
 echo "=== graduation closeout: planted violation — raw fenced text would keep #326 (#2016) ==="

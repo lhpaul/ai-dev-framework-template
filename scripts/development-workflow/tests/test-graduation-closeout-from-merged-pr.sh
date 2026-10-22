@@ -235,9 +235,18 @@ write_pr() {
   local merged="$4"
   local title="$5"
   local body="$6"
-  python3 - "$MOCK_STATE_DIR/pr-${number}.json" "$number" "$head" "$base" "$merged" "$title" "$body" <<'PY'
+  # Title/body can exceed Linux MAX_ARG_STRLEN (~128KiB) for multibyte UTF-8.
+  # Never pass them as python3 argv — use temp files.
+  local title_file body_file
+  title_file="$(mktemp "$TMP_ROOT/pr-title.XXXXXX")"
+  body_file="$(mktemp "$TMP_ROOT/pr-body.XXXXXX")"
+  printf '%s' "$title" > "$title_file"
+  printf '%s' "$body" > "$body_file"
+  python3 - "$MOCK_STATE_DIR/pr-${number}.json" "$number" "$head" "$base" "$merged" "$title_file" "$body_file" <<'PY'
 import json, sys
-path, number, head, base, merged, title, body = sys.argv[1:8]
+path, number, head, base, merged, title_path, body_path = sys.argv[1:8]
+title = open(title_path, encoding="utf-8").read()
+body = open(body_path, encoding="utf-8").read()
 payload = {
     "number": int(number),
     "state": "MERGED" if merged == "true" else "OPEN",
@@ -250,6 +259,40 @@ payload = {
 }
 json.dump(payload, open(path, "w"))
 PY
+  rm -f "$title_file" "$body_file"
+}
+
+# write_pr_from_body_file <number> <head> <base> <merged> <title> <body_file>
+# Prefer this when the body is large (avoids expanding a huge string into argv
+# of intermediate helpers). Title stays short.
+write_pr_from_body_file() {
+  local number="$1"
+  local head="$2"
+  local base="$3"
+  local merged="$4"
+  local title="$5"
+  local body_file="$6"
+  local title_file
+  title_file="$(mktemp "$TMP_ROOT/pr-title.XXXXXX")"
+  printf '%s' "$title" > "$title_file"
+  python3 - "$MOCK_STATE_DIR/pr-${number}.json" "$number" "$head" "$base" "$merged" "$title_file" "$body_file" <<'PY'
+import json, sys
+path, number, head, base, merged, title_path, body_path = sys.argv[1:8]
+title = open(title_path, encoding="utf-8").read()
+body = open(body_path, encoding="utf-8").read()
+payload = {
+    "number": int(number),
+    "state": "MERGED" if merged == "true" else "OPEN",
+    "mergedAt": "2026-07-21T12:00:00Z" if merged == "true" else None,
+    "merged": merged == "true",
+    "baseRefName": base,
+    "headRefName": head,
+    "title": title,
+    "body": body,
+}
+json.dump(payload, open(path, "w"))
+PY
+  rm -f "$title_file"
 }
 
 write_tracker_config() {
@@ -585,12 +628,15 @@ assert_wrapper_gfm_epic_fail() {
 
 echo ""
 echo "=== wrapper: long Unicode body after prose keyword (#2016 Pass 1) ==="
-long_unicode_body="$(python3 -c 'import sys; sys.stdout.write("Epic #900\nCloses #123" + ("あ" * 60000))')"
+# Write via stdout→file (never argv). ~180KiB UTF-8 exceeds Linux MAX_ARG_STRLEN.
+long_unicode_file="$TMP_ROOT/long-unicode-prefilter.txt"
+python3 -c 'import sys; sys.stdout.write("Epic #900\nCloses #123" + ("あ" * 60000))' >"$long_unicode_file"
 set +e
-printf '%s' "$long_unicode_body" | graduation_closeout_raw_has_closing_keyword_candidate
+graduation_closeout_raw_has_closing_keyword_candidate <"$long_unicode_file"
 prefilter_status=$?
 set -e
 run_test "wrap_long_unicode_prefilter_exit_zero" "0" "$prefilter_status"
+run_test "wrap_long_unicode_prefilter_file_over_128kib" "1" "$(python3 -c 'import pathlib,sys; print(1 if pathlib.Path(sys.argv[1]).stat().st_size > 131072 else 0)' "$long_unicode_file")"
 
 echo ""
 echo "=== wrapper: render_gfm preserves caller \$- (#2016 Pass 1) ==="
@@ -632,18 +678,115 @@ assert_wrap_render_gfm_preserves_shell_opts errexit_off 0
 
 echo ""
 echo "=== wrapper: long Unicode prose still discovers epic (#2016 Pass 1) ==="
+long_epic_body_file="$TMP_ROOT/long-unicode-epic-body.txt"
+python3 -c 'import sys; sys.stdout.write("Epic #900\n" + ("あ" * 60000))' >"$long_epic_body_file"
+run_test "wrap_long_epic_body_file_over_128kib" "1" "$(python3 -c 'import pathlib,sys; print(1 if pathlib.Path(sys.argv[1]).stat().st_size > 131072 else 0)' "$long_epic_body_file")"
 for provider in github_projects github_issues; do
   reset_fixture
   write_tracker_config "$provider"
   export MOCK_LABEL_PARENT_MODE=empty
-  long_body="$(python3 -c 'import sys; sys.stdout.write("Epic #900\n" + ("あ" * 60000))')"
-  write_pr 119 "develop-test-2016" "develop" "true" "Graduate wave" "$long_body"
+  write_pr_from_body_file 119 "develop-test-2016" "develop" "true" "Graduate wave" "$long_epic_body_file"
   result="$(run_wrapper --graduation-pr 119)"
   body="$(last_body "$result")"
   run_test "${provider}_wrap_long_unicode_exit_zero" "0" "$(last_status "$result")"
   run_contains "${provider}_wrap_long_unicode_epic" "EPIC_ISSUE=900" "$body"
   run_contains "${provider}_wrap_long_unicode_child" "--epic 900" "$(cat "$CHILD_ARGV_LOG")"
 done
+
+
+echo ""
+echo "=== wrapper: production PR text never passed as external argv (#2016) ==="
+# Static audit: flag python3/jq/gh lines that place large PR-text shell vars on argv
+# (not via stdin pipe / --input / --rawfile). Short ids like $issue / $context are OK.
+argv_hits="$(python3 - "$REPO_ROOT" <<'PYAUDIT'
+import pathlib, re, sys
+root = pathlib.Path(sys.argv[1])
+files = [
+    root / "scripts/development-workflow/graduation-closeout.sh",
+    root / "scripts/development-workflow/graduation-closeout-from-merged-pr.sh",
+    root / "scripts/development-workflow/graduation-closeout-lib.sh",
+]
+var = r"\$\{?(?:body|title|text|raw|payload|title_raw|body_raw|title_enc|body_enc|visible|html)\}?"
+hits = []
+for path in files:
+    for i, line in enumerate(path.read_text().splitlines(), 1):
+        s = line.lstrip()
+        if not s or s.startswith("#"):
+            continue
+        if not re.search(r"\b(python3|jq|gh)\b", line):
+            continue
+        if not re.search(var, line):
+            continue
+        left = line
+        for cmd in ("python3", "jq", "gh"):
+            if cmd in line:
+                left = line.split(cmd)[0]
+                break
+        if "|" in left or "--input" in line or "--rawfile" in line:
+            continue
+        hits.append(f"{path.name}:{i}:{line.strip()}")
+print("\n".join(hits))
+PYAUDIT
+)"
+if [ -n "$argv_hits" ]; then
+  echo "FAIL: production argv audit found PR-text-on-argv call sites:"
+  printf '%s\n' "$argv_hits"
+  FAIL_COUNT=$((FAIL_COUNT + 1))
+else
+  echo "PASS: wrap_production_pr_text_argv_audit_clean"
+  PASS_COUNT=$((PASS_COUNT + 1))
+fi
+
+echo ""
+echo "=== wrapper: >130KiB multibyte body via production stdin path (#2016) ==="
+huge_body_file="$TMP_ROOT/huge-multibyte-body.txt"
+python3 -c 'import sys; sys.stdout.write("Closes #326\n" + ("あ" * 50000))' >"$huge_body_file"
+run_test "wrap_huge_body_over_130kib" "1" "$(python3 -c 'import pathlib,sys; print(1 if pathlib.Path(sys.argv[1]).stat().st_size > 131072 else 0)' "$huge_body_file")"
+argv_guard="$TMP_ROOT/argv-guard"
+cat > "$argv_guard" <<'GUARD'
+#!/usr/bin/env bash
+python3 - "$@" <<'PY'
+import sys
+limit = 131072
+for i, a in enumerate(sys.argv[1:], 1):
+    n = len(a.encode("utf-8"))
+    if n > limit:
+        sys.stderr.write(f"argv-guard: arg {i} is {n} bytes (> {limit})\n")
+        sys.exit(99)
+sys.exit(0)
+PY
+GUARD
+chmod +x "$argv_guard"
+# Invoke via Python so the shell never builds a >128KiB argv word (Linux E2BIG).
+guard_status="$(python3 - "$argv_guard" "$huge_body_file" <<'PY'
+import errno, subprocess, sys
+guard, path = sys.argv[1], sys.argv[2]
+body = open(path, encoding="utf-8").read()
+try:
+    r = subprocess.run([guard, body], capture_output=True)
+    print(r.returncode)
+except OSError as e:
+    print(99 if getattr(e, "errno", None) == errno.E2BIG else 1)
+PY
+)"
+run_test "wrap_argv_guard_rejects_huge_argv" "99" "$guard_status"
+for provider in github_projects github_issues; do
+  reset_fixture
+  write_tracker_config "$provider"
+  export MOCK_LABEL_PARENT_MODE=empty
+  write_pr_from_body_file 120 "develop-test-2016" "develop" "true" "Graduate wave" "$huge_body_file"
+  result="$(run_wrapper --graduation-pr 120)"
+  body="$(last_body "$result")"
+  run_test "${provider}_wrap_huge_stdin_exit_zero" "0" "$(last_status "$result")"
+  run_contains "${provider}_wrap_huge_stdin_epic" "EPIC_ISSUE=326" "$body"
+done
+set +e
+graduation_closeout_raw_has_closing_keyword_candidate <"$huge_body_file"
+huge_pre_st=$?
+set -e
+run_test "wrap_huge_stdin_prefilter_ok" "0" "$huge_pre_st"
+huge_refs="$(graduation_closeout_github_live_refs_from_markdown lhpaul/ai-dev-framework-template <"$huge_body_file" | head -n1 || true)"
+run_test "wrap_huge_stdin_live_refs_326" "326" "$huge_refs"
 
 echo ""
 echo "=== wrapper: planted violation — raw fenced text would keep #326 (#2016) ==="
