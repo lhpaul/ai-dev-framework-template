@@ -275,6 +275,11 @@ Closes #49')"
 check "four_space_indent_is_indented_code" "50" \
   "$(refs_of '    ```
 Closes #50')"
+# A keyword on an indented-code line itself is not live (#2016).
+check "indented_code_line_keyword_not_reported" "" \
+  "$(refs_of '    Closes #53')"
+check "tab_indented_code_line_keyword_not_reported" "" \
+  "$(refs_of "$(printf '\tCloses #54')")"
 check "multiline_inline_span_within_paragraph" "" \
   "$(refs_of 'open `span
 Closes #51` close')"

@@ -173,7 +173,7 @@ JSON
     esac
     ;;
   "pr list --state merged --base develop-test --limit 1000 --json number,title,body")
-    # GitHub Projects / GitHub Issues keyword-scan path (unchanged).
+    # GitHub Projects / GitHub Issues keyword-scan path (fence/indent-aware).
     case "${MOCK_PR_MODE:-single_ref}" in
       fail)
         printf 'mock pr list failure\n' >&2
@@ -191,6 +191,31 @@ JSON
         # Body-only example that would falsely authorize #326 if scanned raw.
         cat <<'JSON'
 [{"number":11,"title":"Graduate wave","body":"See example:\n```\nCloses #326\n```\nNo live closing keywords."}]
+JSON
+        ;;
+      tilde_fenced_example)
+        cat <<'JSON'
+[{"number":11,"title":"Graduate wave","body":"See example:\n~~~\nCloses #326\n~~~\nNo live closing keywords."}]
+JSON
+        ;;
+      unclosed_fenced_example)
+        cat <<'JSON'
+[{"number":11,"title":"Graduate wave","body":"See example:\n```text\nCloses #326\n"}]
+JSON
+        ;;
+      indented_code_example)
+        cat <<'JSON'
+[{"number":11,"title":"Graduate wave","body":"See example:\n    Closes #326\nNo live closing keywords."}]
+JSON
+        ;;
+      foreign_repo_text)
+        cat <<'JSON'
+[{"number":11,"title":"Graduate wave","body":"Closes other/repo#326\nNo local closing keywords."}]
+JSON
+        ;;
+      plain_closes_326)
+        cat <<'JSON'
+[{"number":11,"title":"Deliver item","body":"Closes #326"}]
 JSON
         ;;
       *)
@@ -1034,6 +1059,90 @@ run_contains "uncommented_linear_lea_deferred" "TRACKER_ACTION_REQUIRED=set_stat
 run_test "uncommented_linear_lea_326_untouched" "OPEN" "$(python3 -c 'import json; print(json.load(open("'"$MOCK_STATE_DIR"'/326.json"))["state"])')"
 run_test "uncommented_linear_lea_no_close_log" "" "$(cat "$MOCK_CLOSE_LOG")"
 run_not_contains "uncommented_linear_lea_no_mutation" "issue close" "$(cat "$MOCK_GH_LOG")"
+
+# ---------------------------------------------------------------------------
+# #2016 — GitHub providers ignore example-only closing keywords
+# ---------------------------------------------------------------------------
+
+assert_github_example_326_untouched() {
+  local provider="$1"
+  local mode="$2"
+  local label="$3"
+  reset_fixture
+  write_tracker_config "$provider"
+  export MOCK_NATIVE_MODE=children
+  export MOCK_PR_MODE="$mode"
+  write_issue 101 "Open child" OPEN
+  write_issue 102 "Closed nonterminal" CLOSED
+  write_issue 103 "Closed terminal" CLOSED
+  write_issue 104 "Optional child" OPEN optional
+  write_issue 326 "Example-only issue" OPEN
+  write_issue 900 "Parent epic" OPEN
+  set_status 101 "In Development"
+  set_status 102 "Development in Review"
+  set_status 103 "Merged"
+  set_status 104 "In Development"
+  set_status 326 "In Development"
+  set_status 900 "In Development"
+  local result body
+  result="$(run_closeout)"
+  body="$(last_output_body "$result")"
+  run_test "${label}_exit_zero" "0" "$(last_output_status "$result")"
+  run_contains "${label}_pass" "GRADUATION_CLOSEOUT_RESULT=pass" "$body"
+  run_contains "${label}_provider" "TRACKER_PROVIDER=${provider}" "$body"
+  run_test "${label}_child_closed" "CLOSED" "$(python3 -c 'import json; print(json.load(open("'"$MOCK_STATE_DIR"'/101.json"))["state"])')"
+  run_test "${label}_326_untouched" "OPEN" "$(python3 -c 'import json; print(json.load(open("'"$MOCK_STATE_DIR"'/326.json"))["state"])')"
+  run_not_contains "${label}_no_close_326" "issue close 326" "$(cat "$MOCK_GH_LOG")"
+  run_not_contains "${label}_no_edit_326" "issue edit 326" "$(cat "$MOCK_GH_LOG")"
+  run_not_contains "${label}_no_close_log_326" $'326\t' "$(cat "$MOCK_CLOSE_LOG")"
+}
+
+assert_github_plain_326_closed() {
+  local provider="$1"
+  local label="$2"
+  reset_fixture
+  write_tracker_config "$provider"
+  export MOCK_NATIVE_MODE=empty
+  export MOCK_PR_MODE=plain_closes_326
+  write_issue 326 "Live closing keyword" OPEN
+  write_issue 900 "Parent epic" OPEN
+  set_status 326 "In Development"
+  set_status 900 "In Development"
+  local result body
+  result="$(run_closeout)"
+  body="$(last_output_body "$result")"
+  run_test "${label}_exit_zero" "0" "$(last_output_status "$result")"
+  run_contains "${label}_pass" "GRADUATION_CLOSEOUT_RESULT=pass" "$body"
+  run_contains "${label}_provider" "TRACKER_PROVIDER=${provider}" "$body"
+  run_test "${label}_326_closed" "CLOSED" "$(python3 -c 'import json; print(json.load(open("'"$MOCK_STATE_DIR"'/326.json"))["state"])')"
+  run_contains "${label}_close_log_326" "326" "$(cat "$MOCK_CLOSE_LOG")"
+}
+
+for provider in github_projects github_issues; do
+  echo ""
+  echo "=== graduation closeout: ${provider} ignores fenced example Closes #326 (#2016) ==="
+  assert_github_example_326_untouched "$provider" fenced_example "${provider}_fenced"
+
+  echo ""
+  echo "=== graduation closeout: ${provider} ignores tilde-fenced Closes #326 (#2016) ==="
+  assert_github_example_326_untouched "$provider" tilde_fenced_example "${provider}_tilde"
+
+  echo ""
+  echo "=== graduation closeout: ${provider} ignores unclosed-fence Closes #326 (#2016) ==="
+  assert_github_example_326_untouched "$provider" unclosed_fenced_example "${provider}_unclosed"
+
+  echo ""
+  echo "=== graduation closeout: ${provider} ignores indented-code Closes #326 (#2016) ==="
+  assert_github_example_326_untouched "$provider" indented_code_example "${provider}_indented"
+
+  echo ""
+  echo "=== graduation closeout: ${provider} ignores Closes other/repo#326 (#2016) ==="
+  assert_github_example_326_untouched "$provider" foreign_repo_text "${provider}_foreign_text"
+
+  echo ""
+  echo "=== graduation closeout: ${provider} still closes plain-prose Closes #326 (#2016) ==="
+  assert_github_plain_326_closed "$provider" "${provider}_plain"
+done
 
 echo ""
 echo "Graduation closeout tests: $PASS_COUNT passed, $FAIL_COUNT failed."

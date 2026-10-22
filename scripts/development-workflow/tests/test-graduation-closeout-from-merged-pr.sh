@@ -489,6 +489,88 @@ run_contains "gh_proj_wrapper_epic" "EPIC_ISSUE=900" "$body"
 run_contains "gh_proj_wrapper_provider" "TRACKER_PROVIDER=github_projects" "$body"
 run_contains "gh_proj_child_epic" "--epic 900" "$(cat "$CHILD_ARGV_LOG")"
 
+# ---------------------------------------------------------------------------
+# #2016 — GitHub providers ignore example-only closing keywords in epic discovery
+# ---------------------------------------------------------------------------
+
+assert_wrapper_github_example_ignored() {
+  local provider="$1"
+  local body_text="$2"
+  local label="$3"
+  reset_fixture
+  write_tracker_config "$provider"
+  export MOCK_LABEL_PARENT_MODE=empty
+  write_pr 110 "develop-test-2016" "develop" "true" "Graduate" "$body_text"
+  local result body
+  result="$(run_wrapper --graduation-pr 110)"
+  body="$(last_body "$result")"
+  run_test "${label}_exit_zero" "0" "$(last_status "$result")"
+  run_contains "${label}_epic" "EPIC_ISSUE=900" "$body"
+  run_contains "${label}_provider" "TRACKER_PROVIDER=${provider}" "$body"
+  run_contains "${label}_child_epic" "--epic 900" "$(cat "$CHILD_ARGV_LOG")"
+  run_not_contains "${label}_no_epic_326" "--epic 326" "$(cat "$CHILD_ARGV_LOG")"
+}
+
+assert_wrapper_github_example_only_fails() {
+  local provider="$1"
+  local body_text="$2"
+  local label="$3"
+  reset_fixture
+  write_tracker_config "$provider"
+  export MOCK_LABEL_PARENT_MODE=empty
+  write_pr 111 "develop-test-2016" "develop" "true" "Graduate" "$body_text"
+  local result body
+  result="$(run_wrapper --graduation-pr 111)"
+  body="$(last_body "$result")"
+  run_test "${label}_exit_one" "1" "$(last_status "$result")"
+  run_contains "${label}_reason" "epic_discovery_failed" "$body"
+  run_test "${label}_no_child" "missing" "$( [ -f "$CHILD_ARGV_LOG" ] && echo present || echo missing )"
+}
+
+for provider in github_projects github_issues; do
+  echo ""
+  echo "=== wrapper: ${provider} ignores fenced Closes #326 beside Epic #900 (#2016) ==="
+  assert_wrapper_github_example_ignored "$provider" \
+    $'Epic #900\n```\nCloses #326\n```' \
+    "${provider}_wrap_fenced"
+
+  echo ""
+  echo "=== wrapper: ${provider} ignores tilde-fenced Closes #326 (#2016) ==="
+  assert_wrapper_github_example_ignored "$provider" \
+    $'Epic #900\n~~~\nCloses #326\n~~~' \
+    "${provider}_wrap_tilde"
+
+  echo ""
+  echo "=== wrapper: ${provider} ignores unclosed-fence Closes #326 (#2016) ==="
+  assert_wrapper_github_example_ignored "$provider" \
+    $'Epic #900\n```text\nCloses #326\n' \
+    "${provider}_wrap_unclosed"
+
+  echo ""
+  echo "=== wrapper: ${provider} ignores indented-code Closes #326 (#2016) ==="
+  assert_wrapper_github_example_ignored "$provider" \
+    $'Epic #900\n    Closes #326\n' \
+    "${provider}_wrap_indented"
+
+  echo ""
+  echo "=== wrapper: ${provider} ignores Closes other/repo#326 (#2016) ==="
+  assert_wrapper_github_example_only_fails "$provider" \
+    'Closes other/repo#326' \
+    "${provider}_wrap_foreign"
+
+  echo ""
+  echo "=== wrapper: ${provider} still selects plain-prose Closes #326 as epic (#2016) ==="
+  reset_fixture
+  write_tracker_config "$provider"
+  export MOCK_LABEL_PARENT_MODE=empty
+  write_pr 112 "develop-test-2016" "develop" "true" "Graduate" "Closes #326"
+  result="$(run_wrapper --graduation-pr 112)"
+  body="$(last_body "$result")"
+  run_test "${provider}_wrap_plain_exit_zero" "0" "$(last_status "$result")"
+  run_contains "${provider}_wrap_plain_epic" "EPIC_ISSUE=326" "$body"
+  run_contains "${provider}_wrap_plain_child" "--epic 326" "$(cat "$CHILD_ARGV_LOG")"
+done
+
 echo ""
 echo "Graduation closeout-from-merged-pr tests: $PASS_COUNT passed, $FAIL_COUNT failed."
 if [ "$FAIL_COUNT" -gt 0 ]; then
