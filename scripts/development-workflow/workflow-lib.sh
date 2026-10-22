@@ -111,7 +111,7 @@ workflow_local_config_file() {
   else
     root="$(workflow_local_config_root 2>/dev/null)" || return 2
   fi
-  python3 "$(workflow_config_resolver_script 2>/dev/null)" local-source --repo-root "$root"
+  workflow_command_with_safe_stderr python3 "$(workflow_config_resolver_script 2>/dev/null)" local-source --repo-root "$root"
 }
 
 workflow_local_review_override_root() {
@@ -386,11 +386,11 @@ workflow_product_repo_name_for_github_slug() {
     return 1
   fi
   workflow_local_config_file "$root" >/dev/null || return 2
-  mode_json="$(python3 "$(workflow_config_resolver_script 2>/dev/null)" mode --repo-root "$root" --json)" || return 2
+  mode_json="$(workflow_command_with_safe_stderr python3 "$(workflow_config_resolver_script 2>/dev/null)" mode --repo-root "$root" --json)" || return 2
   mode="$(printf '%s\n' "$mode_json" | jq -r '.WORKFLOW_MODE // ""')" || return 2
   [ "$mode" = workflow_hub ] || return 1
 
-  names="$(python3 "$(workflow_config_resolver_script 2>/dev/null)" list-product-repos --repo-root "$root")" || return 2
+  names="$(workflow_command_with_safe_stderr python3 "$(workflow_config_resolver_script 2>/dev/null)" list-product-repos --repo-root "$root")" || return 2
   while IFS= read -r name; do
     [ -n "$name" ] || continue
     context="$(workflow_repository_context "$name" "$root")" || return 2
@@ -411,7 +411,7 @@ workflow_hub_root_for_ci_policy() {
   local mode_json mode
   [ -n "$root" ] || return 1
   workflow_local_config_file "$root" >/dev/null || return 2
-  mode_json="$(python3 "$(workflow_config_resolver_script 2>/dev/null)" mode --repo-root "$root" --json)" || return 2
+  mode_json="$(workflow_command_with_safe_stderr python3 "$(workflow_config_resolver_script 2>/dev/null)" mode --repo-root "$root" --json)" || return 2
   mode="$(printf '%s\n' "$mode_json" | jq -r '.WORKFLOW_MODE // ""')" || return 2
   [ "$mode" = workflow_hub ] || return 1
   printf '%s\n' "$root"
@@ -454,7 +454,7 @@ workflow_merge_ci_policy_into_json() {
 
   # CI policy belongs to the selected checkout. Do not discover a hub via
   # siblings or inherited locators, then re-root later context/private reads.
-  mode_json="$(python3 "$(workflow_config_resolver_script 2>/dev/null)" mode --repo-root "$root" --json)" || return 2
+  mode_json="$(workflow_command_with_safe_stderr python3 "$(workflow_config_resolver_script 2>/dev/null)" mode --repo-root "$root" --json)" || return 2
   mode="$(printf '%s\n' "$mode_json" | jq -r '.WORKFLOW_MODE // ""')" || return 2
   if [ "$mode" = workflow_hub ] && [ -z "$repo_name" ] && [ -n "$github_slug" ]; then
     repo_name="$(workflow_product_repo_name_for_github_slug "$root" "$github_slug")" || {
@@ -1164,7 +1164,7 @@ workflow_config_review_local_list_if_declared() {
   local config_file="$1" phase="$2" key="$3" status=0 review_root
   workflow_is_default_config_file "$config_file" || return 1
   review_root="$(workflow_local_config_root 2>/dev/null)" || return 2
-  python3 "$(workflow_config_resolver_script 2>/dev/null)" review-local-list \
+  workflow_command_with_safe_stderr python3 "$(workflow_config_resolver_script 2>/dev/null)" review-local-list \
     --repo-root "$review_root" --phase "$phase" --key "$key" || status=$?
   return "$status"
 }
@@ -1178,7 +1178,7 @@ workflow_config_review_list() {
   if workflow_is_default_config_file "$config_file" 2>/dev/null; then
     args+=(--apply-local)
   fi
-  python3 "$(workflow_config_resolver_script 2>/dev/null)" ${args[@]+"${args[@]}"}
+  workflow_command_with_safe_stderr python3 "$(workflow_config_resolver_script 2>/dev/null)" ${args[@]+"${args[@]}"}
 }
 
 workflow_config_review_on_draft_runner() {

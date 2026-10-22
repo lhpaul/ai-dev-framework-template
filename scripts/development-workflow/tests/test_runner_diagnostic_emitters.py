@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Binding D01-D71: synthetic paired-channel runtime/publication diagnostics."""
+"""Binding D01-D72: synthetic paired-channel runtime/publication diagnostics."""
 from __future__ import annotations
 
 import importlib.util
@@ -1562,11 +1562,11 @@ printf 'PROBE=%s\\n' "$settle_review_probe"
                         with self.subTest(route='U' + str(route), shell=shell, fail=fail):
                             args = self.f.root / 'resolver-argv'
                             resolver = self.f.runtime / 'workflow-config-resolver.py'
-                            body = 'set -euo pipefail\n'
+                            body = 'set -euo pipefail\nsource ' + shlex.quote(str(self.f.runtime / 'workflow-lib.sh')) + '\n'
                             body += 'root=' + shlex.quote(str(self.f.checkout)) + '; repo_root="$root"; initiating_root="$root"; config_file="$root/.ai-dev-workflow.yaml"; policy_root="$root"; review_root="$root"; phase=on_draft; key=runner; status=0; args=(review-list --repo-root "$root" --phase on_draft --key runner)\n'
                             body += 'workflow_effective_config_file() { printf "%s\\n" "$config_file"; }; workflow_local_config_root() { printf "%s\\n" "$root"; };\n'
                             body += 'workflow_config_resolver_script() { printf "token=' + self.secret + '\\n" >&2; printf "%s\\n" ' + shlex.quote(str(resolver)) + '; };\n'
-                            body += 'python3() { printf "%s\\0" "$@" >' + shlex.quote(str(args)) + '; '
+                            body += 'python3() { if [ "${2:-}" = redact-text ]; then command python3 "$@"; return $?; fi; printf "%s\\0" "$@" >' + shlex.quote(str(args)) + '; '
                             body += ('printf "configuration: invalid YAML; line=1; column=1\\n" >&2; return 17;' if fail else 'printf "FUNCTIONAL=ok\\n";') + ' };\n'
                             body += 'actual_boundary() {\n' + statement + '\n'
                             if statement.startswith('configured_repos='): body += 'printf "%s\\n" "$configured_repos"\n'
@@ -1579,6 +1579,20 @@ printf 'PROBE=%s\\n' "$settle_review_probe"
                             captured = args.read_bytes().split(b'\0')
                             self.assertEqual(captured[0], str(resolver).encode())
                             self.assertEqual(captured[-1], b'')
+                            expected_tail = {
+                                43: ['coderabbit-policy', '--file', str(self.f.private)],
+                                44: ['coderabbit-policy', '--repo-root', str(self.f.checkout), '--shared-file', str(self.f.checkout / '.ai-dev-workflow.yaml')],
+                                45: ['list-product-repos', '--repo-root', str(self.f.checkout)],
+                                46: ['local-source', '--repo-root', str(self.f.checkout)],
+                                47: ['local-source', '--repo-root', str(self.f.checkout)],
+                                48: ['mode', '--repo-root', str(self.f.checkout), '--json'],
+                                49: ['list-product-repos', '--repo-root', str(self.f.checkout)],
+                                50: ['mode', '--repo-root', str(self.f.checkout), '--json'],
+                                51: ['mode', '--repo-root', str(self.f.checkout), '--json'],
+                                52: ['review-local-list', '--repo-root', str(self.f.checkout), '--phase', 'on_draft', '--key', 'runner'],
+                                53: ['review-list', '--repo-root', str(self.f.checkout), '--phase', 'on_draft', '--key', 'runner'],
+                            }[route]
+                            self.assertEqual(captured[:-1], [str(resolver).encode(), *[arg.encode() for arg in expected_tail]])
                             self.assertEqual(captured.count(str(self.f.checkout).encode()), 0 if '--file' in statement else 1)
                             self.assertEqual(result.stdout, '' if fail else 'FUNCTIONAL=ok\n')
                             self.assertEqual(result.stderr, 'configuration: invalid YAML; line=1; column=1\n' if fail else '')
@@ -1733,6 +1747,62 @@ printf 'PROBE=%s\\n' "$settle_review_probe"
                     self.assertEqual(trace.exists(), failure == 'success')
                     self.assertEqual(result.stdout, str(self.f.checkout) + '\n' if failure == 'success' else '')
                     self.assertEqual(result.stderr, '' if failure == 'success' else 'ERROR: local-source unreadable directory\n')
+
+    def test_D72_real_python_launcher_boundaries_missing_unreadable_and_success(self):
+        # The real interpreter may fail BEFORE the resolver can sanitize stderr.
+        # These are the actual eleven U43-U53 statements, with original guards.
+        groups = {'coderabbit-cli-reviewer.sh': ['rate_limit_policy_from_file', 'rate_limit_policy_from_config'],
+                  'discover-workflow-state.sh': None,
+                  'pr-review-loop.sh': ['resolve_local_review_override_root'],
+                  'workflow-lib.sh': ['workflow_local_config_file', 'workflow_product_repo_name_for_github_slug',
+                                      'workflow_hub_root_for_ci_policy', 'workflow_merge_ci_policy_into_json',
+                                      'workflow_config_review_local_list_if_declared', 'workflow_config_review_list']}
+        locator_dir = self.f.root / ('token=' + self.secret); locator_dir.mkdir()
+        missing = locator_dir / 'missing-resolver.py'
+        unreadable = locator_dir / 'unreadable-resolver.py'
+        unreadable.write_text('print("UNEXPECTED_READ")\n'); unreadable.chmod(0)
+        self.addCleanup(unreadable.chmod, 0o600)
+        self.assertFalse(os.access(unreadable, os.R_OK), 'synthetic unreadable fixture must genuinely deny reads')
+        initialize = 'root=' + shlex.quote(str(self.f.checkout)) + '; repo_root="$root"; initiating_root="$root"; config_file="$root/.ai-dev-workflow.yaml"; policy_root="$root"; review_root="$root"; phase=on_draft; key=runner; status=0; args=(review-list --repo-root "$root" --shared-file "$config_file" --phase on_draft --key runner)\n'
+        route = 43
+        for name, functions in groups.items():
+            lines = ('\n'.join(fixtures.function_text(name, f) for f in functions).splitlines()
+                     if functions else (self.f.runtime / name).read_text().splitlines())
+            for start in [i for i, line in enumerate(lines) if '$(workflow_config_resolver_script' in line]:
+                end = start
+                while lines[end].rstrip().endswith('\\'): end += 1
+                if '|| status=$?' in lines[end]: end += 1
+                statement = '\n'.join(lines[start:end + 1]).strip()
+                for shell in self.compatible_shells():
+                    for mode, locator in [('missing', missing), ('unreadable', unreadable), ('success', Path('/dev/stdin'))]:
+                        with self.subTest(route='U' + str(route), shell=shell, mode=mode):
+                            body = 'set -euo pipefail\nsource ' + shlex.quote(str(self.f.runtime / 'workflow-lib.sh')) + '\n' + initialize
+                            body += 'workflow_config_resolver_script() { printf "%s\\n" ' + shlex.quote(str(locator)) + '; };\n'
+                            body += 'actual_boundary() {\n' + statement + '\n'
+                            for variable in ['configured_repos', 'selected_file', 'mode_json', 'names']:
+                                if statement.startswith(variable + '='): body += 'printf "%s\\n" "$' + variable + '"\n'
+                            body += '}\nactual_boundary ' + shlex.quote(str(self.f.private)) + '\n'
+                            result = self.safe(self.run_command([shell, '-c', body], input='print("SYNTHETIC_OK")\n'), 0 if mode == 'success' else 2)
+                            self.assertEqual(result.stdout, 'SYNTHETIC_OK\n' if mode == 'success' else '')
+                            self.assertEqual(result.stderr, '' if mode == 'success' else 'ERROR: diagnostic sanitization failed\n')
+                            self.assertNotIn(str(locator_dir), result.stdout + result.stderr)
+                route += 1
+        self.assertEqual(route, 54)
+        # Complete public APIs, not only extracted launch statements; no real
+        # config is reached when the interpreter cannot open the fake resolver.
+        for shell in self.compatible_shells():
+            for function, args in [('workflow_local_config_file', shlex.quote(str(self.f.checkout))),
+                                   ('workflow_config_review_local_list_if_declared', shlex.quote(str(self.f.shared)) + ' on_draft runner'),
+                                   ('workflow_config_review_list', shlex.quote(str(self.f.shared)) + ' on_draft runner')]:
+                for mode, locator in [('missing', missing), ('unreadable', unreadable), ('success', Path('/dev/stdin'))]:
+                    with self.subTest(public_api=function, shell=shell, mode=mode):
+                        body = 'set -euo pipefail\nsource ' + shlex.quote(str(self.f.runtime / 'workflow-lib.sh')) + '\n'
+                        body += 'workflow_local_config_root() { printf "%s\\n" ' + shlex.quote(str(self.f.checkout)) + '; };\nworkflow_is_default_config_file() { return 0; };\n'
+                        body += 'workflow_config_resolver_script() { printf "%s\\n" ' + shlex.quote(str(locator)) + '; };\n' + function + ' ' + args + '\n'
+                        result = self.safe(self.run_command([shell, '-c', body], input='print("SYNTHETIC_OK")\n'), 0 if mode == 'success' else 2)
+                        self.assertEqual(result.stdout, 'SYNTHETIC_OK\n' if mode == 'success' else '')
+                        self.assertEqual(result.stderr, '' if mode == 'success' else 'ERROR: diagnostic sanitization failed\n')
+                        self.assertNotIn(str(locator_dir), result.stdout + result.stderr)
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)
