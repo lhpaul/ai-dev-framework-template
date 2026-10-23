@@ -67,6 +67,7 @@ case "$*" in
     ;;
   *"pr diff 123"*"--name-only"*)
     if [ "${MOCK_PR_DIFF_EXIT:-0}" -ne 0 ]; then
+      printf 'HTTP 406: diff exceeds the maximum number of lines\n' >&2
       exit "$MOCK_PR_DIFF_EXIT"
     fi
     if [ -n "${MOCK_PR_DIFF_FILES:-}" ]; then
@@ -87,6 +88,9 @@ MOCK_GH
 install_local_reviewer_mock() {
   cat > "$MOCK_BIN/local-reviewer-mock" <<'MOCK_REVIEWER'
 #!/usr/bin/env bash
+if [ -n "${MOCK_CONTEXT_CAPTURE:-}" ]; then
+  cat "$CONTEXT_BUNDLE_PATH" > "$MOCK_CONTEXT_CAPTURE"
+fi
 if [ -n "${MOCK_LOCAL_REVIEWER_IGNORE_TERM:-}" ]; then
   trap '' TERM
 fi
@@ -123,7 +127,7 @@ reset_mocks() {
   unset LOCAL_AI_REVIEWER_COMMAND LOCAL_AI_REVIEWER_DISABLED LOCAL_AI_REVIEWER_TIMEOUT
   unset LOCAL_AI_REVIEWER_EVIDENCE_FILE LOCAL_AI_REVIEWER_GRAPH_STRATEGY
   unset LOCAL_AI_REVIEWER_DISABLE_DEFAULT LOCAL_AI_REVIEWER_BACKEND
-  unset MOCK_LOCAL_REVIEWER_IGNORE_TERM
+  unset MOCK_LOCAL_REVIEWER_IGNORE_TERM MOCK_CONTEXT_CAPTURE
   unset MOCK_STRICT_STDOUT MOCK_ORDINARY_STDOUT MOCK_STRICT_EXIT MOCK_ORDINARY_SLEEP
   unset MOCK_RECORD_FILE MOCK_ORDINARY_EXIT
 }
@@ -514,6 +518,68 @@ export LOCAL_AI_REVIEWER_COMMAND MOCK_PR_DIFF_EXIT MOCK_LOCAL_REVIEWER_STDOUT
 run_reviewer "$MOCK_BIN:$PATH"
 run_test "diff_unavailable_result" "RESULT=escalate" "$(line_for RESULT)"
 run_test "diff_unavailable_reason" "REASON=diff_unavailable" "$(line_for REASON)"
+
+# #2007: use an actual synthetic >20k-line diff when GitHub rejects it.
+reset_mocks
+LOCAL_AI_REVIEWER_COMMAND=local-reviewer-mock
+MOCK_PR_DIFF_EXIT=1
+MOCK_CONTEXT_CAPTURE="$EVIDENCE_FILE"
+set_mock_stdout '{"result":"clean","findings":[]}'
+git -C "$VALID_REPO_ROOT" update-ref refs/remotes/origin/develop HEAD
+python3 - "$VALID_REPO_ROOT" <<'PY_LARGE_DIFF'
+from pathlib import Path
+import sys
+root = Path(sys.argv[1])
+(root / "large diff.txt").write_text("synthetic line\n" * 21001)
+(root / "line\nbreak.txt").write_text("synthetic\n")
+PY_LARGE_DIFF
+git -C "$VALID_REPO_ROOT" add .
+git -C "$VALID_REPO_ROOT" commit -q -m "synthetic large diff"
+MOCK_PR_HEAD_SHA="$(git -C "$VALID_REPO_ROOT" rev-parse HEAD)"
+export LOCAL_AI_REVIEWER_COMMAND MOCK_PR_DIFF_EXIT MOCK_PR_HEAD_SHA MOCK_CONTEXT_CAPTURE MOCK_LOCAL_REVIEWER_STDOUT
+run_reviewer "$MOCK_BIN:$PATH" --repo-root "$VALID_REPO_ROOT"
+run_test "406_large_diff_result" "RESULT=clean" "$(line_for RESULT)"
+run_test "406_large_diff_exit" "0" "$(exit_code)"
+run_test "406_large_diff_context" 'true' "$(jq -r '.changed_files == ["large diff.txt", "line\nbreak.txt"]' "$EVIDENCE_FILE")"
+run_test "406_large_diff_diagnostic" "yes" "$(if grep -q 'using verified local git diff' "$STDERR_FILE"; then echo yes; else echo no; fi)"
+
+# A fallback still runs real review and preserves a blocking verdict.
+set_mock_stdout '{"result":"needs_fixes","findings":[{"severity":"blocking","path":"large diff.txt","line":1,"message":"synthetic defect","clear_in_scope":true}]}'
+export MOCK_LOCAL_REVIEWER_STDOUT
+run_reviewer "$MOCK_BIN:$PATH" --repo-root "$VALID_REPO_ROOT"
+run_test "406_blocking_review_result" "RESULT=needs_fixes" "$(line_for RESULT)"
+run_test "406_blocking_review_exit" "1" "$(exit_code)"
+set_mock_stdout '{"result":"clean","findings":[]}'
+export MOCK_LOCAL_REVIEWER_STDOUT
+
+# Validation must precede fallback; no backend runs for a mismatched checkout.
+: > "$EVIDENCE_FILE"
+MOCK_PR_HEAD_SHA=0000000000000000000000000000000000000000
+export MOCK_PR_HEAD_SHA
+run_reviewer "$MOCK_BIN:$PATH" --repo-root "$VALID_REPO_ROOT"
+run_test "406_head_mismatch_reason" "REASON=head_mismatch" "$(line_for REASON)"
+run_test "406_head_mismatch_no_review" "0" "$(wc -c < "$EVIDENCE_FILE" | tr -d ' ')"
+MOCK_PR_HEAD_SHA="$(git -C "$VALID_REPO_ROOT" rev-parse HEAD)"
+export MOCK_PR_HEAD_SHA
+git -C "$VALID_REPO_ROOT" remote set-url origin https://github.com/other/repository.git
+run_reviewer "$MOCK_BIN:$PATH" --repo-root "$VALID_REPO_ROOT"
+run_test "406_repo_mismatch_reason" "REASON=repo_root_mismatch" "$(line_for REASON)"
+run_test "406_repo_mismatch_no_review" "0" "$(wc -c < "$EVIDENCE_FILE" | tr -d ' ')"
+git -C "$VALID_REPO_ROOT" remote set-url origin git@github.com:owner/repo.git
+
+# A successful empty comparison is different from a failed comparison.
+git -C "$VALID_REPO_ROOT" update-ref refs/remotes/origin/develop HEAD
+run_reviewer "$MOCK_BIN:$PATH" --repo-root "$VALID_REPO_ROOT"
+run_test "406_empty_diff_result" "RESULT=clean" "$(line_for RESULT)"
+run_test "406_empty_diff_context" "[]" "$(jq -c '.changed_files' "$EVIDENCE_FILE")"
+: > "$EVIDENCE_FILE"
+
+# Missing local base cannot turn an unavailable diff into a clean verdict.
+git -C "$VALID_REPO_ROOT" update-ref -d refs/remotes/origin/develop
+run_reviewer "$MOCK_BIN:$PATH" --repo-root "$VALID_REPO_ROOT"
+run_test "406_missing_base_reason" "REASON=diff_unavailable" "$(line_for REASON)"
+run_test "406_missing_base_exit" "2" "$(exit_code)"
+run_test "406_missing_base_no_review" "0" "$(wc -c < "$EVIDENCE_FILE" | tr -d ' ')"
 
 reset_mocks
 LOCAL_AI_REVIEWER_COMMAND=local-reviewer-mock
