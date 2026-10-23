@@ -22,6 +22,8 @@ Options:
                        Defaults to LOCAL_AI_REVIEWER_TIMEOUT or 300.
   --repo-root <path>   Repository checkout to review. When supplied, HEAD must
                        match the pull request head SHA before review runs.
+                       Enables local git diff fallback when GitHub cannot
+                       return changed paths (for example HTTP 406).
 
 Exit codes:
   0  RESULT=clean
@@ -1147,12 +1149,6 @@ if [ -z "$HEAD_SHA" ]; then
   print_result escalate 0 0 0 head_sha_unavailable head_sha_unavailable
   exit 2
 fi
-if [ "$diff_fetch_failed" -ne 0 ]; then
-  workflow_diagnostic "ERROR: could not fetch pull request diff for #$PR_NUMBER" >&2
-  print_result escalate 0 0 0 diff_unavailable diff_unavailable
-  exit 2
-fi
-
 if [ -n "$REPO_ROOT" ]; then
   if ! REPO_ROOT="$( { CDPATH='' cd -- "$REPO_ROOT" && pwd -P; } 2>/dev/null)"; then
     workflow_diagnostic "ERROR: configuration validation error; key=--repo-root" >&2
@@ -1182,6 +1178,22 @@ if [ -n "$REPO_ROOT" ]; then
     exit 2
   fi
   cd "$REPO_ROOT"
+fi
+
+# GitHub rejects large diffs with HTTP 406, including --name-only requests.
+# Only use the caller's explicitly verified checkout: the origin and HEAD
+# checks above must succeed before local files can stand in for the PR diff.
+if [ "$diff_fetch_failed" -ne 0 ]; then
+  if [ -n "$REPO_ROOT" ] && changed_files_json="$(
+    git diff --name-only -z "origin/$BASE_BRANCH...HEAD" 2>/dev/null |
+      jq -R -s -c 'split("\u0000") | map(select(length > 0))'
+  )"; then
+    workflow_diagnostic "INFO: GitHub PR diff unavailable; using verified local git diff for #$PR_NUMBER" >&2
+  else
+    workflow_diagnostic "ERROR: could not obtain pull request diff for #$PR_NUMBER" >&2
+    print_result escalate 0 0 0 diff_unavailable diff_unavailable
+    exit 2
+  fi
 fi
 
 if git rev-parse --verify "origin/$BASE_BRANCH" >/dev/null 2>&1; then
