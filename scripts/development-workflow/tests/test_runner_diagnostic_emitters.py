@@ -1186,8 +1186,19 @@ printf 'PROBE=%s\\n' "$settle_review_probe"
 
     def test_D56_evidence_diff_caps_are_separate_from_functional_context(self):
         import shutil
+        import sys
         prefix, crossing = self.cutoff_url(12000)
         real_git = shutil.which('git', path=self.f.env['PATH'])
+        real_jq = shutil.which('jq', path=self.f.env['PATH'])
+        # Reproduce Linux's per-argument ceiling on other hosts too. The real
+        # jq still produces the evidence; only argv is bounded.
+        fake_jq = self.f.bin / 'jq'
+        fake_jq.write_text('#!' + sys.executable + '\nimport os, sys\n'
+                           'if any(len(os.fsencode(arg)) >= 131072 for arg in sys.argv[1:]):\n'
+                           '    sys.stderr.write("Argument list too long (synthetic Linux limit)\\n")\n'
+                           '    sys.exit(126)\n'
+                           'os.execv(' + repr(real_jq) + ', [' + repr(real_jq) + ', *sys.argv[1:]])\n')
+        fake_jq.chmod(0o755)
         fake_git = self.f.bin / 'git'
         value = self.f.root / 'diff-output.txt'
         self.f.env['SYNTHETIC_DIFF_OUTPUT'] = str(value)
@@ -1196,14 +1207,20 @@ printf 'PROBE=%s\\n' "$settle_review_probe"
         subprocess.run(['git', 'update-ref', 'refs/remotes/origin/develop', 'HEAD'], cwd=self.f.checkout,
                        env=self.f.env, check=True, capture_output=True)
         for kind, body in [('crossing', crossing), ('long', 'h' * 14000), ('unicode', '界' * 14000),
+                           ('large', 'h' * 220000), ('large_unicode', '界' * 75000),
+                           ('large_crossing', crossing + 'z' * 220000),
                            ('short', 'M\tfixture.py'), ('failed', crossing)]:
             with self.subTest(kind=kind):
+                if kind.startswith('large'):
+                    self.assertGreaterEqual(len(body.encode()), 200000)
                 value.write_text(body)
                 self.f.env['SYNTHETIC_DIFF_STATUS'] = '7' if kind == 'failed' else '0'
                 evidence = self.f.root / 'diff-evidence.json'
                 context = self.f.root / 'functional-context.json'
                 result = self.safe(self.local_entry({'result': 'clean', 'comments': 0}, context_capture=context,
                                                    LOCAL_AI_REVIEWER_EVIDENCE_FILE=str(evidence)), 0)
+                self.assertNotIn('Argument list too long', result.stderr)
+                self.assertNotIn('could not write local AI reviewer evidence', result.stderr)
                 raw = evidence.read_text()
                 self.assertNotIn(prefix, raw + result.stdout + result.stderr)
                 data = json.loads(raw)
@@ -1216,7 +1233,7 @@ printf 'PROBE=%s\\n' "$settle_review_probe"
                         continue
                     self.assertEqual(functional[field], body[:12000])
                     self.assertEqual(len(data['context_summary'][field]), min(len(body), 12000))
-                    if kind == 'crossing':
+                    if kind in ('crossing', 'large_crossing'):
                         self.assertIn('https://[REDACTED]@', data['context_summary'][field])
                     else:
                         self.assertEqual(data['context_summary'][field], body[:12000])
