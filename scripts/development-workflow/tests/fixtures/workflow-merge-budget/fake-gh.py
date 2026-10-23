@@ -77,7 +77,8 @@ if args[:2] == ['api', 'graphql']:
         state.setdefault('trackerMutationRepos',[]).append(os.environ.get('GH_REPO',state['repo']))
         state.setdefault('trackerMutationProjectIds',[]).append(next(a[10:] for a in args if a.startswith('projectId=')))
         state['trackerMutationCount'] = state.get('trackerMutationCount',0)+1
-        if 'quotaAfterTrackerMutation' in state:
+        if ('quotaAfterTrackerMutation' in state
+                and state['trackerMutationCount'] >= state.get('quotaAfterTrackerMutationCount', 1)):
             state['quota']['remaining'] = state['quotaAfterTrackerMutation']
         selected = next((a[9:] for a in args if a.startswith('optionId=')), 'merged')
         selected_status = 'Released' if selected == 'released' else 'Merged'
@@ -90,6 +91,10 @@ if args[:2] == ['api', 'graphql']:
         emit({'data': {'updateProjectV2ItemFieldValue': {'projectV2Item': {'id': 'item'}}}})
     if 'projectItems(' in query:
         number = int(next(a.split('=', 1)[1] for a in args if a.startswith('issueNumber=')))
+        if 'ReleaseBudgetTracker' in query:
+            reads = state.setdefault('releaseTrackerReads', {})
+            reads[str(number)] = reads.get(str(number), 0) + 1
+            state['quota']['remaining'] = max(0, state['quota']['remaining'] - state.get('releaseTrackerReadCost', 0))
         owner = next((a[6:] for a in args if a.startswith('owner=')),state['repo'].split('/')[0])
         name = next((a[5:] for a in args if a.startswith('repo=')),state['repo'].split('/')[1])
         issue_repo = owner+'/'+name

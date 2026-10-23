@@ -230,8 +230,27 @@ verification before its batch can finish. The final cleanup barrier checks all
 retained journal-owned duty proofs instead of repeating the entire tracker
 workload in one window. It cannot declare completion from a helper's exit code,
 a pending duty, or a proof without verification time. Explicit recovery still
-rechecks completed/uncertain work against live evidence. Default whole-set
-sessions and legacy journals keep their existing behavior.
+rechecks completed/uncertain work against live evidence. For staged provider
+duties, those recovery reads themselves run in the frozen issue batches (and
+marker-finalization stage), with completed duties included in the recovery
+estimate. Sample quota before each recovery batch; require its complete cost,
+margin and reserve before reading it. A shortage leaves `Deferred` with
+`stagedRecoveryPending`, `recoveryEstimate` and `recoverySample` in the report.
+Each successful read-back is journaled with its recovery generation. Continuing
+that recovery after reset retains the generation and skips its already verified
+prefix; an API failure also preserves completed read-backs. No mutation can
+resume until all required recovery batches finish and ordinary stage admission
+succeeds. A new recovery after a successful run starts a fresh generation.
+
+The staged cleanup driver reuses durable provider proofs from normal execution
+or completed recovery, including verification timestamps. It must not reread
+completed stamp, tracker or finalization duties before reaching the pending
+batch, or add a second full scope projection outside the stage hooks. Missing
+proofs require explicit recovery. Live PR/publication identity and branch-policy
+checks remain mandatory; uncertain mutations still require independent live
+reconciliation before any retry. The Linear bridge records the same durable
+verification timestamp on a verified provider result. Default whole-set sessions
+and legacy journals keep their existing behavior.
 
 Create the complete selected manifest described in the [helper reference](../../../../scripts/development-workflow/README.md#workflow-merge-budgetpy), run `begin --input <manifest> --repo-root <owner>` and retain its JSON `session` as `MERGE_SESSION` for all commands below. If begin defers, display its local report and stop; do not invoke the per-PR loop. Each planned audit has an explicit frozen destination/marker and distinct pre/final step IDs; the input carries no trusted quota or admission flag.
 

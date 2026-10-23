@@ -1033,7 +1033,7 @@ def pending_stage(state):
     return None
 
 
-def estimate_stage(state, stage=None):
+def estimate_stage(state, stage=None, *, recovery=False):
     stage = stage or pending_stage(state)
     if not stage:
         return {"version": 2, "heuristic": True, "stage": None, "components": [],
@@ -1043,7 +1043,7 @@ def estimate_stage(state, stage=None):
     # Legacy projection charged every completed provider duty again at every
     # later boundary, making a release permanently unaffordable.
     entries = [e for _, _, e in stage_entries(state, stage)
-               if e["status"] not in {"completed", "skipped_by_policy"}]
+               if recovery or e["status"] not in {"completed", "skipped_by_policy"}]
     weights = {"tracker": 250, "release_stamp": 15, "release_finalize": 15,
                "cleanup": 30, "audit": 10, "hold": 10, "publication": 25}
     pieces = [{"kind": "stage_shared", "count": 1, "weight": 125},
@@ -2012,9 +2012,12 @@ def resume(args):
         entry.get("providerEvidence", {}).get("recoveryGeneration") == image.get("recoveryGeneration")
         and newer(entry.get("providerEvidence", {}).get("observedAt"), image.get("recoveryStartedAt"))
         for entry in linear_entries if entry.get("intentAt")))
-    if not continuation:
+    staged_continuation = bool(image.get("releaseAdmission") and image.get("stagedRecoveryPending"))
+    if not continuation and not staged_continuation:
         image["recoveryGeneration"] = image.get("recoveryGeneration", 0) + 1
         image["recoveryStartedAt"] = now()
+    if image.get("releaseAdmission"):
+        image["stagedRecoveryPending"] = True
     image["recoveryAwaitingProvider"] = False
     def recover_entry(target, key, entry):
         try:
@@ -2056,9 +2059,16 @@ def resume(args):
             for key, entry in target["steps"].items():
                 if entry["phase"] in {"audit", "hold"}:
                     continue
+                if image.get("releaseAdmission") and entry["phase"] in {"tracker", "release_stamp", "release_finalize"}:
+                    # Reconcile provider proofs by their frozen batch below.
+                    # Do not read the entire completed prefix before quota.
+                    continue
                 if entry["status"] in {"in_flight", "uncertain", "completed", "skipped_by_policy"} or entry.get("submission"):
                     recover_entry(target, key, entry)
         else:
+            if image.get("releaseAdmission"):
+                recover_release_batches(image, recover_entry)
+                image["stagedRecoveryPending"] = False
             image["active"], image["started"] = None, False
             image["attempt"] += 1
             admission(image)
@@ -2066,7 +2076,8 @@ def resume(args):
                 image.pop("cancellation", None)
             complete_if_ready(image)
     except (Stop, OSError) as exc:
-        image["outcome"], image["reason"] = "Deferred", "unknown outstanding work: " + str(exc)
+        image["outcome"] = "Deferred"
+        image["reason"] = str(exc) if getattr(exc, "evidence", None) == {"budgetDeferred": True} else "unknown outstanding work: " + str(exc)
         image["recoveryAwaitingProvider"] = bool(linear_entries)
     with journal(args.session) as state:
         if state["revision"] != image["revision"]:
@@ -2078,11 +2089,37 @@ def resume(args):
     return summary(snapshot(args.session))
 
 
+def recover_release_batches(state, recover_entry):
+    """Bound live reconciliation as well as mutations; persist each read-back."""
+    generation = state["recoveryGeneration"]
+    for stage in state["releaseAdmission"]["stages"]:
+        entries = [(target, key, entry) for target, key, entry in stage_entries(state, stage)
+                   if entry["phase"] in {"tracker", "release_stamp", "release_finalize"}
+                   and entry["status"] in {"in_flight", "uncertain", "completed", "skipped_by_policy"}
+                   and entry.get("recoveryVerifiedGeneration") != generation]
+        if not entries:
+            continue
+        # Include completed duties here: their independent recovery reads are
+        # real work, even though ordinary admission prices only future writes.
+        state["recoveryEstimate"] = estimate_stage(state, stage, recovery=True)
+        state["recoverySample"] = sample = budget()
+        if sample["remaining"] < state["recoveryEstimate"]["projectedCost"] + state["reserve"]:
+            raise Stop("insufficient GraphQL quota for frozen release recovery batch", {"budgetDeferred": True})
+        for target, key, entry in entries:
+            recover_entry(target, key, entry)
+            entry["recoveryVerifiedGeneration"] = generation
+    state.pop("recoveryEstimate", None)
+    state.pop("recoverySample", None)
+
+
 def summary(state, final=False):
     result = {k: state.get(k) for k in ("schemaVersion", "session", "revision", "outcome", "reason", "reserve", "estimate", "initialSample", "quotaEvidence", "selectedSet", "projectionComplete", "prs", "releasePair", "releaseAdmission", "admittedStage")}
     if state.get("releaseAdmission"):
         stage = pending_stage(state)
         result["pendingStage"] = stage["id"] if stage else None
+        for field in ("stagedRecoveryPending", "recoveryGeneration", "recoveryEstimate", "recoverySample"):
+            if field in state:
+                result[field] = state[field]
     if result.get("prs") is not None:
         result["prs"] = decode(json.dumps(result["prs"]))
         for target in result["prs"]:
@@ -2150,6 +2187,7 @@ def provider(args):
             entry["providerEvidence"] = {k: evidence[k] for k in ("provider", "issue", "repo", *fields, "mutationRequestId", "readRequestId", "observedAt")}
             entry["providerEvidence"]["recoveryGeneration"] = state.get("recoveryGeneration", 0)
             entry["status"] = "completed"
+            entry["verifiedAt"] = now()
             if not any(s["status"] == "in_flight" for p in state["prs"] for s in p["steps"].values()):
                 state["active"] = None
             complete_if_ready(state)
@@ -2201,6 +2239,8 @@ def release_cleanup(args):
     staged = bool(state.get("releaseAdmission"))
     if staged and active:
         raise Stop("staged cleanup requires no active executor; recover explicitly")
+    if staged and (state.get("stagedRecoveryPending") or state["outcome"] not in {"Admitted", "Completed"}):
+        raise Stop("staged cleanup requires completed explicit recovery and admission")
     if not nested and not staged:
         if active:
             raise Stop("release cleanup is not the owning child; explicit recovery required")
@@ -2221,7 +2261,10 @@ def release_cleanup(args):
 
     # Scope and publication are read again at the mutation boundary; inherited
     # environment or an old component cleanup JSON cannot discharge these duties.
-    release_scope_check(state)
+    if not staged:
+        # Staged mutation hooks already recheck this scope at admission. Avoid
+        # another full projection before the pending stage's quota check.
+        release_scope_check(state)
     publication_read(state)
     regular_release_merge(target)
     owner = proof_root(state, state["ownerCommonDir"], state["ownerRoot"])
@@ -2240,6 +2283,13 @@ def release_cleanup(args):
         selected = current["prs"][1]
         entry = selected["steps"][key]
         if entry["status"] in {"completed", "skipped_by_policy"}:
+            if staged and phase in {"tracker", "release_stamp", "release_finalize"}:
+                # Normal execution or explicit recovery already read this duty
+                # back independently. Reusing that journal-owned proof avoids
+                # an unpriced, growing prefix before the next pending batch.
+                if not entry.get("verifiedAt"):
+                    raise Stop("completed release duty lacks durable proof; recover explicitly")
+                continue
             if not verify(current, selected, entry):
                 raise Stop("completed release duty no longer verifies")
             continue

@@ -526,7 +526,16 @@ rerun all tracker mutations or accept best-effort success as completion.
 If a new stage lacks quota, stop with `Deferred`, report historical merges and
 pending work, and explicitly resume the same session after reset. Waiting or
 Interrupted still requires verified recovery without resubmitting a merge or
-replaying an uncertain provider mutation. Staging grants no additional review,
+replaying an uncertain provider mutation. Recovery's provider read-backs are
+also budgeted by the frozen batches, including completed duties in their cost.
+When recovery spans quota windows, the same recovery generation retains its
+verified prefix; `stagedRecoveryPending`, `recoveryEstimate` and `recoverySample`
+identify the outstanding read work. Repeat explicit `resume` after reset until
+recovery and current-stage admission succeed. The cleanup driver then reuses
+those durable proofs instead of reading every completed batch again. It also
+reuses independently verified provider proofs during uninterrupted or repeated
+cleanup; uncertain duties still require live reconciliation. PR, publication
+and branch-policy checks remain live. Staging grants no additional review,
 risk, admin or deletion authority. Ordinary/legacy sessions remain whole-set.
 
 Use `run-step` for the authorized regular production merge with explicit

@@ -58,6 +58,33 @@ class Admission(unittest.TestCase):
         self.args.session = value['session']
         return value
 
+    def test_staged_recovery_retains_partial_batch_proofs_after_read_failure(self):
+        keys = ['tracker:%s:pre' % n for n in range(12, 16)]
+        state = {'recoveryGeneration': 7, 'reserve': 1000,
+                 'releasePair': {'projection': {'scopeReadCost': 1}},
+                 'prs': [{'pr': 13, 'steps': {key: {'phase': 'tracker', 'status': 'completed'} for key in keys}}],
+                 'releaseAdmission': {'stages': [{'id': 'tracker-1',
+                    'steps': [{'pr': 13, 'step': key} for key in keys]}]}}
+        reads = []
+        fail = True
+
+        def recover(target, key, entry):
+            reads.append(key)
+            if fail and key == keys[1]:
+                raise budget.Stop('synthetic read outage')
+            entry['verifiedAt'] = budget.now()
+
+        with self.assertRaisesRegex(budget.Stop, 'synthetic read outage'):
+            budget.recover_release_batches(state, recover)
+        self.assertEqual(state['prs'][0]['steps'][keys[0]]['recoveryVerifiedGeneration'], 7)
+        self.assertNotIn('recoveryVerifiedGeneration', state['prs'][0]['steps'][keys[1]])
+        self.assertIn('recoveryEstimate', state)
+        fail = False
+        budget.recover_release_batches(state, recover)
+        self.assertEqual(reads, [keys[0], keys[1], *keys[1:]])
+        self.assertNotIn('recoveryEstimate', state)
+        self.assertTrue(all(e['recoveryVerifiedGeneration'] == 7 for e in state['prs'][0]['steps'].values()))
+
     def test_release_tracker_fallback_never_masks_primary_evidence(self):
         state={'releasePair':{'projection':{'projectId':'frozen-project'}}}
         issue={'provider':'github_projects','repo':'org/repo','id':'12','status':'Released'}
@@ -2305,6 +2332,75 @@ class ReleasePair(unittest.TestCase):
         self.assertEqual(self.data['trackerMutationCount'], 2)
         self.assertEqual(self.data['stampMutationCount'], {'12': 1, '13': 1})
         self.assertEqual(len(self.data['mergeArgv']), 2)
+
+    def test_staged_many_batch_recovery_budgets_reads_and_never_repeats_prefix(self):
+        # Twelve batches, eleven already mutated and independently verified.
+        # Expensive synthetic read-backs force recovery itself across windows.
+        ids = [str(n) for n in range(12, 24)]
+        for number in range(14, 24):
+            self.candidate(number, self.head)
+        self.save()
+        self.assertEqual(self.begin(releaseAdmission={'mode': 'staged'})['outcome'], 'Admitted')
+        self.merge(12); self.step(12, 'merge_verify')
+        self.published(); self.step(12, 'publication')
+        self.merge(13); self.step(13, 'merge_verify')
+        self.reload()
+        self.data.update(trackerStatuses=dict.fromkeys(ids, 'Merged'),
+                         quotaAfterTrackerMutation=0, quotaAfterTrackerMutationCount=11)
+        self.save()
+        self.cleanup(success=False)
+        self.reload()
+        self.assertEqual(self.data['trackerMutationCount'], 11)
+        self.data.pop('quotaAfterTrackerMutation')
+        self.data.pop('quotaAfterTrackerMutationCount')
+        self.data.update(releaseTrackerReadCost=1000, releaseTrackerReads={})
+        self.save()
+        generation = None
+        windows = 0
+        for _ in range(12):
+            self.reload()
+            self.data['quota']['remaining'] = 5000
+            self.data['quota']['reset'] += 3600
+            self.save()
+            result = self.helper('resume', '--session', self.session, success=False)
+            report = json.loads(result.stdout)
+            windows += 1
+            if generation is None:
+                generation = report['recoveryGeneration']
+            self.assertEqual(report['recoveryGeneration'], generation)
+            self.reload()
+            self.assertTrue(all(count == 1 for count in self.data['releaseTrackerReads'].values()))
+            self.assertGreaterEqual(self.data['quota']['remaining'], 1000)
+            if report['outcome'] == 'Admitted':
+                self.assertFalse(report['stagedRecoveryPending'])
+                break
+            self.assertEqual(report['outcome'], 'Deferred', report)
+            self.assertTrue(report['stagedRecoveryPending'])
+            self.assertIn('recovery batch', report['reason'])
+            self.assertIn('projectedCost', report['recoveryEstimate'])
+            self.assertLess(report['recoverySample']['remaining'],
+                            report['recoveryEstimate']['projectedCost'] + report['reserve'])
+            # Deferral forbids reaching any pending mutation via cleanup.
+            before = dict(self.data['releaseTrackerReads'])
+            self.cleanup(success=False)
+            self.reload()
+            self.assertEqual(self.data['releaseTrackerReads'], before)
+            self.assertEqual(self.data['trackerMutationCount'], 11)
+        else:
+            self.fail('bounded recovery did not make progress across windows')
+        self.assertGreater(windows, 1)
+        self.assertEqual(self.data['releaseTrackerReads'], dict.fromkeys(ids[:-1], 1))
+        self.cleanup()
+        self.reload()
+        self.assertEqual(self.data['releaseTrackerReads'], dict.fromkeys(ids, 1))
+        self.assertEqual(self.data['trackerMutationCount'], 12)
+        self.assertEqual(self.data['stampMutationCount'], dict.fromkeys(ids, 1))
+        self.assertEqual(len(self.data['mergeArgv']), 2)
+        # A repeated successful cleanup reuses the same durable proofs too.
+        self.cleanup()
+        self.reload()
+        self.assertEqual(self.data['releaseTrackerReads'], dict.fromkeys(ids, 1))
+        self.assertEqual(json.loads(self.helper('report', '--session', self.session).stdout)['outcome'], 'Completed')
 
     def test_release_pair_extra_shipped_issue_increases_complete_projection(self):
         first=self.begin()['estimate']['projectedCost']
