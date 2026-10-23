@@ -85,6 +85,34 @@ class Admission(unittest.TestCase):
         self.assertNotIn('recoveryEstimate', state)
         self.assertTrue(all(e['recoveryVerifiedGeneration'] == 7 for e in state['prs'][0]['steps'].values()))
 
+    def test_staged_recovery_keeps_proofs_when_following_admission_defers(self):
+        self.begin()
+        with budget.journal(self.args.session) as state:
+            target = state['prs'][0]
+            target['steps']['tracker:12:pre'] = {'phase': 'tracker', 'status': 'completed',
+                                              'verifiedAt': budget.now(), 'issue': '12'}
+            state['releasePair'] = {'projection': {'scopeReadCost': 1}}
+            state['releaseAdmission'] = {'stages': [{'id': 'production',
+                'steps': [{'pr': 12, 'step': key} for key in target['steps']]}]}
+
+        def read_back(image, target, entry):
+            self.sample['remaining'] = 1100  # Recovery fits; the next stage does not.
+            return True
+
+        with patch.object(budget, 'verify', side_effect=read_back) as reads:
+            first = budget.resume(self.args)
+            self.assertEqual(first['outcome'], 'Deferred')
+            self.assertTrue(first['stagedRecoveryPending'])
+            self.assertNotIn('recoveryEstimate', first)  # All recovery reads finished.
+            generation = first['recoveryGeneration']
+            self.sample['remaining'] = 5000
+            self.sample['reset'] += 3600
+            second = budget.resume(self.args)
+            self.assertEqual(second['outcome'], 'Admitted', second)
+            self.assertFalse(second['stagedRecoveryPending'])
+            self.assertEqual(second['recoveryGeneration'], generation)
+            self.assertEqual(reads.call_count, 1)
+
     def test_release_tracker_fallback_never_masks_primary_evidence(self):
         state={'releasePair':{'projection':{'projectId':'frozen-project'}}}
         issue={'provider':'github_projects','repo':'org/repo','id':'12','status':'Released'}

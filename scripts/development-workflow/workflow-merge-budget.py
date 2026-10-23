@@ -2068,11 +2068,12 @@ def resume(args):
         else:
             if image.get("releaseAdmission"):
                 recover_release_batches(image, recover_entry)
-                image["stagedRecoveryPending"] = False
             image["active"], image["started"] = None, False
             image["attempt"] += 1
             admission(image)
             if image["outcome"] == "Admitted":
+                if image.get("releaseAdmission"):
+                    image["stagedRecoveryPending"] = False
                 image.pop("cancellation", None)
             complete_if_ready(image)
     except (Stop, OSError) as exc:
