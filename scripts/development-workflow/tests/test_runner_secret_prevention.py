@@ -986,20 +986,33 @@ sys.exit(rc)
 
     @unittest.skipUnless(IS_TEMPLATE, "release fragments belong to the template repository")
     def test_upgrade_artifacts_presence_and_content(self):
-        # AC-9 / smoke journey 8: presence and required content, not a residual
-        # search that could pass after an artifact is deleted.
+        # AC-9 / smoke journey 8: require the guide and release note, either
+        # pending in its fragment or published in a versioned changelog section.
         guide = ROOT / 'docs/workflow/development-workflow/integrations/runner-secret-prevention.md'
         fragment = ROOT / 'changelog.d/1993.security.runner-secret-prevention.md'
         self.assertTrue(guide.is_file(), str(guide))
-        self.assertTrue(fragment.is_file(), str(fragment))
         text = guide.read_text()
         for phrase in ('WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT', 'minimal local review configuration',
                        'no automatic copying', 'Do not restore fallback during downstream template sync',
                        'conflated public Bash', 'not supported', 'reviewed forward fix',
                        'distinct failure status', 'checkout-local'):
             self.assertIn(phrase, text.replace('\n', ' '))
-        note = fragment.read_text()
-        for phrase in ('(#1993)', 'explicit selection', 'minimal checkout-local review settings', 'never copied automatically'):
+        if fragment.is_file():
+            note = fragment.read_text()
+            required_phrases = ('(#1993)', 'explicit selection',
+                                'minimal checkout-local review settings', 'never copied automatically')
+        else:
+            changelog = ROOT / 'CHANGELOG.md'
+            self.assertTrue(changelog.is_file(), str(changelog))
+            released_sections = re.findall(
+                r'^## \[\d+\.\d+\.\d+\] - \d{4}-\d{2}-\d{2}\n(.*?)(?=^## |\Z)',
+                changelog.read_text(), re.MULTILINE | re.DOTALL)
+            published_notes = [section for section in released_sections if '(#1993)' in section]
+            self.assertEqual(len(published_notes), 1, 'Expected one published release note for #1993')
+            note = published_notes[0]
+            required_phrases = ('Private runner configuration', 'explicit validated selection',
+                                'minimal reviewer settings', 'never copied automatically')
+        for phrase in required_phrases:
             self.assertIn(phrase, note)
 
 

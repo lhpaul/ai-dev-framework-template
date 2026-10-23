@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.48.5] - 2026-10-23
+
+### Fixed
+
+- **Linear release scope** (#1982): derive Released items from merged implementation PRs in the verified release range, with paginated PR evidence and consistent SemVer tag boundaries. Changelog mentions alone do not release items; ambiguous tags or incomplete evidence stop cleanup.
+- **Linear graduation closeout** (#1984): respect the configured tracker, require native Linear epic IDs, and emit deferred tracker actions. Close GitHub issues only through same-repository structured closing references; support dry runs and stop on unreadable provider configuration.
+- **Template-only nightly tests** (#1996): synced product repositories skip the scheduled workflow harness unless they explicitly enable `WORKFLOW_TESTS_NIGHTLY_ENABLED=true`.
+- **Workflow test filtering** (#1997): run the PR harness only for changes to workflow scripts or its workflow file; nightly and manual runs retain full coverage.
+- **PR policy triggers** (#1998): ordinary issue comments no longer start policy runners. Adopt the policy workflow and reviewer-loop script together so canonical review summaries trigger policy checks.
+- **Readiness labels** (#2006): use consistent reviewer-policy source selection and precedence for base and head, preventing false empty-policy refusals.
+- **Large PR reviews** (#2007): fall back to a verified local Git diff when GitHub rejects the diff with HTTP 406; stop when the checkout or comparison is unavailable.
+- **GitHub graduation closeout** (#2016): ignore closing keywords inside PR code examples and cross-repository references. If Markdown rendering fails, skip text-derived references without falling back to raw text.
+
+### Security
+
+- **Private runner configuration** (#1993): require explicit validated selection of external private configuration, keep policy reads in the selected checkout, and prevent implicit inheritance from sibling checkouts or hub locators. Follow the runner-secret-prevention upgrade guide when selecting external settings.
+- Stage only minimal reviewer settings, preserve source failures, and redact diagnostics using safe metadata and batched value sanitization. Private values are never copied automatically.
+
 ## [0.48.4] - 2026-10-16
 
 ### Fixed
@@ -3348,7 +3366,8 @@ Known limitation: human-verification headings split by HTML comments can still b
 - `.claude/settings.json` with pre-approved permissions for common git and fetch operations; `.claude/settings.local.json.example` documenting machine-specific overrides for optional integrations
 - `.gitignore` covering local Claude settings, `.env` files, and common system files
 
-[Unreleased]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.48.4...HEAD
+[Unreleased]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.48.5...HEAD
+[0.48.5]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.48.4...v0.48.5
 [0.48.4]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.48.3...v0.48.4
 [0.48.3]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.48.2...v0.48.3
 [0.48.2]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.48.1...v0.48.2
