@@ -586,8 +586,9 @@ configured_ready_reviewer_platforms() {
 # configuration no longer declares. Fail closed: a fetch/parse failure
 # escalates rather than falling back to the local checkout silently — the
 # reviewer set is the gate, so an unreadable one is an unreadable gate.
-# When called for the BASE sha (loop_dispatched_base=1), the effective policy
-# is resolved the same way pr-review-loop.sh resolves its base snapshot
+# For both head and base, resolve the effective policy with the same explicitly
+# selected local source and precedence that pr-review-loop.sh uses for its base
+# snapshot
 # (WORKFLOW_APPLY_LOCAL_REVIEW_OVERRIDES=1 on workflow_config_review_platforms,
 # pr-review-loop.sh ~12423-12449): a local `.ai-dev-workflow.local.yaml` that
 # declares `review.on_ready.github` REPLACES the shared list, and the loop
@@ -609,11 +610,7 @@ pr_head_config_ready_platforms() {
   [ -n "$config_body" ] || return 1
   head_config_file="$(mktemp)" || return 1
   printf '%s\n' "$config_body" >"$head_config_file"
-  if [ "${loop_dispatched_base:-0}" = "1" ]; then
-    WORKFLOW_APPLY_LOCAL_REVIEW_OVERRIDES=1 workflow_config_review_on_ready_github "$head_config_file" || rc=$?
-  else
-    workflow_config_review_on_ready_github "$head_config_file" || rc=$?
-  fi
+  WORKFLOW_APPLY_LOCAL_REVIEW_OVERRIDES=1 workflow_config_review_on_ready_github "$head_config_file" || rc=$?
   rm -f "$head_config_file"
   return "$rc"
 }
@@ -1999,11 +1996,9 @@ if [ "$is_implementation_pr" = "true" ]; then
   # trusted as resolved; no base policy is fetched there.)
   if [ -z "${AI_DEV_WORKFLOW_CONFIG_FILE:-}" ]; then
     _base_ready_platforms=""
-    # loop_dispatched_base=1: apply the local review override when resolving the
-    # BASE policy, the same effective-policy resolution pr-review-loop.sh uses
-    # when it dispatches ready-phase platforms from the base configuration
-    # (PR #1818 finding 2, round 7).
-    if ! _base_ready_platforms="$(loop_dispatched_base=1 pr_head_config_ready_platforms "$repo" "$base_ref_oid" 2>/dev/null)"; then
+    # Apply the same selected local override to both snapshots, matching the
+    # effective base policy dispatched by pr-review-loop.sh (#2006).
+    if ! _base_ready_platforms="$(pr_head_config_ready_platforms "$repo" "$base_ref_oid" 2>/dev/null)"; then
       escalate base-config-unreadable
     fi
     if [ -z "$(printf '%s\n' "$ready_platforms" | tr -d '[:space:]')" ]; then

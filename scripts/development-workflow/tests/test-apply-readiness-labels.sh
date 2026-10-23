@@ -911,6 +911,51 @@ result="$(run_helper_no_local_config)"
 run_test "local_override_replaces_base_policy_exit" "0" "${result%%|*}"
 run_test "local_override_replaces_base_policy_result" "labeled" "$(field "$result" RESULT)"
 run_test "local_override_replaces_base_policy_names" "Ronda review" "$(field "$result" REVIEWER_REPORT)"
+# #2006: both shared snapshots may intentionally leave ready reviewers empty
+# while the explicitly selected synthetic local source supplies them. Resolving
+# only the base with that source falsely rejects the head as policy-empty.
+MOCK_HEAD_CONFIG='review:
+  on_ready:
+    github: []'
+MOCK_BASE_CONFIG="$MOCK_HEAD_CONFIG"
+for MOCK_LABEL in ready-for-human-review ready-for-regression; do
+  result="$(run_helper_no_local_config)"
+  run_test "local_override_empty_shared_${MOCK_LABEL}_exit" "0" "${result%%|*}"
+  run_test "local_override_empty_shared_${MOCK_LABEL}_result" "labeled" "$(field "$result" RESULT)"
+  run_test "local_override_empty_shared_${MOCK_LABEL}_names" "Ronda review" "$(field "$result" REVIEWER_REPORT)"
+done
+unset MOCK_LABEL
+# Applying the same source must still require its reviewer's clean evidence.
+MOCK_CHECK_RUNS='{"check_runs":[]}'
+result="$(run_helper_no_local_config)"
+run_test "local_override_empty_shared_absent_check_reason" "reviewer-check-absent" "$(field "$result" REASON)"
+run_test "local_override_empty_shared_absent_check_no_label" "0" "$(grep -c 'add-label ready-for-human-review' "$_LABEL_LOG" || true)"
+# An explicit local empty list replaces both nonempty shared lists, too.
+printf 'review:\n  on_ready:\n    github: []\n' > "$TMP_ROOT/override-root/.ai-dev-workflow.local.yaml"
+MOCK_HEAD_CONFIG='review:
+  on_ready:
+    github:
+      - ronda'
+MOCK_BASE_CONFIG='review:
+  on_ready:
+    github:
+      - bugbot'
+result="$(run_helper_no_local_config)"
+run_test "local_empty_override_replaces_both_exit" "0" "${result%%|*}"
+run_test "local_empty_override_replaces_both_names" "none" "$(field "$result" REVIEWER_REPORT)"
+# A local source without this key inherits each shared snapshot. It cannot
+# hide the head's removal of a reviewer required by the base.
+printf 'review: {}\n' > "$TMP_ROOT/override-root/.ai-dev-workflow.local.yaml"
+MOCK_HEAD_CONFIG='review:
+  on_ready:
+    github: []'
+result="$(run_helper_no_local_config)"
+run_test "local_undeclared_key_preserves_empty_head_refusal" "reviewer-policy-empty" "$(field "$result" REASON)"
+run_test "local_undeclared_key_preserves_empty_head_no_label" "0" "$(grep -c 'add-label ready-for-human-review' "$_LABEL_LOG" || true)"
+MOCK_HEAD_CONFIG='review:
+  on_ready:
+    github:
+      - ronda'
 # Override ABSENT (the worktree case, #1817): fall back to the shared base
 # policy, never fail — the loop's own behavior in a worktree.
 MOCK_LOCAL_OVERRIDE_ROOT=""
