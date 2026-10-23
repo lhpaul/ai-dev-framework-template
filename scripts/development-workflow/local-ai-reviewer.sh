@@ -1641,6 +1641,9 @@ write_evidence_file() {
 
   local evidence_error evidence_capture_opened=0
   evidence_error="$(mktemp 2>/dev/null)" || { workflow_diagnostic "WARN: could not capture evidence diagnostics" >&2; return 0; }
+  # Keep full metadata out of argv (Linux limits each argument to ~128 KiB).
+  # Raw file streams preserve Unicode and let redaction see complete values
+  # before the existing caps apply, without persistent unredacted temp files.
   if ! { { evidence_capture_opened=1; jq -n \
     --arg schema_version "local_ai_reviewer_evidence.v1" \
     --arg result "$final_result" \
@@ -1653,8 +1656,8 @@ write_evidence_file() {
     --arg reviewed_head "$HEAD_SHA" \
     --arg graph_context "$graph_context" \
     --arg pr_body "$PR_BODY" \
-    --arg diff_name_status "${diff_name_status_full:-}" \
-    --arg diff_stat "${diff_stat_full:-}" \
+    --rawfile diff_name_status <(printf '%s' "${diff_name_status_full:-}") \
+    --rawfile diff_stat <(printf '%s' "${diff_stat_full:-}") \
     --arg review_stage "$review_stage" \
     --arg review_stage_source "$review_stage_source" \
     --arg review_checklists "$review_checklists_csv" \

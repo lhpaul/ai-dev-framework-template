@@ -191,7 +191,66 @@ If either check fails, **stop immediately** and report to the human. Do not atte
 
 After discovery, inclusion decisions and ordinary current-head readiness, freeze the entire approved ordered set in one `workflow-merge-budget.py` session. The invocation artifact repository owns its durable journal: the workflow hub for hub-orchestrated work, otherwise the current repository. Resolve and declare product/cleanup roots before admission; pass the same session through product and linked-worktree reentry. Read-only discovery/risk computation and pre-stage reviewer work do not mutate this merge operation.
 
-Admission reads `gh api rate_limit` `resources.graphql`. Heuristic version 1 projects all outstanding selected work, including repeated owned reconciliation executions and sibling rechecks, with conservative weights plus `max(50, ceil(rawCost / 2))` estimation margin. The independent `merge_budget.graphql_reserve` resolves from CLI, owning local config, owning shared config, then omitted-setting default 1000. Invalid explicit values, unavailable quota, unresolved ownership or unknown projection defer rather than using a fallback. Admission requires `remaining >= projectedCost + reserve`; there is no affordable-prefix merge, global reservation, guaranteed upper bound or CLI-version prerequisite.
+Admission reads `gh api rate_limit` `resources.graphql`. By default, heuristic version 1 projects all outstanding selected work, including repeated owned reconciliation executions and sibling rechecks, with conservative weights plus `max(50, ceil(rawCost / 2))` estimation margin. The independent `merge_budget.graphql_reserve` resolves from CLI, owning local config, owning shared config, then omitted-setting default 1000. Invalid explicit values, unavailable quota, unresolved ownership or unknown projection defer rather than using a fallback. Admission requires `remaining >= projectedCost + reserve`; ordinary admission allows no affordable prefix. There is no global reservation, guaranteed upper bound or CLI-version prerequisite.
+
+An explicit `releasePair` may additionally declare top-level
+`"releaseAdmission": {"mode": "staged", "trackerBatchSize": 1}` in its manifest.
+This is the only staged exception. Freeze the complete ordered pair, issue scope,
+ownership, cleanup policy and every duty in the same session before admitting
+anything. The helper derives an immutable ordered stage plan: production merge
+and verification, tag/Release verification, backport merge and verification,
+branch cleanup/retention, issue batches, release-marker finalization, shared
+cleanup verification, and production completion/deferred audits. Missing or
+malformed policy, batch sizes outside 1–100, or unassigned duties defer.
+
+Heuristic version 2 prices the current frozen stage, retaining the estimation
+margin and independent reserve. Each issue batch contains its release stamp and
+tracker duties, with its own independent read-back. The estimate includes scope
+and provider-binding checks; it does not repeatedly charge all completed tracker
+mutations or count local Git/REST branch proofs as GraphQL tracker writes.
+Every unfinished stage must fit the sampled window limit plus reserve; an
+impossible future batch defers before any selected merge. An oversized stage
+still defers in full: never select an affordable subset of
+its duties or expand the frozen scope. Choose smaller batches in a fresh manifest
+when needed; recovery cannot change a frozen plan.
+
+Only the first unfinished stage can execute. A transition rechecks the frozen
+scope and live PR identity and refreshes quota before any mutation, even when
+the prior stage ran in a different quota window. The report retains
+`releaseAdmission`, `admittedStage`, `pendingStage`, the last admission's `estimate.stage`, completed
+proofs and all pending duties. Insufficient quota at a later boundary is
+`Deferred`, preserving historical merges; use the same session's explicit
+`resume` command after quota becomes available. No mutation or audit is allowed
+while deferred. Queue submissions and uncertain mutations retain the existing
+Waiting/Interrupted recovery rules, with no duplicate submission.
+
+The release cleanup driver follows the frozen batches without an outer
+all-tracker mutation envelope. Each duty must finish independent live
+verification before its batch can finish. The final cleanup barrier checks all
+retained journal-owned duty proofs instead of repeating the entire tracker
+workload in one window. It cannot declare completion from a helper's exit code,
+a pending duty, or a proof without verification time. Explicit recovery still
+rechecks completed/uncertain work against live evidence. For staged provider
+duties, those recovery reads themselves run in the frozen issue batches (and
+marker-finalization stage), with completed duties included in the recovery
+estimate. Sample quota before each recovery batch; require its complete cost,
+margin and reserve before reading it. A shortage leaves `Deferred` with
+`stagedRecoveryPending`, `recoveryEstimate` and `recoverySample` in the report.
+Each successful read-back is journaled with its recovery generation. Continuing
+that recovery after reset retains the generation and skips its already verified
+prefix; an API failure also preserves completed read-backs. No mutation can
+resume until all required recovery batches finish and ordinary stage admission
+succeeds. A new recovery after a successful run starts a fresh generation.
+
+The staged cleanup driver reuses durable provider proofs from normal execution
+or completed recovery, including verification timestamps. It must not reread
+completed stamp, tracker or finalization duties before reaching the pending
+batch, or add a second full scope projection outside the stage hooks. Missing
+proofs require explicit recovery. Live PR/publication identity and branch-policy
+checks remain mandatory; uncertain mutations still require independent live
+reconciliation before any retry. The Linear bridge records the same durable
+verification timestamp on a verified provider result. Default whole-set sessions
+and legacy journals keep their existing behavior.
 
 Create the complete selected manifest described in the [helper reference](../../../../scripts/development-workflow/README.md#workflow-merge-budgetpy), run `begin --input <manifest> --repo-root <owner>` and retain its JSON `session` as `MERGE_SESSION` for all commands below. If begin defers, display its local report and stop; do not invoke the per-PR loop. Each planned audit has an explicit frozen destination/marker and distinct pre/final step IDs; the input carries no trusted quota or admission flag.
 
@@ -227,7 +286,7 @@ ledger writes use their own declared IDs (for example, `disposition-final` and
 path in the handoff; `report --session "$MERGE_SESSION"` is local and
 `resume --session "$MERGE_SESSION"` explicitly re-verifies outstanding work.
 
-The `begin` assessment is provisional. The first operation-owned mutation hook refreshes quota and commits definitive whole-set admission locally before dispatch. This ordering includes disposition/ledger/bypass audits and hold writes, not only `gh pr merge`. Supply explicit `--operation merge` and the same `--merge-session` to these audit helpers. Keep pre-stage non-merge audits on their existing route. Ordinary readiness must already be complete: readiness/head drift stops and returns to its owning review phase rather than changing labels inside the merge operation. The delegated gate validates durable session/selected-head binding in addition to existing permission, risk, reviewer, CI, ownership and checkpoint gates; missing/unreadable admission is `budget_deferred` and grants no merge authority.
+The `begin` assessment is provisional. The first operation-owned mutation hook refreshes quota and commits definitive whole-set admission (or the complete current stage for an explicit staged release) locally before dispatch. This ordering includes disposition/ledger/bypass audits and hold writes, not only `gh pr merge`. Supply explicit `--operation merge` and the same `--merge-session` to these audit helpers. Keep pre-stage non-merge audits on their existing route. Ordinary readiness must already be complete: readiness/head drift stops and returns to its owning review phase rather than changing labels inside the merge operation. The delegated gate validates durable session/selected-head binding in addition to existing permission, risk, reviewer, CI, ownership and checkpoint gates; missing/unreadable admission is `budget_deferred` and grants no merge authority.
 
 A session containing only audit or hold work cannot authorize a delegated merge.
 The gate also requires the selected PR's frozen merge, independent merge

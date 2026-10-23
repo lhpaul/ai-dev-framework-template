@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.48.6] - 2026-10-23
+
+### Fixed
+
+- **Release admission** (#2029): support verified release stages and tracker batches within hourly API quotas, preserving recovery proofs and preventing duplicate mutations.
+- **Open-PR CI expectations** (#1964): exclude post-merge-only workflows while retaining applicable checks and stopping on unreadable or changed-head evidence.
+- **Large review evidence** (#2032): write large diff metadata without exceeding Linux argument limits, preserving redaction before truncation.
+
 ## [0.48.5] - 2026-10-23
 
 ### Fixed
@@ -3366,7 +3374,8 @@ Known limitation: human-verification headings split by HTML comments can still b
 - `.claude/settings.json` with pre-approved permissions for common git and fetch operations; `.claude/settings.local.json.example` documenting machine-specific overrides for optional integrations
 - `.gitignore` covering local Claude settings, `.env` files, and common system files
 
-[Unreleased]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.48.5...HEAD
+[Unreleased]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.48.6...HEAD
+[0.48.6]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.48.5...v0.48.6
 [0.48.5]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.48.4...v0.48.5
 [0.48.4]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.48.3...v0.48.4
 [0.48.3]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.48.2...v0.48.3

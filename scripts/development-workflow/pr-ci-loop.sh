@@ -266,16 +266,128 @@ workflow_run_names_for_sha() {
     | jq -r '[.[].workflow_runs[]?.name] | unique | .[]'
 }
 
+# Filter prior workflow runs using their definitions at the current PR head.
+# Only proven inapplicability removes an expectation. Unknown trigger/filter
+# syntax is retained; unreadable metadata or definitions fail closed.
+applicable_prior_workflow_names() {
+  local repo="$1" sha="$2" context="$3" current_names="$4" runs=""
+  runs="$(gh api "repos/$repo/actions/runs?head_sha=$sha&per_page=100" --paginate --slurp 2>/dev/null)" || return 1
+  printf '%s\n' "$runs" | python3 -c '
+import base64
+import json
+import re
+import subprocess
+import sys
+from urllib.parse import quote
+
+repo, context_text, current_text = sys.argv[1:]
+context = json.loads(context_text)
+current = set(current_text.splitlines())
+pages = json.load(sys.stdin)
+if not isinstance(pages, list):
+    raise ValueError("invalid run pages")
+names = set()
+for page in pages:
+    if not isinstance(page, dict) or not isinstance(page.get("workflow_runs"), list):
+        raise ValueError("invalid workflow runs")
+    for run in page["workflow_runs"]:
+        name = run.get("name")
+        if not isinstance(name, str) or not name:
+            raise ValueError("missing workflow name")
+        if name in current:
+            names.add(name)
+            continue
+        # Only pull_request definitions can justify exclusions from PR HEAD.
+        # Target/other/unknown events may execute a definition from elsewhere;
+        # retain their expectations without consulting an untrusted head copy.
+        if run.get("event") != "pull_request":
+            names.add(name)
+            continue
+        path = run.get("path")
+        if not isinstance(path, str) or not re.fullmatch(r"\.github/workflows/[^/]+\.ya?ml", path):
+            raise ValueError("missing workflow identity")
+        response = subprocess.run(
+            ["gh", "api", "repos/" + repo + "/contents/" + quote(path, safe="/") + "?ref=" + context["headRefOid"]],
+            check=True, capture_output=True, text=True, timeout=30,
+        )
+        content = json.loads(response.stdout)
+        if content.get("encoding") != "base64":
+            raise ValueError("unreadable workflow")
+        import yaml
+        # BaseLoader preserves the GitHub Actions `on` key and scalar types.
+        # Reject duplicate keys instead of letting an ambiguous trigger win.
+        class WorkflowLoader(yaml.BaseLoader):
+            def construct_mapping(self, node, deep=False):
+                mapping = {}
+                for key_node, value_node in node.value:
+                    key = self.construct_object(key_node, deep=deep)
+                    if key in mapping:
+                        raise ValueError("duplicate workflow key")
+                    mapping[key] = self.construct_object(value_node, deep=deep)
+                return mapping
+        document = yaml.load(base64.b64decode("".join(content["content"].split()), validate=True), Loader=WorkflowLoader)
+        if not isinstance(document, dict) or "on" not in document:
+            raise ValueError("missing workflow triggers")
+        triggers = document["on"]
+        if isinstance(triggers, str):
+            triggers = {triggers: None}
+        elif isinstance(triggers, list) and all(isinstance(x, str) for x in triggers):
+            triggers = dict.fromkeys(triggers)
+        if not isinstance(triggers, dict) or not triggers:
+            raise ValueError("invalid workflow triggers")
+        applicable = False
+        for event, options in triggers.items():
+            if event != "pull_request":
+                # Other event families may produce pre-merge checks (push,
+                # workflow_run, dispatch, etc.); do not guess them away.
+                applicable = True
+                continue
+            if options is None or options == "":
+                applicable = True
+                continue
+            if not isinstance(options, dict):
+                raise ValueError("invalid PR trigger")
+            types = options.get("types")
+            if types is not None:
+                if not isinstance(types, list) or not types or not all(isinstance(x, str) and x for x in types):
+                    raise ValueError("invalid PR activity types")
+            # Literal base filters are unambiguous. Complex glob/negative
+            # patterns stay expected rather than risking a false green.
+            branches = options.get("branches")
+            ignored = options.get("branches-ignore")
+            if branches is not None and ignored is not None:
+                raise ValueError("conflicting branch filters")
+            for filters in (branches, ignored):
+                if filters is not None and (not isinstance(filters, list) or not filters or
+                        not all(isinstance(x, str) and x for x in filters)):
+                    raise ValueError("invalid branch filters")
+            if types is not None and set(types) == {"closed"}:
+                continue
+            literal = lambda values: all(re.fullmatch(r"[A-Za-z0-9_./-]+", x) for x in values)
+            if branches is not None and literal(branches) and context["baseRefName"] not in branches:
+                continue
+            if ignored is not None and literal(ignored) and context["baseRefName"] in ignored:
+                continue
+            applicable = True
+        if applicable:
+            names.add(name)
+print("\n".join(sorted(names)))
+' "$repo" "$context" "$current_names" 2>/dev/null
+}
+
 # previous_head_check_names <repo> <pr_number> <current_head_sha>
-# Prints workflow-run names from the latest earlier PR commit that actually
-# has workflow-run evidence. A push of two or more commits makes `.[-2]` only
+# Prints applicable workflow names from the latest earlier PR commit with
+# applicable workflow-run evidence. A push of two or more commits makes `.[-2]` only
 # the penultimate SHA, which often never triggered pull_request workflows;
 # comparing against that empty set would fail-open as RESULT=green.
 # Exit 0 with no output means "no earlier head with runs" (single-commit PR,
-# or none of the earlier SHAs ran workflows). Exit 1 means a lookup failed
+# or none of the earlier SHAs ran applicable workflows). Exit 1 means a lookup failed
 # and the expectation is unknown.
 previous_head_check_names() {
-  local repo="$1" pr_number="$2" current_sha="$3" shas="" sha="" workflow_names=""
+  local repo="$1" pr_number="$2" current_sha="$3" current_names="$4" shas="" sha="" workflow_names="" context=""
+  context="$(gh pr view "$pr_number" --repo "$repo" --json headRefOid,baseRefName,state,mergeStateStatus 2>/dev/null)" || return 1
+  printf '%s\n' "$context" | jq -e --arg head "$current_sha" \
+    '.headRefOid == $head and .state == "OPEN" and (.baseRefName | type == "string" and length > 0) and (.mergeStateStatus | type == "string" and length > 0) and (.mergeStateStatus | IN("DIRTY", "UNKNOWN") | not)' >/dev/null || return 1
   # GitHub returns oldest-first. Reverse so we try newest earlier SHA first.
   # --slurp: with --paginate alone, jq runs per page and cannot reverse the
   # full commit list.
@@ -286,7 +398,7 @@ previous_head_check_names() {
   while IFS= read -r sha; do
     [ -n "$sha" ] || continue
     [ "$sha" != "$current_sha" ] || continue
-    workflow_names="$(workflow_run_names_for_sha "$repo" "$sha")" || return 1
+    workflow_names="$(applicable_prior_workflow_names "$repo" "$sha" "$context" "$current_names")" || return 1
     if [ -n "$workflow_names" ]; then
       printf '%s\n' "$workflow_names"
       return 0
@@ -545,7 +657,7 @@ while :; do
       prev_names=""
       if ! current_names="$(workflow_run_names_for_sha "$repo" "$head_sha")"; then
         evidence_lookup_failed=1
-      elif ! prev_names="$(previous_head_check_names "$repo" "$pr_number" "$head_sha")"; then
+      elif ! prev_names="$(previous_head_check_names "$repo" "$pr_number" "$head_sha" "$current_names")"; then
         evidence_lookup_failed=1
       else
         while IFS= read -r prev_name; do
@@ -554,6 +666,13 @@ while :; do
             missing_checks="${missing_checks:+$missing_checks,}$prev_name"
           fi
         done <<< "$prev_names"
+      fi
+    fi
+    if [ -n "$head_sha" ] && [ "${CI_LOOP_SKIP_EVIDENCE_GATE:-0}" != "1" ]; then
+      # Recheck after all evidence reads: an intervening push invalidates them.
+      if ! verified_head="$(gh pr view "$pr_number" --repo "$repo" --json headRefOid --jq .headRefOid 2>/dev/null)" \
+          || [ "$verified_head" != "$head_sha" ]; then
+        evidence_lookup_failed=1
       fi
     fi
     if [ "$evidence_lookup_failed" -eq 1 ]; then
