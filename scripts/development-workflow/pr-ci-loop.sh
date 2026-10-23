@@ -297,6 +297,12 @@ for page in pages:
         if name in current:
             names.add(name)
             continue
+        # Only pull_request definitions can justify exclusions from PR HEAD.
+        # Target/other/unknown events may execute a definition from elsewhere;
+        # retain their expectations without consulting an untrusted head copy.
+        if run.get("event") != "pull_request":
+            names.add(name)
+            continue
         path = run.get("path")
         if not isinstance(path, str) or not re.fullmatch(r"\.github/workflows/[^/]+\.ya?ml", path):
             raise ValueError("missing workflow identity")
@@ -331,7 +337,7 @@ for page in pages:
             raise ValueError("invalid workflow triggers")
         applicable = False
         for event, options in triggers.items():
-            if event not in ("pull_request", "pull_request_target"):
+            if event != "pull_request":
                 # Other event families may produce pre-merge checks (push,
                 # workflow_run, dispatch, etc.); do not guess them away.
                 applicable = True

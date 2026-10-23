@@ -85,8 +85,10 @@ done
 # bug shows up (duplicate/multiple results) versus a correct aggregate.
 emit() {
   local payload="$1"
-  if [[ "$payload" == *workflow_runs* ]] && [ "${MOCK_MISSING_PATH:-0}" != 1 ]; then
-    payload="$(printf %s "$payload" | jq '.workflow_runs |= map(. + {path: (.path // ".github/workflows/synthetic.yml")} )')"
+  if [[ "$payload" == *workflow_runs* ]]; then
+    payload="$(printf %s "$payload" | jq --arg missing "${MOCK_MISSING_PATH:-0}" '
+      .workflow_runs |= map(. + {event: (.event // "pull_request")}
+        | if $missing == "1" then . else . + {path: (.path // ".github/workflows/synthetic.yml")} end)')"
   fi
   case "$*" in *) ;; esac
   if [ "$slurped" = "1" ]; then
@@ -118,7 +120,15 @@ case "$*" in
     [ "${MOCK_CONTENTS_FAIL:-0}" = "1" ] && exit 1
     workflow_default=$'on:\n  pull_request:\n    branches: [develop, main]\n'
     case "$*" in *"/closed.yml?"*) workflow_default=$'on:\n  pull_request:\n    types: [closed]\n' ;; esac
-    payload="$(printf %s "${MOCK_WORKFLOW:-$workflow_default}" | base64 | tr -d '\n')"
+    workflow="${MOCK_WORKFLOW:-$workflow_default}"
+    if [ -n "${MOCK_HEAD_DEFINITION:-}" ]; then
+      case "$*" in
+        *"?ref=${MOCK_HEAD_SHA:-$head_default}"*) workflow="$(cat "$MOCK_HEAD_DEFINITION")" ;;
+        *) workflow="$(cat "$MOCK_BASE_DEFINITION")" ;;
+      esac
+    fi
+    [ -z "${MOCK_CONTENTS_LOG:-}" ] || printf '%s\n' "$*" >> "$MOCK_CONTENTS_LOG"
+    payload="$(printf %s "$workflow" | base64 | tr -d '\n')"
     emit "{\"encoding\":\"base64\",\"content\":\"$payload\"}" ; exit 0 ;;
   *"/actions/runs"*)
     [ "${MOCK_RUNS_FAIL:-0}" = "1" ] && exit 1
@@ -297,7 +307,7 @@ for _workflow in \
 done
 # Event/base applicability, independent of workflow names.
 for _workflow in \
-  $'on:\n  pull_request_target:\n    types: [closed]\n' \
+  $'on:\n  pull_request:\n    types: [closed]\n' \
   $'on:\n  pull_request:\n    branches: [develop]\n' \
   $'on:\n  pull_request:\n    branches-ignore: [main]\n'; do
   _out="$(run_ci MOCK_BASE=main MOCK_ROLLUP="$_subset_rollup" MOCK_PREV_CHECKS="$_runs_two" MOCK_CURRENT_RUNS="$_runs_one" MOCK_PR_COMMITS="$_commits_two" MOCK_WORKFLOW="$_workflow")"
@@ -315,6 +325,30 @@ for _failure in MOCK_CONTENTS_FAIL=1 MOCK_MISSING_PATH=1 \
   run_test "unreadable_or_changed_evidence_red_1964_${_failure%%=*}" "RESULT=red" "$(grep ^RESULT= <<<"$_out" || true)"
   run_test "unreadable_or_changed_evidence_reason_1964_${_failure%%=*}" "REASON=ci_evidence_lookup_failed" "$(grep ^REASON= <<<"$_out" || true)"
 done
+# Target-event definitions can differ between the authoritative branch and
+# PR HEAD. Retain the expectation, without trusting either a closed-only head
+# edit or deletion of its target trigger. Both definition routes are fabricated.
+cat > "$TMP_ROOT/base-workflow.yml" <<'YAML'
+on:
+  pull_request_target:
+    types: [synchronize]
+    branches: [develop, main]
+YAML
+_target_prior='{"workflow_runs":[{"name":"ShellCheck","event":"pull_request"},{"name":"target policy","event":"pull_request_target","path":".github/workflows/target.yml"}]}'
+for _head_definition in \
+  $'on:\n  pull_request_target:\n    types: [closed]\n' \
+  $'on:\n  pull_request:\n    types: [closed]\n'; do
+  printf '%s\n' "$_head_definition" > "$TMP_ROOT/head-workflow.yml"
+  _out="$(run_ci MOCK_ROLLUP="$_subset_rollup" MOCK_PREV_CHECKS="$_target_prior" MOCK_CURRENT_RUNS="$_runs_one" MOCK_PR_COMMITS="$_commits_two" MOCK_HEAD_DEFINITION="$TMP_ROOT/head-workflow.yml" MOCK_BASE_DEFINITION="$TMP_ROOT/base-workflow.yml" MOCK_CONTENTS_LOG="$TMP_ROOT/target-definition-reads")"
+  run_test "divergent_target_definition_red_1964" "RESULT=red" "$(grep ^RESULT= <<<"$_out" || true)"
+  run_test "divergent_target_definition_named_1964" "MISSING_CHECKS=target policy" "$(grep ^MISSING_CHECKS= <<<"$_out" || true)"
+  run_test "divergent_target_definition_exit_1964" "---STATUS=1" "$(grep ^---STATUS= <<<"$_out" || true)"
+  run_test "target_definition_not_trusted_from_head_1964" "absent" "$(if [ -e "$TMP_ROOT/target-definition-reads" ]; then echo present; else echo absent; fi)"
+done
+# Even unreadable head contents cannot drop a target-event expectation.
+_out="$(run_ci MOCK_ROLLUP="$_subset_rollup" MOCK_PREV_CHECKS="$_target_prior" MOCK_CURRENT_RUNS="$_runs_one" MOCK_PR_COMMITS="$_commits_two" MOCK_CONTENTS_FAIL=1)"
+run_test "target_without_head_definition_still_expected_1964" "MISSING_CHECKS=target policy" "$(grep ^MISSING_CHECKS= <<<"$_out" || true)"
+
 _pending_rollup='{"statusCheckRollup":[{"__typename":"CheckRun","name":"ShellCheck","status":"IN_PROGRESS","conclusion":null}]}'
 _out="$(run_ci MOCK_ROLLUP="$_pending_rollup" MOCK_WORKFLOW="$_closed_workflow")"
 run_test "pending_checks_still_timeout_1964" "RESULT=timeout" "$(grep ^RESULT= <<<"$_out" || true)"
