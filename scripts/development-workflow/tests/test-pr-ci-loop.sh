@@ -12,10 +12,24 @@ set -euo pipefail
 
 SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)"
 REPO_ROOT="$(CDPATH='' cd -- "$SCRIPT_DIR/../../.." && pwd)"
-HELPER="$REPO_ROOT/scripts/development-workflow/pr-ci-loop.sh"
+HELPER="${CI_LOOP_TEST_HELPER:-$REPO_ROOT/scripts/development-workflow/pr-ci-loop.sh}"
 
 TMP_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
+# No real repository configuration or service credentials enter the fixtures.
+mkdir -p "$TMP_ROOT/repo with spaces"
+git init --quiet "$TMP_ROOT/repo with spaces"
+cat > "$TMP_ROOT/repo with spaces/.ai-dev-workflow.yaml" <<'CONFIG'
+schema_version: 2
+review:
+  on_draft:
+    runner: []
+    github: []
+  on_ready:
+    github: []
+issue_tracker:
+  provider: none
+CONFIG
 
 pass=0
 fail=0
@@ -71,12 +85,15 @@ done
 # bug shows up (duplicate/multiple results) versus a correct aggregate.
 emit() {
   local payload="$1"
+  if [[ "$payload" == *workflow_runs* ]] && [ "${MOCK_MISSING_PATH:-0}" != 1 ]; then
+    payload="$(printf %s "$payload" | jq '.workflow_runs |= map(. + {path: (.path // ".github/workflows/synthetic.yml")} )')"
+  fi
   case "$*" in *) ;; esac
   if [ "$slurped" = "1" ]; then
     if [ "${MOCK_PAGINATED:-0}" = "1" ]; then
-      payload="[$1,$1]"
+      payload="[$payload,$payload]"
     else
-      payload="[$1]"
+      payload="[$payload]"
     fi
   fi
   if [ -n "$jq_filter" ]; then
@@ -87,12 +104,31 @@ emit() {
 }
 case "$*" in
   *"auth status"*) exit 0 ;;
-  *"--json headRefOid"*) emit "{\"headRefOid\":\"${MOCK_HEAD_SHA:-$head_default}\"}" ; exit 0 ;;
+  *"--json headRefOid,baseRefName,state,mergeStateStatus"*)
+    emit "{\"headRefOid\":\"${MOCK_CONTEXT_HEAD:-${MOCK_HEAD_SHA:-$head_default}}\",\"baseRefName\":\"${MOCK_BASE:-develop}\",\"state\":\"OPEN\",\"mergeStateStatus\":\"${MOCK_MERGE_STATE:-CLEAN}\"}" ; exit 0 ;;
+  *"--json headRefOid"*)
+    head="${MOCK_HEAD_SHA:-$head_default}"
+    if [ "${MOCK_CHANGE_HEAD:-0}" = 1 ]; then
+      if [ -f "$MOCK_HEAD_COUNTER" ]; then head=dddd444000000000000; fi
+      touch "$MOCK_HEAD_COUNTER"
+    fi
+    emit "{\"headRefOid\":\"$head\"}" ; exit 0 ;;
   *"--json statusCheckRollup"*) emit "${MOCK_ROLLUP:-$rollup_default}" ; exit 0 ;;
+  *"/contents/.github/workflows/"*)
+    [ "${MOCK_CONTENTS_FAIL:-0}" = "1" ] && exit 1
+    workflow_default=$'on:\n  pull_request:\n    branches: [develop, main]\n'
+    case "$*" in *"/closed.yml?"*) workflow_default=$'on:\n  pull_request:\n    types: [closed]\n' ;; esac
+    payload="$(printf %s "${MOCK_WORKFLOW:-$workflow_default}" | base64 | tr -d '\n')"
+    emit "{\"encoding\":\"base64\",\"content\":\"$payload\"}" ; exit 0 ;;
   *"/actions/runs"*)
     [ "${MOCK_RUNS_FAIL:-0}" = "1" ] && exit 1
     # Both sides of the evidence comparison hit this endpoint; distinguish
     # them by the head_sha in the query so a test can make them differ.
+    if [ -n "${MOCK_CLOSED_RUN_SHA:-}" ]; then
+      case "$*" in
+        *"head_sha=${MOCK_CLOSED_RUN_SHA}"*) emit '{"workflow_runs":[{"name":"closed-only tracker","path":".github/workflows/closed.yml"}]}' ; exit 0 ;;
+      esac
+    fi
     if [ -n "${MOCK_EMPTY_RUN_SHA:-}" ]; then
       case "$*" in
         *"head_sha=${MOCK_EMPTY_RUN_SHA}"*) emit '{"workflow_runs":[]}' ; exit 0 ;;
@@ -138,7 +174,7 @@ _runs_matrix='{"workflow_runs":[{"name":"workflow test harnesses"}]}'
 run_ci() {
   local out status=0
   _last_stderr_file="$TMP_ROOT/last-stderr"
-  out="$(env PATH="$_bin:$PATH" "$@" bash "$HELPER" 42 --repo owner/repo --poll-interval 1 --max-wait 1 2>"$_last_stderr_file")" || status=$?
+  out="$(env PATH="$_bin:$PATH" MOCK_HEAD_COUNTER="$(mktemp "$TMP_ROOT/head.XXXXXX")-calls" "$@" bash "$HELPER" 42 --repo owner/repo --repo-root "$TMP_ROOT/repo with spaces" --poll-interval 1 --max-wait 1 2>"$_last_stderr_file")" || status=$?
   printf '%s\n---STATUS=%s\n' "$out" "$status"
 }
 
@@ -238,6 +274,50 @@ _current_failure_rollup='{"statusCheckRollup":[
 _out="$(run_ci MOCK_ROLLUP="$_current_failure_rollup" MOCK_PREV_CHECKS="$_runs_one" MOCK_CURRENT_RUNS="$_runs_one" MOCK_PR_COMMITS="$_commits_two")"
 run_test "current_failure_still_red_1559" "RESULT=red" "$(grep '^RESULT=' <<<"$_out" || true)"
 run_test "current_failure_named_1559" "FAILING_CHECKS=policy" "$(grep '^FAILING_CHECKS=' <<<"$_out" || true)"
+
+# 7. Issue #1964: closed-only tracker runs on a prior implementation commit
+# do not belong to open release/main or backport/develop readiness.
+_tracker_prior='{"workflow_runs":[{"name":"ShellCheck"},{"name":"Update tracker status on PR merge"}]}'
+_closed_workflow=$'name: Update tracker status on PR merge\non:\n  pull_request:\n    types: [closed]\n    branches: [develop]\njobs:\n  tracker:\n    if: github.event.pull_request.merged == true\n'
+for _base in main develop; do
+  _out="$(run_ci MOCK_BASE="$_base" MOCK_ROLLUP="$_subset_rollup" MOCK_PREV_CHECKS="$_tracker_prior" MOCK_CURRENT_RUNS="$_runs_one" MOCK_PR_COMMITS="$_commits_two" MOCK_WORKFLOW="$_closed_workflow")"
+  run_test "closed_only_tracker_${_base}_green_1964" "RESULT=green" "$(grep ^RESULT= <<<"$_out" || true)"
+  run_test "closed_only_tracker_${_base}_exit_1964" "---STATUS=0" "$(grep ^---STATUS= <<<"$_out" || true)"
+  run_test "closed_only_tracker_${_base}_evidence_1964" "CI_EVIDENCE=present" "$(grep ^CI_EVIDENCE= <<<"$_out" || true)"
+done
+# A planted applicable expectation must block; removing only the pre-merge
+# activity makes the same prior run inapplicable and restores green above.
+for _workflow in \
+  $'on:\n  pull_request:\n    types: [closed, synchronize]\n    branches: [develop, main]\n' \
+  $'on:\n  pull_request:\n    types: [closed]\n  push:\n' \
+  $'on:\n  pull_request_target:\n    branches: ["release/**", develop]\n'; do
+  _out="$(run_ci MOCK_ROLLUP="$_subset_rollup" MOCK_PREV_CHECKS="$_tracker_prior" MOCK_CURRENT_RUNS="$_runs_one" MOCK_PR_COMMITS="$_commits_two" MOCK_WORKFLOW="$_workflow")"
+  run_test "applicable_missing_workflow_blocks_1964" "RESULT=red" "$(grep ^RESULT= <<<"$_out" || true)"
+  run_test "applicable_missing_workflow_named_1964" "MISSING_CHECKS=Update tracker status on PR merge" "$(grep ^MISSING_CHECKS= <<<"$_out" || true)"
+done
+# Event/base applicability, independent of workflow names.
+for _workflow in \
+  $'on:\n  pull_request_target:\n    types: [closed]\n' \
+  $'on:\n  pull_request:\n    branches: [develop]\n' \
+  $'on:\n  pull_request:\n    branches-ignore: [main]\n'; do
+  _out="$(run_ci MOCK_BASE=main MOCK_ROLLUP="$_subset_rollup" MOCK_PREV_CHECKS="$_runs_two" MOCK_CURRENT_RUNS="$_runs_one" MOCK_PR_COMMITS="$_commits_two" MOCK_WORKFLOW="$_workflow")"
+  run_test "proven_inapplicability_green_1964" "RESULT=green" "$(grep ^RESULT= <<<"$_out" || true)"
+done
+# A newest earlier SHA carrying only a closed-only run must not conceal a
+# genuinely applicable missing workflow on an older head.
+_out="$(run_ci MOCK_ROLLUP="$_subset_rollup" MOCK_PREV_CHECKS="$_runs_two" MOCK_CURRENT_RUNS="$_runs_one" MOCK_PR_COMMITS="$_commits_three" MOCK_CLOSED_RUN_SHA=cccc333000000000000)"
+run_test "closed_only_earlier_head_does_not_conceal_missing_check_1964" "MISSING_CHECKS=workflow test harnesses" "$(grep ^MISSING_CHECKS= <<<"$_out" || true)"
+for _failure in MOCK_CONTENTS_FAIL=1 MOCK_MISSING_PATH=1 \
+  MOCK_WORKFLOW=invalid MOCK_WORKFLOW='   ' \
+  MOCK_WORKFLOW=$'on:\n  pull_request:\n    types: [synchronize]\n    types: [closed]\n' \
+  MOCK_WORKFLOW=$'on:\n  pull_request:\n    types: [closed]\n    branches: invalid\n' MOCK_CONTEXT_HEAD=dddd444000000000000 MOCK_MERGE_STATE=DIRTY MOCK_CHANGE_HEAD=1; do
+  _out="$(run_ci MOCK_ROLLUP="$_subset_rollup" MOCK_PREV_CHECKS="$_tracker_prior" MOCK_CURRENT_RUNS="$_runs_one" MOCK_PR_COMMITS="$_commits_two" "$_failure")"
+  run_test "unreadable_or_changed_evidence_red_1964_${_failure%%=*}" "RESULT=red" "$(grep ^RESULT= <<<"$_out" || true)"
+  run_test "unreadable_or_changed_evidence_reason_1964_${_failure%%=*}" "REASON=ci_evidence_lookup_failed" "$(grep ^REASON= <<<"$_out" || true)"
+done
+_pending_rollup='{"statusCheckRollup":[{"__typename":"CheckRun","name":"ShellCheck","status":"IN_PROGRESS","conclusion":null}]}'
+_out="$(run_ci MOCK_ROLLUP="$_pending_rollup" MOCK_WORKFLOW="$_closed_workflow")"
+run_test "pending_checks_still_timeout_1964" "RESULT=timeout" "$(grep ^RESULT= <<<"$_out" || true)"
 
 printf '\nResults: %d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
