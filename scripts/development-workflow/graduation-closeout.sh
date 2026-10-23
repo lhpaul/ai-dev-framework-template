@@ -204,7 +204,7 @@ case "$TRACKER_PROVIDER" in
     TRACKER_PROVIDER="github_projects"
     ;;
   *)
-    echo "ERROR: unsupported issue_tracker.provider '${TRACKER_PROVIDER}' for graduation closeout." >&2
+    printf 'configuration: configuration validation error; key=issue_tracker.provider\n' >&2
     exit 64
     ;;
 esac

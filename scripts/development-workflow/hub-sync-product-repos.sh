@@ -59,7 +59,10 @@ sync_one_repo() {
     hub_missing_path_guidance "$selected_repo" | sed 's/^/  /'
     if [ "$BOOTSTRAP_LOCAL_PATH" = "true" ]; then
       if confirm_bootstrap "$selected_repo" "$local_path"; then
-        python3 "$HUB_RESOLVER" set-local-path --repo-root "$REPO_ROOT" --repo "$selected_repo" --local-path "$local_path" >/dev/null
+        python3 "$HUB_RESOLVER" set-local-path --repo-root "$REPO_ROOT" --repo "$selected_repo" --local-path "$local_path" >/dev/null || {
+          failed_count=$((failed_count + 1))
+          return 1
+        }
         printf '  BOOTSTRAP=written\n'
         skipped_count=$((skipped_count + 1))
         return 0

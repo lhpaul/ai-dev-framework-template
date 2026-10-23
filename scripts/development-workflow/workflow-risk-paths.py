@@ -167,11 +167,7 @@ def evaluate(root: Path, product: str, evidence: Any) -> dict[str, Any]:
     except reader.ConfigError as exc:
         if "requires PyYAML" in str(exc):
             raise RiskPathError("PyYAML is required; install the workflow tooling dependencies") from exc
-        # The underlying parser diagnostic can include a source snippet. Keep
-        # its line locator, but never echo raw YAML or invalid scalar values.
-        line = re.search(r":([0-9]+):", str(exc))
-        locator = f":{line[1]}" if line else ""
-        raise RiskPathError(f".ai-dev-workflow.yaml{locator}: invalid or unsupported YAML") from exc
+        raise RiskPathError(reader.format_config_error(exc, key="guardrails.risk_paths")) from exc
     try:
         node, location = select_map(reader, shared, path, root, evidence, product)
     except reader.ConfigError as exc:
@@ -205,7 +201,11 @@ def main() -> int:
         result = evaluate(Path(args.repo_root).resolve(), args.product_repo, evidence)
     except (RiskPathError, OSError, ValueError, TypeError, KeyError, RecursionError) as exc:
         if isinstance(exc, RiskPathError):
-            print(f"ERROR: {exc}", file=sys.stderr)
+            try:
+                detail = config_reader().format_config_error(exc.__cause__ or exc, key="guardrails.risk_paths")
+            except Exception:
+                detail = "configuration: configuration validation error; key=guardrails.risk_paths"
+            print("ERROR: " + detail, file=sys.stderr)
         else:
             print("ERROR: unreadable project configuration or classifier evidence", file=sys.stderr)
         return 2

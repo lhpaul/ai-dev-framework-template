@@ -121,8 +121,9 @@ An absent map or `risk_paths: []` uses built-ins. Null, a bare key, a non-list,
 invalid rule or unsupported YAML syntax stops classification with a nonzero
 exit and a field/rule diagnostic. Invalid unmatched rules also stop the run;
 repair the configuration before retrying. Diagnostics do not echo raw invalid
-values. Use the workflow toolchain's PyYAML dependency and supported strict
-YAML subset: no tags, anchors, aliases, duplicate keys or multiline scalars.
+values. Use the dependency-free strict framework YAML reader and its supported
+subset: no tags, anchors, aliases, duplicate keys or multiline scalars. Review
+conversion/shape checks remain separate; no PyYAML is needed for this map.
 Missing or empty changed-file evidence preserves High risk, without adding a
 new independent merge prohibition; the existing risk ceiling and other gates
 continue to decide permission.

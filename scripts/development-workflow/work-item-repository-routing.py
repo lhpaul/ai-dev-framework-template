@@ -12,6 +12,16 @@ from pathlib import Path
 from typing import Any
 
 
+
+def config_error_metadata(error=None, *, key=""):
+    """Use the existing pure formatter without reading any configuration."""
+    try:
+        import runpy
+        api = runpy.run_path(str(Path(__file__).with_name("workflow-config-resolver.py")))
+        return api["format_config_error"](error, key=key)
+    except Exception:
+        return "configuration: validation error"
+
 OUTCOME_LABELS = {
     "product_owned": "Product owned",
     "hub_only": "Hub only",
@@ -133,7 +143,7 @@ def classify(
     if repository_mode not in VALID_REPOSITORY_MODES:
         outcome = "unsupported_mode"
         artifact_owner = "none"
-        stop_reason = f"repository mode '{repository_mode}' is not supported"
+        stop_reason = config_error_metadata(key="mode")
         required_human_action = "fix repository mode configuration before routing implementation work"
     elif repository_mode == "product_repo":
         outcome = "single_repo"
@@ -160,7 +170,7 @@ def classify(
         elif selected[0] not in configured_set:
             outcome = "ambiguous_target"
             artifact_owner = "none"
-            stop_reason = f"selected product repository key '{selected[0]}' is not configured"
+            stop_reason = config_error_metadata(key="workflow_hub.product_repos[].name")
             required_human_action = "select one configured product repository key"
         else:
             outcome = "product_owned"
@@ -234,7 +244,7 @@ def main(argv: list[str]) -> int:
             hub_only,
         )
     except ValueError as exc:
-        print(f"ERROR: {exc}", file=sys.stderr)
+        print(config_error_metadata(exc), file=sys.stderr)
         return 2
 
     if args.json:

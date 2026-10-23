@@ -183,7 +183,10 @@ def configuration(root):
     path = Path(os.environ.get('AI_DEV_WORKFLOW_CONFIG_FILE', str(root / '.ai-dev-workflow.yaml')))
     if not path.is_file():
         path = root / '.ai-dev-workflow.yaml'
-    return resolver.parse_yaml_subset(path, preserve_empty_values=True)
+    try:
+        return resolver.parse_yaml_subset(path, preserve_empty_values=True)
+    except (OSError, UnicodeError) as exc:
+        raise resolver.ConfigError("unreadable configuration") from exc
 
 
 def tracker_scope(config, repo):
@@ -863,7 +866,10 @@ def main():
             snapshot_classify(args)
             return 0
         return scan(args)
-    except (ReadError, resolver.ConfigError, OSError, ValueError, TypeError, AttributeError, KeyError) as exc:
+    except resolver.ConfigError as exc:
+        print(resolver.format_config_error(exc), file=sys.stderr)
+        return 1
+    except (ReadError, OSError, ValueError, TypeError, AttributeError, KeyError) as exc:
         print('Tracker unavailable: ' + str(exc), file=sys.stderr)
         return 1
 

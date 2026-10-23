@@ -8,7 +8,7 @@ if declare -p REVIEW_DOCTRINE_MAX_BYTES >/dev/null 2>&1; then
   case "$(declare -p REVIEW_DOCTRINE_MAX_BYTES 2>/dev/null || true)" in
     *"-r"*)
       if [ "${REVIEW_DOCTRINE_MAX_BYTES}" != "12000" ]; then
-        echo "ERROR: REVIEW_DOCTRINE_MAX_BYTES is readonly at ${REVIEW_DOCTRINE_MAX_BYTES}; AC-12 requires 12000." >&2
+        echo "ERROR: REVIEW_DOCTRINE_MAX_BYTES has an invalid readonly value; AC-12 requires 12000." >&2
         return 1
       fi
       ;;
@@ -31,6 +31,50 @@ workflow_script_dir() {
 
 workflow_repo_root() {
   CDPATH='' cd -- "$(workflow_script_dir)/../.." && pwd
+}
+
+# Anchor an explicit relative source at invocation CWD before any entry changes
+# directory or hands it to a child. This is path metadata only: no private read.
+workflow_anchor_local_override_root() {
+  case "${WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT:-}" in
+    ''|/*) return 0 ;;
+  esac
+  local entry_cwd
+  entry_cwd="$(pwd -P)" || return 2
+  WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT="$entry_cwd/$WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT"
+  export WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT
+}
+workflow_anchor_local_override_root
+
+# Bash arrays cannot be inherited through the environment. Discard a same-name
+# inherited scalar, while preserving an entry's binding if this library is sourced
+# again in the same process. This is state, not another configuration override.
+case "$(declare -p _WORKFLOW_LOCAL_CONFIG_ROOT 2>/dev/null || true)" in
+  'declare -a '*) ;;
+  *) unset _WORKFLOW_LOCAL_CONFIG_ROOT; declare -a _WORKFLOW_LOCAL_CONFIG_ROOT=() ;;
+esac
+
+workflow_local_config_root() {
+  if [ -n "${_WORKFLOW_LOCAL_CONFIG_ROOT[0]:-}" ]; then
+    printf '%s\n' "${_WORKFLOW_LOCAL_CONFIG_ROOT[0]}"
+  else
+    workflow_repo_root
+  fi
+}
+
+workflow_bind_local_config_root() {
+  local root="${1:-}" selected_file
+  [ -n "$root" ] || return 2
+  if ! root="$( { CDPATH='' cd -- "$root" && pwd -P; } 2>/dev/null)"; then
+    printf 'ERROR: local-source unreadable directory\n' >&2
+    return 2
+  fi
+  selected_file="$(workflow_local_config_file "$root")" || return 2
+  if [ -n "${WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT:-}" ]; then
+    WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT="$(dirname -- "$selected_file")" || return 2
+    export WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT
+  fi
+  _WORKFLOW_LOCAL_CONFIG_ROOT=("$root")
 }
 
 workflow_config_file() {
@@ -58,112 +102,22 @@ workflow_effective_config_file() {
   return 1
 }
 
-# workflow_linked_worktree_main_root [repo_root]
-#
-# Prints the main clone root when repo_root is a linked git worktree. Prints
-# nothing and returns 1 for the main clone itself, a plain checkout, a bare
-# repository, a submodule, or a directory outside any git repository.
-# Git-free on purpose: callers such as run-epic-policy-recommender.sh must
-# never invoke git or gh, and a linked worktree is recognisable from the
-# filesystem alone — its .git is a FILE whose first line is
-# `gitdir: <main>/.git/worktrees/<name>`. Mirrors linked_worktree_main_root()
-# in workflow-config-resolver.py (#1560).
-workflow_linked_worktree_main_root() {
-  local repo_root="${1:-$(workflow_repo_root)}"
-  local dot_git="" first="" gitdir="" main_root="" resolved_root=""
-
-  dot_git="$repo_root/.git"
-  [ -f "$dot_git" ] || return 1
-  IFS= read -r first < "$dot_git" || [ -n "$first" ] || return 1
-  case "$first" in gitdir:*) ;; *) return 1 ;; esac
-  gitdir="${first#gitdir:}"
-  gitdir="${gitdir#"${gitdir%%[![:space:]]*}"}"
-  # Trim trailing whitespace too, including a stray CR that `read` (unlike
-  # Python's splitlines()) does not strip from a CRLF-terminated line — the
-  # trimmed value must resolve with `cd` below, same as workflow-config-
-  # resolver.py's linked_worktree_main_root().
-  gitdir="${gitdir%"${gitdir##*[![:space:]]}"}"
-  case "$gitdir" in /*) ;; *) gitdir="$repo_root/$gitdir" ;; esac
-  gitdir="$(CDPATH='' cd -- "$gitdir" 2>/dev/null && pwd -P)" || return 1
-  case "$gitdir" in */.git/worktrees/*) ;; *) return 1 ;; esac
-  main_root="${gitdir%/.git/worktrees/*}"
-  resolved_root="$(CDPATH='' cd -- "$repo_root" 2>/dev/null && pwd -P)" || return 1
-  [ "$main_root" != "$resolved_root" ] || return 1
-  [ -d "$main_root/.git" ] || return 1
-  printf '%s\n' "$main_root"
-}
-
-# workflow_local_review_override_root
-#
-# Prints the directory whose .ai-dev-workflow.local.yaml applies to this
-# checkout. Precedence: WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT (the initiating
-# checkout of a reviewer-loop handoff, #1033), then the checkout's own file,
-# then — when the checkout is a linked worktree with no file of its own — the
-# main clone (#1560: `git worktree add` never carries gitignored files, so
-# without this every externally created worktree silently lost the override).
-workflow_local_review_override_root() {
-  local override_root="${WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT:-}"
-  local repo_root="" main_root=""
-
-  if [ -n "$override_root" ]; then
-    if [ ! -d "$override_root" ]; then
-      echo "ERROR: configured local reviewer override source is unavailable." >&2
-      return 1
-    fi
-    printf '%s\n' "$override_root"
-    return 0
-  fi
-
-  repo_root="$(workflow_repo_root)"
-  # A checkout-local file without a `review:` section (set-local-path writes
-  # one holding only product_repos into a worktree) must not mask the main
-  # clone's reviewer override — that is the #1560 failure all over again.
-  # An UNREADABLE file is neither present nor absent: falling through to the
-  # main clone would apply a different policy than the resolver, which fails
-  # on the same file. Probe status 2 is a structured error; stop.
-  local checkout_status=0 main_status=0
-  _workflow_local_file_has_review_section "$repo_root/.ai-dev-workflow.local.yaml" || checkout_status=$?
-  [ "$checkout_status" -ne 2 ] || return 1
-  if [ "$checkout_status" -eq 1 ] && main_root="$(workflow_linked_worktree_main_root "$repo_root")"; then
-    _workflow_local_file_has_review_section "$main_root/.ai-dev-workflow.local.yaml" || main_status=$?
-    [ "$main_status" -ne 2 ] || return 1
-    if [ "$main_status" -eq 0 ]; then
-      printf '%s\n' "$main_root"
-      return 0
-    fi
-  fi
-  printf '%s\n' "$repo_root"
-}
-
-# _workflow_local_file_has_review_section <file>
-# True when the file exists and declares a top-level `review:` key, whatever
-# its value — empty, `{}`, `null`, `~`, or a nested mapping. Matches on the
-# key alone (mirrors workflow-config-resolver.py's `"review" not in local`
-# key-presence check) so an explicit-but-empty `review: {}` is still treated
-# as present and does not fall through to the main clone's file.
-_workflow_local_file_has_review_section() {
-  local file="$1"
-  [ -f "$file" ] || return 1
-  # Key presence only, matching parse_yaml_subset(), which strips whitespace
-  # around keys: `review : {}` is a review section there and must be one here.
-  # Status 2 (with an error on stderr) means the file exists but cannot be
-  # read — callers must not treat that as "no review section".
-  local status=0
-  grep -Eq '^review[[:blank:]]*:' "$file" || status=$?
-  if [ "$status" -gt 1 ]; then
-    echo "ERROR: local reviewer override exists but could not be read (grep status $status): $file" >&2
-    return 2
-  fi
-  return "$status"
-}
-
+# Source resolution never discovers another checkout. Status 2 means failure.
 workflow_local_config_file() {
-  local override_root
-
-  if ! override_root="$(workflow_local_review_override_root)"; then
-    return 1
+  local root
+  if [ "$#" -gt 0 ]; then
+    [ -n "$1" ] || return 2
+    root="$1"
+  else
+    root="$(workflow_local_config_root 2>/dev/null)" || return 2
   fi
-  printf '%s/.ai-dev-workflow.local.yaml\n' "$override_root"
+  workflow_command_with_safe_stderr python3 "$(workflow_config_resolver_script 2>/dev/null)" local-source --repo-root "$root"
+}
+
+workflow_local_review_override_root() {
+  local file
+  file="$(workflow_local_config_file)" || return 2
+  dirname -- "$file"
 }
 
 workflow_is_default_config_file() {
@@ -173,6 +127,104 @@ workflow_is_default_config_file() {
 
 workflow_config_resolver_script() {
   printf '%s/workflow-config-resolver.py\n' "$(workflow_script_dir)"
+}
+
+# Diagnostic-only stdin boundary. Never send functional config/auth payloads here.
+_workflow_redact_stdin() {
+  local sanitized
+  sanitized="$( { python3 "$(workflow_config_resolver_script)" redact-text "$@"; } 2>/dev/null)" || {
+    printf 'ERROR: diagnostic sanitization failed\n' >&2
+    return 2
+  }
+  printf '%s\n' "$sanitized"
+}
+
+workflow_redact_text() { _workflow_redact_stdin; }
+workflow_redact_json() { _workflow_redact_stdin --json; }
+
+# Group the input open so Bash cannot print a source path before sanitization.
+# Preserve a failed open (1) separately from a failed sanitizer (2).
+workflow_redact_file() {
+  local diagnostic_file="$1" diagnostic_status=0
+  shift
+  { _workflow_redact_stdin "$@" <"$diagnostic_file"; } 2>/dev/null || diagnostic_status=$?
+  if [ "$diagnostic_status" -ne 0 ]; then
+    printf 'ERROR: diagnostic sanitization failed\n' >&2
+  fi
+  return "$diagnostic_status"
+}
+
+# Keep cleanup's original status/errexit context, without replaying rm's stderr.
+workflow_remove_diagnostic_file() {
+  local diagnostic_status=0
+  rm -f "$1" 2>/dev/null || diagnostic_status=$?
+  if [ "$diagnostic_status" -ne 0 ]; then
+    printf 'ERROR: diagnostic cleanup failed\n' >&2
+  fi
+  return "$diagnostic_status"
+}
+
+# Fixed report keys and whole values, framed before any redaction/serialization.
+# One resolver process per report; this never reads or caches configuration.
+workflow_diagnostic_kvs() {
+  if [ "$#" -eq 0 ] || [ "$(( $# % 2 ))" -ne 0 ]; then
+    printf 'ERROR: diagnostic sanitization failed\n' >&2
+    return 2
+  fi
+  printf '%s\0' "$@" | _workflow_redact_stdin --kv
+}
+
+
+# Sanitize complete values before escaping for the line-oriented report contract.
+workflow_diagnostic_kv_escaped() {
+  printf '%s\0' "$1" "$2" | _workflow_redact_stdin --kv-escaped
+}
+
+# External-command boundary: keep stdout functional, sanitize stderr after the
+# command exits, and preserve its status. No background filters or lost waits.
+workflow_command_with_safe_stderr() {
+  local diagnostic_file command_status=0 capture_opened=0
+  diagnostic_file="$(mktemp 2>/dev/null)" || { printf 'ERROR: diagnostic capture failed\n' >&2; return 2; }
+  { { capture_opened=1; "$@"; } 2>"$diagnostic_file"; } 2>/dev/null || command_status=$?
+  if [ "$capture_opened" -eq 0 ]; then
+    printf 'ERROR: diagnostic capture failed\n' >&2
+  elif [ -s "$diagnostic_file" ]; then
+    workflow_redact_file "$diagnostic_file" >&2 || { workflow_remove_diagnostic_file "$diagnostic_file"; return 2; }
+  fi
+  workflow_remove_diagnostic_file "$diagnostic_file"
+  return "$command_status"
+}
+
+workflow_diagnostic_printf() {
+  # Caller-supplied formats are fixed code; values remain separate arguments.
+  # shellcheck disable=SC2059
+  printf "$@" | workflow_redact_text
+}
+
+workflow_diagnostic() {
+  printf '%s\n' "$*" | workflow_redact_text
+}
+
+# Report values are diagnostics regardless of their key suffix. Keep functional
+# print_kv separate: configuration/auth/control payloads are not diagnostic logs.
+workflow_diagnostic_kv() {
+  case "$1" in
+    COMMENT_COUNT|BLOCKING_COUNT|SUGGESTION_COUNT|PR_NUMBER|TOTAL_CHECK_COUNT|FAILING_CHECK_COUNT|PENDING_CHECK_COUNT|REVIEWER_CHECK_COUNT)
+      case "$2" in
+        ''|*[!0-9]*) ;;
+        *) printf '%s=%s\n' "$1" "$2"; return 0 ;;
+      esac ;;
+    RESULT)
+      case "$2" in
+        clean|needs_fixes|escalate|skipped|waiting_on_reviewer|green|red|timeout)
+          printf '%s=%s\n' "$1" "$2"; return 0 ;;
+      esac ;;
+    HEAD_SHA|REVIEWED_HEAD)
+      if [[ "$2" =~ ^[0-9a-fA-F]{40}$ ]]; then
+        printf '%s=%s\n' "$1" "$2"; return 0
+      fi ;;
+  esac
+  printf '%s\0' "$1" "$2" | _workflow_redact_stdin --kv-pair
 }
 
 workflow_config_exists() {
@@ -324,71 +376,43 @@ workflow_github_repo_from_context() {
 }
 
 workflow_product_repo_name_for_github_slug() {
-  local root="$1"
+  local root="${1:-}"
   local slug="$2"
-  local name context github
+  local name context github names mode_json mode
 
   if [ -z "$root" ] || [ -z "$slug" ]; then
     return 1
   fi
+  workflow_local_config_file "$root" >/dev/null || return 2
+  mode_json="$(workflow_command_with_safe_stderr python3 "$(workflow_config_resolver_script 2>/dev/null)" mode --repo-root "$root" --json)" || return 2
+  mode="$(printf '%s\n' "$mode_json" | jq -r '.WORKFLOW_MODE // ""')" || return 2
+  [ "$mode" = workflow_hub ] || return 1
 
+  names="$(workflow_command_with_safe_stderr python3 "$(workflow_config_resolver_script 2>/dev/null)" list-product-repos --repo-root "$root")" || return 2
   while IFS= read -r name; do
     [ -n "$name" ] || continue
-    if ! context="$(workflow_repository_context "$name" "$root" 2>/dev/null)"; then
-      continue
-    fi
+    context="$(workflow_command_with_safe_stderr workflow_repository_context "$name" "$root")" || return 2
     github="$(workflow_github_repo_from_context "$context")"
     if [ "$github" = "$slug" ]; then
       printf '%s\n' "$name"
       return 0
     fi
-  done < <(python3 "$(workflow_config_resolver_script)" list-product-repos --repo-root "$root" 2>/dev/null)
+  done <<< "$names"
 
   return 1
 }
 
+# Compatibility API: a hub is usable only when it is already the selected root.
+# A hub locator or a neighboring public manifest never authorizes private reads.
 workflow_hub_root_for_ci_policy() {
-  local root="$1"
-  local github_slug="${2:-}"
-  local mode context candidate parent repo_name
-
-  if [ -z "$root" ]; then
-    return 1
-  fi
-
-  if [ -n "${WORKFLOW_HUB_REPO_ROOT:-}" ] && [ -f "${WORKFLOW_HUB_REPO_ROOT}/.ai-dev-workflow.yaml" ]; then
-    mode="$(python3 "$(workflow_config_resolver_script)" mode --repo-root "$WORKFLOW_HUB_REPO_ROOT" --json 2>/dev/null | jq -r '.WORKFLOW_MODE // ""')"
-    if [ "$mode" = "workflow_hub" ]; then
-      printf '%s\n' "$WORKFLOW_HUB_REPO_ROOT"
-      return 0
-    fi
-  fi
-
-  mode="$(python3 "$(workflow_config_resolver_script)" mode --repo-root "$root" --json 2>/dev/null | jq -r '.WORKFLOW_MODE // ""')"
-  if [ "$mode" != "product_repo" ]; then
-    return 1
-  fi
-
-  if [ -z "$github_slug" ]; then
-    context="$(workflow_repository_context "" "$root" 2>/dev/null)" || return 1
-    github_slug="$(workflow_github_repo_from_context "$context")"
-  fi
-  [ -n "$github_slug" ] || return 1
-
-  parent="$(dirname "$root")"
-  for candidate in "$parent"/*; do
-    [ -e "$candidate/.ai-dev-workflow.yaml" ] || continue
-    mode="$(python3 "$(workflow_config_resolver_script)" mode --repo-root "$candidate" --json 2>/dev/null | jq -r '.WORKFLOW_MODE // ""')"
-    if [ "$mode" = "workflow_hub" ]; then
-      repo_name="$(workflow_product_repo_name_for_github_slug "$candidate" "$github_slug" 2>/dev/null || true)"
-      if [ -n "$repo_name" ]; then
-        printf '%s\n' "$candidate"
-        return 0
-      fi
-    fi
-  done
-
-  return 1
+  local root="${1:-}"
+  local mode_json mode
+  [ -n "$root" ] || return 1
+  workflow_local_config_file "$root" >/dev/null || return 2
+  mode_json="$(workflow_command_with_safe_stderr python3 "$(workflow_config_resolver_script 2>/dev/null)" mode --repo-root "$root" --json)" || return 2
+  mode="$(printf '%s\n' "$mode_json" | jq -r '.WORKFLOW_MODE // ""')" || return 2
+  [ "$mode" = workflow_hub ] || return 1
+  printf '%s\n' "$root"
 }
 
 workflow_merge_ci_policy_into_json() {
@@ -401,6 +425,7 @@ workflow_merge_ci_policy_into_json() {
     printf '%s\n' "$json"
     return 0
   fi
+  workflow_local_config_file "$root" >/dev/null || return 2
 
   if [ -n "$(printf '%s\n' "$json" | jq -r '.ciPolicy // .ci_policy // ""' 2>/dev/null)" ]; then
     printf '%s\n' "$json"
@@ -422,32 +447,26 @@ workflow_merge_ci_policy_into_json() {
     fi
   fi
 
-  local github_slug resolve_root="$root" context ci_policy mode
+  local github_slug context ci_policy mode_json mode
   github_slug="$(printf '%s\n' "$json" | jq -r '.github_repo // ""' 2>/dev/null)"
 
-  mode="$(python3 "$(workflow_config_resolver_script)" mode --repo-root "$root" --json 2>/dev/null | jq -r '.WORKFLOW_MODE // ""')"
-  if [ "$mode" = "product_repo" ]; then
-    local hub_root
-    hub_root="$(workflow_hub_root_for_ci_policy "$root" "$github_slug" 2>/dev/null || true)"
-    if [ -n "$hub_root" ]; then
-      resolve_root="$hub_root"
-      if [ -z "$repo_name" ] && [ -n "$github_slug" ]; then
-        repo_name="$(workflow_product_repo_name_for_github_slug "$hub_root" "$github_slug" 2>/dev/null || true)"
-      fi
-    fi
-  elif [ -z "$repo_name" ] && [ -n "$github_slug" ]; then
-    repo_name="$(workflow_product_repo_name_for_github_slug "$resolve_root" "$github_slug" 2>/dev/null || true)"
+  # CI policy belongs to the selected checkout. Do not discover a hub via
+  # siblings or inherited locators, then re-root later context/private reads.
+  mode_json="$(workflow_command_with_safe_stderr python3 "$(workflow_config_resolver_script 2>/dev/null)" mode --repo-root "$root" --json)" || return 2
+  mode="$(printf '%s\n' "$mode_json" | jq -r '.WORKFLOW_MODE // ""')" || return 2
+  if [ "$mode" = workflow_hub ] && [ -z "$repo_name" ] && [ -n "$github_slug" ]; then
+    repo_name="$(workflow_product_repo_name_for_github_slug "$root" "$github_slug")" || {
+      local lookup_status=$?
+      [ "$lookup_status" -eq 1 ] || return 2
+    }
   fi
 
-  if [ -n "$github_slug" ] && [ -z "$repo_name" ]; then
+  if [ "$mode" = workflow_hub ] && [ -n "$github_slug" ] && [ -z "$repo_name" ]; then
     printf '%s\n' "$json"
     return 0
   fi
 
-  if ! context="$(workflow_repository_context "$repo_name" "$resolve_root" 2>/dev/null)"; then
-    printf '%s\n' "$json"
-    return 0
-  fi
+  context="$(workflow_command_with_safe_stderr workflow_repository_context "$repo_name" "$root")" || return 2
 
   local resolved_github
   resolved_github="$(workflow_github_repo_from_context "$context")"
@@ -516,7 +535,12 @@ configured_reviewer_check_names_json() {
     config_file="$(workflow_effective_config_file 2>/dev/null || workflow_config_file)"
   fi
 
-  if [ -f "$config_file" ]; then
+  local platforms
+  if [ "$config_file" = "$(workflow_config_file)" ]; then
+    platforms="$(WORKFLOW_APPLY_LOCAL_REVIEW_OVERRIDES=1 workflow_config_review_platforms "$config_file")" || return 2
+  else
+    platforms="$(workflow_config_review_platforms "$config_file")" || return 2
+  fi
     while IFS= read -r platform; do
       platform="$(printf '%s' "$platform" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
       [ -z "$platform" ] && continue
@@ -531,14 +555,7 @@ configured_reviewer_check_names_json() {
           names+=("${RONDA_CHECK_NAME:-Ronda review}")
           ;;
       esac
-    done < <(
-      if [ "$config_file" = "$(workflow_config_file)" ]; then
-        WORKFLOW_APPLY_LOCAL_REVIEW_OVERRIDES=1 workflow_config_review_platforms "$config_file"
-      else
-        workflow_config_review_platforms "$config_file"
-      fi
-    )
-  fi
+    done <<< "$platforms"
 
   if [ "${#names[@]}" -eq 0 ]; then
     printf '[]\n'
@@ -1140,87 +1157,47 @@ workflow_config_review_nested_list_declared() {
   ' "$config_file"
 }
 
+# 0 = declaration (including []), 1 = absent, 2 = source/schema failure.
 workflow_config_review_local_list_if_declared() {
-  local config_file="$1"
-  local phase="$2"
-  local key="$3"
-  local local_file
-
+  local config_file="$1" phase="$2" key="$3" status=0 review_root
   workflow_is_default_config_file "$config_file" || return 1
-  local_file="$(workflow_local_config_file)"
-  workflow_config_review_nested_list_declared "$local_file" "$phase" "$key" || return 1
-  workflow_config_review_nested_list "$local_file" "$phase" "$key"
+  review_root="$(workflow_local_config_root 2>/dev/null)" || return 2
+  workflow_command_with_safe_stderr python3 "$(workflow_config_resolver_script 2>/dev/null)" review-local-list \
+    --repo-root "$review_root" --phase "$phase" --key "$key" || status=$?
+  return "$status"
+}
+
+# Decode/validate selected names before newline transport. One invocation retains
+# local declared-empty precedence and shared legacy fallback without AWK splitting.
+workflow_config_review_list() {
+  local config_file="$1" phase="$2" key="$3" review_root
+  review_root="$(workflow_local_config_root 2>/dev/null)" || return 2
+  local args=(review-list --repo-root "$review_root" --shared-file "$config_file" --phase "$phase" --key "$key")
+  if workflow_is_default_config_file "$config_file" 2>/dev/null; then
+    args+=(--apply-local)
+  fi
+  workflow_command_with_safe_stderr python3 "$(workflow_config_resolver_script 2>/dev/null)" ${args[@]+"${args[@]}"}
 }
 
 workflow_config_review_on_draft_runner() {
-  local config_file="${1:-$(workflow_config_file)}"
-
-  [ -f "$config_file" ] || return 0
-
-  if workflow_config_review_local_list_if_declared "$config_file" on_draft runner; then
-    return 0
-  fi
-
-  if workflow_config_review_nested_list "$config_file" on_draft runner | grep -q .; then
-    workflow_config_review_nested_list "$config_file" on_draft runner
-  else
-    workflow_config_review_legacy_list "$config_file" internal_reviewers
-  fi
+  workflow_config_review_list "${1:-$(workflow_config_file)}" on_draft runner
 }
 
 workflow_config_review_on_draft_github() {
-  local config_file="${1:-$(workflow_config_file)}"
-
-  [ -f "$config_file" ] || return 0
-
-  if workflow_config_review_local_list_if_declared "$config_file" on_draft github; then
-    return 0
-  fi
-
-  if workflow_config_review_nested_list "$config_file" on_draft github | grep -q .; then
-    workflow_config_review_nested_list "$config_file" on_draft github
-    return 0
-  fi
-
-  if workflow_config_review_legacy_list "$config_file" phase_after_clean | grep -q .; then
-    awk '
-      NR == FNR {
-        exclude[$0] = 1
-        next
-      }
-
-      !($0 in exclude)
-    ' \
-      <(workflow_config_review_legacy_list "$config_file" phase_after_clean) \
-      <(workflow_config_review_legacy_list "$config_file" platforms)
-  fi
+  workflow_config_review_list "${1:-$(workflow_config_file)}" on_draft github
 }
 
 workflow_config_review_on_ready_github() {
-  local config_file="${1:-$(workflow_config_file)}"
-
-  [ -f "$config_file" ] || return 0
-
-  if workflow_config_review_local_list_if_declared "$config_file" on_ready github; then
-    return 0
-  fi
-
-  if workflow_config_review_nested_list "$config_file" on_ready github | grep -q .; then
-    workflow_config_review_nested_list "$config_file" on_ready github
-  elif workflow_config_review_legacy_list "$config_file" phase_after_clean | grep -q .; then
-    workflow_config_review_legacy_list "$config_file" phase_after_clean
-  else
-    workflow_config_review_legacy_list "$config_file" platforms
-  fi
+  workflow_config_review_list "${1:-$(workflow_config_file)}" on_ready github
 }
 
 workflow_config_review_platforms() {
-  local config_file="${1:-$(workflow_config_file)}"
-
-  [ -f "$config_file" ] || return 0
-
-  workflow_config_review_on_draft_github "$config_file"
-  workflow_config_review_on_ready_github "$config_file"
+  local config_file="${1:-$(workflow_config_file)}" draft ready
+  draft="$(workflow_config_review_on_draft_github "$config_file")" || return 2
+  ready="$(workflow_config_review_on_ready_github "$config_file")" || return 2
+  [ -z "$draft" ] || printf '%s\n' "$draft"
+  [ -z "$ready" ] || printf '%s\n' "$ready"
+  return 0
 }
 
 # workflow_config_review_github_reviewer_configured <platform> [config_file]
@@ -1239,13 +1216,12 @@ workflow_config_review_github_reviewer_configured() {
   local platforms
 
   [ -n "$platform" ] || return 1
-  [ -f "$config_file" ] || return 1
 
   # No pipe into `grep -q`: this library runs under `set -euo pipefail`, where
   # grep closing the pipe early kills the producer with SIGPIPE and aborts the
   # caller with 141. Capture first, match against a here-string.
   if ! platforms="$(workflow_config_review_platforms "$config_file")"; then
-    return 1
+    return 2
   fi
 
   grep -Fxq -- "$platform" <<<"$platforms"
@@ -1496,20 +1472,30 @@ workflow_config_review_wait_budget_keys() {
 workflow_config_review_phase_after_clean_platforms() {
   local config_file="${1:-$(workflow_config_file)}"
 
-  [ -f "$config_file" ] || return 0
-
   workflow_config_review_on_ready_github "$config_file"
 }
 
 workflow_repository_mode() {
-  local repo_root="${1:-$(workflow_repo_root)}"
+  local repo_root
+  if [ "$#" -gt 0 ]; then
+    [ -n "$1" ] || return 2
+    repo_root="$1"
+  else
+    repo_root="$(workflow_local_config_root 2>/dev/null)" || return 2
+  fi
 
   python3 "$(workflow_config_resolver_script)" mode --repo-root "$repo_root"
 }
 
 workflow_repository_context() {
   local target_repo="${1:-}"
-  local repo_root="${2:-$(workflow_repo_root)}"
+  local repo_root
+  if [ "$#" -ge 2 ]; then
+    [ -n "$2" ] || return 2
+    repo_root="$2"
+  else
+    repo_root="$(workflow_local_config_root 2>/dev/null)" || return 2
+  fi
   local args=(resolve --repo-root "$repo_root")
 
   if [ -n "$target_repo" ]; then
@@ -1521,7 +1507,13 @@ workflow_repository_context() {
 
 workflow_validate_repository_context() {
   local target_repo="${1:-}"
-  local repo_root="${2:-$(workflow_repo_root)}"
+  local repo_root
+  if [ "$#" -ge 2 ]; then
+    [ -n "$2" ] || return 2
+    repo_root="$2"
+  else
+    repo_root="$(workflow_local_config_root 2>/dev/null)" || return 2
+  fi
   local require_local="${3:-}"
   local args=(validate --repo-root "$repo_root")
 
@@ -1536,7 +1528,13 @@ workflow_validate_repository_context() {
 }
 
 workflow_review_override_context() {
-  local repo_root="${1:-$(workflow_repo_root)}"
+  local repo_root
+  if [ "$#" -gt 0 ]; then
+    [ -n "$1" ] || return 2
+    repo_root="$1"
+  else
+    repo_root="$(workflow_local_config_root 2>/dev/null)" || return 2
+  fi
 
   python3 "$(workflow_config_resolver_script)" review-overrides --repo-root "$repo_root"
 }
@@ -2172,7 +2170,7 @@ workflow_run_gh_capture_stderr() {
 
 workflow_print_captured_gh_stderr() {
   if [ -n "$__workflow_last_gh_stderr" ]; then
-    printf '%s\n' "$__workflow_last_gh_stderr" | sed 's/^/  gh: /' >&2
+    printf '%s\n' "$__workflow_last_gh_stderr" | workflow_redact_text | sed 's/^/  gh: /' >&2
   fi
 }
 

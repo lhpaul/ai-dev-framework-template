@@ -779,7 +779,7 @@ run_test "cycles_resolve_max_invalid_config_warns" "yes" "$(
   # Capture stderr into a variable first, then grep the variable — piping
   # directly into `grep -q` risks a SIGPIPE false-negative under pipefail.
   _mc_warn_stderr="$(reviewer_loop_resolve_max_cycles "not-a-number" 2>&1 >/dev/null)"
-  if grep -q "WARN.*not a positive integer" <<< "$_mc_warn_stderr"; then
+  if grep -Fxq "WARN: configuration validation error; key=review.max_cycles" <<< "$_mc_warn_stderr"; then
     echo yes
   else
     echo no
@@ -807,7 +807,7 @@ run_test "total_cycles_resolve_max_invalid_config_defaults" "25" \
   "$(reviewer_loop_resolve_max_total_cycles "not-a-number" 2>/dev/null)"
 run_test "total_cycles_resolve_max_invalid_config_warns" "yes" "$(
   _mc_warn_stderr="$(reviewer_loop_resolve_max_total_cycles "not-a-number" 2>&1 >/dev/null)"
-  if grep -q "WARN.*not a positive integer" <<< "$_mc_warn_stderr"; then
+  if grep -Fxq "WARN: configuration validation error; key=review.max_total_cycles" <<< "$_mc_warn_stderr"; then
     echo yes
   else
     echo no
@@ -854,7 +854,7 @@ run_test "codex_cap_invalid_per_run_keeps_lifetime_warns" "yes" "$(
   unset PR_REVIEW_LOOP_MAX_CYCLES PR_REVIEW_LOOP_MAX_TOTAL_CYCLES
   _mc_warn_stderr="$(reviewer_loop_resolve_max_cycles "not-a-number" 2>&1 >/dev/null)"
   reviewer_loop_resolve_max_total_cycles "40" >/dev/null 2>/dev/null
-  if grep -q "WARN.*not a positive integer" <<< "$_mc_warn_stderr"; then
+  if grep -Fxq "WARN: configuration validation error; key=review.max_cycles" <<< "$_mc_warn_stderr"; then
     echo yes
   else
     echo no
@@ -870,7 +870,7 @@ run_test "codex_cap_invalid_lifetime_keeps_per_run_warns" "yes" "$(
   unset PR_REVIEW_LOOP_MAX_CYCLES PR_REVIEW_LOOP_MAX_TOTAL_CYCLES
   reviewer_loop_resolve_max_cycles "7" >/dev/null 2>/dev/null
   _mtc_warn_stderr="$(reviewer_loop_resolve_max_total_cycles "not-a-number" 2>&1 >/dev/null)"
-  if grep -q "WARN.*not a positive integer" <<< "$_mtc_warn_stderr"; then
+  if grep -Fxq "WARN: configuration validation error; key=review.max_total_cycles" <<< "$_mtc_warn_stderr"; then
     echo yes
   else
     echo no
@@ -1589,7 +1589,12 @@ run_test "no_direct_ready_for_regression_apply_in_loop" "0" "$_direct_applies"
 # signal for whoever is watching the loop. The helper invocation spans
 # two source lines, so flatten the restore function body to one line
 # before checking for a stderr redirection on it.
-_restore_flat="$(sed -n '/restore_regression_label_if_missing()/,/^}/p' "$_loop_src" | tr '\n' ' ' | tr -s ' ')"
+# The root getter closes its own diagnostic stderr; the readiness child's stderr
+# must remain visible. Ignore only that exact nested getter, never the command's
+# own redirection (including either restore or revalidate invocation).
+_restore_flat="$(sed -n '/restore_regression_label_if_missing()/,/^}/p' "$_loop_src" \
+  | sed 's/$(workflow_local_config_root 2>\/dev\/null)/$(workflow_local_config_root)/g' \
+  | tr '\n' ' ' | tr -s ' ')"
 _helper_stderr_redirs="$(printf '%s\n' "$_restore_flat" | grep -c 'apply-readiness-labels\.sh[^;]*2>/dev/null' || true)"
 run_test "restore_path_does_not_discard_helper_stderr" "0" "$_helper_stderr_redirs"
 unset _restore_flat _helper_stderr_redirs

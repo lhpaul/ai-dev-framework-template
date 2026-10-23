@@ -125,7 +125,7 @@ class ModelRoutingTests(unittest.TestCase):
             with self.assertRaises(resolver.ModelConfigError) as caught:
                 resolver.load_model_policy(self.root)
             self.assertEqual(caught.exception.diagnostic["CODE"], "incomplete_route")
-            self.assertEqual(caught.exception.diagnostic["FILE"], str(self.local))
+            self.assertEqual(caught.exception.diagnostic["FILE"], "")
 
     def test_explicit_tier_is_only_default_and_missing_tier_inherits(self):
         self.write(self.policy(self.tier("premium", "p", "premium")))
@@ -195,7 +195,7 @@ class ModelRoutingTests(unittest.TestCase):
                 result = self.cli("model-route", "--runner", "dsh", "--role", "developer", "--json")
                 self.assertEqual(result.returncode, 2)
                 self.assertNotIn("PRIVATE_TEST_SENTINEL", result.stdout + result.stderr)
-                self.assertIn("BR9 block mappings", diagnostic["MESSAGE"])
+                self.assertIn("invalid YAML", diagnostic["MESSAGE"])
                 for command in (("model-routes", "--runner", "dsh", "--json"), ("validate", "--json")):
                     parity = self.cli(*command)
                     self.assertEqual(parity.returncode, 2)
@@ -217,7 +217,7 @@ class ModelRoutingTests(unittest.TestCase):
             directory.mkdir(parents=True)
         (checkout / ".git").write_text(f"gitdir: {main}/.git/worktrees/w\n")
         (main / resolver.LOCAL_CONFIG_NAME).write_text(self.policy(self.tier(model="main")))
-        self.assertEqual(resolver.model_resolution(resolver.load_model_policy(checkout), "developer")["MODEL"], "main")
+        self.assertEqual(resolver.model_resolution(resolver.load_model_policy(checkout), "developer")["MODEL"], "")
         (checkout / resolver.LOCAL_CONFIG_NAME).write_text(self.policy(self.tier(model="checkout")))
         self.assertEqual(resolver.model_resolution(resolver.load_model_policy(checkout), "developer")["MODEL"], "checkout")
         (override / resolver.LOCAL_CONFIG_NAME).write_text(self.policy(self.tier(model="override")))
@@ -263,7 +263,7 @@ class ModelRoutingTests(unittest.TestCase):
             diagnostic = json.loads(result.stderr)
             self.assertEqual(set(diagnostic), {"CODE", "FILE", "FIELD", "MESSAGE"})
             self.assertEqual(diagnostic["CODE"], code)
-            self.assertEqual(diagnostic["FILE"], str((self.shared if text else self.local).resolve()))
+            self.assertEqual(diagnostic["FILE"], "")
             self.assertNotIn("PRIVATE_TEST_SENTINEL", result.stderr)
             if expected is None:
                 expected = diagnostic
@@ -340,7 +340,7 @@ class ModelRoutingTests(unittest.TestCase):
                         diagnostic = json.loads(result.stderr)
                         self.assertEqual(set(diagnostic), {"CODE", "FILE", "FIELD", "MESSAGE"})
                         self.assertEqual(diagnostic["CODE"], code)
-                        self.assertEqual(diagnostic["FILE"], str(self.shared if layer == "shared" else self.local))
+                        self.assertEqual(diagnostic["FILE"], "")
                         self.assertNotIn("PRIVATE_TEST_SENTINEL", result.stderr)
                         if expected is None:
                             expected = diagnostic
@@ -370,22 +370,31 @@ class ModelRoutingTests(unittest.TestCase):
         for active in (False, True):
             self.write(self.policy(self.tier()) if active else "mode: single_repo\n",
                        self.policy(self.tier(model="local")) if active else "")
+            before = (self.shared.read_bytes(), self.local.read_bytes())
+            # The active model envelope has already been validated by its own
+            # reader; its blank projection keeps legacy error line numbers.
+            expected_private_projection = "\n" * before[1].count(b"\n") if active else ""
             for command in commands:
                 args = resolver.build_parser().parse_args([*command, "--repo-root", str(self.root)])
-                original_read = Path.read_bytes
+                original_read = os.open
                 reads = []
-                def observed(path):
-                    reads.append(path)
-                    return original_read(path)
+                def observed(path, flags, *args, **kwargs):
+                    if (flags & os.O_ACCMODE) == os.O_RDONLY:
+                        reads.append(Path(path))
+                    return original_read(path, flags, *args, **kwargs)
                 with self.subTest(active=active, command=command), \
                         patch.object(resolver, "load_model_policy", wraps=resolver.load_model_policy) as loader, \
                         patch.object(resolver, "parse_model_mapping", wraps=resolver.parse_model_mapping) as parser, \
-                        patch.object(resolver, "parse_review_yaml", side_effect=AssertionError("YAML dependency used")), \
-                        patch.object(Path, "read_bytes", observed), patch("builtins.print"):
+                        patch.object(resolver, "parse_review_yaml", wraps=resolver.parse_review_yaml) as strict_reader, \
+                        patch.object(os, "open", observed), patch("builtins.print"):
                     self.assertEqual(args.func(args), 0)
                     loader.assert_called_once_with(self.root.resolve())
                     self.assertEqual(parser.call_count, 2 if active else 0)
+                    strict_reader.assert_called_once_with(self.local.resolve(),
+                                                          raw=expected_private_projection,
+                                                          review_fields=False)
                     self.assertEqual(reads, [self.shared.resolve(), self.local.resolve()])
+                    self.assertEqual((self.shared.read_bytes(), self.local.read_bytes()), before)
         self.write(self.policy(self.tier()))
         policy = resolver.load_model_policy(self.root)
         self.assertEqual(policy.positions[0]["models.dsh.tiers.balanced.model"], 7)
@@ -510,7 +519,7 @@ class ModelRoutingTests(unittest.TestCase):
                         diagnostic = json.loads(result.stderr)
                         self.assertEqual(set(diagnostic), {"CODE", "FILE", "FIELD", "MESSAGE"})
                         self.assertEqual(diagnostic["CODE"], "invalid_yaml")
-                        self.assertEqual(diagnostic["FILE"], str(self.shared if layer == "shared" else self.local))
+                        self.assertEqual(diagnostic["FILE"], "")
                         self.assertNotIn("PRIVATE_TEST_SENTINEL", result.stderr)
                         if expected is None:
                             expected = diagnostic
@@ -525,15 +534,16 @@ class ModelRoutingTests(unittest.TestCase):
             self.write((self.policy(self.tier()) if active else "") + hub, envelope + tail)
             args = resolver.build_parser().parse_args(["set-local-path", "--repo-root", str(self.root),
                 "--repo", "app", "--local-path", "after", "--json"])
-            original_read = Path.read_bytes
+            original_read = os.open
             reads = []
-            def observed(path):
-                reads.append(path)
-                return original_read(path)
+            def observed(path, flags, *args, **kwargs):
+                if (flags & os.O_ACCMODE) == os.O_RDONLY:
+                    reads.append(Path(path))
+                return original_read(path, flags, *args, **kwargs)
             with self.subTest(active=active), \
                     patch.object(resolver, "load_model_policy", wraps=resolver.load_model_policy) as loader, \
                     patch.object(resolver, "parse_yaml_subset", side_effect=AssertionError("Legacy file reload")), \
-                    patch.object(Path, "read_bytes", observed), patch("builtins.print"):
+                    patch.object(os, "open", observed), patch("builtins.print"):
                 self.assertEqual(args.func(args), 0)
                 loader.assert_called_once_with(self.root.resolve())
                 self.assertEqual(reads, [self.shared, self.local])
@@ -567,6 +577,7 @@ class ModelRoutingTests(unittest.TestCase):
             self.assertEqual(json.loads(validate.stderr)["CODE"], "config_discovery")
             self.assertNotIn("PRIVATE_TEST_SENTINEL", validate.stderr)
             missing.mkdir()
+            (missing / resolver.LOCAL_CONFIG_NAME).write_text("review: {}\n")
             self.assertEqual(self.cli("validate", "--json", env=dict(os.environ)).returncode, 0)
             self.assertEqual(self.cli("model-route", "--runner", "dsh", "--role", "developer", "--json",
                                       env=dict(os.environ)).returncode, 0)
@@ -617,6 +628,8 @@ class ModelRoutingTests(unittest.TestCase):
                      '{mode: single_repo, models: {other: {dsh: unused}}}\n',
                      '{mode: single_repo, custom: {models: {dsh: unused}}}\n'):
             self.write(text)
+            # No selected private source: shared legacy grammar stays dependency-free.
+            self.local.unlink()
             absent = subprocess.run([sys.executable, "-S", str(SCRIPT), "validate", "--repo-root", str(self.root), "--json"],
                                     capture_output=True, text=True, env=dict(os.environ, WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT=""))
             legacy = self.cli("resolve", "--json")
@@ -624,9 +637,26 @@ class ModelRoutingTests(unittest.TestCase):
             self.assertEqual(absent.stdout, legacy.stdout)
             self.assertEqual(absent.stderr, legacy.stderr)
         self.write(self.policy(self.tier()))
+        self.local.unlink()
         opted_in = subprocess.run([sys.executable, "-S", str(SCRIPT), "validate", "--repo-root", str(self.root)],
                                  capture_output=True, text=True, env=dict(os.environ, WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT=""))
         self.assertEqual(opted_in.returncode, 0, opted_in.stderr)
+
+    def test_selected_private_source_validates_syntax_without_dependency(self):
+        self.write('mode: single_repo\n', 'review:\n  on_draft:\n    runner: [cursor]\n')
+        result = subprocess.run([sys.executable, '-S', str(SCRIPT), 'validate', '--repo-root', str(self.root)],
+                                capture_output=True, text=True,
+                                env=dict(os.environ, WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT=''))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stderr, '')
+        self.local.write_text('review:\n  on_draft:\n    runner: [fabricatedOpaque,,tail]\n')
+        invalid = subprocess.run([sys.executable, '-S', str(SCRIPT), 'validate', '--repo-root', str(self.root)],
+                                 capture_output=True, text=True,
+                                 env=dict(os.environ, WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT=''))
+        self.assertEqual(invalid.returncode, 2)
+        self.assertEqual(invalid.stdout, '')
+        self.assertIn('invalid YAML', invalid.stderr)
+        self.assertNotIn('fabricatedOpaque', invalid.stderr)
 
     def test_role_catalogue_matches_canonical_table(self):
         text = (ROOT / "docs/workflow/development-workflow/agent-model-config.md").read_text()

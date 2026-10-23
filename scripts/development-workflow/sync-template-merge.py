@@ -32,6 +32,19 @@ class SyncError(Exception):
     """A named failure which cannot authorize a write."""
 
 
+class SyncConfigError(SyncError):
+    """Configuration failure whose rendering cannot reproduce source content."""
+
+    def __str__(self):
+        return SELECTOR.config_error_metadata(self)
+
+
+def error_diagnostic(error):
+    if isinstance(error, SyncError) and not isinstance(error, SyncConfigError):
+        return str(error)  # Operational recovery instructions retain their contract.
+    return SELECTOR.config_error_metadata(error)
+
+
 def digest(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
@@ -52,7 +65,7 @@ def unique_object(pairs):
     result = {}
     for key, value in pairs:
         if key in result:
-            raise SyncError(f"duplicate JSON key: {key}")
+            raise SyncConfigError("duplicate JSON key")
         result[key] = value
     return result
 
@@ -61,7 +74,7 @@ def read_json(data: bytes):
     try:
         return json.loads(data, object_pairs_hook=unique_object)
     except (ValueError, UnicodeError) as exc:
-        raise SyncError(f"invalid JSON: {exc}") from exc
+        raise SyncConfigError("invalid JSON") from exc
 
 
 def git(repo: Path, *args: str) -> bytes:
@@ -88,6 +101,13 @@ def valid_path(path: str) -> str:
     if any(part in {"", ".", "..", ".git"} for part in parts) or PurePosixPath(path).is_absolute():
         raise SyncError(f"unsafe path: {path}")
     return path
+
+
+def config_path(value):
+    try:
+        return valid_path(value)
+    except SyncError as exc:
+        raise SyncConfigError("invalid configuration path") from exc
 
 
 def load_module(name: str, filename: str):
@@ -267,24 +287,27 @@ def validate_state(snapshot, identity: str):
     if snapshot is None:
         return None
     if snapshot["mode"] == "120000":
-        raise SyncError(f"{STATE_PATH}: state cannot be a symlink")
+        raise SyncConfigError(f"{STATE_PATH}: state cannot be a symlink")
     state = read_json(decoded(snapshot["data"]))
     if not isinstance(state, dict) or set(state) != {"schema_version", "template_id", "files"}:
-        raise SyncError(f"{STATE_PATH}: invalid state shape")
+        raise SyncConfigError(f"{STATE_PATH}: invalid state shape")
     if type(state["schema_version"]) is not int or state["schema_version"] != 1:
-        raise SyncError(f"{STATE_PATH}: unsupported schema version")
+        raise SyncConfigError(f"{STATE_PATH}: unsupported schema version")
     if state["template_id"] != identity or not isinstance(state["files"], dict):
-        raise SyncError(f"{STATE_PATH}: template identity or files mismatch")
+        raise SyncConfigError(f"{STATE_PATH}: template identity or files mismatch")
     for path, entry in state["files"].items():
-        valid_path(path)
+        try:
+            valid_path(path)
+        except SyncError as exc:
+            raise SyncConfigError("invalid state path") from exc
         if not isinstance(entry, dict) or set(entry) != {"commit", "source", "blob", "mode"}:
-            raise SyncError(f"{STATE_PATH}: invalid entry for {path}")
+            raise SyncConfigError(f"{STATE_PATH}: invalid entry for {path}")
         if entry["source"] not in ("template", "consumer") or not isinstance(entry["commit"], str) or not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", entry["commit"]):
-            raise SyncError(f"{STATE_PATH}: invalid provenance for {path}")
+            raise SyncConfigError(f"{STATE_PATH}: invalid provenance for {path}")
         if entry["mode"] is None and entry["blob"] is None:
             continue
         if not isinstance(entry["mode"], str) or entry["mode"] not in MODES or not isinstance(entry["blob"], str) or not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", entry["blob"]):
-            raise SyncError(f"{STATE_PATH}: invalid object metadata for {path}")
+            raise SyncConfigError(f"{STATE_PATH}: invalid object metadata for {path}")
     return state
 
 
@@ -293,7 +316,7 @@ def selection(inputs, objects: Objects):
     manifest = objects.snapshot(root, sha, "sync-manifest.yaml")
     if manifest is not None:
         if manifest["mode"] == "120000":
-            raise SyncError("sync-manifest.yaml: committed manifest cannot be a symlink")
+            raise SyncConfigError("sync-manifest.yaml: committed manifest cannot be a symlink")
         with tempfile.TemporaryDirectory(prefix="sync-merge-manifest-") as directory:
             path = Path(directory) / "sync-manifest.yaml"
             path.write_bytes(decoded(manifest["data"]))
@@ -306,15 +329,15 @@ def selection(inputs, objects: Objects):
     else:
         filename = inputs.get("selection_file")
         if not filename:
-            raise SyncError("sync-manifest.yaml: absent; provide explicit protocol fallback --selection-file")
+            raise SyncConfigError("sync-manifest.yaml: absent; provide explicit protocol fallback --selection-file")
         raw = Path(filename).read_bytes()
         fallback = read_json(raw)
         if not isinstance(fallback, dict) or set(fallback) != {"role", "paths", "project_specific"} or fallback["role"] != inputs["role"]:
-            raise SyncError("fallback selection must bind role, paths and project_specific")
+            raise SyncConfigError("fallback selection must bind role, paths and project_specific")
         if not all(isinstance(fallback[k], list) for k in ("paths", "project_specific")):
-            raise SyncError("fallback paths/project_specific must be lists")
-        chosen = {valid_path(p) for p in fallback["paths"]}
-        owned = {valid_path(p) for p in fallback["project_specific"]}
+            raise SyncConfigError("fallback paths/project_specific must be lists")
+        chosen = {config_path(p) for p in fallback["paths"]}
+        owned = {config_path(p) for p in fallback["project_specific"]}
         matches = lambda path: path in chosen
         evidence = {"fallback_digest": digest(raw)}
     owned |= {STATE_PATH, LOCK_PATH, ".ai-dev-workflow.local.yaml", ".ai-dev-workflow.local.env", ".ai-dev-workflow.yaml"}
@@ -387,7 +410,7 @@ def link_graph(root: Path, rows: list[dict]):
             try:
                 resolve(row["path"].split("/"))
             except (SyncError, OSError, UnicodeError, ValueError) as exc:
-                row.update(disposition="blocked", reason=str(exc))
+                row.update(disposition="blocked", reason=error_diagnostic(exc))
     return observed
 
 
@@ -395,27 +418,27 @@ def validate_inputs(inputs):
     expected = {"template_root", "consumer_root", "template_ref", "template_id", "role",
                 "base_ref", "base_source", "selection_file", "decline"}
     if not isinstance(inputs, dict) or set(inputs) != expected:
-        raise SyncError("invalid preview input schema")
+        raise SyncConfigError("invalid preview input schema")
     if not isinstance(inputs["role"], str) or inputs["role"] not in SELECTOR.VALID_ROLES:
-        raise SyncError("invalid preview repository role")
+        raise SyncConfigError("invalid preview repository role")
     if not isinstance(inputs["template_id"], str) or not re.fullmatch(r"[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)+", inputs["template_id"]):
-        raise SyncError("invalid normalized template identity")
+        raise SyncConfigError("invalid normalized template identity")
     for key in ("template_root", "consumer_root"):
         value = inputs[key]
         if not isinstance(value, str) or not Path(value).is_dir() or str(Path(value).resolve()) != value:
-            raise SyncError(f"{key}: checkout root is missing or changed")
+            raise SyncConfigError(f"{key}: checkout root is missing or changed")
     for key in ("template_ref", "base_ref"):
         value = inputs[key]
         if key == "base_ref" and value is None:
             continue
         if not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", value):
-            raise SyncError(f"{key}: exact full commit SHA required")
+            raise SyncConfigError(f"{key}: exact full commit SHA required")
     if bool(inputs["base_ref"]) != bool(inputs["base_source"]) or inputs["base_source"] not in (None, "template", "consumer"):
-        raise SyncError("verified base reference/source must be supplied together")
+        raise SyncConfigError("verified base reference/source must be supplied together")
     if inputs["selection_file"] is not None and not isinstance(inputs["selection_file"], str):
-        raise SyncError("invalid fallback selection filename")
-    if not isinstance(inputs["decline"], list) or inputs["decline"] != sorted({valid_path(p) for p in inputs["decline"]}):
-        raise SyncError("invalid declined path selection")
+        raise SyncConfigError("invalid fallback selection filename")
+    if not isinstance(inputs["decline"], list) or inputs["decline"] != sorted({config_path(p) for p in inputs["decline"]}):
+        raise SyncConfigError("invalid declined path selection")
 
 
 def build_preview(inputs: dict, lock_owned: bool = False):
@@ -430,7 +453,7 @@ def build_preview(inputs: dict, lock_owned: bool = False):
     try:
         state = validate_state(state_snapshot, inputs["template_id"])
     except SyncError as exc:
-        state, error = None, str(exc)
+        state, error = None, error_diagnostic(exc)
     if not lock_owned and os.path.lexists(root / LOCK_PATH):
         error = f"{LOCK_PATH}: active or interrupted transaction; inspect recovery material before retrying"
     candidates = set(incoming_tree) | (set(state["files"]) if state else set())
@@ -472,7 +495,7 @@ def build_preview(inputs: dict, lock_owned: bool = False):
                 known = True
             disposition, output, reason = classify(ours, base, incoming, known)
         except (SyncError, OSError, UnicodeError, ValueError, SELECTOR.ManifestError) as exc:
-            output, reason = ours, str(exc)
+            output, reason = ours, error_diagnostic(exc)
         rows.append({"path": path, "disposition": disposition, "reason": reason,
                      "ours": ours, "incoming": incoming, "output": output,
                      "baseline_known": known, "baseline": provenance})
@@ -717,7 +740,7 @@ def main(argv=None):
         show(result, digest(raw))
         return 0 if result["result"] == "ready" else 1
     except (SyncError, OSError, ValueError, UnicodeError, SELECTOR.ManifestError) as exc:
-        print(f"RESULT=blocked\nERROR={exc}\nACTION=Resolve the named input and generate a fresh preview.", file=sys.stderr)
+        print("RESULT=blocked\nERROR=" + error_diagnostic(exc) + "\nACTION=Resolve the named input and generate a fresh preview.", file=sys.stderr)
         return 2
 
 

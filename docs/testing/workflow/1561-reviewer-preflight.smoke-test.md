@@ -13,7 +13,9 @@
 Workflow tooling only — no application server.
 
 - [ ] Implementation branch for #1561 with `reviewer-preflight.sh` and `reviewer_preflight.py` present.
-- [ ] `bash`, `git`, `python3` (+ `PyYAML==6.0.2`), `jq`, and `gh` (authenticated) available.
+- [ ] `bash`, `git`, `python3`, `jq`, and `gh` (authenticated) available. Framework
+      parsing/projection needs no PyYAML; CodeRabbit-specific configuration checks
+      require `PyYAML==6.0.2` for the gate's Python interpreter.
 - [ ] Run snippets from repository root in `bash --noprofile --norc`.
 - [ ] Preserve `.ai-dev-workflow.local.yaml` if present (move aside before fixtures, restore in `trap`).
 

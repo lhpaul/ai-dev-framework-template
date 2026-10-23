@@ -25,6 +25,16 @@ ROLE_SCOPE_SELECTION = {
 }
 
 
+
+def config_error_metadata(error=None, *, key=""):
+    """Use the existing pure formatter without reading any configuration."""
+    try:
+        import runpy
+        api = runpy.run_path(str(Path(__file__).with_name("workflow-config-resolver.py")))
+        return api["format_config_error"](error, key=key)
+    except Exception:
+        return "configuration: validation error"
+
 class ManifestError(Exception):
     """Manifest selection failure with a human-readable message."""
 
@@ -285,8 +295,8 @@ def run(argv: list[str]) -> int:
 def main() -> None:
     try:
         raise SystemExit(run(sys.argv[1:]))
-    except ManifestError as exc:
-        print(f"ERROR: {exc}", file=sys.stderr)
+    except (ManifestError, OSError, UnicodeError) as exc:
+        print(config_error_metadata(exc), file=sys.stderr)
         raise SystemExit(1)
 
 

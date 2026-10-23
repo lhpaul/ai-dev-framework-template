@@ -87,6 +87,10 @@
 
 set -euo pipefail
 
+{ DIAGNOSTIC_SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"; } 2>/dev/null || { bootstrap_status=$?; printf 'configuration: tooling initialization error\n' >&2; exit "$bootstrap_status"; }
+# shellcheck source=scripts/development-workflow/workflow-lib.sh
+source "$DIAGNOSTIC_SCRIPT_DIR/workflow-lib.sh" 2>/dev/null
+
 # Defaults (overridable by flags or env vars)
 WORKFLOW_FILE="${CLAUDE_CODE_ACTION_WORKFLOW_FILE:-claude-code-review.yml}"
 BOT_LOGIN="${CLAUDE_CODE_ACTION_BOT_LOGIN:-claude[bot]}"
@@ -139,7 +143,7 @@ verify_claude_code_action_run_log() {
   if [ "$run_log_status" -ne 0 ]; then
     run_log_err=$(cat "$run_log_stderr")
     rm -f "$run_log_stderr" "$run_log_tmpfile"
-    echo "WARNING: could not fetch Actions run log (exit $run_log_status): $run_log_err" >&2
+    workflow_diagnostic "WARNING: could not fetch Actions run log (exit $run_log_status): $run_log_err" >&2
     echo "VERDICT: UNAVAILABLE — run succeeded but log verification failed"
     return 3
   fi
@@ -151,15 +155,15 @@ verify_claude_code_action_run_log() {
 
   case "$log_classification_status" in
     0)
-      echo "INFO: Claude Code Action log verification passed ($log_classification)"
+      workflow_diagnostic "INFO: Claude Code Action log verification passed ($log_classification)"
       return 0
       ;;
     1)
-      echo "VERDICT: UNAVAILABLE — Claude Code Action run completed without executing a review ($log_classification)"
+      workflow_diagnostic "VERDICT: UNAVAILABLE — Claude Code Action run completed without executing a review ($log_classification)"
       return 3
       ;;
     *)
-      echo "VERDICT: UNAVAILABLE — Claude Code Action run log did not contain a positive execution marker ($log_classification)"
+      workflow_diagnostic "VERDICT: UNAVAILABLE — Claude Code Action run log did not contain a positive execution marker ($log_classification)"
       return 3
       ;;
   esac
@@ -221,7 +225,7 @@ fi
 # ── Argument parsing ──────────────────────────────────────────────────────────
 
 if [ $# -lt 3 ]; then
-  echo "Usage: $0 <pr_number> <owner> <repo> [--workflow-file <name>] [--bot-login <login>] [--poll-interval <seconds>] [--max-wait <seconds>] [--adopt-run-id <id> --adopt-requested-at <iso8601>] [--head-sha <sha>]" >&2
+  workflow_diagnostic "Usage: $0 <pr_number> <owner> <repo> [--workflow-file <name>] [--bot-login <login>] [--poll-interval <seconds>] [--max-wait <seconds>] [--adopt-run-id <id> --adopt-requested-at <iso8601>] [--head-sha <sha>]" >&2
   exit 2
 fi
 
@@ -238,7 +242,7 @@ shift 3
 # URLs (REVIEW.md: validate user-supplied input before interpolation).
 case "$PR_NUMBER" in
   ''|0|*[!0-9]*)
-    echo "ERROR: PR number '$PR_NUMBER' is not a valid positive integer" >&2
+    workflow_diagnostic "ERROR: PR number '$PR_NUMBER' is not a valid positive integer" >&2
     exit 2
     ;;
 esac
@@ -247,13 +251,13 @@ esac
 # which could redirect API paths).
 case "$OWNER" in
   ''|*[!A-Za-z0-9._-]*)
-    echo "ERROR: owner '$OWNER' contains invalid characters (expected alphanumerics, hyphens, underscores, dots)" >&2
+    workflow_diagnostic "ERROR: owner '$OWNER' contains invalid characters (expected alphanumerics, hyphens, underscores, dots)" >&2
     exit 2
     ;;
 esac
 case "$REPO" in
   ''|*[!A-Za-z0-9._-]*)
-    echo "ERROR: repo '$REPO' contains invalid characters (expected alphanumerics, hyphens, underscores, dots)" >&2
+    workflow_diagnostic "ERROR: repo '$REPO' contains invalid characters (expected alphanumerics, hyphens, underscores, dots)" >&2
     exit 2
     ;;
 esac
@@ -261,28 +265,28 @@ esac
 while [ $# -gt 0 ]; do
   case "$1" in
     --workflow-file)
-      if [ $# -lt 2 ]; then echo "ERROR: --workflow-file requires a value" >&2; exit 2; fi
+      if [ $# -lt 2 ]; then workflow_diagnostic "ERROR: --workflow-file requires a value" >&2; exit 2; fi
       WORKFLOW_FILE="$2"; shift 2;;
     --bot-login)
-      if [ $# -lt 2 ]; then echo "ERROR: --bot-login requires a value" >&2; exit 2; fi
+      if [ $# -lt 2 ]; then workflow_diagnostic "ERROR: --bot-login requires a value" >&2; exit 2; fi
       BOT_LOGIN="$2"; shift 2;;
     --poll-interval)
-      if [ $# -lt 2 ]; then echo "ERROR: --poll-interval requires a value" >&2; exit 2; fi
+      if [ $# -lt 2 ]; then workflow_diagnostic "ERROR: --poll-interval requires a value" >&2; exit 2; fi
       POLL_INTERVAL="$2"; shift 2;;
     --max-wait)
-      if [ $# -lt 2 ]; then echo "ERROR: --max-wait requires a value" >&2; exit 2; fi
+      if [ $# -lt 2 ]; then workflow_diagnostic "ERROR: --max-wait requires a value" >&2; exit 2; fi
       MAX_WAIT="$2"; shift 2;;
     --adopt-run-id)
-      if [ $# -lt 2 ]; then echo "ERROR: --adopt-run-id requires a value" >&2; exit 2; fi
+      if [ $# -lt 2 ]; then workflow_diagnostic "ERROR: --adopt-run-id requires a value" >&2; exit 2; fi
       ADOPT_RUN_ID="$2"; shift 2;;
     --adopt-requested-at)
-      if [ $# -lt 2 ]; then echo "ERROR: --adopt-requested-at requires a value" >&2; exit 2; fi
+      if [ $# -lt 2 ]; then workflow_diagnostic "ERROR: --adopt-requested-at requires a value" >&2; exit 2; fi
       ADOPT_REQUESTED_AT="$2"; shift 2;;
     --head-sha)
-      if [ $# -lt 2 ]; then echo "ERROR: --head-sha requires a value" >&2; exit 2; fi
+      if [ $# -lt 2 ]; then workflow_diagnostic "ERROR: --head-sha requires a value" >&2; exit 2; fi
       HEAD_SHA="$2"; shift 2;;
     *)
-      echo "ERROR: unknown option '$1'" >&2; exit 2;;
+      workflow_diagnostic "ERROR: unknown option '$1'" >&2; exit 2;;
   esac
 done
 
@@ -294,12 +298,12 @@ if [ -n "$ADOPT_RUN_ID" ] || [ -n "$ADOPT_REQUESTED_AT" ]; then
   fi
   case "$ADOPT_RUN_ID" in
     0|*[!0-9]*)
-      echo "ERROR: --adopt-run-id value '$ADOPT_RUN_ID' is not a positive integer" >&2
+      workflow_diagnostic "ERROR: --adopt-run-id value '$ADOPT_RUN_ID' is not a positive integer" >&2
       exit 2
       ;;
   esac
   if ! [[ "$ADOPT_REQUESTED_AT" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]]; then
-    echo "ERROR: --adopt-requested-at value '$ADOPT_REQUESTED_AT' is not an ISO-8601 UTC time (YYYY-MM-DDTHH:MM:SSZ)" >&2
+    workflow_diagnostic "ERROR: --adopt-requested-at value '$ADOPT_REQUESTED_AT' is not an ISO-8601 UTC time (YYYY-MM-DDTHH:MM:SSZ)" >&2
     exit 2
   fi
 fi
@@ -309,7 +313,7 @@ fi
 # discard every review.
 if [ -n "$HEAD_SHA" ]; then
   if ! [[ "$HEAD_SHA" =~ ^[0-9a-fA-F]{40}$ ]]; then
-    echo "ERROR: --head-sha value '$HEAD_SHA' is not a full 40-hex commit SHA" >&2
+    workflow_diagnostic "ERROR: --head-sha value '$HEAD_SHA' is not a full 40-hex commit SHA" >&2
     exit 2
   fi
   HEAD_SHA="$(printf '%s' "$HEAD_SHA" | tr '[:upper:]' '[:lower:]')"
@@ -322,22 +326,22 @@ fi
 
 case "$POLL_INTERVAL" in
   ''|0|*[!0-9]*)
-    echo "ERROR: --poll-interval value '$POLL_INTERVAL' is not a positive integer (must be >= 1)" >&2
+    workflow_diagnostic "ERROR: configuration validation error; key=--poll-interval" >&2
     exit 2
     ;;
 esac
 if [ "$POLL_INTERVAL" -gt 300 ]; then
-  echo "ERROR: --poll-interval value '$POLL_INTERVAL' exceeds maximum of 300 seconds (5 minutes)" >&2
+  workflow_diagnostic "ERROR: configuration validation error; key=--poll-interval" >&2
   exit 2
 fi
 case "$MAX_WAIT" in
   ''|0|*[!0-9]*)
-    echo "ERROR: --max-wait value '$MAX_WAIT' is not a positive integer (must be >= 1)" >&2
+    workflow_diagnostic "ERROR: configuration validation error; key=--max-wait" >&2
     exit 2
     ;;
 esac
 if [ "$MAX_WAIT" -gt 3600 ]; then
-  echo "ERROR: --max-wait value '$MAX_WAIT' exceeds maximum of 3600 seconds (1 hour)" >&2
+  workflow_diagnostic "ERROR: configuration validation error; key=--max-wait" >&2
   exit 2
 fi
 
@@ -356,14 +360,14 @@ fi
 # against BASE_REF (e.g. 'develop') causes a permanent 404 when the workflow
 # file is not yet on the default branch.
 
-echo "INFO: resolving PR #$PR_NUMBER base branch..."
+workflow_diagnostic "INFO: resolving PR #$PR_NUMBER base branch..."
 if ! BASE_REF=$(gh pr view "$PR_NUMBER" --repo "$OWNER/$REPO" --json baseRefName --jq '.baseRefName' 2>/dev/null); then
-  echo "ERROR: could not resolve PR #$PR_NUMBER base branch" >&2
+  workflow_diagnostic "ERROR: could not resolve PR #$PR_NUMBER base branch" >&2
   echo "VERDICT: UNAVAILABLE — could not resolve PR base branch"
   exit 3
 fi
 if [ -z "$BASE_REF" ]; then
-  echo "ERROR: could not resolve PR #$PR_NUMBER base branch (empty result)" >&2
+  workflow_diagnostic "ERROR: could not resolve PR #$PR_NUMBER base branch (empty result)" >&2
   echo "VERDICT: UNAVAILABLE — could not resolve PR base branch (empty result)"
   exit 3
 fi
@@ -373,18 +377,18 @@ if [ -z "$DEFAULT_BRANCH" ]; then
   DEFAULT_BRANCH="main"
 fi
 DISPATCH_REF="$DEFAULT_BRANCH"
-echo "INFO: PR #$PR_NUMBER base branch: $BASE_REF (dispatch ref: $DISPATCH_REF)"
-echo "INFO: dispatch ref: $DISPATCH_REF (GitHub workflow_dispatch requires the workflow on the default branch)"
-echo "INFO: Workflow file: $WORKFLOW_FILE"
-echo "INFO: Bot login: $BOT_LOGIN"
+workflow_diagnostic "INFO: PR #$PR_NUMBER base branch: $BASE_REF (dispatch ref: $DISPATCH_REF)"
+workflow_diagnostic "INFO: dispatch ref: $DISPATCH_REF (GitHub workflow_dispatch requires the workflow on the default branch)"
+workflow_diagnostic "INFO: Workflow file: $WORKFLOW_FILE"
+workflow_diagnostic "INFO: Bot login: $BOT_LOGIN"
 if [ "$POLL_INTERVAL" -gt "$MAX_WAIT" ]; then
   POLL_INTERVAL="$MAX_WAIT"
 fi
-echo "INFO: Poll interval: ${POLL_INTERVAL}s, Max wait (total): ${MAX_WAIT}s"
+workflow_diagnostic "INFO: Poll interval: ${POLL_INTERVAL}s, Max wait (total): ${MAX_WAIT}s"
 
 # Derive plain bot login (without [bot] suffix) for matching PR reviews.
 BOT_LOGIN_PLAIN="${BOT_LOGIN%\[bot\]}"
-echo "INFO: Bot login (plain, for review matching): $BOT_LOGIN_PLAIN"
+workflow_diagnostic "INFO: Bot login (plain, for review matching): $BOT_LOGIN_PLAIN"
 
 # ── Record dispatch time (before dispatch) ────────────────────────────────────
 # DISPATCH_TIME bounds which bot reviews count (Phase 3). It no longer selects
@@ -396,7 +400,7 @@ DISPATCH_TIME=$(date -u -r "$_DISPATCH_EPOCH" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null ||
   date -u -d "@$_DISPATCH_EPOCH" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || \
   python3 -c "import datetime,sys; print(datetime.datetime.fromtimestamp(int(sys.argv[1]), datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'))" "$_DISPATCH_EPOCH")
 unset _DISPATCH_EPOCH
-echo "INFO: dispatch time (pre-dispatch): $DISPATCH_TIME"
+workflow_diagnostic "INFO: dispatch time (pre-dispatch): $DISPATCH_TIME"
 
 # ── Re-wait adoption (#1789, plan D11) ───────────────────────────────────────
 # With --adopt-run-id, the loop hands over the run this loop recorded for the
@@ -428,18 +432,18 @@ if [ -n "$ADOPT_RUN_ID" ]; then
           }
         else error("response is not workflow run " + $id) end' 2>/dev/null)" || ADOPT_STATUS=$?
   if [ "$ADOPT_STATUS" -ne 0 ] || [ -z "$ADOPT_INFO" ]; then
-    echo "WARN: recorded Claude Code Action run $ADOPT_RUN_ID could not be read; not adopting it — dispatching a new review" >&2
+    workflow_diagnostic "WARN: recorded Claude Code Action run $ADOPT_RUN_ID could not be read; not adopting it — dispatching a new review" >&2
   elif [ "$(printf '%s' "$ADOPT_INFO" | jq -r '.path_ok')" != "true" ]; then
-    echo "WARN: recorded Claude Code Action run $ADOPT_RUN_ID is not a '$WORKFLOW_FILE' run; not adopting it — dispatching a new review" >&2
+    workflow_diagnostic "WARN: recorded Claude Code Action run $ADOPT_RUN_ID is not a '$WORKFLOW_FILE' run; not adopting it — dispatching a new review" >&2
   elif [ "$(printf '%s' "$ADOPT_INFO" | jq -r '.pr_ok')" != "true" ]; then
-    echo "WARN: recorded Claude Code Action run $ADOPT_RUN_ID is not named for PR #$PR_NUMBER; not adopting it — dispatching a new review" >&2
+    workflow_diagnostic "WARN: recorded Claude Code Action run $ADOPT_RUN_ID is not named for PR #$PR_NUMBER; not adopting it — dispatching a new review" >&2
   else
     ADOPTED=1
     RUN_ID="$ADOPT_RUN_ID"
     DISPATCH_TIME="$ADOPT_REQUESTED_AT"
     echo "DISPATCH_RESULT=adopted"
-    echo "DISPATCH_WORKFLOW_RUN_ID=$RUN_ID"
-    echo "INFO: adopted the recorded workflow run id $RUN_ID (requested at $DISPATCH_TIME); no new dispatch"
+    workflow_diagnostic "DISPATCH_WORKFLOW_RUN_ID=$RUN_ID"
+    workflow_diagnostic "INFO: adopted the recorded workflow run id $RUN_ID (requested at $DISPATCH_TIME); no new dispatch"
   fi
   unset ADOPT_STATUS ADOPT_INFO
 fi
@@ -456,7 +460,7 @@ fi
 
 # Fresh dispatch only when no recorded run was adopted above.
 if [ "$ADOPTED" -eq 0 ]; then
-echo "INFO: dispatching workflow '$WORKFLOW_FILE' on ref '$DISPATCH_REF' for PR #$PR_NUMBER..."
+workflow_diagnostic "INFO: dispatching workflow '$WORKFLOW_FILE' on ref '$DISPATCH_REF' for PR #$PR_NUMBER..."
 
 DISPATCH_STDERR=$(mktemp)
 DISPATCH_RESPONSE=$(mktemp)
@@ -471,14 +475,14 @@ gh api "repos/$OWNER/$REPO/actions/workflows/$WORKFLOW_FILE/dispatches" \
 if [ "$DISPATCH_STATUS" -ne 0 ]; then
   DISPATCH_ERR=$(cat "$DISPATCH_STDERR")
   rm -f "$DISPATCH_STDERR" "$DISPATCH_RESPONSE"
-  echo "ERROR: workflow dispatch failed (exit $DISPATCH_STATUS): $DISPATCH_ERR" >&2
+  workflow_diagnostic "ERROR: workflow dispatch failed (exit $DISPATCH_STATUS): $DISPATCH_ERR" >&2
   # Distinguish 404 (workflow file absent / not found) from other errors
   if echo "$DISPATCH_ERR" | grep -qi "not found\|404\|workflow was not found"; then
     echo "DISPATCH_RESULT=workflow_not_found"
-    echo "VERDICT: UNAVAILABLE — workflow file '$WORKFLOW_FILE' not found on ref '$DISPATCH_REF'"
+    workflow_diagnostic "VERDICT: UNAVAILABLE — workflow file '$WORKFLOW_FILE' not found on ref '$DISPATCH_REF'"
   else
     echo "DISPATCH_RESULT=rejected"
-    echo "VERDICT: UNAVAILABLE — workflow dispatch failed: $DISPATCH_ERR"
+    workflow_diagnostic "VERDICT: UNAVAILABLE — workflow dispatch failed: $DISPATCH_ERR"
   fi
   exit 3
 fi
@@ -487,7 +491,10 @@ rm -f "$DISPATCH_STDERR"
 RUN_ID="$(claude_code_action_dispatch_run_id "$DISPATCH_RESPONSE")"
 if [ -z "$RUN_ID" ]; then
   if [ -s "$DISPATCH_RESPONSE" ]; then
-    echo "WARNING: dispatch response body had no integer workflow_run_id: $(head -c 300 "$DISPATCH_RESPONSE" | tr '\n' ' ')" >&2
+    dispatch_diagnostic="$(workflow_redact_file "$DISPATCH_RESPONSE")" || dispatch_diagnostic="[diagnostic sanitization failed]"
+    # Drain the complete sanitized stream even after the byte-sized preview.
+    dispatch_diagnostic="$(printf '%s' "$dispatch_diagnostic" | { head -c 300; cat >/dev/null; } | tr '\n' ' ')"
+    workflow_diagnostic "WARNING: dispatch response body had no integer workflow_run_id: $dispatch_diagnostic" >&2
   else
     echo "WARNING: dispatch response body was empty (HTTP 204 without run details)" >&2
   fi
@@ -499,15 +506,15 @@ fi
 rm -f "$DISPATCH_RESPONSE"
 
 echo "DISPATCH_RESULT=accepted"
-echo "DISPATCH_WORKFLOW_RUN_ID=$RUN_ID"
-echo "INFO: workflow dispatch accepted; bound to workflow run id $RUN_ID"
+workflow_diagnostic "DISPATCH_WORKFLOW_RUN_ID=$RUN_ID"
+workflow_diagnostic "INFO: workflow dispatch accepted; bound to workflow run id $RUN_ID"
 fi  # end: ADOPTED -eq 0 (fresh dispatch)
 
 # #1789 (plan D12): the request this run answers — the dispatch (or the
 # adopted recorded request) and the bound run id. Printed once, here, so every
 # later exit path carries it.
-echo "REVIEW_REQUESTED_AT=$DISPATCH_TIME"
-echo "REVIEW_REQUEST_REF=$RUN_ID"
+workflow_diagnostic "REVIEW_REQUESTED_AT=$DISPATCH_TIME"
+workflow_diagnostic "REVIEW_REQUEST_REF=$RUN_ID"
 
 # ── Phase 2: Poll the dispatched run until it completes ──────────────────────
 # Poll only actions/runs/<RUN_ID> at POLL_INTERVAL intervals until it reaches
@@ -515,7 +522,7 @@ echo "REVIEW_REQUEST_REF=$RUN_ID"
 # dispatch created (for example an earlier dispatch for a previous head, inside
 # any time window) can never be read as this request's answer.
 
-echo "INFO: polling workflow run $RUN_ID..."
+workflow_diagnostic "INFO: polling workflow run $RUN_ID..."
 
 TOTAL_ELAPSED=0
 RUN_URL=""
@@ -526,7 +533,7 @@ POLL_READ_FAILED=0
 POLL_LAST_ERR=""
 
 while [ "$TOTAL_ELAPSED" -lt "$MAX_WAIT" ]; do
-  echo "INFO: polling... elapsed ${TOTAL_ELAPSED}s / ${MAX_WAIT}s"
+  workflow_diagnostic "INFO: polling... elapsed ${TOTAL_ELAPSED}s / ${MAX_WAIT}s"
 
   # Use a temp file to avoid SIGPIPE under pipefail.
   RUN_POLL_STDERR=$(mktemp)
@@ -543,7 +550,7 @@ while [ "$TOTAL_ELAPSED" -lt "$MAX_WAIT" ]; do
   if [ "$POLL_STATUS" -ne 0 ]; then
     POLL_ERR=$(cat "$RUN_POLL_STDERR")
     rm -f "$RUN_POLL_STDERR" "$RUN_POLL_TMPFILE"
-    echo "WARNING: could not read workflow run $RUN_ID during polling: ${POLL_ERR:-unreadable response}" >&2
+    workflow_diagnostic "WARNING: could not read workflow run $RUN_ID during polling: ${POLL_ERR:-unreadable response}" >&2
     # #1789 (spec BR 2): only positive evidence makes a reviewer failed. A
     # permission refusal (401/403) or a missing bound run (404) is that
     # evidence, so it is unavailable (exit 3), never No verdict yet. A
@@ -551,12 +558,12 @@ while [ "$TOTAL_ELAPSED" -lt "$MAX_WAIT" ]; do
     case "$(claude_code_action_classify_poll_error "$POLL_ERR")" in
       denied)
         echo "POLL_RESULT=read_denied"
-        echo "VERDICT: UNAVAILABLE — workflow run $RUN_ID could not be read: authorization or permission refused (${POLL_ERR})"
+        workflow_diagnostic "VERDICT: UNAVAILABLE — workflow run $RUN_ID could not be read: authorization or permission refused (${POLL_ERR})"
         exit 3
         ;;
       gone)
         echo "POLL_RESULT=run_not_found"
-        echo "VERDICT: UNAVAILABLE — bound workflow run $RUN_ID was not found (${POLL_ERR})"
+        workflow_diagnostic "VERDICT: UNAVAILABLE — bound workflow run $RUN_ID was not found (${POLL_ERR})"
         exit 3
         ;;
     esac
@@ -573,7 +580,7 @@ while [ "$TOTAL_ELAPSED" -lt "$MAX_WAIT" ]; do
   POLL_READ_OK=$((POLL_READ_OK + 1))
 
   if [ -z "$RUN_INFO" ]; then
-    echo "INFO: workflow run $RUN_ID not readable yet..."
+    workflow_diagnostic "INFO: workflow run $RUN_ID not readable yet..."
     sleep "$POLL_INTERVAL"
     TOTAL_ELAPSED=$((TOTAL_ELAPSED + POLL_INTERVAL))
     continue
@@ -583,7 +590,7 @@ while [ "$TOTAL_ELAPSED" -lt "$MAX_WAIT" ]; do
   RUN_CONCLUSION=$(echo "$RUN_INFO" | jq -r '.conclusion // empty')
   RUN_URL=$(echo "$RUN_INFO" | jq -r '.html_url // empty')
 
-  echo "INFO: found run — id=$RUN_ID status=$RUN_STATUS conclusion=$RUN_CONCLUSION url=$RUN_URL"
+  workflow_diagnostic "INFO: found run — id=$RUN_ID status=$RUN_STATUS conclusion=$RUN_CONCLUSION url=$RUN_URL"
 
   # GitHub Actions API uses `status` for run lifecycle (queued, in_progress,
   # completed) and `conclusion` for the terminal outcome (success, failure,
@@ -593,7 +600,7 @@ while [ "$TOTAL_ELAPSED" -lt "$MAX_WAIT" ]; do
     break
   fi
 
-  echo "INFO: run is still in progress (status=$RUN_STATUS), continuing to poll..."
+  workflow_diagnostic "INFO: run is still in progress (status=$RUN_STATUS), continuing to poll..."
   sleep "$POLL_INTERVAL"
   TOTAL_ELAPSED=$((TOTAL_ELAPSED + POLL_INTERVAL))
 done
@@ -608,27 +615,27 @@ if [ "$RUN_STATUS" != "completed" ]; then
   # spec BR 2, so fail closed (exit 3) instead of reporting "no failure".
   if [ "$POLL_READ_OK" -eq 0 ] && [ "$POLL_READ_FAILED" -gt 0 ]; then
     echo "POLL_RESULT=run_unreadable"
-    echo "VERDICT: UNAVAILABLE — workflow run $RUN_ID could not be read on any of $POLL_READ_FAILED polls within ${MAX_WAIT}s (last error: $POLL_LAST_ERR)"
+    workflow_diagnostic "VERDICT: UNAVAILABLE — workflow run $RUN_ID could not be read on any of $POLL_READ_FAILED polls within ${MAX_WAIT}s (last error: $POLL_LAST_ERR)"
     exit 3
   fi
-  echo "VERDICT: NO_VERDICT_YET — no run completed within ${MAX_WAIT}s (run URL: ${RUN_URL:-unknown})"
-  echo "INFO: re-run the reviewer loop later on the same revision; if the run never completes, verify the '$WORKFLOW_FILE' workflow is present and configured in $OWNER/$REPO."
+  workflow_diagnostic "VERDICT: NO_VERDICT_YET — no run completed within ${MAX_WAIT}s (run URL: ${RUN_URL:-unknown})"
+  workflow_diagnostic "INFO: re-run the reviewer loop later on the same revision; if the run never completes, verify the '$WORKFLOW_FILE' workflow is present and configured in $OWNER/$REPO."
   exit 4
 fi
 
 if [ -z "$RUN_CONCLUSION" ] || [ "$RUN_CONCLUSION" = "null" ]; then
-  echo "VERDICT: FAILED — run completed without a conclusion (run URL: ${RUN_URL:-unknown})"
-  echo "INFO: remediation — check the Actions run log at ${RUN_URL:-the run page} for details."
+  workflow_diagnostic "VERDICT: FAILED — run completed without a conclusion (run URL: ${RUN_URL:-unknown})"
+  workflow_diagnostic "INFO: remediation — check the Actions run log at ${RUN_URL:-the run page} for details."
   exit 2
 fi
 
 if [ "$RUN_CONCLUSION" != "success" ]; then
-  echo "VERDICT: FAILED — run completed with conclusion '$RUN_CONCLUSION' (not 'success'): $RUN_URL"
-  echo "INFO: remediation — check the Actions run log at $RUN_URL for details."
+  workflow_diagnostic "VERDICT: FAILED — run completed with conclusion '$RUN_CONCLUSION' (not 'success'): $RUN_URL"
+  workflow_diagnostic "INFO: remediation — check the Actions run log at $RUN_URL for details."
   exit 2
 fi
 
-echo "INFO: Actions run completed with conclusion=success: $RUN_URL"
+workflow_diagnostic "INFO: Actions run completed with conclusion=success: $RUN_URL"
 
 # A successful Actions run is not proof that Claude actually reviewed the PR.
 # claude-code-action exits successfully when no prompt/trigger is present, logging
@@ -641,7 +648,7 @@ verify_claude_code_action_run_log "$RUN_ID" "$OWNER" "$REPO" || exit $?
 # If any review has state=CHANGES_REQUESTED, exit 1 (NEEDS_REVISION).
 # Otherwise exit 0 (APPROVED).
 
-echo "INFO: checking PR #$PR_NUMBER reviews from '$BOT_LOGIN' posted after $DISPATCH_TIME${HEAD_SHA:+ on commit $HEAD_SHA}..."
+workflow_diagnostic "INFO: checking PR #$PR_NUMBER reviews from '$BOT_LOGIN' posted after $DISPATCH_TIME${HEAD_SHA:+ on commit $HEAD_SHA}..."
 
 REVIEW_STDERR=$(mktemp)
 REVIEW_TMPFILE=$(mktemp)
@@ -657,7 +664,7 @@ gh api "repos/$OWNER/$REPO/pulls/$PR_NUMBER/reviews" --paginate \
 if [ "$REVIEW_STATUS" -ne 0 ]; then
   REVIEW_ERR=$(cat "$REVIEW_STDERR")
   rm -f "$REVIEW_STDERR" "$REVIEW_TMPFILE"
-  echo "WARNING: could not fetch PR reviews (exit $REVIEW_STATUS): $REVIEW_ERR" >&2
+  workflow_diagnostic "WARNING: could not fetch PR reviews (exit $REVIEW_STATUS): $REVIEW_ERR" >&2
   echo "VERDICT: UNAVAILABLE — run succeeded but review fetch failed"
   exit 3
 fi

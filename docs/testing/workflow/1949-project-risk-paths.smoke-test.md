@@ -6,7 +6,8 @@
 
 ## Prerequisites
 
-- Bash, Python 3 with PyYAML, jq and ShellCheck are available.
+- Bash, Python 3, jq and ShellCheck are available; framework configuration parsing
+  uses the dependency-free strict reader, without PyYAML.
 - Use the implementation checkout with a clean tracked tree. Tests create their
   own temporary config/evidence fixtures; no credentials or API writes needed.
 - No UI, database seed, user session or design assets apply.
@@ -66,7 +67,7 @@ not an active Low-risk override for this template.
 
 | Symptom | Action |
 | --- | --- |
-| Missing PyYAML | Use the repository's workflow tooling setup, then retry |
+| Missing Python 3 | Use the repository's workflow tooling setup, then retry; framework parsing needs no PyYAML |
 | Invalid configuration | Repair the indicated rule/field using shipped grammar |
 | Scope, reviewer or CI gate fails | Stop readiness and follow that gate; do not change risk ceilings |
 

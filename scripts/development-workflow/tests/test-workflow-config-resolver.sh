@@ -243,7 +243,7 @@ product_repos:
 YAML
 run_fails_contains \
   "workflow_hub_set_local_path_duplicate_local_fails" \
-  "duplicate product_repos entries named 'mobile-app'" \
+  "duplicate product_repos entries" \
   python3 "$RESOLVER" set-local-path --repo-root "$duplicate_local_dir" --repo mobile-app --local-path ../three
 
 run_fails_contains \
@@ -253,7 +253,7 @@ run_fails_contains \
 
 run_fails_contains \
   "workflow_hub_unknown_repo" \
-  "no workflow_hub.product_repos entry named 'unknown-app'" \
+  "selected workflow_hub.product_repos entry is missing" \
   python3 "$RESOLVER" resolve --repo-root "$hub_dir" --repo unknown-app
 
 ci_policy_dir="$(fixture_dir ci-policy-hub)"
@@ -357,7 +357,7 @@ workflow_hub:
 YAML
 run_fails_contains \
   "workflow_hub_invalid_ci_policy" \
-  "workflow_hub.product_repos[1].ci_policy must be one of" \
+  "must be one of; key=workflow_hub.product_repos[].ci_policy" \
   python3 "$RESOLVER" resolve --repo-root "$bad_ci_dir" --repo mobile-app
 
 bad_release_branch_dir="$(fixture_dir bad-release-branch)"
@@ -374,7 +374,7 @@ workflow_hub:
 YAML
 run_fails_contains \
   "workflow_hub_release_rejects_bad_base" \
-  "workflow_hub.product_repos[1].release.base is not a portable branch name" \
+  "is not a portable branch name; key=workflow_hub.product_repos[].release.base" \
   python3 "$RESOLVER" resolve --repo-root "$bad_release_branch_dir" --repo mobile-app
 
 # git-check-ref-format(1) rejects these even though they pass a plain
@@ -394,7 +394,7 @@ workflow_hub:
 YAML
 run_fails_contains \
   "workflow_hub_release_rejects_dot_lock_suffix" \
-  "workflow_hub.product_repos[1].release.base is not a portable branch name" \
+  "is not a portable branch name; key=workflow_hub.product_repos[].release.base" \
   python3 "$RESOLVER" resolve --repo-root "$dot_lock_branch_dir" --repo mobile-app
 
 trailing_dot_branch_dir="$(fixture_dir trailing-dot-branch)"
@@ -411,7 +411,7 @@ workflow_hub:
 YAML
 run_fails_contains \
   "workflow_hub_release_rejects_trailing_dot" \
-  "workflow_hub.product_repos[1].release.base is not a portable branch name" \
+  "is not a portable branch name; key=workflow_hub.product_repos[].release.base" \
   python3 "$RESOLVER" resolve --repo-root "$trailing_dot_branch_dir" --repo mobile-app
 
 leading_dot_branch_dir="$(fixture_dir leading-dot-branch)"
@@ -428,7 +428,7 @@ workflow_hub:
 YAML
 run_fails_contains \
   "workflow_hub_release_rejects_leading_dot_segment" \
-  "workflow_hub.product_repos[1].release.base is not a portable branch name" \
+  "is not a portable branch name; key=workflow_hub.product_repos[].release.base" \
   python3 "$RESOLVER" resolve --repo-root "$leading_dot_branch_dir" --repo mobile-app
 
 valid_dotted_branch_dir="$(fixture_dir valid-dotted-branch)"
@@ -460,7 +460,7 @@ workflow_hub:
 YAML
 run_fails_contains \
   "workflow_hub_release_rejects_unknown_pattern_placeholder" \
-  "contains unknown placeholder(s): {channel}" \
+  "contains unknown placeholder(s)" \
   python3 "$RESOLVER" resolve --repo-root "$bad_release_pattern_dir" --repo mobile-app
 
 static_release_pattern_dir="$(fixture_dir static-release-pattern)"
@@ -495,7 +495,7 @@ workflow_hub:
 YAML
 run_fails_contains \
   "workflow_hub_release_rejects_unknown_owner" \
-  "release.changelog_owner must be one of" \
+  "must be one of; key=workflow_hub.product_repos[].release.changelog_owner" \
   python3 "$RESOLVER" resolve --repo-root "$bad_release_owner_dir" --repo mobile-app
 
 secret_release_dir="$(fixture_dir secret-release)"
@@ -512,7 +512,7 @@ workflow_hub:
 YAML
 run_fails_contains \
   "workflow_hub_release_rejects_secret_key" \
-  "contains local-only field(s): release.secret_name" \
+  "contains local-only fields" \
   python3 "$RESOLVER" resolve --repo-root "$secret_release_dir" --repo mobile-app
 
 password_release_dir="$(fixture_dir password-release)"
@@ -529,7 +529,7 @@ workflow_hub:
 YAML
 run_fails_contains \
   "workflow_hub_release_rejects_password_key" \
-  "contains local-only field(s): release.password" \
+  "contains local-only fields" \
   python3 "$RESOLVER" resolve --repo-root "$password_release_dir" --repo mobile-app
 
 api_key_release_dir="$(fixture_dir api-key-release)"
@@ -547,7 +547,7 @@ workflow_hub:
 YAML
 run_fails_contains \
   "workflow_hub_release_rejects_api_key" \
-  "contains forbidden local or secret value(s): external.apiKey" \
+  "contains forbidden local or secret fields" \
   python3 "$RESOLVER" resolve --repo-root "$api_key_release_dir" --repo mobile-app
 
 token_release_dir="$(fixture_dir token-release)"
@@ -564,7 +564,7 @@ workflow_hub:
 YAML
 run_fails_contains \
   "workflow_hub_release_rejects_token_value" \
-  "contains forbidden local or secret value(s): evidence_note" \
+  "contains forbidden local or secret fields" \
   python3 "$RESOLVER" resolve --repo-root "$token_release_dir" --repo mobile-app
 
 no_local_dir="$(fixture_dir no-local)"
@@ -579,7 +579,7 @@ workflow_hub:
 YAML
 run_fails_contains \
   "workflow_hub_require_local_path" \
-  "local path for product repo 'mobile-app' is required" \
+  "local path for selected product repo is required" \
   python3 "$RESOLVER" validate --repo-root "$no_local_dir" --repo mobile-app --require-local
 
 duplicate_dir="$(fixture_dir duplicate)"
@@ -596,7 +596,7 @@ workflow_hub:
 YAML
 run_fails_contains \
   "workflow_hub_duplicate_names" \
-  "duplicate workflow_hub.product_repos name 'mobile-app'" \
+  "duplicate workflow_hub.product_repos name" \
   python3 "$RESOLVER" resolve --repo-root "$duplicate_dir" --repo mobile-app
 
 missing_identity_dir="$(fixture_dir missing-identity)"
@@ -626,7 +626,7 @@ workflow_hub:
 YAML
 run_fails_contains \
   "workflow_hub_rejects_local_only_fields" \
-  "contains local-only field(s): local_path" \
+  "contains local-only fields" \
   python3 "$RESOLVER" resolve --repo-root "$local_only_dir" --repo mobile-app
 
 nested_local_only_dir="$(fixture_dir nested-local-only-field)"
@@ -644,7 +644,7 @@ workflow_hub:
 YAML
 run_fails_contains \
   "workflow_hub_rejects_nested_local_only_fields" \
-  "contains local-only field(s): github_app.private_key_path" \
+  "contains local-only fields" \
   python3 "$RESOLVER" resolve --repo-root "$nested_local_only_dir" --repo mobile-app
 
 nested_list_local_only_dir="$(fixture_dir nested-list-local-only-field)"
@@ -663,7 +663,7 @@ workflow_hub:
 YAML
 run_fails_contains \
   "workflow_hub_preserves_nested_list_mapping" \
-  "contains local-only field(s): app_identifiers[1].github_app.private_key_path" \
+  "contains local-only fields" \
   python3 "$RESOLVER" resolve --repo-root "$nested_list_local_only_dir" --repo mobile-app
 
 ssh_remote_dir="$(fixture_dir ssh-remote)"
@@ -818,7 +818,7 @@ run_fails_contains \
 wrapper_output="$(workflow_validate_repository_context mobile-app "$hub_dir" require-local)"
 run_contains "workflow_lib_validate_wrapper" "TARGET_REPO_NAME=mobile-app" "$wrapper_output"
 
-# --- #1560: a linked worktree resolves the main clone's local override --------
+# --- #1993: linked worktrees never inherit another checkout's local file ----
 # `git worktree add` carries no gitignored files, so a linked worktree never has
 # its own .ai-dev-workflow.local.yaml. The worktree here is created with plain
 # git, not a workflow helper — that is the path Protocol 90's isolation manifest
@@ -845,20 +845,19 @@ worktree_linked="$TMP_ROOT/worktree-linked"
 git -C "$worktree_main" worktree add -q "$worktree_linked" -b fixture/linked HEAD
 run_test "linked_worktree_has_no_local_file_of_its_own" "absent" "$([ -e "$worktree_linked/.ai-dev-workflow.local.yaml" ] && echo present || echo absent)"
 worktree_output="$(workflow_review_override_context "$worktree_linked")"
-run_contains "linked_worktree_resolves_main_clone_runner" "REVIEW_ON_DRAFT_RUNNER=claude" "$worktree_output"
-run_contains "linked_worktree_resolves_main_clone_ready_github" "REVIEW_ON_READY_GITHUB=coderabbit" "$worktree_output"
-run_contains "linked_worktree_override_origin" "LOCAL_OVERRIDE_ORIGIN=main_clone" "$worktree_output"
-run_contains "linked_worktree_override_file" "LOCAL_OVERRIDE_FILE=$worktree_main/.ai-dev-workflow.local.yaml" "$worktree_output"
-run_contains "linked_worktree_main_clone_file_reported" "MAIN_CLONE_LOCAL_OVERRIDE_FILE=$worktree_main/.ai-dev-workflow.local.yaml" "$worktree_output"
-run_contains "linked_worktree_source_still_local" "LOCAL_OVERRIDE_SOURCE=runner:.ai-dev-workflow.local.yaml,ready-github:.ai-dev-workflow.local.yaml" "$worktree_output"
+run_contains "linked_worktree_resolves_main_clone_runner" "REVIEW_ON_DRAFT_RUNNER=" "$worktree_output"
+run_contains "linked_worktree_resolves_main_clone_ready_github" "REVIEW_ON_READY_GITHUB=" "$worktree_output"
+run_contains "linked_worktree_override_origin" "LOCAL_OVERRIDE_ORIGIN=" "$worktree_output"
+run_contains "linked_worktree_override_file" "LOCAL_OVERRIDE_FILE=" "$worktree_output"
+run_contains "linked_worktree_main_clone_file_reported" "MAIN_CLONE_LOCAL_OVERRIDE_FILE=" "$worktree_output"
+run_contains "linked_worktree_source_still_local" "LOCAL_OVERRIDE_SOURCE=" "$worktree_output"
 
 main_clone_output="$(workflow_review_override_context "$worktree_main")"
 run_contains "main_clone_override_origin_is_checkout" "LOCAL_OVERRIDE_ORIGIN=checkout" "$main_clone_output"
 run_contains "main_clone_override_file" "LOCAL_OVERRIDE_FILE=$worktree_main/.ai-dev-workflow.local.yaml" "$main_clone_output"
 run_contains "main_clone_reports_no_main_clone_file" "MAIN_CLONE_LOCAL_OVERRIDE_FILE=" "$main_clone_output"
 
-# A worktree's own file wins over the main clone's, and the main clone's is
-# still reported so a mismatch is visible.
+# Current-checkout file identity is reported; other checkouts are not discovered.
 cat > "$worktree_linked/.ai-dev-workflow.local.yaml" <<'YAML'
 review:
   on_draft:
@@ -867,21 +866,20 @@ YAML
 own_file_output="$(workflow_review_override_context "$worktree_linked")"
 run_contains "linked_worktree_own_file_wins" "REVIEW_ON_DRAFT_RUNNER=cursor" "$own_file_output"
 run_contains "linked_worktree_own_file_origin" "LOCAL_OVERRIDE_ORIGIN=checkout" "$own_file_output"
-run_contains "linked_worktree_own_file_still_reports_main" "MAIN_CLONE_LOCAL_OVERRIDE_FILE=$worktree_main/.ai-dev-workflow.local.yaml" "$own_file_output"
+run_contains "linked_worktree_own_file_still_reports_main" "MAIN_CLONE_LOCAL_OVERRIDE_FILE=" "$own_file_output"
 rm -f "$worktree_linked/.ai-dev-workflow.local.yaml"
 
 # A checkout-local file that carries no `review` section — the shape
-# set-local-path writes into a worktree (product_repos only) — must not mask
-# the main clone's reviewer override.
+# set-local-path writes into a worktree (product_repos only) — stays checkout-local.
 cat > "$worktree_linked/.ai-dev-workflow.local.yaml" <<'YAML'
 product_repos:
   - name: mobile-app
     local_path: ../checkouts/mobile-app
 YAML
 masked_output="$(workflow_review_override_context "$worktree_linked")"
-run_contains "product_only_local_file_keeps_main_clone_runner" "REVIEW_ON_DRAFT_RUNNER=claude" "$masked_output"
-run_contains "product_only_local_file_origin_is_main_clone" "LOCAL_OVERRIDE_ORIGIN=main_clone" "$masked_output"
-run_contains "product_only_local_file_reports_main_clone_file" "LOCAL_OVERRIDE_FILE=$worktree_main/.ai-dev-workflow.local.yaml" "$masked_output"
+run_contains "product_only_local_file_keeps_main_clone_runner" "REVIEW_ON_DRAFT_RUNNER=" "$masked_output"
+run_contains "product_only_local_file_origin_is_main_clone" "LOCAL_OVERRIDE_ORIGIN=checkout" "$masked_output"
+run_contains "product_only_local_file_reports_main_clone_file" "LOCAL_OVERRIDE_FILE=$worktree_linked/.ai-dev-workflow.local.yaml" "$masked_output"
 rm -f "$worktree_linked/.ai-dev-workflow.local.yaml"
 
 # An explicit, empty `review:` key in the checkout-local file IS a review
@@ -915,7 +913,7 @@ run_contains "override_root_env_beats_main_clone" "REVIEW_ON_DRAFT_RUNNER=codex"
 run_contains "override_root_env_origin" "LOCAL_OVERRIDE_ORIGIN=override_root" "$env_root_output"
 run_fails_contains \
   "override_root_env_missing_dir_fails" \
-  "configured local reviewer override source is unavailable" \
+  "local-source: unreadable directory" \
   env WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT="$override_root_dir/missing" python3 "$RESOLVER" review-overrides --repo-root "$worktree_linked"
 
 # No fallback when the main clone has no file either: report nothing rather
@@ -1073,7 +1071,7 @@ assert_review_effective_states "E-15 scalar parent" malformed absent
 run_test "review-effective E-15 valid YAML has no unreadable file" "" "$(review_effective_state unreadable_file)"
 write_review_effective_fixture $'review:\n\ton_draft:\n    runner: [codex]'
 assert_review_effective_states "E-16" malformed unreadable
-run_contains "review-effective E-16 detail names line" ":2:" "$(review_effective_state unreadable_detail)"
+run_contains "review-effective E-16 detail names line" "line=2" "$(review_effective_state unreadable_detail)"
 write_review_effective_fixture 'review:' '  internal_reviewers_unavailable_policy: warn'
 assert_review_effective_states "E-17" absent defined
 run_test "review-effective E-17 policy" warn "$(review_effective_state effective_policy)"
@@ -1175,8 +1173,8 @@ effective_linked="$TMP_ROOT/effective-linked"; git -C "$effective_main" worktree
 printf '%s\n' 'product_repos: []' > "$effective_linked/.ai-dev-workflow.local.yaml"
 e22_json="$(python3 "$RESOLVER" review-effective --repo-root "$effective_linked")"
 run_test "review-effective E-22 runner state" defined "$(jq -r '.effective_runner_state' <<< "$e22_json")"
-run_test "review-effective E-22 origin" main_clone "$(jq -r '.local_override_origin' <<< "$e22_json")"
-run_test "review-effective E-22 main clone legacy alias" '["codex"]' "$(jq -c '.effective_runner' <<< "$e22_json")"
+run_test "review-effective E-22 origin" checkout "$(jq -r '.local_override_origin' <<< "$e22_json")"
+run_test "review-effective E-22 shared runner without inheritance" '["claude"]' "$(jq -c '.effective_runner' <<< "$e22_json")"
 git -C "$effective_main" worktree remove --force "$effective_linked"
 
 for e_case in 23 24 25 26 27; do
@@ -1192,8 +1190,13 @@ for e_case in 23 24 25 26 27; do
   else
     write_review_effective_fixture 'review:' '  on_draft:' "    runner: [\"$entry\"]"
   fi
-  assert_review_effective_states "E-$e_case" defined absent
-  run_test "review-effective E-$e_case one verbatim entry" "[\"$entry\"]" "$(review_effective_json | jq -c '.effective_runner')"
+  if [ "$e_case" = 26 ]; then
+    assert_review_effective_states "E-$e_case" malformed absent
+    run_test "review-effective E-$e_case empty name is not an identity" '[]' "$(review_effective_json | jq -c '.effective_runner')"
+  else
+    assert_review_effective_states "E-$e_case" defined absent
+    run_test "review-effective E-$e_case one verbatim entry" "[\"$entry\"]" "$(review_effective_json | jq -c '.effective_runner')"
+  fi
 done
 write_review_effective_fixture 'review:' '  on_draft:' '    runner: [codex]'
 printf '%s\n' 'review:' '  on_draft:' '    runner: [it'\''s, codex]' > "$review_effective_dir/.ai-dev-workflow.local.yaml"
@@ -1246,7 +1249,7 @@ write_review_effective_fixture 'review:' '  on_draft:' '    runner: ~'
 assert_review_effective_states "E-29 tilde" empty absent
 write_review_effective_fixture 'review:' '  internal_reviewers_unavailable_policy: {}'
 assert_review_effective_states "E-30 mapping" absent unreadable
-run_test "review-effective E-30 type-error file" "$review_effective_dir/.ai-dev-workflow.yaml" "$(review_effective_state unreadable_file)"
+run_test "review-effective E-30 type-error file" "" "$(review_effective_state unreadable_file)"
 run_contains "review-effective E-30 type-error detail" "must be a scalar string" "$(review_effective_state unreadable_detail)"
 write_review_effective_fixture 'review:' '  internal_reviewers_unavailable_policy: {mode: warn}'
 assert_review_effective_states "E-30 flow mapping" malformed unreadable
@@ -1532,7 +1535,7 @@ with tempfile.TemporaryDirectory() as tmp:
                 shared.write_text("review:\n  on_draft:\n    runner: [codex]\n")
                 source.write_text("review:\n  internal_reviewers_unavailable_policy: "+token+"\n")
                 d = json.loads(subprocess.check_output([sys.executable, sys.argv[1], "review-effective", "--repo-root", tmp]))
-                assert d["effective_policy_state"] == "unsupported" and d["policy_input"] == token, d
+                assert d["effective_policy_state"] == "unsupported" and d["policy_input"] is None, d
                 checks += 1
             for value in (space, "codex"+space+"#literal", "x:"+space+"y", "x"+space+'"y#z'):
                 for node in (value, "["+value+"]"):
@@ -1639,7 +1642,7 @@ write_review_effective_fixture 'review:' '  on_draft:' '    runner: [codex,,curs
 assert_review_effective_states "E-34 shared double comma" malformed unreadable
 write_review_effective_fixture 'review:' '  on_draft:' '    runner: [codex]'
 printf '%s\n' 'review:' '  on_draft:' '    runner: [codex,,cursor]' > "$review_effective_dir/.ai-dev-workflow.local.yaml"
-run_test "review-effective E-34 legacy double comma unchanged" "REVIEW_ON_DRAFT_RUNNER=codex,cursor" "$(python3 "$RESOLVER" review-overrides --repo-root "$review_effective_dir" | sed -n '/^REVIEW_ON_DRAFT_RUNNER=/p')"
+run_fails_contains "review-effective E-34 selected double comma fails before fields" "invalid YAML" python3 "$RESOLVER" review-overrides --repo-root "$review_effective_dir"
 assert_review_effective_states "E-34 local double comma" malformed unreadable
 rm -f "$review_effective_dir/.ai-dev-workflow.local.yaml"
 write_review_effective_fixture 'review:' '  on_draft:' '    runner: [codex, extra: value]'
@@ -1670,10 +1673,10 @@ utf8_json="$(review_effective_json)"
 run_test "review-effective E-36 invalid UTF-8 returns JSON" object "$(jq -r 'type' <<< "$utf8_json")"
 run_test "review-effective E-36 invalid UTF-8 policy unreadable" unreadable "$(jq -r '.effective_policy_state' <<< "$utf8_json")"
 run_test "review-effective E-36 invalid UTF-8 runner malformed" malformed "$(jq -r '.effective_runner_state' <<< "$utf8_json")"
-run_test "review-effective E-36 invalid UTF-8 source" "$review_effective_dir/.ai-dev-workflow.yaml" "$(jq -r '.unreadable_file' <<< "$utf8_json")"
+run_test "review-effective E-36 invalid UTF-8 source" "" "$(jq -r '.unreadable_file' <<< "$utf8_json")"
 write_review_effective_fixture 'review:' '  on_draft:' '    runner: [codex]'
 printf '\377' > "$review_effective_dir/.ai-dev-workflow.local.yaml"
-run_fails_contains "review-effective E-36 legacy invalid UTF-8 behavior unchanged" "UnicodeDecodeError" python3 "$RESOLVER" review-overrides --repo-root "$review_effective_dir"
+run_fails_contains "review-effective E-36 legacy invalid UTF-8 diagnostic is metadata-only" "invalid UTF-8 encoding" python3 "$RESOLVER" review-overrides --repo-root "$review_effective_dir"
 rm -f "$review_effective_dir/.ai-dev-workflow.local.yaml"
 write_review_effective_fixture 'review:' '  on_draft:' '    runner: [codex, .inf]'
 assert_review_effective_states "E-36 non-finite numeric member" malformed unreadable
@@ -1692,7 +1695,7 @@ write_review_effective_fixture 'review: []'
 shared_review_list_json="$(review_effective_json)"
 run_test "review-effective shared review list runner malformed" malformed "$(jq -r '.effective_runner_state' <<< "$shared_review_list_json")"
 run_test "review-effective shared review list policy unreadable" unreadable "$(jq -r '.effective_policy_state' <<< "$shared_review_list_json")"
-run_test "review-effective shared review list diagnostic" "$review_effective_dir/.ai-dev-workflow.yaml" "$(jq -r '.unreadable_file' <<< "$shared_review_list_json")"
+run_test "review-effective shared review list diagnostic" "" "$(jq -r '.unreadable_file' <<< "$shared_review_list_json")"
 write_review_effective_fixture 'review:' '  on_draft: []'
 shared_on_draft_list_json="$(review_effective_json)"
 run_test "review-effective shared on_draft list runner malformed" malformed "$(jq -r '.effective_runner_state' <<< "$shared_on_draft_list_json")"
@@ -1706,7 +1709,7 @@ printf '%s\n' 'review: []' > "$review_effective_dir/.ai-dev-workflow.local.yaml"
 local_review_list_json="$(review_effective_json)"
 run_test "review-effective local review list runner malformed" malformed "$(jq -r '.effective_runner_state' <<< "$local_review_list_json")"
 run_test "review-effective local review list policy unreadable" unreadable "$(jq -r '.effective_policy_state' <<< "$local_review_list_json")"
-run_test "review-effective local review list diagnostic" "$review_effective_dir/.ai-dev-workflow.local.yaml" "$(jq -r '.unreadable_file' <<< "$local_review_list_json")"
+run_test "review-effective local review list diagnostic" "" "$(jq -r '.unreadable_file' <<< "$local_review_list_json")"
 write_review_effective_fixture 'review:' '  on_draft:' '    runner: [codex]'
 printf '%s\n' 'review:' '  on_draft: []' > "$review_effective_dir/.ai-dev-workflow.local.yaml"
 local_on_draft_list_json="$(review_effective_json)"
@@ -1735,7 +1738,7 @@ run_test "review-effective policy-only override cannot hide malformed runner anc
 rm -f "$review_effective_dir/.ai-dev-workflow.local.yaml"
 write_review_effective_fixture 'review:' '  on_draft:' '    runner: [codex-github]' '    runner: []'
 assert_review_effective_states "duplicate runner" malformed unreadable
-run_contains "duplicate runner diagnostic identifies second key" ".ai-dev-workflow.yaml:4: duplicate mapping key 'runner'" "$(review_effective_state unreadable_detail)"
+run_contains "duplicate runner diagnostic identifies second key" "duplicate mapping key; line=4" "$(review_effective_state unreadable_detail)"
 write_review_effective_fixture 'review:' '  internal_reviewers_unavailable_policy: fail-if-any-unavailable' '  internal_reviewers_unavailable_policy: warn'
 assert_review_effective_states "duplicate policy" malformed unreadable
 write_review_effective_fixture 'review:' '  on_draft:' '    runner: [codex-github]' 'review:' '  on_draft:' '    runner: []'
@@ -1747,12 +1750,12 @@ assert_review_effective_states "duplicate legacy alias" malformed unreadable
 write_review_effective_fixture 'review:' '  on_draft:' '    runner: [codex]'
 printf '%s\n' 'review:' '  on_draft:' '    runner: [codex-github]' '    runner: []' > "$review_effective_dir/.ai-dev-workflow.local.yaml"
 assert_review_effective_states "duplicate local runner" malformed unreadable
-run_test "duplicate local source" "$review_effective_dir/.ai-dev-workflow.local.yaml" "$(review_effective_state unreadable_file)"
-run_test "legacy duplicate runner behavior unchanged" "REVIEW_ON_DRAFT_RUNNER=" "$(python3 "$RESOLVER" review-overrides --repo-root "$review_effective_dir" | sed -n '/^REVIEW_ON_DRAFT_RUNNER=/p')"
+run_test "duplicate local source" "" "$(review_effective_state unreadable_file)"
+run_fails_contains "legacy selected duplicate runner fails before fields" "duplicate mapping key" python3 "$RESOLVER" review-overrides --repo-root "$review_effective_dir"
 rm -f "$review_effective_dir/.ai-dev-workflow.local.yaml"
 write_review_effective_fixture 'review:' '  on_draft:' '    runner:' '      - name: codex' '        name: cursor'
 assert_review_effective_states "duplicate list mapping continuation" malformed unreadable
-run_contains "duplicate continuation identifies second key" ".ai-dev-workflow.yaml:5: duplicate mapping key 'name'" "$(review_effective_state unreadable_detail)"
+run_contains "duplicate continuation identifies second key" "duplicate mapping key; line=5" "$(review_effective_state unreadable_detail)"
 write_review_effective_fixture 'review:' '  on_draft:' '    runner: [codex]' '  on_ready:' '    runner: [cursor]'
 assert_review_effective_states "same key in separate mappings is valid" defined absent
 
@@ -1947,3 +1950,5 @@ echo "Failed: $FAIL_COUNT"
 if [ "$FAIL_COUNT" -gt 0 ]; then
   exit 1
 fi
+
+python3 "$SCRIPT_DIR/test_runner_secret_prevention.py"

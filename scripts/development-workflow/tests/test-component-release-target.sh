@@ -149,6 +149,8 @@ run_test "multiple_repo_disallows_mutation" "false" "$(jq -r '.mutation_allowed'
 unknown_json="$(bash "$TARGET_HELPER" --repo-root "$hub_repo" --repo unknown --json)"
 run_test "unknown_repo_outcome" "unknown_product_repository" "$(jq -r '.routing_outcome' <<< "$unknown_json")"
 run_test "unknown_repo_disallows_mutation" "false" "$(jq -r '.mutation_allowed' <<< "$unknown_json")"
+run_test "unknown_repo_safe_diagnostic_schema" "component_release_target.v1" "$(jq -r '.schema_version' <<< "$unknown_json")"
+run_test "unknown_repo_safe_diagnostic_action" "select one configured product repository key" "$(jq -r '.human_action' <<< "$unknown_json")"
 
 nonexistent_local_hub="$(dirname "$hub_repo")/nonexistent-local-hub"
 cp -R "$hub_repo" "$nonexistent_local_hub"
@@ -165,6 +167,7 @@ rm "$hub_repo/.ai-dev-workflow.local.yaml"
 unavailable_json="$(bash "$TARGET_HELPER" --repo-root "$hub_repo" --repo mobile-app --json)"
 run_test "unavailable_checkout_outcome" "unavailable_product_repository_checkout" "$(jq -r '.routing_outcome' <<< "$unavailable_json")"
 run_test "unavailable_checkout_disallows_mutation" "false" "$(jq -r '.mutation_allowed' <<< "$unavailable_json")"
+run_test "unavailable_checkout_safe_diagnostic_action" "configure a local checkout path for the selected product repository" "$(jq -r '.human_action' <<< "$unavailable_json")"
 
 invalid_json="$(bash "$TARGET_HELPER" --repo-root "$bad_release_repo" --repo mobile-app --json)"
 run_test "invalid_contract_outcome" "invalid_release_contract" "$(jq -r '.routing_outcome' <<< "$invalid_json")"

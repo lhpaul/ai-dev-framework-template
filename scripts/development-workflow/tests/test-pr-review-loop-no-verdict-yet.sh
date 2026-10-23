@@ -121,7 +121,7 @@ for _1789_v in abc 0 -5 1.5 1e3 1000000 1234567 '""'; do
   [ "$_1789_v" = '""' ] && _1789_raw=""
   run_test "1789_T1.3_invalid_${_1789_invalid_n}_falls_back" "2400 default none" "$(reviewer_wait_budget_resolve bugbot 2>/dev/null)"
   run_test "1789_T1.3_invalid_${_1789_invalid_n}_warning" \
-    "WARN: review.wait_budgets.bugbot value '${_1789_raw}' is not a positive whole number of seconds (1-999999); using the built-in default" \
+    "WARN: configuration validation error; key=review.wait_budgets" \
     "$(reviewer_wait_budget_resolve bugbot 2>&1 >/dev/null)"
 done
 config_file="$(_1789_cfg empty_value 'review:
@@ -129,7 +129,7 @@ config_file="$(_1789_cfg empty_value 'review:
     bugbot:
     pr-agent: 600')"
 run_test "1789_T1.3_empty_value_falls_back" "2400 default none" "$(reviewer_wait_budget_resolve bugbot 2>/dev/null)"
-run_contains "1789_T1.3_empty_value_warns" "review.wait_budgets.bugbot value '' is not a positive whole number of seconds (1-999999)" \
+run_contains "1789_T1.3_empty_value_warns" "configuration validation error; key=review.wait_budgets" \
   "$(reviewer_wait_budget_resolve bugbot 2>&1 >/dev/null)"
 run_test "1789_T1.3_missing_key_no_warning" "" "$(reviewer_wait_budget_resolve devin 2>&1 >/dev/null)"
 config_file="$(_1789_cfg upper_bound 'review:
@@ -141,7 +141,7 @@ config_file="$(_1789_cfg unsupported 'review:
     bugbot: 1800
     not-a-reviewer: 600')"
 _1789_warn="$(reviewer_wait_budget_config_warnings 2>&1 >/dev/null)"
-run_test "1789_T1.3_unsupported_key_warning" "WARN: review.wait_budgets.not-a-reviewer is not a supported platform; ignored" "$_1789_warn"
+run_test "1789_T1.3_unsupported_key_warning" "WARN: configuration validation error; key=review.wait_budgets" "$_1789_warn"
 run_test "1789_T1.3_unsupported_key_does_not_disturb_valid" "1800 configured none" "$(reviewer_wait_budget_resolve bugbot)"
 config_file="$(_1789_cfg flow 'review:
   wait_budgets: {bugbot: 1800}')"
@@ -153,7 +153,7 @@ config_file="$(_1789_cfg claude_cap 'review:
     claude-code-action: 3601')"
 run_test "1789_T1.3_claude_cap_falls_back" "1200 default none" "$(reviewer_wait_budget_resolve claude-code-action 2>/dev/null)"
 run_test "1789_T1.3_claude_cap_warning" \
-  "WARN: review.wait_budgets.claude-code-action value '3601' exceeds the companion's 3600-second maximum; using the built-in default" \
+  "WARN: configuration validation error; key=review.wait_budgets.claude-code-action" \
   "$(reviewer_wait_budget_resolve claude-code-action 2>&1 >/dev/null)"
 config_file="$(_1789_cfg claude_at_cap 'review:
   wait_budgets:
@@ -174,7 +174,7 @@ run_test "1789_T1.3_codex_invalid_env_falls_through_to_yaml" "2100 configured no
 # shellcheck disable=SC2034  # read by functions sourced from pr-review-loop.sh
 CODEX_GITHUB_MAX_WAIT=1000000
 run_test "1789_T1.3_codex_oversized_env_falls_through_to_yaml" "2100 configured none" "$(reviewer_wait_budget_resolve codex-github 2>/dev/null)"
-run_contains "1789_T1.3_codex_oversized_env_warns" "CODEX_GITHUB_MAX_WAIT value '1000000' is not a positive whole number of seconds (1-999999)" \
+run_contains "1789_T1.3_codex_oversized_env_warns" "configuration validation error; key=CODEX_GITHUB_MAX_WAIT" \
   "$(reviewer_wait_budget_resolve codex-github 2>&1 >/dev/null)"
 unset CODEX_GITHUB_MAX_WAIT
 
@@ -289,7 +289,7 @@ for _1789_v in 0 abc -5 1.5 1000000; do
   set -e
   run_test "1789_T1.8_max_wait_${_1789_n}_exit_64" "64" "$_1789_rc"
   run_contains "1789_T1.8_max_wait_${_1789_n}_message" \
-    "--max-wait must be a positive whole number of seconds (1-999999) (got '${_1789_v}')." "$_1789_err"
+    "ERROR: configuration validation error; key=--max-wait" "$_1789_err"
   run_contains "1789_T1.8_max_wait_${_1789_n}_usage" "Usage: ./scripts/development-workflow/pr-review-loop.sh" "$_1789_err"
   run_test "1789_T1.8_max_wait_${_1789_n}_no_gh_call" "0" "$(grep -c . "$_1789_log" || true)"
 done
@@ -2678,11 +2678,22 @@ _1789_out="$(_1789_run_gh run_pr_agent_review 2)"
 run_test "1789_T2.18_unlisted_recent_trigger_does_not_suppress_request" "1|" \
   "$(_1789_posts)|$(kv_value_default PR_AGENT_TRIGGER_SKIPPED "$_1789_out" "")"
 _1789_gh_reset
+# This is a separate recent-delivery scenario: the first invocation may have
+# consumed the two-second reuse window while rendering its diagnostic report.
+_1789_pa_now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 _1789_fx issue-comments "[{\"id\":807,\"user\":{\"login\":\"runner\"},\"created_at\":\"$_1789_pa_now\",\"updated_at\":\"$_1789_pa_now\",\"body\":\"/review\"}]"
 reviewer_loop_head_request_refs="807"
 _1789_out="$(_1789_run_gh run_pr_agent_review 2)"
 run_test "1789_T2.18_listed_recent_trigger_reused_and_recorded" "0|recent_review_trigger|${_1789_pa_now}|807" \
   "$(_1789_posts)|$(kv_value_default PR_AGENT_TRIGGER_SKIPPED "$_1789_out" "")|$(_1789_keys "$_1789_out")"
+# A listed trigger outside the same unchanged reuse window never suppresses
+# a new request. Its creation is after the synthetic head but long expired.
+_1789_gh_reset
+_1789_fx issue-comments '[{"id":807,"user":{"login":"runner"},"created_at":"2020-01-01T00:00:20Z","updated_at":"2020-01-01T00:00:20Z","body":"/review"}]'
+reviewer_loop_head_request_refs="807"
+_1789_out="$(_1789_run_gh run_pr_agent_review 2)"
+run_test "1789_T2.18_listed_expired_trigger_does_not_suppress_request" "1||9001" \
+  "$(_1789_posts)|$(kv_value_default PR_AGENT_TRIGGER_SKIPPED "$_1789_out" "")|$(kv_value_default REVIEW_REQUEST_REF "$_1789_out" "")"
 reviewer_loop_head_request_refs=""
 
 # --- T2.22 regression: a delayed older-head first summary arrives after the

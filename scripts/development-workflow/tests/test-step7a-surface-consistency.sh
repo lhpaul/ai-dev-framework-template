@@ -173,7 +173,8 @@ if sys.argv[2]=='--prove-plants':
             ('D-4',local,'      - cursor','      - greptile'),
             ('D-5',protocol,"| `runtime-absent` | Install the reviewer's runtime","| `runtime-absent` | Acquire the reviewer's runtime"),
             ('D-5',protocol,'Run the local runtime --version command named in the detail','Incorrect Run the local runtime --version command named in the detail'),
-            ('D-5',protocol,'Repair .coderabbit.yaml using the reported read or syntax error','Incorrect Repair .coderabbit.yaml using the reported read or syntax error'),
+            ('D-5',protocol,'Repair the known configuration key using its safe error type and locators','Incorrect Repair the known configuration key using its safe error type and locators'),
+            ('D-5',protocol,'Correct the known reviewer-list key and retry.','Incorrect Correct the known reviewer-list key and retry.'),
             ('D-5',protocol,'Install PyYAML==6.0.2 for the python3 used by the gate','Incorrect Install PyYAML==6.0.2 for the python3 used by the gate'),
             ('D-5',protocol,'Run the CodeRabbit configuration check with the gate python3','Incorrect Run the CodeRabbit configuration check with the gate python3'),
             ('D-5',protocol,'Check gh authentication and repository issue-comment access','Incorrect Check gh authentication and repository issue-comment access'),
@@ -205,7 +206,9 @@ if sys.argv[2]=='--prove-plants':
             ('D-22',protocol,'### Branch-type detection','Split `CONFIGURED` on commas to recover reviewer names.\n\n### Branch-type detection'),
             ('D-23',agents,'complete short page','incomplete short page'),
             ('D-24',protocol,'Where the service is not installed and reachable it is\nunavailable with a named reason.','No source condition applies when the service is absent.'),
-            ('D-25','.gitignore','.ai-dev-workflow.local.yaml.retired\n',''),
+            # Negate effective protection after the broad rule in the synthetic
+            # copy; removing the redundant specific rule is not a violation.
+            ('D-25','.gitignore','.ai-dev-workflow.local.*\n','.ai-dev-workflow.local.*\n!.ai-dev-workflow.local.yaml.retired\n'),
         ]
         if not template_mode(fixture):
             plants=[plant for plant in plants if plant[0] not in {'D-9','D-25'}]

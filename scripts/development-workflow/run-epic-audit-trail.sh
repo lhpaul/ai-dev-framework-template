@@ -56,14 +56,14 @@ merge_step=""
 repo_root=""
 
 error_exit() {
-  echo "ERROR: $*" >&2
+  printf 'ERROR: %s\n' "$*" | redact_text >&2
   exit 1
 }
 
 require_value() {
   local option="$1"
   if [ "$#" -lt 2 ] || [ -z "${2:-}" ] || [ "${2#--}" != "$2" ]; then
-    echo "$option requires a value." >&2
+    printf '%s requires a value.\n' "$option" | redact_text >&2
     usage >&2
     exit 64
   fi
@@ -89,12 +89,10 @@ load_input_json() {
 }
 
 redact_text() {
-  sed -E \
-    -e 's#gh[pousr]_[A-Za-z0-9_]+#[REDACTED_TOKEN]#g' \
-    -e 's#Bearer[[:space:]]+[A-Za-z0-9._=-]+#Bearer [REDACTED]#g' \
-    -e 's#Authorization:[[:space:]]*[^[:space:]]+#Authorization: [REDACTED]#g' \
+  workflow_redact_text | sed -E \
     -e 's#/Users/[^[:space:]|)]+#[REDACTED_LOCAL_PATH]#g' \
     -e 's#/tmp/[^[:space:]|)]+#[REDACTED_LOCAL_PATH]#g'
+
 }
 
 table_cell_filter='
@@ -186,6 +184,9 @@ render_pr_disposition() {
     error_exit "missing required PR disposition fields: $missing"
   fi
 
+  # Sanitize values before Markdown escaping/table layout. Filtering only the
+  # rendered line can consume neighboring table cells or hide safe context.
+  json="$(printf '%s' "$json" | workflow_redact_json)" || return 2
   {
     printf '%s\n' "$PR_MARKER"
     printf '## /run-epic PR Disposition\n\n'
@@ -518,7 +519,7 @@ warn_unknown_pr_disposition_keys() {
   ' 2>/dev/null)" || error_exit "failed to check for unknown PR disposition keys (jq parse error)"
   if [ -n "$unknown" ]; then
     printf 'WARN: unrecognized top-level PR disposition field(s) will not appear in the rendered audit comment: %s\n' \
-      "$unknown" >&2
+      "$unknown" | redact_text >&2
   fi
 }
 
@@ -538,6 +539,7 @@ render_epic_ledger() {
     error_exit "missing required epic ledger fields"
   fi
 
+  json="$(printf '%s' "$json" | workflow_redact_json)" || return 2
   {
     printf '%s\n' "$EPIC_MARKER"
     printf '## /run-epic Epic Ledger\n\n'
@@ -632,6 +634,7 @@ render_reviewer_access_bypass() {
     error_exit "missing required reviewer access-bypass fields: $missing"
   fi
 
+  json="$(printf '%s' "$json" | workflow_redact_json)" || return 2
   {
     printf '%s\n' "$REVIEWER_ACCESS_BYPASS_MARKER"
     printf '## Reviewer Access Bypass Audit\n\n'
@@ -780,7 +783,7 @@ apply_comment() {
               --executor-pid "$$" --expected-file "$body_file")
   [ -z "$merge_step" ] || check_args+=(--step "$merge_step")
   [ -z "$repo_root" ] || check_args+=(--repo-root "$repo_root")
-  if ! binding="$(python3 "$SCRIPT_DIR/workflow-merge-budget.py" ${check_args[@]+"${check_args[@]}"})"; then
+  if ! binding="$(workflow_command_with_safe_stderr python3 "$SCRIPT_DIR/workflow-merge-budget.py" ${check_args[@]+"${check_args[@]}"})"; then
     rm -f "$body_file"
     error_exit "merge audit destination/marker/step is outside admitted session"
   fi
@@ -803,7 +806,7 @@ apply_comment() {
   [ -z "$epic_number" ] || child_args+=(--epic "$epic_number")
   [ -z "$repo_root" ] || child_args+=(--repo-root "$repo_root")
   status=0
-  python3 "$SCRIPT_DIR/workflow-merge-budget.py" run-step --session "$merge_session" \
+  workflow_command_with_safe_stderr python3 "$SCRIPT_DIR/workflow-merge-budget.py" run-step --session "$merge_session" \
       --repo "$selected_repo" --pr "$selected_pr" --step "$selected_step" --phase audit \
       --expected-file "$body_file" -- bash "$SCRIPT_DIR/run-epic-audit-trail.sh" \
       ${child_args[@]+"${child_args[@]}"} || status=$?
@@ -853,7 +856,7 @@ while [ "$#" -gt 0 ]; do
       exit 0
       ;;
     *)
-      echo "Unknown option: $1" >&2
+      printf 'Unknown option: %s\n' "$1" | redact_text >&2
       usage >&2
       exit 64
       ;;

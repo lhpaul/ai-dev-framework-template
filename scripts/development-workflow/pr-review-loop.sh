@@ -8,6 +8,7 @@ set -euo pipefail
 SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/development-workflow/workflow-lib.sh
 source "$SCRIPT_DIR/workflow-lib.sh"
+
 # shellcheck source=scripts/development-workflow/codex-github-evidence-lib.sh
 source "$SCRIPT_DIR/codex-github-evidence-lib.sh"
 
@@ -41,10 +42,10 @@ _RESULT_EMITTED=0
 # the single choke point every RESULT line already passes through is what makes
 # this cover all ~100 emission sites without annotating each one.
 print_kv() {
+  workflow_diagnostic_kv "$1" "$2" || return 2
   if [ "$1" = "RESULT" ]; then
     _RESULT_EMITTED=1
   fi
-  printf '%s=%s\n' "$1" "$2"
 }
 
 # _emit_truncation_guard <exit-status>
@@ -63,11 +64,11 @@ _emit_truncation_guard() {
   print_kv REASON truncated_run
   print_kv TRUNCATED 1
   print_kv TRUNCATED_EXIT_STATUS "$status"
-  echo "ERROR: pr-review-loop.sh exited without reaching a verdict (status ${status})." >&2
-  echo "  This run was truncated — treat it as NOT reviewed, not as clean." >&2
-  echo "  Common cause: an outer 'timeout' shorter than a single rate-limit wait." >&2
-  echo "  See PR_REVIEW_LOOP_EXECUTION_BUDGET in this script's header for the" >&2
-  echo "  wall clock a caller must allow." >&2
+  workflow_diagnostic "ERROR: pr-review-loop.sh exited without reaching a verdict (status ${status})." >&2
+  workflow_diagnostic "  This run was truncated — treat it as NOT reviewed, not as clean." >&2
+  workflow_diagnostic "  Common cause: an outer 'timeout' shorter than a single rate-limit wait." >&2
+  workflow_diagnostic "  See PR_REVIEW_LOOP_EXECUTION_BUDGET in this script's header for the" >&2
+  workflow_diagnostic "  wall clock a caller must allow." >&2
   # A truncated run must never look successful, whatever killed it.
   if [ "$status" -eq 0 ]; then
     status=2
@@ -144,17 +145,15 @@ _check_execution_budget() {
   local max_budget=604800       # one week of wall clock
   local bound_error=""
   if [ "${#retries}" -gt 10 ] || [ "$(( 10#$retries ))" -gt "$max_retries" ]; then
-    bound_error="CODERABBIT_RATE_LIMIT_MAX_RETRIES=$retries exceeds the maximum of $max_retries"
+    bound_error="configuration validation error; key=CODERABBIT_RATE_LIMIT_MAX_RETRIES"
   elif [ "${#wait_s}" -gt 10 ] || [ "$(( 10#$wait_s ))" -gt "$max_wait" ]; then
-    bound_error="CODERABBIT_RATE_LIMIT_WAIT=$wait_s exceeds the maximum of $max_wait"
+    bound_error="configuration validation error; key=CODERABBIT_RATE_LIMIT_WAIT"
   elif [ "${#budget}" -gt 10 ] || [ "$(( 10#$budget ))" -gt "$max_budget" ]; then
-    bound_error="PR_REVIEW_LOOP_EXECUTION_BUDGET=$budget exceeds the maximum of $max_budget"
+    bound_error="configuration validation error; key=PR_REVIEW_LOOP_EXECUTION_BUDGET"
   fi
   if [ -n "$bound_error" ]; then
     print_kv BUDGET_INVARIANT violated
-    echo "ERROR: $bound_error." >&2
-    echo "  Values beyond these bounds overflow 64-bit arithmetic and would make" >&2
-    echo "  the budget comparison meaningless." >&2
+    workflow_diagnostic "ERROR: $bound_error." >&2
     print_kv RESULT escalate
     print_kv REASON execution_budget_misconfigured
     return 1
@@ -173,11 +172,7 @@ _check_execution_budget() {
 
   if [ "$worst" -ge "$budget" ]; then
     print_kv BUDGET_INVARIANT violated
-    echo "ERROR: worst-case rate-limit wait (${retries} x ${wait_s}s = ${worst}s) is not less than" >&2
-    echo "  the execution budget (${budget}s). A rate-limited PR could not finish waiting" >&2
-    echo "  inside the budget this run declares, so it would be truncated rather than" >&2
-    echo "  reviewed. Raise PR_REVIEW_LOOP_EXECUTION_BUDGET, or lower" >&2
-    echo "  CODERABBIT_RATE_LIMIT_MAX_RETRIES / CODERABBIT_RATE_LIMIT_WAIT." >&2
+    workflow_diagnostic "ERROR: configuration validation error; key=PR_REVIEW_LOOP_EXECUTION_BUDGET" >&2
     print_kv RESULT escalate
     print_kv REASON execution_budget_misconfigured
     return 1
@@ -454,7 +449,7 @@ if [ "${1:-}" = "unlock" ]; then
     case "$1" in
       --repo|--product-repo)
         if [ -z "${2:-}" ]; then
-          echo "$1 requires a value." >&2
+          workflow_diagnostic "$1 requires a value." >&2
           exit 64
         fi
         _UNLOCK_REPO_SELECTOR="$2"
@@ -462,20 +457,20 @@ if [ "${1:-}" = "unlock" ]; then
         ;;
       --repo-root)
         if [ -z "${2:-}" ]; then
-          echo "$1 requires a value." >&2
+          workflow_diagnostic "$1 requires a value." >&2
           exit 64
         fi
         _UNLOCK_REPO_ROOT="$2"
         shift 2
         ;;
       -*)
-        echo "Unknown option for unlock: $1" >&2
-        echo "Usage: $0 unlock <pr-number> [--repo owner/repo|product-name] [--product-repo name] [--repo-root path]" >&2
+        workflow_diagnostic "Unknown option for unlock: $1" >&2
+        workflow_diagnostic "Usage: $0 unlock <pr-number> [--repo owner/repo|product-name] [--product-repo name] [--repo-root path]" >&2
         exit 64
         ;;
       *)
         if [ -n "$_UNLOCK_PR" ]; then
-          echo "Only one PR number may be provided." >&2
+          workflow_diagnostic "Only one PR number may be provided." >&2
           exit 64
         fi
         _UNLOCK_PR="$1"
@@ -484,7 +479,7 @@ if [ "${1:-}" = "unlock" ]; then
     esac
   done
   if [ -z "$_UNLOCK_PR" ]; then
-    echo "Usage: $0 unlock <pr-number> [--repo owner/repo|product-name] [--product-repo name] [--repo-root path]" >&2
+    workflow_diagnostic "Usage: $0 unlock <pr-number> [--repo owner/repo|product-name] [--product-repo name] [--repo-root path]" >&2
     exit 64
   fi
   _UNLOCK_REPO_KEY="$(_resolve_lock_repo_key "$_UNLOCK_REPO_SELECTOR" "$_UNLOCK_REPO_ROOT")"
@@ -495,19 +490,19 @@ if [ "${1:-}" = "unlock" ]; then
   _UNLOCK_CMD=""
   if [ -d "$_UNLOCK_LOCK_DIR" ]; then
     if ! _UNLOCK_PID="$(cat "$_UNLOCK_LOCK_DIR/pid" 2>/dev/null)"; then
-      echo "ERROR: could not read lock PID from $_UNLOCK_LOCK_DIR/pid — cannot verify ownership." >&2
-      echo "  If you are certain no process holds this lock, remove it manually: rm -rf $_UNLOCK_LOCK_DIR" >&2
+      workflow_diagnostic "ERROR: could not read lock PID from $_UNLOCK_LOCK_DIR/pid — cannot verify ownership." >&2
+      workflow_diagnostic "  If you are certain no process holds this lock, remove it manually: rm -rf $_UNLOCK_LOCK_DIR" >&2
       exit 1
     fi
     if ! _UNLOCK_CMD="$(cat "$_UNLOCK_LOCK_DIR/cmd" 2>/dev/null)"; then
-      echo "ERROR: could not read lock cmd from $_UNLOCK_LOCK_DIR/cmd — cannot verify ownership." >&2
-      echo "  If you are certain no process holds this lock, remove it manually: rm -rf $_UNLOCK_LOCK_DIR" >&2
+      workflow_diagnostic "ERROR: could not read lock cmd from $_UNLOCK_LOCK_DIR/cmd — cannot verify ownership." >&2
+      workflow_diagnostic "  If you are certain no process holds this lock, remove it manually: rm -rf $_UNLOCK_LOCK_DIR" >&2
       exit 1
     fi
   fi
   if [ -n "$_UNLOCK_PID" ] && kill -0 "$_UNLOCK_PID" 2>/dev/null && [ "$_UNLOCK_CMD" = "$(basename "$0")" ]; then
-    echo "ERROR: A live pr-review-loop.sh process (PID $_UNLOCK_PID) currently holds the lock for ${_UNLOCK_REPO_KEY} PR #${_UNLOCK_PR}. Not removing a live lock." >&2
-    echo "  Wait for the process to finish, or send it SIGTERM to stop it gracefully." >&2
+    workflow_diagnostic "ERROR: A live pr-review-loop.sh process (PID $_UNLOCK_PID) currently holds the lock for ${_UNLOCK_REPO_KEY} PR #${_UNLOCK_PR}. Not removing a live lock." >&2
+    workflow_diagnostic "  Wait for the process to finish, or send it SIGTERM to stop it gracefully." >&2
     exit 1
   fi
   if [ -d "$_UNLOCK_LOCK_DIR" ]; then
@@ -593,11 +588,11 @@ else
   _LOCK_PID="$(cat "$_LOCK_DIR/pid" 2>/dev/null || true)"
   _LOCK_CMD="$(cat "$_LOCK_DIR/cmd" 2>/dev/null || true)"
   if [ -n "$_LOCK_PID" ] && kill -0 "$_LOCK_PID" 2>/dev/null && [ "$_LOCK_CMD" = "$(basename "$0")" ]; then
-    echo "ERROR: pr-review-loop.sh is already running for ${_LOCK_REPO_KEY} PR #${_PR_ARG:-unknown} (PID $_LOCK_PID). Exiting to prevent parallel execution." >&2
-    echo "  Lock file: $_LOCK_DIR" >&2
-    echo "  If the process is dead (stale lock from a crash), recover with:" >&2
-    echo "    $_UNLOCK_COMMAND" >&2
-    echo "  Or manually: rm -rf $_LOCK_DIR" >&2
+    workflow_diagnostic "ERROR: pr-review-loop.sh is already running for ${_LOCK_REPO_KEY} PR #${_PR_ARG:-unknown} (PID $_LOCK_PID). Exiting to prevent parallel execution." >&2
+    workflow_diagnostic "  Lock file: $_LOCK_DIR" >&2
+    workflow_diagnostic "  If the process is dead (stale lock from a crash), recover with:" >&2
+    workflow_diagnostic "    $_UNLOCK_COMMAND" >&2
+    workflow_diagnostic "  Or manually: rm -rf $_LOCK_DIR" >&2
     print_kv RESULT escalate
     print_kv REASON lock_contention
     print_kv LOCK_DIR "$_LOCK_DIR"
@@ -617,11 +612,11 @@ else
     printf '%s\n' "$(basename "$0")" > "$_LOCK_DIR/cmd"
     _OWN_LOCK=1
   else
-    echo "ERROR: pr-review-loop.sh is already running for ${_LOCK_REPO_KEY} PR #${_PR_ARG:-unknown} (concurrent startup race). Exiting to prevent parallel execution." >&2
-    echo "  Lock file: $_LOCK_DIR" >&2
-    echo "  If the process is dead (stale lock from a crash), recover with:" >&2
-    echo "    $_UNLOCK_COMMAND" >&2
-    echo "  Or manually: rm -rf $_LOCK_DIR" >&2
+    workflow_diagnostic "ERROR: pr-review-loop.sh is already running for ${_LOCK_REPO_KEY} PR #${_PR_ARG:-unknown} (concurrent startup race). Exiting to prevent parallel execution." >&2
+    workflow_diagnostic "  Lock file: $_LOCK_DIR" >&2
+    workflow_diagnostic "  If the process is dead (stale lock from a crash), recover with:" >&2
+    workflow_diagnostic "    $_UNLOCK_COMMAND" >&2
+    workflow_diagnostic "  Or manually: rm -rf $_LOCK_DIR" >&2
     print_kv RESULT escalate
     print_kv REASON lock_contention
     print_kv LOCK_DIR "$_LOCK_DIR"
@@ -1311,7 +1306,7 @@ expensive_gate_resolve_max_deferrals() {
     source="default"
   fi
   if ! [[ "$configured" =~ ^[1-9][0-9]{0,5}$ ]]; then
-    echo "WARN: PR_REVIEW_LOOP_MAX_EXPENSIVE_DEFERRALS value '$configured' (source: $source) is not a positive integer within the supported range (1-999999); defaulting to 3" >&2
+    workflow_diagnostic "WARN: configuration validation error; key=PR_REVIEW_LOOP_MAX_EXPENSIVE_DEFERRALS" >&2
     configured=3
   fi
   printf '%s\n' "$configured"
@@ -1342,13 +1337,15 @@ expensive_gate_local_ai_configured() {
       fi
     done
   else
+    local resolved_configured_platforms
+    resolved_configured_platforms="$(reviewer_loop_repo_configured_platforms)" || return 2
     while IFS= read -r configured_line; do
       configured_line="$(trim "$configured_line")"
       if [ "$configured_line" = "local-ai-reviewer" ]; then
         printf '1\n'
         return 0
       fi
-    done < <(reviewer_loop_repo_configured_platforms)
+    done <<< "$resolved_configured_platforms"
   fi
   printf '0\n'
 }
@@ -1689,7 +1686,7 @@ expensive_gate_baseline_checks_status() {
   fi
 
   live_head="$(printf '%s\n' "$payload" | jq -r '.headRefOid // ""' 2>/dev/null)" || live_head=""
-  reviewer_names="$(configured_reviewer_check_names_json "")" || reviewer_names='[]'
+  reviewer_names="$(configured_reviewer_check_names_json "")" || return 2
 
   if ! normalized_json="$(
     printf '%s\n' "$payload" | normalize_status_check_rollup 2>/dev/null
@@ -1829,7 +1826,8 @@ expensive_gate_deferral_count() {
 
 # expensive_reviewer_gate <pr_number> <platform> <head_sha> [peer_scope]
 #
-# Returns 0 to dispatch, 1 to defer/escalate. Emits EXPENSIVE_GATE_* keys.
+# Returns 0 to dispatch, 1 to defer/escalate, 2 on failed configuration lookup
+# before evidence/force policy. Emits EXPENSIVE_GATE_* keys for valid inputs.
 # Stops at the first unmet condition so the reason names a single cause.
 # peer_scope: full (default) | earlier_buckets (ready-phase preflight).
 expensive_reviewer_gate() {
@@ -1844,7 +1842,7 @@ expensive_reviewer_gate() {
   local result_clean=""
   local peer_reason=""
   local threads_status="" threads_count="" threads_head=""
-  local checks_state="" checks_head=""
+  local checks_state="" checks_head="" checks_snapshot=""
   local gate_result=""
   local escalation=""
 
@@ -1853,7 +1851,7 @@ expensive_reviewer_gate() {
   expensive_gate_last_reason=""
   expensive_gate_last_result=""
 
-  configured="$(expensive_gate_local_ai_configured)"
+  configured="$(expensive_gate_local_ai_configured)" || return 2
   head_current="$(expensive_gate_local_ai_head_current "$head_sha")"
   result_clean="$(expensive_gate_local_ai_result_clean)"
 
@@ -1892,7 +1890,8 @@ expensive_reviewer_gate() {
   fi
 
   if [ -z "$reason" ]; then
-    read -r checks_state checks_head < <(expensive_gate_baseline_checks_status "$pr_number_arg" "$head_sha") || true
+    checks_snapshot="$(expensive_gate_baseline_checks_status "$pr_number_arg" "$head_sha")" || return 2
+    read -r checks_state checks_head <<< "$checks_snapshot" || true
     if [ -z "${checks_state:-}" ] || [ "$checks_state" = "unavailable" ]; then
       reason="evidence_unavailable_checks"
     elif [ -z "${checks_head:-}" ] || [ "$checks_head" != "$head_sha" ]; then
@@ -2006,19 +2005,15 @@ emit_review_lifecycle_duplicate_warnings() {
   local duplicates
   local duplicate
 
-  [ -f "$config_file" ] || return 0
-
-  duplicates="$(
-    {
-      workflow_config_review_on_draft_runner "$config_file"
-      workflow_config_review_on_draft_github "$config_file"
-      workflow_config_review_on_ready_github "$config_file"
-    } | sort | uniq -d
-  )" || return 0
+  local runners draft ready
+  runners="$(workflow_config_review_on_draft_runner "$config_file")" || return 2
+  draft="$(workflow_config_review_on_draft_github "$config_file")" || return 2
+  ready="$(workflow_config_review_on_ready_github "$config_file")" || return 2
+  duplicates="$(printf '%s\n' "$runners" "$draft" "$ready" | sed '/^$/d' | sort | uniq -d)" || return 2
 
   while IFS= read -r duplicate; do
     [ -z "$duplicate" ] && continue
-    printf 'WARN: review lifecycle config lists reviewer "%s" in more than one bucket; each reviewer should appear only once across on_draft.runner, on_draft.github, and on_ready.github.\n' "$duplicate" >&2
+    printf 'WARN: configuration validation error; key=review\n' | workflow_redact_text >&2
   done <<_REVIEW_DUPLICATE_LINES_
 $duplicates
 _REVIEW_DUPLICATE_LINES_
@@ -2059,7 +2054,7 @@ emit_prefixed_platform_output() {
         continue
         ;;
     esac
-    printf 'PLATFORM_%s_%s=%s\n' "$index" "$key" "$value"
+    print_kv "PLATFORM_${index}_${key}" "$value" || return 2
   done <<< "$kv_output"
 }
 
@@ -2106,7 +2101,7 @@ run_greptile_review() {
   repo="$(repo_slug)"
 
   if [ -z "$trigger_author_login" ]; then
-    trigger_author_login="$(gh api user --jq '.login')"
+    trigger_author_login="$(workflow_command_with_safe_stderr gh api user --jq '.login')"
   fi
 
   # #1789 (plan D15 greptile row): the head every piece of evidence is bound
@@ -2143,10 +2138,10 @@ run_greptile_review() {
       greptile_adopted=1
       review_comment_id="$reviewer_loop_recorded_request_ref"
       review_window_start="${reviewer_loop_recorded_requested_at:-$(date -u +"%Y-%m-%dT%H:%M:%SZ")}"
-      echo "INFO: re-wait: adopting the recorded greptile request ${review_comment_id}; not posting a new trigger" >&2
+      workflow_diagnostic "INFO: re-wait: adopting the recorded greptile request ${review_comment_id}; not posting a new trigger" >&2
       print_review_request_keys "$reviewer_loop_recorded_requested_at" "$reviewer_loop_recorded_request_ref"
     else
-      echo "WARN: recorded greptile request ${reviewer_loop_recorded_request_ref:-<empty>} on ${loop_head_sha:-the current head} is not readable; requesting a review" >&2
+      workflow_diagnostic "WARN: recorded greptile request ${reviewer_loop_recorded_request_ref:-<empty>} on ${loop_head_sha:-the current head} is not readable; requesting a review" >&2
     fi
   else
     reviewer_loop_rewait_log_no_recorded_request "$platform" "${loop_head_sha:-}"
@@ -2162,7 +2157,7 @@ run_greptile_review() {
     _gr_head_refs_json="$(printf '%s\n' "${reviewer_loop_head_request_refs:-}" | jq -R 'select(. != "")' | jq -sc '.' 2>/dev/null)" || _gr_head_refs_json="[]"
     [ -n "$_gr_head_refs_json" ] || _gr_head_refs_json="[]"
     recent_trigger_comment="$(
-      gh api "repos/$repo/issues/$pr_number/comments" --paginate \
+      workflow_command_with_safe_stderr gh api "repos/$repo/issues/$pr_number/comments" --paginate \
         | jq --arg author "$trigger_author_login" \
             --arg trigger "$trigger_comment" \
             --argjson max_wait "$max_wait" \
@@ -2185,7 +2180,7 @@ run_greptile_review() {
     review_comment_id="$(printf '%s\n' "$recent_trigger_comment" | jq -r '.id')"
     review_window_start="$(printf '%s\n' "$recent_trigger_comment" | jq -r '.created_at')"
     existing_thumbs_up="$(
-      gh api "repos/$repo/issues/comments/$review_comment_id/reactions" \
+      workflow_command_with_safe_stderr gh api "repos/$repo/issues/comments/$review_comment_id/reactions" \
         | jq --arg bot "$bot_login" '[.[] | select(.content == "+1" and .user.login == $bot)] | length'
     )"
     if [ "$existing_thumbs_up" -gt 0 ]; then
@@ -2194,13 +2189,13 @@ run_greptile_review() {
     else
       # #1789 (plan D12/D15): a reused trigger recorded for this head is this
       # invocation's request — record its server time and id.
-      echo "INFO: reusing the greptile trigger ${review_comment_id} recorded for ${head_sha}; not posting a new trigger" >&2
+      workflow_diagnostic "INFO: reusing the greptile trigger ${review_comment_id} recorded for ${head_sha}; not posting a new trigger" >&2
       print_review_request_keys "$review_window_start" "$review_comment_id"
     fi
   fi
 
   if [ -z "$review_comment_id" ]; then
-    since_iso="$(gh api "repos/$repo/commits/$head_sha" --jq '.commit.committer.date // empty')"
+    since_iso="$(workflow_command_with_safe_stderr gh api "repos/$repo/commits/$head_sha" --jq '.commit.committer.date // empty')"
     if [ -z "$since_iso" ]; then
       since_iso="$(date -u -v-24H +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date -u -d '24 hours ago' +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || echo '1970-01-01T00:00:00Z')"
     fi
@@ -2209,7 +2204,7 @@ run_greptile_review() {
     # to the head — review comments by original_commit_id, reviews by
     # commit_id — not only created after the head commit's committer time.
     existing_comments="$(
-      gh api "repos/$repo/pulls/$pr_number/comments" --paginate \
+      workflow_command_with_safe_stderr gh api "repos/$repo/pulls/$pr_number/comments" --paginate \
         | jq -r --arg bot "$bot_login" --arg since "$since_iso" --arg head "$head_sha" "$REVIEWER_LOOP_HEAD_BINDING_JQ"'
             .[]
             | select(.user.login == $bot and .created_at > $since and bound_review_comment($head))
@@ -2218,7 +2213,7 @@ run_greptile_review() {
           '
     )"
     existing_reviews="$(
-      gh api "repos/$repo/pulls/$pr_number/reviews" --paginate \
+      workflow_command_with_safe_stderr gh api "repos/$repo/pulls/$pr_number/reviews" --paginate \
         | jq -r --arg bot "$bot_login" --arg since "$since_iso" --arg head "$head_sha" "$REVIEWER_LOOP_HEAD_BINDING_JQ"'
             .[]
             | select(
@@ -2268,7 +2263,7 @@ run_greptile_review() {
         [ -z "${blocking_json:-}" ] && continue
         print_kv "BLOCKING_${index}_PATH" "$(printf '%s\n' "$blocking_json" | jq -r '.path')"
         print_kv "BLOCKING_${index}_LINE" "$(printf '%s\n' "$blocking_json" | jq -r '.line')"
-        print_kv_escaped "BLOCKING_${index}_BODY" "$(printf '%s\n' "$blocking_json" | jq -r '.body')"
+        workflow_diagnostic_kv_escaped "BLOCKING_${index}_BODY" "$(printf '%s\n' "$blocking_json" | jq -r '.body')"
         index=$((index + 1))
       done < "$existing_blocking_file"
       reviewer_loop_print_reviewed_head_from_json_lines < "$existing_blocking_file"
@@ -2279,7 +2274,7 @@ run_greptile_review() {
     rm -f "$existing_blocking_file"
     review_window_start="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
     local _gr_post_json=""
-    _gr_post_json="$(gh api "repos/$repo/issues/$pr_number/comments" --method POST --raw-field body="$trigger_comment")" || _gr_post_json=""
+    _gr_post_json="$(workflow_command_with_safe_stderr gh api "repos/$repo/issues/$pr_number/comments" --method POST --raw-field body="$trigger_comment")" || _gr_post_json=""
     review_comment_id="$(printf '%s' "$_gr_post_json" | jq -r 'if type == "object" then (.id // empty | tostring) else empty end' 2>/dev/null)" || review_comment_id=""
     if [ -n "$review_comment_id" ]; then
       # #1789 (plan D12): the request this invocation posted — the trigger
@@ -2291,7 +2286,7 @@ run_greptile_review() {
   fi
 
   if [ -z "$review_comment_id" ]; then
-    echo "Failed to determine review comment ID for PR #$pr_number." >&2
+    workflow_diagnostic "Failed to determine review comment ID for PR #$pr_number." >&2
     return 2
   fi
 
@@ -2338,7 +2333,7 @@ run_greptile_review() {
   # #1789 (plan D15 greptile row): findings after the thumbs-up count only when
   # bound to the head, in addition to the request-time filter.
   comments="$(
-    gh api "repos/$repo/pulls/$pr_number/comments" --paginate \
+    workflow_command_with_safe_stderr gh api "repos/$repo/pulls/$pr_number/comments" --paginate \
       | jq -r --arg bot "$bot_login" --arg since "$review_window_start" --arg head "$head_sha" "$REVIEWER_LOOP_HEAD_BINDING_JQ"'
         .[]
         | select(.user.login == $bot and .created_at > $since and bound_review_comment($head))
@@ -2353,7 +2348,7 @@ run_greptile_review() {
   )"
 
   blocking_reviews="$(
-    gh api "repos/$repo/pulls/$pr_number/reviews" --paginate \
+    workflow_command_with_safe_stderr gh api "repos/$repo/pulls/$pr_number/reviews" --paginate \
       | jq -r --arg bot "$bot_login" --arg since "$review_window_start" --arg head "$head_sha" "$REVIEWER_LOOP_HEAD_BINDING_JQ"'
         .[]
         | select(
@@ -2408,7 +2403,7 @@ run_greptile_review() {
       [ -z "${blocking_json:-}" ] && continue
       print_kv "BLOCKING_${index}_PATH" "$(printf '%s\n' "$blocking_json" | jq -r '.path')"
       print_kv "BLOCKING_${index}_LINE" "$(printf '%s\n' "$blocking_json" | jq -r '.line')"
-      print_kv_escaped "BLOCKING_${index}_BODY" "$(printf '%s\n' "$blocking_json" | jq -r '.body')"
+      workflow_diagnostic_kv_escaped "BLOCKING_${index}_BODY" "$(printf '%s\n' "$blocking_json" | jq -r '.body')"
       index=$((index + 1))
     done < "$blocking_lines_file"
     reviewer_loop_print_reviewed_head_from_json_lines < "$blocking_lines_file"
@@ -2984,7 +2979,7 @@ run_copilot_review() {
     _sha_rc=$?
     set -e
     if [ "$_sha_rc" -ne 0 ] || [ -z "$current_sha" ]; then
-      echo "WARN: could not refresh HEAD SHA for PR $pr_number (exit $_sha_rc) — falling back to initial SHA $head_sha" >&2
+      workflow_diagnostic "WARN: could not refresh HEAD SHA for PR $pr_number (exit $_sha_rc) — falling back to initial SHA $head_sha" >&2
       current_sha="$head_sha"
     fi
     unset _sha_rc
@@ -3063,7 +3058,7 @@ run_copilot_review() {
         # review_state is empty — gh api or jq failed under set +e.
         # Log a warning so the failure is visible; continue polling rather
         # than escalating on a single transient error.
-        echo "WARN: review state API call returned empty for PR $pr_number SHA $current_sha — retrying in ${effective_poll_interval}s" >&2
+        workflow_diagnostic "WARN: review state API call returned empty for PR $pr_number SHA $current_sha — retrying in ${effective_poll_interval}s" >&2
         ;;
     esac
 
@@ -3172,7 +3167,7 @@ run_ronda_review() {
     _sha_rc=$?
     set -e
     if [ "$_sha_rc" -ne 0 ] || [ -z "$current_sha" ]; then
-      echo "WARN: run_ronda_review: could not refresh HEAD SHA for PR $pr_number (exit $_sha_rc) — falling back to initial SHA $head_sha" >&2
+      workflow_diagnostic "WARN: run_ronda_review: could not refresh HEAD SHA for PR $pr_number (exit $_sha_rc) — falling back to initial SHA $head_sha" >&2
       current_sha="$head_sha"
     fi
 
@@ -3191,7 +3186,7 @@ run_ronda_review() {
     fetch_rc=$?
     set -e
     if [ "$fetch_rc" -ne 0 ]; then
-      echo "WARN: run_ronda_review: check-run fetch/parse failed for PR #$pr_number (SHA=$current_sha)" >&2
+      workflow_diagnostic "WARN: run_ronda_review: check-run fetch/parse failed for PR #$pr_number (SHA=$current_sha)" >&2
       print_kv RESULT escalate
       print_kv REASON fetch-failed
       print_kv PLATFORM "$platform"
@@ -3252,7 +3247,7 @@ run_ronda_review() {
           severity_line_count="$(printf '%s\n' "$severity_lines" | wc -l | tr -d ' ')"
         fi
         if [ "$candidate_count" -ne 1 ] || [ "$severity_line_count" -ne 1 ]; then
-          echo "WARN: run_ronda_review: check run concluded success but its summary has $candidate_count severity line candidate(s), $severity_line_count well-formed (expected exactly 1 of each) for PR #$pr_number (SHA=$current_sha)" >&2
+          workflow_diagnostic "WARN: run_ronda_review: check run concluded success but its summary has $candidate_count severity line candidate(s), $severity_line_count well-formed (expected exactly 1 of each) for PR #$pr_number (SHA=$current_sha)" >&2
           print_kv RESULT escalate
           print_kv REASON ronda_severity_unparseable
           print_kv REVIEWED_HEAD "$current_sha"
@@ -3303,8 +3298,9 @@ run_ronda_review() {
         # length-capped so it cannot break the key=value output contract.
         local ronda_title
         ronda_title="$(printf '%s' "$fetch_output" | jq -r '.output.title // ""' 2>/dev/null)" || ronda_title=""
+        ronda_title="$(printf '%s' "$ronda_title" | workflow_redact_text)" || return 2
         ronda_title="$(printf '%s' "$ronda_title" | tr '\r\n' '  ' | cut -c1-200)"
-        echo "WARN: run_ronda_review: Ronda pass failed for PR #$pr_number (SHA=$current_sha): ${ronda_title:-<no title>}" >&2
+        workflow_diagnostic "WARN: run_ronda_review: Ronda pass failed for PR #$pr_number (SHA=$current_sha): ${ronda_title:-<no title>}" >&2
         print_kv RESULT escalate
         print_kv REASON ronda_pass_failed
         print_kv RONDA_CHECK_TITLE "$ronda_title"
@@ -3320,7 +3316,7 @@ run_ronda_review() {
         # neutral, cancelled, skipped, timed_out, stale) — Ronda's contract
         # emits only success/failure, so fail closed rather than guess
         # whether it means clean or blocking.
-        echo "WARN: run_ronda_review: unexpected check-run conclusion '$conclusion' for PR #$pr_number (SHA=$current_sha)" >&2
+        workflow_diagnostic "WARN: run_ronda_review: unexpected check-run conclusion '$conclusion' for PR #$pr_number (SHA=$current_sha)" >&2
         print_kv RESULT escalate
         print_kv REASON ronda_unexpected_conclusion
         print_kv PLATFORM "$platform"
@@ -3346,7 +3342,7 @@ bugbot_return_disabled() {
   local pr_number="$1"
   local branch_name="$2"
 
-  echo "INFO: Bugbot is disabled for this repository. Enable Bugbot for this repository in the Cursor dashboard, then rerun the reviewer loop." >&2
+  workflow_diagnostic "INFO: Bugbot is disabled for this repository. Enable Bugbot for this repository in the Cursor dashboard, then rerun the reviewer loop." >&2
   print_kv RESULT escalate
   print_kv REASON bugbot-disabled
   print_kv PLATFORM bugbot
@@ -3363,7 +3359,7 @@ bugbot_return_usage_limit() {
   local pr_number="$1"
   local branch_name="$2"
 
-  echo "INFO: Bugbot could not run because the Cursor usage or spend limit was reached. Raise the limit or wait for quota reset, then rerun the reviewer loop." >&2
+  workflow_diagnostic "INFO: Bugbot could not run because the Cursor usage or spend limit was reached. Raise the limit or wait for quota reset, then rerun the reviewer loop." >&2
   print_kv RESULT escalate
   print_kv REASON bugbot-usage-limit
   print_kv PLATFORM bugbot
@@ -3378,14 +3374,14 @@ bugbot_return_usage_limit() {
 
 bugbot_return_explicit_skip() {
   if [ "$#" -ne 2 ]; then
-    echo "ERROR: bugbot_return_explicit_skip requires exactly 2 arguments." >&2
+    workflow_diagnostic "ERROR: bugbot_return_explicit_skip requires exactly 2 arguments." >&2
     return 1
   fi
 
   local pr_number="$1"
   local branch_name="$2"
 
-  echo "WARN: Bugbot explicitly skipped this PR. Treating the skip as a non-blocking warning; no Bugbot review findings were produced." >&2
+  workflow_diagnostic "WARN: Bugbot explicitly skipped this PR. Treating the skip as a non-blocking warning; no Bugbot review findings were produced." >&2
   print_kv RESULT skipped
   print_kv REASON explicit-skip
   print_kv PLATFORM bugbot
@@ -3466,7 +3462,7 @@ bugbot_escalate_for_unavailable_issue_comments() {
   _comments_rc=$?
   set -e
   if [ "$_comments_rc" -ne 0 ]; then
-    echo "WARN: run_bugbot_review: ${context} issue-comment fetch failed for PR #$pr_number" >&2
+    workflow_diagnostic "WARN: run_bugbot_review: ${context} issue-comment fetch failed for PR #$pr_number" >&2
     print_kv RESULT escalate
     print_kv REASON fetch-failed
     print_kv PLATFORM bugbot
@@ -3586,7 +3582,7 @@ bugbot_escalate_if_disabled_without_check_run() {
   _preflight_rc=$?
   set -e
   if [ "$_preflight_rc" -eq 2 ]; then
-    echo "WARN: run_bugbot_review: check-run count fetch failed during disabled preflight for PR #$pr_number" >&2
+    workflow_diagnostic "WARN: run_bugbot_review: check-run count fetch failed during disabled preflight for PR #$pr_number" >&2
     print_kv RESULT escalate
     print_kv REASON fetch-failed
     print_kv PLATFORM bugbot
@@ -3704,7 +3700,7 @@ run_bugbot_review() {
 
   # Resolve the commit timestamp to scope findings to this HEAD.
   if ! since_iso="$(bugbot_since_iso_for_sha "$repo" "$head_sha")"; then
-    echo "WARN: run_bugbot_review: could not resolve commit timestamp for PR #$pr_number (SHA=$head_sha) — returning unavailable" >&2
+    workflow_diagnostic "WARN: run_bugbot_review: could not resolve commit timestamp for PR #$pr_number (SHA=$head_sha) — returning unavailable" >&2
     print_kv RESULT escalate
     print_kv REASON fetch-failed
     print_kv PLATFORM "$platform"
@@ -3756,7 +3752,7 @@ run_bugbot_review() {
   _existing_reviews_rc=$?
   set -e
   if [ "$_existing_comments_rc" -ne 0 ] || [ "$_existing_reviews_rc" -ne 0 ]; then
-    echo "WARN: run_bugbot_review: existing finding fetch/parse failed for PR #$pr_number — returning unavailable" >&2
+    workflow_diagnostic "WARN: run_bugbot_review: existing finding fetch/parse failed for PR #$pr_number — returning unavailable" >&2
     print_kv RESULT escalate
     print_kv REASON fetch-failed
     print_kv PLATFORM "$platform"
@@ -3783,7 +3779,7 @@ run_bugbot_review() {
       set -e
       if [ "$_bb_disabled_rc" -eq 2 ]; then
         rm -f "$existing_blocking_file"
-        echo "WARN: run_bugbot_review: check-run count fetch failed during disabled preflight for PR #$pr_number" >&2
+        workflow_diagnostic "WARN: run_bugbot_review: check-run count fetch failed during disabled preflight for PR #$pr_number" >&2
         print_kv RESULT escalate
         print_kv REASON fetch-failed
         print_kv PLATFORM "$platform"
@@ -3834,7 +3830,7 @@ run_bugbot_review() {
       set -e
       if [ "$_bb_disabled_review_rc" -eq 2 ]; then
         rm -f "$existing_blocking_file"
-        echo "WARN: run_bugbot_review: check-run count fetch failed during disabled preflight for PR #$pr_number" >&2
+        workflow_diagnostic "WARN: run_bugbot_review: check-run count fetch failed during disabled preflight for PR #$pr_number" >&2
         print_kv RESULT escalate
         print_kv REASON fetch-failed
         print_kv PLATFORM "$platform"
@@ -3888,7 +3884,7 @@ run_bugbot_review() {
       [ -z "${blocking_json:-}" ] && continue
       print_kv "BLOCKING_${index}_PATH" "$(printf '%s\n' "$blocking_json" | jq -r '.path')"
       print_kv "BLOCKING_${index}_LINE" "$(printf '%s\n' "$blocking_json" | jq -r '.line')"
-      print_kv_escaped "BLOCKING_${index}_BODY" "$(printf '%s\n' "$blocking_json" | jq -r '.body')"
+      workflow_diagnostic_kv_escaped "BLOCKING_${index}_BODY" "$(printf '%s\n' "$blocking_json" | jq -r '.body')"
       index=$((index + 1))
     done < "$existing_blocking_file"
     rm -f "$existing_blocking_file"
@@ -3917,7 +3913,7 @@ run_bugbot_review() {
   _bb_run_count_rc=$?
   set -e
   if [ "$_bb_run_count_rc" -ne 0 ] || [ -z "$_bb_run_count" ]; then
-    echo "WARN: run_bugbot_review: check-run fetch/parse failed for PR #$pr_number (SHA=$head_sha) — returning unavailable" >&2
+    workflow_diagnostic "WARN: run_bugbot_review: check-run fetch/parse failed for PR #$pr_number (SHA=$head_sha) — returning unavailable" >&2
     print_kv RESULT escalate
     print_kv REASON fetch-failed
     print_kv PLATFORM "$platform"
@@ -3938,7 +3934,7 @@ run_bugbot_review() {
   local bugbot_adopted=0
   if reviewer_loop_rewait_adopts_recorded_request; then
     bugbot_adopted=1
-    echo "INFO: re-wait: adopting the recorded bugbot request ${reviewer_loop_recorded_request_ref:-<no ref>} (requested ${reviewer_loop_recorded_requested_at:-at an unknown time}); not posting a new trigger" >&2
+    workflow_diagnostic "INFO: re-wait: adopting the recorded bugbot request ${reviewer_loop_recorded_request_ref:-<no ref>} (requested ${reviewer_loop_recorded_requested_at:-at an unknown time}); not posting a new trigger" >&2
     print_review_request_keys "$reviewer_loop_recorded_requested_at" "$reviewer_loop_recorded_request_ref"
   else
     reviewer_loop_rewait_log_no_recorded_request "$platform" "$head_sha"
@@ -3973,7 +3969,7 @@ run_bugbot_review() {
       fi
     fi
     if [ "$_bb_trigger_rc" -ne 0 ]; then
-      echo "WARN: run_bugbot_review: trigger comment post failed for PR #$pr_number" >&2
+      workflow_diagnostic "WARN: run_bugbot_review: trigger comment post failed for PR #$pr_number" >&2
       print_kv RESULT escalate
       print_kv REASON trigger-failed
       print_kv PLATFORM "$platform"
@@ -4009,14 +4005,14 @@ run_bugbot_review() {
     if [ "$bugbot_retry_attempted" -eq 0 ] && [ "$elapsed" -gt 0 ] \
         && [ "$elapsed" -ge "$bugbot_retrigger_at" ]; then
       bugbot_retry_attempted=1
-      echo "INFO: run_bugbot_review: Bugbot produced no completed check run within ${elapsed}s of a ${max_wait}s budget for PR #$pr_number — re-triggering once" >&2
+      workflow_diagnostic "INFO: run_bugbot_review: Bugbot produced no completed check run within ${elapsed}s of a ${max_wait}s budget for PR #$pr_number — re-triggering once" >&2
       set +e
       gh api "repos/$repo/issues/$pr_number/comments" --method POST \
         --raw-field body="$trigger_comment" > /dev/null 2>&1
       local _bb_retry_rc=$?
       set -e
       if [ "$_bb_retry_rc" -ne 0 ]; then
-        echo "WARN: run_bugbot_review: retry trigger comment post failed for PR #$pr_number" >&2
+        workflow_diagnostic "WARN: run_bugbot_review: retry trigger comment post failed for PR #$pr_number" >&2
         print_kv RESULT escalate
         print_kv REASON trigger-failed
         print_kv PLATFORM "$platform"
@@ -4036,13 +4032,13 @@ run_bugbot_review() {
     local _sha_rc=$?
     set -e
     if [ "$_sha_rc" -ne 0 ] || [ -z "$_current_sha" ]; then
-      echo "WARN: run_bugbot_review: could not refresh HEAD SHA for PR $pr_number — falling back to $head_sha" >&2
+      workflow_diagnostic "WARN: run_bugbot_review: could not refresh HEAD SHA for PR $pr_number — falling back to $head_sha" >&2
       _current_sha="$head_sha"
     fi
     unset _sha_rc
     local _current_since_iso
     if ! _current_since_iso="$(bugbot_since_iso_for_sha "$repo" "$_current_sha")"; then
-      echo "WARN: run_bugbot_review: could not resolve commit timestamp for PR #$pr_number (SHA=$_current_sha) — returning unavailable" >&2
+      workflow_diagnostic "WARN: run_bugbot_review: could not resolve commit timestamp for PR #$pr_number (SHA=$_current_sha) — returning unavailable" >&2
       print_kv RESULT escalate
       print_kv REASON fetch-failed
       print_kv PLATFORM "$platform"
@@ -4077,7 +4073,7 @@ run_bugbot_review() {
     _fetch_rc=$?
     set -e
     if [ "$_fetch_rc" -ne 0 ] || [ -z "$_fetch_output" ]; then
-      echo "WARN: run_bugbot_review: check-run fetch/parse failed for PR #$pr_number (SHA=$_current_sha) — returning unavailable" >&2
+      workflow_diagnostic "WARN: run_bugbot_review: check-run fetch/parse failed for PR #$pr_number (SHA=$_current_sha) — returning unavailable" >&2
       print_kv RESULT escalate
       print_kv REASON fetch-failed
       print_kv PLATFORM "$platform"
@@ -4138,7 +4134,7 @@ run_bugbot_review() {
           _clean_comments_rc=$?
           set -e
           if [ "$_clean_comments_rc" -ne 0 ]; then
-            echo "WARN: run_bugbot_review: success-path comment fetch/parse failed for PR #$pr_number — returning unavailable" >&2
+            workflow_diagnostic "WARN: run_bugbot_review: success-path comment fetch/parse failed for PR #$pr_number — returning unavailable" >&2
             print_kv RESULT escalate
             print_kv REASON fetch-failed
             print_kv PLATFORM "$platform"
@@ -4183,7 +4179,7 @@ run_bugbot_review() {
               [ -z "${blocking_json:-}" ] && continue
               print_kv "BLOCKING_${index}_PATH" "$(printf '%s\n' "$blocking_json" | jq -r '.path')"
               print_kv "BLOCKING_${index}_LINE" "$(printf '%s\n' "$blocking_json" | jq -r '.line')"
-              print_kv_escaped "BLOCKING_${index}_BODY" "$(printf '%s\n' "$blocking_json" | jq -r '.body')"
+              workflow_diagnostic_kv_escaped "BLOCKING_${index}_BODY" "$(printf '%s\n' "$blocking_json" | jq -r '.body')"
               index=$((index + 1))
             done < "$blocking_lines_file"
             rm -f "$blocking_lines_file"
@@ -4247,7 +4243,7 @@ run_bugbot_review() {
           _blocking_reviews_rc=$?
           set -e
           if [ "$_blocking_comments_rc" -ne 0 ] || [ "$_blocking_reviews_rc" -ne 0 ]; then
-            echo "WARN: run_bugbot_review: blocking finding fetch/parse failed for PR #$pr_number — returning unavailable" >&2
+            workflow_diagnostic "WARN: run_bugbot_review: blocking finding fetch/parse failed for PR #$pr_number — returning unavailable" >&2
             print_kv RESULT escalate
             print_kv REASON fetch-failed
             print_kv PLATFORM "$platform"
@@ -4344,7 +4340,7 @@ run_bugbot_review() {
             [ -z "${blocking_json:-}" ] && continue
             print_kv "BLOCKING_${index}_PATH" "$(printf '%s\n' "$blocking_json" | jq -r '.path')"
             print_kv "BLOCKING_${index}_LINE" "$(printf '%s\n' "$blocking_json" | jq -r '.line')"
-            print_kv_escaped "BLOCKING_${index}_BODY" "$(printf '%s\n' "$blocking_json" | jq -r '.body')"
+            workflow_diagnostic_kv_escaped "BLOCKING_${index}_BODY" "$(printf '%s\n' "$blocking_json" | jq -r '.body')"
             index=$((index + 1))
           done < "$blocking_lines_file"
           rm -f "$blocking_lines_file"
@@ -4425,7 +4421,7 @@ run_bugbot_review() {
           _neutral_reviews_rc=$?
           set -e
           if [ "$_neutral_comments_rc" -ne 0 ] || [ "$_neutral_reviews_rc" -ne 0 ]; then
-            echo "WARN: run_bugbot_review: neutral-conclusion finding fetch/parse failed for PR #$pr_number — returning unavailable" >&2
+            workflow_diagnostic "WARN: run_bugbot_review: neutral-conclusion finding fetch/parse failed for PR #$pr_number — returning unavailable" >&2
             print_kv RESULT escalate
             print_kv REASON fetch-failed
             print_kv PLATFORM "$platform"
@@ -4513,7 +4509,7 @@ run_bugbot_review() {
               [ -z "${blocking_json:-}" ] && continue
               print_kv "BLOCKING_${index}_PATH" "$(printf '%s\n' "$blocking_json" | jq -r '.path')"
               print_kv "BLOCKING_${index}_LINE" "$(printf '%s\n' "$blocking_json" | jq -r '.line')"
-              print_kv_escaped "BLOCKING_${index}_BODY" "$(printf '%s\n' "$blocking_json" | jq -r '.body')"
+              workflow_diagnostic_kv_escaped "BLOCKING_${index}_BODY" "$(printf '%s\n' "$blocking_json" | jq -r '.body')"
               index=$((index + 1))
             done < "$blocking_lines_file"
             rm -f "$blocking_lines_file"
@@ -4526,7 +4522,7 @@ run_bugbot_review() {
           # for the head: an explicit zero is a pass, a positive count whose
           # findings did not surface, and anything unparseable, are not.
           if [ -n "$_bb_summary_count" ] && [ "$_bb_summary_count" -gt 0 ]; then
-            echo "WARN: run_bugbot_review: check run concluded '$conclusion' for PR #$pr_number reporting $_bb_summary_count finding(s), but none were retrievable — escalating" >&2
+            workflow_diagnostic "WARN: run_bugbot_review: check run concluded '$conclusion' for PR #$pr_number reporting $_bb_summary_count finding(s), but none were retrievable — escalating" >&2
             print_kv RESULT escalate
             print_kv REASON bugbot-findings-not-retrievable
             print_kv PLATFORM "$platform"
@@ -4540,7 +4536,7 @@ run_bugbot_review() {
           fi
 
           if [ "$_bb_summary_count" != "0" ]; then
-            echo "WARN: run_bugbot_review: check run concluded '$conclusion' for PR #$pr_number with no recognisable no-issues summary — escalating rather than reporting clean" >&2
+            workflow_diagnostic "WARN: run_bugbot_review: check run concluded '$conclusion' for PR #$pr_number with no recognisable no-issues summary — escalating rather than reporting clean" >&2
             print_kv RESULT escalate
             print_kv REASON bugbot-unverified-verdict
             print_kv PLATFORM "$platform"
@@ -4676,7 +4672,7 @@ run_haystack_review() {
   _draft_rc=$?
   set -e
   if [ "$_draft_rc" -ne 0 ] || [ -z "$is_draft" ]; then
-    echo "WARN: could not determine draft state for PR #$pr_number before Haystack review" >&2
+    workflow_diagnostic "WARN: could not determine draft state for PR #$pr_number before Haystack review" >&2
     print_kv RESULT escalate
     print_kv REASON draft-state-unavailable
     print_kv PLATFORM "$platform"
@@ -4689,7 +4685,7 @@ run_haystack_review() {
     return 2
   fi
   if [ "$is_draft" = "true" ]; then
-    echo "INFO: PR #$pr_number is draft — Haystack does not review draft PRs; mark ready with gh pr ready $pr_number before rerunning" >&2
+    workflow_diagnostic "INFO: PR #$pr_number is draft — Haystack does not review draft PRs; mark ready with gh pr ready $pr_number before rerunning" >&2
     print_kv RESULT skipped
     print_kv REASON pr-is-draft
     print_kv PLATFORM "$platform"
@@ -4722,8 +4718,8 @@ run_haystack_review() {
   # callers can determine why a result was returned (e.g. status=pending, unavailable,
   # auth failure, CLI not installed).
   if [ -s "$haystack_stderr_file" ]; then
-    echo "INFO: haystack-reviewer.sh stderr:" >&2
-    cat "$haystack_stderr_file" >&2
+    workflow_diagnostic "INFO: haystack-reviewer.sh stderr:" >&2
+    workflow_redact_file "$haystack_stderr_file" >&2
   fi
   rm -f "$haystack_stderr_file"
 
@@ -4857,7 +4853,7 @@ run_coderabbit_cli_review() {
   require_gh
   reviewer_script="$(workflow_repo_root)/scripts/development-workflow/coderabbit-cli-reviewer.sh"
   review_repo_root="${repo_root:-$(workflow_repo_root)}"
-  cd "$review_repo_root"
+  workflow_command_with_safe_stderr cd "$review_repo_root"
 
   local owner repo_name repo
   repo="$(repo_slug)"
@@ -4879,8 +4875,8 @@ run_coderabbit_cli_review() {
   set -e
 
   if [ -s "$coderabbit_cli_stderr_file" ]; then
-    echo "INFO: coderabbit-cli-reviewer.sh stderr:" >&2
-    cat "$coderabbit_cli_stderr_file" >&2
+    workflow_diagnostic "INFO: coderabbit-cli-reviewer.sh stderr:" >&2
+    workflow_redact_file "$coderabbit_cli_stderr_file" >&2
   fi
   rm -f "$coderabbit_cli_stderr_file"
 
@@ -5112,7 +5108,7 @@ run_local_ai_reviewer_review() {
   require_gh
   reviewer_script="$(workflow_repo_root)/scripts/development-workflow/local-ai-reviewer.sh"
   review_repo_root="${repo_root:-$(workflow_repo_root)}"
-  cd "$review_repo_root"
+  workflow_command_with_safe_stderr cd "$review_repo_root"
 
   local owner repo_name repo
   repo="$(repo_slug)"
@@ -5134,8 +5130,8 @@ run_local_ai_reviewer_review() {
   set -e
 
   if [ -s "$local_ai_stderr_file" ]; then
-    echo "INFO: local-ai-reviewer.sh stderr:" >&2
-    cat "$local_ai_stderr_file" >&2
+    workflow_diagnostic "INFO: local-ai-reviewer.sh stderr:" >&2
+    workflow_redact_file "$local_ai_stderr_file" >&2
   fi
   rm -f "$local_ai_stderr_file"
 
@@ -5297,7 +5293,7 @@ run_devin_review() {
   cd_workflow_repo_root
   repo="$(repo_slug)"
 
-  head_sha="$(gh api "repos/$repo/pulls/$pr_number" --jq '.head.sha')"
+  head_sha="$(workflow_command_with_safe_stderr gh api "repos/$repo/pulls/$pr_number" --jq '.head.sha')"
   if [ -z "$head_sha" ]; then
     print_kv RESULT escalate
     print_kv REASON "head-sha-unavailable"
@@ -5308,7 +5304,7 @@ run_devin_review() {
     print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
     return 2
   fi
-  since_iso="$(gh api "repos/$repo/commits/$head_sha" --jq '.commit.committer.date // empty')"
+  since_iso="$(workflow_command_with_safe_stderr gh api "repos/$repo/commits/$head_sha" --jq '.commit.committer.date // empty')"
   if [ -z "$since_iso" ]; then
     since_iso="$(date -u -v-24H +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date -u -d '24 hours ago' +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || echo '1970-01-01T00:00:00Z')"
   fi
@@ -5323,7 +5319,7 @@ run_devin_review() {
   # review comments by original_commit_id, reviews by commit_id — in addition
   # to the time filter.
   existing_comments="$(
-    gh api "repos/$repo/pulls/$pr_number/comments" --paginate \
+    workflow_command_with_safe_stderr gh api "repos/$repo/pulls/$pr_number/comments" --paginate \
       | jq -r --arg bot "$bot_login" --arg since "$since_iso" --arg head "$head_sha" "$REVIEWER_LOOP_HEAD_BINDING_JQ"'
           .[]
           | select(.user.login == $bot and .created_at > $since and .in_reply_to_id == null and bound_review_comment($head))
@@ -5332,7 +5328,7 @@ run_devin_review() {
         '
   )"
   existing_reviews="$(
-    gh api "repos/$repo/pulls/$pr_number/reviews" --paginate \
+    workflow_command_with_safe_stderr gh api "repos/$repo/pulls/$pr_number/reviews" --paginate \
       | jq -r --arg bot "$bot_login" --arg since "$since_iso" --arg head "$head_sha" "$REVIEWER_LOOP_HEAD_BINDING_JQ"'
           .[]
           | select(
@@ -5404,7 +5400,7 @@ run_devin_review() {
       [ -z "${blocking_json:-}" ] && continue
       print_kv "BLOCKING_${index}_PATH" "$(printf '%s\n' "$blocking_json" | jq -r '.path')"
       print_kv "BLOCKING_${index}_LINE" "$(printf '%s\n' "$blocking_json" | jq -r '.line')"
-      print_kv_escaped "BLOCKING_${index}_BODY" "$(printf '%s\n' "$blocking_json" | jq -r '.body')"
+      workflow_diagnostic_kv_escaped "BLOCKING_${index}_BODY" "$(printf '%s\n' "$blocking_json" | jq -r '.body')"
       index=$((index + 1))
     done < "$existing_blocking_file"
     reviewer_loop_print_reviewed_head_from_json_lines < "$existing_blocking_file"
@@ -5580,7 +5576,7 @@ run_devin_review() {
         # summaries (e.g., CHANGES_REQUESTED/COMMENTED) may have been superseded
         # by later clean runs and can cause false stale blockers.
         stale_comments="$(
-          gh api "repos/$repo/pulls/$pr_number/comments" --paginate \
+          workflow_command_with_safe_stderr gh api "repos/$repo/pulls/$pr_number/comments" --paginate \
             | jq -s -r --arg bot "$bot_login" '
                 (
                   [
@@ -5628,7 +5624,7 @@ run_devin_review() {
             [ -z "${blocking_json:-}" ] && continue
             print_kv "BLOCKING_${index}_PATH" "$(printf '%s\n' "$blocking_json" | jq -r '.path')"
             print_kv "BLOCKING_${index}_LINE" "$(printf '%s\n' "$blocking_json" | jq -r '.line')"
-            print_kv_escaped "BLOCKING_${index}_BODY" "$(printf '%s\n' "$blocking_json" | jq -r '.body')"
+            workflow_diagnostic_kv_escaped "BLOCKING_${index}_BODY" "$(printf '%s\n' "$blocking_json" | jq -r '.body')"
             index=$((index + 1))
           done < "$stale_file"
           reviewer_loop_print_reviewed_head_from_json_lines < "$stale_file"
@@ -5671,7 +5667,7 @@ run_devin_review() {
   blocking_lines_file="$(mktemp)"
 
   comments="$(
-    gh api "repos/$repo/pulls/$pr_number/comments" --paginate \
+    workflow_command_with_safe_stderr gh api "repos/$repo/pulls/$pr_number/comments" --paginate \
       | jq -r --arg bot "$bot_login" --arg since "$since_iso" --arg head "$head_sha" "$REVIEWER_LOOP_HEAD_BINDING_JQ"'
         .[]
         | select(.user.login == $bot and .created_at > $since and .in_reply_to_id == null and bound_review_comment($head))
@@ -5686,7 +5682,7 @@ run_devin_review() {
   )"
 
   blocking_reviews="$(
-    gh api "repos/$repo/pulls/$pr_number/reviews" --paginate \
+    workflow_command_with_safe_stderr gh api "repos/$repo/pulls/$pr_number/reviews" --paginate \
       | jq -r --arg bot "$bot_login" --arg since "$since_iso" --arg head "$head_sha" "$REVIEWER_LOOP_HEAD_BINDING_JQ"'
         .[]
         | select(
@@ -5765,7 +5761,7 @@ run_devin_review() {
       [ -z "${blocking_json:-}" ] && continue
       print_kv "BLOCKING_${index}_PATH" "$(printf '%s\n' "$blocking_json" | jq -r '.path')"
       print_kv "BLOCKING_${index}_LINE" "$(printf '%s\n' "$blocking_json" | jq -r '.line')"
-      print_kv_escaped "BLOCKING_${index}_BODY" "$(printf '%s\n' "$blocking_json" | jq -r '.body')"
+      workflow_diagnostic_kv_escaped "BLOCKING_${index}_BODY" "$(printf '%s\n' "$blocking_json" | jq -r '.body')"
       index=$((index + 1))
     done < "$blocking_lines_file"
     reviewer_loop_print_reviewed_head_from_json_lines < "$blocking_lines_file"
@@ -5779,7 +5775,7 @@ run_devin_review() {
     # Devin check run or status on the head that reports Devin's own run as
     # failed or timed out, with no completion review and no finding. That is
     # failure evidence, never a clean verdict.
-    echo "WARN: run_devin_review: Devin's own run on $head_sha reported failure (check run or status) with no review — escalating as devin_run_failed" >&2
+    workflow_diagnostic "WARN: run_devin_review: Devin's own run on $head_sha reported failure (check run or status) with no review — escalating as devin_run_failed" >&2
     print_kv RESULT escalate
     print_kv REASON devin_run_failed
     print_kv PLATFORM "$platform"
@@ -5862,7 +5858,7 @@ run_pr_agent_review() {
   # PR head as before when the loop has none.
   head_sha="${loop_head_sha:-}"
   if reviewer_loop_head_is_unknown_or_invalid "$head_sha"; then
-    head_sha="$(gh api "repos/$repo/pulls/$pr_number" --jq '.head.sha')"
+    head_sha="$(workflow_command_with_safe_stderr gh api "repos/$repo/pulls/$pr_number" --jq '.head.sha')"
   fi
   if [ -z "$head_sha" ]; then
     print_kv RESULT escalate
@@ -5875,7 +5871,7 @@ run_pr_agent_review() {
     return 2
   fi
   # Use the HEAD commit's push timestamp to scope comments to this review cycle.
-  since_iso="$(gh api "repos/$repo/commits/$head_sha" --jq '.commit.committer.date // empty')"
+  since_iso="$(workflow_command_with_safe_stderr gh api "repos/$repo/commits/$head_sha" --jq '.commit.committer.date // empty')"
   if [ -z "$since_iso" ]; then
     since_iso="$(date -u -v-24H +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date -u -d '24 hours ago' +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || echo '1970-01-01T00:00:00Z')"
   fi
@@ -6038,7 +6034,7 @@ run_pr_agent_review() {
         [ -n "$match" ] || continue
         pr_agent_bound_body="$(printf '%s' "$match" | jq -r '.body // ""')"
         pr_agent_bound_url="$(printf '%s' "$match" | jq -r '.html_url // ""')"
-        echo "INFO: run_pr_agent_review: first summary ${cand_id} is bound to $head_sha by its PR-Agent review run (D15 rule b)" >&2
+        workflow_diagnostic "INFO: run_pr_agent_review: first summary ${cand_id} is bound to $head_sha by its PR-Agent review run (D15 rule b)" >&2
         return 0
       fi
     done <<_PR_AGENT_RULE_B_CANDIDATES_
@@ -6048,7 +6044,7 @@ _PR_AGENT_RULE_B_CANDIDATES_
   }
 
   _pr_agent_active_review_check_count() {
-    gh api "repos/$repo/commits/$head_sha/check-runs" --paginate \
+    workflow_command_with_safe_stderr gh api "repos/$repo/commits/$head_sha/check-runs" --paginate \
       | jq -rs "$STATUS_CHECK_ROLLUP_DEDUPE_JQ"'[.[].check_runs[]? | select(.name == "PR-Agent review")] | dedupe_status_check_rollup | map(select(.status == "queued" or .status == "in_progress" or .status == "waiting" or .status == "requested" or .status == "pending")) | length' \
       2>/dev/null \
       || printf '0'
@@ -6072,7 +6068,7 @@ _PR_AGENT_RULE_B_CANDIDATES_
     head_refs_json="$(printf '%s\n' "${reviewer_loop_head_request_refs:-}" | jq -R 'select(. != "")' | jq -sc '.' 2>/dev/null)" || head_refs_json="[]"
     [ -n "$head_refs_json" ] || head_refs_json="[]"
 
-    gh api "repos/$repo/issues/$pr_number/comments" --paginate \
+    workflow_command_with_safe_stderr gh api "repos/$repo/issues/$pr_number/comments" --paginate \
       | jq -rs --arg body "$trigger_body" --arg since "$since_iso" --argjson reuse_window "$trigger_reuse_window" \
                --argjson head_refs "$head_refs_json" '
           add // []
@@ -6106,7 +6102,7 @@ _PR_AGENT_RULE_B_CANDIDATES_
     if reviewer_loop_rewait_adopts_recorded_request; then
       print_kv PR_AGENT_TRIGGER_SKIPPED recorded_request_adopted
       print_review_request_keys "$reviewer_loop_recorded_requested_at" "$reviewer_loop_recorded_request_ref"
-      echo "INFO: re-wait: adopting the recorded pr-agent request ${reviewer_loop_recorded_request_ref:-<no ref>}; not posting /review" >&2
+      workflow_diagnostic "INFO: re-wait: adopting the recorded pr-agent request ${reviewer_loop_recorded_request_ref:-<no ref>}; not posting /review" >&2
       pr_agent_outstanding_request=1
       return 0
     fi
@@ -6415,7 +6411,7 @@ _EXTRACT_POSSIBLE_ISSUE_LABELS_
       # outstanding request, its answer can still supersede the failed run
       # (a bound summary or a newer run on the head), so the failure is
       # reported only at budget end, in place of the no_review kept skip.
-      echo "WARN: run_pr_agent_review: the newest PR-Agent review run on $head_sha concluded '$pr_agent_failed_conclusion' with no summary bound to the head — escalating as pr_agent_run_failed" >&2
+      workflow_diagnostic "WARN: run_pr_agent_review: the newest PR-Agent review run on $head_sha concluded '$pr_agent_failed_conclusion' with no summary bound to the head — escalating as pr_agent_run_failed" >&2
       print_kv RESULT escalate
       print_kv REASON pr_agent_run_failed
       print_kv PR_AGENT_RUN_CONCLUSION "$pr_agent_failed_conclusion"
@@ -6590,7 +6586,7 @@ check_unreplied_rest_comments() {
           )] | length
       '
   )" || {
-    echo "WARN: check_unreplied_rest_comments: REST query failed for PR #$pr_number" >&2
+    workflow_diagnostic "WARN: check_unreplied_rest_comments: REST query failed for PR #$pr_number" >&2
     return 3
   }
 
@@ -6640,7 +6636,7 @@ reviewer_loop_print_blocking_from_unreplied_rest_comments() {
   local repo="$2"
   local bot_login="$3"
   local resolved_ids_json="${4:-[]}"
-  local blocking_file idx=0 blocking_json path line body title
+  local blocking_file idx=0 blocking_json path line body title diagnostic_body
 
   blocking_file="$(mktemp)"
   if ! _unreplied_rest_blocking_comment_json_lines \
@@ -6655,13 +6651,14 @@ reviewer_loop_print_blocking_from_unreplied_rest_comments() {
     path="$(printf '%s\n' "$blocking_json" | jq -r '.path // ""')"
     line="$(printf '%s\n' "$blocking_json" | jq -r '.line // 0')"
     body="$(printf '%s\n' "$blocking_json" | jq -r '.body // ""')"
-    title="$(printf '%s\n' "$body" | sed -n 's/^### //p;q')"
+    diagnostic_body="$(printf '%s' "$body" | workflow_redact_text)" || diagnostic_body="[diagnostic sanitization failed]"
+    title="$(printf '%s\n' "$diagnostic_body" | sed -n 's/^### //p;q')"
     if [ -z "$title" ]; then
-      title="$(printf '%.120s' "$(printf '%s\n' "$body" | tr '\n' ' ')")"
+      title="$(printf '%.120s' "$(printf '%s\n' "$diagnostic_body" | tr '\n' ' ')")"
     fi
     print_kv "BLOCKING_${idx}_PATH" "${path:-unknown}"
     print_kv "BLOCKING_${idx}_LINE" "$line"
-    print_kv_escaped "BLOCKING_${idx}_BODY" "$title"
+    workflow_diagnostic_kv_escaped "BLOCKING_${idx}_BODY" "$title"
   done < "$blocking_file"
 
   reviewer_loop_print_reviewed_head_from_json_lines < "$blocking_file"
@@ -6725,7 +6722,7 @@ auto_reply_unreplied_rest_comments() {
           ) | .id]
       '
   )" || {
-    echo "WARN: auto_reply_unreplied_rest_comments: REST query failed for PR #$pr_number" >&2
+    workflow_diagnostic "WARN: auto_reply_unreplied_rest_comments: REST query failed for PR #$pr_number" >&2
     return 1
   }
 
@@ -6742,10 +6739,10 @@ auto_reply_unreplied_rest_comments() {
              --input - \
              --silent > /dev/null 2>&1; then
       reply_count=$((reply_count + 1))
-      echo "INFO: auto-replied to REST comment $comment_id on PR #$pr_number" >&2
+      workflow_diagnostic "INFO: auto-replied to REST comment $comment_id on PR #$pr_number" >&2
     else
       fail_count=$((fail_count + 1))
-      echo "WARN: auto_reply_unreplied_rest_comments: failed to reply to comment $comment_id on PR #$pr_number" >&2
+      workflow_diagnostic "WARN: auto_reply_unreplied_rest_comments: failed to reply to comment $comment_id on PR #$pr_number" >&2
     fi
   done < <(printf '%s\n' "$unreplied_ids" | jq -r '.[]')
 
@@ -6792,7 +6789,7 @@ get_resolved_thread_comment_ids() {
   while [ "$has_next_page" = "true" ]; do
     page=$((page + 1))
     if [ "$page" -gt "$max_pages" ]; then
-      echo "WARN: get_resolved_thread_comment_ids: exceeded $max_pages pages for PR #$pr_number — returning partial results" >&2
+      workflow_diagnostic "WARN: get_resolved_thread_comment_ids: exceeded $max_pages pages for PR #$pr_number — returning partial results" >&2
       break
     fi
 
@@ -6802,7 +6799,7 @@ get_resolved_thread_comment_ids() {
         -f query="$graphql_query" \
         -f owner="$owner" -f repo="$repo_name" -F pr="$pr_number" -f cursor="$cursor" \
         --jq '.data.repository.pullRequest.reviewThreads' 2>/dev/null)" || {
-        echo "WARN: get_resolved_thread_comment_ids: GraphQL query failed for PR #$pr_number — returning partial results" >&2
+        workflow_diagnostic "WARN: get_resolved_thread_comment_ids: GraphQL query failed for PR #$pr_number — returning partial results" >&2
         break
       }
     else
@@ -6810,7 +6807,7 @@ get_resolved_thread_comment_ids() {
         -f query="$graphql_query" \
         -f owner="$owner" -f repo="$repo_name" -F pr="$pr_number" \
         --jq '.data.repository.pullRequest.reviewThreads' 2>/dev/null)" || {
-        echo "WARN: get_resolved_thread_comment_ids: GraphQL query failed for PR #$pr_number — returning partial results" >&2
+        workflow_diagnostic "WARN: get_resolved_thread_comment_ids: GraphQL query failed for PR #$pr_number — returning partial results" >&2
         break
       }
     fi
@@ -6818,7 +6815,7 @@ get_resolved_thread_comment_ids() {
     has_next_page="$(printf '%s\n' "$result" | jq -r '.pageInfo.hasNextPage')"
     cursor="$(printf '%s\n' "$result" | jq -r '.pageInfo.endCursor // empty')"
     if [ "$has_next_page" = "true" ] && [ -z "$cursor" ]; then
-      echo "WARN: get_resolved_thread_comment_ids: hasNextPage=true but endCursor is empty for PR #$pr_number — returning partial results" >&2
+      workflow_diagnostic "WARN: get_resolved_thread_comment_ids: hasNextPage=true but endCursor is empty for PR #$pr_number — returning partial results" >&2
       break
     fi
 
@@ -6859,7 +6856,7 @@ is_coderabbit_blocking() {
 thread_audit_max_retries_value() {
   local value="${THREAD_AUDIT_MAX_RETRIES:-3}"
   if ! printf '%s' "$value" | grep -qE '^[0-9]+$' || [ "$value" -le 0 ] 2>/dev/null; then
-    echo "WARN: THREAD_AUDIT_MAX_RETRIES must be a positive integer; defaulting to 3" >&2
+    workflow_diagnostic "WARN: THREAD_AUDIT_MAX_RETRIES must be a positive integer; defaulting to 3" >&2
     value=3
   fi
   printf '%s\n' "$value"
@@ -6902,7 +6899,7 @@ coderabbit_thread_gate_clean() {
     eval "$prev_errexit"
 
     if [ "$st" -eq 2 ]; then
-      echo "WARN: check_unresolved_threads exceeded page cap for PR #$pr_number (CodeRabbit pass)" >&2
+      workflow_diagnostic "WARN: check_unresolved_threads exceeded page cap for PR #$pr_number (CodeRabbit pass)" >&2
       print_kv RESULT escalate
       print_kv REASON unresolved_thread_check_incomplete
       print_kv PLATFORM "$platform"
@@ -6918,11 +6915,11 @@ coderabbit_thread_gate_clean() {
 
     if [ "$st" -eq 3 ]; then
       if [ "$thread_audit_attempt" -le "$thread_audit_max_retries" ]; then
-        echo "WARN: check_unresolved_threads GraphQL failure for PR #$pr_number (CodeRabbit pass, attempt $thread_audit_attempt/$thread_audit_max_retries) — retrying" >&2
+        workflow_diagnostic "WARN: check_unresolved_threads GraphQL failure for PR #$pr_number (CodeRabbit pass, attempt $thread_audit_attempt/$thread_audit_max_retries) — retrying" >&2
         sleep 5
         continue
       fi
-      echo "ERROR: check_unresolved_threads GraphQL failure for PR #$pr_number (CodeRabbit pass) — all $thread_audit_attempt attempts ($thread_audit_max_retries retries) failed; escalating" >&2
+      workflow_diagnostic "ERROR: check_unresolved_threads GraphQL failure for PR #$pr_number (CodeRabbit pass) — all $thread_audit_attempt attempts ($thread_audit_max_retries retries) failed; escalating" >&2
       print_kv RESULT escalate
       print_kv REASON review_thread_audit_failed
       print_kv PLATFORM "$platform"
@@ -6937,7 +6934,7 @@ coderabbit_thread_gate_clean() {
     fi
 
     if [ "$st" -ne 0 ]; then
-      echo "ERROR: check_unresolved_threads unexpected exit $st for PR #$pr_number (CodeRabbit pass) — escalating" >&2
+      workflow_diagnostic "ERROR: check_unresolved_threads unexpected exit $st for PR #$pr_number (CodeRabbit pass) — escalating" >&2
       print_kv RESULT escalate
       print_kv REASON review_thread_audit_failed
       print_kv PLATFORM "$platform"
@@ -6998,18 +6995,18 @@ coderabbit_thread_gate_clean() {
     # All GraphQL threads are resolved, but the REST supplement still sees
     # unreplied outside-diff comments.  Auto-reply to each one so the gate
     # can advance without requiring manual intervention.
-    echo "INFO: ${rest_unreplied_raw} unreplied CodeRabbit REST comment(s) on PR #$pr_number — auto-replying" >&2
+    workflow_diagnostic "INFO: ${rest_unreplied_raw} unreplied CodeRabbit REST comment(s) on PR #$pr_number — auto-replying" >&2
     local auto_reply_st auto_replied_count
     set +e
     auto_replied_count="$(auto_reply_unreplied_rest_comments "$pr_number" "$repo" "$bot_login" "$resolved_ids_json")"
     auto_reply_st=$?
     eval "$prev_errexit"
-    echo "INFO: auto-replied to ${auto_replied_count:-0} REST comment(s) on PR #$pr_number" >&2
+    workflow_diagnostic "INFO: auto-replied to ${auto_replied_count:-0} REST comment(s) on PR #$pr_number" >&2
 
     if [ "$auto_reply_st" -ne 0 ]; then
       # One or more replies failed; fall back to needs_fixes so the agent can
       # address the remaining comments manually.
-      echo "WARN: auto-reply failed for one or more REST comments on PR #$pr_number — returning needs_fixes" >&2
+      workflow_diagnostic "WARN: auto-reply failed for one or more REST comments on PR #$pr_number — returning needs_fixes" >&2
       reviewer_loop_print_blocking_from_unreplied_rest_comments \
         "$pr_number" "$repo" "$bot_login" "$resolved_ids_json" || true
       print_kv RESULT needs_fixes
@@ -7036,7 +7033,7 @@ coderabbit_thread_gate_clean() {
     if [ "$recheck_st" -ne 0 ]; then
       # Re-check REST query failed — cannot confirm gate is clean; treat as
       # needs_fixes so the agent re-inspects rather than claiming false clean.
-      echo "WARN: REST re-check failed (exit $recheck_st) after auto-reply on PR #$pr_number — returning needs_fixes" >&2
+      workflow_diagnostic "WARN: REST re-check failed (exit $recheck_st) after auto-reply on PR #$pr_number — returning needs_fixes" >&2
       reviewer_loop_print_blocking_from_unreplied_rest_comments \
         "$pr_number" "$repo" "$bot_login" "$resolved_ids_json" || true
       print_kv RESULT needs_fixes
@@ -7053,7 +7050,7 @@ coderabbit_thread_gate_clean() {
       return 1
     fi
     if [ "${recheck_raw:-0}" -gt 0 ]; then
-      echo "WARN: ${recheck_raw} unreplied REST comment(s) remain after auto-reply on PR #$pr_number — returning needs_fixes" >&2
+      workflow_diagnostic "WARN: ${recheck_raw} unreplied REST comment(s) remain after auto-reply on PR #$pr_number — returning needs_fixes" >&2
       reviewer_loop_print_blocking_from_unreplied_rest_comments \
         "$pr_number" "$repo" "$bot_login" "$resolved_ids_json" || true
       print_kv RESULT needs_fixes
@@ -7074,7 +7071,7 @@ coderabbit_thread_gate_clean() {
   if [ "$rest_check_st" -ne 0 ]; then
     # REST failure is non-fatal: the GraphQL thread check already passed.
     # Log the warning and allow RESULT=clean to proceed.
-    echo "WARN: check_unreplied_rest_comments failed (exit $rest_check_st) for PR #$pr_number — skipping outside-diff supplement" >&2
+    workflow_diagnostic "WARN: check_unreplied_rest_comments failed (exit $rest_check_st) for PR #$pr_number — skipping outside-diff supplement" >&2
   fi
 
   return 0
@@ -7117,7 +7114,7 @@ coderabbit_success_status_count() {
   # invalid arguments as "no genuine success status found" is the same safe
   # default the rest of this function already falls back to on API failure.
   if [ -z "$repo" ] || [ -z "$head_sha" ]; then
-    echo "ERROR: coderabbit_success_status_count requires non-empty repo and head_sha arguments (got repo='${repo:-}' head_sha='${head_sha:-}')" >&2
+    workflow_diagnostic "ERROR: coderabbit_success_status_count requires non-empty repo and head_sha arguments (got repo='${repo:-}' head_sha='${head_sha:-}')" >&2
     printf '%s\n' 0
     return 0
   fi
@@ -7280,7 +7277,7 @@ coderabbit_resolve_no_trigger_timeout() {
   if ! [[ "$override" =~ ^[0-9]+$ ]] || [ "$((10#$override))" -le 0 ]; then
     local fallback
     fallback="$(coderabbit_no_trigger_timeout_default "$max_wait")"
-    echo "WARN: CODERABBIT_NO_TRIGGER_TIMEOUT must be a positive integer; defaulting to ${fallback}" >&2
+    workflow_diagnostic "WARN: CODERABBIT_NO_TRIGGER_TIMEOUT must be a positive integer; defaulting to ${fallback}" >&2
     printf '%s\n' "$fallback"
     return 0
   fi
@@ -7622,18 +7619,18 @@ coderabbit_newest_rate_limit_comment() {
   # function was just changed to remove. Fail with the same status 2 contract,
   # but say plainly that the caller, not the API, is at fault.
   if [ "$#" -ne 4 ]; then
-    echo "ERROR: coderabbit_newest_rate_limit_comment requires 4 arguments (repo pr_number bot_login since_iso), got $#" >&2
+    workflow_diagnostic "ERROR: coderabbit_newest_rate_limit_comment requires 4 arguments (repo pr_number bot_login since_iso), got $#" >&2
     return 2
   fi
   if [ -z "${1:-}" ] || [ -z "${2:-}" ] || [ -z "${3:-}" ] || [ -z "${4:-}" ]; then
-    echo "ERROR: coderabbit_newest_rate_limit_comment requires non-empty repo, pr_number, bot_login and since_iso (got repo='${1:-}' pr_number='${2:-}' bot_login='${3:-}' since_iso='${4:-}')" >&2
+    workflow_diagnostic "ERROR: coderabbit_newest_rate_limit_comment requires non-empty repo, pr_number, bot_login and since_iso (got repo='${1:-}' pr_number='${2:-}' bot_login='${3:-}' since_iso='${4:-}')" >&2
     return 2
   fi
   local repo="$1" pr_number="$2" bot_login="$3" since_iso="$4"
   local raw="" status=0
   raw="$(gh api "repos/$repo/issues/$pr_number/comments" --paginate 2>/dev/null)" || status=$?
   if [ "$status" -ne 0 ]; then
-    echo "WARN: coderabbit_newest_rate_limit_comment: could not read comments for PR #$pr_number (gh exited $status) — reporting a lookup failure, not an absence of rate limiting" >&2
+    workflow_diagnostic "WARN: coderabbit_newest_rate_limit_comment: could not read comments for PR #$pr_number (gh exited $status) — reporting a lookup failure, not an absence of rate limiting" >&2
     return 2
   fi
   local selected="" jq_status=0
@@ -7665,7 +7662,7 @@ coderabbit_newest_rate_limit_comment() {
         | . + { effective_at: (.updated_at // .created_at) }
       ' 2>/dev/null)" || jq_status=$?
   if [ "$jq_status" -ne 0 ]; then
-    echo "WARN: coderabbit_newest_rate_limit_comment: could not parse comments for PR #$pr_number (jq exited $jq_status) — reporting a lookup failure" >&2
+    workflow_diagnostic "WARN: coderabbit_newest_rate_limit_comment: could not parse comments for PR #$pr_number (jq exited $jq_status) — reporting a lookup failure" >&2
     return 2
   fi
   printf '%s' "$selected"
@@ -7733,7 +7730,7 @@ run_coderabbit_review() {
   cd_workflow_repo_root
   repo="$(repo_slug)"
 
-  head_sha="$(gh api "repos/$repo/pulls/$pr_number" --jq '.head.sha')"
+  head_sha="$(workflow_command_with_safe_stderr gh api "repos/$repo/pulls/$pr_number" --jq '.head.sha')"
   if [ -z "$head_sha" ]; then
     print_kv RESULT escalate
     print_kv REASON "head-sha-unavailable"
@@ -7746,7 +7743,7 @@ run_coderabbit_review() {
     print_kv CODERABBIT_REVIEWS_RECEIVED 0
     return 2
   fi
-  since_iso="$(gh api "repos/$repo/commits/$head_sha" --jq '.commit.committer.date // empty')"
+  since_iso="$(workflow_command_with_safe_stderr gh api "repos/$repo/commits/$head_sha" --jq '.commit.committer.date // empty')"
   if [ -z "$since_iso" ]; then
     since_iso="$(date -u -v-24H +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date -u -d '24 hours ago' +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || echo '1970-01-01T00:00:00Z')"
   fi
@@ -7761,7 +7758,7 @@ run_coderabbit_review() {
   # head — review comments by original_commit_id, reviews by commit_id — in
   # addition to the time filter.
   existing_comments="$(
-    gh api "repos/$repo/pulls/$pr_number/comments" --paginate \
+    workflow_command_with_safe_stderr gh api "repos/$repo/pulls/$pr_number/comments" --paginate \
       | jq -r --arg bot "$bot_login" --arg since "$since_iso" --arg head "$head_sha" "$REVIEWER_LOOP_HEAD_BINDING_JQ"'
           .[]
           | select(.user.login == $bot and .created_at > $since and .in_reply_to_id == null and bound_review_comment($head))
@@ -7770,7 +7767,7 @@ run_coderabbit_review() {
         '
   )"
   existing_reviews="$(
-    gh api "repos/$repo/pulls/$pr_number/reviews" --paginate \
+    workflow_command_with_safe_stderr gh api "repos/$repo/pulls/$pr_number/reviews" --paginate \
       | jq -r --arg bot "$bot_login" --arg since "$since_iso" --arg head "$head_sha" "$REVIEWER_LOOP_HEAD_BINDING_JQ"'
           .[]
           | select(
@@ -7823,7 +7820,7 @@ run_coderabbit_review() {
       [ -z "${blocking_json:-}" ] && continue
       print_kv "BLOCKING_${index}_PATH" "$(printf '%s\n' "$blocking_json" | jq -r '.path')"
       print_kv "BLOCKING_${index}_LINE" "$(printf '%s\n' "$blocking_json" | jq -r '.line')"
-      print_kv_escaped "BLOCKING_${index}_BODY" "$(printf '%s\n' "$blocking_json" | jq -r '.body')"
+      workflow_diagnostic_kv_escaped "BLOCKING_${index}_BODY" "$(printf '%s\n' "$blocking_json" | jq -r '.body')"
       index=$((index + 1))
     done < "$existing_blocking_file"
     rm -f "$existing_blocking_file"
@@ -7854,7 +7851,7 @@ run_coderabbit_review() {
   # before sorting, so the "most recent" selection spans the entire comment history
   # rather than being limited to the last item on whichever page arrived last.
   phase0_most_recent_body="$(
-    gh api "repos/$repo/issues/$pr_number/comments" --paginate \
+    workflow_command_with_safe_stderr gh api "repos/$repo/issues/$pr_number/comments" --paginate \
       | jq -rs --arg bot "$bot_login" '
           add // []
           | map(select(.user.login == $bot))
@@ -7864,7 +7861,7 @@ run_coderabbit_review() {
         '
   )"
   if printf '%s\n' "$phase0_most_recent_body" | grep -qi "reviews\? paused"; then
-    echo "INFO: CodeRabbit is in auto-pause state (most recent CR comment is a pause banner) — posting @coderabbitai resume before entering poll loop" >&2
+    workflow_diagnostic "INFO: CodeRabbit is in auto-pause state (most recent CR comment is a pause banner) — posting @coderabbitai resume before entering poll loop" >&2
     local phase0_resume_since_iso
     # Capture the timestamp BEFORE posting so any same-second CodeRabbit response
     # is still within the detection window (queries use strict > $since_iso).
@@ -7873,13 +7870,13 @@ run_coderabbit_review() {
       coderabbit_phase0_retrigger=1
       coderabbit_trigger_attempts=$((coderabbit_trigger_attempts + 1))
       since_iso="$phase0_resume_since_iso"
-      echo "INFO: @coderabbitai resume posted; since_iso reset to $since_iso" >&2
+      workflow_diagnostic "INFO: @coderabbitai resume posted; since_iso reset to $since_iso" >&2
     else
       # The resume post failed while CodeRabbit is still paused. If we proceed without
       # resetting since_iso, the timeout guard at the end of the poll loop may miss the
       # old pause banner (its timestamp predates since_iso) and fall through to a false-
       # clean RESULT=skipped/REASON=no_review. Escalate immediately instead.
-      echo "ERROR: failed to post @coderabbitai resume for pre-existing pause banner — escalating to avoid false-clean no_review exit" >&2
+      workflow_diagnostic "ERROR: failed to post @coderabbitai resume for pre-existing pause banner — escalating to avoid false-clean no_review exit" >&2
       print_kv RESULT escalate
       print_kv REASON rate_limit_max_retries
       print_kv PLATFORM "$platform"
@@ -7938,16 +7935,16 @@ run_coderabbit_review() {
   local coderabbit_request_recorded=0
   if reviewer_loop_rewait_adopts_recorded_request; then
     coderabbit_rewait_adopted=1
-    echo "INFO: re-wait: a recorded coderabbit request exists; not posting the conditional @coderabbitai review re-trigger" >&2
+    workflow_diagnostic "INFO: re-wait: a recorded coderabbit request exists; not posting the conditional @coderabbitai review re-trigger" >&2
     print_review_request_keys "$reviewer_loop_recorded_requested_at" "$reviewer_loop_recorded_request_ref"
     coderabbit_request_recorded=1
   fi
   if ! [[ "$coderabbit_rate_limit_max_retries" =~ ^[0-9]+$ ]]; then
-    echo "WARN: CODERABBIT_RATE_LIMIT_MAX_RETRIES must be a non-negative integer; defaulting to 4" >&2
+    workflow_diagnostic "WARN: CODERABBIT_RATE_LIMIT_MAX_RETRIES must be a non-negative integer; defaulting to 4" >&2
     coderabbit_rate_limit_max_retries=4
   fi
   if ! [[ "$coderabbit_rate_limit_wait" =~ ^[0-9]+$ ]] || [ "$coderabbit_rate_limit_wait" -le 0 ]; then
-    echo "WARN: CODERABBIT_RATE_LIMIT_WAIT must be a positive integer; defaulting to 900" >&2
+    workflow_diagnostic "WARN: CODERABBIT_RATE_LIMIT_WAIT must be a positive integer; defaulting to 900" >&2
     coderabbit_rate_limit_wait=900
   fi
 
@@ -8077,7 +8074,7 @@ run_coderabbit_review() {
       # historical pause banners from prior HEAD commits.
       local paused_count
       paused_count="$(
-        gh api "repos/$repo/issues/$pr_number/comments" --paginate \
+        workflow_command_with_safe_stderr gh api "repos/$repo/issues/$pr_number/comments" --paginate \
           | jq -s --arg bot "$bot_login" --arg since "$since_iso" '
               [.[].[] | select(
                   .user.login == $bot and
@@ -8087,14 +8084,14 @@ run_coderabbit_review() {
             '
       )"
       if [ "${paused_count:-0}" -gt 0 ]; then
-        echo "INFO: CodeRabbit reviews are paused — posting @coderabbitai resume to trigger a fresh review" >&2
+        workflow_diagnostic "INFO: CodeRabbit reviews are paused — posting @coderabbitai resume to trigger a fresh review" >&2
         if gh pr comment "$pr_number" --body "@coderabbitai resume" >/dev/null 2>&1; then
           coderabbit_retrigger_attempted=1
           coderabbit_trigger_attempts=$((coderabbit_trigger_attempts + 1))
           # Reset the elapsed timer to give the retrigger time to complete.
           elapsed=0
         else
-          echo "WARN: failed to post @coderabbitai resume — will not reset timer" >&2
+          workflow_diagnostic "WARN: failed to post @coderabbitai resume — will not reset timer" >&2
           coderabbit_retrigger_attempted=1
         fi
         _interruptible_sleep "$poll_interval"
@@ -8129,7 +8126,7 @@ run_coderabbit_review() {
       # declined to post a trigger (#1579).
       local silent_paused_count
       silent_paused_count="$(
-        gh api "repos/$repo/issues/$pr_number/comments" --paginate \
+        workflow_command_with_safe_stderr gh api "repos/$repo/issues/$pr_number/comments" --paginate \
           | jq -s --arg bot "$bot_login" --arg since "$since_iso" '
               [.[].[] | select(
                   .user.login == $bot and
@@ -8149,19 +8146,19 @@ run_coderabbit_review() {
           # Hold the retrigger rather than spend a review on a guess: the
           # allowance was measured at 1 per hour, so a wasted trigger costs the
           # PR an hour, while holding costs one poll interval.
-          echo "WARN: could not determine CodeRabbit rate-limit state for PR #$pr_number — holding the silent non-trigger retrigger rather than spending a review on an unread signal" >&2
+          workflow_diagnostic "WARN: could not determine CodeRabbit rate-limit state for PR #$pr_number — holding the silent non-trigger retrigger rather than spending a review on an unread signal" >&2
           silent_blocked=1
         elif [ -n "$silent_rate_limit_json" ]; then
           if coderabbit_rate_limit_is_live "$silent_rate_limit_json" "$coderabbit_last_trigger_iso"; then
             silent_blocked=1
           else
-            echo "INFO: a spent CodeRabbit rate-limit comment is present but its window has elapsed — not letting it suppress the silent non-trigger retrigger (#1579)" >&2
+            workflow_diagnostic "INFO: a spent CodeRabbit rate-limit comment is present but its window has elapsed — not letting it suppress the silent non-trigger retrigger (#1579)" >&2
           fi
         fi
       fi
       if [ "$silent_blocked" -eq 0 ]; then
         coderabbit_no_trigger_retriggers=$((coderabbit_no_trigger_retriggers + 1))
-        echo "INFO: CodeRabbit has not auto-triggered after ${elapsed}s (silent non-trigger, attempt ${coderabbit_no_trigger_retriggers}/${coderabbit_rate_limit_max_retries}) — posting @coderabbitai review" >&2
+        workflow_diagnostic "INFO: CodeRabbit has not auto-triggered after ${elapsed}s (silent non-trigger, attempt ${coderabbit_no_trigger_retriggers}/${coderabbit_rate_limit_max_retries}) — posting @coderabbitai review" >&2
         if gh pr comment "$pr_number" --body "@coderabbitai review" >/dev/null 2>&1; then
           coderabbit_rate_limit_hold_seen=0
           coderabbit_trigger_attempts=$((coderabbit_trigger_attempts + 1))
@@ -8170,9 +8167,9 @@ run_coderabbit_review() {
             print_review_request_keys "$coderabbit_last_trigger_iso" ""
             coderabbit_request_recorded=1
           fi
-          echo "INFO: @coderabbitai review trigger posted" >&2
+          workflow_diagnostic "INFO: @coderabbitai review trigger posted" >&2
         else
-          echo "WARN: failed to post @coderabbitai review trigger for silent non-trigger" >&2
+          workflow_diagnostic "WARN: failed to post @coderabbitai review trigger for silent non-trigger" >&2
         fi
         # Reset the elapsed timer to give the retrigger a full polling window.
         elapsed=0
@@ -8203,7 +8200,7 @@ run_coderabbit_review() {
         # status-2 contract was introduced to remove. The retry branch below
         # is skipped either way, but a silent skip leaves nothing in the log to
         # explain why the loop went on to spend a review.
-        echo "WARN: could not read the rate-limit comment for PR #$pr_number (lookup exit $rate_limit_lookup_status) — proceeding without rate-limit evidence for this pass, NOT concluding that no limit exists" >&2
+        workflow_diagnostic "WARN: could not read the rate-limit comment for PR #$pr_number (lookup exit $rate_limit_lookup_status) — proceeding without rate-limit evidence for this pass, NOT concluding that no limit exists" >&2
         rate_limit_comment_json=""
       fi
 
@@ -8219,13 +8216,13 @@ run_coderabbit_review() {
             if [ "$coderabbit_rate_limit_retries" -gt 0 ]; then
               coderabbit_rate_limit_retries=$((coderabbit_rate_limit_retries - 1))
             fi
-            echo "INFO: CodeRabbit quota refusal observed for last trigger — not counting it toward CODERABBIT_RATE_LIMIT_MAX_RETRIES" >&2
+            workflow_diagnostic "INFO: CodeRabbit quota refusal observed for last trigger — not counting it toward CODERABBIT_RATE_LIMIT_MAX_RETRIES" >&2
           fi
           rate_limit_comment_count=1
         else
-          echo "INFO: newest CodeRabbit rate-limit comment (${rate_limit_comment_created:-unknown time}) is past the window it announced — treating it as spent rather than waiting on it again (#1579)" >&2
+          workflow_diagnostic "INFO: newest CodeRabbit rate-limit comment (${rate_limit_comment_created:-unknown time}) is past the window it announced — treating it as spent rather than waiting on it again (#1579)" >&2
           if [ "$coderabbit_rate_limit_hold_seen" -eq 1 ] && [ "$coderabbit_rate_limit_retries" -lt "$coderabbit_rate_limit_max_retries" ]; then
-            echo "INFO: CodeRabbit rate-limit window elapsed after a held wait — posting @coderabbitai review" >&2
+            workflow_diagnostic "INFO: CodeRabbit rate-limit window elapsed after a held wait — posting @coderabbitai review" >&2
             if gh pr comment "$pr_number" --body "@coderabbitai review" >/dev/null 2>&1; then
               coderabbit_rate_limit_hold_seen=0
               coderabbit_rate_limit_retries=$((coderabbit_rate_limit_retries + 1))
@@ -8235,9 +8232,9 @@ run_coderabbit_review() {
                 print_review_request_keys "$coderabbit_last_trigger_iso" ""
                 coderabbit_request_recorded=1
               fi
-              echo "INFO: posted @coderabbitai review after rate-limit window elapsed" >&2
+              workflow_diagnostic "INFO: posted @coderabbitai review after rate-limit window elapsed" >&2
             else
-              echo "WARN: failed to post @coderabbitai review after rate-limit window elapsed" >&2
+              workflow_diagnostic "WARN: failed to post @coderabbitai review after rate-limit window elapsed" >&2
             fi
             elapsed=0
             _interruptible_sleep "$poll_interval"
@@ -8247,7 +8244,7 @@ run_coderabbit_review() {
         fi
       fi
       if [ "${rate_limit_comment_count:-0}" -gt 0 ]; then
-        echo "INFO: CodeRabbit rate limit detected (retry attempts spent $coderabbit_rate_limit_retries/$coderabbit_rate_limit_max_retries) — checking for SUCCESS commit status before waiting" >&2
+        workflow_diagnostic "INFO: CodeRabbit rate limit detected (retry attempts spent $coderabbit_rate_limit_retries/$coderabbit_rate_limit_max_retries) — checking for SUCCESS commit status before waiting" >&2
         # --- Early SUCCESS check before retry wait ---
         # Check whether CodeRabbit already posted a genuine SUCCESS commit status for
         # the current HEAD SHA (state == "success" AND description is not a rate-limit
@@ -8266,14 +8263,14 @@ run_coderabbit_review() {
           # threads time to arrive so the audit does not return a false-clean count.
           local fallback_settle_wait="${FALLBACK_THREAD_SETTLE_WAIT:-60}"
           if [ "$fallback_settle_wait" -gt 0 ]; then
-            echo "INFO: coderabbit_status_success_fallback — waiting ${fallback_settle_wait}s for async threads to settle before thread audit" >&2
+            workflow_diagnostic "INFO: coderabbit_status_success_fallback — waiting ${fallback_settle_wait}s for async threads to settle before thread audit" >&2
             _interruptible_sleep "$fallback_settle_wait"
           fi
           local cr_early_gate_rc
           coderabbit_thread_gate_clean "$pr_number" "$repo" "$bot_login" "$branch_name"
           cr_early_gate_rc=$?
           if [ "$cr_early_gate_rc" -eq 0 ]; then
-            echo "INFO: CodeRabbit SUCCESS commit-status found for HEAD $head_sha before retry wait — treating PR as clean (coderabbit_status_success_fallback)" >&2
+            workflow_diagnostic "INFO: CodeRabbit SUCCESS commit-status found for HEAD $head_sha before retry wait — treating PR as clean (coderabbit_status_success_fallback)" >&2
             print_kv RESULT clean
       {
         [ -n "${comments:-}" ] && printf '%s\n' "$comments"
@@ -8307,16 +8304,16 @@ run_coderabbit_review() {
         local coderabbit_this_wait
         coderabbit_this_wait="$(coderabbit_rate_limit_remaining_seconds "$rate_limit_comment_body" "$rate_limit_comment_created" "$coderabbit_rate_limit_wait")"
         if [ "$coderabbit_this_wait" != "$coderabbit_rate_limit_wait" ]; then
-          echo "INFO: no SUCCESS commit status found — CodeRabbit states its next review window; waiting ${coderabbit_this_wait}s (configured fallback ${coderabbit_rate_limit_wait}s) before re-triggering" >&2
+          workflow_diagnostic "INFO: no SUCCESS commit status found — CodeRabbit states its next review window; waiting ${coderabbit_this_wait}s (configured fallback ${coderabbit_rate_limit_wait}s) before re-triggering" >&2
         else
-          echo "INFO: no SUCCESS commit status found — waiting ${coderabbit_this_wait}s before re-triggering" >&2
+          workflow_diagnostic "INFO: no SUCCESS commit status found — waiting ${coderabbit_this_wait}s before re-triggering" >&2
         fi
         _interruptible_sleep "$coderabbit_this_wait"
         local coderabbit_post_wait_rate_limit_json="" coderabbit_post_wait_lookup_status=0
         local coderabbit_skip_rate_limit_retrigger=0
         coderabbit_post_wait_rate_limit_json="$(coderabbit_newest_rate_limit_comment "$repo" "$pr_number" "$bot_login" "$since_iso")" || coderabbit_post_wait_lookup_status=$?
         if [ "$coderabbit_post_wait_lookup_status" -ne 0 ]; then
-          echo "WARN: could not re-check CodeRabbit rate-limit state after waiting for PR #$pr_number — holding retrigger rather than spending a review attempt on unread quota state" >&2
+          workflow_diagnostic "WARN: could not re-check CodeRabbit rate-limit state after waiting for PR #$pr_number — holding retrigger rather than spending a review attempt on unread quota state" >&2
           _interruptible_sleep "$poll_interval"
           elapsed=$((elapsed + coderabbit_this_wait + poll_interval))
           if [ "$elapsed" -lt "$max_wait" ]; then
@@ -8326,7 +8323,7 @@ run_coderabbit_review() {
           coderabbit_skip_rate_limit_retrigger=1
         fi
         if coderabbit_rate_limit_is_live "$coderabbit_post_wait_rate_limit_json" "$coderabbit_last_trigger_iso"; then
-          echo "INFO: CodeRabbit rate limit is still live after waiting — not posting a trigger while quota refusal remains outstanding" >&2
+          workflow_diagnostic "INFO: CodeRabbit rate limit is still live after waiting — not posting a trigger while quota refusal remains outstanding" >&2
           _interruptible_sleep "$poll_interval"
           elapsed=$((elapsed + coderabbit_this_wait + poll_interval))
           if [ "$elapsed" -lt "$max_wait" ]; then
@@ -8353,9 +8350,9 @@ run_coderabbit_review() {
               print_review_request_keys "$coderabbit_last_trigger_iso" ""
               coderabbit_request_recorded=1
             fi
-            echo "INFO: posted @coderabbitai review after rate-limit wait" >&2
+            workflow_diagnostic "INFO: posted @coderabbitai review after rate-limit wait" >&2
           else
-            echo "WARN: failed to post @coderabbitai review after rate-limit wait" >&2
+            workflow_diagnostic "WARN: failed to post @coderabbitai review after rate-limit wait" >&2
           fi
           _interruptible_sleep "$poll_interval"
           elapsed=$((elapsed + poll_interval))
@@ -8385,13 +8382,13 @@ run_coderabbit_review() {
           # threads time to arrive so the audit does not return a false-clean count.
           local fallback_settle_wait_timeout="${FALLBACK_THREAD_SETTLE_WAIT:-60}"
           if [ "$fallback_settle_wait_timeout" -gt 0 ]; then
-            echo "INFO: coderabbit_status_success_fallback — waiting ${fallback_settle_wait_timeout}s for async threads to settle before thread audit" >&2
+            workflow_diagnostic "INFO: coderabbit_status_success_fallback — waiting ${fallback_settle_wait_timeout}s for async threads to settle before thread audit" >&2
             _interruptible_sleep "$fallback_settle_wait_timeout"
           fi
           coderabbit_thread_gate_clean "$pr_number" "$repo" "$bot_login" "$branch_name"
           cr_success_gate_rc=$?
           if [ "$cr_success_gate_rc" -eq 0 ]; then
-            echo "INFO: CodeRabbit SUCCESS commit-status found for HEAD $head_sha — treating PR as clean (coderabbit_status_success_fallback)" >&2
+            workflow_diagnostic "INFO: CodeRabbit SUCCESS commit-status found for HEAD $head_sha — treating PR as clean (coderabbit_status_success_fallback)" >&2
             print_kv RESULT clean
       {
         [ -n "${comments:-}" ] && printf '%s\n' "$comments"
@@ -8425,7 +8422,7 @@ run_coderabbit_review() {
         local stale_blocking_count=0
         local stale_comments
         stale_comments="$(
-          gh api "repos/$repo/pulls/$pr_number/comments" --paginate \
+          workflow_command_with_safe_stderr gh api "repos/$repo/pulls/$pr_number/comments" --paginate \
             | jq -s -r --arg bot "$bot_login" '
                 (
                   [
@@ -8479,7 +8476,7 @@ run_coderabbit_review() {
             [ -z "${blocking_json:-}" ] && continue
             print_kv "BLOCKING_${index}_PATH" "$(printf '%s\n' "$blocking_json" | jq -r '.path')"
             print_kv "BLOCKING_${index}_LINE" "$(printf '%s\n' "$blocking_json" | jq -r '.line')"
-            print_kv_escaped "BLOCKING_${index}_BODY" "$(printf '%s\n' "$blocking_json" | jq -r '.body')"
+            workflow_diagnostic_kv_escaped "BLOCKING_${index}_BODY" "$(printf '%s\n' "$blocking_json" | jq -r '.body')"
             index=$((index + 1))
           done < "$stale_file"
           reviewer_loop_print_reviewed_head_from_json_lines < "$stale_file"
@@ -8501,7 +8498,7 @@ run_coderabbit_review() {
         # rather than posting a new one, so we check both created_at and updated_at.
         local timeout_incomplete_count
         timeout_incomplete_count="$(
-          gh api "repos/$repo/issues/$pr_number/comments" --paginate \
+          workflow_command_with_safe_stderr gh api "repos/$repo/issues/$pr_number/comments" --paginate \
             | jq -s --arg bot "$bot_login" --arg since "$since_iso" '
                 [.[].[] | select(
                     .user.login == $bot and
@@ -8551,7 +8548,7 @@ run_coderabbit_review() {
         # and revised at 23:52, straddling later comments.
         local timeout_latest_cr_body
         timeout_latest_cr_body="$(
-          gh api "repos/$repo/issues/$pr_number/comments" --paginate \
+          workflow_command_with_safe_stderr gh api "repos/$repo/issues/$pr_number/comments" --paginate \
             | jq -rs --arg bot "$bot_login" --arg since "$since_iso" '
                 add // []
                 | map(select(
@@ -8569,7 +8566,7 @@ run_coderabbit_review() {
           timeout_skip_banner_count=1
         fi
         if [ "${timeout_skip_banner_count:-0}" -gt 0 ]; then
-          echo "ERROR: CodeRabbit posted a 'Review skipped' banner and never reviewed HEAD $head_sha — escalating instead of returning clean. Check reviews.auto_review.enabled / .drafts / .base_branches in .coderabbit.yaml against this PR's draft state and base branch." >&2
+          workflow_diagnostic "ERROR: CodeRabbit posted a 'Review skipped' banner and never reviewed HEAD $head_sha — escalating instead of returning clean. Check reviews.auto_review.enabled / .drafts / .base_branches in .coderabbit.yaml against this PR's draft state and base branch." >&2
           print_kv RESULT escalate
           print_kv REASON review_skipped_banner
           print_kv PLATFORM "$platform"
@@ -8585,7 +8582,7 @@ run_coderabbit_review() {
           return 2
         fi
         if [ "${timeout_incomplete_count:-0}" -gt 0 ] || [ "$coderabbit_phase0_retrigger" -eq 1 ]; then
-          echo "INFO: CodeRabbit rate-limit or pause still unresolved at timeout (incomplete_count=${timeout_incomplete_count:-0}, phase0_retrigger=$coderabbit_phase0_retrigger) — escalating instead of returning clean" >&2
+          workflow_diagnostic "INFO: CodeRabbit rate-limit or pause still unresolved at timeout (incomplete_count=${timeout_incomplete_count:-0}, phase0_retrigger=$coderabbit_phase0_retrigger) — escalating instead of returning clean" >&2
           print_kv RESULT escalate
           print_kv REASON rate_limit_max_retries
           print_kv PLATFORM "$platform"
@@ -8642,14 +8639,14 @@ run_coderabbit_review() {
   if [ "$coderabbit_status_success_seen" -eq 1 ]; then
     local cr_status_success_settle_wait="${FALLBACK_THREAD_SETTLE_WAIT:-60}"
     if [ "$cr_status_success_settle_wait" -gt 0 ] 2>/dev/null; then
-      echo "INFO: CodeRabbit success status on $head_sha ended the wait — waiting ${cr_status_success_settle_wait}s for async threads to settle before collecting findings" >&2
+      workflow_diagnostic "INFO: CodeRabbit success status on $head_sha ended the wait — waiting ${cr_status_success_settle_wait}s for async threads to settle before collecting findings" >&2
       _interruptible_sleep "$cr_status_success_settle_wait"
     fi
   fi
   blocking_lines_file="$(mktemp)"
 
   comments="$(
-    gh api "repos/$repo/pulls/$pr_number/comments" --paginate \
+    workflow_command_with_safe_stderr gh api "repos/$repo/pulls/$pr_number/comments" --paginate \
       | jq -r --arg bot "$bot_login" --arg since "$since_iso" --arg head "$head_sha" "$REVIEWER_LOOP_HEAD_BINDING_JQ"'
         .[]
         | select(.user.login == $bot and .created_at > $since and .in_reply_to_id == null and bound_review_comment($head))
@@ -8664,7 +8661,7 @@ run_coderabbit_review() {
   )"
 
   blocking_reviews="$(
-    gh api "repos/$repo/pulls/$pr_number/reviews" --paginate \
+    workflow_command_with_safe_stderr gh api "repos/$repo/pulls/$pr_number/reviews" --paginate \
       | jq -r --arg bot "$bot_login" --arg since "$since_iso" --arg head "$head_sha" "$REVIEWER_LOOP_HEAD_BINDING_JQ"'
         .[]
         | select(
@@ -8722,7 +8719,7 @@ run_coderabbit_review() {
       [ -z "${blocking_json:-}" ] && continue
       print_kv "BLOCKING_${index}_PATH" "$(printf '%s\n' "$blocking_json" | jq -r '.path')"
       print_kv "BLOCKING_${index}_LINE" "$(printf '%s\n' "$blocking_json" | jq -r '.line')"
-      print_kv_escaped "BLOCKING_${index}_BODY" "$(printf '%s\n' "$blocking_json" | jq -r '.body')"
+      workflow_diagnostic_kv_escaped "BLOCKING_${index}_BODY" "$(printf '%s\n' "$blocking_json" | jq -r '.body')"
       index=$((index + 1))
     done < "$blocking_lines_file"
     rm -f "$blocking_lines_file"
@@ -8749,7 +8746,7 @@ run_coderabbit_review() {
       ''|*[!0-9]*) coderabbit_bound_review_count=0 ;;
     esac
     if [ "$coderabbit_bound_review_count" -eq 0 ]; then
-      echo "WARN: run_coderabbit_review: CodeRabbit reported a failed status on $head_sha with no review bound to the head — escalating as coderabbit_status_failed" >&2
+      workflow_diagnostic "WARN: run_coderabbit_review: CodeRabbit reported a failed status on $head_sha with no review bound to the head — escalating as coderabbit_status_failed" >&2
       print_kv RESULT escalate
       print_kv REASON coderabbit_status_failed
       print_kv PLATFORM "$platform"
@@ -8904,23 +8901,23 @@ check_unresolved_threads() {
       # unresolved threads beyond the cap. Exit 3 (below) is for transient GraphQL
       # failures; callers must escalate (not degrade) on exit 3 to prevent RESULT=clean
       # when the thread audit could not be completed.
-      echo "WARN: check_unresolved_threads: exceeded $max_pages pages for PR #$pr_number; cannot confirm all threads checked" >&2
+      workflow_diagnostic "WARN: check_unresolved_threads: exceeded $max_pages pages for PR #$pr_number; cannot confirm all threads checked" >&2
       return 2
     fi
 
     local result
     if [ -n "$cursor" ]; then
-      result="$(gh api graphql \
+      result="$(workflow_command_with_safe_stderr gh api graphql \
         -f query="$graphql_query" \
         -f owner="$owner" -f repo="$repo_name" -F pr="$pr_number" -f cursor="$cursor" \
         --jq '.data.repository.pullRequest')" \
-        || { echo "WARN: check_unresolved_threads: GraphQL query failed for PR #$pr_number" >&2; return 3; }
+        || { workflow_diagnostic "WARN: check_unresolved_threads: GraphQL query failed for PR #$pr_number" >&2; return 3; }
     else
-      result="$(gh api graphql \
+      result="$(workflow_command_with_safe_stderr gh api graphql \
         -f query="$graphql_query" \
         -f owner="$owner" -f repo="$repo_name" -F pr="$pr_number" \
         --jq '.data.repository.pullRequest')" \
-        || { echo "WARN: check_unresolved_threads: GraphQL query failed for PR #$pr_number" >&2; return 3; }
+        || { workflow_diagnostic "WARN: check_unresolved_threads: GraphQL query failed for PR #$pr_number" >&2; return 3; }
     fi
 
     if [ "$mode" = "provisional" ]; then
@@ -8972,7 +8969,7 @@ check_unresolved_threads() {
             && [ "$last_created_at" \> "$head_committed_date" ]; then
           local thread_id
           thread_id="$(printf '%s\n' "$thread_json" | jq -r '.id // "unknown"')"
-          echo "INFO: check_unresolved_threads: thread $thread_id provisionally addressed (reply by $last_author after head commit $head_committed_date) — not blocking re-review; still requires resolveReviewThread before RESULT=clean" >&2
+          workflow_diagnostic "INFO: check_unresolved_threads: thread $thread_id provisionally addressed (reply by $last_author after head commit $head_committed_date) — not blocking re-review; still requires resolveReviewThread before RESULT=clean" >&2
           continue
         fi
       fi
@@ -8981,7 +8978,7 @@ check_unresolved_threads() {
     done < <(printf '%s\n' "$result" | jq -c '.reviewThreads.nodes[]')
 
     if [ "$has_next_page" = "true" ] && [ -z "$cursor" ]; then
-      echo "WARN: check_unresolved_threads: hasNextPage=true but endCursor is empty for PR #$pr_number; cannot confirm all threads checked" >&2
+      workflow_diagnostic "WARN: check_unresolved_threads: hasNextPage=true but endCursor is empty for PR #$pr_number; cannot confirm all threads checked" >&2
       return 2
     fi
   done
@@ -9123,23 +9120,23 @@ ensure_pr_ready_for_ready_phase() {
     local rl_reset
     if rl_reset="$(gh_rate_limit_exhausted_reset)"; then
       READY_PHASE_GATE_RATE_LIMIT_RESET="$rl_reset"
-      echo "WARN: could not determine draft state for PR #$pr_number before ready phase — GitHub API rate limit exhausted (resets $rl_reset)" >&2
+      workflow_diagnostic "WARN: could not determine draft state for PR #$pr_number before ready phase — GitHub API rate limit exhausted (resets $rl_reset)" >&2
       return 3
     fi
-    echo "WARN: could not determine draft state for PR #$pr_number before ready phase" >&2
+    workflow_diagnostic "WARN: could not determine draft state for PR #$pr_number before ready phase" >&2
     return 2
   fi
 
   if [ "$is_draft" = "true" ]; then
-    echo "INFO: converting PR #$pr_number to ready before ready-phase reviewers" >&2
+    workflow_diagnostic "INFO: converting PR #$pr_number to ready before ready-phase reviewers" >&2
     if ! gh pr ready "$pr_number" >/dev/null 2>&1; then
       local rl_reset_ready
       if rl_reset_ready="$(gh_rate_limit_exhausted_reset)"; then
         READY_PHASE_GATE_RATE_LIMIT_RESET="$rl_reset_ready"
-        echo "WARN: failed to mark PR #$pr_number ready before ready phase — GitHub API rate limit exhausted (resets $rl_reset_ready)" >&2
+        workflow_diagnostic "WARN: failed to mark PR #$pr_number ready before ready phase — GitHub API rate limit exhausted (resets $rl_reset_ready)" >&2
         return 3
       fi
-      echo "WARN: failed to mark PR #$pr_number ready before ready phase" >&2
+      workflow_diagnostic "WARN: failed to mark PR #$pr_number ready before ready phase" >&2
       return 2
     fi
   fi
@@ -9165,7 +9162,7 @@ run_project_advisory_checks() {
   set -e
 
   if [ -n "$advisory_output" ]; then
-    printf '%s\n' "$advisory_output"
+    printf '%s\n' "$advisory_output" | workflow_redact_text
   fi
 
   return 0
@@ -9479,12 +9476,14 @@ reviewer_loop_gh_read_err_file() {
 # next read starts clean. A missing or empty path returns 1.
 reviewer_loop_gh_read_denied() {
   local err_file="${1:-}"
-  local err_text="" detail=""
+  local err_text="" detail="" error_class=""
   [ -n "$err_file" ] && [ -f "$err_file" ] || return 1
-  err_text="$(cat "$err_file" 2>/dev/null)" || err_text=""
+  err_text="$(workflow_command_with_safe_stderr cat "$err_file")"
+  error_class="$(reviewer_loop_gh_read_error_class "$err_text")"
+  err_text="$(printf '%s' "$err_text" | workflow_redact_text)" || return 2
   : > "$err_file" 2>/dev/null || true
   [ -n "$err_text" ] || return 1
-  if [ "$(reviewer_loop_gh_read_error_class "$err_text")" = "denied" ]; then
+  if [ "$error_class" = "denied" ]; then
     # awk reads all input (no early exit), so no SIGPIPE under pipefail.
     detail="$(printf '%s\n' "$err_text" | awk 'NF && !d { print; d = 1 }' | tr -d '\r' | cut -c1-200)" || detail=""
     printf '%s\n' "${detail:-authorization or permission refused}"
@@ -9505,7 +9504,7 @@ reviewer_loop_gh_capture_stderr() {
   if [ -n "$err_file" ]; then
     gh "$@" 2>>"$err_file"
   else
-    gh "$@"
+    workflow_command_with_safe_stderr gh "$@"
   fi
 }
 
@@ -9515,7 +9514,7 @@ reviewer_loop_gh_capture_stderr() {
 # required). The caller returns 2.
 print_reviewer_read_denied() {
   local platform="${1:-}" pr_number="${2:-}" branch_name="${3:-}" detail="${4:-}"
-  echo "WARN: ${platform} polling read refused (authorization or permission): ${detail}" >&2
+  workflow_diagnostic "WARN: ${platform} polling read refused (authorization or permission): ${detail}" >&2
   print_kv RESULT escalate
   print_kv REASON "${platform}-read-denied"
   print_kv READ_DENIED_DETAIL "$detail"
@@ -9606,10 +9605,10 @@ ensure_reviewer_failed_label_exists() {
     return 0
   fi
 
-  if ! gh label create "$REVIEWER_FAILED_LABEL" \
+  if ! workflow_command_with_safe_stderr gh label create "$REVIEWER_FAILED_LABEL" \
       --color "$REVIEWER_FAILED_LABEL_COLOR" \
       --description "$REVIEWER_FAILED_LABEL_DESCRIPTION" >/dev/null; then
-    echo "WARN: failed to create ${REVIEWER_FAILED_LABEL} label; proceeding with reviewer loop" >&2
+    workflow_diagnostic "WARN: failed to create ${REVIEWER_FAILED_LABEL} label; proceeding with reviewer loop" >&2
   fi
 
   return 0
@@ -9635,8 +9634,8 @@ sync_reviewer_failed_label() {
 
   if [ "$required" = "1" ]; then
     ensure_reviewer_failed_label_exists
-    if ! gh pr edit "$pr_number_arg" --add-label "$REVIEWER_FAILED_LABEL" >/dev/null; then
-      echo "WARN: failed to apply ${REVIEWER_FAILED_LABEL} label to PR #${pr_number_arg}; proceeding with reviewer loop" >&2
+    if ! workflow_command_with_safe_stderr gh pr edit "$pr_number_arg" --add-label "$REVIEWER_FAILED_LABEL" >/dev/null; then
+      workflow_diagnostic "WARN: failed to apply ${REVIEWER_FAILED_LABEL} label to PR #${pr_number_arg}; proceeding with reviewer loop" >&2
     fi
   else
     label_check_status=1
@@ -9648,8 +9647,8 @@ sync_reviewer_failed_label() {
     if [ "$label_check_status" -eq 1 ]; then
       return 0
     fi
-    if ! gh pr edit "$pr_number_arg" --remove-label "$REVIEWER_FAILED_LABEL" >/dev/null; then
-      echo "WARN: failed to remove ${REVIEWER_FAILED_LABEL} label from PR #${pr_number_arg}; proceeding with reviewer loop" >&2
+    if ! workflow_command_with_safe_stderr gh pr edit "$pr_number_arg" --remove-label "$REVIEWER_FAILED_LABEL" >/dev/null; then
+      workflow_diagnostic "WARN: failed to remove ${REVIEWER_FAILED_LABEL} label from PR #${pr_number_arg}; proceeding with reviewer loop" >&2
     fi
   fi
 
@@ -9830,6 +9829,8 @@ append_compare_metrics_row() {
   local branch_name_arg="$2"
   local overall_result_arg="$3"
   shift 3
+  pr_number_arg="$(printf '%s' "$pr_number_arg" | workflow_redact_text)" || return 2
+  overall_result_arg="$(printf '%s' "$overall_result_arg" | workflow_redact_text)" || return 2
 
   local metrics_file
   metrics_file="$(workflow_repo_root)/docs/workflow/retro-metrics-platforms.md"
@@ -9850,8 +9851,8 @@ append_compare_metrics_row() {
   local -a platform_names=()
   local -a verdict_tokens=()
   while [ "$#" -ge 2 ]; do
-    platform_names+=("$1")
-    verdict_tokens+=("$2")
+    platform_names+=("$(printf '%s' "$1" | workflow_redact_text)") || return 2
+    verdict_tokens+=("$(printf '%s' "$2" | workflow_redact_text)") || return 2
     shift 2
   done
 
@@ -10009,9 +10010,9 @@ restore_regression_label_if_missing() {
       # output "false", causing a spurious re-apply. Use command substitution with
       # explicit exit-code capture instead, equivalent to pipefail on a single-stage
       # pipeline (gh --jq is one command, not a pipe).
-      if ! _rfr_has_label="$(gh pr view "$pr_number" --json labels \
+      if ! _rfr_has_label="$(workflow_command_with_safe_stderr gh pr view "$pr_number" --json labels \
           --jq '[.labels[].name] | any(. == "ready-for-regression")')"; then
-        echo "WARN: gh pr view failed for regression-label auto-restore (PR ${pr_number}); skipping" >&2
+        workflow_diagnostic "WARN: gh pr view failed for regression-label auto-restore (PR ${pr_number}); skipping" >&2
         return 0
       fi
       if [ "${_rfr_has_label:-}" = "false" ]; then
@@ -10028,7 +10029,7 @@ restore_regression_label_if_missing() {
         local _rfr_current_head_sha=""
         if ! _rfr_current_head_sha="$(gh pr view "$pr_number" --json headRefOid --jq '.headRefOid // ""' 2>/dev/null)" \
             || [ -z "${_rfr_current_head_sha:-}" ]; then
-          echo "WARN: could not resolve current head for ready-for-regression restore on PR #${pr_number}; skipping restore." >&2
+          workflow_diagnostic "WARN: could not resolve current head for ready-for-regression restore on PR #${pr_number}; skipping restore." >&2
           return 0
         fi
         local _rfr_latest_summary_record=""
@@ -10065,12 +10066,12 @@ restore_regression_label_if_missing() {
             _rfr_restore_allowed=1
           fi
         else
-          echo "WARN: gh api failed for summary-comment gate on PR ${pr_number}; failing open — restoring label." >&2
+          workflow_diagnostic "WARN: gh api failed for summary-comment gate on PR ${pr_number}; failing open — restoring label." >&2
           _rfr_restore_allowed=1
           _rfr_restore_reason="summary-comment lookup failed; fail-open restore"
         fi
         if [ "${_rfr_restore_allowed:-0}" -eq 1 ]; then
-          echo "INFO: ready-for-regression label missing on PR #${pr_number} (${branch_name}); ${_rfr_restore_reason} — restoring before loop runs." >&2
+          workflow_diagnostic "INFO: ready-for-regression label missing on PR #${pr_number} (${branch_name}); ${_rfr_restore_reason} — restoring before loop runs." >&2
           # Route the mutation through apply-readiness-labels.sh (#1408) so the
           # reviewer/CI verdict gate runs on the label this path restores; a
           # direct `gh pr edit --add-label` would bypass it. Helper failure
@@ -10079,11 +10080,11 @@ restore_regression_label_if_missing() {
           # Do NOT redirect stderr here: surface errors so failures are
           # observable rather than silently swallowed.
           if ! bash "$SCRIPT_DIR/apply-readiness-labels.sh" \
-              --pr "$pr_number" --branch "$branch_name" --label "ready-for-regression"; then
-            echo "WARN: apply-readiness-labels.sh refused or failed to restore ready-for-regression on PR #${pr_number}; proceeding without it" >&2
+              --pr "$pr_number" --branch "$branch_name" --repo-root "${repo_root:-$(workflow_local_config_root 2>/dev/null)}" --label "ready-for-regression"; then
+            workflow_diagnostic "WARN: apply-readiness-labels.sh refused or failed to restore ready-for-regression on PR #${pr_number}; proceeding without it" >&2
           fi
         else
-          echo "INFO: ready-for-regression label missing on PR #${pr_number} (${branch_name}); no current-head clean reviewer-loop summary found — skipping restore." >&2
+          workflow_diagnostic "INFO: ready-for-regression label missing on PR #${pr_number} (${branch_name}); no current-head clean reviewer-loop summary found — skipping restore." >&2
         fi
       else
         # Label already present (PR #1818 F1 round 10): do NOT skip the helper.
@@ -10092,10 +10093,10 @@ restore_regression_label_if_missing() {
         # still current. Helper failure keeps WARN-and-proceed (the label
         # simply stays for the helper's own WARN output to address). Do NOT
         # redirect stderr here: surface errors so failures are observable.
-        echo "INFO: ready-for-regression label already present on PR #${pr_number} (${branch_name}); revalidating through apply-readiness-labels.sh." >&2
+        workflow_diagnostic "INFO: ready-for-regression label already present on PR #${pr_number} (${branch_name}); revalidating through apply-readiness-labels.sh." >&2
         if ! bash "$SCRIPT_DIR/apply-readiness-labels.sh" \
-            --pr "$pr_number" --branch "$branch_name" --label "ready-for-regression"; then
-          echo "WARN: apply-readiness-labels.sh refused or failed to revalidate the existing ready-for-regression on PR #${pr_number}; proceeding without change" >&2
+            --pr "$pr_number" --branch "$branch_name" --repo-root "${repo_root:-$(workflow_local_config_root 2>/dev/null)}" --label "ready-for-regression"; then
+          workflow_diagnostic "WARN: apply-readiness-labels.sh refused or failed to revalidate the existing ready-for-regression on PR #${pr_number}; proceeding without change" >&2
         fi
       fi
       ;;
@@ -10106,7 +10107,7 @@ restore_regression_label_if_missing() {
 doc_branch_default_max_wait() {
   local configured="${PR_REVIEW_LOOP_DOC_MAX_WAIT:-180}"
   if ! [[ "$configured" =~ ^[1-9][0-9]*$ ]]; then
-    echo "WARN: PR_REVIEW_LOOP_DOC_MAX_WAIT must be a positive integer; defaulting to 180" >&2
+    workflow_diagnostic "WARN: PR_REVIEW_LOOP_DOC_MAX_WAIT must be a positive integer; defaulting to 180" >&2
     configured=180
   fi
   printf '%s\n' "$configured"
@@ -10115,7 +10116,7 @@ doc_branch_default_max_wait() {
 codex_github_default_max_wait() {
   local configured="${CODEX_GITHUB_MAX_WAIT:-1800}"
   if ! [[ "$configured" =~ ^[1-9][0-9]*$ ]]; then
-    echo "WARN: CODEX_GITHUB_MAX_WAIT must be a positive integer; defaulting to 1800" >&2
+    workflow_diagnostic "WARN: CODEX_GITHUB_MAX_WAIT must be a positive integer; defaulting to 1800" >&2
     configured=1800
   fi
   printf '%s\n' "$configured"
@@ -10125,7 +10126,7 @@ codex_github_default_poll_interval() {
   local configured="${CODEX_GITHUB_POLL_INTERVAL:-60}"
   local max_wait="$1"
   if ! [[ "$configured" =~ ^[1-9][0-9]*$ ]]; then
-    echo "WARN: CODEX_GITHUB_POLL_INTERVAL must be a positive integer; defaulting to 60" >&2
+    workflow_diagnostic "WARN: CODEX_GITHUB_POLL_INTERVAL must be a positive integer; defaulting to 60" >&2
     configured=60
   fi
   if [ "$configured" -ge "$max_wait" ]; then
@@ -10211,11 +10212,11 @@ reviewer_wait_budget_config_warnings() {
   while IFS= read -r key; do
     [ -n "$key" ] || continue
     if [ "$key" = "__flow__" ]; then
-      echo "WARN: review.wait_budgets must be a block mapping; ignored" >&2
+      workflow_diagnostic "WARN: review.wait_budgets must be a block mapping; ignored" >&2
       continue
     fi
     if ! reviewer_loop_is_supported_platform "$key"; then
-      echo "WARN: review.wait_budgets.${key} is not a supported platform; ignored" >&2
+      workflow_diagnostic "WARN: configuration validation error; key=review.wait_budgets" >&2
     fi
   done < <(workflow_config_review_wait_budget_keys "$cfg" 2>/dev/null || true)
   return 0
@@ -10235,7 +10236,7 @@ reviewer_wait_budget_configured() {
       return 0
     fi
     if [[ "$CODEX_GITHUB_MAX_WAIT" =~ ^[1-9][0-9]*$ ]]; then
-      echo "WARN: CODEX_GITHUB_MAX_WAIT value '${CODEX_GITHUB_MAX_WAIT}' is not a positive whole number of seconds (1-999999); ignored" >&2
+      workflow_diagnostic "WARN: configuration validation error; key=CODEX_GITHUB_MAX_WAIT" >&2
     else
       # Existing warning, emitted by the unchanged value source.
       codex_github_default_max_wait >/dev/null
@@ -10256,11 +10257,11 @@ reviewer_wait_budget_configured() {
     [ "$present" -eq 1 ] || return 0
   fi
   if ! reviewer_wait_seconds_is_valid "$value"; then
-    echo "WARN: review.wait_budgets.${platform} value '${value}' is not a positive whole number of seconds (1-999999); using the built-in default" >&2
+    workflow_diagnostic "WARN: configuration validation error; key=review.wait_budgets" >&2
     return 0
   fi
   if [ "$platform" = "claude-code-action" ] && [ "$value" -gt "$REVIEWER_LOOP_CLAUDE_CODE_ACTION_MAX_WAIT" ]; then
-    echo "WARN: review.wait_budgets.claude-code-action value '${value}' exceeds the companion's ${REVIEWER_LOOP_CLAUDE_CODE_ACTION_MAX_WAIT}-second maximum; using the built-in default" >&2
+    workflow_diagnostic "WARN: configuration validation error; key=review.wait_budgets.claude-code-action" >&2
     return 0
   fi
   printf '%s\n' "$value"
@@ -10466,7 +10467,7 @@ reviewer_loop_small_findings_required_rounds() {
   local configured="${PR_REVIEW_LOOP_SMALL_FINDINGS_STOP_ROUNDS:-2}"
 
   if ! [[ "$configured" =~ ^[1-9][0-9]*$ ]] || [ "$configured" -gt 999 ]; then
-    echo "WARN: PR_REVIEW_LOOP_SMALL_FINDINGS_STOP_ROUNDS must be an integer from 1-999; defaulting to 2" >&2
+    workflow_diagnostic "WARN: PR_REVIEW_LOOP_SMALL_FINDINGS_STOP_ROUNDS must be an integer from 1-999; defaulting to 2" >&2
     configured=2
   fi
 
@@ -10860,13 +10861,13 @@ reviewer_loop_repo_configured_platforms() {
     return 0
   fi
   local cfg="${config_file:-$(workflow_config_file)}"
-  if [ ! -f "$cfg" ]; then
-    return 0
-  fi
+  local resolved_platforms
+  resolved_platforms="$(WORKFLOW_APPLY_LOCAL_REVIEW_OVERRIDES=1 workflow_config_review_platforms "$cfg")" || return 2
   while IFS= read -r line; do
     line="$(trim "$line")"
     [ -n "$line" ] && printf '%s\n' "$line"
-  done < <(WORKFLOW_APPLY_LOCAL_REVIEW_OVERRIDES=1 workflow_config_review_platforms "$cfg")
+  done <<< "$resolved_platforms"
+  return 0
 }
 
 # reviewer_loop_compose_current_round_payload <history_payload> <iteration>
@@ -11141,7 +11142,7 @@ reviewer_loop_platform_pre_dispatch() {
       # contract, summary, or history — the same rule the ready-phase preflight
       # applies. The gate still ran: its live thread and baseline-check
       # conditions were satisfied for this head before the replay was allowed.
-      echo "INFO: expensive-gate passed for ${platform_name}; replaying the recorded current-head clean instead of dispatching" >&2
+      workflow_diagnostic "INFO: expensive-gate passed for ${platform_name}; replaying the recorded current-head clean instead of dispatching" >&2
       expensive_gate_last_platform=""
       expensive_gate_last_result=""
       expensive_gate_last_reason=""
@@ -11164,7 +11165,7 @@ reviewer_loop_platform_pre_dispatch() {
   # dispatch would have contributed.
   if [ "$stage_skip_replay" -eq 1 ] \
       && reviewer_loop_stage_skip_allowed_now "$platform_name" "$stage_skip_gate_state"; then
-    echo "INFO: skipping ${platform_name}: reviewer loop ledger already records it clean on ${loop_head_sha}" >&2
+    workflow_diagnostic "INFO: skipping ${platform_name}: reviewer loop ledger already records it clean on ${loop_head_sha}" >&2
     stage_skipped_platforms+=("$platform_name")
     reviewer_loop_platform_loop_should_break=0
     reviewer_loop_process_platform_output "$platform_name" "$platform_index" \
@@ -11336,7 +11337,15 @@ reviewer_loop_second_local_pass_before_ready_gate() {
   _sl_prior_payload="$(reviewer_loop_prior_history_payload_from_pr "$pr_number_arg")"
   _sl_next_iteration="$(printf '%s\n' "$_sl_prior_payload" | jq '(.entries // []) | length + 1' 2>/dev/null)" || _sl_next_iteration=1
   [[ "$_sl_next_iteration" =~ ^[0-9]+$ ]] || _sl_next_iteration=1
-  _sl_configured="$(reviewer_loop_repo_configured_platforms)"
+  _sl_configured="$(reviewer_loop_repo_configured_platforms)" || {
+    local_second_pass_reason="local_pass_unavailable"
+    aggregate_result="escalate"
+    aggregate_reason="local_pass_unavailable"
+    aggregate_output="$(printf 'RESULT=escalate\nREASON=local_pass_unavailable\nCOMMENT_COUNT=0\nBLOCKING_COUNT=0\nSUGGESTION_COUNT=0\n')"
+    aggregate_status=2
+    last_platform="local-ai-reviewer"
+    return 1
+  }
   _sl_composed="$(reviewer_loop_compose_current_round_payload "$_sl_prior_payload" "$_sl_next_iteration")"
   _sl_required="$(reviewer_loop_local_pass_required "$_sl_composed" "$loop_head_sha" "$_sl_configured")"
   local_second_pass_reason="$_sl_required"
@@ -11835,7 +11844,7 @@ reviewer_loop_print_blocking_from_unresolved_bot_threads() {
   local pr_number="$1"
   local repo="$2"
   local graphql_bot_login="$3"
-  local json st idx=0 path line body title row
+  local json st idx=0 path line body title row diagnostic_body
 
   set +e
   json="$(_reviewer_loop_blocking_unresolved_bot_threads_json \
@@ -11852,13 +11861,14 @@ reviewer_loop_print_blocking_from_unresolved_bot_threads() {
     path="$(printf '%s' "$row" | jq -r '.path // ""')"
     line="$(printf '%s' "$row" | jq -r '.line // 0')"
     body="$(printf '%s' "$row" | jq -r '.body // ""')"
-    title="$(printf '%s\n' "$body" | sed -n 's/^### //p;q')"
+    diagnostic_body="$(printf '%s' "$body" | workflow_redact_text)" || diagnostic_body="[diagnostic sanitization failed]"
+    title="$(printf '%s\n' "$diagnostic_body" | sed -n 's/^### //p;q')"
     if [ -z "$title" ]; then
-      title="$(printf '%.120s' "$(printf '%s\n' "$body" | tr '\n' ' ')")"
+      title="$(printf '%.120s' "$(printf '%s\n' "$diagnostic_body" | tr '\n' ' ')")"
     fi
     print_kv "BLOCKING_${idx}_PATH" "${path:-unknown}"
     print_kv "BLOCKING_${idx}_LINE" "$line"
-    print_kv_escaped "BLOCKING_${idx}_BODY" "$title"
+    workflow_diagnostic_kv_escaped "BLOCKING_${idx}_BODY" "$title"
   done < <(printf '%s\n' "$json" | jq -c '.[]?')
   return 0
 }
@@ -11890,7 +11900,7 @@ reviewer_loop_append_late_thread_missed_findings() {
   local pr_number="$1"
   local repo="$2"
   local platform_name bot_login graphql_bot_login count json head output_blob
-  local idx=0 row path line body title
+  local idx=0 row path line body title diagnostic_body
 
   for platform_name in "${platforms[@]:-}"; do
     bot_login="$(bot_login_for_platform "$platform_name")"
@@ -11929,9 +11939,10 @@ reviewer_loop_append_late_thread_missed_findings() {
       path="$(printf '%s' "$row" | jq -r '.path // ""')"
       line="$(printf '%s' "$row" | jq -r '.line // 0')"
       body="$(printf '%s' "$row" | jq -r '.body // ""')"
-      title="$(printf '%s\n' "$body" | sed -n 's/^### //p;q')"
+      diagnostic_body="$(printf '%s' "$body" | workflow_redact_text)" || diagnostic_body="[diagnostic sanitization failed]"
+      title="$(printf '%s\n' "$diagnostic_body" | sed -n 's/^### //p;q')"
       if [ -z "$title" ]; then
-        title="$(printf '%.120s' "$(printf '%s\n' "$body" | tr '\n' ' ')")"
+        title="$(printf '%.120s' "$(printf '%s\n' "$diagnostic_body" | tr '\n' ' ')")"
       fi
       output_blob="${output_blob}BLOCKING_${idx}_PATH=${path:-unknown}"$'\n'
       output_blob="${output_blob}BLOCKING_${idx}_LINE=${line}"$'\n'
@@ -12108,6 +12119,7 @@ reviewer_loop_missed_findings_from_history_payload() {
 # Render one summary line (<=200 chars) for a missed-finding record JSON object.
 reviewer_loop_missed_finding_summary_line() {
   local record_json="${1:-}"
+  record_json="$(printf '%s' "$record_json" | workflow_redact_json)" || return 2
   local reviewer short_sha blocking path_total state classification label
   local prefix suffix remainder_max budget named=0 path next_len rem rem_text line
   local -a paths=()
@@ -12766,7 +12778,9 @@ reviewer_loop_emit_local_ai_head_evidence_keys() {
   local local_ai_head_current=""
   local entry platform_name reviewed_head classification state
 
-  if [ "$(expensive_gate_local_ai_configured)" = "1" ]; then
+  local configured
+  configured="$(expensive_gate_local_ai_configured)" || return 2
+  if [ "$configured" = "1" ]; then
     local_ai_configured=1
   fi
 
@@ -12811,7 +12825,7 @@ reviewer_loop_history_current_head_sha() {
     # placeholder so this entry is always countable as its own distinct
     # event instead of silently vanishing from both counters.
     head_sha="unknown-$(date +%s 2>/dev/null || printf '0')-$$-${RANDOM:-0}"
-    echo "WARN: could not resolve current HEAD SHA for PR #${pr_number} while building a reviewer-loop history entry; using synthetic placeholder '$head_sha' so this cycle remains countable" >&2
+    workflow_diagnostic "WARN: could not resolve current HEAD SHA for PR #${pr_number} while building a reviewer-loop history entry; using synthetic placeholder '$head_sha' so this cycle remains countable" >&2
   fi
   printf '%s\n' "$head_sha"
 }
@@ -13251,7 +13265,8 @@ reviewer_loop_history_extract_preserved_section() {
 }
 
 reviewer_loop_history_append_to_summary() {
-  local comment_body="$1"
+  local comment_body
+  comment_body="$(printf '%s' "$1" | workflow_redact_text)" || return 2
   local existing_body="${2:-}"
   shift 2
   local payload
@@ -13286,14 +13301,14 @@ reviewer_loop_history_append_to_summary() {
         entries: []
       }' >"$_payload_tmp"
   fi
-  payload="$(cat "$_payload_tmp")"
+  payload="$(workflow_redact_file "$_payload_tmp" --json)" || { workflow_remove_diagnostic_file "$_payload_tmp"; return 2; }
   rm -f "$_payload_tmp"
 
   # #1651 AC-7a: when history cannot be appended and a prior block exists,
   # leave that block byte-for-byte unchanged — do not re-render a stub over it.
   if [ "${reviewer_loop_history_last_append_safe:-1}" -eq 0 ] \
       && [ "${reviewer_loop_history_had_prior_block:-0}" -eq 1 ]; then
-    prior_section="$(reviewer_loop_history_extract_preserved_section "$existing_body")"
+    prior_section="$(reviewer_loop_history_extract_preserved_section "$existing_body" | workflow_redact_text)" || return 2
     if [ -n "$prior_section" ]; then
       printf '%s\n\n%s\n' "$comment_body" "$prior_section"
       return 0
@@ -13779,7 +13794,7 @@ reviewer_loop_rewait_resolve() {
   reviewer_loop_rewait_state="$(reviewer_loop_no_verdict_rewait_state "$reviewer_loop_rewait_history_payload" "$loop_head_sha")"
   if [ "$reviewer_loop_rewait_state" = "rewait" ]; then
     reviewer_loop_rewait_mode=1
-    echo "INFO: re-wait mode — this run id already waited on ${loop_head_sha} with no verdict; recorded outstanding requests are adopted, not re-posted" >&2
+    workflow_diagnostic "INFO: re-wait mode — this run id already waited on ${loop_head_sha} with no verdict; recorded outstanding requests are adopted, not re-posted" >&2
   fi
   return 0
 }
@@ -13820,7 +13835,7 @@ reviewer_loop_rewait_log_no_recorded_request() {
   local platform="${1:-}" head="${2:-}"
   if [ "${reviewer_loop_rewait_mode:-0}" -eq 1 ] \
       && [ "${reviewer_loop_recorded_request_found:-0}" -ne 1 ]; then
-    echo "INFO: no recorded outstanding request for ${platform} on ${head:-the current head}; requesting a review" >&2
+    workflow_diagnostic "INFO: no recorded outstanding request for ${platform} on ${head:-the current head}; requesting a review" >&2
   fi
   return 0
 }
@@ -13977,7 +13992,7 @@ reviewer_loop_timing_summary_section() {
       || [ "${#platform_timing_records[@]}" -eq 0 ]; then
     return 0
   fi
-  timing_lines="$(printf '%s\n' "${platform_timing_records[@]}" | jq -r '
+  timing_lines="$(printf '%s\n' ${platform_timing_records[@]+"${platform_timing_records[@]}"} | jq -s . | workflow_redact_json | jq -c '.[]' | jq -r '
       def source_label:
         if . == "default" then "built-in default"
         elif . == "configured" then "configured"
@@ -14188,7 +14203,7 @@ reviewer_loop_resolve_max_cycles() {
     source="default"
   fi
   if ! [[ "$configured" =~ ^[1-9][0-9]{0,5}$ ]]; then
-    echo "WARN: max_cycles value '$configured' (source: $source) is not a positive integer within the supported range (1-999999); defaulting to 10" >&2
+    workflow_diagnostic "WARN: configuration validation error; key=review.max_cycles" >&2
     configured=10
   fi
   printf '%s\n' "$configured"
@@ -14219,7 +14234,7 @@ reviewer_loop_resolve_max_total_cycles() {
     source="default"
   fi
   if ! [[ "$configured" =~ ^[1-9][0-9]{0,5}$ ]]; then
-    echo "WARN: max_total_cycles value '$configured' (source: $source) is not a positive integer within the supported range (1-999999); defaulting to 25" >&2
+    workflow_diagnostic "WARN: configuration validation error; key=review.max_total_cycles" >&2
     configured=25
   fi
   printf '%s\n' "$configured"
@@ -14376,7 +14391,7 @@ reviewer_loop_resolve_cycle_counts() {
   fi
 
   if ! repo="$(repo_slug 2>/dev/null)" || [ -z "$repo" ]; then
-    echo "WARN: could not resolve repo slug while resolving reviewer cycle counts for PR #${pr_number_arg}; treating prior cycle counts as unavailable" >&2
+    workflow_diagnostic "WARN: could not resolve repo slug while resolving reviewer cycle counts for PR #${pr_number_arg}; treating prior cycle counts as unavailable" >&2
     printf '%s %s\n' -1 -1
     return 0
   fi
@@ -14411,11 +14426,11 @@ reviewer_loop_resolve_cycle_counts() {
       break
     fi
     if [ "$attempt" -gt "$max_retries" ]; then
-      echo "WARN: failed to fetch existing summary comments for PR ${pr_number_arg} while resolving reviewer cycle counts (attempt $attempt/$((max_retries + 1))); treating prior cycle counts as unavailable" >&2
+      workflow_diagnostic "WARN: failed to fetch existing summary comments for PR ${pr_number_arg} while resolving reviewer cycle counts (attempt $attempt/$((max_retries + 1))); treating prior cycle counts as unavailable" >&2
       printf '%s %s\n' -1 -1
       return 0
     fi
-    echo "WARN: failed to fetch existing summary comments for PR ${pr_number_arg} while resolving reviewer cycle counts (attempt $attempt/$((max_retries + 1))) — retrying" >&2
+    workflow_diagnostic "WARN: failed to fetch existing summary comments for PR ${pr_number_arg} while resolving reviewer cycle counts (attempt $attempt/$((max_retries + 1))) — retrying" >&2
     [ "$retry_wait" -gt 0 ] && sleep "$retry_wait"
   done
 
@@ -14523,11 +14538,8 @@ _check_release_pr_guard() {
 #
 # Prints the directory whose .ai-dev-workflow.local.yaml carries the review
 # policy for this run, or nothing when the policy is the shared config. The
-# resolver reports LOCAL_OVERRIDE_FILE, which is the initiating root's own file
-# or — when the initiating root is a linked worktree without one — the main
-# clone's (#1560). Printing the file's directory rather than the initiating
-# root keeps the exported WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT pointing at a
-# directory that actually holds the file.
+# resolver reports only the deliberately selected file. Validate the entire
+# selected source before exporting its directory to a handoff.
 resolve_local_review_override_root() {
   local initiating_root="$1"
   local caller_override_root="${WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT:-}"
@@ -14536,15 +14548,14 @@ resolve_local_review_override_root() {
   local override_file=""
 
   if [ -n "$caller_override_root" ]; then
-    if [ ! -d "$caller_override_root" ]; then
-      return 1
-    fi
-    printf '%s\n' "$caller_override_root"
+    local selected_file
+    selected_file="$(workflow_command_with_safe_stderr python3 "$(workflow_config_resolver_script 2>/dev/null)" local-source --repo-root "$initiating_root")" || return 2
+    dirname -- "$selected_file"
     return 0
   fi
 
   if ! override_context="$(workflow_review_override_context "$initiating_root")"; then
-    return 1
+    return 2
   fi
   override_source="$(workflow_context_value "LOCAL_OVERRIDE_SOURCE" "$override_context")"
   override_file="$(workflow_context_value "LOCAL_OVERRIDE_FILE" "$override_context")"
@@ -14842,7 +14853,7 @@ reviewer_loop_dispatch_pr_policy() {
   fi
 
   if dispatch_err="$(
-      gh workflow run pr-policy.yml \
+      workflow_command_with_safe_stderr gh workflow run pr-policy.yml \
         --repo "$repo_arg" \
         --ref "$default_branch" \
         -f "pr_number=${pr_number_arg}" 2>&1
@@ -14851,6 +14862,9 @@ reviewer_loop_dispatch_pr_policy() {
     return 0
   fi
 
+  # Both captured streams become diagnostics on failure. Redact complete values
+  # before collapsing whitespace (including multi-line private-key blocks).
+  dispatch_err="$(printf '%s' "$dispatch_err" | workflow_redact_text)" || dispatch_err="workflow_dispatch_failed"
   # Collapse multi-line gh errors into one loggable reason token.
   dispatch_err="$(printf '%s' "$dispatch_err" | tr '\n' ' ' | sed 's/[[:space:]]\{1,\}/ /g')"
   echo "PR_POLICY_DISPATCH=failed reason=${dispatch_err:-workflow_dispatch_failed}"
@@ -14889,7 +14903,7 @@ phase_after_clean_filtered_out=""
 require_option_value() {
   local option="$1"
   if [ "$#" -lt 2 ] || [ -z "${2:-}" ]; then
-    echo "$option requires a value." >&2
+    workflow_diagnostic "$option requires a value." >&2
     usage >&2
     exit 64
   fi
@@ -14970,12 +14984,12 @@ while [ "$#" -gt 0 ]; do
       exit 0
       ;;
     -*)
-      echo "Unknown option: $1" >&2
+      workflow_diagnostic "Unknown option: $1" >&2
       exit 64
       ;;
     *)
       if [ -n "$pr_number" ]; then
-        echo "Only one PR number may be provided." >&2
+        workflow_diagnostic "Only one PR number may be provided." >&2
         exit 64
       fi
       pr_number="$1"
@@ -14988,13 +15002,15 @@ done
 # before any gh call, so no review request is posted for a run that could
 # never wait correctly. 1-999999 keeps the budget inside bash integer tests.
 if [ -n "$max_wait_override" ] && ! reviewer_wait_seconds_is_valid "$max_wait_override"; then
-  echo "--max-wait must be a positive whole number of seconds (1-999999) (got '${max_wait_override}')." >&2
+  workflow_diagnostic "ERROR: configuration validation error; key=--max-wait" >&2
   usage >&2
   exit 64
 fi
 
+workflow_bind_local_config_root "$repo_root" || exit 2
+repo_root="$(workflow_local_config_root)"
 if ! local_review_override_root="$(resolve_local_review_override_root "$repo_root")"; then
-  echo "ERROR: could not resolve the initiating checkout's local reviewer policy." >&2
+  workflow_diagnostic "ERROR: could not resolve the initiating checkout's local reviewer policy." >&2
   exit 2
 fi
 if [ -n "$local_review_override_root" ]; then
@@ -15017,7 +15033,7 @@ if [ -n "$repo_selector" ]; then
     target_github_repo="$(workflow_github_repo_from_context "$repo_context")"
   fi
   if [ -z "$target_github_repo" ]; then
-    echo "ERROR: could not resolve GitHub repository for PR review loop; pass --repo owner/repo or --product-repo <name>." >&2
+    workflow_diagnostic "ERROR: could not resolve GitHub repository for PR review loop; pass --repo owner/repo or --product-repo <name>." >&2
     exit 64
   fi
   export WORKFLOW_TARGET_GITHUB_REPO="$target_github_repo"
@@ -15071,7 +15087,7 @@ if [ -z "$_ownership_expected_branch" ]; then
     print_kv PR_OWNERSHIP_BRANCH_SOURCE "$_ownership_branch_source"
     print_kv PR_OWNERSHIP_CHECKOUT_BRANCH "${_ownership_expected_branch:-<detached-or-unreadable>}"
     print_kv PR_OWNERSHIP_REQUIRED_ACTION "Pass --branch <item-branch>, or run from the item's workflow-branch checkout (or pass its --repo-root)."
-    echo "STOP: no --branch was given and ${_ownership_checkout} is not on a workflow branch (${_ownership_expected_branch:-detached HEAD or not a checkout}), so PR #${pr_number} cannot be verified; no reviewer ran and the PR was not modified." >&2
+    workflow_diagnostic "STOP: no --branch was given and ${_ownership_checkout} is not on a workflow branch (${_ownership_expected_branch:-detached HEAD or not a checkout}), so PR #${pr_number} cannot be verified; no reviewer ran and the PR was not modified." >&2
     exit 2
   fi
 fi
@@ -15154,8 +15170,8 @@ if [ "$_ownership_status" -ne 0 ]; then
   # grep would abort this block under `set -e` before the exit 2 below.
   printf '%s\n' "$_ownership_output" \
     | awk '/^(RESULT|PR_HEAD_BRANCH|PR_HEAD_REPO|MISMATCH|REQUIRED_ACTION)=/ { print "PR_OWNERSHIP_" $0 }'
-  echo "STOP: PR #${pr_number} was not verified as the PR of branch '${_ownership_expected_branch}'; no reviewer ran and the PR was not modified." >&2
-  printf '%s\n' "$_ownership_output" | awk '/^(REFUSED|ERROR):/' >&2
+  workflow_diagnostic "STOP: PR #${pr_number} was not verified as the PR of branch '${_ownership_expected_branch}'; no reviewer ran and the PR was not modified." >&2
+  printf '%s\n' "$_ownership_output" | awk '/^(REFUSED|ERROR):/' | workflow_redact_text >&2
   exit 2
 fi
 print_kv PR_OWNERSHIP_RESULT owned
@@ -15239,7 +15255,7 @@ EOF
         gh api "repos/$_repo/issues/$_pr_number/comments" --paginate 2>/dev/null \
           | reviewer_loop_history_select_summary_record
       )"; then
-      echo "WARN: failed to fetch existing summary comments for PR ${_pr_number}; will create a new comment with unavailable history" >&2
+      workflow_diagnostic "WARN: failed to fetch existing summary comments for PR ${_pr_number}; will create a new comment with unavailable history" >&2
       _existing_comment_record=""
       _existing_comment_body="$(reviewer_loop_history_unavailable_stub_body comment_read_failed)"
     fi
@@ -15267,7 +15283,7 @@ EOF
     if gh pr comment "$_pr_number" --body-file "$_body_tmpfile" >/dev/null 2>&1; then
       _comment_posted=1
     else
-      echo "WARN: failed to post release guard summary comment for PR ${_pr_number}" >&2
+      workflow_diagnostic "WARN: failed to post release guard summary comment for PR ${_pr_number}" >&2
     fi
     rm -f "$_body_tmpfile"
   fi
@@ -15282,9 +15298,9 @@ EOF
 }
 
 if [ "$_release_guard_fired" -eq 0 ]; then
-  echo "Release PR detected — reviewer loop skipped." >&2
-  echo "Review happens on develop-targeting feature/fix PRs, not on release/* or hotfix/* branches." >&2
-  echo "Release readiness path: validate release artifacts → run pr-ci-loop.sh → apply ready-for-human-review when CI is green." >&2
+  workflow_diagnostic "Release PR detected — reviewer loop skipped." >&2
+  workflow_diagnostic "Review happens on develop-targeting feature/fix PRs, not on release/* or hotfix/* branches." >&2
+  workflow_diagnostic "Release readiness path: validate release artifacts → run pr-ci-loop.sh → apply ready-for-human-review when CI is green." >&2
   # Remove any stale reviewer-failed label left from a prior failed run so the
   # PR is not misleadingly labeled after a clean release-guard skip exit.
   sync_reviewer_failed_label "$pr_number" 0
@@ -15316,7 +15332,7 @@ if [ "$_pr_base_exit" -eq 0 ]; then
   _pr_base="$_pr_base_raw"
 elif ! printf '%s\n' "$_pr_base_raw" | grep -qi "Could not resolve\|not found"; then
   printf 'WARNING: failed to resolve PR base branch (exit %d): %s — falling back to working-tree config\n' \
-    "$_pr_base_exit" "$_pr_base_raw" >&2
+    "$_pr_base_exit" "$_pr_base_raw" | workflow_redact_text >&2
 fi
 if [ -n "$_pr_base" ]; then
   if _PR_CONFIG_TMPFILE="$(mktemp 2>/dev/null)"; then
@@ -15330,16 +15346,15 @@ if [ -n "$_pr_base" ]; then
   fi
 fi
 config_file="${_PR_CONFIG_TMPFILE:-$(workflow_config_file)}"
-if [ -f "$config_file" ]; then
-  if [ "$review_lifecycle_duplicate_warnings_emitted" -eq 0 ]; then
-    WORKFLOW_APPLY_LOCAL_REVIEW_OVERRIDES=1 emit_review_lifecycle_duplicate_warnings "$config_file"
-    review_lifecycle_duplicate_warnings_emitted=1
-  fi
-  while IFS= read -r line; do
-    line="$(trim "$line")"
-    [ -n "$line" ] && repo_review_platforms+=("$line")
-  done < <(WORKFLOW_APPLY_LOCAL_REVIEW_OVERRIDES=1 workflow_config_review_platforms "$config_file")
+if [ "$review_lifecycle_duplicate_warnings_emitted" -eq 0 ]; then
+  WORKFLOW_APPLY_LOCAL_REVIEW_OVERRIDES=1 emit_review_lifecycle_duplicate_warnings "$config_file" || exit 2
+  review_lifecycle_duplicate_warnings_emitted=1
 fi
+resolved_repo_platforms="$(WORKFLOW_APPLY_LOCAL_REVIEW_OVERRIDES=1 workflow_config_review_platforms "$config_file")" || exit 2
+while IFS= read -r line; do
+  line="$(trim "$line")"
+  [ -n "$line" ] && repo_review_platforms+=("$line")
+done <<< "$resolved_repo_platforms"
 
 if [ "${#platforms[@]}" -eq 0 ] && [ "${#repo_review_platforms[@]}" -gt 0 ]; then
   platforms=("${repo_review_platforms[@]}")
@@ -15347,16 +15362,15 @@ fi
 
 if [ "${#phase_after_clean_platforms[@]}" -eq 0 ]; then
   config_file="${config_file:-$(workflow_config_file)}"
-  if [ -f "$config_file" ]; then
-    if [ "$review_lifecycle_duplicate_warnings_emitted" -eq 0 ]; then
-      WORKFLOW_APPLY_LOCAL_REVIEW_OVERRIDES=1 emit_review_lifecycle_duplicate_warnings "$config_file"
-      review_lifecycle_duplicate_warnings_emitted=1
-    fi
-    while IFS= read -r line; do
-      line="$(trim "$line")"
-      [ -n "$line" ] && phase_after_clean_platforms+=("$line")
-    done < <(WORKFLOW_APPLY_LOCAL_REVIEW_OVERRIDES=1 workflow_config_review_phase_after_clean_platforms "$config_file")
+  if [ "$review_lifecycle_duplicate_warnings_emitted" -eq 0 ]; then
+    WORKFLOW_APPLY_LOCAL_REVIEW_OVERRIDES=1 emit_review_lifecycle_duplicate_warnings "$config_file" || exit 2
+    review_lifecycle_duplicate_warnings_emitted=1
   fi
+  resolved_ready_platforms="$(WORKFLOW_APPLY_LOCAL_REVIEW_OVERRIDES=1 workflow_config_review_phase_after_clean_platforms "$config_file")" || exit 2
+  while IFS= read -r line; do
+    line="$(trim "$line")"
+    [ -n "$line" ] && phase_after_clean_platforms+=("$line")
+  done <<< "$resolved_ready_platforms"
 fi
 
 print_kv REVIEW_POLICY_SOURCE "$review_policy_source"
@@ -15378,11 +15392,11 @@ reorder_expensive_reviewers_last
 
 if [ "${#platforms[@]}" -gt 0 ]; then
   require_gh
-  cd "$repo_root" || exit 1
+  workflow_command_with_safe_stderr cd "$repo_root" || exit 1
 
   if [ -z "$branch_name" ]; then
-    if ! branch_name="$(gh pr view "$pr_number" --json headRefName --jq '.headRefName')"; then
-      echo "ERROR: could not resolve PR #$pr_number head branch." >&2
+    if ! branch_name="$(workflow_command_with_safe_stderr gh pr view "$pr_number" --json headRefName --jq '.headRefName')"; then
+      workflow_diagnostic "ERROR: could not resolve PR #$pr_number head branch." >&2
       exit 1
     fi
   fi
@@ -15410,11 +15424,11 @@ fi
 large_diff_threshold="${LARGE_DIFF_THRESHOLD:-50}"
 large_diff_max_wait="${LARGE_DIFF_MAX_WAIT:-2400}"
 if ! [[ "$large_diff_threshold" =~ ^[1-9][0-9]*$ ]]; then
-  echo "WARN: LARGE_DIFF_THRESHOLD must be a positive integer; defaulting to 50" >&2
+  workflow_diagnostic "WARN: LARGE_DIFF_THRESHOLD must be a positive integer; defaulting to 50" >&2
   large_diff_threshold=50
 fi
 if ! reviewer_wait_seconds_is_valid "$large_diff_max_wait"; then
-  echo "WARN: LARGE_DIFF_MAX_WAIT must be a positive integer; defaulting to 2400" >&2
+  workflow_diagnostic "WARN: LARGE_DIFF_MAX_WAIT must be a positive integer; defaulting to 2400" >&2
   large_diff_max_wait=2400
 fi
 changed_files_count=-1
@@ -15426,7 +15440,7 @@ if [ -z "$max_wait_override" ] && ! reviewer_wait_branch_is_documentation "$bran
       --jq '.changed_files // -1' 2>/dev/null)"
     set -e
     if ! [[ "${changed_files_count:-}" =~ ^-?[0-9]+$ ]]; then
-      echo "WARN: failed to fetch changed_files count for PR #$pr_number — skipping large-diff extension" >&2
+      workflow_diagnostic "WARN: failed to fetch changed_files count for PR #$pr_number — skipping large-diff extension" >&2
       changed_files_count=-1
     fi
   fi
@@ -15441,7 +15455,7 @@ if [ "${#platforms[@]}" -gt 0 ]; then
     read -r _wb_seconds _wb_source _wb_adjustment <<< "${reviewer_wait_budget_cache_values[$_wb_index]}"
     if [ "$_wb_adjustment" = "large_diff" ]; then
       large_diff_extended=1
-      echo "INFO: PR #$pr_number has ${changed_files_count} changed files (threshold: ${large_diff_threshold}) — extending the ${reviewer_wait_budget_cache_platforms[$_wb_index]} wait budget to ${_wb_seconds}s for large-diff poll window" >&2
+      workflow_diagnostic "INFO: PR #$pr_number has ${changed_files_count} changed files (threshold: ${large_diff_threshold}) — extending the ${reviewer_wait_budget_cache_platforms[$_wb_index]} wait budget to ${_wb_seconds}s for large-diff poll window" >&2
     fi
     _wb_index=$((_wb_index + 1))
   done
@@ -15517,7 +15531,7 @@ loop_head_sha=""
 if [ -n "$pr_number" ]; then
   if ! loop_head_sha="$(gh pr view "$pr_number" --json headRefOid --jq '.headRefOid' 2>/dev/null)"; then
     loop_head_sha=""
-    echo "WARN: could not read the PR head before dispatching reviewers; POST_CLEAN_HEAD_SHA will be empty and Protocol 91 Check 0.6 will refuse this verdict" >&2
+    workflow_diagnostic "WARN: could not read the PR head before dispatching reviewers; POST_CLEAN_HEAD_SHA will be empty and Protocol 91 Check 0.6 will refuse this verdict" >&2
   fi
 fi
 # Per-platform result tokens for the PR summary comment.
@@ -15683,7 +15697,7 @@ for index in "${!platforms[@]}"; do
           # EXPENSIVE_GATE_RESULT=dispatched/forced (or any new enum value) into
           # the machine-consumed stdout contract / summary / history. Deferrals
           # still emit the full EXPENSIVE_GATE_* block below.
-          echo "INFO: expensive-gate ready preflight passed for ${_eg_plat} (earlier_buckets); full gate still runs before dispatch" >&2
+          workflow_diagnostic "INFO: expensive-gate ready preflight passed for ${_eg_plat} (earlier_buckets); full gate still runs before dispatch" >&2
           expensive_gate_last_platform=""
           expensive_gate_last_result=""
           expensive_gate_last_reason=""
@@ -15939,7 +15953,7 @@ _ADVISORY_ENTRY_LINES_
         local _has_regression_label
         _has_regression_label="$(gh pr view "$pr_number" --json labels \
           --jq '[.labels[].name] | any(. == "ready-for-regression")' 2>/dev/null)" \
-          || { echo "WARN: gh pr view failed for ready-for-regression check (PR ${pr_number}); label check skipped" >&2; _has_regression_label=""; }
+          || { workflow_diagnostic "WARN: gh pr view failed for ready-for-regression check (PR ${pr_number}); label check skipped" >&2; _has_regression_label=""; }
         if [ "${_has_regression_label:-}" = "false" ]; then
           regression_label_section="
 
@@ -16110,7 +16124,7 @@ $(reviewer_loop_head_evidence_render "${loop_head_sha:-}" "${platform_reviewed_h
   # substituted body would patch over unappendable latest history (AC-7a).
   local _existing_read_failed=0
   _repo="$(repo_slug 2>/dev/null)" \
-    || { echo "WARN: repo_slug failed in _post_review_summary; will post new comment without update-in-place check" >&2; _repo=""; _existing_read_failed=1; }
+    || { workflow_diagnostic "WARN: repo_slug failed in _post_review_summary; will post new comment without update-in-place check" >&2; _repo=""; _existing_read_failed=1; }
   if [ -n "$_repo" ]; then
     _existing_comment_record="$(
       set -o pipefail
@@ -16118,7 +16132,7 @@ $(reviewer_loop_head_evidence_render "${loop_head_sha:-}" "${platform_reviewed_h
         | reviewer_loop_history_select_latest_summary_record
     )" \
       || {
-        echo "WARN: failed to fetch existing summary comments for PR ${pr_number}; will create a new comment with unavailable history" >&2
+        workflow_diagnostic "WARN: failed to fetch existing summary comments for PR ${pr_number}; will create a new comment with unavailable history" >&2
         _existing_comment_record=""
         _existing_comment_body="$(reviewer_loop_history_unavailable_stub_body comment_read_failed)"
         _existing_read_failed=1
@@ -16284,7 +16298,7 @@ EOF
         --input - <<< "$_patch_payload" >/dev/null 2>&1; then
       _comment_posted=1
     else
-      echo "WARN: failed to update existing summary comment ${_existing_comment_id} for PR ${pr_number}; falling back to create" >&2
+      workflow_diagnostic "WARN: failed to update existing summary comment ${_existing_comment_id} for PR ${pr_number}; falling back to create" >&2
     fi
   fi
   if [ "$_comment_posted" -eq 0 ]; then
@@ -16294,7 +16308,7 @@ EOF
     if gh pr comment "$pr_number" --body-file "$_body_tmpfile" >/dev/null 2>&1; then
       _comment_posted=1
     else
-      echo "WARN: failed to post reviewer loop summary comment for PR ${pr_number}" >&2
+      workflow_diagnostic "WARN: failed to post reviewer loop summary comment for PR ${pr_number}" >&2
     fi
     rm -f "$_body_tmpfile"
   fi
@@ -16340,6 +16354,10 @@ EOF
 }
 
 if [ -z "$last_platform" ]; then
+  local_ai_head_evidence_output="$(reviewer_loop_emit_local_ai_head_evidence_keys)" || {
+    printf 'configuration: configuration validation error; key=review.on_draft.runner\n' >&2
+    exit 2
+  }
   print_kv LOCAL_SECOND_PASS 0
   print_kv LOCAL_SECOND_PASS_REASON not_required
   print_kv STAGE_SKIPPED_PLATFORMS ""
@@ -16352,7 +16370,7 @@ if [ -z "$last_platform" ]; then
   print_kv UNRESOLVED_THREAD_COUNT 0
   _post_review_summary "skipped" "not_configured" "none" "0" "0" "" "" "0" "" "0" "0" "" "0"
   sync_reviewer_failed_label "$pr_number" 0
-  reviewer_loop_emit_local_ai_head_evidence_keys
+  printf '%s\n' "$local_ai_head_evidence_output"
   exit 0
 fi
 
@@ -16441,7 +16459,7 @@ if [ "$aggregate_result" = "clean" ] || [ "$aggregate_result" = "skipped" ] \
       thread_check_status=$?
       set -e
       if [ "$thread_check_status" -eq 3 ] && [ "$thread_audit_attempt" -le "$thread_audit_max_retries" ]; then
-        echo "WARN: check_unresolved_threads GraphQL failure (aggregate gate, attempt $thread_audit_attempt/$thread_audit_max_retries) — retrying" >&2
+        workflow_diagnostic "WARN: check_unresolved_threads GraphQL failure (aggregate gate, attempt $thread_audit_attempt/$thread_audit_max_retries) — retrying" >&2
         sleep 5
         continue
       fi
@@ -16451,7 +16469,7 @@ if [ "$aggregate_result" = "clean" ] || [ "$aggregate_result" = "skipped" ] \
       # Exit 2 = page-cap exceeded. Escalate: the audit was incomplete so we cannot
       # confirm threads past page 10 are resolved. This is not a fixable finding —
       # sending it through the fixer loop is pointless. Hard-stop for human inspection.
-      echo "WARN: check_unresolved_threads exceeded page cap — escalating for manual inspection" >&2
+      workflow_diagnostic "WARN: check_unresolved_threads exceeded page cap — escalating for manual inspection" >&2
       aggregate_result="escalate"
       aggregate_reason="unresolved_thread_check_incomplete"
       unresolved_thread_count=-1
@@ -16460,7 +16478,7 @@ if [ "$aggregate_result" = "clean" ] || [ "$aggregate_result" = "skipped" ] \
       # Escalate: we cannot confirm threads are resolved, so RESULT=clean must not be
       # emitted. Never degrade gracefully — a silent bypass of the thread audit can
       # allow PRs with unresolved review threads to be labeled ready-for-human-review.
-      echo "ERROR: check_unresolved_threads failed (exit $thread_check_status, $thread_audit_attempt attempts / $thread_audit_max_retries retries) — escalating (thread audit required)" >&2
+      workflow_diagnostic "ERROR: check_unresolved_threads failed (exit $thread_check_status, $thread_audit_attempt attempts / $thread_audit_max_retries retries) — escalating (thread audit required)" >&2
       aggregate_result="escalate"
       aggregate_reason="review_thread_audit_failed"
       unresolved_thread_count=-1
@@ -16503,7 +16521,7 @@ if [ "$aggregate_result" = "clean" ] || [ "$aggregate_result" = "skipped" ] \
     if [ "$(printf '%s' "$_sf_terminal_json" | jq -r '.small_findings_stop // false')" = "true" ]; then
       aggregate_status=0
       small_findings_stop=1
-      echo "INFO: small-findings stop — ${small_findings_rounds}/${small_findings_required_rounds} consecutive rounds only touched small non-shipped findings on the current head; strict thread audit found zero unresolved threads" >&2
+      workflow_diagnostic "INFO: small-findings stop — ${small_findings_rounds}/${small_findings_required_rounds} consecutive rounds only touched small non-shipped findings on the current head; strict thread audit found zero unresolved threads" >&2
     fi
     unset reviewer_loop_latest_summary_body _sf_terminal_json
   fi
@@ -16561,9 +16579,9 @@ if [ "$aggregate_result" = "clean" ] \
   print_kv POST_CLEAN_SETTLE_QUIET_SECONDS "$settle_quiet"
   print_kv POST_CLEAN_REQUIRE_REVIEW "$settle_require_review"
   if [ "$settle_require_review" -eq 1 ]; then
-    echo "INFO: post-clean settle — awaiting a submitted review for this HEAD, then ${settle_quiet}s of silence (max ${settle_window}s), polling every ${settle_poll}s" >&2
+    workflow_diagnostic "INFO: post-clean settle — awaiting a submitted review for this HEAD, then ${settle_quiet}s of silence (max ${settle_window}s), polling every ${settle_poll}s" >&2
   else
-    echo "INFO: post-clean settle — requiring ${settle_quiet}s of platform silence (max ${settle_window}s), polling every ${settle_poll}s" >&2
+    workflow_diagnostic "INFO: post-clean settle — requiring ${settle_quiet}s of platform silence (max ${settle_window}s), polling every ${settle_poll}s" >&2
   fi
   # since_iso for the settle probes is the HEAD commit time, not "now": a review
   # submitted between the loop starting and the settle beginning still counts as
@@ -16583,7 +16601,7 @@ if [ "$aggregate_result" = "clean" ] \
   fi
   if [ -z "$settle_head_iso" ]; then
     settle_head_iso="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
-    echo "WARN: post-clean settle — head commit time unavailable; a submitted review must land after ${settle_head_iso} to count" >&2
+    workflow_diagnostic "WARN: post-clean settle — head commit time unavailable; a submitted review must land after ${settle_head_iso} to count" >&2
   fi
   settle_review_seen=0
   # The head this settle is about. Emitted as POST_CLEAN_HEAD_SHA so Protocol
@@ -16616,13 +16634,13 @@ if [ "$aggregate_result" = "clean" ] \
     set -e
 
     if [ "$late_thread_check_status" -eq 2 ]; then
-      echo "WARN: post-clean settle: check_unresolved_threads exceeded page cap — escalating" >&2
+      workflow_diagnostic "WARN: post-clean settle: check_unresolved_threads exceeded page cap — escalating" >&2
       aggregate_result="escalate"
       aggregate_reason="post_clean_recheck_thread_check_incomplete"
       late_thread_count=-1
       break
     elif [ "$late_thread_check_status" -ne 0 ]; then
-      echo "WARN: post-clean settle: check_unresolved_threads failed (exit $late_thread_check_status) — escalating" >&2
+      workflow_diagnostic "WARN: post-clean settle: check_unresolved_threads failed (exit $late_thread_check_status) — escalating" >&2
       aggregate_result="escalate"
       aggregate_reason="post_clean_recheck_thread_audit_failed"
       late_thread_count=-1
@@ -16631,7 +16649,7 @@ if [ "$aggregate_result" = "clean" ] \
 
     late_thread_count="$late_thread_check_output"
     if [ "$late_thread_count" -gt 0 ]; then
-      echo "INFO: post-clean settle — found $late_thread_count late unresolved thread(s) after ${settle_elapsed}s; switching to needs_fixes" >&2
+      workflow_diagnostic "INFO: post-clean settle — found $late_thread_count late unresolved thread(s) after ${settle_elapsed}s; switching to needs_fixes" >&2
       aggregate_result="needs_fixes"
       aggregate_reason="late_review_threads"
       reviewer_loop_append_late_thread_missed_findings "$pr_number" "$settle_repo"
@@ -16651,24 +16669,24 @@ if [ "$aggregate_result" = "clean" ] \
     if [ "$settle_activity" = "-1" ]; then
       # A failed probe is not silence. Do not let it satisfy the quiet period.
       settle_probe_failed=1
-      echo "WARN: post-clean settle: activity probe failed; not counting this interval as quiet" >&2
+      workflow_diagnostic "WARN: post-clean settle: activity probe failed; not counting this interval as quiet" >&2
     elif [ "${settle_activity:-0}" -gt 0 ]; then
       settle_activity_seen=1
       settle_quiet_elapsed=0
       settle_since="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
-      echo "INFO: post-clean settle — $settle_activity new platform action(s) at ${settle_elapsed}s; quiet timer reset" >&2
+      workflow_diagnostic "INFO: post-clean settle — $settle_activity new platform action(s) at ${settle_elapsed}s; quiet timer reset" >&2
     elif [ "$settle_require_review" -eq 1 ] && [ "$settle_review_seen" -eq 0 ]; then
       # Silence before the review lands is the platform thinking, not finishing.
       # Do not let it accumulate toward the quiet period.
-      settle_review_probe="$(_bot_review_submitted_since "$settle_repo" "$pr_number" "$settle_head_iso" "$settle_head_sha" "${unresolved_bot_logins[@]}")"
+      settle_review_probe="$(_bot_review_submitted_since "$settle_repo" "$pr_number" "$settle_head_iso" "$settle_head_sha" ${unresolved_bot_logins[@]+"${unresolved_bot_logins[@]}"})"
       if [ "$settle_review_probe" = "1" ]; then
         settle_review_seen=1
-        echo "INFO: post-clean settle — submitted review detected at ${settle_elapsed}s; quiet period starts now" >&2
+        workflow_diagnostic "INFO: post-clean settle — submitted review detected at ${settle_elapsed}s; quiet period starts now" >&2
       elif [ "$settle_review_probe" = "-1" ]; then
         settle_probe_failed=1
-        echo "WARN: post-clean settle: review probe failed; not counting this interval as quiet" >&2
+        workflow_diagnostic "WARN: post-clean settle: review probe failed; not counting this interval as quiet" >&2
       else
-        echo "INFO: post-clean settle — no submitted review yet at ${settle_elapsed}s of ${settle_window}s; still waiting" >&2
+        workflow_diagnostic "INFO: post-clean settle — no submitted review yet at ${settle_elapsed}s of ${settle_window}s; still waiting" >&2
       fi
     else
       settle_quiet_elapsed=$((settle_quiet_elapsed + settle_poll))
@@ -16678,7 +16696,7 @@ if [ "$aggregate_result" = "clean" ] \
   if [ "$aggregate_result" = "clean" ]; then
     if [ "$settle_quiet_elapsed" -ge "$settle_quiet" ]; then
       print_kv POST_CLEAN_SETTLED 1
-      echo "INFO: post-clean settle — platform quiet for ${settle_quiet_elapsed}s; result remains clean" >&2
+      workflow_diagnostic "INFO: post-clean settle — platform quiet for ${settle_quiet_elapsed}s; result remains clean" >&2
     else
       # The window ran out before the quiet period was satisfied. The verdict is
       # still clean (no unresolved thread was ever found) but it is weaker than
@@ -16688,10 +16706,10 @@ if [ "$aggregate_result" = "clean" ] \
       print_kv POST_CLEAN_SETTLE_TIMEOUT 1
       if [ "$settle_require_review" -eq 1 ] && [ "$settle_review_seen" -eq 0 ]; then
         print_kv POST_CLEAN_NO_SUBMITTED_REVIEW 1
-        echo "WARN: post-clean settle — window (${settle_window}s) exhausted and the platform never submitted a review for this HEAD." >&2
-        echo "  Its walkthrough comment alone does not mean it finished. Verdict is clean but UNSETTLED — re-query threads before labelling." >&2
+        workflow_diagnostic "WARN: post-clean settle — window (${settle_window}s) exhausted and the platform never submitted a review for this HEAD." >&2
+        workflow_diagnostic "  Its walkthrough comment alone does not mean it finished. Verdict is clean but UNSETTLED — re-query threads before labelling." >&2
       else
-        echo "WARN: post-clean settle — window (${settle_window}s) exhausted before ${settle_quiet}s of silence; the platform was still active. Verdict is clean but UNSETTLED." >&2
+        workflow_diagnostic "WARN: post-clean settle — window (${settle_window}s) exhausted before ${settle_quiet}s of silence; the platform was still active. Verdict is clean but UNSETTLED." >&2
       fi
     fi
     [ "$settle_probe_failed" -eq 1 ] && print_kv POST_CLEAN_ACTIVITY_PROBE_FAILED 1
@@ -16736,7 +16754,7 @@ if [ "$aggregate_result" = "clean" ] && [ -n "$pr_number" ] && [ -n "$loop_head_
   live_head_sha=""
   if live_head_sha="$(gh pr view "$pr_number" --json headRefOid --jq '.headRefOid' 2>/dev/null)" \
     && [ -n "$live_head_sha" ] && [ "$live_head_sha" != "$loop_head_sha" ]; then
-    echo "WARN: PR head moved from ${loop_head_sha} to ${live_head_sha} while this loop ran; the clean verdict describes the old head — re-run the loop for the current HEAD" >&2
+    workflow_diagnostic "WARN: PR head moved from ${loop_head_sha} to ${live_head_sha} while this loop ran; the clean verdict describes the old head — re-run the loop for the current HEAD" >&2
     aggregate_result="needs_fixes"
     aggregate_reason="head_moved_during_run"
   fi
@@ -16798,15 +16816,15 @@ if [ "$aggregate_reason" = "head_moved_during_run" ]; then
   # count it (reviewer_loop_history_entries_count excludes this reason).
   :
 elif reviewer_loop_cycle_count_unavailable_should_escalate "$lifetime_cycle_count" "$aggregate_result"; then
-  echo "WARN: reviewer cycle counts could not be read (ledger unavailable after retries) with aggregate_result=$aggregate_result — escalating (cycle_count_unavailable) rather than allowing an unbounded number of unverifiable retries" >&2
+  workflow_diagnostic "WARN: reviewer cycle counts could not be read (ledger unavailable after retries) with aggregate_result=$aggregate_result — escalating (cycle_count_unavailable) rather than allowing an unbounded number of unverifiable retries" >&2
   aggregate_result="escalate"
   aggregate_reason="cycle_count_unavailable"
 elif reviewer_loop_cap_exceeded "$cycle_count" "$max_cycles" "$aggregate_result"; then
-  echo "WARN: reviewer per-run cycle count ($cycle_count) reached max_cycles ($max_cycles) for run_id=$current_run_id with aggregate_result=$aggregate_result — escalating (max_cycles_exceeded)" >&2
+  workflow_diagnostic "WARN: reviewer per-run cycle count ($cycle_count) reached max_cycles ($max_cycles) for run_id=$current_run_id with aggregate_result=$aggregate_result — escalating (max_cycles_exceeded)" >&2
   aggregate_result="escalate"
   aggregate_reason="max_cycles_exceeded"
 elif reviewer_loop_cap_exceeded "$lifetime_cycle_count" "$max_total_cycles" "$aggregate_result"; then
-  echo "WARN: reviewer lifetime cycle count ($lifetime_cycle_count) reached max_total_cycles ($max_total_cycles) with aggregate_result=$aggregate_result — escalating (max_total_cycles_exceeded)" >&2
+  workflow_diagnostic "WARN: reviewer lifetime cycle count ($lifetime_cycle_count) reached max_total_cycles ($max_total_cycles) with aggregate_result=$aggregate_result — escalating (max_total_cycles_exceeded)" >&2
   aggregate_result="escalate"
   aggregate_reason="max_total_cycles_exceeded"
 fi
@@ -16853,6 +16871,10 @@ fi
 #
 # Skipped for "skipped" (no ledger entry is ever written for that result —
 # see the not-configured early-exit path above, which never reaches here).
+local_ai_head_evidence_output="$(reviewer_loop_emit_local_ai_head_evidence_keys)" || {
+  printf 'configuration: configuration validation error; key=review.on_draft.runner\n' >&2
+  exit 2
+}
 if [ "$aggregate_result" != "skipped" ]; then
   _post_summary_exit=0
   _post_review_summary "$aggregate_result" "$aggregate_reason" \
@@ -16865,7 +16887,7 @@ if [ "$aggregate_result" != "skipped" ]; then
     "$phase_after_clean_blocking_platform" "$pre_after_clean_only" \
     "$advisory_checks_section" || _post_summary_exit=$?
   if reviewer_loop_persist_failure_should_escalate "$_post_summary_exit" "$aggregate_result" "$aggregate_reason"; then
-    echo "WARN: reviewer-loop summary comment could not be persisted for a dispatch-triggering result ($aggregate_result) — escalating (ledger_persist_failed) rather than letting an uncounted fixer/retry dispatch happen" >&2
+    workflow_diagnostic "WARN: reviewer-loop summary comment could not be persisted for a dispatch-triggering result ($aggregate_result) — escalating (ledger_persist_failed) rather than letting an uncounted fixer/retry dispatch happen" >&2
     aggregate_result="escalate"
     aggregate_reason="ledger_persist_failed"
   fi
@@ -16891,7 +16913,7 @@ if [ "$compare_mode" -eq 1 ] && [ "${#compare_verdicts[@]}" -gt 0 ]; then
   done
   append_compare_metrics_row "${_metrics_args[@]}" 2>/dev/null && \
     _compare_metrics_appended=1 || \
-    echo "WARN: append_compare_metrics_row failed — metrics row not written" >&2
+    workflow_diagnostic "WARN: append_compare_metrics_row failed — metrics row not written" >&2
   set -e
 fi
 
@@ -16931,7 +16953,7 @@ if [ -n "$aggregate_output" ]; then
   [ -n "$review_comment_id" ] && print_kv REVIEW_COMMENT_ID "$review_comment_id"
 fi
 
-reviewer_loop_emit_local_ai_head_evidence_keys
+printf '%s\n' "$local_ai_head_evidence_output"
 
 # _post_review_summary has already run above (using the pre-correction
 # aggregate_result as its own "result"/"reason" arguments intentionally —

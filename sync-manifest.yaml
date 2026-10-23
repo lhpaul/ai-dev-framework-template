@@ -297,6 +297,10 @@ categories:
     - path: CHANGELOG.md
       mode_scope: shared
       note: project maintains its own changelog; never overwrite
+    - path: changelog.d/
+      glob: "**/*"
+      mode_scope: shared
+      note: project-owned pending release fragments; template artifact checks are template-gated
     - path: .ai-dev-workflow.yaml
       mixed_content: true
       annotation_scheme: html_comments
@@ -503,6 +507,8 @@ required_additions:
 # entry needs a reason. Do not use this list to silence a real dependency: ship the
 # file in categories instead, or gate the assertion with workflow_template_is_template.
 sync_coverage_exemptions:
+  - path: .ai-dev-workflow.local.env.example
+    reason: runner-secret-prevention tests use this public filename only as synthetic Git ignore-engine input; its actual contents are never read
   - path: .coderabbit.yaml
     reason: repository-local CodeRabbit config (see its header); tests write their own fixture copies
   - path: docs/README.md

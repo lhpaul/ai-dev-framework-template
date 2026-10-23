@@ -42,15 +42,19 @@ with tempfile.TemporaryDirectory(prefix='review-yaml-parser-') as tmp:
             result = effective(source, 'review:\n  on_draft:\n    runner: '+flow+'\n')
             assert result['effective_runner_state'] == 'malformed', result
             assert result['effective_policy_state'] == 'unreadable', result
-            assert result['unreadable_file'] == str(source), result
+            assert result['unreadable_file'] == '', result
             passed += 1
         for token, value in (('":bad"', ':bad'), ("':bad'", ':bad'),
                              ('"#literal"', '#literal'), ('a:b', 'a:b'),
                              ('a#b', 'a#b'), ('foo "', 'foo "'),
                              ('"a\\e[2J"', 'a\x1b[2J')):
             result = effective(source, 'review:\n  on_draft:\n    runner: [codex,'+token+'] # comment\n')
-            assert result['effective_runner'] == ['codex', value], result
-            assert result['effective_runner_state'] == 'defined', result
+            if value == 'a\x1b[2J':
+                assert result['effective_runner'] == [], result
+                assert result['effective_runner_state'] == 'malformed', result
+            else:
+                assert result['effective_runner'] == ['codex', value], result
+                assert result['effective_runner_state'] == 'defined', result
             passed += 1
         for invalid in ('broken: "unterminated', 'broken: a: b', 'broken: %reserved',
                         'broken: [a[b]', 'broken: \x07', '# comment \x00'):
@@ -71,8 +75,9 @@ with tempfile.TemporaryDirectory(prefix='review-yaml-parser-') as tmp:
             assert 'scalar conversion' in result['unreadable_detail'], result
             passed += 1
         result = effective(source, valid, {**os.environ, 'PYTHONPATH': str(missing)})
-        assert result['effective_policy_state'] == 'unreadable', result
-        assert 'install PyYAML==6.0.2' in result['unreadable_detail'], result
+        assert result['effective_runner_state'] == 'defined', result
+        assert result['effective_runner'] == ['codex'], result
+        assert result['unreadable_detail'] == '', result
         legacy = subprocess.check_output([
             sys.executable, sys.argv[1], 'review-overrides', '--repo-root', tmp,
         ], env={**os.environ, 'PYTHONPATH': str(missing)}, text=True)
@@ -80,6 +85,41 @@ with tempfile.TemporaryDirectory(prefix='review-yaml-parser-') as tmp:
         if source == local:
             assert 'REVIEW_ON_DRAFT_RUNNER=codex' in legacy, legacy
         passed += 1
+
+    # The common strict reader and all selected-source validation are dependency-free.
+    # Use distinct selected/shared policy so a fallback cannot satisfy this case.
+    dependency_env = {**os.environ, 'PYTHONPATH': str(missing)}
+    dependency_env.pop('WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT', None)
+    shared.write_text(valid)
+    selected_valid = 'review:\n  on_draft:\n    runner: [cursor]\n'
+    for source_text in (None, '', 'other: ordinary context\n', selected_valid,
+                        selected_valid + 'other: [fabricatedOpaque,,tail]\n',
+                        selected_valid + 'other: "fabricatedOpaque\n',
+                        selected_valid + 'other: first\nother: fabricatedOpaque\n'):
+        if source_text is None:
+            local.unlink(missing_ok=True)
+        else:
+            local.write_text(source_text)
+        selected_env = dict(dependency_env)
+        if source_text is not None:
+            selected_env['WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT'] = str(root)
+        legacy = subprocess.run([
+            sys.executable, sys.argv[1], 'review-overrides', '--repo-root', tmp,
+        ], env=selected_env, capture_output=True, text=True)
+        if source_text is not None and 'fabricatedOpaque' in source_text:
+            assert legacy.returncode == 2, legacy
+            assert legacy.stdout == '', legacy.stdout
+            assert 'invalid YAML' in legacy.stderr or 'duplicate mapping' in legacy.stderr, legacy.stderr
+            assert 'fabricatedOpaque' not in legacy.stderr, legacy.stderr
+            assert 'PyYAML' not in legacy.stderr, legacy.stderr
+        else:
+            assert legacy.returncode == 0, legacy.stderr
+            assert 'REVIEW_ON_DRAFT_RUNNER=' in legacy.stdout, legacy.stdout
+            if source_text == selected_valid:
+                assert 'REVIEW_ON_DRAFT_RUNNER=cursor' in legacy.stdout, legacy.stdout
+            assert 'PyYAML' not in legacy.stderr, legacy.stderr
+        passed += 1
+    local.unlink(missing_ok=True)
 
     # Document the parser's line-break boundary without emulating its scanner.
     for linebreak in ('\u0085', '\u2028', '\u2029'):

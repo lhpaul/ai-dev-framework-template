@@ -258,7 +258,7 @@ printf 'categories:\n  always_sync:\n    - path: x\n      mode_scope: shared\n' 
 out="$TMP_ROOT/bad.out"
 status="$(run_checker "$out" --repo-root "$FIX" --manifest "$TMP_ROOT/bad-manifest.yaml")"
 run_test "malformed_manifest_exit_2" "2" "$status"
-run_test "malformed_manifest_error" "yes" "$(has_line "$out" "ERROR: manifest is missing mode_scopes")"
+run_test "malformed_manifest_error" "yes" "$(has_line "$out" "configuration: validation error")"
 
 # An invalid when_pattern is an input error (exit 2), never "gaps found" (exit 1).
 BAD_REGEX_MANIFEST="$TMP_ROOT/bad-regex-manifest.yaml"
@@ -267,13 +267,13 @@ printf 'guardrails:\n  stop_conditions:\n    - failing_ci\n' >"$CONSUMER/.ai-dev
 out="$TMP_ROOT/bad-regex.out"
 status="$(run_checker "$out" --repo-root "$FIX" --manifest "$BAD_REGEX_MANIFEST" --consumer-root "$CONSUMER")"
 run_test "invalid_when_pattern_exit_2" "2" "$status"
-run_test "invalid_when_pattern_error" "yes" "$(has_line "$out" "has an invalid when_pattern")"
+run_test "invalid_when_pattern_error" "yes" "$(has_line "$out" "configuration: validation error")"
 
 # A consumer root that does not exist must not pass as "nothing applies".
 out="$TMP_ROOT/missing-consumer.out"
 status="$(run_checker "$out" --repo-root "$FIX" --consumer-root "$TMP_ROOT/no-such-checkout")"
 run_test "missing_consumer_root_exit_2" "2" "$status"
-run_test "missing_consumer_root_error" "yes" "$(has_line "$out" "is not a directory")"
+run_test "missing_consumer_root_error" "yes" "$(has_line "$out" "configuration: validation error")"
 
 # An exemption silences a gap, so one without a reason is refused (exit 2).
 NO_REASON_MANIFEST="$TMP_ROOT/no-reason-manifest.yaml"
@@ -281,7 +281,7 @@ grep -v '^    reason: named as data only$' "$FIX/sync-manifest.yaml" >"$NO_REASO
 out="$TMP_ROOT/no-reason.out"
 status="$(run_checker "$out" --repo-root "$FIX" --manifest "$NO_REASON_MANIFEST")"
 run_test "exemption_without_reason_exit_2" "2" "$status"
-run_test "exemption_without_reason_error" "yes" "$(has_line "$out" "needs a nonblank path and reason")"
+run_test "exemption_without_reason_error" "yes" "$(has_line "$out" "configuration: validation error")"
 
 # A section written as a mapping instead of a list must not parse as empty
 # (which would turn the required-addition check off).
@@ -297,7 +297,7 @@ PY
 out="$TMP_ROOT/mapping.out"
 status="$(run_checker "$out" --repo-root "$FIX" --manifest "$MAPPING_MANIFEST" --consumer-root "$CONSUMER")"
 run_test "section_without_list_exit_2" "2" "$status"
-run_test "section_without_list_error" "yes" "$(has_line "$out" "expected a list of '- key: value' entries")"
+run_test "section_without_list_error" "yes" "$(has_line "$out" "configuration: validation error")"
 # The well-formed list still evaluates the addition (the failing/passing pair).
 out="$TMP_ROOT/mapping-ok.out"
 status="$(run_checker "$out" --repo-root "$FIX" --consumer-root "$CONSUMER")"
@@ -327,7 +327,7 @@ PY
     run_test "inline_section_${inline_value}_accepted" "0" "$status"
   else
     run_test "inline_section_${inline_value}_refused" "2" "$status"
-    run_test "inline_section_${inline_value}_error" "yes" "$(has_line "$out" "inline values are not supported")"
+    run_test "inline_section_${inline_value}_error" "yes" "$(has_line "$out" "configuration: validation error")"
   fi
 done
 
@@ -344,7 +344,7 @@ PY
 out="$TMP_ROOT/nested.out"
 status="$(run_checker "$out" --repo-root "$FIX" --manifest "$NESTED_MANIFEST")"
 run_test "nested_list_entry_exit_2" "2" "$status"
-run_test "nested_list_entry_error" "yes" "$(has_line "$out" "nested lists are not supported")"
+run_test "nested_list_entry_error" "yes" "$(has_line "$out" "configuration: validation error")"
 
 echo ""
 echo "Results: $PASS_COUNT passed, $FAIL_COUNT failed"

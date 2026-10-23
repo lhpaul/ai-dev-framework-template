@@ -1216,8 +1216,8 @@ its own built-in categories, immutable sensitive/tooling floors and PR gates.
 
 Arguments are `--repo-root <project-policy-root>` and optional
 `--product-repo <stable-product-name>`. Policy comes only from the shared
-`.ai-dev-workflow.yaml`, using the existing strict YAML reader and PyYAML
-toolchain. Hub product rules are selected in the hub's shared product entry;
+`.ai-dev-workflow.yaml`, using the same dependency-free strict framework YAML
+reader as selected-source validation and modern review. Hub product rules are selected in the hub's shared product entry;
 they do not require a local product checkout or inherit the hub's map.
 
 See [Project Path Risk Maps](../../docs/workflow/development-workflow/guardrails.md#project-path-risk-maps)
@@ -1466,3 +1466,40 @@ Use this when:
 - The agent protocol `94-batch-merge-protocol.md` is running a batch merge.
 - You want to inspect the merge ordering for a set of PRs before invoking the agent command.
 - Called by the `/batch-merge` Claude Code command, `/batch-merge` Cursor command, or the `/batch-merge` / `batch-merge` Codex skill alias.
+
+## Private runner configuration
+
+Implicit `.ai-dev-workflow.local.yaml` selection stays inside the current
+checkout, including linked worktrees. External indirection requires explicit
+`WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT`; a selected missing/unreadable source fails
+without shared/default fallback. The Bash declaration helper returns 0 for a
+declaration (including `[]`), 1 for absence and 2 for source/schema failure;
+public list readers return 0 for valid lists/absence and 2 for failure. Callers
+must capture failures before conditional iteration or aggregation.
+
+Preflight's `review-snapshot --repo-root <source> --destination <private-dir>`
+reads the selected source once and atomically stages only validated reviewer
+settings with mode 0600. Staged readers remove inherited external-source overrides;
+original attribution is separate metadata. `redact-text` sanitizes diagnostic
+stdin without loading configuration; `workflow_redact_text` exposes that boundary
+for Bash, and `workflow_redact_json` preserves structured diagnostic values.
+`workflow_diagnostic_kvs` batches fixed report keys using NUL-framed whole values
+through `redact-text --kv`. Each value is sanitized independently before any
+report is published; invalid framing or UTF-8 fails without partial stdout.
+Functional configuration and deliberate auth transport are separate interfaces.
+Configuration parse/validation errors use the central closed type/line/column/known-key
+formatter; no source path, excerpt or exception text is emitted. Model error `FILE`
+and review `unreadable_file` remain empty. Functional authority bindings and successful
+`SOURCE_FILE` provenance remain available to their consumers.
+Complete selected-private syntax validation, modern review-effective/GitHub
+readers and review projection share one strict framework reader without PyYAML.
+Review-specific conversion/shape checks remain separate from complete-source
+syntax; legacy field extraction retains its existing semantics. Empty/missing
+private and shared-only legacy paths also remain dependency-free. Unsupported
+selected YAML fails before field selection: legacy/Bash readers exit `2` with
+metadata-only diagnostics and never substitute shared/default policy.
+Provider-specific configuration readers retain their own dependencies.
+
+See the [consumer upgrade and prevention guide](../../docs/workflow/development-workflow/integrations/runner-secret-prevention.md).
+Reversal to implicit inheritance or conflated Bash failure/absence statuses is not
+supported; regressions use reviewed forward fixes preserving both contracts.

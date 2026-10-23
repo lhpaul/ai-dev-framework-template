@@ -3,6 +3,10 @@
 
 set -euo pipefail
 
+{ DIAGNOSTIC_SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"; } 2>/dev/null || { bootstrap_status=$?; printf 'configuration: tooling initialization error\n' >&2; exit "$bootstrap_status"; }
+# shellcheck source=scripts/development-workflow/workflow-lib.sh
+source "$DIAGNOSTIC_SCRIPT_DIR/workflow-lib.sh" 2>/dev/null
+
 codex_bin="${LOCAL_CODEX_REVIEWER_BIN:-codex}"
 output_file="$(mktemp)"
 cleanup() {
@@ -41,5 +45,5 @@ codex_args+=("$prompt")
 
 # Close stdin: `codex exec` reads extra prompt input from any non-TTY stdin and
 # blocks forever on an idle inherited pipe (e.g. a background harness, #1843).
-"$codex_bin" "${codex_args[@]}" </dev/null >/dev/null
+workflow_command_with_safe_stderr "$codex_bin" ${codex_args[@]+"${codex_args[@]}"} </dev/null >/dev/null
 cat "$output_file"

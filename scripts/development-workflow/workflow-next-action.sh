@@ -99,7 +99,8 @@ if [ "$targets" -ne 1 ]; then
   exit 64
 fi
 
-cd "$repo_root"
+repo_root="$( { CDPATH='' cd -- "$repo_root" && pwd -P; } 2>/dev/null)" || { printf 'configuration: checkout access error\n' >&2; exit 2; }
+workflow_command_with_safe_stderr cd "$repo_root"
 if [ -n "$scan_snapshot" ]; then
   snapshot_args=(--repo-root "$repo_root" --scan-snapshot "$scan_snapshot" --mode next)
   [ -n "$target_repo" ] && snapshot_args+=(--repo "$target_repo")
@@ -139,8 +140,8 @@ repo_root_tracker_provider() {
   local raw_provider=""
 
   if [ -f "$config_file" ]; then
-    if ! raw_provider="$(workflow_config_provider issue_tracker "$config_file")"; then
-      echo "ERROR: could not resolve issue tracker provider for $config_file." >&2
+    if ! raw_provider="$(workflow_config_provider issue_tracker "$config_file" 2>/dev/null)"; then
+      printf 'configuration: configuration validation error; key=issue_tracker.provider\n' >&2
       return 2
     fi
   fi
@@ -210,6 +211,7 @@ repository_context_for_action() {
   local routing_json=""
   local routing_outcome=""
   local routing_continue=""
+  local routing_status=0
   local routing_args=()
 
   if [ "$workflow_mode" = "workflow_hub" ]; then
@@ -232,10 +234,16 @@ repository_context_for_action() {
         set -e
         case "$hub_only_status" in
           0) routing_args+=(--hub-only) ;;
-          2) return 1 ;;
+          2) return 3 ;;
         esac
-        if ! routing_json="$("${routing_args[@]}")"; then
-          return 1
+        routing_json="$( ${routing_args[@]+"${routing_args[@]}"} 2>&1)" || routing_status=$?
+        if [ "$routing_status" -ne 0 ]; then
+          # Every classifier execution failure is fatal. Selection-required is
+          # a well-formed status0 JSON decision, never a failed child process.
+          # Captured output can mix functional data and diagnostics, so do not
+          # publish it on failure, even when the child failed unexpectedly.
+          printf 'configuration: configuration validation error\n' >&2
+          return 3
         fi
         if ! printf '%s\n' "$routing_json" | jq -e '
           .schema_version == "work_item_repository_routing.v1"
@@ -250,10 +258,24 @@ repository_context_for_action() {
           and (.selected_product_repo_keys | type == "array")
           and (.fingerprint | type == "string" and test("^sha256:[0-9a-f]{64}$"))
         ' >/dev/null 2>&1; then
-          print_kv ROUTING_INTERNAL_ERROR "invalid_classifier_response"
-          return 1
+          printf 'configuration: configuration validation error\n' >&2
+          return 3
         fi
         routing_outcome="$(printf '%s\n' "$routing_json" | jq -r '.outcome_code')"
+        routing_continue="$(printf '%s\n' "$routing_json" | jq -r '.continue_allowed')"
+        # Routing fields are functional data. Resolve the entire selected context
+        # before publishing them so a late schema error cannot leave a partial
+        # payload for a caller to re-emit as a diagnostic. Rejections remain
+        # complete functional payloads with their existing internal status2.
+        if [ "$routing_continue" = "true" ] && [ "$routing_outcome" != "hub_only" ]; then
+          if ! context="$(workflow_repository_context "$target_repo" "$repo_root")"; then
+            return 3 # internal validation failure; callers normalize to CLI status 2
+          fi
+          action_repository_kind="product_repo_owned"
+          action_repository="$(workflow_context_value TARGET_REPO_NAME "$context")"
+          action_github_repo="$(workflow_github_repo_from_context "$context")"
+          action_local_path="$(workflow_context_value TARGET_LOCAL_PATH "$context")"
+        fi
         print_kv ROUTING_OUTCOME_CODE "$routing_outcome"
         print_kv ROUTING_DISPLAY_LABEL "$(printf '%s\n' "$routing_json" | jq -r '.display_label')"
         print_kv ROUTING_CONTINUE_ALLOWED "$(printf '%s\n' "$routing_json" | jq -r '.continue_allowed')"
@@ -262,21 +284,12 @@ repository_context_for_action() {
         print_kv ROUTING_STOP_REASON "$(printf '%s\n' "$routing_json" | jq -r '.stop_reason // ""')"
         print_kv ROUTING_REQUIRED_HUMAN_ACTION "$(printf '%s\n' "$routing_json" | jq -r '.required_human_action // ""')"
         print_kv ROUTING_FINGERPRINT "$(printf '%s\n' "$routing_json" | jq -r '.fingerprint')"
-        routing_continue="$(printf '%s\n' "$routing_json" | jq -r '.continue_allowed')"
         if [ "$routing_continue" != "true" ]; then
           return 2
         fi
         if [ "$routing_outcome" = "hub_only" ]; then
           action_repository_kind="hub_owned"
           action_repository="$(basename "$repo_root")"
-        else
-          if ! context="$(workflow_repository_context "$target_repo" "$repo_root")"; then
-            return 1
-          fi
-          action_repository_kind="product_repo_owned"
-          action_repository="$(workflow_context_value TARGET_REPO_NAME "$context")"
-          action_github_repo="$(workflow_github_repo_from_context "$context")"
-          action_local_path="$(workflow_context_value TARGET_LOCAL_PATH "$context")"
         fi
         ;;
       *)
@@ -285,7 +298,7 @@ repository_context_for_action() {
         ;;
     esac
   else
-    context="$(workflow_repository_context "" "$repo_root")"
+    context="$(workflow_repository_context "" "$repo_root")" || return 3
     action_repository="$(workflow_context_value TARGET_REPO_NAME "$context")"
     action_github_repo="$(workflow_github_repo_from_context "$context")"
     action_local_path="$(workflow_context_value TARGET_LOCAL_PATH "$context")"
@@ -316,7 +329,7 @@ github_repo_args_for_action() {
     if [ "$hub_only_status" -eq 2 ]; then
       return 1
     fi
-    context="$(workflow_repository_context "$target_repo" "$repo_root")"
+    context="$(workflow_repository_context "$target_repo" "$repo_root")" || return 2
     action_github_repo="$(workflow_github_repo_from_context "$context")"
     if [ -n "$action_github_repo" ]; then
       printf '%s\n%s\n' "--repo" "$action_github_repo"
@@ -369,7 +382,8 @@ if [ -n "$pr_number" ]; then
     set -e
     if [ "$pr_action_status" -ne 0 ]; then
       if [ "$pr_action_status" -ne 2 ]; then
-        echo "ERROR: $pr_action_context" >&2
+        printf 'configuration: configuration validation error\n' >&2
+        [ "$pr_action_status" -ne 3 ] || exit 2
         exit "$pr_action_status"
       fi
       print_kv WORKFLOW_MODE "$workflow_mode"
@@ -385,9 +399,10 @@ if [ -n "$pr_number" ]; then
   fi
   pr_view_args=()
   if [ "$workflow_mode" = "workflow_hub" ]; then
+    pr_target_args="$(github_repo_args_for_action implementation)" || exit 2
     while IFS= read -r arg; do
       [ -n "$arg" ] && pr_view_args+=("$arg")
-    done < <(github_repo_args_for_action implementation)
+    done <<< "$pr_target_args"
   fi
   if [ "${#pr_view_args[@]}" -eq 0 ] && [ -n "$pr_hub_probe_json" ]; then
     # Routing resolved to the current (hub) checkout -- the probe above
@@ -420,7 +435,8 @@ if [ -n "$pr_number" ]; then
   set -e
   if [ "$pr_action_status" -ne 0 ]; then
     if [ "$pr_action_status" -ne 2 ]; then
-      echo "ERROR: $pr_action_context" >&2
+      printf 'configuration: configuration validation error\n' >&2
+      [ "$pr_action_status" -ne 3 ] || exit 2
       exit "$pr_action_status"
     fi
     printf '%s\n' "$pr_action_context"
@@ -478,7 +494,8 @@ if [ -n "$branch_name" ]; then
   set -e
   if [ "$action_context_status" -ne 0 ]; then
     if [ "$action_context_status" -ne 2 ]; then
-      echo "ERROR: $action_context_output" >&2
+      printf 'configuration: configuration validation error\n' >&2
+      [ "$action_context_status" -ne 3 ] || exit 2
       exit "$action_context_status"
     fi
     print_kv WORKFLOW_MODE "$workflow_mode"
@@ -494,10 +511,11 @@ if [ -n "$branch_name" ]; then
   pr_list_args=()
   pr_view_args=()
   if [ "$action_kind" = "implementation" ]; then
+    branch_target_args="$(github_repo_args_for_action implementation)" || exit 2
     while IFS= read -r arg; do
       [ -n "$arg" ] && pr_list_args+=("$arg")
       [ -n "$arg" ] && pr_view_args+=("$arg")
-    done < <(github_repo_args_for_action implementation)
+    done <<< "$branch_target_args"
   fi
   if gh_available; then
     if [ "${#pr_list_args[@]}" -gt 0 ]; then
@@ -646,9 +664,10 @@ if [ "$feature_branch_exists" -eq 0 ] && [ -n "$plan_file" ] && gh_available; th
   # Try exact branch name first: [prefix]/<slug>
   merged_pr_args=()
   if [ "$dev_prefix" != "spec" ] && [ "$workflow_mode" = "workflow_hub" ]; then
+    merged_target_args="$(github_repo_args_for_action implementation)" || exit 2
     while IFS= read -r arg; do
       [ -n "$arg" ] && merged_pr_args+=("$arg")
-    done < <(github_repo_args_for_action implementation)
+    done <<< "$merged_target_args"
   fi
   if [ "${#merged_pr_args[@]}" -gt 0 ]; then
     if ! merged_count="$(gh pr list "${merged_pr_args[@]}" --state merged --head "${dev_prefix}/$slug" --limit 100 --json number --jq 'length')"; then
@@ -723,7 +742,8 @@ case "$next_action" in
     set -e
     if [ "$action_context_status" -ne 0 ]; then
       if [ "$action_context_status" -ne 2 ]; then
-        echo "ERROR: $action_context_output" >&2
+        printf 'configuration: configuration validation error\n' >&2
+        [ "$action_context_status" -ne 3 ] || exit 2
         exit "$action_context_status"
       fi
       printf '%s\n' "$action_context_output"
@@ -735,9 +755,12 @@ case "$next_action" in
     fi
     ;;
   *)
-    if ! action_context_output="$(repository_context_for_action hub 2>&1)"; then
-      echo "ERROR: $action_context_output" >&2
-      exit 1
+    action_context_status=0
+    action_context_output="$(repository_context_for_action hub 2>&1)" || action_context_status=$?
+    if [ "$action_context_status" -ne 0 ]; then
+      printf 'configuration: configuration validation error\n' >&2
+      [ "$action_context_status" -ne 3 ] || exit 2
+      exit "$action_context_status"
     fi
     ;;
 esac

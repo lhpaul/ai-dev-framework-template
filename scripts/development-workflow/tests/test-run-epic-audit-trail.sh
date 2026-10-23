@@ -646,7 +646,7 @@ run_test "renders_reviewer_access_bypass_marker" "yes" "$(grep -q '<!-- reviewer
 run_test "renders_reviewer_access_bypass_state" "yes" "$(grep -q 'authorized_pending_attempt' <<< "$bypass_output" && echo yes || echo no)"
 run_test "renders_reviewer_access_bypass_action" "yes" "$(grep -q 'gh pr merge 42 --admin --match-head-commit aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' <<< "$bypass_output" && echo yes || echo no)"
 run_test "redacts_bypass_tokens_and_paths" "yes" "$(
-  grep -q '\[REDACTED_TOKEN\]' <<< "$bypass_output" &&
+  grep -q '\[REDACTED\]' <<< "$bypass_output" &&
     grep -q '\[REDACTED_LOCAL_PATH\]' <<< "$bypass_output" &&
     echo yes || echo no
 )"

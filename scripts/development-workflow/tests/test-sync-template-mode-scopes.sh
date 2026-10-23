@@ -91,6 +91,27 @@ run_fails_contains() {
   fi
 }
 
+run_config_fails_metadata() {
+  local name="$1" manifest="$2" opaque="$3" status=0 output
+  local stdout_file="$TMP_ROOT/config-error.stdout" stderr_file="$TMP_ROOT/config-error.stderr"
+  # An ignored comment supplies opaque source material without changing the defect.
+  printf '\n# opaqueConfigurationMaterial\n' >> "$manifest"
+  python3 "$SELECTOR" --manifest "$manifest" --role workflow_hub >"$stdout_file" 2>"$stderr_file" || status=$?
+  output="$(cat "$stdout_file" "$stderr_file")"
+  if [ "$status" -eq 1 ] && [ ! -s "$stdout_file" ] &&
+      [ "$(cat "$stderr_file")" = 'configuration: configuration validation error' ] &&
+      ! grep -Fq -- "$opaque" <<< "$output" &&
+      ! grep -Fq -- 'opaqueConfigurationMaterial' <<< "$output" &&
+      ! grep -Fq -- "$TMP_ROOT" <<< "$output"; then
+    echo "PASS: $name"
+    PASS_COUNT=$((PASS_COUNT + 1))
+  else
+    echo "FAIL: $name - expected status 1 and metadata-only stderr with empty stdout"
+    printf 'Status: %s\nOutput:\n%s\n' "$status" "$output"
+    FAIL_COUNT=$((FAIL_COUNT + 1))
+  fi
+}
+
 fixture_manifest="$TMP_ROOT/sync-manifest.yaml"
 cat > "$fixture_manifest" <<'YAML'
 schema_version: 1
@@ -189,25 +210,22 @@ run_equals "selection_helper_output_stable_for_dry_run_apply" "$product_output" 
 
 unknown_scope_manifest="$TMP_ROOT/unknown-scope.yaml"
 sed 's/mode_scope: shared/mode_scope: mystery/' "$fixture_manifest" > "$unknown_scope_manifest"
-run_fails_contains \
+run_config_fails_metadata \
   "unknown_mode_scope_fails_closed" \
-  "unknown mode_scope 'mystery'" \
-  python3 "$SELECTOR" --manifest "$unknown_scope_manifest" --role workflow_hub
+  "$unknown_scope_manifest" "mystery"
 
 missing_entry_scope_manifest="$TMP_ROOT/missing-entry-scope.yaml"
 sed '/mode_scope: shared/d' "$fixture_manifest" > "$missing_entry_scope_manifest"
-run_fails_contains \
+run_config_fails_metadata \
   "missing_entry_mode_scope_fails_closed" \
-  "is missing mode_scope" \
-  python3 "$SELECTOR" --manifest "$missing_entry_scope_manifest" --role workflow_hub
+  "$missing_entry_scope_manifest" "README.md"
 
 missing_scopes_manifest="$TMP_ROOT/missing-mode-scopes.yaml"
 sed '/mode_scopes:/,/categories:/d' "$fixture_manifest" > "$missing_scopes_manifest"
 printf 'categories:\n' | cat - "$missing_scopes_manifest" > "$TMP_ROOT/missing-mode-scopes-fixed.yaml"
-run_fails_contains \
+run_config_fails_metadata \
   "missing_mode_scopes_fails_closed" \
-  "manifest is missing mode_scopes" \
-  python3 "$SELECTOR" --manifest "$TMP_ROOT/missing-mode-scopes-fixed.yaml" --role workflow_hub
+  "$TMP_ROOT/missing-mode-scopes-fixed.yaml" "README.md"
 
 partial_scopes_manifest="$TMP_ROOT/partial-mode-scopes.yaml"
 cat > "$partial_scopes_manifest" <<'YAML'
@@ -222,10 +240,9 @@ categories:
     - path: REVIEW.md
       mode_scope: shared
 YAML
-run_fails_contains \
+run_config_fails_metadata \
   "partial_mode_scopes_fail_closed" \
-  "manifest is missing required mode_scope declarations" \
-  python3 "$SELECTOR" --manifest "$partial_scopes_manifest" --role workflow_hub
+  "$partial_scopes_manifest" "README.md"
 
 unknown_category_manifest="$TMP_ROOT/unknown-category.yaml"
 cat > "$unknown_category_manifest" <<'YAML'
@@ -244,10 +261,9 @@ categories:
     - path: REVIEW.md
       mode_scope: shared
 YAML
-run_fails_contains \
+run_config_fails_metadata \
   "unknown_category_fails_closed" \
-  "unknown category 'not_a_sync_category'" \
-  python3 "$SELECTOR" --manifest "$unknown_category_manifest" --role workflow_hub
+  "$unknown_category_manifest" "not_a_sync_category"
 
 entry_before_category_manifest="$TMP_ROOT/entry-before-category.yaml"
 cat > "$entry_before_category_manifest" <<'YAML'
@@ -265,10 +281,9 @@ categories:
     - path: REVIEW.md
       mode_scope: shared
 YAML
-run_fails_contains \
+run_config_fails_metadata \
   "entry_before_category_fails_closed" \
-  "category entry appears before category name" \
-  python3 "$SELECTOR" --manifest "$entry_before_category_manifest" --role workflow_hub
+  "$entry_before_category_manifest" "README.md"
 
 run_fails_contains \
   "unknown_role_fails_closed" \
@@ -277,10 +292,9 @@ run_fails_contains \
 
 tab_indent_manifest="$TMP_ROOT/tab-indent.yaml"
 printf 'schema_version: 1\n\nmode_scopes:\n\tshared:\n' > "$tab_indent_manifest"
-run_fails_contains \
+run_config_fails_metadata \
   "tab_indentation_fails_closed" \
-  "tabs are not supported for indentation" \
-  python3 "$SELECTOR" --manifest "$tab_indent_manifest" --role workflow_hub
+  "$tab_indent_manifest" "schema_version"
 
 triple_quote_manifest="$TMP_ROOT/triple-quote.yaml"
 cat > "$triple_quote_manifest" <<'YAML'

@@ -96,19 +96,8 @@ require_value() {
 }
 
 sanitize_guardrails_parse_detail() {
-  local detail="$1"
-  local schema_detail
-
-  schema_detail="${detail#*: }"
-  case "$schema_detail" in
-    guardrails.mode\ must\ be\ manual,\ assisted,\ delegated,\ or\ autonomous,*|\
-    guardrails.stages.*.max_merge_risk\ must\ be\ low,\ medium,\ or\ high,*)
-      printf '%s\n' "$schema_detail"
-      ;;
-    *)
-      printf 'failed to parse guardrails from workflow config\n'
-      ;;
-  esac
+  # This is an error boundary, not a configuration/source-content transport.
+  printf 'configuration: guardrails validation error; key=guardrails\n'
 }
 
 read_guardrails_json() {
@@ -219,7 +208,8 @@ try:
         "audit": audit,
     }))
 except Exception as exc:
-    print(f"failed to parse guardrails from {sys.argv[1]}: {exc}", file=sys.stderr)
+    formatter = getattr(locals().get("resolver"), "format_config_error", None)
+    print(formatter(exc, key="guardrails") if formatter else "configuration: validation error", file=sys.stderr)
     sys.exit(2)
 PYEOF
   )" || _py_exit=$?
@@ -537,7 +527,13 @@ if [ "$scope_mode" = "item" ] && [ "$(workflow_template_is_template)" = "true" ]
     if [ "${#fm_matching_folders[@]}" -le 1 ]; then
       fm_artifact_stage=""
       if [ "${#fm_matching_folders[@]}" -eq 1 ]; then
-        if fm_next_action_output="$("$SCRIPT_DIR/workflow-next-action.sh" --development "${fm_matching_folders[0]}" --repo-root "$fm_repo_root" 2>/dev/null)"; then
+        fm_next_action_status=0
+        fm_next_action_output="$("$SCRIPT_DIR/workflow-next-action.sh" --development "${fm_matching_folders[0]}" --repo-root "$fm_repo_root" 2>&1)" || fm_next_action_status=$?
+        if [ "$fm_next_action_status" -eq 2 ]; then
+          printf 'configuration: configuration validation error\n' >&2
+          exit 2
+        fi
+        if [ "$fm_next_action_status" -eq 0 ]; then
           fm_artifact_stage="$(printf '%s\n' "$fm_next_action_output" | awk -F= '$1=="STATUS"{print $2; exit}')"
         fi
       fi

@@ -6,6 +6,9 @@ SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)"
 # shellcheck source=scripts/development-workflow/workflow-lib.sh
 source "$SCRIPT_DIR/workflow-lib.sh"
 
+# This entry emits diagnostic reports; shared config/control transport stays raw.
+print_kv() { workflow_diagnostic_kv "$@"; }
+
 usage() {
   cat <<'EOF'
 Usage: ./scripts/development-workflow/pr-ci-loop.sh <pr-number> [--repo owner/repo|product-name] [--product-repo name] [--repo-root path] [--poll-interval seconds] [--max-wait seconds]
@@ -32,7 +35,7 @@ repo_root="$(workflow_repo_root)"
 require_option_value() {
   local option="$1"
   if [ "$#" -lt 2 ] || [ -z "${2:-}" ]; then
-    echo "$option requires a value." >&2
+    workflow_diagnostic "$option requires a value." >&2
     usage >&2
     exit 64
   fi
@@ -70,12 +73,12 @@ while [ "$#" -gt 0 ]; do
       exit 0
       ;;
     -*)
-      echo "Unknown option: $1" >&2
+      workflow_diagnostic "Unknown option: $1" >&2
       exit 64
       ;;
     *)
       if [ -n "$pr_number" ]; then
-        echo "Only one PR number may be provided." >&2
+        workflow_diagnostic "Only one PR number may be provided." >&2
         exit 64
       fi
       pr_number="$1"
@@ -89,8 +92,10 @@ if [ -z "$pr_number" ]; then
   exit 64
 fi
 
+workflow_bind_local_config_root "$repo_root" || exit 2
+repo_root="$(workflow_local_config_root)"
 require_gh
-cd "$repo_root"
+workflow_command_with_safe_stderr cd "$repo_root"
 
 elapsed=0
 if [ -n "$repo_selector" ] && workflow_is_valid_github_repo_slug "$repo_selector"; then
@@ -102,7 +107,7 @@ else
   repo="$(repo_slug)"
 fi
 if [ -z "$repo" ]; then
-  echo "ERROR: could not resolve GitHub repository for PR CI loop; pass --repo owner/repo or --product-repo <name>." >&2
+  workflow_diagnostic "ERROR: could not resolve GitHub repository for PR CI loop; pass --repo owner/repo or --product-repo <name>." >&2
   exit 64
 fi
 export WORKFLOW_TARGET_GITHUB_REPO="$repo"
@@ -339,7 +344,7 @@ while :; do
   fi
   reviewer_check_names="$(
     configured_reviewer_check_names_json ""
-  )"
+  )" || exit 2
   if ! ci_checks_json="$(
     printf '%s\n' "$normalized_checks_json" | jq --argjson reviewer_names "$reviewer_check_names" '
       [
@@ -496,7 +501,7 @@ while :; do
     if [ "$devin_error_count" -gt 0 ] && [ "$devin_error_count" -eq "$failing_count" ]; then
       # All failures are Devin error contexts. Check whether the error is stale.
       if is_devin_status_stale "$pr_number" "$repo"; then
-        echo "INFO: Devin commit status is ERROR but no blocking Devin review findings exist for the current HEAD. Treating as stale — bypassing Devin error check." >&2
+        workflow_diagnostic "INFO: Devin commit status is ERROR but no blocking Devin review findings exist for the current HEAD. Treating as stale — bypassing Devin error check." >&2
         failing_count=0
         failing_list=""
       fi
@@ -568,8 +573,8 @@ while :; do
       print_kv REVIEWER_CHECK_COUNT "$reviewer_check_count"
       print_kv REVIEWER_CHECKS "$reviewer_check_list"
       print_kv REVIEWER_CHECKS_JSON "$reviewer_checks_json"
-      echo "ERROR: could not read workflow-run evidence for $head_sha; refusing to report green on an unverified head." >&2
-      echo "  Retry, or set CI_LOOP_SKIP_EVIDENCE_GATE=1 to proceed without the check." >&2
+      workflow_diagnostic "ERROR: could not read workflow-run evidence for $head_sha; refusing to report green on an unverified head." >&2
+      workflow_diagnostic "  Retry, or set CI_LOOP_SKIP_EVIDENCE_GATE=1 to proceed without the check." >&2
       exit 1
     fi
     if [ -n "$missing_checks" ]; then
@@ -587,16 +592,16 @@ while :; do
       print_kv REVIEWER_CHECK_COUNT "$reviewer_check_count"
       print_kv REVIEWER_CHECKS "$reviewer_check_list"
       print_kv REVIEWER_CHECKS_JSON "$reviewer_checks_json"
-      echo "ERROR: workflow(s) that ran on the PR's previous head are absent on $head_sha: $missing_checks" >&2
-      echo "  A conflicting PR gets no pull_request workflows at all; resolve the conflict (or the filter change) and let CI re-run." >&2
+      workflow_diagnostic "ERROR: workflow(s) that ran on the PR's previous head are absent on $head_sha: $missing_checks" >&2
+      workflow_diagnostic "  A conflicting PR gets no pull_request workflows at all; resolve the conflict (or the filter change) and let CI re-run." >&2
       exit 1
     fi
     if [ -z "$head_sha" ]; then
       print_kv CI_EVIDENCE unknown
-      echo "WARNING: could not resolve the PR head SHA; the CI-evidence comparison did not run." >&2
+      workflow_diagnostic "WARNING: could not resolve the PR head SHA; the CI-evidence comparison did not run." >&2
     elif [ "$total_check_count" -eq 0 ]; then
       print_kv CI_EVIDENCE none
-      echo "WARNING: no checks ran on $head_sha; 'green' here means 'nothing failed', not 'CI passed'." >&2
+      workflow_diagnostic "WARNING: no checks ran on $head_sha; 'green' here means 'nothing failed', not 'CI passed'." >&2
     else
       print_kv CI_EVIDENCE present
     fi

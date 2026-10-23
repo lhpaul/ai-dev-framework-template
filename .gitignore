@@ -9,6 +9,24 @@ Thumbs.db
 .ai-dev-workflow.local.yaml
 .ai-dev-workflow.local.yaml.retired
 .ai-dev-workflow.local.env
+# Private local workflow variants; public examples remain trackable.
+.ai-dev-workflow.local.*
+!.ai-dev-workflow.local.example.yaml
+!.ai-dev-workflow.local.env.example
+# Conventional private keys and credential files (public certificates stay visible).
+*.key
+*-key.pem
+*.private.pem
+private_key.pem
+id_rsa
+id_dsa
+id_ecdsa
+id_ed25519
+.netrc
+.aws/credentials
+credentials.json
+credentials.yaml
+credentials.yml
 # Local /run-item and /run-epic checkpoint satisfaction state
 checkpoint-policy.json
 

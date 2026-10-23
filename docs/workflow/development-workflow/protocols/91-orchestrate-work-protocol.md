@@ -86,7 +86,9 @@ subset: two-space block mappings, known keys, one-line quoted/bare strings and
 multiline values, tags/directives, duplicates and wrong types fail closed.
 `validate`, `model-route` and `model-routes` share the same policy reading path
 and first CODE/FILE/FIELD/MESSAGE error, exit 2 and empty stdout. The legacy tail
-and unactivated files retain the existing dependency-free reading contract.
+and unactivated shared files retain dependency-free field reading. Selected
+private bytes are first syntax-validated by the dependency-free strict framework
+subset parser, as described in the selected-source contract below.
 See the [format and activation guide](../integrations/dsh.md#explicit-activation-and-strict-format).
 
 YAML anchors, aliases and merge keys are unsupported in `models.dsh`. Use
@@ -1243,11 +1245,14 @@ echo "Branch context verified: $CURRENT"
 
 **Local reviewer override continuity — verify once after entering the worktree**
 
-`git worktree add` carries no gitignored files, so the worktree has no
-`.ai-dev-workflow.local.yaml` of its own. The workflow scripts resolve a linked
-worktree's override from the main clone automatically (#1560); confirm that
-from inside the worktree now, rather than discovering it in Step 7a as a
-zero-reachable-reviewer hard-fail:
+`git worktree add` carries no gitignored files. Implicit private configuration
+selection is confined to the current checkout; a missing, empty or product-only
+local file never inherits another checkout's settings. Operators may deliberately
+select a readable external source with `WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT`.
+Invalid explicit selection fails without shared/default substitution. Runners
+must not copy private files or inspect their contents manually.
+
+Verify selected source identity after entering the worktree:
 
 <!-- workflow-shell-contract: bash-zsh -->
 ```bash
@@ -1255,13 +1260,14 @@ python3 ./scripts/development-workflow/workflow-config-resolver.py review-overri
   | grep -E '^(LOCAL_OVERRIDE_FILE|LOCAL_OVERRIDE_ORIGIN|MAIN_CLONE_LOCAL_OVERRIDE_FILE)='
 ```
 
-Expected for a worktree of a clone that has a local override:
-`LOCAL_OVERRIDE_ORIGIN=main_clone` with `LOCAL_OVERRIDE_FILE` equal to
-`MAIN_CLONE_LOCAL_OVERRIDE_FILE`. `MAIN_CLONE_LOCAL_OVERRIDE_FILE` set while
-`LOCAL_OVERRIDE_FILE` is empty means the override exists and is not being
-applied — stop and report it to the Portfolio Orchestrator; do not copy the
-file by hand. All three empty means the clone has no local override and the
-shared `.ai-dev-workflow.yaml` applies.
+An intentional current-checkout source reports `LOCAL_OVERRIDE_ORIGIN=checkout`;
+an explicitly selected source reports `override_root`. With no local source,
+file and origin are empty and shared settings apply under existing reader rules.
+`MAIN_CLONE_LOCAL_OVERRIDE_FILE` is always empty compatibility metadata. Source
+failures stop the operation; they are never absence. See the [consumer upgrade
+guide](../integrations/runner-secret-prevention.md) for explicit selection and
+minimal review-only settings. Reviewer-loop initiating-root handoffs remain
+explicit; preflight pins staged readers to its validated projection.
 
 Apply the same verification pattern any time a `git switch` or `git checkout <branch>` is issued outside the worktree-creation path (e.g., when a stage protocol's recovery step asks to switch branches):
 
@@ -1728,26 +1734,36 @@ helper. Run it on every cycle, before dispatch, passing the actual driving
 session kind (`claude`, `cursor`, `codex`, `dsh`, or `unknown`), never a value inferred
 from PATH, the reviewer list, or `WORKFLOW_RUNNER_KIND`. There is no independent `review-effective` or `review-overrides` call before this helper. Its bounded entry includes configuration parsing; never prepend an unbounded parser invocation. A stalled parser is verified by smoke Step 16.
 
-The strict `review-effective` reader requires PyYAML (CI pin `6.0.2`) in the gate's
-`python3` environment for every reviewer. Workflow CI already provisions it;
-`scripts/cloud-agent-install.sh` provisions the distribution package. Locally,
-install the pinned version in a virtual environment and put its `bin` directory
-on PATH. Missing PyYAML blocks as `policy-unreadable`, with installation guidance
-in `UNREADABLE_DETAIL`; the helper never installs dependencies.
+The strict `review-effective` and `review-github-effective` readers, complete
+selected-private validation and review projection share the dependency-free
+strict framework reader in `workflow-config-resolver.py`. They do not require
+PyYAML or install packages. Provider-specific configuration checks, including
+CodeRabbit's own configuration reader, retain their separate prerequisites.
 
-Strict syntax is delegated to PyYAML's `BaseLoader` scanner/parser and composed
-nodes, never YAML object construction. YAML 1.1 line-break semantics apply:
-raw NEL/U+2028/U+2029 are line breaks, not ordinary scalar whitespace. Use spaces
-for separation outside quoted values; PyYAML's pure scanner rejects tabs in some
-separation positions. Quoted/interior indicators accepted by that parser remain
-literal values. The supported workflow subset excludes tags, anchors, aliases,
-directives, document markers, complex/quoted mapping keys, multiline scalars and
-flow collections, and non-empty flow mappings. Duplicate mapping keys and
-unsupported shapes fail closed throughout both files. Scalar typing remains
-explicit: only `null`/`Null`/`NULL`/`~` and empty plain values are null, and only
+The same strict reader validates the entire captured source before field/schema
+selection; there is no third-party syntax delegate or parallel validation grammar.
+YAML 1.1 line-break semantics apply: raw NEL/U+2028/U+2029 are line breaks, not
+ordinary scalar whitespace. ASCII spaces and tabs separate nodes; indentation
+uses spaces. Supported quoted/interior indicators remain literal values.
+The supported workflow subset excludes tags, anchors, aliases, directives,
+document markers, complex/quoted mapping keys, multiline scalars and multiline
+flow collections. Duplicate mapping keys and unsupported syntax fail closed.
+Review-specific conversion and shape restrictions are separate: the modern
+review profile rejects non-empty flow mappings, while complete-source syntax
+validation accepts supported unrelated flow mappings. Only
+`null`/`Null`/`NULL`/`~` and empty plain values are null, and only
 `true`/`True`/`TRUE` or `false`/`False`/`FALSE` are booleans; quoted values stay
-strings. Numeric conversion limits produce structured unreadable-config diagnostics.
-Legacy resolver commands retain their existing dependency-free parser.
+strings. Numeric conversion limits produce metadata-only unreadable-config
+diagnostics. Modern readers retain their structured malformed/unreadable reports.
+
+Legacy field extraction retains its existing semantics. A selected private
+source is validated in full by that same strict reader before any legacy field
+is read, including non-review commands and CodeRabbit policy selection.
+Malformed selected YAML is a source failure: legacy and Bash list commands exit
+`2`, never substitute shared/default policy, and emit only safe error type,
+line, column and known-key metadata. Missing/empty private sources and shared-only
+legacy commands remain dependency-free. Syntax validation and reviewer schema
+selection remain separate contracts.
 
 
 The resolver accepts the transition-release `review.internal_reviewers` alias
@@ -1794,7 +1810,7 @@ substitute a reviewer while it runs. Do not provision services or write tracked 
 | `runtime-absent` | Install the reviewer's runtime on this machine, or remove the reviewer from review.on_draft.runner in .ai-dev-workflow.local.yaml. |
 | `prerequisite-missing` | Install or enable the review service for this repository, or remove the reviewer from review.on_draft.runner in .ai-dev-workflow.local.yaml. |
 | `check-inconclusive` | Use the remedy for the actual failing probe context below. |
-| `value-not-supported` | Correct the configured value to one of the supported reviewer values, or remove it from review.on_draft.runner. |
+| `value-not-supported` | Correct the known reviewer-list key and retry. |
 
 Inconclusive remedies use an explicit internal probe context, not the reviewer
 name or free-text detail. The four reason values and output keys stay unchanged.
@@ -1805,7 +1821,7 @@ CodeRabbit or gh setup guidance.
 | Probe context | Inconclusive remedy |
 | --- | --- |
 | `local-runtime` | Run the local runtime --version command named in the detail; repair or update that runtime, then re-run the gate. |
-| `coderabbit-config` | Repair .coderabbit.yaml using the reported read or syntax error, then re-run the gate. |
+| `coderabbit-config` | Repair the known configuration key using its safe error type and locators, then re-run the gate. |
 | `coderabbit-dependency` | Install PyYAML==6.0.2 for the python3 used by the gate, then re-run the gate. |
 | `coderabbit-parser` | Run the CodeRabbit configuration check with the gate python3 to diagnose the execution failure or timeout, then re-run the gate. |
 | `hosted-activity` | Check gh authentication and repository issue-comment access, inspect the reported activity coverage or API error, then re-run the gate. |

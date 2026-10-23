@@ -184,6 +184,26 @@ run_fails_contains() {
   fi
 }
 
+run_config_fails_metadata() {
+  local name="$1" opaque="$2" status=0 output expected
+  shift 2
+  local stdout_file="$TMP_ROOT/config-error.stdout" stderr_file="$TMP_ROOT/config-error.stderr"
+  "$@" >"$stdout_file" 2>"$stderr_file" || status=$?
+  output="$(cat "$stdout_file" "$stderr_file")"
+  expected=$'ERROR: configuration: configuration validation error; key=guardrails.risk_paths\nERROR: project risk path configuration or evidence is invalid'
+  if [ "$status" -eq 1 ] && [ ! -s "$stdout_file" ] &&
+      [ "$(cat "$stderr_file")" = "$expected" ] &&
+      ! grep -Fq -- "$opaque" <<< "$output" &&
+      ! grep -Fq -- "$TMP_ROOT" <<< "$output"; then
+    echo "PASS: $name"
+    PASS_COUNT=$((PASS_COUNT + 1))
+  else
+    echo "FAIL: $name - expected status 1 and metadata-only stderr with empty stdout"
+    printf 'Status: %s\nOutput:\n%s\n' "$status" "$output"
+    FAIL_COUNT=$((FAIL_COUNT + 1))
+  fi
+}
+
 write_fixture() {
   local name="$1"
   local content="$2"
@@ -346,7 +366,7 @@ product_repo:
     github_repo: example/workflow-hub
 YAML
 hub_via_env_output="$(env WORKFLOW_HUB_REPO_ROOT="$hub_ci_dir" "$CLASSIFIER" --input "$hub_via_env_fixture" --repo-root "$product_hub_lookup_dir" --max-risk medium --json)"
-run_test "hub_ci_policy_from_workflow_hub_repo_root_env" "true" "$(printf '%s\n' "$hub_via_env_output" | jq -r '.merge_permitted')"
+run_test "inherited_hub_locator_does_not_replace_product_ci_policy" "false" "$(printf '%s\n' "$hub_via_env_output" | jq -r '.merge_permitted')"
 
 run_test "json_output_has_reasons" "yes" "$(printf '%s\n' "$low_output" | jq -e '.reasons | length > 0' >/dev/null && echo yes || echo no)"
 run_test "json_output_shape_stable" "yes" "$(
@@ -873,13 +893,13 @@ workflow_hub:
           - glob: docs/**
             risk: low
             reason: Fork target map
-    - name: other
+    - name: opaque-wrong-target-configuration-material
       github_repo: example/other
 YAML
 fork_result="$("$CLASSIFIER" --pr 42 --repo-root "$fork_root" --product-repo app --max-risk low --json)"
 run_test "fork_pr_target_map_risk" low "$(printf '%s\n' "$fork_result" | jq -r '.risk')"
 run_test "fork_pr_selects_target_map" true "$(printf '%s\n' "$fork_result" | jq -r '[.reasons[] | contains("Fork target map")] | any')"
-run_fails_contains "fork_pr_rejects_wrong_target" "selector and evidence repository disagree" "$CLASSIFIER" --pr 42 --repo-root "$fork_root" --product-repo other --json
+run_config_fails_metadata "fork_pr_rejects_wrong_target" "opaque-wrong-target-configuration-material" "$CLASSIFIER" --pr 42 --repo-root "$fork_root" --product-repo opaque-wrong-target-configuration-material --json
 
 # #1949: project categories never replace sensitive-path floors.
 project_root="$TMP_ROOT/project-risk-map"
@@ -966,10 +986,10 @@ guardrails:
       risk: low
       reason: "Docs"
     - glob: "apps/**"
-      risk: unknown
+      risk: opaqueInvalidRiskConfigurationMaterial
       reason: "Invalid unmatched rule"
 YAML
-run_fails_contains "invalid_unmatched_map_fails_classifier" "risk must be low, medium or high" \
+run_config_fails_metadata "invalid_unmatched_map_fails_classifier" "opaqueInvalidRiskConfigurationMaterial" \
   "$CLASSIFIER" --input "$low_fixture" --repo-root "$project_root" --json
 
 # Composed outcome: a valid Low map result cannot clear other gate reasons.

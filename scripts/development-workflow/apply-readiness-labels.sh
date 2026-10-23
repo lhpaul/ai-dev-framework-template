@@ -413,12 +413,15 @@ SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)"
 # shellcheck source=scripts/development-workflow/workflow-lib.sh
 source "$SCRIPT_DIR/workflow-lib.sh"
 
+# This entry emits diagnostic reports; shared config/control transport stays raw.
+print_kv() { workflow_diagnostic_kv "$@"; }
+
 usage() {
   cat <<'USAGE'
 Usage: apply-readiness-labels.sh --classify-pr-agent|--pr-agent-focus-labels < review.txt
        apply-readiness-labels.sh --pr <number> [--repo <owner/repo>] \
   --label <ready-for-human-review|ready-for-regression> \
-  [--branch <branch>] [--dry-run] [--json]
+  [--branch <branch>] [--repo-root <path>] [--dry-run] [--json]
 
 Refuses to apply the label unless every configured ready-phase reviewer check
 run is `completed` for the current head SHA, the reviewer posted no blocking
@@ -486,37 +489,44 @@ label=""
 json_output="false"
 branch_name=""
 dry_run="false"
+repo_root=""
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --pr)
-      [ "$#" -ge 2 ] && [ -n "${2:-}" ] || { printf 'ERROR: missing value for --pr\n' >&2; exit 2; }
-      [ -z "$pr_number" ] || { printf 'ERROR: repeated option: --pr\n' >&2; exit 2; }
+      [ "$#" -ge 2 ] && [ -n "${2:-}" ] || { workflow_diagnostic_printf 'ERROR: missing value for --pr\n' >&2; exit 2; }
+      [ -z "$pr_number" ] || { workflow_diagnostic_printf 'ERROR: repeated option: --pr\n' >&2; exit 2; }
       pr_number="$2"
       shift 2
       ;;
     --repo)
-      [ "$#" -ge 2 ] && [ -n "${2:-}" ] || { printf 'ERROR: missing value for --repo\n' >&2; exit 2; }
-      [ -z "$repo" ] || { printf 'ERROR: repeated option: --repo\n' >&2; exit 2; }
+      [ "$#" -ge 2 ] && [ -n "${2:-}" ] || { workflow_diagnostic_printf 'ERROR: missing value for --repo\n' >&2; exit 2; }
+      [ -z "$repo" ] || { workflow_diagnostic_printf 'ERROR: repeated option: --repo\n' >&2; exit 2; }
       repo="$2"
       shift 2
       ;;
+    --repo-root)
+      [ "$#" -ge 2 ] && [ -n "${2:-}" ] || { workflow_diagnostic_printf 'ERROR: missing value for --repo-root\n' >&2; exit 2; }
+      [ -z "$repo_root" ] || { workflow_diagnostic_printf 'ERROR: repeated option: --repo-root\n' >&2; exit 2; }
+      repo_root="$2"
+      shift 2
+      ;;
     --label)
-      [ "$#" -ge 2 ] && [ -n "${2:-}" ] || { printf 'ERROR: missing value for --label\n' >&2; exit 2; }
-      [ -z "$label" ] || { printf 'ERROR: repeated option: --label\n' >&2; exit 2; }
+      [ "$#" -ge 2 ] && [ -n "${2:-}" ] || { workflow_diagnostic_printf 'ERROR: missing value for --label\n' >&2; exit 2; }
+      [ -z "$label" ] || { workflow_diagnostic_printf 'ERROR: repeated option: --label\n' >&2; exit 2; }
       label="$2"
       shift 2
       ;;
     --branch)
-      [ "$#" -ge 2 ] && [ -n "${2:-}" ] || { printf 'ERROR: missing value for --branch\n' >&2; exit 2; }
-      [ -z "$branch_name" ] || { printf 'ERROR: repeated option: --branch\n' >&2; exit 2; }
+      [ "$#" -ge 2 ] && [ -n "${2:-}" ] || { workflow_diagnostic_printf 'ERROR: missing value for --branch\n' >&2; exit 2; }
+      [ -z "$branch_name" ] || { workflow_diagnostic_printf 'ERROR: repeated option: --branch\n' >&2; exit 2; }
       branch_name="$2"
       shift 2
       ;;
     --dry-run) dry_run="true"; shift ;;
     --json) json_output="true"; shift ;;
     --help|-h) usage; exit 0 ;;
-    *) printf 'ERROR: unknown argument: %s\n' "$1" >&2; usage >&2; exit 2 ;;
+    *) workflow_diagnostic_printf 'ERROR: unknown argument: %s\n' "$1" >&2; usage >&2; exit 2 ;;
   esac
 done
 
@@ -526,14 +536,20 @@ if [ -z "$pr_number" ] || [ -z "$label" ]; then
 fi
 case "$label" in
   ready-for-human-review|ready-for-regression) ;;
-  *) printf 'ERROR: --label must be ready-for-human-review or ready-for-regression\n' >&2; exit 2 ;;
+  *) workflow_diagnostic_printf 'ERROR: --label must be ready-for-human-review or ready-for-regression\n' >&2; exit 2 ;;
 esac
 case "$pr_number" in
-  ''|*[!0-9]*) printf 'ERROR: --pr must be a number\n' >&2; exit 2 ;;
+  ''|*[!0-9]*) workflow_diagnostic_printf 'ERROR: --pr must be a number\n' >&2; exit 2 ;;
 esac
 
+# Bind explicit checkout authority before any private-source or remote operation.
+# The default remains this tool checkout; children pass their selected root.
+[ -n "$repo_root" ] || repo_root="$(workflow_repo_root 2>/dev/null)"
+workflow_bind_local_config_root "$repo_root" || exit 2
+repo_root="$(workflow_local_config_root)"
+
 require_gh
-cd_workflow_repo_root
+cd -- "$repo_root" 2>/dev/null || { root_status=$?; printf 'configuration: checkout access error\n' >&2; exit "$root_status"; }
 [ -n "$repo" ] || repo="$(repo_slug)"
 
 # Readiness gate verdict.
@@ -585,7 +601,7 @@ configured_ready_reviewer_platforms() {
 # loop dispatched.
 pr_head_config_ready_platforms() {
   local repo_arg="$1" sha_arg="$2"
-  local content_b64 config_body head_config_file rc
+  local content_b64 config_body head_config_file rc=0
   content_b64="$(gh api "repos/$repo_arg/contents/.ai-dev-workflow.yaml?ref=$sha_arg" \
       --jq '.content // ""' 2>/dev/null)" || return 1
   [ -n "$content_b64" ] || return 1
@@ -594,11 +610,10 @@ pr_head_config_ready_platforms() {
   head_config_file="$(mktemp)" || return 1
   printf '%s\n' "$config_body" >"$head_config_file"
   if [ "${loop_dispatched_base:-0}" = "1" ]; then
-    WORKFLOW_APPLY_LOCAL_REVIEW_OVERRIDES=1 workflow_config_review_on_ready_github "$head_config_file"
+    WORKFLOW_APPLY_LOCAL_REVIEW_OVERRIDES=1 workflow_config_review_on_ready_github "$head_config_file" || rc=$?
   else
-    workflow_config_review_on_ready_github "$head_config_file"
+    workflow_config_review_on_ready_github "$head_config_file" || rc=$?
   fi
-  rc=$?
   rm -f "$head_config_file"
   return "$rc"
 }
@@ -1525,20 +1540,21 @@ commented_review_body_blocks() {
 }
 
 emit_verdict() {
-  print_kv RESULT "$result"
-  print_kv REASON "$reason"
-  print_kv PR_NUMBER "$pr_number"
-  print_kv REPO "$repo"
-  print_kv LABEL "$label"
-  print_kv HEAD_SHA "$head_sha"
-  print_kv REVIEWER_REPORT "$reviewer_report"
-  print_kv BLOCKING_FINDING_COUNT "$blocking_count"
-  print_kv PENDING_CHECK_COUNT "$pending_count"
-  print_kv FAILING_CHECK_COUNT "$failing_count"
-  print_kv DRY_RUN "$dry_run"
+  workflow_diagnostic_kvs \
+    RESULT "$result" \
+    REASON "$reason" \
+    PR_NUMBER "$pr_number" \
+    REPO "$repo" \
+    LABEL "$label" \
+    HEAD_SHA "$head_sha" \
+    REVIEWER_REPORT "$reviewer_report" \
+    BLOCKING_FINDING_COUNT "$blocking_count" \
+    PENDING_CHECK_COUNT "$pending_count" \
+    FAILING_CHECK_COUNT "$failing_count" \
+    DRY_RUN "$dry_run"
   if [ "$json_output" = "true" ]; then
     python3 -c 'import json,sys; print(json.dumps(dict(result=sys.argv[1], reason=sys.argv[2], prNumber=sys.argv[3], repo=sys.argv[4], label=sys.argv[5], headSha=sys.argv[6], reviewerReport=sys.argv[7], blockingFindingCount=int(sys.argv[8]), pendingCheckCount=int(sys.argv[9]), failingCheckCount=int(sys.argv[10]), dryRun=(sys.argv[11] == "true"))))' \
-      "$result" "$reason" "$pr_number" "$repo" "$label" "$head_sha" "$reviewer_report" "$blocking_count" "$pending_count" "$failing_count" "$dry_run"
+      "$result" "$reason" "$pr_number" "$repo" "$label" "$head_sha" "$reviewer_report" "$blocking_count" "$pending_count" "$failing_count" "$dry_run" | workflow_redact_json
   fi
 }
 
@@ -1609,7 +1625,7 @@ remove_readiness_label_best_effort() {
     return 0
   fi
   if ! gh pr edit "$pr_number" --repo "$repo" --remove-label "$label_to_remove" >/dev/null 2>&1; then
-    printf 'WARN: %s\n' "failed to remove $label_to_remove on PR #$pr_number — remove it manually" >&2
+    workflow_diagnostic_printf 'WARN: %s\n' "failed to remove $label_to_remove on PR #$pr_number — remove it manually" >&2
   fi
 }
 
@@ -1956,7 +1972,7 @@ if [ "$is_implementation_pr" = "true" ]; then
   # head fetch/parse failure escalates — fail closed — instead of silently
   # gating on this checkout's configuration, which the PR may have changed.
   if [ -n "${AI_DEV_WORKFLOW_CONFIG_FILE:-}" ]; then
-    ready_platforms="$(configured_ready_reviewer_platforms)"
+    ready_platforms="$(configured_ready_reviewer_platforms)" || escalate ready-config-unreadable
   elif ! ready_platforms="$(pr_head_config_ready_platforms "$repo" "$head_sha" 2>/dev/null)"; then
     escalate ready-config-unreadable
   fi

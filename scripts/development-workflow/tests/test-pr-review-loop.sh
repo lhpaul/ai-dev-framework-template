@@ -285,7 +285,7 @@ caller_override_root="$(
   WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT="$_LOCAL_OVERRIDE_DIR" \
     resolve_local_review_override_root "$_TEMP_WORKTREE_DIR"
 )"
-run_test "caller_override_root_is_preserved" "$_LOCAL_OVERRIDE_DIR" "$caller_override_root"
+run_test "caller_override_root_is_canonical_selected_source" "$(CDPATH='' cd -- "$_LOCAL_OVERRIDE_DIR" && pwd -P)" "$caller_override_root"
 rm -rf "$_TEMP_WORKTREE_DIR"
 unset _TEMP_WORKTREE_DIR initiating_override_parsed caller_override_root
 
@@ -295,7 +295,7 @@ if WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT="$_LOCAL_OVERRIDE_DIR/missing" workflow_l
 else
   missing_override_status=$?
 fi
-run_test "unavailable_initiating_override_stops_resolution" "1" "$missing_override_status"
+run_test "unavailable_initiating_override_stops_resolution" "2" "$missing_override_status"
 
 # #1560: an externally created linked worktree (plain `git worktree add`, the
 # Protocol 90 isolation path) has no gitignored local override of its own. The
@@ -332,19 +332,17 @@ _WT_LINKED="$_WT_MAIN-linked"
 git -C "$_WT_MAIN" worktree add -q "$_WT_LINKED" -b fixture/linked-1560 HEAD
 # The resolver shells out to git itself, so it needs the real PATH too.
 linked_override_root="$(PATH="$_REAL_PATH" resolve_local_review_override_root "$_WT_LINKED")"
-run_test "linked_worktree_override_root_is_main_clone" "$_WT_MAIN" "$linked_override_root"
+run_test "linked_worktree_without_local_override_has_no_handoff" "" "$linked_override_root"
 linked_local_file="$(
   workflow_repo_root() { printf '%s\n' "$_WT_LINKED"; }
   workflow_local_config_file
 )"
-run_test "linked_worktree_local_config_file_is_main_clone" "$_WT_MAIN/.ai-dev-workflow.local.yaml" "$linked_local_file"
+run_test "linked_worktree_local_config_file_is_checkout_local" "$_WT_LINKED/.ai-dev-workflow.local.yaml" "$linked_local_file"
 linked_platforms="$(
   workflow_repo_root() { printf '%s\n' "$_WT_LINKED"; }
   workflow_config_review_platforms "$_WT_LINKED/.ai-dev-workflow.yaml" | paste -sd ',' -
 )"
-run_test "linked_worktree_applies_main_clone_review_override" "pr-agent,bugbot" "$linked_platforms"
-linked_main_root="$(workflow_linked_worktree_main_root "$_WT_LINKED")"
-run_test "linked_worktree_main_root_detected" "$_WT_MAIN" "$linked_main_root"
+run_test "linked_worktree_uses_shared_review_policy" "pr-agent,haystack" "$linked_platforms"
 # A worktree-local file with no `review:` section (set-local-path output) must
 # not mask the main clone's reviewer override.
 printf 'product_repos:\n  - name: mobile-app\n    local_path: ../mobile-app\n' > "$_WT_LINKED/.ai-dev-workflow.local.yaml"
@@ -352,7 +350,7 @@ product_only_local_file="$(
   workflow_repo_root() { printf '%s\n' "$_WT_LINKED"; }
   workflow_local_config_file
 )"
-run_test "product_only_worktree_file_does_not_mask_main_clone" "$_WT_MAIN/.ai-dev-workflow.local.yaml" "$product_only_local_file"
+run_test "product_only_worktree_file_stays_local" "$_WT_LINKED/.ai-dev-workflow.local.yaml" "$product_only_local_file"
 printf 'review:\n  on_ready:\n    github: [haystack]\n' > "$_WT_LINKED/.ai-dev-workflow.local.yaml"
 review_local_file="$(
   workflow_repo_root() { printf '%s\n' "$_WT_LINKED"; }
@@ -380,7 +378,7 @@ if [ "$(id -u)" -ne 0 ]; then
     workflow_repo_root() { printf '%s\n' "$_WT_LINKED"; }
     workflow_local_config_file 2>/dev/null
   )" || unreadable_status=$?
-  run_test "unreadable_worktree_file_is_an_error" "1:" "$unreadable_status:$unreadable_out"
+  run_test "unreadable_worktree_file_is_an_error" "2:" "$unreadable_status:$unreadable_out"
   chmod 644 "$_WT_LINKED/.ai-dev-workflow.local.yaml"
   unset unreadable_status unreadable_out
 fi
@@ -395,31 +393,18 @@ if [ "$(id -u)" -ne 0 ]; then
     workflow_repo_root() { printf '%s\n' "$_WT_LINKED"; }
     workflow_local_config_file 2>/dev/null
   )" || unreadable_main_status=$?
-  run_test "unreadable_main_clone_file_is_an_error" "1:" "$unreadable_main_status:$unreadable_main_out"
+  run_test "unreadable_main_clone_is_never_read" "0:$_WT_LINKED/.ai-dev-workflow.local.yaml" "$unreadable_main_status:$unreadable_main_out"
   chmod 644 "$_WT_MAIN/.ai-dev-workflow.local.yaml"
   unset unreadable_main_status unreadable_main_out
 fi
-main_root_status=0
-workflow_linked_worktree_main_root "$_WT_MAIN" >/dev/null 2>&1 || main_root_status=$?
-run_test "main_clone_is_not_a_linked_worktree" "1" "$main_root_status"
-# Detection is git-free: under the harness's git mock (which exits 64 for
-# anything but one rev-parse form) the worktree is still recognised, and no
-# git call is logged. run-epic-policy-recommender.sh relies on this — it is
-# forbidden from invoking git, and it reads the review config through these
-# helpers (caught by its CI suite, not locally, where the local file exists).
+# A Git stub must never run during private-source selection.
 mock_git_status=0
-mock_git_main_root="$(
+mock_git_local_file="$(
   unset -f git
-  workflow_linked_worktree_main_root "$_WT_LINKED" 2>/dev/null
+  workflow_repo_root() { printf '%s\n' "$_WT_LINKED"; }
+  workflow_local_config_file 2>/dev/null
 )" || mock_git_status=$?
-run_test "linked_worktree_detected_without_invoking_git" "0:$_WT_MAIN" "$mock_git_status:$mock_git_main_root"
-# The referenced gitdir must exist: otherwise path resolution fails before
-# the worktrees-layout check and the test proves nothing about that check.
-mkdir -p "$_WT_MAIN/.git/modules/sub" "$_WT_MAIN/fake-submodule"
-printf 'gitdir: ../.git/modules/sub\n' > "$_WT_MAIN/fake-submodule/.git"
-submodule_status=0
-workflow_linked_worktree_main_root "$_WT_MAIN/fake-submodule" >/dev/null 2>&1 || submodule_status=$?
-run_test "submodule_gitdir_file_is_not_a_linked_worktree" "1" "$submodule_status"
+run_test "source_selection_without_invoking_git" "0:$_WT_LINKED/.ai-dev-workflow.local.yaml" "$mock_git_status:$mock_git_local_file"
 git -C "$_WT_MAIN" worktree remove --force "$_WT_LINKED"
 unset -f git
 rm -rf "$_WT_MAIN"
@@ -450,12 +435,24 @@ review:
     github: [haystack]
 YAML
 
-duplicate_warning="$(emit_review_lifecycle_duplicate_warnings "$_CONFIG_DIR/.ai-dev-workflow-duplicates.yaml" 2>&1 || true)"
-case "$duplicate_warning" in
-  *'reviewer "haystack" in more than one bucket'*) duplicate_detected=yes ;;
-  *) duplicate_detected=no ;;
-esac
-run_test "duplicate_lifecycle_reviewer_warning" "yes" "$duplicate_detected"
+_DUP_CHANNEL_DIR="$(mktemp -d)"
+duplicate_status=0
+emit_review_lifecycle_duplicate_warnings "$_CONFIG_DIR/.ai-dev-workflow-duplicates.yaml" >"$_DUP_CHANNEL_DIR/stdout" 2>"$_DUP_CHANNEL_DIR/stderr" || duplicate_status=$?
+duplicate_warning="$(cat "$_DUP_CHANNEL_DIR/stderr")"
+run_test "duplicate_lifecycle_reviewer_warning" "WARN: configuration validation error; key=review" "$duplicate_warning"
+run_test "duplicate_lifecycle_warning_status" "0" "$duplicate_status"
+run_test "duplicate_lifecycle_warning_stdout_empty" "" "$(cat "$_DUP_CHANNEL_DIR/stdout")"
+duplicate_identities_absent=yes
+if grep -Eq 'haystack|pr-agent|codex' "$_DUP_CHANNEL_DIR/stdout" "$_DUP_CHANNEL_DIR/stderr"; then
+  duplicate_identities_absent=no
+fi
+run_test "duplicate_lifecycle_warning_identities_absent_both_channels" "yes" "$duplicate_identities_absent"
+duplicate_selected_payload="$(
+  printf 'draft=%s;ready=%s' \
+    "$(workflow_config_review_on_draft_github "$_CONFIG_DIR/.ai-dev-workflow-duplicates.yaml" | paste -sd ',' -)" \
+    "$(workflow_config_review_on_ready_github "$_CONFIG_DIR/.ai-dev-workflow-duplicates.yaml" | paste -sd ',' -)"
+)"
+run_test "duplicate_lifecycle_warning_preserves_selected_payload" "draft=pr-agent,haystack;ready=haystack" "$duplicate_selected_payload"
 
 _DUP_OVERRIDE_DIR="$(mktemp -d)"
 cat > "$_DUP_OVERRIDE_DIR/.ai-dev-workflow.local.yaml" <<'YAML'
@@ -475,18 +472,33 @@ review:
   on_ready:
     github: [haystack]
 YAML
-duplicate_override_warning="$(
+duplicate_override_status=0
+(
   workflow_repo_root() { printf '%s\n' "$_DUP_OVERRIDE_DIR"; }
-  WORKFLOW_APPLY_LOCAL_REVIEW_OVERRIDES=1 emit_review_lifecycle_duplicate_warnings "$_DUP_TEMP_CONFIG" 2>&1 || true
+  WORKFLOW_APPLY_LOCAL_REVIEW_OVERRIDES=1 emit_review_lifecycle_duplicate_warnings "$_DUP_TEMP_CONFIG"
+) >"$_DUP_CHANNEL_DIR/stdout" 2>"$_DUP_CHANNEL_DIR/stderr" || duplicate_override_status=$?
+duplicate_override_warning="$(cat "$_DUP_CHANNEL_DIR/stderr")"
+run_test "duplicate_lifecycle_warning_uses_local_override_for_temp_config" "WARN: configuration validation error; key=review" "$duplicate_override_warning"
+run_test "duplicate_lifecycle_override_warning_status" "0" "$duplicate_override_status"
+run_test "duplicate_lifecycle_override_warning_stdout_empty" "" "$(cat "$_DUP_CHANNEL_DIR/stdout")"
+duplicate_override_identities_absent=yes
+if grep -Eq 'bugbot|haystack|pr-agent' "$_DUP_CHANNEL_DIR/stdout" "$_DUP_CHANNEL_DIR/stderr"; then
+  duplicate_override_identities_absent=no
+fi
+run_test "duplicate_lifecycle_override_identities_absent_both_channels" "yes" "$duplicate_override_identities_absent"
+duplicate_override_payload="$(
+  workflow_repo_root() { printf '%s\n' "$_DUP_OVERRIDE_DIR"; }
+  export WORKFLOW_APPLY_LOCAL_REVIEW_OVERRIDES=1
+  printf 'draft=%s;ready=%s' \
+    "$(workflow_config_review_on_draft_github "$_DUP_TEMP_CONFIG" | paste -sd ',' -)" \
+    "$(workflow_config_review_on_ready_github "$_DUP_TEMP_CONFIG" | paste -sd ',' -)"
 )"
-case "$duplicate_override_warning" in
-  *'reviewer "bugbot" in more than one bucket'*) duplicate_override_detected=yes ;;
-  *) duplicate_override_detected=no ;;
-esac
-run_test "duplicate_lifecycle_warning_uses_local_override_for_temp_config" "yes" "$duplicate_override_detected"
+run_test "duplicate_lifecycle_override_preserves_selected_payload" "draft=bugbot;ready=bugbot" "$duplicate_override_payload"
 rm -rf "$_DUP_OVERRIDE_DIR"
 rm -f "$_DUP_TEMP_CONFIG"
-unset _DUP_OVERRIDE_DIR _DUP_TEMP_CONFIG duplicate_override_warning duplicate_override_detected
+rm -rf "$_DUP_CHANNEL_DIR"
+unset _DUP_OVERRIDE_DIR _DUP_TEMP_CONFIG _DUP_CHANNEL_DIR duplicate_override_warning duplicate_override_status duplicate_override_identities_absent duplicate_override_payload
+unset duplicate_warning duplicate_status duplicate_identities_absent duplicate_selected_payload
 
 declare -a phase_after_clean_platforms=()
 append_phase_after_clean_platforms "coderabbit, pr-agent"
