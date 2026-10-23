@@ -497,8 +497,46 @@ No current tag, Release date
 or previous-tag date is needed. Unknown, ambiguous or truncated membership
 defers the whole operation. Issue stamps, tracker transitions, GitHub milestone
 finalization, branch cleanup/retention and declared audits all contribute to
-admission; an unaffordable pair admits no prefix. Existing gates and deletion
+admission; by default, an unaffordable pair admits no prefix. Existing gates and deletion
 permissions still apply.
+
+For a release whose complete work cannot fit one quota window, add top-level
+`"releaseAdmission": {"mode": "staged", "trackerBatchSize": 1}` to this same
+complete manifest. Follow Protocol 94 §3.6's staged exception: retain both PRs,
+all issues and every owned duty in one journal, and admit only the complete
+current frozen stage. The order is production merge/verification, publication
+verification, backport merge/verification, branch cleanup/retention, issue
+batches, marker finalization and cleanup/audit completion. Backport still
+requires a verified regular production merge and matching published tag/Release;
+tracker mutation still requires both regular merges and verified branch policy.
+
+Batch size is a positive integer up to 100, defaulting to one issue. Every batch
+contains that issue scope's release stamps and tracker transitions with separate
+independent read-backs. A batch must fit with reserve and estimation margin;
+the helper never splits a batch after freezing. Version 2 reports only the
+current stage's projected future work, avoiding repeated charges for completed
+tracker writes and local Git/REST branch proofs. This remains a conservative
+heuristic, not reserved quota or a guaranteed upper bound.
+
+Continue using the same `run-step` and `prepare-release-post-merge-cleanup.sh
+--merge-session` entrypoints. The staged cleanup driver executes the frozen
+issue batches directly and verifies each duty before the next stage. Its final
+barriers require the retained independent proofs for every duty; they do not
+rerun all tracker mutations or accept best-effort success as completion.
+If a new stage lacks quota, stop with `Deferred`, report historical merges and
+pending work, and explicitly resume the same session after reset. Waiting or
+Interrupted still requires verified recovery without resubmitting a merge or
+replaying an uncertain provider mutation. Recovery's provider read-backs are
+also budgeted by the frozen batches, including completed duties in their cost.
+When recovery spans quota windows, the same recovery generation retains its
+verified prefix; `stagedRecoveryPending`, `recoveryEstimate` and `recoverySample`
+identify the outstanding read work. Repeat explicit `resume` after reset until
+recovery and current-stage admission succeed. The cleanup driver then reuses
+those durable proofs instead of reading every completed batch again. It also
+reuses independently verified provider proofs during uninterrupted or repeated
+cleanup; uncertain duties still require live reconciliation. PR, publication
+and branch-policy checks remain live. Staging grants no additional review,
+risk, admin or deletion authority. Ordinary/legacy sessions remain whole-set.
 
 Use `run-step` for the authorized regular production merge with explicit
 `--repo` and `--match-head-commit`, preserving its argv. Execute `merge_verify`,

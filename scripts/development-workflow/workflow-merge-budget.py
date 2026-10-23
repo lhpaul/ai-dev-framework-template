@@ -937,6 +937,8 @@ def release_action_check(state, target, args, live):
 
 
 def estimate(state):
+    if state.get("releaseAdmission"):
+        return estimate_stage(state)
     pieces = [{"kind": "shared", "count": 1, "weight": 25}]
     outstanding = [p for p in state["prs"] if any(s["status"] not in {"completed", "skipped_by_policy"} for s in p["steps"].values())]
     pieces.append({"kind": "pr", "count": len(outstanding), "weight": 50})
@@ -972,6 +974,90 @@ def estimate(state):
     raw = sum(p["count"] * p["weight"] for p in pieces)
     margin = max(50, (raw + 1) // 2)
     return {"version": 1, "heuristic": True, "components": pieces,
+            "rawCost": raw, "estimationMargin": margin, "projectedCost": raw + margin}
+
+
+def freeze_release_admission(declaration, state):
+    """Opt in without weakening legacy whole-selection admission."""
+    if "releaseAdmission" not in declaration:
+        return
+    policy = declaration["releaseAdmission"]
+    if (not state.get("releasePair") or not isinstance(policy, dict)
+            or set(policy) - {"mode", "trackerBatchSize"} or policy.get("mode") != "staged"):
+        raise Stop("staged admission requires an explicit release pair and valid policy")
+    size = integer(policy.get("trackerBatchSize", 1), "tracker batch size", True)
+    if size > 100:
+        raise Stop("tracker batch size exceeds 100")
+    production, backport = state["prs"]
+    stages = []
+    assigned = set()
+
+    def add(name, target, predicate):
+        steps = []
+        for key, entry in target["steps"].items():
+            identity = (target["pr"], key)
+            if identity not in assigned and predicate(entry):
+                steps.append({"pr": target["pr"], "step": key})
+                assigned.add(identity)
+        if steps:
+            stages.append({"id": name, "steps": steps})
+
+    merge_phases = {"merge_api", "merge_verify", "recheck", "hold", "audit"}
+    add("production", production, lambda e: e["phase"] in merge_phases and not e.get("deferUntilPairCleanup"))
+    add("publication", production, lambda e: e["phase"] == "publication")
+    add("backport", backport, lambda e: e["phase"] in merge_phases)
+    add("branch-cleanup", backport, lambda e: e["phase"] in {"remote_delete", "local_cleanup", "policy_skip"})
+    ids = [i["id"] for i in backport["issues"]]
+    for offset in range(0, len(ids), size):
+        batch = ids[offset:offset + size]
+        add("tracker-%s" % (offset // size + 1), backport,
+            lambda e: e["phase"] in {"release_stamp", "tracker"} and e.get("issue") in batch)
+    add("finalization", backport, lambda e: e["phase"] == "release_finalize")
+    add("shared-verification", backport, lambda e: e["phase"] == "cleanup")
+    add("completion", production, lambda e: e["phase"] == "cleanup" or e.get("deferUntilPairCleanup") is True)
+    if len(assigned) != sum(len(p["steps"]) for p in state["prs"]):
+        raise Stop("release stage plan leaves unassigned duties")
+    state["releaseAdmission"] = {"mode": "staged", "trackerBatchSize": size, "stages": stages}
+
+
+def stage_entries(state, stage):
+    for ref in stage["steps"]:
+        target = next(p for p in state["prs"] if p["pr"] == ref["pr"])
+        yield target, ref["step"], target["steps"][ref["step"]]
+
+
+def pending_stage(state):
+    for stage in state["releaseAdmission"]["stages"]:
+        if any(e["status"] not in {"completed", "skipped_by_policy"} for _, _, e in stage_entries(state, stage)):
+            return stage
+    return None
+
+
+def estimate_stage(state, stage=None, *, recovery=False):
+    stage = stage or pending_stage(state)
+    if not stage:
+        return {"version": 2, "heuristic": True, "stage": None, "components": [],
+                "rawCost": 0, "estimationMargin": 0, "projectedCost": 0}
+    # Price only the current frozen stage, including independent read-back.
+    # Provider branch proofs are Git/REST reads, not GraphQL tracker writes.
+    # Legacy projection charged every completed provider duty again at every
+    # later boundary, making a release permanently unaffordable.
+    entries = [e for _, _, e in stage_entries(state, stage)
+               if recovery or e["status"] not in {"completed", "skipped_by_policy"}]
+    weights = {"tracker": 250, "release_stamp": 15, "release_finalize": 15,
+               "cleanup": 30, "audit": 10, "hold": 10, "publication": 25}
+    pieces = [{"kind": "stage_shared", "count": 1, "weight": 125},
+              {"kind": "stage_scope", "count": 1,
+               "weight": max(100, state["releasePair"]["projection"]["scopeReadCost"])}]
+    for phase in sorted({e["phase"] for e in entries}):
+        pieces.append({"kind": phase, "count": sum(e["phase"] == phase for e in entries),
+                       "weight": weights.get(phase, 50)})
+    # Each provider execution and its proof resolve the owning binding.
+    pieces.append({"kind": "provider_binding", "count": sum(e["phase"] in
+                   {"tracker", "release_stamp", "release_finalize"} for e in entries), "weight": 150})
+    raw = sum(p["count"] * p["weight"] for p in pieces)
+    margin = max(50, (raw + 1) // 2)
+    return {"version": 2, "heuristic": True, "stage": stage["id"], "components": pieces,
             "rawCost": raw, "estimationMargin": margin, "projectedCost": raw + margin}
 
 
@@ -1122,13 +1208,21 @@ def admission(state):
     try:
         sample = budget()
         state["initialSample"] = sample
+        if state.get("releaseAdmission") and any(
+                estimate_stage(state, stage)["projectedCost"] + state["reserve"] > sample["limit"]
+                for stage in state["releaseAdmission"]["stages"]
+                if any(e["status"] not in {"completed", "skipped_by_policy"}
+                       for _, _, e in stage_entries(state, stage))):
+            raise Stop("frozen release stage cannot fit a GraphQL quota window; use a smaller fresh plan")
         if sample["remaining"] < state["estimate"]["projectedCost"] + state["reserve"]:
-            raise Stop("insufficient GraphQL quota for entire outstanding selection")
+            raise Stop("insufficient GraphQL quota for " + ("current frozen release stage" if state.get("releaseAdmission") else "entire outstanding selection"))
     except (Stop, OSError) as exc:
         state["outcome"], state["reason"] = "Deferred", str(exc)
         state["quotaEvidence"] = getattr(exc, "evidence", None)
         return False
     state["outcome"], state["reason"] = "Admitted", ""
+    if state.get("releaseAdmission"):
+        state["admittedStage"] = state["estimate"]["stage"]
     return True
 
 
@@ -1286,6 +1380,7 @@ def begin(args):
                     if entry["phase"] == phase:
                         entry.update(phase="policy_skip", skippedPhase=phase)
         freeze_release_pair(declaration, state)
+        freeze_release_admission(declaration, state)
         state["participants"] = sorted(set(state["participants"]))
         state["manifestFingerprint"] = hashlib.sha256(json.dumps(declaration, sort_keys=True).encode()).hexdigest()
         state["projectionComplete"] = True
@@ -1314,6 +1409,11 @@ def before(args):
     old = target["steps"].get(key)
     if not old or old.get("phase") != args.phase:
         raise Stop("unknown step or phase outside frozen manifest")
+    stage = pending_stage(image) if image.get("releaseAdmission") else None
+    if image.get("releaseAdmission") and (not stage or not any(
+            p is target and step == key for p, step, _ in stage_entries(image, stage))):
+        raise Stop("step is outside the current frozen release stage")
+    stage_changed = bool(stage and image.get("admittedStage") != stage["id"])
     if args.phase in target.get("policySkipped", []):
         raise Stop("cleanup forbidden by declared existing policy")
     if args.phase in {"tracker", "issue_close"} and not any(
@@ -1354,7 +1454,7 @@ def before(args):
     target = target_for(image, args)
     failure = None
     try:
-        if not image["started"]:
+        if not image["started"] or stage_changed:
             if image.get("releasePair"):
                 release_scope_check(image)
             for selected in image["prs"]:
@@ -1409,11 +1509,13 @@ def before(args):
                     selected["steps"][step_id]["submission"] = entry["submission"]
         if image.get("releasePair"):
             state["releasePair"] = image["releasePair"]
-        for field in ("estimate", "initialSample", "quotaEvidence"):
+        for field in ("estimate", "initialSample", "quotaEvidence", "admittedStage"):
             if field in image:
                 state[field] = image[field]
         if failure:
-            state["outcome"] = "Waiting" if image["outcome"] == "Waiting" else ("Interrupted" if state["started"] else "Deferred")
+            state["outcome"] = ("Waiting" if image["outcome"] == "Waiting" else
+                                "Deferred" if image.get("releaseAdmission") and image["outcome"] == "Deferred" else
+                                "Interrupted" if state["started"] else "Deferred")
             state["reason"] = failure
             if not any(entry["status"] == "in_flight" for target in state["prs"] for entry in target["steps"].values()):
                 state["active"] = None
@@ -1795,6 +1897,15 @@ def verify(state, target, entry, seen=None):
             if len(cleanup) != 1 or cleanup[0]["status"] != "completed":
                 raise Stop("shared release cleanup remains unverified", {"knownOutstanding": True})
             return verify(state, shared, cleanup[0])
+        if state.get("releaseAdmission"):
+            # Each batch already performed its own independent live read-back.
+            # The final barrier checks all journal-owned proofs, rather than
+            # executing the entire tracker workload again in one window.
+            duties = {"tracker", "release_stamp", "release_finalize", "remote_delete", "local_cleanup", "policy_skip"}
+            if any(e["status"] not in {"completed", "skipped_by_policy"} or not e.get("verifiedAt")
+                   for e in target["steps"].values() if e["phase"] in duties):
+                raise Stop("staged release duties lack independent verification", {"knownOutstanding": True})
+            return True
         for issue in target["issues"]:
             if issue.get("tracker") and not tracker_read(state, issue):
                 raise Stop("owned tracker follow-up remains pending", {"knownOutstanding": True})
@@ -1901,9 +2012,12 @@ def resume(args):
         entry.get("providerEvidence", {}).get("recoveryGeneration") == image.get("recoveryGeneration")
         and newer(entry.get("providerEvidence", {}).get("observedAt"), image.get("recoveryStartedAt"))
         for entry in linear_entries if entry.get("intentAt")))
-    if not continuation:
+    staged_continuation = bool(image.get("releaseAdmission") and image.get("stagedRecoveryPending"))
+    if not continuation and not staged_continuation:
         image["recoveryGeneration"] = image.get("recoveryGeneration", 0) + 1
         image["recoveryStartedAt"] = now()
+    if image.get("releaseAdmission"):
+        image["stagedRecoveryPending"] = True
     image["recoveryAwaitingProvider"] = False
     def recover_entry(target, key, entry):
         try:
@@ -1945,17 +2059,26 @@ def resume(args):
             for key, entry in target["steps"].items():
                 if entry["phase"] in {"audit", "hold"}:
                     continue
+                if image.get("releaseAdmission") and entry["phase"] in {"tracker", "release_stamp", "release_finalize"}:
+                    # Reconcile provider proofs by their frozen batch below.
+                    # Do not read the entire completed prefix before quota.
+                    continue
                 if entry["status"] in {"in_flight", "uncertain", "completed", "skipped_by_policy"} or entry.get("submission"):
                     recover_entry(target, key, entry)
         else:
+            if image.get("releaseAdmission"):
+                recover_release_batches(image, recover_entry)
             image["active"], image["started"] = None, False
             image["attempt"] += 1
             admission(image)
             if image["outcome"] == "Admitted":
+                if image.get("releaseAdmission"):
+                    image["stagedRecoveryPending"] = False
                 image.pop("cancellation", None)
             complete_if_ready(image)
     except (Stop, OSError) as exc:
-        image["outcome"], image["reason"] = "Deferred", "unknown outstanding work: " + str(exc)
+        image["outcome"] = "Deferred"
+        image["reason"] = str(exc) if getattr(exc, "evidence", None) == {"budgetDeferred": True} else "unknown outstanding work: " + str(exc)
         image["recoveryAwaitingProvider"] = bool(linear_entries)
     with journal(args.session) as state:
         if state["revision"] != image["revision"]:
@@ -1967,8 +2090,37 @@ def resume(args):
     return summary(snapshot(args.session))
 
 
+def recover_release_batches(state, recover_entry):
+    """Bound live reconciliation as well as mutations; persist each read-back."""
+    generation = state["recoveryGeneration"]
+    for stage in state["releaseAdmission"]["stages"]:
+        entries = [(target, key, entry) for target, key, entry in stage_entries(state, stage)
+                   if entry["phase"] in {"tracker", "release_stamp", "release_finalize"}
+                   and entry["status"] in {"in_flight", "uncertain", "completed", "skipped_by_policy"}
+                   and entry.get("recoveryVerifiedGeneration") != generation]
+        if not entries:
+            continue
+        # Include completed duties here: their independent recovery reads are
+        # real work, even though ordinary admission prices only future writes.
+        state["recoveryEstimate"] = estimate_stage(state, stage, recovery=True)
+        state["recoverySample"] = sample = budget()
+        if sample["remaining"] < state["recoveryEstimate"]["projectedCost"] + state["reserve"]:
+            raise Stop("insufficient GraphQL quota for frozen release recovery batch", {"budgetDeferred": True})
+        for target, key, entry in entries:
+            recover_entry(target, key, entry)
+            entry["recoveryVerifiedGeneration"] = generation
+    state.pop("recoveryEstimate", None)
+    state.pop("recoverySample", None)
+
+
 def summary(state, final=False):
-    result = {k: state.get(k) for k in ("schemaVersion", "session", "revision", "outcome", "reason", "reserve", "estimate", "initialSample", "quotaEvidence", "selectedSet", "projectionComplete", "prs", "releasePair")}
+    result = {k: state.get(k) for k in ("schemaVersion", "session", "revision", "outcome", "reason", "reserve", "estimate", "initialSample", "quotaEvidence", "selectedSet", "projectionComplete", "prs", "releasePair", "releaseAdmission", "admittedStage")}
+    if state.get("releaseAdmission"):
+        stage = pending_stage(state)
+        result["pendingStage"] = stage["id"] if stage else None
+        for field in ("stagedRecoveryPending", "recoveryGeneration", "recoveryEstimate", "recoverySample"):
+            if field in state:
+                result[field] = state[field]
     if result.get("prs") is not None:
         result["prs"] = decode(json.dumps(result["prs"]))
         for target in result["prs"]:
@@ -2036,6 +2188,7 @@ def provider(args):
             entry["providerEvidence"] = {k: evidence[k] for k in ("provider", "issue", "repo", *fields, "mutationRequestId", "readRequestId", "observedAt")}
             entry["providerEvidence"]["recoveryGeneration"] = state.get("recoveryGeneration", 0)
             entry["status"] = "completed"
+            entry["verifiedAt"] = now()
             if not any(s["status"] == "in_flight" for p in state["prs"] for s in p["steps"].values()):
                 state["active"] = None
             complete_if_ready(state)
@@ -2084,7 +2237,12 @@ def release_cleanup(args):
                     raise Stop(remote_tip_error)
             raise
 
-    if not nested:
+    staged = bool(state.get("releaseAdmission"))
+    if staged and active:
+        raise Stop("staged cleanup requires no active executor; recover explicitly")
+    if staged and (state.get("stagedRecoveryPending") or state["outcome"] not in {"Admitted", "Completed"}):
+        raise Stop("staged cleanup requires completed explicit recovery and admission")
+    if not nested and not staged:
         if active:
             raise Stop("release cleanup is not the owning child; explicit recovery required")
         if cleanup_entry["status"] == "pending":
@@ -2104,83 +2262,112 @@ def release_cleanup(args):
 
     # Scope and publication are read again at the mutation boundary; inherited
     # environment or an old component cleanup JSON cannot discharge these duties.
-    release_scope_check(state)
+    if not staged:
+        # Staged mutation hooks already recheck this scope at admission. Avoid
+        # another full projection before the pending stage's quota check.
+        release_scope_check(state)
     publication_read(state)
     regular_release_merge(target)
     owner = proof_root(state, state["ownerCommonDir"], state["ownerRoot"])
     issue_by_id = {i["id"]: i for i in target["issues"]}
-    for phase in ("remote_delete", "local_cleanup", "policy_skip", "release_stamp", "tracker", "release_finalize"):
-        for key, original in target["steps"].items():
-            if original["phase"] != phase:
+    phases = ("remote_delete", "local_cleanup", "policy_skip", "release_stamp", "tracker", "release_finalize")
+    if staged:
+        ordered = [(key, entry) for stage in state["releaseAdmission"]["stages"]
+                   for selected, key, entry in stage_entries(state, stage)
+                   if selected is target and entry["phase"] in phases]
+    else:
+        ordered = [(key, entry) for phase in phases for key, entry in target["steps"].items()
+                   if entry["phase"] == phase]
+    for key, original in ordered:
+        phase = original["phase"]
+        current = checked_snapshot(args.session)
+        selected = current["prs"][1]
+        entry = selected["steps"][key]
+        if entry["status"] in {"completed", "skipped_by_policy"}:
+            if staged and phase in {"tracker", "release_stamp", "release_finalize"}:
+                # Normal execution or explicit recovery already read this duty
+                # back independently. Reusing that journal-owned proof avoids
+                # an unpriced, growing prefix before the next pending batch.
+                if not entry.get("verifiedAt"):
+                    raise Stop("completed release duty lacks durable proof; recover explicitly")
                 continue
-            current = checked_snapshot(args.session)
-            selected = current["prs"][1]
-            entry = selected["steps"][key]
-            if entry["status"] in {"completed", "skipped_by_policy"}:
-                if not verify(current, selected, entry):
-                    raise Stop("completed release duty no longer verifies")
-                continue
-            if entry["status"] != "pending":
-                raise Stop("uncertain release duty requires explicit recovery")
-            status = None
-            argv = ["true"]
-            if phase in {"release_stamp", "tracker", "release_finalize"}:
-                if phase == "release_stamp":
-                    status = pair["version"]
-                    function, values = "record_release_for_issue_best_effort", [entry["issue"], status]
-                    if issue_by_id[entry["issue"]]["provider"] == "linear":
-                        print("LINEAR_RELEASE_ACTION_REQUIRED issue=%s version=%s marker=%s" %
-                              (entry["issue"], status, json.dumps(pair["projection"]["linearMarker"], sort_keys=True)), file=sys.stderr)
-                elif phase == "tracker":
-                    status = issue_by_id[entry["issue"]]["status"]
-                    function, values = "update_tracker_status_best_effort", [entry["issue"], status, pair["projection"]["mergedStatus"]]
+            if not verify(current, selected, entry):
+                raise Stop("completed release duty no longer verifies")
+            continue
+        if entry["status"] != "pending":
+            raise Stop("uncertain release duty requires explicit recovery")
+        status = None
+        argv = ["true"]
+        if phase in {"release_stamp", "tracker", "release_finalize"}:
+            if phase == "release_stamp":
+                status = pair["version"]
+                function, values = "record_release_for_issue_best_effort", [entry["issue"], status]
+                if issue_by_id[entry["issue"]]["provider"] == "linear":
+                    print("LINEAR_RELEASE_ACTION_REQUIRED issue=%s version=%s marker=%s" %
+                          (entry["issue"], status, json.dumps(pair["projection"]["linearMarker"], sort_keys=True)), file=sys.stderr)
+            elif phase == "tracker":
+                status = issue_by_id[entry["issue"]]["status"]
+                function, values = "update_tracker_status_best_effort", [entry["issue"], status, pair["projection"]["mergedStatus"]]
+            else:
+                function, values = "finalize_release_marker_best_effort", [pair["version"]]
+            # Function names are fixed here; values are positional argv, never shell source.
+            script = 'set -e; source "$1/workflow-lib.sh"; cd "$2"; shift 2; ' + function + ' "$@" >&2'
+            argv = ["bash", "-c", script, "release-budget", str(SCRIPT), owner, *values]
+        elif phase == "remote_delete":
+            git_root = proof_root(current, selected["commonDir"], selected["root"])
+            remote_ref = "refs/heads/" + pair["branch"]
+            remote_tip = call(["git", "-C", git_root, "ls-remote", "origin", remote_ref])
+            if remote_tip:
+                if remote_tip.split() != [pair["head"], remote_ref]:
+                    raise Stop(remote_tip_error)
+                # Bind deletion to this exact SHA even if the ref advances
+                # between the read and push; no history replacement occurs.
+                argv = ["git", "-C", git_root, "push", "origin", "--delete", pair["branch"],
+                        "--force-with-lease=" + remote_ref + ":" + pair["head"]]
+        elif phase == "local_cleanup":
+            git_root = proof_root(current, selected["commonDir"], selected["root"])
+            # Preserve worktrees; reuse the frozen participant already on
+            # the base, refusing tracked changes or ambiguous ownership.
+            if call(["git", "-C", git_root, "branch", "--list", pair["branch"]]):
+                if call(["git", "-C", git_root, "status", "--porcelain", "--untracked-files=no"]):
+                    raise Stop("selected release worktree has tracked changes; local cleanup pending")
+                listing = call(["git", "-C", git_root, "worktree", "list", "--porcelain"])
+                bases = [block.splitlines()[0][9:] for block in listing.split("\n\n")
+                         if "branch refs/heads/" + pair["backportBase"] in block.splitlines()]
+                if len(bases) > 1:
+                    raise Stop("release base worktree ownership ambiguous")
+                base_root = str(root(bases[0])) if bases else git_root
+                if base_root not in current["participants"] or str(common(base_root)) != selected["commonDir"]:
+                    raise Stop("release base worktree is not a frozen participant")
+                if call(["git", "-C", base_root, "status", "--porcelain", "--untracked-files=no"]):
+                    raise Stop("release base worktree has tracked changes")
+                if base_root != git_root:
+                    # Keep both checkouts. Update the already occupied base,
+                    # then detach the selected checkout onto that same ref.
+                    script = 'set -e; git -C "$1" fetch origin; git -C "$1" pull --ff-only origin "$2"; git -C "$3" switch --detach "$2"; git -C "$1" branch -d "$4"'
+                    argv = ["bash", "-c", script, "release-budget", base_root, pair["backportBase"], git_root, pair["branch"]]
                 else:
-                    function, values = "finalize_release_marker_best_effort", [pair["version"]]
-                # Function names are fixed here; values are positional argv, never shell source.
-                script = 'set -e; source "$1/workflow-lib.sh"; cd "$2"; shift 2; ' + function + ' "$@" >&2'
-                argv = ["bash", "-c", script, "release-budget", str(SCRIPT), owner, *values]
-            elif phase == "remote_delete":
-                git_root = proof_root(current, selected["commonDir"], selected["root"])
-                remote_ref = "refs/heads/" + pair["branch"]
-                remote_tip = call(["git", "-C", git_root, "ls-remote", "origin", remote_ref])
-                if remote_tip:
-                    if remote_tip.split() != [pair["head"], remote_ref]:
-                        raise Stop(remote_tip_error)
-                    # Bind deletion to this exact SHA even if the ref advances
-                    # between the read and push; no history replacement occurs.
-                    argv = ["git", "-C", git_root, "push", "origin", "--delete", pair["branch"],
-                            "--force-with-lease=" + remote_ref + ":" + pair["head"]]
-            elif phase == "local_cleanup":
-                git_root = proof_root(current, selected["commonDir"], selected["root"])
-                # Preserve worktrees; reuse the frozen participant already on
-                # the base, refusing tracked changes or ambiguous ownership.
-                if call(["git", "-C", git_root, "branch", "--list", pair["branch"]]):
-                    if call(["git", "-C", git_root, "status", "--porcelain", "--untracked-files=no"]):
-                        raise Stop("selected release worktree has tracked changes; local cleanup pending")
-                    listing = call(["git", "-C", git_root, "worktree", "list", "--porcelain"])
-                    bases = [block.splitlines()[0][9:] for block in listing.split("\n\n")
-                             if "branch refs/heads/" + pair["backportBase"] in block.splitlines()]
-                    if len(bases) > 1:
-                        raise Stop("release base worktree ownership ambiguous")
-                    base_root = str(root(bases[0])) if bases else git_root
-                    if base_root not in current["participants"] or str(common(base_root)) != selected["commonDir"]:
-                        raise Stop("release base worktree is not a frozen participant")
-                    if call(["git", "-C", base_root, "status", "--porcelain", "--untracked-files=no"]):
-                        raise Stop("release base worktree has tracked changes")
-                    if base_root != git_root:
-                        # Keep both checkouts. Update the already occupied base,
-                        # then detach the selected checkout onto that same ref.
-                        script = 'set -e; git -C "$1" fetch origin; git -C "$1" pull --ff-only origin "$2"; git -C "$3" switch --detach "$2"; git -C "$1" branch -d "$4"'
-                        argv = ["bash", "-c", script, "release-budget", base_root, pair["backportBase"], git_root, pair["branch"]]
-                    else:
-                        script = 'set -e; git -C "$1" fetch origin; git -C "$1" switch "$2"; git -C "$1" pull --ff-only origin "$2"; git -C "$1" branch -d "$3"'
-                        argv = ["bash", "-c", script, "release-budget", git_root, pair["backportBase"], pair["branch"]]
-            run(selected, key, entry, argv, status)
+                    script = 'set -e; git -C "$1" fetch origin; git -C "$1" switch "$2"; git -C "$1" pull --ff-only origin "$2"; git -C "$1" branch -d "$3"'
+                    argv = ["bash", "-c", script, "release-budget", git_root, pair["backportBase"], pair["branch"]]
+        run(selected, key, entry, argv, status)
+    if staged:
+        # All provider batches are verified before either cleanup barrier.
+        for number in (pair["backportPr"], pair["productionPr"]):
+            current = checked_snapshot(args.session)
+            selected = next(p for p in current["prs"] if p["pr"] == number)
+            key, entry = next((k, e) for k, e in selected["steps"].items() if e["phase"] == "cleanup")
+            if entry["status"] == "pending":
+                run(selected, key, entry, ["true"])
+            elif entry["status"] != "completed" or not verify(current, selected, entry):
+                raise Stop("staged cleanup barrier requires explicit recovery")
     return {"sharedDutiesVerified": True, "releasePair": pair}
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description=__doc__, epilog=(
+        'Release manifests may opt in with "releaseAdmission": '
+        '{"mode":"staged","trackerBatchSize":1} alongside a complete releasePair. '
+        'Batch size is 1–100; stages retain one journal and require fresh quota and verified recovery.'))
     parser.add_argument("command", choices=["begin", "before-step", "after-step", "run-step", "resume", "report", "check", "record-provider-result", "project-release", "release-cleanup"])
     parser.add_argument("--input")
     parser.add_argument("--repo-root")
