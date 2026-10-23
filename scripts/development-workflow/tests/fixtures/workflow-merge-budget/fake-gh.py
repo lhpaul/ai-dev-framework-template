@@ -77,6 +77,8 @@ if args[:2] == ['api', 'graphql']:
         state.setdefault('trackerMutationRepos',[]).append(os.environ.get('GH_REPO',state['repo']))
         state.setdefault('trackerMutationProjectIds',[]).append(next(a[10:] for a in args if a.startswith('projectId=')))
         state['trackerMutationCount'] = state.get('trackerMutationCount',0)+1
+        if 'quotaAfterTrackerMutation' in state:
+            state['quota']['remaining'] = state['quotaAfterTrackerMutation']
         selected = next((a[9:] for a in args if a.startswith('optionId=')), 'merged')
         selected_status = 'Released' if selected == 'released' else 'Merged'
         if state.get('releaseMode'):

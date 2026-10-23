@@ -2168,6 +2168,144 @@ class ReleasePair(unittest.TestCase):
         self.merge(12,success=False)
         self.assertNotIn(['pr','merge'],json.loads(self.fixture.read_text())['events'])
 
+    def test_staged_release_freezes_twelve_items_and_affordable_batches(self):
+        for number in range(14, 24):
+            self.candidate(number, self.head)
+        self.save()
+        legacy = self.begin()
+        self.assertEqual(legacy['outcome'], 'Deferred')
+        staged = self.begin(releaseAdmission={'mode': 'staged'})
+        self.assertEqual(staged['outcome'], 'Admitted', staged)
+        state = json.loads(Path(self.session).read_text())
+        self.assertEqual(len(state['prs'][1]['issues']), 12)
+        batches = [s for s in state['releaseAdmission']['stages'] if s['id'].startswith('tracker-')]
+        self.assertEqual(len(batches), 12)
+        refs = [tuple(sorted(r.items())) for s in state['releaseAdmission']['stages'] for r in s['steps']]
+        self.assertEqual(len(refs), len(set(refs)))
+        self.assertEqual(len(refs), sum(len(p['steps']) for p in state['prs']))
+        for stage in state['releaseAdmission']['stages']:
+            estimate = budget.estimate(state)
+            self.assertEqual(estimate['stage'], stage['id'])
+            self.assertLessEqual(estimate['projectedCost'] + state['reserve'], 5000)
+            for _, _, entry in budget.stage_entries(state, stage):
+                entry.update(status='completed', verifiedAt=budget.now())
+        self.assertEqual(budget.estimate(state)['projectedCost'], 0)
+
+    def test_staged_release_defers_next_window_without_replaying_production(self):
+        self.assertEqual(self.begin(releaseAdmission={'mode': 'staged'})['outcome'], 'Admitted')
+        self.merge(12)
+        self.step(12, 'merge_verify')
+        self.published()
+        self.data['quota']['remaining'] = 0
+        self.save()
+        self.step(12, 'publication', success=False)
+        state = json.loads(Path(self.session).read_text())
+        self.assertEqual(state['outcome'], 'Deferred')
+        self.assertEqual(state['prs'][0]['verifiedState'], 'merged')
+        self.assertEqual(state['prs'][0]['steps']['merge_api']['status'], 'completed')
+        self.assertEqual(state['prs'][0]['steps']['publication']['status'], 'pending')
+        self.reload()
+        self.assertEqual(len(self.data['mergeArgv']), 1)
+        self.data['quota']['remaining'] = 5000
+        self.save()
+        self.helper('resume', '--session', self.session)
+        self.step(12, 'publication')
+        self.merge(13)
+        self.step(13, 'merge_verify')
+        self.reload()
+        self.data['trackerStatuses'] = {'12': 'Merged', '13': 'Merged'}
+        self.save()
+        self.cleanup()
+        report = json.loads(self.helper('report', '--session', self.session).stdout)
+        self.assertEqual(report['outcome'], 'Completed', report)
+        self.reload()
+        self.assertEqual(len(self.data['mergeArgv']), 2)
+        self.assertEqual(self.data['trackerMutationCount'], 2)
+        self.assertEqual(self.data['stampMutationCount'], {'12': 1, '13': 1})
+
+    def test_staged_release_refuses_out_of_order_and_oversized_batch(self):
+        self.assertEqual(self.begin(releaseAdmission={'mode': 'staged'})['outcome'], 'Admitted')
+        self.merge(13, success=False)
+        self.step(12, 'publication', success=False)
+        self.reload()
+        self.assertNotIn('mergeArgv', self.data)
+        for policy in ({'mode': 'staged', 'trackerBatchSize': 0},
+                       {'mode': 'staged', 'trackerBatchSize': True},
+                       {'mode': 'staged', 'trackerBatchSize': 101},
+                       {'mode': 'unknown'}, {'mode': 'staged', 'untrusted': True}):
+            with self.subTest(policy=policy):
+                self.assertEqual(self.begin(releaseAdmission=policy)['outcome'], 'Deferred')
+        for number in range(14, 24):
+            self.candidate(number, self.head)
+        self.save()
+        impossible = self.begin(releaseAdmission={'mode': 'staged', 'trackerBatchSize': 12})
+        self.assertEqual(impossible['outcome'], 'Deferred')
+        self.assertIn('cannot fit', impossible['reason'])
+        self.reload()
+        self.assertNotIn('mergeArgv', self.data)
+
+    def test_staged_release_recovers_uncertain_batch_without_duplicate_stamp(self):
+        self.begin(releaseAdmission={'mode': 'staged'})
+        self.merge(12); self.step(12, 'merge_verify')
+        self.published(); self.step(12, 'publication')
+        self.merge(13); self.step(13, 'merge_verify')
+        self.reload()
+        self.data.update(trackerStatuses={'12': 'Merged', '13': 'Merged'}, stampPostReadOutage='13')
+        self.save()
+        self.cleanup(success=False)
+        state = json.loads(Path(self.session).read_text())
+        self.assertEqual(state['outcome'], 'Interrupted')
+        self.assertEqual(state['prs'][1]['steps']['tracker:12:pre']['status'], 'completed')
+        self.assertEqual(state['prs'][1]['steps']['release_stamp:13']['status'], 'uncertain')
+        self.reload()
+        self.data.pop('stampReadOutage'); self.data.pop('stampPostReadOutage')
+        self.save()
+        self.helper('resume', '--session', self.session)
+        self.cleanup()
+        self.reload()
+        self.assertEqual(self.data['stampMutationCount'], {'12': 1, '13': 1})
+        self.assertEqual(self.data['trackerMutationCount'], 2)
+
+    def test_staged_final_barrier_requires_individual_readback(self):
+        self.begin(releaseAdmission={'mode': 'staged'})
+        state = json.loads(Path(self.session).read_text())
+        target = state['prs'][1]
+        cleanup = next(e for e in target['steps'].values() if e['phase'] == 'cleanup')
+        with patch.object(budget, 'proof_root', return_value=str(self.repo)), \
+                patch.object(budget, 'pr_read', return_value={'state': 'MERGED'}), \
+                patch.object(budget, 'publication_read'), patch.object(budget, 'regular_release_merge'):
+            with self.assertRaisesRegex(budget.Stop, 'lack independent verification'):
+                budget.verify(state, target, cleanup)
+
+    def test_staged_tracker_batches_defer_and_resume_across_windows(self):
+        self.begin(releaseAdmission={'mode': 'staged'})
+        self.merge(12); self.step(12, 'merge_verify')
+        self.published(); self.step(12, 'publication')
+        self.merge(13); self.step(13, 'merge_verify')
+        self.reload()
+        self.data.update(trackerStatuses={'12': 'Merged', '13': 'Merged'}, quotaAfterTrackerMutation=0)
+        self.save()
+        self.cleanup(success=False)
+        state = json.loads(Path(self.session).read_text())
+        self.assertEqual(state['outcome'], 'Deferred')
+        self.assertEqual(state['prs'][1]['steps']['tracker:12:pre']['status'], 'completed')
+        self.assertEqual(state['prs'][1]['steps']['release_stamp:13']['status'], 'pending')
+        self.assertEqual(state['prs'][1]['steps']['cleanup']['status'], 'pending')
+        report = json.loads(self.helper('report', '--session', self.session).stdout)
+        self.assertEqual(report['pendingStage'], 'tracker-2')
+        self.reload()
+        self.assertEqual(self.data['trackerMutationCount'], 1)
+        self.data.pop('quotaAfterTrackerMutation')
+        self.data['quota']['remaining'] = 5000
+        self.data['quota']['reset'] += 3600
+        self.save()
+        self.helper('resume', '--session', self.session)
+        self.cleanup()
+        self.reload()
+        self.assertEqual(self.data['trackerMutationCount'], 2)
+        self.assertEqual(self.data['stampMutationCount'], {'12': 1, '13': 1})
+        self.assertEqual(len(self.data['mergeArgv']), 2)
+
     def test_release_pair_extra_shipped_issue_increases_complete_projection(self):
         first=self.begin()['estimate']['projectedCost']
         self.reload();self.candidate(14,self.head);self.save()
