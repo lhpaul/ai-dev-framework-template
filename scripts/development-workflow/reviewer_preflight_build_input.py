@@ -15,6 +15,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from reviewer_preflight_coderabbit import DiagnosticArgumentParser, diagnostic_text, config_error_metadata
+
 BUCKET_MAP = {
     "on_draft.runner": "on_draft_runner",
     "on_draft.github": "on_draft_github",
@@ -183,7 +185,7 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def main(argv: list[str]) -> int:
-    parser = argparse.ArgumentParser(description="Build reviewer_preflight.py input JSON")
+    parser = DiagnosticArgumentParser(description="Build reviewer_preflight.py input JSON")
     parser.add_argument("--runner-json", default="")
     parser.add_argument("--github-json", default="")
     parser.add_argument("--coderabbit-json", default="")
@@ -199,9 +201,13 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--output", required=True)
     args = parser.parse_args(argv)
 
-    payload = build(args)
-    with open(args.output, "w", encoding="utf-8") as handle:
-        json.dump(payload, handle, sort_keys=True)
+    try:
+        payload = build(args)
+        with open(args.output, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, sort_keys=True)
+    except (OSError, UnicodeError, ValueError) as error:
+        print(config_error_metadata(error), file=sys.stderr)
+        return 1
     return 0
 
 

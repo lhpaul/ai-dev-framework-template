@@ -198,7 +198,7 @@ class SyncTests(unittest.TestCase):
             before = self.fingerprint()
             plan = self.preview(known=False)
             self.assertEqual(plan["result"], "blocked")
-            self.assertIn(merge.STATE_PATH, plan["error"])
+            self.assertIn("configuration: configuration validation error", plan["error"])
             self.apply(expected=2)
             self.assertEqual(before, self.fingerprint())
         self.write(self.consumer, merge.STATE_PATH, json.dumps(original))

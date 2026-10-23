@@ -73,7 +73,8 @@ _harness_exit() {
 }
 trap _harness_exit EXIT
 
-for _cmd in bash env jq mktemp date cat rm wc sed tr sleep; do
+# Keep the diagnostic sanitizer available while deliberately omitting timeout.
+for _cmd in bash env jq mktemp date cat rm wc sed tr sleep dirname python3; do
   _cmd_path="$(command -v "$_cmd")"
   ln -sf "$_cmd_path" "$NO_TIMEOUT_BIN/$_cmd"
 done

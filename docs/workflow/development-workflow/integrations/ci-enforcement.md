@@ -27,7 +27,14 @@ The workflow handles these events:
 
 - `pull_request_target`: `opened`, `reopened`, `ready_for_review`,
   `synchronize`
-- `issue_comment`: `created`, `edited`
+- `workflow_dispatch` with required input `pr_number` (positive integer),
+  invoked by `pr-review-loop.sh` after it posts or updates the canonical
+  Automated Reviewer Loop Summary (#1998)
+
+It does **not** run on `issue_comment`. Comment-triggered runs billed about one
+minute each and dominated Actions minutes without changing outcomes beyond the
+summary-dispatch path above. Do not re-add an `issue_comment` trigger when
+syncing this workflow into a consumer.
 
 The workflow checks out the repository **default branch** (pinned `actions/checkout`,
 `persist-credentials: false`) to run the readiness-label helper; it never checks
@@ -39,10 +46,9 @@ out or executes PR head code, and never reads files from untrusted fork heads.
 
 | Event | In-scope same-repository implementation PR | Non-implementation PR | Fork-head PR |
 | --- | --- | --- | --- |
-| `opened`, `reopened`, `ready_for_review` | Ensures and applies `ready-for-regression`, then evaluates reviewer-loop guard status. | Skips implementation labels and posts successful skipped-guard status. | Skips privileged label and status mutation. |
-| `synchronize` | Removes stale `ready-for-regression` only when no canonical reviewer-loop summary exists, then evaluates reviewer-loop guard status. | Skips implementation labels and posts successful skipped-guard status. | Skips privileged label and status mutation. |
-| Summary `issue_comment` | Re-fetches current PR metadata and comments, then refreshes the PR-scoped guard status. | Posts successful skipped-guard status. | Skips privileged label and status mutation. |
-| Non-summary `issue_comment` | Exits without changing labels or statuses. | Exits without changing labels or statuses. | Exits without changing labels or statuses. |
+| `opened`, `reopened`, `ready_for_review` | Evaluates reviewer-loop guard status; regression labeling waits for current-head clean/skipped summary evidence. | Skips implementation labels and posts successful skipped-guard status. | Skips privileged label and status mutation. |
+| `synchronize` | Removes stale `ready-for-regression` when current-head clean reviewer-loop evidence is absent, then evaluates reviewer-loop guard status. | Skips implementation labels and posts successful skipped-guard status. | Skips privileged label and status mutation. |
+| `workflow_dispatch` (`pr_number`) | Fetches the PR and latest canonical summary from comments, applies regression policy on clean/skipped current-head summaries, and refreshes the PR-scoped guard status. | Posts successful skipped-guard status. | Skips privileged label and status mutation. |
 
 The `ready-for-regression` label is a readiness signal for configured real
 regression checks. It does not by itself enable inactive placeholder regression
@@ -101,19 +107,27 @@ The verdict is read from the **latest** matching summary comment (#1810):
 The workflow manages `ready-for-regression` for same-repository implementation
 PRs only:
 
-1. On `opened`, `reopened`, and `ready_for_review`, it creates the label if
-   needed and applies it to in-scope implementation PRs.
-2. On `synchronize`, it removes the label only when the PR has the label and no
-   canonical reviewer-loop summary comment exists.
-3. If the comments API fails on `synchronize`, it skips label removal. Unknown
+1. On `opened`, `reopened`, and `ready_for_review`, it does not apply the label;
+   regression waits for current-head clean or allowed-skipped summary evidence.
+2. On `workflow_dispatch` (after `pr-review-loop.sh` posts or updates the
+   canonical summary), it may dispatch the configured regression workflow and
+   apply the label when the latest summary is clean or skipped for the live head.
+3. On `synchronize`, it removes the label only when the PR has the label and no
+   current-head clean reviewer-loop evidence exists.
+4. If the comments API fails on `synchronize`, it skips label removal. Unknown
    reviewer-loop state is treated conservatively so the workflow does not drop a
    label that may have been deliberately applied by the reviewer loop.
-4. If a canonical reviewer-loop summary already exists, the workflow leaves the
-   label in place because `pr-review-loop.sh` owns re-establishing readiness on
-   its next invocation.
+5. If current-head clean evidence already exists on `synchronize`, the workflow
+   leaves the label in place.
 
 The label operation is idempotent: re-runs on an already-labeled PR complete
 without duplicating the label.
+
+`pr-review-loop.sh` prints `PR_POLICY_DISPATCH=requested|skipped|failed` after
+each summary post. Dispatch is best-effort: set `PR_REVIEW_LOOP_POLICY_DISPATCH=0`
+to opt out. Until the updated `pr-policy.yml` is on the repository default
+branch (`main` in this template), `workflow_dispatch` may fail with a missing
+trigger error; that failure does not change the loop `RESULT` or exit code.
 
 ---
 
@@ -232,3 +246,22 @@ auto-applied label may be present while the template placeholder remains
 inactive. That is expected: the label preserves staged workflow semantics, while
 explicitly enabled placeholder or real regression workflows decide whether
 expensive checks run.
+
+---
+
+## Path-filtered harness check (`workflow-tests.yml`)
+
+`.github/workflows/workflow-tests.yml` (check name **workflow test harnesses**)
+limits `pull_request` to `scripts/development-workflow/**` and
+`.github/workflows/workflow-tests.yml` (#1997). Docs-only PRs start no harness
+jobs; GitHub evaluates the filter against the whole PR diff, so a PR that once
+touches a covered path keeps running. The template nightly and
+`workflow_dispatch` remain the full-run backstop.
+
+This repository does not require that check on `develop` / `main`. Consumers
+that require **workflow test harnesses** in branch protection must not treat a
+path-filtered skip as success: the check stays pending when the filter does not
+match, so either drop the requirement or add a matching no-op that always
+passes when the harness is skipped. `pr-ci-loop.sh` also reports
+`expected_checks_missing` when a workflow ran on a previous head but not the
+current one.

@@ -119,7 +119,7 @@ source "$HAYSTACK_REVIEWER_SCRIPT_DIR/workflow-lib.sh"
 # Emit REVIEWED_HEAD when the check/PR head was established (#1651).
 emit_reviewed_head_if_known() {
   [ -n "${REVIEWED_HEAD_SHA:-}" ] || return 0
-  printf 'REVIEWED_HEAD=%s\n' "$REVIEWED_HEAD_SHA"
+  workflow_diagnostic_kv REVIEWED_HEAD "$REVIEWED_HEAD_SHA"
 }
 
 capture_reviewed_head_from_check_json() {
@@ -142,7 +142,7 @@ haystack_ensure_reviewed_head_sha() {
 # ── Argument parsing ──────────────────────────────────────────────────────────
 
 if [ $# -lt 3 ]; then
-  echo "Usage: $0 <pr_number> <owner> <repo> [--timeout <seconds>]" >&2
+  workflow_diagnostic "Usage: $0 <pr_number> <owner> <repo> [--timeout <seconds>]" >&2
   exit 3
 fi
 
@@ -154,19 +154,19 @@ shift 3
 # Validate positional arguments before interpolation.
 case "$PR_NUMBER" in
   ''|0|*[!0-9]*)
-    echo "ERROR: PR number '$PR_NUMBER' is not a valid positive integer" >&2
+    workflow_diagnostic "ERROR: PR number '$PR_NUMBER' is not a valid positive integer" >&2
     exit 3
     ;;
 esac
 case "$OWNER" in
   ''|*[!A-Za-z0-9._-]*)
-    echo "ERROR: owner '$OWNER' contains invalid characters (expected alphanumerics, hyphens, underscores, dots)" >&2
+    workflow_diagnostic "ERROR: owner '$OWNER' contains invalid characters (expected alphanumerics, hyphens, underscores, dots)" >&2
     exit 3
     ;;
 esac
 case "$REPO" in
   ''|*[!A-Za-z0-9._-]*)
-    echo "ERROR: repo '$REPO' contains invalid characters (expected alphanumerics, hyphens, underscores, dots)" >&2
+    workflow_diagnostic "ERROR: repo '$REPO' contains invalid characters (expected alphanumerics, hyphens, underscores, dots)" >&2
     exit 3
     ;;
 esac
@@ -183,17 +183,17 @@ REVIEWED_HEAD_SHA=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --timeout)
-      if [ $# -lt 2 ]; then echo "ERROR: --timeout requires a value" >&2; exit 3; fi
+      if [ $# -lt 2 ]; then workflow_diagnostic "ERROR: --timeout requires a value" >&2; exit 3; fi
       TIMEOUT="$2"; shift 2;;
     *)
-      echo "ERROR: unknown option '$1'" >&2; exit 3;;
+      workflow_diagnostic "ERROR: unknown option '$1'" >&2; exit 3;;
   esac
 done
 
 # Validate timeout
 case "$TIMEOUT" in
   ''|0|*[!0-9]*)
-    echo "ERROR: --timeout value '$TIMEOUT' is not a positive integer (must be >= 1)" >&2
+    workflow_diagnostic "ERROR: configuration validation error; key=--timeout" >&2
     exit 3
     ;;
 esac
@@ -201,7 +201,7 @@ esac
 # Validate poll interval
 case "$POLL_INTERVAL" in
   ''|0|*[!0-9]*)
-    echo "ERROR: HAYSTACK_POLL_INTERVAL value '$POLL_INTERVAL' is not a positive integer (must be >= 1)" >&2
+    workflow_diagnostic "ERROR: configuration validation error; key=HAYSTACK_POLL_INTERVAL" >&2
     exit 3
     ;;
 esac
@@ -332,10 +332,10 @@ emit_haystack_analysis_file_limit_skip_from_json() {
   printf 'BLOCKING_COUNT=0\n'
   printf 'SUGGESTION_COUNT=0\n'
   printf 'COMMENT_COUNT=0\n'
-  printf 'CHECK_RUN_STATUS=%s\n' "$status"
-  printf 'CHECK_RUN_CONCLUSION=%s\n' "$conclusion"
-  [ -n "$title" ] && printf 'CHECK_RUN_TITLE=%s\n' "$title"
-  [ -n "$details_url" ] && printf 'CHECK_RUN_URL=%s\n' "$details_url"
+  workflow_diagnostic_kv CHECK_RUN_STATUS "$status"
+  workflow_diagnostic_kv CHECK_RUN_CONCLUSION "$conclusion"
+  [ -n "$title" ] && workflow_diagnostic_kv CHECK_RUN_TITLE "$title"
+  [ -n "$details_url" ] && workflow_diagnostic_kv CHECK_RUN_URL "$details_url"
   return 0
 }
 
@@ -388,13 +388,13 @@ emit_haystack_check_run_result() {
     printf 'RESULT=skipped\n'
   emit_reviewed_head_if_known
     printf 'REASON=pending_check_run\n'
-    [ "$after_budget" = "1" ] && printf 'HAYSTACK_BUDGET_EXPIRED=1\n'
+    [ "$after_budget" = "1" ] && workflow_diagnostic_printf 'HAYSTACK_BUDGET_EXPIRED=1\n'
     printf 'BLOCKING_COUNT=0\n'
     printf 'SUGGESTION_COUNT=0\n'
     printf 'COMMENT_COUNT=0\n'
-    printf 'CHECK_RUN_STATUS=%s\n' "$status"
-    printf 'CHECK_RUN_CONCLUSION=%s\n' "$conclusion"
-    [ -n "$details_url" ] && printf 'CHECK_RUN_URL=%s\n' "$details_url"
+    workflow_diagnostic_kv CHECK_RUN_STATUS "$status"
+    workflow_diagnostic_kv CHECK_RUN_CONCLUSION "$conclusion"
+    [ -n "$details_url" ] && workflow_diagnostic_kv CHECK_RUN_URL "$details_url"
     return 2
   fi
 
@@ -423,12 +423,12 @@ EOF
       printf 'RESULT=clean\n'
   emit_reviewed_head_if_known
       printf 'BLOCKING_COUNT=0\n'
-      printf 'SUGGESTION_COUNT=%d\n' "$suggestion_count"
-      printf 'COMMENT_COUNT=%d\n' "$comment_count"
-      printf 'CHECK_RUN_STATUS=%s\n' "$status"
-      printf 'CHECK_RUN_CONCLUSION=%s\n' "$conclusion"
-      [ -n "$title" ] && printf 'CHECK_RUN_TITLE=%s\n' "$title"
-      [ -n "$details_url" ] && printf 'CHECK_RUN_URL=%s\n' "$details_url"
+      workflow_diagnostic_printf 'SUGGESTION_COUNT=%d\n' "$suggestion_count"
+      workflow_diagnostic_printf 'COMMENT_COUNT=%d\n' "$comment_count"
+      workflow_diagnostic_kv CHECK_RUN_STATUS "$status"
+      workflow_diagnostic_kv CHECK_RUN_CONCLUSION "$conclusion"
+      [ -n "$title" ] && workflow_diagnostic_kv CHECK_RUN_TITLE "$title"
+      [ -n "$details_url" ] && workflow_diagnostic_kv CHECK_RUN_URL "$details_url"
       return 0
       ;;
     failure|FAILURE|action_required|ACTION_REQUIRED|startup_failure|STARTUP_FAILURE)
@@ -441,36 +441,36 @@ EOF
       if [ "$blocking_count" -gt 0 ]; then
         printf 'RESULT=needs_fixes\n'
   emit_reviewed_head_if_known
-        printf 'BLOCKING_COUNT=%d\n' "$blocking_count"
-        printf 'SUGGESTION_COUNT=%d\n' "$suggestion_count"
-        printf 'COMMENT_COUNT=%d\n' "$comment_count"
-        printf 'CHECK_RUN_STATUS=%s\n' "$status"
-        printf 'CHECK_RUN_CONCLUSION=%s\n' "$conclusion"
-        [ -n "$title" ] && printf 'CHECK_RUN_TITLE=%s\n' "$title"
-        [ -n "$details_url" ] && printf 'CHECK_RUN_URL=%s\n' "$details_url"
+        workflow_diagnostic_printf 'BLOCKING_COUNT=%d\n' "$blocking_count"
+        workflow_diagnostic_printf 'SUGGESTION_COUNT=%d\n' "$suggestion_count"
+        workflow_diagnostic_printf 'COMMENT_COUNT=%d\n' "$comment_count"
+        workflow_diagnostic_kv CHECK_RUN_STATUS "$status"
+        workflow_diagnostic_kv CHECK_RUN_CONCLUSION "$conclusion"
+        [ -n "$title" ] && workflow_diagnostic_kv CHECK_RUN_TITLE "$title"
+        [ -n "$details_url" ] && workflow_diagnostic_kv CHECK_RUN_URL "$details_url"
         return 1
       fi
       printf 'RESULT=clean\n'
   emit_reviewed_head_if_known
       printf 'BLOCKING_COUNT=0\n'
-      printf 'SUGGESTION_COUNT=%d\n' "$suggestion_count"
-      printf 'COMMENT_COUNT=%d\n' "$comment_count"
-      printf 'CHECK_RUN_STATUS=%s\n' "$status"
-      printf 'CHECK_RUN_CONCLUSION=%s\n' "$conclusion"
-      [ -n "$title" ] && printf 'CHECK_RUN_TITLE=%s\n' "$title"
-      [ -n "$details_url" ] && printf 'CHECK_RUN_URL=%s\n' "$details_url"
+      workflow_diagnostic_printf 'SUGGESTION_COUNT=%d\n' "$suggestion_count"
+      workflow_diagnostic_printf 'COMMENT_COUNT=%d\n' "$comment_count"
+      workflow_diagnostic_kv CHECK_RUN_STATUS "$status"
+      workflow_diagnostic_kv CHECK_RUN_CONCLUSION "$conclusion"
+      [ -n "$title" ] && workflow_diagnostic_kv CHECK_RUN_TITLE "$title"
+      [ -n "$details_url" ] && workflow_diagnostic_kv CHECK_RUN_URL "$details_url"
       return 0
       ;;
     *)
       printf 'RESULT=skipped\n'
   emit_reviewed_head_if_known
-      printf 'REASON=check_run_%s\n' "${conclusion:-unknown}"
+      workflow_diagnostic_printf 'REASON=check_run_%s\n' "${conclusion:-unknown}"
       printf 'BLOCKING_COUNT=0\n'
       printf 'SUGGESTION_COUNT=0\n'
       printf 'COMMENT_COUNT=0\n'
-      printf 'CHECK_RUN_STATUS=%s\n' "$status"
-      printf 'CHECK_RUN_CONCLUSION=%s\n' "$conclusion"
-      [ -n "$details_url" ] && printf 'CHECK_RUN_URL=%s\n' "$details_url"
+      workflow_diagnostic_kv CHECK_RUN_STATUS "$status"
+      workflow_diagnostic_kv CHECK_RUN_CONCLUSION "$conclusion"
+      [ -n "$details_url" ] && workflow_diagnostic_kv CHECK_RUN_URL "$details_url"
       return 2
       ;;
   esac
@@ -520,8 +520,8 @@ if ! command -v jq >/dev/null 2>&1; then
   exit 3
 fi
 
-echo "INFO: haystack CLI found: $(command -v haystack)" >&2
-echo "INFO: poll-retry loop — polling every ${POLL_INTERVAL}s, overall timeout: ${TIMEOUT}s" >&2
+workflow_diagnostic "INFO: haystack CLI found: $(command -v haystack)" >&2
+workflow_diagnostic "INFO: poll-retry loop — polling every ${POLL_INTERVAL}s, overall timeout: ${TIMEOUT}s" >&2
 
 # ── Poll-retry loop ───────────────────────────────────────────────────────────
 #
@@ -594,7 +594,7 @@ while true; do
   POLL_CALL_TIMEOUT=$(( remaining / 2 ))
   [ "$POLL_CALL_TIMEOUT" -lt 1 ] && POLL_CALL_TIMEOUT=1
 
-  echo "INFO: running: haystack triage ${OWNER}/${REPO}#${PR_NUMBER} --json --no-wait (elapsed: ${elapsed}s, per-call timeout: ${POLL_CALL_TIMEOUT}s)" >&2
+  workflow_diagnostic "INFO: running: haystack triage ${OWNER}/${REPO}#${PR_NUMBER} --json --no-wait (elapsed: ${elapsed}s, per-call timeout: ${POLL_CALL_TIMEOUT}s)" >&2
 
   # Check for 'timeout' command availability (not always present on macOS without GNU coreutils).
   if command -v timeout >/dev/null 2>&1; then
@@ -629,7 +629,7 @@ while true; do
   # Log stderr output for debugging.
   if [ -s "$TRIAGE_STDERR" ]; then
     echo "INFO: haystack triage stderr output:" >&2
-    cat "$TRIAGE_STDERR" >&2
+    workflow_redact_file "$TRIAGE_STDERR" >&2
   fi
 
   # ── Handle per-call timeout ─────────────────────────────────────────────────
@@ -639,7 +639,7 @@ while true; do
     if [ "$LOOP_START_TS" -gt 0 ] && [ "$NOW_TS" -ge "$LOOP_START_TS" ]; then
       elapsed=$((NOW_TS - LOOP_START_TS))
     fi
-    echo "INFO: haystack triage per-call timeout (total elapsed: ${elapsed}s)" >&2
+    workflow_diagnostic "INFO: haystack triage per-call timeout (total elapsed: ${elapsed}s)" >&2
     if [ "$elapsed" -ge "$TIMEOUT" ]; then
       TRIAGE_EXIT=124  # propagate timeout sentinel
       break
@@ -671,7 +671,7 @@ while true; do
   #   d) Valid JSON with status=none → permanent unavailability; fall through to
   #      the status-check block which handles this case.
   if [ "$TRIAGE_EXIT" -ne 0 ]; then
-    echo "INFO: haystack triage exited with code $TRIAGE_EXIT — inspecting stdout before deciding outcome" >&2
+    workflow_diagnostic "INFO: haystack triage exited with code $TRIAGE_EXIT — inspecting stdout before deciding outcome" >&2
     if [ -z "$TRIAGE_OUTPUT" ] || ! printf '%s\n' "$TRIAGE_OUTPUT" | jq -e . >/dev/null 2>&1; then
       # Sub-case (a): empty or invalid JSON → genuinely unavailable.
       echo "INFO: haystack triage non-zero exit AND empty/invalid stdout — treating as UNAVAILABLE" >&2
@@ -687,7 +687,7 @@ while true; do
     # Sub-cases (b), (c), (d): stdout is valid JSON — fall through to status check
     # and findings parsing.  The status-check block below will handle pending,
     # none, and completed outcomes identically to the exit-0 path.
-    echo "INFO: haystack triage non-zero exit (code $TRIAGE_EXIT) but stdout is valid JSON — proceeding to status/findings parsing (non-zero exit may be a haystack CLI version quirk)" >&2
+    workflow_diagnostic "INFO: haystack triage non-zero exit (code $TRIAGE_EXIT) but stdout is valid JSON — proceeding to status/findings parsing (non-zero exit may be a haystack CLI version quirk)" >&2
   fi
 
   # ── Validate JSON output ─────────────────────────────────────────────────────
@@ -761,11 +761,11 @@ while true; do
       if _auth_reason="$(haystack_triage_auth_error_reason "$TRIAGE_OUTPUT")"; then
         _error_msg="$(printf '%s\n' "$TRIAGE_OUTPUT" | jq -r '.message // empty' 2>/dev/null)"
         _error_msg="${_error_msg:-unknown}"
-        echo "INFO: haystack triage returned status=error with message=${_error_msg} — treating as ${_auth_reason} (not retrying)" >&2
+        workflow_diagnostic "INFO: haystack triage returned status=error with message=${_error_msg} — treating as ${_auth_reason} (not retrying)" >&2
         rm -f "$TRIAGE_STDERR"
         printf 'RESULT=skipped\n'
   emit_reviewed_head_if_known
-        printf 'REASON=%s\n' "$_auth_reason"
+        workflow_diagnostic_kv REASON "$_auth_reason"
         printf 'BLOCKING_COUNT=0\n'
         printf 'SUGGESTION_COUNT=0\n'
         printf 'COMMENT_COUNT=0\n'
@@ -774,7 +774,7 @@ while true; do
       # Treat other transient states as still synthesizing — poll-retry after POLL_INTERVAL.
       # NEVER map an unknown or error status to "clean"; only a genuinely
       # completed result (empty STATUS_VALUE above) may yield RESULT=clean.
-      echo "INFO: status='${STATUS_VALUE}' — still synthesizing; waiting ${POLL_INTERVAL}s before retry (${elapsed}s elapsed of ${TIMEOUT}s budget)" >&2
+      workflow_diagnostic "INFO: status='${STATUS_VALUE}' — still synthesizing; waiting ${POLL_INTERVAL}s before retry (${elapsed}s elapsed of ${TIMEOUT}s budget)" >&2
       # The check run can become terminal while the triage request is in
       # flight. Probe again before sleeping so the skip is observed at this
       # standard polling boundary instead of burning the remaining timeout.
@@ -802,7 +802,7 @@ rm -f "$TRIAGE_STDERR"
 if [ "$TRIAGE_EXIT" -eq 124 ]; then
   # A single haystack triage call exceeded its per-call OS timeout and the
   # overall budget was exhausted.
-  echo "INFO: haystack triage timed out after ${TIMEOUT}s" >&2
+  workflow_diagnostic "INFO: haystack triage timed out after ${TIMEOUT}s" >&2
   echo "INFO: trying GitHub App check-run fallback after triage timeout" >&2
   if emit_check_run_fallback_or_skip 1; then
     :
@@ -823,7 +823,7 @@ if [ "$TRIAGE_EXIT" -eq 200 ]; then
   # completed result within the timeout window. This is distinct from
   # REASON=unavailable (CLI not found / auth failure) and REASON=timeout
   # (per-call OS timeout).
-  echo "INFO: haystack triage transient state persisted — budget exhausted after ${TIMEOUT}s (pending_timeout)" >&2
+  workflow_diagnostic "INFO: haystack triage transient state persisted — budget exhausted after ${TIMEOUT}s (pending_timeout)" >&2
   echo "INFO: trying GitHub App check-run fallback after pending_timeout" >&2
   if emit_check_run_fallback_or_skip 1; then
     :
@@ -838,7 +838,7 @@ if [ "$TRIAGE_EXIT" -eq 200 ]; then
 fi
 
 echo "INFO: haystack triage raw output:" >&2
-printf '%s\n' "$TRIAGE_OUTPUT" >&2
+workflow_diagnostic_printf '%s\n' "$TRIAGE_OUTPUT" >&2
 
 # ── Parse findings by category ────────────────────────────────────────────────
 #
@@ -884,7 +884,7 @@ if [ -n "$CATEGORIES" ]; then
         ;;
       "__UNKNOWN__"|*)
         # Null/missing or unrecognised category — safe-fail to blocking
-        echo "INFO: unrecognised finding category '$category' — treating as blocking (safe-fail)" >&2
+        workflow_diagnostic "INFO: unrecognised finding category '$category' — treating as blocking (safe-fail)" >&2
         BLOCKING_COUNT=$((BLOCKING_COUNT + 1))
         ;;
     esac
@@ -895,7 +895,7 @@ fi
 
 COMMENT_COUNT=$((BLOCKING_COUNT + SUGGESTION_COUNT))
 
-echo "INFO: findings parsed — blocking: $BLOCKING_COUNT, advisory: $SUGGESTION_COUNT, total: $COMMENT_COUNT" >&2
+workflow_diagnostic "INFO: findings parsed — blocking: $BLOCKING_COUNT, advisory: $SUGGESTION_COUNT, total: $COMMENT_COUNT" >&2
 
 # ── Parse review-policy verdict from haystack pr-status ──────────────────────
 #
@@ -920,14 +920,14 @@ if [ "$PR_STATUS_CHECK" != "0" ]; then
   PR_STATUS_TIMEOUT="$TIMEOUT"
   case "$PR_STATUS_TIMEOUT" in
     ''|0|*[!0-9]*)
-      echo "ERROR: internal pr-status timeout '$PR_STATUS_TIMEOUT' is not a positive integer" >&2
+      workflow_diagnostic "ERROR: internal pr-status timeout '$PR_STATUS_TIMEOUT' is not a positive integer" >&2
       rm -f "$PR_STATUS_STDERR"
       exit 3
       ;;
   esac
   [ "$PR_STATUS_TIMEOUT" -gt 30 ] && PR_STATUS_TIMEOUT=30
 
-  echo "INFO: running: haystack pr-status ${OWNER}/${REPO}#${PR_NUMBER} --json" >&2
+  workflow_diagnostic "INFO: running: haystack pr-status ${OWNER}/${REPO}#${PR_NUMBER} --json" >&2
   if command -v timeout >/dev/null 2>&1; then
     set +e
     PR_STATUS_OUTPUT="$(timeout "$PR_STATUS_TIMEOUT" haystack pr-status "${OWNER}/${REPO}#${PR_NUMBER}" --json 2>"$PR_STATUS_STDERR")"
@@ -945,14 +945,14 @@ if [ "$PR_STATUS_CHECK" != "0" ]; then
     done
     if kill -0 "$PR_STATUS_PID" 2>/dev/null; then
       if ! kill "$PR_STATUS_PID" 2>/dev/null; then
-        echo "WARN: failed to terminate timed-out haystack pr-status process $PR_STATUS_PID" >&2
+        workflow_diagnostic "WARN: failed to terminate timed-out haystack pr-status process $PR_STATUS_PID" >&2
       fi
       wait "$PR_STATUS_PID" 2>/dev/null
       pr_status_wait_exit=$?
       case "$pr_status_wait_exit" in
         0|130|137|143) ;;
         *)
-          echo "WARN: haystack pr-status process $PR_STATUS_PID exited with status $pr_status_wait_exit after timeout cleanup" >&2
+          workflow_diagnostic "WARN: haystack pr-status process $PR_STATUS_PID exited with status $pr_status_wait_exit after timeout cleanup" >&2
           ;;
       esac
       PR_STATUS_EXIT=124
@@ -970,7 +970,7 @@ if [ "$PR_STATUS_CHECK" != "0" ]; then
 
   if [ -s "$PR_STATUS_STDERR" ]; then
     echo "INFO: haystack pr-status stderr output:" >&2
-    cat "$PR_STATUS_STDERR" >&2
+    workflow_redact_file "$PR_STATUS_STDERR" >&2
   fi
   rm -f "$PR_STATUS_STDERR"
 
@@ -1013,13 +1013,13 @@ if [ "$PR_STATUS_CHECK" != "0" ]; then
   emit_reviewed_head_if_known
       printf 'REASON=policy_status_parse_failed\n'
       printf 'BLOCKING_COUNT=1\n'
-      printf 'SUGGESTION_COUNT=%d\n' "$SUGGESTION_COUNT"
-      printf 'COMMENT_COUNT=%d\n' "$((SUGGESTION_COUNT + 1))"
+      workflow_diagnostic_printf 'SUGGESTION_COUNT=%d\n' "$SUGGESTION_COUNT"
+      workflow_diagnostic_printf 'COMMENT_COUNT=%d\n' "$((SUGGESTION_COUNT + 1))"
       printf 'POLICY_STATUS_AVAILABLE=0\n'
       printf 'POLICY_REVIEW_REQUIRED=0\n'
       printf 'POLICY_DISPOSITION=blocking\n'
-      printf 'POLICY_ANALYSIS_STATUS=%s\n' "$POLICY_ANALYSIS_STATUS"
-      printf 'POLICY_NEEDS_HUMAN=%s\n' "$POLICY_NEEDS_HUMAN"
+      workflow_diagnostic_kv POLICY_ANALYSIS_STATUS "$POLICY_ANALYSIS_STATUS"
+      workflow_diagnostic_kv POLICY_NEEDS_HUMAN "$POLICY_NEEDS_HUMAN"
       exit 1
     fi
   else
@@ -1044,34 +1044,34 @@ haystack_ensure_reviewed_head_sha
 if [ "$BLOCKING_COUNT" -gt 0 ]; then
   printf 'RESULT=needs_fixes\n'
   emit_reviewed_head_if_known
-  printf 'BLOCKING_COUNT=%d\n' "$BLOCKING_COUNT"
-  printf 'SUGGESTION_COUNT=%d\n' "$SUGGESTION_COUNT"
-  printf 'COMMENT_COUNT=%d\n' "$COMMENT_COUNT"
-  printf 'POLICY_STATUS_AVAILABLE=%d\n' "$POLICY_STATUS_AVAILABLE"
-  printf 'POLICY_REVIEW_REQUIRED=%d\n' "$POLICY_REVIEW_REQUIRED"
-  printf 'POLICY_DISPOSITION=%s\n' "$POLICY_DISPOSITION"
-  [ -n "$POLICY_VERDICT" ] && printf 'POLICY_VERDICT=%s\n' "$POLICY_VERDICT"
-  printf 'POLICY_ANALYSIS_STATUS=%s\n' "$POLICY_ANALYSIS_STATUS"
-  [ -n "$POLICY_BUCKET" ] && printf 'POLICY_BUCKET=%s\n' "$POLICY_BUCKET"
-  [ -n "$POLICY_RATING" ] && printf 'POLICY_RATING=%s\n' "$POLICY_RATING"
-  [ -n "$POLICY_HAS_REVIEWER" ] && printf 'POLICY_HAS_REVIEWER=%s\n' "$POLICY_HAS_REVIEWER"
-  printf 'POLICY_NEEDS_HUMAN=%s\n' "$POLICY_NEEDS_HUMAN"
+  workflow_diagnostic_printf 'BLOCKING_COUNT=%d\n' "$BLOCKING_COUNT"
+  workflow_diagnostic_printf 'SUGGESTION_COUNT=%d\n' "$SUGGESTION_COUNT"
+  workflow_diagnostic_printf 'COMMENT_COUNT=%d\n' "$COMMENT_COUNT"
+  workflow_diagnostic_printf 'POLICY_STATUS_AVAILABLE=%d\n' "$POLICY_STATUS_AVAILABLE"
+  workflow_diagnostic_printf 'POLICY_REVIEW_REQUIRED=%d\n' "$POLICY_REVIEW_REQUIRED"
+  workflow_diagnostic_kv POLICY_DISPOSITION "$POLICY_DISPOSITION"
+  [ -n "$POLICY_VERDICT" ] && workflow_diagnostic_kv POLICY_VERDICT "$POLICY_VERDICT"
+  workflow_diagnostic_kv POLICY_ANALYSIS_STATUS "$POLICY_ANALYSIS_STATUS"
+  [ -n "$POLICY_BUCKET" ] && workflow_diagnostic_kv POLICY_BUCKET "$POLICY_BUCKET"
+  [ -n "$POLICY_RATING" ] && workflow_diagnostic_kv POLICY_RATING "$POLICY_RATING"
+  [ -n "$POLICY_HAS_REVIEWER" ] && workflow_diagnostic_kv POLICY_HAS_REVIEWER "$POLICY_HAS_REVIEWER"
+  workflow_diagnostic_kv POLICY_NEEDS_HUMAN "$POLICY_NEEDS_HUMAN"
   exit 1
 fi
 
 printf 'RESULT=clean\n'
   emit_reviewed_head_if_known
 printf 'BLOCKING_COUNT=0\n'
-printf 'SUGGESTION_COUNT=%d\n' "$SUGGESTION_COUNT"
-printf 'COMMENT_COUNT=%d\n' "$COMMENT_COUNT"
-printf 'POLICY_STATUS_AVAILABLE=%d\n' "$POLICY_STATUS_AVAILABLE"
-printf 'POLICY_REVIEW_REQUIRED=%d\n' "$POLICY_REVIEW_REQUIRED"
-printf 'POLICY_DISPOSITION=%s\n' "$POLICY_DISPOSITION"
-[ -n "$POLICY_VERDICT" ] && printf 'POLICY_VERDICT=%s\n' "$POLICY_VERDICT"
-printf 'POLICY_ANALYSIS_STATUS=%s\n' "$POLICY_ANALYSIS_STATUS"
-[ -n "$POLICY_BUCKET" ] && printf 'POLICY_BUCKET=%s\n' "$POLICY_BUCKET"
-[ -n "$POLICY_RATING" ] && printf 'POLICY_RATING=%s\n' "$POLICY_RATING"
-[ -n "$POLICY_HAS_REVIEWER" ] && printf 'POLICY_HAS_REVIEWER=%s\n' "$POLICY_HAS_REVIEWER"
-printf 'POLICY_NEEDS_HUMAN=%s\n' "$POLICY_NEEDS_HUMAN"
-[ "$POLICY_REVIEW_REQUIRED" -eq 1 ] && printf 'DISPLAY_RESULT=needs-review: policy\n'
+workflow_diagnostic_printf 'SUGGESTION_COUNT=%d\n' "$SUGGESTION_COUNT"
+workflow_diagnostic_printf 'COMMENT_COUNT=%d\n' "$COMMENT_COUNT"
+workflow_diagnostic_printf 'POLICY_STATUS_AVAILABLE=%d\n' "$POLICY_STATUS_AVAILABLE"
+workflow_diagnostic_printf 'POLICY_REVIEW_REQUIRED=%d\n' "$POLICY_REVIEW_REQUIRED"
+workflow_diagnostic_kv POLICY_DISPOSITION "$POLICY_DISPOSITION"
+[ -n "$POLICY_VERDICT" ] && workflow_diagnostic_kv POLICY_VERDICT "$POLICY_VERDICT"
+workflow_diagnostic_kv POLICY_ANALYSIS_STATUS "$POLICY_ANALYSIS_STATUS"
+[ -n "$POLICY_BUCKET" ] && workflow_diagnostic_kv POLICY_BUCKET "$POLICY_BUCKET"
+[ -n "$POLICY_RATING" ] && workflow_diagnostic_kv POLICY_RATING "$POLICY_RATING"
+[ -n "$POLICY_HAS_REVIEWER" ] && workflow_diagnostic_kv POLICY_HAS_REVIEWER "$POLICY_HAS_REVIEWER"
+workflow_diagnostic_kv POLICY_NEEDS_HUMAN "$POLICY_NEEDS_HUMAN"
+[ "$POLICY_REVIEW_REQUIRED" -eq 1 ] && workflow_diagnostic_printf 'DISPLAY_RESULT=needs-review: policy\n'
 exit 0

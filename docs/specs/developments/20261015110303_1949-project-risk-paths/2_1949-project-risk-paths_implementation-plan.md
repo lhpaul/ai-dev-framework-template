@@ -19,6 +19,16 @@ toolchain. Template-fit check passed: this is generic framework tooling.
 Luis authorized definition of configuration design through spec and plan;
 the implementation still requires human review before merge.
 
+## Current reader dependency clarification
+
+The PyYAML dependency statements below retain this plan's historical assumptions
+and verification evidence. The later #1993 sole-reader design supersedes that
+runtime dependency for framework configuration: the shared risk-map reader uses
+the same dependency-free strict reader as modern review and selected-source
+validation. This does not change risk rules, implementation scope or approval
+history. Provider-specific CodeRabbit checks keep their separate dependency.
+See the [current reader contract](../../../workflow/development-workflow/integrations/runner-secret-prevention.md).
+
 ## Verification Log
 
 Repository-derived evidence below was collected at

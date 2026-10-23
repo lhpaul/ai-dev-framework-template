@@ -8,8 +8,15 @@
 # Usage:
 #   ./scripts/development-workflow/graduation-closeout-from-merged-pr.sh \
 #     --graduation-pr <number> \
-#     [--epic <number>] [--slug <slug>] \
-#     [--exclude-issue <number>]... [--defer-epic-close]
+#     [--epic <epic-id>] [--slug <slug>] \
+#     [--exclude-issue <number>]... [--defer-epic-close] [--dry-run]
+#
+#   --epic  Optional override. GitHub issue number when tracker is
+#           github_projects / github_issues. With provider linear, a native
+#           Linear ID (e.g. LEA-326). A bare number with linear fails closed.
+#
+#   --dry-run  Forwarded to graduation-closeout.sh; prints planned mutations
+#           and applies none.
 #
 # Exit codes:
 #   0 — discovery succeeded and graduation-closeout.sh passed
@@ -22,11 +29,18 @@ SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)"
 # shellcheck source=./workflow-lib.sh
 # shellcheck disable=SC1091
 . "$SCRIPT_DIR/workflow-lib.sh"
+# shellcheck source=./graduation-closeout-lib.sh
+# shellcheck disable=SC1091
+. "$SCRIPT_DIR/graduation-closeout-lib.sh"
+# shellcheck source=./closing-keyword-lib.sh
+# shellcheck disable=SC1091
+. "$SCRIPT_DIR/closing-keyword-lib.sh"
 
 GRADUATION_PR=""
 SLUG_OVERRIDE=""
 EPIC_OVERRIDE=""
 DEFER_EPIC_CLOSE=0
+DRY_RUN=0
 declare -a EXCLUDED_ISSUES=()
 
 # Populated during discovery for the summary.
@@ -35,14 +49,19 @@ DISCOVERED_EPIC=""
 EPIC_SOURCE=""
 SLUG_SOURCE=""
 DEFER_SOURCE="none"
+TRACKER_PROVIDER=""
 CHILD_ARGV=()
 
 usage() {
   cat >&2 <<'EOF'
 Usage:
   graduation-closeout-from-merged-pr.sh --graduation-pr <number> \
-    [--epic <number>] [--slug <slug>] \
-    [--exclude-issue <number>]... [--defer-epic-close]
+    [--epic <epic-id>] [--slug <slug>] \
+    [--exclude-issue <number>]... [--defer-epic-close] [--dry-run]
+
+  --epic  GitHub issue number, or with issue_tracker.provider=linear a native
+          Linear ID (e.g. LEA-326). Bare numbers fail closed under linear.
+  --dry-run  Forwarded to graduation-closeout.sh (print mutations, apply none).
 EOF
 }
 
@@ -61,6 +80,10 @@ is_positive_int() {
     0*) return 1 ;;
     *) return 0 ;;
   esac
+}
+
+is_linear_issue_id() {
+  [[ "$1" =~ ^[A-Z][A-Z0-9_]*-[0-9]+$ ]]
 }
 
 is_valid_slug() {
@@ -97,6 +120,10 @@ while [ "$#" -gt 0 ]; do
       DEFER_SOURCE="cli"
       shift
       ;;
+    --dry-run)
+      DRY_RUN=1
+      shift
+      ;;
     -h|--help)
       usage
       exit 0
@@ -117,10 +144,6 @@ if [ -n "$SLUG_OVERRIDE" ] && ! is_valid_slug "$SLUG_OVERRIDE"; then
   echo "ERROR: --slug must be non-empty and contain only letters, numbers, dot, underscore, or hyphen." >&2
   exit 64
 fi
-if [ -n "$EPIC_OVERRIDE" ] && ! is_positive_int "$EPIC_OVERRIDE"; then
-  echo "ERROR: --epic must be a positive integer." >&2
-  exit 64
-fi
 for excluded in ${EXCLUDED_ISSUES[@]+"${EXCLUDED_ISSUES[@]}"}; do
   if ! is_positive_int "$excluded"; then
     echo "ERROR: --exclude-issue must be a positive integer." >&2
@@ -134,6 +157,45 @@ require_gh
 REPO_SLUG="$(repo_slug)"
 REPO_OWNER="${REPO_SLUG%%/*}"
 REPO_NAME="${REPO_SLUG#*/}"
+
+TRACKER_PROVIDER_RAW=""
+TRACKER_PROVIDER_RAW="$(workflow_graduation_closeout_tracker_provider_raw "$(pwd)")" || exit $?
+TRACKER_PROVIDER="$(workflow_normalize_issue_tracker_provider "$TRACKER_PROVIDER_RAW")"
+case "$TRACKER_PROVIDER" in
+  linear) ;;
+  github_projects|github_issues|'')
+    TRACKER_PROVIDER="${TRACKER_PROVIDER:-github_projects}"
+    ;;
+  none)
+    TRACKER_PROVIDER="github_projects"
+    ;;
+  *)
+    printf 'configuration: configuration validation error; key=issue_tracker.provider\n' >&2
+    exit 64
+    ;;
+esac
+
+# Shared parser must also see linear — update_tracker_status_best_effort uses
+# that path. Fail closed before epic discovery or child closeout mutations.
+if [ "$TRACKER_PROVIDER" = "linear" ]; then
+  SHARED_TRACKER_PROVIDER="$(workflow_normalize_issue_tracker_provider "$(workflow_config_provider issue_tracker "$(pwd)/.ai-dev-workflow.yaml")")"
+  if [ "$SHARED_TRACKER_PROVIDER" != "linear" ]; then
+    echo "ERROR: issue_tracker.provider is linear but the tracker bridge cannot read it (commented section header?). Remove the trailing comment from the 'issue_tracker:' line in .ai-dev-workflow.yaml and rerun." >&2
+    exit 64
+  fi
+fi
+
+if [ -n "$EPIC_OVERRIDE" ]; then
+  if [ "$TRACKER_PROVIDER" = "linear" ]; then
+    if ! is_linear_issue_id "$EPIC_OVERRIDE"; then
+      echo "ERROR: with issue_tracker.provider=linear, --epic must be a native Linear ID with team prefix (e.g. LEA-326), not a bare number. Refusing to mutate GitHub issues from a numeric suffix." >&2
+      exit 64
+    fi
+  elif ! is_positive_int "$EPIC_OVERRIDE"; then
+    echo "ERROR: --epic must be a positive integer." >&2
+    exit 64
+  fi
+fi
 
 TMP_DIR="$(mktemp -d)"
 cleanup() {
@@ -149,16 +211,6 @@ fail_closed() {
   exit 1
 }
 
-# Strip fenced code blocks so example closing keywords are not treated as live refs.
-strip_fenced_blocks() {
-  python3 -c '
-import re, sys
-text = sys.stdin.read()
-text = re.sub(r"```.*?```", "", text, flags=re.S)
-sys.stdout.write(text)
-'
-}
-
 extract_closing_issue_numbers() {
   grep -ioE '(^|[^[:alnum:]_])(close[sd]?|fix(es|ed)?|resolve[sd]?)[[:space:]]+(issue[[:space:]]+)?#[0-9]+' \
     | grep -oE '[0-9]+$' \
@@ -169,6 +221,13 @@ extract_epic_parent_refs() {
   grep -ioE '(^|[^[:alnum:]_])(epic|parent)[[:space:]]*#[0-9]+' \
     | grep -oE '[0-9]+$' \
     | sort -un || true
+}
+
+# Linear epic / parent refs: "Epic LEA-326", "Parent LEA-326", bare "LEA-326".
+extract_linear_epic_refs() {
+  grep -ioE '(^|[^[:alnum:]_])((epic|parent)[[:space:]]+)?[A-Z][A-Z0-9_]*-[0-9]+' \
+    | grep -oE '[A-Z][A-Z0-9_]*-[0-9]+' \
+    | sort -u || true
 }
 
 read_merged_graduation_pr() {
@@ -228,16 +287,75 @@ sys.stdout.write(body)
     SLUG_SOURCE="cli_override"
   fi
 
+  # Combined text is for Linear only (unchanged join). GitHub closeout filters
+  # title and body as independent documents — see collect_pr_epic_candidates.
   printf '%s\n%s\n' "$title" "$body" > "$TMP_DIR/pr-text.txt"
+  printf '%s' "$title" > "$TMP_DIR/pr-title.txt"
+  printf '%s' "$body" > "$TMP_DIR/pr-body.txt"
+}
+
+# Drop indented Markdown code lines (4+ spaces or a leading tab) after fence
+# stripping. Used only for Linear epic-ID text discovery (deferred tracker
+# action), never for GitHub issue mutation — GitHub closeout uses GFM render.
+strip_indented_code_lines() {
+  python3 -c '
+import sys
+for line in sys.stdin:
+    if line.startswith("\t"):
+        continue
+    leading = len(line) - len(line.lstrip(" "))
+    if leading >= 4:
+        continue
+    sys.stdout.write(line)
+'
 }
 
 collect_pr_epic_candidates() {
   local text
-  text="$(strip_fenced_blocks < "$TMP_DIR/pr-text.txt")"
+  if [ "$TRACKER_PROVIDER" = "linear" ]; then
+    # Shared fence filter + simple indented-code strip. Epic IDs drive Linear
+    # deferred actions only — never GitHub issue mutations.
+    if ! text="$(strip_fenced_pr_body_blocks < "$TMP_DIR/pr-text.txt")"; then
+      fail_closed "could_not_strip_fenced_blocks"
+    fi
+    if ! text="$(printf '%s' "$text" | strip_indented_code_lines)"; then
+      fail_closed "could_not_strip_indented_code"
+    fi
+    printf '%s\n' "$text" | extract_linear_epic_refs | sort -u > "$TMP_DIR/pr-epic-candidates.txt"
+    return 0
+  fi
+  # github_projects / github_issues: render title and body via GitHub GFM,
+  # extract visible text outside <pre>/<code>, then union epic/closing refs
+  # (closing via shared closing_keyword_live_refs). Fail closed for text refs
+  # when render/extract fails — never scan raw markdown.
+  local context title_raw body_raw title_text body_text
+  context="${REPO_OWNER}/${REPO_NAME}"
+  title_raw="$(cat "$TMP_DIR/pr-title.txt")"
+  body_raw="$(cat "$TMP_DIR/pr-body.txt")"
+  title_text=""
+  body_text=""
+  if printf '%s' "$title_raw" | graduation_closeout_raw_has_closing_keyword_candidate \
+    || printf '%s' "$title_raw" | graduation_closeout_raw_has_epic_or_parent_ref; then
+    if ! title_text="$(printf '%s' "$title_raw" | graduation_closeout_github_visible_text_from_markdown "$context")"; then
+      echo "CLOSEOUT_TEXT_REFS_UNAVAILABLE pr=${GRADUATION_PR} reason=gfm_render_or_extract_failed" >&2
+      : > "$TMP_DIR/pr-epic-candidates.txt"
+      return 0
+    fi
+  fi
+  if printf '%s' "$body_raw" | graduation_closeout_raw_has_closing_keyword_candidate \
+    || printf '%s' "$body_raw" | graduation_closeout_raw_has_epic_or_parent_ref; then
+    if ! body_text="$(printf '%s' "$body_raw" | graduation_closeout_github_visible_text_from_markdown "$context")"; then
+      echo "CLOSEOUT_TEXT_REFS_UNAVAILABLE pr=${GRADUATION_PR} reason=gfm_render_or_extract_failed" >&2
+      : > "$TMP_DIR/pr-epic-candidates.txt"
+      return 0
+    fi
+  fi
   {
-    printf '%s\n' "$text" | extract_epic_parent_refs
-    printf '%s\n' "$text" | extract_closing_issue_numbers
-  } | sort -un > "$TMP_DIR/pr-epic-candidates.txt"
+    printf '%s\n' "$title_text" | extract_epic_parent_refs
+    printf '%s\n' "$title_text" | closing_keyword_live_refs
+    printf '%s\n' "$body_text" | extract_epic_parent_refs
+    printf '%s\n' "$body_text" | closing_keyword_live_refs
+  } | sed '/^$/d' | sort -un > "$TMP_DIR/pr-epic-candidates.txt"
 }
 
 discover_epic_via_label_parents() {
@@ -321,6 +439,15 @@ resolve_epic() {
     return 0
   fi
 
+  # Linear epics are not GitHub issues — never discover via GitHub parent GraphQL
+  # or treat a numeric suffix as the epic.
+  if [ "$TRACKER_PROVIDER" = "linear" ]; then
+    if [ "$count" -gt 1 ]; then
+      fail_closed "ambiguous_epic_candidates"
+    fi
+    fail_closed "epic_discovery_failed"
+  fi
+
   if parent_epic="$(discover_epic_via_label_parents)"; then
     if [ "$count" -gt 1 ]; then
       # Ambiguous PR refs: accept parent convergence only when it matches exactly
@@ -345,6 +472,10 @@ resolve_epic() {
 
 epic_has_defer_label() {
   local labels_csv old_ifs label normalized
+  # Linear epics have no GitHub issue labels; defer only via CLI.
+  if [ "$TRACKER_PROVIDER" = "linear" ]; then
+    return 1
+  fi
   if ! labels_csv="$(gh issue view "$DISCOVERED_EPIC" --json labels --jq '[.labels[].name] | join(",")' 2>/dev/null)"; then
     return 1
   fi
@@ -383,6 +514,9 @@ done
 if [ "$DEFER_EPIC_CLOSE" -eq 1 ]; then
   CHILD_ARGV+=(--defer-epic-close)
 fi
+if [ "$DRY_RUN" -eq 1 ]; then
+  CHILD_ARGV+=(--dry-run)
+fi
 
 echo "GRADUATION_CLOSEOUT_FROM_MERGED_PR_RESULT=running"
 echo "GRADUATION_PR=$GRADUATION_PR"
@@ -390,6 +524,8 @@ echo "SLUG=$DISCOVERED_SLUG"
 echo "SLUG_SOURCE=$SLUG_SOURCE"
 echo "EPIC_ISSUE=$DISCOVERED_EPIC"
 echo "EPIC_SOURCE=$EPIC_SOURCE"
+echo "TRACKER_PROVIDER=$TRACKER_PROVIDER"
+echo "DRY_RUN=$DRY_RUN"
 echo "DEFER_EPIC_CLOSE=$DEFER_EPIC_CLOSE"
 echo "DEFER_SOURCE=$DEFER_SOURCE"
 echo "CHILD_COMMAND=${CHILD_ARGV[*]}"

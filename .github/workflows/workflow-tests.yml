@@ -23,6 +23,36 @@ name: workflow test harnesses
 # scheduled nightly full run is the backstop for cross-suite and mapping
 # regressions the subset cannot see.
 #
+# pull_request path filter (#1997): limited to scripts/development-workflow/**
+# and this workflow file. An empty selection still used to start three jobs
+# (select, one shard, aggregator) and bill ~3 minutes on docs/spec/plan PRs.
+# Suites that cover docs/workflow, other .github/workflows, sync-manifest.yaml,
+# .ai-dev-workflow.yaml, command/skill surfaces, and similar paths no longer
+# run on PRs that touch only those paths; the template nightly is the
+# backstop, and workflow_dispatch can run a full pass on demand.
+#
+# GitHub evaluates pull_request `paths:` against the whole PR diff, so once a
+# PR touches a covered path it keeps running on later pushes even if a later
+# commit only edits docs. pr-ci-loop.sh's expected_checks_missing logic treats
+# a workflow that ran on a previous head but not the current one as red — a
+# path filter that stops matching mid-PR can therefore fail the CI loop even
+# when nothing is broken.
+#
+# Required-check caveat: a path-filtered check stays pending on PRs that do
+# not match the filter. This repository's develop/main have no required
+# checks, but downstream consumers that require "workflow test harnesses"
+# must not make that check required, or must add a matching no-op workflow
+# that always reports success when the harness is skipped.
+#
+# Nightly schedule gate (#1996): `on.schedule` cannot be conditioned, so every
+# job skips schedule events unless this is lhpaul/ai-dev-framework-template or
+# the repository variable WORKFLOW_TESTS_NIGHTLY_ENABLED compares equal to
+# 'true' under GitHub Actions' case-insensitive `==` (so true/True/TRUE opt
+# in; any other value or absence keeps the nightly off). Consumers that sync
+# this file keep the cron entry but do not start runners by default.
+# workflow_dispatch is unchanged. Opt in: Settings → Secrets and variables →
+# Actions → Variables → WORKFLOW_TESTS_NIGHTLY_ENABLED = true.
+#
 # Sharding (#1722) narrows this tradeoff but does not remove it. The matrix
 # runs one job per SHARD, not one per suite. GitHub bills every job rounded up
 # to a whole minute, so a job per suite pays the checkout/interpreter overhead
@@ -38,15 +68,20 @@ name: workflow test harnesses
 
 on:
   pull_request:
-    # Deliberately NOT path-filtered. A path filter is how the previous
-    # workflow silently skipped suites; the selector below decides what runs,
-    # and an empty selection finishes in seconds.
+    # Path-filtered (#1997): skip runners when no workflow script or this file
+    # changed. The selector still decides which suites run when the filter
+    # matches; see the header for the nightly / workflow_dispatch backstop.
     branches:
       - develop
       - develop-**
       - main
+    paths:
+      - 'scripts/development-workflow/**'
+      - '.github/workflows/workflow-tests.yml'
   schedule:
     # Nightly full run, 04:17 UTC. Off the hour to avoid Actions peak.
+    # Job-level gate (#1996): runners start only in the template repo, or when
+    # vars.WORKFLOW_TESTS_NIGHTLY_ENABLED == 'true'. See header comments.
     - cron: '17 4 * * *'
   # Manual full run. There is no PR to diff against, so this always runs
   # everything — no input is offered, rather than one that cannot take effect.
@@ -77,6 +112,11 @@ env:
 jobs:
   select:
     name: select suites
+    # Schedule: template repo, or explicit opt-in. Other events always run.
+    if: >-
+      github.event_name != 'schedule' ||
+      github.repository == 'lhpaul/ai-dev-framework-template' ||
+      vars.WORKFLOW_TESTS_NIGHTLY_ENABLED == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -163,7 +203,13 @@ jobs:
   test:
     name: shard ${{ matrix.shard.id }}
     needs: select
-    if: needs.select.outputs.count != '0'
+    if: >-
+      needs.select.outputs.count != '0' &&
+      (
+        github.event_name != 'schedule' ||
+        github.repository == 'lhpaul/ai-dev-framework-template' ||
+        vars.WORKFLOW_TESTS_NIGHTLY_ENABLED == 'true'
+      )
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -344,7 +390,15 @@ jobs:
   result:
     name: workflow test harnesses
     needs: [select, test]
-    if: always()
+    # always() alone would start a runner after gated schedule skips; keep the
+    # same schedule allow-list as select/test (#1996).
+    if: >-
+      always() &&
+      (
+        github.event_name != 'schedule' ||
+        github.repository == 'lhpaul/ai-dev-framework-template' ||
+        vars.WORKFLOW_TESTS_NIGHTLY_ENABLED == 'true'
+      )
     runs-on: ubuntu-latest
     # No checkout and no API calls — this job only reads job results.
     permissions: {}

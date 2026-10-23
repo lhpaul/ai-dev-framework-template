@@ -17,4 +17,4 @@ Key rules:
 - Open **two** PRs: one to `main`, one backport to `develop`
 - **After both PRs exist**, treat `pr-review-loop.sh` as skipped for the `release/*` branch, apply `ready-for-regression`, and run the CI loop on the **production PR targeting `main` only** — do not stop at “PR opened”
 - Merge `main` PR first; the tag is created automatically by CI
-- After both PRs merge, run Step 9 post-merge cleanup with `--from-changelog` or an explicit `--issues` scope, then complete any emitted tracker handoff such as `TRACKER_ACTION=linear_mcp_or_api_required` before considering the release flow complete
+- After both PRs merge, run Step 9 post-merge cleanup with `--from-changelog` or an explicit `--issues` scope, then complete any emitted tracker handoff such as `TRACKER_ACTION=linear_mcp_or_api_required` before considering the release flow complete. For Linear, `--from-changelog` scopes Released from merged PRs in the release commit range (IDs from PR branch/title only; changelog is complement); read any `RELEASE_SCOPE_SKIPPED` / `RELEASE_SCOPE_INCOMPLETE` lines before applying handoff

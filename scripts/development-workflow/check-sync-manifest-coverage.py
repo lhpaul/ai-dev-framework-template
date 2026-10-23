@@ -384,8 +384,11 @@ def main() -> None:
     try:
         raise SystemExit(run(sys.argv[1:]))
     except InputError as exc:
-        print(f"ERROR: {exc}", file=sys.stderr)
+        print("configuration: validation error", file=sys.stderr)
         raise SystemExit(2)
+    except (OSError, UnicodeError):
+        print("configuration: unreadable manifest", file=sys.stderr)
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":

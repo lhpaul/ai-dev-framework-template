@@ -340,32 +340,63 @@ After the human merges the graduation PR (must use a **merge commit**):
    ./scripts/development-workflow/graduation-closeout.sh \
      --slug <slug> \
      --graduation-pr <graduation-pr-number> \
-     --epic <epic-issue-number>
+     --epic <epic-id>
    ```
 
-   Add `--base <branch>` when this is a nested graduation whose PR base is a
-   parent integration branch rather than `develop` (e.g. `--base
-   develop-sales-module`) — it must match the graduation PR's actual base,
-   and it must be `develop` or a `develop-*` integration branch. Add
-   `--exclude-issue <issue-number>` for optional, deferred, cancelled, or explicitly excluded sub-items that must remain open for human disposition. Add `--defer-epic-close` only when the human explicitly requests that the parent epic remain open after the core deliverable graduates.
+   `--epic` is a GitHub issue number when `issue_tracker.provider` is
+   `github_projects` or `github_issues`. With `provider: linear`, pass a native
+   Linear ID with team prefix (e.g. `LEA-326`); a bare number fails closed and
+   never mutates the GitHub issue with that numeric suffix. Add `--base <branch>`
+   when this is a nested graduation whose PR base is a parent integration branch
+   rather than `develop` (e.g. `--base develop-sales-module`) — it must match
+   the graduation PR's actual base, and it must be `develop` or a `develop-*`
+   integration branch. Add `--exclude-issue <issue-number>` for optional,
+   deferred, cancelled, or explicitly excluded sub-items that must remain open
+   for human disposition. Add `--defer-epic-close` only when the human
+   explicitly requests that the parent epic remain open after the core
+   deliverable graduates. Add `--dry-run` to print every external mutation
+   (`DRY_RUN would: …`) without applying any of them; both
+   `graduation-closeout.sh` and `graduation-closeout-from-merged-pr.sh` support
+   the flag (the wrapper forwards it to the child).
 
    **Operator deferral durability:** `--defer-epic-close` also ensures the epic
-   carries the durable label `defer-epic-close` before closeout reports success.
-   Merge-time automation reads that label (and the existing sub-item skip labels
-   `optional`, `deferred`, `cancelled`, `excluded-from-graduation`,
-   `exclude-from-graduation`) so a later fallback run does not force-close a
-   deferred epic or excluded sub-item.
+   carries the durable label `defer-epic-close` before closeout reports success
+   (GitHub Projects / GitHub Issues only). Merge-time automation reads that
+   label (and the existing sub-item skip labels `optional`, `deferred`,
+   `cancelled`, `excluded-from-graduation`, `exclude-from-graduation`) so a
+   later fallback run does not force-close a deferred epic or excluded
+   sub-item. Under Linear, deferral is CLI-only; the helper never writes
+   GitHub labels derived from a Linear ID.
 
    The helper:
    - validates that the graduation PR is already merged from `develop-<slug>` to its expected base (`develop` by default, or the branch passed via `--base` for a nested graduation);
-   - identifies planned sub-items from native GitHub sub-issues or the `integration-branch:<slug>` label fallback;
-   - includes issue references from closing keywords in merged PRs targeting `develop-<slug>`;
-   - closes open delivered sub-items and reasserts the configured terminal Project status;
+   - with GitHub Projects / GitHub Issues: identifies planned sub-items from native GitHub sub-issues or the `integration-branch:<slug>` label fallback;
+   - with Linear: skips GitHub `subIssues` and label fallback (Linear children are not GitHub sub-issues); emits `TRACKER_ACTION_REQUIRED=` deferred actions for the native bridge; closes GitHub issues **only** when they appear in same-repo structured `closingIssuesReferences` on merged PRs targeting `develop-<slug>` (never from body/title text, fenced examples, indented code, or foreign-repo structured refs). Text-only closing keywords are printed as `LINEAR_GITHUB_REF_SKIPPED … reason=not_structurally_linked` and skipped. GitHub often leaves `closingIssuesReferences` empty for non-default integration bases, so on `develop-<slug>` no GitHub issue is closed — safe by design;
+   - with GitHub Projects / GitHub Issues: includes issue references from **live** closing keywords in merged PRs targeting `develop-<slug>` by rendering each PR title and body separately through GitHub's GFM markdown API (`gh api markdown`), extracting visible text outside `<pre>` / `<code>`, then applying the shared `closing_keyword_live_refs` matcher (same regex as post-merge cleanup). Example-only `Closes #N` inside rendered code, and cross-repo `owner/repo#N`, are ignored; when the markdown API fails or returns unusable output for a PR, that PR contributes no text-derived references (`CLOSEOUT_TEXT_REFS_UNAVAILABLE`) and closeout continues with other evidence — never falls back to scanning raw markdown. Requires markdown API access. Post-merge cleanup behavior is unchanged. Native sub-issues and label fallback as above;
+   - closes open delivered sub-items and reasserts the configured terminal Project status (GitHub trackers) or emits Linear deferred status updates;
    - updates closed-but-non-terminal delivered sub-items to the terminal Project status;
    - reports already terminal sub-items without moving them backward;
    - skips optional/deferred/excluded sub-items and reports the required human disposition;
-   - fails closed when candidate discovery is incomplete or no delivered sub-items can be identified;
+   - fails closed when candidate discovery is incomplete or no delivered sub-items can be identified (GitHub trackers; Linear may proceed with epic-only deferred closeout when no PR-linked GitHub issues exist);
    - closes the parent epic only after delivered planned sub-items reconcile, unless epic closure is explicitly deferred.
+
+   **Graduation closeout decision-gate consistency matrix** (#1984; complex workflow decision gate — mirror surfaces must stay aligned):
+
+   | Gate inputs | Allowed outcomes | Required next actions | Mirror surfaces |
+   | --- | --- | --- | --- |
+   | `provider: github_projects` or `github_issues`; valid GitHub epic `#`; discovery succeeds | `GRADUATION_CLOSEOUT_RESULT=pass`; delivered sub-items closed/terminal; epic closed unless deferred | Report cleanup complete; surface `skipped_optional` to human | This Step 5 section, `graduation-closeout.sh`, `docs/workflow/development-workflow/integrations/github-projects.md` |
+   | Same providers; example-only `Closes #N` in fenced/indented code (or `owner/repo#N`) on merged PRs | No mutation of that local `#N` after GFM render + visible-text extract; prose `Closes #N` still selects it | None when other discovery sources cover delivered work | `graduation-closeout-lib.sh` (GFM helpers), unit tests + recorded GFM fixtures (#2016) |
+   | Same providers; markdown API failure / unusable HTML for a candidate PR | That PR contributes no text-derived refs (`CLOSEOUT_TEXT_REFS_UNAVAILABLE`); other evidence may still pass | None when labels/sub-issues cover delivered work; otherwise repair API access | Both closeout scripts, unit tests (#2016) |
+   | Same providers; discovery incomplete or zero delivered candidates | `GRADUATION_CLOSEOUT_RESULT=failed`; epic held open | Repair discovery/delivered items before claiming graduation complete | Helper stdout/stderr, Step 5 failure guidance above |
+   | `provider: linear`; native epic ID (e.g. `LEA-326`) | Linear epic status via `TRACKER_ACTION_REQUIRED=` only; GitHub issues closed only if same-repo structured `closingIssuesReferences` | Orchestrator bridge applies deferred Linear transitions; do not mutate GitHub issues from Linear numeric suffix or text-only `Closes #N` | This matrix, `docs/workflow/development-workflow/integrations/linear.md`, `graduation-closeout.sh` |
+   | `provider: linear`; text-only `Closes #N` (plain / fenced / indented) with empty structured refs | No GitHub mutation; emit `LINEAR_GITHUB_REF_SKIPPED issue=N reason=not_structurally_linked`; epic deferred closeout may still pass | None for GitHub; rely on Linear bridge for epic | Helper stdout, unit tests |
+   | `provider: linear`; bare numeric `--epic` | Fail closed (usage exit); **no** GitHub issue mutation | Fix `--epic` to native Linear ID | `graduation-closeout.sh` usage, unit tests |
+   | `provider: linear` under a commented `issue_tracker:` header (bridge cannot read it) | Fail closed (exit 64) before any GitHub/tracker mutation | Remove the trailing comment from the `issue_tracker:` line in `.ai-dev-workflow.yaml` and rerun | Both closeout scripts, `linear.md`, unit tests |
+   | Any provider; `--dry-run` | Prints `DRY_RUN would:` for every mutation; applies none | Re-run without `--dry-run` when ready | Both closeout scripts |
+   | GitHub providers; `--defer-epic-close` / skip labels | Epic and excluded sub-items remain open; durable `defer-epic-close` label when applicable | Human disposition for deferred/skipped items | Step 5 deferral bullets, merge-time fallback labels |
+   | `provider: linear`; bridge emits success without `TRACKER_ACTION_REQUIRED=` for deferred epic update | Fail closed; epic **not** reported closed | Fix bridge/orchestrator handoff | `graduation-closeout.sh`, Linear bridge tests |
+   | `provider: linear`; closeout re-run emits `set_status` toward `Merged` while epic is already `Released` (or later) | Helper may still emit `TRACKER_ACTION_REQUIRED=`; native bridge skips (forward-only) and records the skip — no regressive move | None when bridge skip is recorded | `linear.md` deferred-action / orchestrator loop, tracker-status-mapping |
+   | Step 5 and merge-time automation both run | Idempotent `already_terminal`; no regressive moves | None when second run is clean | Protocol 05b Step 5, `graduation-closeout-from-merged-pr.sh`, `update-tracker-on-merge.yml` (see #1281 matrix for automation rows) |
 
    Terminal Project status is resolved in this order: `GITHUB_PROJECT_STATUS_GRADUATED`, `GITHUB_PROJECT_STATUS_MERGED`, then `Merged`.
 

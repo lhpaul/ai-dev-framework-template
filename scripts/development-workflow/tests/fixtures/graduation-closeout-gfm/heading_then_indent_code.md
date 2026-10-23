@@ -1,0 +1,2 @@
+## Example
+    Closes #326

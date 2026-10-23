@@ -107,24 +107,58 @@ Before running this smoke test:
 
 ---
 
-### Step 4: Simulate the reviewer-loop summary comment
+### Step 4: Simulate the reviewer-loop summary and dispatch PR policy
 
-1. Post a synthetic summary comment that matches the canonical marker:
+Comments no longer start `pr-policy.yml` (#1998). Post a fixture that includes
+both canonical markers **and** a current-head history entry, then dispatch the
+workflow explicitly (the same path `pr-review-loop.sh` uses after a real
+summary).
 
+1. Resolve the live head and post a valid clean summary fixture:
+
+   <!-- workflow-shell-contract: bash-zsh -->
    ```bash
-   gh pr comment "$PR_NUM" --body "### Automated Reviewer Loop Summary
+   set -euo pipefail
+   HEAD_SHA=$(gh pr view "$PR_NUM" --json headRefOid --jq '.headRefOid')
+   DEFAULT_BRANCH=$(gh repo view --json defaultBranchRef --jq '.defaultBranchRef.name')
+   BODY_FILE=$(mktemp)
+   cat > "$BODY_FILE" <<EOF
+### Automated Reviewer Loop Summary
 
-**Result:** CLEAN
+**Result:** clean — no blocking findings
 **Platforms:** pr-agent, coderabbit
 **Findings:** 0 blocking, 0 suggestions
 
-*Posted automatically by \`pr-review-loop.sh\`.*"
+<details>
+
+\`\`\`json
+{"schema":"reviewer_loop_history.v1","entries":[{"head_sha":"${HEAD_SHA}"}]}
+\`\`\`
+
+</details>
+
+*Posted automatically by \`pr-review-loop.sh\`.*
+EOF
+   gh pr comment "$PR_NUM" --body-file "$BODY_FILE"
+   rm -f "$BODY_FILE"
    ```
 
-2. Wait for the guard's `issue_comment` event path to complete, then re-check
-   the commit status:
+2. Dispatch PR policy for this PR (do not wait for an `issue_comment` run):
 
+   <!-- workflow-shell-contract: bash-zsh -->
    ```bash
+   set -euo pipefail
+   gh workflow run pr-policy.yml \
+     --ref "$DEFAULT_BRANCH" \
+     -f "pr_number=${PR_NUM}"
+   ```
+
+3. Wait for that `workflow_dispatch` run to finish, then re-check the commit
+   status:
+
+   <!-- workflow-shell-contract: bash-zsh -->
+   ```bash
+   set -euo pipefail
    HEAD_SHA=$(gh pr view "$PR_NUM" --json headRefOid --jq '.headRefOid')
    gh api "repos/$(gh repo view --json nameWithOwner --jq '.nameWithOwner')/commits/$HEAD_SHA/statuses" \
      --jq "[.[] | select(.context | startswith(\"Reviewer-loop completion guard (#\"))] | first | {state, description}"
@@ -133,11 +167,11 @@ Before running this smoke test:
 **Expected result**:
 
 - `state` is `"success"`.
-- `description` indicates the reviewer-loop summary is present.
-- No extra push is required; the summary comment event refreshes readiness for
-  the current PR head SHA.
-- **Maps to**: Acceptance Criterion #6 (guard passes once the summary comment is present).
-
+- `description` indicates the reviewer loop ran clean for the current head.
+- No extra push is required; the explicit `workflow_dispatch` refreshes
+  readiness for the current PR head SHA (#1998).
+- **Maps to**: Acceptance Criterion #6 (guard passes once a current-head clean
+  summary exists and policy has been dispatched).
 ---
 
 ### Step 5: Verify the guard re-evaluates on every push
@@ -287,7 +321,7 @@ No seed data is required. The smoke test uses fixture branches and PRs created i
 | --- | --- | --- |
 | PR policy workflow fails with "Label not found" | The `ready-for-regression` label does not exist in the repo and label creation was not included | Verify the workflow includes the `gh label create` step before `gh pr edit --add-label` |
 | Guard workflow fails with a GitHub API error instead of a status check | `statuses: write` permission missing from the workflow | Add `statuses: write` under `permissions` in `pr-policy.yml` |
-| Guard reports "failure" even after posting the summary comment | Comment body does not contain both required markers, or the `issue_comment` workflow did not run | Confirm the comment contains exactly `### Automated Reviewer Loop Summary` and `*Posted automatically by \`pr-review-loop.sh\`.*`; inspect the guard workflow run for the comment event |
+| Guard reports "failure" even after posting the summary comment | Comment body does not contain both required markers, or `pr-policy.yml` was not dispatched after the summary | Confirm the comment contains exactly `### Automated Reviewer Loop Summary` and `*Posted automatically by \`pr-review-loop.sh\`.*`; confirm `PR_POLICY_DISPATCH=requested` and inspect the `workflow_dispatch` run (#1998) |
 | Out-of-scope branch (`spec/*`) receives the label | `IN_SCOPE_PREFIXES` env var contains an unexpected value | Check the env var default in `pr-policy.yml`; ensure `spec/` is not included |
 | `actionlint` reports warnings on the workflow file | YAML syntax issue or unsupported action reference | Fix the reported lines; re-run `actionlint` |
 

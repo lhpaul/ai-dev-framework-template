@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
-"""#1890 durable admission proofs; no remote requests or user-resource cleanup."""
+"""#1890 durable admission proofs; no remote requests or user-resource cleanup.
+
+covers: scripts/development-workflow/workflow-merge-budget.py
+covers: scripts/development-workflow/tests/fixtures/workflow-merge-budget.develop-baseline.py
+"""
 import argparse
+import hashlib
 import importlib.util
 import json
 import os
@@ -1673,6 +1678,67 @@ class ReleaseScope(unittest.TestCase):
                 self.assertEqual(json.loads(self.fixture.read_text())['events'],[['auth','status']])
                 self.assertEqual(self.command(['git','show-ref']).stdout,before)
 
+    def test_linear_release_projection_missing_changelog_digest(self):
+        shutil.copyfile(self.source / 'workflow-merge-budget.py', self.scripts / 'workflow-merge-budget.py')
+        (self.repo / '.ai-dev-workflow.yaml').write_text('issue_tracker:\n  provider: linear\n')
+        self.command(['git', 'add', '.ai-dev-workflow.yaml'])
+        self.command(['git', 'commit', '-qm', 'linear release without changelog'])
+        self.release_head = self.command(['git', 'rev-parse', 'HEAD']).stdout.strip()
+        result = subprocess.run(
+            ['bash', str(self.scripts / 'prepare-release-post-merge-cleanup.sh'), 'v1.2.3',
+             '--inspect-targets', '--release-head', self.release_head, '--issue', 'LEA-12'],
+            cwd=self.repo, env=self.env, text=True, capture_output=True,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        projection = json.loads(result.stdout)
+        self.assertEqual(
+            projection['changelogDigest'],
+            hashlib.sha256(b'').hexdigest(),
+        )
+        self.assertEqual(projection['issues'][0]['id'], 'LEA-12')
+
+    def test_project_release_accepts_component_prefixed_semver(self):
+        # REAL workflow-merge-budget.py project-release path (not the inspect stub).
+        shutil.copyfile(self.source / 'workflow-merge-budget.py', self.scripts / 'workflow-merge-budget.py')
+        (self.repo / '.ai-dev-workflow.yaml').write_text('issue_tracker:\n  provider: linear\n')
+        (self.repo / 'CHANGELOG.md').write_text(
+            '# Changes\n\n## [mobile-v1.1.0] - 2026-10-10\n- LEA-12\n\n## [1.2.3] - 2026-10-09\n- LEA-12\n'
+        )
+        self.command(['git', 'add', '.ai-dev-workflow.yaml', 'CHANGELOG.md'])
+        self.command(['git', 'commit', '-qm', 'component-prefixed release projection'])
+        head = self.command(['git', 'rev-parse', 'HEAD']).stdout.strip()
+        digest = hashlib.sha256(
+            self.command(['git', 'show', head + ':CHANGELOG.md']).stdout.encode()
+        ).hexdigest()
+        helper = str(self.scripts / 'workflow-merge-budget.py')
+        cases = (
+            ('mobile-v1.1.0', 'release/mobile-v1.1.0', 'mobile-v1.1.0'),
+            ('v1.2.3', 'release/v1.2.3', 'v1.2.3'),
+            ('1.2.3', 'release/v1.2.3', '1.2.3'),
+        )
+        for version, branch, expected_version in cases:
+            with self.subTest(version=version):
+                result = subprocess.run(
+                    [sys.executable, helper, 'project-release',
+                     '--repo', 'org/repo', '--repo-root', str(self.repo),
+                     '--target-root', str(self.repo), '--version', version,
+                     '--branch', branch, '--head', head, '--base', 'develop',
+                     '--provider', 'linear', '--issue-repo', 'org/repo',
+                     '--scope-issue', 'LEA-12'],
+                    cwd=self.repo, env=self.env, text=True, capture_output=True,
+                )
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                projection = json.loads(result.stdout)
+                self.assertEqual(projection['version'], expected_version)
+                self.assertEqual(projection['branch'], branch)
+                self.assertEqual(projection['head'], head)
+                self.assertEqual(projection['changelogDigest'], digest)
+                self.assertEqual(projection['issues'][0]['id'], 'LEA-12')
+                self.assertEqual(
+                    projection['linearMarker'],
+                    {'kind': 'label', 'name': 'release/' + expected_version},
+                )
+
     def test_release_scope_boundary_references(self):
         self.assertEqual([i['id'] for i in self.scope('(#12), #13.\n')['issues']],['12','13'])
 
@@ -1781,6 +1847,152 @@ class ReleaseScope(unittest.TestCase):
         self.assertEqual(json.loads(result.stdout),projection)
 
 
+class DevelopGithubParity(unittest.TestCase):
+    """#1982: GitHub project_release surfaces stay byte-identical to frozen develop."""
+
+    BASELINE = (
+        Path(__file__).resolve().parents[1]
+        / 'tests/fixtures/workflow-merge-budget.develop-baseline.py'
+    )
+    HEAD = Path(__file__).resolve().parents[1] / 'workflow-merge-budget.py'
+
+    @staticmethod
+    def _load(path, name):
+        spec = importlib.util.spec_from_file_location(name, path)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+
+    def setUp(self):
+        self.assertTrue(self.BASELINE.is_file(), 'missing frozen develop baseline: %s' % self.BASELINE)
+        self.head_mod = self._load(self.HEAD, 'merge_budget_head_parity')
+        self.base_mod = self._load(self.BASELINE, 'merge_budget_develop_baseline')
+        self.temp = tempfile.TemporaryDirectory(prefix='1982-github-parity-')
+        self.addCleanup(self.temp.cleanup)
+        self.repo = Path(self.temp.name).resolve() / 'repo'
+        self.repo.mkdir()
+        subprocess.run(['git', 'init', '-q', '-b', 'develop'], cwd=self.repo, check=True)
+        subprocess.run(['git', 'config', 'user.name', 'Fixture'], cwd=self.repo, check=True)
+        subprocess.run(['git', 'config', 'user.email', 'fixture@example.invalid'], cwd=self.repo, check=True)
+
+    def _commit_changelog(self, body):
+        (self.repo / 'CHANGELOG.md').write_text(body)
+        subprocess.run(['git', 'add', 'CHANGELOG.md'], cwd=self.repo, check=True)
+        subprocess.run(['git', 'commit', '-qm', 'changelog'], cwd=self.repo, check=True)
+        return subprocess.run(
+            ['git', 'rev-parse', 'HEAD'], cwd=self.repo, text=True, capture_output=True, check=True,
+        ).stdout.strip()
+
+    def _run_project_release(self, mod, provider, version, head, *, branch=None):
+        if branch is None:
+            branch = 'release/v1.2.3' if not str(version).startswith('mobile') else 'release/vmobile-v1.1.0'
+            if str(version).startswith('vmobile'):
+                branch = 'release/vmobile-v1.1.0'
+            if 'rc' in str(version):
+                branch = 'release/' + (version if str(version).startswith('v') else 'v' + version)
+        args = argparse.Namespace(
+            target_root=str(self.repo),
+            repo_root=str(self.repo),
+            version=version,
+            branch=branch,
+            base='develop',
+            head=head,
+            provider=provider,
+            issue_repo='org/repo',
+            repo='org/repo',
+            scope_issue=['12'],
+            project_id='PVT_test000001' if provider == 'github_projects' else None,
+            merged_status='Merged',
+            released_status='Released',
+            evidence=None,
+            release_field=None,
+            release_label_prefix=None,
+        )
+        patches = [
+            patch.object(mod, 'gh', lambda *a, **k: {'number': 12, 'state': 'closed'}),
+        ]
+        if provider == 'github_projects' and hasattr(mod, 'release_omitted'):
+            patches.append(patch.object(mod, 'release_omitted', lambda *a, **k: ([], 0)))
+        for mock in patches:
+            mock.start()
+        try:
+            try:
+                return ('ok', mod.project_release(args))
+            except Exception as exc:  # noqa: BLE001 — compare Stop message across modules
+                return ('err', type(exc).__name__, str(exc))
+        finally:
+            for mock in patches:
+                mock.stop()
+
+    def test_github_project_release_matches_develop_baseline(self):
+        versions = (
+            '1.2.3',
+            'v1.2.3',
+            'vmobile-v1.1.0',
+            'mobile-v1.1.0',
+            'v1.2.3-rc.1',
+            'v1.2.3-rc.01',
+            'not-a-version',
+        )
+        changelogs = (
+            ('trailing_nl', '# Changes\n\n## [1.2.3] - 2026-10-10\n- Fixed (#12).\n'),
+            ('no_trailing_nl', '# Changes\n\n## [1.2.3] - 2026-10-10\n- Fixed (#12).'),
+            ('missing_section', '# Changes\n\n## [9.9.9] - 2026-01-01\n- Other (#99).\n'),
+        )
+        parity_cases = 0
+        for provider in ('github_projects', 'github_issues'):
+            for cl_name, body in changelogs:
+                # Fresh commit per changelog shape so digests stay independent.
+                head = self._commit_changelog(body)
+                for version in versions:
+                    with self.subTest(provider=provider, changelog=cl_name, version=version):
+                        head_result = self._run_project_release(self.head_mod, provider, version, head)
+                        base_result = self._run_project_release(self.base_mod, provider, version, head)
+                        self.assertEqual(head_result[0], base_result[0], head_result)
+                        if head_result[0] == 'err':
+                            self.assertEqual(head_result[1], base_result[1])
+                            self.assertEqual(head_result[2], base_result[2])
+                        else:
+                            self.assertEqual(
+                                head_result[1]['changelogDigest'],
+                                base_result[1]['changelogDigest'],
+                            )
+                            self.assertEqual(head_result[1]['version'], base_result[1]['version'])
+                            self.assertEqual(head_result[1]['markerProvider'], provider)
+                            # GitHub must use call()-stripped digest, not raw stdout.
+                            raw = subprocess.run(
+                                ['git', '-C', str(self.repo), 'show', head + ':CHANGELOG.md'],
+                                text=True, capture_output=True, check=True,
+                            ).stdout
+                            stripped = raw.strip()
+                            expected = hashlib.sha256(stripped.encode()).hexdigest()
+                            self.assertEqual(head_result[1]['changelogDigest'], expected)
+                            if raw != stripped:
+                                self.assertNotEqual(
+                                    head_result[1]['changelogDigest'],
+                                    hashlib.sha256(raw.encode()).hexdigest(),
+                                )
+                        parity_cases += 1
+        # 2 providers × 3 changelog shapes × 7 versions
+        self.assertEqual(parity_cases, 42)
+
+    def test_github_missing_changelog_file_matches_develop(self):
+        # Commit something else so HEAD exists, then remove CHANGELOG from that tree
+        # by never adding it — fingerprint raises via call() on both modules.
+        (self.repo / 'note.txt').write_text('x\n')
+        subprocess.run(['git', 'add', 'note.txt'], cwd=self.repo, check=True)
+        subprocess.run(['git', 'commit', '-qm', 'no changelog'], cwd=self.repo, check=True)
+        head = subprocess.run(
+            ['git', 'rev-parse', 'HEAD'], cwd=self.repo, text=True, capture_output=True, check=True,
+        ).stdout.strip()
+        for provider in ('github_projects', 'github_issues'):
+            with self.subTest(provider=provider):
+                head_result = self._run_project_release(self.head_mod, provider, 'v1.2.3', head)
+                base_result = self._run_project_release(self.base_mod, provider, 'v1.2.3', head)
+                self.assertEqual(head_result[0], 'err')
+                self.assertEqual(head_result, base_result)
+
+
 class ReleasePair(unittest.TestCase):
     command = Composed.command
     helper = Composed.helper
@@ -1791,8 +2003,26 @@ class ReleasePair(unittest.TestCase):
         self.command(['git','branch','-m','release/v1.2.3'])
         (self.repo/'CHANGELOG.md').write_text('# Changes\n\n## [1.2.3] - 2026-10-10\n- Shipped #12, #13 (ENG-12, ENG-13).\n')
         self.command(['git','add','CHANGELOG.md','.ai-dev-workflow.yaml'])
-        self.command(['git','commit','-qm','reviewed release'])
-        self.head = self.command(['git','rev-parse','HEAD']).stdout.strip()
+        # Linear --from-changelog (#1982) resolves IDs only via commits/<sha>/pulls
+        # associations (not subject PR numbers). Populate commitPulls for eng12/eng13.
+        self.command(['git','commit','-qm','Merge pull request #112 from org/fix/ENG-12-item'])
+        eng12 = self.command(['git','rev-parse','HEAD']).stdout.strip()
+        self.command(['git','commit','--allow-empty','-qm','Merge pull request #113 from org/fix/ENG-13-item'])
+        eng13 = self.command(['git','rev-parse','HEAD']).stdout.strip()
+        self.head = eng13
+        self.eng12 = eng12
+        self.eng13 = eng13
+        pr112 = dict(
+            number=112, state='MERGED', headRefName='fix/ENG-12-item',
+            title='fix: ENG-12', mergedAt='2026-10-10T12:00:00Z', baseRefName='develop',
+            headRefOid=eng12, mergeCommitOid=eng12, isInMergeQueue=False, autoMergeRequest=None)
+        pr113 = dict(
+            number=113, state='MERGED', headRefName='fix/ENG-13-item',
+            title='fix: ENG-13', mergedAt='2026-10-10T12:00:00Z', baseRefName='develop',
+            headRefOid=eng13, mergeCommitOid=eng13, isInMergeQueue=False, autoMergeRequest=None)
+        self.data.setdefault('prs', {})['112'] = pr112
+        self.data['prs']['113'] = pr113
+        self.data['commitPulls'] = {eng12: [pr112], eng13: [pr113]}
         self.command(['git','push','-q','origin','release/v1.2.3'])
         base = self.command(['git','rev-parse','develop']).stdout.strip()
         tree = self.command(['git','rev-parse','HEAD^{tree}']).stdout.strip()
@@ -2609,6 +2839,10 @@ class ReleasePair(unittest.TestCase):
         config=self.repo/'.ai-dev-workflow.yaml'
         original='issue_tracker:\n  provider: linear\n  custom_fields:\n    release_field: Release\n'
         config.write_text(original);self.both()
+        state=json.loads(Path(self.session).read_text())
+        self.assertEqual([i['id'] for i in state['prs'][1]['issues']],['ENG-12','ENG-13'])
+        self.assertIn('release_stamp:ENG-12',state['prs'][1]['steps'])
+        self.assertIn('release_stamp:ENG-13',state['prs'][1]['steps'])
         for phase in ('remote_delete','local_cleanup'):
             self.step(13,'policy_skip',key=phase)
         config.write_text(original.replace('release_field: Release','release_field: Other'))
@@ -2657,6 +2891,10 @@ class ReleasePair(unittest.TestCase):
     def test_release_pair_linear_stamp_bridge_preserves_deferred_work(self):
         (self.repo/'.ai-dev-workflow.yaml').write_text('issue_tracker:\n  provider: linear\n  custom_fields:\n    release_field: Release\n')
         self.both()
+        state=json.loads(Path(self.session).read_text())
+        self.assertEqual([i['id'] for i in state['prs'][1]['issues']],['ENG-12','ENG-13'])
+        self.assertIn('release_stamp:ENG-12',state['prs'][1]['steps'])
+        self.assertIn('release_stamp:ENG-13',state['prs'][1]['steps'])
         self.cleanup(success=False)
         state=json.loads(Path(self.session).read_text())
         stamp=state['prs'][1]['steps']['release_stamp:ENG-12']

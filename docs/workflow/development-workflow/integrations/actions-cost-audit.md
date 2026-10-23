@@ -86,6 +86,32 @@ path triggers, or workflows that no longer gate a meaningful decision.
 The consolidated `.github/workflows/pr-policy.yml` workflow is an example of a
 `replace` outcome: it preserves reviewer-loop and regression-readiness policy
 while replacing redundant lightweight PR policy fan-out with one API-only job.
+Issue #1998 further removed its `issue_comment` trigger so ordinary PR comments
+no longer start a runner; `pr-review-loop.sh` dispatches the workflow once per
+canonical summary instead.
+
+`.github/workflows/workflow-tests.yml` is a `make opt-in` outcome for its
+**nightly schedule** in consumer repositories (#1996). The cron entry remains
+in the synced file, but every job skips `schedule` events unless the repository
+is `lhpaul/ai-dev-framework-template` or the Actions repository variable
+`WORKFLOW_TESTS_NIGHTLY_ENABLED` compares equal to `true` under GitHub Actions'
+case-insensitive `==` (`true` / `True` / `TRUE` opt in; any other value or
+absence keeps the nightly off). Adopting the template version during sync keeps
+the nightly off by default; set the variable only when a consumer intentionally
+wants the full harness every night.
+
+`pull_request` is path-filtered (#1997) to `scripts/development-workflow/**`
+and `.github/workflows/workflow-tests.yml`, so a docs-only PR starts no harness
+runners. GitHub evaluates that filter against the whole PR diff, so once a PR
+touches a covered path it keeps running on later pushes. `workflow_dispatch`
+still runs a full pass on demand; the template nightly (or an opted-in consumer
+nightly) is the backstop for suites that cover docs, other workflows, or
+manifest surfaces. Do not make the check name **workflow test harnesses**
+required in branch protection without a matching no-op: a path-filtered
+required check stays pending on PRs that do not match. `pr-ci-loop.sh` also
+reports `expected_checks_missing` (red) when a workflow ran on a previous head
+but not the current one — another reason not to require a path-filtered check
+without a no-op.
 
 ---
 

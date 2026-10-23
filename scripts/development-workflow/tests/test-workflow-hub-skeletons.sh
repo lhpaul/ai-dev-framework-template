@@ -176,7 +176,7 @@ categories:
 YAML
 run_fails_contains \
   "sync_manifest_product_runtime_drift_fails" \
-  "product_repo_injection runtime paths do not match required release runtime set" \
+  "configuration: configuration validation error" \
   python3 "$REPO_ROOT/scripts/development-workflow/validate-workflow-hub-skeletons.py" \
   --repo-root "$REPO_ROOT" \
   --sync-manifest "$runtime_drift_sync_manifest" \
@@ -201,17 +201,17 @@ sync_blocks = re.split(r'(?=^    - path:)', sync, flags=re.M)
 (tmp / 'extra-runtime-sync.yaml').write_text(sync.replace('    - path: scripts/development-workflow/workflow-portfolio-scan.py\n      mode_scope: hub_only', '    - path: scripts/development-workflow/workflow-portfolio-scan.py\n      mode_scope: product_repo_injection'))
 PY
 run_fails_contains "product_missing_reader_dependency_fails" \
-  "missing required product release runtime entries: scripts/development-workflow/workflow-project-reader.py" \
+  "configuration: configuration validation error" \
   validate_skeleton_manifest "$TMP_ROOT/missing-reader-skeleton.yaml" "$REPO_ROOT"
 run_fails_contains "sync_missing_reader_dependency_fails" \
-  "missing: scripts/development-workflow/workflow-project-reader.py" \
+  "configuration: configuration validation error" \
   python3 "$REPO_ROOT/scripts/development-workflow/validate-workflow-hub-skeletons.py" \
   --repo-root "$REPO_ROOT" --sync-manifest "$TMP_ROOT/missing-reader-sync.yaml"
 run_fails_contains "product_extra_runtime_still_fails" \
-  "unexpected required_for_product_repo entries: scripts/development-workflow/workflow-portfolio-scan.py" \
+  "configuration: configuration validation error" \
   validate_skeleton_manifest "$TMP_ROOT/extra-runtime-skeleton.yaml" "$REPO_ROOT"
 run_fails_contains "sync_extra_runtime_still_fails" \
-  "unexpected: scripts/development-workflow/workflow-portfolio-scan.py" \
+  "configuration: configuration validation error" \
   python3 "$REPO_ROOT/scripts/development-workflow/validate-workflow-hub-skeletons.py" \
   --repo-root "$REPO_ROOT" --sync-manifest "$TMP_ROOT/extra-runtime-sync.yaml"
 product_entries="$(python3 "$REPO_ROOT/scripts/development-workflow/select-sync-manifest-entries.py" --manifest "$REPO_ROOT/sync-manifest.yaml" --role product_repo)"
@@ -248,15 +248,15 @@ entries:
   - path: AGENTS.md
     mode_scope: product_repo_injection
 YAML
-run_fails_contains "product_repo_missing_release_runtime_fails" "missing required product release runtime entries" validate_skeleton_manifest "$missing_release_runtime_manifest" "$fixture_root"
+run_fails_contains "product_repo_missing_release_runtime_fails" "configuration: configuration validation error" validate_skeleton_manifest "$missing_release_runtime_manifest" "$fixture_root"
 
 empty_manifest="$TMP_ROOT/empty.yaml"
 : > "$empty_manifest"
-run_fails_contains "empty_manifest_fails" "manifest is empty" validate_skeleton_manifest "$empty_manifest" "$fixture_root"
+run_fails_contains "empty_manifest_fails" "configuration: configuration validation error" validate_skeleton_manifest "$empty_manifest" "$fixture_root"
 
 whitespace_manifest="$TMP_ROOT/whitespace.yaml"
 printf ' \n  \n' > "$whitespace_manifest"
-run_fails_contains "whitespace_manifest_fails" "manifest is empty" validate_skeleton_manifest "$whitespace_manifest" "$fixture_root"
+run_fails_contains "whitespace_manifest_fails" "configuration: configuration validation error" validate_skeleton_manifest "$whitespace_manifest" "$fixture_root"
 
 missing_path_manifest="$TMP_ROOT/missing-path.yaml"
 cat > "$missing_path_manifest" <<'YAML'
@@ -267,7 +267,7 @@ entries:
   - path: missing/file.md
     mode_scope: hub_only
 YAML
-run_fails_contains "missing_source_path_fails" "missing source path" validate_skeleton_manifest "$missing_path_manifest" "$fixture_root"
+run_fails_contains "missing_source_path_fails" "configuration: configuration validation error" validate_skeleton_manifest "$missing_path_manifest" "$fixture_root"
 
 generated_path_manifest="$TMP_ROOT/generated-path.yaml"
 cat > "$generated_path_manifest" <<'YAML'
@@ -291,7 +291,7 @@ entries:
     mode_scope: product_repo_injection
     generated_example: true
 YAML
-run_fails_contains "product_repo_specs_forbidden" "hub-owned artifact" validate_skeleton_manifest "$forbidden_specs_manifest" "$fixture_root"
+run_fails_contains "product_repo_specs_forbidden" "configuration: configuration validation error" validate_skeleton_manifest "$forbidden_specs_manifest" "$fixture_root"
 
 forbidden_plan_manifest="$TMP_ROOT/forbidden-plan.yaml"
 cat > "$forbidden_plan_manifest" <<'YAML'
@@ -303,7 +303,7 @@ entries:
     mode_scope: product_repo_injection
     generated_example: true
 YAML
-run_fails_contains "product_repo_plan_forbidden" "hub-owned artifact" validate_skeleton_manifest "$forbidden_plan_manifest" "$fixture_root"
+run_fails_contains "product_repo_plan_forbidden" "configuration: configuration validation error" validate_skeleton_manifest "$forbidden_plan_manifest" "$fixture_root"
 
 required_product_artifact_manifest="$TMP_ROOT/required-product-artifact.yaml"
 cat > "$required_product_artifact_manifest" <<'YAML'
@@ -329,7 +329,7 @@ entries:
     generated_example: true
     required_for_product_repo: true
 YAML
-run_fails_contains "required_product_repo_flag_rejected_for_hub" "only valid for product_repo" validate_skeleton_manifest "$required_non_product_artifact_manifest" "$fixture_root"
+run_fails_contains "required_product_repo_flag_rejected_for_hub" "configuration: configuration validation error" validate_skeleton_manifest "$required_non_product_artifact_manifest" "$fixture_root"
 
 unknown_scope_manifest="$TMP_ROOT/unknown-scope.yaml"
 cat > "$unknown_scope_manifest" <<'YAML'
@@ -340,7 +340,7 @@ entries:
   - path: AGENTS.md
     mode_scope: unknown_scope
 YAML
-run_fails_contains "unknown_mode_scope_fails" "unknown mode_scope" validate_skeleton_manifest "$unknown_scope_manifest" "$fixture_root"
+run_fails_contains "unknown_mode_scope_fails" "configuration: configuration validation error" validate_skeleton_manifest "$unknown_scope_manifest" "$fixture_root"
 
 echo ""
 echo "=== Summary ==="

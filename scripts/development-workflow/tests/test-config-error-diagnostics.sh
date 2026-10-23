@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# covers: scripts/development-workflow/workflow-config-resolver.py
+# covers: scripts/development-workflow/reviewer_preflight_coderabbit.py
+# covers: scripts/development-workflow/reviewer_preflight.py
+# covers: scripts/development-workflow/reviewer_preflight_build_input.py
+# covers: scripts/development-workflow/run-bounded-prelude.sh
+# covers: scripts/development-workflow/run-work-router.sh
+# covers: scripts/development-workflow/workflow-risk-paths.py
+# covers: scripts/development-workflow/workflow-portfolio-scan.py
+# covers: scripts/development-workflow/work-item-repository-routing.py
+# covers: scripts/development-workflow/validate-workflow-hub-skeletons.py
+# covers: scripts/development-workflow/select-sync-manifest-entries.py
+# covers: scripts/development-workflow/check-sync-manifest-coverage.py
+# covers: scripts/development-workflow/sync-template-merge.py
+# covers: scripts/development-workflow/resolve-reviewer-availability.sh
+# covers: scripts/development-workflow/workflow-batch-lanes.sh
+# covers: scripts/development-workflow/workflow-merge-budget.py
+# covers: scripts/development-workflow/workflow-project-reader.py
+# covers: scripts/development-workflow/run-epic-policy-recommender.sh
+# covers: scripts/development-workflow/reviewer-preflight.sh
+# covers: scripts/development-workflow/workflow-batch-plan.sh
+# covers: scripts/development-workflow/workflow-next-action.sh
+# covers: scripts/development-workflow/workflow-lib.sh
+# covers: scripts/development-workflow/graduation-closeout.sh
+# covers: scripts/development-workflow/graduation-closeout-from-merged-pr.sh
+# covers: scripts/development-workflow/tests/test_config_error_diagnostics.py
+# covers: scripts/development-workflow/tests/test_private_source_consumers.py
+# covers: .claude/commands/sync-template.md
+# covers: .claude/skills/sync-template.md
+# covers: .cursor/commands/sync-template.md
+set -euo pipefail
+SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+exec python3 "$SCRIPT_DIR/test_config_error_diagnostics.py"

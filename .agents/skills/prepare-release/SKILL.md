@@ -22,9 +22,13 @@ This is the Codex command-style alias for Claude Code `/prepare-release`.
 7. After both release PRs merge, run post-merge cleanup with `--from-changelog`
    or an explicit `--issues` scope, then complete any emitted tracker handoff
    such as `TRACKER_ACTION=linear_mcp_or_api_required` before calling the
-   release done. For workflow-hub component releases, include `--repo`,
-   `--repo-root`, and `--evidence-file` so cleanup validates the persisted
-   binding before touching product-owned release branches.
+   release done. For Linear, `--from-changelog` scopes Released from merged PRs
+   in the release commit range (IDs from PR branch/title only; changelog is
+   complement), reports `RELEASE_SCOPE_SKIPPED` for changelog-only IDs, and
+   fails closed on `RELEASE_SCOPE_INCOMPLETE` when PR resolution fails. For
+   workflow-hub component releases, include `--repo`, `--repo-root`, and
+   `--evidence-file` so cleanup validates the persisted binding before touching
+   product-owned release branches.
 8. For workflow-hub component releases, run
    `component-milestone-reconciliation.sh` after component release evidence and
    cleanup are complete. The evidence must include `hub_tracker_ref`,

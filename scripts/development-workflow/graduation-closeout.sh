@@ -3,7 +3,12 @@
 # Reconcile delivered integration-branch sub-items after a graduation PR merges.
 #
 # Usage:
-#   ./scripts/development-workflow/graduation-closeout.sh --slug <slug> --graduation-pr <number> --epic <issue-number> [--base <branch>] [--exclude-issue <number>]... [--defer-epic-close]
+#   ./scripts/development-workflow/graduation-closeout.sh --slug <slug> --graduation-pr <number> --epic <epic-id> [--base <branch>] [--exclude-issue <number>]... [--defer-epic-close] [--dry-run]
+#
+#   --epic  GitHub issue number when issue_tracker.provider is github_projects
+#           or github_issues. With provider linear, must be a native Linear ID
+#           with team prefix (e.g. LEA-326). A bare number with linear fails
+#           closed (no GitHub mutation from the numeric suffix).
 #
 #   --base defaults to 'develop'. Override when the graduation PR targets a
 #           parent integration branch instead of develop — e.g. a nested wave
@@ -11,6 +16,10 @@
 #           develop-sales-module. Must be 'develop' or a 'develop-*'
 #           integration branch; an arbitrary feature/fix branch is rejected
 #           up front regardless of what the graduation PR actually targets.
+#
+#   --dry-run  Print every external mutation (gh issue close/edit/comment,
+#           label edits, tracker status updates / deferred actions) with a
+#           DRY_RUN would: prefix and apply none of them.
 #
 # Env overrides:
 #   GRADUATION_BASE                  Same as --base; --base takes precedence.
@@ -23,22 +32,33 @@ SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)"
 # shellcheck source=./workflow-lib.sh
 # shellcheck disable=SC1091
 . "$SCRIPT_DIR/workflow-lib.sh"
+# shellcheck source=./graduation-closeout-lib.sh
+# shellcheck disable=SC1091
+. "$SCRIPT_DIR/graduation-closeout-lib.sh"
+# shellcheck source=./closing-keyword-lib.sh
+# shellcheck disable=SC1091
+. "$SCRIPT_DIR/closing-keyword-lib.sh"
 
 SLUG=""
 GRADUATION_PR=""
 EPIC_ISSUE=""
 DEFER_EPIC_CLOSE=0
+DRY_RUN=0
 declare -a EXCLUDED_ISSUES=()
 GRADUATION_BASE="${GRADUATION_BASE:-develop}"
+TRACKER_PROVIDER=""
 
 usage() {
   cat >&2 <<'EOF'
 Usage:
-  graduation-closeout.sh --slug <slug> --graduation-pr <number> --epic <issue-number> [--base <branch>] [--exclude-issue <number>]... [--defer-epic-close]
+  graduation-closeout.sh --slug <slug> --graduation-pr <number> --epic <epic-id> [--base <branch>] [--exclude-issue <number>]... [--defer-epic-close] [--dry-run]
 
+  --epic  GitHub issue number (github_projects / github_issues). With
+          issue_tracker.provider=linear, a native Linear ID (e.g. LEA-326).
   --base  Expected graduation PR base branch (default: develop). Override
           for nested graduation into a parent integration branch, e.g.
           --base develop-sales-module. Must be 'develop' or 'develop-*'.
+  --dry-run  Print planned external mutations and apply none of them.
 EOF
 }
 
@@ -59,6 +79,11 @@ is_positive_int() {
   esac
 }
 
+# Native Linear issue identifier with team prefix (e.g. LEA-326).
+is_linear_issue_id() {
+  [[ "$1" =~ ^[A-Z][A-Z0-9_]*-[0-9]+$ ]]
+}
+
 is_valid_slug() {
   case "$1" in
     ''|*[^a-zA-Z0-9._-]*) return 1 ;;
@@ -76,6 +101,17 @@ is_valid_graduation_base() {
     develop-*) is_valid_slug "${1#develop-}" ;;
     *) return 1 ;;
   esac
+}
+
+# Print every external mutation before apply; dry-run prints and skips apply.
+announce_mutation() {
+  local description="$1"
+  if [ "$DRY_RUN" -eq 1 ]; then
+    printf 'DRY_RUN would: %s\n' "$description"
+    return 1
+  fi
+  printf 'MUTATION: %s\n' "$description"
+  return 0
 }
 
 while [ "$#" -gt 0 ]; do
@@ -109,6 +145,10 @@ while [ "$#" -gt 0 ]; do
       DEFER_EPIC_CLOSE=1
       shift
       ;;
+    --dry-run)
+      DRY_RUN=1
+      shift
+      ;;
     -h|--help)
       usage
       exit 0
@@ -127,10 +167,6 @@ if ! is_valid_slug "$SLUG"; then
 fi
 if ! is_positive_int "$GRADUATION_PR"; then
   echo "ERROR: --graduation-pr must be a positive integer." >&2
-  exit 64
-fi
-if ! is_positive_int "$EPIC_ISSUE"; then
-  echo "ERROR: --epic must be a positive integer." >&2
   exit 64
 fi
 if ! is_valid_graduation_base "$GRADUATION_BASE"; then
@@ -153,6 +189,49 @@ REPO_NAME="${REPO_SLUG#*/}"
 INTEGRATION_BRANCH="develop-${SLUG}"
 INTEGRATION_LABEL="integration-branch:${SLUG}"
 TERMINAL_STATUS="${GITHUB_PROJECT_STATUS_GRADUATED:-${GITHUB_PROJECT_STATUS_MERGED:-Merged}}"
+
+# Resolve tracker provider after repo root is known (same pattern as #1930).
+TRACKER_PROVIDER_RAW=""
+TRACKER_PROVIDER_RAW="$(workflow_graduation_closeout_tracker_provider_raw "$(pwd)")" || exit $?
+TRACKER_PROVIDER="$(workflow_normalize_issue_tracker_provider "$TRACKER_PROVIDER_RAW")"
+case "$TRACKER_PROVIDER" in
+  linear) ;;
+  github_projects|github_issues|'')
+    # Empty / unset keeps historical GitHub Projects closeout behavior.
+    TRACKER_PROVIDER="${TRACKER_PROVIDER:-github_projects}"
+    ;;
+  none)
+    TRACKER_PROVIDER="github_projects"
+    ;;
+  *)
+    printf 'configuration: configuration validation error; key=issue_tracker.provider\n' >&2
+    exit 64
+    ;;
+esac
+
+# Shared parser (workflow_config_provider) must also see linear — the tracker
+# bridge uses that path. A commented `issue_tracker:` header can make the
+# closeout-local reader say linear while the bridge still defaults to
+# github_projects; fail closed before any mutation.
+if [ "$TRACKER_PROVIDER" = "linear" ]; then
+  SHARED_TRACKER_PROVIDER="$(workflow_normalize_issue_tracker_provider "$(workflow_config_provider issue_tracker "$(pwd)/.ai-dev-workflow.yaml")")"
+  if [ "$SHARED_TRACKER_PROVIDER" != "linear" ]; then
+    echo "ERROR: issue_tracker.provider is linear but the tracker bridge cannot read it (commented section header?). Remove the trailing comment from the 'issue_tracker:' line in .ai-dev-workflow.yaml and rerun." >&2
+    exit 64
+  fi
+fi
+
+if [ "$TRACKER_PROVIDER" = "linear" ]; then
+  if ! is_linear_issue_id "$EPIC_ISSUE"; then
+    echo "ERROR: with issue_tracker.provider=linear, --epic must be a native Linear ID with team prefix (e.g. LEA-326), not a bare number. Refusing to mutate GitHub issues from a numeric suffix." >&2
+    exit 64
+  fi
+else
+  if ! is_positive_int "$EPIC_ISSUE"; then
+    echo "ERROR: --epic must be a positive integer." >&2
+    exit 64
+  fi
+fi
 
 TMP_DIR="$(mktemp -d)"
 cleanup() {
@@ -233,20 +312,38 @@ tracker_status_for_issue() {
 
 ensure_terminal_tracker_status() {
   local issue="$1"
-  local before after
+  local before after update_out update_rc
+  if [ "$TRACKER_PROVIDER" = "linear" ]; then
+    # Linear transitions are deferred to the native bridge. Success requires an
+    # observed TRACKER_ACTION_REQUIRED= line for this issue — a silent skip
+    # (e.g. merge-session binding failure that returns 0 with empty stdout)
+    # must not report EPIC_RESULT=closed.
+    if ! announce_mutation "update_tracker_status ${issue} → ${TERMINAL_STATUS} (linear deferred)"; then
+      return 0
+    fi
+    update_rc=0
+    update_out="$(update_tracker_status_best_effort "$issue" "$TERMINAL_STATUS" "" "allow-backward")" || update_rc=$?
+    printf '%s\n' "$update_out"
+    if [ "$update_rc" -ne 0 ]; then
+      echo "ERROR: Linear tracker update for ${issue} → ${TERMINAL_STATUS} failed (exit ${update_rc}); no deferred action observed." >&2
+      return 1
+    fi
+    case "$update_out" in
+      *TRACKER_ACTION_REQUIRED=*"issue=${issue}"*) return 0 ;;
+    esac
+    echo "ERROR: Linear tracker update for ${issue} → ${TERMINAL_STATUS} returned success without emitting TRACKER_ACTION_REQUIRED= for that issue; refusing to report closed." >&2
+    return 1
+  fi
   before="$(tracker_status_for_issue "$issue")"
   if is_closeout_terminal_status "$before"; then
+    return 0
+  fi
+  if ! announce_mutation "update_tracker_status #${issue} → ${TERMINAL_STATUS}"; then
     return 0
   fi
   update_tracker_status_best_effort "$issue" "$TERMINAL_STATUS" "" "allow-backward" >/dev/null
   after="$(tracker_status_for_issue "$issue")"
   is_closeout_terminal_status "$after"
-}
-
-extract_closing_issue_numbers() {
-  grep -ioE '(^|[^[:alnum:]_])(close[sd]?|fix(es|ed)?|resolve[sd]?)[[:space:]]+(issue[[:space:]]+)?#[0-9]+' \
-    | grep -oE '[0-9]+$' \
-    | sort -un || true
 }
 
 validate_graduation_pr() {
@@ -370,30 +467,173 @@ discover_label_subitems() {
 }
 
 discover_closing_keyword_refs() {
-  local prs_json
+  # GitHub Projects / GitHub Issues path only. For each merged PR, render
+  # title and body separately via GitHub GFM (`gh api markdown`), extract
+  # visible text outside <pre>/<code>, then scan with shared
+  # closing_keyword_live_refs. Title and body stay independent documents.
+  # Fail closed per PR: any render/extract failure contributes no text-derived
+  # refs for that PR (never fall back to raw markdown). Cross-repo
+  # owner/repo#N never matches the shared keyword pattern. Linear must not
+  # call this — see discover_linear_merged_pr_issue_refs.
+  local prs_json context
+  context="${REPO_OWNER}/${REPO_NAME}"
   if ! prs_json="$(gh pr list --state merged --base "$INTEGRATION_BRANCH" --limit 1000 --json number,title,body 2>/dev/null)"; then
     return 1
   fi
   printf '%s' "$prs_json" | python3 -c '
 import json, sys
+RS = chr(30)  # record newline
+US = chr(31)  # record tab (must survive TSV; GFM cares about real tabs)
 try:
     prs = json.load(sys.stdin)
 except Exception:
     sys.exit(1)
 for pr in prs or []:
     number = pr.get("number")
-    text = ((pr.get("title") or "") + "\n" + (pr.get("body") or "")).replace("\t", " ")
-    if number:
-        print(f"PR\t{number}\t{text.replace(chr(10), chr(30))}")
+    if not number:
+        continue
+    title = (pr.get("title") or "").replace("\t", US).replace("\n", RS)
+    body = (pr.get("body") or "").replace("\t", US).replace("\n", RS)
+    print("%s\t%s\t%s" % (number, title, body))
 ' > "$TMP_DIR/merged-prs.tsv"
-  while IFS="$(printf '\t')" read -r marker pr_number text; do
-    [ "$marker" = "PR" ] || continue
-    printf '%s' "$text" | tr "$(printf '\036')" '\n' | extract_closing_issue_numbers > "$TMP_DIR/pr-${pr_number}-issues.txt"
+  while IFS="$(printf '\t')" read -r pr_number title_enc body_enc; do
+    [ -n "$pr_number" ] || continue
+    local title body title_refs body_refs
+    # Preserve trailing newlines: $(...) strips them; append a sentinel.
+    # Map RS→newline and US→tab so GFM sees real indentation.
+    title="$(printf '%s' "$title_enc" | tr "$(printf '\036\037')" "$(printf '\n\t')"; printf x)"
+    title="${title%x}"
+    body="$(printf '%s' "$body_enc" | tr "$(printf '\036\037')" "$(printf '\n\t')"; printf x)"
+    body="${body%x}"
+    : > "$TMP_DIR/pr-${pr_number}-issues.txt"
+    local need_title=0 need_body=0
+    if printf '%s' "$title" | graduation_closeout_raw_has_closing_keyword_candidate; then
+      need_title=1
+    fi
+    if printf '%s' "$body" | graduation_closeout_raw_has_closing_keyword_candidate; then
+      need_body=1
+    fi
+    if [ "$need_title" -eq 0 ] && [ "$need_body" -eq 0 ]; then
+      continue
+    fi
+    if [ "$need_title" -eq 1 ]; then
+      if ! title_refs="$(printf '%s' "$title" | graduation_closeout_github_live_refs_from_markdown "$context")"; then
+        echo "CLOSEOUT_TEXT_REFS_UNAVAILABLE pr=${pr_number} reason=gfm_render_or_extract_failed" >&2
+        continue
+      fi
+    else
+      title_refs=""
+    fi
+    if [ "$need_body" -eq 1 ]; then
+      if ! body_refs="$(printf '%s' "$body" | graduation_closeout_github_live_refs_from_markdown "$context")"; then
+        echo "CLOSEOUT_TEXT_REFS_UNAVAILABLE pr=${pr_number} reason=gfm_render_or_extract_failed" >&2
+        continue
+      fi
+    else
+      body_refs=""
+    fi
+    {
+      printf '%s\n' "$title_refs"
+      printf '%s\n' "$body_refs"
+    } | sed '/^$/d' > "$TMP_DIR/pr-${pr_number}-issues.txt"
     while IFS= read -r issue; do
       [ -z "$issue" ] && continue
       append_candidate "$issue" "pr:${pr_number}"
     done < "$TMP_DIR/pr-${pr_number}-issues.txt"
   done < "$TMP_DIR/merged-prs.tsv"
+}
+
+discover_linear_merged_pr_issue_refs() {
+  # Linear path: mutate GitHub issues ONLY via same-repo structured
+  # closingIssuesReferences. Text-only closing keywords (plain, fenced,
+  # indented, etc.) are reported and skipped — never mutation candidates.
+  # Integration-branch PRs often leave structured refs empty; that means no
+  # GitHub issue is closed (safe by design).
+  local prs_json
+  if ! prs_json="$(gh pr list --state merged --base "$INTEGRATION_BRANCH" --limit 1000 --json number,title,body,closingIssuesReferences 2>/dev/null)"; then
+    return 1
+  fi
+  printf '%s' "$prs_json" | python3 -c '
+import json, re, sys
+
+RS = chr(30)
+expected = (sys.argv[1] or "").strip().lower()
+try:
+    prs = json.load(sys.stdin)
+except Exception:
+    sys.exit(1)
+
+def ref_repo(ref):
+    repo = ((ref.get("repository") or {}).get("nameWithOwner") or "").strip()
+    if repo:
+        return repo
+    url = (ref.get("url") or "").strip()
+    match = re.match(r"https?://github\.com/([^/]+/[^/]+)/issues/\d+", url, re.I)
+    if match:
+        return match.group(1)
+    return ""
+
+keyword_re = re.compile(
+    r"(^|[^A-Za-z0-9_])(close[sd]?|fix(?:es|ed)?|resolve[sd]?)\s+(?:issue\s+)?#(\d+)",
+    re.I,
+)
+
+for pr in prs or []:
+    pr_number = pr.get("number")
+    if not pr_number:
+        continue
+    accepted = set()
+    for ref in pr.get("closingIssuesReferences") or []:
+        issue = ref.get("number")
+        if not issue:
+            continue
+        repo = ref_repo(ref)
+        if not repo:
+            print(
+                "FOREIGN_CLOSING_REF\t{}\t{}\t(missing repository identity)".format(
+                    pr_number, issue
+                ),
+                file=sys.stderr,
+            )
+            continue
+        if repo.lower() != expected:
+            print(
+                "FOREIGN_CLOSING_REF\t{}\t{}\t{}".format(pr_number, issue, repo),
+                file=sys.stderr,
+            )
+            continue
+        accepted.add(int(issue))
+        print("STRUCTURED\t{}\t{}".format(pr_number, issue))
+    title = pr.get("title") or ""
+    body = pr.get("body") or ""
+    text = title + "\n" + body
+    # Reporting-only scan of raw text (including fences/indent). Never mutate.
+    for match in keyword_re.finditer(text):
+        issue = int(match.group(3))
+        if issue in accepted:
+            continue
+        print("TEXT_ONLY\t{}\t{}".format(pr_number, issue))
+' "$REPO_SLUG" > "$TMP_DIR/linear-pr-discovery.tsv" 2> "$TMP_DIR/structured-closing-refs.err" || return 1
+  if [ -s "$TMP_DIR/structured-closing-refs.err" ]; then
+    while IFS="$(printf '\t')" read -r marker pr_number issue repo_or_reason; do
+      [ "$marker" = "FOREIGN_CLOSING_REF" ] || continue
+      echo "Warning: skipping foreign closingIssuesReferences from PR #${pr_number}: #${issue} in ${repo_or_reason} (local repo is ${REPO_SLUG})." >&2
+    done < "$TMP_DIR/structured-closing-refs.err"
+  fi
+  while IFS="$(printf '\t')" read -r kind pr_number payload; do
+    [ -n "$kind" ] || continue
+    case "$kind" in
+      STRUCTURED)
+        [ -z "$payload" ] && continue
+        append_candidate "$payload" "pr:${pr_number}:closingIssuesReferences"
+        ;;
+      TEXT_ONLY)
+        [ -z "$payload" ] && continue
+        printf 'LINEAR_GITHUB_REF_SKIPPED issue=%s reason=not_structurally_linked pr=%s\n' \
+          "$payload" "$pr_number"
+        ;;
+    esac
+  done < "$TMP_DIR/linear-pr-discovery.tsv"
 }
 
 issue_source_summary() {
@@ -435,6 +675,9 @@ close_issue_with_comment() {
   local kind="$2"
   local comment
   comment="${kind} delivered via graduation PR #${GRADUATION_PR} from \`${INTEGRATION_BRANCH}\` to \`${GRADUATION_BASE}\`. Tracker status reconciled by graduation closeout."
+  if ! announce_mutation "gh issue close #${issue} --comment (${kind})"; then
+    return 0
+  fi
   gh issue close "$issue" --comment "$comment" >/dev/null
 }
 
@@ -447,12 +690,29 @@ process_delivered_issue() {
   fi
   IFS="$(printf '\t')" read -r _ title state labels <<< "$details"
   source="$(issue_source_summary "$issue")"
-  status="$(tracker_status_for_issue "$issue")"
 
   if is_excluded_issue "$issue" || is_skip_label "$labels"; then
     record_result "$SKIPPED_FILE" "$issue" "$title" "$source" "requires_human_disposition"
     return
   fi
+
+  # Linear tracker: GitHub candidates here are only PR-linked issues. Close the
+  # GitHub issue when open, but never send the GitHub number through the Linear
+  # bridge (numeric suffix is not a Linear ID).
+  if [ "$TRACKER_PROVIDER" = "linear" ]; then
+    if [ "$state" != "OPEN" ]; then
+      record_result "$ALREADY_FILE" "$issue" "$title" "$source" "already_terminal"
+      return
+    fi
+    if ! close_issue_with_comment "$issue" "Sub-item"; then
+      record_result "$FAILED_FILE" "$issue" "$title" "$source" "issue_close_failed"
+      return
+    fi
+    record_result "$CLOSED_FILE" "$issue" "$title" "$source" "delivered_terminal"
+    return
+  fi
+
+  status="$(tracker_status_for_issue "$issue")"
 
   if [ "$state" != "OPEN" ] && is_closeout_terminal_status "$status"; then
     record_result "$ALREADY_FILE" "$issue" "$title" "$source" "already_terminal"
@@ -476,7 +736,16 @@ process_delivered_issue() {
 
 ensure_defer_epic_close_label() {
   # Durable automation signal shared with merge-time closeout fallback (AC4).
+  # Linear epics are not GitHub issues — never derive a GH number from LEA-N.
   local labels_csv has_label old_ifs label normalized
+  if [ "$TRACKER_PROVIDER" = "linear" ]; then
+    if ! announce_mutation "defer-epic-close signal for Linear epic ${EPIC_ISSUE} (no GitHub label mutation)"; then
+      printf 'DEFER_LABEL=dry_run\n'
+      return 0
+    fi
+    printf 'DEFER_LABEL=linear_bridge_deferred\n'
+    return 0
+  fi
   if ! labels_csv="$(gh issue view "$EPIC_ISSUE" --json labels --jq '[.labels[].name] | join(",")' 2>/dev/null)"; then
     echo "ERROR: could not read labels on epic #${EPIC_ISSUE} to ensure defer-epic-close." >&2
     return 1
@@ -499,11 +768,19 @@ ensure_defer_epic_close_label() {
     printf 'DEFER_LABEL=already_present\n'
     return 0
   fi
+  if ! announce_mutation "gh issue edit #${EPIC_ISSUE} --add-label defer-epic-close"; then
+    printf 'DEFER_LABEL=dry_run\n'
+    return 0
+  fi
   if gh issue edit "$EPIC_ISSUE" --add-label "defer-epic-close" >/dev/null 2>&1; then
     printf 'DEFER_LABEL=added\n'
     return 0
   fi
   # Label may not exist in the repository yet — create then retry once.
+  if ! announce_mutation "gh label create defer-epic-close + gh issue edit #${EPIC_ISSUE} --add-label"; then
+    printf 'DEFER_LABEL=dry_run\n'
+    return 0
+  fi
   if gh label create "defer-epic-close" \
       --description "Operator deferred epic close after graduation; merge-time automation must honor this." \
       --color "FBCA04" >/dev/null 2>&1 \
@@ -533,6 +810,19 @@ process_epic() {
     printf 'EPIC_REASON=delivered_subitem_failures\n'
     return 1
   fi
+
+  if [ "$TRACKER_PROVIDER" = "linear" ]; then
+    # Never gh issue view/close the Linear ID's numeric suffix.
+    if ! ensure_terminal_tracker_status "$EPIC_ISSUE"; then
+      printf 'EPIC_RESULT=failed\n'
+      printf 'EPIC_REASON=tracker_status_update_failed\n'
+      return 1
+    fi
+    printf 'EPIC_RESULT=closed\n'
+    printf 'EPIC_CLOSE_MODE=linear_deferred\n'
+    return 0
+  fi
+
   if ! details="$(issue_details_tsv "$EPIC_ISSUE")"; then
     printf 'EPIC_RESULT=failed\n'
     printf 'EPIC_REASON=could_not_read_epic\n'
@@ -577,34 +867,48 @@ print_section() {
 
 validate_graduation_pr
 
-if ! discover_native_subissues; then
-  echo "Warning: native sub-issue discovery failed for epic #${EPIC_ISSUE}; using label fallback only." >&2
-fi
-if [ ! -s "$CANDIDATES_FILE" ]; then
-  if ! discover_label_subitems; then
-    echo "Warning: label fallback discovery failed for ${INTEGRATION_LABEL}." >&2
-    record_result "$FAILED_FILE" "discovery" "Candidate discovery" "label:${INTEGRATION_LABEL}" "label_fallback_failed"
+if [ "$TRACKER_PROVIDER" = "linear" ]; then
+  # Linear sub-items are not GitHub subIssues. Never query subIssues with the
+  # Linear ID or its numeric suffix. Mutate GitHub issues only via same-repo
+  # structured closingIssuesReferences; text-only keywords are reported/skipped.
+  echo "TRACKER_PROVIDER=linear — skipping GitHub subIssues and label fallback; discovering same-repo structured closingIssuesReferences only."
+  if ! discover_linear_merged_pr_issue_refs; then
+    echo "Warning: could not read structured closingIssuesReferences for merged PRs targeting ${INTEGRATION_BRANCH}." >&2
+    record_result "$FAILED_FILE" "discovery" "Candidate discovery" "pr:${INTEGRATION_BRANCH}" "merged_pr_discovery_failed"
+  fi
+  if [ ! -s "$CANDIDATES_FILE" ] && [ ! -s "$FAILED_FILE" ]; then
+    echo "Note: no structured same-repo GitHub closing refs discovered; proceeding with Linear epic closeout only."
   fi
 else
-  # Still include label-discovered legacy items when native sub-issues exist.
-  if ! discover_label_subitems; then
-    echo "Warning: label fallback discovery failed for ${INTEGRATION_LABEL}." >&2
-    record_result "$FAILED_FILE" "discovery" "Candidate discovery" "label:${INTEGRATION_LABEL}" "label_fallback_failed"
+  if ! discover_native_subissues; then
+    echo "Warning: native sub-issue discovery failed for epic #${EPIC_ISSUE}; using label fallback only." >&2
   fi
-fi
-if ! discover_closing_keyword_refs; then
-  echo "Warning: could not read merged PR closing-keyword references for ${INTEGRATION_BRANCH}." >&2
-  record_result "$FAILED_FILE" "discovery" "Candidate discovery" "pr:${INTEGRATION_BRANCH}" "merged_pr_discovery_failed"
-fi
-if [ ! -s "$CANDIDATES_FILE" ]; then
-  record_result "$FAILED_FILE" "discovery" "Candidate discovery" "native-subissue,label:${INTEGRATION_LABEL},pr:${INTEGRATION_BRANCH}" "no_delivered_subitems_discovered"
+  if [ ! -s "$CANDIDATES_FILE" ]; then
+    if ! discover_label_subitems; then
+      echo "Warning: label fallback discovery failed for ${INTEGRATION_LABEL}." >&2
+      record_result "$FAILED_FILE" "discovery" "Candidate discovery" "label:${INTEGRATION_LABEL}" "label_fallback_failed"
+    fi
+  else
+    # Still include label-discovered legacy items when native sub-issues exist.
+    if ! discover_label_subitems; then
+      echo "Warning: label fallback discovery failed for ${INTEGRATION_LABEL}." >&2
+      record_result "$FAILED_FILE" "discovery" "Candidate discovery" "label:${INTEGRATION_LABEL}" "label_fallback_failed"
+    fi
+  fi
+  if ! discover_closing_keyword_refs; then
+    echo "Warning: could not read merged PR closing-keyword references for ${INTEGRATION_BRANCH}." >&2
+    record_result "$FAILED_FILE" "discovery" "Candidate discovery" "pr:${INTEGRATION_BRANCH}" "merged_pr_discovery_failed"
+  fi
+  if [ ! -s "$CANDIDATES_FILE" ]; then
+    record_result "$FAILED_FILE" "discovery" "Candidate discovery" "native-subissue,label:${INTEGRATION_LABEL},pr:${INTEGRATION_BRANCH}" "no_delivered_subitems_discovered"
+  fi
 fi
 
 cut -f1 "$CANDIDATES_FILE" | sort -n -u > "$UNIQUE_ISSUES_FILE"
 
 while IFS= read -r issue; do
   [ -z "$issue" ] && continue
-  if [ "$issue" = "$EPIC_ISSUE" ]; then
+  if [ "$TRACKER_PROVIDER" != "linear" ] && [ "$issue" = "$EPIC_ISSUE" ]; then
     continue
   fi
   process_delivered_issue "$issue"
@@ -625,6 +929,8 @@ echo "INTEGRATION_BRANCH=$INTEGRATION_BRANCH"
 echo "GRADUATION_BASE=$GRADUATION_BASE"
 echo "GRADUATION_PR=$GRADUATION_PR"
 echo "EPIC_ISSUE=$EPIC_ISSUE"
+echo "TRACKER_PROVIDER=$TRACKER_PROVIDER"
+echo "DRY_RUN=$DRY_RUN"
 cat "$EPIC_OUTPUT"
 echo "TERMINAL_STATUS=$TERMINAL_STATUS"
 echo "CLOSED_COUNT=$CLOSED_COUNT"

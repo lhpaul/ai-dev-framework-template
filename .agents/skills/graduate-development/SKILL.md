@@ -14,8 +14,10 @@ This is the Codex command-style alias for Claude Code `/graduate-development`.
 5. After the graduation PR merges, run the Protocol 05b Step 5 graduation
    closeout helper (`graduation-closeout.sh`) so delivered sub-items and the
    parent epic are closed or moved to the terminal tracker status in the right
-   order. Step 5 remains the primary path; merge-time automation may also run
-   the same reconciler via `graduation-closeout-from-merged-pr.sh` as a
-   fallback (idempotent if both run).
+   order. With `issue_tracker.provider: linear`, pass a native Linear epic ID
+   (e.g. `--epic LEA-326`), not a bare number. Step 5 remains the primary path;
+   merge-time automation may also run the same reconciler via
+   `graduation-closeout-from-merged-pr.sh` as a fallback (idempotent if both
+   run).
 6. Stop and surface the closeout summary if any delivered sub-item fails
    reconciliation or any skipped optional/deferred item needs human disposition.

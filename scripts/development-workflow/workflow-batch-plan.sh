@@ -507,7 +507,8 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 
-cd "$repo_root" || exit 1
+repo_root="$( { CDPATH='' cd -- "$repo_root" && pwd -P; } 2>/dev/null)" || { printf 'configuration: checkout access error\n' >&2; exit 1; }
+workflow_command_with_safe_stderr cd "$repo_root" || exit 1
 if [ -n "$scan_snapshot" ]; then
   python3 "$SCRIPT_DIR/workflow-portfolio-scan.py" --repo-root "$repo_root" \
     --scan-snapshot "$scan_snapshot" --mode validate
@@ -664,7 +665,13 @@ for development_path in "${development_paths[@]}"; do
 
   next_action_args=(--development "$development_path" --repo-root "$repo_root")
   [ -n "$target_repo" ] && next_action_args+=(--repo "$target_repo")
-  if ! next_action_output="$("$SCRIPT_DIR/workflow-next-action.sh" "${next_action_args[@]}" 2>&1)"; then
+  next_action_status=0
+  next_action_output="$("$SCRIPT_DIR/workflow-next-action.sh" ${next_action_args[@]+"${next_action_args[@]}"} 2>&1)" || next_action_status=$?
+  if [ "$next_action_status" -ne 0 ]; then
+    if [ "$next_action_status" -eq 2 ]; then
+      printf 'configuration: configuration validation error\n' >&2
+      exit 2
+    fi
     # next-action failed (e.g., no merged spec/plan PR yet).  Emit an abbreviated
     # block so the orchestrator still sees TOOL_FIX for this folder.
     echo "Skipping $development_path: $next_action_output" >&2

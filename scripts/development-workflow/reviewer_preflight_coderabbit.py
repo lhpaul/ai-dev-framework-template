@@ -28,6 +28,12 @@ from typing import Any, Iterator
 class ConfigError(ValueError):
     """Raised for a malformed or unreadable .coderabbit.yaml."""
 
+    def __init__(self, message: str):
+        # Call sites supply schema names; the formatter independently allowlists
+        # them. Never retain a rejected value or rely on exception rendering.
+        self.key = message.split(" must ", 1)[0]
+        super().__init__("configuration validation error")
+
 
 class PatternTimeoutError(RuntimeError):
     """Raised when a single base_branches regex match exceeds its bounded budget.
@@ -68,6 +74,38 @@ def _bounded_regex_match(seconds: float) -> Iterator[None]:
     finally:
         signal.setitimer(signal.ITIMER_REAL, 0)
         signal.signal(signal.SIGALRM, previous_handler)
+
+
+def diagnostic_api():
+    # Reuse the injected pure sanitizer; never load workstation configuration.
+    import runpy
+    return runpy.run_path(str(Path(__file__).with_name("workflow-config-resolver.py")))
+
+
+def config_error_metadata(error=None, *, key=""):
+    try:
+        if isinstance(error, ConfigError):
+            return diagnostic_api()["format_config_error"](key=error.key)
+        return diagnostic_api()["format_config_error"](error, key=key)
+    except Exception:
+        return "configuration: validation error"
+
+
+def diagnostic_text(text: str) -> str:
+    try:
+        return diagnostic_api()["redact_text"](text)
+    except Exception:
+        return "ERROR: diagnostic sanitization failed"
+
+
+def diagnostic_json(value):
+    return diagnostic_api()["redact_diagnostic_json"](value)
+
+
+class DiagnosticArgumentParser(argparse.ArgumentParser):
+    def _print_message(self, message, file=None):
+        if message:
+            super()._print_message(diagnostic_text(message), file)
 
 
 def _mapping(value: Any, name: str) -> dict[str, Any]:
@@ -269,13 +307,13 @@ def _cmd_enabled_bool(path: Path) -> int:
     try:
         result = load_coderabbit_config(path)
     except (OSError, UnicodeDecodeError, ValueError) as error:
-        print(str(error), file=sys.stderr)
+        print(config_error_metadata(error), file=sys.stderr)
         return 3
     except Exception as error:  # yaml.YAMLError does not subclass ValueError on all versions
         import yaml
 
         if isinstance(error, yaml.YAMLError):
-            print(str(error), file=sys.stderr)
+            print(config_error_metadata(error), file=sys.stderr)
             return 3
         raise
     print("true" if result["auto_review_enabled"] else "false")
@@ -310,13 +348,13 @@ def _cmd_full_json(path: Path) -> int:
     try:
         result = load_coderabbit_config(path)
     except (OSError, UnicodeDecodeError, ValueError) as error:
-        print(str(error), file=sys.stderr)
+        print(config_error_metadata(error), file=sys.stderr)
         return 3
     except Exception as error:
         import yaml
 
         if isinstance(error, yaml.YAMLError):
-            print(str(error), file=sys.stderr)
+            print(config_error_metadata(error), file=sys.stderr)
             return 3
         raise
     print(json.dumps(result, sort_keys=True))
@@ -324,7 +362,7 @@ def _cmd_full_json(path: Path) -> int:
 
 
 def main(argv: list[str]) -> int:
-    parser = argparse.ArgumentParser(description="Read .coderabbit.yaml (shared parser)")
+    parser = DiagnosticArgumentParser(description="Read .coderabbit.yaml (shared parser)")
     parser.add_argument(
         "--mode",
         choices=["enabled-bool", "full-json"],

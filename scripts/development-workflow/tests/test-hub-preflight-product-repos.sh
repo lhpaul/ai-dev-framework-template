@@ -122,6 +122,8 @@ chmod +x "$stub_bin/gh"
 echo ""
 echo "=== Hub preflight product repos ==="
 
+# A valid single-repository source reaches the intended mode guard.
+mkdir -p "$TMP_ROOT/single"
 run_fails_contains \
   "requires_workflow_hub_mode" \
   "workflow_hub mode is required" \

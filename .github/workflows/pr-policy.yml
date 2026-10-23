@@ -11,11 +11,16 @@
 #     - same-repository implementation PRs: remove stale ready-for-regression
 #       when current-head reviewer-loop clean evidence is absent
 #     - all same-repository PRs: evaluate reviewer-loop guard status
-#   issue_comment created/edited
-#     - non-summary comments: exit without label or status mutation
-#     - clean current-head canonical summaries: dispatch regression and apply
-#       ready-for-regression
-#     - all canonical summary comments: refresh the PR-scoped guard status
+#   workflow_dispatch (pr_number)
+#     - dispatched by pr-review-loop.sh after it posts/updates the canonical
+#       Automated Reviewer Loop Summary (one run per summary, not per comment)
+#     - fetch the PR, evaluate the latest canonical summary from comments,
+#       apply regression policy on clean/skipped current-head summaries, and
+#       refresh the PR-scoped guard status
+#
+# Do not re-add issue_comment triggers: they billed ~1 minute per comment and
+# dominated Actions minutes without changing policy outcomes beyond the
+# summary-dispatch path above.
 #
 # Fork-head PRs are skipped before any label or status mutation. This workflow
 # checks out the repository's default branch only — trusted, reviewed code — to
@@ -26,17 +31,18 @@ name: PR policy
 on:
   pull_request_target:
     types: [opened, reopened, ready_for_review, synchronize]
-  issue_comment:
-    types: [created, edited]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: Pull request number whose summary and guard should be evaluated
+        required: true
+        type: string
 
 concurrency:
   group: >-
-    pr-policy-${{ github.event.pull_request.number || github.event.issue.number || github.run_id }}-${{
-      github.event_name == 'issue_comment' &&
-      contains(github.event.comment.body, '### Automated Reviewer Loop Summary') &&
-      'summary-comment' ||
-      github.event_name == 'issue_comment' &&
-      'non-summary' ||
+    pr-policy-${{ github.event.pull_request.number || github.event.inputs.pr_number || github.run_id }}-${{
+      github.event_name == 'workflow_dispatch' &&
+      'summary-dispatch' ||
       github.event_name == 'pull_request_target' &&
       github.event.action == 'synchronize' &&
       'pr-synchronize' ||
@@ -48,7 +54,7 @@ concurrency:
 
 jobs:
   policy:
-    if: github.event_name != 'issue_comment' || github.event.issue.pull_request
+    if: github.event_name == 'pull_request_target' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     permissions:
       actions: write
@@ -80,12 +86,11 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
           EVENT_ACTION: ${{ github.event.action }}
           REPO: ${{ github.repository }}
-          PR_NUMBER: ${{ github.event.pull_request.number || github.event.issue.number }}
+          PR_NUMBER: ${{ github.event.pull_request.number || github.event.inputs.pr_number }}
           EVENT_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           EVENT_BRANCH: ${{ github.event.pull_request.head.ref }}
           EVENT_BASE_BRANCH: ${{ github.event.pull_request.base.ref }}
           EVENT_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
-          COMMENT_BODY: ${{ github.event.comment.body }}
           REGRESSION_DISPATCH_ENABLED: ${{ vars.PR_POLICY_REGRESSION_DISPATCH_ENABLED || 'true' }}
           REGRESSION_WORKFLOW: ${{ vars.PR_POLICY_REGRESSION_WORKFLOW || 'e2e-regression.yml' }}
           # Override IN_SCOPE_PREFIXES in your repository to customise which branches
@@ -101,7 +106,6 @@ jobs:
           # shellcheck disable=SC2016
           MARKER2='*Posted automatically by `pr-review-loop.sh`.*'
           GUARD_CONTEXT="Reviewer-loop completion guard (#${PR_NUMBER})"
-          EVENT_COMMENT_HAS_SUMMARY=false
           COMMENTS_FETCH_FAILED=false
           LABEL_POLICY_FAILED=false
           FOUND=0
@@ -109,6 +113,11 @@ jobs:
           LATEST_SUMMARY_RESULT="missing"
           LATEST_SUMMARY_HEAD_SHA=""
           LATEST_SUMMARY_HEAD_MATCHES=false
+
+          if ! [[ "${PR_NUMBER:-}" =~ ^[1-9][0-9]*$ ]]; then
+            echo "ERROR: pr_number must be a positive integer; got '${PR_NUMBER:-}'." >&2
+            exit 1
+          fi
 
           post_failure_status_if_possible() {
             local sha="$1"
@@ -230,12 +239,6 @@ jobs:
               COMMENTS_FETCH_FAILED=true
               FOUND=0
             fi
-
-            if [ "$EVENT_COMMENT_HAS_SUMMARY" = "true" ] && [ "${FOUND:-0}" -eq 0 ]; then
-              echo "Fresh comment listing did not include triggering summary comment; counting event payload."
-              FOUND=1
-              LATEST_SUMMARY_BODY="$COMMENT_BODY"
-            fi
           }
 
           summarize_reviewer_loop_result() {
@@ -246,19 +249,16 @@ jobs:
               return 0
             fi
 
-            if printf '%s\n' "$LATEST_SUMMARY_BODY" |
-              grep -Eiq '(^|[ *[:space:]])Result:([ *[:space:]])*(clean)([^[:alnum:]_]|$)'; then
+            if grep -Eiq '(^|[ *[:space:]])Result:([ *[:space:]])*(clean)([^[:alnum:]_]|$)' <<<"$LATEST_SUMMARY_BODY"; then
               LATEST_SUMMARY_RESULT="clean"
-            elif printf '%s\n' "$LATEST_SUMMARY_BODY" |
-              grep -Eiq '(^|[ *[:space:]])Result:([ *[:space:]])*(skipped)([^[:alnum:]_]|$)'; then
+            elif grep -Eiq '(^|[ *[:space:]])Result:([ *[:space:]])*(skipped)([^[:alnum:]_]|$)' <<<"$LATEST_SUMMARY_BODY"; then
               LATEST_SUMMARY_RESULT="skipped"
             else
               LATEST_SUMMARY_RESULT="non_clean"
             fi
 
             LATEST_SUMMARY_HEAD_SHA="$(
-              printf '%s\n' "$LATEST_SUMMARY_BODY" |
-                awk 'in_json && /^```/ {exit} in_json {print} /^```json$/ {in_json=1}' |
+              awk 'in_json && /^```/ {exit} in_json {print} /^```json$/ {in_json=1}' <<<"$LATEST_SUMMARY_BODY" |
                 jq -r '.entries[-1].head_sha // ""' 2>/dev/null || true
             )"
 
@@ -372,16 +372,6 @@ jobs:
             fi
           }
 
-          if [ "$EVENT_NAME" = "issue_comment" ]; then
-            case "$COMMENT_BODY" in
-              *"$MARKER1"*"$MARKER2"*|*"$MARKER2"*"$MARKER1"*) EVENT_COMMENT_HAS_SUMMARY=true ;;
-              *)
-                echo "Issue comment does not contain the canonical reviewer-loop summary markers; skipping."
-                exit 0
-                ;;
-            esac
-          fi
-
           if ! pr_json="$(gh api "repos/$REPO/pulls/$PR_NUMBER")"; then
             echo "ERROR: failed to fetch PR #${PR_NUMBER} metadata."
             post_failure_status_if_possible \
@@ -419,7 +409,7 @@ jobs:
             exit 1
           fi
 
-          if [ "$EVENT_NAME" != "issue_comment" ]; then
+          if [ "$EVENT_NAME" = "pull_request_target" ]; then
             HEAD_SHA="${EVENT_HEAD_SHA:-$HEAD_SHA}"
             BRANCH="${EVENT_BRANCH:-$BRANCH}"
             BASE_BRANCH="${EVENT_BASE_BRANCH:-$BASE_BRANCH}"
@@ -449,7 +439,7 @@ jobs:
             develop|develop-*|main) regression_base_in_scope=true ;;
           esac
 
-          if [ "$EVENT_NAME" != "issue_comment" ]; then
+          if [ "$EVENT_NAME" = "pull_request_target" ]; then
             case "$EVENT_ACTION" in
               opened|reopened|ready_for_review)
                 echo "Branch '${BRANCH}' is in scope; regression waits for current-head reviewer-loop clean evidence."
@@ -461,11 +451,11 @@ jobs:
           fetch_reviewer_loop_summary_count
           summarize_reviewer_loop_result
 
-          if [ "$EVENT_NAME" = "issue_comment" ]; then
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
             apply_regression_policy_after_clean_summary
           fi
 
-          if [ "$EVENT_NAME" != "issue_comment" ] && [ "$EVENT_ACTION" = "synchronize" ]; then
+          if [ "$EVENT_NAME" = "pull_request_target" ] && [ "$EVENT_ACTION" = "synchronize" ]; then
             if ! labels_json=$(gh pr view "$PR_NUMBER" \
               --repo "$REPO" \
               --json labels); then
@@ -498,7 +488,7 @@ jobs:
             fi
           fi
 
-          if [ "$COMMENTS_FETCH_FAILED" = "true" ] && [ "$EVENT_COMMENT_HAS_SUMMARY" != "true" ]; then
+          if [ "$COMMENTS_FETCH_FAILED" = "true" ]; then
             echo "ERROR: failed to fetch PR comments; posting retry-oriented failure status."
             gh api \
               --method POST \

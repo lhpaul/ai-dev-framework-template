@@ -71,11 +71,14 @@ else
   echo "SKIP: template legacy policy workflow removal - consumer-owned adoption"
 fi
 run_test "pull_request_target_trigger_present" "yes" "$(contains "pull_request_target:")"
-run_test "issue_comment_trigger_present" "yes" "$(contains "issue_comment:")"
-run_test "issue_comment_created_edited" "yes" "$(contains "types: [created, edited]")"
+run_test "issue_comment_trigger_absent" "yes" "$(not_contains "issue_comment:")"
+run_test "workflow_dispatch_trigger_present" "yes" "$(contains "workflow_dispatch:")"
+run_test "workflow_dispatch_pr_number_input_present" "yes" "$(contains "pr_number:")"
+run_test "workflow_dispatch_pr_number_required" "yes" "$(contains "required: true")"
+run_test "pr_number_positive_integer_validated" "yes" "$(contains 'pr_number must be a positive integer')"
 run_test "pr_event_types_preserved" "yes" "$(contains "types: [opened, reopened, ready_for_review, synchronize]")"
-run_test "summary_comments_get_separate_concurrency" "yes" "$(contains "'summary-comment' ||")"
-run_test "non_summary_comments_get_separate_concurrency" "yes" "$(contains "'non-summary' ||")"
+run_test "summary_dispatch_gets_separate_concurrency" "yes" "$(contains "'summary-dispatch' ||")"
+run_test "dispatch_concurrency_uses_pr_number_input" "yes" "$(contains "github.event.inputs.pr_number")"
 run_test "synchronize_events_get_separate_concurrency" "yes" "$(contains "'pr-synchronize' ||")"
 run_test "pr_lifecycle_events_get_separate_concurrency" "yes" "$(contains "'pr-label-and-guard' ||")"
 run_test "pr_events_get_separate_concurrency" "yes" "$(contains "'pr-event'")"
@@ -103,8 +106,11 @@ run_test "missing_summary_fails_without_elapsed_wait" "yes" "$(contains "No revi
 run_test "summary_marker_one_checked" "yes" "$(contains "MARKER1=\"### Automated Reviewer Loop Summary\"")"
 run_test "summary_marker_two_checked" "yes" "$(contains "MARKER2='*Posted automatically by \`pr-review-loop.sh\`.*'")"
 run_test "summary_marker_two_required_in_comment_scan" "yes" "$(contains '(.body // "" | contains($m2))')"
-run_test "non_summary_comment_skips" "yes" "$(contains "Issue comment does not contain the canonical reviewer-loop summary markers; skipping.")"
-run_test "summary_comment_payload_is_counted" "yes" "$(contains "Fresh comment listing did not include triggering summary comment; counting event payload.")"
+run_test "no_comment_body_payload_branch" "yes" "$(not_contains "COMMENT_BODY")"
+run_test "no_non_summary_comment_skip_branch" "yes" "$(not_contains "Issue comment does not contain the canonical reviewer-loop summary markers; skipping.")"
+run_test "no_summary_comment_payload_fallback" "yes" "$(not_contains "Fresh comment listing did not include triggering summary comment; counting event payload.")"
+run_test "dispatch_path_applies_regression_policy" "yes" "$(contains 'EVENT_NAME" = "workflow_dispatch"')"
+run_test "dispatch_path_calls_regression_helper" "yes" "$(contains "apply_regression_policy_after_clean_summary")"
 run_test "comment_path_fetches_current_pr" "yes" "$(contains 'gh api "repos/$REPO/pulls/$PR_NUMBER"')"
 run_test "comment_path_fetches_current_comments" "yes" "$(contains 'gh api "repos/$REPO/issues/$PR_NUMBER/comments"')"
 run_test "metadata_fetch_failure_posts_status" "yes" "$(contains "Could not fetch PR metadata. Re-run the workflow to retry.")"
@@ -175,7 +181,7 @@ run_test "permissions_include_contents_read" "yes" "$(contains "contents: read")
 # Thread PRRT_kwDORWAxaM6nBzBW: the readiness helper reads
 # commits/<sha>/check-runs for check-run reviewers (bugbot, ronda, haystack);
 # without checks: read that read 403s and escalates check-run-fetch-failed,
-# so the issue_comment path could never apply ready-for-regression.
+# so the workflow_dispatch summary path could never apply ready-for-regression.
 run_test "permissions_include_checks_read" "yes" "$(contains "checks: read")"
 
 echo ""
@@ -205,7 +211,18 @@ STALE_HEAD="2222222222222222222222222222222222222222"
 summary_fixture() {
   local result="$1"
   local head="$2"
+  local padding_bytes="${3:-0}"
   printf '### Automated Reviewer Loop Summary\n\n**Result:** %s\n' "$result"
+  # Synthetic prose after the early marker exceeds the pipe buffer. Keep the
+  # history at the end, as in reviewer-loop summaries; never use real PR data.
+  awk -v bytes="$padding_bytes" 'BEGIN {
+    line="synthetic padding with spaces * [ ] ? / and no result marker here"
+    while (bytes > 0) {
+      n = bytes < length(line) ? bytes : length(line)
+      print substr(line, 1, n)
+      bytes -= n
+    }
+  }'
   if [ -n "$head" ]; then
     printf '\n<details>\n```json\n{"entries":[{"head_sha":"%s"}]}\n```\n</details>\n' "$head"
   fi
@@ -242,6 +259,85 @@ run_test "guard_missing_summary_fails" "failure" \
   "$(guard_state_for 0 "")"
 run_test "guard_no_longer_passes_on_presence_alone" "yes" \
   "$(not_contains 'DESCRIPTION="Reviewer-loop summary present."')"
+
+echo ""
+echo "=== Summary parsing under pipefail, synthetic bodies (#2019) ==="
+
+summary_observation() {
+  # Isolated subshells make concurrent test invocations safe: no shared writes
+  # or GitHub calls. Explicit pipefail also applies inside command substitution.
+  # shellcheck disable=SC2034 # read by the eval'd workflow functions
+  (
+    set -euo pipefail
+    HEAD_SHA="$LIVE_HEAD"
+    FOUND=1
+    LATEST_SUMMARY_BODY="$1"
+    if [ "$2" = unset ]; then
+      unset LATEST_SUMMARY_BODY
+    fi
+    summarize_reviewer_loop_result
+    reviewer_loop_guard_verdict
+    printf '%s|%s|%s|%s' "$LATEST_SUMMARY_RESULT" \
+      "$LATEST_SUMMARY_HEAD_SHA" "$LATEST_SUMMARY_HEAD_MATCHES" "$STATE"
+  )
+}
+
+for padding_bytes in 0 54013 1048576; do
+  for result in clean skipped needs_fixes escalate pending_timeout unclean clean_extra skipped_extra; do
+    expected_result=non_clean
+    expected_state=failure
+    case "$result" in
+      clean|skipped) expected_result="$result"; expected_state=success ;;
+    esac
+    run_test "summary_${result}_padding_${padding_bytes}" \
+      "${expected_result}|${LIVE_HEAD}|true|${expected_state}" \
+      "$(summary_observation "$(summary_fixture "$result" "$LIVE_HEAD" "$padding_bytes")" set)"
+  done
+done
+
+# A clean result grants success only for the exact full current head. Exercise
+# stale, abbreviated, extended and absent history, including a large body.
+for history_head in "$STALE_HEAD" "${LIVE_HEAD%1}" "${LIVE_HEAD}1" ""; do
+  run_test "summary_clean_rejects_head_${history_head:-absent}" \
+    "clean|${history_head}|false|failure" \
+    "$(summary_observation "$(summary_fixture clean "$history_head" 1048576)" set)"
+done
+run_test "summary_empty" "missing||false|failure" "$(summary_observation "" set)"
+run_test "summary_unset" "missing||false|failure" "$(summary_observation "" unset)"
+run_test "summary_whitespace_only" "non_clean||false|failure" \
+  "$(summary_observation $' \t\n ' set)"
+run_test "summary_case_insensitive_clean" "clean|${LIVE_HEAD}|true|success" \
+  "$(summary_observation "$(summary_fixture CLEAN "$LIVE_HEAD" 1048576)" set)"
+
+echo ""
+echo "=== Early JSON fence under pipefail, synthetic bodies (#2022) ==="
+
+# Put the history before a large suffix: awk exits at the first closing fence
+# while a piped printf still has more than a pipe buffer left to write.
+for result in clean skipped needs_fixes; do
+  expected_result="$result"
+  expected_state=success
+  if [ "$result" = needs_fixes ]; then
+    expected_result=non_clean
+    expected_state=failure
+  fi
+  for padding_bytes in 54013 1048576; do
+    body="$(
+      summary_fixture "$result" "$LIVE_HEAD"
+      awk -v bytes="$padding_bytes" 'BEGIN {
+        while (bytes-- > 0) printf "x"
+        print ""
+      }'
+      # A later JSON block must not replace the first history block.
+      printf '\n```json\n{"entries":[{"head_sha":"%s"}]}\n```\n' "$STALE_HEAD"
+    )"
+    # Ignoring PIPE exposes EPIPE diagnostics even when the existing || true
+    # masks the failed producer's status. Include stderr in the assertion.
+    run_test "summary_${result}_early_fence_suffix_${padding_bytes}" \
+      "${expected_result}|${LIVE_HEAD}|true|${expected_state}" \
+      "$(trap '' PIPE; summary_observation "$body" set 2>&1)"
+  done
+done
 
 echo ""
 echo "Results: ${PASS_COUNT} passed, ${FAIL_COUNT} failed"

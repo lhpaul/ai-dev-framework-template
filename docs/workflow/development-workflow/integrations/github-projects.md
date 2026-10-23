@@ -625,18 +625,26 @@ Use explicit issue numbers to avoid accidental broad transitions. Items not incl
 After an integration branch graduation PR merges from `develop-<slug>` to
 `develop`, Protocol 05b Step 5 remains the **primary** closeout path:
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
 ./scripts/development-workflow/graduation-closeout.sh \
   --slug <slug> \
   --graduation-pr <graduation-pr-number> \
-  --epic <epic-issue-number>
+  --epic <epic-id>
 ```
+
+`--epic` is a GitHub issue number for this GitHub Projects integration. When a
+repository uses `issue_tracker.provider: linear` instead, pass a native Linear
+ID (e.g. `LEA-326`); a bare number fails closed so closeout cannot treat the
+numeric suffix as a GitHub issue. Both closeout scripts accept `--dry-run` to
+print planned mutations without applying them.
 
 Merge-time automation is a **fallback**: `update-tracker-on-merge.yml` invokes
 `graduation-closeout-from-merged-pr.sh` for merged graduation heads, which
-discovers the slug/epic and calls the same reconciler. Operator controls:
+discovers the slug/epic and calls the same reconciler (no workflow argument
+change; GitHub Projects behavior stays identical). Operator controls:
 
-- CLI `--defer-epic-close` / `--exclude-issue` on Step 5
+- CLI `--defer-epic-close` / `--exclude-issue` / `--dry-run` on Step 5
 - Durable epic label `defer-epic-close` (applied automatically when Step 5 uses
   `--defer-epic-close`; also honored when present before automation runs)
 - Sub-item skip labels already honored by the reconciler (`optional`,
@@ -645,11 +653,20 @@ discovers the slug/epic and calls the same reconciler. Operator controls:
 
 The helper validates that the graduation PR already merged from
 `develop-<slug>` to `develop`, then reconciles delivered planned sub-items
-before closing the parent epic. It discovers planned work from native GitHub
-sub-issues, the legacy `integration-branch:<slug>` label fallback, and closing
-keywords in merged PRs that targeted `develop-<slug>`. If discovery is
-incomplete or no delivered sub-items can be identified, closeout fails and holds
-the parent epic open.
+before closing the parent epic. Under GitHub Projects it discovers planned work
+from native GitHub sub-issues, the legacy `integration-branch:<slug>` label
+fallback, and **live** closing keywords in merged PRs that targeted
+`develop-<slug>`. For those keywords, closeout renders each merged PR title and
+body separately through GitHub's GFM markdown API (`gh api markdown`), extracts
+visible text outside `<pre>` / `<code>`, then applies the shared
+`closing_keyword_live_refs` matcher (same regex as post-merge cleanup). Keywords
+inside rendered code and cross-repo `owner/repo#N` are ignored; plain-prose
+`Closes #N` still counts. When the markdown API fails or returns unusable output
+for a PR, that PR contributes no text-derived references
+(`CLOSEOUT_TEXT_REFS_UNAVAILABLE`) — closeout never falls back to scanning raw
+markdown. This path requires markdown API access; post-merge cleanup behavior is
+unchanged. If discovery is incomplete or no delivered sub-items can be
+identified, closeout fails and holds the parent epic open.
 
 For each delivered sub-item, it closes the GitHub issue when needed and then
 reasserts the terminal Project status so built-in GitHub Projects close

@@ -226,7 +226,7 @@ invalid_guardrails_status=$?
 set -e
 run_test "invalid_guardrails_json_fails" "true" "$([ "$invalid_guardrails_status" -ne 0 ] && echo true || echo false)"
 run_test "invalid_guardrails_json_detail" "true" "$(
-  printf '%s\n' "$invalid_guardrails_out" | jq -r '.detail | test("max_merge_risk")' 2>/dev/null || echo false
+  printf '%s\n' "$invalid_guardrails_out" | jq -r '.detail | test("configuration: guardrails validation error; key=guardrails")' 2>/dev/null || echo false
 )"
 run_test "invalid_guardrails_json_detail_sanitized" "false" "$(
   printf '%s\n' "$invalid_guardrails_out" | jq -r --arg path "$invalid_guardrails_config" '.detail | contains($path)' 2>/dev/null || echo true

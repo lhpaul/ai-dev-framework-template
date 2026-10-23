@@ -125,6 +125,15 @@ TRACKER_ACTION_REQUIRED=<action_type> issue=<issue_id>[ <extra_fields>]
 | `read_status` | `get_tracker_status_for_issue`       | _(none)_                                 | Status read was deferred; orchestrator supplies the value. |
 | `create_item` | `add-backlog-item.sh create`         | `title='My New Feature'`                 | New Linear item should be created via MCP.                |
 
+`set_status` is **forward-only** at the native bridge (same guarantee as
+GitHub Projects' `update_tracker_status_best_effort` order check): before
+applying, the orchestrator reads the item's current Linear status and skips
+the update when the item is already at or beyond the target in
+[`tracker-status-mapping.md`](../tracker-status-mapping.md) (e.g. target
+`Merged` while the item is `Released`), recording the skip. Helpers may still
+emit `TRACKER_ACTION_REQUIRED=set_status` on re-runs; the bridge must not
+regress status.
+
 **Quoting convention**: when a field value contains spaces, it is
 single-quoted in the output — for example, `target_status='Plan in Review'`
 rather than `target_status=Plan in Review`. Single-word values are not
@@ -134,16 +143,23 @@ for all controlled-vocabulary values in the workflow.
 
 **Orchestrator collection loop** (pseudocode):
 
-```
+```text
 for each Work Item Runner output line:
   if line starts with "TRACKER_ACTION_REQUIRED=":
     parse action_type from "TRACKER_ACTION_REQUIRED=<action_type> ..."
     parse issue from "... issue=<id> ..."
     parse extra_field value (strip single quotes if present)
-    apply via Linear MCP (e.g., updateIssue, createIssue)
+    if action_type is set_status:
+      read current Linear status via MCP
+      if current is at or beyond target_status in tracker-status-mapping:
+        record skip; do not updateIssue
+      else:
+        apply via Linear MCP updateIssue
+    else:
+      apply via Linear MCP (e.g., createIssue)
   if line starts with "TRACKER_UPDATE_REQUIRED:":
     parse issue number and target_status
-    apply via Linear MCP updateIssue
+    apply the same forward-only set_status rule via Linear MCP
 ```
 
 The `TRACKER_UPDATE_REQUIRED:` format (used in protocol 91 Step 8b) is a
@@ -290,6 +306,100 @@ and exit non-zero unless `--best-effort` was explicitly accepted. The
 orchestrator or a Linear MCP runner must apply the release label/custom field
 and then transition every listed `TRACKER_ISSUES` item from `Merged` to
 `Released` before reporting the release as complete.
+
+When cleanup is invoked with `--from-changelog`, Linear scope is **not** the set
+of IDs matched in the CHANGELOG version section alone (#1982). The canonical
+**consistency matrix** (gate inputs, allowed outcomes, required next actions,
+and operator signals) lives in
+[`05-prepare-release-protocol.md`](../protocols/05-prepare-release-protocol.md)
+Step 9.1. The CHANGELOG is only a complement: a missing `CHANGELOG.md` or version section prints
+`CHANGELOG_SECTION_UNAVAILABLE version=vX.Y.Z (Linear scope derived from merged
+PRs only)` and scope still comes from merged PRs. The helper derives scope from
+merged PRs in the release git range (previous tag → verified release tag
+`refs/tags/...` or `--release-head`; never checkout `HEAD` or unqualified names
+that could resolve a same-named branch): for each commit it resolves associated
+PRs only through GitHub `commits/<sha>/pulls` (subject `(#N)` is never
+sufficient evidence), against the checkout/component repository (not an
+inherited `GH_REPO` override). A well-formed empty JSON array `[]` means the
+commit has no associated PR (direct push / local merge): it contributes no
+IDs, emits `RELEASE_SCOPE_COMMIT_WITHOUT_PR sha=<short>` once per SHA, and
+does **not** make the scope incomplete. Empty response body, non-array JSON,
+`[null]`, `[{}]`, or any element missing an integer `number` or a
+`merged_at` / `merged` / `mergedAt` field is malformed evidence and produces
+`RELEASE_SCOPE_INCOMPLETE` with that SHA listed. A PR is accepted when it is
+merged and its merge/head commit is in the range (or the associating range SHA
+when those fields are absent), regardless of the PR base branch (including
+nested `feature/*` or `develop-<slug>` parents). Documentation-stage head
+branches (`spec/*`, `implementation-plan/*`) and release/backport branches are
+`RELEASE_SCOPE_SKIPPED` (`documentation_stage_pr_only` /
+`release_or_backport_branch_pr`); every other merged prefix (including
+`chore/`, `ci/`, `feature/`, `fix/`, …) counts as Released shipping evidence.
+Linear IDs come from each PR’s `headRefName` / REST `head.ref` and `title`
+(not commit text or PR body). Changelog-only mentions — including
+cross-references such as “did not ship LEA-298” and expanded ranges — are
+skipped with
+`RELEASE_SCOPE_SKIPPED issue=<ID> reason=changelog_mention_without_merged_pr`
+(and appear under `release_scope_skipped` in component `--json` output). The
+previous-tag boundary first resolves a **canonical SemVer tag namespace** from
+local ∪ remote evidence for the bare/`v` spellings of the requested version
+(Linear-only requested tag spelling; component prefixes such as `mobile-v…`
+have a single spelling). Resolution is **identical with and without
+`--release-head`** (never adopt a co-pointing component tag): sole existing
+spelling → adopt it (e.g. request `v1.1.0` with only `1.1.0` → namespace
+`1.1.0`); both spellings agreeing on one SHA → keep the requested spelling;
+local↔remote or bare-vs-`v` SHA conflict →
+`RELEASE_SCOPE_INCOMPLETE reason=ambiguous_release_tag_namespace` (stderr
+`ambiguous_release_tag_namespace version=<requested> (bare/v spellings or
+local/remote tag SHAs disagree)`); neither spelling present → keep the
+requested spelling (never invent `v-`). Only then does previous-tag selection
+use **that namespace’s PREFIX** and SemVer 2.0.0 precedence (prerelease <
+release; build metadata ignored); invalid prerelease identifiers are ignored
+with `SEMVER_TAG_IGNORED`; `first_release` only when no same-prefix remote tag
+is strictly lower. Shallow clones, remote tag-list failures, or a preceding
+remote tag whose peeled commit is missing locally or disagrees with a local
+tag of the same name emit
+`RELEASE_SCOPE_INCOMPLETE reason=previous_release_boundary_unavailable` (the
+helper never `git fetch`es during scope resolution — fetch tags and rerun). A
+fully resolved range with zero Linear IDs is an empty scope (not incomplete). If
+the release ref is unavailable or PR resolution fails for any commit
+(including malformed `commits/<sha>/pulls` evidence), the helper emits
+`RELEASE_SCOPE_INCOMPLETE` (`reason=release_ref_unavailable` or
+`unresolved_shas=...`) and fails closed. Explicit `--issue` / `--issues` are
+unioned with the derived scope and are never filtered. The canonical
+consistency matrix (including namespace rows) lives in
+[`05-prepare-release-protocol.md`](../protocols/05-prepare-release-protocol.md)
+Step 9.1.
+
+---
+
+## Graduation Closeout (Linear)
+
+`graduation-closeout.sh` and `graduation-closeout-from-merged-pr.sh` honor
+`issue_tracker.provider: linear` the same way post-merge cleanup does (#1930 /
+#1984):
+
+- `--epic` must be a native Linear ID with team prefix (e.g. `LEA-326`). A bare
+  number fails closed — the helper never treats the numeric suffix as a GitHub
+  issue. If `provider: linear` is only visible under a commented
+  `issue_tracker:` header, closeout fails closed before mutation — remove the
+  trailing comment so the shared tracker bridge can read the provider.
+
+- GitHub `subIssues` / parent GraphQL and `defer-epic-close` label writes are
+  skipped. Epic (and other Linear) status transitions are emitted as
+  `TRACKER_ACTION_REQUIRED=` deferred actions for the orchestrator MCP bridge.
+- GitHub issues are closed **only** via same-repo structured
+  `closingIssuesReferences` on merged PRs targeting `develop-<slug>`. Text-only
+  references (`Closes #N` in title/body, including fenced or indented examples)
+  are reported as `LINEAR_GITHUB_REF_SKIPPED issue=N reason=not_structurally_linked`
+  and never mutate GitHub. Foreign-repo structured refs are skipped. GitHub does
+  not populate `closingIssuesReferences` for many non-default-branch bases, so on
+  integration branches typically **no** GitHub issue is closed — safe by design.
+  Decision-gate outcomes are listed in Protocol 05b Step 5 **Graduation closeout
+  decision-gate consistency matrix**.
+- Both scripts accept `--dry-run` to print planned mutations without applying
+  them.
+
+See Protocol 05b Step 5 for the primary operator command.
 
 ---
 

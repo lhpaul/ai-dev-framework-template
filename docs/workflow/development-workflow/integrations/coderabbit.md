@@ -191,15 +191,15 @@ CodeRabbit as an internal reviewer is subject to the same `max_internal_review_c
 
 ### Availability Check
 
-Step 7a workflow configuration validation requires PyYAML in the `python3`
-interpreter used by the gate for every reviewer. CodeRabbit enablement uses the
-same dependency. The workflow CI provisions `PyYAML==6.0.2`, and
-`scripts/cloud-agent-install.sh` provisions the distribution package. For local
-use, install that pinned version in a virtual environment and put its `bin`
-directory on PATH before running the gate. Missing PyYAML during workflow
-configuration parsing produces `policy-unreadable` with setup guidance. An
-isolated CodeRabbit parser import failure remains `check-inconclusive`. Neither
-path installs packages.
+Step 7a framework configuration validation uses one strict framework reader
+without PyYAML, shared by complete selected-source validation, modern review
+and projection. CodeRabbit's separate `.coderabbit.yaml` enablement reader still
+requires PyYAML in the `python3` interpreter used by the gate. The workflow CI
+provisions `PyYAML==6.0.2`, and `scripts/cloud-agent-install.sh` provisions the
+distribution package. For local CodeRabbit checks, install that pinned version
+in a virtual environment and put its `bin` directory on PATH. A CodeRabbit parser
+import failure remains `check-inconclusive`; it is not a missing dependency of
+framework workflow parsing. Neither reader installs packages.
 
 The entire `.coderabbit.yaml` is validated with a safe YAML loader, including
 unrelated sections. Syntax errors, unsafe tags, and duplicate explicit mapping

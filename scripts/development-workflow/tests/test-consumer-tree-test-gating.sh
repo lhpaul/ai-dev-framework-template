@@ -12,6 +12,10 @@
 # downstream sync.
 #
 # Usage: bash scripts/development-workflow/tests/test-consumer-tree-test-gating.sh
+# duration: 150
+# covers: scripts/development-workflow/workflow-config-resolver.py
+# covers: scripts/development-workflow/tests/lib/consumer-readiness-fixture.sh
+# covers: scripts/development-workflow/tests/lib/readiness-label-fixture.sh
 # covers: scripts/development-workflow/tests/test-apply-readiness-labels.sh
 # covers: scripts/development-workflow/tests/test-review-doctrine-lint.sh
 # covers: scripts/development-workflow/tests/test-reviewer-loop-guard-workflow.sh
@@ -613,33 +617,8 @@ echo ""
 echo "=== Area 6: consumer-owned reviewer/trigger/legacy state ==="
 
 portable_root="$TMP_ROOT/portable-consumer"
-build_fake_root "$portable_root" false
-cp -R "$REPO_ROOT/scripts/." "$portable_root/scripts/"
-cp -R "$REPO_ROOT/.github/." "$portable_root/.github/"
-for surface in docs .claude .cursor template sync-manifest.yaml REVIEW.md; do
-  ln -s "$REPO_ROOT/$surface" "$portable_root/$surface"
-done
-git -C "$portable_root" init -q
-cat > "$portable_root/.ai-dev-workflow.yaml" <<'YAML'
-template:
-  is_template: false
-review:
-  on_ready:
-    github:
-      - pr-agent
-YAML
-cat > "$portable_root/.ai-dev-workflow.local.yaml" <<'YAML'
-review:
-  on_ready:
-    github:
-      - local-ai-reviewer
-YAML
-printf '%s\n' 'name: Consumer Markdown' 'on:' '  workflow_dispatch:' \
-  > "$portable_root/.github/workflows/markdown-lint.yml"
-for legacy in apply-regression-label remove-regression-label-on-push reviewer-loop-guard; do
-  printf '%s\n' 'name: Consumer legacy policy' 'on:' '  workflow_dispatch:' \
-    > "$portable_root/.github/workflows/$legacy.yml"
-done
+# shellcheck source=scripts/development-workflow/tests/lib/consumer-readiness-fixture.sh
+source "$SCRIPT_DIR/lib/consumer-readiness-fixture.sh"
 
 run_consumer_suite() {
   local suite="$1" expected="$2" output rc=0
@@ -716,9 +695,12 @@ from pathlib import Path
 import sys
 p = Path(sys.argv[1])
 s = p.read_text().split('# ...and a head-config fetch failure', 1)[0]
-s = s.replace('export WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT="$ISOLATED_OVERRIDE_ROOT"',
+fixture = p.parent / 'lib/readiness-label-fixture.sh'
+f = fixture.read_text()
+f = f.replace('export WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT="$ISOLATED_OVERRIDE_ROOT"',
               'export WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT="$REPO_ROOT"')
-s = s.replace('${MOCK_LOCAL_OVERRIDE_ROOT:-$ISOLATED_OVERRIDE_ROOT}', '${MOCK_LOCAL_OVERRIDE_ROOT:-}')
+f = f.replace('${MOCK_LOCAL_OVERRIDE_ROOT:-$ISOLATED_OVERRIDE_ROOT}', '${MOCK_LOCAL_OVERRIDE_ROOT:-}')
+fixture.write_text(f)
 s += '\n[ "$fail" -eq 0 ]\n'
 p.write_text(s)
 PLANT_READINESS

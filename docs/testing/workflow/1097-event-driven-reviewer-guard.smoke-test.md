@@ -41,38 +41,68 @@ minutes sleeping by default.
 
 ---
 
-## Scenario 2: Summary comment event posts readiness success
+## Scenario 2: Summary fixture + workflow_dispatch posts readiness success
 
-1. On the same pull request, post a comment containing the canonical reviewer-loop
-   summary markers:
+Comments no longer start `pr-policy.yml` (#1998). Post a current-head clean
+summary fixture (both canonical markers plus history `head_sha` equal to the
+live head), then dispatch the workflow explicitly.
 
-   ```markdown
-   ### Automated Reviewer Loop Summary
+1. On the same pull request, resolve the live head and post:
 
-   **Result:** clean - no blocking findings
+   <!-- workflow-shell-contract: bash-zsh -->
+   ```bash
+   set -euo pipefail
+   HEAD_SHA=$(gh pr view "$PR_NUM" --json headRefOid --jq '.headRefOid')
+   DEFAULT_BRANCH=$(gh repo view --json defaultBranchRef --jq '.defaultBranchRef.name')
+   BODY_FILE=$(mktemp)
+   cat > "$BODY_FILE" <<EOF
+### Automated Reviewer Loop Summary
 
-   *Posted automatically by `pr-review-loop.sh`.*
+**Result:** clean — no blocking findings
+
+<details>
+
+\`\`\`json
+{"schema":"reviewer_loop_history.v1","entries":[{"head_sha":"${HEAD_SHA}"}]}
+\`\`\`
+
+</details>
+
+*Posted automatically by \`pr-review-loop.sh\`.*
+EOF
+   gh pr comment "$PR_NUM" --body-file "$BODY_FILE"
+   rm -f "$BODY_FILE"
    ```
 
-2. Wait for the guard's comment-event path to complete.
-3. Inspect the PR-scoped status context again.
+2. Dispatch PR policy (the path `pr-review-loop.sh` uses after a real summary):
+
+   <!-- workflow-shell-contract: bash-zsh -->
+   ```bash
+   set -euo pipefail
+   gh workflow run pr-policy.yml \
+     --ref "$DEFAULT_BRANCH" \
+     -f "pr_number=${PR_NUM}"
+   ```
+
+3. Wait for that `workflow_dispatch` run to finish, then inspect the PR-scoped
+   status context again.
 
 **Expected result**: The status becomes passing for the pull request head SHA and
-the description indicates the reviewer-loop summary is present.
+the description indicates the reviewer loop ran clean for the current head.
 
 ---
 
-## Scenario 3: Non-summary comments do not mark readiness
+## Scenario 3: Ordinary comments do not start PR policy
 
 1. Push a new commit to the implementation pull request or otherwise inspect a
    pull request head without a valid summary status.
 2. Post a normal PR comment that does not include the canonical summary markers.
-3. Wait long enough for issue-comment workflows to enqueue if they are going to
-   run.
+3. Confirm no new `pr-policy.yml` run is created for that comment (the workflow
+   has no `issue_comment` trigger).
 4. Inspect the PR-scoped status context.
 
-**Expected result**: The normal comment does not mark reviewer-loop readiness as
-passing.
+**Expected result**: The normal comment does not start a PR policy runner and
+does not mark reviewer-loop readiness as passing.
 
 ---
 
@@ -103,8 +133,8 @@ branch and exits quickly with the existing non-blocking behavior.
 
 1. Open or inspect a pull request whose head repository differs from the base
    repository.
-2. Trigger the pull request path and, if possible, post a comment containing the
-   reviewer-loop summary markers.
+2. Trigger the pull request path and, if possible, dispatch
+   `pr-policy.yml` with that PR's number after posting a summary fixture.
 3. Inspect the guard workflow logs and PR-scoped status contexts.
 
 **Expected result**: The guard does not post reviewer-loop readiness statuses for
@@ -122,10 +152,10 @@ the fork-head pull request, matching the existing same-repository restriction.
 
 2. Run markdown and workflow shell validation.
 
-**Expected result**: The focused test passes and covers the configured triggers,
-absence of default polling, summary marker matching, non-summary comment skips,
-fork-head skips, out-of-scope success, and the unchanged PR-scoped status
-context.
+**Expected result**: The focused test passes and covers the configured triggers
+(`pull_request_target` plus `workflow_dispatch`, no `issue_comment`), absence of
+default polling, summary marker matching, fork-head skips, out-of-scope success,
+and the unchanged PR-scoped status context (#1998).
 
 ---
 
@@ -152,8 +182,8 @@ context.
 
 | Symptom | Likely cause | Action |
 | --- | --- | --- |
-| Missing-summary status remains after the summary comment is posted | The issue-comment workflow did not run or could not fetch the PR head SHA | Rerun the guard workflow and inspect the Actions logs for API failures. |
-| A normal comment marks readiness passing | The comment-event path is not checking both canonical summary markers | Tighten marker matching and add a regression test for non-summary comments. |
-| Fork-head PR receives a reviewer-loop readiness status | The comment-event path did not preserve the same-repository head guard | Fetch head repository metadata before posting statuses and skip fork heads. |
+| Missing-summary status remains after the summary comment is posted | `pr-policy.yml` was not dispatched after the summary, or the dispatch run could not fetch the PR head SHA | Confirm `PR_POLICY_DISPATCH=requested`, rerun `workflow_dispatch` with `pr_number`, and inspect Actions logs (#1998). |
+| A normal comment starts a PR policy runner | An `issue_comment` trigger was re-added to `pr-policy.yml` | Remove `issue_comment` from the workflow; summary refresh is via `workflow_dispatch` only. |
+| Fork-head PR receives a reviewer-loop readiness status | The dispatch or PR-event path did not preserve the same-repository head guard | Fetch head repository metadata before posting statuses and skip fork heads. |
 | Out-of-scope branches fail the guard | Branch-prefix detection changed | Verify the configured in-scope prefixes and expected branch name. |
 | Branch protection no longer recognizes the guard | Required status pattern points at an obsolete context | Use the documented `Reviewer-loop completion guard (#*)` pattern or repository-supported equivalent. |

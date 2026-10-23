@@ -10,6 +10,9 @@ SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/development-workflow/workflow-lib.sh
 source "$SCRIPT_DIR/workflow-lib.sh"
 
+# This entry emits diagnostic reports; shared config/control transport stays raw.
+print_kv() { workflow_diagnostic_kv "$@"; }
+
 usage() {
   cat >&2 <<'EOF'
 Usage: local-ai-reviewer.sh <pr_number> <owner> <repo> [--timeout <seconds>] [--repo-root <path>]
@@ -19,6 +22,8 @@ Options:
                        Defaults to LOCAL_AI_REVIEWER_TIMEOUT or 300.
   --repo-root <path>   Repository checkout to review. When supplied, HEAD must
                        match the pull request head SHA before review runs.
+                       Enables local git diff fallback when GitHub cannot
+                       return changed paths (for example HTTP 406).
 
 Exit codes:
   0  RESULT=clean
@@ -115,7 +120,7 @@ resolve_local_ai_reviewer_command() {
       preset_label="Codex"
       ;;
     *)
-      echo "ERROR: unknown LOCAL_AI_REVIEWER_BACKEND '$backend' (expected codex or http)" >&2
+      workflow_diagnostic "ERROR: configuration validation error; key=LOCAL_AI_REVIEWER_BACKEND" >&2
       return 1
       ;;
   esac
@@ -124,7 +129,7 @@ resolve_local_ai_reviewer_command() {
     default_command_quoted="$(printf '%s' "$default_command" | sed "s/'/'\\\\''/g; 1s/^/'/; \$s/\$/'/")"
     LOCAL_AI_REVIEWER_COMMAND="$default_command_quoted"
     export LOCAL_AI_REVIEWER_COMMAND
-    echo "INFO: LOCAL_AI_REVIEWER_COMMAND defaulted to bundled ${preset_label} preset: $default_command" >&2
+    workflow_diagnostic "INFO: LOCAL_AI_REVIEWER_COMMAND defaulted to bundled ${preset_label} preset: $default_command" >&2
   fi
 }
 
@@ -136,6 +141,8 @@ print_result() {
   local reason="${5:-}"
   local display_result="${6:-}"
 
+  reason="$(printf '%s' "$reason" | workflow_redact_text)" || return 2
+  display_result="$(printf '%s' "$display_result" | workflow_redact_text)" || return 2
   print_kv RESULT "$result"
   print_kv COMMENT_COUNT "$comment_count"
   print_kv BLOCKING_COUNT "$blocking_count"
@@ -596,7 +603,7 @@ emit_strict_entry_output() {
       print_kv "STRICT_${idx}_CHECK" "$check"
       print_kv "STRICT_${idx}_PATH" "$path"
       print_kv "STRICT_${idx}_LINE" "$line"
-      print_kv "STRICT_${idx}_BODY" "$body"
+      print_kv "STRICT_${idx}_BODY" "$(printf '%s' "$body" | workflow_redact_text)"
     done
   fi
 }
@@ -926,7 +933,7 @@ reviewer_changed_files_touch_workflow_policy() {
 reviewer_decode_changed_files() {
   local decoded
   if ! decoded="$(printf '%s' "${1:-}" | jq -r '.[]?' 2>/dev/null)"; then
-    echo "WARN: could not decode changed_files_json; workflow-policy checklist not applied" >&2
+    workflow_diagnostic "WARN: could not decode changed_files_json; workflow-policy checklist not applied" >&2
     decoded=""
   fi
   printf '%s\n' "$decoded"
@@ -1038,16 +1045,16 @@ shift 3
 
 case "$PR_NUMBER" in
   ''|0|*[!0-9]*)
-    echo "ERROR: PR number '$PR_NUMBER' is not a valid positive integer" >&2
+    workflow_diagnostic "ERROR: PR number '$PR_NUMBER' is not a valid positive integer" >&2
     exit 2
     ;;
 esac
 if ! valid_slug_component "$OWNER"; then
-  echo "ERROR: owner '$OWNER' contains invalid characters" >&2
+  workflow_diagnostic "ERROR: owner '$OWNER' contains invalid characters" >&2
   exit 2
 fi
 if ! valid_slug_component "$REPO"; then
-  echo "ERROR: repo '$REPO' contains invalid characters" >&2
+  workflow_diagnostic "ERROR: repo '$REPO' contains invalid characters" >&2
   exit 2
 fi
 
@@ -1056,12 +1063,12 @@ REPO_ROOT=""
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --timeout)
-      [ "$#" -ge 2 ] && [ -n "${2:-}" ] || { echo "ERROR: --timeout requires a value" >&2; exit 2; }
+      [ "$#" -ge 2 ] && [ -n "${2:-}" ] || { workflow_diagnostic "ERROR: --timeout requires a value" >&2; exit 2; }
       TIMEOUT="$2"
       shift 2
       ;;
     --repo-root)
-      [ "$#" -ge 2 ] && [ -n "${2:-}" ] || { echo "ERROR: --repo-root requires a value" >&2; exit 2; }
+      [ "$#" -ge 2 ] && [ -n "${2:-}" ] || { workflow_diagnostic "ERROR: --repo-root requires a value" >&2; exit 2; }
       REPO_ROOT="$2"
       shift 2
       ;;
@@ -1070,7 +1077,7 @@ while [ "$#" -gt 0 ]; do
       exit 0
       ;;
     *)
-      echo "ERROR: unknown option '$1'" >&2
+      workflow_diagnostic "ERROR: unknown option '$1'" >&2
       usage
       exit 2
       ;;
@@ -1079,7 +1086,7 @@ done
 
 case "$TIMEOUT" in
   ''|0|*[!0-9]*)
-    echo "ERROR: --timeout value '$TIMEOUT' is not a positive integer" >&2
+    workflow_diagnostic "ERROR: configuration validation error; key=--timeout" >&2
     exit 2
     ;;
 esac
@@ -1103,7 +1110,7 @@ if ! resolve_local_ai_reviewer_command; then
 fi
 
 if [ -z "${LOCAL_AI_REVIEWER_COMMAND:-}" ]; then
-  echo "ERROR: LOCAL_AI_REVIEWER_COMMAND is not configured" >&2
+  workflow_diagnostic "ERROR: LOCAL_AI_REVIEWER_COMMAND is not configured" >&2
   print_result escalate 0 0 0 missing_command missing_command
   exit 2
 fi
@@ -1133,29 +1140,23 @@ if command -v gh >/dev/null 2>&1; then
   fi
 fi
 if [ -z "$BASE_BRANCH" ]; then
-  echo "ERROR: could not resolve pull request base branch for #$PR_NUMBER" >&2
+  workflow_diagnostic "ERROR: could not resolve pull request base branch for #$PR_NUMBER" >&2
   print_result escalate 0 0 0 base_branch_unavailable base_branch_unavailable
   exit 2
 fi
 if [ -z "$HEAD_SHA" ]; then
-  echo "ERROR: could not resolve pull request head SHA for #$PR_NUMBER" >&2
+  workflow_diagnostic "ERROR: could not resolve pull request head SHA for #$PR_NUMBER" >&2
   print_result escalate 0 0 0 head_sha_unavailable head_sha_unavailable
   exit 2
 fi
-if [ "$diff_fetch_failed" -ne 0 ]; then
-  echo "ERROR: could not fetch pull request diff for #$PR_NUMBER" >&2
-  print_result escalate 0 0 0 diff_unavailable diff_unavailable
-  exit 2
-fi
-
 if [ -n "$REPO_ROOT" ]; then
-  if ! REPO_ROOT="$(CDPATH='' cd -- "$REPO_ROOT" && pwd -P)"; then
-    echo "ERROR: --repo-root is not a Git checkout: $REPO_ROOT" >&2
+  if ! REPO_ROOT="$( { CDPATH='' cd -- "$REPO_ROOT" && pwd -P; } 2>/dev/null)"; then
+    workflow_diagnostic "ERROR: configuration validation error; key=--repo-root" >&2
     print_result escalate 0 0 0 invalid_repo_root invalid_repo_root
     exit 2
   fi
   if [ ! -d "$REPO_ROOT/.git" ] && ! git -C "$REPO_ROOT" rev-parse --git-dir >/dev/null 2>&1; then
-    echo "ERROR: --repo-root is not a Git checkout: $REPO_ROOT" >&2
+    workflow_diagnostic "ERROR: configuration validation error; key=--repo-root" >&2
     print_result escalate 0 0 0 invalid_repo_root invalid_repo_root
     exit 2
   fi
@@ -1164,7 +1165,7 @@ if [ -n "$REPO_ROOT" ]; then
   fi
   repo_root_slug="$(normalize_github_remote_slug "$repo_root_origin")"
   if [ "$repo_root_slug" != "$OWNER/$REPO" ]; then
-    echo "ERROR: --repo-root origin does not match expected repository ($(redact_github_remote_slug "$repo_root_origin") != $OWNER/$REPO)" >&2
+    workflow_diagnostic "ERROR: --repo-root origin does not match expected repository ($(redact_github_remote_slug "$repo_root_origin") != $OWNER/$REPO)" >&2
     print_result escalate 0 0 0 repo_root_mismatch repo_root_mismatch
     exit 2
   fi
@@ -1172,24 +1173,44 @@ if [ -n "$REPO_ROOT" ]; then
     CURRENT_SHA=""
   fi
   if [ "$CURRENT_SHA" != "$HEAD_SHA" ]; then
-    echo "ERROR: checkout HEAD does not match PR head ($CURRENT_SHA != $HEAD_SHA)" >&2
+    workflow_diagnostic "ERROR: checkout HEAD does not match PR head ($CURRENT_SHA != $HEAD_SHA)" >&2
     print_result escalate 0 0 0 head_mismatch head_mismatch
     exit 2
   fi
   cd "$REPO_ROOT"
 fi
 
+# GitHub rejects large diffs with HTTP 406, including --name-only requests.
+# Only use the caller's explicitly verified checkout: the origin and HEAD
+# checks above must succeed before local files can stand in for the PR diff.
+if [ "$diff_fetch_failed" -ne 0 ]; then
+  if [ -n "$REPO_ROOT" ] && changed_files_json="$(
+    git diff --name-only -z "origin/$BASE_BRANCH...HEAD" 2>/dev/null |
+      jq -R -s -c 'split("\u0000") | map(select(length > 0))'
+  )"; then
+    workflow_diagnostic "INFO: GitHub PR diff unavailable; using verified local git diff for #$PR_NUMBER" >&2
+  else
+    workflow_diagnostic "ERROR: could not obtain pull request diff for #$PR_NUMBER" >&2
+    print_result escalate 0 0 0 diff_unavailable diff_unavailable
+    exit 2
+  fi
+fi
+
 if git rev-parse --verify "origin/$BASE_BRANCH" >/dev/null 2>&1; then
   if diff_name_status_full="$(git diff --name-status --find-renames --find-copies "origin/$BASE_BRANCH...HEAD" 2>/dev/null)"; then
     diff_name_status="${diff_name_status_full:0:12000}"
+  else
+    diff_name_status_full=""
   fi
   if diff_stat_full="$(git diff --stat --find-renames --find-copies "origin/$BASE_BRANCH...HEAD" 2>/dev/null)"; then
     diff_stat="${diff_stat_full:0:12000}"
+  else
+    diff_stat_full=""
   fi
 fi
 
 if [ ! -f REVIEW.md ]; then
-  echo "ERROR: REVIEW.md is required for local review" >&2
+  workflow_diagnostic "ERROR: REVIEW.md is required for local review" >&2
   print_result escalate 0 0 0 review_contract_missing review_contract_missing
   exit 2
 fi
@@ -1229,7 +1250,7 @@ case "$graph_strategy" in
     command -v graphify >/dev/null 2>&1 && graph_context="graphify" || graph_context="skipped"
     ;;
   *)
-    echo "ERROR: invalid LOCAL_AI_REVIEWER_GRAPH_STRATEGY '$graph_strategy'" >&2
+    workflow_diagnostic "ERROR: configuration validation error; key=LOCAL_AI_REVIEWER_GRAPH_STRATEGY" >&2
     print_result escalate 0 0 0 malformed_output malformed_output
     exit 2
     ;;
@@ -1347,7 +1368,7 @@ command_stderr="$(cat "$stderr_file" 2>/dev/null || true)"
 # exited 124 or 137 before the budget leaves the flag at 0 and reaches the
 # ordinary non-zero handling below.
 if [ "${RUN_WITH_TIMEOUT_EXPIRED:-0}" = "1" ]; then
-  echo "WARN: local AI reviewer had not returned a verdict after ${TIMEOUT}s; stopped at the wait budget (no verdict yet)" >&2
+  workflow_diagnostic "WARN: local AI reviewer had not returned a verdict after ${TIMEOUT}s; stopped at the wait budget (no verdict yet)" >&2
   print_kv RESULT waiting_on_reviewer
   print_kv REASON reviewer-no-verdict-yet
   print_kv NO_VERDICT_YET 1
@@ -1403,25 +1424,26 @@ fi
 if [ -n "$setup_probe_output" ] && grep -Eiq 'usage[[:space:]_-]*limit|quota[[:space:]_-]*(exhaust|exceed)|out of (quota|credits)|hit your usage' <<< "$setup_probe_output"; then
   quota_reset_at="$(
     printf '%s\n' "$setup_probe_output" \
+      | workflow_redact_text \
       | grep -Ei 'try again at .+' \
-      | head -n1 \
+      | sed -n '1p' \
       | sed -E 's/^.*[Tt]ry again at[[:space:]]+//; s/[[:space:].]+$//' \
       || true
   )"
-  echo "WARN: local AI reviewer provider quota exhausted" >&2
+  workflow_diagnostic "WARN: local AI reviewer provider quota exhausted" >&2
   if [ -n "$command_stderr" ]; then
-    echo "INFO: local AI reviewer command stderr:" >&2
-    printf '%s\n' "$command_stderr" >&2
+    workflow_diagnostic "INFO: local AI reviewer command stderr:" >&2
+    printf '%s\n' "$command_stderr" | workflow_redact_text >&2
   fi
   print_result escalate 0 0 0 quota_exhausted quota_exhausted
-  [ -n "$quota_reset_at" ] && print_kv QUOTA_RESET_AT "$quota_reset_at"
+  [ -n "$quota_reset_at" ] && print_kv QUOTA_RESET_AT "$(printf '%s' "$quota_reset_at" | workflow_redact_text)"
   exit 2
 fi
 if [ -z "$(printf '%s' "$command_stdout" | tr -d '[:space:]')" ]; then
-  echo "WARN: local AI reviewer produced no machine output" >&2
+  workflow_diagnostic "WARN: local AI reviewer produced no machine output" >&2
   if [ -n "$command_stderr" ]; then
-    echo "INFO: local AI reviewer command stderr:" >&2
-    printf '%s\n' "$command_stderr" >&2
+    workflow_diagnostic "INFO: local AI reviewer command stderr:" >&2
+    printf '%s\n' "$command_stderr" | workflow_redact_text >&2
   fi
   print_result escalate 0 0 0 malformed_output malformed_output
   exit 2
@@ -1430,10 +1452,10 @@ fi
 # Fail closed: setup probes above had no pattern match, so anything that is not a valid
 # verdict object must not reach the parser, where an empty findings set would infer clean.
 if [ "$stdout_is_verdict" -ne 1 ]; then
-  echo "WARN: local AI reviewer output was not a valid review verdict object" >&2
+  workflow_diagnostic "WARN: local AI reviewer output was not a valid review verdict object" >&2
   if [ -n "$command_stderr" ]; then
-    echo "INFO: local AI reviewer command stderr:" >&2
-    printf '%s\n' "$command_stderr" >&2
+    workflow_diagnostic "INFO: local AI reviewer command stderr:" >&2
+    printf '%s\n' "$command_stderr" | workflow_redact_text >&2
   fi
   print_result escalate 0 0 0 malformed_output malformed_output
   exit 2
@@ -1527,7 +1549,7 @@ case "$parse_status" in
     exit 2
     ;;
   *)
-    echo "WARN: local AI reviewer output was malformed" >&2
+    workflow_diagnostic "WARN: local AI reviewer output was malformed" >&2
     print_result escalate 0 0 0 malformed_output malformed_output
     exit 2
     ;;
@@ -1617,7 +1639,9 @@ write_evidence_file() {
   strict_plan_json="$(strict_build_strict_evidence_json "$strict_plan_state" "$strict_plan_count" \
     "$strict_plan_checks" "$strict_plan_applied" "$strict_plan_unknown_count" "$strict_plan_reason")"
 
-  if ! jq -n \
+  local evidence_error evidence_capture_opened=0
+  evidence_error="$(mktemp 2>/dev/null)" || { workflow_diagnostic "WARN: could not capture evidence diagnostics" >&2; return 0; }
+  if ! { { evidence_capture_opened=1; jq -n \
     --arg schema_version "local_ai_reviewer_evidence.v1" \
     --arg result "$final_result" \
     --arg reason "$final_reason" \
@@ -1629,8 +1653,8 @@ write_evidence_file() {
     --arg reviewed_head "$HEAD_SHA" \
     --arg graph_context "$graph_context" \
     --arg pr_body "$PR_BODY" \
-    --arg diff_name_status "$diff_name_status" \
-    --arg diff_stat "$diff_stat" \
+    --arg diff_name_status "${diff_name_status_full:-}" \
+    --arg diff_stat "${diff_stat_full:-}" \
     --arg review_stage "$review_stage" \
     --arg review_stage_source "$review_stage_source" \
     --arg review_checklists "$review_checklists_csv" \
@@ -1661,7 +1685,7 @@ write_evidence_file() {
       },
       context_summary: {
         changed_files: $changed_files,
-        pr_body: ($pr_body[0:20000]),
+        pr_body: $pr_body,
         diff_name_status: $diff_name_status,
         diff_stat: $diff_stat
       },
@@ -1677,9 +1701,13 @@ write_evidence_file() {
       },
       strict_spec: $strict_spec,
       strict_plan: $strict_plan
-    }' >"$LOCAL_AI_REVIEWER_EVIDENCE_FILE"; then
-    echo "WARN: could not write local AI reviewer evidence file: $LOCAL_AI_REVIEWER_EVIDENCE_FILE" >&2
+    }' | workflow_redact_json | jq '.context_summary |= (.pr_body |= .[0:20000] | .diff_name_status |= .[0:12000] | .diff_stat |= .[0:12000])' >"$LOCAL_AI_REVIEWER_EVIDENCE_FILE"; } 2>"$evidence_error"; } 2>/dev/null; then
+    if [ "$evidence_capture_opened" -eq 1 ]; then
+      workflow_redact_file "$evidence_error" >&2
+    fi
+    workflow_diagnostic "WARN: could not write local AI reviewer evidence file: $LOCAL_AI_REVIEWER_EVIDENCE_FILE" >&2
   fi
+  workflow_remove_diagnostic_file "$evidence_error"
 }
 
 emit_ordinary_and_strict() {
@@ -1695,7 +1723,7 @@ emit_ordinary_and_strict() {
   print_result "$final_result" "$final_comment_count" "$final_blocking_count" \
     "$final_suggestion_count" "$final_reason" "$final_display"
   if [ "$final_result" = "needs_fixes" ]; then
-    printf '%s\n' "$parse_result" | awk '/^BLOCKING_[0-9]+_(PATH|LINE|BODY)=/ { print }'
+    printf '%s\n' "$parse_result" | awk '/^BLOCKING_[0-9]+_(PATH|LINE|BODY)=/ { print }' | workflow_redact_text
   fi
   emit_strict_spec_output "$strict_spec_state" "$strict_spec_count" \
     "$strict_spec_checks" "$strict_spec_unknown_count" "$strict_spec_reason" "$strict_spec_applied" \

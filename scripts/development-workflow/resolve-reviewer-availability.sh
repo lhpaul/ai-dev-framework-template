@@ -8,7 +8,12 @@ LOCAL_PROBE_CAP_SECONDS=3
 HOSTED_PROBE_CAP_SECONDS=4
 set -euo pipefail
 
-fail() { printf 'ERROR: %s\n' "$*" >&2; exit 2; }
+{ SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd); } 2>/dev/null || { bootstrap_status=$?; printf 'configuration: tooling initialization error\n' >&2; exit "$bootstrap_status"; }
+export REVIEWER_PREFLIGHT_CODERABBIT_MODULE_DIR="$SCRIPT_DIR"
+# shellcheck source=scripts/development-workflow/workflow-lib.sh
+source "$SCRIPT_DIR/workflow-lib.sh" 2>/dev/null
+
+fail() { workflow_diagnostic "ERROR: $*" >&2; exit 2; }
 if [ "${WORKFLOW_REVIEWER_AVAILABILITY_TEST_MODE:-0}" = 1 ]; then
   case "${WORKFLOW_REVIEWER_AVAILABILITY_BUDGET_SECONDS:-8}" in
     [1-8]) AVAILABILITY_BUDGET_SECONDS=${WORKFLOW_REVIEWER_AVAILABILITY_BUDGET_SECONDS:-8} ;;
@@ -36,10 +41,7 @@ case "$owner/$repo" in *[!a-zA-Z0-9_./-]*) fail 'invalid owner or repo' ;; esac
 case "$owner" in */*|.|..) fail 'invalid owner' ;; esac
 case "$repo" in */*|.|..) fail 'invalid repo' ;; esac
 case "$runner_kind" in claude|cursor|codex|dsh|unknown) ;; *) fail 'unsupported runner-kind' ;; esac
-SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
-export REVIEWER_PREFLIGHT_CODERABBIT_MODULE_DIR="$SCRIPT_DIR"
-# shellcheck source=scripts/development-workflow/workflow-lib.sh
-source "$SCRIPT_DIR/workflow-lib.sh"
+
 for dependency in python3 jq mktemp rm sleep cat; do
   have_cmd "$dependency" || fail "missing dependency: $dependency"
 done
@@ -217,28 +219,37 @@ policy= policy_input= policy_source= policy_state=not-evaluated
 unreadable_file= unreadable_detail= list_state=not-evaluated list_source=
 local_state=none configured= excluded= reachable= unreachable=
 fallback=false outcome=blocked block_cause=none count=0 reachable_count=0 unavailable_count=0
+config_error_report=false
 names=() statuses=() reasons=() remedies=() details=()
 add_record() {
   names[$count]=$1 statuses[$count]=$2 reasons[$count]=$3 details[$count]=$4
+  if [ "$3" = check-inconclusive ] && [ "${5:-}" = coderabbit-config ]; then
+    config_error_report=true
+  fi
+  if [ "$3" = value-not-supported ]; then
+    names[$count]=unknown
+    details[$count]='configuration: unsupported reviewer; key=review.on_draft.runner'
+  fi
   case "$3" in
     runtime-absent) remedies[$count]="Install the reviewer's runtime on this machine, or remove the reviewer from review.on_draft.runner in .ai-dev-workflow.local.yaml." ;;
     prerequisite-missing) remedies[$count]='Install or enable the review service for this repository, or remove the reviewer from review.on_draft.runner in .ai-dev-workflow.local.yaml.' ;;
     check-inconclusive)
       case "${5:-}" in
         local-runtime) remedies[$count]='Run the local runtime --version command named in the detail; repair or update that runtime, then re-run the gate.' ;;
-        coderabbit-config) remedies[$count]='Repair .coderabbit.yaml using the reported read or syntax error, then re-run the gate.' ;;
+        coderabbit-config) remedies[$count]='Repair the known configuration key using its safe error type and locators, then re-run the gate.' ;;
         coderabbit-dependency) remedies[$count]='Install PyYAML==6.0.2 for the python3 used by the gate, then re-run the gate.' ;;
         coderabbit-parser) remedies[$count]='Run the CodeRabbit configuration check with the gate python3 to diagnose the execution failure or timeout, then re-run the gate.' ;;
         hosted-activity) remedies[$count]='Check gh authentication and repository issue-comment access, inspect the reported activity coverage or API error, then re-run the gate.' ;;
         budget) remedies[$count]='Re-run the gate when the environment is responsive; diagnose earlier slow probes if the availability budget is exhausted again.' ;;
         *) fail 'missing inconclusive probe context' ;;
       esac ;;
-    value-not-supported) remedies[$count]='Correct the configured value to one of the supported reviewer values, or remove it from review.on_draft.runner.' ;;
+    value-not-supported) remedies[$count]='Correct the known reviewer-list key and retry.' ;;
     '') remedies[$count]= ;;
     *) fail 'invalid internal reason' ;;
   esac
   count=$((count + 1))
   local display=$1
+  [ "$3" != value-not-supported ] || display=unknown
   if ! [[ "$display" =~ ^[a-z][a-z0-9-]*$ ]]; then display="<entry $count>"; fi
   case "$2" in
     reachable) reachable="${reachable:+$reachable,}$display"; reachable_count=$((reachable_count + 1)) ;;
@@ -247,8 +258,21 @@ add_record() {
   esac
   if [ "$2" != override-excluded ]; then configured="${configured:+$configured,}$display"; fi
 }
-report() {
+report_unredacted() {
   local i=0 n
+  case "$block_cause" in
+    policy-unreadable|policy-unsupported|list-malformed)
+      policy_source= list_source= unreadable_file= local_state= ;;
+  esac
+  if [ "$config_error_report" = true ]; then
+    policy_source= list_source= unreadable_file= local_state=
+  fi
+  for ((i=0; i<count; i++)); do
+    if [ "${reasons[$i]}" = value-not-supported ]; then
+      policy_source= list_source= unreadable_file= local_state=
+    fi
+  done
+  i=0
   # Include temporary-file cleanup in the reported determination duration.
   rm -rf -- "$work_dir"
   work_dir=
@@ -282,6 +306,10 @@ report() {
   print_kv_escaped BLOCK_CAUSE "$block_cause"
   print_kv_escaped ELAPSED_SECONDS "$SECONDS.0"
 }
+report() {
+  report_unredacted | workflow_redact_text
+}
+
 block() { block_cause=$1; report; exit 1; }
 config_deadline=$((SECONDS + CONFIG_RESOLVE_CAP_SECONDS))
 clamp_bound "$CONFIG_RESOLVE_CAP_SECONDS"
@@ -289,7 +317,7 @@ config_rc=0
 run_bounded "$bound" "$work_dir/config.json" "$work_dir/config.err" \
   python3 "$SCRIPT_DIR/workflow-config-resolver.py" review-effective --repo-root "$repo_root" || config_rc=$?
 if [ "$config_rc" = 124 ]; then block config-resolution-inconclusive; fi
-if [ "$config_rc" != 0 ]; then cat "$work_dir/config.err" >&2; fail "review-effective failed (exit $config_rc)"; fi
+if [ "$config_rc" != 0 ]; then workflow_redact_file "$work_dir/config.err" >&2; fail "review-effective failed (exit $config_rc)"; fi
 # Parsing and every JSON decode share one configuration-stage deadline,
 # further constrained by the overall determination deadline.
 # Run in this shell so cancellation retains ownership of the active process.
@@ -379,7 +407,7 @@ sys.exit(_rpc.main(["--mode", "enabled-bool", sys.argv[1]]))
     fi
     if [ "$rc" = 3 ]; then
       probe_context=coderabbit-config
-      detail=".coderabbit.yaml could not be read: $(cat "$work_dir/probe.err")"
+      detail="$(workflow_command_with_safe_stderr cat "$work_dir/probe.err")"
       return
     fi
     if [ "$rc" != 0 ]; then detail='CodeRabbit enablement check did not complete'; return; fi

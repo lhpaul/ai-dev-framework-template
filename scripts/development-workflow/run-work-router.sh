@@ -197,14 +197,14 @@ try:
 
     print(json.dumps({"section": "present", "mode": mode, "backlog_start": allow}))
 except Exception as e:
-    sys.stderr.write("run-work-router: warning: YAML parse error: {}\n".format(e))
-    print(json.dumps({"section": "absent", "mode": "manual", "backlog_start": False}))
+    formatter = getattr(locals().get("resolver"), "format_config_error", None)
+    print(formatter(e, key="guardrails") if formatter else "configuration: validation error", file=sys.stderr)
+    sys.exit(2)
 PYEOF
   )" || _py_exit=$?
 
   if [ "$_py_exit" -ne 0 ]; then
-    echo "run-work-router: warning: guardrails config parsing failed (exit $_py_exit); using defaults" >&2
-    return 0
+    return 2
   fi
 
   if [ -n "$py_result" ]; then
@@ -456,7 +456,8 @@ gh_rate_limit_reset_info() {
 # ---------------------------------------------------------------------------
 
 build_probe_fail_reason() {
-  local kind="$1" token="$2" err="$3"
+  local kind="$1" token="$2" err="$3" diagnostic_error
+  diagnostic_error="$(printf '%s' "$err" | workflow_redact_text)" || diagnostic_error="[diagnostic sanitization failed]"
   case "$kind" in
     rate_limited)
       local reset_info
@@ -474,10 +475,10 @@ build_probe_fail_reason() {
       printf "Network error contacting GitHub while resolving target '%s'; check connectivity and retry" "$token"
       ;;
     local_config_error)
-      printf "gh could not determine which repository to query while resolving target '%s' (gh reported: %s); run 'gh repo set-default' in this checkout — retrying will not help until the default repository is configured" "$token" "$(printf '%s' "$err" | head -n1)"
+      printf "gh could not determine which repository to query while resolving target '%s' (gh reported: %s); run 'gh repo set-default' in this checkout — retrying will not help until the default repository is configured" "$token" "$(printf '%s' "$diagnostic_error" | sed -n '1p')"
       ;;
     github_unavailable)
-      printf "GitHub appears unavailable while resolving target '%s' (gh reported: %s); retry shortly" "$token" "$(printf '%s' "$err" | head -n1)"
+      printf "GitHub appears unavailable while resolving target '%s' (gh reported: %s); retry shortly" "$token" "$(printf '%s' "$diagnostic_error" | sed -n '1p')"
       ;;
     *)
       printf "gh probe failed while resolving target '%s'" "$token"
@@ -616,7 +617,7 @@ done
 # Read guardrails config (always, for reporting)
 # ---------------------------------------------------------------------------
 
-read_guardrails_config
+read_guardrails_config || exit 2
 
 # ---------------------------------------------------------------------------
 # Core routing logic

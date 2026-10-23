@@ -568,14 +568,19 @@ class Fixture(unittest.TestCase):
         def batch(selected=None):
             args=['bash',str(SCRIPTS/'workflow-batch-plan.sh'),'--repo-root',str(self.root),'--scan-snapshot',str(path)]
             if selected:args+=['--repo',selected]
-            rows=json.loads(self.execute(*args).stdout)
+            result=self.execute(*args)
+            self.assertEqual(result.stderr,'')
+            rows=json.loads(result.stdout)
+            diagnostics=rows[0]['reason']+result.stderr
+            self.assertNotIn('opaque-selected-repository-material',diagnostics)
             self.assertEqual(len(self.ledger()['calls']),before)
             return rows[0]
         for selected,action,reason in ((None,'resolve-repository-selection','no selected product'),
                                        ('mobile-app','hold-unreadable','selected repository'),
-                                       ('foreign-key','resolve-repository-selection','not configured')):
+                                       ('opaque-selected-repository-material','resolve-repository-selection','configuration: configuration validation error; key=workflow_hub.product_repos[].name')):
             row=batch(selected);self.assertEqual(row['category'],'HELD');self.assertEqual(row['action'],action)
             self.assertIn(reason,row['reason'])
+            if selected=='opaque-selected-repository-material':self.assertEqual(row['reason'],reason)
         # A selected documentation action owns the hub, despite retained fix refs.
         self.env['SCAN_FIXTURE_BRANCH']='fix/1-fixture'
         next((self.root/development).glob('2_*_implementation-plan.md')).unlink()

@@ -32,7 +32,7 @@ EOF
 require_option_value() {
   local option="$1"
   if [ "$#" -lt 2 ] || [ -z "${2:-}" ]; then
-    echo "$option requires a value." >&2
+    workflow_diagnostic "$option requires a value." >&2
     usage >&2
     exit 64
   fi
@@ -149,7 +149,7 @@ while [ "$#" -gt 0 ]; do
       exit 0
       ;;
     *)
-      echo "Unknown option: $1" >&2
+      workflow_diagnostic "Unknown option: $1" >&2
       usage >&2
       exit 64
       ;;
@@ -161,7 +161,7 @@ is_true() {
     true|1|yes) return 0 ;;
     false|0|no|"") return 1 ;;
     *)
-      echo "Boolean option must be true or false, got '$1'." >&2
+      workflow_diagnostic "ERROR: configuration validation error" >&2
       exit 64
       ;;
   esac
@@ -173,7 +173,7 @@ validate_bool_option() {
   case "${value:-}" in
     true|1|yes|false|0|no|"") ;;
     *)
-      echo "$option must be true or false, got '$value'." >&2
+      workflow_diagnostic "ERROR: configuration validation error; key=$option" >&2
       exit 64
       ;;
   esac
@@ -200,7 +200,7 @@ discrepancy_count=0
 unavailable_required_count=0
 
 md_escape() {
-  printf '%s' "${1:-}" | tr '\n' ' ' | sed 's/|/\\|/g; s/[[:space:]][[:space:]]*/ /g; s/^ //; s/ $//'
+  printf '%s' "${1:-}" | workflow_redact_text | tr '\n' ' ' | sed 's/|/\\|/g; s/[[:space:]][[:space:]]*/ /g; s/^ //; s/ $//'
 }
 
 add_row() {
@@ -261,12 +261,14 @@ configured_platforms_all_no_thread() {
   local platform=""
   local seen=0
 
-  config_file="$(workflow_effective_config_file)"
+  local resolved_platforms
+  config_file="$(workflow_effective_config_file 2>/dev/null || workflow_config_file)"
+  resolved_platforms="$(configured_review_platforms "$config_file")" || return 2
   while IFS= read -r platform; do
     [ -n "$platform" ] || continue
     platform_has_no_review_threads "$platform" || return 1
     seen=1
-  done < <(configured_review_platforms "$config_file")
+  done <<< "$resolved_platforms"
   [ "$seen" -eq 1 ]
 }
 
@@ -297,7 +299,9 @@ configured_thread_bot_logins_json() {
   local bot_login=""
   local -a bot_logins=()
 
-  config_file="$(workflow_effective_config_file)"
+  local resolved_platforms
+  config_file="$(workflow_effective_config_file 2>/dev/null || workflow_config_file)"
+  resolved_platforms="$(configured_review_platforms "$config_file")" || return 2
   while IFS= read -r platform; do
     [ -n "$platform" ] || continue
     bot_login="$(bot_login_for_platform "$platform")"
@@ -306,7 +310,7 @@ configured_thread_bot_logins_json() {
       [ -n "$bot_login_variant" ] || continue
       bot_logins+=("$bot_login_variant")
     done < <(thread_bot_login_variants "$bot_login")
-  done < <(configured_review_platforms "$config_file")
+  done <<< "$resolved_platforms"
 
   if [ "${#bot_logins[@]}" -eq 0 ]; then
     printf '[]\n'
@@ -432,10 +436,12 @@ local_ai_reviewer_configured() {
   local config_file
   local platform
 
-  config_file="$(workflow_effective_config_file)"
+  local resolved_platforms
+  config_file="$(workflow_effective_config_file 2>/dev/null || workflow_config_file)"
+  resolved_platforms="$(configured_review_platforms "$config_file")" || return 2
   while IFS= read -r platform; do
     [ "$platform" = "local-ai-reviewer" ] && return 0
-  done < <(configured_review_platforms "$config_file")
+  done <<< "$resolved_platforms"
   return 1
 }
 
@@ -495,13 +501,15 @@ reviewer_check_names_json() {
   local check_name=""
   local -a check_names=()
 
-  config_file="$(workflow_effective_config_file)"
+  local resolved_platforms
+  config_file="$(workflow_effective_config_file 2>/dev/null || workflow_config_file)"
+  resolved_platforms="$(configured_review_platforms "$config_file")" || return 2
   while IFS= read -r platform; do
     [ -n "$platform" ] || continue
     check_name="$(reviewer_check_name_for_platform "$platform")"
     [ -n "$check_name" ] || continue
     check_names+=("$check_name")
-  done < <(configured_review_platforms "$config_file")
+  done <<< "$resolved_platforms"
 
   if [ "${#check_names[@]}" -eq 0 ]; then
     printf '[]\n'
@@ -527,7 +535,9 @@ worktree_path_for_branch() {
   '
 }
 
-cd "$repo_root"
+workflow_bind_local_config_root "$repo_root" || exit 2
+repo_root="$(workflow_local_config_root)"
+workflow_command_with_safe_stderr cd "$repo_root"
 
 resolved_repo_root="$(pwd -P)"
 resolved_worktree_path="$(CDPATH='' cd -- "$worktree_path" 2>/dev/null && pwd -P || printf '%s' "$worktree_path")"
@@ -697,7 +707,10 @@ if [ -n "$pr_number" ]; then
         add_row "pull_request.changed_files" "verified" "$pr_files" "gh pr view $pr_number --json files"
       fi
 
-      reviewer_checks="$(reviewer_check_names_json)"
+      if ! reviewer_checks="$(reviewer_check_names_json)"; then
+        add_row "pull_request.reviewer_configuration" "unavailable_required" "source resolution failed" "configured review platforms"
+        reviewer_checks='[]'
+      fi
       # Superseded runs stay in the rollup; judge only the latest run per
       # check (shared helper, workflow-lib.sh, #1559).
       if normalized_checks="$(printf '%s\n' "$pr_json" | normalize_status_check_rollup 2>&1)" \
@@ -764,8 +777,16 @@ if [ -n "$pr_number" ]; then
 
       if ! is_true "$require_review_summary"; then
         add_row "pull_request.local_reviewer_head" "unavailable_optional" "not claimed" "--require-review-summary not set"
-      elif ! local_ai_reviewer_configured; then
-        add_row "pull_request.local_reviewer_head" "unavailable_optional" "local-ai-reviewer not configured" "resolved platform list"
+      elif ! configured_review_platforms "$(workflow_effective_config_file 2>/dev/null || workflow_config_file)" >/dev/null; then
+        add_row "pull_request.local_reviewer_head" "unavailable_required" "source resolution failed" "configured review platforms"
+      elif local_ai_configured_status=0
+        local_ai_reviewer_configured || local_ai_configured_status=$?
+        [ "$local_ai_configured_status" -ne 0 ]; then
+        if [ "$local_ai_configured_status" -eq 1 ]; then
+          add_row "pull_request.local_reviewer_head" "unavailable_optional" "local-ai-reviewer not configured" "resolved platform list"
+        else
+          add_row "pull_request.local_reviewer_head" "unavailable_required" "source resolution failed" "configured review platforms"
+        fi
       elif latest_review_summary="$(fetch_latest_review_summary "$pr_repo" "$pr_number" 2>&1)"; then
         if [ -n "$latest_review_summary" ]; then
           ledger_json="$(printf '%s\n' "$latest_review_summary" | extract_reviewer_loop_history_json)"
@@ -814,7 +835,10 @@ if [ -n "$pr_number" ]; then
       if is_true "$require_review_threads"; then
         owner="${pr_repo%%/*}"
         name="${pr_repo#*/}"
-        thread_bot_logins_json="$(configured_thread_bot_logins_json)"
+        if ! thread_bot_logins_json="$(configured_thread_bot_logins_json)"; then
+          add_row "pull_request.reviewer_configuration" "unavailable_required" "source resolution failed" "configured review platforms"
+          thread_bot_logins_json='[]'
+        fi
         threads_json=""
         thread_count=""
         graph_thread_comment_ids="[]"
@@ -934,7 +958,7 @@ else
   overall_result="discrepancy"
 fi
 
-cat <<EOF
+cat <<EOF | workflow_redact_text
 ## Ground-Truth Completion Verification
 
 - Item: #$issue

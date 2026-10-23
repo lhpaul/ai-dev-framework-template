@@ -1462,7 +1462,9 @@ cmd_merge() {
   local conflict_state
   conflict_state="$(git status --porcelain 2>/dev/null | grep -E '^(UU|AA|DD|AU|UA|DU|UD)' || true)"
   if [ -n "$conflict_state" ]; then
-    merge_die "Working tree has unresolved conflicts from a previous merge — resolve or abort the in-progress merge before calling merge --pr again. Conflicting paths: $(printf '%s' "$conflict_state" | awk '{print $2}' | tr '\n' ' ')"
+    local conflict_diagnostic
+    conflict_diagnostic="$(printf '%s' "$conflict_state" | workflow_redact_text)" || conflict_diagnostic="[diagnostic sanitization failed]"
+    merge_die "Working tree has unresolved conflicts from a previous merge — resolve or abort the in-progress merge before calling merge --pr again. Conflicting paths: $(printf '%s' "$conflict_diagnostic" | awk '{print $2}' | tr '\n' ' ')"
   fi
 
   local budget_repo budget_result
@@ -1619,7 +1621,8 @@ cmd_merge() {
   # Non-conflict failure: abort and report.
   git merge --abort 2>/dev/null || true
   local error_msg
-  error_msg="$(printf '%s' "$merge_output" | head -n 5 | tr '\n' ' ')"
+  error_msg="$(printf '%s' "$merge_output" | workflow_redact_text)" || error_msg="[diagnostic sanitization failed]"
+  error_msg="$(printf '%s' "$error_msg" | sed -n '1,5p' | tr '\n' ' ')"
   print_kv MERGE_RESULT "failed"
   print_kv_escaped ERROR_MESSAGE "$error_msg"
   exit 2

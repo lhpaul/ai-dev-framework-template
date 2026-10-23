@@ -851,7 +851,7 @@ with tempfile.TemporaryDirectory(prefix='reviewer-preflight-tests-') as tmp:
     )
     check('T-27 multi-platform report renders both rows', data.get('PLATFORM_COUNT') == '2', data)
     names = {data.get('PLATFORM_1_NAME'), data.get('PLATFORM_2_NAME')}
-    check('T-27 both platform names appear', names == {'coderabbit', 'not-a-real-reviewer'}, data)
+    check('T-27 both platform names appear', names == {'coderabbit', 'unknown'}, data)
     for n in ('1', '2'):
         name = data.get(f'PLATFORM_{n}_NAME')
         verdict = data.get(f'PLATFORM_{n}_VERDICT')
@@ -1657,45 +1657,29 @@ with tempfile.TemporaryDirectory(prefix='reviewer-preflight-tests-') as tmp:
         err,
     )
 
-    # T-48 (bounded-Codex-pass, P2): if copying the local override file
-    # fails for any reason (it disappears, becomes unreadable, or the copy
-    # itself fails between review-overrides resolving it and this script's
-    # own read — review-overrides must itself still succeed first, or the
-    # existing "review-overrides failed" tooling failure fires instead,
-    # never reaching the cp this test targets), that must be a tooling
-    # failure (exit 3, named), not an unguarded `cp` exiting 1 under
-    # `set -e` with no OUTCOME report — exit 1 is reserved for the
-    # structured `blocked` verdict, so a caller distinguishing outcomes by
-    # exit code alone could misclassify this staging failure as a
-    # reviewer-configuration disagreement. Fake `cp` itself to fail
-    # deterministically for exactly this one target, isolating the guard
-    # from needing to reproduce a genuine, inherently racy TOCTOU window.
+    # T-48: failed review-only projection is a tooling failure, never a
+    # reviewer disagreement or an unsafe whole-file copy.
     repo48 = root / 'repo48'
     write_repo(repo48, coherent_shared, coherent_coderabbit)
     local48 = repo48 / '.ai-dev-workflow.local.yaml'
     local48.write_text('review:\n  on_draft:\n    runner: [claude]\n')
     bins48 = root / 'bin48'
     bins48.mkdir(exist_ok=True)
-    real_cp48 = shutil.which('cp')
-    failing_cp48 = bins48 / 'cp'
-    failing_cp48.write_text(
+    real_python48 = shutil.which('python3')
+    failing_snapshot48 = bins48 / 'python3'
+    failing_snapshot48.write_text(
         '#!/bin/bash\n'
-        'for arg in "$@"; do case "$arg" in *.ai-dev-workflow.local.yaml) echo "cp: simulated I/O error" >&2; exit 1;; esac; done\n'
-        f'exec {real_cp48!r} "$@"\n'
+        'for arg in "$@"; do case "$arg" in review-snapshot) echo "review-snapshot: synthetic atomic staging failure" >&2; exit 2;; esac; done\n'
+        f'exec {real_python48!r} "$@"\n'
     )
-    failing_cp48.chmod(0o755)
+    failing_snapshot48.chmod(0o755)
     rc, data, out, err = run(
         repo48, '--mode', 'pre-dispatch', '--target-base', 'develop',
         '--remaining-stages', 'on_draft.github', '--pr-state', 'on_draft.github=draft',
-        env={'PATH': f'{bins48}:{os.environ.get("PATH", "")}'},
-        expected=3,
+        env={'PATH': f'{bins48}:{os.environ.get("PATH", "")}'}, expected=3,
     )
-    check('T-48 a failed copy of the local override file fails closed as a tooling failure, not a bare cp exit 1', 'OUTCOME' not in data, data)
-    check(
-        'T-48 failure message names the local override file and the copy failure',
-        str(local48) in err and 'cannot copy the local override file' in err,
-        err,
-    )
+    check('T-48 failed review-only projection fails closed as a tooling failure', 'OUTCOME' not in data, data)
+    check('T-48 failure names the projection operation', 'review-snapshot failed' in err, err)
 
     # T-49 (#1561 round-6 finding, P2): an explicit empty --remaining-stages
     # short-circuits straight to no-review-remaining WITHOUT reading either
@@ -1735,18 +1719,12 @@ with tempfile.TemporaryDirectory(prefix='reviewer-preflight-tests-') as tmp:
     check('T-49b empty remaining-stages against a valid base still short-circuits to no-review-remaining', data.get('OUTCOME') == 'no-review-remaining', data)
     check('T-49b no platforms computed', data.get('PLATFORM_COUNT') == '0', data)
 
-    # T-50 (bounded-Codex-pass, P2): when review-overrides resolves a
-    # local override path but that path is no longer a readable regular
-    # file by the time this script's own presence check runs (deleted or
-    # replaced in between), this must fail closed as a tooling failure —
-    # not silently fall through to LOCAL_OVERRIDE_STATE=none and resolve
-    # reviewer lists as if no override existed. Fake python3 to replace
-    # the override file with a directory immediately after the real
-    # review-overrides call resolves it (a stable, deterministic
-    # reproduction of this TOCTOU window).
+    # T-50: removing the original external source after projection cannot
+    # affect staged readers. Original identity remains separate metadata.
     repo50 = root / 'repo50'
     write_repo(repo50, coherent_shared, coherent_coderabbit)
-    local50 = repo50 / '.ai-dev-workflow.local.yaml'
+    external50 = root / 'external50'; external50.mkdir()
+    local50 = external50 / '.ai-dev-workflow.local.yaml'
     local50.write_text('review:\n  on_draft:\n    runner: [claude]\n')
     bins50 = root / 'bin50'
     bins50.mkdir(exist_ok=True)
@@ -1755,7 +1733,7 @@ with tempfile.TemporaryDirectory(prefix='reviewer-preflight-tests-') as tmp:
     racy_python50.write_text(
         '#!/bin/bash\n'
         'is_review_overrides=0\n'
-        'for arg in "$@"; do [ "$arg" = review-overrides ] && is_review_overrides=1; done\n'
+        'for arg in "$@"; do [ "$arg" = review-snapshot ] && is_review_overrides=1; done\n'
         f'{real_python50!r} "$@"\n'
         'rc=$?\n'
         'if [ "$is_review_overrides" = 1 ] && [ "$rc" = 0 ]; then\n'
@@ -1767,15 +1745,10 @@ with tempfile.TemporaryDirectory(prefix='reviewer-preflight-tests-') as tmp:
     rc, data, out, err = run(
         repo50, '--mode', 'pre-dispatch', '--target-base', 'develop',
         '--remaining-stages', 'on_draft.github', '--pr-state', 'on_draft.github=draft',
-        env={'PATH': f'{bins50}:{os.environ.get("PATH", "")}'},
-        expected=3,
+        env={'PATH': f'{bins50}:{os.environ.get("PATH", "")}', 'WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT': str(external50)},
+        expected=0,
     )
-    check('T-50 a local override removed between resolution and the presence check fails closed, not LOCAL_OVERRIDE_STATE=none', 'OUTCOME' not in data, data)
-    check(
-        'T-50 failure message names the local override file and that it no longer exists',
-        str(local50) in err and 'no longer exists' in err,
-        err,
-    )
+    check('T-50 removed external source does not replace validated projection', data.get('LOCAL_OVERRIDE_STATE') == 'applied', data)
 
     # T-51 (#1561 round-7 finding, P2): clamp_bound_floor's 1-second floor
     # must extend the effective deadline exactly ONCE per invocation, not
@@ -1902,7 +1875,7 @@ with tempfile.TemporaryDirectory(prefix='reviewer-preflight-tests-') as tmp:
     bins54 = root / 'bin54'
     bins54.mkdir(exist_ok=True)
     stub_python54 = bins54 / 'python3'
-    stub_python54.write_text('#!/bin/bash\nexit 0\n')
+    stub_python54.write_text('#!/bin/bash\nif [ "${2:-}" = redact-text ]; then exec ' + repr(shutil.which('python3')) + ' "$@"; fi\nexit 0\n')
     stub_python54.chmod(0o755)
     (bins54 / 'dirname').symlink_to(shutil.which('dirname'))
     repo54 = root / 'repo54'

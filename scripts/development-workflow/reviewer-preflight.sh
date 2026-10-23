@@ -55,7 +55,7 @@ set -euo pipefail
 # around it.
 export GIT_NO_LAZY_FETCH=1
 
-fail() { printf 'ERROR: %s\n' "$*" >&2; exit 3; }
+fail() { workflow_diagnostic "ERROR: $*" >&2; exit 3; }
 
 SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source=scripts/development-workflow/workflow-lib.sh
@@ -380,8 +380,8 @@ case "$mode" in pre-dispatch|branch-resume|pr-resume) ;; *) fail '--mode must be
 # resolved with `pwd -P` first so a symlinked TMPDIR (e.g. macOS's
 # /var -> /private/var) cannot hide the containment. The EXIT trap already
 # removes work_dir on this path, so the rejected scratch tree does not leak.
-repo_root_physical=$(cd -- "$repo_root" && pwd -P) || fail 'cannot resolve --repo-root to a physical path'
-work_dir_physical=$(cd -- "$work_dir" && pwd -P) || fail 'cannot resolve the scratch directory to a physical path'
+repo_root_physical=$( { cd -- "$repo_root" && pwd -P; } 2>/dev/null) || fail 'cannot resolve --repo-root to a physical path'
+work_dir_physical=$( { cd -- "$work_dir" && pwd -P; } 2>/dev/null) || fail 'cannot resolve the scratch directory to a physical path'
 case "$work_dir_physical/" in
   "$repo_root_physical"/*) fail "refusing to run with a scratch directory inside --repo-root ($work_dir_physical); set TMPDIR to a location outside the repository so the read-only side-effect check stays meaningful" ;;
 esac
@@ -639,12 +639,7 @@ resolve_target_base_or_fail() {
   esac
 }
 
-# Derived from review-overrides's own LOCAL_OVERRIDE_FILE/ORIGIN once that
-# runs below — not from a bare $repo_root/.ai-dev-workflow.local.yaml
-# existence check, which misses the linked-worktree -> main-clone fallback
-# (#1560: a linked worktree with no local override of its own but a real
-# override in the main clone would otherwise report "none" here, even
-# though the resolver did find and could apply one).
+# Attribution comes from review-snapshot metadata, independently of staged paths.
 local_override_state=none
 
 shared_ref= platform_ref=
@@ -912,7 +907,7 @@ run_bounded "$bound" "$early_output_json" "$work_dir/early-classify.err" \
 early_valid_rc=0
 bounded_jq plain "$work_dir/early-valid.out" "$work_dir/early-valid.err" -e . "$early_output_json" >/dev/null 2>&1 || early_valid_rc=$?
 if [ "$early_classify_rc" -gt 3 ] || { [ "$early_classify_rc" != 0 ] && [ "$early_valid_rc" != 0 ]; }; then
-  cat "$work_dir/early-classify.err" >&2
+  workflow_redact_file "$work_dir/early-classify.err" >&2
   fail "reviewer_preflight.py failed (exit $early_classify_rc)"
 fi
 early_outcome=$(bounded_jq plain "$work_dir/early-outcome.out" "$work_dir/early-outcome.err" -er '.outcome' "$early_output_json") || fail 'cannot inspect early stage-set validation output'
@@ -921,17 +916,10 @@ if [ "$early_outcome" = prerequisite-failed ]; then
   prerequisite_failed_report "$early_detail"
 fi
 
-# Shared reviewer list: resolved YAML at $shared_ref, with the machine-local
-# override applied from this machine (never from the branch/PR being read).
-# The override file itself is resolved once, normally, against the real
-# --repo-root (so the existing linked-worktree/main-clone fallback in
-# resolve_local_config still applies) and copied alongside the ref snapshot,
-# rather than pointed at via WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT — that env
-# var's own early-return branch in resolve_local_config bypasses the
-# main-clone fallback entirely, which would silently miss a linked-worktree
-# override.
+# Shared settings come from the selected Git ref. The private source is read
+# once into a validated review-only projection, with original attribution separate.
 shared_dir="$work_dir/shared-config"
-mkdir -p "$shared_dir"
+workflow_command_with_safe_stderr mkdir -m 700 "$shared_dir"
 shared_read_rc=0
 read_ref_file "$shared_ref" .ai-dev-workflow.yaml "$shared_dir/.ai-dev-workflow.yaml" || shared_read_rc=$?
 case "$shared_read_rc" in
@@ -943,8 +931,8 @@ overrides_json="$work_dir/overrides.json"
 overrides_rc=0
 clamp_bound "$PREFLIGHT_PER_PLATFORM_CAP_SECONDS"
 run_bounded "$bound" "$overrides_json" "$work_dir/overrides.err" \
-  python3 "$SCRIPT_DIR/workflow-config-resolver.py" review-overrides --repo-root "$repo_root" --json || overrides_rc=$?
-[ "$overrides_rc" = 0 ] || fail "review-overrides failed (exit $overrides_rc): $(cat "$work_dir/overrides.err" 2>/dev/null)"
+  python3 "$SCRIPT_DIR/workflow-config-resolver.py" review-snapshot --repo-root "$repo_root" --destination "$shared_dir" || overrides_rc=$?
+[ "$overrides_rc" = 0 ] || fail "review-snapshot failed (exit $overrides_rc): $(cat "$work_dir/overrides.err" 2>/dev/null)"
 # #1561 round-11 finding: this resolver-output parse (and the
 # local_review_override_applied probe below) previously ran unbounded —
 # jq reading an already-written local file is normally instant, but a
@@ -955,43 +943,12 @@ overrides_fields_rc=0
 clamp_bound "$PREFLIGHT_PER_PLATFORM_CAP_SECONDS"
 run_bounded "$bound" "$work_dir/overrides-fields.out" "$work_dir/overrides-fields.err" \
   jq -j '(.LOCAL_OVERRIDE_FILE // ""), "\u0000", (.LOCAL_OVERRIDE_ORIGIN // ""), "\u0000"' "$overrides_json" || overrides_fields_rc=$?
-[ "$overrides_fields_rc" = 0 ] || fail "cannot read LOCAL_OVERRIDE_FILE/LOCAL_OVERRIDE_ORIGIN from review-overrides output (exit $overrides_fields_rc): $(cat "$work_dir/overrides-fields.err" 2>/dev/null)"
+[ "$overrides_fields_rc" = 0 ] || fail "cannot read LOCAL_OVERRIDE_FILE/LOCAL_OVERRIDE_ORIGIN from review-snapshot output (exit $overrides_fields_rc): $(cat "$work_dir/overrides-fields.err" 2>/dev/null)"
 overrides_fields=()
 while IFS= read -r -d '' overrides_field; do overrides_fields+=("$overrides_field"); done <"$work_dir/overrides-fields.out"
 local_override_file="${overrides_fields[0]:-}"
 local_override_origin="${overrides_fields[1]:-}"
 if [ -n "$local_override_file" ]; then
-  if [ ! -f "$local_override_file" ]; then
-    # review-overrides resolved a local override path (a non-empty
-    # LOCAL_OVERRIDE_FILE), but by the time this script's own [ -f ] test
-    # runs, that path is no longer a regular readable file — it
-    # disappeared, or was replaced by something else, in the window
-    # between review-overrides's own resolution and this check. Silently
-    # falling through here (the previous behavior) leaves
-    # local_override_state="none" and resolves reviewer lists as if no
-    # local override existed at all — a different, unreported outcome
-    # than the one review-overrides itself just proved. This is a tooling
-    # failure, not "no override configured"; fail closed rather than
-    # silently proceed without it.
-    fail "the local override file ($local_override_file) that review-overrides resolved no longer exists as a readable regular file — it may have been deleted or replaced after review-overrides resolved it"
-  fi
-  # An unguarded `cp` here is terminated by `set -e` on failure with the
-  # command's own exit status (typically 1) — the same exit code this
-  # script's own structured `blocked` verdict (OUTCOME=blocked) uses, but
-  # with no OUTCOME report at all, since the script never reaches the
-  # point that would print one. A caller distinguishing outcomes by exit
-  # code alone could misclassify this staging/tooling failure (the file
-  # disappearing or becoming unreadable between the check above and this
-  # copy) as a reviewer-configuration disagreement. Route it through
-  # fail() instead, so it is unambiguously a tooling failure (exit 3)
-  # with diagnostic context.
-  cp -- "$local_override_file" "$shared_dir/.ai-dev-workflow.local.yaml" || fail "cannot copy the local override file ($local_override_file) for reading: it may have disappeared or become unreadable after the presence check just above"
-  # Matches the documented contract's three states (none | applied |
-  # present-unpropagated <details>): a file was found (accounting for the
-  # linked-worktree -> main-clone fallback via LOCAL_OVERRIDE_ORIGIN) but
-  # nothing from it applied to any resolved bucket yet — the block below
-  # upgrades this to "applied" when review-effective / review-github-
-  # effective actually used it.
   local_override_state="present-unpropagated $local_override_file${local_override_origin:+ (origin: $local_override_origin)}"
 fi
 
@@ -1000,11 +957,11 @@ github_json="$work_dir/github-effective.json"
 resolver_rc=0
 clamp_bound "$PREFLIGHT_PER_PLATFORM_CAP_SECONDS"
 run_bounded "$bound" "$runner_json" "$work_dir/resolver.err" \
-  python3 "$SCRIPT_DIR/workflow-config-resolver.py" review-effective --repo-root "$shared_dir" || resolver_rc=$?
+  env -u WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT python3 "$SCRIPT_DIR/workflow-config-resolver.py" review-effective --repo-root "$shared_dir" || resolver_rc=$?
 [ "$resolver_rc" = 0 ] || fail "review-effective failed (exit $resolver_rc): $(cat "$work_dir/resolver.err" 2>/dev/null)"
 clamp_bound "$PREFLIGHT_PER_PLATFORM_CAP_SECONDS"
 run_bounded "$bound" "$github_json" "$work_dir/resolver-github.err" \
-  python3 "$SCRIPT_DIR/workflow-config-resolver.py" review-github-effective --repo-root "$shared_dir" || resolver_rc=$?
+  env -u WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT python3 "$SCRIPT_DIR/workflow-config-resolver.py" review-github-effective --repo-root "$shared_dir" || resolver_rc=$?
 [ "$resolver_rc" = 0 ] || fail "review-github-effective failed (exit $resolver_rc): $(cat "$work_dir/resolver-github.err" 2>/dev/null)"
 
 override_applied_rc=0
@@ -1105,7 +1062,7 @@ run_bounded "$bound" "$output_json" "$work_dir/preflight.err" \
 final_valid_rc=0
 bounded_jq plain "$work_dir/final-valid.out" "$work_dir/final-valid.err" -e . "$output_json" >/dev/null 2>&1 || final_valid_rc=$?
 if [ "$preflight_rc" -gt 3 ] || { [ "$preflight_rc" != 0 ] && [ "$final_valid_rc" != 0 ]; }; then
-  cat "$work_dir/preflight.err" >&2
+  workflow_redact_file "$work_dir/preflight.err" >&2
   fail "reviewer_preflight.py failed (exit $preflight_rc)"
 fi
 
@@ -1143,7 +1100,7 @@ if [ "$json_output" = true ]; then
     jq --argjson elapsed "$SECONDS" --argjson budget "$PREFLIGHT_BUDGET_SECONDS" \
     '. + {elapsed_seconds: $elapsed, budget_seconds: $budget}' "$output_json" || json_render_rc=$?
   [ "$json_render_rc" = 0 ] || fail "cannot render the JSON report (exit $json_render_rc): $(cat "$work_dir/json-report.err" 2>/dev/null)"
-  cat "$work_dir/json-report.out"
+  workflow_redact_file "$work_dir/json-report.out" --json
   exit "$preflight_rc"
 fi
 
@@ -1168,6 +1125,7 @@ run_bounded "$bound" "$work_dir/report-fields.out" "$work_dir/report-fields.err"
 [ "$report_rc" = 0 ] || fail "cannot render the report (exit $report_rc): $(cat "$work_dir/report-fields.err" 2>/dev/null)"
 report_fields=()
 while IFS= read -r -d '' report_field; do report_fields+=("$report_field"); done <"$work_dir/report-fields.out"
+{
 print_kv_escaped OUTCOME "${report_fields[0]}"
 print_kv_escaped OUTCOME_LABEL "${report_fields[1]}"
 print_kv_escaped CHECKED_SHARED_CONFIG_REF "${report_fields[2]}"
@@ -1196,5 +1154,7 @@ while [ "$n" -lt "$platform_count" ]; do
 done
 print_kv_escaped ELAPSED_SECONDS "$SECONDS"
 print_kv_escaped BUDGET_SECONDS "$PREFLIGHT_BUDGET_SECONDS"
+
+} | workflow_redact_text
 
 exit "$preflight_rc"

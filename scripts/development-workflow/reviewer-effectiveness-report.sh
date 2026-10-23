@@ -15,7 +15,7 @@ RER_DEFAULT_WINDOW=20
 RER_STRICT_SPEC_CHECKLIST_RELPATH="docs/workflow/development-workflow/strict-spec-checks.md"
 
 rer_fail() {
-  printf 'ERROR: %s\n' "$*" >&2
+  workflow_diagnostic_printf 'ERROR: %s\n' "$*" >&2
   exit 1
 }
 
@@ -597,9 +597,9 @@ rer_main() {
   fi
 
   if [ "$json_output" -eq 1 ]; then
-    printf '%s\n' "$final_report"
+    printf '%s\n' "$final_report" | workflow_redact_json
   else
-    rer_render_text "$final_report"
+    rer_render_text "$final_report" | workflow_redact_text
   fi
 }
 

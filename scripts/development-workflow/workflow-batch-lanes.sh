@@ -237,8 +237,8 @@ read_parallelism_caps() {
     return 0
   fi
 
-  python3 - "$config_file" <<'PYEOF' || printf '{"spec":0,"plan":0,"review":0,"implementation":1}\n'
-import json, sys
+  python3 - "$config_file" "$SCRIPT_DIR/workflow-config-resolver.py" <<'PYEOF'
+import json, runpy, sys
 from pathlib import Path
 
 path = Path(sys.argv[1])
@@ -251,9 +251,14 @@ except ImportError:
 
 try:
     cfg = yaml.safe_load(path.read_text()) or {}
-except Exception:
-    print(json.dumps(defaults))
-    sys.exit(0)
+except Exception as exc:
+    try:
+        formatter = runpy.run_path(sys.argv[2])["format_config_error"]
+        detail = formatter(exc, key="guardrails.parallelism")
+    except Exception:
+        detail = "configuration: configuration validation error; key=guardrails.parallelism"
+    print(detail, file=sys.stderr)
+    sys.exit(2)
 
 guardrails = cfg.get("guardrails") if isinstance(cfg, dict) else None
 parallelism = guardrails.get("parallelism") if isinstance(guardrails, dict) else None
@@ -307,9 +312,10 @@ if [ -z "$repo_root" ]; then
   repo_root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 fi
 
-cd "$repo_root" || exit 1
+repo_root="$( { CDPATH='' cd -- "$repo_root" && pwd -P; } 2>/dev/null)" || { printf 'configuration: checkout access error\n' >&2; exit 1; }
+workflow_command_with_safe_stderr cd "$repo_root" || exit 1
 
-caps_json="$(read_parallelism_caps "$repo_root")"
+caps_json="$(read_parallelism_caps "$repo_root")" || exit 2
 max_spec="$(printf '%s' "$caps_json" | jq -r '.spec')"
 max_plan="$(printf '%s' "$caps_json" | jq -r '.plan')"
 max_review="$(printf '%s' "$caps_json" | jq -r '.review')"
@@ -321,12 +327,6 @@ if [ -n "${WORKFLOW_MAX_CONCURRENT_PLAN:-}" ]; then max_plan="$WORKFLOW_MAX_CONC
 if [ -n "${WORKFLOW_MAX_CONCURRENT_REVIEW:-}" ]; then max_review="$WORKFLOW_MAX_CONCURRENT_REVIEW"; fi
 if [ -n "${WORKFLOW_MAX_CONCURRENT_IMPLEMENTATION:-}" ]; then max_implementation="$WORKFLOW_MAX_CONCURRENT_IMPLEMENTATION"; fi
 
-print_kv MAX_CONCURRENT_SPEC "$max_spec"
-print_kv MAX_CONCURRENT_PLAN "$max_plan"
-print_kv MAX_CONCURRENT_REVIEW "$max_review"
-print_kv MAX_CONCURRENT_IMPLEMENTATION "$max_implementation"
-echo
-
 batch_input=""
 if [ "$scan_mode" -eq 1 ]; then
   if [ "${#development_paths[@]}" -gt 0 ]; then
@@ -337,6 +337,14 @@ if [ "$scan_mode" -eq 1 ]; then
 else
   batch_input="$(cat)"
 fi
+
+# Publish functional caps only after a scan has acquired its validated input.
+# A fatal child error must not leave a partial successful report on stdout.
+print_kv MAX_CONCURRENT_SPEC "$max_spec"
+print_kv MAX_CONCURRENT_PLAN "$max_plan"
+print_kv MAX_CONCURRENT_REVIEW "$max_review"
+print_kv MAX_CONCURRENT_IMPLEMENTATION "$max_implementation"
+echo
 
 if [ -z "${batch_input//[[:space:]]/}" ]; then
   echo "(none)"

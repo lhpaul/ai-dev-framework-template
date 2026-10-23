@@ -392,7 +392,7 @@ workflow_hub:
 YAML
 run_fails_contains \
   "shared_config_rejects_private_key_path" \
-  "contains local-only field(s): github_app.private_key_path" \
+  "contains local-only fields" \
   python3 "$RESOLVER" auth --repo-root "$shared_secret_dir" --repo mobile-app
 
 token_exchange_stub="$TMP_ROOT/token-exchange-stub.sh"
@@ -453,7 +453,10 @@ product_repos:
       private_key_path: ~/mobile-app.pem
 YAML
 tilde_token="$(
-  HOME="$tilde_home" WORKFLOW_GITHUB_APP_TOKEN_EXCHANGE_CMD="$token_exchange_stub" \
+  # Keep the already available public parser dependency visible when the
+  # existing tilde-path fixture changes the child home directory.
+  PYTHONPATH="$(python3 -c 'import pathlib, yaml; print(pathlib.Path(yaml.__file__).resolve().parent.parent)')" \
+    HOME="$tilde_home" WORKFLOW_GITHUB_APP_TOKEN_EXCHANGE_CMD="$token_exchange_stub" \
     bash "$TOKEN_HELPER" --repo-root "$tilde_key_dir" --repo mobile-app --print-token
 )"
 run_equals "token_helper_tilde_private_key_path" "fixture-installation-token" "$tilde_token"

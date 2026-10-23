@@ -85,6 +85,10 @@
 
 set -euo pipefail
 
+{ DIAGNOSTIC_SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"; } 2>/dev/null || { bootstrap_status=$?; printf 'configuration: tooling initialization error\n' >&2; exit "$bootstrap_status"; }
+# shellcheck source=scripts/development-workflow/workflow-lib.sh
+source "$DIAGNOSTIC_SCRIPT_DIR/workflow-lib.sh" 2>/dev/null
+
 # Use BASH_SOURCE[0] rather than $0 so this resolves correctly even if the
 # script is ever sourced (e.g. by a future harness), matching the pattern
 # already used by pr-review-loop.sh.
@@ -98,14 +102,14 @@ source "$CODEX_REVIEWER_SCRIPT_DIR/codex-github-evidence-lib.sh"
 emit_reviewed_head_if_known() {
   emit_review_requested_at_if_known
   [ -n "${CURRENT_SHA_FULL:-}" ] || return 0
-  printf 'REVIEWED_HEAD=%s\n' "$CURRENT_SHA_FULL"
+  workflow_diagnostic_kv REVIEWED_HEAD "$CURRENT_SHA_FULL"
 }
 
 # #1789 (plan D12): REVIEW_REQUESTED_AT=<TRIGGER_TIME> once a current-head
 # trigger was posted or found; nothing before that.
 emit_review_requested_at_if_known() {
   if [ -n "${TRIGGER_TIME:-}" ]; then
-    printf 'REVIEW_REQUESTED_AT=%s\n' "$TRIGGER_TIME"
+    workflow_diagnostic_kv REVIEW_REQUESTED_AT "$TRIGGER_TIME"
   fi
   return 0
 }
@@ -113,7 +117,7 @@ emit_review_requested_at_if_known() {
 # ── Argument parsing ──────────────────────────────────────────────────────────
 
 if [ $# -lt 3 ]; then
-  echo "Usage: $0 <pr_number> <owner> <repo> [--trigger-phrase <phrase>] [--bot-login <login>] [--poll-interval <seconds>] [--max-wait <seconds>] [--pre-trigger-wait <seconds>] [--max-retriggers <count>]" >&2
+  workflow_diagnostic "Usage: $0 <pr_number> <owner> <repo> [--trigger-phrase <phrase>] [--bot-login <login>] [--poll-interval <seconds>] [--max-wait <seconds>] [--pre-trigger-wait <seconds>] [--max-retriggers <count>]" >&2
   exit 2
 fi
 
@@ -126,7 +130,7 @@ shift 3
 # URLs (REVIEW.md: validate user-supplied input before interpolation).
 case "$PR_NUMBER" in
   ''|0|*[!0-9]*)
-    echo "ERROR: PR number '$PR_NUMBER' is not a valid positive integer" >&2
+    workflow_diagnostic "ERROR: PR number '$PR_NUMBER' is not a valid positive integer" >&2
     exit 2
     ;;
 esac
@@ -135,13 +139,13 @@ esac
 # which could redirect API paths).
 case "$OWNER" in
   ''|*[!A-Za-z0-9._-]*)
-    echo "ERROR: owner '$OWNER' contains invalid characters (expected alphanumerics, hyphens, underscores, dots)" >&2
+    workflow_diagnostic "ERROR: owner '$OWNER' contains invalid characters (expected alphanumerics, hyphens, underscores, dots)" >&2
     exit 2
     ;;
 esac
 case "$REPO" in
   ''|*[!A-Za-z0-9._-]*)
-    echo "ERROR: repo '$REPO' contains invalid characters (expected alphanumerics, hyphens, underscores, dots)" >&2
+    workflow_diagnostic "ERROR: repo '$REPO' contains invalid characters (expected alphanumerics, hyphens, underscores, dots)" >&2
     exit 2
     ;;
 esac
@@ -157,25 +161,25 @@ MAX_RETRIGGERS=1
 while [ $# -gt 0 ]; do
   case "$1" in
     --trigger-phrase)
-      if [ $# -lt 2 ]; then echo "ERROR: --trigger-phrase requires a value" >&2; exit 2; fi
+      if [ $# -lt 2 ]; then workflow_diagnostic "ERROR: --trigger-phrase requires a value" >&2; exit 2; fi
       TRIGGER_PHRASE="$2"; shift 2;;
     --bot-login)
-      if [ $# -lt 2 ]; then echo "ERROR: --bot-login requires a value" >&2; exit 2; fi
+      if [ $# -lt 2 ]; then workflow_diagnostic "ERROR: --bot-login requires a value" >&2; exit 2; fi
       BOT_LOGIN="$2"; shift 2;;
     --poll-interval)
-      if [ $# -lt 2 ]; then echo "ERROR: --poll-interval requires a value" >&2; exit 2; fi
+      if [ $# -lt 2 ]; then workflow_diagnostic "ERROR: --poll-interval requires a value" >&2; exit 2; fi
       POLL_INTERVAL="$2"; shift 2;;
     --max-wait)
-      if [ $# -lt 2 ]; then echo "ERROR: --max-wait requires a value" >&2; exit 2; fi
+      if [ $# -lt 2 ]; then workflow_diagnostic "ERROR: --max-wait requires a value" >&2; exit 2; fi
       MAX_WAIT="$2"; shift 2;;
     --pre-trigger-wait)
-      if [ $# -lt 2 ]; then echo "ERROR: --pre-trigger-wait requires a value" >&2; exit 2; fi
+      if [ $# -lt 2 ]; then workflow_diagnostic "ERROR: --pre-trigger-wait requires a value" >&2; exit 2; fi
       PRE_TRIGGER_WAIT="$2"; shift 2;;
     --max-retriggers)
-      if [ $# -lt 2 ]; then echo "ERROR: --max-retriggers requires a value" >&2; exit 2; fi
+      if [ $# -lt 2 ]; then workflow_diagnostic "ERROR: --max-retriggers requires a value" >&2; exit 2; fi
       MAX_RETRIGGERS="$2"; shift 2;;
     *)
-      echo "ERROR: unknown option '$1'" >&2; exit 2;;
+      workflow_diagnostic "ERROR: unknown option '$1'" >&2; exit 2;;
   esac
 done
 
@@ -186,20 +190,20 @@ done
 
 case "$POLL_INTERVAL" in
   ''|0|*[!0-9]*)
-    echo "ERROR: --poll-interval value '$POLL_INTERVAL' is not a positive integer (must be >= 1)" >&2
+    workflow_diagnostic "ERROR: configuration validation error; key=--poll-interval" >&2
     exit 2
     ;;
 esac
 case "$MAX_WAIT" in
   ''|0|*[!0-9]*)
-    echo "ERROR: --max-wait value '$MAX_WAIT' is not a positive integer (must be >= 1)" >&2
+    workflow_diagnostic "ERROR: configuration validation error; key=--max-wait" >&2
     exit 2
     ;;
 esac
 # PRE_TRIGGER_WAIT may be 0 (skip the pre-trigger check) but must be non-negative.
 case "$PRE_TRIGGER_WAIT" in
   ''|*[!0-9]*)
-    echo "ERROR: --pre-trigger-wait value '$PRE_TRIGGER_WAIT' is not a non-negative integer (must be >= 0)" >&2
+    workflow_diagnostic "ERROR: configuration validation error; key=--pre-trigger-wait" >&2
     exit 2
     ;;
 esac
@@ -207,7 +211,7 @@ PRE_TRIGGER_WAIT=$((10#$PRE_TRIGGER_WAIT))
 # MAX_RETRIGGERS may be 0 (disable retriggering) but must be a non-negative integer.
 case "$MAX_RETRIGGERS" in
   ''|*[!0-9]*)
-    echo "ERROR: --max-retriggers value '$MAX_RETRIGGERS' is not a non-negative integer (must be >= 0)" >&2
+    workflow_diagnostic "ERROR: configuration validation error; key=--max-retriggers" >&2
     exit 2
     ;;
 esac
@@ -224,15 +228,15 @@ fi
 # Guard the assignment with 'if !' to prevent set -e from exiting with code 1
 # (NEEDS_REVISION) before the empty-check guard below can emit the VERDICT line.
 
-if ! CURRENT_SHA_FULL=$(gh pr view "$PR_NUMBER" --repo "$OWNER/$REPO" --json headRefOid --jq '.headRefOid' | head -c 100); then
-  echo "ERROR: could not resolve PR #$PR_NUMBER HEAD SHA" >&2
+if ! CURRENT_SHA_FULL=$(workflow_command_with_safe_stderr gh pr view "$PR_NUMBER" --repo "$OWNER/$REPO" --json headRefOid --jq '.headRefOid' | head -c 100); then
+  workflow_diagnostic "ERROR: could not resolve PR #$PR_NUMBER HEAD SHA" >&2
   echo "VERDICT: TIMED_OUT — could not resolve PR HEAD SHA (treated as unavailable)"
   exit 2
 fi
 CURRENT_SHA_FULL=$(printf '%s' "$CURRENT_SHA_FULL" | tr -d '\n' | cut -c1-40)
 CURRENT_SHA=$(printf '%s' "$CURRENT_SHA_FULL" | cut -c1-12)
 if [ -z "$CURRENT_SHA_FULL" ]; then
-  echo "ERROR: could not resolve PR #$PR_NUMBER HEAD SHA (empty result)" >&2
+  workflow_diagnostic "ERROR: could not resolve PR #$PR_NUMBER HEAD SHA (empty result)" >&2
   echo "VERDICT: TIMED_OUT — could not resolve PR HEAD SHA (treated as unavailable)"
   exit 2
 fi
@@ -260,20 +264,20 @@ fi
 # the real workflow checkout.
 CODEX_MARKER_REPO_ROOT="${CODEX_GITHUB_MARKER_REPO_ROOT:-$(pwd)}"
 
-echo "INFO: PR #$PR_NUMBER HEAD commit: $CURRENT_SHA"
-echo "INFO: Bot login: $BOT_LOGIN"
-echo "INFO: Trigger phrase: $TRIGGER_PHRASE"
+workflow_diagnostic "INFO: PR #$PR_NUMBER HEAD commit: $CURRENT_SHA"
+workflow_diagnostic "INFO: Bot login: $BOT_LOGIN"
+workflow_diagnostic "INFO: Trigger phrase: $TRIGGER_PHRASE"
 if [ "$POLL_INTERVAL" -gt "$MAX_WAIT" ]; then
   POLL_INTERVAL="$MAX_WAIT"
 fi
-echo "INFO: Poll interval: ${POLL_INTERVAL}s, Max wait (total): ${MAX_WAIT}s"
-echo "INFO: Pre-trigger wait: ${PRE_TRIGGER_WAIT}s"
+workflow_diagnostic "INFO: Poll interval: ${POLL_INTERVAL}s, Max wait (total): ${MAX_WAIT}s"
+workflow_diagnostic "INFO: Pre-trigger wait: ${PRE_TRIGGER_WAIT}s"
 
 # Derive plain bot login (without [bot] suffix) for matching PR-comment
 # acknowledgements from the non-[bot] account (e.g. "chatgpt-codex-connector").
 # Findings are posted as GitHub Reviews from the [bot]-suffixed account.
 BOT_LOGIN_PLAIN="${BOT_LOGIN%\[bot\]}"
-echo "INFO: Bot login (plain, for PR-comment matching): $BOT_LOGIN_PLAIN"
+workflow_diagnostic "INFO: Bot login (plain, for PR-comment matching): $BOT_LOGIN_PLAIN"
 
 TRIGGER_COMMENT_ID=""
 TRIGGER_TIME=""
@@ -286,7 +290,7 @@ codex_trigger_approval_reaction_count() {
 
   local reaction_tmpfile
   reaction_tmpfile=$(mktemp)
-  if gh api "repos/$OWNER/$REPO/issues/comments/$comment_id/reactions" --paginate \
+  if workflow_command_with_safe_stderr gh api "repos/$OWNER/$REPO/issues/comments/$comment_id/reactions" --paginate \
     | jq -sr --arg bot "$BOT_LOGIN" --arg bot_plain "$BOT_LOGIN_PLAIN" \
       '(add // []) | [.[] | select(.content == "+1" and (.user.login == $bot or .user.login == $bot_plain))] | length' \
     > "$reaction_tmpfile"; then
@@ -311,7 +315,7 @@ codex_inline_review_comment_count_since() {
 
   local review_comment_tmpfile
   review_comment_tmpfile=$(mktemp)
-  if gh api "repos/$OWNER/$REPO/pulls/$PR_NUMBER/comments" --paginate \
+  if workflow_command_with_safe_stderr gh api "repos/$OWNER/$REPO/pulls/$PR_NUMBER/comments" --paginate \
     | jq -sr --arg bot "$BOT_LOGIN" --arg bot_plain "$BOT_LOGIN_PLAIN" --arg trigger_time "$trigger_time" --arg sha "$CURRENT_SHA_FULL" \
       '(add // []) | [.[] | select((.user.login == $bot or .user.login == $bot_plain) and .created_at >= $trigger_time and ((.original_commit_id // "") == $sha))] | length' \
     > "$review_comment_tmpfile"; then
@@ -1398,7 +1402,7 @@ codex_combine_terminal_evidence() {
     COMBINED_BODY="$comment_terminal_body"
     COMBINED_TIME="$comment_terminal_time"
     COMBINED_SOURCE="review"
-    echo "INFO: $label detected via SHA-pinned PR comment"
+    workflow_diagnostic "INFO: $label detected via SHA-pinned PR comment"
   fi
 
   # Presence is checked via review_time, not review_body: a genuine
@@ -1421,7 +1425,7 @@ codex_combine_terminal_evidence() {
         COMBINED_SOURCE="review"
         COMBINED_REVIEW_STATE="$review_state"
         COMBINED_REVIEW_ID="$review_id"
-        echo "INFO: $label detected via PR reviews endpoint (supersedes SHA-pinned comment)"
+        workflow_diagnostic "INFO: $label detected via PR reviews endpoint (supersedes SHA-pinned comment)"
       fi
     else
       COMBINED_BODY="$review_body"
@@ -1429,7 +1433,7 @@ codex_combine_terminal_evidence() {
       COMBINED_SOURCE="review"
       COMBINED_REVIEW_STATE="$review_state"
       COMBINED_REVIEW_ID="$review_id"
-      echo "INFO: $label detected via PR reviews endpoint"
+      workflow_diagnostic "INFO: $label detected via PR reviews endpoint"
     fi
   fi
 
@@ -1492,7 +1496,7 @@ codex_combine_terminal_evidence() {
       COMBINED_TIME="$comment_latest_time"
       COMBINED_SOURCE="comment"
       COMBINED_REVIEW_STATE=""
-      echo "INFO: $label usage-limit notice takes immediate precedence over terminal/review evidence, including same-fetch evidence"
+      workflow_diagnostic "INFO: $label usage-limit notice takes immediate precedence over terminal/review evidence, including same-fetch evidence"
     fi
   elif [ "$comment_latest_is_terminal" -eq 0 ] && [ -n "$comment_latest_body" ] && codex_response_is_account_not_connected "$comment_latest_body"; then
     if [ -n "$COMBINED_SOURCE" ] && { [ "$COMBINED_REVIEW_STATE" = "CHANGES_REQUESTED" ] || codex_response_is_blocking "$COMBINED_BODY"; }; then
@@ -1504,7 +1508,7 @@ codex_combine_terminal_evidence() {
       COMBINED_TIME="$comment_latest_time"
       COMBINED_SOURCE="comment"
       COMBINED_REVIEW_STATE=""
-      echo "INFO: $label account-connection refusal takes immediate precedence over terminal/review evidence, including same-fetch evidence"
+      workflow_diagnostic "INFO: $label account-connection refusal takes immediate precedence over terminal/review evidence, including same-fetch evidence"
     fi
   elif [ "$comment_latest_is_terminal" -eq 0 ] && [ -n "$comment_latest_body" ] && codex_response_is_environment_error "$comment_latest_body"; then
     if [ -n "$COMBINED_SOURCE" ] && { [ "$COMBINED_REVIEW_STATE" = "CHANGES_REQUESTED" ] || codex_response_is_blocking "$COMBINED_BODY"; }; then
@@ -1522,7 +1526,7 @@ codex_combine_terminal_evidence() {
       COMBINED_TIME="$comment_latest_time"
       COMBINED_SOURCE="comment"
       COMBINED_REVIEW_STATE=""
-      echo "INFO: $label environment-setup error retained over non-newer terminal/review evidence"
+      workflow_diagnostic "INFO: $label environment-setup error retained over non-newer terminal/review evidence"
     fi
   fi
 }
@@ -1771,8 +1775,8 @@ EOF
 
 codex_require_current_head() {
   local latest_sha latest_sha_full
-  if ! latest_sha_full=$(gh pr view "$PR_NUMBER" --repo "$OWNER/$REPO" --json headRefOid --jq '.headRefOid' | head -c 100); then
-    echo "ERROR: could not revalidate PR #$PR_NUMBER HEAD SHA" >&2
+  if ! latest_sha_full=$(workflow_command_with_safe_stderr gh pr view "$PR_NUMBER" --repo "$OWNER/$REPO" --json headRefOid --jq '.headRefOid' | head -c 100); then
+    workflow_diagnostic "ERROR: could not revalidate PR #$PR_NUMBER HEAD SHA" >&2
     echo "VERDICT: TIMED_OUT — could not revalidate PR HEAD SHA (treated as unavailable)"
     echo "REASON=codex-github-head-unavailable"
     exit 2
@@ -1780,13 +1784,13 @@ codex_require_current_head() {
   latest_sha_full=$(printf '%s' "$latest_sha_full" | tr -d '\n' | cut -c1-40)
   latest_sha=$(printf '%s' "$latest_sha_full" | cut -c1-12)
   if [ -z "$latest_sha_full" ]; then
-    echo "ERROR: could not revalidate PR #$PR_NUMBER HEAD SHA (empty result)" >&2
+    workflow_diagnostic "ERROR: could not revalidate PR #$PR_NUMBER HEAD SHA (empty result)" >&2
     echo "VERDICT: TIMED_OUT — could not revalidate PR HEAD SHA (treated as unavailable)"
     echo "REASON=codex-github-head-unavailable"
     exit 2
   fi
   if [ "$latest_sha_full" != "$CURRENT_SHA_FULL" ]; then
-    echo "INFO: PR head changed during Codex polling (started at $CURRENT_SHA, now $latest_sha)"
+    workflow_diagnostic "INFO: PR head changed during Codex polling (started at $CURRENT_SHA, now $latest_sha)"
     codex_return_head_changed
   fi
 }
@@ -1871,7 +1875,7 @@ codex_fetch_existing_current_head_evidence() {
     local existing_comments_err
     existing_comments_err=$(cat "$existing_comments_stderr")
     rm -f "$existing_comments_stderr" "$existing_comments_tmpfile"
-    echo "WARNING: failed to fetch existing Codex root comments before trigger: $existing_comments_err" >&2
+    workflow_diagnostic "WARNING: failed to fetch existing Codex root comments before trigger: $existing_comments_err" >&2
     return 2
   fi
   rm -f "$existing_comments_stderr" "$existing_comments_tmpfile"
@@ -1913,7 +1917,7 @@ codex_fetch_existing_current_head_evidence() {
     local existing_reviews_err
     existing_reviews_err=$(cat "$existing_reviews_stderr")
     rm -f "$existing_reviews_stderr" "$existing_reviews_tmpfile"
-    echo "WARNING: failed to fetch existing Codex PR reviews before trigger: $existing_reviews_err" >&2
+    workflow_diagnostic "WARNING: failed to fetch existing Codex PR reviews before trigger: $existing_reviews_err" >&2
     return 2
   fi
   rm -f "$existing_reviews_stderr" "$existing_reviews_tmpfile"
@@ -1958,7 +1962,7 @@ EOF
     codex_require_current_head
     echo "INFO: existing current-head Codex evidence detected; no trigger comment will be posted"
     echo "VERDICT: NEEDS_REVISION"
-    echo "INFO: detected $unresolved_thread_count existing unresolved Codex review thread(s)"
+    workflow_diagnostic "INFO: detected $unresolved_thread_count existing unresolved Codex review thread(s)"
 emit_reviewed_head_if_known
     exit 1
   fi
@@ -1977,7 +1981,7 @@ emit_reviewed_head_if_known
   [ -n "$EXISTING_BOT_RESPONSE_TIME" ] || return 1
 
   codex_require_current_head
-  response_display=$(printf '%s' "$EXISTING_BOT_RESPONSE" | jq -Rrs '.[0:10000]')  # workflow-shell-guard: allow SH003 - jq reads raw text for display truncation only.
+  response_display=$(printf '%s' "$EXISTING_BOT_RESPONSE" | workflow_redact_text | jq -Rrs '.[0:10000]')  # workflow-shell-guard: allow SH003 - jq reads raw text for display truncation only.
 
   if [ "$EXISTING_BOT_RESPONSE_SOURCE" = "review" ] && [ "$cleared_thread_count" -gt 0 ] && \
     [ "$EXISTING_BOT_RESPONSE_REVIEW_STATE" != "CHANGES_REQUESTED" ] && \
@@ -1997,7 +2001,7 @@ emit_reviewed_head_if_known
     "$COMMENT_MALFORMED_BODY" "$COMMENT_MALFORMED_TIME" "$COMMENT_EVIDENCE_UNAVAILABLE" "$EXISTING_BOT_RESPONSE_TIME"; then
     echo "VERDICT: NEEDS_REVISION"
     echo "---BEGIN BOT RESPONSE---"
-    echo "$response_display"
+    workflow_diagnostic "$response_display"
     echo "---END BOT RESPONSE---"
 emit_reviewed_head_if_known
     exit 1
@@ -2008,7 +2012,7 @@ emit_reviewed_head_if_known
   elif [ "$EXISTING_BOT_RESPONSE_SOURCE" = "review" ] && codex_response_is_approved "$EXISTING_BOT_RESPONSE"; then
     echo "VERDICT: APPROVED"
     echo "---BEGIN BOT RESPONSE---"
-    echo "$response_display"
+    workflow_diagnostic "$response_display"
     echo "---END BOT RESPONSE---"
 emit_reviewed_head_if_known
     exit 0
@@ -2023,7 +2027,7 @@ codex_wait_for_existing_current_head_evidence() {
     echo "INFO: pre-trigger existing-evidence check disabled"
     return 0
   fi
-  echo "INFO: checking for existing current-head Codex review evidence before posting trigger (max ${PRE_TRIGGER_WAIT}s)"
+  workflow_diagnostic "INFO: checking for existing current-head Codex review evidence before posting trigger (max ${PRE_TRIGGER_WAIT}s)"
   while :; do
     codex_classify_existing_current_head_evidence || true
     if [ "$elapsed" -ge "$PRE_TRIGGER_WAIT" ]; then
@@ -2036,7 +2040,7 @@ codex_wait_for_existing_current_head_evidence() {
     if [ "$sleep_for" -gt "$remaining" ]; then
       sleep_for="$remaining"
     fi
-    echo "INFO: no existing current-head Codex evidence yet; waiting ${sleep_for}s before posting trigger"
+    workflow_diagnostic "INFO: no existing current-head Codex evidence yet; waiting ${sleep_for}s before posting trigger"
     sleep "$sleep_for"
     elapsed=$((elapsed + sleep_for))
   done
@@ -2066,7 +2070,7 @@ if gh api "repos/$OWNER/$REPO/issues/$PR_NUMBER/comments" --paginate \
   TRIGGER_COMMENT_INFO=$(head -c 2000 "$IDEM_TMPFILE")
 else
   IDEM_ERR=$(cat "$IDEM_STDERR")
-  echo "WARNING: gh api failed in idempotency check (will proceed with trigger post as fallback): $IDEM_ERR" >&2
+  workflow_diagnostic "WARNING: gh api failed in idempotency check (will proceed with trigger post as fallback): $IDEM_ERR" >&2
   TRIGGER_COMMENT_INFO=""
 fi
 rm -f "$IDEM_STDERR" "$IDEM_TMPFILE"
@@ -2100,7 +2104,7 @@ if [ -n "$TRIGGER_COMMENT_INFO" ]; then
         { codex_response_is_usage_limit "$(codex_strip_quoted_spans "$CODEX_LAST_REPLY")" || \
           codex_response_is_account_not_connected "$(codex_strip_quoted_spans "$CODEX_LAST_REPLY")" || \
           codex_response_is_environment_error "$(codex_strip_quoted_spans "$CODEX_LAST_REPLY")"; }; then
-        echo "INFO: previous trigger for commit $CURRENT_SHA was answered with a reviewer-unavailability refusal — re-triggering so a restored quota/connection can review this commit"
+        workflow_diagnostic "INFO: previous trigger for commit $CURRENT_SHA was answered with a reviewer-unavailability refusal — re-triggering so a restored quota/connection can review this commit"
         TRIGGER_TIME=""
         TRIGGER_COMMENT_ID=""
       fi
@@ -2116,23 +2120,23 @@ if [ -n "$TRIGGER_COMMENT_INFO" ]; then
 	    # it and poll it instead of posting a duplicate. Both values are GitHub
 	    # ISO-8601 UTC strings, so a string comparison orders them.
 	    if [ -n "$CLEARED_FINDINGS_REVIEW_TIME" ] && [[ "$TRIGGER_TIME" > "$CLEARED_FINDINGS_REVIEW_TIME" ]]; then
-	      echo "INFO: trigger for commit $CURRENT_SHA posted after the cleared Codex review is still outstanding — not posting a duplicate"
+	      workflow_diagnostic "INFO: trigger for commit $CURRENT_SHA posted after the cleared Codex review is still outstanding — not posting a duplicate"
 	    else
-	      echo "INFO: existing trigger for commit $CURRENT_SHA already produced only cleared Codex findings — posting a fresh trigger"
+	      workflow_diagnostic "INFO: existing trigger for commit $CURRENT_SHA already produced only cleared Codex findings — posting a fresh trigger"
 	      TRIGGER_TIME=""
 	      TRIGGER_COMMENT_ID=""
 	    fi
 	  fi
 	fi
 	if [ -n "$TRIGGER_TIME" ]; then
-	  echo "INFO: trigger comment already posted for commit $CURRENT_SHA (at $TRIGGER_TIME) — skipping duplicate post"
+	  workflow_diagnostic "INFO: trigger comment already posted for commit $CURRENT_SHA (at $TRIGGER_TIME) — skipping duplicate post"
 	fi
 fi
 
 # ── Post trigger comment (if no duplicate found) ──────────────────────────────
 
 if [ -z "$TRIGGER_TIME" ]; then
-  echo "INFO: posting trigger comment to PR #$PR_NUMBER..."
+  workflow_diagnostic "INFO: posting trigger comment to PR #$PR_NUMBER..."
   # Use gh api --method POST to capture the GitHub-server-assigned created_at
   # timestamp. Using 'date -u' here would risk clock skew between the local
   # machine and GitHub's API server. SHA-pinned review filters use >= because
@@ -2140,10 +2144,10 @@ if [ -z "$TRIGGER_TIME" ]; then
   # trigger second.
   # Guard with 'if !' to emit TIMED_OUT (exit 2) on failure instead of letting
   # set -e exit with code 1 (NEEDS_REVISION) without a VERDICT line.
-  if ! TRIGGER_RESPONSE=$(gh api "repos/$OWNER/$REPO/issues/$PR_NUMBER/comments" \
+  if ! TRIGGER_RESPONSE=$(workflow_command_with_safe_stderr gh api "repos/$OWNER/$REPO/issues/$PR_NUMBER/comments" \
     --method POST \
     --raw-field body="$TRIGGER_PHRASE (review triggered by workflow runner, commit: $CURRENT_SHA)"); then
-    echo "ERROR: failed to post trigger comment to PR #$PR_NUMBER" >&2
+    workflow_diagnostic "ERROR: failed to post trigger comment to PR #$PR_NUMBER" >&2
     echo "VERDICT: TIMED_OUT — failed to post trigger comment (treated as unavailable)"
     exit 2
   fi
@@ -2157,7 +2161,7 @@ if [ -z "$TRIGGER_TIME" ]; then
     echo "VERDICT: TIMED_OUT — malformed trigger comment response (treated as unavailable)"
     exit 2
   fi
-  echo "INFO: trigger comment posted at $TRIGGER_TIME (server-assigned timestamp)"
+  workflow_diagnostic "INFO: trigger comment posted at $TRIGGER_TIME (server-assigned timestamp)"
 fi
 
 # ── Poll for bot response (with retrigger support) ───────────────────────────
@@ -2170,8 +2174,8 @@ fi
 # a re-post usually gets a response. After all attempts are exhausted, we exit
 # with TIMED_OUT (treated as unavailable by the caller).
 
-echo "INFO: polling for response from '$BOT_LOGIN' (trigger time: $TRIGGER_TIME)..."
-echo "INFO: MAX_WAIT=${MAX_WAIT}s total; up to $((MAX_RETRIGGERS + 1)) attempt(s) (MAX_RETRIGGERS=$MAX_RETRIGGERS)"
+workflow_diagnostic "INFO: polling for response from '$BOT_LOGIN' (trigger time: $TRIGGER_TIME)..."
+workflow_diagnostic "INFO: MAX_WAIT=${MAX_WAIT}s total; up to $((MAX_RETRIGGERS + 1)) attempt(s) (MAX_RETRIGGERS=$MAX_RETRIGGERS)"
 
 RETRIGGER_COUNT=0
 CONSECUTIVE_API_FAILURES=0
@@ -2197,7 +2201,7 @@ while true; do
   sleep "$POLL_INTERVAL"
   TOTAL_ELAPSED=$((TOTAL_ELAPSED + POLL_INTERVAL))
 
-  echo "INFO: polling... elapsed ${TOTAL_ELAPSED}s / ${MAX_WAIT}s"
+  workflow_diagnostic "INFO: polling... elapsed ${TOTAL_ELAPSED}s / ${MAX_WAIT}s"
 
   # Query comments authored by the bot that appeared after the trigger comment timestamp.
   # The bot login may include "[bot]" suffix — use exact string match on user.login.
@@ -2227,9 +2231,9 @@ while true; do
     POLL_ERR=$(cat "$POLL_STDERR")
     rm -f "$POLL_STDERR" "$POLL_TMPFILE"
     CONSECUTIVE_API_FAILURES=$((CONSECUTIVE_API_FAILURES + 1))
-    echo "WARNING: gh api failed during polling (attempt $CONSECUTIVE_API_FAILURES): $POLL_ERR" >&2
+    workflow_diagnostic "WARNING: gh api failed during polling (attempt $CONSECUTIVE_API_FAILURES): $POLL_ERR" >&2
     if [ "$CONSECUTIVE_API_FAILURES" -ge "$MAX_CONSECUTIVE_FAILURES" ]; then
-      echo "VERDICT: TIMED_OUT — gh api failed $CONSECUTIVE_API_FAILURES consecutive times. Last error: $POLL_ERR"
+      workflow_diagnostic "VERDICT: TIMED_OUT — gh api failed $CONSECUTIVE_API_FAILURES consecutive times. Last error: $POLL_ERR"
       echo "INFO: remediation — check gh CLI authentication, API rate limits, and network connectivity."
       exit 2
     fi
@@ -2278,7 +2282,7 @@ while true; do
   else
     REVIEW_ERR=$(cat "$REVIEW_STDERR")
     rm -f "$REVIEW_STDERR" "$REVIEW_TMPFILE"
-    echo "WARNING: failed to fetch or parse Codex PR reviews: $REVIEW_ERR" >&2
+    workflow_diagnostic "WARNING: failed to fetch or parse Codex PR reviews: $REVIEW_ERR" >&2
     echo "VERDICT: TIMED_OUT — failed to fetch Codex PR reviews (treated as unavailable)"
     exit 2
   fi
@@ -2324,7 +2328,7 @@ while true; do
   # (printf) is always fully drained and can never receive SIGPIPE, unlike
   # a piped `head -c N` which can close early on long input (fresh evidence
   # from PR #1490 finding 3787868733).
-  BOT_RESPONSE=$(printf '%s' "$BOT_RESPONSE" | jq -Rrs '.[0:10000]')  # workflow-shell-guard: allow SH003 - jq -R treats input as raw text (not JSON), so it cannot fail on malformed content; a genuine jq internal failure still trips `set -e` since this is a bare assignment, which is the desired fail-closed behavior
+  BOT_RESPONSE=$(printf '%s' "$BOT_RESPONSE" | workflow_redact_text | jq -Rrs '.[0:10000]')  # workflow-shell-guard: allow SH003 - jq -R treats input as raw text (not JSON), so it cannot fail on malformed content; a genuine jq internal failure still trips `set -e` since this is a bare assignment, which is the desired fail-closed behavior
 
   if ! INLINE_REVIEW_COMMENT_COUNT=$(codex_inline_review_comment_count_since "$TRIGGER_TIME"); then
     echo "VERDICT: TIMED_OUT — failed to fetch Codex inline review comments (treated as unavailable)"
@@ -2333,7 +2337,7 @@ while true; do
   if [ "$INLINE_REVIEW_COMMENT_COUNT" -gt 0 ]; then
     codex_require_current_head
     echo "VERDICT: NEEDS_REVISION"
-    echo "INFO: detected $INLINE_REVIEW_COMMENT_COUNT Codex inline review comment(s) after trigger"
+    workflow_diagnostic "INFO: detected $INLINE_REVIEW_COMMENT_COUNT Codex inline review comment(s) after trigger"
 emit_reviewed_head_if_known
     exit 1
   fi
@@ -2401,7 +2405,7 @@ emit_reviewed_head_if_known
       # #1490 finding 3796396391).
       echo "VERDICT: NEEDS_REVISION"
       echo "---BEGIN BOT RESPONSE---"
-      echo "$BOT_RESPONSE"
+      workflow_diagnostic "$BOT_RESPONSE"
       echo "---END BOT RESPONSE---"
 emit_reviewed_head_if_known
       exit 1
@@ -2434,7 +2438,7 @@ emit_reviewed_head_if_known
       fi
       echo "VERDICT: APPROVED"
       echo "---BEGIN BOT RESPONSE---"
-      echo "$BOT_RESPONSE"
+      workflow_diagnostic "$BOT_RESPONSE"
       echo "---END BOT RESPONSE---"
 emit_reviewed_head_if_known
       exit 0
@@ -2462,7 +2466,7 @@ emit_reviewed_head_if_known
   fi
 
   if [ "$APPROVAL_REACTION_COUNT" -gt 0 ]; then
-    echo "INFO: detected Codex thumbs-up reaction on trigger comment $TRIGGER_COMMENT_ID"
+    workflow_diagnostic "INFO: detected Codex thumbs-up reaction on trigger comment $TRIGGER_COMMENT_ID"
     echo "INFO: waiting for current-head review evidence before treating reaction as terminal"
     SEEN_APPROVAL_REACTION=1
     continue
@@ -2474,13 +2478,13 @@ emit_reviewed_head_if_known
     RETRIGGER_COUNT=$((RETRIGGER_COUNT + 1))
     ATTEMPT_NUM=$((RETRIGGER_COUNT + 1))
     TOTAL_ATTEMPTS=$((MAX_RETRIGGERS + 1))
-    echo "INFO: no response yet; re-triggering (attempt ${ATTEMPT_NUM}/${TOTAL_ATTEMPTS}, total elapsed ${TOTAL_ELAPSED}s/${MAX_WAIT}s)..."
+    workflow_diagnostic "INFO: no response yet; re-triggering (attempt ${ATTEMPT_NUM}/${TOTAL_ATTEMPTS}, total elapsed ${TOTAL_ELAPSED}s/${MAX_WAIT}s)..."
     # --raw-field passes the body string as-is to the GitHub API without shell
     # re-interpretation, so special characters in TRIGGER_PHRASE are safe.
-    if ! TRIGGER_RESPONSE=$(gh api "repos/$OWNER/$REPO/issues/$PR_NUMBER/comments" \
+    if ! TRIGGER_RESPONSE=$(workflow_command_with_safe_stderr gh api "repos/$OWNER/$REPO/issues/$PR_NUMBER/comments" \
       --method POST \
       --raw-field body="$TRIGGER_PHRASE — retrigger ${RETRIGGER_COUNT}/${MAX_RETRIGGERS} after timeout (sha: $CURRENT_SHA)"); then
-      echo "ERROR: failed to post retrigger comment to PR #$PR_NUMBER" >&2
+      workflow_diagnostic "ERROR: failed to post retrigger comment to PR #$PR_NUMBER" >&2
       echo "VERDICT: TIMED_OUT — failed to post retrigger comment (treated as unavailable)"
       exit 2
     fi
@@ -2494,7 +2498,7 @@ emit_reviewed_head_if_known
       echo "VERDICT: TIMED_OUT — malformed retrigger comment response (treated as unavailable)"
       exit 2
     fi
-    echo "INFO: retrigger comment posted at $TRIGGER_TIME (TRIGGER_TIME updated)"
+    workflow_diagnostic "INFO: retrigger comment posted at $TRIGGER_TIME (TRIGGER_TIME updated)"
     continue
   else
     break
@@ -2509,12 +2513,12 @@ done  # end outer retrigger loop
 # This is a lightweight one-shot check: it does not extend the full MAX_WAIT
 # budget and does not add another iteration of the outer retrigger loop.
 
-echo "INFO: poll budget exhausted; waiting ${POLL_INTERVAL}s for late async response..."
+workflow_diagnostic "INFO: poll budget exhausted; waiting ${POLL_INTERVAL}s for late async response..."
 
 ASYNC_TRIGGER_COMMENT_ID=""
 if [ "$MAX_RETRIGGERS" -gt 0 ]; then
   echo "INFO: posting async-arrival trigger comment..."
-  if ! TRIGGER_RESPONSE=$(gh api "repos/$OWNER/$REPO/issues/$PR_NUMBER/comments" \
+  if ! TRIGGER_RESPONSE=$(workflow_command_with_safe_stderr gh api "repos/$OWNER/$REPO/issues/$PR_NUMBER/comments" \
     --method POST \
     --raw-field body="$TRIGGER_PHRASE — async-arrival check after poll-window expiry (sha: $CURRENT_SHA)"); then
     echo "WARNING: failed to post async-arrival trigger comment; continuing with grace poll from existing trigger time" >&2
@@ -2527,13 +2531,13 @@ if [ "$MAX_RETRIGGERS" -gt 0 ]; then
       echo "VERDICT: TIMED_OUT — malformed async trigger comment response (treated as unavailable)"
       exit 2
     fi
-    echo "INFO: async-arrival trigger comment posted at $ASYNC_TRIGGER_TIME"
+    workflow_diagnostic "INFO: async-arrival trigger comment posted at $ASYNC_TRIGGER_TIME"
   fi
 else
   echo "INFO: MAX_RETRIGGERS=0 — skipping async-arrival trigger comment; grace poll will use existing trigger time"
 fi
 
-echo "INFO: sleeping ${POLL_INTERVAL}s before async grace poll..."
+workflow_diagnostic "INFO: sleeping ${POLL_INTERVAL}s before async grace poll..."
 sleep "$POLL_INTERVAL"
 
 # Single grace poll: check both PR comments and PR reviews
@@ -2547,7 +2551,7 @@ fi
 if [ "$ASYNC_INLINE_REVIEW_COMMENT_COUNT" -gt 0 ]; then
   codex_require_current_head
   echo "VERDICT: NEEDS_REVISION"
-  echo "INFO: detected $ASYNC_INLINE_REVIEW_COMMENT_COUNT Codex inline review comment(s) during async grace period"
+  workflow_diagnostic "INFO: detected $ASYNC_INLINE_REVIEW_COMMENT_COUNT Codex inline review comment(s) during async grace period"
 emit_reviewed_head_if_known
   exit 1
 fi
@@ -2624,7 +2628,7 @@ ASYNC_BOT_RESPONSE_FULL="$ASYNC_BOT_RESPONSE"
 # `jq -Rs` slurps its entire stdin before producing output, avoiding
 # SIGPIPE on long root-comment-sourced bodies (see rationale above the
 # main-loop equivalent).
-ASYNC_BOT_RESPONSE=$(printf '%s' "$ASYNC_BOT_RESPONSE" | jq -Rrs '.[0:10000]')  # workflow-shell-guard: allow SH003 - jq -R treats input as raw text (not JSON), so it cannot fail on malformed content; a genuine jq internal failure still trips `set -e` since this is a bare assignment, which is the desired fail-closed behavior
+ASYNC_BOT_RESPONSE=$(printf '%s' "$ASYNC_BOT_RESPONSE" | workflow_redact_text | jq -Rrs '.[0:10000]')  # workflow-shell-guard: allow SH003 - jq -R treats input as raw text (not JSON), so it cannot fail on malformed content; a genuine jq internal failure still trips `set -e` since this is a bare assignment, which is the desired fail-closed behavior
 
 if [ -n "$ASYNC_BOT_RESPONSE_TIME" ]; then
   echo "INFO: async-arrival bot response detected during grace period"
@@ -2638,7 +2642,7 @@ if [ -n "$ASYNC_BOT_RESPONSE_TIME" ]; then
     "$COMMENT_MALFORMED_BODY" "$COMMENT_MALFORMED_TIME" "$COMMENT_EVIDENCE_UNAVAILABLE" "$ASYNC_BOT_RESPONSE_TIME"; then
     echo "VERDICT: NEEDS_REVISION"
     echo "---BEGIN BOT RESPONSE---"
-    echo "$ASYNC_BOT_RESPONSE"
+    workflow_diagnostic "$ASYNC_BOT_RESPONSE"
     echo "---END BOT RESPONSE---"
 emit_reviewed_head_if_known
     exit 1
@@ -2660,7 +2664,7 @@ emit_reviewed_head_if_known
     fi
     echo "VERDICT: APPROVED"
     echo "---BEGIN BOT RESPONSE---"
-    echo "$ASYNC_BOT_RESPONSE"
+    workflow_diagnostic "$ASYNC_BOT_RESPONSE"
     echo "---END BOT RESPONSE---"
 emit_reviewed_head_if_known
     exit 0
@@ -2668,7 +2672,7 @@ emit_reviewed_head_if_known
     # Gated on non-terminal evidence — see the main-loop equivalent above
     # for the rationale (issue #1491's implementation plan, Decision 6).
     echo "INFO: async-arrival Codex acknowledgement detected without current-head review or inline comments"
-    echo "INFO: waiting ${POLL_INTERVAL}s for final Codex async signal..."
+    workflow_diagnostic "INFO: waiting ${POLL_INTERVAL}s for final Codex async signal..."
     sleep "$POLL_INTERVAL"
     if ! ASYNC_INLINE_REVIEW_COMMENT_COUNT=$(codex_inline_review_comment_count_since "$TRIGGER_TIME"); then
       echo "VERDICT: TIMED_OUT — failed to fetch Codex inline review comments after async acknowledgement (treated as unavailable)"
@@ -2677,7 +2681,7 @@ emit_reviewed_head_if_known
     if [ "$ASYNC_INLINE_REVIEW_COMMENT_COUNT" -gt 0 ]; then
       codex_require_current_head
       echo "VERDICT: NEEDS_REVISION"
-      echo "INFO: detected $ASYNC_INLINE_REVIEW_COMMENT_COUNT Codex inline review comment(s) after async acknowledgement"
+      workflow_diagnostic "INFO: detected $ASYNC_INLINE_REVIEW_COMMENT_COUNT Codex inline review comment(s) after async acknowledgement"
 emit_reviewed_head_if_known
       exit 1
 	    fi
@@ -2742,7 +2746,7 @@ emit_reviewed_head_if_known
     # `jq -Rs` slurps its entire stdin before producing output, avoiding
     # SIGPIPE on long root-comment-sourced bodies (see rationale above the
     # main-loop equivalent).
-    ASYNC_FINAL_BOT_RESPONSE=$(printf '%s' "$ASYNC_FINAL_BOT_RESPONSE" | jq -Rrs '.[0:10000]')  # workflow-shell-guard: allow SH003 - jq -R treats input as raw text (not JSON), so it cannot fail on malformed content; a genuine jq internal failure still trips `set -e` since this is a bare assignment, which is the desired fail-closed behavior
+    ASYNC_FINAL_BOT_RESPONSE=$(printf '%s' "$ASYNC_FINAL_BOT_RESPONSE" | workflow_redact_text | jq -Rrs '.[0:10000]')  # workflow-shell-guard: allow SH003 - jq -R treats input as raw text (not JSON), so it cannot fail on malformed content; a genuine jq internal failure still trips `set -e` since this is a bare assignment, which is the desired fail-closed behavior
 
     if [ -n "$ASYNC_FINAL_BOT_RESPONSE_TIME" ]; then
       echo "INFO: final async bot response detected after acknowledgement wait"
@@ -2754,7 +2758,7 @@ emit_reviewed_head_if_known
         "$COMMENT_MALFORMED_BODY" "$COMMENT_MALFORMED_TIME" "$COMMENT_EVIDENCE_UNAVAILABLE" "$ASYNC_FINAL_BOT_RESPONSE_TIME"; then
         echo "VERDICT: NEEDS_REVISION"
         echo "---BEGIN BOT RESPONSE---"
-        echo "$ASYNC_FINAL_BOT_RESPONSE"
+        workflow_diagnostic "$ASYNC_FINAL_BOT_RESPONSE"
         echo "---END BOT RESPONSE---"
 emit_reviewed_head_if_known
         exit 1
@@ -2776,7 +2780,7 @@ emit_reviewed_head_if_known
         fi
         echo "VERDICT: APPROVED"
         echo "---BEGIN BOT RESPONSE---"
-        echo "$ASYNC_FINAL_BOT_RESPONSE"
+        workflow_diagnostic "$ASYNC_FINAL_BOT_RESPONSE"
         echo "---END BOT RESPONSE---"
 emit_reviewed_head_if_known
         exit 0
@@ -2809,7 +2813,7 @@ emit_reviewed_head_if_known
       ASYNC_APPROVAL_REACTION_COUNT=$((ASYNC_APPROVAL_REACTION_COUNT + ASYNC_EXTRA_APPROVAL_REACTION_COUNT))
     fi
     if [ "$ASYNC_APPROVAL_REACTION_COUNT" -gt 0 ]; then
-      echo "INFO: detected Codex thumbs-up reaction on trigger comment $TRIGGER_COMMENT_ID after async acknowledgement"
+      workflow_diagnostic "INFO: detected Codex thumbs-up reaction on trigger comment $TRIGGER_COMMENT_ID after async acknowledgement"
       if [ "$SEEN_ENVIRONMENT_ERROR" -eq 1 ]; then
         codex_return_environment_error "$SEEN_ENVIRONMENT_RESPONSE"
       fi
@@ -2823,8 +2827,8 @@ emit_reviewed_head_if_known
 fi
 
 if [ "$ASYNC_APPROVAL_REACTION_COUNT" -gt 0 ]; then
-  echo "INFO: detected Codex thumbs-up reaction on trigger comment $TRIGGER_COMMENT_ID during async grace period"
-  echo "INFO: waiting ${POLL_INTERVAL}s for final Codex review evidence after async reaction..."
+  workflow_diagnostic "INFO: detected Codex thumbs-up reaction on trigger comment $TRIGGER_COMMENT_ID during async grace period"
+  workflow_diagnostic "INFO: waiting ${POLL_INTERVAL}s for final Codex review evidence after async reaction..."
   sleep "$POLL_INTERVAL"
   if ! ASYNC_INLINE_REVIEW_COMMENT_COUNT=$(codex_inline_review_comment_count_since "$TRIGGER_TIME"); then
     echo "VERDICT: TIMED_OUT — failed to fetch Codex inline review comments after async reaction (treated as unavailable)"
@@ -2833,7 +2837,7 @@ if [ "$ASYNC_APPROVAL_REACTION_COUNT" -gt 0 ]; then
   if [ "$ASYNC_INLINE_REVIEW_COMMENT_COUNT" -gt 0 ]; then
     codex_require_current_head
     echo "VERDICT: NEEDS_REVISION"
-    echo "INFO: detected $ASYNC_INLINE_REVIEW_COMMENT_COUNT Codex inline review comment(s) after async reaction"
+    workflow_diagnostic "INFO: detected $ASYNC_INLINE_REVIEW_COMMENT_COUNT Codex inline review comment(s) after async reaction"
 emit_reviewed_head_if_known
     exit 1
   fi
@@ -2899,7 +2903,7 @@ emit_reviewed_head_if_known
   # `jq -Rs` slurps its entire stdin before producing output, avoiding
   # SIGPIPE on long root-comment-sourced bodies (see rationale above the
   # main-loop equivalent).
-  ASYNC_REACTION_FINAL_BOT_RESPONSE=$(printf '%s' "$ASYNC_REACTION_FINAL_BOT_RESPONSE" | jq -Rrs '.[0:10000]')  # workflow-shell-guard: allow SH003 - jq -R treats input as raw text (not JSON), so it cannot fail on malformed content; a genuine jq internal failure still trips `set -e` since this is a bare assignment, which is the desired fail-closed behavior
+  ASYNC_REACTION_FINAL_BOT_RESPONSE=$(printf '%s' "$ASYNC_REACTION_FINAL_BOT_RESPONSE" | workflow_redact_text | jq -Rrs '.[0:10000]')  # workflow-shell-guard: allow SH003 - jq -R treats input as raw text (not JSON), so it cannot fail on malformed content; a genuine jq internal failure still trips `set -e` since this is a bare assignment, which is the desired fail-closed behavior
 
   if [ -n "$ASYNC_REACTION_FINAL_BOT_RESPONSE_TIME" ]; then
     codex_require_current_head
@@ -2910,7 +2914,7 @@ emit_reviewed_head_if_known
       "$COMMENT_MALFORMED_BODY" "$COMMENT_MALFORMED_TIME" "$COMMENT_EVIDENCE_UNAVAILABLE" "$ASYNC_REACTION_FINAL_BOT_RESPONSE_TIME"; then
       echo "VERDICT: NEEDS_REVISION"
       echo "---BEGIN BOT RESPONSE---"
-      echo "$ASYNC_REACTION_FINAL_BOT_RESPONSE"
+      workflow_diagnostic "$ASYNC_REACTION_FINAL_BOT_RESPONSE"
       echo "---END BOT RESPONSE---"
 emit_reviewed_head_if_known
       exit 1
@@ -2932,7 +2936,7 @@ emit_reviewed_head_if_known
       fi
       echo "VERDICT: APPROVED"
       echo "---BEGIN BOT RESPONSE---"
-      echo "$ASYNC_REACTION_FINAL_BOT_RESPONSE"
+      workflow_diagnostic "$ASYNC_REACTION_FINAL_BOT_RESPONSE"
       echo "---END BOT RESPONSE---"
 emit_reviewed_head_if_known
       exit 0
@@ -2964,12 +2968,12 @@ echo "INFO: no bot response during async grace period"
 # ── Timeout ───────────────────────────────────────────────────────────────────
 
 TOTAL_ATTEMPTS=$((MAX_RETRIGGERS + 1))
-echo "VERDICT: WAITING_ON_REVIEWER — current-head Codex review is still pending after ${TOTAL_ELAPSED}s (budget ${MAX_WAIT}s) across up to ${TOTAL_ATTEMPTS} attempt(s)"
+workflow_diagnostic "VERDICT: WAITING_ON_REVIEWER — current-head Codex review is still pending after ${TOTAL_ELAPSED}s (budget ${MAX_WAIT}s) across up to ${TOTAL_ATTEMPTS} attempt(s)"
 echo "REASON=codex-github-review-pending"
 echo "PENDING_REVIEWER=codex-github"
-echo "PENDING_REVIEW_HEAD_SHA=$CURRENT_SHA_FULL"
-echo "PENDING_REVIEW_TRIGGER_COMMENT_ID=$TRIGGER_COMMENT_ID"
-echo "PENDING_REVIEW_TRIGGER_TIME=$TRIGGER_TIME"
+workflow_diagnostic "PENDING_REVIEW_HEAD_SHA=$CURRENT_SHA_FULL"
+workflow_diagnostic "PENDING_REVIEW_TRIGGER_COMMENT_ID=$TRIGGER_COMMENT_ID"
+workflow_diagnostic "PENDING_REVIEW_TRIGGER_TIME=$TRIGGER_TIME"
 emit_review_requested_at_if_known
 echo "INFO: no duplicate trigger needed; the existing current-head trigger is still pending."
 exit 4
