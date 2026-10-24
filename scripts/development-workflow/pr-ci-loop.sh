@@ -274,13 +274,64 @@ applicable_prior_workflow_names() {
   runs="$(gh api "repos/$repo/actions/runs?head_sha=$sha&per_page=100" --paginate --slurp 2>/dev/null)" || return 1
   printf '%s\n' "$runs" | python3 -c '
 import base64
+import importlib.util
 import json
+from pathlib import Path
 import re
 import subprocess
 import sys
 from urllib.parse import quote
 
-repo, context_text, current_text = sys.argv[1:]
+repo, context_text, current_text, resolver_path = sys.argv[1:]
+sys.dont_write_bytecode = True
+spec = importlib.util.spec_from_file_location("workflow_config_resolver", resolver_path)
+resolver = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(resolver)
+
+
+def workflow_triggers(raw):
+    # Validate the entire document with the framework grammar. Replace only
+    # literal/folded block scalar bodies (ordinary job scripts) with null;
+    # never project away quoted-scalar context that could conceal a root key.
+    path = Path("workflow.yml")
+    lines = []
+    block_parent = None
+    document_started = False
+    for line in raw.removeprefix("\ufeff").splitlines():
+        indent = len(line) - len(line.lstrip(" "))
+        if block_parent is not None:
+            if not line.strip() or indent > block_parent:
+                continue
+            block_parent = None
+        if line == "---" and not document_started:
+            document_started = True
+            continue
+        if line.strip() and not line.lstrip().startswith("#"):
+            document_started = True
+        # Quoted root keys, particularly "on", have the same identity as plain
+        # keys. Decode using the shared scalar tokenizer before normalization.
+        header = re.fullmatch(r"([A-Za-z_][A-Za-z0-9_-]*|\"[^\"]*\"|\x27[^\x27]*\x27):(?:[ \t]+(.*))?", line)
+        if header:
+            key_text, value = header.groups()
+            key = resolver.StrictYamlReader("", path).scalar(key_text, 1)
+            if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_-]*", key):
+                raise ValueError("unsupported workflow key")
+            line = key + ":" + (" " + value if value is not None else "")
+        block = re.fullmatch(
+            r"( *)(-[ \t]+)*(?:([A-Za-z_][A-Za-z0-9_.-]*):[ \t]+)?"
+            r"[|>](?:[+-][1-9]?|[1-9][+-]?)?(?:[ \t]+#.*)?", line)
+        if block:
+            # Compact sequence mappings place the key after their dash.
+            prefix = re.match(r" *(?:-[ \t]+)*", line)[0]
+            key = block[3]
+            block_parent = len(prefix) if key else max(indent, len(prefix) - 2)
+            line = prefix + (key + ": null" if key else "null")
+        lines.append(line)
+    document = resolver.StrictYamlReader("\n".join(lines), path).parse()
+    if not isinstance(document, dict) or "on" not in document:
+        raise ValueError("missing workflow triggers")
+    return document["on"]
+
 context = json.loads(context_text)
 current = set(current_text.splitlines())
 pages = json.load(sys.stdin)
@@ -313,22 +364,8 @@ for page in pages:
         content = json.loads(response.stdout)
         if content.get("encoding") != "base64":
             raise ValueError("unreadable workflow")
-        import yaml
-        # BaseLoader preserves the GitHub Actions `on` key and scalar types.
-        # Reject duplicate keys instead of letting an ambiguous trigger win.
-        class WorkflowLoader(yaml.BaseLoader):
-            def construct_mapping(self, node, deep=False):
-                mapping = {}
-                for key_node, value_node in node.value:
-                    key = self.construct_object(key_node, deep=deep)
-                    if key in mapping:
-                        raise ValueError("duplicate workflow key")
-                    mapping[key] = self.construct_object(value_node, deep=deep)
-                return mapping
-        document = yaml.load(base64.b64decode("".join(content["content"].split()), validate=True), Loader=WorkflowLoader)
-        if not isinstance(document, dict) or "on" not in document:
-            raise ValueError("missing workflow triggers")
-        triggers = document["on"]
+        triggers = workflow_triggers(base64.b64decode(
+            "".join(content["content"].split()), validate=True).decode("utf-8"))
         if isinstance(triggers, str):
             triggers = {triggers: None}
         elif isinstance(triggers, list) and all(isinstance(x, str) for x in triggers):
@@ -372,7 +409,7 @@ for page in pages:
         if applicable:
             names.add(name)
 print("\n".join(sorted(names)))
-' "$repo" "$context" "$current_names" 2>/dev/null
+' "$repo" "$context" "$current_names" "$SCRIPT_DIR/workflow-config-resolver.py" 2>/dev/null
 }
 
 # previous_head_check_names <repo> <pr_number> <current_head_sha>
