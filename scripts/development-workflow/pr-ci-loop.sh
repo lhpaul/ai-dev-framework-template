@@ -290,42 +290,44 @@ spec.loader.exec_module(resolver)
 
 
 def workflow_triggers(raw):
-    # Reuse the framework grammar for the trigger subtree. Jobs commonly have
-    # multiline shell scalars outside that grammar; their contents cannot affect
-    # a block-root on key. Require complete, unambiguous root headers before
-    # projecting that subtree, and fail closed on unsupported YAML constructs.
+    # Validate the entire document with the framework grammar. Replace only
+    # literal/folded block scalar bodies (ordinary job scripts) with null;
+    # never project away quoted-scalar context that could conceal a root key.
     path = Path("workflow.yml")
-    selected = []
-    seen = set()
-    in_triggers = False
+    lines = []
+    block_parent = None
+    document_started = False
     for line in raw.removeprefix("\ufeff").splitlines():
-        if not line.strip() or line.lstrip().startswith("#"):
+        indent = len(line) - len(line.lstrip(" "))
+        if block_parent is not None:
+            if not line.strip() or indent > block_parent:
+                continue
+            block_parent = None
+        if line == "---" and not document_started:
+            document_started = True
             continue
-        if "\t" in line[:len(line) - len(line.lstrip(" \t"))]:
-            raise ValueError("ambiguous workflow indentation")
-        if line.startswith(" "):
-            if not seen:
-                raise ValueError("indented workflow root")
-            if in_triggers:
-                selected.append(line)
-            continue
-        if line == "---" and not seen:
-            continue
+        if line.strip() and not line.lstrip().startswith("#"):
+            document_started = True
+        # Quoted root keys, particularly "on", have the same identity as plain
+        # keys. Decode using the shared scalar tokenizer before normalization.
         header = re.fullmatch(r"([A-Za-z_][A-Za-z0-9_-]*|\"[^\"]*\"|\x27[^\x27]*\x27):(?:[ \t]+(.*))?", line)
-        if not header:
-            raise ValueError("unsupported workflow root")
-        key_text, value = header.groups()
-        key = resolver.StrictYamlReader("", path).scalar(key_text, 1)
-        if key in seen:
-            raise ValueError("duplicate workflow key")
-        seen.add(key)
-        in_triggers = key == "on"
-        if in_triggers:
-            selected.append("on:" + (" " + value if value is not None else ""))
-        elif value and not re.fullmatch(r"[|>][+-]?[1-9]?(?:[ \t]+#.*)?", value):
-            # An unfinished quote/flow value could conceal a later root key.
-            resolver.StrictYamlReader("", path).scalar(value, 1)
-    document = resolver.StrictYamlReader("\n".join(selected), path).parse()
+        if header:
+            key_text, value = header.groups()
+            key = resolver.StrictYamlReader("", path).scalar(key_text, 1)
+            if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_-]*", key):
+                raise ValueError("unsupported workflow key")
+            line = key + ":" + (" " + value if value is not None else "")
+        block = re.fullmatch(
+            r"( *)(-[ \t]+)*(?:([A-Za-z_][A-Za-z0-9_.-]*):[ \t]+)?"
+            r"[|>](?:[+-][1-9]?|[1-9][+-]?)?(?:[ \t]+#.*)?", line)
+        if block:
+            # Compact sequence mappings place the key after their dash.
+            prefix = re.match(r" *(?:-[ \t]+)*", line)[0]
+            key = block[3]
+            block_parent = len(prefix) if key else max(indent, len(prefix) - 2)
+            line = prefix + (key + ": null" if key else "null")
+        lines.append(line)
+    document = resolver.StrictYamlReader("\n".join(lines), path).parse()
     if not isinstance(document, dict) or "on" not in document:
         raise ValueError("missing workflow triggers")
     return document["on"]

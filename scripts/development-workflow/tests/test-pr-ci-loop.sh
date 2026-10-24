@@ -375,6 +375,8 @@ for _workflow in \
   $'on: [push]\n"on": {pull_request: {types: [closed]}}\n' \
   $'on:\n  pull_request: &activity\n    types: [closed]\n' \
   $'on:\n  pull_request:\n    types: [closed]\n<<: *other_triggers\n' \
+  $'jobs:\n  build:\n    name: "hello\non:\n  pull_request:\n    types: [closed]\nenv: end"\n' \
+  $'name: [unfinished,\n  continuation]\non:\n  pull_request:\n    types: [closed]\n' \
   $'name: "unfinished\non:\n  pull_request:\n    types: [closed]\n'; do
   _out="$(run_ci MOCK_ROLLUP="$_subset_rollup" MOCK_PREV_CHECKS="$_tracker_prior" MOCK_CURRENT_RUNS="$_runs_one" MOCK_PR_COMMITS="$_commits_two" MOCK_WORKFLOW="$_workflow")"
   run_test "ambiguous_trigger_definition_fails_closed_2037" "REASON=ci_evidence_lookup_failed" "$(grep ^REASON= <<<"$_out" || true)"
