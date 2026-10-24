@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.48.7] - 2026-10-23
+
+### Fixed
+
+- **CI evidence without PyYAML** (#2037): remove the CI loop's runtime dependency on PyYAML when checking prior workflow applicability; keep ambiguous definitions blocked.
+
+- Correct the tracker mapping diagnostic's script reference by removing its trailing period (#2038).
+
 ## [0.48.6] - 2026-10-23
 
 ### Fixed
@@ -3374,7 +3382,8 @@ Known limitation: human-verification headings split by HTML comments can still b
 - `.claude/settings.json` with pre-approved permissions for common git and fetch operations; `.claude/settings.local.json.example` documenting machine-specific overrides for optional integrations
 - `.gitignore` covering local Claude settings, `.env` files, and common system files
 
-[Unreleased]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.48.6...HEAD
+[Unreleased]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.48.7...HEAD
+[0.48.7]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.48.6...v0.48.7
 [0.48.6]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.48.5...v0.48.6
 [0.48.5]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.48.4...v0.48.5
 [0.48.4]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.48.3...v0.48.4
