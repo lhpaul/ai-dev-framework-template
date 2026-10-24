@@ -2,6 +2,7 @@
 # test-pr-ci-loop.sh - CI loop verdict tests.
 # covers: scripts/development-workflow/pr-ci-loop.sh
 # covers: scripts/development-workflow/workflow-lib.sh
+# covers: scripts/development-workflow/workflow-config-resolver.py
 #
 # Focus: the CI-evidence gate (#1514, #1580). "No failing and no pending
 # checks" is not evidence that CI ran — a head can legitimately carry zero
@@ -159,6 +160,16 @@ GH
 
 _bin="$TMP_ROOT/bin"
 make_gh "$_bin"
+# Exercise every verdict without third-party Python packages, even when the
+# developer machine happens to have PyYAML installed.
+python3 -m venv --without-pip "$TMP_ROOT/python"
+cat > "$_bin/python3" <<'PYTHON'
+#!/usr/bin/env bash
+exec env -u PYTHONPATH PYTHONNOUSERSITE=1 "$CI_LOOP_TEST_PYTHON" "$@"
+PYTHON
+chmod +x "$_bin/python3"
+export CI_LOOP_TEST_PYTHON="$TMP_ROOT/python/bin/python3"
+run_test "pyyaml_is_unavailable_2037" "absent" "$("$CI_LOOP_TEST_PYTHON" -I -c 'import importlib.util; print("absent" if importlib.util.find_spec("yaml") is None else "present")')"
 
 _success_rollup='{"statusCheckRollup":[{"__typename":"CheckRun","name":"workflow test harnesses","status":"COMPLETED","conclusion":"SUCCESS"},{"__typename":"CheckRun","name":"ShellCheck","status":"COMPLETED","conclusion":"SUCCESS"}]}'
 _subset_rollup='{"statusCheckRollup":[{"__typename":"CheckRun","name":"ShellCheck","status":"COMPLETED","conclusion":"SUCCESS"}]}'
@@ -344,6 +355,31 @@ for _head_definition in \
   run_test "divergent_target_definition_named_1964" "MISSING_CHECKS=target policy" "$(grep ^MISSING_CHECKS= <<<"$_out" || true)"
   run_test "divergent_target_definition_exit_1964" "---STATUS=1" "$(grep ^---STATUS= <<<"$_out" || true)"
   run_test "target_definition_not_trusted_from_head_1964" "absent" "$(if [ -e "$TMP_ROOT/target-definition-reads" ]; then echo present; else echo absent; fi)"
+done
+# The trigger reader must tolerate ordinary job shell blocks without parsing
+# their shell text as YAML, and support quoted/scalar/flow trigger spellings.
+for _workflow in \
+  $'---\nname: Synthetic workflow\n"on": # trigger comment\n  pull_request:\n    types:\n      - closed\njobs:\n  synthetic:\n    steps:\n      - run: |\n          echo "on: [push]"\n          echo "types: [synchronize]"\n' \
+  "'on': {pull_request: {types: [closed]}}"; do
+  _out="$(run_ci MOCK_ROLLUP="$_subset_rollup" MOCK_PREV_CHECKS="$_tracker_prior" MOCK_CURRENT_RUNS="$_runs_one" MOCK_PR_COMMITS="$_commits_two" MOCK_WORKFLOW="$_workflow")"
+  run_test "closed_only_yaml_forms_without_pyyaml_2037" "RESULT=green" "$(grep ^RESULT= <<<"$_out" || true)"
+done
+for _workflow in 'on: pull_request' 'on: [pull_request]' \
+  $'on:\n  pull_request:\n    branches: ["release/**"]\n' \
+  $'on:\n  pull_request:\n    branches-ignore: ["develop*"]\n'; do
+  _out="$(run_ci MOCK_ROLLUP="$_subset_rollup" MOCK_PREV_CHECKS="$_tracker_prior" MOCK_CURRENT_RUNS="$_runs_one" MOCK_PR_COMMITS="$_commits_two" MOCK_WORKFLOW="$_workflow")"
+  run_test "applicable_or_unknown_triggers_stay_expected_2037" "MISSING_CHECKS=Update tracker status on PR merge" "$(grep ^MISSING_CHECKS= <<<"$_out" || true)"
+done
+for _workflow in \
+  $'on: {pull_request: {types: [synchronize], types: [closed]}}\n' \
+  $'on: [push]\n"on": {pull_request: {types: [closed]}}\n' \
+  $'on:\n  pull_request: &activity\n    types: [closed]\n' \
+  $'on:\n  pull_request:\n    types: [closed]\n<<: *other_triggers\n' \
+  $'jobs:\n  build:\n    name: "hello\non:\n  pull_request:\n    types: [closed]\nenv: end"\n' \
+  $'name: [unfinished,\n  continuation]\non:\n  pull_request:\n    types: [closed]\n' \
+  $'name: "unfinished\non:\n  pull_request:\n    types: [closed]\n'; do
+  _out="$(run_ci MOCK_ROLLUP="$_subset_rollup" MOCK_PREV_CHECKS="$_tracker_prior" MOCK_CURRENT_RUNS="$_runs_one" MOCK_PR_COMMITS="$_commits_two" MOCK_WORKFLOW="$_workflow")"
+  run_test "ambiguous_trigger_definition_fails_closed_2037" "REASON=ci_evidence_lookup_failed" "$(grep ^REASON= <<<"$_out" || true)"
 done
 # Even unreadable head contents cannot drop a target-event expectation.
 _out="$(run_ci MOCK_ROLLUP="$_subset_rollup" MOCK_PREV_CHECKS="$_target_prior" MOCK_CURRENT_RUNS="$_runs_one" MOCK_PR_COMMITS="$_commits_two" MOCK_CONTENTS_FAIL=1)"
