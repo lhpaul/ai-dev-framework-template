@@ -434,4 +434,4 @@ jobs:
           else
             echo "This run: RUN standard tracker mapping (${{ steps.detect.outputs.branch_type }})"
           fi
-          echo "These mappings are verified by scripts/development-workflow/check-tracker-merge-mapping.sh."
+          echo "These mappings are verified by scripts/development-workflow/check-tracker-merge-mapping.sh"
