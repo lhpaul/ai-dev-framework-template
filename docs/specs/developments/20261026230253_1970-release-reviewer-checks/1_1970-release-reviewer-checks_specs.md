@@ -58,11 +58,14 @@ Luis approved the issue scope and the approach in the development session: consi
 
 ## Decision Matrix
 
+Rows are independent constraints, not an ordered decision tree. For every reachable combination, any applicable blocking row prevents readiness; every applicable blocker must be resolved before advancement. A reviewer exemption removes only that reviewer's contribution and cannot override another row. Existing gate execution order and first-error reporting remain unchanged: this correction defines no new precedence. Ownership failure, missing expected evidence, failing ordinary CI and head changes can coexist and all remain blocking.
+
 | Input | Outcome | Required next action | Surfaces |
 | --- | --- | --- | --- |
 | Release with pending or failed configured reviewer check; other gates pass | Reviewer does not block | Continue normal readiness | CI loop; initial and live readiness |
 | Release with unrelated pending or failing CI | Existing CI block remains | Wait or fix CI | CI loop; initial and live readiness |
 | Release missing expected workflow evidence | Existing evidence block remains | Restore required evidence | CI loop |
+| Ownership verification fails | Existing ownership block remains | Correct the target identity before mutation | Readiness ownership guard |
 | Release head changes during evaluation | Readiness refuses | Reevaluate the current head | Live readiness |
 | Implementation lacking required reviewer evidence | Review gate refuses | Complete required review | Implementation readiness |
 | Unconfigured or similarly named job | No reviewer exemption | Evaluate as ordinary CI | CI loop; release readiness |
