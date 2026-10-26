@@ -666,7 +666,7 @@ _interruptible_sleep() {
 
 usage() {
   cat <<'EOF'
-Usage: ./scripts/development-workflow/pr-review-loop.sh <pr-number> [--branch name] [--repo owner/repo|product-name] [--product-repo name] [--repo-root path] [--platform greptile] [--platform greptile,devin,pr-agent,coderabbit,coderabbit-cli,local-ai-reviewer,codex-github,claude-code-action,copilot,haystack,bugbot,ronda] [--ready-phase haystack] [--phase-after-clean haystack] [--draft-github-only] [--pre-after-clean-only] [--poll-interval seconds] [--max-wait seconds] [--pre-trigger-wait seconds] [--post-final-summary] [--compare]
+Usage: ./scripts/development-workflow/pr-review-loop.sh <pr-number> [--branch name] [--repo owner/repo|product-name] [--product-repo name] [--repo-root path] [--platform greptile] [--platform greptile,devin,pr-agent,coderabbit,coderabbit-cli,local-ai-reviewer,codex-github,claude-code-action,copilot,haystack,bugbot,ronda] [--ready-phase haystack] [--phase-after-clean haystack] [--draft-github-only] [--pre-after-clean-only] [--poll-interval seconds] [--max-wait seconds] [--pre-trigger-wait seconds] [--post-final-summary] [--retry-local-review-head sha] [--compare]
        ./scripts/development-workflow/pr-review-loop.sh unlock <pr-number> [--repo owner/repo|product-name] [--product-repo name] [--repo-root path]
 
 Runs the automated PR review loop for one or more platforms in sequence. Before
@@ -708,6 +708,19 @@ Subcommands:
   Compatibility no-op. The script now posts or updates the
   "Automated Reviewer Loop Summary" comment on every needs_fixes exit, not only
   final/max-cycle exits. Existing callers may keep passing this flag.
+
+--retry-local-review-head <full-lowercase-sha>:
+  Explicitly retry a failed local second pass for this exact PR head after
+  repairing the checkout (use an isolated worktree on the PR branch and pass
+  --branch and --repo-root). Example:
+    pr-review-loop.sh 123 --branch fix/123-example --repo-root /path/to/worktree \
+      --retry-local-review-head <full-40-character-head-sha>
+  Only prior infrastructure escalations (local_pass_unavailable or
+  failed_for_head) qualify; recorded findings still require fixes. The retry
+  runs the real local reviewer once, verifies its reviewed head and the live
+  PR head, and retains history and both cycle caps. It never marks a failure
+  clean or clears review threads. A failed retry remains blocked by default;
+  another attempt requires another explicit invocation after repair.
 
 --compare:
   Run all configured platforms to completion regardless of individual verdicts
@@ -10956,6 +10969,23 @@ reviewer_loop_local_second_pass_failed_for_head() {
   '
 }
 
+# An explicit retry authorizes a fresh review, never a clean verdict. Refuse
+# findings, ambiguous failures, and unknown history. Keep the original ledger
+# untouched so cycle limits and the default failed-head refusal still apply.
+reviewer_loop_local_retry_allowed() {
+  local payload="$1" head="$2"
+  [ "${retry_local_review_head:-}" = "$head" ] || return 1
+  [[ "$head" =~ ^[0-9a-f]{40}$ ]] || return 1
+  printf '%s' "$payload" | jq -e --arg head "$head" '
+    .schema == "reviewer_loop_history.v1" and
+    (.history_status // "available") == "available" and
+    ([.entries[] | select(.local_second_pass_failed_head == $head)] as $failed
+      | ($failed | length) > 0 and
+        all($failed[]; .result == "escalate" and
+          (.reason == "local_pass_unavailable" or .reason == "failed_for_head")))
+  ' >/dev/null 2>&1
+}
+
 # reviewer_loop_local_pass_required <history_payload> <loop_head_sha> <configured_platforms>
 reviewer_loop_local_pass_required() {
   local payload="${1:-}" head="${2:-}" configured="${3:-}"
@@ -11371,14 +11401,24 @@ reviewer_loop_second_local_pass_before_ready_gate() {
   fi
 
   if [ "$(reviewer_loop_local_second_pass_failed_for_head "$_sl_prior_payload" "$loop_head_sha")" -gt 0 ] 2>/dev/null; then
-    local_second_pass=0
-    local_second_pass_reason="failed_for_head"
-    aggregate_result="escalate"
-    aggregate_reason="failed_for_head"
-    aggregate_output="$(printf 'RESULT=escalate\nREASON=failed_for_head\nCOMMENT_COUNT=0\nBLOCKING_COUNT=0\nSUGGESTION_COUNT=0\n')"
-    aggregate_status=2
-    last_platform="local-ai-reviewer"
-    return 1
+    if reviewer_loop_local_retry_allowed "$_sl_prior_payload" "$loop_head_sha"; then
+      # Consume before dispatch, including failed/unknown-head attempts.
+      local_review_retry_head_record="$retry_local_review_head"
+      retry_local_review_head=""
+      if ! reviewer_loop_second_local_pass_confirm_live_head "$pr_number_arg"; then
+        return 1
+      fi
+      workflow_diagnostic "INFO: explicitly retrying failed local review for ${loop_head_sha}; prior history retained" >&2
+    else
+      local_second_pass=0
+      local_second_pass_reason="failed_for_head"
+      aggregate_result="escalate"
+      aggregate_reason="failed_for_head"
+      aggregate_output="$(printf 'RESULT=escalate\nREASON=failed_for_head\nCOMMENT_COUNT=0\nBLOCKING_COUNT=0\nSUGGESTION_COUNT=0\n')"
+      aggregate_status=2
+      last_platform="local-ai-reviewer"
+      return 1
+    fi
   fi
 
   local_second_pass=1
@@ -12945,6 +12985,7 @@ reviewer_loop_history_build_entry() {
     --argjson localSecondPass "${local_second_pass:-0}" \
     --arg localSecondPassReason "${local_second_pass_reason:-not_required}" \
     --arg localSecondPassFailedHead "${local_second_pass_failed_head_record:-}" \
+    --arg localReviewRetryHead "${local_review_retry_head_record:-}" \
     '{
       iteration: $iteration,
       recorded_at: $recordedAt,
@@ -13032,7 +13073,8 @@ reviewer_loop_history_build_entry() {
       end
     | . + {
         local_second_pass: ($localSecondPass == 1),
-        local_second_pass_reason: $localSecondPassReason
+        local_second_pass_reason: $localSecondPassReason,
+        local_review_retry_head: $localReviewRetryHead
       }
     | if ($localSecondPassFailedHead | length) > 0 then
         . + {local_second_pass_failed_head: $localSecondPassFailedHead}
@@ -14884,6 +14926,8 @@ repo_selector=""
 repo_root="$(workflow_repo_root)"
 repo_root_explicit=0
 local_review_override_root=""
+retry_local_review_head=""
+local_review_retry_head_record=""
 review_policy_source="shared"
 # One-run overrides (#1789): set only by --poll-interval / --max-wait. Without
 # them every platform waits with its own resolved budget and poll interval
@@ -14911,6 +14955,15 @@ require_option_value() {
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
+    --retry-local-review-head)
+      require_option_value "$@"
+      retry_local_review_head="$2"
+      if ! [[ "$retry_local_review_head" =~ ^[0-9a-f]{40}$ ]]; then
+        workflow_diagnostic "ERROR: --retry-local-review-head requires a full lowercase 40-character SHA." >&2
+        exit 64
+      fi
+      shift 2
+      ;;
     --branch)
       require_option_value "$@"
       branch_name="$2"
@@ -15533,6 +15586,11 @@ if [ -n "$pr_number" ]; then
     loop_head_sha=""
     workflow_diagnostic "WARN: could not read the PR head before dispatching reviewers; POST_CLEAN_HEAD_SHA will be empty and Protocol 91 Check 0.6 will refuse this verdict" >&2
   fi
+fi
+if [ -n "$retry_local_review_head" ] && [ "$retry_local_review_head" != "$loop_head_sha" ]; then
+  print_kv RESULT escalate
+  print_kv REASON local_review_retry_head_mismatch
+  exit 2
 fi
 # Per-platform result tokens for the PR summary comment.
 # Each entry is "platform_name:display_token" (e.g. "haystack:unavailable").
@@ -16923,6 +16981,7 @@ fi
 # ledger (#1692), so a stale label is removed once the evidence is clean.
 reviewer_loop_reconcile_reviewer_failed_label "$pr_number" "$aggregate_result" "$aggregate_reason"
 
+print_kv LOCAL_REVIEW_RETRY_HEAD "${local_review_retry_head_record:-}"
 print_kv LOCAL_SECOND_PASS "${local_second_pass:-0}"
 print_kv LOCAL_SECOND_PASS_REASON "${local_second_pass_reason:-not_required}"
 # Issue #1692: which reviewers this run replayed from the ledger instead of

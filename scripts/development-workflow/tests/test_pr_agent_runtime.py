@@ -764,6 +764,38 @@ class FittingTests(unittest.TestCase):
             self.assertNotEqual('clean', classify(visible))
             self.assertEqual('escalate', classify(self.fit(visible)))
 
+    def test_comment_split_human_verification_is_not_ancillary(self):
+        for comment in ('<!-- note -->', '<!-- note > detail -->',
+                        '<!-- multi\nline note -->', '<!-- first --><!-- second -->'):
+            payload = '\nRequires further human verifi' + comment + 'cation\n'
+            payload += 'file.py ' * 10000
+            metadata = '<tr><td><strong>Priority files</strong><br><br>' + payload + '</td></tr>'
+            guide = '<details><summary><strong>💡 Tool usage guide:</strong></summary><hr>'
+            for surface, original in (
+                ('metadata', review().replace('</table>', metadata + '</table>')),
+                ('tool-guide', review(suffix=guide + payload + '</details>')),
+            ):
+                with self.subTest(comment=comment, surface=surface):
+                    self.assertGreater(len(original), 65000)
+                    self.assertEqual('escalate', classify(original))
+                    self.assertEqual('escalate', classify(self.fit(original)))
+                    for limit in (len(original), len(original) + 1):
+                        self.assertEqual(original, self.fit(original, limit))
+
+    def test_hidden_comment_status_does_not_protect_ancillary_content(self):
+        payload = '\n<!-- Requires further human verification -->\n' + 'file.py ' * 10000
+        metadata = '<tr><td><strong>Priority files</strong><br><br>' + payload + '</td></tr>'
+        guide = '<details><summary><strong>💡 Tool usage guide:</strong></summary><hr>'
+        for original in (review().replace('</table>', metadata + '</table>'),
+                         review(suffix=guide + payload + '</details>')):
+            with self.subTest(metadata='Priority files' in original):
+                self.assertEqual('clean', classify(original))
+                published = self.fit(original)
+                self.assertEqual('clean', classify(published))
+                self.assertIn('No security concerns identified', published)
+                self.assertIn('No major issues detected', published)
+                self.assertNotIn('file.py', published)
+
     def test_comment_contained_fences_cannot_remove_live_blocker(self):
         for fence in ('```', '~~~~'):
             for excerpt in (

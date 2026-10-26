@@ -1493,6 +1493,8 @@ gh() {
 }
 
 _1656_reset_guard_globals() {
+  retry_local_review_head=""
+  local_review_retry_head_record=""
   phase_after_clean_enabled=1
   phase_after_clean_started=0
   local_second_pass=0
@@ -1585,6 +1587,53 @@ run_test "1656_s8c_guard_no_dispatch" "0" "$_1656_run_platform_review_calls"
 run_test "1656_s8c_guard_escalate" "escalate" "$aggregate_result"
 run_test "1656_s8c_guard_failed_reason" "failed_for_head" "$aggregate_reason"
 run_test "1656_s8c_phase_not_started" "0" "$phase_after_clean_started"
+
+# #2045: recovery is explicit, head-bound and executes a fresh local review.
+_2045_infra_hist="$(printf '%s' "$_1656_guard_hist_failed" | jq '.entries[0].reason = "local_pass_unavailable"')"
+_1656_reset_guard_globals
+_1656_guard_hist_payload="$_2045_infra_hist"
+retry_local_review_head="$_1656_guard_head"
+reviewer_loop_second_local_pass_before_ready_gate 1693 && _st=0 || _st=$?
+run_test "2045_retry_clean_proceeds" "0" "$_st"
+run_test "2045_retry_dispatches" "1" "$local_second_pass"
+run_test "2045_retry_consumed" "" "$retry_local_review_head"
+run_test "2045_retry_audit_head" "$_1656_guard_head" "$local_review_retry_head_record"
+run_test "2045_retry_does_not_erase_failure" "1" \
+  "$(reviewer_loop_local_second_pass_failed_for_head "$_1656_guard_hist_payload" "$_1656_guard_head")"
+
+# The consumed authorization cannot be reused, even within the same process.
+platform_result_records=()
+platform_reviewed_heads=()
+reviewer_loop_second_local_pass_before_ready_gate 1693 && _st=0 || _st=$?
+run_test "2045_retry_one_use" "1" "$_st"
+run_test "2045_retry_one_use_reason" "failed_for_head" "$aggregate_reason"
+
+for _2045_case in wrong_head findings ambiguous unavailable moved unreadable failed skipped missing_reviewed_head; do
+  _1656_reset_guard_globals
+  _1656_guard_hist_payload="$_2045_infra_hist"
+  retry_local_review_head="$_1656_guard_head"
+  case "$_2045_case" in
+    wrong_head) retry_local_review_head="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" ;;
+    findings) _1656_guard_hist_payload="$(printf '%s' "$_2045_infra_hist" | jq '.entries[0].result = "needs_fixes"')" ;;
+    ambiguous) _1656_guard_hist_payload="$_1656_guard_hist_failed" ;;
+    unavailable) _1656_guard_hist_payload='{"schema":"reviewer_loop_history.v1","history_status":"unavailable","entries":[]}' ;;
+    moved) _1656_stub_pr_head="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" ;;
+    unreadable) _1656_stub_pr_head="UNAVAILABLE" ;;
+    failed) _1656_stub_pass_result="escalate_pass" ;;
+    skipped) _1656_stub_pass_result="skipped" ;;
+    missing_reviewed_head) _1656_stub_pass_result="clean_no_head" ;;
+  esac
+  reviewer_loop_second_local_pass_before_ready_gate 1693 && _st=0 || _st=$?
+  run_test "2045_${_2045_case}_blocked" "1" "$_st"
+  run_test "2045_${_2045_case}_no_ready_phase" "0" "$phase_after_clean_started"
+  case "$_2045_case" in
+    wrong_head|findings|ambiguous|unavailable|moved|unreadable)
+      run_test "2045_${_2045_case}_no_dispatch" "0" "$local_second_pass" ;;
+    failed|skipped)
+      run_test "2045_${_2045_case}_failed_head_retained" "$_1656_guard_head" "$local_second_pass_failed_head_record" ;;
+  esac
+done
+unset _2045_infra_hist _2045_case
 
 # Prior ledger unavailable — close gate before dispatch (P9 / cross-invocation)
 _1656_guard_hist_unavail='{"schema":"reviewer_loop_history.v1","history_status":"unavailable","history_unavailable_reason":"comment_read_failed","entries":[]}'

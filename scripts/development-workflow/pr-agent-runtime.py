@@ -328,6 +328,8 @@ class ReviewSpans(HTMLParser):
 
 
 def plain_text(source):
+    # Match the classifier: comments disappear without splitting status words.
+    source = re.sub(r"<!--[\s\S]*?-->", "", source)
     return " ".join(unescape(re.sub(r"<[^>]*>", " ", source)).split())
 
 
