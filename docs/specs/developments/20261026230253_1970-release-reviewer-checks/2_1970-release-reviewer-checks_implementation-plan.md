@@ -63,7 +63,7 @@ Parser-risk applies because readiness filters structured check evidence. No new 
 | Missing expected workflow | CI loop refuses despite a reviewer exemption | test-pr-ci-loop.sh |
 | Malformed or unknown check evidence | No removal based on fuzzy names or a fallback unknown name; existing parse/refusal handling remains | Both harnesses |
 | Initial reviewer failure followed by live reviewer pending | Release readiness still passes when ordinary CI and head remain valid | test-apply-readiness-labels.sh |
-| Ordinary CI becomes pending/failing during live evaluation | No readiness label is added | test-apply-readiness-labels.sh |
+| Ordinary CI becomes pending/failing during live evaluation | Pending refuses ready-for-human-review but remains allowed for ready-for-regression; failing refuses both labels | test-apply-readiness-labels.sh |
 | Head changes during readiness | Existing head-changed-before-apply refusal; no readiness label is added | test-apply-readiness-labels.sh |
 | Implementation missing required reviewer evidence | Existing reviewer refusal remains even with passing ordinary CI | test-apply-readiness-labels.sh |
 
