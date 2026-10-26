@@ -2229,11 +2229,24 @@ if ! normalized="$(printf '%s\n' "$pr_json" | normalize_status_check_rollup 2>/d
   escalate check-rollup-parse-failed
 fi
 
+# Release policy excludes reviewers configured in either phase. Other heads
+# retain their existing ready-phase name exclusions and reviewer requirements.
+ci_reviewer_names="$(printf '%s\n' "$reviewer_names_seen" | tr ',' '\n' | jq -R . | jq -s '.')"
+ci_release_reviewers=false
+case "$head_ref_name" in
+  release/*)
+    ci_release_reviewers=true
+    if ! ci_reviewer_names="$(configured_reviewer_check_names_json "")"; then
+      escalate ready-config-unreadable
+    fi
+    ;;
+esac
+
 baseline_json=""
-if ! baseline_json="$(printf '%s\n' "$normalized" | jq -c --argjson names "$(printf '%s\n' "$reviewer_names_seen" | tr ',' '\n' | jq -R . | jq -s '.')" '
+if ! baseline_json="$(printf '%s\n' "$normalized" | jq -c --argjson names "$ci_reviewer_names" --argjson release "$ci_release_reviewers" "$CONFIGURED_REVIEWER_CHECK_JQ"'
       [ .[]
         | (.name // .context // .workflowName // "unknown") as $n
-        | select(($names | index($n)) | not)
+        | select((if $release then configured_reviewer_check($names) else ($names | index($n)) != null end) | not)
       ]
     ' 2>/dev/null)"; then
   escalate check-rollup-parse-failed
@@ -2399,10 +2412,10 @@ revalidate_ci_state() {
     return 1
   fi
   baseline_arg=""
-  if ! baseline_arg="$(printf '%s\n' "$normalized_arg" | jq -c --argjson names "$(printf '%s\n' "$reviewer_names_seen" | tr ',' '\n' | jq -R . | jq -s '.')" '
+  if ! baseline_arg="$(printf '%s\n' "$normalized_arg" | jq -c --argjson names "$ci_reviewer_names" --argjson release "$ci_release_reviewers" "$CONFIGURED_REVIEWER_CHECK_JQ"'
         [ .[]
           | (.name // .context // .workflowName // "unknown") as $n
-          | select(($names | index($n)) | not)
+          | select((if $release then configured_reviewer_check($names) else ($names | index($n)) != null end) | not)
         ]
       ' 2>/dev/null)"; then
     return 1
