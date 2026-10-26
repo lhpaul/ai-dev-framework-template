@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.48.8] - 2026-10-26
+
+### Fixed
+
+- **PR-Agent review evidence** (#1961): preserve human verification requests split by HTML comments when reducing oversized reviews.
+- **Local review recovery** (#2045): allow an explicit retry bound to the current head after eligible infrastructure failures, preserving review history and blocking findings or ambiguous evidence.
+- **Optional tracker workflow tests** (#2043): keep mapping reference tests usable in downstream repositories that omit the GitHub tracker merge workflow, while still checking adopted workflows and synthetic invalid references.
+
 ## [0.48.7] - 2026-10-23
 
 ### Fixed
@@ -3382,7 +3390,8 @@ Known limitation: human-verification headings split by HTML comments can still b
 - `.claude/settings.json` with pre-approved permissions for common git and fetch operations; `.claude/settings.local.json.example` documenting machine-specific overrides for optional integrations
 - `.gitignore` covering local Claude settings, `.env` files, and common system files
 
-[Unreleased]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.48.7...HEAD
+[Unreleased]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.48.8...HEAD
+[0.48.8]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.48.7...v0.48.8
 [0.48.7]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.48.6...v0.48.7
 [0.48.6]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.48.5...v0.48.6
 [0.48.5]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.48.4...v0.48.5
