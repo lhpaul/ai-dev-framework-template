@@ -522,9 +522,10 @@ print_kv() {
 #
 # Returns a JSON array of GitHub check-run names owned by configured review
 # platforms (haystack → Haystack / Review, bugbot → Cursor Bugbot, ronda →
-# Ronda review). Shared by
+# Ronda review, pr-agent → PR-Agent review). Shared by
 # pr-ci-loop.sh (to exclude reviewer checks from the baseline CI set) and
-# pr-review-loop.sh (expensive-reviewer gate baseline-check classification).
+# pr-review-loop.sh (expensive-reviewer gate baseline-check classification),
+# and apply-readiness-labels.sh (release-only CI exclusions).
 # Relocated from pr-ci-loop.sh (#1649) with no behavior change.
 configured_reviewer_check_names_json() {
   local config_file="${1:-}"
@@ -551,6 +552,9 @@ configured_reviewer_check_names_json() {
         bugbot)
           names+=("${BUGBOT_CHECK_NAME:-Cursor Bugbot}")
           ;;
+        pr-agent)
+          names+=("PR-Agent review")
+          ;;
         ronda)
           names+=("${RONDA_CHECK_NAME:-Ronda review}")
           ;;
@@ -564,6 +568,29 @@ configured_reviewer_check_names_json() {
 
   printf '%s\n' "${names[@]}" | jq -R . | jq -s .
 }
+
+# Safe reviewer exclusion policy. Unknown or contradictory evidence remains CI;
+# this does not change the ordinary CI verdict policy of any caller.
+# shellcheck disable=SC2034,SC2016 # Shared jq definitions consumed by callers.
+CONFIGURED_REVIEWER_CHECK_JQ='
+def configured_reviewer_check($names):
+  . as $check
+  | (.__typename == "CheckRun")
+    and ((.name | type) == "string")
+    and ((.status | type) == "string")
+    and (.state == null or .state == "")
+    and (($names | index($check.name)) != null)
+    and (
+      ((["QUEUED", "IN_PROGRESS", "WAITING", "REQUESTED", "PENDING", "EXPECTED"]
+        | index($check.status)) != null
+        and ($check.conclusion == null or $check.conclusion == ""))
+      or ($check.status == "COMPLETED"
+        and (($check.conclusion | type) == "string")
+        and ((["SUCCESS", "FAILURE", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED",
+                "STARTUP_FAILURE", "NEUTRAL", "SKIPPED"]
+          | index($check.conclusion)) != null))
+    );
+'
 
 # STATUS_CHECK_ROLLUP_DEDUPE_JQ — the single statusCheckRollup deduplication
 #

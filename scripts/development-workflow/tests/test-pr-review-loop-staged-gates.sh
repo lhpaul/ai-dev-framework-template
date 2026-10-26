@@ -337,9 +337,9 @@ _1649_baseline_helper_row() {
 _1649_green_rollup='{"statusCheckRollup":[{"name":"ShellCheck","status":"COMPLETED","conclusion":"SUCCESS"}],"headRefOid":"'"$_1649_head"'"}'
 _1649_fail_rollup='{"statusCheckRollup":[{"name":"ShellCheck","status":"COMPLETED","conclusion":"FAILURE"},{"name":"lint","status":"COMPLETED","conclusion":"SUCCESS"}],"headRefOid":"'"$_1649_head"'"}'
 _1649_pending_rollup='{"statusCheckRollup":[{"name":"ShellCheck","status":"IN_PROGRESS","conclusion":null},{"name":"lint","status":"COMPLETED","conclusion":"SUCCESS"}],"headRefOid":"'"$_1649_head"'"}'
-_1649_exclude_rollup='{"statusCheckRollup":[{"name":"Cursor Bugbot","status":"IN_PROGRESS","conclusion":null},{"name":"ShellCheck","status":"COMPLETED","conclusion":"SUCCESS"}],"headRefOid":"'"$_1649_head"'"}'
+_1649_exclude_rollup='{"statusCheckRollup":[{"__typename":"CheckRun","name":"Cursor Bugbot","status":"IN_PROGRESS","conclusion":null},{"name":"ShellCheck","status":"COMPLETED","conclusion":"SUCCESS"}],"headRefOid":"'"$_1649_head"'"}'
 _1649_empty_rollup='{"statusCheckRollup":[],"headRefOid":"'"$_1649_head"'"}'
-_1649_reviewer_only_rollup='{"statusCheckRollup":[{"name":"Cursor Bugbot","status":"COMPLETED","conclusion":"SUCCESS"}],"headRefOid":"'"$_1649_head"'"}'
+_1649_reviewer_only_rollup='{"statusCheckRollup":[{"__typename":"CheckRun","name":"Cursor Bugbot","status":"COMPLETED","conclusion":"SUCCESS"}],"headRefOid":"'"$_1649_head"'"}'
 
 run_test "1649_s10_real_green" "green $_1649_head" \
   "$(_1649_baseline_helper_row "$_1649_green_rollup")"
@@ -354,6 +354,10 @@ run_test "1649_s10_real_empty" "empty $_1649_head" \
   "$(_1649_baseline_helper_row "$_1649_empty_rollup")"
 run_test "1649_s10_real_reviewer_only" "empty $_1649_head" \
   "$(_1649_baseline_helper_row "$_1649_reviewer_only_rollup")"
+# A reviewer name without a genuine CheckRun type stays in baseline CI.
+_1970_unknown_reviewer_rollup=$(printf '%s\n' "$_1649_exclude_rollup" | jq 'del(.statusCheckRollup[0].__typename)')
+run_test "1970_unknown_reviewer_type_retained" "pending $_1649_head" \
+  "$(_1649_baseline_helper_row "$_1970_unknown_reviewer_rollup")"
 # Stale failed duplicate + newer green same name → green (pr-ci-loop normalization)
 _1649_dup_rollup='{"statusCheckRollup":[{"name":"ShellCheck","status":"COMPLETED","conclusion":"FAILURE","startedAt":"2026-01-01T00:00:00Z"},{"name":"ShellCheck","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-01-01T01:00:00Z"}],"headRefOid":"'"$_1649_head"'"}'
 run_test "1649_s10_real_dup_latest_green" "green $_1649_head" \

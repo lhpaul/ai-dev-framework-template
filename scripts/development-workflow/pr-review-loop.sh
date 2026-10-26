@@ -1711,12 +1711,12 @@ expensive_gate_baseline_checks_status() {
   if ! baseline_json="$(
     printf '%s\n' "$normalized_json" | jq \
       --argjson reviewer_names "$reviewer_names" \
-      --arg guard_prefix "$EXPENSIVE_GATE_COMPLETION_GUARD_PREFIX" '
+      --arg guard_prefix "$EXPENSIVE_GATE_COMPLETION_GUARD_PREFIX" "$CONFIGURED_REVIEWER_CHECK_JQ"'
       [
         .[]
         | select(
             (.name // .context // .workflowName // "unknown") as $check_name
-            | ($reviewer_names | index($check_name) | not)
+            | (configured_reviewer_check($reviewer_names) | not)
               and ($check_name | startswith($guard_prefix) | not)
               and (
                 ((.__typename // "") == "CheckRun"
