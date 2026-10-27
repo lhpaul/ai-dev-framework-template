@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.48.9] - 2026-10-26
+
+### Fixed
+
+- **Release reviewer checks** (#1970): Exclude exact configured reviewer checks, including PR-Agent, consistently from release CI and live readiness validation while preserving ordinary CI, implementation review and head freshness gates.
+
 ## [0.48.8] - 2026-10-26
 
 ### Fixed
@@ -3390,7 +3396,8 @@ Known limitation: human-verification headings split by HTML comments can still b
 - `.claude/settings.json` with pre-approved permissions for common git and fetch operations; `.claude/settings.local.json.example` documenting machine-specific overrides for optional integrations
 - `.gitignore` covering local Claude settings, `.env` files, and common system files
 
-[Unreleased]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.48.8...HEAD
+[Unreleased]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.48.9...HEAD
+[0.48.9]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.48.8...v0.48.9
 [0.48.8]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.48.7...v0.48.8
 [0.48.7]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.48.6...v0.48.7
 [0.48.6]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.48.5...v0.48.6

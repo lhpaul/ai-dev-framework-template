@@ -495,12 +495,11 @@ while :; do
     configured_reviewer_check_names_json ""
   )" || exit 2
   if ! ci_checks_json="$(
-    printf '%s\n' "$normalized_checks_json" | jq --argjson reviewer_names "$reviewer_check_names" '
+    printf '%s\n' "$normalized_checks_json" | jq --argjson reviewer_names "$reviewer_check_names" "$CONFIGURED_REVIEWER_CHECK_JQ"'
       [
         .[]
         | select(
-            (.name // .context // .workflowName // "unknown") as $check_name
-            | ($reviewer_names | index($check_name) | not)
+            configured_reviewer_check($reviewer_names) | not
           )
       ]
     '
@@ -520,24 +519,22 @@ while :; do
     exit 1
   fi
   reviewer_check_count="$(
-    printf '%s\n' "$normalized_checks_json" | jq --argjson reviewer_names "$reviewer_check_names" '
+    printf '%s\n' "$normalized_checks_json" | jq --argjson reviewer_names "$reviewer_check_names" "$CONFIGURED_REVIEWER_CHECK_JQ"'
       [
         .[]
         | select(
-            (.name // .context // .workflowName // "unknown") as $check_name
-            | ($reviewer_names | index($check_name))
+            configured_reviewer_check($reviewer_names)
           )
       ]
       | length
     '
   )"
   reviewer_check_list="$(
-    printf '%s\n' "$normalized_checks_json" | jq -r --argjson reviewer_names "$reviewer_check_names" '
+    printf '%s\n' "$normalized_checks_json" | jq -r --argjson reviewer_names "$reviewer_check_names" "$CONFIGURED_REVIEWER_CHECK_JQ"'
       [
         .[]
         | select(
-            (.name // .context // .workflowName // "unknown") as $check_name
-            | ($reviewer_names | index($check_name))
+            configured_reviewer_check($reviewer_names)
           )
         | (.name // .context // .workflowName // "unknown")
       ]
@@ -545,11 +542,11 @@ while :; do
     '
   )"
   reviewer_checks_json="$(
-    printf '%s\n' "$normalized_checks_json" | jq -c --argjson reviewer_names "$reviewer_check_names" --arg pr_number "$pr_number" '
+    printf '%s\n' "$normalized_checks_json" | jq -c --argjson reviewer_names "$reviewer_check_names" --arg pr_number "$pr_number" "$CONFIGURED_REVIEWER_CHECK_JQ"'
       [
         .[]
         | (.name // .context // .workflowName // "unknown") as $check_name
-        | select($reviewer_names | index($check_name))
+        | select(configured_reviewer_check($reviewer_names))
         | {
             name: $check_name,
             provider: $check_name,
