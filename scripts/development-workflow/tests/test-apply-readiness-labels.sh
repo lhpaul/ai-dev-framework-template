@@ -2164,7 +2164,66 @@ run_test "graphql_literal_scan_finds_queries" "yes" \
   "$(grep -c "query='" "$HELPER" | awk '$1 > 0 {print "yes"}')"
 
 echo ""
-# shellcheck disable=SC2154 # Provided by the shared readiness fixture or its caller.
+# #1970: release CI excludes only coherent, exact configured reviewer checks.
+MOCK_HEAD_CONFIG=$'review:\n  on_draft:\n    github: [pr-agent]\n  on_ready:\n    github: [local-ai-reviewer]'
+MOCK_BASE_CONFIG="$MOCK_HEAD_CONFIG"
+printf '%s\n' "$MOCK_HEAD_CONFIG" > "$TMP_ROOT/workflow.yaml"
+# shellcheck disable=SC2034 # Consumed by the sourced fixture.
+MOCK_COMMENTS='[]'
+# shellcheck disable=SC2034 # Consumed by the sourced fixture.
+MOCK_REVIEWS='[]'
+# shellcheck disable=SC2034 # Consumed by the sourced fixture.
+MOCK_CHECK_RUNS='{"check_runs":[]}'
+# shellcheck disable=SC2034 # Consumed by the sourced fixture.
+MOCK_ISSUE_COMMENTS='[]'
+MOCK_FINAL_REVALIDATE_HEAD=''
+# shellcheck disable=SC2034 # Consumed by the sourced fixture.
+MOCK_REVALIDATE_HEAD=''
+MOCK_REVALIDATE_PR_JSON=''
+# shellcheck disable=SC2034 # Consumed by the sourced fixture.
+MOCK_LATE_CI_PR_JSON=''
+MOCK_LABEL=ready-for-human-review
+_release_1970=$(jq --arg h "$HEAD" '{headRefOid:$h,headRefName:"release/v0.0.0",labels:[],statusCheckRollup:[{__typename:"CheckRun",name:"ShellCheck",status:"COMPLETED",conclusion:"SUCCESS"},{__typename:"CheckRun",name:"PR-Agent review",status:"COMPLETED",conclusion:"FAILURE"}]}' <<< '{}')
+MOCK_PR_JSON="$_release_1970"
+result="$(run_helper)"
+run_test "release_failed_reviewer_passes_1970" "labeled" "$(field "$result" RESULT)"
+MOCK_REVALIDATE_PR_JSON=$(jq '.statusCheckRollup[1] += {status:"IN_PROGRESS",conclusion:null}' <<< "$_release_1970")
+result="$(run_helper)"
+run_test "release_live_pending_reviewer_passes_1970" "labeled" "$(field "$result" RESULT)"
+for _ci_state in FAILURE PENDING; do
+  MOCK_REVALIDATE_PR_JSON=$(jq --arg c "$_ci_state" '.statusCheckRollup[0] += (if $c == "PENDING" then {status:"IN_PROGRESS",conclusion:null} else {conclusion:$c} end)' <<< "$_release_1970")
+  result="$(run_helper)"
+  run_test "release_live_ordinary_${_ci_state}_blocks_1970" "refused" "$(field "$result" RESULT)"
+  run_test "release_live_ordinary_${_ci_state}_no_label_1970" "0" "$(edit_count)"
+  MOCK_LABEL=ready-for-regression
+  result="$(run_helper)"
+  _regression_expected=refused
+  [ "$_ci_state" != PENDING ] || _regression_expected=labeled
+  run_test "release_regression_ordinary_${_ci_state}_1970" "$_regression_expected" "$(field "$result" RESULT)"
+  MOCK_LABEL=ready-for-human-review
+done
+MOCK_REVALIDATE_PR_JSON=''
+MOCK_FINAL_REVALIDATE_HEAD='bbbb222000000000000'
+result="$(run_helper)"
+run_test "release_head_change_blocks_1970" "head-changed-before-apply" "$(field "$result" REASON)"
+# shellcheck disable=SC2034 # Consumed by the sourced fixture.
+MOCK_FINAL_REVALIDATE_HEAD=''
+for _negative in 'del(.__typename)' '.name = "PR-Agent review extra"' '.status = "UNRECOGNIZED"' '.status = "IN_PROGRESS"' '.conclusion = "SUCCESS" | .state = "FAILURE"'; do
+  MOCK_PR_JSON=$(jq ".statusCheckRollup[1] |= ($_negative)" <<< "$_release_1970")
+  result="$(run_helper)"
+  run_test "release_unknown_evidence_retained_1970_${_negative}" "1" "$(field "$result" FAILING_CHECK_COUNT)"
+done
+# shellcheck disable=SC2034 # Consumed by the sourced fixture.
+MOCK_PR_JSON="$_release_1970"
+# shellcheck disable=SC2034 # Consumed by the sourced fixture.
+MOCK_REVALIDATE_PR_JSON=''
+result="$(run_helper)"
+run_test "release_correction_passes_1970" "labeled" "$(field "$result" RESULT)"
+printf '%s\n' "$MOCK_HEAD_CONFIG" | sed 's/github: \[pr-agent\]/github: []/' > "$TMP_ROOT/workflow.yaml"
+result="$(run_helper)"
+run_test "release_unconfigured_reviewer_blocks_1970" "ci-failing" "$(field "$result" REASON)"
+
+# shellcheck disable=SC2154 # Counters provided by the sourced fixture.
 echo "$pass passed, $fail failed"
 
 if [ "$fail" -ne 0 ]; then

@@ -20,6 +20,7 @@ trap 'rm -rf "$TMP_ROOT"' EXIT
 # No real repository configuration or service credentials enter the fixtures.
 mkdir -p "$TMP_ROOT/repo with spaces"
 git init --quiet "$TMP_ROOT/repo with spaces"
+printf 'review: {}\n' > "$TMP_ROOT/repo with spaces/.ai-dev-workflow.local.yaml"
 cat > "$TMP_ROOT/repo with spaces/.ai-dev-workflow.yaml" <<'CONFIG'
 schema_version: 2
 review:
@@ -195,7 +196,7 @@ _runs_matrix='{"workflow_runs":[{"name":"workflow test harnesses"}]}'
 run_ci() {
   local out status=0
   _last_stderr_file="$TMP_ROOT/last-stderr"
-  out="$(env PATH="$_bin:$PATH" MOCK_HEAD_COUNTER="$(mktemp "$TMP_ROOT/head.XXXXXX")-calls" "$@" bash "$HELPER" 42 --repo owner/repo --repo-root "$TMP_ROOT/repo with spaces" --poll-interval 1 --max-wait 1 2>"$_last_stderr_file")" || status=$?
+  out="$(env AI_DEV_WORKFLOW_CONFIG_FILE="$TMP_ROOT/repo with spaces/.ai-dev-workflow.yaml" WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT="$TMP_ROOT/repo with spaces" PATH="$_bin:$PATH" MOCK_HEAD_COUNTER="$(mktemp "$TMP_ROOT/head.XXXXXX")-calls" "$@" bash "$HELPER" 42 --repo owner/repo --repo-root "$TMP_ROOT/repo with spaces" --poll-interval 1 --max-wait 1 2>"$_last_stderr_file")" || status=$?
   printf '%s\n---STATUS=%s\n' "$out" "$status"
 }
 
@@ -388,6 +389,84 @@ run_test "target_without_head_definition_still_expected_1964" "MISSING_CHECKS=ta
 _pending_rollup='{"statusCheckRollup":[{"__typename":"CheckRun","name":"ShellCheck","status":"IN_PROGRESS","conclusion":null}]}'
 _out="$(run_ci MOCK_ROLLUP="$_pending_rollup" MOCK_WORKFLOW="$_closed_workflow")"
 run_test "pending_checks_still_timeout_1964" "RESULT=timeout" "$(grep ^RESULT= <<<"$_out" || true)"
+
+# Exercise the shared predicate boundary without service data. Empty/whitespace,
+# absent, array and false fields are conservative non-exclusions.
+_predicate_matrix_1970="$(
+  source "$REPO_ROOT/scripts/development-workflow/workflow-lib.sh"
+  jq -n "$CONFIGURED_REVIEWER_CHECK_JQ"'
+    def record: {__typename:"CheckRun",name:"PR-Agent review"};
+    [ (["QUEUED","IN_PROGRESS","WAITING","REQUESTED","PENDING","EXPECTED"][] as $s
+        | [null, ""][] as $c
+        | record + {status:$s,conclusion:$c} | configured_reviewer_check(["PR-Agent review"])),
+      (["SUCCESS","FAILURE","CANCELLED","TIMED_OUT","ACTION_REQUIRED","STARTUP_FAILURE","NEUTRAL","SKIPPED"][] as $c
+        | record + {status:"COMPLETED",conclusion:$c} | configured_reviewer_check(["PR-Agent review"]))
+    ] | all'
+)"
+run_test "recognized_reviewer_shapes_1970" true "$_predicate_matrix_1970"
+_predicate_negative_1970="$(
+  source "$REPO_ROOT/scripts/development-workflow/workflow-lib.sh"
+  jq -n "$CONFIGURED_REVIEWER_CHECK_JQ"'
+    [ {}, {__typename:"CheckRun", name:"PR-Agent review", status:" "},
+      {__typename:"CheckRun", name:"PR-Agent review", status:"IN_PROGRESS", conclusion:false},
+      {__typename:"CheckRun", name:"PR-Agent review", status:["COMPLETED"], conclusion:"SUCCESS"},
+      {__typename:"CheckRun", name:"PR-Agent review", status:"COMPLETED", conclusion:["SUCCESS"]},
+      {__typename:"CheckRun", name:"PR-Agent review", status:"COMPLETED", conclusion:"SUCCESS", state:"FAILURE"}
+    ] | map(configured_reviewer_check(["PR-Agent review"])) | any'
+)"
+run_test "malformed_reviewer_shapes_1970" false "$_predicate_negative_1970"
+
+# #1970: effective draft reviewer owns exactly one check; the local reviewer
+# publishes a ledger, not a GitHub check run.
+cat > "$TMP_ROOT/repo with spaces/.ai-dev-workflow.yaml" <<'CONFIG'
+schema_version: 2
+review:
+  on_draft:
+    runner: []
+    github: [pr-agent]
+  on_ready:
+    github: [local-ai-reviewer]
+issue_tracker:
+  provider: none
+CONFIG
+for _state in 'IN_PROGRESS null' 'COMPLETED "FAILURE"'; do
+  read -r _status _conclusion <<< "$_state"
+  _reviewer=$(jq -nc --arg s "$_status" --argjson c "$_conclusion" '{__typename:"CheckRun",name:"PR-Agent review",status:$s,conclusion:$c}')
+  _release_rollup=$(jq --argjson r "$_reviewer" '.statusCheckRollup += [$r]' <<< "$_success_rollup")
+  _out="$(run_ci MOCK_ROLLUP="$_release_rollup" MOCK_PREV_CHECKS="$_runs_two" MOCK_CURRENT_RUNS="$_runs_two" MOCK_PR_COMMITS="$_commits_two")"
+  run_test "release_reviewer_${_status}_green_1970" "RESULT=green" "$(grep '^RESULT=' <<<"$_out" || true)"
+  run_test "release_reviewer_${_status}_count_1970" "REVIEWER_CHECK_COUNT=1" "$(grep '^REVIEWER_CHECK_COUNT=' <<<"$_out" || true)"
+done
+
+# Same-name malformed records, lookalikes, and ordinary CI retain their
+# original verdict classification and never enter reviewer projections.
+for _mutation in 'del(.__typename)' '.__typename = "Unknown"' '.status = "UNKNOWN"' '.status = "IN_PROGRESS"' '.conclusion = "UNKNOWN"' '.name = "PR-Agent review extra"' '.status = ["COMPLETED"]' '.conclusion = ["FAILURE"]' '.status = "IN_PROGRESS" | .conclusion = false' '.conclusion = "SUCCESS" | .state = "FAILURE"'; do
+  _bad=$(jq "$_mutation" <<< "$_reviewer")
+  _rollup=$(jq --argjson r "$_bad" '.statusCheckRollup += [$r]' <<< "$_success_rollup")
+  _out="$(run_ci MOCK_ROLLUP="$_rollup" MOCK_PR_COMMITS='[]')"
+  run_test "malformed_not_projected_1970_${_mutation}" "REVIEWER_CHECK_COUNT=0" "$(grep '^REVIEWER_CHECK_COUNT=' <<<"$_out" || true)"
+  if [ "$_mutation" = '.status = ["COMPLETED"]' ]; then
+    # The existing rollup normalizer rejects this structural type error before
+    # any reviewer projection. Preserve that parse refusal instead of a count.
+    run_test "malformed_status_parse_refusal_1970" "REASON=check_json_parse_failed" "$(grep '^REASON=' <<<"$_out" || true)"
+  else
+    run_test "malformed_retained_in_ci_1970_${_mutation}" "TOTAL_CHECK_COUNT=3" "$(grep '^TOTAL_CHECK_COUNT=' <<<"$_out" || true)"
+  fi
+done
+for _ordinary in FAILURE PENDING; do
+  _rollup=$(jq --arg c "$_ordinary" --argjson r "$_reviewer" '.statusCheckRollup += [$r] | .statusCheckRollup[0] += (if $c == "PENDING" then {status:"IN_PROGRESS",conclusion:null} else {conclusion:$c} end)' <<< "$_success_rollup")
+  _out="$(run_ci MOCK_ROLLUP="$_rollup" MOCK_PR_COMMITS='[]')"
+  _expected=red
+  [ "$_ordinary" != PENDING ] || _expected=timeout
+  run_test "ordinary_${_ordinary}_blocks_reviewer_exemption_1970" "RESULT=$_expected" "$(grep '^RESULT=' <<<"$_out" || true)"
+done
+_out="$(run_ci MOCK_ROLLUP="$_release_rollup" MOCK_PREV_CHECKS="$_runs_two" MOCK_CURRENT_RUNS="$_runs_one" MOCK_PR_COMMITS="$_commits_two")"
+run_test "missing_workflow_blocks_reviewer_exemption_1970" "REASON=expected_checks_missing" "$(grep '^REASON=' <<<"$_out" || true)"
+# Remove only the configured draft reviewer; its failed check must block.
+sed 's/github: \[pr-agent\]/github: []/' "$TMP_ROOT/repo with spaces/.ai-dev-workflow.yaml" > "$TMP_ROOT/unconfigured.yaml"
+mv "$TMP_ROOT/unconfigured.yaml" "$TMP_ROOT/repo with spaces/.ai-dev-workflow.yaml"
+_out="$(run_ci MOCK_ROLLUP="$_release_rollup" MOCK_PR_COMMITS='[]')"
+run_test "unconfigured_reviewer_blocks_1970" "RESULT=red" "$(grep '^RESULT=' <<<"$_out" || true)"
 
 printf '\nResults: %d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
