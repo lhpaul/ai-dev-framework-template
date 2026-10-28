@@ -45,3 +45,13 @@ The implementation PR records the reviewed commit and final suite outcomes.
 | Local reviewer context and proof | `test-local-ai-reviewer.sh`, the `#2061` cases: missing/unverified/stale proof, an independent code finding, evidence drift and API failure cannot approve | Full body and second-page proof reach the backend; explicit matching proof is accepted and its snapshot hash survives metadata transport |
 | Loop targeted review and replay | `test-pr-review-loop-pr-agent-coderabbit.sh`, `2061_targeted_*`, and staged-gates `2061_*`: unverified proof, prior failure without retry, code findings and stale fingerprints refuse clearance | A configured fresh local assessment at the original SHA verifies proof; current fingerprint and compact metadata survive replay |
 | Readiness | `test-apply-readiness-labels.sh`, `2061_*`: unverified, edited, forged or independently security-blocking proof applies no label | Only the matching trusted verified fixture returns `labeled` |
+
+The head-binding regression also composes the actual PR-Agent handler output,
+the production platform processor and the trusted readiness predicate for both
+the existing-summary and polling phases (`_2061_platform_entry` in
+`test-pr-review-loop-pr-agent-coderabbit.sh`). Removing the two successful
+`REVIEWED_HEAD` emissions in a disposable subshell makes seven assertions fail:
+the emitted head is missing, the persisted head is empty and readiness remains
+`verification_pending`. With the emissions restored, all 27 targeted assertions
+pass. The ledger in this regression receives the processor's actual head data;
+the test does not supply a reviewed head directly.

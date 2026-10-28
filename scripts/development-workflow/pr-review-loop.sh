@@ -6434,6 +6434,7 @@ _EXTRACT_POSSIBLE_ISSUE_LABELS_
         return 3
       fi
       print_kv RESULT clean
+      print_kv REVIEWED_HEAD "$head_sha"
       print_kv PLATFORM "$platform"
       print_kv PR_NUMBER "$pr_number"
       print_kv BRANCH "$branch_name"
@@ -6583,6 +6584,7 @@ _EXTRACT_POSSIBLE_ISSUE_LABELS_
         return 3
       fi
       print_kv RESULT clean
+      print_kv REVIEWED_HEAD "$head_sha"
       print_kv PLATFORM "$platform"
       print_kv PR_NUMBER "$pr_number"
       print_kv BRANCH "$branch_name"
