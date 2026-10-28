@@ -1,7 +1,7 @@
 # Smoke Test Runbook: PR-Agent ticket readiness
 
 **Feature**: #2064
-**Spec**: [Approved spec](https://github.com/lhpaul/ai-dev-framework-template/blob/f163244f90010062094f6c3b1f370efca86f5f0c/docs/specs/developments/20261028174727_2064-pr-agent-ticket-readiness/1_2064-pr-agent-ticket-readiness_specs.md)
+**Spec**: [Merged approved spec f62b494c](https://github.com/lhpaul/ai-dev-framework-template/blob/f62b494c54abca0d57cd3528e7d18fdf4bd3b6f5/docs/specs/developments/20261028174727_2064-pr-agent-ticket-readiness/1_2064-pr-agent-ticket-readiness_specs.md)
 **Created in**: Plan Ready stage
 **Updated in**: Implementation must record actual execution revision/results.
 

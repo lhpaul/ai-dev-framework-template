@@ -1,6 +1,6 @@
 # PR-Agent ticket analysis and downstream readiness — Implementation Plan
 
-**Spec**: [Approved revision f163244f](https://github.com/lhpaul/ai-dev-framework-template/blob/f163244f90010062094f6c3b1f370efca86f5f0c/docs/specs/developments/20261028174727_2064-pr-agent-ticket-readiness/1_2064-pr-agent-ticket-readiness_specs.md)
+**Spec**: [Merged approved spec f62b494c](https://github.com/lhpaul/ai-dev-framework-template/blob/f62b494c54abca0d57cd3528e7d18fdf4bd3b6f5/docs/specs/developments/20261028174727_2064-pr-agent-ticket-readiness/1_2064-pr-agent-ticket-readiness_specs.md)
 **Smoke test runbook**: [Synthetic downstream readiness](../../../testing/workflow/2064-pr-agent-ticket-readiness.smoke-test.md)
 
 ## Summary
@@ -27,14 +27,21 @@ configuration guidance, using the template's existing toolchain.
 
 ## Verification Log
 
-Repository-derived evidence below was inspected on 2026-10-28 at
-`ba5d80b109c1330443cdcb79e2c359a9ed8f1868`. Re-run these searches at implementation
-start; retain the resulting path list and explain new or removed consumers before
-readiness. This is scope-residual evidence rather than a frozen sweep list.
+Repository-derived evidence was initially inspected on 2026-10-28 at
+`ba5d80b109c1330443cdcb79e2c359a9ed8f1868`, which precedes the spec merge and
+does not contain it. All queries below were repeated after the spec merge,
+against base `f62b494c54abca0d57cd3528e7d18fdf4bd3b6f5` plus this plan/runbook.
+The base delta adds only the approved spec; inspected scripts and configuration
+are unchanged. The approved pre-squash spec and merged spec have identical
+content, verified with `git diff --exit-code` between their commits for the spec
+path. Links below use the merged commit as the canonical spec reference.
+Re-run these searches at implementation start; retain the resulting path list
+and explain new or removed consumers before readiness. This is scope-residual
+evidence rather than a frozen sweep list.
 
 | Check | Reproducible command | Observed scope / conclusion |
 | --- | --- | --- |
-| Base | `git rev-parse HEAD` | Recorded base above; #2061 implementation is in its history. |
+| Base | `git rev-parse HEAD` | Current base f62b494c verified with `git rev-parse origin/develop`; #2061 is in its history. Initial ba5d80b predates the spec merge. |
 | Classifier and consumers | `rg -n 'classify_pr_agent_review|classify-pr-agent|inspect-pr-agent|workflow_pr_agent_evidence_verdict|_pr_agent_classify' scripts .agents .codex .claude .cursor docs/workflow --glob '!*.json'` | Classifier/inspection in `apply-readiness-labels.sh`; shared predicate in `workflow-lib.sh`; loop call sites and readiness issue-comment selector; tests include runtime and evidence-context suites. See composed contract below. |
 | Ticket grammar and regressions | `rg -n 'Ticket compliance|PR Code Verified|ticket_compliance' scripts/development-workflow --glob '!*.json'` | Existing ticket grammar, classifier/loop cases in `tests/test-pr-review-loop-pr-agent-coderabbit.sh`, readiness cases in `tests/lib/readiness-label-matrix-cases.sh`, evidence cases in `tests/test-review-evidence-context.py`, runtime tests. |
 | Replay and proof branch | `rg -n 'verification_only|workflow_pr_agent_evidence_verdict|PR Code Verified' scripts/development-workflow/pr-review-loop.sh scripts/development-workflow/workflow-lib.sh scripts/development-workflow/apply-readiness-labels.sh` | `_pr_agent_classify` proof collection is conditional on inspection; replay independently withholds cached evidence on verification strings. Preserve the latter conservative freshness rule. |
@@ -42,7 +49,7 @@ readiness. This is scope-residual evidence rather than a frozen sweep list.
 | Sync implementation | `rg -n 'def show|def main|consumer_root|RESULT=|error_diagnostic' scripts/development-workflow/sync-template-merge.py` | Preview has consumer root and renders report through `show`; apply and blocking/error handling are separate. |
 | Configuration and delivery | `rg -n 'require_ticket_analysis_review|Ticket compliance' .pr_agent.toml; rg -n 'project_specific|apply-readiness|development-workflow' sync-manifest.yaml` | Template disables ticket analysis; comment needs correction. Shared workflow helpers are synchronized; do not add TOML to always-sync. |
 | Integration guidance | `rg -n 'classif|Ticket|TOML|precedence' docs/workflow/development-workflow/integrations/pr-agent.md` | Existing classification and TOML guidance is the documentation update target. |
-| Design discovery | `gh issue view 2064 --json body` and `git ls-tree -r --name-only f163244f90010062094f6c3b1f370efca86f5f0c docs/specs/developments/20261028174727_2064-pr-agent-ticket-readiness` | Issue contains no Design assets section or linked graphical assets; spec tree contains no asset baseline. No UI fidelity step. |
+| Design discovery | `gh issue view 2064 --json body` and `git ls-tree -r --name-only f62b494c54abca0d57cd3528e7d18fdf4bd3b6f5 docs/specs/developments/20261028174727_2064-pr-agent-ticket-readiness` | Issue contains no Design assets section or linked graphical assets; spec tree contains no asset baseline. No UI fidelity step. |
 
 ## Factual Claim Evidence
 
@@ -88,11 +95,11 @@ owned by the Summary execution boundary, checked at future plan publication.
 | --- | --- | --- | --- | --- | --- |
 | Artifact ownership and base | `single_repo`, lhpaul/ai-dev-framework-template, develop | Public `.ai-dev-workflow.yaml`, invocation isolation handoff | 2026-10-28; recorded base | #2064 only | Verified |
 | Configuration ownership and disable setting | Downstream TOML project-owned; template setting false | Configuration/delivery search above; spec BR5 | 2026-10-28; recorded base | #2064 and same-surface PR queries below | Verified |
-| Ticket policy precedence | Approved Ticket Exception supersedes #2061 only in validated ticket analysis | Immutable approved spec, Approved Ticket Exception | 2026-10-28; spec f163244f | #2064 only; human resolution supplied by Luis | Resolved |
-| Concurrent operational edits | Parent bounded queries found only spec #2066 for PR-Agent; no sync-template match | `gh pr list --state open --search '"PR-Agent"' --limit 30 --json number,title,headRefName,baseRefName`; corresponding query with `"sync-template"` | 2026-10-28, parent handoff at recorded base | Current invocation [2064]; same-surface open PRs only | Verified |
+| Ticket policy precedence | Approved Ticket Exception supersedes #2061 only in validated ticket analysis | Immutable approved spec, Approved Ticket Exception | 2026-10-28; merged spec f62b494c | #2064 only; human resolution supplied by Luis | Resolved |
+| Concurrent operational edits | Repeated bounded queries found only this plan PR #2067 for both PR-Agent and sync-template; spec #2066 is merged | `gh pr list --state open --search '"PR-Agent"' --limit 30 --json number,title,headRefName,baseRefName`; corresponding query with `"sync-template"` | 2026-10-28; repeated after spec merge at f62b494c | Current invocation [2064]; same-surface open PRs only | Verified |
 
-No unrelated portfolio scan is required. Repeat the bounded check before future
-publication and resolve a new same-surface conflict with the orchestrator.
+No unrelated portfolio scan is required. The publication cross-check found no competing same-surface PR. Repeat it at
+implementation start and resolve a new conflict with the orchestrator.
 
 ## Parser-Risk Classification and Edge-Case Mapping
 
