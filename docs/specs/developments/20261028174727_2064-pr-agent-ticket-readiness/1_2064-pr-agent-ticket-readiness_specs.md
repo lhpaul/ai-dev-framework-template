@@ -75,8 +75,9 @@ project-owned configuration and the configured model and credentials.
 
 ## Decision-Gate Consistency Matrix
 
-Rows are evaluated with malformed output and independent blocking findings
-taking precedence over informational ticket commentary.
+Rows are evaluated with escalation taking precedence over needs fixes, and
+needs fixes taking precedence over informational ticket commentary. Thus an
+independent human-verification request still escalates alongside a code finding.
 
 | Inputs | Allowed outcome | Required next action | Surfaces |
 | --- | --- | --- | --- |
@@ -86,7 +87,7 @@ taking precedence over informational ticket commentary.
 | Valid ticket analysis; independent human-verification request | Escalate | Preserve existing escalation path | Classifier, reviewer loop, readiness |
 | Unknown ticket status, malformed or duplicate heading, missing or truncated analysis | Escalate | Preserve existing escalation path | Classifier, reviewer loop, readiness |
 | No ticket analysis | Existing classification | Follow existing reviewer result | Classifier, reviewer loop, readiness |
-| Downstream ticket setting absent or enabled | Configuration warning | Explain supported disabling setting; preserve configuration | Template synchronization, integration guidance |
+| Downstream ticket setting absent, enabled, empty, malformed, or unreadable | Configuration warning | Explain supported disabling setting or configuration repair; preserve configuration and existing sync error handling | Template synchronization, integration guidance |
 | Downstream ticket analysis explicitly disabled | No ticket-setting warning | Continue synchronization | Template synchronization, integration guidance |
 
 The examples above are synthetic behavioral cases. This correction introduces
