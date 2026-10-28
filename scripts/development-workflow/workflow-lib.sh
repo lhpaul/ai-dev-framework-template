@@ -33,6 +33,50 @@ workflow_repo_root() {
   CDPATH='' cd -- "$(workflow_script_dir)/../.." && pwd
 }
 
+# Complete, file-based evidence transport. An unavailable snapshot is explicit
+# and must never serve as verification; ordinary code review may still report it.
+workflow_collect_review_evidence() {
+  local evidence_repo="$1" evidence_pr="$2" evidence_head="$3" evidence_output="$4"
+  local evidence_tmp evidence_helper evidence_available=true
+  evidence_helper="$(workflow_script_dir)/review-evidence-context.py"
+  evidence_tmp="$(mktemp -d)" || return 2
+  if ! gh pr view "$evidence_pr" --repo "$evidence_repo" --json headRefOid,body \
+      >"$evidence_tmp/pr.json" 2>/dev/null; then
+    evidence_available=false
+  fi
+  if ! gh api --paginate --slurp "repos/$evidence_repo/issues/$evidence_pr/comments?per_page=100" \
+      >"$evidence_tmp/pages.json" 2>/dev/null; then
+    evidence_available=false
+  fi
+  if ! jq -e --arg head "$evidence_head" \
+      '.headRefOid == $head and (.body | type == "string")' "$evidence_tmp/pr.json" >/dev/null 2>&1 \
+      || ! jq -e 'type == "array" and all(.[]; type == "array")' "$evidence_tmp/pages.json" >/dev/null 2>&1; then
+    evidence_available=false
+  fi
+  if [ "$evidence_available" = true ]; then
+    if ! jq -n --arg repo "$evidence_repo" --argjson pr "$evidence_pr" --arg head "$evidence_head" \
+        --slurpfile pr_data "$evidence_tmp/pr.json" --slurpfile pages "$evidence_tmp/pages.json" \
+        '{repository:$repo,pr_number:$pr,head_sha:$head,body:$pr_data[0].body,
+          comments:[$pages[0][][]],available:true}' >"$evidence_tmp/raw.json" \
+        || ! python3 "$evidence_helper" snapshot --input "$evidence_tmp/raw.json" >"$evidence_output"; then
+      evidence_available=false
+    fi
+  fi
+  if [ "$evidence_available" != true ]; then
+    jq -n --arg repo "$evidence_repo" --argjson pr "$evidence_pr" --arg head "$evidence_head" \
+      '{repository:$repo,pr_number:$pr,head_sha:$head,available:false}' >"$evidence_tmp/raw.json" || {
+        rm -rf "$evidence_tmp"; return 2;
+      }
+    if ! python3 "$evidence_helper" snapshot --input "$evidence_tmp/raw.json" >"$evidence_output"; then
+      rm -rf "$evidence_tmp"
+      return 2
+    fi
+    printf '%s\n' 'review evidence: complete PR/comment context unavailable' >&2
+  fi
+  rm -rf "$evidence_tmp"
+  [ "$evidence_available" = true ]
+}
+
 # Anchor an explicit relative source at invocation CWD before any entry changes
 # directory or hands it to a child. This is path metadata only: no private read.
 workflow_anchor_local_override_root() {

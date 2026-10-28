@@ -1,0 +1,139 @@
+#!/usr/bin/env python3
+"""Synthetic behavioral tests for evidence identity and proof binding."""
+import copy
+import importlib.util
+import json
+import os
+from pathlib import Path
+import subprocess
+import tempfile
+import unittest
+
+spec = importlib.util.spec_from_file_location(
+    "review_evidence", Path(__file__).resolve().parents[1] / "review-evidence-context.py")
+evidence = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(evidence)
+
+
+class EvidenceTests(unittest.TestCase):
+    def setUp(self):
+        self.raw = {"repository": "example/project", "pr_number": 42,
+                    "head_sha": "a" * 40, "body": "Synthetic pass/fail proof",
+                    "available": True, "comments": [
+                        {"id": 10, "body": "Verification request", "updated_at": "2026-01-01T00:00:00Z"},
+                        {"id": 20, "body": "Synthetic planted violation fails; removal passes",
+                         "updated_at": "2026-01-01T00:00:00Z"}]}
+        self.context = evidence.snapshot(self.raw)
+        self.result = {"result": "clean", "reviewed_head": "a" * 40,
+                       "evidence_verification": {"schema": evidence.PROOF_SCHEMA,
+                           "snapshot_sha256": self.context["snapshot_sha256"],
+                           "request_id": 10, "status": "verified", "sources": ["comment:20"]}}
+
+    def test_explicit_current_proof_can_verify_comment_or_body(self):
+        for sources in (["body"], ["comment:20"], ["body", "comment:20"]):
+            with self.subTest(sources=sources):
+                self.result["evidence_verification"]["sources"] = sources
+                self.assertTrue(evidence.verify(self.context, self.result, 10)["verified"])
+
+    def test_publication_and_unrelated_clean_are_not_verification(self):
+        for result in ({"result": "clean", "reviewed_head": "a" * 40}, {}, None):
+            self.assertFalse(evidence.verify(self.context, result, 10)["verified"])
+
+    def test_code_finding_or_wrong_head_cannot_be_overridden_by_proof(self):
+        for key, value in (("result", "needs_fixes"), ("reviewed_head", "b" * 40)):
+            result = copy.deepcopy(self.result)
+            result[key] = value
+            self.assertFalse(evidence.verify(self.context, result, 10)["verified"])
+
+    def test_evidence_edit_delete_and_identity_change_invalidate_proof(self):
+        for kind in ("body", "edit", "delete", "request", "head", "repo", "pr"):
+            raw = copy.deepcopy(self.raw)
+            if kind == "body": raw["body"] += " amended"
+            elif kind == "edit": raw["comments"][1]["body"] += " amended"
+            elif kind == "delete": raw["comments"].pop()
+            elif kind == "request": raw["comments"][0]["body"] += " amended"
+            elif kind == "head": raw["head_sha"] = "b" * 40
+            elif kind == "repo": raw["repository"] = "example/other"
+            else: raw["pr_number"] = 43
+            self.assertFalse(evidence.verify(evidence.snapshot(raw), self.result, 10)["verified"], kind)
+
+    def test_comment_order_is_irrelevant_and_complete_unicode_is_preserved(self):
+        self.raw["body"] = "Prueba íntegra 🧪" * 10000
+        original = evidence.snapshot(self.raw)
+        self.raw["comments"].reverse()
+        reordered = evidence.snapshot(self.raw)
+        self.assertEqual(original, reordered)
+        self.assertEqual(reordered["body"], self.raw["body"])
+        self.raw["body"] += "final-character-change"
+        self.assertNotEqual(original["snapshot_sha256"], evidence.snapshot(self.raw)["snapshot_sha256"])
+
+    def test_bookkeeping_is_excluded_but_marker_prose_is_not(self):
+        raw = copy.deepcopy(self.raw)
+        raw["comments"].append({"id": 30, "body": "### Automated Reviewer Loop Summary\nnew history",
+                                "updated_at": "2026-01-01T00:01:00Z"})
+        self.assertEqual(self.context["snapshot_sha256"], evidence.snapshot(raw)["snapshot_sha256"])
+        raw["comments"][-1]["body"] = "Mention ### Automated Reviewer Loop Summary in proof"
+        self.assertNotEqual(self.context["snapshot_sha256"], evidence.snapshot(raw)["snapshot_sha256"])
+
+    def test_unknown_self_empty_duplicate_or_malformed_proof_is_rejected(self):
+        for sources in ([], ["comment:10"], ["comment:999"], ["comment:020"],
+                        ["comment:20", "comment:20"], [True], None):
+            result = copy.deepcopy(self.result)
+            result["evidence_verification"]["sources"] = sources
+            self.assertFalse(evidence.verify(self.context, result, 10)["verified"], sources)
+        for key, value in (("status", "unknown"), ("request_id", True),
+                           ("request_id", 20), ("schema", "unknown")):
+            result = copy.deepcopy(self.result)
+            result["evidence_verification"][key] = value
+            self.assertFalse(evidence.verify(self.context, result, 10)["verified"])
+
+    def test_unavailable_partial_tampered_or_duplicate_context_cannot_verify(self):
+        raw = copy.deepcopy(self.raw)
+        raw["available"] = False
+        context = evidence.snapshot(raw)
+        self.assertEqual(context["snapshot_sha256"], "")
+        self.assertFalse(evidence.verify(context, self.result, 10)["verified"])
+        context = copy.deepcopy(self.context)
+        context["body"] += " tamper"
+        self.assertFalse(evidence.verify(context, self.result, 10)["verified"])
+        raw = copy.deepcopy(self.raw)
+        raw["comments"].append(raw["comments"][0])
+        with self.assertRaises(ValueError): evidence.snapshot(raw)
+
+    def test_collection_reads_every_page_and_failure_never_becomes_empty_success(self):
+        library = Path(__file__).resolve().parents[1] / "workflow-lib.sh"
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            pr_file, pages_file, output = (root / n for n in ("pr.json", "pages.json", "context.json"))
+            pr_file.write_text(json.dumps({"headRefOid": "a" * 40, "body": "Complete synthetic body"}))
+            comments = [{"id": i, "body": f"Proof {i} 🧪", "updated_at": "2026-01-01T00:00:00Z"}
+                        for i in range(100, 205)]
+            pages_file.write_text(json.dumps([comments[:100], comments[100:]]))
+            gh = root / "gh"
+            gh.write_text('''#!/usr/bin/env bash
+case "$1" in
+  pr) cat "$MOCK_EVIDENCE_PR_FILE" ;;
+  api)
+    [ "${MOCK_EVIDENCE_API_FAIL:-0}" = 0 ] || exit 1
+    cat "$MOCK_EVIDENCE_PAGES_FILE" ;;
+  *) exit 99 ;;
+esac
+''')
+            gh.chmod(0o755)
+            env = {**os.environ, "PATH": str(root) + os.pathsep + os.environ["PATH"],
+                   "MOCK_EVIDENCE_PR_FILE": str(pr_file), "MOCK_EVIDENCE_PAGES_FILE": str(pages_file)}
+            command = ["bash", "-c", 'source "$1"; workflow_collect_review_evidence example/project 42 "$3" "$2"',
+                       "synthetic-collector", str(library), str(output), "a" * 40]
+            collected = subprocess.run(command, env=env, capture_output=True, text=True)
+            self.assertEqual(collected.returncode, 0, collected.stderr)
+            context = json.loads(output.read_text())
+            self.assertEqual(context["comments"], comments)
+            env["MOCK_EVIDENCE_API_FAIL"] = "1"
+            unavailable = subprocess.run(command, env=env, capture_output=True, text=True)
+            self.assertEqual(unavailable.returncode, 1)
+            self.assertFalse(json.loads(output.read_text())["available"])
+            self.assertIn("context unavailable", unavailable.stderr)
+
+
+if __name__ == "__main__":
+    unittest.main()
