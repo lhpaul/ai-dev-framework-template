@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 # covers: scripts/development-workflow/pr-agent-runtime.py
+# covers: scripts/development-workflow/pr-review-loop.sh
+# covers: scripts/development-workflow/apply-readiness-labels.sh
 # covers: scripts/development-workflow/tests/test_pr_agent_runtime.py
 # covers: .github/workflows/pr-agent.yml
 set -euo pipefail
