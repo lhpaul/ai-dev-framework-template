@@ -54,6 +54,7 @@ set -euo pipefail
 # loading another command runner or performing any GitHub operation.
 classify_pr_agent_review() {
   python3 -c '
+import json
 import re
 import runpy
 import sys
@@ -255,7 +256,7 @@ def focus_labels(body):
     return [" ".join(label.split()) for label in html_labels] + [" ".join(unescape(label).split()) for label in markdown_labels]
 
 
-def classify(body):
+def classify(body, verify_ticket=False):
     if not body:
         return "none"
     body = visible_review(body)
@@ -266,13 +267,25 @@ def classify(body):
     if len(ticket_matches) > 1:
         return "escalate"
     ticket = bool(ticket_matches)
+    # Only the producers known ticket-analysis heading is eligible. Other
+    # human decisions and unknown verification statuses remain escalations.
+    verify_ticket = verify_ticket and ticket and bool(re.search(
+        r"^[ \t]*Requires further human verification:[ \t]*$", body, re.M))
+    if verify_ticket:
+        start = ticket_matches[0].end()
+        section = re.split(r"</td>|^### ", body[start:], maxsplit=1, flags=re.M)[0]
+        end = start + len(section)
+        # Every occurrence must belong to the parsed ticket analysis. An
+        # additional independent human checkpoint must never be suppressed.
+        verify_ticket = all(start <= match.start() < end for match in re.finditer(
+            r"Requires\s+further\s+human\s+verification", body, re.I))
     rendered_headers = FocusLabels()
     rendered_headers.feed(body)
     ticket_candidates = len(re.findall(r"^[ \t]*(?:\*\*|#{1,6})[^\n]*Ticket compliance analysis", body, re.M))
     ticket_candidates += sum("Ticket compliance analysis" in label for label in rendered_headers.labels)
     if ticket_candidates != len(ticket_matches):
         return "escalate"  # A malformed heading is not just a prose mention.
-    if any(re.match(r"Requires further human verification\b", " ".join(label.split()), re.I) for label in rendered_headers.labels) or re.search(r"^[ \t]*(?:#{1,6}[ \t]+|\*\*)?Requires further human verification\b", body, re.M | re.I):
+    if not verify_ticket and (any(re.match(r"Requires further human verification\b", " ".join(label.split()), re.I) for label in rendered_headers.labels) or re.search(r"^[ \t]*(?:#{1,6}[ \t]+|\*\*)?Requires further human verification\b", body, re.M | re.I)):
         return "escalate"
     verification_reader = ReviewText()
     verification_reader.feed(body)
@@ -287,7 +300,7 @@ def classify(body):
     verification_text = re.sub(r"[*_]", "", verification_text)
     # Rendered HTML headings carry the same manual request as plain text.
     # Anchor the known phrase so custom prefixes remain outside this scope.
-    if re.search(r"^[ \t]*Requires\s+further\s+human\s+verification\b", verification_text, re.M | re.I):
+    if not verify_ticket and re.search(r"^[ \t]*Requires\s+further\s+human\s+verification\b", verification_text, re.M | re.I):
         return "escalate"
     verification_sections = list(re.finditer(verification_heading + r"\s*:?\s*([^\n]*)(?:\n|$)", verification_text, re.M | re.I))
     verification_candidates = len(re.findall(verification_heading, verification_text, re.M | re.I))
@@ -330,12 +343,12 @@ def classify(body):
                     return "escalate"
                 if any(re.fullmatch(r"(?:unknown|tbd|unavailable|undetermined|pending|not assessed)[.!?]?", re.sub(r"^(?:[-*]|[0-9]+[.)])[ \t]+", "", line), re.I) for line in evidence_lines):
                     return "escalate"
-            if level == "pr code verified" or re.search(r"\bRequires\s+further\s+human\s+verification\b", unescape(re.sub(r"<[^>]*>", " ", requirements)), re.I):
+            if not verify_ticket and (level == "pr code verified" or re.search(r"\bRequires\s+further\s+human\s+verification\b", unescape(re.sub(r"<[^>]*>", " ", requirements)), re.I)):
                 verdicts.append("escalate")
             elif level in {"partially compliant", "not compliant"} or "Non-compliant requirements:" in requirements:
                 verdicts.append("needs_fixes")
             else:
-                verdicts.append(compliance_values[level])
+                verdicts.append("clean" if level == "pr code verified" and verify_ticket else compliance_values[level])
         if "escalate" in verdicts:
             return "escalate"
         needs_fixes = "needs_fixes" in verdicts
@@ -392,16 +405,21 @@ if sys.argv[1] == "labels":
     visible = visible_review(body)
     if visible is not None:
         print("\n".join(focus_labels(visible) or []), end="")
+elif sys.argv[1] == "inspect":
+    verdict = classify(body)
+    print(json.dumps({"verdict": verdict, "verification_only": verdict == "escalate" and classify(body, True) == "clean"}), end="")
 else:
     print(classify(body), end="")
 ' "${1:-verdict}" "$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/pr-agent-runtime.py"
 }
 
 case "${1:-}" in
-  --classify-pr-agent|--pr-agent-focus-labels)
-    [ "$#" -eq 1 ] || { echo "Usage: apply-readiness-labels.sh --classify-pr-agent|--pr-agent-focus-labels < review.txt" >&2; exit 64; }
+  --classify-pr-agent|--pr-agent-focus-labels|--inspect-pr-agent)
+    [ "$#" -eq 1 ] || { echo "Usage: apply-readiness-labels.sh --classify-pr-agent|--pr-agent-focus-labels|--inspect-pr-agent < review.txt" >&2; exit 64; }
     if [ "$1" = --pr-agent-focus-labels ]; then
       classify_pr_agent_review labels
+    elif [ "$1" = --inspect-pr-agent ]; then
+      classify_pr_agent_review inspect
     else
       classify_pr_agent_review
     fi
@@ -418,7 +436,7 @@ print_kv() { workflow_diagnostic_kv "$@"; }
 
 usage() {
   cat <<'USAGE'
-Usage: apply-readiness-labels.sh --classify-pr-agent|--pr-agent-focus-labels < review.txt
+Usage: apply-readiness-labels.sh --classify-pr-agent|--pr-agent-focus-labels|--inspect-pr-agent < review.txt
        apply-readiness-labels.sh --pr <number> [--repo <owner/repo>] \
   --label <ready-for-human-review|ready-for-regression> \
   [--branch <branch>] [--repo-root <path>] [--dry-run] [--json]
@@ -1122,7 +1140,7 @@ coderabbit_cli_local_ai_ledger_verdict() {
           | . as $entry
           | ((.platform_results // [])[]
              | select(.platform == $platform)
-             | {outcome: (.result // "unknown"),
+             | {outcome: (.result // "unknown"), evidence_snapshot_sha256: (.evidence_snapshot_sha256 // ""),
                 head_sha: (
                   ($entry.reviewed_heads // [])
                   | map(select(.platform == $platform))
@@ -1151,6 +1169,17 @@ coderabbit_cli_local_ai_ledger_verdict() {
     # Clean, but on another head (or no head recorded) — stale evidence.
     _adapter_refusal_reason="reviewer-check-absent"
     return
+  fi
+  if [ "$platform_arg" = local-ai-reviewer ]; then
+    local context fingerprint
+    fingerprint="$(printf '%s' "$verdict" | jq -r '.evidence_snapshot_sha256 // ""')"
+    [ -n "$fingerprint" ] || { _adapter_refusal_reason=reviewer-evidence-unreadable; return; }
+    context="$(mktemp)" || return
+    if ! workflow_collect_review_evidence "$repo" "$pr_number" "$head_sha" "$context" ||
+        [ "$(jq -r .snapshot_sha256 "$context")" != "$fingerprint" ]; then
+      rm -f "$context"; _adapter_refusal_reason=reviewer-evidence-unreadable; return
+    fi
+    rm -f "$context"
   fi
   _adapter_ledger_started_at="${ledger_started_at:-}"
   _adapter_ledger_clean=1
@@ -1404,7 +1433,7 @@ comment_only_completion_evidence() {
       body="$(printf '%s\n' "$pragent_entry" | jq -r '.body // ""')"
       created="$(printf '%s\n' "$pragent_entry" | jq -r '.created_at // ""')"
       local pragent_verdict
-      pragent_verdict="$(printf '%s' "$body" | classify_pr_agent_review)" || escalate issue-comment-parse-failed
+      pragent_verdict="$(workflow_pr_agent_evidence_verdict "$repo" "$pr_number" "$head_sha" "$(printf '%s' "$pragent_entry" | jq -r .id)" "$body")" || escalate issue-comment-parse-failed
       case "$pragent_verdict" in
         clean) reviewer_started_at="$created"; return 0 ;;
         needs_fixes) return 2 ;;

@@ -2404,6 +2404,7 @@ run_test "2061_second_page_proof_visible" 20 "$(jq -r '.evidence_context.comment
 run_test "2061_bookkeeping_visible_for_review" 3 "$(jq -r '.evidence_context.review_comments|length' "$MOCK_CONTEXT_CAPTURE")"
 _proof_line="$(line_for EVIDENCE_VERIFICATION_JSON)"
 run_test "2061_explicit_verified_metadata" verified "$(printf '%s' "${_proof_line#*=}" | jq -r '.status')"
+run_test "2061_snapshot_metadata_round_trip" "$(jq -r '.evidence_context.snapshot_sha256' "$MOCK_CONTEXT_CAPTURE")" "$(printf '%s' "${_proof_line#*=}" | jq -r '.snapshot_sha256')"
 
 for MOCK_EVIDENCE_PROOF_MODE in missing unverified stale code; do
   export MOCK_EVIDENCE_PROOF_MODE

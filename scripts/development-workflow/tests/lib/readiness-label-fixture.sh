@@ -122,6 +122,10 @@ case "$*" in
     fi
     exit "${MOCK_GH_EDIT_EXIT:-0}"
     ;;
+  *"pr view"*"--json headRefOid,body"*)
+    printf '%s\n' "${MOCK_PR_JSON:-$pr_default}" | jq '{headRefOid,body:(.body // "")}'
+    exit 0
+    ;;
   *"pr view"*"--json headRefOid --jq"*)
     # Pre-apply head revalidation — after round 9 there is exactly ONE
     # re-fetch, the final pre-mutation head check (the last API call before

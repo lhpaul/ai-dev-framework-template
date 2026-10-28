@@ -35,6 +35,94 @@ class EvidenceTests(unittest.TestCase):
                 self.result["evidence_verification"]["sources"] = sources
                 self.assertTrue(evidence.verify(self.context, self.result, 10)["verified"])
 
+    def test_verification_inspection_never_relaxes_other_blockers(self):
+        classifier = Path(__file__).resolve().parents[1] / "apply-readiness-labels.sh"
+        request = ("<table><tr><td>\n**Ticket compliance analysis**\n"
+                   "**[42](url) - PR Code Verified**\nCompliant requirements:\n- Code checked.\n"
+                   "Requires further human verification:\n- Verify synthetic test evidence.\n"
+                   "</td></tr></table>\n### Recommended focus areas for review\n**No major issues detected**\n")
+        for name, body, eligible in (
+                ("known", request, True),
+                ("code", request.replace("No major issues detected", "Must Fix"), False),
+                ("partial", request.replace("PR Code Verified", "Partially compliant"), False),
+                ("unknown", request.replace("PR Code Verified", "Unknown status"), False),
+                ("malformed", request.replace("</td>", ""), False),
+                ("checkpoint", request + "<h3>Requires further human verification</h3>\n", False),
+                ("status", request + "## Verification status: pending\n", False),
+                ("security", request + "## Security concerns\nYes\n", False),
+                ("unknown_focus", request.replace("No major issues detected", "Unknown label"), False)):
+            with self.subTest(name=name):
+                output = subprocess.run(["bash", str(classifier), "--inspect-pr-agent"],
+                    input=body, capture_output=True, text=True, check=True)
+                inspection = json.loads(output.stdout)
+                self.assertEqual(inspection["verification_only"], eligible)
+                self.assertNotEqual(inspection["verdict"], "clean")
+
+    def test_shared_loop_readiness_predicate_requires_trusted_current_proof(self):
+        raw = copy.deepcopy(self.raw)
+        request = ("**Ticket compliance analysis**\n**[42](url) - PR Code Verified**\n"
+                   "Compliant requirements:\n- Code checked.\n"
+                   "Requires further human verification:\n- Verify synthetic test evidence.\n"
+                   "### Recommended focus areas for review\n**No major issues detected**\n")
+        raw["comments"][0]["body"] = request
+        proof = copy.deepcopy(self.result["evidence_verification"])
+        proof["snapshot_sha256"] = evidence.snapshot(raw)["snapshot_sha256"]
+        ledger = {"schema": "reviewer_loop_history.v1", "entries": [{
+            "reviewed_heads": [{"platform": "pr-agent", "reviewed_head": "a" * 40}],
+            "platform_results": [{"platform": "pr-agent", "result": "clean",
+                "evidence_verifier": "local-ai-reviewer", "evidence_verification": proof}]}]}
+        library = Path(__file__).resolve().parents[1] / "workflow-lib.sh"
+        with tempfile.TemporaryDirectory() as root:
+            root = Path(root)
+            mock = root / "gh"
+            mock.write_text('''#!/usr/bin/env python3
+import json, os, sys
+from pathlib import Path
+data=json.loads(Path(os.environ["MOCK_SHARED_DATA"]).read_text())
+args=sys.argv[1:]
+if args[:2] == ["api", "user"]: print("reviewer")
+elif args[:2] == ["pr", "view"]: print(json.dumps(data["pr"]))
+elif "permission" in " ".join(args): print(data["permission"])
+elif args[:1] == ["api"]: print(json.dumps([data["comments"]]))
+else: sys.exit(1)
+''')
+            mock.chmod(0o755)
+            datafile = root / "data.json"
+            bodyfile = root / "body.txt"
+            bodyfile.write_text(request)
+            env = dict(os.environ, PATH=str(root) + os.pathsep + os.environ["PATH"],
+                       MOCK_SHARED_DATA=str(datafile))
+            for variant, expected in (("verified", "clean"), ("missing", "verification_pending"),
+                    ("edited", "verification_pending"), ("deleted", "verification_pending"),
+                    ("forged", "verification_pending"), ("writer", "clean"),
+                    ("unverified", "verification_pending"), ("wrong_head", "verification_pending"),
+                    ("wrong_request", "verification_pending"), ("bookkeeping", "verification_pending")):
+                with self.subTest(variant=variant):
+                    current = copy.deepcopy(raw)
+                    payload = copy.deepcopy(ledger)
+                    record = payload["entries"][0]["platform_results"][0]
+                    if variant == "missing": record.pop("evidence_verification")
+                    if variant == "edited": current["comments"][1]["body"] += " amended"
+                    if variant == "deleted": current["comments"].pop()
+                    if variant == "unverified": record["evidence_verification"]["status"] = "unverified"
+                    if variant == "wrong_head": payload["entries"][0]["reviewed_heads"][0]["reviewed_head"] = "b" * 40
+                    if variant == "wrong_request": record["evidence_verification"]["request_id"] = 11
+                    if variant == "bookkeeping": record["evidence_verification"]["sources"] = ["comment:30"]
+                    summary = ("### Automated Reviewer Loop Summary\n"
+                               "*Posted automatically by `pr-review-loop.sh`.*\n"
+                               "<!-- reviewer-loop-history:v1 -->\n```json\n" + json.dumps(payload) + "\n```\n")
+                    current["comments"].append({"id": 30, "body": summary,
+                        "updated_at": "2026-01-01", "created_at": "2026-01-01",
+                        "user": {"login": "attacker" if variant in ("forged", "writer") else "reviewer"}})
+                    datafile.write_text(json.dumps({"comments": current["comments"],
+                        "pr": {"headRefOid": "a" * 40, "body": raw["body"]},
+                        "permission": "write" if variant == "writer" else "read"}))
+                    result = subprocess.run(["bash", "-c", 'source "$1"; workflow_pr_agent_evidence_verdict example/project 42 "$2" 10 "$(cat "$3")"',
+                        "synthetic-shared-predicate", str(library), "a" * 40, str(bodyfile)],
+                        env=env, text=True, capture_output=True)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual(result.stdout, expected, result.stderr)
+
     def test_publication_and_unrelated_clean_are_not_verification(self):
         for result in ({"result": "clean", "reviewed_head": "a" * 40}, {}, None):
             self.assertFalse(evidence.verify(self.context, result, 10)["verified"])

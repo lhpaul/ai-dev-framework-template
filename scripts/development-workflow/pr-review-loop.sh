@@ -715,11 +715,13 @@ Subcommands:
   --branch and --repo-root). Example:
     pr-review-loop.sh 123 --branch fix/123-example --repo-root /path/to/worktree \
       --retry-local-review-head <full-40-character-head-sha>
-  Only prior infrastructure escalations (local_pass_unavailable or
-  failed_for_head) qualify; recorded findings still require fixes. The retry
-  runs the real local reviewer once, verifies its reviewed head and the live
-  PR head, and retains history and both cycle caps. It never marks a failure
-  clean or clears review threads. A failed retry remains blocked by default;
+  Known infrastructure failures and recorded local findings qualify. Publish
+  relevant proof before retrying evidence-only findings; they remain pending
+  until the configured reviewer verifies it. Each explicit invocation reserves
+  a unique attempt before dispatch and spends one slot on both cycle axes,
+  including interrupted reservations. Historical entries keep their previous
+  accounting. The retry verifies the reviewed/live head and current evidence.
+  It never marks a failure clean or clears review threads. A failed retry remains blocked by default;
   another attempt requires another explicit invocation after repair.
 
 --compare:
@@ -978,7 +980,7 @@ Outputs stable key=value lines including:
                   Resets to 0 at each orchestration-run boundary (i.e. whenever RUN_ID changes).
                   Never reset by a HEAD SHA change alone — see max_cycles below.)
   MAX_CYCLES=<n> (the configured PER-RUN cycle cap; default 10, see PR_REVIEW_LOOP_MAX_CYCLES below)
-  TOTAL_CYCLE_COUNT=<n> (LIFETIME ceiling count — the same distinct-HEAD-SHA fixer-dispatch count as
+  TOTAL_CYCLE_COUNT=<n> (LIFETIME ceiling count — historical deduplicated fixer cycles plus distinct reserved retry attempts, as
                   CYCLE_COUNT, but across the PR's ENTIRE review-loop lifetime regardless of RUN_ID;
                   never resets. -1 when the ledger could not be read reliably (always -1 exactly when
                   CYCLE_COUNT is also -1 — both come from the same ledger read).)
@@ -5148,6 +5150,8 @@ run_local_ai_reviewer_review() {
   fi
   rm -f "$local_ai_stderr_file"
 
+  print_kv EVIDENCE_SNAPSHOT_SHA256 "$(kv_value_default EVIDENCE_SNAPSHOT_SHA256 "$script_output" "")"
+  print_kv EVIDENCE_VERIFICATION_JSON "$(kv_value_default EVIDENCE_VERIFICATION_JSON "$script_output" "{}")"
   blocking_count="$(kv_value_default BLOCKING_COUNT "$script_output" 0)"
   suggestion_count="$(kv_value_default SUGGESTION_COUNT "$script_output" 0)"
   comment_count="$(kv_value_default COMMENT_COUNT "$script_output" 0)"
@@ -5904,6 +5908,7 @@ run_pr_agent_review() {
   # _pr_agent_bound_summary sets these for the poll that found a bound summary.
   local pr_agent_bound_body=""
   local pr_agent_bound_url=""
+  local pr_agent_bound_id=""
   # The PR's issue comments as read by the current _pr_agent_bound_summary
   # call; rule (b) condition 4 reads the /review comments from it.
   local pr_agent_issue_comments_json=""
@@ -6014,6 +6019,7 @@ run_pr_agent_review() {
 
     pr_agent_bound_body=""
     pr_agent_bound_url=""
+    pr_agent_bound_id=""
     pr_agent_issue_comments_json=""
     if ! pr_agent_issue_comments_json="$(gh api "repos/$repo/issues/$pr_number/comments" --paginate 2>/dev/null \
         | jq -cs 'add // [] | if type == "array" then . else error("not an array") end' 2>/dev/null)" \
@@ -6031,6 +6037,7 @@ run_pr_agent_review() {
         | sort_by(.updated_at // .created_at // "") | last // empty' 2>/dev/null)" || match=""
     if [ -n "$match" ]; then
       pr_agent_bound_body="$(printf '%s' "$match" | jq -r '.body // ""')"
+      pr_agent_bound_id="$(printf '%s' "$match" | jq -r '.id // ""')"
       pr_agent_bound_url="$(printf '%s' "$match" | jq -r '.html_url // ""')"
       return 0
     fi
@@ -6046,6 +6053,7 @@ run_pr_agent_review() {
           '[ .[] | select(((.id // "") | tostring) == $id) ] | first // empty' 2>/dev/null)" || match=""
         [ -n "$match" ] || continue
         pr_agent_bound_body="$(printf '%s' "$match" | jq -r '.body // ""')"
+        pr_agent_bound_id="$(printf '%s' "$match" | jq -r '.id // ""')"
         pr_agent_bound_url="$(printf '%s' "$match" | jq -r '.html_url // ""')"
         workflow_diagnostic "INFO: run_pr_agent_review: first summary ${cand_id} is bound to $head_sha by its PR-Agent review run (D15 rule b)" >&2
         return 0
@@ -6295,14 +6303,92 @@ _EXTRACT_POSSIBLE_ISSUE_LABELS_
   }
 
   _pr_agent_classify() {
-    # Readiness and the loop must interpret the same visible review, including
-    # ticket compliance. The pure classifier mode performs no remote operation.
-    local verdict
-    if ! verdict="$(printf '%s' "$1" | bash "$SCRIPT_DIR/apply-readiness-labels.sh" --classify-pr-agent)"; then
-      printf 'escalate'
-      return
+    local verdict output status=0 prior tmp proof normalized previous_local
+    verdict="$(workflow_pr_agent_evidence_verdict "$repo" "$pr_number" "$head_sha" "$pr_agent_bound_id" "$1")"
+    if [ "$verdict" = clean ]; then
+      tmp="$(mktemp)" || { print_kv VERDICT escalate; return; }
+      if workflow_collect_review_evidence "$repo" "$pr_number" "$head_sha" "$tmp"; then
+        print_kv EVIDENCE_SNAPSHOT_SHA256 "$(jq -r .snapshot_sha256 "$tmp")"
+        if proof="$(workflow_review_evidence_ledger_proof "$repo" "$pr_number" "$head_sha" "$pr_agent_bound_id" "$tmp")"; then
+          print_kv EVIDENCE_VERIFICATION_JSON "$(printf '%s' "$proof" | jq -c .evidence_verification)"
+          print_kv EVIDENCE_VERIFIER local-ai-reviewer
+        elif [ "$(printf '%s' "$1" | bash "$SCRIPT_DIR/apply-readiness-labels.sh" --inspect-pr-agent | jq -r .verification_only)" = true ]; then
+          verdict=verification_pending
+        fi
+      elif [ "$(printf '%s' "$1" | bash "$SCRIPT_DIR/apply-readiness-labels.sh" --inspect-pr-agent | jq -r .verification_only)" = true ]; then
+        verdict=verification_pending
+      fi
+      rm -f "$tmp"
     fi
-    printf '%s' "$verdict"
+    if [ "$verdict" = verification_pending ]; then
+      local configured_local
+      configured_local="$(reviewer_loop_repo_configured_platforms)" || configured_local=""
+      if ! grep -Fxq local-ai-reviewer <<<"$configured_local"; then
+        print_kv VERDICT escalate; return
+      fi
+      prior="$(reviewer_loop_prior_history_payload_from_pr "$pr_number")"
+      if ! printf '%s' "$prior" | jq -e '(.history_status // "available") == "available" and (.entries | type) == "array"' >/dev/null 2>&1; then
+        print_kv VERDICT escalate; return
+      fi
+      # Existing failed-head refusal still requires the explicit bounded retry.
+      previous_local="$(reviewer_loop_local_latest_verdict "$prior" local-ai-reviewer)"
+      if [ "$(reviewer_loop_local_second_pass_failed_for_head "$prior" "$head_sha")" -gt 0 ] ||
+          printf '%s' "$previous_local" | jq -e --arg head "$head_sha" \
+            '.head_sha == $head and (.outcome == "needs_fixes" or .outcome == "needs_rerun")' >/dev/null 2>&1; then
+        if [ "${local_review_retry_head_record:-}" != "$head_sha" ]; then
+          print_kv VERDICT escalate; return
+        fi
+      fi
+      local evidence_wait evidence_poll _evidence_budget_details
+      read -r evidence_wait _evidence_budget_details < <(reviewer_wait_budget_for_platform local-ai-reviewer)
+      evidence_poll="$(reviewer_poll_interval_resolve local-ai-reviewer "$evidence_wait")"
+      output="$(LOCAL_AI_REVIEWER_VERIFICATION_REQUEST_ID="$pr_agent_bound_id" LOCAL_AI_REVIEWER_REQUIRE_EVIDENCE=1 \
+        run_local_ai_reviewer_review "$pr_number" "$branch_name" "$evidence_poll" "$evidence_wait")" || status=$?
+      verdict="$(kv_value_default RESULT "$output" escalate)"
+      if [ "$status" -ne 0 ] && [ "$verdict" = clean ]; then verdict=escalate; fi
+      case "$verdict" in
+        clean|needs_fixes|needs_rerun|waiting_on_reviewer|escalate) ;;
+        *) verdict=escalate ;;
+      esac
+      case "$verdict" in
+        needs_fixes|needs_rerun) print_kv EVIDENCE_REVIEW_FAILED_HEAD "$head_sha" ;;
+      esac
+      if [ "$status" -eq 0 ] && [ "$verdict" = clean ]; then
+        # Independently recheck currency after the targeted local assessment.
+        tmp="$(mktemp -d)" || { print_kv VERDICT escalate; return; }
+        proof="$(kv_value_default EVIDENCE_VERIFICATION_JSON "$output" "{}")"
+        normalized="$(jq -cn --arg head "$(kv_value_default REVIEWED_HEAD "$output" "")" \
+          --argjson proof "$proof" '{result:"clean",reviewed_head:$head,evidence_verification:$proof}')" || normalized='{}'
+        printf '%s' "$normalized" >"$tmp/result"
+        if workflow_collect_review_evidence "$repo" "$pr_number" "$head_sha" "$tmp/context" &&
+            python3 "$SCRIPT_DIR/review-evidence-context.py" verify --context "$tmp/context" \
+              --result "$tmp/result" --request-id "$pr_agent_bound_id" >"$tmp/check" &&
+            jq -e '.verified == true' "$tmp/check" >/dev/null; then
+          print_kv EVIDENCE_VERIFICATION_JSON "$proof"
+          print_kv EVIDENCE_SNAPSHOT_SHA256 "$(jq -r .snapshot_sha256 "$tmp/context")"
+          print_kv EVIDENCE_VERIFIER local-ai-reviewer
+        else verdict=escalate; fi
+        rm -rf "$tmp"
+      fi
+    fi
+    print_kv VERDICT "$verdict"
+  }
+
+  # The targeted local pass can finish without a verdict or detect drift.
+  # Preserve those outcomes; neither means to submit another PR-Agent review.
+  _pr_agent_local_pending() {
+    if [ "$verdict" = waiting_on_reviewer ]; then
+      print_no_verdict_yet local-ai-reviewer stopped_at_budget "$head_sha" ""
+    else
+      print_kv RESULT needs_rerun
+      print_kv REASON evidence_changed_during_review
+    fi
+    print_kv PLATFORM "$platform"
+    print_kv PR_NUMBER "$pr_number"
+    print_kv BRANCH "$branch_name"
+    print_kv COMMENT_COUNT 0
+    print_kv BLOCKING_COUNT 0
+    print_kv SUGGESTION_COUNT 0
   }
 
   # --- Phase 1: Check for an existing PR-Agent summary comment on this HEAD ---
@@ -6312,10 +6398,14 @@ _EXTRACT_POSSIBLE_ISSUE_LABELS_
   if _pr_agent_bound_summary phase1; then
     comment_body="$pr_agent_bound_body"
   fi
-  local verdict
-  verdict="$(_pr_agent_classify "$comment_body")"
+  local verdict classified
+  classified="$(_pr_agent_classify "$comment_body")"
+  verdict="$(kv_value_default VERDICT "$classified" escalate)"
+  printf '%s\n' "$classified" | sed -n '/^EVIDENCE_/p'
 
   case "$verdict" in
+    needs_rerun) _pr_agent_local_pending; return 3 ;;
+    waiting_on_reviewer) _pr_agent_local_pending; return 4 ;;
     clean)
       local _advisory_labels _comment_url _advisory_entry _eval_status
       _advisory_labels="$(_pr_agent_extract_advisory_labels "$comment_body")"
@@ -6404,7 +6494,9 @@ _EXTRACT_POSSIBLE_ISSUE_LABELS_
     if _pr_agent_bound_summary phase2; then
       comment_body="$pr_agent_bound_body"
     fi
-    verdict="$(_pr_agent_classify "$comment_body")"
+    classified="$(_pr_agent_classify "$comment_body")"
+    verdict="$(kv_value_default VERDICT "$classified" escalate)"
+    printf '%s\n' "$classified" | sed -n '/^EVIDENCE_/p'
 
     if [ "$verdict" != "none" ]; then
       break
@@ -6461,6 +6553,8 @@ _EXTRACT_POSSIBLE_ISSUE_LABELS_
 
   # --- Phase 3: Classify the comment body ---
   case "$verdict" in
+    needs_rerun) _pr_agent_local_pending; return 3 ;;
+    waiting_on_reviewer) _pr_agent_local_pending; return 4 ;;
     clean)
       local _advisory_labels _comment_url _advisory_entry _eval_status
       _advisory_labels="$(_pr_agent_extract_advisory_labels "$comment_body")"
@@ -10806,7 +10900,9 @@ reviewer_loop_retain_local_evidence_for_current_run() {
   platform_reviewed_heads+=("local-ai-reviewer:${reviewed_head}")
   reason="retained_history"
   platform_peer_evidence+=("local-ai-reviewer|${outcome}|${reason}")
-  platform_result_records+=("$(reviewer_loop_platform_result_record_json local-ai-reviewer "$outcome" "$reason")")
+  local retained_metadata
+  retained_metadata="$(reviewer_loop_platform_evidence_metadata "$payload" local-ai-reviewer)"
+  platform_result_records+=("$(reviewer_loop_platform_result_record_json local-ai-reviewer "$outcome" "$reason" 0 "$retained_metadata")")
 }
 
 # reviewer_loop_local_latest_verdict <history_payload> <configured_platforms>
@@ -10969,9 +11065,7 @@ reviewer_loop_local_second_pass_failed_for_head() {
   '
 }
 
-# An explicit retry authorizes a fresh review, never a clean verdict. Refuse
-# findings, ambiguous failures, and unknown history. Keep the original ledger
-# untouched so cycle limits and the default failed-head refusal still apply.
+# A retry authorizes review, never a verdict. Unknown history stays blocked.
 reviewer_loop_local_retry_allowed() {
   local payload="$1" head="$2"
   [ "${retry_local_review_head:-}" = "$head" ] || return 1
@@ -10979,10 +11073,16 @@ reviewer_loop_local_retry_allowed() {
   printf '%s' "$payload" | jq -e --arg head "$head" '
     .schema == "reviewer_loop_history.v1" and
     (.history_status // "available") == "available" and
-    ([.entries[] | select(.local_second_pass_failed_head == $head)] as $failed
+    ([.entries[] | select(
+       (.local_second_pass_failed_head // "") == $head or
+       ((.classification_head // .head_sha) == $head and
+        any(.platform_results[]?; .platform == "local-ai-reviewer" and
+            (.result == "needs_fixes" or .result == "needs_rerun"))))] as $failed
       | ($failed | length) > 0 and
-        all($failed[]; .result == "escalate" and
-          (.reason == "local_pass_unavailable" or .reason == "failed_for_head")))
+        all($failed[]; .result == "needs_fixes" or .result == "needs_rerun" or
+          (.result == "escalate" and
+           (.reason == "local_pass_unavailable" or .reason == "failed_for_head" or
+            .reason == "max_cycles_exceeded" or .reason == "max_total_cycles_exceeded"))))
   ' >/dev/null 2>&1
 }
 
@@ -11012,7 +11112,9 @@ reviewer_loop_local_pass_required() {
   esac
 
   if [ -n "$head" ] && [ "$verdict_head" = "$head" ]; then
-    printf 'not_required\n'
+    if [ "$(reviewer_loop_platform_clean_for_head "$payload" local-ai-reviewer "$head")" = clean_current ]; then
+      printf 'not_required\n'
+    else printf 'evidence_changed\n'; fi
   else
     printf 'head_changed\n'
   fi
@@ -11057,7 +11159,7 @@ reviewer_loop_platform_clean_for_head() {
           | . as $entry
           | ((.platform_results // [])[]
              | select(.platform == $platform)
-             | {outcome: (.result // "unknown"),
+             | {outcome: (.result // "unknown"), evidence_snapshot_sha256: (.evidence_snapshot_sha256 // ""),
                 head_sha: (
                   ($entry.reviewed_heads // [])
                   | map(select(.platform == $platform))
@@ -11085,6 +11187,30 @@ reviewer_loop_platform_clean_for_head() {
     *) printf 'not_clean\n'; return 0 ;;
   esac
 
+  if [ -z "$verdict_head" ] || [ "$verdict_head" != "$head" ]; then
+    printf 'head_changed\n'; return 0
+  fi
+  if [ "$platform" = local-ai-reviewer ] || [ "$platform" = pr-agent ]; then
+    local fingerprint context repo
+    fingerprint="$(printf '%s' "$verdict" | jq -r '.evidence_snapshot_sha256 // ""')"
+    if [ -z "$fingerprint" ]; then printf 'no_evidence\n'; return 0; fi
+    context="$(mktemp)" || { printf 'no_evidence\n'; return 0; }
+    repo="$(repo_slug)" || repo=""
+    if ! workflow_collect_review_evidence "$repo" "${pr_number:-}" "$head" "$context" ||
+        [ "$(jq -r .snapshot_sha256 "$context")" != "$fingerprint" ]; then
+      rm -f "$context"; printf 'no_evidence\n'; return 0
+    fi
+    if [ "$platform" = pr-agent ] && jq -e '
+        [.comments[]?.body // "", .body // ""] |
+        any(.[]; test("Requires\\s+further\\s+human\\s+verification|PR Code Verified"; "i"))
+      ' "$context" >/dev/null 2>&1; then
+      # This only withholds replay. The normal handler authenticates the
+      # selected request and rechecks current trusted proof through the shared
+      # predicate; a cached fingerprint alone grants no verification authority.
+      rm -f "$context"; printf 'no_evidence\n'; return 0
+    fi
+    rm -f "$context"
+  fi
   if [ -n "$verdict_head" ] && [ "$verdict_head" = "$head" ]; then
     printf 'clean_current\n'
   else
@@ -11199,7 +11325,7 @@ reviewer_loop_platform_pre_dispatch() {
     stage_skipped_platforms+=("$platform_name")
     reviewer_loop_platform_loop_should_break=0
     reviewer_loop_process_platform_output "$platform_name" "$platform_index" \
-      "$(reviewer_loop_stage_skip_output "$loop_head_sha")" 0 1
+      "$(reviewer_loop_stage_skip_output "$loop_head_sha" "$platform_name")" 0 1
     if [ "$reviewer_loop_platform_loop_should_break" -eq 1 ]; then
       reviewer_loop_pre_dispatch_action="break"
     else
@@ -11265,6 +11391,8 @@ reviewer_loop_stage_skip_resolve() {
     stage_skip_disabled_reason="disabled_by_env"
   elif [ "${compare_mode:-0}" -eq 1 ]; then
     stage_skip_disabled_reason="compare_mode"
+  elif [ -n "${retry_local_review_head:-}" ]; then
+    stage_skip_disabled_reason="explicit_local_retry"
   elif [ "${platform_selection_explicit:-0}" -eq 1 ]; then
     stage_skip_disabled_reason="explicit_platform_selection"
   elif [ "$platform_count" -eq 0 ] || [ -z "$pr_number_arg" ] || [ -z "${loop_head_sha:-}" ]; then
@@ -11290,8 +11418,21 @@ reviewer_loop_stage_skip_resolve() {
 # LOCAL_AI_HEAD_CURRENT / Protocol 91 Check 0.6 (#1648), and a
 # platform_results record for the ledger. The reviewed head is <head_sha> by
 # definition of the skip - it is the head the recorded clean verdict names.
+reviewer_loop_platform_evidence_metadata() {
+  printf '%s' "$1" | jq -c --arg platform "$2" '
+    [.entries[]? | .platform_results[]? | select(.platform == $platform)] | last // {} |
+    {evidence_snapshot_sha256, evidence_verification, evidence_verifier} |
+    with_entries(select(.value != null))'
+}
+
 reviewer_loop_stage_skip_output() {
-  local head="${1:-}"
+  local head="${1:-}" metadata
+  if [ -n "${2:-}" ]; then
+    metadata="$(reviewer_loop_platform_evidence_metadata "$stage_skip_history_payload" "$2")"
+    print_kv EVIDENCE_SNAPSHOT_SHA256 "$(printf '%s' "$metadata" | jq -r '.evidence_snapshot_sha256 // ""')"
+    print_kv EVIDENCE_VERIFICATION_JSON "$(printf '%s' "$metadata" | jq -c '.evidence_verification // {}')"
+    print_kv EVIDENCE_VERIFIER "$(printf '%s' "$metadata" | jq -r '.evidence_verifier // ""')"
+  fi
   printf 'RESULT=clean\nREASON=%s\nDISPLAY_RESULT=clean (already clean on head)\nSTAGE_SKIP=1\nSTAGE_SKIP_REASON=%s\nREVIEWED_HEAD=%s\nCOMMENT_COUNT=0\nBLOCKING_COUNT=0\nSUGGESTION_COUNT=0\n' \
     "$REVIEWER_LOOP_STAGE_SKIP_REASON" "$REVIEWER_LOOP_STAGE_SKIP_REASON" "$head"
 }
@@ -11378,6 +11519,9 @@ reviewer_loop_second_local_pass_before_ready_gate() {
   }
   _sl_composed="$(reviewer_loop_compose_current_round_payload "$_sl_prior_payload" "$_sl_next_iteration")"
   _sl_required="$(reviewer_loop_local_pass_required "$_sl_composed" "$loop_head_sha" "$_sl_configured")"
+  if [ "${retry_local_review_head:-}" = "$loop_head_sha" ] && [ "${local_review_retry_head_record:-}" = "$loop_head_sha" ]; then
+    _sl_required=explicit_retry
+  fi
   local_second_pass_reason="$_sl_required"
 
   if [ "$_sl_required" = "not_required" ] || [ "$_sl_required" = "no_local_reviewer" ]; then
@@ -11401,7 +11545,7 @@ reviewer_loop_second_local_pass_before_ready_gate() {
   fi
 
   if [ "$(reviewer_loop_local_second_pass_failed_for_head "$_sl_prior_payload" "$loop_head_sha")" -gt 0 ] 2>/dev/null; then
-    if reviewer_loop_local_retry_allowed "$_sl_prior_payload" "$loop_head_sha"; then
+    if [ "${retry_local_review_head:-}" = "$loop_head_sha" ] && [ "${local_review_retry_head_record:-}" = "$loop_head_sha" ] && [ "${local_review_retry_attempt_json:-null}" != null ]; then
       # Consume before dispatch, including failed/unknown-head attempts.
       local_review_retry_head_record="$retry_local_review_head"
       retry_local_review_head=""
@@ -11580,7 +11724,21 @@ reviewer_loop_process_platform_output() {
   # #1789 (plan D12): budget, request, and latency for this outcome (or the
   # #1692 reused marker), printed and carried into the ledger record.
   reviewer_loop_record_platform_timing "$platform_name" "$platform_index" "$platform_output" "$platform_result" "$platform_reason"
-  platform_result_records+=("$(reviewer_loop_platform_result_record_json "$platform_name" "$platform_result" "$platform_reason" "$(kv_value_default NO_VERDICT_YET "$platform_output" 0)" "$reviewer_loop_last_timing_json")")
+  local proof_extra proof_timing
+  proof_timing="$reviewer_loop_last_timing_json"
+  [ -n "$proof_timing" ] || proof_timing='{}'
+  proof_extra="$(jq -cn --argjson timing "$proof_timing" \
+    --arg verifier "$(kv_value_default EVIDENCE_VERIFIER "$platform_output" "")" \
+    --arg hash "$(kv_value_default EVIDENCE_SNAPSHOT_SHA256 "$platform_output" "")" \
+    --argjson proof "$(kv_value_default EVIDENCE_VERIFICATION_JSON "$platform_output" "{}")" \
+    '$timing + (if $verifier != "" then {evidence_verifier:$verifier} else {} end) + (if $hash != "" then {evidence_snapshot_sha256:$hash} else {} end) +
+     (if $proof != {} then {evidence_verification:$proof} else {} end)')" || proof_extra="$reviewer_loop_last_timing_json"
+  platform_result_records+=("$(reviewer_loop_platform_result_record_json "$platform_name" "$platform_result" "$platform_reason" "$(kv_value_default NO_VERDICT_YET "$platform_output" 0)" "$proof_extra")")
+  if [ "$platform_name" = pr-agent ] &&
+      [ "$(kv_value_default EVIDENCE_REVIEW_FAILED_HEAD "$platform_output" "")" = "${loop_head_sha:-}" ] &&
+      { [ "$platform_result" = needs_fixes ] || [ "$platform_result" = needs_rerun ]; }; then
+    local_second_pass_failed_head_record="$loop_head_sha"
+  fi
   platform_blocking_outputs+=("${platform_name}"$'\036'"${platform_output}")
 
   _policy_status_available="$(kv_value_default POLICY_STATUS_AVAILABLE "$platform_output" 0)"
@@ -12986,6 +13144,7 @@ reviewer_loop_history_build_entry() {
     --arg localSecondPassReason "${local_second_pass_reason:-not_required}" \
     --arg localSecondPassFailedHead "${local_second_pass_failed_head_record:-}" \
     --arg localReviewRetryHead "${local_review_retry_head_record:-}" \
+    --argjson localRetryAttempt "${local_review_retry_attempt_json:-null}" \
     '{
       iteration: $iteration,
       recorded_at: $recordedAt,
@@ -13016,6 +13175,7 @@ reviewer_loop_history_build_entry() {
       small_findings_required_rounds: $smallFindingsRequiredRounds,
       small_findings_paths: ($smallFindingsPaths | split("\n") | map(select(length > 0)))
     }
+    | if $localRetryAttempt != null then . + {local_review_retry_attempt: $localRetryAttempt} else . end
     | if ($egResult | length) > 0 then
         . + {expensive_gate: {platform: $egPlatform, result: $egResult, reason: $egReason, head: $egHead}}
       else
@@ -13398,7 +13558,12 @@ reviewer_loop_history_append_to_summary() {
 # structural backstop that does not depend on every caller correctly
 # threading a stable run identifier through every invocation.
 #
-# What is counted (both caps): fixer-dispatch-triggering cycles. Only prior
+# What is counted (both caps): historical fixer cycles plus distinct UUID
+# reservations in local_review_retry_attempt. Reservation/completion records
+# with one UUID count once, including interrupted attempts. Present malformed
+# or conflicting retry metadata makes both counts unavailable. The historical
+# partition (entries WITHOUT local_review_retry_attempt) keeps the exact
+# qualifying filters and deduplication below. Only historical
 # ledger entries whose `result` is `needs_fixes` or `needs_rerun` are
 # candidates — each such result is exactly the trigger condition for a
 # fixer dispatch (or, for needs_rerun, PR-Agent's equivalent auto-push
@@ -13561,22 +13726,35 @@ reviewer_loop_history_entries_count() {
   fi
 
   counts="$(printf '%s\n' "$json" | jq -r --arg runId "$run_id" '
-        [
-          .entries[]?
+        # Additive retry records never enter the historical deduplication.
+        [.entries[] | select(has("local_review_retry_attempt"))] as $new
+        | if all($new[];
+            . as $entry | .local_review_retry_attempt as $attempt
+            | ($attempt | type) == "object"
+              and ($attempt.id | type) == "string"
+              and ($attempt.id | test("^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"))
+              and ($attempt.head_sha | type) == "string"
+              and ($attempt.head_sha | test("^[0-9a-f]{40}$"))
+              and ($attempt.run_id | type) == "string"
+              and ($attempt.run_id | length) > 0
+              and $attempt.run_id == $entry.run_id
+              and $attempt.head_sha == ($entry.classification_head // $entry.head_sha))
+            and ([$new[].local_review_retry_attempt] | group_by(.id)
+                 | all(.[]; ([.[] | {head_sha, run_id}] | unique | length) == 1))
+          then . else error("invalid retry attempt") end
+        | [.entries[]
+          | select(has("local_review_retry_attempt") | not)
           | select((.result // "") == "needs_fixes" or (.result // "") == "needs_rerun")
-          # A head that moved during an otherwise clean run dispatches no
-          # fixer; it is a re-run, not a cycle (issue #1574).
           | select((.reason // "") != "head_moved_during_run")
         ] as $qualifying
         | ($qualifying
             | [.[] | select((.head_sha // "") | length > 0) | ((.head_sha // "") + "|" + (.result // ""))]
-            | unique
-            | length) as $lifetime
+            | unique | length) as $legacyLifetime
         | ($qualifying
             | [.[] | select(($runId | length) > 0 and (.run_id // "") == $runId and ((.head_sha // "") | length > 0)) | ((.head_sha // "") + "|" + (.result // ""))]
-            | unique
-            | length) as $run
-        | "\($lifetime) \($run)"
+            | unique | length) as $legacyRun
+        | ($new | map(.local_review_retry_attempt) | unique_by(.id)) as $attempts
+        | "\($legacyLifetime + ($attempts | length)) \($legacyRun + ([$attempts[] | select(.run_id == $runId)] | length))"
       ' 2>/dev/null)" || counts=""
   read -r lifetime_count run_count <<<"$counts"
 
@@ -14421,6 +14599,74 @@ reviewer_loop_persist_failure_should_escalate() {
 # restore_regression_label_if_missing) so it is directly unit-testable via the
 # MOCK_GH_COMMENTS_OUTPUT / MOCK_GH_COMMENTS_EXIT harness conventions, without
 # requiring a full main-loop subprocess run.
+# Prepare the one explicit retry before any main-loop platform can dispatch.
+reviewer_loop_prepare_local_retry() {
+  local configured_local
+  local_retry_preparation_failed=0
+  if [ -n "$retry_local_review_head" ]; then
+    configured_local="$(reviewer_loop_repo_configured_platforms)" || configured_local=""
+    if grep -Fxq local-ai-reviewer <<<"$configured_local" &&
+        reviewer_loop_reserve_local_retry_attempt "$1"; then
+      export LOCAL_AI_REVIEWER_REQUIRE_EVIDENCE=1
+    else
+      local_retry_preparation_failed=1
+      aggregate_result=escalate
+      aggregate_reason="${local_review_retry_failure_reason:-cycle_count_unavailable}"
+      aggregate_status=2
+      last_platform=local-ai-reviewer
+    fi
+  fi
+}
+
+# Reserve a retry durably under the existing PR lock before any dispatch.
+# An uncertain write is never retried: its UUID remains spent if persisted.
+reviewer_loop_reserve_local_retry_attempt() {
+  local pr="$1" repo record body payload_file rendered_file readback_file attempt
+  local lifetime run status
+  local_review_retry_failure_reason="cycle_count_unavailable"
+  repo="$(repo_slug)" || return 1
+  record="$(set -o pipefail; gh api "repos/$repo/issues/$pr/comments" --paginate 2>/dev/null |
+    reviewer_loop_history_select_latest_summary_record)" || return 1
+  body="$(printf '%s' "$record" | jq -r '.body // ""')" || return 1
+  read -r lifetime run status < <(reviewer_loop_history_entries_count "$body" "$current_run_id")
+  [ "$status" = available ] || return 1
+  if [ "$run" -ge "$max_cycles" ]; then
+    local_review_retry_failure_reason="max_cycles_exceeded"; return 1
+  fi
+  if [ "$lifetime" -ge "$max_total_cycles" ]; then
+    local_review_retry_failure_reason="max_total_cycles_exceeded"; return 1
+  fi
+  reviewer_loop_local_retry_allowed "$(printf '%s' "$body" | reviewer_loop_history_extract_latest_json)" "$loop_head_sha" || {
+    local_review_retry_failure_reason="failed_for_head"; return 1;
+  }
+  attempt="$(python3 -c 'import uuid; print(uuid.uuid4())')" || return 1
+  local_review_retry_attempt_json="$(jq -cn --arg id "$attempt" --arg head "$loop_head_sha" --arg run "$current_run_id" \
+    '{id:$id, head_sha:$head, run_id:$run}')" || return 1
+  local_review_retry_head_record="$loop_head_sha"
+  payload_file="$(mktemp)" || return 1
+  rendered_file="$(mktemp)" || { rm -f "$payload_file"; return 1; }
+  readback_file="$(mktemp)" || { rm -f "$payload_file" "$rendered_file"; return 1; }
+  # File arguments avoid transporting the accumulating ledger in argv.
+  if ! reviewer_loop_history_append_to_summary \
+      $'### Automated Reviewer Loop Summary\n\nRESULT=needs_fixes\nREASON=local_review_retry_reserved\n\n*Posted automatically by `pr-review-loop.sh`.*' \
+      "$body" needs_fixes local_review_retry_reserved local-ai-reviewer 0 0 >"$rendered_file" ||
+      ! jq -n --rawfile body "$rendered_file" '{body:$body}' >"$payload_file"; then
+    rm -f "$payload_file" "$rendered_file" "$readback_file"; return 1
+  fi
+  local comment_id
+  comment_id="$(printf '%s' "$record" | jq -r '.id // ""')"
+  if ! [[ "$comment_id" =~ ^[1-9][0-9]*$ ]] ||
+      ! gh api --method PATCH "repos/$repo/issues/comments/$comment_id" --input "$payload_file" >/dev/null 2>&1 ||
+      ! gh api "repos/$repo/issues/comments/$comment_id" >"$readback_file" 2>/dev/null ||
+      ! jq -e --rawfile expected "$rendered_file" '.body == $expected' "$readback_file" >/dev/null 2>&1; then
+    rm -f "$payload_file" "$rendered_file" "$readback_file"; return 1
+  fi
+  rm -f "$payload_file" "$rendered_file" "$readback_file"
+  lifetime_cycle_count=$((lifetime + 1))
+  cycle_count=$((run + 1))
+  local_review_retry_failure_reason=""
+}
+
 reviewer_loop_resolve_cycle_counts() {
   local pr_number_arg="$1"
   local run_id_arg="${2:-}"
@@ -14928,6 +15174,7 @@ repo_root_explicit=0
 local_review_override_root=""
 retry_local_review_head=""
 local_review_retry_head_record=""
+local_review_retry_attempt_json=null
 review_policy_source="shared"
 # One-run overrides (#1789): set only by --poll-interval / --max-wait. Without
 # them every platform waits with its own resolved budget and poll interval
@@ -15713,7 +15960,10 @@ reviewer_loop_recorded_request_ref=""
 reviewer_loop_recorded_requested_at=""
 reviewer_loop_rewait_resolve "$pr_number"
 
+reviewer_loop_prepare_local_retry "$pr_number"
+
 for index in "${!platforms[@]}"; do
+  [ "$local_retry_preparation_failed" -eq 0 ] || break
   platform_index=$((index + 1))
   platform_name="${platforms[$index]}"
 
@@ -16982,6 +17232,7 @@ fi
 reviewer_loop_reconcile_reviewer_failed_label "$pr_number" "$aggregate_result" "$aggregate_reason"
 
 print_kv LOCAL_REVIEW_RETRY_HEAD "${local_review_retry_head_record:-}"
+print_kv LOCAL_REVIEW_RETRY_ATTEMPT_ID "$(printf '%s' "${local_review_retry_attempt_json:-null}" | jq -r '.id // ""')"
 print_kv LOCAL_SECOND_PASS "${local_second_pass:-0}"
 print_kv LOCAL_SECOND_PASS_REASON "${local_second_pass_reason:-not_required}"
 # Issue #1692: which reviewers this run replayed from the ledger instead of

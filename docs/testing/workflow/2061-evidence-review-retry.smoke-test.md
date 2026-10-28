@@ -2,7 +2,7 @@
 
 ## Scope
 
-Validate [the spec](../../specs/developments/20261028125542_2061-evidence-review-retry/1_2061-evidence-review-retry_specs.md) using disposable synthetic fixtures. Implementation adds the new tests named below; this plan-stage runbook is not a claim those tests already pass.
+Validate [the spec](../../specs/developments/20261028125542_2061-evidence-review-retry/1_2061-evidence-review-retry_specs.md) using disposable synthetic fixtures. The synthetic suites below exercise context collection, explicit verification, durable retry accounting, dispatch and readiness.
 
 No live downstream PR, private local configuration, credential, or user data is a fixture. Use explicit synthetic reviewer/config settings and mocked GitHub responses. No force push, branch deletion, checkpoint-policy edit, or live merge is part of this runbook.
 
@@ -31,3 +31,17 @@ The successful fixture publishes evidence and obtains fresh reviewer verificatio
 ## Evidence to Record
 
 Record the implementation commit, commands, suite outcomes, synthetic proof locations and the AC mapping. Do not copy private configuration or real comment bodies into the report. No visual-fidelity check applies because the issue supplies no UI or design assets.
+
+## Planted-Violation Evidence
+
+All records below use fabricated inputs and mocked transport/model responses.
+The implementation PR records the reviewed commit and final suite outcomes.
+
+| Guard | Violation and observed refusal | Corrected fixture and observed success |
+| --- | --- | --- |
+| Retry pre-dispatch cap | `test-pr-review-loop-cycles-labels.sh`, `_retry2061_plant`, removes the actual per-run guard in a subshell: three dispatches and four spent cycles exceed the limit | `_retry2061_exercise run` uses the production guard: two retries after one historical cycle; the next invocation reports `max_cycles_exceeded` without dispatch |
+| Lifetime and durable reservation | Shared `tests/lib/review-retry-fixture.sh` changes run IDs without resetting lifetime; uncertain writes and mismatching readback cause zero dispatches while persisted reservations remain spent | Matching readback permits a real dispatch stub; reservation/completion share one UUID and count once |
+| Explicit verification | `test-review-evidence-context.py`, `test_shared_loop_readiness_predicate_requires_trusted_current_proof`: unverified, stale, deleted, forged, wrong-head/request and bookkeeping-only proof stay pending | The same current snapshot with trusted explicit verified proof returns clean |
+| Local reviewer context and proof | `test-local-ai-reviewer.sh`, the `#2061` cases: missing/unverified/stale proof, an independent code finding, evidence drift and API failure cannot approve | Full body and second-page proof reach the backend; explicit matching proof is accepted and its snapshot hash survives metadata transport |
+| Loop targeted review and replay | `test-pr-review-loop-pr-agent-coderabbit.sh`, `2061_targeted_*`, and staged-gates `2061_*`: unverified proof, prior failure without retry, code findings and stale fingerprints refuse clearance | A configured fresh local assessment at the original SHA verifies proof; current fingerprint and compact metadata survive replay |
+| Readiness | `test-apply-readiness-labels.sh`, `2061_*`: unverified, edited, forged or independently security-blocking proof applies no label | Only the matching trusted verified fixture returns `labeled` |

@@ -4860,3 +4860,62 @@ reviewer_loop_history_select_latest_summary_record() {
       }
   '
 }
+
+# Current proof uses the existing summary trust domain: this token login or
+# a live admin/maintain/write collaborator. Markers alone grant no authority.
+workflow_review_evidence_ledger_proof() {
+  local repo="$1" pr="$2" head="$3" request="$4" context="$5"
+  local invoker candidates candidate login permission summary="" body payload tmp
+  invoker="$(gh api user --jq '.login // ""' 2>/dev/null)" || invoker=""
+  candidates="$(set -o pipefail; gh api "repos/$repo/issues/$pr/comments" --paginate --slurp 2>/dev/null |
+    jq -c '[.[]?[] | select((.body // "" | startswith("### Automated Reviewer Loop Summary")) and
+      (.body // "" | contains("*Posted automatically by `pr-review-loop.sh`.*")))] |
+      sort_by(.created_at) | reverse | .[]')" || return 1
+  while IFS= read -r candidate; do
+    [ -n "$candidate" ] || continue
+    login="$(printf '%s' "$candidate" | jq -r '.user.login // ""')" || continue
+    [ -n "$login" ] || continue
+    if [ "$login" = "$invoker" ]; then summary="$candidate"; break; fi
+    permission="$(gh api "repos/$repo/collaborators/$login/permission" --jq '.permission // ""' 2>/dev/null)" || continue
+    case "$permission" in admin|maintain|write) summary="$candidate"; break ;; esac
+  done <<<"$candidates"
+  [ -n "$summary" ] || return 1
+  body="$(printf '%s' "$summary" | jq -r '.body')" || return 1
+  payload="$(printf '%s' "$body" | reviewer_loop_history_extract_latest_json)" || return 1
+  tmp="$(mktemp)" || return 1
+  if ! printf '%s' "$payload" | jq -ce --arg head "$head" '
+    select(.schema == "reviewer_loop_history.v1" and (.history_status // "available") == "available") |
+    [.entries[] | . as $entry | .platform_results[]? | select(.platform == "pr-agent") |
+      {result:.result, evidence_verifier:.evidence_verifier, evidence_verification:.evidence_verification,
+       reviewed_head:([$entry.reviewed_heads[]? | select(.platform == "pr-agent") | .reviewed_head] | last)}] |
+    last | select(.result == "clean" and .evidence_verifier == "local-ai-reviewer" and .reviewed_head == $head)' >"$tmp"; then
+    rm -f "$tmp"; return 1
+  fi
+  local verified
+  verified="$(python3 "$(workflow_script_dir)/review-evidence-context.py" verify \
+    --context "$context" --result "$tmp" --request-id "$request" 2>/dev/null)" || verified='{}'
+  rm -f "$tmp"
+  printf '%s' "$verified" | jq -e '.verified == true' >/dev/null 2>&1 || return 1
+  printf '%s' "$verified"
+}
+
+# Shared loop/readiness decision. The caller authenticates the request and
+# binds it to this head using the existing PR-Agent selector before calling.
+workflow_pr_agent_evidence_verdict() {
+  local repo="$1" pr="$2" head="$3" request="$4" body="$5"
+  local inspection verdict tmp
+  inspection="$(printf '%s' "$body" | bash "$(workflow_script_dir)/apply-readiness-labels.sh" --inspect-pr-agent)" || {
+    printf 'escalate'; return;
+  }
+  verdict="$(printf '%s' "$inspection" | jq -r .verdict)"
+  if [ "$(printf '%s' "$inspection" | jq -r .verification_only)" != true ]; then
+    printf '%s' "$verdict"; return
+  fi
+  tmp="$(mktemp)" || { printf escalate; return; }
+  if workflow_collect_review_evidence "$repo" "$pr" "$head" "$tmp" &&
+      workflow_review_evidence_ledger_proof "$repo" "$pr" "$head" "$request" "$tmp" >/dev/null; then
+    verdict=clean
+  else verdict=verification_pending; fi
+  rm -f "$tmp"
+  printf '%s' "$verdict"
+}

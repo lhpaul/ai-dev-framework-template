@@ -413,9 +413,44 @@ When a pass fails on an unchanged head, the ledger entry records
 `local_second_pass_failed_head`. The summary comment includes
 `**Second local pass:** second local pass: <reason> → <result>` when a pass ran.
 
-The pass does not increment `CYCLE_COUNT` or `TOTAL_CYCLE_COUNT`. A failed pass
-on an unchanged head refuses with `RESULT=escalate`, `REASON=failed_for_head` on
-the next cycle (cross-invocation), without relying on cycle caps.
+An ordinary pass retains the existing cycle accounting. A failed pass on an
+unchanged head refuses with `RESULT=escalate`, `REASON=failed_for_head` by default.
+An explicit `--retry-local-review-head <full-lowercase-sha>` can request a fresh
+configured local review after infrastructure repair or publication of relevant
+proof for recorded findings. It never supplies a clean verdict itself.
+
+Each explicit retry reserves `local_review_retry_attempt: {id, head_sha, run_id}`
+in the existing v1 history before any platform dispatch. The UUID is new for
+each invocation. Reservation and completion with that UUID spend one slot on
+both cycle axes; an interrupted reservation remains spent. Historical entries
+without this object retain their previous head/result filters and deduplication.
+Malformed or conflicting attempt metadata makes counts unavailable. Unavailable
+counts, exhausted per-run/lifetime caps, or unverified persistence prevent
+reviewer dispatch. A clean result in the final admitted slot can still proceed.
+Changing run ID resets only the per-run axis; changing SHA resets neither.
+
+### Published evidence and verification
+
+The local reviewer receives the complete PR body and every issue-comment page
+as untrusted review context, including prior review history. Missing proof stays
+pending until the reviewer inspects it. Publishing a comment, an unrelated clean
+review, or requesting a retry cannot resolve a finding.
+
+`review-evidence-context.py` defines the shared snapshot and explicit-proof
+predicate used by the loop and readiness. Relevant body/comment edits, deletion,
+request changes and head changes invalidate evidence-dependent replay. Exact
+workflow bookkeeping headings are excluded from the fingerprint to avoid a
+summary invalidating itself; those comments cannot be proof sources. API or
+pagination failure leaves context unavailable.
+
+For a structurally recognized PR-Agent ticket request requiring further
+verification, the configured local reviewer must verify every requested item
+against eligible body/comment sources. Its clean ordinary/strict review and
+`review_evidence_verification.v1` proof must match the repository/PR/head snapshot
+and selected authenticated request. Only compact proof metadata is persisted
+in the existing trusted reviewer-loop ledger. Readiness independently checks
+current context and trusted author/write permission. Independent code/security
+findings, human decisions, malformed or unknown statuses remain blocking.
 
 **Scope note**: This pre-flight checks `review.on_draft.github` and
 `review.on_ready.github` (external reviewers used by Protocol 93 / Step 7). The
