@@ -55,3 +55,19 @@ the emitted head is missing, the persisted head is empty and readiness remains
 `verification_pending`. With the emissions restored, all 27 targeted assertions
 pass. The ledger in this regression receives the processor's actual head data;
 the test does not supply a reviewed head directly.
+
+## Immutable cumulative history recovery
+
+Run `bash scripts/development-workflow/tests/test-reviewer-loop-history.sh` and
+the cycle harness area 10c. Fork two synthetic histories, copy a cumulative
+prefix, and persist reservation/completion records with the same UUID plus a
+second UUID. Verify historical accounting is unchanged, distinct attempts exhaust
+the cap, and interrupted reservations remain spent. Original comment objects
+must remain unchanged. Quote the summary markers inside an ordinary comment; it
+must not become an authoritative summary. Malformed or unavailable histories
+must keep accounting unavailable, including when a newer valid snapshot exists.
+
+For each summary write, verify one POST and an independent GET of the returned
+ID and exact body. Plant a failed/uncertain POST, a failed GET, a mismatching
+body, and a mismatching ID. Each must stop without PATCH or repeated POST; an
+uncertain stored reservation must still be counted on the next read.

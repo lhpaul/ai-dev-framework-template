@@ -4843,22 +4843,25 @@ reviewer_loop_history_extract_latest_json() {
 }
 
 reviewer_loop_history_select_latest_summary_record() {
-  jq -rs '
-    (add // []) as $all
-    | [
-        $all[]
-        | select(
-            (.body // "" | contains("### Automated Reviewer Loop Summary")) and
-            (.body // "" | contains("*Posted automatically by `pr-review-loop.sh`.*"))
-          )
-      ]
-    | sort_by(.created_at)
-    | last
-    | {
-        id: (.id // ""),
-        body: (.body // "")
-      }
-  '
+  python3 "$(workflow_script_dir)/reviewer-loop-history.py"
+}
+
+# Append exactly once. An uncertain POST or failed independent readback is
+# unavailable, never a reason to retry a write or edit previous evidence.
+# Arguments: repository, PR, file containing the complete new comment body.
+reviewer_loop_history_publish() {
+  local repo="$1" pr="$2" body_file="$3" tmp id result=1
+  tmp="$(mktemp -d)" || return 1
+  if jq -n --rawfile body "$body_file" '{body:$body}' >"$tmp/payload" &&
+      gh api --method POST "repos/$repo/issues/$pr/comments" --input "$tmp/payload" >"$tmp/response" 2>/dev/null &&
+      id="$(jq -er '.id | select(type == "number" and . > 0 and . == floor)' "$tmp/response" 2>/dev/null)" &&
+      gh api "repos/$repo/issues/comments/$id" >"$tmp/readback" 2>/dev/null &&
+      jq -e --argjson id "$id" --rawfile expected "$body_file" \
+        '.id == $id and .body == $expected' "$tmp/readback" >/dev/null 2>&1; then
+    result=0
+  fi
+  rm -rf "$tmp"
+  return "$result"
 }
 
 # Current proof uses the existing summary trust domain: this token login or
@@ -4883,9 +4886,12 @@ workflow_review_evidence_ledger_proof() {
   body="$(printf '%s' "$summary" | jq -r '.body')" || return 1
   payload="$(printf '%s' "$body" | reviewer_loop_history_extract_latest_json)" || return 1
   tmp="$(mktemp)" || return 1
+  # Reconciled historical objects are accounting evidence, not new review
+  # authority. Only this trusted snapshot's newly appended entry can prove
+  # verification; copying an older/foreign claim must never promote its trust.
   if ! printf '%s' "$payload" | jq -ce --arg head "$head" '
     select(.schema == "reviewer_loop_history.v1" and (.history_status // "available") == "available") |
-    [.entries[] | . as $entry | .platform_results[]? | select(.platform == "pr-agent") |
+    [.entries[-1] | . as $entry | .platform_results[]? | select(.platform == "pr-agent") |
       {result:.result, evidence_verifier:.evidence_verifier, evidence_verification:.evidence_verification,
        reviewed_head:([$entry.reviewed_heads[]? | select(.platform == "pr-agent") | .reviewed_head] | last)}] |
     last | select(.result == "clean" and .evidence_verifier == "local-ai-reviewer" and .reviewed_head == $head)' >"$tmp"; then

@@ -1006,8 +1006,7 @@ Outputs stable key=value lines including:
                   disabling both cap backstops indefinitely for this PR.)
   REASON=ledger_persist_failed (RESULT=escalate, exit 2; emitted when this cycle's own
                   reviewer_loop_history.v1 ledger entry could not be reliably written — either
-                  because both the PATCH to the existing summary comment and the create-fallback
-                  failed, OR because the pre-write READ of the existing comment failed (which makes
+                  because comment creation or independent readback failed, OR because the pre-write READ of the existing comment failed (which makes
                   the write fall back to an "unavailable" stub that silently drops this cycle's entry
                   even when the stub itself is posted successfully) — while this cycle's own result
                   was needs_fixes or needs_rerun. Without this check, the caller would dispatch a
@@ -13414,24 +13413,9 @@ reviewer_loop_history_select_summary_record() {
   '
 }
 
-# reviewer_loop_history_select_latest_summary_record
-#
-# Like reviewer_loop_history_select_summary_record, but WITHOUT the
-# render-continuity fallback to an older "available" history body when the
-# newest summary comment's own history is unavailable. Selects strictly the
-# newest "Automated Reviewer Loop Summary" comment by created_at and returns
-# ITS OWN body verbatim, regardless of whether its embedded history block
-# says available or unavailable.
-#
-# Use this selector for CYCLE-COUNTING purposes (reviewer_loop_resolve_
-# cycle_counts) — reviewer_loop_history_select_summary_record's older-
-# history fallback exists to keep the VISIBLE summary comment's rendered
-# history table from regressing when a transient write failure marks the
-# newest entry unavailable, but that same fallback would silently return a
-# STALE (and possibly under-counted) cycle count to the cap-enforcement
-# logic while masking the fact that the newest ledger state is actually
-# unreadable — defeating the fail-closed guarantee in reviewer_loop_
-# cycle_count_unavailable_should_escalate (found in review of PR #1507).
+# The shared latest-summary selector reconciles immutable history snapshots.
+# It never substitutes an older available history for an unavailable block.
+# Rendering-only fallback above is not used for persistence or cycle counts.
 reviewer_loop_history_extract_preserved_section() {
   local existing_body="$1"
   local prior=""
@@ -14533,29 +14517,15 @@ reviewer_loop_cycle_count_unavailable_should_escalate() {
 
 # reviewer_loop_persist_failure_should_escalate <post_summary_exit_code> <result>
 #
-# Returns 0 (true — escalate) when this cycle's reviewer_loop_history.v1
-# ledger entry could not be persisted (<post_summary_exit_code> is non-zero
-# — both _post_review_summary's PATCH and create-fallback failed) AND this
-# cycle's own result was needs_fixes or needs_rerun (dispatch-triggering).
-# A "clean" or already-"escalate" result is never affected — no fixer
-# dispatch is at risk of going uncounted in those cases. Fails CLOSED,
-# matching the same rationale as reviewer_loop_cycle_count_unavailable_
-# should_escalate: a persistence failure that silently lets the caller
-# dispatch an uncounted fixer defeats both caps exactly as much as an
-# unreadable ledger does (found in review of PR #1507).
-#
-# Kept as its own pure, directly-testable function (defined before the
-# HARNESS_MODE return point) because _post_review_summary itself is defined
-# after that point (it does real gh API side effects) and is not directly
-# unit-testable from the harness — this function isolates the decision
-# logic so it can be verified without a full main-loop subprocess run.
+# Failed creation/readback must prevent both uncounted fixer dispatch and
+# clean readiness. Already-stopped outcomes keep their original reason.
 reviewer_loop_persist_failure_should_escalate() {
   local post_summary_exit_code="$1"
   local result="$2"
   local reason="${3:-}"
 
   case "$result" in
-    needs_fixes|needs_rerun) : ;;
+    clean|needs_fixes|needs_rerun) : ;;
     *) return 1 ;;
   esac
   # A head that moved during a clean run dispatches no fixer and is not
@@ -14623,7 +14593,7 @@ reviewer_loop_prepare_local_retry() {
 # Reserve a retry durably under the existing PR lock before any dispatch.
 # An uncertain write is never retried: its UUID remains spent if persisted.
 reviewer_loop_reserve_local_retry_attempt() {
-  local pr="$1" repo record body payload_file rendered_file readback_file attempt
+  local pr="$1" repo record body rendered_file attempt
   local lifetime run status
   local_review_retry_failure_reason="cycle_count_unavailable"
   repo="$(repo_slug)" || return 1
@@ -14645,25 +14615,17 @@ reviewer_loop_reserve_local_retry_attempt() {
   local_review_retry_attempt_json="$(jq -cn --arg id "$attempt" --arg head "$loop_head_sha" --arg run "$current_run_id" \
     '{id:$id, head_sha:$head, run_id:$run}')" || return 1
   local_review_retry_head_record="$loop_head_sha"
-  payload_file="$(mktemp)" || return 1
-  rendered_file="$(mktemp)" || { rm -f "$payload_file"; return 1; }
-  readback_file="$(mktemp)" || { rm -f "$payload_file" "$rendered_file"; return 1; }
+  rendered_file="$(mktemp)" || return 1
   # File arguments avoid transporting the accumulating ledger in argv.
   if ! reviewer_loop_history_append_to_summary \
       $'### Automated Reviewer Loop Summary\n\nRESULT=needs_fixes\nREASON=local_review_retry_reserved\n\n*Posted automatically by `pr-review-loop.sh`.*' \
-      "$body" needs_fixes local_review_retry_reserved local-ai-reviewer 0 0 >"$rendered_file" ||
-      ! jq -n --rawfile body "$rendered_file" '{body:$body}' >"$payload_file"; then
-    rm -f "$payload_file" "$rendered_file" "$readback_file"; return 1
+      "$body" needs_fixes local_review_retry_reserved local-ai-reviewer 0 0 >"$rendered_file"; then
+    rm -f "$rendered_file"; return 1
   fi
-  local comment_id
-  comment_id="$(printf '%s' "$record" | jq -r '.id // ""')"
-  if ! [[ "$comment_id" =~ ^[1-9][0-9]*$ ]] ||
-      ! gh api --method PATCH "repos/$repo/issues/comments/$comment_id" --input "$payload_file" >/dev/null 2>&1 ||
-      ! gh api "repos/$repo/issues/comments/$comment_id" >"$readback_file" 2>/dev/null ||
-      ! jq -e --rawfile expected "$rendered_file" '.body == $expected' "$readback_file" >/dev/null 2>&1; then
-    rm -f "$payload_file" "$rendered_file" "$readback_file"; return 1
+  if ! reviewer_loop_history_publish "$repo" "$pr" "$rendered_file"; then
+    rm -f "$rendered_file"; return 1
   fi
-  rm -f "$payload_file" "$rendered_file" "$readback_file"
+  rm -f "$rendered_file"
   lifetime_cycle_count=$((lifetime + 1))
   cycle_count=$((run + 1))
   local_review_retry_failure_reason=""
@@ -15526,7 +15488,7 @@ fi
 post_release_guard_summary() {
   local _pr_number="$1"
   local _branch_name="$2"
-  local _repo _existing_comment_id _patch_payload _comment_posted _body_tmpfile
+  local _repo _comment_posted _body_tmpfile
   local _comment_body
   local _existing_comment_body=""
   local _existing_comment_record=""
@@ -15549,46 +15511,40 @@ EOF
 
   set +e
 
-  _existing_comment_id=""
   _repo="$(repo_slug 2>/dev/null)"
   if [ -n "$_repo" ]; then
     if ! _existing_comment_record="$(
         set -o pipefail
         gh api "repos/$_repo/issues/$_pr_number/comments" --paginate 2>/dev/null \
-          | reviewer_loop_history_select_summary_record
+          | reviewer_loop_history_select_latest_summary_record
       )"; then
       workflow_diagnostic "WARN: failed to fetch existing summary comments for PR ${_pr_number}; will create a new comment with unavailable history" >&2
       _existing_comment_record=""
       _existing_comment_body="$(reviewer_loop_history_unavailable_stub_body comment_read_failed)"
     fi
     if [ -n "$_existing_comment_record" ]; then
-      _existing_comment_id="$(printf '%s\n' "$_existing_comment_record" | jq -r '.id // empty' 2>/dev/null)" || _existing_comment_id=""
       _existing_comment_body="$(printf '%s\n' "$_existing_comment_record" | jq -r '.body // ""' 2>/dev/null)" || _existing_comment_body=""
     fi
+  fi
+
+  local _history_counts _history_status
+  _history_counts="$(reviewer_loop_history_entries_count "$_existing_comment_body" "${current_run_id:-}")"
+  _history_status="${_history_counts##* }"
+  if [ -z "$_repo" ] || [ "$_history_status" != available ]; then
+    workflow_diagnostic "WARN: release-guard cumulative history unavailable; no summary written" >&2
+    set -e
+    return 1
   fi
 
   _comment_body="$(reviewer_loop_history_append_to_summary "$_comment_body" "$_existing_comment_body" \
     "skipped" "release_pr" "none" "0" "0" "0" "" "0" "0" "")"
 
-  _patch_payload="$(jq -n --arg body "$_comment_body" '{body: $body}')"
   _comment_posted=0
-  if [ -n "$_repo" ] && [ -n "$_existing_comment_id" ]; then
-    if gh api "repos/$_repo/issues/comments/$_existing_comment_id" \
-        --method PATCH \
-        --input - <<< "$_patch_payload" >/dev/null 2>&1; then
-      _comment_posted=1
-    fi
+  _body_tmpfile="$(mktemp)"
+  if [ -n "$_repo" ] && printf '%s' "$_comment_body" >"$_body_tmpfile" && reviewer_loop_history_publish "$_repo" "$_pr_number" "$_body_tmpfile"; then
+    _comment_posted=1
   fi
-  if [ "$_comment_posted" -eq 0 ]; then
-    _body_tmpfile="$(mktemp)"
-    printf '%s' "$_comment_body" > "$_body_tmpfile"
-    if gh pr comment "$_pr_number" --body-file "$_body_tmpfile" >/dev/null 2>&1; then
-      _comment_posted=1
-    else
-      workflow_diagnostic "WARN: failed to post release guard summary comment for PR ${_pr_number}" >&2
-    fi
-    rm -f "$_body_tmpfile"
-  fi
+  rm -f "$_body_tmpfile"
 
   set -e
   if [ "$_comment_posted" -eq 0 ]; then
@@ -16118,9 +16074,8 @@ done
 # hasReviewSummary check is satisfied automatically. The comment body matches
 # the regex used by workflow-next-action.sh and Protocol 90 Step 5.1:
 #   "Automated Reviewer Loop Summary|Reviewer Loop Summary|No blocking PR feedback"
-# Post on `clean`, `escalate`, and `needs_fixes` exits. The summary comment is
-# updated in place, so posting on fixable `needs_fixes` cycles does not create
-# duplicates and prevents stale clean summaries from masking active findings.
+# Post on `clean`, `escalate`, and `needs_fixes` exits. Each new cumulative
+# summary preserves earlier evidence and names the latest findings.
 # `skipped` exits (no platforms configured) also do not post per protocol spec.
 _post_review_summary() {
   local result="$1"
@@ -16410,14 +16365,8 @@ $(reviewer_loop_head_evidence_render "${loop_head_sha:-}" "${platform_reviewed_h
   # failures are visible in CI logs without being fatal.
   set +e
 
-  # Update-in-place: find an existing script-posted summary comment and edit it
-  # rather than creating a new one. This prevents redundant intermediate summary
-  # comments when the orchestrator invokes the script multiple times (e.g. once
-  # per fix cycle). Only one "Automated Reviewer Loop Summary" comment should
-  # ever exist on the PR timeline at a time.
-  # The marker string "*Posted automatically by `pr-review-loop.sh`.*" is unique
-  # to this script and is present in every comment it posts.
-  local _existing_comment_id=""
+  # Reconcile all immutable snapshots, then create a new cumulative comment.
+  # Never update or delete previous comments or review evidence.
   local _existing_comment_body=""
   local _repo
   local _existing_comment_record=""
@@ -16430,11 +16379,10 @@ $(reviewer_loop_head_evidence_render "${loop_head_sha:-}" "${platform_reviewed_h
   # still never actually recorded. A later "clean" cycle's OWN posting-time
   # history_select_summary_record's deliberate render-continuity fallback is used
   # ONLY for missed-finding derivation input (_mf_prior_payload), never for the
-  # comment id/body chosen for update-in-place — mixing newest id with an older
-  # substituted body would patch over unappendable latest history (AC-7a).
+  # cumulative history used for persistence or cycle counting (AC-7a).
   local _existing_read_failed=0
   _repo="$(repo_slug 2>/dev/null)" \
-    || { workflow_diagnostic "WARN: repo_slug failed in _post_review_summary; will post new comment without update-in-place check" >&2; _repo=""; _existing_read_failed=1; }
+    || { workflow_diagnostic "WARN: repo_slug failed in _post_review_summary; summary history is unavailable" >&2; _repo=""; _existing_read_failed=1; }
   if [ -n "$_repo" ]; then
     _existing_comment_record="$(
       set -o pipefail
@@ -16448,7 +16396,6 @@ $(reviewer_loop_head_evidence_render "${loop_head_sha:-}" "${platform_reviewed_h
         _existing_read_failed=1
       }
     if [ -n "$_existing_comment_record" ]; then
-      _existing_comment_id="$(printf '%s\n' "$_existing_comment_record" | jq -r '.id // empty' 2>/dev/null)" || _existing_comment_id=""
       _existing_comment_body="$(printf '%s\n' "$_existing_comment_record" | jq -r '.body // ""' 2>/dev/null)" || _existing_comment_body=""
     fi
   fi
@@ -16566,6 +16513,12 @@ ${_attr_line}"
 **Missed-finding telemetry:** could not be recorded this round (${_hist_unavail_reason:-unknown}). Existing reviewer-loop history was left unchanged."
   fi
 
+  if [ "$_hist_append_safe" -eq 0 ] || [ "$_existing_read_failed" -eq 1 ]; then
+    workflow_diagnostic "WARN: cumulative reviewer-loop history unavailable; no summary written" >&2
+    set -e
+    return 1
+  fi
+
   local _display_missed_findings_json='[]'
   _display_missed_findings_json="$(reviewer_loop_missed_findings_from_history_payload "$_prior_payload")"
   if [ "$_mf_count" -gt 0 ] && [ "$_hist_append_safe" -eq 1 ]; then
@@ -16597,36 +16550,19 @@ EOF
     "$phase_enabled" "$phase_platform_list" "$phase_started" \
     "$phase_net_new_blocker" "$phase_blocking_platform")"
 
-  local _patch_payload
-  _patch_payload="$(jq -n --arg body "$comment_body" '{body: $body}')"
-  local _comment_posted=0
-  if [ -n "$_existing_comment_id" ]; then
-    # Edit the existing comment in place; fall back to creating a new comment
-    # if the PATCH fails (e.g. comment was deleted or a transient API error).
-    if gh api "repos/$_repo/issues/comments/$_existing_comment_id" \
-        --method PATCH \
-        --input - <<< "$_patch_payload" >/dev/null 2>&1; then
-      _comment_posted=1
-    else
-      workflow_diagnostic "WARN: failed to update existing summary comment ${_existing_comment_id} for PR ${pr_number}; falling back to create" >&2
-    fi
+  local _comment_posted=0 _body_tmpfile
+  _body_tmpfile="$(mktemp)"
+  if [ -n "$_repo" ] && printf '%s' "$comment_body" >"$_body_tmpfile" && reviewer_loop_history_publish "$_repo" "$pr_number" "$_body_tmpfile"; then
+    _comment_posted=1
+  else
+    workflow_diagnostic "WARN: reviewer-loop summary write/readback unavailable for PR ${pr_number}" >&2
   fi
-  if [ "$_comment_posted" -eq 0 ]; then
-    local _body_tmpfile
-    _body_tmpfile="$(mktemp)"
-    printf '%s' "$comment_body" > "$_body_tmpfile"
-    if gh pr comment "$pr_number" --body-file "$_body_tmpfile" >/dev/null 2>&1; then
-      _comment_posted=1
-    else
-      workflow_diagnostic "WARN: failed to post reviewer loop summary comment for PR ${pr_number}" >&2
-    fi
-    rm -f "$_body_tmpfile"
-  fi
+  rm -f "$_body_tmpfile"
 
   set -e
 
-  # Persistence failure signal (#1502 dual-cap follow-up): when BOTH the
-  # PATCH and the create-fallback fail, this cycle's reviewer_loop_history.v1
+  # Persistence failure signal (#1502 dual-cap follow-up): when creation or
+  # independent readback fails, this cycle's reviewer_loop_history.v1
   # entry (built by reviewer_loop_history_append_to_summary above and folded
   # into $comment_body) was never actually written to the PR. If the caller
   # does not react to this, the next invocation's reviewer_loop_resolve_
@@ -16657,7 +16593,7 @@ EOF
   if [ "$_comment_posted" -eq 1 ]; then
     reviewer_loop_dispatch_pr_policy "$pr_number" "${_repo:-}"
   fi
-  if [ "$_comment_posted" -eq 0 ] || [ "$_existing_read_failed" -eq 1 ]; then
+  if [ "$_comment_posted" -eq 0 ] || [ "$_existing_read_failed" -eq 1 ] || [ "$_hist_append_safe" -eq 0 ]; then
     return 1
   fi
   return 0
@@ -17197,7 +17133,7 @@ if [ "$aggregate_result" != "skipped" ]; then
     "$phase_after_clean_blocking_platform" "$pre_after_clean_only" \
     "$advisory_checks_section" || _post_summary_exit=$?
   if reviewer_loop_persist_failure_should_escalate "$_post_summary_exit" "$aggregate_result" "$aggregate_reason"; then
-    workflow_diagnostic "WARN: reviewer-loop summary comment could not be persisted for a dispatch-triggering result ($aggregate_result) — escalating (ledger_persist_failed) rather than letting an uncounted fixer/retry dispatch happen" >&2
+    workflow_diagnostic "WARN: reviewer-loop summary write/readback unavailable ($aggregate_result) — escalating (ledger_persist_failed); readiness and fixer/retry dispatch withheld" >&2
     aggregate_result="escalate"
     aggregate_reason="ledger_persist_failed"
   fi

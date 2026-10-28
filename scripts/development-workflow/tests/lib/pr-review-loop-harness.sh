@@ -236,6 +236,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR" && git rev-parse --show-toplevel)"
 # Each mock reads its output from an environment variable set by the test case.
 # ---------------------------------------------------------------------------
 MOCK_BIN="$(mktemp -d)"
+export MOCK_GH_SUMMARY_STORE="$MOCK_BIN/summary-record.json"
 _METRICS_TMP=""
 _METRICS_DIR=""
 _CONFIG_DIR=""
@@ -301,6 +302,24 @@ case "$*" in
   *"pr edit"*)
     printf '%s\n' "${MOCK_GH_PR_EDIT_OUTPUT:-${MOCK_GH_OUTPUT:-{}}}"
     exit "${MOCK_GH_PR_EDIT_EXIT:-${MOCK_GH_EXIT:-0}}"
+    ;;
+  "api --method POST repos/"*"/issues/"*"/comments --input "*)
+    [ "${MOCK_GH_POST_EXIT:-${MOCK_GH_EXIT:-0}}" -eq 0 ] || exit "${MOCK_GH_POST_EXIT:-${MOCK_GH_EXIT:-0}}"
+    _summary_input=""
+    while [ "$#" -gt 0 ]; do
+      if [ "$1" = --input ]; then _summary_input="$2"; break; fi
+      shift
+    done
+    jq '. + {id:99999}' "$_summary_input" >"$MOCK_GH_SUMMARY_STORE"
+    if [ -n "${MOCK_GH_BODY_CAPTURE:-}" ]; then
+      jq -r '.body' "$MOCK_GH_SUMMARY_STORE" >"$MOCK_GH_BODY_CAPTURE"
+    fi
+    cat "$MOCK_GH_SUMMARY_STORE"
+    exit 0
+    ;;
+  "api repos/"*"/issues/comments/99999")
+    cat "$MOCK_GH_SUMMARY_STORE"
+    exit "${MOCK_GH_EXIT:-0}"
     ;;
   *"--method POST"*)
     printf '%s\n' "${MOCK_GH_POST_OUTPUT:-{}}"

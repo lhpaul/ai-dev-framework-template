@@ -1151,7 +1151,7 @@ unset MOCK_GH_COMMENTS_EXIT CYCLE_LEDGER_RETRY_WAIT
 
 run_test "persist_failure_escalates_on_needs_fixes" "yes"   "$(reviewer_loop_persist_failure_should_escalate 1 needs_fixes && echo yes || echo no)"
 run_test "persist_failure_escalates_on_needs_rerun" "yes"   "$(reviewer_loop_persist_failure_should_escalate 1 needs_rerun && echo yes || echo no)"
-run_test "persist_failure_does_not_escalate_on_clean" "no"   "$(reviewer_loop_persist_failure_should_escalate 1 clean && echo yes || echo no)"
+run_test "persist_failure_withholds_clean_readiness" "yes"   "$(reviewer_loop_persist_failure_should_escalate 1 clean && echo yes || echo no)"
 run_test "persist_failure_does_not_escalate_on_already_escalate" "no"   "$(reviewer_loop_persist_failure_should_escalate 1 escalate && echo yes || echo no)"
 run_test "persist_failure_does_not_escalate_on_waiting_on_reviewer" "no"   "$(reviewer_loop_persist_failure_should_escalate 1 waiting_on_reviewer && echo yes || echo no)"
 run_test "persist_failure_does_not_fire_when_persist_succeeded" "no"   "$(reviewer_loop_persist_failure_should_escalate 0 needs_fixes && echo yes || echo no)"
@@ -1333,6 +1333,8 @@ unset _entry_write_payload
 # #2061: real durable reservation, repeated identical SHA/result, both caps.
 # shellcheck source=scripts/development-workflow/tests/lib/review-retry-fixture.sh
 source "$REPO_ROOT/scripts/development-workflow/tests/lib/review-retry-fixture.sh"
+run_test "2061_split_histories_reconcile_before_dispatch_and_exhaust_cap" \
+  '1|max_cycles_exceeded|3 3 available' "$(_retry2061_exercise forked)"
 run_test "2061_identical_sha_results_exhaust_run_cap_before_next_dispatch" \
   '2|max_cycles_exceeded|3 3 available' "$(_retry2061_exercise run)"
 run_test "2061_new_run_retains_lifetime_retry_spend" \

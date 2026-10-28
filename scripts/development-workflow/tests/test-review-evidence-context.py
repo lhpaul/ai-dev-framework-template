@@ -96,7 +96,7 @@ else: sys.exit(1)
                     ("edited", "verification_pending"), ("deleted", "verification_pending"),
                     ("forged", "verification_pending"), ("writer", "clean"),
                     ("unverified", "verification_pending"), ("wrong_head", "verification_pending"),
-                    ("wrong_request", "verification_pending"), ("bookkeeping", "verification_pending")):
+                    ("wrong_request", "verification_pending"), ("bookkeeping", "verification_pending"), ("inherited_claim", "verification_pending")):
                 with self.subTest(variant=variant):
                     current = copy.deepcopy(raw)
                     payload = copy.deepcopy(ledger)
@@ -108,6 +108,7 @@ else: sys.exit(1)
                     if variant == "wrong_head": payload["entries"][0]["reviewed_heads"][0]["reviewed_head"] = "b" * 40
                     if variant == "wrong_request": record["evidence_verification"]["request_id"] = 11
                     if variant == "bookkeeping": record["evidence_verification"]["sources"] = ["comment:30"]
+                    if variant == "inherited_claim": payload["entries"].append({"platform_results": [], "result": "clean"})
                     summary = ("### Automated Reviewer Loop Summary\n"
                                "*Posted automatically by `pr-review-loop.sh`.*\n"
                                "<!-- reviewer-loop-history:v1 -->\n```json\n" + json.dumps(payload) + "\n```\n")
