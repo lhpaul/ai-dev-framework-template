@@ -36,7 +36,7 @@ readiness. This is scope-residual evidence rather than a frozen sweep list.
 | Classifier and consumers | `rg -n 'classify_pr_agent_review|classify-pr-agent|inspect-pr-agent|workflow_pr_agent_evidence_verdict|_pr_agent_classify' scripts .agents .codex .claude .cursor docs/workflow --glob '!*.json'` | Classifier/inspection in `apply-readiness-labels.sh`; shared predicate in `workflow-lib.sh`; loop call sites and readiness issue-comment selector; tests include runtime and evidence-context suites. See composed contract below. |
 | Ticket grammar and regressions | `rg -n 'Ticket compliance|PR Code Verified|ticket_compliance' scripts/development-workflow --glob '!*.json'` | Existing ticket grammar, classifier/loop cases in `tests/test-pr-review-loop-pr-agent-coderabbit.sh`, readiness cases in `tests/lib/readiness-label-matrix-cases.sh`, evidence cases in `tests/test-review-evidence-context.py`, runtime tests. |
 | Replay and proof branch | `rg -n 'verification_only|workflow_pr_agent_evidence_verdict|PR Code Verified' scripts/development-workflow/pr-review-loop.sh scripts/development-workflow/workflow-lib.sh scripts/development-workflow/apply-readiness-labels.sh` | `_pr_agent_classify` proof collection is conditional on inspection; replay independently withholds cached evidence on verification strings. Preserve the latter conservative freshness rule. |
-| Sync entrypoints | `rg -n 'sync-template-merge.py|preview|canonical' .claude/commands/sync-template.md .cursor/commands/sync-template.md .codex/skills/workflow-sync-template/SKILL.md .agents/skills/sync-template/SKILL.md` | Claude command is canonical; Cursor carries procedure mirror; Codex skill and alias delegate to it. Preview is ordinary sync and dry-run entrypoint. |
+| Sync entrypoints | `rg -n 'sync-template-merge.py|preview|canonical' .claude/commands/sync-template.md .claude/skills/sync-template.md .cursor/commands/sync-template.md .codex/skills/workflow-sync-template/SKILL.md .agents/skills/sync-template/SKILL.md` | Claude command is canonical; `.claude/skills/sync-template.md` and Cursor carry full procedure mirrors; Codex skill and alias delegate to it. Preview is ordinary sync and dry-run entrypoint. |
 | Sync implementation | `rg -n 'def show|def main|consumer_root|RESULT=|error_diagnostic' scripts/development-workflow/sync-template-merge.py` | Preview has consumer root and renders report through `show`; apply and blocking/error handling are separate. |
 | Configuration and delivery | `rg -n 'require_ticket_analysis_review|Ticket compliance' .pr_agent.toml; rg -n 'project_specific|apply-readiness|development-workflow' sync-manifest.yaml` | Template disables ticket analysis; comment needs correction. Shared workflow helpers are synchronized; do not add TOML to always-sync. |
 | Integration guidance | `rg -n 'classif|Ticket|TOML|precedence' docs/workflow/development-workflow/integrations/pr-agent.md` | Existing classification and TOML guidance is the documentation update target. |
@@ -172,7 +172,8 @@ coverage classes and spec behavior govern equivalent consolidations.
 - [ ] Update `docs/workflow/development-workflow/integrations/pr-agent.md` with
   the section-scoped exception and downstream warning behavior.
 - [ ] Update canonical `.claude/commands/sync-template.md` and genuine procedure
-  mirror `.cursor/commands/sync-template.md` to explain the preview diagnostic.
+  mirrors `.claude/skills/sync-template.md` and
+  `.cursor/commands/sync-template.md` to explain the preview diagnostic.
   Delegating Codex skill wrappers require no duplicated policy. No general
   developer/review checklist change is planned.
 - [ ] Add `changelog.d/2064.fixed.pr-agent-ticket-readiness.md`, using the
