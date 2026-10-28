@@ -149,6 +149,14 @@ The test matrix defines the seed population: fabricated PR identities, SHA strin
 | Repeated explicit retries evade execution limits | Preserve history and charge retries against existing bounds |
 | Context contents reach diagnostics | File-based transport, existing redaction, hashes/references only in public ledger |
 
+## Reversal and Recovery
+
+Revert the implementation through a normal reviewed PR that reverses the context producer, prompt contracts, retry/replay logic and readiness consumer together. Do not deploy a partial reversal that leaves a consumer treating an unsupported verification object as approval. Preserve published history and evidence artifacts; no destructive migration, ledger rewrite, force push, or synthetic commit to a reviewed PR is part of reversal.
+
+Before that coordinated reversal is enabled, pause automated evidence-resolution retries and identify the affected PRs from their published evidence-verification records. Withdraw their readiness through the normal owned-PR path and require a fresh ordinary review or human handoff before merging them. The prior PR-Agent classifier's conservative verification-request behavior resumes after rollback; historical verification objects are retained as audit evidence and cannot waive its unresolved request. A prior evidence-dependent clean ledger entry or label is not sufficient reversal-time readiness evidence. Keep evidence-based automation paused for an affected PR until its fresh review or human disposition is recorded; a stand-alone producer/consumer rollback without this reconciliation is unavailable.
+
+For interrupted execution without a code rollback, retain the current ledger, re-fetch the PR head and evidence, and retry only through the existing explicit current-head route and cycle limits. Unreadable or mismatched proof remains unresolved. Synthetic regression proof must include an old/historical verification record that cannot clear an unsupported or currently unverified request.
+
 ## Implementation Order
 
 1. Revalidate assumptions and branch from the approved base through the normal guards; use an implementation branch, not this plan branch.
