@@ -1042,6 +1042,9 @@ class ImagePublicationTests(unittest.TestCase):
         cls.original_composer = STATE.append_review_state
         cls.original_limiter = GithubProvider.limit_output_characters
         cls.original_alias = reviewer.append_review_state
+        cls.original_publisher = GithubProvider.publish_comment
+        cls.original_editor = GithubProvider.edit_comment
+        cls.original_persistent = GithubProvider.publish_persistent_comment_full
         runtime.install_hooks()
 
     @classmethod
@@ -1050,6 +1053,10 @@ class ImagePublicationTests(unittest.TestCase):
         STATE.append_review_state = cls.original_composer
         reviewer.append_review_state = cls.original_alias
         cls.provider_class.limit_output_characters = cls.original_limiter
+        cls.provider_class.publish_comment = cls.original_publisher
+        cls.provider_class.edit_comment = cls.original_editor
+        cls.provider_class.publish_persistent_comment_full = cls.original_persistent
+        del cls.provider_class._workflow_immutable_review_hook
 
     def provider(self, limit=65000):
         provider = self.provider_class.__new__(self.provider_class)
@@ -1057,6 +1064,19 @@ class ImagePublicationTests(unittest.TestCase):
         provider.issue_main = None
         provider.max_comment_chars = limit
         provider.pr.comments_list = []
+        provider.repo = 'synthetic/repo'
+        provider.last_commit_id = SimpleNamespace(
+            sha='a' * 40, html_url='https://example.invalid/synthetic/repo/commit/' + 'a' * 40)
+        provider.pr.head.sha = 'a' * 40
+        records = {}
+
+        def create(body):
+            number = len(records) + 1
+            records[number] = body
+            return SimpleNamespace(id=number, body=body)
+
+        provider.pr.create_issue_comment.side_effect = create
+        provider.pr.get_issue_comment.side_effect = lambda number: SimpleNamespace(id=number, body=records[number])
         return provider
 
     def test_publication_consumers(self):
@@ -1070,18 +1090,19 @@ class ImagePublicationTests(unittest.TestCase):
             provider.publish_comment(generated)
             outbound = provider.pr.create_issue_comment.call_args.args[0]
             self.assertLessEqual(len(outbound), 65000)
-            self.assertIn(visible.rstrip(), outbound)
+            self.assertIn(visible.split('\n', 1)[1].rstrip(), outbound)
             self.assertEqual(classify(visible), classify(outbound))
             comment = Mock()
             body = generated.replace('<!-- pr-agent:review:full -->',
                                      '<!-- pr-agent:review:full -->\n\n#### (Review updated until commit https://example.invalid/commit/' + 'a' * 40 + ')')
             provider.edit_comment(comment, body)
-            outbound = comment.edit.call_args.kwargs['body']
+            comment.edit.assert_not_called()
+            outbound = provider.pr.create_issue_comment.call_args.args[0]
             self.assertLessEqual(len(outbound), 65000)
             self.assertIn('a' * 40, outbound)
             self.assertEqual(classify(visible), classify(outbound))
             self.assertIsNone(STATE.parse_review_state(outbound).state)
-            provider.get_latest_commit_url = Mock(return_value='https://example.invalid/commit/' + 'a' * 40)
+            provider.get_latest_commit_url = Mock(return_value='https://example.invalid/synthetic/repo/commit/' + 'a' * 40)
             provider.get_comment_url = Mock(return_value='https://example.invalid/comment/1')
             comment.reset_mock()
             with patch.object(GitProvider, '_iter_persistent_comments', return_value=iter([(comment, visible)])):
@@ -1089,10 +1110,82 @@ class ImagePublicationTests(unittest.TestCase):
                     generated, initial_header='## PR Reviewer Guide 🔍', final_update_message=False,
                     fallback_on_error=False,
                 )
-            outbound = comment.edit.call_args.kwargs['body']
-            self.assertIn('Review updated until commit https://example.invalid/commit/' + 'a' * 40, outbound)
+            comment.edit.assert_not_called()
+            outbound = provider.pr.create_issue_comment.call_args.args[0]
+            self.assertIn('Review updated until commit https://example.invalid/synthetic/repo/commit/' + 'a' * 40, outbound)
             self.assertLessEqual(len(outbound), 65000)
             self.assertEqual(classify(visible), classify(outbound))
+
+    def test_new_d15_record_with_prior_summary_and_review_trigger(self):
+        from pr_agent.git_providers.git_provider import GitProvider
+        provider = self.provider()
+        old = Mock(body=review(False))
+        before = old.body
+        generated = STATE.append_review_state(review(False), state())
+        # A persistent summary already exists and /review may have been used.
+        # The producer must not inspect/edit it or rely on D15 rule (b).
+        with patch.object(GitProvider, '_iter_persistent_comments', return_value=iter([(old, before)])) as iterator:
+            response = provider.publish_persistent_comment_full(generated, initial_header=HEADERS[0])
+        iterator.assert_not_called()
+        old.edit.assert_not_called()
+        self.assertEqual(before, old.body)
+        provider.pr.create_issue_comment.assert_called_once()
+        provider.pr.get_issue_comment.assert_called_once_with(response.id)
+        published = provider.pr.create_issue_comment.call_args.args[0]
+        self.assertIn('#### (Review updated until commit https://example.invalid/synthetic/repo/commit/' + 'a' * 40 + ')', published)
+        # The actual D15 consumer runs on the host in --image-smoke, where jq
+        # already exists. Do not install tools into the producer image.
+        self.assertEqual('clean', classify(published))
+        provider.pr.head.sha = 'b' * 40
+        with self.assertRaisesRegex(RuntimeError, 'head moved'):
+            provider.publish_comment(generated)
+        self.assertEqual(1, provider.pr.create_issue_comment.call_count)
+
+    def test_producer_rejects_missing_wrong_or_unverifiable_identity_before_create(self):
+        generated = STATE.append_review_state(review(False), state())
+        for variant in ('missing_head', 'wrong_head', 'wrong_repo', 'wrong_state', 'too_small'):
+            with self.subTest(variant=variant):
+                provider = self.provider()
+                if variant == 'missing_head': provider.last_commit_id.sha = None
+                if variant == 'wrong_head': provider.last_commit_id.sha = 'b' * 40
+                if variant == 'wrong_repo': provider.repo = 'other/repo'
+                if variant == 'wrong_state': generated_input = generated.replace('"head_sha":"' + 'a' * 40, '"head_sha":"' + 'b' * 40)
+                else: generated_input = generated
+                if variant == 'too_small': provider.max_comment_chars = 20
+                with self.assertRaises(RuntimeError):
+                    provider.publish_comment(generated_input)
+                provider.pr.create_issue_comment.assert_not_called()
+
+    def test_producer_uncertain_create_or_readback_never_replays_or_edits(self):
+        generated = STATE.append_review_state(review(False), state())
+        for variant in ('uncertain', 'missing_id', 'readback_error', 'wrong_id', 'boolean_id', 'wrong_body'):
+            with self.subTest(variant=variant):
+                provider = self.provider()
+                old = Mock(body=review(False))
+                if variant == 'uncertain': provider.pr.create_issue_comment.side_effect = RuntimeError('synthetic transport uncertainty')
+                if variant == 'missing_id': provider.pr.create_issue_comment.side_effect = lambda body: SimpleNamespace(body=body)
+                if variant == 'readback_error': provider.pr.get_issue_comment.side_effect = RuntimeError('synthetic readback failure')
+                if variant in ('wrong_id', 'boolean_id', 'wrong_body'):
+                    original_readback = provider.pr.get_issue_comment.side_effect
+
+                    def altered_readback(number):
+                        record = original_readback(number)
+                        return SimpleNamespace(
+                            id=(True if variant == 'boolean_id' else number + (variant == 'wrong_id')),
+                            body=('mismatch' if variant == 'wrong_body' else record.body))
+
+                    provider.pr.get_issue_comment.side_effect = altered_readback
+                with self.assertRaises(RuntimeError):
+                    provider.edit_comment(old, generated)
+                provider.pr.create_issue_comment.assert_called_once()
+                old.edit.assert_not_called()
+
+    def test_repeated_hook_installation_does_not_duplicate_publication(self):
+        runtime.install_hooks()
+        provider = self.provider()
+        provider.publish_comment(STATE.append_review_state(review(False), state()))
+        provider.pr.create_issue_comment.assert_called_once()
+        provider.pr.get_issue_comment.assert_called_once()
 
     def test_non_review_delegation(self):
         provider = self.provider(10)
@@ -1337,4 +1430,19 @@ class HiddenReviewStateTests(unittest.TestCase):
 
 if __name__ == '__main__':
     runtime.LOGGER.addHandler(logging.NullHandler())
-    unittest.main(verbosity=2)
+    if IMAGE_SMOKE and sys.argv[1:] == ['--emit-synthetic-d15-record']:
+        ImagePublicationTests.setUpClass()
+        try:
+            fixture = ImagePublicationTests('test_new_d15_record_with_prior_summary_and_review_trigger')
+            provider = fixture.provider()
+            compact_state = state()
+            compact_state['findings'] = []
+            body = STATE.append_review_state(review(False), compact_state)
+            response = provider.publish_persistent_comment_full(body, initial_header=HEADERS[0])
+            print(json.dumps({'body': response.body, 'head': 'a' * 40,
+                              'creates': provider.pr.create_issue_comment.call_count,
+                              'readbacks': provider.pr.get_issue_comment.call_count}))
+        finally:
+            ImagePublicationTests.tearDownClass()
+    else:
+        unittest.main(verbosity=2)

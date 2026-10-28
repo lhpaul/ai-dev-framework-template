@@ -97,9 +97,14 @@ a non-default branch, with credentials not persisted.
 The container receives workspace/event/output mounts and the existing model
 configuration; secret values remain environment variables passed by name.
 
+A runtime change on a PR head does not activate it in GitHub: the action continues
+to execute from `pr.base.sha`. Trusted-base promotion is a separate authorized
+step. The synthetic image/host test neither promotes that base nor changes the
+workflow, its permissions, credentials or model configuration.
+
 The patch defers the review composer's size cap and fits the final GitHub
 create/edit body after persistent-update identity and current-head metadata.
-Complete comments at or below the provider limit pass through unchanged.
+Final review records include a visible D15 commit link from the provider's reviewed context before fitting. Existing comments remain unchanged; persistent-review and review-edit paths create new issue-comment records instead. Repository/commit identity, any retained state head, live-head drift and independent exact-ID/body readback are checked; failed or uncertain publication is not replayed. Complete fitted review content otherwise retains the existing publication-limit rules.
 Oversized reviews lose the exact generated resolved-history suffix first,
 then the complete hidden state marker if necessary. Retained state remains
 valid; omitted state is absent, rather than an empty or partially complete
@@ -125,7 +130,11 @@ bash scripts/development-workflow/tests/test-pr-agent-runtime.sh --image-smoke
 ```
 
 The first command uses the standard library; the second uses the launcher's
-pinned image with networking disabled and mocked GitHub publication. It checks
+pinned image with networking disabled and mocked GitHub publication. The image
+emits a synthetic review record; the host then executes the original D15
+predicate using its existing tools. A different SHA and removal of the visible
+marker (while retaining hidden state) must both be refused. No tool installation
+or weaker substitute predicate is used. It checks
 the actual parser/renderer, composer bindings and final fresh/persistent
 publication. Neither command starts a live review or needs API credentials.
 An unsupported hook signature fails before the runner starts, without an
@@ -177,16 +186,17 @@ review even when it authenticates as a bot or GitHub App.
 
 ### Step 7.2 — Detect review completion
 
-PR-Agent signals completion by posting a plain issue comment (not a formal GitHub PR review) from `github-actions[bot]` whose body contains `PR Reviewer Guide` (PR-Agent's stable output marker). PR-Agent keeps **one persistent summary comment** and edits it in place, so the comment's `created_at` or `updated_at` cannot show which revision it describes. Since #1789 the helper accepts a summary comment for the current head `H` only by one of two rules, never by its time:
+PR-Agent signals completion by posting a plain issue comment (not a formal GitHub PR review) from `github-actions[bot]` whose body contains `PR Reviewer Guide` (PR-Agent's stable output marker). The runtime creates a **new head-bound review record** on each final issue-comment publication, retaining earlier evidence. Legacy producers may have edited a single persistent comment; neither its `created_at` nor `updated_at` alone proves which revision it describes. Since #1789 the helper accepts a summary comment for the current head `H` only by one of two rules, never by its time:
 
-- **Rule (a) — head marker.** With PR-Agent's hidden `<!-- pr-agent-review-state:v1 … -->` block removed, the visible body contains the marker line `Review updated until commit https://<host>/<owner>/<repo>/commit/<H>)` naming the full 40-character `H`. A match of `H` anywhere else, including inside the review-state block, does not count. A block opener with no `-->` terminator makes the comment unbound (fail closed). PR-Agent writes this marker whenever it updates its summary.
+- **Rule (a) — head marker.** With PR-Agent's hidden `<!-- pr-agent-review-state:v1 … -->` block removed, the visible body contains the marker line `Review updated until commit https://<host>/<owner>/<repo>/commit/<H>)` naming the full 40-character `H`. A match of `H` anywhere else, including inside the review-state block, does not count. A block opener with no `-->` terminator makes the comment unbound (fail closed). The runtime writes this marker on each new review record, including the first publication. It never relabels an earlier review with a later live head.
 - **Rule (b) — first summary bound to its run.** An unedited first summary with no marker (`updated_at == created_at`) is accepted only when every condition holds: a `PR-Agent review` check run on `commits/H/check-runs` completed with conclusion `success` and its `started_at <= created_at <= completed_at`; no `PR-Agent review` check run on `H` is queued or in progress; no `pull_request` run of that workflow on the PR's head branch for another revision was in progress at `created_at`; and no `/review` comment on the PR was posted at or before the summary (an `issue_comment` run records neither the PR nor the revision it read). Any failed API read or failed condition leaves the summary unbound.
 
 An unbound summary keeps the helper polling. A first summary that rule (b)
 cannot bind (for example, because a `/review` preceded it or another
 revision's run overlapped it) ends that invocation in the `no_review` kept
-skip, never in a verdict for another revision; any later PR-Agent run on `H`
-rewrites the summary with the `H` marker, which rule (a) accepts.
+skip, never in a verdict for another revision. A producer supporting immutable
+publication creates a new record with the `H` marker, which rule (a) accepts.
+Do not edit an older bot comment to supply that missing binding.
 
 | Result                                                                   | Action                                                                          |
 | ------------------------------------------------------------------------ | ------------------------------------------------------------------------------- |

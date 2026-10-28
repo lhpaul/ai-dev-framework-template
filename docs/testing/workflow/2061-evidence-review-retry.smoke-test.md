@@ -71,3 +71,17 @@ For each summary write, verify one POST and an independent GET of the returned
 ID and exact body. Plant a failed/uncertain POST, a failed GET, a mismatching
 body, and a mismatching ID. Each must stop without PATCH or repeated POST; an
 uncertain stored reservation must still be counted on the next read.
+
+## Producer record and host D15 composition
+
+Run `bash scripts/development-workflow/tests/test-pr-agent-runtime.sh --image-smoke`
+with the existing pinned image. No credentials are mounted and container
+networking stays disabled. The image exercises real provider hooks with synthetic
+transport, emitting one new review record with independent readback and a visible
+reviewed-SHA link. Earlier comments must not be edited. The host executes the
+unchanged `pr_agent_summary_marker_names_head` predicate: the published SHA passes;
+a different SHA and a body with its visible marker removed both fail even though
+the latter retains the SHA in hidden state. No tools are installed in the image.
+
+Passing this test does not activate the producer. The workflow continues loading
+its runtime from the trusted PR base; promotion requires separate authorization.
