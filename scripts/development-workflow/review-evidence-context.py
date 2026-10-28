@@ -48,12 +48,13 @@ def snapshot(raw):
         raise ValueError("invalid PR/head identity")
     if raw.get("available") is not True:
         return {"schema": CONTEXT_SCHEMA, "repository": repo.lower(),
-                "pr_number": pr, "head_sha": head, "body": "", "comments": [],
+                "pr_number": pr, "head_sha": head, "body": "", "comments": [], "review_comments": [],
                 "available": False, "snapshot_sha256": ""}
     body, comments = raw.get("body"), raw.get("comments")
     if not isinstance(body, str) or not isinstance(comments, list):
         raise ValueError("incomplete evidence response")
     eligible = []
+    review_comments = []
     seen = set()
     for comment in comments:
         if not isinstance(comment, dict):
@@ -63,13 +64,16 @@ def snapshot(raw):
                 or not isinstance(revision, str) or not revision):
             raise ValueError("invalid comment identity/revision")
         seen.add(ident)
+        record = {"id": ident, "body": text, "updated_at": revision}
+        review_comments.append(record)
         if not bookkeeping(text):
-            eligible.append({"id": ident, "body": text, "updated_at": revision})
+            eligible.append(record)
     content = {"repository": repo.lower(), "pr_number": pr, "head_sha": head,
                "body": body, "comments": sorted(eligible, key=lambda c: c["id"])}
     encoded = json.dumps(content, ensure_ascii=False, sort_keys=True,
                          separators=(",", ":")).encode("utf-8")
     return {"schema": CONTEXT_SCHEMA, **content, "available": True,
+            "review_comments": sorted(review_comments, key=lambda c: c["id"]),
             "snapshot_sha256": hashlib.sha256(encoded).hexdigest()}
 
 

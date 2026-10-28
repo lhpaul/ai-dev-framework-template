@@ -90,8 +90,16 @@ run_test "codex_prompt_mentions_context" "yes" "$(grep -q '/tmp/context.json' "$
 run_test "codex_prompt_mentions_base_diff" "yes" "$(grep -q 'origin/develop...HEAD' "$PROMPT_LOG" && echo yes || echo no)"
 run_test "wrapper_help_mentions_evidence_file" "yes" "$("$WRAPPER" --help 2>&1 | grep -- '--evidence-file' > /dev/null && echo yes || echo no)"
 
-# Scenario 11: default stage (no REVIEW_CHECKLISTS) is byte-identical to fixture
-run_test "1653_s11_default_prompt" "$DEFAULT_PROMPT_WITHOUT_STAGE" "$(cat "$PROMPT_LOG")"
+# Preserve the existing ordinary review contract while adding evidence assessment.
+case "$(cat "$PROMPT_LOG")" in
+  "$DEFAULT_PROMPT_WITHOUT_STAGE"*) ordinary_contract_preserved=yes ;;
+  *) ordinary_contract_preserved=no ;;
+esac
+run_test "1653_s11_default_prompt" yes "$ordinary_contract_preserved"
+run_test "2061_proof_schema_requested" yes "$(grep -Fq 'review_evidence_verification.v1' "$PROMPT_LOG" && echo yes || echo no)"
+run_test "2061_evidence_pending_until_inspected" yes "$(grep -Fq 'required evidence stays pending until you inspect sufficient proof' "$PROMPT_LOG" && echo yes || echo no)"
+run_test "2061_human_decision_not_waived" yes "$(grep -Fq 'Human approvals or decisions cannot be supplied by this review' "$PROMPT_LOG" && echo yes || echo no)"
+run_test "2061_code_blocker_preserved" yes "$(grep -Fq 'Never let evidence clearance suppress an independent code/security finding' "$PROMPT_LOG" && echo yes || echo no)"
 
 # Scenario 10: stage sentence includes monotonicity wording
 REVIEW_STAGE="implementation"

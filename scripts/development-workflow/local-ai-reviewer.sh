@@ -1256,6 +1256,16 @@ case "$graph_strategy" in
     ;;
 esac
 
+evidence_context_file="$(mktemp)"
+evidence_current_file="$(mktemp)"
+evidence_result_file="$(mktemp)"
+evidence_verification_json='{}'
+verification_request_id="${LOCAL_AI_REVIEWER_VERIFICATION_REQUEST_ID:-0}"
+case "$verification_request_id" in ''|*[!0-9]*) verification_request_id=0 ;; esac
+if ! workflow_collect_review_evidence "$OWNER/$REPO" "$PR_NUMBER" "$HEAD_SHA" "$evidence_context_file"; then
+  workflow_diagnostic 'INFO: published evidence context is unavailable; it cannot satisfy a finding' >&2
+fi
+evidence_snapshot_sha256="$(jq -r '.snapshot_sha256 // ""' "$evidence_context_file")"
 context_file="$(mktemp)"
 stdout_file="$(mktemp)"
 stderr_file="$(mktemp)"
@@ -1277,6 +1287,8 @@ jq -n \
   --argjson doctrine_supply "$doctrine_supply_json" \
   --argjson changed_files "$changed_files_json" \
   --argjson review_checklists "$review_checklists_json" \
+  --slurpfile evidence "$evidence_context_file" \
+  --arg verification_request_id "$verification_request_id" \
   '{
     schema_version: "local_ai_reviewer_context.v1",
     pr_number: ($pr_number | tonumber),
@@ -1286,7 +1298,9 @@ jq -n \
     head_branch: $head_branch,
     reviewed_head: $reviewed_head,
     changed_files: $changed_files,
-    pr_body: ($pr_body[0:20000]),
+    pr_body: (if $evidence[0].available then $evidence[0].body else $pr_body end),
+    evidence_context: $evidence[0],
+    verification_request_id: ($verification_request_id | tonumber),
     diff_name_status: $diff_name_status,
     diff_stat: $diff_stat,
     review_contract: "REVIEW.md",
@@ -1334,6 +1348,7 @@ strict_plan_sources_json="[]"
 
 cleanup() {
   rm -f "${context_file:-}" "${stdout_file:-}" "${stderr_file:-}"
+  rm -f "${evidence_context_file:-}" "${evidence_current_file:-}" "${evidence_result_file:-}"
 }
 trap cleanup EXIT
 
@@ -1569,6 +1584,44 @@ reason="${reason:-}"
 # --- Strict registry passes (at most one dispatches; never merges into blocking) ---
 strict_run_all_registry_entries
 
+# A review can only discharge evidence it actually saw. Re-read complete remote
+# evidence after the backend returns; a body/comment edit need not move git HEAD.
+if [ "$result" = clean ] && [ "$command_exit" -eq 0 ]; then
+  if [ -n "$evidence_snapshot_sha256" ]; then
+    if ! workflow_collect_review_evidence "$OWNER/$REPO" "$PR_NUMBER" "$HEAD_SHA" "$evidence_current_file"; then
+      result=escalate
+      reason=evidence_context_unavailable
+    elif [ "$(jq -r '.snapshot_sha256' "$evidence_current_file")" != "$evidence_snapshot_sha256" ]; then
+      result=needs_rerun
+      reason=evidence_changed_during_review
+    fi
+  elif [ "${LOCAL_AI_REVIEWER_REQUIRE_EVIDENCE:-0}" = 1 ] || [ "$verification_request_id" != 0 ]; then
+    result=escalate
+    reason=evidence_context_unavailable
+  fi
+  if [ "$result" = clean ] && [ "$command_exit" -eq 0 ] \
+      && [ "$verification_request_id" != 0 ] \
+      && [ "$strict_spec_state" != unavailable ] && [ "$strict_plan_state" != unavailable ] \
+      && [ "${strict_spec_count:-0}" -eq 0 ] && [ "${strict_plan_count:-0}" -eq 0 ]; then
+    printf '%s\n' "$command_stdout" | jq --arg result "$result" '.result=$result' >"$evidence_result_file"
+    if proof_check="$(python3 "$SCRIPT_DIR/review-evidence-context.py" verify \
+        --context "$evidence_context_file" --result "$evidence_result_file" \
+        --request-id "$verification_request_id")"; then
+      if [ "$(printf '%s' "$proof_check" | jq -r '.verified')" = true ]; then
+        evidence_verification_json="$(printf '%s' "$proof_check" | jq -c '.evidence_verification')"
+      fi
+    fi
+  fi
+  if [ "$result" = clean ] && [ "$verification_request_id" != 0 ] \
+      && [ "$evidence_verification_json" = '{}' ]; then
+    result=needs_fixes
+    blocking_count=$((blocking_count + 1))
+    comment_count=$((comment_count + 1))
+    parse_result="${parse_result}
+BLOCKING_${blocking_count}_BODY=Verification evidence has not been verified for the current request."
+  fi
+fi
+
 strict_build_strict_evidence_json() {
   local state="$1"
   local count="$2"
@@ -1654,6 +1707,8 @@ write_evidence_file() {
     --arg base_branch "$BASE_BRANCH" \
     --arg head_branch "$HEAD_BRANCH" \
     --arg reviewed_head "$HEAD_SHA" \
+    --arg evidence_snapshot_sha256 "$evidence_snapshot_sha256" \
+    --argjson evidence_verification "$evidence_verification_json" \
     --arg graph_context "$graph_context" \
     --arg pr_body "$PR_BODY" \
     --rawfile diff_name_status <(printf '%s' "${diff_name_status_full:-}") \
@@ -1680,6 +1735,8 @@ write_evidence_file() {
       base_branch: $base_branch,
       head_branch: $head_branch,
       reviewed_head: $reviewed_head,
+      evidence_snapshot_sha256: $evidence_snapshot_sha256,
+      evidence_verification: $evidence_verification,
       graph_context: $graph_context,
       counts: {
         comments: $comment_count,
@@ -1704,7 +1761,7 @@ write_evidence_file() {
       },
       strict_spec: $strict_spec,
       strict_plan: $strict_plan
-    }' | workflow_redact_json | jq '.context_summary |= (.pr_body |= .[0:20000] | .diff_name_status |= .[0:12000] | .diff_stat |= .[0:12000])' >"$LOCAL_AI_REVIEWER_EVIDENCE_FILE"; } 2>"$evidence_error"; } 2>/dev/null; then
+    }' | workflow_redact_json | jq '.context_summary |= (.diff_name_status |= .[0:12000] | .diff_stat |= .[0:12000])' >"$LOCAL_AI_REVIEWER_EVIDENCE_FILE"; } 2>"$evidence_error"; } 2>/dev/null; then
     if [ "$evidence_capture_opened" -eq 1 ]; then
       workflow_redact_file "$evidence_error" >&2
     fi
@@ -1725,6 +1782,8 @@ emit_ordinary_and_strict() {
 
   print_result "$final_result" "$final_comment_count" "$final_blocking_count" \
     "$final_suggestion_count" "$final_reason" "$final_display"
+  print_kv EVIDENCE_SNAPSHOT_SHA256 "$evidence_snapshot_sha256"
+  print_kv EVIDENCE_VERIFICATION_JSON "$evidence_verification_json"
   if [ "$final_result" = "needs_fixes" ]; then
     printf '%s\n' "$parse_result" | awk '/^BLOCKING_[0-9]+_(PATH|LINE|BODY)=/ { print }' | workflow_redact_text
   fi
