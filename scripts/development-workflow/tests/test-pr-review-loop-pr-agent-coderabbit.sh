@@ -2624,8 +2624,8 @@ _2061_platform_entry() (
   platform_policy_status_notes=()
   compare_verdicts=()
   reviewer_loop_process_platform_output pr-agent 1 "$1" 0 1 >/dev/null
-  jq -cn --argjson records "$(printf '%s\n' "${platform_result_records[@]}" | jq -s '.')" \
-    --argjson heads "$(reviewer_loop_head_evidence_json "$loop_head_sha" "${platform_reviewed_heads[@]}")" \
+  jq -cn --argjson records "$(printf '%s\n' ${platform_result_records[@]+"${platform_result_records[@]}"} | jq -s '.')" \
+    --argjson heads "$(reviewer_loop_head_evidence_json "$loop_head_sha" ${platform_reviewed_heads[@]+"${platform_reviewed_heads[@]}"})" \
     '{platform_results:$records,reviewed_heads:$heads}'
 )
 # shellcheck disable=SC2034 # Synthetic retry globals are read by the sourced handler.

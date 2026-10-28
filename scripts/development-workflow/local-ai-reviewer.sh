@@ -1761,7 +1761,7 @@ write_evidence_file() {
       },
       strict_spec: $strict_spec,
       strict_plan: $strict_plan
-    }' | workflow_redact_json | jq '.context_summary |= (.diff_name_status |= .[0:12000] | .diff_stat |= .[0:12000])' >"$LOCAL_AI_REVIEWER_EVIDENCE_FILE"; } 2>"$evidence_error"; } 2>/dev/null; then
+    }' | workflow_redact_json | jq '.context_summary |= (.pr_body |= .[0:20000] | .diff_name_status |= .[0:12000] | .diff_stat |= .[0:12000])' >"$LOCAL_AI_REVIEWER_EVIDENCE_FILE"; } 2>"$evidence_error"; } 2>/dev/null; then
     if [ "$evidence_capture_opened" -eq 1 ]; then
       workflow_redact_file "$evidence_error" >&2
     fi

@@ -338,7 +338,7 @@ esac
 
     def local_entry(self, payload, stderr=None, status=0, context_capture=None, **env):
         (self.f.checkout / 'REVIEW.md').write_text('# Synthetic reviewer contract\n')
-        self.gh_script('case "$*" in "pr diff"*) echo README.md;; "repo view"*) echo fixture/repo;; "pr view"*) cat "$SYNTHETIC_PR";; "auth status"*) exit 0;; *) exit 99;; esac\n')
+        self.gh_script('case "$*" in "pr diff"*) echo README.md;; "repo view"*) echo fixture/repo;; "pr view"*) cat "$SYNTHETIC_PR";; "auth status"*) exit 0;; "api "*"/issues/1993/comments?per_page=100") echo "[[]]";; *) exit 99;; esac\n')
         command = self.f.bin / 'synthetic-review'
         command.write_text('#!/bin/sh\n' + (('cp "$CONTEXT_BUNDLE_PATH" ' + shlex.quote(str(context_capture)) + '\n') if context_capture else '') + 'printf "%s\\n" ' + shlex.quote(json.dumps(payload) if isinstance(payload, dict) else payload) + '\n' +
                            'printf "%s\\n" ' + shlex.quote(stderr or 'token=' + self.secret) + ' >&2\nexit ' + str(status) + '\n')
@@ -2208,7 +2208,7 @@ printf 'PROBE=%s\\n' "$settle_review_probe"
         self.assertEqual(data['counts'], {'comments': 0, 'blocking': 0, 'suggestions': 0})
         self.assertEqual(data['result'], 'clean')
         self.assertLessEqual(len(data['context_summary']['pr_body']), 20000)
-        self.assertEqual(json.loads(context.read_text())['pr_body'], source[:20000])
+        self.assertEqual(json.loads(context.read_text())['pr_body'], source)
 
 
     def test_D83_shared_header_grammar_with_empty_first_line_frames(self):
@@ -2677,7 +2677,7 @@ printf 'PROBE=%s\\n' "$settle_review_probe"
         self.assertEqual(data['counts'], {'comments': 0, 'blocking': 0, 'suggestions': 0})
         self.assertEqual(data['result'], 'clean')
         self.assertLessEqual(len(data['context_summary']['pr_body']), 20000)
-        self.assertEqual(json.loads(context.read_text())['pr_body'], source[:20000])
+        self.assertEqual(json.loads(context.read_text())['pr_body'], source)
 
     def test_D88_sensitive_assignment_inside_public_raw_json_string(self):
         resolver = str(self.f.runtime / 'workflow-config-resolver.py')
@@ -2725,8 +2725,8 @@ printf 'PROBE=%s\\n' "$settle_review_probe"
                 self.assertEqual(data['counts'], {'comments': 0, 'blocking': 0, 'suggestions': 0})
                 self.assertEqual(data['result'], 'clean')
                 self.assertLessEqual(len(data['context_summary']['pr_body']), 20000)
-                # Existing Bash PR_BODY capture strips terminal LF before the functional cap.
-                self.assertEqual(json.loads(context.read_text())['pr_body'], source.rstrip('\n')[:20000])
+                # Functional review context preserves the complete API body, including terminal LF.
+                self.assertEqual(json.loads(context.read_text())['pr_body'], source)
 
     def configured_source_case(self, state):
         self.f.shared.write_text('review:\n  on_draft:\n    github: [local-ai-reviewer]\n  on_ready:\n    github: []\n')
@@ -2834,7 +2834,7 @@ reviewer_loop_process_platform_output() { aggregate_result=clean; aggregate_stat
 run_platform_review() { synthetic-ready-reviewer "$@"; }
 '''
                     body += 'ensure_pr_ready_for_ready_phase() { touch ' + shlex.quote(str(ready)) + '; }\n'
-                    body += actual_loop + '\nprintf "RESULT=%s\\nSTATUS=%s\\n" "$aggregate_result" "$aggregate_status"\nexit "$aggregate_status"\n'
+                    body += 'local_retry_preparation_failed=0\n' + actual_loop + '\nprintf "RESULT=%s\\nSTATUS=%s\\n" "$aggregate_result" "$aggregate_status"\nexit "$aggregate_status"\n'
                     result = self.run_command([shell, '-c', body])
                     self.safe(result, 2 if state in ('malformed', 'missing') else 0)
                     items = log.read_bytes().split(b'\0')[:-1]
@@ -2953,7 +2953,7 @@ reviewer_loop_process_platform_output() { aggregate_result=clean; aggregate_stat
                             elif boundary == 'predispatch':
                                 body += 'reviewer_loop_platform_pre_dispatch codex-github 1\nprintf "ACTION=%s\\nAGGREGATE=%s\\n" "$reviewer_loop_pre_dispatch_action" "$aggregate_result"\nexit "$aggregate_status"\n'
                             else:
-                                body += actual_loop + '\nprintf "AGGREGATE=%s\\n" "$aggregate_result"\nexit "$aggregate_status"\n'
+                                body += 'local_retry_preparation_failed=0\n' + actual_loop + '\nprintf "AGGREGATE=%s\\n" "$aggregate_result"\nexit "$aggregate_status"\n'
                             result = self.run_command([shell, '-c', body])
                             source_error = state in ('malformed', 'missing')
                             permitted = state == 'configured' or (not source_error and force == 1)
