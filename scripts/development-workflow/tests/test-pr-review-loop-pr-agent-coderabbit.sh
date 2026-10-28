@@ -1942,10 +1942,23 @@ _fixture_dir_1946="$(mktemp -d)"
 cat > "$_fixture_dir_1946/gh" <<'GH1946'
 #!/usr/bin/env bash
 case "$*" in
+  *"api user"*) printf 'loop-runner\n' ;;
+  *"api -X POST "*"issues/42/comments"*) printf '%s\n' '{"id":99,"created_at":"2020-01-01T00:00:03Z","body":"/review"}' ;;
+  *"repo view"*) printf 'owner/repo\n' ;;
+  *"pr view"*"--json headRefOid,body"*) printf '%s\n' '{"headRefOid":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","body":"Synthetic regression proof"}' ;;
   *"--jq .head.sha"*) printf '%s\n' 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' ;;
   *"--jq .commit.committer.date"*) printf '%s\n' '2020-01-01T00:00:00Z' ;;
   *"issues/42/comments"*)
-    jq -nc --arg body "$PR_AGENT_FIXTURE_BODY" '[{user:{login:"github-actions[bot]"},updated_at:"2020-01-01T00:00:02Z",body:$body}]' ;;
+    if [ -n "${PR_AGENT_FIXTURE_POLL_MARKER:-}" ] && [ ! -e "$PR_AGENT_FIXTURE_POLL_MARKER" ]; then
+      : >"$PR_AGENT_FIXTURE_POLL_MARKER"
+      printf '[]\n'
+      exit 0
+    fi
+    if [ -n "${PR_AGENT_FIXTURE_LEDGER_FILE:-}" ]; then
+      jq -c --arg args "$*" 'if ($args | contains("--slurp")) then [.] else . end' "$PR_AGENT_FIXTURE_LEDGER_FILE"
+      exit 0
+    fi
+    jq -nc --arg body "$PR_AGENT_FIXTURE_BODY" --arg args "$*" '[{id:10,user:{login:"github-actions[bot]"},created_at:"2020-01-01T00:00:02Z",updated_at:"2020-01-01T00:00:02Z",body:$body}] | if ($args | contains("--slurp")) then [.] else . end' ;;
   *) printf '[]\n' ;;
 esac
 GH1946
@@ -2566,6 +2579,112 @@ fixture_test_1946 format_fragmented_value_required_full escalate "${_fixture_tic
 fixture_test_1946 format_fragmented_value_required_partial escalate "${_fixture_ticket_1946/Fully compliant/Partially compliant}"$'<strong>Verification status</strong>: <span>Req</span><em>uired</em>\n'
 fixture_test_1946 format_fragmented_value_unknown_full escalate "${_fixture_ticket_1946}"$'<strong>Verification status</strong>: <span>Unk</span><em>nown</em>\n'
 fixture_test_1946 format_fragmented_value_unknown_partial escalate "${_fixture_ticket_1946/Fully compliant/Partially compliant}"$'<strong>Verification status</strong>: <span>Unk</span><em>nown</em>\n'
+# #2061: run the real PR-Agent handler and targeted configured local dispatch.
+# Pure proof validation remains production code; only transport/model output
+# is synthetic. A mock clean without valid explicit proof cannot approve.
+_2061_request=$'**Ticket compliance analysis**\n**[42](url) - PR Code Verified**\nCompliant requirements:\n- Code checked.\nRequires further human verification:\n- Verify the synthetic body proof.\n### Recommended focus areas for review\n**No major issues detected**\n'
+# shellcheck disable=SC2034 # Read by the sourced production handler.
+repo_review_platforms=(local-ai-reviewer pr-agent)
+reviewer_loop_prior_history_payload_from_pr() {
+  printf '%s' "$_2061_prior"
+}
+run_local_ai_reviewer_review() {
+  printf 'dispatch\n' >>"$_fixture_dir_1946/dispatch"
+  local context hash proof
+  context="$(mktemp)"
+  workflow_collect_review_evidence owner/repo 42 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa "$context" || return 2
+  hash="$(jq -r .snapshot_sha256 "$context")"
+  rm -f "$context"
+  proof="$(jq -cn --arg hash "$hash" --arg status "${_2061_proof_status:-verified}" '{schema:"review_evidence_verification.v1",snapshot_sha256:$hash,request_id:10,status:$status,sources:["body"]}')"
+  printf 'RESULT=%s\nREVIEWED_HEAD=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\nEVIDENCE_VERIFICATION_JSON=%s\n' "${_2061_local_result:-clean}" "$proof"
+  [ "${_2061_local_result:-clean}" = clean ]
+}
+# Exercise the actual handler -> platform processor -> persisted proof boundary.
+# shellcheck disable=SC2034 # Production processor consumes the initialized globals.
+_2061_platform_entry() (
+  loop_head_sha=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  phase_after_clean_enabled=0
+  compare_mode=0
+  aggregate_result=skipped
+  aggregate_reason=""
+  aggregate_output=""
+  aggregate_status=0
+  total_comment_count=0
+  total_blocking_count=0
+  total_suggestion_count=0
+  reviewer_failed_required=0
+  aggregate_advisory_labels=""
+  platform_result_records=()
+  platform_reviewed_heads=()
+  platform_peer_evidence=()
+  platform_result_tokens=()
+  platform_blocking_outputs=()
+  aggregate_blocking_paths=()
+  aggregate_blocking_findings=()
+  platform_policy_status_notes=()
+  compare_verdicts=()
+  reviewer_loop_process_platform_output pr-agent 1 "$1" 0 1 >/dev/null
+  jq -cn --argjson records "$(printf '%s\n' ${platform_result_records[@]+"${platform_result_records[@]}"} | jq -s '.')" \
+    --argjson heads "$(reviewer_loop_head_evidence_json "$loop_head_sha" ${platform_reviewed_heads[@]+"${platform_reviewed_heads[@]}"})" \
+    '{platform_results:$records,reviewed_heads:$heads}'
+)
+# shellcheck disable=SC2034 # Synthetic retry globals are read by the sourced handler.
+for _2061_case in verified polled unverified code drift waiting skipped no_retry retry; do
+  : >"$_fixture_dir_1946/dispatch"
+  _2061_prior='{"schema":"reviewer_loop_history.v1","entries":[]}'
+  _2061_proof_status=verified
+  _2061_local_result=clean
+  local_review_retry_head_record=""
+  _2061_poll_marker=""
+  _2061_expected=clean
+  _2061_expected_dispatch=1
+  case "$_2061_case" in
+    polled) _2061_poll_marker="$_fixture_dir_1946/poll-once" ;;
+    unverified) _2061_proof_status=unverified; _2061_expected=escalate ;;
+    code) _2061_local_result=needs_fixes; _2061_expected=needs_fixes ;;
+    drift) _2061_local_result=needs_rerun; _2061_expected=needs_rerun ;;
+    waiting) _2061_local_result=waiting_on_reviewer; _2061_expected=waiting_on_reviewer ;;
+    skipped) _2061_local_result=skipped; _2061_expected=escalate ;;
+    no_retry|retry)
+      _2061_prior='{"schema":"reviewer_loop_history.v1","entries":[{"result":"needs_fixes","local_second_pass_failed_head":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]}'
+      if [ "$_2061_case" = no_retry ]; then _2061_expected=escalate; _2061_expected_dispatch=0
+      else local_review_retry_head_record=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa; fi ;;
+  esac
+  _2061_output="$(PATH="$_fixture_dir_1946:$PATH" PR_AGENT_FIXTURE_POLL_MARKER="$_2061_poll_marker" PR_AGENT_FIXTURE_BODY="${_fixture_header_1946}${_2061_request}" \
+    run_pr_agent_review 42 feature/42-test 1 0 || true)"
+  if ! grep -Fxq "RESULT=$_2061_expected" <<<"$_2061_output"; then
+    printf '%s\n' "$_2061_output" >&2
+  fi
+  run_test "2061_targeted_${_2061_case}_verdict" "RESULT=$_2061_expected" "$(printf '%s\n' "$_2061_output" | grep '^RESULT=')"
+  run_test "2061_targeted_${_2061_case}_dispatch" "$_2061_expected_dispatch" "$(wc -l <"$_fixture_dir_1946/dispatch" | tr -d ' ')"
+  if [ "$_2061_case" = code ]; then
+    run_test "2061_targeted_finding_retry_marker" aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+      "$(kv_value_default EVIDENCE_REVIEW_FAILED_HEAD "$_2061_output" missing)"
+  fi
+  if [ "$_2061_expected" = clean ]; then
+    run_test "2061_targeted_${_2061_case}_emits_reviewed_head" aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+      "$(kv_value_default REVIEWED_HEAD "$_2061_output" missing)"
+  fi
+  if [ "$_2061_case" = verified ] || [ "$_2061_case" = polled ]; then
+    _2061_entry="$( _2061_platform_entry "$_2061_output" )"
+    run_test "2061_${_2061_case}_processor_persists_actual_head" aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+      "$(printf '%s' "$_2061_entry" | jq -r '.reviewed_heads[] | select(.platform=="pr-agent") | .reviewed_head')"
+    _2061_history="$(printf '%s' "$_2061_entry" | jq -c '{schema:"reviewer_loop_history.v1",entries:[.]}')"
+    _2061_ledger_body="$(printf '### Automated Reviewer Loop Summary\n*Posted automatically by `pr-review-loop.sh`.*\n<!-- reviewer-loop-history:v1 -->\n```json\n%s\n```\n' "$_2061_history")"
+    jq -cn --arg body "${_fixture_header_1946}${_2061_request}" --arg summary "$_2061_ledger_body" \
+      '[{id:10,user:{login:"github-actions[bot]"},created_at:"2020-01-01T00:00:02Z",updated_at:"2020-01-01T00:00:02Z",body:$body},{id:30,user:{login:"loop-runner"},created_at:"2020-01-01T00:00:03Z",updated_at:"2020-01-01T00:00:03Z",body:$summary}]' >"$_fixture_dir_1946/actual-ledger.json"
+    _2061_ready_verdict="$(PATH="$_fixture_dir_1946:$PATH" PR_AGENT_FIXTURE_LEDGER_FILE="$_fixture_dir_1946/actual-ledger.json" \
+      workflow_pr_agent_evidence_verdict owner/repo 42 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa 10 "${_fixture_header_1946}${_2061_request}")"
+    run_test "2061_${_2061_case}_actual_ledger_allows_readiness" clean "$_2061_ready_verdict"
+  fi
+  if [ "$_2061_case" = polled ]; then
+    run_test "2061_polled_phase_posts_request" 1 "$(grep -c '^PR_AGENT_TRIGGER_COMMENT=' <<<"$_2061_output")"
+  fi
+
+done
+unset -f _2061_platform_entry
+unset _2061_entry _2061_history _2061_ledger_body _2061_ready_verdict _2061_poll_marker
+unset _2061_request _2061_case _2061_prior _2061_output _2061_local_result _2061_proof_status _2061_expected _2061_expected_dispatch
 rm -rf "$_fixture_dir_1946"
 unset _fixture_dir_1946 _fixture_header_1946 _fixture_ticket_1946 _fixture_focus_1946
 unset -f fixture_test_1946

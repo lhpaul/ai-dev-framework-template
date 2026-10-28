@@ -165,6 +165,7 @@ echo ""
 echo "=== Area 15: main-loop integration — release guard ==="
 
 _integration_mock_bin="$(mktemp -d)"
+export INTEG_MOCK_SUMMARY_STORE="$_integration_mock_bin/summary.json"
 _integration_cleanup() { rm -rf "${_integration_mock_bin:-}"; }
 trap '_integration_cleanup' EXIT
 
@@ -177,6 +178,26 @@ cat > "$_integration_mock_bin/gh" <<'INTEG_GH_MOCK'
 [ -n "${INTEG_MOCK_GH_LOG:-}" ] && printf '%s\n' "$*" >> "$INTEG_MOCK_GH_LOG"
 [ -n "${INTEG_MOCK_GH_ENV_LOG:-}" ] && printf '%s|%s\n' "${GH_REPO:-}" "$*" >> "$INTEG_MOCK_GH_ENV_LOG"
 case "$*" in
+  "api --method POST repos/"*"/issues/"*"/comments --input "*)
+    [ "${INTEG_MOCK_PR_COMMENT_FAIL:-0}" != 1 ] || exit 64
+    while [ "$#" -gt 0 ]; do
+      if [ "$1" = --input ]; then
+        jq '. + {id:99999}' "$2" >"$INTEG_MOCK_SUMMARY_STORE"
+        cat "$INTEG_MOCK_SUMMARY_STORE"
+        exit 0
+      fi
+      shift
+    done
+    exit 99
+    ;;
+  "api repos/"*"/issues/comments/99999")
+    if [ "${INTEG_MOCK_READBACK_MISMATCH:-0}" = 1 ]; then
+      jq '.body += "changed"' "$INTEG_MOCK_SUMMARY_STORE"
+    else cat "$INTEG_MOCK_SUMMARY_STORE"; fi
+    exit 0
+    ;;
+  *"/issues/"*"/comments --paginate")
+    printf '[]\n'; exit 0 ;;
   *"headRefName"*)
     # Use a variable for the default to avoid the bash brace-balance issue:
     # ${VAR:-{"key":""}} closes ${...} at the inner }, producing a stray }
@@ -262,7 +283,7 @@ run_test "mainloop_release_guard_reason_release_pr" "REASON=release_pr" \
   "$(printf '%s\n' "$_integ_out" | grep '^REASON=')"
 run_test "mainloop_release_guard_exit0" "0" "$_integ_exit"
 run_test "mainloop_release_guard_posts_summary" "1" "$(
-  grep -c -- 'pr comment 999 --body-file' "$_integ_gh_log" 2>/dev/null || true
+  grep -c -- 'api --method POST repos/example/repo/issues/999/comments --input' "$_integ_gh_log" 2>/dev/null || true
 )"
 rm -f "$_integ_gh_log"
 unset INTEG_MOCK_GH_LOG
@@ -288,6 +309,15 @@ run_test "mainloop_release_guard_comment_failure_exit1" "1" "$_integ_exit"
 unset INTEG_MOCK_PR_COMMENT_FAIL
 unset INTEG_MOCK_HEAD_JSON
 
+INTEG_MOCK_HEAD_JSON="$(_integ_head_json release/v9.9.10)"
+export INTEG_MOCK_HEAD_JSON INTEG_MOCK_READBACK_MISMATCH=1
+_integ_exit=0
+_integ_out="$(_run_loop_derived 995 --repo-root "$(_integ_fixture r995 release/v9.9.10)")" || _integ_exit=$?
+run_test "mainloop_release_guard_readback_failure_result" "RESULT=escalate" \
+  "$(printf '%s\n' "$_integ_out" | grep '^RESULT=' | tail -1)"
+run_test "mainloop_release_guard_readback_failure_exit" "1" "$_integ_exit"
+unset INTEG_MOCK_READBACK_MISMATCH INTEG_MOCK_HEAD_JSON
+
 # Test 15.2: hotfix/* head branch → main loop also emits RESULT=skipped, exits 0
 # (expected branch derived from the working directory: no --repo-root). The
 # working directory is another checkout of this repository — same origin as
@@ -312,7 +342,7 @@ run_test "mainloop_hotfix_guard_result_skipped" "RESULT=skipped" \
   "$(printf '%s\n' "$_integ_out" | grep '^RESULT=')"
 run_test "mainloop_hotfix_guard_exit0" "0" "$_integ_exit"
 run_test "mainloop_hotfix_guard_posts_summary" "1" "$(
-  grep -c -- 'pr comment 998 --body-file' "$_integ_gh_log" 2>/dev/null || true
+  grep -c -- "api --method POST repos/$_integ_self_slug/issues/998/comments --input" "$_integ_gh_log" 2>/dev/null || true
 )"
 rm -f "$_integ_gh_log"
 unset INTEG_MOCK_GH_LOG
@@ -430,7 +460,7 @@ run_test "mainloop_ownership_repo_root_only_reports_repo" "PR_OWNERSHIP_REPO=acm
 run_test "mainloop_ownership_repo_root_only_result_skipped" "RESULT=skipped" \
   "$(printf '%s\n' "$_integ_out" | grep '^RESULT=')"
 run_test "mainloop_ownership_repo_root_only_summary_pinned" "1" \
-  "$(grep -c '^acme/rootonly|pr comment 997 --body-file' "$_integ_gh_env_log" || true)"
+  "$(grep -c '^acme/rootonly|api --method POST repos/acme/rootonly/issues/997/comments --input' "$_integ_gh_env_log" || true)"
 rm -f "$_integ_gh_log" "$_integ_gh_env_log"
 
 # 15.8: WORKFLOW_TARGET_GITHUB_REPO only

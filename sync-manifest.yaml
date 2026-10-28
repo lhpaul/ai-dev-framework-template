@@ -155,6 +155,12 @@ categories:
     - path: scripts/development-workflow/pr-ownership-guard.sh
       mode_scope: product_repo_injection
       note: PR ownership guard (#1444) required by pr-review-loop.sh before any PR mutation
+    - path: scripts/development-workflow/reviewer-loop-history.py
+      mode_scope: product_repo_injection
+      note: immutable cumulative history reconciliation required by workflow-lib.sh (#2061)
+    - path: scripts/development-workflow/review-evidence-context.py
+      mode_scope: product_repo_injection
+      note: complete evidence identity and verification required by local reviewers (#2061)
     - path: scripts/development-workflow/pr-review-loop.sh
       mode_scope: product_repo_injection
       note: product-repo runtime reviewer loop for product-owned PRs

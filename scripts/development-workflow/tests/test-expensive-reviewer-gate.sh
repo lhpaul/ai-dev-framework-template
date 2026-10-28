@@ -488,18 +488,28 @@ run_test "1692_gate_pass_no_evidence_action" "dispatch" "$reviewer_loop_pre_disp
 run_contains "1692_gate_pass_no_evidence_emits_telemetry" "EXPENSIVE_GATE_RESULT=" "$_1692_out"
 
 # Case 4 — a non-expensive reviewer has no gate to owe: clean ledger evidence
-# replays directly.
+# replays directly when its evidence snapshot is current.
+_2061_original_collect="$(declare -f workflow_collect_review_evidence)"
+_2061_original_repo_slug="$(declare -f repo_slug)"
+repo_slug() { printf 'synthetic/repo\n'; }
+workflow_collect_review_evidence() {
+  printf '%s\n' '{"snapshot_sha256":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"}' >"$4"
+}
 _1692_reset
 stage_skip_history_payload="$(jq -nc --arg head "$_1692_head" '{
   schema: "reviewer_loop_history.v1",
   entries: [{
     iteration: 1,
-    platform_results: [{platform: "local-ai-reviewer", result: "clean", raw_result: "clean", raw_reason: ""}],
+    platform_results: [{platform: "local-ai-reviewer", evidence_snapshot_sha256: "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc", result: "clean", raw_result: "clean", raw_reason: ""}],
     reviewed_heads: [{platform: "local-ai-reviewer", reviewed_head: $head, state: "current", reason: ""}]
   }]
 }')"
 reviewer_loop_platform_pre_dispatch local-ai-reviewer 1 >/dev/null 2>&1
 run_test "1692_cheap_replays" "replay" "$reviewer_loop_pre_dispatch_action"
+
+eval "$_2061_original_collect"
+eval "$_2061_original_repo_slug"
+unset _2061_original_collect _2061_original_repo_slug
 
 # Case 5 — staging disabled: everything dispatches, gate telemetry emitted.
 _1692_reset

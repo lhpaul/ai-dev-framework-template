@@ -1591,7 +1591,7 @@ export MOCK_GH_CALL_LOG="$_summary_call_log"
 MOCK_GH_EXIT=0
 export MOCK_GH_EXIT
 _post_review_summary "escalate" "thread-check-failed" "codex-github" "0" "0"
-_body_file="$(awk '/pr comment 42 --body-file / {print $NF}' "$_summary_call_log" | tail -n 1)"
+_body_file="$(awk '/api --method POST repos\/owner\/repo\/issues\/42\/comments --input / {print $NF}' "$_summary_call_log" | tail -n 1)"
 if [ -n "$_body_file" ]; then
   _body_file_used="yes"
 else
@@ -1615,13 +1615,8 @@ export MOCK_GH_EXIT
 # since this test only cares about body-file cleanup, not the return code
 # (that contract is covered separately by the persist-failure tests above).
 _post_review_summary "escalate" "thread-check-failed" "codex-github" "0" "0" 2>/dev/null || true
-_body_file="$(awk '/pr comment 42 --body-file / {print $NF}' "$_summary_call_log" | tail -n 1)"
-if [ -n "$_body_file" ] && [ ! -e "$_body_file" ]; then
-  _body_file_removed="yes"
-else
-  _body_file_removed="no"
-fi
-run_test "post_summary_removes_body_file_on_failure" "yes" "$_body_file_removed"
+_body_file="$(awk '/api --method POST repos\/owner\/repo\/issues\/42\/comments --input / {print $NF}' "$_summary_call_log" | tail -n 1)"
+run_test "post_summary_read_failure_does_not_write" "" "$_body_file"
 rm -f "$_summary_call_log"
 
 MOCK_GH_EXIT=0
@@ -1631,7 +1626,7 @@ export MOCK_GH_COMMENTS_OUTPUT
 _summary_call_log="$(mktemp)"
 export MOCK_GH_CALL_LOG="$_summary_call_log"
 _post_review_summary "needs_fixes" "haystack_blocking_findings" "pr-agent (clean), haystack (needs_fixes)" "2" "0"
-_needs_fixes_create_calls="$(grep_count_or_zero 'pr comment 42 --body-file' "$_summary_call_log")"
+_needs_fixes_create_calls="$(grep_count_or_zero 'api --method POST repos/owner/repo/issues/42/comments --input' "$_summary_call_log")"
 _needs_fixes_patch_calls="$(grep_count_or_zero '--method PATCH' "$_summary_call_log")"
 run_test "post_summary_needs_fixes_creates_when_missing" "1" "$_needs_fixes_create_calls"
 run_test "post_summary_needs_fixes_missing_does_not_patch" "0" "$_needs_fixes_patch_calls"
@@ -1645,10 +1640,10 @@ export MOCK_GH_COMMENTS_OUTPUT
 _summary_call_log="$(mktemp)"
 export MOCK_GH_CALL_LOG="$_summary_call_log"
 _post_review_summary "needs_fixes" "haystack_blocking_findings" "pr-agent (clean), haystack (needs_fixes)" "2" "0"
-_needs_fixes_create_calls="$(grep_count_or_zero 'pr comment 42 --body-file' "$_summary_call_log")"
+_needs_fixes_create_calls="$(grep_count_or_zero 'api --method POST repos/owner/repo/issues/42/comments --input' "$_summary_call_log")"
 _needs_fixes_patch_calls="$(grep_count_or_zero '--method PATCH' "$_summary_call_log")"
-run_test "post_summary_needs_fixes_repeated_no_duplicate" "0" "$_needs_fixes_create_calls"
-run_test "post_summary_needs_fixes_repeated_updates_in_place" "1" "$_needs_fixes_patch_calls"
+run_test "post_summary_needs_fixes_repeated_creates_new_record" "1" "$_needs_fixes_create_calls"
+run_test "post_summary_needs_fixes_repeated_never_patches" "0" "$_needs_fixes_patch_calls"
 rm -f "$_summary_call_log"
 
 unset MOCK_GH_CALL_LOG MOCK_GH_EXIT MOCK_GH_COMMENTS_OUTPUT

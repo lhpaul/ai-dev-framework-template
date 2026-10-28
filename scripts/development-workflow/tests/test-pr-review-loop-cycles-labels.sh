@@ -3,6 +3,7 @@
 # limits, regression/reviewer-failed labels, and the rate-limit ready-phase
 # gate.
 # duration: 20
+# covers: scripts/development-workflow/tests/lib/review-retry-fixture.sh
 # covers: scripts/development-workflow/pr-review-loop.sh
 # covers: scripts/development-workflow/tests/lib/pr-review-loop-harness.sh
 # covers: docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md
@@ -1150,7 +1151,7 @@ unset MOCK_GH_COMMENTS_EXIT CYCLE_LEDGER_RETRY_WAIT
 
 run_test "persist_failure_escalates_on_needs_fixes" "yes"   "$(reviewer_loop_persist_failure_should_escalate 1 needs_fixes && echo yes || echo no)"
 run_test "persist_failure_escalates_on_needs_rerun" "yes"   "$(reviewer_loop_persist_failure_should_escalate 1 needs_rerun && echo yes || echo no)"
-run_test "persist_failure_does_not_escalate_on_clean" "no"   "$(reviewer_loop_persist_failure_should_escalate 1 clean && echo yes || echo no)"
+run_test "persist_failure_withholds_clean_readiness" "yes"   "$(reviewer_loop_persist_failure_should_escalate 1 clean && echo yes || echo no)"
 run_test "persist_failure_does_not_escalate_on_already_escalate" "no"   "$(reviewer_loop_persist_failure_should_escalate 1 escalate && echo yes || echo no)"
 run_test "persist_failure_does_not_escalate_on_waiting_on_reviewer" "no"   "$(reviewer_loop_persist_failure_should_escalate 1 waiting_on_reviewer && echo yes || echo no)"
 run_test "persist_failure_does_not_fire_when_persist_succeeded" "no"   "$(reviewer_loop_persist_failure_should_escalate 0 needs_fixes && echo yes || echo no)"
@@ -1328,6 +1329,51 @@ unset _mc_persisted_unavailable_body _mc_malformed_body _mc_wrong_schema_body
 unset _mc_three_dispatch_payload _mc_three_dispatch_comment_json
 unset _mc_three_runs_payload _mc_three_runs_comment_json
 unset _entry_write_payload
+
+# #2061: real durable reservation, repeated identical SHA/result, both caps.
+# shellcheck source=scripts/development-workflow/tests/lib/review-retry-fixture.sh
+source "$REPO_ROOT/scripts/development-workflow/tests/lib/review-retry-fixture.sh"
+run_test "2061_split_histories_reconcile_before_dispatch_and_exhaust_cap" \
+  '1|max_cycles_exceeded|3 3 available' "$(_retry2061_exercise forked)"
+run_test "2061_identical_sha_results_exhaust_run_cap_before_next_dispatch" \
+  '2|max_cycles_exceeded|3 3 available' "$(_retry2061_exercise run)"
+run_test "2061_new_run_retains_lifetime_retry_spend" \
+  '2|max_total_cycles_exceeded|3 0 available' "$(_retry2061_exercise lifetime)"
+run_test "2061_crashed_reserved_attempts_are_spent" \
+  '2|max_cycles_exceeded|3 3 available' "$(_retry2061_exercise reserved_only)"
+run_test "2061_failed_write_prevents_dispatch" \
+  '0|cycle_count_unavailable|1 1 available' "$(_retry2061_exercise write_failure)"
+run_test "2061_uncertain_write_prevents_dispatch_and_retains_spend" \
+  '0|cycle_count_unavailable|2 2 available' "$(_retry2061_exercise uncertain_write)"
+run_test "2061_mismatching_readback_prevents_dispatch_and_retains_spend" \
+  '0|cycle_count_unavailable|2 2 available' "$(_retry2061_exercise readback_mismatch)"
+run_test "2061_new_run_can_resume_after_prior_per_run_escalation" \
+  '3||4 3 available' "$(_retry2061_exercise run_after_cap)"
+# Invalid present metadata must not migrate into the historical partition.
+_retry2061_body() {
+  printf '### Automated Reviewer Loop Summary\n<!-- reviewer-loop-history:v1 -->\n```json\n%s\n```\n' "$1"
+}
+for _retry2061_invalid in null '{}' '{"id":"malformed"}'; do
+  _retry2061_payload="$(jq -cn --argjson attempt "$_retry2061_invalid" '{schema:"reviewer_loop_history.v1",entries:[{head_sha:"legacy",result:"needs_fixes",local_review_retry_attempt:$attempt}]}')"
+  run_test "2061_invalid_retry_metadata_${_retry2061_invalid}" '-1 -1 unavailable' \
+    "$(reviewer_loop_history_entries_count "$(_retry2061_body "$_retry2061_payload")" run-A)"
+done
+_retry2061_payload="$(jq -cn '{schema:"reviewer_loop_history.v1",entries:["run-A","run-B"] | map({head_sha:"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",run_id:.,result:"needs_fixes",local_review_retry_attempt:{id:"00000000-0000-4000-8000-000000000001",head_sha:"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",run_id:.}})}')"
+run_test "2061_conflicting_uuid_metadata_unavailable" '-1 -1 unavailable' \
+  "$(reviewer_loop_history_entries_count "$(_retry2061_body "$_retry2061_payload")" run-A)"
+unset _retry2061_payload _retry2061_invalid
+unset -f _retry2061_body
+# Planted violation: removing the real pre-dispatch cap must change behavior.
+_retry2061_plant() (
+  local definition
+  definition="$(declare -f reviewer_loop_reserve_local_retry_attempt | sed 's/if \[ "$run" -ge "$max_cycles" \]; then/if false; then/')"
+  eval "$definition"
+  _retry2061_exercise run
+)
+run_test "2061_planted_missing_predispatch_guard_dispatches_over_limit" \
+  '3||4 4 available' "$(_retry2061_plant)"
+unset -f _retry2061_plant
+unset -f _retry2061_exercise
 
 # Area 11: Step 7b regression-label auto-restore (Option C, issue #805)
 #

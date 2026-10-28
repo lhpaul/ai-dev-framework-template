@@ -62,7 +62,12 @@ case "$*" in
       mock_head_sha=""
     fi
     mock_head_branch="${MOCK_PR_HEAD_BRANCH:-feature/test}"
-    printf '{"baseRefName":"develop","headRefName":"%s","headRefOid":"%s"}\n' "$mock_head_branch" "$mock_head_sha"
+    if [ -n "${MOCK_EVIDENCE_BODY_FILE:-}" ]; then
+      jq -n --arg branch "$mock_head_branch" --arg head "$mock_head_sha" --rawfile body "$MOCK_EVIDENCE_BODY_FILE" \
+        '{baseRefName:"develop",headRefName:$branch,headRefOid:$head,body:$body}'
+    else
+      printf '{"baseRefName":"develop","headRefName":"%s","headRefOid":"%s"}\n' "$mock_head_branch" "$mock_head_sha"
+    fi
     exit 0
     ;;
   *"pr diff 123"*"--name-only"*)
@@ -76,6 +81,15 @@ case "$*" in
       printf '%s\n' "scripts/example.sh" "REVIEW.md" "docs/specs/developments/test/1_test_specs.md"
     fi
     exit 0
+    ;;
+  *"pr view 123"*"--json headRefOid,body"*)
+    [ -n "${MOCK_EVIDENCE_BODY_FILE:-}" ] || exit 1
+    jq -n --arg head "$MOCK_PR_HEAD_SHA" --rawfile body "$MOCK_EVIDENCE_BODY_FILE" '{headRefOid:$head,body:$body}'
+    ;;
+  *"api"*"repos/owner/repo/issues/123/comments?per_page=100"*)
+    [ "${MOCK_EVIDENCE_API_FAIL:-0}" = 0 ] || exit 1
+    [ -n "${MOCK_EVIDENCE_PAGES_FILE:-}" ] || exit 1
+    cat "$MOCK_EVIDENCE_PAGES_FILE"
     ;;
   *)
     exit 1
@@ -109,6 +123,20 @@ fi
 if [ -n "${MOCK_LOCAL_REVIEWER_STDERR:-}" ]; then
   printf '%s\n' "$MOCK_LOCAL_REVIEWER_STDERR" >&2
 fi
+if [ -n "${MOCK_EVIDENCE_PROOF_MODE:-}" ]; then
+  jq --arg mode "$MOCK_EVIDENCE_PROOF_MODE" --arg source "${MOCK_EVIDENCE_SOURCE:-comment:20}" '
+    {result:(if $mode=="code" then "needs_fixes" else "clean" end), reviewed_head:.reviewed_head,
+     findings:(if $mode=="code" then [{severity:"blocking",path:"scripts/example.sh",line:4,message:"Synthetic code defect"}] else [] end),
+     evidence_verification:{schema:"review_evidence_verification.v1",
+       snapshot_sha256:(if $mode=="stale" then "wrong-snapshot" else .evidence_context.snapshot_sha256 end),
+       request_id:.verification_request_id,status:(if $mode=="unverified" then "unverified" else "verified" end),sources:[$source]}}
+    | if $mode=="missing" then del(.evidence_verification) else . end' "$CONTEXT_BUNDLE_PATH"
+  if [ "${MOCK_EVIDENCE_DRIFT:-0}" = 1 ]; then
+    jq '.[1][0].body += " edited after review"' "$MOCK_EVIDENCE_PAGES_FILE" > "$MOCK_EVIDENCE_PAGES_FILE.tmp"
+    mv "$MOCK_EVIDENCE_PAGES_FILE.tmp" "$MOCK_EVIDENCE_PAGES_FILE"
+  fi
+  exit 0
+fi
 if [ -n "${MOCK_LOCAL_REVIEWER_STDOUT:-}" ]; then
   printf '%s\n' "$MOCK_LOCAL_REVIEWER_STDOUT"
 fi
@@ -130,6 +158,8 @@ reset_mocks() {
   unset MOCK_LOCAL_REVIEWER_IGNORE_TERM MOCK_CONTEXT_CAPTURE
   unset MOCK_STRICT_STDOUT MOCK_ORDINARY_STDOUT MOCK_STRICT_EXIT MOCK_ORDINARY_SLEEP
   unset MOCK_RECORD_FILE MOCK_ORDINARY_EXIT
+  unset MOCK_EVIDENCE_BODY_FILE MOCK_EVIDENCE_PAGES_FILE MOCK_EVIDENCE_PROOF_MODE MOCK_EVIDENCE_DRIFT MOCK_EVIDENCE_API_FAIL MOCK_EVIDENCE_SOURCE
+  unset LOCAL_AI_REVIEWER_VERIFICATION_REQUEST_ID LOCAL_AI_REVIEWER_REQUIRE_EVIDENCE
 }
 
 set_mock_stdout() {
@@ -2347,6 +2377,54 @@ export MOCK_PR_HEAD_BRANCH MOCK_PR_HEAD_SHA
 run_reviewer "$MOCK_BIN:$PATH" --repo-root "$VALID_REPO_ROOT"
 run_test "1655_s16_evidence_has_plan" "true" "$(jq -r 'has("strict_plan")' "$EVIDENCE_FILE")"
 run_test "1655_s16_evidence_plan_state" "not_applicable" "$(jq -r '.strict_plan.state' "$EVIDENCE_FILE")"
+
+# #2061: proof reaches the actual backend and only explicit current verification clears it.
+reset_mocks
+export LOCAL_AI_REVIEWER_COMMAND=local-reviewer-mock
+MOCK_PR_HEAD_SHA="$(git -C "$VALID_REPO_ROOT" rev-parse HEAD)"
+export MOCK_PR_HEAD_SHA
+export MOCK_PR_HEAD_BRANCH=feature/test MOCK_PR_DIFF_FILES=scripts/example.sh
+export MOCK_EVIDENCE_BODY_FILE="$VALID_REPO_ROOT/evidence-body.txt"
+export MOCK_EVIDENCE_PAGES_FILE="$VALID_REPO_ROOT/evidence-pages.json"
+export MOCK_CONTEXT_CAPTURE="$VALID_REPO_ROOT/evidence-context.json"
+export LOCAL_AI_REVIEWER_VERIFICATION_REQUEST_ID=10
+python3 - "$MOCK_EVIDENCE_BODY_FILE" "$MOCK_EVIDENCE_PAGES_FILE" <<'PYFIXTURE'
+import json, pathlib, sys
+pathlib.Path(sys.argv[1]).write_text("Synthetic Unicode proof 🧪 " * 2000 + "TAIL_PROOF")
+pathlib.Path(sys.argv[2]).write_text(json.dumps([
+ [{"id":10,"body":"Verify the synthetic planted violation","updated_at":"2026-01-01T00:00:00Z"}],
+ [{"id":20,"body":"Synthetic failure before fix, pass after fix","updated_at":"2026-01-01T00:00:00Z"},
+  {"id":30,"body":"### Automated Reviewer Loop Summary\nEarlier missing proof","updated_at":"2026-01-01T00:00:00Z"}]]))
+PYFIXTURE
+export MOCK_EVIDENCE_PROOF_MODE=verified
+run_reviewer "$MOCK_BIN:$PATH" --repo-root "$VALID_REPO_ROOT"
+run_test "2061_verified_proof_clean" RESULT=clean "$(line_for RESULT)"
+run_test "2061_body_not_truncated" true "$(jq -r '.pr_body|endswith("TAIL_PROOF")' "$MOCK_CONTEXT_CAPTURE")"
+run_test "2061_second_page_proof_visible" 20 "$(jq -r '.evidence_context.comments[1].id' "$MOCK_CONTEXT_CAPTURE")"
+run_test "2061_bookkeeping_visible_for_review" 3 "$(jq -r '.evidence_context.review_comments|length' "$MOCK_CONTEXT_CAPTURE")"
+_proof_line="$(line_for EVIDENCE_VERIFICATION_JSON)"
+run_test "2061_explicit_verified_metadata" verified "$(printf '%s' "${_proof_line#*=}" | jq -r '.status')"
+run_test "2061_snapshot_metadata_round_trip" "$(jq -r '.evidence_context.snapshot_sha256' "$MOCK_CONTEXT_CAPTURE")" "$(printf '%s' "${_proof_line#*=}" | jq -r '.snapshot_sha256')"
+
+for MOCK_EVIDENCE_PROOF_MODE in missing unverified stale code; do
+  export MOCK_EVIDENCE_PROOF_MODE
+  run_reviewer "$MOCK_BIN:$PATH" --repo-root "$VALID_REPO_ROOT"
+  run_test "2061_${MOCK_EVIDENCE_PROOF_MODE}_proof_pending" RESULT=needs_fixes "$(line_for RESULT)"
+  run_test "2061_${MOCK_EVIDENCE_PROOF_MODE}_proof_exit" 1 "$(exit_code)"
+done
+export MOCK_EVIDENCE_PROOF_MODE=verified MOCK_EVIDENCE_SOURCE=comment:30
+run_reviewer "$MOCK_BIN:$PATH" --repo-root "$VALID_REPO_ROOT"
+run_test "2061_bookkeeping_cannot_supply_proof" RESULT=needs_fixes "$(line_for RESULT)"
+unset MOCK_EVIDENCE_SOURCE
+export MOCK_EVIDENCE_DRIFT=1
+run_reviewer "$MOCK_BIN:$PATH" --repo-root "$VALID_REPO_ROOT"
+run_test "2061_evidence_changed_review_pending" RESULT=needs_rerun "$(line_for RESULT)"
+run_test "2061_evidence_changed_reason" REASON=evidence_changed_during_review "$(line_for REASON)"
+unset MOCK_EVIDENCE_DRIFT
+export MOCK_EVIDENCE_API_FAIL=1
+run_reviewer "$MOCK_BIN:$PATH" --repo-root "$VALID_REPO_ROOT"
+run_test "2061_unavailable_context_not_verified" RESULT=escalate "$(line_for RESULT)"
+run_test "2061_unavailable_context_reason" REASON=evidence_context_unavailable "$(line_for REASON)"
 
 if [ "$FAIL_COUNT" -ne 0 ]; then
   echo "FAIL: $FAIL_COUNT test(s) failed"

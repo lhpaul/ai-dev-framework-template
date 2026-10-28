@@ -33,6 +33,50 @@ workflow_repo_root() {
   CDPATH='' cd -- "$(workflow_script_dir)/../.." && pwd
 }
 
+# Complete, file-based evidence transport. An unavailable snapshot is explicit
+# and must never serve as verification; ordinary code review may still report it.
+workflow_collect_review_evidence() {
+  local evidence_repo="$1" evidence_pr="$2" evidence_head="$3" evidence_output="$4"
+  local evidence_tmp evidence_helper evidence_available=true
+  evidence_helper="$(workflow_script_dir)/review-evidence-context.py"
+  evidence_tmp="$(mktemp -d)" || return 2
+  if ! gh pr view "$evidence_pr" --repo "$evidence_repo" --json headRefOid,body \
+      >"$evidence_tmp/pr.json" 2>/dev/null; then
+    evidence_available=false
+  fi
+  if ! gh api --paginate --slurp "repos/$evidence_repo/issues/$evidence_pr/comments?per_page=100" \
+      >"$evidence_tmp/pages.json" 2>/dev/null; then
+    evidence_available=false
+  fi
+  if ! jq -e --arg head "$evidence_head" \
+      '.headRefOid == $head and (.body | type == "string")' "$evidence_tmp/pr.json" >/dev/null 2>&1 \
+      || ! jq -e 'type == "array" and all(.[]; type == "array")' "$evidence_tmp/pages.json" >/dev/null 2>&1; then
+    evidence_available=false
+  fi
+  if [ "$evidence_available" = true ]; then
+    if ! jq -n --arg repo "$evidence_repo" --argjson pr "$evidence_pr" --arg head "$evidence_head" \
+        --slurpfile pr_data "$evidence_tmp/pr.json" --slurpfile pages "$evidence_tmp/pages.json" \
+        '{repository:$repo,pr_number:$pr,head_sha:$head,body:$pr_data[0].body,
+          comments:[$pages[0][][]],available:true}' >"$evidence_tmp/raw.json" \
+        || ! python3 "$evidence_helper" snapshot --input "$evidence_tmp/raw.json" >"$evidence_output"; then
+      evidence_available=false
+    fi
+  fi
+  if [ "$evidence_available" != true ]; then
+    jq -n --arg repo "$evidence_repo" --argjson pr "$evidence_pr" --arg head "$evidence_head" \
+      '{repository:$repo,pr_number:$pr,head_sha:$head,available:false}' >"$evidence_tmp/raw.json" || {
+        rm -rf "$evidence_tmp"; return 2;
+      }
+    if ! python3 "$evidence_helper" snapshot --input "$evidence_tmp/raw.json" >"$evidence_output"; then
+      rm -rf "$evidence_tmp"
+      return 2
+    fi
+    printf '%s\n' 'review evidence: complete PR/comment context unavailable' >&2
+  fi
+  rm -rf "$evidence_tmp"
+  [ "$evidence_available" = true ]
+}
+
 # Anchor an explicit relative source at invocation CWD before any entry changes
 # directory or hands it to a child. This is path metadata only: no private read.
 workflow_anchor_local_override_root() {
@@ -4799,20 +4843,85 @@ reviewer_loop_history_extract_latest_json() {
 }
 
 reviewer_loop_history_select_latest_summary_record() {
-  jq -rs '
-    (add // []) as $all
-    | [
-        $all[]
-        | select(
-            (.body // "" | contains("### Automated Reviewer Loop Summary")) and
-            (.body // "" | contains("*Posted automatically by `pr-review-loop.sh`.*"))
-          )
-      ]
-    | sort_by(.created_at)
-    | last
-    | {
-        id: (.id // ""),
-        body: (.body // "")
-      }
-  '
+  python3 "$(workflow_script_dir)/reviewer-loop-history.py"
+}
+
+# Append exactly once. An uncertain POST or failed independent readback is
+# unavailable, never a reason to retry a write or edit previous evidence.
+# Arguments: repository, PR, file containing the complete new comment body.
+reviewer_loop_history_publish() {
+  local repo="$1" pr="$2" body_file="$3" tmp id result=1
+  tmp="$(mktemp -d)" || return 1
+  if jq -n --rawfile body "$body_file" '{body:$body}' >"$tmp/payload" &&
+      gh api --method POST "repos/$repo/issues/$pr/comments" --input "$tmp/payload" >"$tmp/response" 2>/dev/null &&
+      id="$(jq -er '.id | select(type == "number" and . > 0 and . == floor)' "$tmp/response" 2>/dev/null)" &&
+      gh api "repos/$repo/issues/comments/$id" >"$tmp/readback" 2>/dev/null &&
+      jq -e --argjson id "$id" --rawfile expected "$body_file" \
+        '.id == $id and .body == $expected' "$tmp/readback" >/dev/null 2>&1; then
+    result=0
+  fi
+  rm -rf "$tmp"
+  return "$result"
+}
+
+# Current proof uses the existing summary trust domain: this token login or
+# a live admin/maintain/write collaborator. Markers alone grant no authority.
+workflow_review_evidence_ledger_proof() {
+  local repo="$1" pr="$2" head="$3" request="$4" context="$5"
+  local invoker candidates candidate login permission summary="" body payload tmp
+  invoker="$(gh api user --jq '.login // ""' 2>/dev/null)" || invoker=""
+  candidates="$(set -o pipefail; gh api "repos/$repo/issues/$pr/comments" --paginate --slurp 2>/dev/null |
+    jq -c '[.[]?[] | select((.body // "" | startswith("### Automated Reviewer Loop Summary")) and
+      (.body // "" | contains("*Posted automatically by `pr-review-loop.sh`.*")))] |
+      sort_by(.created_at) | reverse | .[]')" || return 1
+  while IFS= read -r candidate; do
+    [ -n "$candidate" ] || continue
+    login="$(printf '%s' "$candidate" | jq -r '.user.login // ""')" || continue
+    [ -n "$login" ] || continue
+    if [ "$login" = "$invoker" ]; then summary="$candidate"; break; fi
+    permission="$(gh api "repos/$repo/collaborators/$login/permission" --jq '.permission // ""' 2>/dev/null)" || continue
+    case "$permission" in admin|maintain|write) summary="$candidate"; break ;; esac
+  done <<<"$candidates"
+  [ -n "$summary" ] || return 1
+  body="$(printf '%s' "$summary" | jq -r '.body')" || return 1
+  payload="$(printf '%s' "$body" | reviewer_loop_history_extract_latest_json)" || return 1
+  tmp="$(mktemp)" || return 1
+  # Reconciled historical objects are accounting evidence, not new review
+  # authority. Only this trusted snapshot's newly appended entry can prove
+  # verification; copying an older/foreign claim must never promote its trust.
+  if ! printf '%s' "$payload" | jq -ce --arg head "$head" '
+    select(.schema == "reviewer_loop_history.v1" and (.history_status // "available") == "available") |
+    [.entries[-1] | . as $entry | .platform_results[]? | select(.platform == "pr-agent") |
+      {result:.result, evidence_verifier:.evidence_verifier, evidence_verification:.evidence_verification,
+       reviewed_head:([$entry.reviewed_heads[]? | select(.platform == "pr-agent") | .reviewed_head] | last)}] |
+    last | select(.result == "clean" and .evidence_verifier == "local-ai-reviewer" and .reviewed_head == $head)' >"$tmp"; then
+    rm -f "$tmp"; return 1
+  fi
+  local verified
+  verified="$(python3 "$(workflow_script_dir)/review-evidence-context.py" verify \
+    --context "$context" --result "$tmp" --request-id "$request" 2>/dev/null)" || verified='{}'
+  rm -f "$tmp"
+  printf '%s' "$verified" | jq -e '.verified == true' >/dev/null 2>&1 || return 1
+  printf '%s' "$verified"
+}
+
+# Shared loop/readiness decision. The caller authenticates the request and
+# binds it to this head using the existing PR-Agent selector before calling.
+workflow_pr_agent_evidence_verdict() {
+  local repo="$1" pr="$2" head="$3" request="$4" body="$5"
+  local inspection verdict tmp
+  inspection="$(printf '%s' "$body" | bash "$(workflow_script_dir)/apply-readiness-labels.sh" --inspect-pr-agent)" || {
+    printf 'escalate'; return;
+  }
+  verdict="$(printf '%s' "$inspection" | jq -r .verdict)"
+  if [ "$(printf '%s' "$inspection" | jq -r .verification_only)" != true ]; then
+    printf '%s' "$verdict"; return
+  fi
+  tmp="$(mktemp)" || { printf escalate; return; }
+  if workflow_collect_review_evidence "$repo" "$pr" "$head" "$tmp" &&
+      workflow_review_evidence_ledger_proof "$repo" "$pr" "$head" "$request" "$tmp" >/dev/null; then
+    verdict=clean
+  else verdict=verification_pending; fi
+  rm -f "$tmp"
+  printf '%s' "$verdict"
 }
