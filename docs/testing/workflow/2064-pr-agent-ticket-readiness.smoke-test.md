@@ -93,7 +93,10 @@ branches. No merge or tracker update belongs to this runbook.
 
 ## Assertions Checklist
 
-- [ ] AC1–AC2: Clean ticket-only cases progress through peers and readiness.
+- [ ] AC1: Clean ticket-only cases progress through peers and readiness.
+- [ ] AC2: Valid fully compliant, partially compliant, non-compliant and
+  ticket-only human-verification cases classify as clean, including ticket-only
+  requests without matching verified proof, when the remaining review is clean.
 - [ ] AC3: Malformed/unknown ticket output still escalates.
 - [ ] AC4: Outside evidence, code, security and human blockers retain refusal.
 - [ ] AC5: Sync warns safely and preserves project-owned TOML.
