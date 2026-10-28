@@ -409,8 +409,26 @@ esac
         self.assertIn('[REDACTED]', parsed['entries'][0]['detail'])
         published = self.f.root / 'published-summary.md'
         self.f.env['SYNTHETIC_PUBLISHED'] = str(published)
-        self.gh_script('case "$*" in "repo view"*) echo fixture/repo;; "pr comment"*) while [ "$#" -gt 0 ]; do ' +
-                       'case "$1" in --body-file) cp "$2" "$SYNTHETIC_PUBLISHED"; break;; *) shift;; esac; done;; *) echo "[]";; esac\n')
+        operations = self.f.root / 'summary-publication-operations'
+        self.f.env['SYNTHETIC_PUBLISH_OPERATIONS'] = str(operations)
+        self.gh_script('''case "$*" in
+  "repo view"*) echo fixture/repo;;
+  "api --method POST repos/fixture/repo/issues/1993/comments --input "*)
+    printf 'POST\n' >> "$SYNTHETIC_PUBLISH_OPERATIONS"
+    while [ "$#" -gt 0 ]; do
+      if [ "$1" = --input ]; then
+        jq -j '.body' "$2" > "$SYNTHETIC_PUBLISHED"
+        jq '. + {id:99}' "$2"
+        break
+      fi
+      shift
+    done;;
+  "api repos/fixture/repo/issues/comments/99")
+    printf 'GET\n' >> "$SYNTHETIC_PUBLISH_OPERATIONS"
+    jq -n --rawfile body "$SYNTHETIC_PUBLISHED" '{id:99,body:$body}';;
+  *) echo "[]";;
+esac
+''')
         # Definition only from after the harness-return point; no main loop runs.
         post = fixtures.function_text('pr-review-loop.sh', '_post_review_summary')
         result = self.safe(self.bash(post + '\npr_number=1993; branch_name=feature/1993-fixture; compare_mode=0; compare_verdicts=();\n' +
@@ -418,6 +436,7 @@ esac
         self.assertIn('Automated Reviewer Loop Summary', published.read_text())
         self.assertIn('[REDACTED]', published.read_text())
         self.assertNotIn(self.secret, published.read_text())
+        self.assertEqual(operations.read_text().splitlines(), ['POST', 'GET'])
 
     def test_D16_metrics_timing_and_missed_finding_renderers(self):
         folder = self.f.checkout / 'docs/workflow'; folder.mkdir(parents=True)
