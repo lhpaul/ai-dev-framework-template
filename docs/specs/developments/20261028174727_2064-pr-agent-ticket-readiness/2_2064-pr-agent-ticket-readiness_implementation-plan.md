@@ -15,10 +15,12 @@ classifier, evidence predicate, loop and readiness path; synthetic composed test
 are needed alongside the parser regression cases.
 
 **Dependencies and execution boundary**: #2061 is present at the recorded base.
-Spec PR #2066 remains unmerged. This local plan may be reviewed now; publishing a
-plan branch/PR waits for that spec's merge under Protocol 91 ordering. Every merge
-requires Luis's explicit OK. The invocation authorizes medium risk only for #2064
-and forbids adding it to Project 1 or changing Status/Type.
+Spec PR #2066 was squash-merged to develop as
+`f62b494c54abca0d57cd3528e7d18fdf4bd3b6f5` with Luis's approval. Plan publication
+is authorized; plan and implementation merges require Luis's explicit OK.
+Implementation starts only after the plan merges under Protocol 91 ordering.
+The invocation authorizes medium risk only for #2064 and forbids adding it to
+Project 1 or changing Type. Do not change tracker Status without authorization.
 
 **Template fit**: Pass. The deliverable changes generic workflow shell/Python and
 configuration guidance, using the template's existing toolchain.
