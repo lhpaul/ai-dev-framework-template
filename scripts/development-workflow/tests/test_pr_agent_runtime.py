@@ -444,7 +444,7 @@ class InlineProducerHTMLTests(unittest.TestCase):
         self.assertNotEqual("clean", classify(body))
 
     def test_unsupported_and_ambiguous_inputs_still_escalate(self):
-        for content in ("`unclosed", "``double``", "`two\nlines`", "`trailing\\`",
+        for content in ("`unclosed", "``mismatched`", "`two\nlines`", "`trailing\\`",
                         "\\`escaped`", "`prose </summary>`",
                         "`</summary> live prose <strong>Must fix</strong>`", "<div>`helper()`</div>",
                         '<a title="`helper()`">text</a>',
@@ -464,7 +464,7 @@ class InlineProducerHTMLTests(unittest.TestCase):
                             history.replace("</summary>\n\n", "</summary>\n", 1)):
             source = unsupported if unsupported == history else review() + "\n" + unsupported
             self.assertEqual("escalate", classify(source))
-        for bad in ("`unclosed", "``double``", "`two\nlines`", '<span title="`bad`">text</span>'):
+        for bad in ("`unclosed", "``mismatched`", "`two\nlines`", '<span title="`bad`">text</span>'):
             self.assertEqual("escalate", classify(review() + "\n" + history.replace(
                 "Example `</summary>` and `<?php` and `<!-- literal -->`.", bad)))
         # History recognition never extends to a later, unrelated raw block.
@@ -1038,6 +1038,9 @@ class ImagePublicationTests(unittest.TestCase):
     def setUpClass(cls):
         from pr_agent.git_providers.github_provider import GithubProvider
         import pr_agent.tools.pr_reviewer as reviewer
+        import pr_agent.algo.utils as utils
+        cls.original_renderer = utils.convert_to_markdown_v2
+        cls.original_renderer_alias = reviewer.convert_to_markdown_v2
         cls.provider_class = GithubProvider
         cls.original_composer = STATE.append_review_state
         cls.original_limiter = GithubProvider.limit_output_characters
@@ -1050,6 +1053,9 @@ class ImagePublicationTests(unittest.TestCase):
     @classmethod
     def tearDownClass(cls):
         import pr_agent.tools.pr_reviewer as reviewer
+        import pr_agent.algo.utils as utils
+        utils.convert_to_markdown_v2 = cls.original_renderer
+        reviewer.convert_to_markdown_v2 = cls.original_renderer_alias
         STATE.append_review_state = cls.original_composer
         reviewer.append_review_state = cls.original_alias
         cls.provider_class.limit_output_characters = cls.original_limiter

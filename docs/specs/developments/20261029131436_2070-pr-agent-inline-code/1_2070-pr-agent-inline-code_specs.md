@@ -47,7 +47,7 @@ PR-Agent can publish a review card whose inline code contains a literal closing 
 
 ## Business Rules
 
-1. Correct producer formatting before publication; preserve the existing parser guard and classification policy. Do not add exemptions for a PR, finding identifier, or desired verdict.
+1. Correct producer formatting before publication; extend delimiter recognition while preserving the parser guard’s ambiguity protections and classification policy. Do not add exemptions for a PR, finding identifier, or desired verdict.
 2. Preserve review content and code meaning, finding severity, reviewed commit identity, and review-state provenance. Formatting must not remove findings, alter their disposition, or manufacture evidence that the review is current.
 3. Scope the correction to legitimate inline code in normal review cards. Genuinely ambiguous or cross-boundary HTML must retain fail-closed rejection.
 4. A safely formatted expression does not override independent security, verification, or other blocking findings. Existing blocker precedence remains unchanged.
@@ -70,10 +70,13 @@ PR-Agent can publish a review card whose inline code contains a literal closing 
 
 - [ ] **AC1**: A fabricated normal Possible Issue review card containing a mixed single-line expression with a literal closing HTML tag publishes as equivalent readable inline code. Classification of the independently read published body is clean, without ambiguity escalation or verification-only fallback.
 - [ ] **AC2**: An ordinary inline-code control follows the same publication-to-classification path with its code presentation, finding content, severity, and classification unchanged by the formatting correction.
-- [ ] **AC3**: Synthetic genuinely ambiguous and cross-boundary HTML negative controls remain rejected by the unchanged parser guard and retain their existing fail-closed classification. Include a structural closing boundary crossed by an inline span, rather than only a legitimate code literal.
+- [ ] **AC3**: Synthetic genuinely ambiguous and cross-boundary HTML negative controls remain rejected by the parser guard with the same ambiguity protections and retain their existing fail-closed classification. Include a structural closing boundary crossed by an inline span, rather than only a legitimate code literal.
 - [ ] **AC4**: Published synthetic reviews preserve their findings, severity, reviewed commit identity, and review-state provenance. Missing, invalid, or stale identity and provenance retain their existing handling; formatting cannot make them current or valid.
 - [ ] **AC5**: Synthetic reviews combining the closing-tag expression with independent security and verification blockers retain the blocking disposition of each blocker. Include each blocker independently so one cannot mask loss of the other.
 - [ ] **AC6**: Automated regression coverage exercises the ordinary producer publication path and classification of its independently read published body for AC1–AC5, including below-limit reviews. No previous bot comment or live evidence is modified to obtain readiness, and publication limits and current-head checks remain enforced.
+
+- [ ] **AC7**: Supported complete single-line double-backtick spans, including literal single backticks inside them, retain equivalent visible code in newly rendered findings. The consumer also accepts supported double-backtick code produced by the predecessor, without changing its published body.
+- [ ] **AC8**: A synthetic bootstrap runs the unmodified predecessor producer/publication path against the candidate consumer. Advisory-only supported spans are classifiable without verification-only fallback; independent blockers and genuinely ambiguous HTML still reject. Current-head identity and provenance remain required under the existing policy.
 
 ## Brief Objective List and Coverage Matrix
 
@@ -84,6 +87,7 @@ PR-Agent can publish a review card whose inline code contains a literal closing 
 | Add synthetic producer/parser regressions for the mixed expression, ordinary code, and ambiguous negative controls | AC1–AC3, AC6 |
 | Preserve content, severity, current-head identity, and provenance; never rewrite published evidence | AC2, AC4, AC6; business rules 2, 6 |
 | Verify normal publication-to-classification including independent security and verification blockers; no bypass | AC5, AC6; business rules 4, 5, 7 |
+| Support double-backtick code and bootstrap from predecessor producer without gate suppression | AC7, AC8; approved extension below |
 | Limit work to #2070, with Luis approving each merge and the implementation's technical approach | Out of scope; confirmed execution constraints below |
 
 ## Out of Scope (MVP)
@@ -95,5 +99,11 @@ PR-Agent can publish a review card whose inline code contains a literal closing 
 - Project fields other than the authorized Type Bug and canonical workflow Status transitions for #2070.
 
 **Deferral notes**: No issue acceptance objective is deferred. The exclusions bound the producer fix rather than remove required behavior. Technical design is reserved for the implementation plan.
+
+## Approved scope extension: double-backtick bootstrap
+
+Luis explicitly approved updating this spec and plan within implementation PR #2073 before implementing double-backtick support in both producer and guard. This supersedes the earlier requirement to keep the guard implementation unchanged; its fail-closed protections and classification policy remain required.
+
+- Supported runs match exactly one or two backticks; doubles may contain isolated single backticks. Mismatched, escaped, unclosed, multiline and longer delimiter runs remain fail-closed. No PR/finding exemption, history rewrite, reviewer bypass or premature trusted-base promotion is authorized.
 
 **Confirmed execution constraints**: Luis accepted the current issue requirements and acceptance criteria, authorized Type Bug and canonical Status transitions, and limited this run to #2070 at maximum risk medium. Each spec, plan, and implementation merge requires his explicit OK; he will review the technical approach at the implementation PR's merge checkpoint.
