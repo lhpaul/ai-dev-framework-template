@@ -3,7 +3,7 @@
 **Feature**: #2064
 **Spec**: [Merged approved spec f62b494c](https://github.com/lhpaul/ai-dev-framework-template/blob/f62b494c54abca0d57cd3528e7d18fdf4bd3b6f5/docs/specs/developments/20261028174727_2064-pr-agent-ticket-readiness/1_2064-pr-agent-ticket-readiness_specs.md)
 **Created in**: Plan Ready stage
-**Updated in**: Implementation must record actual execution revision/results.
+**Updated in**: In Development; actual synthetic execution recorded below.
 
 ## Prerequisites
 
@@ -114,3 +114,66 @@ branches. No merge or tracker update belongs to this runbook.
 
 Synthetic smoke proves workflow composition without running external models.
 It does not certify an epic's requirements or mutate a live downstream project.
+
+## Execution Record — 2026-10-29 UTC
+
+**Tested checkpoint**: `82f50ee931a26cab542ac0f6b8c482328f073985`.
+The following required readiness suites ran serially with all scripts, tests and
+goldens frozen at this checkpoint. This record is a later documentation-only
+change; it does not claim live reviewer, CI or merge readiness.
+
+| Exact command | Actual result |
+| --- | --- |
+| `bash scripts/development-workflow/tests/test-apply-readiness-labels.sh` | 410 passed, 0 failed |
+| `bash scripts/development-workflow/tests/test-readiness-label-matrix-part-1.sh` | 503 passed, 0 failed |
+| `bash scripts/development-workflow/tests/test-readiness-label-matrix-part-2.sh` | 476 passed, 0 failed |
+| `bash scripts/development-workflow/tests/test-readiness-label-matrix-part-3.sh` | 499 passed, 0 failed |
+| `bash scripts/development-workflow/tests/test-readiness-label-matrix-part-4.sh` | 483 passed, 0 failed |
+| `bash scripts/development-workflow/tests/test-consumer-readiness-matrix-part-1.sh` | 503 passed, 0 failed |
+| `bash scripts/development-workflow/tests/test-consumer-readiness-matrix-part-2.sh` | 476 passed, 0 failed |
+| `bash scripts/development-workflow/tests/test-consumer-readiness-matrix-part-3.sh` | 499 passed, 0 failed |
+| `bash scripts/development-workflow/tests/test-consumer-readiness-matrix-part-4.sh` | 483 passed, 0 failed |
+
+**Step 1 / AC1**: PASS. The actual bound PR-Agent handler/processor permits the
+normal configured peer pre-dispatch without a force override; standalone and
+consumer readiness fixtures permit the clean ticket-only case. The missing-ledger
+case asserts absence before invocation, clears the prior result and verifies a
+fresh issue-comment read before checking the actual readiness result.
+
+**Separate AC2 check**: PASS. Full, partial, non-compliant and PR Code Verified
+cases exercise informational classification, including ticket-only verification
+without matching proof. The existing acquisition suite ran with
+`bash scripts/development-workflow/tests/test-pr-review-loop-pr-agent-coderabbit.sh --area 1946`
+and reported 1230 passed, 0 failed. That earlier run overlapped focused prefix
+hardening edits; it is supplemental rather than an immutable-checkpoint proof.
+The final prefix behavior was separately verified by
+`python3 scripts/development-workflow/tests/test-review-evidence-context.py`
+(11 tests OK); scripts exercised by the serial table above include that behavior.
+
+**Step 2 / AC3–AC4**: PASS. Malformed/unknown ticket analyses and independent code,
+verification, security, evidence and human refusal controls remain exercised in
+the serial suites. The scoped missing-ledger correction was also checked through
+the existing mocked readiness driver: 11 focused assertions passed, including
+outside verification and security refusals.
+
+**Step 3 / AC5**: PASS. `python3 scripts/development-workflow/tests/test_sync_template_merge.py`
+reported 28 tests OK. Subsequent platform/parser-limit diagnostic hardening was
+checked with
+`python3 scripts/development-workflow/tests/test_sync_template_merge.py SyncTests.test_ticket_setting_semantics_and_safe_diagnostics SyncTests.test_ticket_warning_is_delivered_by_normal_preview_without_plan_leak`
+(2 tests OK). Those diagnostic sources are unchanged at the tested checkpoint.
+Enabled/absent settings warn, boolean false suppresses the warning, invalid or
+unreadable settings receive safe advice, and configuration bytes and sentinel
+non-disclosure controls pass. No live downstream configuration was inspected.
+
+**Step 4 / AC6**: PASS. Configuration comment, integration guide, canonical Claude
+command, full Claude skill procedure, Cursor procedure and release fragment were
+cross-checked; delegating Codex wrappers require no duplicated policy. Final
+tracked-file consumer/mirror queries found no unaccounted scoped consumer or
+procedure mirror. Markdownlint and heuristic checks were clean before this
+execution-record update and are repeated for this documentation-only change.
+
+Earlier runs with helper edits in flight produced transient empty-output
+failures and stale expected-policy assertions; those results were retained and
+were superseded by the complete serial frozen-checkpoint execution above. No
+unrelated production logic or expectations were changed to clear those failures.
+Disposable fixture teardown completed; owned branches/worktrees were retained.
