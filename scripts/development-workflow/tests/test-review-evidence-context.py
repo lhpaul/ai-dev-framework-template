@@ -60,6 +60,29 @@ class EvidenceTests(unittest.TestCase):
                 self.assertFalse(inspection["verification_only"])
                 self.assertEqual(inspection["verdict"], expected)
 
+    def test_ticket_mask_refuses_same_line_independent_html_headings(self):
+        classifier = Path(__file__).resolve().parents[1] / "apply-readiness-labels.sh"
+        ticket = ("**Ticket compliance analysis**\n"
+                  "**[42](url) - Fully compliant**\n"
+                  "Compliant requirements:\n- Implemented.")
+        styles = ("h1", "h2", "h3", "h4", "h5", "h6", "strong", "b", "em",
+                  "span", "p", "div", "summary", 'strong title=">"')
+        for heading, value in (("Security concerns", "Yes"),
+                               ("Verification status", "pending")):
+            for opening in styles:
+                with self.subTest(heading=heading, opening=opening):
+                    closing = opening.split()[0]
+                    body = ticket + "<" + opening + ">" + heading + "</" + closing + "><p>" + value + "</p>"
+                    output = subprocess.run(["bash", str(classifier), "--inspect-pr-agent"],
+                        input=body, capture_output=True, text=True, check=True)
+                    self.assertEqual(json.loads(output.stdout),
+                                     {"verdict": "escalate", "verification_only": False})
+        formatted = ticket.replace("Implemented.", "<strong>Implemented</strong> with <em>ordinary</em> <span>formatting</span>.<br>")
+        output = subprocess.run(["bash", str(classifier), "--inspect-pr-agent"],
+            input=formatted, capture_output=True, text=True, check=True)
+        self.assertEqual(json.loads(output.stdout),
+                         {"verdict": "clean", "verification_only": False})
+
     def test_ticket_only_shared_predicate_does_not_require_proof(self):
         raw = copy.deepcopy(self.raw)
         request = ("**Ticket compliance analysis**\n**[42](url) - PR Code Verified**\n"

@@ -198,6 +198,38 @@ class ReviewText(HTMLParser):
         self.parts.append(data)
 
 
+class TicketSectionText(ReviewText):
+    """Refuse independent HTML headings before ticket commentary is masked."""
+    label_tags = {"strong", "b", "em", "span", "p", "div", "summary"}
+    independent_heading = re.compile(
+        r"^[^\w]*(?:(?:Review status|Review metadata)\s*[—:-]\s*)?"
+        r"(?:Security\s+concerns|(?:Human\s+)?verification(?:\s+status)?|"
+        r"Requires\s+further\s+human\s+verification|"
+        r"Recommended focus areas for review|Key issues to review)\b", re.I)
+
+    def __init__(self):
+        super().__init__()
+        self.open_labels = []
+        self.ambiguous = False
+
+    def handle_starttag(self, tag, attrs):
+        if re.fullmatch(r"h[1-6]", tag):
+            self.ambiguous = True
+        ReviewText.handle_starttag(self, tag, attrs)
+        if tag in self.label_tags:
+            self.open_labels.append((tag, len(self.parts)))
+
+    def handle_endtag(self, tag):
+        if self.open_labels and self.open_labels[-1][0] == tag:
+            _, start = self.open_labels.pop()
+            label = " ".join("".join(self.parts[start:]).split())
+            if self.independent_heading.match(label):
+                self.ambiguous = True
+        # ReviewText.handle_endtag delegates to self.handle_starttag; avoid
+        # reopening a candidate label while retaining its rendering semantics.
+        ReviewText.handle_starttag(self, tag, [])
+
+
 def visible_review(body):
     try:
         body = mask_review_code(body, preserve_offsets=False)
@@ -276,6 +308,12 @@ def classify(body):
     if ticket:
         section = body[ticket_matches[0].end():]
         section = re.split(r"</td>|^### ", section, maxsplit=1, flags=re.M)[0]
+        # Same-line independent HTML headings cannot be swallowed by the mask.
+        # Parse tags rather than guessing boundaries through quoted attributes.
+        ticket_text = TicketSectionText()
+        ticket_text.feed(section)
+        if ticket_text.ambiguous:
+            return "escalate"
         tickets = re.findall(r"\*\*(?:\[[^\]\n]+\]\([^\n]*?\)|Untracked ticket) - ([^*\n]+)\*\*([\s\S]*?)(?=\*\*(?:\[|Untracked ticket)|\Z)", section)
         candidates = re.findall(r"^[ \t]*\*\*(?:\[|Untracked ticket)", section, re.M)
         first_ticket = re.search(r"\*\*(?:\[|Untracked ticket)", section)
