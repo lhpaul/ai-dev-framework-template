@@ -3296,5 +3296,48 @@ gh() { printf 'fixture/repo\n'; }
                     self.assertEqual(result.returncode, 0); self.assertEqual(result.stdout, self.secret + '\n'); self.assertEqual(result.stderr, '')
 
 
+    def test_D101_baseline_conclusion_classification(self):
+        # Exercise the real helper with strings, not a reimplementation of its
+        # jq predicate: jq 1.8.1 used to bind a boolean to the conclusion variable.
+        head = 'a' * 40
+        def check(conclusion, **fields):
+            return dict({'__typename': 'CheckRun', 'name': 'unit-tests',
+                         'status': 'COMPLETED', 'conclusion': conclusion}, **fields)
+        cases = [
+            (value, [check(value)], 'green')
+            for value in ('SUCCESS', 'SKIPPED', 'NEUTRAL', 'NONE', 'success', '', None)
+        ] + [
+            (value, [check(value)], 'failed')
+            for value in ('FAILURE', 'CANCELLED', 'TIMED_OUT', 'ACTION_REQUIRED',
+                          'STARTUP_FAILURE', 'STALE', 'UNKNOWN', 'failure', '   ')
+        ] + [
+            ('absent-conclusion', [{'name': 'unit-tests', 'status': 'COMPLETED'}], 'green'),
+            ('empty-rollup', [], 'empty'),
+            ('pending', [dict(check(None), status='IN_PROGRESS')], 'pending'),
+            ('pending-before-failed', [dict(check(None), status='QUEUED'),
+                                      dict(check('FAILURE'), name='lint')], 'pending'),
+            ('legacy-success', [{'context': 'legacy', 'state': 'SUCCESS'}], 'green'),
+            ('legacy-failure', [{'context': 'legacy', 'state': 'FAILURE'}], 'failed'),
+            ('legacy-error', [{'context': 'legacy', 'state': 'error'}], 'failed'),
+            ('legacy-pending', [{'context': 'legacy', 'state': 'PENDING'}], 'pending'),
+            ('legacy-expected', [{'context': 'legacy', 'state': 'EXPECTED'}], 'pending'),
+            ('mixed-failure', [check('SUCCESS'), dict(check('FAILURE'), name='lint')], 'failed'),
+            ('reviewer-excluded', [check('SUCCESS'), dict(check('FAILURE'), name='Haystack / Review')], 'green'),
+            ('baseline-failure-retained', [check('FAILURE'), dict(check('SUCCESS'), name='Haystack / Review')], 'failed'),
+        ]
+        payload = self.f.root / 'baseline-conclusions.json'
+        for shell in self.compatible_shells():
+            for label, rollup, expected in cases:
+                with self.subTest(shell=shell, case=label):
+                    body = self.configured_source_case('nonempty')
+                    payload.write_text(json.dumps({'headRefOid': head, 'statusCheckRollup': rollup}))
+                    body += 'gh() { cat ' + shlex.quote(str(payload)) + '; }\n'
+                    result = self.safe(self.run_command([shell, '-c', body +
+                        'expensive_gate_baseline_checks_status 1993 "$loop_head_sha"']), 0)
+                    self.assertEqual(result.stdout, expected + ' ' + head + '\n')
+                    self.assertEqual(result.stderr, '')
+                    self.assertFalse(self.f.log.exists())
+
+
 if __name__ == '__main__':
     unittest.main(verbosity=2)
