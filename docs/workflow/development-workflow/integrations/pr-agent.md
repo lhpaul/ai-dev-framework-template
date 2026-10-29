@@ -267,6 +267,26 @@ PR-Agent's blocking classification is based on stable body-content markers in it
 
 When `Recommended focus areas for review` is present but contains **only** explicitly-known advisory labels (`Possible Issue`, `Edge Case`, `Logic Gap`, `Documentation Inconsistency`), the classifier returns `clean`. Hard-blocker labels, security labels (`Security Concern`), and compatibility labels (`API Change`, `Backward Compatibility`) always block.
 
+**Ticket-analysis exception (#2064):** Recognized, structurally valid ticket
+analysis is informational, including Fully compliant, Partially compliant,
+Not compliant and PR Code Verified. Verification requests confined to that
+validated section need no matching ticket proof to permit normal reviewer
+progression. This exception supersedes #2061's ticket-only proof prerequisite;
+it does not certify that an epic is complete. Unknown status, malformed,
+duplicate, empty or truncated analysis still escalates. Verification, unavailable
+or malformed evidence, code/security findings and human blockers outside that
+section retain their existing gates. Reviewer scheduling, head binding, CI,
+checkpoints and merge approval are unchanged.
+
+The template sets `pr_reviewer.require_ticket_analysis_review = false` in
+`.pr_agent.toml` to reduce misleading ticket commentary. Ordinary template sync
+preview (including dry-run) warns when the selected consumer's setting is absent,
+enabled or invalid; only explicit TOML boolean `false` suppresses the warning.
+Unusable files or an unavailable TOML parser receive safe repair/inspection
+advice. The warning does not change sync exit status, expose configuration values,
+copy TOML into the sync plan, or overwrite project-owned settings. Maintainers
+may keep their setting: synchronized classifier behavior still applies.
+
 **Classifier-safe fallback**: If an agent cannot read the full PR-Agent comment body
 because the runner's classifier or tool policy blocks the structured review text, do
 not stop the reviewer loop. Re-run PR-Agent through `pr-review-loop.sh --platform

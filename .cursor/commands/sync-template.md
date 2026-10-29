@@ -136,6 +136,18 @@ report, showing every named problem and baseline provenance; stop before any
 mutation or apply approval. Invalid input requires correction and a fresh
 preview first. Do not suppress the failure or treat it as approval.
 
+**PR-Agent ticket-setting guidance:** The preview helper inspects only the
+selected consumer root's `.pr_agent.toml` for
+`pr_reviewer.require_ticket_analysis_review`. Only explicit TOML boolean `false`
+suppresses its advisory; absent/enabled/invalid settings receive disabling or
+repair guidance. Missing TOML parser support produces an inspection-unavailable
+warning. Symlinks and non-regular files are not read. Show this advisory with the
+preview report, including dry-run and classified blocked batches; preserve the
+existing sync exit handling and approval gates. Never print configuration values,
+copy TOML into the sync plan, or overwrite project-owned settings. Valid ticket
+analysis remains informational for readiness even when maintainers keep it enabled;
+independent code, evidence, security and human blockers retain their gates.
+
 When the source manifest is absent, first enumerate the embedded fallback from
 the pinned Git tree, never `find` over the source filesystem. Provide a private
 `--selection-file` JSON with `role`, exact `paths`, and exact `project_specific`
