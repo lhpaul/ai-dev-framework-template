@@ -77,7 +77,7 @@ class EvidenceTests(unittest.TestCase):
                         input=body, capture_output=True, text=True, check=True)
                     self.assertEqual(json.loads(output.stdout),
                                      {"verdict": "escalate", "verification_only": False})
-        formatted = ticket.replace("Implemented.", "<strong>Implemented</strong> with <em>ordinary</em> <span>formatting</span>.<br>")
+        formatted = ticket.replace("Implemented.", "<strong>Implemented</strong> with <em>ordinary</em> <span>formatting</span>.")
         output = subprocess.run(["bash", str(classifier), "--inspect-pr-agent"],
             input=formatted, capture_output=True, text=True, check=True)
         self.assertEqual(json.loads(output.stdout),
@@ -100,16 +100,37 @@ class EvidenceTests(unittest.TestCase):
                     capture_output=True, text=True, check=True)
                 self.assertEqual(json.loads(output.stdout),
                                  {"verdict": "escalate", "verification_only": False})
-        controls = (ticket, ticket + "<br>", ticket + "<br>- Verify another ticket requirement.",
+        controls = (ticket, ticket + "\n- Verify another ticket requirement.",
                     ticket + "&lt;br&gt;Verification status is quoted example text.",
                     ticket + "&amp;lt;br&amp;gt;Verification status is double escaped example text.",
-                    ticket.replace("synthetic ticket proof.", "<strong>synthetic</strong> <em>ticket</em> proof.<br>"))
+                    ticket.replace("synthetic ticket proof.", "<strong>synthetic</strong> <em>ticket</em> proof."))
         for body in controls:
             with self.subTest(control=body):
                 output = subprocess.run(["bash", str(classifier), "--inspect-pr-agent"],
                     input=body, capture_output=True, text=True, check=True)
                 self.assertEqual(json.loads(output.stdout),
                                  {"verdict": "clean", "verification_only": False})
+
+    def test_ticket_allowlist_rejects_control_fields_and_unknown_markup(self):
+        classifier = Path(__file__).resolve().parents[1] / "apply-readiness-labels.sh"
+        ticket = ("**Ticket compliance analysis**\n**[42](url) - Fully compliant**\n"
+                  "Compliant requirements:\n- Implemented.")
+        bodies = [ticket + "\n" + prefix + heading
+                  for prefix in ("- ", "* ", "1. ", "1) ")
+                  for heading in ("Verification status: pending", "Human verification: required",
+                                  "Security concerns: Yes", "Recommended focus areas for review",
+                                  "Key issues to review")]
+        bodies += [ticket + suffix for suffix in ("<br>", "<br>- Next requirement.",
+                   "<unknown>unknown structure</unknown>", "<span class=\"note\">ordinary</span>")]
+        bodies += [ticket.replace("Compliant requirements:", "Unconsumed prefix\nCompliant requirements:"),
+                   ticket + "\nUnknown requirements:\n- Unknown field.",
+                   ticket + "\nCompliant requirements:\n- Duplicate field."]
+        for body in bodies:
+            with self.subTest(body=body):
+                output = subprocess.run(["bash", str(classifier), "--inspect-pr-agent"],
+                    input=body, capture_output=True, text=True, check=True)
+                self.assertEqual(json.loads(output.stdout),
+                                 {"verdict": "escalate", "verification_only": False})
 
     def test_ticket_only_shared_predicate_does_not_require_proof(self):
         raw = copy.deepcopy(self.raw)

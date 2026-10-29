@@ -78,6 +78,8 @@ compliance_values = {"fully compliant", "partially compliant",
 analysis_headings = {"Compliant requirements", "Non-compliant requirements",
                      "Requires further human verification"}
 
+verification_heading = r"^[ \t]*(?:(?:#{1,6}|[-*]|[0-9]+[.)])\s+)?(?:[^\w\s]*\s*)?(?:(?:Review status|Review metadata)\s*[—:-]\s*)?(?:Human\s+verification|Verification\s+status|Verification)\b"
+
 def value_verdict(value, negatives, findings):
     value = " ".join(value.split()).lower().rstrip(".")
     if value in negatives:
@@ -198,36 +200,94 @@ class ReviewText(HTMLParser):
         self.parts.append(data)
 
 
-class TicketSectionText(ReviewText):
-    """Refuse independent HTML headings before ticket commentary is masked."""
-    label_tags = {"strong", "b", "em", "span", "p", "div", "summary"}
-    independent_heading = re.compile(
-        r"^[^\w]*(?:(?:Review status|Review metadata)\s*[—:-]\s*)?"
-        r"(?:Security\s+concerns|(?:Human\s+)?verification(?:\s+status)?|"
-        r"Requires\s+further\s+human\s+verification|"
-        r"Recommended focus areas for review|Key issues to review)\b", re.I)
+def independent_ticket_control(text):
+    """Use the independent verification grammar and known reviewer labels."""
+    text = re.sub(r"[*_]", "", text)
+    return bool(re.match(verification_heading, text, re.I) or re.match(
+        r"^[ \t]*(?:(?:[-*]|[0-9]+[.)])\s+)?[^\w]*"
+        r"(?:Security concerns|Recommended focus areas for review|Key issues to review)\b", text, re.I))
+
+
+class TicketBulletText(HTMLParser):
+    """Positive inline grammar for one complete requirement bullet line."""
+    inline_tags = {"em", "strong", "b", "span"}
 
     def __init__(self):
         super().__init__()
-        self.open_labels = []
-        self.ambiguous = False
+        self.parts = []
+        self.stack = []
+        self.valid = True
 
     def handle_starttag(self, tag, attrs):
-        if re.fullmatch(r"h[1-6]", tag):
-            self.ambiguous = True
-        ReviewText.handle_starttag(self, tag, attrs)
-        if tag in self.label_tags:
-            self.open_labels.append((tag, len(self.parts)))
+        if tag not in self.inline_tags or attrs:
+            self.valid = False
+        self.stack.append((tag, len(self.parts)))
 
     def handle_endtag(self, tag):
-        if self.open_labels and self.open_labels[-1][0] == tag:
-            _, start = self.open_labels.pop()
-            label = " ".join("".join(self.parts[start:]).split())
-            if self.independent_heading.match(label):
-                self.ambiguous = True
-        # ReviewText.handle_endtag delegates to self.handle_starttag; avoid
-        # reopening a candidate label while retaining its rendering semantics.
-        ReviewText.handle_starttag(self, tag, [])
+        if not self.stack or self.stack[-1][0] != tag:
+            self.valid = False
+            return
+        _, start = self.stack.pop()
+        label = " ".join("".join(self.parts[start:]).split())
+        # Inline emphasis may format prose, never an independent status label.
+        if independent_ticket_control(label):
+            self.valid = False
+
+    def handle_data(self, data):
+        self.parts.append(data)
+
+    def handle_comment(self, data):
+        self.valid = False
+
+    def handle_decl(self, decl):
+        self.valid = False
+
+    def handle_pi(self, data):
+        self.valid = False
+
+
+def valid_ticket_requirements(requirements):
+    """Consume the whole slice: known headers and their complete data lines."""
+    heading = None
+    kind = None
+    seen = set()
+    for source_line in requirements.splitlines():
+        line = source_line.strip()
+        if not line:
+            continue
+        if line in {name + ":" for name in analysis_headings}:
+            if (heading is not None and kind is None) or line in seen:
+                return False
+            heading, kind = line, None
+            seen.add(line)
+            continue
+        if heading is None:
+            return False
+        inline = TicketBulletText()
+        inline.feed(line)
+        text = "".join(inline.parts).strip()
+        if not inline.valid or inline.stack or len(text.splitlines()) != 1:
+            return False
+        normalized = " ".join(text.split()).lower().rstrip(".")
+        if normalized in negative_values:
+            if kind is not None:
+                return False
+            kind = "negative"
+            continue
+        bullet = re.fullmatch(r"(?:[-*]|[0-9]+[.)])[ \t]+(\S.*)", text)
+        if bullet is None or kind == "negative":
+            return False
+        content = bullet.group(1)
+        if (not re.sub(r"[\s*#_`-]", "", content)
+                or re.fullmatch(r"[A-Za-z][A-Za-z -]*:", content)):
+            return False  # An empty field heading is not requirement data.
+        # Use the independent gate grammar, including bullet/number prefixes.
+        if independent_ticket_control(text):
+            return False
+        if re.fullmatch(r"(?:unknown|tbd|unavailable|undetermined|pending|not assessed)[.!?]?", content, re.I):
+            return False
+        kind = "bullets"
+    return heading is not None and kind is not None
 
 
 def visible_review(body):
@@ -308,13 +368,7 @@ def classify(body):
     if ticket:
         section = body[ticket_matches[0].end():]
         section = re.split(r"</td>|^### ", section, maxsplit=1, flags=re.M)[0]
-        # Same-line independent HTML headings cannot be swallowed by the mask.
-        # Parse tags rather than guessing boundaries through quoted attributes.
-        ticket_text = TicketSectionText()
-        ticket_text.feed(section)
-        if ticket_text.ambiguous:
-            return "escalate"
-        tickets = re.findall(r"\*\*(?:\[[^\]\n]+\]\([^\n]*?\)|Untracked ticket) - ([^*\n]+)\*\*([\s\S]*?)(?=\*\*(?:\[|Untracked ticket)|\Z)", section)
+        tickets = re.findall(r"\*\*(?:\[[^\]\n<>]+\]\([^\n<>]*?\)|Untracked ticket) - ([^*\n]+)\*\*([\s\S]*?)(?=\*\*(?:\[|Untracked ticket)|\Z)", section)
         candidates = re.findall(r"^[ \t]*\*\*(?:\[|Untracked ticket)", section, re.M)
         first_ticket = re.search(r"\*\*(?:\[|Untracked ticket)", section)
         if (not tickets or len(tickets) != len(candidates) or first_ticket is None
@@ -324,28 +378,8 @@ def classify(body):
             level = level.strip().lower()
             if level not in compliance_values:
                 return "escalate"
-            # A status heading without its analysis is incomplete.
-            requirement_headers = re.findall(r"^[ \t]*([A-Za-z][A-Za-z -]*):[ \t]*$", requirements, re.M)
-            if not requirement_headers or any(header not in analysis_headings for header in requirement_headers):
+            if not valid_ticket_requirements(requirements):
                 return "escalate"
-            analyses = re.findall(r"(?:Compliant requirements|Non-compliant requirements|Requires further human verification):([\s\S]*?)(?=(?:Compliant requirements|Non-compliant requirements|Requires further human verification):|\Z)", requirements)
-            if not analyses:
-                return "escalate"
-            # Validate the rendered lines, not tag-stripped concatenations:
-            # an HTML break must not hide an independent verification heading.
-            for analysis in analyses:
-                analysis_reader = ReviewText()
-                analysis_reader.feed(analysis)
-                rendered_analysis = "".join(analysis_reader.parts).strip()
-                if not re.sub(r"[\s*#_`-]", "", rendered_analysis):
-                    return "escalate"
-                if " ".join(rendered_analysis.split()).lower().rstrip(".") in negative_values:
-                    continue
-                evidence_lines = [line.strip() for line in rendered_analysis.splitlines() if line.strip()]
-                if not evidence_lines or any(not re.match(r"^(?:[-*]|[0-9]+[.)])[ \t]+\S", line) for line in evidence_lines):
-                    return "escalate"
-                if any(re.fullmatch(r"(?:unknown|tbd|unavailable|undetermined|pending|not assessed)[.!?]?", re.sub(r"^(?:[-*]|[0-9]+[.)])[ \t]+", "", line), re.I) for line in evidence_lines):
-                    return "escalate"
         # Only fully validated ticket commentary is informational (#2064).
         # Keep the surrounding markup and all outside sections for the existing
         # independent verification, security and code checks below.
@@ -358,7 +392,6 @@ def classify(body):
     verification_reader = ReviewText()
     verification_reader.feed(body)
     # Markdown emphasis is presentation; HTMLParser decodes entities once.
-    verification_heading = r"^[ \t]*(?:(?:#{1,6}|[-*]|[0-9]+[.)])\s+)?(?:[^\w\s]*\s*)?(?:(?:Review status|Review metadata)\s*[—:-]\s*)?(?:Human\s+verification|Verification\s+status|Verification)\b"
     def render_emphasis(match):
         text = match.group(2)
         if re.match(verification_heading, text, re.I):
