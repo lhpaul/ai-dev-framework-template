@@ -70,6 +70,34 @@ def fence_spans(source):
     return spans
 
 
+def read_inline_code_span(source, start):
+    """Read the supported one/two-backtick subset without pairing through bad runs."""
+    if start > 0 and source[start - 1] == "\\":
+        raise ValueError("ambiguous escaped backtick")
+    width = len(re.match(r"`+", source[start:]).group())
+    if width not in (1, 2):
+        raise ValueError("unsupported inline delimiter")
+    for run in re.finditer(r"`+", source[start + width:]):
+        if len(run.group()) < width:
+            continue  # A literal single backtick inside a double-delimited span.
+        if len(run.group()) != width:
+            raise ValueError("mismatched inline delimiter")
+        closing = start + width + run.start()
+        content = source[start + width:closing]
+        if (not content or re.search(r"[\r\n\v\f\x85\u2028\u2029]", content)
+                or content.endswith("\\")):
+            raise ValueError("ambiguous inline span")
+        return closing + width, content
+    raise ValueError("unmatched inline delimiter")
+
+
+def inline_code_text(content):
+    """GFM single-line code strips one padding space at both ends, unless all spaces."""
+    if content.startswith(" ") and content.endswith(" ") and content.strip(" "):
+        return content[1:-1]
+    return content
+
+
 def normalize_finding_inline_code(source):
     """Format supported source spans only after proving the whole field boundary.
 
@@ -98,19 +126,14 @@ def normalize_finding_inline_code(source):
         index = 0
         while index < len(line):
             if line[index] == "`":
-                if (index > 0 and line[index - 1] == "\\") or line.startswith("``", index):
-                    return source
-                end = line.find("`", index + 1)
-                if end < 0:
-                    return source
-                content = line[index + 1:end]
-                if (not content or re.search(r"[\r\n\v\f\x85\u2028\u2029]", content)
-                        or content.endswith("\\") or line.startswith("``", end)):
+                try:
+                    end, content = read_inline_code_span(line, index)
+                except ValueError:
                     return source
                 if re.search(r"<\s*/", content):
-                    spans.append((offset + index, offset + end + 1,
-                                  "<code>" + escape(content) + "</code>"))
-                index = end + 1
+                    spans.append((offset + index, offset + end,
+                                  "<code>" + escape(inline_code_text(content)).replace("`", "&#96;") + "</code>"))
+                index = end
                 continue
             if (line[index] == "<"
                     and re.match(r"<\s*(?:/?\s*[A-Za-z]|!|\?|/?\s*$)", line[index:])):
@@ -141,7 +164,7 @@ def normalize_review_render_data(output_data):
 
 
 def mask_review_code(source, preserve_offsets=True):
-    """Exclude simple single-line code and closed fences; reject ambiguity."""
+    """Exclude supported single-line code and closed fences; reject ambiguity."""
     parts = []
     index = 0
     html_depth = []
@@ -238,17 +261,7 @@ def mask_review_code(source, preserve_offsets=True):
                     or html_block not in inline_tags | {None}
                     or (in_html and "table" not in html_depth and not history_markdown)):
                 raise ValueError("ambiguous backticks in HTML")
-            if index > 0 and source[index - 1] == "\\":
-                raise ValueError("ambiguous escaped backtick")
-            if source.startswith("``", index):
-                raise ValueError("unsupported inline delimiter")
-            end = source.find("`", index + 1)
-            if end < 0:
-                raise ValueError("unmatched inline delimiter")
-            content = source[index + 1:end]
-            if (not content or re.search(r"[\r\n\v\f\x85\u2028\u2029]", content)
-                    or content.endswith("\\") or source.startswith("``", end)):
-                raise ValueError("ambiguous inline span")
+            end, content = read_inline_code_span(source, index)
             # Complete HTML-only code is literal, including tag fragments.
             # A quoted comment opener is literal too, even in an expression.
             # Mixed prose/HTML still cannot swallow closing tags, declarations
@@ -256,8 +269,8 @@ def mask_review_code(source, preserve_offsets=True):
             if (in_html and not history_markdown and not html_markup_only(content)
                     and re.search(r"<\s*/|<!(?!--)|<\?", content)):
                 raise ValueError("inline span crosses HTML markup")
-            parts.append(masked(index, end + 1))
-            index = end + 1
+            parts.append(masked(index, end))
+            index = end
             continue
         if html.match(source, index):
             end = index + 1

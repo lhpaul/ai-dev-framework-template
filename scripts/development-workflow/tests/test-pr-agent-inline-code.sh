@@ -15,16 +15,20 @@ if [ "${1:-}" != --image-smoke ]; then
   exit
 fi
 IMAGE="$(python3 "$REPO_ROOT/scripts/development-workflow/pr-agent-runtime.py" --image)"
+SYNTHETIC_TMP="$(mktemp -d)"
+trap 'rm -rf "$SYNTHETIC_TMP"' EXIT
+# Public predecessor source snapshot; never copy workstation configuration.
+BOOTSTRAP_REVISION=e0d16ef7e4ea48e351a071f872b1caf2bd0515cc
+git -C "$REPO_ROOT" show "$BOOTSTRAP_REVISION:scripts/development-workflow/pr-agent-runtime.py" > "$SYNTHETIC_TMP/runtime-base.py"
 run_image() {
-  docker run --rm --network none --entrypoint python \
+  docker run --rm --interactive --network none --entrypoint python \
     --mount "type=bind,src=$REPO_ROOT,dst=/workspace,readonly" \
     --env PR_AGENT_IMAGE_SMOKE=1 --env PYTHONPATH=/app \
     "$IMAGE" /workspace/scripts/development-workflow/tests/test_pr_agent_inline_code.py "$@"
 }
 run_image
-SYNTHETIC_TMP="$(mktemp -d)"
-trap 'rm -rf "$SYNTHETIC_TMP"' EXIT
 run_image --emit-records > "$SYNTHETIC_TMP/records.json"
+run_image --emit-bootstrap-records < "$SYNTHETIC_TMP/runtime-base.py" > "$SYNTHETIC_TMP/bootstrap.json"
 # Python drives actual host entrypoints; it does not reproduce classifier policy.
 python3 - "$REPO_ROOT" "$SYNTHETIC_TMP" <<'PY_HOST'
 import json
@@ -33,7 +37,8 @@ import re
 import subprocess
 import sys
 root, scratch = map(Path, sys.argv[1:])
-records = json.loads((scratch / 'records.json').read_text())
+records = json.loads((scratch / 'records.json').read_text()) + json.loads((scratch / 'bootstrap.json').read_text())
+assert records and any(record['d15'] for record in records)
 for index, record in enumerate(records):
     body = record['body']
     def consumer(flag):
@@ -54,6 +59,7 @@ for index, record in enumerate(records):
         print('PASS:', record['name'], observed)
 PY_HOST
 HARNESS_MODE=1 source "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh"
+[ -f "$SYNTHETIC_TMP/body-0" ] || { echo 'FAIL: no D15 publication records' >&2; exit 1; }
 for BODY_FILE in "$SYNTHETIC_TMP"/body-*; do
   RECORD_INDEX="${BODY_FILE##*body-}"
   pr_agent_summary_marker_names_head "$(cat "$BODY_FILE")" aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa

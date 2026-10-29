@@ -5,7 +5,7 @@ import importlib.util
 import os
 import json
 from html.parser import HTMLParser
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 from unittest.mock import Mock, patch
 from pathlib import Path
 import sys
@@ -66,9 +66,9 @@ class SourceTests(unittest.TestCase):
         self.assertTrue(result.startswith('雪 '))
 
     def test_unsupported_delimiters(self):
-        for text in ('\\`' + EXPRESSION + '`', '``' + EXPRESSION + '``',
+        for text in ('\\`' + EXPRESSION + '`', '``' + EXPRESSION + '`',
                      '`' + EXPRESSION, '`first\n</td>`', '`</td>\\`',
-                     '`ok` ``unsupported`` `' + EXPRESSION + '`', '`</td>\u2028x`'):
+                     '`ok` ``unsupported` `' + EXPRESSION + '`', '`</td>\u2028x`'):
             with self.subTest(text=text):
                 self.assertEqual(text, runtime.normalize_finding_inline_code(text))
 
@@ -102,6 +102,42 @@ class SourceTests(unittest.TestCase):
         self.assertIn('<code>', result['review']['key_issues_to_review'][0]['issue_content'])
 
 
+    def test_double_backticks(self):
+        for source, decoded in (
+                ('``f("</node>")``', 'f("</node>")'),
+                ('`` `f("</node>")` ``', '`f("</node>")`'),
+                ('``  x("</node>")  ``', ' x("</node>") ')):
+            with self.subTest(source=source):
+                result = runtime.normalize_finding_inline_code(source)
+                self.assertTrue(result.startswith('<code>'), result)
+                from html import unescape
+                self.assertEqual(decoded, unescape(result.removeprefix('<code>').removesuffix('</code>')))
+        mixed = TEXT + ' beside `` `value` ``.'
+        self.assertIn('<code>', runtime.normalize_finding_inline_code(mixed))
+        for source in ('``helper()``', '`` `value` ``', '``   ``', '``a <node> b``'):
+            self.assertEqual(source, runtime.normalize_finding_inline_code(source))
+            body = '<table><tr><td><details><summary>Inspect ' + source + '</summary></details></td></tr></table>'
+            masked = runtime.mask_review_code(body)
+            self.assertEqual(len(body), len(masked))
+            self.assertNotIn('`', masked)
+
+    def test_double_negative_boundaries(self):
+        for source in ('``unclosed', '``x`', '`x``', '``x```', '``two\nlines``',
+                       '\\``escaped``', '``trailing\\``', '``first\u2028last``'):
+            with self.subTest(source=source):
+                self.assertEqual(source, runtime.normalize_finding_inline_code(source))
+                with self.assertRaises(ValueError):
+                    runtime.mask_review_code('<table><tr><td>' + source + '</td></tr></table>')
+        for source in ('<details><summary>Example ``cross </summary> boundary``</details>',
+                       '``f("</node>")`` <div>later</div>'):
+            self.assertEqual(source, runtime.normalize_finding_inline_code(source))
+            with self.assertRaises(ValueError):
+                runtime.mask_review_code('<table><tr><td>' + source + '</td></tr></table>')
+        for source in ('<div>``helper()``</div>', '<span title="``bad``">text</span>'):
+            with self.assertRaises(ValueError):
+                runtime.mask_review_code(source)
+
+
 def provider():
     from pr_agent.git_providers.github_provider import GithubProvider
     instance = GithubProvider.__new__(GithubProvider)
@@ -122,9 +158,9 @@ def provider():
     return instance
 
 
-def snapshot():
+def snapshot(text=TEXT):
     return {'schema_version': 1, 'last_run': {'head_sha': 'a' * 40, 'complete': True, 'kind': 'full'},
-            'findings': [{'finding_id': 'fabricated-1', 'path': 'src/example.py', 'body': TEXT, 'state': 'ACTIVE'}]}
+            'findings': [{'finding_id': 'fabricated-1', 'path': 'src/example.py', 'body': text, 'state': 'ACTIVE'}]}
 
 
 def publication(text=TEXT, header="Possible Issue", security="No", mode="fresh", extra_review=None):
@@ -133,7 +169,7 @@ def publication(text=TEXT, header="Possible Issue", security="No", mode="fresh",
     source = data(text, header, security)
     source["review"].update(extra_review or {})
     before = copy.deepcopy(source)
-    state = snapshot()
+    state = snapshot(text)
     rendered = reviewer.convert_to_markdown_v2(source)
     generated = reviewer.append_review_state(rendered, state)
     instance = provider()
@@ -152,7 +188,7 @@ def publication(text=TEXT, header="Possible Issue", security="No", mode="fresh",
     assert instance.pr.get_issue_comment.call_count == 2
     import pr_agent.algo.review_finding_state as state_api
     assert state_api.parse_review_state(readback).state == state
-    assert state == snapshot()
+    assert state == snapshot(text)
     return {'body': readback, 'head': 'a' * 40, 'creates': 1, 'readbacks': 2}
 
 
@@ -182,7 +218,7 @@ class ProducerTests(unittest.TestCase):
         runtime.install_hooks()
         source = data(text, header, security)
         before = copy.deepcopy(source)
-        state = snapshot()
+        state = snapshot(text)
         state_before = copy.deepcopy(state)
         body = self.reviewer.convert_to_markdown_v2(source)
         if with_state:
@@ -195,7 +231,7 @@ class ProducerTests(unittest.TestCase):
         return body
 
     def test_publication_consumers(self):
-        for text in (TEXT, 'Consider `helper()` here.'):
+        for text in (TEXT, 'Consider `helper()` here.', 'Inspect `` `f("</node>")` `` and ``helper()``.'):
             generated = self.generated(text)
             for mode in ('fresh', 'edit', 'persistent'):
                 with self.subTest(text=text, mode=mode):
@@ -212,10 +248,10 @@ class ProducerTests(unittest.TestCase):
                     old.edit.assert_not_called()
                     outbound = instance.pr.create_issue_comment.call_args.args[0]
                     self.assertEqual(outbound, instance.pr.get_issue_comment(response.id).body)
-                    self.assertEqual(snapshot(), self.state_api.parse_review_state(outbound).state)
+                    self.assertEqual(snapshot(text), self.state_api.parse_review_state(outbound).state)
                     self.assertIn('Possible Issue', outbound)
                     runtime.mask_review_code(outbound)
-                    self.assertIn('<code>' if text == TEXT else '`helper()`', outbound)
+                    self.assertIn('`helper()`' if text == 'Consider `helper()` here.' else '<code>', outbound)
 
     def test_structural_boundaries(self):
         negatives = ('<details><summary>Example `cross </summary> boundary`</details>',
@@ -367,7 +403,7 @@ class ProducerTests(unittest.TestCase):
 def emit_records():
     import pr_agent.tools.pr_reviewer as reviewer
     records = []
-    for text in (TEXT, 'Consider `helper()` here.'):
+    for text in (TEXT, 'Consider `helper()` here.', 'Inspect `` `f("</node>")` `` and ``helper()``.'):
         for mode in ('fresh', 'edit', 'persistent'):
             records.append(dict(publication(text, mode=mode), name=mode + text, verdict='clean', verification_only=False,
                                 focus='Possible Issue', d15=True))
@@ -387,6 +423,57 @@ def emit_records():
         records.append({'name': 'renderer-source-negative', 'body': reviewer.convert_to_markdown_v2(data(text)),
                         'verdict': 'escalate', 'verification_only': False, 'd15': False})
     records.append({'name': 'composed-negative', 'body': '## PR Reviewer Guide 🔍\n<table><tr><td><details><summary>Example `cross </summary> boundary`</details></td></tr></table>',
+                    'verdict': 'escalate', 'verification_only': False, 'd15': False})
+    print(json.dumps(records))
+
+
+def emit_bootstrap_records():
+    # Separate process: only this untouched public predecessor installs hooks.
+    global runtime
+    predecessor = ModuleType('bootstrap_predecessor')
+    sys.modules[predecessor.__name__] = predecessor
+    source = sys.stdin.read()
+    assert source.startswith('#!/usr/bin/env python3')
+    exec(compile(source, 'public-bootstrap-predecessor.py', 'exec'), predecessor.__dict__)
+    runtime = predecessor
+    text = 'Inspect `` `widget` `` and ``a <node> b`` and ``   ``.'
+    records = []
+    for mode in ('fresh', 'edit', 'persistent'):
+        record = publication(text, mode=mode)
+        assert text in record['body']  # The old producer did not normalize it.
+        try:
+            predecessor.mask_review_code(record['body'])
+        except ValueError as error:
+            assert str(error) == 'unsupported inline delimiter'
+        else:
+            raise AssertionError('predecessor unexpectedly accepts the bootstrap fixture')
+        records.append(dict(record, name='bootstrap-' + mode, verdict='clean', verification_only=False,
+                            focus='Possible Issue', d15=True))
+    for name, header, security, verdict, verification in (
+            ('security', 'Possible Issue', 'Yes', 'needs_fixes', False),
+            ('verification', 'Possible Issue', 'No', 'escalate', True),
+            ('hard-focus', 'Must fix', 'No', 'needs_fixes', False)):
+        extra = {}
+        if name == 'verification':
+            extra['ticket_compliance_check'] = [{
+                'ticket_url': 'https://example.invalid/issues/fabricated',
+                'requires_further_human_verification': '- Confirm the fabricated acceptance scenario.'}]
+        record = publication(text, header=header, security=security, extra_review=extra)
+        records.append(dict(record, name='bootstrap-' + name, verdict=verdict, verification_only=verification,
+                            focus=header, d15=True))
+    # Do not allow an old-producer cross-boundary span merely because doubles are recognized.
+    import pr_agent.tools.pr_reviewer as reviewer
+    negative = '<details><summary>Example ``cross </summary> boundary``</details>'
+    records.append({'name': 'bootstrap-structural-negative', 'body': reviewer.convert_to_markdown_v2(data(negative)),
+                    'verdict': 'escalate', 'verification_only': False, 'd15': False})
+    # Old publication fitting diagnostics are not a successful bootstrap result.
+    generated = reviewer.append_review_state(reviewer.convert_to_markdown_v2(data(text * 100)), snapshot(text * 100))
+    instance = provider()
+    instance.max_comment_chars = 1500
+    response = instance.publish_comment(generated)
+    diagnostic = instance.pr.get_issue_comment(response.id).body
+    assert len(diagnostic) <= 1500 and 'verification' in diagnostic.lower()
+    records.append({'name': 'bootstrap-limit-diagnostic', 'body': diagnostic,
                     'verdict': 'escalate', 'verification_only': False, 'd15': False})
     print(json.dumps(records))
 
@@ -412,6 +499,8 @@ def probe_compatibility(mode):
 if __name__ == '__main__':
     if len(sys.argv) == 3 and sys.argv[1] == '--probe-compatibility':
         probe_compatibility(sys.argv[2])
+    elif sys.argv[1:] == ['--emit-bootstrap-records']:
+        emit_bootstrap_records()
     elif sys.argv[1:] == ['--emit-records']:
         emit_records()
     else:

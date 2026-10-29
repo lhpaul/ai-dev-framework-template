@@ -444,7 +444,7 @@ class InlineProducerHTMLTests(unittest.TestCase):
         self.assertNotEqual("clean", classify(body))
 
     def test_unsupported_and_ambiguous_inputs_still_escalate(self):
-        for content in ("`unclosed", "``double``", "`two\nlines`", "`trailing\\`",
+        for content in ("`unclosed", "``mismatched`", "`two\nlines`", "`trailing\\`",
                         "\\`escaped`", "`prose </summary>`",
                         "`</summary> live prose <strong>Must fix</strong>`", "<div>`helper()`</div>",
                         '<a title="`helper()`">text</a>',
@@ -464,7 +464,7 @@ class InlineProducerHTMLTests(unittest.TestCase):
                             history.replace("</summary>\n\n", "</summary>\n", 1)):
             source = unsupported if unsupported == history else review() + "\n" + unsupported
             self.assertEqual("escalate", classify(source))
-        for bad in ("`unclosed", "``double``", "`two\nlines`", '<span title="`bad`">text</span>'):
+        for bad in ("`unclosed", "``mismatched`", "`two\nlines`", '<span title="`bad`">text</span>'):
             self.assertEqual("escalate", classify(review() + "\n" + history.replace(
                 "Example `</summary>` and `<?php` and `<!-- literal -->`.", bad)))
         # History recognition never extends to a later, unrelated raw block.
