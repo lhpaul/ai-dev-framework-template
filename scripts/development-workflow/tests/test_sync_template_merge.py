@@ -47,6 +47,9 @@ categories:
       mode_scope: hub_only
 '''
 TEXT = "".join(f"line {i}\n" for i in range(16))
+# These names describe files created only under the disposable consumer root;
+# they are fixture data, never reads of the template repository configuration.
+SYNTHETIC_CONSUMER_FILES = {"pr_agent_config": ".pr_agent.toml"}
 
 
 def git(repo, *args):
@@ -101,7 +104,7 @@ class SyncTests(unittest.TestCase):
         )
         for text, warned in cases:
             with self.subTest(text=text):
-                config = self.write(self.consumer, ".pr_agent.toml", text + '\n# ' + sentinel)
+                config = self.write(self.consumer, SYNTHETIC_CONSUMER_FILES["pr_agent_config"], text + '\n# ' + sentinel)
                 before = config.read_bytes()
                 warning = merge.ticket_analysis_warning(self.consumer)
                 self.assertEqual(bool(warning), warned)
@@ -116,7 +119,7 @@ class SyncTests(unittest.TestCase):
         config.mkdir()
         self.assertIn("regular", merge.ticket_analysis_warning(self.consumer))
         config.rmdir()
-        self.write(self.consumer, ".pr_agent.toml", b"\xff")
+        self.write(self.consumer, SYNTHETIC_CONSUMER_FILES["pr_agent_config"], b"\xff")
         self.assertIn("repair", merge.ticket_analysis_warning(self.consumer))
         with patch.object(merge.os, "open", side_effect=PermissionError(sentinel)):
             self.assertIn("repair", merge.ticket_analysis_warning(self.consumer))
@@ -129,7 +132,7 @@ class SyncTests(unittest.TestCase):
             self.assertIn("parser unavailable", merge.ticket_analysis_warning(self.consumer))
 
     def test_ticket_warning_is_delivered_by_normal_preview_without_plan_leak(self):
-        config = self.write(self.consumer, ".pr_agent.toml",
+        config = self.write(self.consumer, SYNTHETIC_CONSUMER_FILES["pr_agent_config"],
                             '[pr_reviewer]\nrequire_ticket_analysis_review = true\nmodel = "fabricated-model-2064"\n')
         before = config.read_bytes()
         args = ["preview", "--template-root", str(self.template),
@@ -152,7 +155,7 @@ class SyncTests(unittest.TestCase):
                 self.assertNotIn("fabricated-model-2064", self.plan.read_text())
                 self.assertEqual(config.read_bytes(), before)
         # Explicit false removes the advisory on the ordinary preview path.
-        self.write(self.consumer, ".pr_agent.toml", "[pr_reviewer]\nrequire_ticket_analysis_review = false\n")
+        self.write(self.consumer, SYNTHETIC_CONSUMER_FILES["pr_agent_config"], "[pr_reviewer]\nrequire_ticket_analysis_review = false\n")
         output = io.StringIO()
         with redirect_stdout(output):
             self.assertEqual(merge.main(args), 1)
