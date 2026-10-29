@@ -81,6 +81,8 @@ class SourceTests(unittest.TestCase):
             raw_fenced = opener + '\n`</td>`\n' + closer + '\n' + TEXT
             self.assertEqual(raw_fenced, runtime.normalize_finding_inline_code(raw_fenced))
         self.assertEqual('```\n' + TEXT, runtime.normalize_finding_inline_code('```\n' + TEXT))
+        double_fence = '````python\n``literal``\n`````\n'
+        self.assertTrue(runtime.normalize_finding_inline_code(double_fence + TEXT).startswith(double_fence))
 
     def test_input_shapes(self):
         for source in (None, [], {}, {'review': None}, {'review': []},
@@ -424,6 +426,16 @@ def emit_records():
                         'verdict': 'escalate', 'verification_only': False, 'd15': False})
     records.append({'name': 'composed-negative', 'body': '## PR Reviewer Guide 🔍\n<table><tr><td><details><summary>Example `cross </summary> boundary`</details></td></tr></table>',
                     'verdict': 'escalate', 'verification_only': False, 'd15': False})
+    for text in ('<details><summary>Example ``cross </summary> boundary``</details>',
+                 '``f("</node>")`` <div>later</div>', '``unclosed', '``x`', '`x``',
+                 '``x```', '``two\nlines``', '\\``escaped``', '``trailing\\``'):
+        copied = runtime.normalize_review_render_data(data(text))
+        assert copied['review']['key_issues_to_review'][0]['issue_content'] == text
+        records.append({'name': 'double-renderer-negative', 'body': reviewer.convert_to_markdown_v2(data(text)),
+                        'verdict': 'escalate', 'verification_only': False, 'd15': False})
+    records.append({'name': 'double-quoted-verdict-negative',
+                    'body': '## PR Reviewer Guide 🔍\n\n``No major issues detected``',
+                    'verdict': 'escalate', 'verification_only': False, 'd15': False})
     print(json.dumps(records))
 
 
@@ -461,6 +473,28 @@ def emit_bootstrap_records():
         record = publication(text, header=header, security=security, extra_review=extra)
         records.append(dict(record, name='bootstrap-' + name, verdict=verdict, verification_only=verification,
                             focus=header, d15=True))
+    import pr_agent.tools.pr_reviewer as reviewer
+    import pr_agent.algo.review_finding_state as state_api
+    history = snapshot(text)
+    history['findings'].append({'finding_id': 'fabricated-resolved', 'path': 'src/example.py',
+                                'body': 'Read `` `archived` ``.', 'state': 'RESOLVED'})
+    generated = reviewer.append_review_state(reviewer.convert_to_markdown_v2(data(text)), history)
+    instance = provider()
+    response = instance.publish_comment(generated)
+    history_readback = instance.pr.get_issue_comment(response.id).body
+    assert state_api.parse_review_state(history_readback).state == history
+    records.append({'name': 'bootstrap-resolved-history', 'body': history_readback, 'head': 'a' * 40,
+                    'creates': 1, 'readbacks': 2, 'verdict': 'clean', 'verification_only': False,
+                    'focus': 'Possible Issue', 'd15': True})
+    # Existing publication identity failures stay pre-create failures in the old runtime.
+    instance = provider()
+    instance.last_commit_id.sha = None
+    try:
+        instance.publish_comment(generated)
+    except RuntimeError:
+        assert instance.pr.create_issue_comment.call_count == 0
+    else:
+        raise AssertionError('predecessor published without reviewed identity')
     # Do not allow an old-producer cross-boundary span merely because doubles are recognized.
     import pr_agent.tools.pr_reviewer as reviewer
     negative = '<details><summary>Example ``cross </summary> boundary``</details>'
