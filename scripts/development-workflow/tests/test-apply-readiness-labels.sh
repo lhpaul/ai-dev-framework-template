@@ -1962,8 +1962,17 @@ for _2061_case in verified unverified edited forged security outside missing; do
   [ "$_2061_case" != forged ] || _2061_login=outsider
   MOCK_ISSUE_COMMENTS="$(jq -cn --argjson comments "$_2061_comments" --argjson summary "$(_ledger_comment "$_2061_login" NONE 30 "$_2061_summary")" '$comments + $summary')"
   [ "$_2061_case" != edited ] || MOCK_ISSUE_COMMENTS="$(printf '%s' "$MOCK_ISSUE_COMMENTS" | jq '.[1].body += " amended"')"
+  if [ "$_2061_case" = missing ]; then
+    MOCK_ISSUE_COMMENTS="$_2061_comments"
+    run_test "2064_missing_input_has_no_ledger" 0 \
+      "$(printf '%s' "$MOCK_ISSUE_COMMENTS" | jq '[.[] | select(.body | contains("reviewer-loop-history:v1"))] | length')"
+  fi
+  result=""
   result="$(run_helper_platform "$_codex_config")"
-  [ "$_2061_case" != missing ] || MOCK_ISSUE_COMMENTS="$_2061_comments"
+  if [ "$_2061_case" = missing ]; then
+    run_test "2064_missing_fresh_comment_read" observed \
+      "$(if grep -Fq 'issues/42/comments' "$_CALL_LOG"; then printf observed; else printf absent; fi)"
+  fi
   if [ "$_2061_case" != security ] && [ "$_2061_case" != outside ]; then
     run_test "2064_${_2061_case}_ticket_labels" labeled "$(field "$result" RESULT)"
   else
