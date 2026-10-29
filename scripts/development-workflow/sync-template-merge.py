@@ -531,6 +531,8 @@ def ticket_analysis_warning(consumer_root):
             return "PR-Agent ticket-setting inspection requires a regular, non-symlink file. " + guidance
         # NOFOLLOW closes the lstat/open symlink race; NONBLOCK prevents a
         # replaced FIFO from hanging preview before fstat rejects its type.
+        if not hasattr(os, "O_NOFOLLOW") or not hasattr(os, "O_NONBLOCK"):
+            return "PR-Agent safe ticket-setting file inspection unavailable. " + guidance
         descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
         with os.fdopen(descriptor, "rb") as config:
             if not stat.S_ISREG(os.fstat(config.fileno()).st_mode):
@@ -542,7 +544,7 @@ def ticket_analysis_warning(consumer_root):
         return guidance
     except FileNotFoundError:
         return guidance
-    except (OSError, ValueError, UnicodeError):
+    except (OSError, ValueError, UnicodeError, RecursionError):
         return "PR-Agent ticket-setting inspection failed; repair .pr_agent.toml. " + guidance
 
 

@@ -97,6 +97,7 @@ class SyncTests(unittest.TestCase):
             ('[pr_reviewer]\nrequire_ticket_analysis_review = ""\n', True),
             ("[pr_reviewer]\nrequire_ticket_analysis_review =\n", True),
             ("[pr_reviewer]\nrequire_ticket_analysis_review = false\nrequire_ticket_analysis_review = true\n", True),
+            ("[pr_reviewer]\nvalue = " + "[" * 1100 + "0" + "]" * 1100, True),
         )
         for text, warned in cases:
             with self.subTest(text=text):
@@ -120,6 +121,10 @@ class SyncTests(unittest.TestCase):
         with patch.object(merge.os, "open", side_effect=PermissionError(sentinel)):
             self.assertIn("repair", merge.ticket_analysis_warning(self.consumer))
             self.assertNotIn(sentinel, merge.ticket_analysis_warning(self.consumer))
+        with patch.object(merge.os, "O_NOFOLLOW", create=True):
+            # Missing platform primitives must not become a runtime requirement.
+            del merge.os.O_NOFOLLOW
+            self.assertIn("inspection unavailable", merge.ticket_analysis_warning(self.consumer))
         with patch.object(merge, "tomllib", None):
             self.assertIn("parser unavailable", merge.ticket_analysis_warning(self.consumer))
 
