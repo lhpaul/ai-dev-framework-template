@@ -84,6 +84,75 @@ class SyncTests(unittest.TestCase):
         git(root, "commit", "-qm", "fixture", "--allow-empty")
         return git(root, "rev-parse", "HEAD")
 
+    def test_ticket_setting_semantics_and_safe_diagnostics(self):
+        sentinel = "fabricated-credential-2064"
+        cases = (
+            ("[pr_reviewer]\nrequire_ticket_analysis_review = false\n", False),
+            ("pr_reviewer.require_ticket_analysis_review = false\n", False),
+            ("[pr_reviewer]\nrequire_ticket_analysis_review = true\n", True),
+            ("[pr_reviewer]\n", True),
+            ("[pr_reviewer]\n# require_ticket_analysis_review = false\n", True),
+            ("[other]\nrequire_ticket_analysis_review = false\n", True),
+            ('[pr_reviewer]\nrequire_ticket_analysis_review = "false"\n', True),
+            ('[pr_reviewer]\nrequire_ticket_analysis_review = ""\n', True),
+            ("[pr_reviewer]\nrequire_ticket_analysis_review =\n", True),
+            ("[pr_reviewer]\nrequire_ticket_analysis_review = false\nrequire_ticket_analysis_review = true\n", True),
+        )
+        for text, warned in cases:
+            with self.subTest(text=text):
+                config = self.write(self.consumer, ".pr_agent.toml", text + '\n# ' + sentinel)
+                before = config.read_bytes()
+                warning = merge.ticket_analysis_warning(self.consumer)
+                self.assertEqual(bool(warning), warned)
+                self.assertEqual(config.read_bytes(), before)
+                self.assertNotIn(sentinel, warning)
+                self.assertNotIn(str(self.consumer), warning)
+        config.unlink()
+        self.assertTrue(merge.ticket_analysis_warning(self.consumer))
+        config.symlink_to(self.template / "sync-manifest.yaml")
+        self.assertIn("non-symlink", merge.ticket_analysis_warning(self.consumer))
+        config.unlink()
+        config.mkdir()
+        self.assertIn("regular", merge.ticket_analysis_warning(self.consumer))
+        config.rmdir()
+        self.write(self.consumer, ".pr_agent.toml", b"\xff")
+        self.assertIn("repair", merge.ticket_analysis_warning(self.consumer))
+        with patch.object(merge.os, "open", side_effect=PermissionError(sentinel)):
+            self.assertIn("repair", merge.ticket_analysis_warning(self.consumer))
+            self.assertNotIn(sentinel, merge.ticket_analysis_warning(self.consumer))
+        with patch.object(merge, "tomllib", None):
+            self.assertIn("parser unavailable", merge.ticket_analysis_warning(self.consumer))
+
+    def test_ticket_warning_is_delivered_by_normal_preview_without_plan_leak(self):
+        config = self.write(self.consumer, ".pr_agent.toml",
+                            '[pr_reviewer]\nrequire_ticket_analysis_review = true\nmodel = "fabricated-model-2064"\n')
+        before = config.read_bytes()
+        args = ["preview", "--template-root", str(self.template),
+                "--consumer-root", str(self.consumer), "--template-ref", self.incoming,
+                "--template-id", "fixture/template", "--role", "single_repo",
+                "--base-ref", self.base, "--base-source", "template", "--plan", str(self.plan)]
+        for blocked in (False, True):
+            with self.subTest(blocked=blocked):
+                if blocked:
+                    self.write(self.template, "shared/a.md", "incoming conflict\n")
+                    self.incoming = self.save(self.template)
+                    self.write(self.consumer, "shared/a.md", "consumer conflict\n")
+                    args[args.index("--template-ref") + 1] = self.incoming
+                output = io.StringIO()
+                with redirect_stdout(output):
+                    status = merge.main(args)
+                self.assertEqual(status, 1 if blocked else 0)
+                self.assertIn("WARNING=PR-Agent", output.getvalue())
+                self.assertNotIn("fabricated-model-2064", output.getvalue())
+                self.assertNotIn("fabricated-model-2064", self.plan.read_text())
+                self.assertEqual(config.read_bytes(), before)
+        # Explicit false removes the advisory on the ordinary preview path.
+        self.write(self.consumer, ".pr_agent.toml", "[pr_reviewer]\nrequire_ticket_analysis_review = false\n")
+        output = io.StringIO()
+        with redirect_stdout(output):
+            self.assertEqual(merge.main(args), 1)
+        self.assertNotIn("WARNING=PR-Agent", output.getvalue())
+
     def preview(self, known=True, role="single_repo", declines=(), source="template", **kwargs):
         inputs = dict(template_root=str(self.template), consumer_root=str(self.consumer),
                       template_ref=self.incoming, template_id="fixture/template", role=role,
