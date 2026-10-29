@@ -4,7 +4,6 @@ import copy
 import importlib.util
 import os
 import json
-from html import unescape
 from html.parser import HTMLParser
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
@@ -34,15 +33,14 @@ class SourceTests(unittest.TestCase):
         self.assertEqual(result, runtime.normalize_finding_inline_code(result))
 
     def test_ordinary_unchanged(self):
-        for text in ('Use `helper()` here.', '`&lt;/td&gt;`', 'ordinary prose'):
+        for text in ('', ' \t\n', 'Use `helper()` here.', '`&lt;/td&gt;`', 'ordinary prose'):
             self.assertEqual(text, runtime.normalize_finding_inline_code(text))
 
     def test_structural_boundaries(self):
         for markup in ('<details><summary>Example `cross </summary> boundary`</details>',
                        TEXT + '<div>later</div>', '<!-- comment -->' + TEXT,
-                       '<!DOCTYPE html>' + TEXT, '<?synthetic?>' + TEXT):
+                       '<!DOCTYPE html>' + TEXT, '<?synthetic?>' + TEXT, TEXT + '<broken', TEXT + '<!'):
             self.assertEqual(markup, runtime.normalize_finding_inline_code(markup))
-
 
     def test_boundary_variants(self):
         class CodeText(HTMLParser):

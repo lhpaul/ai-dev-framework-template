@@ -102,6 +102,16 @@ to execute from `pr.base.sha`. Trusted-base promotion is a separate authorized
 step. The synthetic image/host test neither promotes that base nor changes the
 workflow, its permissions, credentials or model configuration.
 
+Before rendering GFM finding cards, the runtime copies structured finding data
+and formats supported single-line, single-backtick `issue_content` spans that
+contain literal closing-tag-like syntax as escaped HTML code. The decoded code
+text stays identical; ordinary code and non-GFM rendering stay unchanged. The
+original findings and review state are untouched. Any raw HTML outside supported
+spans preserves the entire source field, even when that HTML follows an eligible
+span. Unsupported delimiters and fenced examples are never repaired. Renderer
+signature and imported-alias identity are checked before installing any hook.
+The consumer ambiguity guard, severity and independent blocker gates are unchanged.
+
 The patch defers the review composer's size cap and fits the final GitHub
 create/edit body after persistent-update identity and current-head metadata.
 Final review records include a visible D15 commit link from the provider's reviewed context before fitting. Existing comments remain unchanged; persistent-review and review-edit paths create new issue-comment records instead. Repository/commit identity, any retained state head, live-head drift and independent exact-ID/body readback are checked; failed or uncertain publication is not replayed. Complete fitted review content otherwise retains the existing publication-limit rules.
@@ -127,16 +137,18 @@ Run the publication regressions and real-image compatibility smoke test:
 ```bash
 bash scripts/development-workflow/tests/test-pr-agent-runtime.sh
 bash scripts/development-workflow/tests/test-pr-agent-runtime.sh --image-smoke
+bash scripts/development-workflow/tests/test-pr-agent-inline-code.sh
+bash scripts/development-workflow/tests/test-pr-agent-inline-code.sh --image-smoke
 ```
 
-The first command uses the standard library; the second uses the launcher's
+Default modes use the standard library; `--image-smoke` modes use the launcher's
 pinned image with networking disabled and mocked GitHub publication. The image
 emits a synthetic review record; the host then executes the original D15
 predicate using its existing tools. A different SHA and removal of the visible
 marker (while retaining hidden state) must both be refused. No tool installation
 or weaker substitute predicate is used. It checks
 the actual parser/renderer, composer bindings and final fresh/persistent
-publication. Neither command starts a live review or needs API credentials.
+publication. None of these commands starts a live review or needs API credentials.
 An unsupported hook signature fails before the runner starts, without an
 unpatched fallback. To upgrade the image, inspect its producer helpers and
 publication consumers, update the launcher's image reference deliberately,

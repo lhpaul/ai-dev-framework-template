@@ -57,13 +57,27 @@ Follow the plan's Reversal Policy only in a separately authorized rollback PR; t
 
 ## Assertions Checklist
 
-- [ ] AC1: The mixed closing-tag expression is readable and clean through the actual publication/readback/consumer chain, without verification-only fallback.
-- [ ] AC2: Ordinary inline-code presentation and findings remain unchanged.
-- [ ] AC3: Ambiguous/cross-boundary HTML retains fail-closed rejection.
-- [ ] AC4: Content, severity, reviewed identity and state provenance retain their original meaning and failure handling.
-- [ ] AC5: Security and verification blockers each independently block.
-- [ ] AC6: Actual renderer/hooks, publication/readback, limits, compatibility and unchanged host consumers are exercised with synthetic data.
+- [x] AC1: The mixed closing-tag expression is readable and clean through the actual publication/readback/consumer chain, without verification-only fallback.
+- [x] AC2: Ordinary inline-code presentation and findings remain unchanged.
+- [x] AC3: Ambiguous/cross-boundary HTML retains fail-closed rejection.
+- [x] AC4: Content, severity, reviewed identity and state provenance retain their original meaning and failure handling.
+- [x] AC5: Security and verification blockers each independently block.
+- [x] AC6: Actual renderer/hooks, publication/readback, limits, compatibility and unchanged host consumers are exercised with synthetic data.
 
 ## Execution Record
 
-Not executed at plan stage: the proposed synthetic suite does not exist yet. Implementation must fill in command results, commit, digest and planted-violation locations after delivering the suite. The plan's feasibility experiment is documented separately and does not check off this runbook.
+Executed 2026-10-29 UTC on implementation checkpoint `86973b81` with synthetic
+fixtures only. The final PR's reviewed head and CI record provide the subsequent
+review/readiness evidence; this record describes the delivered behavior tests.
+
+- Default suite: PASS, eight source test families; nine image-only families skipped on the host.
+- `--image-smoke`: PASS, all 17 families, then 12 host classification controls and D15 correct-head/wrong-head/hidden-only checks. Affected and ordinary controls each exercise fresh, review-edit and persistent publication; security and hard focus independently report `needs_fixes`, verification reports `escalate` with verification-only true, and renderer-source/composed structural negatives report `escalate` with verification-only false.
+- Image: `pragent/pr-agent@sha256:31b9aac6ab067bada9a0c1b001d30ebc500ea4487e00a93c18c59b9ef5fa66db`; read-only checkout, networking disabled, in-memory GitHub boundary.
+- Identity failures before publication create zero records. Readback mismatch and uncertain-write cases create at most once, without retry. Below/exact limits preserve the expression; HTML expansion can omit the complete hidden state, while oversized protected content produces the existing verification diagnostic.
+- Compatibility planted-violation proof: `test_pr_agent_inline_code.py`, `probe_compatibility`, lines 399–405 plants an incompatible signature or a distinct imported alias. In separate disposable image processes, `--probe-compatibility signature` exits 1 with `incompatible PR-Agent runtime hook`; `--probe-compatibility alias` exits 1 with `incompatible PR-Agent renderer alias`; `--probe-compatibility compatible` exits 0 with `PASS: compatible renderer installed`. Automated tests also assert no partial hook installation and restore all captured references.
+- ShellCheck, workflow shell guard and shell snippet lint: PASS. Diff-driven suite selection includes the new wrapper for runtime and synthetic test changes. The consumer guard's AST matches the approved base unchanged.
+
+The initial synthetic regression was run before implementation against the pinned
+producer and failed with `inline span crosses HTML markup`; the same source now
+passes the publication/readback/host-consumer chain. No live historical comment,
+provider configuration or workflow was changed for this evidence.
