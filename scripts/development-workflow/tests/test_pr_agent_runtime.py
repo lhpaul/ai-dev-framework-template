@@ -1038,6 +1038,9 @@ class ImagePublicationTests(unittest.TestCase):
     def setUpClass(cls):
         from pr_agent.git_providers.github_provider import GithubProvider
         import pr_agent.tools.pr_reviewer as reviewer
+        import pr_agent.algo.utils as utils
+        cls.original_renderer = utils.convert_to_markdown_v2
+        cls.original_renderer_alias = reviewer.convert_to_markdown_v2
         cls.provider_class = GithubProvider
         cls.original_composer = STATE.append_review_state
         cls.original_limiter = GithubProvider.limit_output_characters
@@ -1050,6 +1053,9 @@ class ImagePublicationTests(unittest.TestCase):
     @classmethod
     def tearDownClass(cls):
         import pr_agent.tools.pr_reviewer as reviewer
+        import pr_agent.algo.utils as utils
+        utils.convert_to_markdown_v2 = cls.original_renderer
+        reviewer.convert_to_markdown_v2 = cls.original_renderer_alias
         STATE.append_review_state = cls.original_composer
         reviewer.append_review_state = cls.original_alias
         cls.provider_class.limit_output_characters = cls.original_limiter
