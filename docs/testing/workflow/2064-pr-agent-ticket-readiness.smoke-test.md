@@ -115,7 +115,7 @@ branches. No merge or tracker update belongs to this runbook.
 Synthetic smoke proves workflow composition without running external models.
 It does not certify an epic's requirements or mutate a live downstream project.
 
-## Execution Record — 2026-10-29 UTC
+## Historical Execution Record — 2026-10-29 UTC
 
 **Tested checkpoint**: `82f50ee931a26cab542ac0f6b8c482328f073985`.
 The following required readiness suites ran serially with all scripts, tests and
@@ -177,3 +177,56 @@ failures and stale expected-policy assertions; those results were retained and
 were superseded by the complete serial frozen-checkpoint execution above. No
 unrelated production logic or expectations were changed to clear those failures.
 Disposable fixture teardown completed; owned branches/worktrees were retained.
+
+## Final Allowlist Execution Record — 2026-10-29 UTC
+
+**Updated in**: documentation-only follow-up to tested checkpoint
+`ea6703aac525041da3f063728086ac64d013e6e5`.
+**Outcome**: PASS for local synthetic verification; remote review, CI and merge
+readiness remain separate parent-owned gates. The historical record above does
+not certify this later parser revision.
+
+The final policy consumes the complete ticket slice: recognized status and
+analysis scaffold plus complete requirement bullets. Allowed inline HTML is
+balanced, attribute-free `em`, `strong`, `b` and `span`. Known heading presentation
+may use `<br>` before the first ticket. HTML breaks inside or after a requirement,
+unknown markup, unconsumed text and independent control headings (including list
+or numbered prefixes) fail closed. This deliberately hardens earlier permissive
+embedded-break controls under Luis's latest authorization; ticket-only
+“Requires further human verification” remains informational without ticket proof.
+
+**AC1–AC4**: PASS. The following exact commands ran serially with sources and
+goldens frozen at the tested checkpoint:
+
+| Exact command | Actual result |
+| --- | --- |
+| `python3 scripts/development-workflow/tests/test-review-evidence-context.py` | 14 tests OK |
+| `bash scripts/development-workflow/tests/test-apply-readiness-labels.sh` | 410 passed, 0 failed |
+| `bash scripts/development-workflow/tests/test-readiness-label-matrix-part-1.sh` | 503 passed, 0 failed |
+| `bash scripts/development-workflow/tests/test-readiness-label-matrix-part-2.sh` | 476 passed, 0 failed |
+| `bash scripts/development-workflow/tests/test-readiness-label-matrix-part-3.sh` | 499 passed, 0 failed |
+| `bash scripts/development-workflow/tests/test-readiness-label-matrix-part-4.sh` | 483 passed, 0 failed |
+| `bash scripts/development-workflow/tests/test-consumer-readiness-matrix-part-1.sh` | 503 passed, 0 failed |
+| `bash scripts/development-workflow/tests/test-consumer-readiness-matrix-part-2.sh` | 476 passed, 0 failed |
+| `bash scripts/development-workflow/tests/test-consumer-readiness-matrix-part-3.sh` | 499 passed, 0 failed |
+| `bash scripts/development-workflow/tests/test-consumer-readiness-matrix-part-4.sh` | 483 passed, 0 failed |
+| `python3 scripts/development-workflow/tests/test_pr_agent_runtime.py` | 56 tests OK, 8 skipped |
+
+Separate AC2 controls include full/partial/non-compliance, PR Code Verified and
+missing ticket proof. AC4 regressions cover same-line HTML headings, empty blocks
+and rendered separators, list/number verification and security headings, unknown
+markup and independent outside-section controls. Synthetic before/after fixtures
+show the formerly clean `<br>`/empty-`p` plus list/number pending-verification
+variants now escalate; known inline formatting and heading scaffold stay clean.
+
+**AC5**: PASS. The sync implementation is unchanged by the allowlist repair.
+The earlier sync suite passed 28 tests. Its synthetic consumer filename now uses
+the checker's existing fixture-data mapping contract; manifest coverage passed
+56 assertions. This repairs a fixture-path false positive without changing the
+checker, manifest, repository configuration or any genuine read dependency.
+
+**AC6**: PASS. Tracked runtime consumers and all three full sync procedures were
+accounted for; thin Codex wrappers retain delegation. No scoped residual is
+deferred. Final documentation lints and partition inventory are recorded in the
+local author handoff. All fixture/process teardown completed; no remote writes
+or implementation merge were performed by this implementer.
