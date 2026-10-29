@@ -329,11 +329,16 @@ def classify(body):
             if not requirement_headers or any(header not in analysis_headings for header in requirement_headers):
                 return "escalate"
             analyses = re.findall(r"(?:Compliant requirements|Non-compliant requirements|Requires further human verification):([\s\S]*?)(?=(?:Compliant requirements|Non-compliant requirements|Requires further human verification):|\Z)", requirements)
-            if not analyses or any(not re.sub(r"[\s*#_`-]", "", unescape(re.sub(r"<[^>]*>", "", analysis))) for analysis in analyses):
+            if not analyses:
                 return "escalate"
-            # Unknown status-like text cannot serve as requirement analysis.
+            # Validate the rendered lines, not tag-stripped concatenations:
+            # an HTML break must not hide an independent verification heading.
             for analysis in analyses:
-                rendered_analysis = unescape(re.sub(r"<[^>]*>", "", analysis)).strip()
+                analysis_reader = ReviewText()
+                analysis_reader.feed(analysis)
+                rendered_analysis = "".join(analysis_reader.parts).strip()
+                if not re.sub(r"[\s*#_`-]", "", rendered_analysis):
+                    return "escalate"
                 if " ".join(rendered_analysis.split()).lower().rstrip(".") in negative_values:
                     continue
                 evidence_lines = [line.strip() for line in rendered_analysis.splitlines() if line.strip()]

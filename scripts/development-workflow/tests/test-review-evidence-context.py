@@ -83,6 +83,34 @@ class EvidenceTests(unittest.TestCase):
         self.assertEqual(json.loads(output.stdout),
                          {"verdict": "clean", "verification_only": False})
 
+    def test_ticket_requirements_preserve_rendered_line_boundaries(self):
+        classifier = Path(__file__).resolve().parents[1] / "apply-readiness-labels.sh"
+        ticket = ("**Ticket compliance analysis**\n"
+                  "**[42](url) - PR Code Verified**\n"
+                  "Requires further human verification:\n- Verify synthetic ticket proof.")
+        separators = ("<br>", "<br/>", "<br />", "<p></p>", "<div></div>",
+                      "<li></li>", "<summary></summary>", "<details></details>",
+                      "<table></table>", "<tr></tr>", "<td></td>",
+                      "<h1></h1>", "<h2></h2>", "<h3></h3>", "<h4></h4>",
+                      "<h5></h5>", "<h6></h6>", "&#10;", "&#xA;", "&NewLine;")
+        for separator in separators:
+            with self.subTest(separator=separator):
+                output = subprocess.run(["bash", str(classifier), "--inspect-pr-agent"],
+                    input=ticket + separator + "Verification status: pending",
+                    capture_output=True, text=True, check=True)
+                self.assertEqual(json.loads(output.stdout),
+                                 {"verdict": "escalate", "verification_only": False})
+        controls = (ticket, ticket + "<br>", ticket + "<br>- Verify another ticket requirement.",
+                    ticket + "&lt;br&gt;Verification status is quoted example text.",
+                    ticket + "&amp;lt;br&amp;gt;Verification status is double escaped example text.",
+                    ticket.replace("synthetic ticket proof.", "<strong>synthetic</strong> <em>ticket</em> proof.<br>"))
+        for body in controls:
+            with self.subTest(control=body):
+                output = subprocess.run(["bash", str(classifier), "--inspect-pr-agent"],
+                    input=body, capture_output=True, text=True, check=True)
+                self.assertEqual(json.loads(output.stdout),
+                                 {"verdict": "clean", "verification_only": False})
+
     def test_ticket_only_shared_predicate_does_not_require_proof(self):
         raw = copy.deepcopy(self.raw)
         request = ("**Ticket compliance analysis**\n**[42](url) - PR Code Verified**\n"
