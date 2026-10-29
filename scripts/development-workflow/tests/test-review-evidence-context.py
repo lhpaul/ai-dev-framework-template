@@ -43,6 +43,7 @@ class EvidenceTests(unittest.TestCase):
                    "</td></tr></table>\n### Recommended focus areas for review\n**No major issues detected**\n")
         for name, body, expected in (
                 ("known", request, "clean"),
+                ("known_html_break", request.replace("**Ticket compliance analysis**", "<strong>Ticket compliance analysis</strong><br>"), "clean"),
                 ("code", request.replace("No major issues detected", "Must Fix"), "needs_fixes"),
                 ("partial", request.replace("PR Code Verified", "Partially compliant"), "clean"),
                 ("unknown", request.replace("PR Code Verified", "Unknown status"), "escalate"),

@@ -280,7 +280,7 @@ def classify(body):
         candidates = re.findall(r"^[ \t]*\*\*(?:\[|Untracked ticket)", section, re.M)
         first_ticket = re.search(r"\*\*(?:\[|Untracked ticket)", section)
         if (not tickets or len(tickets) != len(candidates) or first_ticket is None
-                or section[:first_ticket.start()].strip()):
+                or not re.fullmatch(r"(?:\s|<br\s*/?>)*", section[:first_ticket.start()], re.I)):
             return "escalate"
         for level, requirements in tickets:
             level = level.strip().lower()
