@@ -41,7 +41,7 @@ Verify T2 enters through the installed reviewer renderer alias, appends actual p
 
 ### Step 3: Genuine ambiguity and independent blockers — AC3, AC5
 
-In the same suite, verify E7's unchanged raw HTML negatives still raise/reject through the original guard. Verify security, verification-required evidence and hard-focus blockers independently retain their original non-clean classification beside E1. Expected: formatting never suppresses a blocker or repairs raw structural HTML.
+In the same suite, exercise E7 at both boundaries: supply malformed raw HTML in source `issue_content` through the installed renderer alias, and separately feed the composed-comment negative to the consumer. Assert the whole source field remains byte-identical under D2, including an eligible span before later raw markup; the genuine boundary-crossing example must still reject through the original guard and classify `escalate`. The paired source positive, with HTML only inside supported code spans, must still pass Step 2. Verify security, verification-required evidence and hard-focus blockers independently retain their original non-clean classification beside E1. Expected: formatting never suppresses a blocker or repairs source or composed structural HTML.
 
 ### Step 4: Publication boundary failures and limits — AC4, AC6
 
@@ -50,6 +50,10 @@ Check T3's missing/wrong/stale identity, mismatched/invalid state, head drift an
 ### Step 5: Hook compatibility and final evidence — AC6
 
 Verify T4's incompatible signature and alias mismatch fail before patching/publication; compatible restoration succeeds. Record concrete planted test locations and both outcomes in the implementation PR. Check idempotence, teardown restoration, non-review delegation and diff-driven suite discovery. Record unit/image commands, image digest, reviewed commit and actual results; leave CI and review gates in force.
+
+### Reversal verification — policy only at plan stage
+
+Follow the plan's Reversal Policy only in a separately authorized rollback PR; this runbook does not execute a rollback. In synthetic verification of that PR, retain an already-formatted fabricated review and confirm the predecessor consumer still reads its code, identity and state. Generate a new fabricated review through the restored producer and disclose the returning closing-tag ambiguity behavior. No previously published comment may be rewritten, deleted or republished to simulate reversal; normal future reviews create independent records. Keep the existing guard/publication checks and workflow/configuration intact.
 
 ## Assertions Checklist
 
