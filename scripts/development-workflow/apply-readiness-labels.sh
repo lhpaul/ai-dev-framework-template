@@ -73,8 +73,8 @@ security_findings = blockers | {"yes", "true", "unsafe input execution"}
 focus_negatives = {"no major issues detected", "no issues detected", "no issues found", "none"}
 focus_advisories = {"possible issue", "edge case", "code quality", "best practice",
                     "performance", "readability", "maintainability"}
-compliance_values = {"fully compliant": "clean", "partially compliant": "needs_fixes",
-                     "not compliant": "needs_fixes", "pr code verified": "escalate"}
+compliance_values = {"fully compliant", "partially compliant",
+                     "not compliant", "pr code verified"}
 analysis_headings = {"Compliant requirements", "Non-compliant requirements",
                      "Requires further human verification"}
 
@@ -256,7 +256,7 @@ def focus_labels(body):
     return [" ".join(label.split()) for label in html_labels] + [" ".join(unescape(label).split()) for label in markdown_labels]
 
 
-def classify(body, verify_ticket=False):
+def classify(body):
     if not body:
         return "none"
     body = visible_review(body)
@@ -267,53 +267,12 @@ def classify(body, verify_ticket=False):
     if len(ticket_matches) > 1:
         return "escalate"
     ticket = bool(ticket_matches)
-    # Only the producers known ticket-analysis heading is eligible. Other
-    # human decisions and unknown verification statuses remain escalations.
-    verify_ticket = verify_ticket and ticket and bool(re.search(
-        r"^[ \t]*Requires further human verification:[ \t]*$", body, re.M))
-    if verify_ticket:
-        start = ticket_matches[0].end()
-        section = re.split(r"</td>|^### ", body[start:], maxsplit=1, flags=re.M)[0]
-        end = start + len(section)
-        # Every occurrence must belong to the parsed ticket analysis. An
-        # additional independent human checkpoint must never be suppressed.
-        verify_ticket = all(start <= match.start() < end for match in re.finditer(
-            r"Requires\s+further\s+human\s+verification", body, re.I))
     rendered_headers = FocusLabels()
     rendered_headers.feed(body)
     ticket_candidates = len(re.findall(r"^[ \t]*(?:\*\*|#{1,6})[^\n]*Ticket compliance analysis", body, re.M))
     ticket_candidates += sum("Ticket compliance analysis" in label for label in rendered_headers.labels)
     if ticket_candidates != len(ticket_matches):
         return "escalate"  # A malformed heading is not just a prose mention.
-    if not verify_ticket and (any(re.match(r"Requires further human verification\b", " ".join(label.split()), re.I) for label in rendered_headers.labels) or re.search(r"^[ \t]*(?:#{1,6}[ \t]+|\*\*)?Requires further human verification\b", body, re.M | re.I)):
-        return "escalate"
-    verification_reader = ReviewText()
-    verification_reader.feed(body)
-    # Markdown emphasis is presentation; HTMLParser decodes entities once.
-    verification_heading = r"^[ \t]*(?:(?:#{1,6}|[-*]|[0-9]+[.)])\s+)?(?:[^\w\s]*\s*)?(?:(?:Review status|Review metadata)\s*[—:-]\s*)?(?:Human\s+verification|Verification\s+status|Verification)\b"
-    def render_emphasis(match):
-        text = match.group(2)
-        if re.match(verification_heading, text, re.I):
-            return "\n" + text + "\n"
-        return text
-    verification_text = re.sub(r"(\*\*|__)([\s\S]*?)\1", render_emphasis, "".join(verification_reader.parts))
-    verification_text = re.sub(r"[*_]", "", verification_text)
-    # Rendered HTML headings carry the same manual request as plain text.
-    # Anchor the known phrase so custom prefixes remain outside this scope.
-    if not verify_ticket and re.search(r"^[ \t]*Requires\s+further\s+human\s+verification\b", verification_text, re.M | re.I):
-        return "escalate"
-    verification_sections = list(re.finditer(verification_heading + r"\s*:?\s*([^\n]*)(?:\n|$)", verification_text, re.M | re.I))
-    verification_candidates = len(re.findall(verification_heading, verification_text, re.M | re.I))
-    styled_candidates = sum(bool(re.match(verification_heading, re.sub(r"[*_]", "", label), re.I)) for label in rendered_headers.labels)
-    styled_candidates += len(re.findall(r"^[ \t]*(?:#{1,6}|\*\*|__)[^\n]*Verification\s+status\b", body, re.M | re.I))
-    verification_candidates = max(verification_candidates, styled_candidates)
-    if len(verification_sections) != verification_candidates or len(verification_sections) > 1:
-        return "escalate"
-    if verification_sections:
-        verification_value = verification_sections[0].group(1)
-        if value_verdict(verification_value, negative_values | {"not required", "no further human verification required"}, {"yes", "true", "required", "pending"}) != "clean":
-            return "escalate"  # Known requests and unknown statuses both need a human.
-    needs_fixes = False
     if ticket:
         section = body[ticket_matches[0].end():]
         section = re.split(r"</td>|^### ", section, maxsplit=1, flags=re.M)[0]
@@ -321,7 +280,6 @@ def classify(body, verify_ticket=False):
         candidates = re.findall(r"^[ \t]*\*\*(?:\[|Untracked ticket)", section, re.M)
         if not tickets or len(tickets) != len(candidates):
             return "escalate"
-        verdicts = []
         for level, requirements in tickets:
             level = level.strip().lower()
             if level not in compliance_values:
@@ -343,15 +301,42 @@ def classify(body, verify_ticket=False):
                     return "escalate"
                 if any(re.fullmatch(r"(?:unknown|tbd|unavailable|undetermined|pending|not assessed)[.!?]?", re.sub(r"^(?:[-*]|[0-9]+[.)])[ \t]+", "", line), re.I) for line in evidence_lines):
                     return "escalate"
-            if not verify_ticket and (level == "pr code verified" or re.search(r"\bRequires\s+further\s+human\s+verification\b", unescape(re.sub(r"<[^>]*>", " ", requirements)), re.I)):
-                verdicts.append("escalate")
-            elif level in {"partially compliant", "not compliant"} or "Non-compliant requirements:" in requirements:
-                verdicts.append("needs_fixes")
-            else:
-                verdicts.append("clean" if level == "pr code verified" and verify_ticket else compliance_values[level])
-        if "escalate" in verdicts:
-            return "escalate"
-        needs_fixes = "needs_fixes" in verdicts
+        # Only fully validated ticket commentary is informational (#2064).
+        # Keep the surrounding markup and all outside sections for the existing
+        # independent verification, security and code checks below.
+        start = ticket_matches[0].end()
+        body = body[:start] + re.sub(r"[^\r\n]", " ", section) + body[start + len(section):]
+    rendered_headers = FocusLabels()
+    rendered_headers.feed(body)
+    if (any(re.match(r"Requires further human verification\b", " ".join(label.split()), re.I) for label in rendered_headers.labels) or re.search(r"^[ \t]*(?:#{1,6}[ \t]+|\*\*)?Requires further human verification\b", body, re.M | re.I)):
+        return "escalate"
+    verification_reader = ReviewText()
+    verification_reader.feed(body)
+    # Markdown emphasis is presentation; HTMLParser decodes entities once.
+    verification_heading = r"^[ \t]*(?:(?:#{1,6}|[-*]|[0-9]+[.)])\s+)?(?:[^\w\s]*\s*)?(?:(?:Review status|Review metadata)\s*[—:-]\s*)?(?:Human\s+verification|Verification\s+status|Verification)\b"
+    def render_emphasis(match):
+        text = match.group(2)
+        if re.match(verification_heading, text, re.I):
+            return "\n" + text + "\n"
+        return text
+    verification_text = re.sub(r"(\*\*|__)([\s\S]*?)\1", render_emphasis, "".join(verification_reader.parts))
+    verification_text = re.sub(r"[*_]", "", verification_text)
+    # Rendered HTML headings carry the same manual request as plain text.
+    # Anchor the known phrase so custom prefixes remain outside this scope.
+    if re.search(r"^[ \t]*Requires\s+further\s+human\s+verification\b", verification_text, re.M | re.I):
+        return "escalate"
+    verification_sections = list(re.finditer(verification_heading + r"\s*:?\s*([^\n]*)(?:\n|$)", verification_text, re.M | re.I))
+    verification_candidates = len(re.findall(verification_heading, verification_text, re.M | re.I))
+    styled_candidates = sum(bool(re.match(verification_heading, re.sub(r"[*_]", "", label), re.I)) for label in rendered_headers.labels)
+    styled_candidates += len(re.findall(r"^[ \t]*(?:#{1,6}|\*\*|__)[^\n]*Verification\s+status\b", body, re.M | re.I))
+    verification_candidates = max(verification_candidates, styled_candidates)
+    if len(verification_sections) != verification_candidates or len(verification_sections) > 1:
+        return "escalate"
+    if verification_sections:
+        verification_value = verification_sections[0].group(1)
+        if value_verdict(verification_value, negative_values | {"not required", "no further human verification required"}, {"yes", "true", "required", "pending"}) != "clean":
+            return "escalate"  # Known requests and unknown statuses both need a human.
+    needs_fixes = False
     # An explicit security section cannot be overridden by clean compliance.
     # Normalize only the known unprefixed HTML heading, retaining its body.
     security_parts = []
@@ -407,7 +392,7 @@ if sys.argv[1] == "labels":
         print("\n".join(focus_labels(visible) or []), end="")
 elif sys.argv[1] == "inspect":
     verdict = classify(body)
-    print(json.dumps({"verdict": verdict, "verification_only": verdict == "escalate" and classify(body, True) == "clean"}), end="")
+    print(json.dumps({"verdict": verdict, "verification_only": False}), end="")
 else:
     print(classify(body), end="")
 ' "${1:-verdict}" "$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/pr-agent-runtime.py"

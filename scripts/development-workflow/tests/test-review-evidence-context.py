@@ -41,24 +41,24 @@ class EvidenceTests(unittest.TestCase):
                    "**[42](url) - PR Code Verified**\nCompliant requirements:\n- Code checked.\n"
                    "Requires further human verification:\n- Verify synthetic test evidence.\n"
                    "</td></tr></table>\n### Recommended focus areas for review\n**No major issues detected**\n")
-        for name, body, eligible in (
-                ("known", request, True),
-                ("code", request.replace("No major issues detected", "Must Fix"), False),
-                ("partial", request.replace("PR Code Verified", "Partially compliant"), False),
-                ("unknown", request.replace("PR Code Verified", "Unknown status"), False),
-                ("malformed", request.replace("</td>", ""), False),
-                ("checkpoint", request + "<h3>Requires further human verification</h3>\n", False),
-                ("status", request + "## Verification status: pending\n", False),
-                ("security", request + "## Security concerns\nYes\n", False),
-                ("unknown_focus", request.replace("No major issues detected", "Unknown label"), False)):
+        for name, body, expected in (
+                ("known", request, "clean"),
+                ("code", request.replace("No major issues detected", "Must Fix"), "needs_fixes"),
+                ("partial", request.replace("PR Code Verified", "Partially compliant"), "clean"),
+                ("unknown", request.replace("PR Code Verified", "Unknown status"), "escalate"),
+                ("malformed", request.replace("</td>", ""), "escalate"),
+                ("checkpoint", request + "<h3>Requires further human verification</h3>\n", "escalate"),
+                ("status", request + "## Verification status: pending\n", "escalate"),
+                ("security", request + "## Security concerns\nYes\n", "needs_fixes"),
+                ("unknown_focus", request.replace("No major issues detected", "Unknown label"), "escalate")):
             with self.subTest(name=name):
                 output = subprocess.run(["bash", str(classifier), "--inspect-pr-agent"],
                     input=body, capture_output=True, text=True, check=True)
                 inspection = json.loads(output.stdout)
-                self.assertEqual(inspection["verification_only"], eligible)
-                self.assertNotEqual(inspection["verdict"], "clean")
+                self.assertFalse(inspection["verification_only"])
+                self.assertEqual(inspection["verdict"], expected)
 
-    def test_shared_loop_readiness_predicate_requires_trusted_current_proof(self):
+    def test_ticket_only_shared_predicate_does_not_require_proof(self):
         raw = copy.deepcopy(self.raw)
         request = ("**Ticket compliance analysis**\n**[42](url) - PR Code Verified**\n"
                    "Compliant requirements:\n- Code checked.\n"
@@ -92,12 +92,16 @@ else: sys.exit(1)
             bodyfile.write_text(request)
             env = dict(os.environ, PATH=str(root) + os.pathsep + os.environ["PATH"],
                        MOCK_SHARED_DATA=str(datafile))
-            for variant, expected in (("verified", "clean"), ("missing", "verification_pending"),
-                    ("edited", "verification_pending"), ("deleted", "verification_pending"),
-                    ("forged", "verification_pending"), ("writer", "clean"),
-                    ("unverified", "verification_pending"), ("wrong_head", "verification_pending"),
-                    ("wrong_request", "verification_pending"), ("bookkeeping", "verification_pending"), ("inherited_claim", "verification_pending")):
+            for variant, expected in (("verified", "clean"), ("missing", "clean"),
+                    ("edited", "clean"), ("deleted", "clean"),
+                    ("forged", "clean"), ("writer", "clean"),
+                    ("unverified", "clean"), ("wrong_head", "clean"),
+                    ("wrong_request", "clean"), ("bookkeeping", "clean"), ("inherited_claim", "clean"), ("outside", "escalate"),
+                    ("malformed", "escalate")):
                 with self.subTest(variant=variant):
+                    bodyfile.write_text(request + "### Verification: pending\n" if variant == "outside"
+                                        else request.replace("PR Code Verified", "Unknown status") if variant == "malformed"
+                                        else request)
                     current = copy.deepcopy(raw)
                     payload = copy.deepcopy(ledger)
                     record = payload["entries"][0]["platform_results"][0]
