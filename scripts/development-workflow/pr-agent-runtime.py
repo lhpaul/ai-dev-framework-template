@@ -3,7 +3,7 @@
 
 import argparse
 from dataclasses import dataclass, field
-from html import unescape
+from html import escape, unescape
 from html.parser import HTMLParser
 import inspect
 import json
@@ -70,8 +70,101 @@ def fence_spans(source):
     return spans
 
 
+def read_inline_code_span(source, start):
+    """Read the supported one/two-backtick subset without pairing through bad runs."""
+    if start > 0 and source[start - 1] == "\\":
+        raise ValueError("ambiguous escaped backtick")
+    width = len(re.match(r"`+", source[start:]).group())
+    if width not in (1, 2):
+        raise ValueError("unsupported inline delimiter")
+    for run in re.finditer(r"`+", source[start + width:]):
+        if len(run.group()) < width:
+            continue  # A literal single backtick inside a double-delimited span.
+        if len(run.group()) != width:
+            raise ValueError("mismatched inline delimiter")
+        closing = start + width + run.start()
+        content = source[start + width:closing]
+        if (not content or re.search(r"[\r\n\v\f\x85\u2028\u2029]", content)
+                or content.endswith("\\")):
+            raise ValueError("ambiguous inline span")
+        return closing + width, content
+    raise ValueError("unmatched inline delimiter")
+
+
+def inline_code_text(content):
+    """GFM single-line code strips one padding space at both ends, unless all spaces."""
+    if content.startswith(" ") and content.endswith(" ") and content.strip(" "):
+        return content[1:-1]
+    return content
+
+
+def normalize_finding_inline_code(source):
+    """Format supported source spans only after proving the whole field boundary.
+
+    Ambiguous delimiters keep the field unchanged. Raw markup anywhere outside
+    supported spans (including fenced examples) also vetoes all replacements.
+    This helper never receives a composed HTML review.
+    """
+    spans = []
+    fence = None
+    offset = 0
+    for line in source.splitlines(keepends=True):
+        marker = re.match(r"^ {0,3}(`{3,}|~{3,})([^\r\n]*)", line)
+        if fence is not None or marker:
+            if re.search(r"<\s*(?:/?\s*[A-Za-z]|!|\?|/?\s*$)", line):
+                return source
+            if fence is None:
+                fence = marker.group(1)
+                if fence[0] == "`" and "`" in marker.group(2):
+                    return source
+            elif (marker and marker.group(1)[0] == fence[0]
+                  and len(marker.group(1)) >= len(fence)
+                  and not marker.group(2).strip()):
+                fence = None
+            offset += len(line)
+            continue
+        index = 0
+        while index < len(line):
+            if line[index] == "`":
+                try:
+                    end, content = read_inline_code_span(line, index)
+                except ValueError:
+                    return source
+                if re.search(r"<\s*/", content):
+                    spans.append((offset + index, offset + end,
+                                  "<code>" + escape(inline_code_text(content)).replace("`", "&#96;") + "</code>"))
+                index = end
+                continue
+            if (line[index] == "<"
+                    and re.match(r"<\s*(?:/?\s*[A-Za-z]|!|\?|/?\s*$)", line[index:])):
+                return source
+            index += 1
+        offset += len(line)
+    if fence is not None:
+        return source
+    for start, end, replacement in reversed(spans):
+        source = source[:start] + replacement + source[end:]
+    return source
+
+
+def normalize_review_render_data(output_data):
+    """Copy only the recognized rendering path; state and caller data stay intact."""
+    if not isinstance(output_data, dict) or not isinstance(output_data.get("review"), dict):
+        return output_data
+    review = output_data["review"]
+    findings = review.get("key_issues_to_review")
+    if not isinstance(findings, list):
+        return output_data
+    copied = []
+    for finding in findings:
+        if isinstance(finding, dict) and isinstance(finding.get("issue_content"), str):
+            finding = dict(finding, issue_content=normalize_finding_inline_code(finding["issue_content"]))
+        copied.append(finding)
+    return dict(output_data, review=dict(review, key_issues_to_review=copied))
+
+
 def mask_review_code(source, preserve_offsets=True):
-    """Exclude simple single-line code and closed fences; reject ambiguity."""
+    """Exclude supported single-line code and closed fences; reject ambiguity."""
     parts = []
     index = 0
     html_depth = []
@@ -168,17 +261,7 @@ def mask_review_code(source, preserve_offsets=True):
                     or html_block not in inline_tags | {None}
                     or (in_html and "table" not in html_depth and not history_markdown)):
                 raise ValueError("ambiguous backticks in HTML")
-            if index > 0 and source[index - 1] == "\\":
-                raise ValueError("ambiguous escaped backtick")
-            if source.startswith("``", index):
-                raise ValueError("unsupported inline delimiter")
-            end = source.find("`", index + 1)
-            if end < 0:
-                raise ValueError("unmatched inline delimiter")
-            content = source[index + 1:end]
-            if (not content or re.search(r"[\r\n\v\f\x85\u2028\u2029]", content)
-                    or content.endswith("\\") or source.startswith("``", end)):
-                raise ValueError("ambiguous inline span")
+            end, content = read_inline_code_span(source, index)
             # Complete HTML-only code is literal, including tag fragments.
             # A quoted comment opener is literal too, even in an expression.
             # Mixed prose/HTML still cannot swallow closing tags, declarations
@@ -186,8 +269,8 @@ def mask_review_code(source, preserve_offsets=True):
             if (in_html and not history_markdown and not html_markup_only(content)
                     and re.search(r"<\s*/|<!(?!--)|<\?", content)):
                 raise ValueError("inline span crosses HTML markup")
-            parts.append(masked(index, end + 1))
-            index = end + 1
+            parts.append(masked(index, end))
+            index = end
             continue
         if html.match(source, index):
             end = index + 1
@@ -544,15 +627,20 @@ def publish_review_record(provider, body, publisher, state_api, headers):
 
 def install_hooks():
     import pr_agent.algo.review_finding_state as state_api
+    import pr_agent.algo.utils as utils
     from pr_agent.algo.comment_identity import PRReviewHeader
     from pr_agent.git_providers.github_provider import GithubProvider
     import pr_agent.tools.pr_reviewer as reviewer
 
+    renderer = utils.convert_to_markdown_v2
     composer = state_api.append_review_state
     limiter = GithubProvider.limit_output_characters
     publisher = GithubProvider.publish_comment
     editor = GithubProvider.edit_comment
     persistent = GithubProvider.publish_persistent_comment_full
+    require_signature(renderer, ["output_data", "gfm_supported", "incremental_review", "git_provider", "files"])
+    if reviewer.convert_to_markdown_v2 is not renderer:
+        raise RuntimeError("incompatible PR-Agent renderer alias")
     require_signature(composer, ["review_body", "state", "max_chars"])
     require_signature(limiter, ["self", "output", "max_chars"])
     require_signature(state_api.parse_review_state, ["comment_body"])
@@ -570,6 +658,11 @@ def install_hooks():
         raise RuntimeError("incompatible PR-Agent review identities")
     if getattr(GithubProvider, "_workflow_immutable_review_hook", False):
         return
+
+    def source_renderer(output_data, gfm_supported=True, incremental_review=None,
+                        git_provider=None, files=None):
+        rendering_data = normalize_review_render_data(output_data) if gfm_supported else output_data
+        return renderer(rendering_data, gfm_supported, incremental_review, git_provider, files)
 
     def deferred_composer(review_body, state, max_chars=None):
         return composer(review_body, state, max_chars=None)
@@ -606,6 +699,8 @@ def install_hooks():
                           as_thread, identity_marker, legacy_initial_header,
                           require_agent_authorship, fallback_on_error)
 
+    utils.convert_to_markdown_v2 = source_renderer
+    reviewer.convert_to_markdown_v2 = source_renderer
     state_api.append_review_state = deferred_composer
     reviewer.append_review_state = deferred_composer
     GithubProvider.limit_output_characters = publication_limiter

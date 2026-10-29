@@ -1743,8 +1743,8 @@ expensive_gate_baseline_checks_status() {
           ) then
         "pending"
       elif any(
-            ((.conclusion // "") != "" and (.conclusion // "" | ascii_upcase) as $c
-              | ($c != "SUCCESS" and $c != "SKIPPED" and $c != "NEUTRAL" and $c != "NONE"))
+            ((.conclusion // "" | ascii_upcase) as $c
+              | ($c != "" and $c != "SUCCESS" and $c != "SKIPPED" and $c != "NEUTRAL" and $c != "NONE"))
             or ((.state // "" | ascii_upcase) as $s
               | ($s == "FAILURE" or $s == "ERROR"))
           ) then
