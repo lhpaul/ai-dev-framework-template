@@ -111,7 +111,7 @@ MOCK_ISSUE_COMMENTS='[]'
 readiness_fixture_1946 extra_rendered_human refused "${_ticket_body_1946}"$'<strong>Requires further human verification</strong><br>\n- Verify authorization manually.\n'
 readiness_fixture_1946 extra_malformed_second_section refused "${_ticket_body_1946}"$'**Ticket compliance analysis ❌*\n**[43](url) - Not compliant**\nNon-compliant requirements:\n- Missing.\n'
 readiness_fixture_1946 extra_partial_bold_focus refused "${_ticket_body_1946/Fully compliant/Partially compliant}"$'**Recommended focus areas for review**\n<strong>Critical</strong>\n'
-readiness_fixture_1946 extra_partial_human_ticket labeled "commit: $HEAD"$'\n**Ticket compliance analysis 🔶**\n**[42](url) - Partially compliant**\nNon-compliant requirements:\n- Missing.\n**[43](url) - PR Code Verified**\nCompliant requirements:\n- Implemented; human verification pending.\n'
+readiness_fixture_1946 extra_partial_human_ticket labeled "commit: $HEAD"$'\n## PR Reviewer Guide\n**Ticket compliance analysis 🔶**\n**[42](url) - Partially compliant**\nNon-compliant requirements:\n- Missing.\n**[43](url) - PR Code Verified**\nCompliant requirements:\n- Implemented; human verification pending.\n'
 readiness_fixture_1946 extra2_unreadable_legacy_focus refused "commit: $HEAD"$'\n### Recommended focus areas for review\nNo parseable labels\n' reviewer-check-absent
 readiness_fixture_1946 extra2_empty_security refused "${_ticket_body_1946}"$'<strong>Security concerns</strong><br>\n' reviewer-check-absent
 readiness_fixture_1946 extra2_blank_security refused "${_ticket_body_1946}"$'<tr><td><strong>Security concerns</strong><br><span> &nbsp; </span></td></tr>\n' reviewer-check-absent
