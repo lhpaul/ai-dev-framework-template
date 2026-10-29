@@ -47,6 +47,7 @@ class EvidenceTests(unittest.TestCase):
                 ("partial", request.replace("PR Code Verified", "Partially compliant"), "clean"),
                 ("unknown", request.replace("PR Code Verified", "Unknown status"), "escalate"),
                 ("malformed", request.replace("</td>", ""), "escalate"),
+                ("unvalidated_prefix", request.replace("**[42]", "Verification: pending\n**[42]"), "escalate"),
                 ("checkpoint", request + "<h3>Requires further human verification</h3>\n", "escalate"),
                 ("status", request + "## Verification status: pending\n", "escalate"),
                 ("security", request + "## Security concerns\nYes\n", "needs_fixes"),

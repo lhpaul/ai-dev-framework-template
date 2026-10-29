@@ -278,7 +278,9 @@ def classify(body):
         section = re.split(r"</td>|^### ", section, maxsplit=1, flags=re.M)[0]
         tickets = re.findall(r"\*\*(?:\[[^\]\n]+\]\([^\n]*?\)|Untracked ticket) - ([^*\n]+)\*\*([\s\S]*?)(?=\*\*(?:\[|Untracked ticket)|\Z)", section)
         candidates = re.findall(r"^[ \t]*\*\*(?:\[|Untracked ticket)", section, re.M)
-        if not tickets or len(tickets) != len(candidates):
+        first_ticket = re.search(r"\*\*(?:\[|Untracked ticket)", section)
+        if (not tickets or len(tickets) != len(candidates) or first_ticket is None
+                or section[:first_ticket.start()].strip()):
             return "escalate"
         for level, requirements in tickets:
             level = level.strip().lower()
