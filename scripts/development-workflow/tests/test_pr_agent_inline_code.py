@@ -496,7 +496,6 @@ def emit_bootstrap_records():
     else:
         raise AssertionError('predecessor published without reviewed identity')
     # Do not allow an old-producer cross-boundary span merely because doubles are recognized.
-    import pr_agent.tools.pr_reviewer as reviewer
     negative = '<details><summary>Example ``cross </summary> boundary``</details>'
     records.append({'name': 'bootstrap-structural-negative', 'body': reviewer.convert_to_markdown_v2(data(negative)),
                     'verdict': 'escalate', 'verification_only': False, 'd15': False})

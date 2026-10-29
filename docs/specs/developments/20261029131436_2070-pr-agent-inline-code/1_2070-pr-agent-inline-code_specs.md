@@ -75,6 +75,9 @@ PR-Agent can publish a review card whose inline code contains a literal closing 
 - [ ] **AC5**: Synthetic reviews combining the closing-tag expression with independent security and verification blockers retain the blocking disposition of each blocker. Include each blocker independently so one cannot mask loss of the other.
 - [ ] **AC6**: Automated regression coverage exercises the ordinary producer publication path and classification of its independently read published body for AC1–AC5, including below-limit reviews. No previous bot comment or live evidence is modified to obtain readiness, and publication limits and current-head checks remain enforced.
 
+- [ ] **AC7**: Supported complete single-line double-backtick spans, including literal single backticks inside them, retain equivalent visible code in newly rendered findings. The consumer also accepts supported double-backtick code produced by the predecessor, without changing its published body.
+- [ ] **AC8**: A synthetic bootstrap runs the unmodified predecessor producer/publication path against the candidate consumer. Advisory-only supported spans are classifiable without verification-only fallback; independent blockers and genuinely ambiguous HTML still reject. Current-head identity and provenance remain required under the existing policy.
+
 ## Brief Objective List and Coverage Matrix
 
 | Objective from the issue or confirmed constraint | Coverage |
@@ -101,8 +104,6 @@ PR-Agent can publish a review card whose inline code contains a literal closing 
 
 Luis explicitly approved updating this spec and plan within implementation PR #2073 before implementing double-backtick support in both producer and guard. This supersedes the earlier requirement to keep the guard implementation unchanged; its fail-closed protections and classification policy remain required.
 
-- **AC7**: Complete single-line double-backtick spans, including literal single backticks inside them, retain equivalent visible code in newly rendered findings. The consumer also accepts supported double-backtick code produced by the predecessor, without changing its published body.
-- **AC8**: A synthetic bootstrap runs the unmodified predecessor producer/publication path against the candidate consumer. Advisory-only supported spans are classifiable without verification-only fallback; independent blockers and genuinely ambiguous HTML still reject. Current-head identity and provenance remain required under the existing policy.
-- Mismatched, escaped, unclosed, multiline and unsupported delimiter runs remain fail-closed. No PR/finding exemption, history rewrite, reviewer bypass or premature trusted-base promotion is authorized.
+- Supported runs match exactly one or two backticks; doubles may contain isolated single backticks. Mismatched, escaped, unclosed, multiline and longer delimiter runs remain fail-closed. No PR/finding exemption, history rewrite, reviewer bypass or premature trusted-base promotion is authorized.
 
 **Confirmed execution constraints**: Luis accepted the current issue requirements and acceptance criteria, authorized Type Bug and canonical Status transitions, and limited this run to #2070 at maximum risk medium. Each spec, plan, and implementation merge requires his explicit OK; he will review the technical approach at the implementation PR's merge checkpoint.

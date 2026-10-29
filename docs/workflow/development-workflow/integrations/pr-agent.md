@@ -103,14 +103,26 @@ step. The synthetic image/host test neither promotes that base nor changes the
 workflow, its permissions, credentials or model configuration.
 
 Before rendering GFM finding cards, the runtime copies structured finding data
-and formats supported single-line, single-backtick `issue_content` spans that
+and formats supported single-line, single- or double-backtick `issue_content` spans that
 contain literal closing-tag-like syntax as escaped HTML code. The decoded code
 text stays identical; ordinary code and non-GFM rendering stay unchanged. The
 original findings and review state are untouched. Any raw HTML outside supported
 spans preserves the entire source field, even when that HTML follows an eligible
 span. Unsupported delimiters and fenced examples are never repaired. Renderer
 signature and imported-alias identity are checked before installing any hook.
-The consumer ambiguity guard, severity and independent blocker gates are unchanged.
+The consumer recognizes matching one- or two-backtick delimiters, including literal single backticks inside doubles. Unsupported runs, escaped boundaries, multiline payloads and genuine HTML crossings still reject. Affected rendered spans preserve GFM code text (including padding-space normalization); embedded backticks are encoded as `&#96;` inside HTML code. Severity and independent blocker gates retain their existing policy.
+
+For bootstrap, run the ordinary reviewer loop from the candidate item checkout:
+its classifier loads the adjacent runtime, while GitHub PR-Agent still executes
+from the trusted PR base. The image smoke test captures the complete public
+predecessor runtime at Git revision
+`e0d16ef7e4ea48e351a071f872b1caf2bd0515cc` and passes it through container
+stdin to a separate producer process. That Git object must be locally available
+for image mode; the suite does not fetch or substitute another runtime. The
+candidate host consumer checks the predecessor's independently read synthetic
+publications. This proves supported old output can pass without early producer
+activation. Unsupported old output remains a blocker; existing comments are
+never rewritten or counted as approval of a new head.
 
 The patch defers the review composer's size cap and fits the final GitHub
 create/edit body after persistent-update identity and current-head metadata.
