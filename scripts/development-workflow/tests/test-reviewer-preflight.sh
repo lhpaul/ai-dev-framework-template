@@ -589,25 +589,26 @@ with tempfile.TemporaryDirectory(prefix='reviewer-preflight-tests-') as tmp:
     slow_git18 = bins18 / 'git'
     slow_git18.write_text(
         '#!/bin/bash\n'
-        'for arg in "$@"; do case "$arg" in *:.coderabbit.yaml) sleep 5; break;; esac; done\n'
+        'for arg in "$@"; do case "$arg" in *:.coderabbit.yaml) sleep 50; break;; esac; done\n'
         f'exec {real_git18!r} "$@"\n'
     )
     slow_git18.chmod(0o755)
+    budget18, cap18 = 30, 10
     rc, data, out, err = run(
         repo18, '--mode', 'pre-dispatch', '--target-base', 'develop',
         '--remaining-stages', 'on_draft.github', '--pr-state', 'on_draft.github=draft',
         env={
             'PATH': f'{bins18}:{os.environ.get("PATH", "")}',
             'WORKFLOW_REVIEWER_PREFLIGHT_TEST_MODE': '1',
-            'WORKFLOW_REVIEWER_PREFLIGHT_BUDGET_SECONDS': '3',
-            'WORKFLOW_REVIEWER_PREFLIGHT_PER_PLATFORM_CAP_SECONDS': '1',
+            'WORKFLOW_REVIEWER_PREFLIGHT_BUDGET_SECONDS': str(budget18),
+            'WORKFLOW_REVIEWER_PREFLIGHT_PER_PLATFORM_CAP_SECONDS': str(cap18),
         },
         expected=0,
     )
     elapsed = float(data.get('ELAPSED_SECONDS', '999'))
     check(
         'T-18 bound floor keeps total elapsed close to the budget, not 2x the per-step cap',
-        elapsed <= 6.0,
+        elapsed <= budget18 + cap18 + 1,
         data,
     )
 
@@ -1774,11 +1775,37 @@ with tempfile.TemporaryDirectory(prefix='reviewer-preflight-tests-') as tmp:
         '--remaining-stages', 'on_draft.github', '--pr-state', 'on_draft.github=draft',
         env=env2, expected=0,
     )
-    check('T-51 reported BUDGET_SECONDS is the nominal input, not inflated by the floor extension', data.get('BUDGET_SECONDS') == '20', data)
+    check('T-51 reported BUDGET_SECONDS is the nominal input, not inflated by the floor extension', data.get('BUDGET_SECONDS') == env2['WORKFLOW_REVIEWER_PREFLIGHT_BUDGET_SECONDS'], data)
     check(
         'T-51 elapsed stays within budget + per-platform cap + a single one-second floor extension, not one extension per post-deadline call site',
-        float(data.get('ELAPSED_SECONDS', '999')) <= 50.0,
+        float(data.get('ELAPSED_SECONDS', '999')) <= (
+            int(env2['WORKFLOW_REVIEWER_PREFLIGHT_BUDGET_SECONDS'])
+            + int(env2['WORKFLOW_REVIEWER_PREFLIGHT_PER_PLATFORM_CAP_SECONDS']) + 1
+        ),
         data,
+    )
+
+    # The integration run can finish before its nominal deadline on a fast
+    # host. Exercise the actual floor function with synthetic elapsed times
+    # too, so setup speed cannot hide a fresh-second-per-call regression.
+    floor_function51 = helper.read_text().split('clamp_bound_floor() {', 1)[1].split('\n}', 1)[0]
+    clock_probe51 = (
+        'set -eu\n'
+        + 'clamp_bound_floor() {' + floor_function51 + '\n}\n'
+        + 'PREFLIGHT_BUDGET_SECONDS=20\nfloor_deadline_extension=0\nunset SECONDS\n'
+        + 'for elapsed in 19 20 20 21 22 23; do\n'
+        + '  SECONDS=$elapsed\n'
+        + '  clamp_bound_floor 10\n'
+        + '  printf "%s:%s:%s\\n" "$bound" "$floor_deadline_extension" "$PREFLIGHT_BUDGET_SECONDS"\n'
+        + 'done\n'
+    )
+    probe51 = subprocess.run([bash, '-c', clock_probe51], text=True, capture_output=True, timeout=15)
+    check(
+        'T-51 synthetic clock shares one floor second across all post-deadline calls without inflating the nominal budget',
+        probe51.returncode == 0 and probe51.stdout.splitlines() == [
+            '1:0:20', '1:1:20', '1:1:20', '0:1:20', '0:1:20', '0:1:20',
+        ],
+        (probe51.returncode, probe51.stdout, probe51.stderr),
     )
 
     # T-52 (#1561 round-8 finding, P2): an omitted --remaining-stages must
