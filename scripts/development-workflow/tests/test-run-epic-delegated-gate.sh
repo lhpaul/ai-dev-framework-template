@@ -62,7 +62,11 @@ case "$*" in
       --arg base "${BUDGET_TEST_BASE:-develop}" '{number:$n,state:"OPEN",headRefName:"feature/budget-fixture",headRefOid:$head,baseRefName:$base,isInMergeQueue:false,autoMergeRequest:null,body:"",closingIssuesReferences:[]}'
     ;;
   repo\ view*)
-    printf '{"nameWithOwner":"example/mobile-app"}\n'
+    if [[ " $* " == *" --jq "* ]]; then
+      printf 'example/mobile-app\n'
+    else
+      printf '{"nameWithOwner":"example/mobile-app"}\n'
+    fi
     ;;
   mock-sleep-test)
     mock_sleep_if_requested "${MOCK_GH_SLEEP_VAR_NAME:-}"
@@ -1665,6 +1669,14 @@ binding_proof="$(
   python3 "$REPO_ROOT/scripts/development-workflow/workflow-merge-budget.py" begin --input "$TMP_ROOT/binding-manifest.json" --repo-root "$BUDGET_ROOT" > "$TMP_ROOT/binding-created.json"
   selected_session="$(jq -r '.session' "$TMP_ROOT/binding-created.json")"
   "$GATE_SCRIPT" --input "$TMP_ROOT/binding-proof.json" --merge-session "$selected_session" --repo-root "$BUDGET_ROOT" --json > "$TMP_ROOT/binding-valid.json"
+  # Bypass budget_gate: its enrichment would hide a missing repository (#2068).
+  jq 'del(.repository, .repo, .pr.repository, .productRepo)' "$TMP_ROOT/binding-proof.json" > "$TMP_ROOT/binding-no-repo.json"
+  WORKFLOW_TARGET_GITHUB_REPO=example/mobile-app "$GATE_SCRIPT" --input "$TMP_ROOT/binding-no-repo.json" --merge-session "$selected_session" --repo-root "$BUDGET_ROOT" --json > "$TMP_ROOT/binding-env-repo.json"
+  WORKFLOW_TARGET_GITHUB_REPO= "$GATE_SCRIPT" --input "$TMP_ROOT/binding-no-repo.json" --merge-session "$selected_session" --repo-root "$BUDGET_ROOT" --json > "$TMP_ROOT/binding-context-repo.json"
+  jq '.repository=""' "$TMP_ROOT/binding-no-repo.json" > "$TMP_ROOT/binding-empty-repo.json"
+  WORKFLOW_TARGET_GITHUB_REPO=example/mobile-app "$GATE_SCRIPT" --input "$TMP_ROOT/binding-empty-repo.json" --merge-session "$selected_session" --repo-root "$BUDGET_ROOT" --json > "$TMP_ROOT/binding-empty-repo-result.json"
+  WORKFLOW_TARGET_GITHUB_REPO=other/repo "$GATE_SCRIPT" --input "$TMP_ROOT/binding-proof.json" --merge-session "$selected_session" --repo-root "$BUDGET_ROOT" --json > "$TMP_ROOT/binding-explicit-repo-result.json"
+  WORKFLOW_TARGET_GITHUB_REPO=invalid "$GATE_SCRIPT" --input "$TMP_ROOT/binding-no-repo.json" --merge-session "$selected_session" --repo-root "$BUDGET_ROOT" --json > "$TMP_ROOT/binding-invalid-env-result.json"
   jq '.pr.headSha="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"' "$TMP_ROOT/binding-proof.json" > "$TMP_ROOT/binding-stale.json"
   "$GATE_SCRIPT" --input "$TMP_ROOT/binding-stale.json" --merge-session "$selected_session" --repo-root "$BUDGET_ROOT" --json > "$TMP_ROOT/binding-stale-result.json"
   jq '.repository="other/repo"' "$TMP_ROOT/binding-proof.json" > "$TMP_ROOT/binding-foreign.json"
@@ -1677,6 +1689,11 @@ binding_proof="$(
   "$GATE_SCRIPT" --input "$TMP_ROOT/binding-proof.json" --merge-session "$(jq -r '.session' "$TMP_ROOT/binding-unaffordable.json")" --repo-root "$BUDGET_ROOT" --json > "$TMP_ROOT/binding-deferred-result.json"
   jq -n --slurpfile valid "$TMP_ROOT/binding-valid.json" --slurpfile stale "$TMP_ROOT/binding-stale-result.json" --slurpfile foreign "$TMP_ROOT/binding-foreign-result.json" --slurpfile deferred "$TMP_ROOT/binding-deferred-result.json" --slurpfile audit "$TMP_ROOT/audit-only-created.json" --slurpfile auditgate "$TMP_ROOT/audit-only-gate.json" '{auditOutcome:$audit[0].outcome,auditPermitted:$auditgate[0].mergePermitted,auditDecision:$auditgate[0].decision,valid:$valid[0].mergePermitted,stale:$stale[0].decision,foreign:$foreign[0].decision,deferred:$deferred[0].decision}'
 )"
+run_test "missing_repository_uses_environment" true "$(jq -r '.mergePermitted' "$TMP_ROOT/binding-env-repo.json")"
+run_test "missing_repository_uses_checkout_context" true "$(jq -r '.mergePermitted' "$TMP_ROOT/binding-context-repo.json")"
+run_test "empty_repository_uses_environment" true "$(jq -r '.mergePermitted' "$TMP_ROOT/binding-empty-repo-result.json")"
+run_test "explicit_repository_precedes_environment" true "$(jq -r '.mergePermitted' "$TMP_ROOT/binding-explicit-repo-result.json")"
+run_test "invalid_environment_repository_defers" budget_deferred "$(jq -r '.decision' "$TMP_ROOT/binding-invalid-env-result.json")"
 run_test "audit_only_scope_can_admit_its_own_write" Admitted "$(printf '%s\n' "$binding_proof" | jq -r '.auditOutcome')"
 run_test "audit_only_admission_cannot_authorize_merge" false "$(printf '%s\n' "$binding_proof" | jq -r '.auditPermitted')"
 run_test "audit_only_scope_reports_budget_deferred_gate" budget_deferred "$(printf '%s\n' "$binding_proof" | jq -r '.auditDecision')"
