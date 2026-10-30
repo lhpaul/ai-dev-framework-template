@@ -116,6 +116,43 @@ class EvidenceTests(unittest.TestCase):
                     self.assertEqual(json.loads(output.stdout),
                                      {"verdict": "clean", "verification_only": False})
 
+    def test_ticket_mask_preserves_unicode_control_whitespace_offsets(self):
+        classifier = Path(__file__).resolve().parents[1] / "apply-readiness-labels.sh"
+        ticket = ("**Ticket compliance analysis**\n**[42](url) - Fully compliant**\n"
+                  "Compliant requirements:\n- Implemented. ")
+        # Exercise entity decoding and literal Unicode without rewriting the
+        # rendered string: emphasis boundaries must keep their original offsets.
+        separators = ("&nbsp;", "&#160;", "&#xA0;", "&ensp;", "&emsp;", "&thinsp;",
+                      "&#x202F;", "&#x205F;", "&#x3000;", "\u00a0", "\u1680",
+                      "\u2000", "\u2007", "\u2009", "\u202f", "\u205f", "\u3000")
+        for separator in separators:
+            for tag in ("strong", "em", "b", "span"):
+                controls = (f"Secu<{tag}>rity</{tag}>{separator}concerns: Yes",
+                            f"Recommended{separator}focus areas for <{tag}>review</{tag}>",
+                            f"Recommended focus{separator}areas for <{tag}>review</{tag}>",
+                            f"Recommended focus areas{separator}for <{tag}>review</{tag}>",
+                            f"Recommended focus areas for{separator}<{tag}>review</{tag}>",
+                            f"Key{separator}issues to re<{tag}>view</{tag}>",
+                            f"Key issues{separator}to re<{tag}>view</{tag}>",
+                            f"Key issues to{separator}re<{tag}>view</{tag}>",
+                            f"Verification{separator}<{tag}>status</{tag}>: pending")
+                for control in controls:
+                    with self.subTest(separator=separator, tag=tag, control=control):
+                        output = subprocess.run(["bash", str(classifier), "--inspect-pr-agent"],
+                            input=ticket + control, capture_output=True, text=True, check=True)
+                        self.assertEqual(json.loads(output.stdout),
+                                         {"verdict": "escalate", "verification_only": False})
+            for prose in (f"Support Security{separator}concerns <em>values</em>.",
+                          f"Support Recommended{separator}focus areas for review <em>values</em>.",
+                          f"Support Key{separator}issues to review <em>values</em>.",
+                          f"Requires{separator}further <em>human</em> verification",
+                          f"<strong>Support Security{separator}concerns values.</strong>"):
+                with self.subTest(separator=separator, prose=prose):
+                    output = subprocess.run(["bash", str(classifier), "--inspect-pr-agent"],
+                        input=ticket + prose, capture_output=True, text=True, check=True)
+                    self.assertEqual(json.loads(output.stdout),
+                                     {"verdict": "clean", "verification_only": False})
+
     def test_ticket_requirements_preserve_rendered_line_boundaries(self):
         classifier = Path(__file__).resolve().parents[1] / "apply-readiness-labels.sh"
         ticket = ("**Ticket compliance analysis**\n"

@@ -201,11 +201,11 @@ class ReviewText(HTMLParser):
 
 
 def independent_ticket_control(text):
-    """Use the independent verification grammar and known reviewer labels."""
+    """Match decoded whitespace in place, preserving rendered label offsets."""
     text = re.sub(r"[*_]", "", text)
     return re.match(verification_heading, text, re.I) or re.match(
         r"^[ \t]*(?:(?:[-*]|[0-9]+[.)])\s+)?[^\w]*"
-        r"(?:Security concerns|Recommended focus areas for review|Key issues to review)\b", text, re.I)
+        r"(?:Security\s+concerns|Recommended\s+focus\s+areas\s+for\s+review|Key\s+issues\s+to\s+review)\b", text, re.I)
 
 
 def styled_ticket_control(text, html_spans=()):
