@@ -220,21 +220,23 @@ with tempfile.TemporaryDirectory(prefix='reviewer-preflight-tests-') as tmp:
 
     # T-7: budget timeout degrades to undetermined, not blocked, when nothing
     # else already proved a disagreement — never hangs past the test budget.
+    # Scale budget, cap and fake delay together (10x) so loaded CI runners
+    # can finish setup before the intended config-read timeout.
     repo7 = root / 'repo7'
     write_repo(repo7, coherent_shared, coherent_coderabbit)
     slow_git = bins / 'git'
     real_git = shutil.which('git')
     slow_git.write_text(
         '#!/bin/bash\n'
-        'for arg in "$@"; do case "$arg" in *:.coderabbit.yaml) sleep 5; break;; esac; done\n'
+        'for arg in "$@"; do case "$arg" in *:.coderabbit.yaml) sleep 50; break;; esac; done\n'
         f'exec {real_git!r} "$@"\n'
     )
     slow_git.chmod(0o755)
     env2 = {
         'PATH': f'{bins}:{os.environ.get("PATH", "")}',
         'WORKFLOW_REVIEWER_PREFLIGHT_TEST_MODE': '1',
-        'WORKFLOW_REVIEWER_PREFLIGHT_BUDGET_SECONDS': '2',
-        'WORKFLOW_REVIEWER_PREFLIGHT_PER_PLATFORM_CAP_SECONDS': '1',
+        'WORKFLOW_REVIEWER_PREFLIGHT_BUDGET_SECONDS': '20',
+        'WORKFLOW_REVIEWER_PREFLIGHT_PER_PLATFORM_CAP_SECONDS': '10',
     }
     rc, data, out, err = run(
         repo7, '--mode', 'pre-dispatch', '--target-base', 'develop',
@@ -587,25 +589,26 @@ with tempfile.TemporaryDirectory(prefix='reviewer-preflight-tests-') as tmp:
     slow_git18 = bins18 / 'git'
     slow_git18.write_text(
         '#!/bin/bash\n'
-        'for arg in "$@"; do case "$arg" in *:.coderabbit.yaml) sleep 5; break;; esac; done\n'
+        'for arg in "$@"; do case "$arg" in *:.coderabbit.yaml) sleep 50; break;; esac; done\n'
         f'exec {real_git18!r} "$@"\n'
     )
     slow_git18.chmod(0o755)
+    budget18, cap18 = 30, 10
     rc, data, out, err = run(
         repo18, '--mode', 'pre-dispatch', '--target-base', 'develop',
         '--remaining-stages', 'on_draft.github', '--pr-state', 'on_draft.github=draft',
         env={
             'PATH': f'{bins18}:{os.environ.get("PATH", "")}',
             'WORKFLOW_REVIEWER_PREFLIGHT_TEST_MODE': '1',
-            'WORKFLOW_REVIEWER_PREFLIGHT_BUDGET_SECONDS': '3',
-            'WORKFLOW_REVIEWER_PREFLIGHT_PER_PLATFORM_CAP_SECONDS': '1',
+            'WORKFLOW_REVIEWER_PREFLIGHT_BUDGET_SECONDS': str(budget18),
+            'WORKFLOW_REVIEWER_PREFLIGHT_PER_PLATFORM_CAP_SECONDS': str(cap18),
         },
         expected=0,
     )
     elapsed = float(data.get('ELAPSED_SECONDS', '999'))
     check(
         'T-18 bound floor keeps total elapsed close to the budget, not 2x the per-step cap',
-        elapsed <= 6.0,
+        elapsed <= budget18 + cap18 + 1,
         data,
     )
 
@@ -1015,6 +1018,9 @@ with tempfile.TemporaryDirectory(prefix='reviewer-preflight-tests-') as tmp:
     # unbounded sleep; the run must still finish within a small multiple of
     # the (deliberately tight) test budget, not hang for the fake's full
     # sleep duration.
+    # These stall tests reserve 30s total / 10s per step for loaded-host
+    # setup. Their 45s wall bound remains below each deliberate 100s stall
+    # and the harness's 90s subprocess guard. Keep the failure-site checks.
     repo33 = root / 'repo33'
     write_repo(repo33, coherent_shared, coherent_coderabbit)
     bins33 = root / 'bin33'
@@ -1028,7 +1034,7 @@ with tempfile.TemporaryDirectory(prefix='reviewer-preflight-tests-') as tmp:
         # scanning args rather than assuming $1/$2.
         'is_status=0\n'
         'for arg in "$@"; do case "$arg" in status) is_status=1;; esac; done\n'
-        'if [ "$is_status" = 1 ]; then sleep 30; fi\n'
+        'if [ "$is_status" = 1 ]; then sleep 100; fi\n'
         f'exec {real_git33!r} "$@"\n'
     )
     slow_git33.chmod(0o755)
@@ -1041,14 +1047,14 @@ with tempfile.TemporaryDirectory(prefix='reviewer-preflight-tests-') as tmp:
         env={
             'PATH': f'{bins33}:{os.environ.get("PATH", "")}',
             'WORKFLOW_REVIEWER_PREFLIGHT_TEST_MODE': '1',
-            'WORKFLOW_REVIEWER_PREFLIGHT_BUDGET_SECONDS': '3',
-            'WORKFLOW_REVIEWER_PREFLIGHT_PER_PLATFORM_CAP_SECONDS': '1',
+            'WORKFLOW_REVIEWER_PREFLIGHT_BUDGET_SECONDS': '30',
+            'WORKFLOW_REVIEWER_PREFLIGHT_PER_PLATFORM_CAP_SECONDS': '10',
         },
     )
     wall33 = _time33.monotonic() - start33
     check(
         'T-33 a stalled git status --porcelain does not let the run exceed a small multiple of its budget',
-        wall33 <= 15.0,
+        wall33 <= 45.0,
         f'wall={wall33}s rc={rc} data={data} err={err}',
     )
     check(
@@ -1083,7 +1089,7 @@ with tempfile.TemporaryDirectory(prefix='reviewer-preflight-tests-') as tmp:
         '#!/bin/bash\n'
         'is_merge_base=0\n'
         'for arg in "$@"; do case "$arg" in merge-base) is_merge_base=1;; esac; done\n'
-        'if [ "$is_merge_base" = 1 ]; then sleep 30; fi\n'
+        'if [ "$is_merge_base" = 1 ]; then sleep 100; fi\n'
         f'exec {real_git34!r} "$@"\n'
     )
     slow_git34.chmod(0o755)
@@ -1094,14 +1100,14 @@ with tempfile.TemporaryDirectory(prefix='reviewer-preflight-tests-') as tmp:
         env={
             'PATH': f'{bins34}:{os.environ.get("PATH", "")}',
             'WORKFLOW_REVIEWER_PREFLIGHT_TEST_MODE': '1',
-            'WORKFLOW_REVIEWER_PREFLIGHT_BUDGET_SECONDS': '3',
-            'WORKFLOW_REVIEWER_PREFLIGHT_PER_PLATFORM_CAP_SECONDS': '1',
+            'WORKFLOW_REVIEWER_PREFLIGHT_BUDGET_SECONDS': '30',
+            'WORKFLOW_REVIEWER_PREFLIGHT_PER_PLATFORM_CAP_SECONDS': '10',
         },
     )
     wall34 = _time33.monotonic() - start34
     check(
         'T-34 a stalled merge-base --is-ancestor does not let the run exceed a small multiple of its budget',
-        wall34 <= 15.0,
+        wall34 <= 45.0,
         f'wall={wall34}s rc={rc} data={data} err={err}',
     )
     check(
@@ -1198,7 +1204,7 @@ with tempfile.TemporaryDirectory(prefix='reviewer-preflight-tests-') as tmp:
         '#!/bin/bash\n'
         'is_revparse=0\n'
         'for arg in "$@"; do case "$arg" in --verify) is_revparse=1;; esac; done\n'
-        'if [ "$is_revparse" = 1 ]; then sleep 30; fi\n'
+        'if [ "$is_revparse" = 1 ]; then sleep 100; fi\n'
         f'exec {real_git37!r} "$@"\n'
     )
     slow_git37.chmod(0o755)
@@ -1209,14 +1215,14 @@ with tempfile.TemporaryDirectory(prefix='reviewer-preflight-tests-') as tmp:
         env={
             'PATH': f'{bins37}:{os.environ.get("PATH", "")}',
             'WORKFLOW_REVIEWER_PREFLIGHT_TEST_MODE': '1',
-            'WORKFLOW_REVIEWER_PREFLIGHT_BUDGET_SECONDS': '3',
-            'WORKFLOW_REVIEWER_PREFLIGHT_PER_PLATFORM_CAP_SECONDS': '1',
+            'WORKFLOW_REVIEWER_PREFLIGHT_BUDGET_SECONDS': '30',
+            'WORKFLOW_REVIEWER_PREFLIGHT_PER_PLATFORM_CAP_SECONDS': '10',
         },
     )
     wall37 = _time33.monotonic() - start37
     check(
         'T-37 a stalled rev-parse --verify branch-resolution probe does not let the run exceed a small multiple of its budget',
-        wall37 <= 15.0,
+        wall37 <= 45.0,
         f'wall={wall37}s rc={rc} data={data} err={err}',
     )
     check(
@@ -1247,7 +1253,7 @@ with tempfile.TemporaryDirectory(prefix='reviewer-preflight-tests-') as tmp:
         '#!/bin/bash\n'
         'is_verify=0\n'
         'for arg in "$@"; do case "$arg" in --verify) is_verify=1;; esac; done\n'
-        'if [ "$is_verify" = 1 ]; then sleep 30; fi\n'
+        'if [ "$is_verify" = 1 ]; then sleep 100; fi\n'
         f'exec {real_git38!r} "$@"\n'
     )
     slow_git38.chmod(0o755)
@@ -1258,14 +1264,14 @@ with tempfile.TemporaryDirectory(prefix='reviewer-preflight-tests-') as tmp:
         env={
             'PATH': f'{bins38}:{os.environ.get("PATH", "")}',
             'WORKFLOW_REVIEWER_PREFLIGHT_TEST_MODE': '1',
-            'WORKFLOW_REVIEWER_PREFLIGHT_BUDGET_SECONDS': '3',
-            'WORKFLOW_REVIEWER_PREFLIGHT_PER_PLATFORM_CAP_SECONDS': '1',
+            'WORKFLOW_REVIEWER_PREFLIGHT_BUDGET_SECONDS': '30',
+            'WORKFLOW_REVIEWER_PREFLIGHT_PER_PLATFORM_CAP_SECONDS': '10',
         },
     )
     wall38 = _time33.monotonic() - start38
     check(
         'T-38 a stalled read_ref_file verify-probe does not let the run exceed a small multiple of its budget',
-        wall38 <= 15.0,
+        wall38 <= 45.0,
         f'wall={wall38}s rc={rc} data={data} err={err}',
     )
     # The shared config file (.ai-dev-workflow.yaml) exists in this
@@ -1277,7 +1283,7 @@ with tempfile.TemporaryDirectory(prefix='reviewer-preflight-tests-') as tmp:
     # 124 there to Undetermined/check-inconclusive for that one platform
     # (this test's own load-bearing assertion is the wall-clock bound
     # above, which proves that degrade happened quickly rather than after
-    # hanging for the fake's full 30s sleep).
+    # hanging for the fake's full 100s sleep).
     check(
         'T-38 a bounded verify-probe timeout degrades to Undetermined/check-inconclusive, not a hang',
         data.get('OUTCOME') == 'passed-unverified'
@@ -1496,15 +1502,17 @@ with tempfile.TemporaryDirectory(prefix='reviewer-preflight-tests-') as tmp:
     fake_timeout44.chmod(0o755)
     real_git44 = shutil.which('git')
     marker44 = root / 'grandchild-survived.marker'
+    started44 = root / 'ls-remote-started.marker'
     slow_git44 = bins44 / 'git'
     slow_git44.write_text(
         '#!/bin/bash\n'
         'is_lsremote=0\n'
         'for arg in "$@"; do [ "$arg" = ls-remote ] && is_lsremote=1; done\n'
         'if [ "$is_lsremote" = 1 ]; then\n'
-        f'  (sleep 2.5; touch {str(marker44)!r}) &\n'
+        f'  touch {str(started44)!r}\n'
+        f'  (sleep 25; touch {str(marker44)!r}) &\n'
         '  disown\n'
-        '  sleep 30\n'
+        '  sleep 100\n'
         '  exit 0\n'
         'fi\n'
         f'exec {real_git44!r} "$@"\n'
@@ -1517,20 +1525,21 @@ with tempfile.TemporaryDirectory(prefix='reviewer-preflight-tests-') as tmp:
         env={
             'PATH': f'{bins44}:{os.environ.get("PATH", "")}',
             'WORKFLOW_REVIEWER_PREFLIGHT_TEST_MODE': '1',
-            'WORKFLOW_REVIEWER_PREFLIGHT_BUDGET_SECONDS': '2',
-            'WORKFLOW_REVIEWER_PREFLIGHT_PER_PLATFORM_CAP_SECONDS': '1',
+            'WORKFLOW_REVIEWER_PREFLIGHT_BUDGET_SECONDS': '30',
+            'WORKFLOW_REVIEWER_PREFLIGHT_PER_PLATFORM_CAP_SECONDS': '10',
         },
     )
     wall44 = _time33.monotonic() - start44
     check(
         'T-44 a stalled fallback-launcher command does not let the run hang for the grandchild\'s full sleep',
-        wall44 <= 10.0,
+        wall44 <= 45.0,
         f'wall={wall44}s rc={rc} data={data} err={err}',
     )
-    # Wait past when the marker would appear if the grandchild survived
-    # (2.5s from its own spawn, well before this check), then confirm it
-    # never did.
-    _time33.sleep(max(0.0, 3.5 - wall44))
+    check('T-44 reaches the intended ls-remote stall before timing out', started44.exists(), err)
+    # The child delay (25s) exceeds the cap (10s). Wait longer than that
+    # delay AFTER the bounded call returns, regardless of setup duration,
+    # so a surviving grandchild cannot write its marker after our check.
+    _time33.sleep(26)
     check(
         'T-44 the ls-remote grandchild is killed with its parent (process-group kill), not left running',
         not marker44.exists(),
@@ -1760,7 +1769,7 @@ with tempfile.TemporaryDirectory(prefix='reviewer-preflight-tests-') as tmp:
     # before-porcelain snapshot, either input-build path, the classifier,
     # the after-porcelain snapshot, and the report renderer). Reuse T-7's
     # own reliable, non-race-prone timing fixture (a real git subprocess
-    # bounded well under its artificial 5-second delay, not a tight
+    # bounded well under its artificial 50-second delay, not a tight
     # sub-second race against another fake) and assert the reported
     # BUDGET_SECONDS stays exactly the nominal value passed in (not
     # inflated by however many post-deadline call sites happened to run)
@@ -1772,11 +1781,37 @@ with tempfile.TemporaryDirectory(prefix='reviewer-preflight-tests-') as tmp:
         '--remaining-stages', 'on_draft.github', '--pr-state', 'on_draft.github=draft',
         env=env2, expected=0,
     )
-    check('T-51 reported BUDGET_SECONDS is the nominal input, not inflated by the floor extension', data.get('BUDGET_SECONDS') == '2', data)
+    check('T-51 reported BUDGET_SECONDS is the nominal input, not inflated by the floor extension', data.get('BUDGET_SECONDS') == env2['WORKFLOW_REVIEWER_PREFLIGHT_BUDGET_SECONDS'], data)
     check(
         'T-51 elapsed stays within budget + per-platform cap + a single one-second floor extension, not one extension per post-deadline call site',
-        float(data.get('ELAPSED_SECONDS', '999')) <= 5.0,
+        float(data.get('ELAPSED_SECONDS', '999')) <= (
+            int(env2['WORKFLOW_REVIEWER_PREFLIGHT_BUDGET_SECONDS'])
+            + int(env2['WORKFLOW_REVIEWER_PREFLIGHT_PER_PLATFORM_CAP_SECONDS']) + 1
+        ),
         data,
+    )
+
+    # The integration run can finish before its nominal deadline on a fast
+    # host. Exercise the actual floor function with synthetic elapsed times
+    # too, so setup speed cannot hide a fresh-second-per-call regression.
+    floor_function51 = helper.read_text().split('clamp_bound_floor() {', 1)[1].split('\n}', 1)[0]
+    clock_probe51 = (
+        'set -eu\n'
+        + 'clamp_bound_floor() {' + floor_function51 + '\n}\n'
+        + 'PREFLIGHT_BUDGET_SECONDS=20\nfloor_deadline_extension=0\nunset SECONDS\n'
+        + 'for elapsed in 19 20 20 21 22 23; do\n'
+        + '  SECONDS=$elapsed\n'
+        + '  clamp_bound_floor 10\n'
+        + '  printf "%s:%s:%s\\n" "$bound" "$floor_deadline_extension" "$PREFLIGHT_BUDGET_SECONDS"\n'
+        + 'done\n'
+    )
+    probe51 = subprocess.run([bash, '-c', clock_probe51], text=True, capture_output=True, timeout=15)
+    check(
+        'T-51 synthetic clock shares one floor second across all post-deadline calls without inflating the nominal budget',
+        probe51.returncode == 0 and probe51.stdout.splitlines() == [
+            '1:0:20', '1:1:20', '1:1:20', '0:1:20', '0:1:20', '0:1:20',
+        ],
+        (probe51.returncode, probe51.stdout, probe51.stderr),
     )
 
     # T-52 (#1561 round-8 finding, P2): an omitted --remaining-stages must
@@ -1840,7 +1875,7 @@ with tempfile.TemporaryDirectory(prefix='reviewer-preflight-tests-') as tmp:
         '#!/bin/bash\n'
         'for arg in "$@"; do [ "$arg" = --argjson ] && is_argjson=1; done\n'
         'if [ "${is_argjson:-0}" = 1 ]; then\n'
-        '  for arg in "$@"; do [ "$arg" = elapsed ] && sleep 10; done\n'
+        '  for arg in "$@"; do [ "$arg" = elapsed ] && sleep 100; done\n'
         'fi\n'
         f'exec {real_jq53!r} "$@"\n'
     )
@@ -1853,13 +1888,13 @@ with tempfile.TemporaryDirectory(prefix='reviewer-preflight-tests-') as tmp:
         env={
             'PATH': f'{bins53}:{os.environ.get("PATH", "")}',
             'WORKFLOW_REVIEWER_PREFLIGHT_TEST_MODE': '1',
-            'WORKFLOW_REVIEWER_PREFLIGHT_BUDGET_SECONDS': '2',
-            'WORKFLOW_REVIEWER_PREFLIGHT_PER_PLATFORM_CAP_SECONDS': '1',
+            'WORKFLOW_REVIEWER_PREFLIGHT_BUDGET_SECONDS': '30',
+            'WORKFLOW_REVIEWER_PREFLIGHT_PER_PLATFORM_CAP_SECONDS': '10',
         },
         expected=3,
     )
     elapsed53 = time.monotonic() - started53
-    check('T-53 a stalled JSON-report jq is bounded, not left to run its full stall duration', elapsed53 <= 8.0, elapsed53)
+    check('T-53 a stalled JSON-report jq is bounded, not left to run its full stall duration', elapsed53 <= 45.0, elapsed53)
     check('T-53 failure message names the JSON report render failure', 'cannot render the JSON report' in err, err)
 
     # T-54 (#1561 round-11 finding, P2): required dependencies must be
@@ -1911,7 +1946,7 @@ with tempfile.TemporaryDirectory(prefix='reviewer-preflight-tests-') as tmp:
     stalled_jq55 = bins55 / 'jq'
     stalled_jq55.write_text(
         '#!/bin/bash\n'
-        'for arg in "$@"; do case "$arg" in *LOCAL_OVERRIDE_FILE*) sleep 10;; esac; done\n'
+        'for arg in "$@"; do case "$arg" in *LOCAL_OVERRIDE_FILE*) sleep 100;; esac; done\n'
         f'exec {real_jq55!r} "$@"\n'
     )
     stalled_jq55.chmod(0o755)
@@ -1922,13 +1957,13 @@ with tempfile.TemporaryDirectory(prefix='reviewer-preflight-tests-') as tmp:
         env={
             'PATH': f'{bins55}:{os.environ.get("PATH", "")}',
             'WORKFLOW_REVIEWER_PREFLIGHT_TEST_MODE': '1',
-            'WORKFLOW_REVIEWER_PREFLIGHT_BUDGET_SECONDS': '2',
-            'WORKFLOW_REVIEWER_PREFLIGHT_PER_PLATFORM_CAP_SECONDS': '1',
+            'WORKFLOW_REVIEWER_PREFLIGHT_BUDGET_SECONDS': '30',
+            'WORKFLOW_REVIEWER_PREFLIGHT_PER_PLATFORM_CAP_SECONDS': '10',
         },
         expected=3,
     )
     elapsed55 = time.monotonic() - started55
-    check('T-55 a stalled resolver-output jq is bounded, not left to run its full stall duration', elapsed55 <= 8.0, elapsed55)
+    check('T-55 a stalled resolver-output jq is bounded, not left to run its full stall duration', elapsed55 <= 45.0, elapsed55)
     check('T-55 failure message names the LOCAL_OVERRIDE_FILE/LOCAL_OVERRIDE_ORIGIN parse failure', 'cannot read LOCAL_OVERRIDE_FILE' in err, err)
 
     # T-56 (#1561 round-12 finding, P1): a non-empty but malformed
@@ -1973,7 +2008,7 @@ with tempfile.TemporaryDirectory(prefix='reviewer-preflight-tests-') as tmp:
     stalled_git57 = bins57 / 'git'
     stalled_git57.write_text(
         '#!/bin/bash\n'
-        'for arg in "$@"; do [ "$arg" = check-ref-format ] && sleep 10; done\n'
+        'for arg in "$@"; do [ "$arg" = check-ref-format ] && sleep 100; done\n'
         f'exec {real_git57!r} "$@"\n'
     )
     stalled_git57.chmod(0o755)
@@ -1984,13 +2019,13 @@ with tempfile.TemporaryDirectory(prefix='reviewer-preflight-tests-') as tmp:
         env={
             'PATH': f'{bins57}:{os.environ.get("PATH", "")}',
             'WORKFLOW_REVIEWER_PREFLIGHT_TEST_MODE': '1',
-            'WORKFLOW_REVIEWER_PREFLIGHT_BUDGET_SECONDS': '2',
-            'WORKFLOW_REVIEWER_PREFLIGHT_PER_PLATFORM_CAP_SECONDS': '1',
+            'WORKFLOW_REVIEWER_PREFLIGHT_BUDGET_SECONDS': '30',
+            'WORKFLOW_REVIEWER_PREFLIGHT_PER_PLATFORM_CAP_SECONDS': '10',
         },
         expected=3,
     )
     elapsed57 = time.monotonic() - started57
-    check('T-57 a stalled check-ref-format probe is bounded, not left to run its full stall duration', elapsed57 <= 8.0, elapsed57)
+    check('T-57 a stalled check-ref-format probe is bounded, not left to run its full stall duration', elapsed57 <= 45.0, elapsed57)
     check('T-57 failure message names the check-ref-format probe timeout', 'check-ref-format probe did not complete' in err, err)
 
     # T-58 (#1561 round-14 finding, P2): a TMPDIR pointing inside --repo-root
