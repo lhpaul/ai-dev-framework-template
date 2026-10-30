@@ -2034,17 +2034,21 @@ import sys
 from types import SimpleNamespace
 
 runtime = runpy.run_path(sys.argv[1] + "/scripts/development-workflow/pr-agent-runtime.py")
-for example in ("`git show <head>:CHANGELOG.md`", "~~~html\n<head>\n~~~\n"):
+for example in ("`git show <head>:CHANGELOG.md`", "``complex``", "~~~html\n<head>\n~~~\n"):
     source = example + "\n\n<details><summary>Visible</summary></details>"
     masked = runtime["mask_review_code"](source)
     assert len(masked) == len(source)
+    assert not masked[:len(example)].strip()
+    assert masked[len(example):] == source[len(example):]
+    if example == "``complex``":
+        assert runtime["mask_review_code"](source, preserve_offsets=False) == " " + source[len(example):]
     assert [i for i, char in enumerate(masked) if char in "\r\n"] == [
         i for i, char in enumerate(source) if char in "\r\n"]
     nodes = runtime["ReviewSpans"](source).nodes
     assert [node.tag for node in nodes] == ["details", "summary"]
     assert source[nodes[1].close_start:nodes[1].end] == "</summary>"
 
-for source in ("Unmatched ` prose", "`first\nsecond`", "``complex``",
+for source in ("Unmatched ` prose", "`first\nsecond`",
                "<span>`Critical`</span>",
                '<span title="`">Text</span>',
                "<details><summary>Read `git show <head>:CHANGELOG.md`</summary></details>",

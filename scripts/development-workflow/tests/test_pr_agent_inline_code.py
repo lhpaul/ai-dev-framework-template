@@ -107,7 +107,6 @@ class SourceTests(unittest.TestCase):
     def test_double_backticks(self):
         for source, decoded in (
                 ('``f("</node>")``', 'f("</node>")'),
-                ('`` `f("</node>")` ``', '`f("</node>")`'),
                 ('``  x("</node>")  ``', ' x("</node>") ')):
             with self.subTest(source=source):
                 result = runtime.normalize_finding_inline_code(source)
@@ -115,13 +114,27 @@ class SourceTests(unittest.TestCase):
                 from html import unescape
                 self.assertEqual(decoded, unescape(result.removeprefix('<code>').removesuffix('</code>')))
         mixed = TEXT + ' beside `` `value` ``.'
-        self.assertIn('<code>', runtime.normalize_finding_inline_code(mixed))
-        for source in ('``helper()``', '`` `value` ``', '``   ``', '``a <node> b``'):
+        self.assertEqual(mixed, runtime.normalize_finding_inline_code(mixed))
+        for source in ('``helper()``', '``complex``', '``   ``', '``a <node> b``'):
             self.assertEqual(source, runtime.normalize_finding_inline_code(source))
             body = '<table><tr><td><details><summary>Inspect ' + source + '</summary></details></td></tr></table>'
             masked = runtime.mask_review_code(body)
             self.assertEqual(len(body), len(masked))
             self.assertNotIn('`', masked)
+
+    def test_mixed_width_runs_are_deferred_without_relaxing_simple_doubles(self):
+        deferred = ('``git `<head>`:CHANGELOG.md``', '`` `value` ``',
+                    '`` `f("</node>")` ``', '``before ` after``')
+        for source in deferred:
+            with self.subTest(source=source):
+                self.assertEqual(source, runtime.normalize_finding_inline_code(source))
+                for preserve in (True, False):
+                    with self.assertRaises(ValueError):
+                        runtime.mask_review_code(source, preserve_offsets=preserve)
+        source = '``complex``'
+        suffix = '\n\n<table><tr><td>Visible</td></tr></table>'
+        self.assertEqual(' ' * len(source) + suffix, runtime.mask_review_code(source + suffix))
+        self.assertEqual(' ' + suffix, runtime.mask_review_code(source + suffix, preserve_offsets=False))
 
     def test_double_negative_boundaries(self):
         for source in ('``unclosed', '``x`', '`x``', '``x```', '``two\nlines``',
@@ -233,7 +246,7 @@ class ProducerTests(unittest.TestCase):
         return body
 
     def test_publication_consumers(self):
-        for text in (TEXT, 'Consider `helper()` here.', 'Inspect `` `f("</node>")` `` and ``helper()``.'):
+        for text in (TEXT, 'Consider `helper()` here.', 'Inspect ``f("</node>")`` and ``helper()``.'):
             generated = self.generated(text)
             for mode in ('fresh', 'edit', 'persistent'):
                 with self.subTest(text=text, mode=mode):
@@ -254,6 +267,13 @@ class ProducerTests(unittest.TestCase):
                     self.assertIn('Possible Issue', outbound)
                     runtime.mask_review_code(outbound)
                     self.assertIn('`helper()`' if text == 'Consider `helper()` here.' else '<code>', outbound)
+
+    def test_mixed_width_publication_remains_blocking(self):
+        for mode in ('fresh', 'edit', 'persistent'):
+            with self.subTest(mode=mode):
+                record = publication('Inspect `` `f("</node>")` ``.', mode=mode)
+                with self.assertRaises(ValueError):
+                    runtime.mask_review_code(record['body'])
 
     def test_structural_boundaries(self):
         negatives = ('<details><summary>Example `cross </summary> boundary`</details>',
@@ -405,13 +425,13 @@ class ProducerTests(unittest.TestCase):
 def emit_records():
     import pr_agent.tools.pr_reviewer as reviewer
     records = []
-    for text in (TEXT, 'Consider `helper()` here.', 'Inspect `` `f("</node>")` `` and ``helper()``.'):
+    for text in (TEXT, 'Consider `helper()` here.', 'Inspect ``f("</node>")`` and ``helper()``.'):
         for mode in ('fresh', 'edit', 'persistent'):
             records.append(dict(publication(text, mode=mode), name=mode + text, verdict='clean', verification_only=False,
                                 focus='Possible Issue', d15=True))
     for name, header, security, verdict, verification in (
             ('security', 'Possible Issue', 'Yes', 'needs_fixes', False),
-            ('verification', 'Possible Issue', 'No', 'escalate', True),
+            ('verification', 'Possible Issue', 'No', 'clean', False),
             ('hard-focus', 'Must fix', 'No', 'needs_fixes', False)):
         extra = {}
         if name == 'verification':
@@ -420,6 +440,12 @@ def emit_records():
                 'requires_further_human_verification': '- Confirm the fabricated acceptance scenario.'}]
         record = publication(header=header, security=security, extra_review=extra)
         records.append(dict(record, name=name, verdict=verdict, verification_only=verification, focus=header, d15=True))
+        if name == 'verification':
+            for suffix in ('\n### Verification status: pending\n',
+                           '\n### Requires further human verification\n- Confirm code evidence.\n'):
+                records.append({'name': 'independent-verification-' + suffix,
+                                'body': record['body'] + suffix, 'verdict': 'escalate',
+                                'verification_only': False, 'd15': False})
     for text in ('<details><summary>Example `cross </summary> boundary`</details>',
                  TEXT + '<details><summary>Example `cross </summary> boundary`</details>'):
         records.append({'name': 'renderer-source-negative', 'body': reviewer.convert_to_markdown_v2(data(text)),
@@ -428,7 +454,8 @@ def emit_records():
                     'verdict': 'escalate', 'verification_only': False, 'd15': False})
     for text in ('<details><summary>Example ``cross </summary> boundary``</details>',
                  '``f("</node>")`` <div>later</div>', '``unclosed', '``x`', '`x``',
-                 '``x```', '``two\nlines``', '\\``escaped``', '``trailing\\``'):
+                 '``x```', '``two\nlines``', '\\``escaped``', '``trailing\\``',
+                 '``git `<head>`:CHANGELOG.md``', '`` `f("</node>")` ``'):
         copied = runtime.normalize_review_render_data(data(text))
         assert copied['review']['key_issues_to_review'][0]['issue_content'] == text
         records.append({'name': 'double-renderer-negative', 'body': reviewer.convert_to_markdown_v2(data(text)),
@@ -448,7 +475,7 @@ def emit_bootstrap_records():
     assert source.startswith('#!/usr/bin/env python3')
     exec(compile(source, 'public-bootstrap-predecessor.py', 'exec'), predecessor.__dict__)
     runtime = predecessor
-    text = 'Inspect `` `widget` `` and ``a <node> b`` and ``   ``.'
+    text = 'Inspect ``widget`` and ``a <node> b`` and ``   ``.'
     records = []
     for mode in ('fresh', 'edit', 'persistent'):
         record = publication(text, mode=mode)
@@ -463,7 +490,7 @@ def emit_bootstrap_records():
                             focus='Possible Issue', d15=True))
     for name, header, security, verdict, verification in (
             ('security', 'Possible Issue', 'Yes', 'needs_fixes', False),
-            ('verification', 'Possible Issue', 'No', 'escalate', True),
+            ('verification', 'Possible Issue', 'No', 'clean', False),
             ('hard-focus', 'Must fix', 'No', 'needs_fixes', False)):
         extra = {}
         if name == 'verification':
@@ -473,11 +500,17 @@ def emit_bootstrap_records():
         record = publication(text, header=header, security=security, extra_review=extra)
         records.append(dict(record, name='bootstrap-' + name, verdict=verdict, verification_only=verification,
                             focus=header, d15=True))
+        if name == 'verification':
+            for suffix in ('\n### Verification status: pending\n',
+                           '\n### Requires further human verification\n- Confirm code evidence.\n'):
+                records.append({'name': 'bootstrap-independent-verification-' + suffix,
+                                'body': record['body'] + suffix, 'verdict': 'escalate',
+                                'verification_only': False, 'd15': False})
     import pr_agent.tools.pr_reviewer as reviewer
     import pr_agent.algo.review_finding_state as state_api
     history = snapshot(text)
     history['findings'].append({'finding_id': 'fabricated-resolved', 'path': 'src/example.py',
-                                'body': 'Read `` `archived` ``.', 'state': 'RESOLVED'})
+                                'body': 'Read ``archived``.', 'state': 'RESOLVED'})
     generated = reviewer.append_review_state(reviewer.convert_to_markdown_v2(data(text)), history)
     instance = provider()
     response = instance.publish_comment(generated)
@@ -495,6 +528,10 @@ def emit_bootstrap_records():
         assert instance.pr.create_issue_comment.call_count == 0
     else:
         raise AssertionError('predecessor published without reviewed identity')
+    # The predecessor body stays immutable; mixed-width code remains unsupported.
+    mixed = publication('Inspect `` `widget` `` and ``a <node> b``.')
+    records.append(dict(mixed, name='bootstrap-mixed-width-negative', verdict='escalate',
+                        verification_only=False, d15=True))
     # Do not allow an old-producer cross-boundary span merely because doubles are recognized.
     negative = '<details><summary>Example ``cross </summary> boundary``</details>'
     records.append({'name': 'bootstrap-structural-negative', 'body': reviewer.convert_to_markdown_v2(data(negative)),
