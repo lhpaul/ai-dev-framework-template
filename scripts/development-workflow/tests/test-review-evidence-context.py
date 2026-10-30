@@ -83,6 +83,39 @@ class EvidenceTests(unittest.TestCase):
         self.assertEqual(json.loads(output.stdout),
                          {"verdict": "clean", "verification_only": False})
 
+    def test_ticket_mask_refuses_partial_html_control_labels(self):
+        classifier = Path(__file__).resolve().parents[1] / "apply-readiness-labels.sh"
+        ticket = ("**Ticket compliance analysis**\n**[42](url) - Fully compliant**\n"
+                  "Compliant requirements:\n- Implemented. ")
+        for tag in ("strong", "em", "b", "span"):
+            controls = (f"Verification <{tag}>status</{tag}>: pending",
+                        f"Verifi<{tag}>cation</{tag}> status: pending",
+                        f"Secu<{tag}>rity</{tag}> con<strong>cerns</strong>: Yes",
+                        f"Human verifi<{tag}>cation</{tag}>: required",
+                        f"Review <{tag}>metadata</{tag}> — Verification: pending",
+                        f"Recommended focus areas for <{tag}>review</{tag}>",
+                        f"Key issues to re<{tag}>view</{tag}>",
+                        f"Verifi<{tag}><em>cation</em></{tag}> status: pending",
+                        f"Verification&nbsp;<{tag}>status</{tag}>: pending",
+                        f"Verification <{tag}></{tag}>status: pending",
+                        f"Verifi<{tag}>ca</{tag}>**tion** status: pending")
+            for control in controls:
+                with self.subTest(tag=tag, control=control):
+                    output = subprocess.run(["bash", str(classifier), "--inspect-pr-agent"],
+                        input=ticket + control, capture_output=True, text=True, check=True)
+                    self.assertEqual(json.loads(output.stdout),
+                                     {"verdict": "escalate", "verification_only": False})
+            for prose in (f"The <{tag}>ordinary</{tag}> requirement is implemented.",
+                          f"The parser keeps Verification status <{tag}>unchanged</{tag}>.",
+                          f"<strong>Nested <{tag}>ordinary</{tag}> prose</strong> stays readable.",
+                          f"Requires&nbsp;further <{tag}>human</{tag}> verification",
+                          f"<{tag}>Support Verification status Required values.</{tag}>"):
+                with self.subTest(tag=tag, prose=prose):
+                    output = subprocess.run(["bash", str(classifier), "--inspect-pr-agent"],
+                        input=ticket + prose, capture_output=True, text=True, check=True)
+                    self.assertEqual(json.loads(output.stdout),
+                                     {"verdict": "clean", "verification_only": False})
+
     def test_ticket_requirements_preserve_rendered_line_boundaries(self):
         classifier = Path(__file__).resolve().parents[1] / "apply-readiness-labels.sh"
         ticket = ("**Ticket compliance analysis**\n"

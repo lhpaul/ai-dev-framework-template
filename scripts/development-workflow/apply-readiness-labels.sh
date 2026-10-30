@@ -208,20 +208,30 @@ def independent_ticket_control(text):
         r"(?:Security concerns|Recommended focus areas for review|Key issues to review)\b", text, re.I)
 
 
-def markdown_ticket_control(text):
-    """Refuse emphasized control labels, including emphasis within a word."""
+def styled_ticket_control(text, html_spans=()):
+    """Refuse control labels overlapping Markdown or allowed inline HTML."""
     # Map rendered characters back to the raw line so ordinary emphasis after
     # a prose mention does not turn that mention into a control label.
     offsets = [index for index, char in enumerate(text) if char not in "*_"]
     rendered = "".join(text[index] for index in offsets)
+    ticket_requests = list(re.finditer(r"\bRequires\s+further\s+human\s+verification\b", rendered, re.I))
     for word in re.finditer(r"\b(?:Verification|Human|Review|Security|Recommended|Key)\b", rendered, re.I):
         control = independent_ticket_control(rendered[word.start():])
         if not control:
             continue
+        # Preserve the approved ticket-only request, including inline styling.
+        if any(request.start() <= word.start()
+               and word.start() + control.end() <= request.end()
+               for request in ticket_requests):
+            continue
         start = offsets[word.start()]
         end = offsets[word.start() + control.end() - 1] + 1
         if (re.search(r"[*_]", text[start:end])
-                or (start > 0 and text[start - 1] in "*_")):
+                or (start > 0 and text[start - 1] in "*_")
+                # A boundary within the label is partial label formatting;
+                # an element enclosing descriptive prose is not a new heading.
+                or any(start <= span_start < end or start < span_end <= end
+                       for span_start, span_end in html_spans)):
             return True
     return False
 
@@ -233,26 +243,30 @@ class TicketBulletText(HTMLParser):
     def __init__(self):
         super().__init__()
         self.parts = []
+        self.length = 0
+        self.spans = []
         self.stack = []
         self.valid = True
 
     def handle_starttag(self, tag, attrs):
         if tag not in self.inline_tags or attrs:
             self.valid = False
-        self.stack.append((tag, len(self.parts)))
+        self.stack.append((tag, self.length))
 
     def handle_endtag(self, tag):
         if not self.stack or self.stack[-1][0] != tag:
             self.valid = False
             return
         _, start = self.stack.pop()
-        label = " ".join("".join(self.parts[start:]).split())
+        self.spans.append((start, self.length))
+        label = " ".join("".join(self.parts)[start:].split())
         # Inline emphasis may format prose, never an independent status label.
         if independent_ticket_control(label):
             self.valid = False
 
     def handle_data(self, data):
         self.parts.append(data)
+        self.length += len(data)
 
     def handle_comment(self, data):
         self.valid = False
@@ -283,7 +297,8 @@ def valid_ticket_requirements(requirements):
             return False
         inline = TicketBulletText()
         inline.feed(line)
-        text = "".join(inline.parts).strip()
+        rendered = "".join(inline.parts)
+        text = rendered.strip()
         if not inline.valid or inline.stack or len(text.splitlines()) != 1:
             return False
         normalized = " ".join(text.split()).lower().rstrip(".")
@@ -300,7 +315,7 @@ def valid_ticket_requirements(requirements):
                 or re.fullmatch(r"[A-Za-z][A-Za-z -]*:", content)):
             return False  # An empty field heading is not requirement data.
         # Use the independent gate grammar, including bullet/number prefixes.
-        if independent_ticket_control(text) or markdown_ticket_control(text):
+        if independent_ticket_control(text) or styled_ticket_control(rendered, inline.spans):
             return False
         if re.fullmatch(r"(?:unknown|tbd|unavailable|undetermined|pending|not assessed)[.!?]?", content, re.I):
             return False
