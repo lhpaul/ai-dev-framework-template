@@ -12,7 +12,12 @@ python3 - "$SCRIPT_DIR/.." <<'PY'
 import json, os, pathlib, shlex, shutil, signal, subprocess, sys, tempfile, time, yaml
 
 scripts = pathlib.Path(sys.argv[1]).resolve()
-helper = scripts / 'resolve-reviewer-availability.sh'
+production_helper = scripts / 'resolve-reviewer-availability.sh'
+# Scale the test clock, stalls and assertions together; production keeps its
+# 8/2/3/4-second limits. CI scheduling must not consume a fixture's setup cap.
+time_scale = 5
+wall_limit = 10 * time_scale
+stall_seconds = 30 * time_scale
 real_python = sys.executable
 bash = '/bin/bash'
 passed = 0
@@ -27,6 +32,23 @@ def check(name, condition, detail=''):
 
 with tempfile.TemporaryDirectory(prefix='availability-tests-') as tmp:
     root = pathlib.Path(tmp).resolve()
+    helper = root / production_helper.name
+    helper_source = production_helper.read_text()
+    for name, seconds in (('AVAILABILITY_BUDGET_SECONDS', 8),
+                          ('CONFIG_RESOLVE_CAP_SECONDS', 2),
+                          ('LOCAL_PROBE_CAP_SECONDS', 3),
+                          ('HOSTED_PROBE_CAP_SECONDS', 4)):
+        assignment = f'{name}={seconds}\n'
+        assert helper_source.count(assignment) == 1, name
+        helper_source = helper_source.replace(assignment, f'{name}={seconds * time_scale}\n')
+    # Keep all dependencies at their real paths; copy only the timed helper.
+    script_dir_line = next(line for line in helper_source.splitlines() if line.startswith('{ SCRIPT_DIR='))
+    helper_source = helper_source.replace(script_dir_line, 'SCRIPT_DIR=' + shlex.quote(str(scripts)))
+    test_budget = 'AVAILABILITY_BUDGET_SECONDS=${WORKFLOW_REVIEWER_AVAILABILITY_BUDGET_SECONDS:-8}'
+    assert helper_source.count(test_budget) == 1
+    helper_source = helper_source.replace(test_budget,
+        'AVAILABILITY_BUDGET_SECONDS=$(( ${WORKFLOW_REVIEWER_AVAILABILITY_BUDGET_SECONDS:-8} * ' + str(time_scale) + ' ))')
+    helper.write_text(helper_source)
     repo = root / 'repository with spaces'
     repo.mkdir()
     bins = root / 'bin'
@@ -84,11 +106,11 @@ with tempfile.TemporaryDirectory(prefix='availability-tests-') as tmp:
         started = time.monotonic()
         result = subprocess.run(
             [bash,str(helper), '--repo-root',str(repo), '--owner','example','--repo','test', '--runner-kind',driver] if arguments is None else [bash,str(helper),*arguments],
-            env={**env,**(extra_env or {})}, text=True, capture_output=True, timeout=12,
+            env={**env,**(extra_env or {})}, text=True, capture_output=True, timeout=12 * time_scale,
             stdin=subprocess.DEVNULL if closed_stdin else None,
         )
         elapsed = time.monotonic()-started
-        assert elapsed <= 10.0, (elapsed,result.stdout,result.stderr)
+        assert elapsed <= wall_limit, (elapsed,result.stdout,result.stderr)
         assert result.returncode == expected, (result.returncode,expected,result.stdout,result.stderr)
         if capture is not None:
             capture.append(result)
@@ -98,7 +120,7 @@ with tempfile.TemporaryDirectory(prefix='availability-tests-') as tmp:
         data = dict(row.split('=',1) for row in rows)
         assert len(data)==len(rows), result.stdout
         if 'OUTCOME' in data:
-            assert float(data['ELAPSED_SECONDS']) <= 10.0
+            assert float(data['ELAPSED_SECONDS']) <= wall_limit
             outputs.append(data)
         return data
 
@@ -120,12 +142,12 @@ with tempfile.TemporaryDirectory(prefix='availability-tests-') as tmp:
     bad=subprocess.run([bash,str(helper),'--repo-root',str(repo),'--owner','example','--repo','test','--runner-kind','not-a-runner'],env=env,text=True,capture_output=True)
     check('T-4b unsupported runner-kind fails closed',bad.returncode!=0 and 'unsupported runner-kind' in bad.stderr)
     reset();fake('codex','exit 1');check('T-5 error is inconclusive',run(expected=1)['REVIEWER_1_REASON']=='check-inconclusive')
-    fake('codex','sleep 30');d=run(expected=1,extra_env={'WORKFLOW_REVIEWER_AVAILABILITY_TEST_MODE':'1','WORKFLOW_REVIEWER_AVAILABILITY_BUDGET_SECONDS':'2'})
+    fake('codex',f'sleep {stall_seconds}');d=run(expected=1,extra_env={'WORKFLOW_REVIEWER_AVAILABILITY_TEST_MODE':'1','WORKFLOW_REVIEWER_AVAILABILITY_BUDGET_SECONDS':'2'})
     check('T-6 probe bound', 'bound' in d['REVIEWER_1_DETAIL'])
     reset('[claude, cursor, codex, coderabbit, codex-github]')
-    for binary in ('claude','cursor-agent','codex'): fake(binary,'sleep 30')
-    gh(body='sleep 30');d=run('unknown',1)
-    check('T-7 exact ten-second ceiling',d['REVIEWER_COUNT']=='5' and d['BUDGET_SECONDS']=='8')
+    for binary in ('claude','cursor-agent','codex'): fake(binary,f'sleep {stall_seconds}')
+    gh(body=f'sleep {stall_seconds}');d=run('unknown',1)
+    check('T-7 scaled aggregate ceiling',d['REVIEWER_COUNT']=='5' and d['BUDGET_SECONDS']==str(8 * time_scale))
     reset('[not-a-reviewer]');d=run(expected=1)
     check('T-8 unsupported',d['REVIEWER_1_NAME']=='unknown' and d['REVIEWER_1_REASON']=='value-not-supported')
     reset('[not-a-reviewer, codex]');fake('codex','exit 0');d=run();check('T-9 reduced',d['OUTCOME']=='proceeded-reduced')
@@ -336,7 +358,7 @@ reviews:
     reset('[coderabbit]');gh([{'user':{'login':'coderabbitai[bot]'}}])
     reset('[codex]');fake('codex','exit 1');d=run(expected=1)
     check('T-22 local failure remedy targets runtime', '--version' in d['REVIEWER_1_REMEDY'] and all(x not in d['REVIEWER_1_REMEDY'] for x in ('gh','PyYAML','.coderabbit')),d)
-    fake('codex','sleep 30');d=run(expected=1,extra_env={'WORKFLOW_REVIEWER_AVAILABILITY_TEST_MODE':'1','WORKFLOW_REVIEWER_AVAILABILITY_BUDGET_SECONDS':'2'})
+    fake('codex',f'sleep {stall_seconds}');d=run(expected=1,extra_env={'WORKFLOW_REVIEWER_AVAILABILITY_TEST_MODE':'1','WORKFLOW_REVIEWER_AVAILABILITY_BUDGET_SECONDS':'2'})
     check('T-22 local timeout remedy targets runtime','codex --version' in d['REVIEWER_1_DETAIL'] and '--version' in d['REVIEWER_1_REMEDY'] and 'gh' not in d['REVIEWER_1_REMEDY'],d)
     for reviewer in ('coderabbit','codex-github'):
         reset('['+reviewer+']');gh(body='exit 1');d=run(expected=1)
@@ -355,18 +377,18 @@ reviews:
     # Slow individual decoders cannot each receive a fresh configuration cap.
     # Include a slow parser so the same allowance covers parsing plus decoding.
     real_jq=str((bins/'jq').resolve())
-    for parser_delay in (0.7, 1.0):
+    for parser_delay in (0.7 * time_scale, 1.0 * time_scale):
         reset('[codex]')
         config_started=root/'config-started'
         clock_code='import pathlib,time; pathlib.Path('+repr(str(config_started))+').write_text(str(time.monotonic()))'
         fake('python3',shlex.quote(real_python)+' -c '+shlex.quote(clock_code)+'\nsleep '+str(parser_delay)+'\nexec '+shlex.quote(real_python)+' "$@"')
-        fake('jq','sleep 1.5\nexec '+shlex.quote(real_jq)+' "$@"')
+        fake('jq',f'sleep {1.5 * time_scale}\nexec '+shlex.quote(real_jq)+' "$@"')
         try:
             d=run('codex',1)
         finally:
             (bins/'jq').unlink()
             (bins/'jq').symlink_to(real_jq)
-        check(f'T-22 config parsing and decoding share two seconds {parser_delay}',time.monotonic()-float(config_started.read_text())<3 and d['BLOCK_CAUSE']=='config-resolution-inconclusive' and d['REVIEWER_COUNT']=='0',d)
+        check(f'T-22 config parsing and decoding share scaled config cap {parser_delay}',time.monotonic()-float(config_started.read_text())<3 * time_scale and d['BLOCK_CAUSE']=='config-resolution-inconclusive' and d['REVIEWER_COUNT']=='0',d)
     reset('[codex]')
     decode_calls=root/'config-decode-calls'
     fake('jq','printf x >> '+shlex.quote(str(decode_calls))+'\nexec '+shlex.quote(real_jq)+' "$@"')
@@ -393,7 +415,7 @@ reviews:
         reset('[codex-github]' if stage=='hosted' else '[codex]')
         gh([{'user':{'login':'chatgpt-codex-connector[bot]'}}])
         condition='[ "$1" = -er ]' if stage=='hosted' else '[[ "$2" == '+shlex.quote(stage)+'* ]]'
-        fake('jq','if '+condition+'; then sleep 30; fi\nexec '+shlex.quote(real_jq)+' "$@"')
+        fake('jq','if '+condition+f'; then sleep {stall_seconds}; fi\nexec '+shlex.quote(real_jq)+' "$@"')
         try:
             d=run('codex',1)
         finally:
@@ -667,7 +689,7 @@ reviews:
                   d['OUTCOME']=='blocked' and d['BLOCK_CAUSE']=='list-malformed' and d['CONFIG_LIST_STATE']=='malformed'
                   and d['REVIEWER_COUNT']=='0' and d['FALLBACK_APPLIED']=='false'
                   and opaque not in captured[0].stdout+captured[0].stderr,d)
-    reset();fake('python3','sleep 30');d=run(expected=1)
+    reset();fake('python3',f'sleep {stall_seconds}');d=run(expected=1)
     check('T-40 config timeout ceiling',d['BLOCK_CAUSE']=='config-resolution-inconclusive' and d['REVIEWER_COUNT']=='0' and d['POLICY_STATE']==d['CONFIG_LIST_STATE']=='not-evaluated')
     fake('python3','echo deliberate-parser-error >&2; exit 2');check('T-41 config invocation error','OUTCOME' not in run(expected=2))
     reset();payload=json.loads(subprocess.check_output([real_python,str(scripts/'workflow-config-resolver.py'),'review-effective','--repo-root',str(repo)]))
@@ -677,7 +699,7 @@ reviews:
     for driver in ('claude','cursor','codex','dsh'):
         earlier=[x for x in ('claude','cursor','codex','dsh') if x!=driver]
         reset(json.dumps(earlier+[driver,'not-a-reviewer']))
-        for binary in ('claude','cursor-agent','codex','dsh'):fake(binary,'sleep 30')
+        for binary in ('claude','cursor-agent','codex','dsh'):fake(binary,f'sleep {stall_seconds}')
         d=run(driver,extra_env={'WORKFLOW_REVIEWER_AVAILABILITY_TEST_MODE':'1','WORKFLOW_REVIEWER_AVAILABILITY_BUDGET_SECONDS':'2'})
         check(f'T-43 native survives budget {driver}',d['REVIEWER_4_STATUS']=='reachable' and d['REVIEWER_5_REASON']=='value-not-supported' and d['OUTCOME']=='proceeded-reduced')
     reset('[claude,cursor,codex]');local.write_text('review:\n  on_draft:\n    runner: []\n');d=run('codex')
@@ -695,10 +717,10 @@ shift
 exec perl -e 'setpgrp(0,0) or die; my $bound=shift; $SIG{TERM}="IGNORE"; my $pid=fork(); die unless defined $pid; if (!$pid) {$SIG{TERM}="DEFAULT"; exec @ARGV; die;} my $timed=0; $SIG{ALRM}=sub {$timed=1; kill "TERM", -$$;}; alarm $bound; while (waitpid($pid,0) < 0) {} exit($timed ? 124 : ($? >> 8));' -- "$bound" "$@""" + '"')
         for command,reviewer in (('codex','codex'),('gh','codex-github')):
             reset(f'[{reviewer}]');pidfile=root/'descendant.pid'
-            fake(command, f'trap "exit 0" TERM\n( trap "" TERM; sleep 30 ) &\nprintf "%s\\n" "$!" > {str(pidfile)!r}\nwait')
+            fake(command, f'trap "exit 0" TERM\n( trap "" TERM; sleep {stall_seconds} ) &\nprintf "%s\\n" "$!" > {str(pidfile)!r}\nwait')
             d=run(expected=1)
             pid=int(pidfile.read_text());gone=False
-            for _ in range(30):
+            for _ in range(30 * time_scale):
                 try:os.kill(pid,0)
                 except ProcessLookupError:gone=True;break
                 time.sleep(.05)
@@ -708,7 +730,7 @@ exec perl -e 'setpgrp(0,0) or die; my $bound=shift; $SIG{TERM}="IGNORE"; my $pid
         for discovery,command,reviewer in ((mode,cmd,reviewer) for mode in ('task-children','status-scan') for cmd,reviewer in (('codex','codex'),('gh','codex-github'))):
             reset(f'[{reviewer}]');pidfile=root/'detached.pid'
             pidfile.unlink(missing_ok=True)
-            detached = f"import os,pathlib,time; os.setsid(); pathlib.Path({str(pidfile)!r}).write_text(str(os.getpid())); time.sleep(30)"
+            detached = f"import os,pathlib,time; os.setsid(); pathlib.Path({str(pidfile)!r}).write_text(str(os.getpid())); time.sleep({stall_seconds})"
             # Wait until the child has actually left the original group, then
             # exit the leader successfully. Cleanup must still reap that child.
             fake(command, f'{shlex.quote(real_python)} -c {shlex.quote(detached)} &\nwhile [ ! -s {str(pidfile)!r} ]; do sleep .01; done\nprintf \'%s\\n\' \'[{{"user":{{"login":"chatgpt-codex-connector[bot]"}}}}]\'\nexit 0')
@@ -725,13 +747,13 @@ exec perl -e 'setpgrp(0,0) or die; my $bound=shift; $SIG{TERM}="IGNORE"; my $pid
             for cancellation in (signal.SIGTERM, signal.SIGINT):
                 reset('[codex]');pidfile=root/'cancel-probe.pid';childfile=root/'cancel-child.pid'
                 pidfile.unlink(missing_ok=True);childfile.unlink(missing_ok=True)
-                descendant=f"import os,pathlib,time; pathlib.Path({str(childfile)!r}).write_text(str(os.getpid())); time.sleep(30)"
-                probe=f"import os,pathlib,subprocess,sys,time; subprocess.Popen([sys.executable, '-c', {descendant!r}], start_new_session=True); pathlib.Path({str(pidfile)!r}).write_text(str(os.getpid())); time.sleep(30)"
+                descendant=f"import os,pathlib,time; pathlib.Path({str(childfile)!r}).write_text(str(os.getpid())); time.sleep({stall_seconds})"
+                probe=f"import os,pathlib,subprocess,sys,time; subprocess.Popen([sys.executable, '-c', {descendant!r}], start_new_session=True); pathlib.Path({str(pidfile)!r}).write_text(str(os.getpid())); time.sleep({stall_seconds})"
                 fake('codex',f'exec {shlex.quote(real_python)} -c {shlex.quote(probe)}')
                 process=subprocess.Popen([bash,str(helper),'--repo-root',str(repo),'--owner','example','--repo','test','--runner-kind','unknown'],env=env,text=True,stdout=subprocess.PIPE,stderr=subprocess.PIPE,start_new_session=True)
                 owned=[]
                 try:
-                    deadline=time.monotonic()+5
+                    deadline=time.monotonic()+5 * time_scale
                     while not (pidfile.exists() and childfile.exists()) and process.poll() is None and time.monotonic()<deadline:
                         time.sleep(.01)
                     assert pidfile.exists() and childfile.exists(), 'probe must start before cancellation'
@@ -740,12 +762,12 @@ exec perl -e 'setpgrp(0,0) or die; my $bound=shift; $SIG{TERM}="IGNORE"; my $pid
                     time.sleep(.01)
                     if process.poll() is None:
                         process.send_signal(cancellation)  # Repeated cancellation must not interrupt cleanup.
-                    output,error=process.communicate(timeout=3)
+                    output,error=process.communicate(timeout=3 * time_scale)
                     gone=[]
                     for pid in owned:
                         try:os.kill(pid,0);gone.append(False)
                         except ProcessLookupError:gone.append(True)
-                    check(f'T-46 external cancellation reaps {engine} {cancellation.name}',process.returncode==2 and time.monotonic()-started<2.5 and all(gone),(process.returncode,owned,gone,output,error))
+                    check(f'T-46 external cancellation reaps {engine} {cancellation.name}',process.returncode==2 and time.monotonic()-started<2.5 * time_scale and all(gone),(process.returncode,owned,gone,output,error))
                 finally:
                     if process.poll() is None:process.kill();process.wait()
                     for pid in owned:
@@ -757,22 +779,22 @@ exec perl -e 'setpgrp(0,0) or die; my $bound=shift; $SIG{TERM}="IGNORE"; my $pid
         (bins/'python3').write_text('#!/bin/bash\ntrap "" TERM INT\nprintf "%s" "$$" > '+shlex.quote(str(pidfile))+'\nwhile :; do :; done\n')
         process=subprocess.Popen([bash,str(helper),'--repo-root',str(repo),'--owner','example','--repo','test'],env=env,text=True,stdout=subprocess.PIPE,stderr=subprocess.PIPE,start_new_session=True)
         try:
-            deadline=time.monotonic()+3
+            deadline=time.monotonic()+3 * time_scale
             while not pidfile.exists() and process.poll() is None and time.monotonic()<deadline:time.sleep(.01)
             assert pidfile.exists(), 'hung supervisor fixture must start'
-            started=time.monotonic();process.terminate();output,error=process.communicate(timeout=3)
+            started=time.monotonic();process.terminate();output,error=process.communicate(timeout=3 * time_scale)
             gone=False
             try:os.kill(int(pidfile.read_text()),0)
             except ProcessLookupError:gone=True
-            check('T-46 external cancellation bounds unresponsive supervisor',process.returncode==2 and gone and time.monotonic()-started<2.5,(output,error))
+            check('T-46 external cancellation bounds unresponsive supervisor',process.returncode==2 and gone and time.monotonic()-started<2.5 * time_scale,(output,error))
         finally:
             if process.poll() is None:process.kill();process.wait()
         (bins/'timeout').unlink(missing_ok=True)
     reset();fake('codex','exit 0');fake('timeout','echo "BusyBox timeout"; exit 1')
     check('T-46 non-GNU timeout uses owned-group fallback',run()['REVIEWER_1_STATUS']=='reachable')
     (bins/'timeout').unlink()
-    reset('[codex-github]');gh([{'user':{'login':'chatgpt-codex-connector[bot]'}}],body=f'if [ "$1" = auth ]; then sleep 30; else cat {str(activity)!r}; fi')
-    run();gh(body='if [ "$1" = auth ]; then sleep 30; else sleep 30; fi');run(expected=1)
+    reset('[codex-github]');gh([{'user':{'login':'chatgpt-codex-connector[bot]'}}],body=f'if [ "$1" = auth ]; then sleep {stall_seconds}; else cat {str(activity)!r}; fi')
+    run();gh(body=f'if [ "$1" = auth ]; then sleep {stall_seconds}; else sleep {stall_seconds}; fi');run(expected=1)
     check('T-47 no auth preflight','auth' not in log.read_text())
     reset('[codex]','"bad policy"');d=run(expected=1)
     check('T-48 unsupported raw policy',d['POLICY_INPUT']=='' and d['POLICY']=='')
