@@ -110,7 +110,7 @@ original findings and review state are untouched. Any raw HTML outside supported
 spans preserves the entire source field, even when that HTML follows an eligible
 span. Unsupported delimiters and fenced examples are never repaired. Renderer
 signature and imported-alias identity are checked before installing any hook.
-The consumer recognizes matching one- or two-backtick delimiters, including literal single backticks inside doubles. Unsupported runs, escaped boundaries, multiline payloads and genuine HTML crossings still reject. Affected rendered spans preserve GFM code text (including padding-space normalization); embedded backticks are encoded as `&#96;` inside HTML code. Severity and independent blocker gates retain their existing policy.
+The consumer recognizes matching one- or two-backtick delimiters without internal runs of a different width; mixed-width support is deferred to #2078. Unsupported runs, escaped boundaries, multiline payloads and genuine HTML crossings still reject. Affected rendered spans preserve GFM code text (including padding-space normalization); embedded backticks are encoded as `&#96;` inside HTML code. Severity and independent blocker gates retain their existing policy.
 
 For bootstrap, run the ordinary reviewer loop from the candidate item checkout:
 its classifier loads the adjacent runtime, while GitHub PR-Agent still executes
@@ -290,6 +290,34 @@ PR-Agent's blocking classification is based on stable body-content markers in it
 | No `<strong>` labels parsed    | Yes — `RESULT=needs_fixes` (unreadable format)                      |
 
 When `Recommended focus areas for review` is present but contains **only** explicitly-known advisory labels (`Possible Issue`, `Edge Case`, `Logic Gap`, `Documentation Inconsistency`), the classifier returns `clean`. Hard-blocker labels, security labels (`Security Concern`), and compatibility labels (`API Change`, `Backward Compatibility`) always block.
+
+**Ticket-analysis exception (#2064):** Recognized, structurally valid ticket
+analysis is informational, including Fully compliant, Partially compliant,
+Not compliant and PR Code Verified. Verification requests confined to that
+validated section need no matching ticket proof to permit normal reviewer
+progression. This exception supersedes #2061's ticket-only proof prerequisite;
+it does not certify that an epic is complete. Unknown status, malformed,
+duplicate, empty or truncated analysis still escalates. Verification, unavailable
+or malformed evidence, code/security findings and human blockers outside that
+section retain their existing gates. Reviewer scheduling, head binding, CI,
+checkpoints and merge approval are unchanged.
+
+A known requirements heading may contain either requirement bullets or one
+explicit negative value (`None`, `No`, `False`, `N/A`, `Not applicable`). A
+negative is content, not an empty analysis; mixing it with bullets or repeating
+it under the same heading is malformed. A following known heading starts its
+own requirements block. Ticket-only verification prose remains informational;
+an independent status/control label styled with HTML or Markdown emphasis is
+rejected before masking, including when it follows prose in the same bullet.
+
+The template sets `pr_reviewer.require_ticket_analysis_review = false` in
+`.pr_agent.toml` to reduce misleading ticket commentary. Ordinary template sync
+preview (including dry-run) warns when the selected consumer's setting is absent,
+enabled or invalid; only explicit TOML boolean `false` suppresses the warning.
+Unusable files or an unavailable TOML parser receive safe repair/inspection
+advice. The warning does not change sync exit status, expose configuration values,
+copy TOML into the sync plan, or overwrite project-owned settings. Maintainers
+may keep their setting: synchronized classifier behavior still applies.
 
 **Classifier-safe fallback**: If an agent cannot read the full PR-Agent comment body
 because the runner's classifier or tool policy blocks the structured review text, do

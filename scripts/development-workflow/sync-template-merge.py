@@ -22,6 +22,11 @@ import subprocess
 import sys
 import tempfile
 
+try:
+    import tomllib
+except ImportError:
+    tomllib = None
+
 STATE_PATH = ".ai-dev-workflow.sync-state.json"
 LOCK_PATH = ".ai-dev-workflow.sync-lock"
 MODES = {"100644", "100755", "120000"}
@@ -510,6 +515,39 @@ def build_preview(inputs: dict, lock_owned: bool = False):
             "error": error}
 
 
+def ticket_analysis_warning(consumer_root):
+    """Inspect only project-owned PR-Agent TOML; never render its contents."""
+    guidance = (
+        "PR-Agent ticket analysis: set "
+        "pr_reviewer.require_ticket_analysis_review = false in .pr_agent.toml "
+        "to disable noisy ticket commentary. Valid ticket analysis is "
+        "informational for readiness; project configuration is unchanged."
+    )
+    if tomllib is None:
+        return "PR-Agent ticket-setting inspection unavailable (TOML parser unavailable). " + guidance
+    try:
+        path = Path(consumer_root) / ".pr_agent.toml"
+        if not stat.S_ISREG(path.lstat().st_mode):
+            return "PR-Agent ticket-setting inspection requires a regular, non-symlink file. " + guidance
+        # NOFOLLOW closes the lstat/open symlink race; NONBLOCK prevents a
+        # replaced FIFO from hanging preview before fstat rejects its type.
+        if not hasattr(os, "O_NOFOLLOW") or not hasattr(os, "O_NONBLOCK"):
+            return "PR-Agent safe ticket-setting file inspection unavailable. " + guidance
+        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        with os.fdopen(descriptor, "rb") as config:
+            if not stat.S_ISREG(os.fstat(config.fileno()).st_mode):
+                return "PR-Agent ticket-setting inspection requires a regular, non-symlink file. " + guidance
+            settings = tomllib.load(config)
+        reviewer = settings.get("pr_reviewer", {})
+        if isinstance(reviewer, dict) and reviewer.get("require_ticket_analysis_review") is False:
+            return ""
+        return guidance
+    except FileNotFoundError:
+        return guidance
+    except (OSError, ValueError, UnicodeError, RecursionError):
+        return "PR-Agent ticket-setting inspection failed; repair .pr_agent.toml. " + guidance
+
+
 def show(preview, approved_digest: str = ""):
     print("RESULT=" + preview["result"])
     print("SELECTED_COUNT=" + str(preview["selected_count"]))
@@ -735,6 +773,9 @@ def main(argv=None):
         if any(root == plan_path.resolve() or root in plan_path.resolve().parents for root in (Path(inputs["template_root"]), Path(inputs["consumer_root"]))):
             raise SyncError("preview plan must be private scratch outside both checkouts")
         result = build_preview(inputs)
+        warning = ticket_analysis_warning(inputs["consumer_root"])
+        if warning:
+            print("WARNING=" + warning)
         raw = json_bytes(result)
         write_private_plan(plan_path, raw, (Path(inputs["template_root"]), Path(inputs["consumer_root"])))
         show(result, digest(raw))

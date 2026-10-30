@@ -71,15 +71,13 @@ def fence_spans(source):
 
 
 def read_inline_code_span(source, start):
-    """Read the supported one/two-backtick subset without pairing through bad runs."""
+    """Read matching one/two-backtick spans; mixed-width internal runs await #2078."""
     if start > 0 and source[start - 1] == "\\":
         raise ValueError("ambiguous escaped backtick")
     width = len(re.match(r"`+", source[start:]).group())
     if width not in (1, 2):
         raise ValueError("unsupported inline delimiter")
     for run in re.finditer(r"`+", source[start + width:]):
-        if len(run.group()) < width:
-            continue  # A literal single backtick inside a double-delimited span.
         if len(run.group()) != width:
             raise ValueError("mismatched inline delimiter")
         closing = start + width + run.start()

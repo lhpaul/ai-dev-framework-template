@@ -1942,14 +1942,15 @@ MOCK_ISSUE_COMMENTS="$(_ledger_comment loop-runner OWNER 939 "$(_ledger_entry no
 result="$(run_helper_platform "$_codex_config")"
 run_test "1789_local_ai_reviewer_no_verdict_yet_ledger_refuses_reason" "reviewer-check-absent" "$(field "$result" REASON)"
 run_test "1789_local_ai_reviewer_no_verdict_yet_ledger_no_label" "0" "$(grep -c 'add-label ready-for-human-review' "$_LABEL_LOG" || true)"
-# #2061: actual readiness labels require explicit current proof in a trusted
-# ledger, even when PR-Agent reports that the code itself is verified.
+# #2064: ticket-only commentary needs no matched proof. Independent security
+# and outside verification still refuse actual readiness labels.
 MOCK_HEAD_CONFIG="$_pr_agent_platform_yaml"
 MOCK_BASE_CONFIG="$_pr_agent_platform_yaml"
 _2061_request=$'## PR Reviewer Guide\ncommit: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n**Ticket compliance analysis**\n**[42](url) - PR Code Verified**\nCompliant requirements:\n- Code checked.\nRequires further human verification:\n- Verify the synthetic regression proof.\n### Recommended focus areas for review\n**No major issues detected**\n'
-for _2061_case in verified unverified edited forged security; do
+for _2061_case in verified unverified edited forged security outside missing; do
   _2061_body="$_2061_request"
   [ "$_2061_case" != security ] || _2061_body="${_2061_body/No major issues detected/Security Concern}"
+  [ "$_2061_case" != outside ] || _2061_body="${_2061_body}"$'### Verification: pending\n'
   _2061_comments="$(jq -cn --arg body "$_2061_body" '[{id:10,user:{login:"github-actions[bot]"},created_at:"2026-01-09T00:00:00Z",updated_at:"2026-01-09T00:00:00Z",body:$body},{id:20,user:{login:"synthetic-author"},created_at:"2026-01-09T00:00:00Z",updated_at:"2026-01-09T00:00:00Z",body:"Synthetic planted violation fails, removal passes"}]')"
   _2061_hash="$(jq -cn --arg head "$HEAD" --argjson comments "$_2061_comments" '{repository:"acme/widgets",pr_number:42,head_sha:$head,body:"",comments:$comments,available:true}' |
     python3 "$REPO_ROOT/scripts/development-workflow/review-evidence-context.py" snapshot --input - | jq -r .snapshot_sha256)"
@@ -1961,9 +1962,19 @@ for _2061_case in verified unverified edited forged security; do
   [ "$_2061_case" != forged ] || _2061_login=outsider
   MOCK_ISSUE_COMMENTS="$(jq -cn --argjson comments "$_2061_comments" --argjson summary "$(_ledger_comment "$_2061_login" NONE 30 "$_2061_summary")" '$comments + $summary')"
   [ "$_2061_case" != edited ] || MOCK_ISSUE_COMMENTS="$(printf '%s' "$MOCK_ISSUE_COMMENTS" | jq '.[1].body += " amended"')"
+  if [ "$_2061_case" = missing ]; then
+    MOCK_ISSUE_COMMENTS="$_2061_comments"
+    run_test "2064_missing_input_has_no_ledger" 0 \
+      "$(printf '%s' "$MOCK_ISSUE_COMMENTS" | jq '[.[] | select(.body | contains("reviewer-loop-history:v1"))] | length')"
+  fi
+  result=""
   result="$(run_helper_platform "$_codex_config")"
-  if [ "$_2061_case" = verified ]; then
-    run_test "2061_verified_proof_labels" labeled "$(field "$result" RESULT)"
+  if [ "$_2061_case" = missing ]; then
+    run_test "2064_missing_fresh_comment_read" observed \
+      "$(if grep -Fq 'issues/42/comments' "$_CALL_LOG"; then printf observed; else printf absent; fi)"
+  fi
+  if [ "$_2061_case" != security ] && [ "$_2061_case" != outside ]; then
+    run_test "2064_${_2061_case}_ticket_labels" labeled "$(field "$result" RESULT)"
   else
     run_test "2061_${_2061_case}_proof_refuses_label" 0 "$(grep -c 'add-label ready-for-human-review' "$_LABEL_LOG" || true)"
     run_test "2061_${_2061_case}_proof_refuses_exit" 1 "${result%%|*}"
