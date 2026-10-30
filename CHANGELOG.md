@@ -21,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **PR-Agent inline code** (#2070): publish readable closing-tag expressions safely in single- and double-backtick code, support predecessor double-backtick output and preserve fail-closed blocker checks.
 - **Reviewer baseline checks** (#2074): restore successful-CI recognition on jq 1.8.1 while preserving failed and pending gates and configured reviewer exclusions.
 - **Reviewer preflight tests** (#2082): give timeout scenarios enough setup margin on loaded CI runners while preserving deadline-extension and descendant-process cleanup coverage.
+- **Reviewer availability tests** (#2084): give timeout scenarios proportional headroom on loaded CI runners while preserving shared deadlines, process cleanup and production limits.
 
 ## [0.48.9] - 2026-10-26
 
