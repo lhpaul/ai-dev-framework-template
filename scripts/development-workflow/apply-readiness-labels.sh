@@ -203,9 +203,27 @@ class ReviewText(HTMLParser):
 def independent_ticket_control(text):
     """Use the independent verification grammar and known reviewer labels."""
     text = re.sub(r"[*_]", "", text)
-    return bool(re.match(verification_heading, text, re.I) or re.match(
+    return re.match(verification_heading, text, re.I) or re.match(
         r"^[ \t]*(?:(?:[-*]|[0-9]+[.)])\s+)?[^\w]*"
-        r"(?:Security concerns|Recommended focus areas for review|Key issues to review)\b", text, re.I))
+        r"(?:Security concerns|Recommended focus areas for review|Key issues to review)\b", text, re.I)
+
+
+def markdown_ticket_control(text):
+    """Refuse emphasized control labels, including emphasis within a word."""
+    # Map rendered characters back to the raw line so ordinary emphasis after
+    # a prose mention does not turn that mention into a control label.
+    offsets = [index for index, char in enumerate(text) if char not in "*_"]
+    rendered = "".join(text[index] for index in offsets)
+    for word in re.finditer(r"\b(?:Verification|Human|Review|Security|Recommended|Key)\b", rendered, re.I):
+        control = independent_ticket_control(rendered[word.start():])
+        if not control:
+            continue
+        start = offsets[word.start()]
+        end = offsets[word.start() + control.end() - 1] + 1
+        if (re.search(r"[*_]", text[start:end])
+                or (start > 0 and text[start - 1] in "*_")):
+            return True
+    return False
 
 
 class TicketBulletText(HTMLParser):
@@ -282,7 +300,7 @@ def valid_ticket_requirements(requirements):
                 or re.fullmatch(r"[A-Za-z][A-Za-z -]*:", content)):
             return False  # An empty field heading is not requirement data.
         # Use the independent gate grammar, including bullet/number prefixes.
-        if independent_ticket_control(text):
+        if independent_ticket_control(text) or markdown_ticket_control(text):
             return False
         if re.fullmatch(r"(?:unknown|tbd|unavailable|undetermined|pending|not assessed)[.!?]?", content, re.I):
             return False

@@ -132,6 +132,75 @@ class EvidenceTests(unittest.TestCase):
                 self.assertEqual(json.loads(output.stdout),
                                  {"verdict": "escalate", "verification_only": False})
 
+    def test_ticket_mask_preserves_markdown_emphasized_controls(self):
+        classifier = Path(__file__).resolve().parents[1] / "apply-readiness-labels.sh"
+        ticket = ("**Ticket compliance analysis**\n**[42](url) - Fully compliant**\n"
+                  "Compliant requirements:\n- Implemented. ")
+        styles = ("*{}*", "**{}**", "***{}***", "_{}_", "__{}__", "___{}___",
+                  "**_{}_**", "_**{}**_", "**Verification** status: pending",
+                  "Verification **status**: pending", "Verifi**cation** status: pending",
+                  "Verifi_cation_ status: pending")
+        controls = ("Verification status: pending", "Human verification: required",
+                    "Review metadata — Verification: pending", "Security concerns: Yes",
+                    "Recommended focus areas for review", "Key issues to review")
+        for style in styles:
+            for control in controls if "{}" in style else ("Verification status: pending",):
+                with self.subTest(style=style, control=control):
+                    formatted = style.format(control)
+                    output = subprocess.run(["bash", str(classifier), "--inspect-pr-agent"],
+                        input=ticket + formatted, capture_output=True, text=True, check=True)
+                    self.assertEqual(json.loads(output.stdout),
+                                     {"verdict": "escalate", "verification_only": False})
+        # Removing the independent control restores ordinary formatted prose.
+        for style in styles[:8]:
+            with self.subTest(ordinary=style):
+                output = subprocess.run(["bash", str(classifier), "--inspect-pr-agent"],
+                    input=ticket + style.format("ordinary ticket requirement"),
+                    capture_output=True, text=True, check=True)
+                self.assertEqual(json.loads(output.stdout),
+                                 {"verdict": "clean", "verification_only": False})
+
+    def test_ticket_negative_values_are_explicit_content_not_empty_analysis(self):
+        classifier = Path(__file__).resolve().parents[1] / "apply-readiness-labels.sh"
+        ticket = "**Ticket compliance analysis**\n**[42](url) - Fully compliant**\n"
+        for negative in ("None", "No", "False", "N/A", "Not applicable", "NONE."):
+            for requirements, expected in (
+                    ("Compliant requirements:\n" + negative, "clean"),
+                    ("Compliant requirements:\n" + negative +
+                     "\nNon-compliant requirements:\n- A ticket requirement.", "clean"),
+                    ("Compliant requirements:\n" + negative + "\n- Contradictory data.", "escalate"),
+                    ("Compliant requirements:\n- A requirement.\n" + negative, "escalate"),
+                    ("Compliant requirements:\n" + negative + "\n" + negative, "escalate")):
+                with self.subTest(negative=negative, requirements=requirements):
+                    output = subprocess.run(["bash", str(classifier), "--inspect-pr-agent"],
+                        input=ticket + requirements, capture_output=True, text=True, check=True)
+                    self.assertEqual(json.loads(output.stdout),
+                                     {"verdict": expected, "verification_only": False})
+        for requirements in ("", "Compliant requirements:\n", "Compliant requirements:\nUnknown",
+                             "Compliant requirements:\nNone\nNon-compliant requirements:\n"):
+            with self.subTest(incomplete=requirements):
+                output = subprocess.run(["bash", str(classifier), "--inspect-pr-agent"],
+                    input=ticket + requirements, capture_output=True, text=True, check=True)
+                self.assertEqual(json.loads(output.stdout),
+                                 {"verdict": "escalate", "verification_only": False})
+
+    def test_ticket_verification_prose_is_informational_only_inside_valid_ticket(self):
+        classifier = Path(__file__).resolve().parents[1] / "apply-readiness-labels.sh"
+        ticket = "**Ticket compliance analysis**\n**[42](url) - PR Code Verified**\n"
+        requirements = ("Compliant requirements:\n- Requires further human verification",
+                        "Requires further human verification:\n- Verify synthetic ticket proof.",
+                        "Compliant requirements:\nNone\nRequires further human verification:\n- Verify ticket proof.")
+        for content in requirements:
+            for suffix, expected in (("", "clean"),
+                    ("\n### Requires further human verification\n- Review code evidence.", "escalate"),
+                    ("\n### Verification status: pending\n", "escalate"),
+                    ("\n### Security concerns\nYes\n", "needs_fixes")):
+                with self.subTest(content=content, suffix=suffix):
+                    output = subprocess.run(["bash", str(classifier), "--inspect-pr-agent"],
+                        input=ticket + content + suffix, capture_output=True, text=True, check=True)
+                    self.assertEqual(json.loads(output.stdout),
+                                     {"verdict": expected, "verification_only": False})
+
     def test_ticket_only_shared_predicate_does_not_require_proof(self):
         raw = copy.deepcopy(self.raw)
         request = ("**Ticket compliance analysis**\n**[42](url) - PR Code Verified**\n"
