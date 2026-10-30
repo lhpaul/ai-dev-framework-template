@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Delegated gate repository fallback** (#2068): resolve missing repository identity from the workflow environment or checkout while preserving explicit repository and durable-session checks.
 - **PR-Agent inline code** (#2070): publish readable closing-tag expressions safely in single- and double-backtick code, support predecessor double-backtick output and preserve fail-closed blocker checks.
 - **Reviewer baseline checks** (#2074): restore successful-CI recognition on jq 1.8.1 while preserving failed and pending gates and configured reviewer exclusions.
+- **Reviewer preflight tests** (#2082): give timeout scenarios enough setup margin on loaded CI runners while preserving deadline-extension and descendant-process cleanup coverage.
 
 ## [0.48.9] - 2026-10-26
 
