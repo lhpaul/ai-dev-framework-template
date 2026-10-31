@@ -386,6 +386,12 @@ def focus_labels(body):
                  and node.open_end <= headings[0].start() < node.close_start]
         if len(cells) != 1:
             return [""]
+        # Only marked strong titles carry structured finding metadata. Other
+        # HTML emphasis cannot inherit their advisory verdict (#2086).
+        if any(node.tag in {"b", "em"}
+               and headings[0].end() <= node.start < cells[0].close_start
+               for node in parsed.nodes):
+            return [""]
         content = body[headings[0].end():cells[0].close_start]
     else:
         # Legacy Markdown sections still end at their next section boundary.

@@ -117,6 +117,32 @@ class FindingMetadataTests(unittest.TestCase):
                 with self.subTest(boundary=boundary, candidate=candidate):
                     self.assertEqual('clean', self.consumer(candidate))
 
+    def test_unmarked_html_emphasis_cannot_hide_extra_findings(self):
+        body = self.annotated()
+        for tag in ('b', 'em'):
+            for closing in ('</summary>', '</details>', '</td>'):
+                with self.subTest(tag=tag, closing=closing):
+                    extra = f'<{tag}>Must fix</{tag}>'
+                    if closing == '</td>':
+                        candidate = body.replace('\n\n</td></tr>\n</table>', extra + '\n</td></tr>\n</table>')
+                    else:
+                        candidate = body.replace(closing, extra + closing, 1)
+                    self.assertNotEqual(body, candidate)
+                    self.assertEqual('escalate', self.consumer(candidate))
+                    self.assertEqual('', self.consumer(candidate, '--pr-agent-focus-labels'))
+                    self.assertEqual('escalate', json.loads(self.consumer(candidate, '--inspect-pr-agent'))['verdict'])
+
+    def test_html_emphasis_in_code_or_comments_is_not_a_finding(self):
+        body = self.annotated()
+        for tag in ('b', 'em'):
+            extra = f'<{tag}>Must fix</{tag}>'
+            candidates = (
+                body.replace('const example = 1;', 'const example = 1;\n' + extra, 1),
+                body.replace('</details>', '<!-- ' + extra + ' --></details>', 1))
+            for candidate in candidates:
+                with self.subTest(tag=tag, candidate=candidate):
+                    self.assertEqual('clean', self.consumer(candidate))
+
     def test_blocking_and_security_escalate(self):
         body = self.annotated()
         for candidate in (
