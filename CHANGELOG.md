@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.49.0] - 2026-10-30
+
+### Added
+
+- **Cursor hub worker runbook** (#1720): document My Machines / Remote Control setup, execution targets, local product checkouts, authentication boundaries and dispatch profiles.
+
+### Fixed
+
+- **Review evidence and retries** (#2061): give local reviewers complete published PR evidence, require current verification to resolve evidence-only findings, and preserve bounded same-commit retries with append-only history and verified reviewed-SHA bindings.
+- **PR-Agent ticket readiness** (#2064): treat valid ticket analysis as informational while preserving malformed-output and independent code, security, evidence and human blockers. Template sync warns about ticket analysis without overwriting downstream configuration; mixed-width inline backticks remain blocked.
+- **Delegated gate repository fallback** (#2068): resolve missing repository identity from the workflow environment or checkout while preserving explicit repository and durable-session checks.
+- **PR-Agent inline code** (#2070): publish readable closing-tag expressions safely in single- and double-backtick code, support predecessor double-backtick output and preserve fail-closed blocker checks.
+- **Reviewer baseline checks** (#2074): restore successful-CI recognition on jq 1.8.1 while preserving failed and pending gates and configured reviewer exclusions.
+- **Reviewer preflight tests** (#2082): give timeout scenarios enough setup margin on loaded CI runners while preserving deadline-extension and descendant-process cleanup coverage.
+- **Reviewer availability tests** (#2084): give timeout scenarios proportional headroom on loaded CI runners while preserving shared deadlines, process cleanup and production limits.
+
 ## [0.48.9] - 2026-10-26
 
 ### Fixed
@@ -3396,7 +3412,8 @@ Known limitation: human-verification headings split by HTML comments can still b
 - `.claude/settings.json` with pre-approved permissions for common git and fetch operations; `.claude/settings.local.json.example` documenting machine-specific overrides for optional integrations
 - `.gitignore` covering local Claude settings, `.env` files, and common system files
 
-[Unreleased]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.48.9...HEAD
+[Unreleased]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.49.0...HEAD
+[0.49.0]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.48.9...v0.49.0
 [0.48.9]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.48.8...v0.48.9
 [0.48.8]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.48.7...v0.48.8
 [0.48.7]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.48.6...v0.48.7
