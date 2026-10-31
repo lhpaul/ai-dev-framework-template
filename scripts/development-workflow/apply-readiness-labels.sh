@@ -62,7 +62,8 @@ from html import unescape
 from html.parser import HTMLParser
 
 body = sys.stdin.read()
-mask_review_code = runpy.run_path(sys.argv[2])["mask_review_code"]
+runtime = runpy.run_path(sys.argv[2])
+mask_review_code = runtime["mask_review_code"]
 blockers = {"critical", "must fix", "breaking change", "security concern",
             "api change", "backward compatibility"}
 # Verdict-bearing values are closed sets. Descriptive requirement bullets are
@@ -337,6 +338,10 @@ def visible_review(body):
 
 
 def focus_labels(body):
+    try:
+        explicit = runtime["explicit_finding_labels"](body)
+    except ValueError:
+        return [""]
     # Focus prefixes are presentation; a known hard blocker still counts.
     focus_name = "Recommended focus areas for review"
     parts = []
@@ -378,6 +383,9 @@ def focus_labels(body):
     markdown_labels = re.findall(r"\*\*([^*\n]*)\*\*", content)
     if len(html_labels) != rendered.count or content.count("**") != 2 * len(markdown_labels):
         return [""]  # A complete earlier label must not hide a broken one.
+    if explicit is not None:
+        # Metadata may replace title interpretation, never hide extra evidence.
+        return [""] if markdown_labels else explicit
     return [" ".join(label.split()) for label in html_labels] + [" ".join(unescape(label).split()) for label in markdown_labels]
 
 
@@ -474,6 +482,8 @@ def classify(body):
         value = unescape(re.sub(r"<[^>]*>", "", security_sections[0].group(1))).strip()
         security_verdict = value_verdict(value, security_negatives, security_findings)
         if security_verdict == "escalate":
+            return "escalate"
+        if security_verdict == "needs_fixes" and "data-pr-agent-finding" in body:
             return "escalate"
         needs_fixes = needs_fixes or security_verdict == "needs_fixes"
     # Both rendered focus headings use the same hard-blocker/advisory labels.
