@@ -4,6 +4,8 @@ import copy
 import importlib.util
 import os
 import json
+import re
+import subprocess
 from html.parser import HTMLParser
 from types import ModuleType, SimpleNamespace
 from unittest.mock import Mock, patch
@@ -22,7 +24,178 @@ TEXT = 'Consider `' + EXPRESSION + '` here.'
 
 def data(text=TEXT, header='Possible Issue', security='No'):
     return {'review': {'security_concerns': security, 'key_issues_to_review': [
-        {'relevant_file': 'src/example.py', 'issue_header': header, 'issue_content': text}]}}
+        {'relevant_file': 'src/example.py', 'issue_header': header, 'issue_content': text,
+         'category': 'blocking' if header.lower() == 'must fix' else 'advisory',
+         'severity': 'high' if header.lower() == 'must fix' else 'medium'}]}}
+
+
+FINDING_HEAD = '0' * 39 + '1'
+
+
+def titled_review():
+    """Fabricated two-finding shape; no copied consumer data."""
+    findings = []
+    details = []
+    for index, title in enumerate(('Retry Loop', 'Unbounded Read')):
+        line = 10 + index * 30
+        findings.append({'issue_header': title, 'issue_content': 'A fabricated review finding.',
+                         'category': 'advisory', 'severity': 'medium'})
+        details.append(
+            f"<details><summary><a href='https://example.invalid/repo/pull/42/files#diff-abcR{line}-R{line+10}'>"
+            f'<strong>{title}</strong></a>\n\nA fabricated review finding.\n</summary>\n\n'
+            '```typescript\nconst example = 1;\n```\n\n</details>')
+    state = {'schema_version': 1, 'last_run': {}, 'findings': [
+        {'body': '**' + f['issue_header'] + '**\n\nFabricated prose.',
+         'finding_id': character * 12, 'path': 'src/' + character + '.ts',
+         'line_start': 10 + index * 30, 'line_end': 20 + index * 30,
+         'last_seen_head_sha': FINDING_HEAD, 'state': 'ACTIVE'}
+        for index, (f, character) in enumerate(zip(findings, ('a', 'b')))]}
+    body = ('## PR Reviewer Guide 🔍\n\n<!-- pr-agent:review:full -->\n\n'
+            f'#### (Review updated until commit https://example.invalid/repo/commit/{FINDING_HEAD})\n\n'
+            '<table>\n<tr><td>⏱️&nbsp;<strong>Estimated effort to review</strong>: 3</td></tr>\n'
+            '<tr><td>🧪&nbsp;<strong>PR contains tests</strong></td></tr>\n'
+            '<tr><td>🔒&nbsp;<strong>No security concerns identified</strong></td></tr>\n'
+            '<tr><td>⚡&nbsp;<strong>Recommended focus areas for review</strong><br><br>\n\n'
+            + '\n\n'.join(details) + '\n\n</td></tr>\n</table>\n\n'
+            '<!-- pr-agent-review-state:v1\n' + json.dumps(state) + '\n-->')
+    return body, {'review': {'key_issues_to_review': findings}}
+
+
+class FindingMetadataTests(unittest.TestCase):
+    def consumer(self, body, flag='--classify-pr-agent'):
+        return subprocess.run(
+            ['bash', str(ROOT / 'scripts/development-workflow/apply-readiness-labels.sh'), flag],
+            input=body, text=True, capture_output=True, check=True).stdout.strip()
+
+    def annotated(self):
+        body, source = titled_review()
+        before = copy.deepcopy(source)
+        result = runtime.annotate_finding_metadata(body, source)
+        self.assertEqual(before, source)
+        self.assertIn('<strong data-pr-agent-finding="v1"', result)
+        return result
+
+    def test_legacy_free_titles_remain_ambiguous(self):
+        body, _ = titled_review()
+        self.assertEqual('escalate', self.consumer(body))
+
+    def test_explicit_advisories_keep_visible_titles_and_excerpts(self):
+        body = self.annotated()
+        self.assertEqual('clean', self.consumer(body))
+        self.assertEqual('Possible Issue\nPossible Issue', self.consumer(body, '--pr-agent-focus-labels'))
+        self.assertEqual({'verdict': 'clean', 'verification_only': False},
+                         json.loads(self.consumer(body, '--inspect-pr-agent')))
+        self.assertIn('>Retry Loop</strong>', body)
+        self.assertIn('>Unbounded Read</strong>', body)
+        self.assertEqual(2, body.count('const example = 1;'))
+
+    def test_markdown_boundaries_cannot_hide_extra_findings_inside_focus_cell(self):
+        body = self.annotated()
+        for boundary in ('### Additional finding', '---'):
+            for closing in ('</summary>', '</details>', '</td>'):
+                with self.subTest(boundary=boundary, closing=closing):
+                    extra = '\n' + boundary + '\n**Must fix**\n'
+                    if closing == '</td>':
+                        # Add evidence to the focus cell, not an ancillary row.
+                        candidate = body.replace('\n\n</td></tr>\n</table>', extra + '\n</td></tr>\n</table>')
+                    else:
+                        candidate = body.replace(closing, extra + closing, 1)
+                    self.assertNotEqual(body, candidate)
+                    self.assertEqual('escalate', self.consumer(candidate))
+                    self.assertEqual('', self.consumer(candidate, '--pr-agent-focus-labels'))
+                    self.assertEqual('escalate', json.loads(self.consumer(candidate, '--inspect-pr-agent'))['verdict'])
+            with self.subTest(boundary=boundary, attribute='quoted cell terminator'):
+                extra = '<span title="</td>">Descriptive prose.</span>\n' + boundary + '\n**Must fix**\n'
+                self.assertEqual('escalate', self.consumer(body.replace('</details>', extra + '</details>', 1)))
+
+    def test_markdown_boundaries_in_prose_or_code_do_not_invent_findings(self):
+        body = self.annotated()
+        for boundary in ('### Additional finding', '---'):
+            prose = body.replace('</details>', '\n' + boundary + '\nDescriptive prose.\n</details>', 1)
+            code = body.replace('const example = 1;', 'const example = 1;\n' + boundary + '\n**Must fix**', 1)
+            for candidate in (prose, code):
+                with self.subTest(boundary=boundary, candidate=candidate):
+                    self.assertEqual('clean', self.consumer(candidate))
+
+    def test_unmarked_html_emphasis_cannot_hide_extra_findings(self):
+        body = self.annotated()
+        for tag in ('b', 'em'):
+            for closing in ('</summary>', '</details>', '</td>'):
+                with self.subTest(tag=tag, closing=closing):
+                    extra = f'<{tag}>Must fix</{tag}>'
+                    if closing == '</td>':
+                        candidate = body.replace('\n\n</td></tr>\n</table>', extra + '\n</td></tr>\n</table>')
+                    else:
+                        candidate = body.replace(closing, extra + closing, 1)
+                    self.assertNotEqual(body, candidate)
+                    self.assertEqual('escalate', self.consumer(candidate))
+                    self.assertEqual('', self.consumer(candidate, '--pr-agent-focus-labels'))
+                    self.assertEqual('escalate', json.loads(self.consumer(candidate, '--inspect-pr-agent'))['verdict'])
+
+    def test_html_emphasis_in_code_or_comments_is_not_a_finding(self):
+        body = self.annotated()
+        for tag in ('b', 'em'):
+            extra = f'<{tag}>Must fix</{tag}>'
+            candidates = (
+                body.replace('const example = 1;', 'const example = 1;\n' + extra, 1),
+                body.replace('</details>', '<!-- ' + extra + ' --></details>', 1))
+            for candidate in candidates:
+                with self.subTest(tag=tag, candidate=candidate):
+                    self.assertEqual('clean', self.consumer(candidate))
+
+    def test_blocking_and_security_escalate(self):
+        body = self.annotated()
+        for candidate in (
+                body.replace('data-category="advisory" data-severity="medium"',
+                             'data-category="blocking" data-severity="high"', 1),
+                body.replace('<strong>No security concerns identified</strong>',
+                             '<strong>Security concerns</strong><br>Yes')):
+            with self.subTest(candidate=candidate):
+                self.assertEqual('escalate', self.consumer(candidate))
+
+    def test_incomplete_invalid_and_contradictory_markers(self):
+        body = self.annotated()
+        for candidate in (
+                body.replace('<table>', '').replace('</table>', ''),
+                re.sub(r'^#### .*\n', '', body, flags=re.M),
+                body.replace('data-category="advisory"', 'data-category="unknown"', 1),
+                body.replace('data-severity="medium"', 'data-severity="high"', 1),
+                body.replace('data-severity="medium"', '', 1),
+                body.replace('data-pr-agent-finding="v1"', '', 1),
+                body.replace('data-pr-agent-finding="v1"', 'data-pr-agent-finding="v2"', 1),
+                body.replace(FINDING_HEAD + ')', FINDING_HEAD[:-1] + ')', 1),
+                body.replace('</table>', '</table>\n<table></table>'),
+                body.replace('data-category="advisory" data-severity="medium"', '', 1),
+                body.replace('data-category="advisory"', 'data-category="advisory" data-category="blocking"', 1),
+                body.replace('</details>', '', 1),
+                body.replace('data-category="advisory"', 'data-category=""', 1),
+                body.replace('data-severity="medium"', 'data-severity="   "', 1),
+                body + '\n### Key issues to review\n**Must fix**\n',
+                body.replace('</details>', '\n**Must fix**\n</details>', 1)):
+            with self.subTest(candidate=candidate):
+                self.assertEqual('escalate', self.consumer(candidate))
+                self.assertEqual('', self.consumer(candidate, '--pr-agent-focus-labels'))
+
+    def test_producer_never_guesses_metadata_from_title(self):
+        body, source = titled_review()
+        for field in ('category', 'severity'):
+            for value in (None, '', ' ', 'unknown', [], {}, 1):
+                candidate = copy.deepcopy(source)
+                candidate['review']['key_issues_to_review'][0][field] = value
+                self.assertEqual('escalate', self.consumer(runtime.annotate_finding_metadata(body, candidate)))
+            candidate = copy.deepcopy(source)
+            del candidate['review']['key_issues_to_review'][0][field]
+            self.assertEqual('escalate', self.consumer(runtime.annotate_finding_metadata(body, candidate)))
+
+    def test_prompt_schema_is_explicit_and_idempotent(self):
+        source = 'class KeyIssuesComponentLink(BaseModel):\n    issue_header: str\n      issue_header: |\n'
+        extended = runtime.finding_prompt_schema(source)
+        self.assertIn('category: Literal["advisory", "blocking"]', extended)
+        self.assertIn('severity: Literal["low", "medium", "high", "critical"]', extended)
+        self.assertEqual(extended, runtime.finding_prompt_schema(extended))
+        for invalid in ('', ' ', source + source):
+            with self.assertRaises(RuntimeError):
+                runtime.finding_prompt_schema(invalid)
 
 
 class SourceTests(unittest.TestCase):
@@ -217,7 +390,8 @@ class ProducerTests(unittest.TestCase):
         self.state_api, self.utils, self.reviewer = state_api, utils, reviewer
         self.provider_class = GithubProvider
         self.targets = [(state_api, 'append_review_state'), (reviewer, 'append_review_state'),
-                        (utils, 'convert_to_markdown_v2'), (reviewer, 'convert_to_markdown_v2')]
+                        (utils, 'convert_to_markdown_v2'), (reviewer, 'convert_to_markdown_v2'),
+                        (reviewer, 'PRReview')]
         self.targets += [(GithubProvider, name) for name in ('limit_output_characters', 'publish_comment',
                          'edit_comment', 'publish_persistent_comment_full')]
         self.originals = [(obj, name, getattr(obj, name)) for obj, name in self.targets]
@@ -268,6 +442,58 @@ class ProducerTests(unittest.TestCase):
                     runtime.mask_review_code(outbound)
                     self.assertIn('`helper()`' if text == 'Consider `helper()` here.' else '<code>', outbound)
 
+    def test_free_title_metadata_reaches_published_record(self):
+        record = publication('A fabricated finding with `helper()`.', header='Retry Loop')
+        body = record['body']
+        self.assertIn('data-category="advisory" data-severity="medium">Retry Loop</strong>', body)
+        self.assertEqual('clean', FindingMetadataTests().consumer(body))
+        from pr_agent.config_loader import get_settings
+        self.assertIn('category: Literal["advisory", "blocking"]', get_settings().pr_review_prompt.system)
+
+    def test_schema_reaches_reviewer_after_synthetic_repo_settings(self):
+        from pr_agent.config_loader import get_settings
+        import pr_agent.git_providers.utils as provider_utils
+        runtime.install_hooks()
+        settings = get_settings()
+        previous = settings.pr_reviewer.extra_instructions
+        self.addCleanup(settings.set, 'pr_reviewer.extra_instructions', previous)
+        instance = Mock()
+        instance.get_repo_settings.return_value = b'[pr_reviewer]\nextra_instructions = "Fabricated repository guidance"\n'
+        with patch.object(provider_utils, 'get_git_provider_with_context', return_value=instance), \
+                patch.object(provider_utils, '_get_per_directory_settings', return_value=[]):
+            provider_utils.apply_repo_settings('https://example.invalid/repo/pull/42')
+        self.assertEqual('Fabricated repository guidance', settings.pr_reviewer.extra_instructions)
+        instance.get_pr_description.return_value = ('Synthetic description', [])
+        with patch.object(self.reviewer, 'get_git_provider_with_context', return_value=instance), \
+                patch.object(self.reviewer, 'get_main_pr_language', return_value='Python'), \
+                patch.object(self.reviewer, 'get_skills_context', return_value=''), \
+                patch.object(self.reviewer, 'build_repo_context', return_value=''), \
+                patch.object(self.reviewer.PRReviewer, '_get_user_answers', return_value=('', '')), \
+                patch.object(self.reviewer, 'TokenHandler') as tokens:
+            self.reviewer.PRReviewer('https://example.invalid/repo/pull/42', ai_handler=Mock)
+        prompt = tokens.call_args.args[2]
+        self.assertIn('category: Literal["advisory", "blocking"]', prompt)
+        self.assertIn('severity: Literal["low", "medium", "high", "critical"]', prompt)
+
+    def test_actual_output_schema_accepts_explicit_fields_and_rejects_bad_data(self):
+        source = data('Synthetic finding.', 'Retry Loop')
+        source['review']['key_issues_to_review'][0].update(start_line=10, end_line=20)
+        instance = self.reviewer.PRReviewer.__new__(self.reviewer.PRReviewer)
+        instance.vars = {}
+        # Planted producer failure: upstream extra="forbid" rejects these fields.
+        self.assertFalse(instance._validate_review_schema(source))
+        runtime.install_hooks()
+        self.assertTrue(instance._validate_review_schema(source))
+        for field in ('category', 'severity', 'relevant_file', 'start_line'):
+            invalid = copy.deepcopy(source)
+            del invalid['review']['key_issues_to_review'][0][field]
+            self.assertFalse(instance._validate_review_schema(invalid))
+        for field, value in (('category', 'unknown'), ('severity', 'unknown'),
+                             ('unexpected_field', 'fabricated')):
+            invalid = copy.deepcopy(source)
+            invalid['review']['key_issues_to_review'][0][field] = value
+            self.assertFalse(instance._validate_review_schema(invalid))
+
     def test_mixed_width_publication_remains_blocking(self):
         for mode in ('fresh', 'edit', 'persistent'):
             with self.subTest(mode=mode):
@@ -298,7 +524,12 @@ class ProducerTests(unittest.TestCase):
         runtime.install_hooks()
         self.assertEqual(expected, self.reviewer.convert_to_markdown_v2(source, False, 'synthetic incremental', None, []))
         for malformed in ({}, {'review': {}}, {'review': {'key_issues_to_review': [None, {'issue_content': 1}]}}):
-            self.assertEqual(original(malformed), self.reviewer.convert_to_markdown_v2(malformed))
+            observed = self.reviewer.convert_to_markdown_v2(malformed)
+            if observed != original(malformed):
+                self.assertIn('Verification: required', observed)
+                self.assertEqual('escalate', FindingMetadataTests().consumer(observed))
+            else:
+                self.assertEqual(original(malformed), observed)
 
     def test_identity_failures_before_create(self):
         body = self.generated()
@@ -430,16 +661,17 @@ def emit_records():
             records.append(dict(publication(text, mode=mode), name=mode + text, verdict='clean', verification_only=False,
                                 focus='Possible Issue', d15=True))
     for name, header, security, verdict, verification in (
-            ('security', 'Possible Issue', 'Yes', 'needs_fixes', False),
+            ('security', 'Possible Issue', 'Yes', 'escalate', False),
             ('verification', 'Possible Issue', 'No', 'clean', False),
-            ('hard-focus', 'Must fix', 'No', 'needs_fixes', False)):
+            ('hard-focus', 'Must fix', 'No', 'escalate', False)):
         extra = {}
         if name == 'verification':
             extra['ticket_compliance_check'] = [{
                 'ticket_url': 'https://example.invalid/issues/fabricated',
                 'requires_further_human_verification': '- Confirm the fabricated acceptance scenario.'}]
         record = publication(header=header, security=security, extra_review=extra)
-        records.append(dict(record, name=name, verdict=verdict, verification_only=verification, focus=header, d15=True))
+        records.append(dict(record, name=name, verdict=verdict, verification_only=verification,
+                            focus='' if name == 'hard-focus' else header, d15=True))
         if name == 'verification':
             for suffix in ('\n### Verification status: pending\n',
                            '\n### Requires further human verification\n- Confirm code evidence.\n'):
