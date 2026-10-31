@@ -1942,10 +1942,23 @@ _fixture_dir_1946="$(mktemp -d)"
 cat > "$_fixture_dir_1946/gh" <<'GH1946'
 #!/usr/bin/env bash
 case "$*" in
+  *"api user"*) printf 'loop-runner\n' ;;
+  *"api -X POST "*"issues/42/comments"*) printf '%s\n' '{"id":99,"created_at":"2020-01-01T00:00:03Z","body":"/review"}' ;;
+  *"repo view"*) printf 'owner/repo\n' ;;
+  *"pr view"*"--json headRefOid,body"*) printf '%s\n' '{"headRefOid":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","body":"Synthetic regression proof"}' ;;
   *"--jq .head.sha"*) printf '%s\n' 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' ;;
   *"--jq .commit.committer.date"*) printf '%s\n' '2020-01-01T00:00:00Z' ;;
   *"issues/42/comments"*)
-    jq -nc --arg body "$PR_AGENT_FIXTURE_BODY" '[{user:{login:"github-actions[bot]"},updated_at:"2020-01-01T00:00:02Z",body:$body}]' ;;
+    if [ -n "${PR_AGENT_FIXTURE_POLL_MARKER:-}" ] && [ ! -e "$PR_AGENT_FIXTURE_POLL_MARKER" ]; then
+      : >"$PR_AGENT_FIXTURE_POLL_MARKER"
+      printf '[]\n'
+      exit 0
+    fi
+    if [ -n "${PR_AGENT_FIXTURE_LEDGER_FILE:-}" ]; then
+      jq -c --arg args "$*" 'if ($args | contains("--slurp")) then [.] else . end' "$PR_AGENT_FIXTURE_LEDGER_FILE"
+      exit 0
+    fi
+    jq -nc --arg body "$PR_AGENT_FIXTURE_BODY" --arg args "$*" '[{id:10,user:{login:"github-actions[bot]"},created_at:"2020-01-01T00:00:02Z",updated_at:"2020-01-01T00:00:02Z",body:$body}] | if ($args | contains("--slurp")) then [.] else . end' ;;
   *) printf '[]\n' ;;
 esac
 GH1946
@@ -1971,9 +1984,15 @@ fixture_test_1946 legacy_clean clean 'No major issues detected'
 fixture_test_1946 legacy_advisory clean "$_fixture_focus_1946"
 fixture_test_1946 legacy_blocker needs_fixes "${_fixture_focus_1946/Possible Issue/Security Concern}"
 fixture_test_1946 ticket_clean clean "$_fixture_ticket_1946"
-fixture_test_1946 ticket_partial needs_fixes "${_fixture_ticket_1946/Fully compliant/Partially compliant}"
-fixture_test_1946 ticket_not_compliant needs_fixes "${_fixture_ticket_1946/Fully compliant/Not compliant}"
-fixture_test_1946 ticket_human_verification escalate "${_fixture_ticket_1946/Fully compliant/PR Code Verified}"
+fixture_test_1946 ticket_partial clean "${_fixture_ticket_1946/Fully compliant/Partially compliant}"
+fixture_test_1946 ticket_not_compliant clean "${_fixture_ticket_1946/Fully compliant/Not compliant}"
+fixture_test_1946 ticket_human_verification clean "${_fixture_ticket_1946/Fully compliant/PR Code Verified}"
+_ticket_request_2064=$'### 🎫 Ticket compliance analysis ✅\n**[42](https://example.test/issues/42) - PR Code Verified**\nRequires further human verification:\n- Verify ticket proof manually.\n'
+fixture_test_1946 ticket_only_request_no_proof clean "$_ticket_request_2064"
+fixture_test_1946 ticket_only_request_code needs_fixes "${_ticket_request_2064}${_fixture_focus_1946/Possible Issue/Must Fix}"
+fixture_test_1946 ticket_only_request_outside escalate "${_ticket_request_2064}"$'### Requires further human verification\n- Approve deployment.\n'
+fixture_test_1946 ticket_only_request_precedence escalate "${_ticket_request_2064}${_fixture_focus_1946/Possible Issue/Must Fix}"$'### Verification: pending\n'
+unset _ticket_request_2064
 fixture_test_1946 ticket_unknown_status escalate "${_fixture_ticket_1946/Fully compliant/Unknown status}"
 fixture_test_1946 ticket_missing_analysis escalate $'**Ticket compliance analysis ✅**\n**[42](url) - Fully compliant**\n'
 fixture_test_1946 ticket_truncated escalate "${_fixture_ticket_1946%</table>*}"
@@ -1994,7 +2013,7 @@ fixture_test_1946 hidden_old_blocker clean "${_fixture_ticket_1946}"$'<!-- pr-ag
 # Acquisition deliberately rejects a marker hidden by an unterminated comment;
 # no bound summary is available. The pure parser still refuses that content.
 fixture_test_1946 unfinished_history escalate "${_fixture_ticket_1946}"$'<!-- pr-agent-review-state:v1\n' skipped
-fixture_test_1946 multiple_tickets_blocker needs_fixes $'**Ticket compliance analysis 🔶**\n**[42](url) - Fully compliant**\nCompliant requirements:\n- Implemented.\n**[43](url) - Not compliant**\nNon-compliant requirements:\n- Missing behavior.\n'
+fixture_test_1946 multiple_tickets_blocker clean $'**Ticket compliance analysis 🔶**\n**[42](url) - Fully compliant**\nCompliant requirements:\n- Implemented.\n**[43](url) - Not compliant**\nNon-compliant requirements:\n- Missing behavior.\n'
 fixture_test_1946 downstream_truncated escalate $'<table>\n<tr><td>\n**🎫 Ticket compliance analysis 🔶**\n**[42](url) - Partially compliant**\nCompliant requirements:\n- Guard provider.cancelSubscription against preapprovals holding an active lifecycle state (visible in subscription-ch...\n'
 fixture_test_1946 legacy_truncated escalate $'<table>\n<tr><td>Recommended focus areas for review\n<details><summary><strong>Possible Issue</strong></summary>\nAdvisory text\n'
 fixture_test_1946 empty_markdown_analysis escalate $'**Ticket compliance analysis ✅**\n**[42](url) - Fully compliant**\nCompliant requirements:\n\n---\n'
@@ -2015,17 +2034,21 @@ import sys
 from types import SimpleNamespace
 
 runtime = runpy.run_path(sys.argv[1] + "/scripts/development-workflow/pr-agent-runtime.py")
-for example in ("`git show <head>:CHANGELOG.md`", "~~~html\n<head>\n~~~\n"):
+for example in ("`git show <head>:CHANGELOG.md`", "``complex``", "~~~html\n<head>\n~~~\n"):
     source = example + "\n\n<details><summary>Visible</summary></details>"
     masked = runtime["mask_review_code"](source)
     assert len(masked) == len(source)
+    assert not masked[:len(example)].strip()
+    assert masked[len(example):] == source[len(example):]
+    if example == "``complex``":
+        assert runtime["mask_review_code"](source, preserve_offsets=False) == " " + source[len(example):]
     assert [i for i, char in enumerate(masked) if char in "\r\n"] == [
         i for i, char in enumerate(source) if char in "\r\n"]
     nodes = runtime["ReviewSpans"](source).nodes
     assert [node.tag for node in nodes] == ["details", "summary"]
     assert source[nodes[1].close_start:nodes[1].end] == "</summary>"
 
-for source in ("Unmatched ` prose", "`first\nsecond`", "``complex``",
+for source in ("Unmatched ` prose", "`first\nsecond`",
                "<span>`Critical`</span>",
                '<span title="`">Text</span>',
                "<details><summary>Read `git show <head>:CHANGELOG.md`</summary></details>",
@@ -2130,7 +2153,7 @@ run_test 1946_new_focus_advisory_labels 'Possible Issue' "$(_pr_agent_extract_ad
 fixture_test_1946 extra_rendered_human escalate "${_fixture_ticket_1946}"$'<strong>Requires further human verification</strong><br>\n- Verify authorization manually.\n'
 fixture_test_1946 extra_malformed_second_section escalate "${_fixture_ticket_1946}"$'**Ticket compliance analysis ❌*\n**[43](url) - Not compliant**\nNon-compliant requirements:\n- Missing.\n'
 fixture_test_1946 extra_partial_bold_focus needs_fixes "${_fixture_ticket_1946/Fully compliant/Partially compliant}"$'**Recommended focus areas for review**\n<strong>Critical</strong>\n'
-fixture_test_1946 extra_partial_human_ticket escalate $'\n**Ticket compliance analysis 🔶**\n**[42](url) - Partially compliant**\nNon-compliant requirements:\n- Missing.\n**[43](url) - PR Code Verified**\nCompliant requirements:\n- Implemented; human verification pending.\n'
+fixture_test_1946 extra_partial_human_ticket clean $'\n**Ticket compliance analysis 🔶**\n**[42](url) - Partially compliant**\nNon-compliant requirements:\n- Missing.\n**[43](url) - PR Code Verified**\nCompliant requirements:\n- Implemented; human verification pending.\n'
 fixture_test_1946 extra2_unreadable_legacy_focus escalate $'\n### Recommended focus areas for review\nNo parseable labels\n'
 fixture_test_1946 extra2_empty_security escalate "${_fixture_ticket_1946}"$'<strong>Security concerns</strong><br>\n'
 fixture_test_1946 extra2_blank_security escalate "${_fixture_ticket_1946}"$'<tr><td><strong>Security concerns</strong><br><span> &nbsp; </span></td></tr>\n'
@@ -2163,10 +2186,10 @@ fixture_test_1946 closed_legacy_unknown escalate $'\n## PR Reviewer Guide\nRevie
 run_test 1946_unknown_not_advisory '' "$(_pr_agent_extract_advisory_labels "${_fixture_focus_1946/Possible Issue/Unknown}")"
 fixture_test_1946 closed_bare_security_unknown escalate "${_fixture_ticket_1946}"$'Security concerns: Unknown\n'
 fixture_test_1946 closed_malformed_verification_unknown escalate "${_fixture_ticket_1946}"$'### Verification status Unknown\n'
-fixture_test_1946 scoped_human_no_colon escalate $'\n## PR Reviewer Guide\n**Ticket compliance analysis ✅**\n**[42](url) - Fully compliant**\nCompliant requirements:\n- Requires further human verification\n'
+fixture_test_1946 scoped_human_no_colon clean $'\n## PR Reviewer Guide\n**Ticket compliance analysis ✅**\n**[42](url) - Fully compliant**\nCompliant requirements:\n- Requires further human verification\n'
 fixture_test_1946 scoped_human_colon escalate $'\n## PR Reviewer Guide\n**Ticket compliance analysis ✅**\n**[42](url) - Fully compliant**\nCompliant requirements:\n- Requires further human verification:\n'
-fixture_test_1946 scoped_human_rendered escalate $'\n## PR Reviewer Guide\n**Ticket compliance analysis ✅**\n**[42](url) - Fully compliant**\nCompliant requirements:\n- Requires&nbsp;further <em>human</em> verification\n'
-fixture_test_1946 scoped_partial_human_no_colon escalate $'\n## PR Reviewer Guide\n**Ticket compliance analysis ✅**\n**[42](url) - Partially compliant**\nCompliant requirements:\n- Requires further human verification\n'
+fixture_test_1946 scoped_human_rendered clean $'\n## PR Reviewer Guide\n**Ticket compliance analysis ✅**\n**[42](url) - Fully compliant**\nCompliant requirements:\n- Requires&nbsp;further <em>human</em> verification\n'
+fixture_test_1946 scoped_partial_human_no_colon clean $'\n## PR Reviewer Guide\n**Ticket compliance analysis ✅**\n**[42](url) - Partially compliant**\nCompliant requirements:\n- Requires further human verification\n'
 # Raw HTML attributes remain opaque while Markdown code is masked.
 fixture_test_1946 raw_structure_h1_full escalate "${_fixture_ticket_1946}"$'<h1 data-note=pre`bad`post>Reviewer notes</h1>\n'
 fixture_test_1946 raw_structure_h1_partial escalate "${_fixture_ticket_1946/Fully compliant/Partially compliant}"$'<h1 data-note=pre`bad`post>Reviewer notes</h1>\n'
@@ -2191,13 +2214,13 @@ fixture_test_1946 raw_structure_p_partial escalate "${_fixture_ticket_1946/Fully
 fixture_test_1946 raw_structure_div_full escalate "${_fixture_ticket_1946}"$'<div data-note=pre`bad`post>Reviewer notes</div>\n'
 fixture_test_1946 raw_structure_div_partial escalate "${_fixture_ticket_1946/Fully compliant/Partially compliant}"$'<div data-note=pre`bad`post>Reviewer notes</div>\n'
 fixture_test_1946 raw_structure_fenced_bad_attribute_full clean "${_fixture_ticket_1946}"$'```html\n<h3 data-note=pre`bad`post>Reviewer notes</h3>\n```\n'
-fixture_test_1946 raw_structure_fenced_bad_attribute_partial needs_fixes "${_fixture_ticket_1946/Fully compliant/Partially compliant}"$'```html\n<h3 data-note=pre`bad`post>Reviewer notes</h3>\n```\n'
+fixture_test_1946 raw_structure_fenced_bad_attribute_partial clean "${_fixture_ticket_1946/Fully compliant/Partially compliant}"$'```html\n<h3 data-note=pre`bad`post>Reviewer notes</h3>\n```\n'
 fixture_test_1946 raw_structure_inline_bad_attribute_full escalate "${_fixture_ticket_1946}"$'``<h3 data-note=pre`bad`post>Reviewer notes</h3>``\n'
 fixture_test_1946 raw_structure_inline_bad_attribute_partial escalate "${_fixture_ticket_1946/Fully compliant/Partially compliant}"$'``<h3 data-note=pre`bad`post>Reviewer notes</h3>``\n'
 fixture_test_1946 raw_structure_fenced_unclosed_full clean "${_fixture_ticket_1946}"$'```html\n<h3>Reviewer notes\n```\n'
-fixture_test_1946 raw_structure_fenced_unclosed_partial needs_fixes "${_fixture_ticket_1946/Fully compliant/Partially compliant}"$'```html\n<h3>Reviewer notes\n```\n'
+fixture_test_1946 raw_structure_fenced_unclosed_partial clean "${_fixture_ticket_1946/Fully compliant/Partially compliant}"$'```html\n<h3>Reviewer notes\n```\n'
 fixture_test_1946 raw_structure_inline_unclosed_full clean "${_fixture_ticket_1946}"$'\n`<h3>Reviewer notes`\n'
-fixture_test_1946 raw_structure_inline_unclosed_partial needs_fixes "${_fixture_ticket_1946/Fully compliant/Partially compliant}"$'\n`<h3>Reviewer notes`\n'
+fixture_test_1946 raw_structure_inline_unclosed_partial clean "${_fixture_ticket_1946/Fully compliant/Partially compliant}"$'\n`<h3>Reviewer notes`\n'
 fixture_test_1946 raw_structure_quoted_backticks escalate "${_fixture_ticket_1946}"$'<h3 data-note="pre`bad`post">Reviewer notes</h3>\n'
 fixture_test_1946 raw_structure_quoted_spaced_literal clean "${_fixture_ticket_1946}"$'<h3 title="< h3">Reviewer notes</h3>\n'
 fixture_test_1946 raw_structure_opaque_history clean "${_fixture_ticket_1946}"$'<!-- <h3 data-note=pre`bad`post>old malformed sample -->\n'
@@ -2348,97 +2371,97 @@ fixture_test_1946 focus_hard_hidden clean "${_fixture_ticket_1946}"$'<!-- <h3>Re
 fixture_test_1946 focus_hard_code clean "${_fixture_ticket_1946}"$'```html\n<h3>Recommended focus areas for review</h3><strong>Critical</strong>\n```\n'
 # HTML security headings use the same explicit value lists (#1946).
 fixture_test_1946 html_security_h1_negative_full clean "${_fixture_ticket_1946}"$'<h1>Security concerns</h1><p>None</p>\n'
-fixture_test_1946 html_security_h1_negative_partial needs_fixes "${_fixture_ticket_1946/Fully compliant/Partially compliant}"$'<h1>Security concerns</h1><p>None</p>\n'
+fixture_test_1946 html_security_h1_negative_partial clean "${_fixture_ticket_1946/Fully compliant/Partially compliant}"$'<h1>Security concerns</h1><p>None</p>\n'
 fixture_test_1946 html_security_h1_finding_full needs_fixes "${_fixture_ticket_1946}"$'<h1>Security concerns</h1><p>Unsafe input execution.</p>\n'
 fixture_test_1946 html_security_h1_finding_partial needs_fixes "${_fixture_ticket_1946/Fully compliant/Partially compliant}"$'<h1>Security concerns</h1><p>Unsafe input execution.</p>\n'
 fixture_test_1946 html_security_h1_unknown_full escalate "${_fixture_ticket_1946}"$'<h1>Security concerns</h1><p>Unknown</p>\n'
 fixture_test_1946 html_security_h1_unknown_partial escalate "${_fixture_ticket_1946/Fully compliant/Partially compliant}"$'<h1>Security concerns</h1><p>Unknown</p>\n'
 fixture_test_1946 html_security_h2_negative_full clean "${_fixture_ticket_1946}"$'<h2>Security concerns</h2><p>None</p>\n'
-fixture_test_1946 html_security_h2_negative_partial needs_fixes "${_fixture_ticket_1946/Fully compliant/Partially compliant}"$'<h2>Security concerns</h2><p>None</p>\n'
+fixture_test_1946 html_security_h2_negative_partial clean "${_fixture_ticket_1946/Fully compliant/Partially compliant}"$'<h2>Security concerns</h2><p>None</p>\n'
 fixture_test_1946 html_security_h2_finding_full needs_fixes "${_fixture_ticket_1946}"$'<h2>Security concerns</h2><p>Unsafe input execution.</p>\n'
 fixture_test_1946 html_security_h2_finding_partial needs_fixes "${_fixture_ticket_1946/Fully compliant/Partially compliant}"$'<h2>Security concerns</h2><p>Unsafe input execution.</p>\n'
 fixture_test_1946 html_security_h2_unknown_full escalate "${_fixture_ticket_1946}"$'<h2>Security concerns</h2><p>Unknown</p>\n'
 fixture_test_1946 html_security_h2_unknown_partial escalate "${_fixture_ticket_1946/Fully compliant/Partially compliant}"$'<h2>Security concerns</h2><p>Unknown</p>\n'
 fixture_test_1946 html_security_h3_negative_full clean "${_fixture_ticket_1946}"$'<h3>Security concerns</h3><p>None</p>\n'
-fixture_test_1946 html_security_h3_negative_partial needs_fixes "${_fixture_ticket_1946/Fully compliant/Partially compliant}"$'<h3>Security concerns</h3><p>None</p>\n'
+fixture_test_1946 html_security_h3_negative_partial clean "${_fixture_ticket_1946/Fully compliant/Partially compliant}"$'<h3>Security concerns</h3><p>None</p>\n'
 fixture_test_1946 html_security_h3_finding_full needs_fixes "${_fixture_ticket_1946}"$'<h3>Security concerns</h3><p>Unsafe input execution.</p>\n'
 fixture_test_1946 html_security_h3_finding_partial needs_fixes "${_fixture_ticket_1946/Fully compliant/Partially compliant}"$'<h3>Security concerns</h3><p>Unsafe input execution.</p>\n'
 fixture_test_1946 html_security_h3_unknown_full escalate "${_fixture_ticket_1946}"$'<h3>Security concerns</h3><p>Unknown</p>\n'
 fixture_test_1946 html_security_h3_unknown_partial escalate "${_fixture_ticket_1946/Fully compliant/Partially compliant}"$'<h3>Security concerns</h3><p>Unknown</p>\n'
 fixture_test_1946 html_security_h4_negative_full clean "${_fixture_ticket_1946}"$'<h4>Security concerns</h4><p>None</p>\n'
-fixture_test_1946 html_security_h4_negative_partial needs_fixes "${_fixture_ticket_1946/Fully compliant/Partially compliant}"$'<h4>Security concerns</h4><p>None</p>\n'
+fixture_test_1946 html_security_h4_negative_partial clean "${_fixture_ticket_1946/Fully compliant/Partially compliant}"$'<h4>Security concerns</h4><p>None</p>\n'
 fixture_test_1946 html_security_h4_finding_full needs_fixes "${_fixture_ticket_1946}"$'<h4>Security concerns</h4><p>Unsafe input execution.</p>\n'
 fixture_test_1946 html_security_h4_finding_partial needs_fixes "${_fixture_ticket_1946/Fully compliant/Partially compliant}"$'<h4>Security concerns</h4><p>Unsafe input execution.</p>\n'
 fixture_test_1946 html_security_h4_unknown_full escalate "${_fixture_ticket_1946}"$'<h4>Security concerns</h4><p>Unknown</p>\n'
 fixture_test_1946 html_security_h4_unknown_partial escalate "${_fixture_ticket_1946/Fully compliant/Partially compliant}"$'<h4>Security concerns</h4><p>Unknown</p>\n'
 fixture_test_1946 html_security_h5_negative_full clean "${_fixture_ticket_1946}"$'<h5>Security concerns</h5><p>None</p>\n'
-fixture_test_1946 html_security_h5_negative_partial needs_fixes "${_fixture_ticket_1946/Fully compliant/Partially compliant}"$'<h5>Security concerns</h5><p>None</p>\n'
+fixture_test_1946 html_security_h5_negative_partial clean "${_fixture_ticket_1946/Fully compliant/Partially compliant}"$'<h5>Security concerns</h5><p>None</p>\n'
 fixture_test_1946 html_security_h5_finding_full needs_fixes "${_fixture_ticket_1946}"$'<h5>Security concerns</h5><p>Unsafe input execution.</p>\n'
 fixture_test_1946 html_security_h5_finding_partial needs_fixes "${_fixture_ticket_1946/Fully compliant/Partially compliant}"$'<h5>Security concerns</h5><p>Unsafe input execution.</p>\n'
 fixture_test_1946 html_security_h5_unknown_full escalate "${_fixture_ticket_1946}"$'<h5>Security concerns</h5><p>Unknown</p>\n'
 fixture_test_1946 html_security_h5_unknown_partial escalate "${_fixture_ticket_1946/Fully compliant/Partially compliant}"$'<h5>Security concerns</h5><p>Unknown</p>\n'
 fixture_test_1946 html_security_h6_negative_full clean "${_fixture_ticket_1946}"$'<h6>Security concerns</h6><p>None</p>\n'
-fixture_test_1946 html_security_h6_negative_partial needs_fixes "${_fixture_ticket_1946/Fully compliant/Partially compliant}"$'<h6>Security concerns</h6><p>None</p>\n'
+fixture_test_1946 html_security_h6_negative_partial clean "${_fixture_ticket_1946/Fully compliant/Partially compliant}"$'<h6>Security concerns</h6><p>None</p>\n'
 fixture_test_1946 html_security_h6_finding_full needs_fixes "${_fixture_ticket_1946}"$'<h6>Security concerns</h6><p>Unsafe input execution.</p>\n'
 fixture_test_1946 html_security_h6_finding_partial needs_fixes "${_fixture_ticket_1946/Fully compliant/Partially compliant}"$'<h6>Security concerns</h6><p>Unsafe input execution.</p>\n'
 fixture_test_1946 html_security_h6_unknown_full escalate "${_fixture_ticket_1946}"$'<h6>Security concerns</h6><p>Unknown</p>\n'
 fixture_test_1946 html_security_h6_unknown_partial escalate "${_fixture_ticket_1946/Fully compliant/Partially compliant}"$'<h6>Security concerns</h6><p>Unknown</p>\n'
 fixture_test_1946 html_security_strong_negative_full clean "${_fixture_ticket_1946}"$'<strong>Security concerns</strong><p>None</p>\n'
-fixture_test_1946 html_security_strong_negative_partial needs_fixes "${_fixture_ticket_1946/Fully compliant/Partially compliant}"$'<strong>Security concerns</strong><p>None</p>\n'
+fixture_test_1946 html_security_strong_negative_partial clean "${_fixture_ticket_1946/Fully compliant/Partially compliant}"$'<strong>Security concerns</strong><p>None</p>\n'
 fixture_test_1946 html_security_strong_finding_full needs_fixes "${_fixture_ticket_1946}"$'<strong>Security concerns</strong><p>Unsafe input execution.</p>\n'
 fixture_test_1946 html_security_strong_finding_partial needs_fixes "${_fixture_ticket_1946/Fully compliant/Partially compliant}"$'<strong>Security concerns</strong><p>Unsafe input execution.</p>\n'
 fixture_test_1946 html_security_strong_unknown_full escalate "${_fixture_ticket_1946}"$'<strong>Security concerns</strong><p>Unknown</p>\n'
 fixture_test_1946 html_security_strong_unknown_partial escalate "${_fixture_ticket_1946/Fully compliant/Partially compliant}"$'<strong>Security concerns</strong><p>Unknown</p>\n'
 fixture_test_1946 html_security_b_negative_full clean "${_fixture_ticket_1946}"$'<b>Security concerns</b><p>None</p>\n'
-fixture_test_1946 html_security_b_negative_partial needs_fixes "${_fixture_ticket_1946/Fully compliant/Partially compliant}"$'<b>Security concerns</b><p>None</p>\n'
+fixture_test_1946 html_security_b_negative_partial clean "${_fixture_ticket_1946/Fully compliant/Partially compliant}"$'<b>Security concerns</b><p>None</p>\n'
 fixture_test_1946 html_security_b_finding_full needs_fixes "${_fixture_ticket_1946}"$'<b>Security concerns</b><p>Unsafe input execution.</p>\n'
 fixture_test_1946 html_security_b_finding_partial needs_fixes "${_fixture_ticket_1946/Fully compliant/Partially compliant}"$'<b>Security concerns</b><p>Unsafe input execution.</p>\n'
 fixture_test_1946 html_security_b_unknown_full escalate "${_fixture_ticket_1946}"$'<b>Security concerns</b><p>Unknown</p>\n'
 fixture_test_1946 html_security_b_unknown_partial escalate "${_fixture_ticket_1946/Fully compliant/Partially compliant}"$'<b>Security concerns</b><p>Unknown</p>\n'
 fixture_test_1946 html_security_em_negative_full clean "${_fixture_ticket_1946}"$'<em>Security concerns</em><p>None</p>\n'
-fixture_test_1946 html_security_em_negative_partial needs_fixes "${_fixture_ticket_1946/Fully compliant/Partially compliant}"$'<em>Security concerns</em><p>None</p>\n'
+fixture_test_1946 html_security_em_negative_partial clean "${_fixture_ticket_1946/Fully compliant/Partially compliant}"$'<em>Security concerns</em><p>None</p>\n'
 fixture_test_1946 html_security_em_finding_full needs_fixes "${_fixture_ticket_1946}"$'<em>Security concerns</em><p>Unsafe input execution.</p>\n'
 fixture_test_1946 html_security_em_finding_partial needs_fixes "${_fixture_ticket_1946/Fully compliant/Partially compliant}"$'<em>Security concerns</em><p>Unsafe input execution.</p>\n'
 fixture_test_1946 html_security_em_unknown_full escalate "${_fixture_ticket_1946}"$'<em>Security concerns</em><p>Unknown</p>\n'
 fixture_test_1946 html_security_em_unknown_partial escalate "${_fixture_ticket_1946/Fully compliant/Partially compliant}"$'<em>Security concerns</em><p>Unknown</p>\n'
 fixture_test_1946 html_security_span_negative_full clean "${_fixture_ticket_1946}"$'<span>Security concerns</span><p>None</p>\n'
-fixture_test_1946 html_security_span_negative_partial needs_fixes "${_fixture_ticket_1946/Fully compliant/Partially compliant}"$'<span>Security concerns</span><p>None</p>\n'
+fixture_test_1946 html_security_span_negative_partial clean "${_fixture_ticket_1946/Fully compliant/Partially compliant}"$'<span>Security concerns</span><p>None</p>\n'
 fixture_test_1946 html_security_span_finding_full needs_fixes "${_fixture_ticket_1946}"$'<span>Security concerns</span><p>Unsafe input execution.</p>\n'
 fixture_test_1946 html_security_span_finding_partial needs_fixes "${_fixture_ticket_1946/Fully compliant/Partially compliant}"$'<span>Security concerns</span><p>Unsafe input execution.</p>\n'
 fixture_test_1946 html_security_span_unknown_full escalate "${_fixture_ticket_1946}"$'<span>Security concerns</span><p>Unknown</p>\n'
 fixture_test_1946 html_security_span_unknown_partial escalate "${_fixture_ticket_1946/Fully compliant/Partially compliant}"$'<span>Security concerns</span><p>Unknown</p>\n'
 fixture_test_1946 html_security_div_negative_full clean "${_fixture_ticket_1946}"$'<div>Security concerns</div><p>None</p>\n'
-fixture_test_1946 html_security_div_negative_partial needs_fixes "${_fixture_ticket_1946/Fully compliant/Partially compliant}"$'<div>Security concerns</div><p>None</p>\n'
+fixture_test_1946 html_security_div_negative_partial clean "${_fixture_ticket_1946/Fully compliant/Partially compliant}"$'<div>Security concerns</div><p>None</p>\n'
 fixture_test_1946 html_security_div_finding_full needs_fixes "${_fixture_ticket_1946}"$'<div>Security concerns</div><p>Unsafe input execution.</p>\n'
 fixture_test_1946 html_security_div_finding_partial needs_fixes "${_fixture_ticket_1946/Fully compliant/Partially compliant}"$'<div>Security concerns</div><p>Unsafe input execution.</p>\n'
 fixture_test_1946 html_security_div_unknown_full escalate "${_fixture_ticket_1946}"$'<div>Security concerns</div><p>Unknown</p>\n'
 fixture_test_1946 html_security_div_unknown_partial escalate "${_fixture_ticket_1946/Fully compliant/Partially compliant}"$'<div>Security concerns</div><p>Unknown</p>\n'
 fixture_test_1946 html_security_p_negative_full clean "${_fixture_ticket_1946}"$'<p>Security concerns</p><p>None</p>\n'
-fixture_test_1946 html_security_p_negative_partial needs_fixes "${_fixture_ticket_1946/Fully compliant/Partially compliant}"$'<p>Security concerns</p><p>None</p>\n'
+fixture_test_1946 html_security_p_negative_partial clean "${_fixture_ticket_1946/Fully compliant/Partially compliant}"$'<p>Security concerns</p><p>None</p>\n'
 fixture_test_1946 html_security_p_finding_full needs_fixes "${_fixture_ticket_1946}"$'<p>Security concerns</p><p>Unsafe input execution.</p>\n'
 fixture_test_1946 html_security_p_finding_partial needs_fixes "${_fixture_ticket_1946/Fully compliant/Partially compliant}"$'<p>Security concerns</p><p>Unsafe input execution.</p>\n'
 fixture_test_1946 html_security_p_unknown_full escalate "${_fixture_ticket_1946}"$'<p>Security concerns</p><p>Unknown</p>\n'
 fixture_test_1946 html_security_p_unknown_partial escalate "${_fixture_ticket_1946/Fully compliant/Partially compliant}"$'<p>Security concerns</p><p>Unknown</p>\n'
 fixture_test_1946 html_security_summary_negative_full clean "${_fixture_ticket_1946}"$'<summary>Security concerns</summary><p>None</p>\n'
-fixture_test_1946 html_security_summary_negative_partial needs_fixes "${_fixture_ticket_1946/Fully compliant/Partially compliant}"$'<summary>Security concerns</summary><p>None</p>\n'
+fixture_test_1946 html_security_summary_negative_partial clean "${_fixture_ticket_1946/Fully compliant/Partially compliant}"$'<summary>Security concerns</summary><p>None</p>\n'
 fixture_test_1946 html_security_summary_finding_full needs_fixes "${_fixture_ticket_1946}"$'<summary>Security concerns</summary><p>Unsafe input execution.</p>\n'
 fixture_test_1946 html_security_summary_finding_partial needs_fixes "${_fixture_ticket_1946/Fully compliant/Partially compliant}"$'<summary>Security concerns</summary><p>Unsafe input execution.</p>\n'
 fixture_test_1946 html_security_summary_unknown_full escalate "${_fixture_ticket_1946}"$'<summary>Security concerns</summary><p>Unknown</p>\n'
 fixture_test_1946 html_security_summary_unknown_partial escalate "${_fixture_ticket_1946/Fully compliant/Partially compliant}"$'<summary>Security concerns</summary><p>Unknown</p>\n'
 fixture_test_1946 html_security_attributes_negative_full clean "${_fixture_ticket_1946}"$'<h3 class="security">Security concerns:</h3><p>None</p>\n'
-fixture_test_1946 html_security_attributes_negative_partial needs_fixes "${_fixture_ticket_1946/Fully compliant/Partially compliant}"$'<h3 class="security">Security concerns:</h3><p>None</p>\n'
+fixture_test_1946 html_security_attributes_negative_partial clean "${_fixture_ticket_1946/Fully compliant/Partially compliant}"$'<h3 class="security">Security concerns:</h3><p>None</p>\n'
 fixture_test_1946 html_security_attributes_finding_full needs_fixes "${_fixture_ticket_1946}"$'<h3 class="security">Security concerns:</h3><p>Unsafe input execution.</p>\n'
 fixture_test_1946 html_security_attributes_finding_partial needs_fixes "${_fixture_ticket_1946/Fully compliant/Partially compliant}"$'<h3 class="security">Security concerns:</h3><p>Unsafe input execution.</p>\n'
 fixture_test_1946 html_security_attributes_unknown_full escalate "${_fixture_ticket_1946}"$'<h3 class="security">Security concerns:</h3><p>Unknown</p>\n'
 fixture_test_1946 html_security_attributes_unknown_partial escalate "${_fixture_ticket_1946/Fully compliant/Partially compliant}"$'<h3 class="security">Security concerns:</h3><p>Unknown</p>\n'
 fixture_test_1946 html_security_nested_negative_full clean "${_fixture_ticket_1946}"$'<h3><strong>Security concerns</strong></h3><p>None</p>\n'
-fixture_test_1946 html_security_nested_negative_partial needs_fixes "${_fixture_ticket_1946/Fully compliant/Partially compliant}"$'<h3><strong>Security concerns</strong></h3><p>None</p>\n'
+fixture_test_1946 html_security_nested_negative_partial clean "${_fixture_ticket_1946/Fully compliant/Partially compliant}"$'<h3><strong>Security concerns</strong></h3><p>None</p>\n'
 fixture_test_1946 html_security_nested_finding_full needs_fixes "${_fixture_ticket_1946}"$'<h3><strong>Security concerns</strong></h3><p>Unsafe input execution.</p>\n'
 fixture_test_1946 html_security_nested_finding_partial needs_fixes "${_fixture_ticket_1946/Fully compliant/Partially compliant}"$'<h3><strong>Security concerns</strong></h3><p>Unsafe input execution.</p>\n'
 fixture_test_1946 html_security_nested_unknown_full escalate "${_fixture_ticket_1946}"$'<h3><strong>Security concerns</strong></h3><p>Unknown</p>\n'
 fixture_test_1946 html_security_nested_unknown_partial escalate "${_fixture_ticket_1946/Fully compliant/Partially compliant}"$'<h3><strong>Security concerns</strong></h3><p>Unknown</p>\n'
 fixture_test_1946 html_security_fragmented_negative_full clean "${_fixture_ticket_1946}"$'<h3>Secu<em>rity</em> con<strong>cerns</strong></h3><p>None</p>\n'
-fixture_test_1946 html_security_fragmented_negative_partial needs_fixes "${_fixture_ticket_1946/Fully compliant/Partially compliant}"$'<h3>Secu<em>rity</em> con<strong>cerns</strong></h3><p>None</p>\n'
+fixture_test_1946 html_security_fragmented_negative_partial clean "${_fixture_ticket_1946/Fully compliant/Partially compliant}"$'<h3>Secu<em>rity</em> con<strong>cerns</strong></h3><p>None</p>\n'
 fixture_test_1946 html_security_fragmented_finding_full needs_fixes "${_fixture_ticket_1946}"$'<h3>Secu<em>rity</em> con<strong>cerns</strong></h3><p>Unsafe input execution.</p>\n'
 fixture_test_1946 html_security_fragmented_finding_partial needs_fixes "${_fixture_ticket_1946/Fully compliant/Partially compliant}"$'<h3>Secu<em>rity</em> con<strong>cerns</strong></h3><p>Unsafe input execution.</p>\n'
 fixture_test_1946 html_security_fragmented_unknown_full escalate "${_fixture_ticket_1946}"$'<h3>Secu<em>rity</em> con<strong>cerns</strong></h3><p>Unknown</p>\n'
@@ -2566,6 +2589,127 @@ fixture_test_1946 format_fragmented_value_required_full escalate "${_fixture_tic
 fixture_test_1946 format_fragmented_value_required_partial escalate "${_fixture_ticket_1946/Fully compliant/Partially compliant}"$'<strong>Verification status</strong>: <span>Req</span><em>uired</em>\n'
 fixture_test_1946 format_fragmented_value_unknown_full escalate "${_fixture_ticket_1946}"$'<strong>Verification status</strong>: <span>Unk</span><em>nown</em>\n'
 fixture_test_1946 format_fragmented_value_unknown_partial escalate "${_fixture_ticket_1946/Fully compliant/Partially compliant}"$'<strong>Verification status</strong>: <span>Unk</span><em>nown</em>\n'
+# #2064 supersedes #2061 ticket-only dispatch: the real handler must not
+# demand proof or a targeted verification review for informational tickets.
+# Snapshot/proof validators remain independently tested. This synthetic local
+# reviewer must not dispatch for a ticket-only request, regardless of its result.
+_2061_request=$'**Ticket compliance analysis**\n**[42](url) - PR Code Verified**\nCompliant requirements:\n- Code checked.\nRequires further human verification:\n- Verify the synthetic body proof.\n### Recommended focus areas for review\n**No major issues detected**\n'
+# shellcheck disable=SC2034 # Read by the sourced production handler.
+repo_review_platforms=(local-ai-reviewer pr-agent)
+reviewer_loop_prior_history_payload_from_pr() {
+  printf '%s' "$_2061_prior"
+}
+run_local_ai_reviewer_review() {
+  printf 'dispatch\n' >>"$_fixture_dir_1946/dispatch"
+  local context hash proof
+  context="$(mktemp)"
+  workflow_collect_review_evidence owner/repo 42 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa "$context" || return 2
+  hash="$(jq -r .snapshot_sha256 "$context")"
+  rm -f "$context"
+  proof="$(jq -cn --arg hash "$hash" --arg status "${_2061_proof_status:-verified}" '{schema:"review_evidence_verification.v1",snapshot_sha256:$hash,request_id:10,status:$status,sources:["body"]}')"
+  printf 'RESULT=%s\nREVIEWED_HEAD=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\nEVIDENCE_VERIFICATION_JSON=%s\n' "${_2061_local_result:-clean}" "$proof"
+  [ "${_2061_local_result:-clean}" = clean ]
+}
+# Exercise the actual handler -> platform processor -> persisted proof boundary.
+# shellcheck disable=SC2034 # Production processor consumes the initialized globals.
+_2061_platform_entry() (
+  loop_head_sha=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  phase_after_clean_enabled=0
+  compare_mode=0
+  aggregate_result=skipped
+  aggregate_reason=""
+  aggregate_output=""
+  aggregate_status=0
+  total_comment_count=0
+  total_blocking_count=0
+  total_suggestion_count=0
+  reviewer_failed_required=0
+  aggregate_advisory_labels=""
+  platform_result_records=()
+  platform_reviewed_heads=()
+  platform_peer_evidence=()
+  platform_result_tokens=()
+  platform_blocking_outputs=()
+  aggregate_blocking_paths=()
+  aggregate_blocking_findings=()
+  platform_policy_status_notes=()
+  compare_verdicts=()
+  reviewer_loop_process_platform_output pr-agent 1 "$1" 0 1 >/dev/null
+  # Feed the actual PR-Agent processor result into unchanged peer scheduling.
+  # Only remote thread/CI snapshots are stubbed; no force override is set.
+  platforms=(local-ai-reviewer pr-agent codex-github)
+  repo_review_platforms=(local-ai-reviewer pr-agent codex-github)
+  phase_after_clean_platforms=()
+  platform_reviewed_heads+=("local-ai-reviewer:$loop_head_sha")
+  platform_peer_evidence+=("local-ai-reviewer|clean|")
+  stage_skip_enabled=0
+  pr_number=42
+  EXPENSIVE_GATE_MOCK_LEDGER_BODY=""
+  unset PR_REVIEW_LOOP_FORCE_EXPENSIVE_REVIEWERS
+  expensive_gate_unresolved_threads_status() { printf 'ok 0 %s\n' "$loop_head_sha"; }
+  expensive_gate_baseline_checks_status() { printf 'green %s\n' "$loop_head_sha"; }
+  reviewer_loop_pre_dispatch_action=""
+  reviewer_loop_platform_pre_dispatch codex-github 2 >/dev/null
+  jq -cn --arg action "$reviewer_loop_pre_dispatch_action" \
+    --argjson records "$(printf '%s\n' ${platform_result_records[@]+"${platform_result_records[@]}"} | jq -s '.')" \
+    --argjson heads "$(reviewer_loop_head_evidence_json "$loop_head_sha" ${platform_reviewed_heads[@]+"${platform_reviewed_heads[@]}"})" \
+    '{platform_results:$records,reviewed_heads:$heads,peer_dispatch_action:$action}'
+
+)
+# shellcheck disable=SC2034 # Synthetic retry globals are read by the sourced handler.
+for _2061_case in verified polled unverified code drift waiting skipped no_retry retry; do
+  : >"$_fixture_dir_1946/dispatch"
+  _2061_prior='{"schema":"reviewer_loop_history.v1","entries":[]}'
+  _2061_proof_status=verified
+  _2061_local_result=clean
+  local_review_retry_head_record=""
+  _2061_poll_marker=""
+  _2061_expected=clean
+  _2061_expected_dispatch=0
+  case "$_2061_case" in
+    polled) _2061_poll_marker="$_fixture_dir_1946/poll-once" ;;
+    unverified) _2061_proof_status=unverified ;;
+    code) _2061_local_result=needs_fixes ;;
+    drift) _2061_local_result=needs_rerun ;;
+    waiting) _2061_local_result=waiting_on_reviewer ;;
+    skipped) _2061_local_result=skipped ;;
+    no_retry|retry)
+      _2061_prior='{"schema":"reviewer_loop_history.v1","entries":[{"result":"needs_fixes","local_second_pass_failed_head":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]}'
+      [ "$_2061_case" != retry ] || local_review_retry_head_record=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ;;
+  esac
+  _2061_output="$(PATH="$_fixture_dir_1946:$PATH" PR_AGENT_FIXTURE_POLL_MARKER="$_2061_poll_marker" PR_AGENT_FIXTURE_BODY="${_fixture_header_1946}${_2061_request}" \
+    run_pr_agent_review 42 feature/42-test 1 0 || true)"
+  if ! grep -Fxq "RESULT=$_2061_expected" <<<"$_2061_output"; then
+    printf '%s\n' "$_2061_output" >&2
+  fi
+  run_test "2061_targeted_${_2061_case}_verdict" "RESULT=$_2061_expected" "$(printf '%s\n' "$_2061_output" | grep '^RESULT=')"
+  run_test "2061_targeted_${_2061_case}_dispatch" "$_2061_expected_dispatch" "$(wc -l <"$_fixture_dir_1946/dispatch" | tr -d ' ')"
+  if [ "$_2061_expected" = clean ]; then
+    run_test "2061_targeted_${_2061_case}_emits_reviewed_head" aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+      "$(kv_value_default REVIEWED_HEAD "$_2061_output" missing)"
+  fi
+  if [ "$_2061_case" = verified ] || [ "$_2061_case" = polled ]; then
+    _2061_entry="$( _2061_platform_entry "$_2061_output" )"
+    run_test "2061_${_2061_case}_processor_persists_actual_head" aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+      "$(printf '%s' "$_2061_entry" | jq -r '.reviewed_heads[] | select(.platform=="pr-agent") | .reviewed_head')"
+    run_test "2064_${_2061_case}_normal_peer_dispatch" dispatch \
+      "$(printf '%s' "$_2061_entry" | jq -r .peer_dispatch_action)"
+    _2061_history="$(printf '%s' "$_2061_entry" | jq -c '{schema:"reviewer_loop_history.v1",entries:[.]}')"
+    _2061_ledger_body="$(printf '### Automated Reviewer Loop Summary\n*Posted automatically by `pr-review-loop.sh`.*\n<!-- reviewer-loop-history:v1 -->\n```json\n%s\n```\n' "$_2061_history")"
+    jq -cn --arg body "${_fixture_header_1946}${_2061_request}" --arg summary "$_2061_ledger_body" \
+      '[{id:10,user:{login:"github-actions[bot]"},created_at:"2020-01-01T00:00:02Z",updated_at:"2020-01-01T00:00:02Z",body:$body},{id:30,user:{login:"loop-runner"},created_at:"2020-01-01T00:00:03Z",updated_at:"2020-01-01T00:00:03Z",body:$summary}]' >"$_fixture_dir_1946/actual-ledger.json"
+    _2061_ready_verdict="$(PATH="$_fixture_dir_1946:$PATH" PR_AGENT_FIXTURE_LEDGER_FILE="$_fixture_dir_1946/actual-ledger.json" \
+      workflow_pr_agent_evidence_verdict owner/repo 42 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa 10 "${_fixture_header_1946}${_2061_request}")"
+    run_test "2061_${_2061_case}_actual_ledger_allows_readiness" clean "$_2061_ready_verdict"
+  fi
+  if [ "$_2061_case" = polled ]; then
+    run_test "2061_polled_phase_posts_request" 1 "$(grep -c '^PR_AGENT_TRIGGER_COMMENT=' <<<"$_2061_output")"
+  fi
+
+done
+unset -f _2061_platform_entry
+unset _2061_entry _2061_history _2061_ledger_body _2061_ready_verdict _2061_poll_marker
+unset _2061_request _2061_case _2061_prior _2061_output _2061_local_result _2061_proof_status _2061_expected _2061_expected_dispatch
 rm -rf "$_fixture_dir_1946"
 unset _fixture_dir_1946 _fixture_header_1946 _fixture_ticket_1946 _fixture_focus_1946
 unset -f fixture_test_1946

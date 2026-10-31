@@ -60,6 +60,16 @@ entries:
     mode_scope: product_repo_injection
     required_for_product_repo: true
     note: validates product repository workflow configuration
+  - group: complete review evidence identity
+    path: scripts/development-workflow/review-evidence-context.py
+    mode_scope: product_repo_injection
+    required_for_product_repo: true
+    note: full PR evidence identity and explicit current verification used by review and readiness
+  - group: immutable cumulative reviewer history
+    path: scripts/development-workflow/reviewer-loop-history.py
+    mode_scope: product_repo_injection
+    required_for_product_repo: true
+    note: reconciles append-only review snapshots without losing cycles or retry UUIDs
   - group: shared workflow shell helpers
     path: scripts/development-workflow/workflow-lib.sh
     mode_scope: product_repo_injection

@@ -413,9 +413,44 @@ When a pass fails on an unchanged head, the ledger entry records
 `local_second_pass_failed_head`. The summary comment includes
 `**Second local pass:** second local pass: <reason> → <result>` when a pass ran.
 
-The pass does not increment `CYCLE_COUNT` or `TOTAL_CYCLE_COUNT`. A failed pass
-on an unchanged head refuses with `RESULT=escalate`, `REASON=failed_for_head` on
-the next cycle (cross-invocation), without relying on cycle caps.
+An ordinary pass retains the existing cycle accounting. A failed pass on an
+unchanged head refuses with `RESULT=escalate`, `REASON=failed_for_head` by default.
+An explicit `--retry-local-review-head <full-lowercase-sha>` can request a fresh
+configured local review after infrastructure repair or publication of relevant
+proof for recorded findings. It never supplies a clean verdict itself.
+
+Each explicit retry reserves `local_review_retry_attempt: {id, head_sha, run_id}`
+in the existing v1 history before any platform dispatch. The UUID is new for
+each invocation. Reservation and completion with that UUID spend one slot on
+both cycle axes; an interrupted reservation remains spent. Historical entries
+without this object retain their previous head/result filters and deduplication.
+Malformed or conflicting attempt metadata makes counts unavailable. Unavailable
+counts, exhausted per-run/lifetime caps, or unverified persistence prevent
+reviewer dispatch. A clean result in the final admitted slot can still proceed.
+Changing run ID resets only the per-run axis; changing SHA resets neither.
+
+### Published evidence and verification
+
+The local reviewer receives the complete PR body and every issue-comment page
+as untrusted review context, including prior review history. Missing proof stays
+pending until the reviewer inspects it. Publishing a comment, an unrelated clean
+review, or requesting a retry cannot resolve a finding.
+
+`review-evidence-context.py` defines the shared snapshot and explicit-proof
+predicate used by the loop and readiness. Relevant body/comment edits, deletion,
+request changes and head changes invalidate evidence-dependent replay. Exact
+workflow bookkeeping headings are excluded from the fingerprint to avoid a
+summary invalidating itself; those comments cannot be proof sources. API or
+pagination failure leaves context unavailable.
+
+For a structurally recognized PR-Agent ticket request requiring further
+verification, the configured local reviewer must verify every requested item
+against eligible body/comment sources. Its clean ordinary/strict review and
+`review_evidence_verification.v1` proof must match the repository/PR/head snapshot
+and selected authenticated request. Only compact proof metadata is persisted
+in the existing trusted reviewer-loop ledger. Readiness independently checks
+current context and trusted author/write permission. Independent code/security
+findings, human decisions, malformed or unknown statuses remain blocking.
 
 **Scope note**: This pre-flight checks `review.on_draft.github` and
 `review.on_ready.github` (external reviewers used by Protocol 93 / Step 7). The
@@ -1684,7 +1719,7 @@ waiver was recorded.
 
 ### Advisory finding dispositions (post-clean)
 
-When `pr-review-loop.sh` exits `clean` and the output contains a non-empty `ADVISORY_LABELS` value (advisory findings from any configured platform), the runner must document the disposition of each advisory finding and update the summary comment before marking the PR ready. This closes the gap between "we saw this finding" and "here is why it was or was not addressed."
+When `pr-review-loop.sh` exits `clean` and the output contains a non-empty `ADVISORY_LABELS` value (advisory findings from any configured platform), the runner must document the disposition of each advisory finding in a new cumulative summary comment before marking the PR ready. This closes the gap between "we saw this finding" and "here is why it was or was not addressed."
 
 #### When this step triggers
 
@@ -1700,25 +1735,21 @@ Any clean exit where the script output includes one or more advisory label entri
    - **Deferred** — the finding will be tracked separately. Note the issue or backlog reference.
    - **Rejected** — the finding is a false positive. Explain why (e.g., "regex verified correct via manual test — pattern correctly excludes `[bot]`-suffixed logins").
 
-3. **Update the Automated Reviewer Loop Summary comment** to append an "Advisory dispositions" subsection immediately after the advisory findings list:
+3. **Prepare a new cumulative Automated Reviewer Loop Summary comment** containing an "Advisory dispositions" subsection immediately after the advisory findings list:
 
    ```
    **Advisory dispositions:**
    - *Finding Name*: [Addressed in `<sha>` | Accepted | Deferred | Rejected] — one-line reason.
    ```
 
-4. **Edit the comment in place** using `gh api PATCH`:
-
-   ```bash
-   # Find the summary comment ID (last match in case of multiple).
-   # Use the same multi-marker pattern as Step 8c to cover all accepted summary forms.
-   comment_id=$(gh api repos/{owner}/{repo}/issues/{pr_number}/comments \
-     --jq '[.[] | select(.body | test("Automated Reviewer Loop Summary|Reviewer Loop Summary|No blocking PR feedback"))] | last | .id')
-
-   # Patch with the updated body (include dispositions section at the end, before the script footer)
-   gh api repos/{owner}/{repo}/issues/comments/$comment_id \
-     -X PATCH -f body="<updated body>"
-   ```
+4. **Create a new comment and verify it independently**. Preserve the original
+   comments and history entries. Use the reconciled cumulative history from
+   `reviewer_loop_history_select_latest_summary_record`, add the dispositions
+   to the new summary body, and publish through `reviewer_loop_history_publish`
+   with repository, PR number, and the complete body file. The helper performs
+   one POST and a separate GET of the returned comment ID, requiring the exact
+   expected body. Failed or uncertain writes/readbacks stop readiness; never
+   retry an uncertain POST or PATCH an earlier comment.
 
 This step is mandatory when advisory findings are present. A summary comment that only lists finding names and links without dispositions leaves human reviewers and future retrospectives without visibility into whether findings were considered and why.
 
@@ -1886,7 +1917,8 @@ Follow the "PR feedback tracking and comments" subsection of Step 7 in `91-orche
   `architecture_decision`, the reply points to Protocol 91 and the canonical
   page for the full escalation report — this reply-level declaration is never
   a lighter substitute for that full report.
-- When the loop terminates with `clean`, `needs_fixes`, or `escalate`, **`pr-review-loop.sh` automatically posts or updates the "Automated Reviewer Loop Summary" comment** — you do not need to post it manually for those exits. On `needs_fixes`, the script updates the existing summary in place so active findings are visible while the fixer loop continues. The script-posted comment satisfies the Step 8c `hasReviewSummary` check.
+- When the loop terminates with `clean`, `needs_fixes`, or `escalate`, **`pr-review-loop.sh` automatically creates a new cumulative "Automated Reviewer Loop Summary" comment** — you do not need to post it manually for those exits. On `needs_fixes`, the new summary includes the active findings while all earlier comments remain unchanged. The script-posted comment satisfies the Step 8c `hasReviewSummary` check.
+- **Immutable cumulative persistence (#2061):** normal, release-guard and explicit retry-reservation summaries create new comments only, with independent exact-body readback. Read all comment pages, recognize only an opening summary heading plus the script footer (quoted markers are not summaries), and reconcile every history block before counting or appending. Preserve original entry objects and their maximum multiplicity across cumulative snapshots; copied prefixes must not multiply cycles. Historical qualifying `(head_sha, result)` deduplication remains unchanged. Each distinct retry UUID is spent once even when reservation/completion appears in several snapshots; conflicting UUID bindings remain unavailable. Any malformed or unavailable history block makes accounting unavailable, without dropping valid earlier entries or falling back to zero. A failed or uncertain write/readback stops dispatch/readiness and is never automatically retried. A later read reconciles any remotely persisted uncertain reservation before another attempt. Reconciled historical objects provide accounting evidence, not new review authority: explicit verification must be present in the latest trusted summary's newly appended entry; copying an older claim never promotes its trust. If a complete cumulative record exceeds the service limit, stop without truncating history.
 - If the result is `skipped` (no platforms configured), do not post a summary comment.
 
 ### Review comments audit (post-clean gate)

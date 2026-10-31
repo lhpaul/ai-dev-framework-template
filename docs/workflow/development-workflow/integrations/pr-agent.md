@@ -97,9 +97,36 @@ a non-default branch, with credentials not persisted.
 The container receives workspace/event/output mounts and the existing model
 configuration; secret values remain environment variables passed by name.
 
+A runtime change on a PR head does not activate it in GitHub: the action continues
+to execute from `pr.base.sha`. Trusted-base promotion is a separate authorized
+step. The synthetic image/host test neither promotes that base nor changes the
+workflow, its permissions, credentials or model configuration.
+
+Before rendering GFM finding cards, the runtime copies structured finding data
+and formats supported single-line, single- or double-backtick `issue_content` spans that
+contain literal closing-tag-like syntax as escaped HTML code. The decoded code
+text stays identical; ordinary code and non-GFM rendering stay unchanged. The
+original findings and review state are untouched. Any raw HTML outside supported
+spans preserves the entire source field, even when that HTML follows an eligible
+span. Unsupported delimiters and fenced examples are never repaired. Renderer
+signature and imported-alias identity are checked before installing any hook.
+The consumer recognizes matching one- or two-backtick delimiters without internal runs of a different width; mixed-width support is deferred to #2078. Unsupported runs, escaped boundaries, multiline payloads and genuine HTML crossings still reject. Affected rendered spans preserve GFM code text (including padding-space normalization); embedded backticks are encoded as `&#96;` inside HTML code. Severity and independent blocker gates retain their existing policy.
+
+For bootstrap, run the ordinary reviewer loop from the candidate item checkout:
+its classifier loads the adjacent runtime, while GitHub PR-Agent still executes
+from the trusted PR base. The image smoke test captures the complete public
+predecessor runtime at Git revision
+`e0d16ef7e4ea48e351a071f872b1caf2bd0515cc` and passes it through container
+stdin to a separate producer process. That Git object must be locally available
+for image mode; the suite does not fetch or substitute another runtime. The
+candidate host consumer checks the predecessor's independently read synthetic
+publications. This proves supported old output can pass without early producer
+activation. Unsupported old output remains a blocker; existing comments are
+never rewritten or counted as approval of a new head.
+
 The patch defers the review composer's size cap and fits the final GitHub
 create/edit body after persistent-update identity and current-head metadata.
-Complete comments at or below the provider limit pass through unchanged.
+Final review records include a visible D15 commit link from the provider's reviewed context before fitting. Existing comments remain unchanged; persistent-review and review-edit paths create new issue-comment records instead. Repository/commit identity, any retained state head, live-head drift and independent exact-ID/body readback are checked; failed or uncertain publication is not replayed. Complete fitted review content otherwise retains the existing publication-limit rules.
 Oversized reviews lose the exact generated resolved-history suffix first,
 then the complete hidden state marker if necessary. Retained state remains
 valid; omitted state is absent, rather than an empty or partially complete
@@ -122,12 +149,18 @@ Run the publication regressions and real-image compatibility smoke test:
 ```bash
 bash scripts/development-workflow/tests/test-pr-agent-runtime.sh
 bash scripts/development-workflow/tests/test-pr-agent-runtime.sh --image-smoke
+bash scripts/development-workflow/tests/test-pr-agent-inline-code.sh
+bash scripts/development-workflow/tests/test-pr-agent-inline-code.sh --image-smoke
 ```
 
-The first command uses the standard library; the second uses the launcher's
-pinned image with networking disabled and mocked GitHub publication. It checks
+Default modes use the standard library; `--image-smoke` modes use the launcher's
+pinned image with networking disabled and mocked GitHub publication. The image
+emits a synthetic review record; the host then executes the original D15
+predicate using its existing tools. A different SHA and removal of the visible
+marker (while retaining hidden state) must both be refused. No tool installation
+or weaker substitute predicate is used. It checks
 the actual parser/renderer, composer bindings and final fresh/persistent
-publication. Neither command starts a live review or needs API credentials.
+publication. None of these commands starts a live review or needs API credentials.
 An unsupported hook signature fails before the runner starts, without an
 unpatched fallback. To upgrade the image, inspect its producer helpers and
 publication consumers, update the launcher's image reference deliberately,
@@ -177,16 +210,17 @@ review even when it authenticates as a bot or GitHub App.
 
 ### Step 7.2 — Detect review completion
 
-PR-Agent signals completion by posting a plain issue comment (not a formal GitHub PR review) from `github-actions[bot]` whose body contains `PR Reviewer Guide` (PR-Agent's stable output marker). PR-Agent keeps **one persistent summary comment** and edits it in place, so the comment's `created_at` or `updated_at` cannot show which revision it describes. Since #1789 the helper accepts a summary comment for the current head `H` only by one of two rules, never by its time:
+PR-Agent signals completion by posting a plain issue comment (not a formal GitHub PR review) from `github-actions[bot]` whose body contains `PR Reviewer Guide` (PR-Agent's stable output marker). The runtime creates a **new head-bound review record** on each final issue-comment publication, retaining earlier evidence. Legacy producers may have edited a single persistent comment; neither its `created_at` nor `updated_at` alone proves which revision it describes. Since #1789 the helper accepts a summary comment for the current head `H` only by one of two rules, never by its time:
 
-- **Rule (a) — head marker.** With PR-Agent's hidden `<!-- pr-agent-review-state:v1 … -->` block removed, the visible body contains the marker line `Review updated until commit https://<host>/<owner>/<repo>/commit/<H>)` naming the full 40-character `H`. A match of `H` anywhere else, including inside the review-state block, does not count. A block opener with no `-->` terminator makes the comment unbound (fail closed). PR-Agent writes this marker whenever it updates its summary.
+- **Rule (a) — head marker.** With PR-Agent's hidden `<!-- pr-agent-review-state:v1 … -->` block removed, the visible body contains the marker line `Review updated until commit https://<host>/<owner>/<repo>/commit/<H>)` naming the full 40-character `H`. A match of `H` anywhere else, including inside the review-state block, does not count. A block opener with no `-->` terminator makes the comment unbound (fail closed). The runtime writes this marker on each new review record, including the first publication. It never relabels an earlier review with a later live head.
 - **Rule (b) — first summary bound to its run.** An unedited first summary with no marker (`updated_at == created_at`) is accepted only when every condition holds: a `PR-Agent review` check run on `commits/H/check-runs` completed with conclusion `success` and its `started_at <= created_at <= completed_at`; no `PR-Agent review` check run on `H` is queued or in progress; no `pull_request` run of that workflow on the PR's head branch for another revision was in progress at `created_at`; and no `/review` comment on the PR was posted at or before the summary (an `issue_comment` run records neither the PR nor the revision it read). Any failed API read or failed condition leaves the summary unbound.
 
 An unbound summary keeps the helper polling. A first summary that rule (b)
 cannot bind (for example, because a `/review` preceded it or another
 revision's run overlapped it) ends that invocation in the `no_review` kept
-skip, never in a verdict for another revision; any later PR-Agent run on `H`
-rewrites the summary with the `H` marker, which rule (a) accepts.
+skip, never in a verdict for another revision. A producer supporting immutable
+publication creates a new record with the `H` marker, which rule (a) accepts.
+Do not edit an older bot comment to supply that missing binding.
 
 | Result                                                                   | Action                                                                          |
 | ------------------------------------------------------------------------ | ------------------------------------------------------------------------------- |
@@ -256,6 +290,34 @@ PR-Agent's blocking classification is based on stable body-content markers in it
 | No `<strong>` labels parsed    | Yes — `RESULT=needs_fixes` (unreadable format)                      |
 
 When `Recommended focus areas for review` is present but contains **only** explicitly-known advisory labels (`Possible Issue`, `Edge Case`, `Logic Gap`, `Documentation Inconsistency`), the classifier returns `clean`. Hard-blocker labels, security labels (`Security Concern`), and compatibility labels (`API Change`, `Backward Compatibility`) always block.
+
+**Ticket-analysis exception (#2064):** Recognized, structurally valid ticket
+analysis is informational, including Fully compliant, Partially compliant,
+Not compliant and PR Code Verified. Verification requests confined to that
+validated section need no matching ticket proof to permit normal reviewer
+progression. This exception supersedes #2061's ticket-only proof prerequisite;
+it does not certify that an epic is complete. Unknown status, malformed,
+duplicate, empty or truncated analysis still escalates. Verification, unavailable
+or malformed evidence, code/security findings and human blockers outside that
+section retain their existing gates. Reviewer scheduling, head binding, CI,
+checkpoints and merge approval are unchanged.
+
+A known requirements heading may contain either requirement bullets or one
+explicit negative value (`None`, `No`, `False`, `N/A`, `Not applicable`). A
+negative is content, not an empty analysis; mixing it with bullets or repeating
+it under the same heading is malformed. A following known heading starts its
+own requirements block. Ticket-only verification prose remains informational;
+an independent status/control label styled with HTML or Markdown emphasis is
+rejected before masking, including when it follows prose in the same bullet.
+
+The template sets `pr_reviewer.require_ticket_analysis_review = false` in
+`.pr_agent.toml` to reduce misleading ticket commentary. Ordinary template sync
+preview (including dry-run) warns when the selected consumer's setting is absent,
+enabled or invalid; only explicit TOML boolean `false` suppresses the warning.
+Unusable files or an unavailable TOML parser receive safe repair/inspection
+advice. The warning does not change sync exit status, expose configuration values,
+copy TOML into the sync plan, or overwrite project-owned settings. Maintainers
+may keep their setting: synchronized classifier behavior still applies.
 
 **Classifier-safe fallback**: If an agent cannot read the full PR-Agent comment body
 because the runner's classifier or tool policy blocks the structured review text, do

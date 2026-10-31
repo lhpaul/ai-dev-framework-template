@@ -39,6 +39,8 @@ PRODUCT_RELEASE_RUNTIME_PATHS = {
     "scripts/development-workflow/codex-github-evidence-lib.sh",
     "scripts/development-workflow/pr-ownership-guard.sh",
     "scripts/development-workflow/pr-review-loop.sh",
+    "scripts/development-workflow/review-evidence-context.py",
+    "scripts/development-workflow/reviewer-loop-history.py",
     "scripts/development-workflow/pr-ci-loop.sh",
     "scripts/development-workflow/changelog-fragments.sh",
     "scripts/development-workflow/post-merge-cleanup.sh",

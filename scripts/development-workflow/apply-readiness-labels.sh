@@ -54,6 +54,7 @@ set -euo pipefail
 # loading another command runner or performing any GitHub operation.
 classify_pr_agent_review() {
   python3 -c '
+import json
 import re
 import runpy
 import sys
@@ -72,10 +73,12 @@ security_findings = blockers | {"yes", "true", "unsafe input execution"}
 focus_negatives = {"no major issues detected", "no issues detected", "no issues found", "none"}
 focus_advisories = {"possible issue", "edge case", "code quality", "best practice",
                     "performance", "readability", "maintainability"}
-compliance_values = {"fully compliant": "clean", "partially compliant": "needs_fixes",
-                     "not compliant": "needs_fixes", "pr code verified": "escalate"}
+compliance_values = {"fully compliant", "partially compliant",
+                     "not compliant", "pr code verified"}
 analysis_headings = {"Compliant requirements", "Non-compliant requirements",
                      "Requires further human verification"}
+
+verification_heading = r"^[ \t]*(?:(?:#{1,6}|[-*]|[0-9]+[.)])\s+)?(?:[^\w\s]*\s*)?(?:(?:Review status|Review metadata)\s*[—:-]\s*)?(?:Human\s+verification|Verification\s+status|Verification)\b"
 
 def value_verdict(value, negatives, findings):
     value = " ".join(value.split()).lower().rstrip(".")
@@ -197,6 +200,129 @@ class ReviewText(HTMLParser):
         self.parts.append(data)
 
 
+def independent_ticket_control(text):
+    """Match decoded whitespace in place, preserving rendered label offsets."""
+    text = re.sub(r"[*_]", "", text)
+    return re.match(verification_heading, text, re.I) or re.match(
+        r"^[ \t]*(?:(?:[-*]|[0-9]+[.)])\s+)?[^\w]*"
+        r"(?:Security\s+concerns|Recommended\s+focus\s+areas\s+for\s+review|Key\s+issues\s+to\s+review)\b", text, re.I)
+
+
+def styled_ticket_control(text, html_spans=()):
+    """Refuse control labels overlapping Markdown or allowed inline HTML."""
+    # Map rendered characters back to the raw line so ordinary emphasis after
+    # a prose mention does not turn that mention into a control label.
+    offsets = [index for index, char in enumerate(text) if char not in "*_"]
+    rendered = "".join(text[index] for index in offsets)
+    ticket_requests = list(re.finditer(r"\bRequires\s+further\s+human\s+verification\b", rendered, re.I))
+    for word in re.finditer(r"\b(?:Verification|Human|Review|Security|Recommended|Key)\b", rendered, re.I):
+        control = independent_ticket_control(rendered[word.start():])
+        if not control:
+            continue
+        # Preserve the approved ticket-only request, including inline styling.
+        if any(request.start() <= word.start()
+               and word.start() + control.end() <= request.end()
+               for request in ticket_requests):
+            continue
+        start = offsets[word.start()]
+        end = offsets[word.start() + control.end() - 1] + 1
+        if (re.search(r"[*_]", text[start:end])
+                or (start > 0 and text[start - 1] in "*_")
+                # A boundary within the label is partial label formatting;
+                # an element enclosing descriptive prose is not a new heading.
+                or any(start <= span_start < end or start < span_end <= end
+                       for span_start, span_end in html_spans)):
+            return True
+    return False
+
+
+class TicketBulletText(HTMLParser):
+    """Positive inline grammar for one complete requirement bullet line."""
+    inline_tags = {"em", "strong", "b", "span"}
+
+    def __init__(self):
+        super().__init__()
+        self.parts = []
+        self.length = 0
+        self.spans = []
+        self.stack = []
+        self.valid = True
+
+    def handle_starttag(self, tag, attrs):
+        if tag not in self.inline_tags or attrs:
+            self.valid = False
+        self.stack.append((tag, self.length))
+
+    def handle_endtag(self, tag):
+        if not self.stack or self.stack[-1][0] != tag:
+            self.valid = False
+            return
+        _, start = self.stack.pop()
+        self.spans.append((start, self.length))
+        label = " ".join("".join(self.parts)[start:].split())
+        # Inline emphasis may format prose, never an independent status label.
+        if independent_ticket_control(label):
+            self.valid = False
+
+    def handle_data(self, data):
+        self.parts.append(data)
+        self.length += len(data)
+
+    def handle_comment(self, data):
+        self.valid = False
+
+    def handle_decl(self, decl):
+        self.valid = False
+
+    def handle_pi(self, data):
+        self.valid = False
+
+
+def valid_ticket_requirements(requirements):
+    """Consume the whole slice: known headers and their complete data lines."""
+    heading = None
+    kind = None
+    seen = set()
+    for source_line in requirements.splitlines():
+        line = source_line.strip()
+        if not line:
+            continue
+        if line in {name + ":" for name in analysis_headings}:
+            if (heading is not None and kind is None) or line in seen:
+                return False
+            heading, kind = line, None
+            seen.add(line)
+            continue
+        if heading is None:
+            return False
+        inline = TicketBulletText()
+        inline.feed(line)
+        rendered = "".join(inline.parts)
+        text = rendered.strip()
+        if not inline.valid or inline.stack or len(text.splitlines()) != 1:
+            return False
+        normalized = " ".join(text.split()).lower().rstrip(".")
+        if normalized in negative_values:
+            if kind is not None:
+                return False
+            kind = "negative"
+            continue
+        bullet = re.fullmatch(r"(?:[-*]|[0-9]+[.)])[ \t]+(\S.*)", text)
+        if bullet is None or kind == "negative":
+            return False
+        content = bullet.group(1)
+        if (not re.sub(r"[\s*#_`-]", "", content)
+                or re.fullmatch(r"[A-Za-z][A-Za-z -]*:", content)):
+            return False  # An empty field heading is not requirement data.
+        # Use the independent gate grammar, including bullet/number prefixes.
+        if independent_ticket_control(text) or styled_ticket_control(rendered, inline.spans):
+            return False
+        if re.fullmatch(r"(?:unknown|tbd|unavailable|undetermined|pending|not assessed)[.!?]?", content, re.I):
+            return False
+        kind = "bullets"
+    return heading is not None and kind is not None
+
+
 def visible_review(body):
     try:
         body = mask_review_code(body, preserve_offsets=False)
@@ -272,12 +398,33 @@ def classify(body):
     ticket_candidates += sum("Ticket compliance analysis" in label for label in rendered_headers.labels)
     if ticket_candidates != len(ticket_matches):
         return "escalate"  # A malformed heading is not just a prose mention.
-    if any(re.match(r"Requires further human verification\b", " ".join(label.split()), re.I) for label in rendered_headers.labels) or re.search(r"^[ \t]*(?:#{1,6}[ \t]+|\*\*)?Requires further human verification\b", body, re.M | re.I):
+    if ticket:
+        section = body[ticket_matches[0].end():]
+        section = re.split(r"</td>|^### ", section, maxsplit=1, flags=re.M)[0]
+        tickets = re.findall(r"\*\*(?:\[[^\]\n<>]+\]\([^\n<>]*?\)|Untracked ticket) - ([^*\n]+)\*\*([\s\S]*?)(?=\*\*(?:\[|Untracked ticket)|\Z)", section)
+        candidates = re.findall(r"^[ \t]*\*\*(?:\[|Untracked ticket)", section, re.M)
+        first_ticket = re.search(r"\*\*(?:\[|Untracked ticket)", section)
+        if (not tickets or len(tickets) != len(candidates) or first_ticket is None
+                or not re.fullmatch(r"(?:\s|<br\s*/?>)*", section[:first_ticket.start()], re.I)):
+            return "escalate"
+        for level, requirements in tickets:
+            level = level.strip().lower()
+            if level not in compliance_values:
+                return "escalate"
+            if not valid_ticket_requirements(requirements):
+                return "escalate"
+        # Only fully validated ticket commentary is informational (#2064).
+        # Keep the surrounding markup and all outside sections for the existing
+        # independent verification, security and code checks below.
+        start = ticket_matches[0].end()
+        body = body[:start] + re.sub(r"[^\r\n]", " ", section) + body[start + len(section):]
+    rendered_headers = FocusLabels()
+    rendered_headers.feed(body)
+    if (any(re.match(r"Requires further human verification\b", " ".join(label.split()), re.I) for label in rendered_headers.labels) or re.search(r"^[ \t]*(?:#{1,6}[ \t]+|\*\*)?Requires further human verification\b", body, re.M | re.I)):
         return "escalate"
     verification_reader = ReviewText()
     verification_reader.feed(body)
     # Markdown emphasis is presentation; HTMLParser decodes entities once.
-    verification_heading = r"^[ \t]*(?:(?:#{1,6}|[-*]|[0-9]+[.)])\s+)?(?:[^\w\s]*\s*)?(?:(?:Review status|Review metadata)\s*[—:-]\s*)?(?:Human\s+verification|Verification\s+status|Verification)\b"
     def render_emphasis(match):
         text = match.group(2)
         if re.match(verification_heading, text, re.I):
@@ -301,44 +448,6 @@ def classify(body):
         if value_verdict(verification_value, negative_values | {"not required", "no further human verification required"}, {"yes", "true", "required", "pending"}) != "clean":
             return "escalate"  # Known requests and unknown statuses both need a human.
     needs_fixes = False
-    if ticket:
-        section = body[ticket_matches[0].end():]
-        section = re.split(r"</td>|^### ", section, maxsplit=1, flags=re.M)[0]
-        tickets = re.findall(r"\*\*(?:\[[^\]\n]+\]\([^\n]*?\)|Untracked ticket) - ([^*\n]+)\*\*([\s\S]*?)(?=\*\*(?:\[|Untracked ticket)|\Z)", section)
-        candidates = re.findall(r"^[ \t]*\*\*(?:\[|Untracked ticket)", section, re.M)
-        if not tickets or len(tickets) != len(candidates):
-            return "escalate"
-        verdicts = []
-        for level, requirements in tickets:
-            level = level.strip().lower()
-            if level not in compliance_values:
-                return "escalate"
-            # A status heading without its analysis is incomplete.
-            requirement_headers = re.findall(r"^[ \t]*([A-Za-z][A-Za-z -]*):[ \t]*$", requirements, re.M)
-            if not requirement_headers or any(header not in analysis_headings for header in requirement_headers):
-                return "escalate"
-            analyses = re.findall(r"(?:Compliant requirements|Non-compliant requirements|Requires further human verification):([\s\S]*?)(?=(?:Compliant requirements|Non-compliant requirements|Requires further human verification):|\Z)", requirements)
-            if not analyses or any(not re.sub(r"[\s*#_`-]", "", unescape(re.sub(r"<[^>]*>", "", analysis))) for analysis in analyses):
-                return "escalate"
-            # Unknown status-like text cannot serve as requirement analysis.
-            for analysis in analyses:
-                rendered_analysis = unescape(re.sub(r"<[^>]*>", "", analysis)).strip()
-                if " ".join(rendered_analysis.split()).lower().rstrip(".") in negative_values:
-                    continue
-                evidence_lines = [line.strip() for line in rendered_analysis.splitlines() if line.strip()]
-                if not evidence_lines or any(not re.match(r"^(?:[-*]|[0-9]+[.)])[ \t]+\S", line) for line in evidence_lines):
-                    return "escalate"
-                if any(re.fullmatch(r"(?:unknown|tbd|unavailable|undetermined|pending|not assessed)[.!?]?", re.sub(r"^(?:[-*]|[0-9]+[.)])[ \t]+", "", line), re.I) for line in evidence_lines):
-                    return "escalate"
-            if level == "pr code verified" or re.search(r"\bRequires\s+further\s+human\s+verification\b", unescape(re.sub(r"<[^>]*>", " ", requirements)), re.I):
-                verdicts.append("escalate")
-            elif level in {"partially compliant", "not compliant"} or "Non-compliant requirements:" in requirements:
-                verdicts.append("needs_fixes")
-            else:
-                verdicts.append(compliance_values[level])
-        if "escalate" in verdicts:
-            return "escalate"
-        needs_fixes = "needs_fixes" in verdicts
     # An explicit security section cannot be overridden by clean compliance.
     # Normalize only the known unprefixed HTML heading, retaining its body.
     security_parts = []
@@ -392,16 +501,21 @@ if sys.argv[1] == "labels":
     visible = visible_review(body)
     if visible is not None:
         print("\n".join(focus_labels(visible) or []), end="")
+elif sys.argv[1] == "inspect":
+    verdict = classify(body)
+    print(json.dumps({"verdict": verdict, "verification_only": False}), end="")
 else:
     print(classify(body), end="")
 ' "${1:-verdict}" "$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/pr-agent-runtime.py"
 }
 
 case "${1:-}" in
-  --classify-pr-agent|--pr-agent-focus-labels)
-    [ "$#" -eq 1 ] || { echo "Usage: apply-readiness-labels.sh --classify-pr-agent|--pr-agent-focus-labels < review.txt" >&2; exit 64; }
+  --classify-pr-agent|--pr-agent-focus-labels|--inspect-pr-agent)
+    [ "$#" -eq 1 ] || { echo "Usage: apply-readiness-labels.sh --classify-pr-agent|--pr-agent-focus-labels|--inspect-pr-agent < review.txt" >&2; exit 64; }
     if [ "$1" = --pr-agent-focus-labels ]; then
       classify_pr_agent_review labels
+    elif [ "$1" = --inspect-pr-agent ]; then
+      classify_pr_agent_review inspect
     else
       classify_pr_agent_review
     fi
@@ -418,7 +532,7 @@ print_kv() { workflow_diagnostic_kv "$@"; }
 
 usage() {
   cat <<'USAGE'
-Usage: apply-readiness-labels.sh --classify-pr-agent|--pr-agent-focus-labels < review.txt
+Usage: apply-readiness-labels.sh --classify-pr-agent|--pr-agent-focus-labels|--inspect-pr-agent < review.txt
        apply-readiness-labels.sh --pr <number> [--repo <owner/repo>] \
   --label <ready-for-human-review|ready-for-regression> \
   [--branch <branch>] [--repo-root <path>] [--dry-run] [--json]
@@ -1122,7 +1236,7 @@ coderabbit_cli_local_ai_ledger_verdict() {
           | . as $entry
           | ((.platform_results // [])[]
              | select(.platform == $platform)
-             | {outcome: (.result // "unknown"),
+             | {outcome: (.result // "unknown"), evidence_snapshot_sha256: (.evidence_snapshot_sha256 // ""),
                 head_sha: (
                   ($entry.reviewed_heads // [])
                   | map(select(.platform == $platform))
@@ -1151,6 +1265,17 @@ coderabbit_cli_local_ai_ledger_verdict() {
     # Clean, but on another head (or no head recorded) — stale evidence.
     _adapter_refusal_reason="reviewer-check-absent"
     return
+  fi
+  if [ "$platform_arg" = local-ai-reviewer ]; then
+    local context fingerprint
+    fingerprint="$(printf '%s' "$verdict" | jq -r '.evidence_snapshot_sha256 // ""')"
+    [ -n "$fingerprint" ] || { _adapter_refusal_reason=reviewer-evidence-unreadable; return; }
+    context="$(mktemp)" || return
+    if ! workflow_collect_review_evidence "$repo" "$pr_number" "$head_sha" "$context" ||
+        [ "$(jq -r .snapshot_sha256 "$context")" != "$fingerprint" ]; then
+      rm -f "$context"; _adapter_refusal_reason=reviewer-evidence-unreadable; return
+    fi
+    rm -f "$context"
   fi
   _adapter_ledger_started_at="${ledger_started_at:-}"
   _adapter_ledger_clean=1
@@ -1404,7 +1529,7 @@ comment_only_completion_evidence() {
       body="$(printf '%s\n' "$pragent_entry" | jq -r '.body // ""')"
       created="$(printf '%s\n' "$pragent_entry" | jq -r '.created_at // ""')"
       local pragent_verdict
-      pragent_verdict="$(printf '%s' "$body" | classify_pr_agent_review)" || escalate issue-comment-parse-failed
+      pragent_verdict="$(workflow_pr_agent_evidence_verdict "$repo" "$pr_number" "$head_sha" "$(printf '%s' "$pragent_entry" | jq -r .id)" "$body")" || escalate issue-comment-parse-failed
       case "$pragent_verdict" in
         clean) reviewer_started_at="$created"; return 0 ;;
         needs_fixes) return 2 ;;

@@ -1327,6 +1327,9 @@ budget_evidence='{"outcome":"Deferred","reason":"merge-session binding is absent
 budget_valid=false
 if [ -n "$merge_session" ]; then
   budget_repo="$(printf '%s\n' "$state_json" | jq -r '.repository // .repo // .pr.repository // .productRepo.github_repo // ""')"
+  if [ -z "$budget_repo" ]; then
+    budget_repo="$(cd -- "$effective_root" && repo_slug 2>/dev/null || true)"
+  fi
   budget_pr="$(printf '%s\n' "$state_json" | jq -r '.pr.number')"
   budget_head="$(printf '%s\n' "$state_json" | jq -r '.pr.headSha // .pr.head_sha // .pr.headRefOid // ""')"
   budget_base="$(printf '%s\n' "$state_json" | jq -r '.pr.baseRefName')"

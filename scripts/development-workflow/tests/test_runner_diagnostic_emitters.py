@@ -338,7 +338,7 @@ esac
 
     def local_entry(self, payload, stderr=None, status=0, context_capture=None, **env):
         (self.f.checkout / 'REVIEW.md').write_text('# Synthetic reviewer contract\n')
-        self.gh_script('case "$*" in "pr diff"*) echo README.md;; "repo view"*) echo fixture/repo;; "pr view"*) cat "$SYNTHETIC_PR";; "auth status"*) exit 0;; *) exit 99;; esac\n')
+        self.gh_script('case "$*" in "pr diff"*) echo README.md;; "repo view"*) echo fixture/repo;; "pr view"*) cat "$SYNTHETIC_PR";; "auth status"*) exit 0;; "api "*"/issues/1993/comments?per_page=100") echo "[[]]";; *) exit 99;; esac\n')
         command = self.f.bin / 'synthetic-review'
         command.write_text('#!/bin/sh\n' + (('cp "$CONTEXT_BUNDLE_PATH" ' + shlex.quote(str(context_capture)) + '\n') if context_capture else '') + 'printf "%s\\n" ' + shlex.quote(json.dumps(payload) if isinstance(payload, dict) else payload) + '\n' +
                            'printf "%s\\n" ' + shlex.quote(stderr or 'token=' + self.secret) + ' >&2\nexit ' + str(status) + '\n')
@@ -409,8 +409,26 @@ esac
         self.assertIn('[REDACTED]', parsed['entries'][0]['detail'])
         published = self.f.root / 'published-summary.md'
         self.f.env['SYNTHETIC_PUBLISHED'] = str(published)
-        self.gh_script('case "$*" in "repo view"*) echo fixture/repo;; "pr comment"*) while [ "$#" -gt 0 ]; do ' +
-                       'case "$1" in --body-file) cp "$2" "$SYNTHETIC_PUBLISHED"; break;; *) shift;; esac; done;; *) echo "[]";; esac\n')
+        operations = self.f.root / 'summary-publication-operations'
+        self.f.env['SYNTHETIC_PUBLISH_OPERATIONS'] = str(operations)
+        self.gh_script('''case "$*" in
+  "repo view"*) echo fixture/repo;;
+  "api --method POST repos/fixture/repo/issues/1993/comments --input "*)
+    printf 'POST\n' >> "$SYNTHETIC_PUBLISH_OPERATIONS"
+    while [ "$#" -gt 0 ]; do
+      if [ "$1" = --input ]; then
+        jq -j '.body' "$2" > "$SYNTHETIC_PUBLISHED"
+        jq '. + {id:99}' "$2"
+        break
+      fi
+      shift
+    done;;
+  "api repos/fixture/repo/issues/comments/99")
+    printf 'GET\n' >> "$SYNTHETIC_PUBLISH_OPERATIONS"
+    jq -n --rawfile body "$SYNTHETIC_PUBLISHED" '{id:99,body:$body}';;
+  *) echo "[]";;
+esac
+''')
         # Definition only from after the harness-return point; no main loop runs.
         post = fixtures.function_text('pr-review-loop.sh', '_post_review_summary')
         result = self.safe(self.bash(post + '\npr_number=1993; branch_name=feature/1993-fixture; compare_mode=0; compare_verdicts=();\n' +
@@ -418,6 +436,7 @@ esac
         self.assertIn('Automated Reviewer Loop Summary', published.read_text())
         self.assertIn('[REDACTED]', published.read_text())
         self.assertNotIn(self.secret, published.read_text())
+        self.assertEqual(operations.read_text().splitlines(), ['POST', 'GET'])
 
     def test_D16_metrics_timing_and_missed_finding_renderers(self):
         folder = self.f.checkout / 'docs/workflow'; folder.mkdir(parents=True)
@@ -2208,7 +2227,7 @@ printf 'PROBE=%s\\n' "$settle_review_probe"
         self.assertEqual(data['counts'], {'comments': 0, 'blocking': 0, 'suggestions': 0})
         self.assertEqual(data['result'], 'clean')
         self.assertLessEqual(len(data['context_summary']['pr_body']), 20000)
-        self.assertEqual(json.loads(context.read_text())['pr_body'], source[:20000])
+        self.assertEqual(json.loads(context.read_text())['pr_body'], source)
 
 
     def test_D83_shared_header_grammar_with_empty_first_line_frames(self):
@@ -2677,7 +2696,7 @@ printf 'PROBE=%s\\n' "$settle_review_probe"
         self.assertEqual(data['counts'], {'comments': 0, 'blocking': 0, 'suggestions': 0})
         self.assertEqual(data['result'], 'clean')
         self.assertLessEqual(len(data['context_summary']['pr_body']), 20000)
-        self.assertEqual(json.loads(context.read_text())['pr_body'], source[:20000])
+        self.assertEqual(json.loads(context.read_text())['pr_body'], source)
 
     def test_D88_sensitive_assignment_inside_public_raw_json_string(self):
         resolver = str(self.f.runtime / 'workflow-config-resolver.py')
@@ -2725,8 +2744,8 @@ printf 'PROBE=%s\\n' "$settle_review_probe"
                 self.assertEqual(data['counts'], {'comments': 0, 'blocking': 0, 'suggestions': 0})
                 self.assertEqual(data['result'], 'clean')
                 self.assertLessEqual(len(data['context_summary']['pr_body']), 20000)
-                # Existing Bash PR_BODY capture strips terminal LF before the functional cap.
-                self.assertEqual(json.loads(context.read_text())['pr_body'], source.rstrip('\n')[:20000])
+                # Functional review context preserves the complete API body, including terminal LF.
+                self.assertEqual(json.loads(context.read_text())['pr_body'], source)
 
     def configured_source_case(self, state):
         self.f.shared.write_text('review:\n  on_draft:\n    github: [local-ai-reviewer]\n  on_ready:\n    github: []\n')
@@ -2834,7 +2853,7 @@ reviewer_loop_process_platform_output() { aggregate_result=clean; aggregate_stat
 run_platform_review() { synthetic-ready-reviewer "$@"; }
 '''
                     body += 'ensure_pr_ready_for_ready_phase() { touch ' + shlex.quote(str(ready)) + '; }\n'
-                    body += actual_loop + '\nprintf "RESULT=%s\\nSTATUS=%s\\n" "$aggregate_result" "$aggregate_status"\nexit "$aggregate_status"\n'
+                    body += 'local_retry_preparation_failed=0\n' + actual_loop + '\nprintf "RESULT=%s\\nSTATUS=%s\\n" "$aggregate_result" "$aggregate_status"\nexit "$aggregate_status"\n'
                     result = self.run_command([shell, '-c', body])
                     self.safe(result, 2 if state in ('malformed', 'missing') else 0)
                     items = log.read_bytes().split(b'\0')[:-1]
@@ -2953,7 +2972,7 @@ reviewer_loop_process_platform_output() { aggregate_result=clean; aggregate_stat
                             elif boundary == 'predispatch':
                                 body += 'reviewer_loop_platform_pre_dispatch codex-github 1\nprintf "ACTION=%s\\nAGGREGATE=%s\\n" "$reviewer_loop_pre_dispatch_action" "$aggregate_result"\nexit "$aggregate_status"\n'
                             else:
-                                body += actual_loop + '\nprintf "AGGREGATE=%s\\n" "$aggregate_result"\nexit "$aggregate_status"\n'
+                                body += 'local_retry_preparation_failed=0\n' + actual_loop + '\nprintf "AGGREGATE=%s\\n" "$aggregate_result"\nexit "$aggregate_status"\n'
                             result = self.run_command([shell, '-c', body])
                             source_error = state in ('malformed', 'missing')
                             permitted = state == 'configured' or (not source_error and force == 1)
@@ -3275,6 +3294,49 @@ gh() { printf 'fixture/repo\n'; }
                     # Configuration payload remains functional and unmasked when explicitly requested.
                     result = self.run_command([shell, '-c', prefix + 'workflow_config_review_on_draft_runner ' + shlex.quote(str(self.f.shared))])
                     self.assertEqual(result.returncode, 0); self.assertEqual(result.stdout, self.secret + '\n'); self.assertEqual(result.stderr, '')
+
+
+    def test_D101_baseline_conclusion_classification(self):
+        # Exercise the real helper with strings, not a reimplementation of its
+        # jq predicate: jq 1.8.1 used to bind a boolean to the conclusion variable.
+        head = 'a' * 40
+        def check(conclusion, **fields):
+            return dict({'__typename': 'CheckRun', 'name': 'unit-tests',
+                         'status': 'COMPLETED', 'conclusion': conclusion}, **fields)
+        cases = [
+            (value, [check(value)], 'green')
+            for value in ('SUCCESS', 'SKIPPED', 'NEUTRAL', 'NONE', 'success', '', None)
+        ] + [
+            (value, [check(value)], 'failed')
+            for value in ('FAILURE', 'CANCELLED', 'TIMED_OUT', 'ACTION_REQUIRED',
+                          'STARTUP_FAILURE', 'STALE', 'UNKNOWN', 'failure', '   ')
+        ] + [
+            ('absent-conclusion', [{'name': 'unit-tests', 'status': 'COMPLETED'}], 'green'),
+            ('empty-rollup', [], 'empty'),
+            ('pending', [dict(check(None), status='IN_PROGRESS')], 'pending'),
+            ('pending-before-failed', [dict(check(None), status='QUEUED'),
+                                      dict(check('FAILURE'), name='lint')], 'pending'),
+            ('legacy-success', [{'context': 'legacy', 'state': 'SUCCESS'}], 'green'),
+            ('legacy-failure', [{'context': 'legacy', 'state': 'FAILURE'}], 'failed'),
+            ('legacy-error', [{'context': 'legacy', 'state': 'error'}], 'failed'),
+            ('legacy-pending', [{'context': 'legacy', 'state': 'PENDING'}], 'pending'),
+            ('legacy-expected', [{'context': 'legacy', 'state': 'EXPECTED'}], 'pending'),
+            ('mixed-failure', [check('SUCCESS'), dict(check('FAILURE'), name='lint')], 'failed'),
+            ('reviewer-excluded', [check('SUCCESS'), dict(check('FAILURE'), name='Haystack / Review')], 'green'),
+            ('baseline-failure-retained', [check('FAILURE'), dict(check('SUCCESS'), name='Haystack / Review')], 'failed'),
+        ]
+        payload = self.f.root / 'baseline-conclusions.json'
+        for shell in self.compatible_shells():
+            for label, rollup, expected in cases:
+                with self.subTest(shell=shell, case=label):
+                    body = self.configured_source_case('nonempty')
+                    payload.write_text(json.dumps({'headRefOid': head, 'statusCheckRollup': rollup}))
+                    body += 'gh() { cat ' + shlex.quote(str(payload)) + '; }\n'
+                    result = self.safe(self.run_command([shell, '-c', body +
+                        'expensive_gate_baseline_checks_status 1993 "$loop_head_sha"']), 0)
+                    self.assertEqual(result.stdout, expected + ' ' + head + '\n')
+                    self.assertEqual(result.stderr, '')
+                    self.assertFalse(self.f.log.exists())
 
 
 if __name__ == '__main__':

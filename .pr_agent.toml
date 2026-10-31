@@ -59,15 +59,13 @@ num_code_suggestions = 0
 # pipefail suppressions) are typically emitted under "Possible Issue" and are therefore
 # non-blocking. The reviewer loop will classify them as clean and will not loop.
 #
-# Ticket compliance check disabled: PR-Agent's ticket compliance analysis is disabled
-# because it generates false positives. When a PR description or branch name contains
-# issue numbers from cross-repository references (e.g. "ported from other-repo#145"),
-# PR-Agent incorrectly treats those numbers as the PR's own linked tickets and checks
-# requirements from the wrong issue. The check does not affect the automated reviewer
-# loop's clean/needs_fixes classification (which relies on "No major issues detected"
-# vs "Recommended focus areas for review" markers), but it creates confusing noise in
-# the review comment and can mislead agents into treating the false positive as a
-# finding that needs to be fixed. See issue #569.
+# Ticket analysis is disabled because epic and contextual issue references can
+# generate misleading compliance commentary. Recognized, structurally valid
+# ticket analysis is informational for readiness, including ticket-only human
+# verification without matched proof (#2064). Unknown/malformed analysis still
+# escalates; independent code, security, evidence and human blockers remain.
+# Downstream sync warns about enabled/unspecified settings without overwriting
+# project-owned TOML. This default reduces noise rather than enforcing scope.
 require_ticket_analysis_review = false
 # Repo context for the reviewer model — reduces false positives from DeepSeek on
 # this repository's common content types.

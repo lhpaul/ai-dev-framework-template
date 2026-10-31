@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # Dispatch tests for the local AI reviewer pr-review-loop platform.
+# covers: scripts/development-workflow/tests/lib/review-retry-fixture.sh
 # covers: scripts/development-workflow/pr-review-loop.sh
 # covers: scripts/development-workflow/local-ai-reviewer.sh
 
@@ -50,6 +51,7 @@ else
   echo "SKIP: default_draft_github_reviewers_start_with_local_ai - local-ai-reviewer is not a configured on_draft.github reviewer in this repository"
 fi
 
+_2061_real_local_adapter="$(declare -f run_local_ai_reviewer_review)"
 _local_ai_dispatch_called=0
 run_local_ai_reviewer_review() {
   _local_ai_dispatch_called=1
@@ -71,6 +73,8 @@ fi
 run_test "local_ai_reviewer_preserves_needs_rerun_mapping" "present" "$actual"
 
 unset -f run_local_ai_reviewer_review
+eval "$_2061_real_local_adapter"
+unset _2061_real_local_adapter
 
 # Issue #1648: LOCAL_AI_* stdout contract for dispatch surfaces
 _1648_ancestor_sha='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
@@ -112,6 +116,42 @@ run_test "1648_dispatch_current_head" "LOCAL_AI_HEAD_CURRENT=1" \
   "$(grep '^LOCAL_AI_HEAD_CURRENT=' "$_1648_dispatch_out")"
 rm -f "$_1648_dispatch_out"
 unset _1648_ancestor_sha _1648_live_sha _1648_dispatch_out platforms platform_reviewed_heads loop_head_sha
+
+# #2061: the real local adapter must forward compact proof metadata. This
+# catches accidentally adding the keys to a different review adapter.
+_2061_adapter_output="$(
+  _2061_root="$(mktemp -d)"
+  trap 'rm -rf "$_2061_root"' EXIT
+  mkdir -p "$_2061_root/scripts/development-workflow"
+  cat >"$_2061_root/scripts/development-workflow/local-ai-reviewer.sh" <<'SYNTHETIC_REVIEW'
+#!/usr/bin/env bash
+printf '%s\n' 'RESULT=clean' 'REVIEW_STAGE=implementation' 'REVIEW_STAGE_SOURCE=synthetic' 'REVIEW_CHECKLISTS=Code Review Checklist' 'REVIEWED_HEAD=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' 'EVIDENCE_SNAPSHOT_SHA256=synthetic-current' 'EVIDENCE_VERIFICATION_JSON={"schema":"review_evidence_verification.v1","status":"verified"}'
+SYNTHETIC_REVIEW
+  chmod +x "$_2061_root/scripts/development-workflow/local-ai-reviewer.sh"
+  workflow_repo_root() { printf '%s\n' "$_2061_root"; }
+  repo_slug() { printf 'synthetic/repo\n'; }
+  require_gh() { :; }
+  # shellcheck disable=SC2034 # Read by the sourced production local adapter.
+  repo_root="$_2061_root"
+  run_local_ai_reviewer_review 2061 feature/2061-test 1 1
+)"
+run_test "2061_real_local_adapter_forwards_snapshot" synthetic-current \
+  "$(kv_value_default EVIDENCE_SNAPSHOT_SHA256 "$_2061_adapter_output" missing)"
+run_test "2061_real_local_adapter_forwards_proof" verified \
+  "$(kv_value_default EVIDENCE_VERIFICATION_JSON "$_2061_adapter_output" '{}' | jq -r .status)"
+unset _2061_adapter_output
+
+# #2061: exercise the production pre-dispatch preparation, real durable
+# reservation, and dispatch stub through repeated identical-head retries.
+# shellcheck source=scripts/development-workflow/tests/lib/review-retry-fixture.sh
+source "$REPO_ROOT/scripts/development-workflow/tests/lib/review-retry-fixture.sh"
+run_test "2061_dispatch_stops_at_run_cap_same_sha" \
+  '2|max_cycles_exceeded|3 3 available' "$(_retry2061_exercise run)"
+run_test "2061_dispatch_stops_at_lifetime_cap_new_runs" \
+  '2|max_total_cycles_exceeded|3 0 available' "$(_retry2061_exercise lifetime)"
+run_test "2061_dispatch_requires_verified_reservation" \
+  '0|cycle_count_unavailable|2 2 available' "$(_retry2061_exercise uncertain_write)"
+unset -f _retry2061_exercise
 
 if [ "$FAIL_COUNT" -ne 0 ]; then
   echo "FAIL: $FAIL_COUNT test(s) failed"
