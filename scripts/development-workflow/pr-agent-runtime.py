@@ -760,6 +760,23 @@ def install_hooks():
     if getattr(GithubProvider, "_workflow_immutable_review_hook", False):
         return
 
+    # The pinned model forbids extra fields. Extend the actual validation tree
+    # as well as the prompt, retaining all existing types and extra-field guards.
+    from pydantic import create_model
+    from typing import Literal
+    import pr_agent.algo.output_models as models
+    finding_model = create_model(
+        "WorkflowFinding", __base__=models.KeyIssuesComponentLink,
+        category=(Literal["advisory", "blocking"], ...),
+        severity=(Literal["low", "medium", "high", "critical"], ...),
+    )
+    review_model = create_model(
+        "WorkflowReview", __base__=models.Review,
+        key_issues_to_review=(list[finding_model], ...),
+    )
+    output_model = create_model(
+        "WorkflowPRReview", __base__=models.PRReview, review=(review_model, ...),
+    )
     from pr_agent.config_loader import get_settings
     settings = get_settings()
     settings.set("pr_review_prompt.system", finding_prompt_schema(settings.pr_review_prompt.system))
@@ -807,6 +824,7 @@ def install_hooks():
 
     utils.convert_to_markdown_v2 = source_renderer
     reviewer.convert_to_markdown_v2 = source_renderer
+    reviewer.PRReview = output_model
     state_api.append_review_state = deferred_composer
     reviewer.append_review_state = deferred_composer
     GithubProvider.limit_output_characters = publication_limiter

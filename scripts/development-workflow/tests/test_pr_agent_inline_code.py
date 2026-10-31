@@ -336,7 +336,8 @@ class ProducerTests(unittest.TestCase):
         self.state_api, self.utils, self.reviewer = state_api, utils, reviewer
         self.provider_class = GithubProvider
         self.targets = [(state_api, 'append_review_state'), (reviewer, 'append_review_state'),
-                        (utils, 'convert_to_markdown_v2'), (reviewer, 'convert_to_markdown_v2')]
+                        (utils, 'convert_to_markdown_v2'), (reviewer, 'convert_to_markdown_v2'),
+                        (reviewer, 'PRReview')]
         self.targets += [(GithubProvider, name) for name in ('limit_output_characters', 'publish_comment',
                          'edit_comment', 'publish_persistent_comment_full')]
         self.originals = [(obj, name, getattr(obj, name)) for obj, name in self.targets]
@@ -419,6 +420,25 @@ class ProducerTests(unittest.TestCase):
         prompt = tokens.call_args.args[2]
         self.assertIn('category: Literal["advisory", "blocking"]', prompt)
         self.assertIn('severity: Literal["low", "medium", "high", "critical"]', prompt)
+
+    def test_actual_output_schema_accepts_explicit_fields_and_rejects_bad_data(self):
+        source = data('Synthetic finding.', 'Retry Loop')
+        source['review']['key_issues_to_review'][0].update(start_line=10, end_line=20)
+        instance = self.reviewer.PRReviewer.__new__(self.reviewer.PRReviewer)
+        instance.vars = {}
+        # Planted producer failure: upstream extra="forbid" rejects these fields.
+        self.assertFalse(instance._validate_review_schema(source))
+        runtime.install_hooks()
+        self.assertTrue(instance._validate_review_schema(source))
+        for field in ('category', 'severity', 'relevant_file', 'start_line'):
+            invalid = copy.deepcopy(source)
+            del invalid['review']['key_issues_to_review'][0][field]
+            self.assertFalse(instance._validate_review_schema(invalid))
+        for field, value in (('category', 'unknown'), ('severity', 'unknown'),
+                             ('unexpected_field', 'fabricated')):
+            invalid = copy.deepcopy(source)
+            invalid['review']['key_issues_to_review'][0][field] = value
+            self.assertFalse(instance._validate_review_schema(invalid))
 
     def test_mixed_width_publication_remains_blocking(self):
         for mode in ('fresh', 'edit', 'persistent'):
