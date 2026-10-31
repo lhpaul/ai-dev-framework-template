@@ -89,6 +89,34 @@ class FindingMetadataTests(unittest.TestCase):
         self.assertIn('>Unbounded Read</strong>', body)
         self.assertEqual(2, body.count('const example = 1;'))
 
+    def test_markdown_boundaries_cannot_hide_extra_findings_inside_focus_cell(self):
+        body = self.annotated()
+        for boundary in ('### Additional finding', '---'):
+            for closing in ('</summary>', '</details>', '</td>'):
+                with self.subTest(boundary=boundary, closing=closing):
+                    extra = '\n' + boundary + '\n**Must fix**\n'
+                    if closing == '</td>':
+                        # Add evidence to the focus cell, not an ancillary row.
+                        candidate = body.replace('\n\n</td></tr>\n</table>', extra + '\n</td></tr>\n</table>')
+                    else:
+                        candidate = body.replace(closing, extra + closing, 1)
+                    self.assertNotEqual(body, candidate)
+                    self.assertEqual('escalate', self.consumer(candidate))
+                    self.assertEqual('', self.consumer(candidate, '--pr-agent-focus-labels'))
+                    self.assertEqual('escalate', json.loads(self.consumer(candidate, '--inspect-pr-agent'))['verdict'])
+            with self.subTest(boundary=boundary, attribute='quoted cell terminator'):
+                extra = '<span title="</td>">Descriptive prose.</span>\n' + boundary + '\n**Must fix**\n'
+                self.assertEqual('escalate', self.consumer(body.replace('</details>', extra + '</details>', 1)))
+
+    def test_markdown_boundaries_in_prose_or_code_do_not_invent_findings(self):
+        body = self.annotated()
+        for boundary in ('### Additional finding', '---'):
+            prose = body.replace('</details>', '\n' + boundary + '\nDescriptive prose.\n</details>', 1)
+            code = body.replace('const example = 1;', 'const example = 1;\n' + boundary + '\n**Must fix**', 1)
+            for candidate in (prose, code):
+                with self.subTest(boundary=boundary, candidate=candidate):
+                    self.assertEqual('clean', self.consumer(candidate))
+
     def test_blocking_and_security_escalate(self):
         body = self.annotated()
         for candidate in (

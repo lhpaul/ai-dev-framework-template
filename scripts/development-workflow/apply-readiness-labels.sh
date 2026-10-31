@@ -375,8 +375,21 @@ def focus_labels(body):
         return [""]  # A valid section cannot hide a later unknown section.
     if not headings:
         return None
-    # Start immediately after the heading: HTML findings can share its line.
-    content = re.split(r"</td>|^[ \t]*#{1,6}[ \t]+\S|^---$", body[headings[0].end():], maxsplit=1, flags=re.M)[0]
+    # Structured findings own the complete HTML cell. Markdown headings/rules
+    # inside that cell cannot terminate evidence scanning (#2086).
+    if explicit is not None:
+        try:
+            parsed, _ = runtime["focus_title_nodes"](body)
+        except ValueError:
+            return [""]
+        cells = [node for node in parsed.nodes if node.tag == "td"
+                 and node.open_end <= headings[0].start() < node.close_start]
+        if len(cells) != 1:
+            return [""]
+        content = body[headings[0].end():cells[0].close_start]
+    else:
+        # Legacy Markdown sections still end at their next section boundary.
+        content = re.split(r"</td>|^[ \t]*#{1,6}[ \t]+\S|^---$", body[headings[0].end():], maxsplit=1, flags=re.M)[0]
     rendered = FocusLabels()
     rendered.feed(content)
     html_labels = rendered.labels
