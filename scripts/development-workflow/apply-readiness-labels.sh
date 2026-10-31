@@ -62,7 +62,8 @@ from html import unescape
 from html.parser import HTMLParser
 
 body = sys.stdin.read()
-mask_review_code = runpy.run_path(sys.argv[2])["mask_review_code"]
+runtime = runpy.run_path(sys.argv[2])
+mask_review_code = runtime["mask_review_code"]
 blockers = {"critical", "must fix", "breaking change", "security concern",
             "api change", "backward compatibility"}
 # Verdict-bearing values are closed sets. Descriptive requirement bullets are
@@ -337,6 +338,10 @@ def visible_review(body):
 
 
 def focus_labels(body):
+    try:
+        explicit = runtime["explicit_finding_labels"](body)
+    except ValueError:
+        return [""]
     # Focus prefixes are presentation; a known hard blocker still counts.
     focus_name = "Recommended focus areas for review"
     parts = []
@@ -370,14 +375,36 @@ def focus_labels(body):
         return [""]  # A valid section cannot hide a later unknown section.
     if not headings:
         return None
-    # Start immediately after the heading: HTML findings can share its line.
-    content = re.split(r"</td>|^[ \t]*#{1,6}[ \t]+\S|^---$", body[headings[0].end():], maxsplit=1, flags=re.M)[0]
+    # Structured findings own the complete HTML cell. Markdown headings/rules
+    # inside that cell cannot terminate evidence scanning (#2086).
+    if explicit is not None:
+        try:
+            parsed, _ = runtime["focus_title_nodes"](body)
+        except ValueError:
+            return [""]
+        cells = [node for node in parsed.nodes if node.tag == "td"
+                 and node.open_end <= headings[0].start() < node.close_start]
+        if len(cells) != 1:
+            return [""]
+        # Only marked strong titles carry structured finding metadata. Other
+        # HTML emphasis cannot inherit their advisory verdict (#2086).
+        if any(node.tag in {"b", "em"}
+               and headings[0].end() <= node.start < cells[0].close_start
+               for node in parsed.nodes):
+            return [""]
+        content = body[headings[0].end():cells[0].close_start]
+    else:
+        # Legacy Markdown sections still end at their next section boundary.
+        content = re.split(r"</td>|^[ \t]*#{1,6}[ \t]+\S|^---$", body[headings[0].end():], maxsplit=1, flags=re.M)[0]
     rendered = FocusLabels()
     rendered.feed(content)
     html_labels = rendered.labels
     markdown_labels = re.findall(r"\*\*([^*\n]*)\*\*", content)
     if len(html_labels) != rendered.count or content.count("**") != 2 * len(markdown_labels):
         return [""]  # A complete earlier label must not hide a broken one.
+    if explicit is not None:
+        # Metadata may replace title interpretation, never hide extra evidence.
+        return [""] if markdown_labels else explicit
     return [" ".join(label.split()) for label in html_labels] + [" ".join(unescape(label).split()) for label in markdown_labels]
 
 
@@ -474,6 +501,8 @@ def classify(body):
         value = unescape(re.sub(r"<[^>]*>", "", security_sections[0].group(1))).strip()
         security_verdict = value_verdict(value, security_negatives, security_findings)
         if security_verdict == "escalate":
+            return "escalate"
+        if security_verdict == "needs_fixes" and "data-pr-agent-finding" in body:
             return "escalate"
         needs_fixes = needs_fixes or security_verdict == "needs_fixes"
     # Both rendered focus headings use the same hard-blocker/advisory labels.
