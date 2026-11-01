@@ -94,7 +94,7 @@ def checks(base):
     out['D-5']=out['D-5'] and contains(runtime,'explicit internal probe context','four reason values and output keys stay unchanged')
     out['D-6']=contains(dispatch,'Every dispatched failure is a review failure under either policy.','claude -p --output-format text','cursor-agent --print --output-format text','codex exec --sandbox read-only','DSH_PERMISSION_MODE=read-only dsh --profile headless','Request a read-only review and exactly one `VERDICT: APPROVED` or `VERDICT: NEEDS REVISION`','The parent applies deterministic fixes, commits and pushes them','never add permission-bypass flags','approval requires exit `0` and exactly one valid terminal verdict','non-zero CLI exit, timeout, permission denial, or missing/ambiguous verdict')
     out['D-6']=out['D-6'] and contains(gate,'Cross-runner CLI reviewers remain read-only; the parent owns their fixes, commits, pushes, and required review reruns.')
-    out['D-7']=all("driving runner's own stage reviewer" in normalized(x) for x in (entry,read(readme))) and 'stage-appropriate `claude` reviewer' not in entry
+    out['D-7']=contains(entry,'helper selects `codex` by default, independently of the driving runner') and contains(read(readme),'gate defaults to Codex, independently of the driving runner') and "driving runner's own stage reviewer" not in normalized(entry)
     out['D-8']=contains(runtime,'is read-only: do not review, post a comment, alter the PR, install software, or substitute a reviewer','Do not provision services or write tracked files.')
     declared_runner_list=documented_shipped_runner_list(read(readme))
     # D-4 still validates supported reviewers in every repository. Only the
@@ -106,12 +106,12 @@ def checks(base):
         return re.findall(r'^\*\*`codex-github` runner reviewer dispatch\*\*:.*$',s,re.M)
     da,db=[dispatch_block(read(a)) for a in agents]
     out['D-11']=len(da)==len(db)==1 and da==db
-    out['D-12']=contains(entry,'On exit `0`, dispatch each indexed reachable reviewer','Never dispatch unreachable or override-excluded records.','When `FALLBACK_APPLIED=true`, dispatch the driving runner\'s own stage reviewer exactly once.')
+    out['D-12']=contains(entry,'On exit `0`, dispatch each indexed reachable reviewer','Never dispatch unreachable or override-excluded records.','When `FALLBACK_APPLIED=true`, still dispatch only the indexed Reachable records, exactly once per pass;', '`FALLBACK_REASON=default-codex`', '`FALLBACK_REASON=primary-unavailable`')
     out['D-13']=contains(entry,'Run it on every cycle','a verdict from an earlier cycle is never reused.')
     out['D-14']=contains(runtime,'This interval starts at helper entry and ends at helper return; reporting and draft-state recovery are allowed only after determination.','is read-only: do not review, post a comment, alter the PR','Do not provision services or write tracked files.')
     invocation=section(entry,'```bash','```')
     out['D-15']=contains(entry,'No reviewer is dispatched until the resolver returns and the policy has been applied') and contains(invocation,'resolve-reviewer-availability.sh','--repo-root <artifact-repo-root> --owner <target-owner> --repo <target-repo>','--runner-kind <actual-driving-session-kind>') and contains(entry,'never a value inferred from PATH, the reviewer list, or `WORKFLOW_RUNNER_KIND`')
-    out['D-16']=contains(summary,'per-reviewer verdict for every configured reviewer','display labels Reachable, Unreachable, or Excluded by override','Override-excluded entries appear in the summary and never in the warning.','Record `FALLBACK_APPLIED` and the own-stage dispatch')
+    out['D-16']=contains(summary,'per-reviewer verdict for every configured reviewer','display labels Reachable, Unreachable, or Excluded by override','Override-excluded entries appear in the summary and never in the warning.','Record `FALLBACK_APPLIED`, `FALLBACK_REASON`, and the indexed reviewer actually dispatched')
     out['D-17']=contains(warning,'only when `OUTCOME=proceeded-reduced`','before dispatching any reviewer','indexed names, reasons, and remedies','reachable subset','never name runner context') and '(<runner-context>)' not in warning
     out['D-18']=contains(hard,'Every configured reviewer with its verdict','including Reachable and Excluded by override','reason and remedy','`BLOCK_CAUSE`','`LOCAL_OVERRIDE_STATE`','`POLICY_INPUT`','`UNREADABLE_FILE` / `UNREADABLE_DETAIL`','Case B names `fail-if-any-unavailable`','do not attribute a block to runner identity') and '(<runner-context>)' not in hard
     recovery=section(hard,'Treat helper','After a proceed verdict')
@@ -184,12 +184,12 @@ if sys.argv[2]=='--prove-plants':
             ('D-6',protocol,'Cross-runner CLI reviewers remain read-only; the parent owns their fixes, commits, pushes, and required review reruns.','Cross-runner CLI reviewers apply fixes directly.'),
             ('D-1',protocol,'`codex`, `dsh` (local-runtime), and','`codex`, and'),
             ('D-6',protocol,'DSH_PERMISSION_MODE=read-only dsh --profile headless','dsh --profile web without read-only preset'),
-            ('D-7',readme,"driving runner's own stage reviewer",'fixed Claude reviewer'),
+            ('D-7',readme,'gate defaults to Codex, independently of the driving runner','gate defaults to a fixed Claude reviewer'),
             ('D-8',protocol,'install software, or\nsubstitute a reviewer','install software, or\nreplace a reviewer'),
             ('D-9',readme,'The shipped list is `[claude]`','The shipped list is `[claude, cursor]`'),
             ('D-10',cr,'`reviews.auto_review.enabled: true` must be set','`reviews.auto_review.enabled: false` must be set'),
             ('D-11',agents[1],'Exit `0` approves','Exit `0` accepts'),
-            ('D-12',protocol,"`FALLBACK_APPLIED=true`, dispatch the driving runner's own stage reviewer\nexactly once.","`FALLBACK_APPLIED=true`, dispatch the driving runner's own stage reviewer\nzero times."),
+            ('D-12',protocol,'`FALLBACK_APPLIED=true`, still dispatch only the indexed Reachable records,\nexactly once per pass;', '`FALLBACK_APPLIED=true`, dispatch the driving runner instead of indexed records;'),
             ('D-13',protocol,'a verdict from an earlier cycle is never reused.','a verdict from an earlier cycle is reused.'),
             ('D-14',protocol,'This interval starts at helper entry and ends at helper return; reporting and draft-state recovery are allowed only after determination.','Reporting may run during determination.'),
             ('D-15',protocol,'No reviewer is dispatched until the resolver returns and the\npolicy has been applied','Dispatch all reviewers before determination'),
