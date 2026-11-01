@@ -28,7 +28,10 @@ started = time.monotonic()
 with tempfile.TemporaryDirectory(prefix="bounded-prelude-") as temp:
     stage_file = Path(temp) / "stage"
     stage_file.write_text("startup")
-    env = dict(os.environ, _BOUNDED_PRELUDE_WORKER="1", _BOUNDED_PRELUDE_STAGE_FILE=str(stage_file))
+    trace_file = Path(temp) / "stages"
+    trace_file.write_text("")
+    env = dict(os.environ, _BOUNDED_PRELUDE_WORKER="1", _BOUNDED_PRELUDE_STAGE_FILE=str(stage_file),
+               _BOUNDED_PRELUDE_TRACE_FILE=str(trace_file))
     process = subprocess.Popen(["bash", sys.argv[1], *sys.argv[2:]], env=env,
                                stdin=subprocess.DEVNULL, start_new_session=True)
 
@@ -67,13 +70,17 @@ with tempfile.TemporaryDirectory(prefix="bounded-prelude-") as temp:
                               "budgetSeconds": budget,
                               "readOnlyGuarantee": "No tracker or artifact mutations were performed."}))
         sys.exit(124)
+    # Fatal configuration errors have a strict metadata-only stderr contract.
+    # Buffer progress until success; timeout already reports the last stage.
+    if result == 0:
+        print(trace_file.read_text(), end="", file=sys.stderr)
     sys.exit(result if result >= 0 else 128 - result)
 PY_BUDGET
 fi
 unset _BOUNDED_PRELUDE_WORKER
 prelude_stage() {
   printf '%s' "$1" > "$_BOUNDED_PRELUDE_STAGE_FILE"
-  printf 'bounded-prelude: stage=%s elapsed_seconds=%s\n' "$1" "$SECONDS" >&2
+  printf 'bounded-prelude: stage=%s elapsed_seconds=%s\n' "$1" "$SECONDS" >> "$_BOUNDED_PRELUDE_TRACE_FILE"
 }
 prelude_stage configuration
 # shellcheck source=scripts/development-workflow/workflow-lib.sh
