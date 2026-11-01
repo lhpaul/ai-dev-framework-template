@@ -406,7 +406,8 @@ reviews:
     for binary in ('codex','cursor-agent'):
         fake(binary,'touch '+shlex.quote(str(runtime_started)))
     budget_clock=root/'budget-clock.bash'
-    budget_clock.write_text("trap 'case \"$BASH_COMMAND\" in verdict=unreachable*) SECONDS=$DEADLINE ;; esac' DEBUG\n")
+    # Classification now runs in a function; carry the synthetic clock into it.
+    budget_clock.write_text("set -T\ntrap 'case \"$BASH_COMMAND\" in verdict=unreachable*) SECONDS=$DEADLINE ;; esac' DEBUG\n")
     d=run(expected=1,extra_env={'BASH_ENV':str(budget_clock)})
     check('T-22 unstarted probe remedy targets budget',not runtime_started.exists() and d['REVIEWER_2_DETAIL']=='availability budget exhausted before this check started' and 'budget' in d['REVIEWER_2_REMEDY'] and all(x not in d['REVIEWER_2_REMEDY'] for x in ('gh','PyYAML','.coderabbit')),d)
     # Every jq stage, including successful hosted responses, shares the gate
