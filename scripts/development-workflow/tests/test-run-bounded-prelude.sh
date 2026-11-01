@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # test-run-bounded-prelude.sh - Fixture tests for shared bounded prelude output shape.
+# covers: scripts/development-workflow/tests/test-bounded-prelude-performance.py
 
 set -euo pipefail
 
@@ -284,3 +285,6 @@ fi
 
 printf '\nResults: %d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
+
+# Keep the synthetic deadline/search/extractor regressions in the selected CI suite.
+python3 "$SCRIPT_DIR/test-bounded-prelude-performance.py"
