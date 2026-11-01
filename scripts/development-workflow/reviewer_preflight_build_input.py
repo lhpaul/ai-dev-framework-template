@@ -103,10 +103,14 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
     runner_data = _load_json(args.runner_json)
     if runner_data is not None:
         shared["on_draft_runner"] = runner_data.get("shipped_runner", [])
-        if runner_data.get("effective_runner_state") == "malformed":
+        if (runner_data.get("effective_runner_state") == "malformed"
+                or runner_data.get("effective_fallback_runner_state") == "malformed"):
             malformed_buckets.append("on_draft_runner")
         else:
-            resolved["on_draft_runner"] = runner_data.get("effective_runner", [])
+            resolved["on_draft_runner"] = list(runner_data.get("effective_runner", []))
+            fallback_runner = runner_data.get("effective_fallback_runner", "")
+            if fallback_runner and fallback_runner not in resolved["on_draft_runner"]:
+                resolved["on_draft_runner"].append(fallback_runner)
 
     github_data = _load_json(args.github_json)
     if github_data is not None:

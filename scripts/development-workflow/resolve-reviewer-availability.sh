@@ -218,7 +218,8 @@ fi
 policy= policy_input= policy_source= policy_state=not-evaluated
 unreadable_file= unreadable_detail= list_state=not-evaluated list_source=
 local_state=none configured= excluded= reachable= unreachable=
-fallback=false outcome=blocked block_cause=none count=0 reachable_count=0 unavailable_count=0
+fallback=false fallback_reason=none fallback_runner= fallback_state=absent fallback_source=
+outcome=blocked block_cause=none count=0 reachable_count=0 unavailable_count=0
 config_error_report=false
 names=() statuses=() reasons=() remedies=() details=()
 add_record() {
@@ -261,7 +262,7 @@ add_record() {
 report_unredacted() {
   local i=0 n
   case "$block_cause" in
-    policy-unreadable|policy-unsupported|list-malformed)
+    policy-unreadable|policy-unsupported|list-malformed|fallback-malformed)
       policy_source= list_source= unreadable_file= local_state= ;;
   esac
   if [ "$config_error_report" = true ]; then
@@ -302,6 +303,10 @@ report_unredacted() {
   print_kv_escaped REACHABLE "$reachable"
   print_kv_escaped UNREACHABLE "$unreachable"
   print_kv_escaped FALLBACK_APPLIED "$fallback"
+  print_kv_escaped FALLBACK_REASON "$fallback_reason"
+  print_kv_escaped FALLBACK_RUNNER "$fallback_runner"
+  print_kv_escaped FALLBACK_CONFIG_STATE "$fallback_state"
+  print_kv_escaped FALLBACK_CONFIG_SOURCE "$fallback_source"
   print_kv_escaped OUTCOME "$outcome"
   print_kv_escaped BLOCK_CAUSE "$block_cause"
   print_kv_escaped ELAPSED_SECONDS "$SECONDS.0"
@@ -333,19 +338,22 @@ decode_config() {
 # Validate before reading: malformed helper output is execution failure, not configuration data.
 decode_config "$work_dir/fields" -j 'if (type == "object" and
   ([.effective_runner,.override_excluded,.shipped_runner] | all(.[]; type == "array" and all(.[]; type == "string" and (contains("\u0000")|not)))) and
-  ([.effective_runner_state,.effective_runner_source,.effective_policy,.effective_policy_state,.effective_policy_source,.unreadable_file,.unreadable_detail,.local_override_file,.local_override_origin,.main_clone_local_override_file] | all(.[]; type == "string")) and
+  ([.effective_runner_state,.effective_runner_source,.effective_policy,.effective_policy_state,.effective_policy_source,.unreadable_file,.unreadable_detail,.local_override_file,.local_override_origin,.main_clone_local_override_file,
+    .effective_fallback_runner,.effective_fallback_runner_state,.effective_fallback_runner_source]
+    | all(.[]; type == "string" and (contains("\u0000")|not))) and
   (.local_review_override_applied | type == "boolean")) then
   [.effective_policy_state,.effective_policy_source,
   (if .policy_input == null then "" elif (.policy_input|type)=="string" then .policy_input else (.policy_input|tojson) end),
   .unreadable_file,.unreadable_detail,.local_override_file,.local_override_origin,.main_clone_local_override_file,.effective_policy,.effective_runner_state,.effective_runner_source,
   (.local_review_override_applied|tostring),(.override_excluded|length|tostring),
+  .effective_fallback_runner,.effective_fallback_runner_state,.effective_fallback_runner_source,
   .override_excluded[],.effective_runner[]][] | . + "\u0000"
   else error("invalid review-effective JSON contract") end' \
   "$work_dir/config.json" || fail 'invalid review-effective JSON contract'
 fields=()
 while IFS= read -r -d '' field; do fields+=("$field"); done <"$work_dir/fields"
 local_review_override_applied=${fields[11]}
-excluded_end=$((13 + ${fields[12]}))
+excluded_end=$((16 + ${fields[12]}))
 policy_state=${fields[0]} policy_source=${fields[1]} policy_input=${fields[2]}
 unreadable_file=${fields[3]} unreadable_detail=${fields[4]}
 if [ "$local_review_override_applied" = true ] && [ -n "${fields[5]}" ]; then local_state="${fields[5]} (${fields[6]}), applied"
@@ -359,18 +367,18 @@ case "$policy_state" in
 esac
 list_state=${fields[9]} list_source=${fields[10]}
 case "$list_state" in
-  malformed) block list-malformed ;; absent|empty) fallback=true ;; defined) ;; *) fail 'invalid runner list state' ;;
+  malformed) block list-malformed ;; absent|empty) fallback=true; fallback_reason=default-codex ;; defined) ;; *) fail 'invalid runner list state' ;;
 esac
-for ((entry_index=13; entry_index<excluded_end; entry_index++)); do
+fallback_runner=${fields[13]} fallback_state=${fields[14]} fallback_source=${fields[15]}
+case "$fallback_state" in
+  malformed) fallback_runner=; fallback_source=; block fallback-malformed ;;
+  absent|empty) ;;
+  defined) case "$fallback_runner" in claude|cursor|codex|dsh) ;; *) fail 'invalid fallback reviewer' ;; esac ;;
+  *) fail 'invalid fallback state' ;;
+esac
+for ((entry_index=16; entry_index<excluded_end; entry_index++)); do
   add_record "${fields[$entry_index]}" override-excluded '' 'removed by local override'
 done
-if [ "$fallback" = true ]; then
-  [ "$runner_kind" != unknown ] || block no-driving-runner
-  outcome=proceeded
-  report
-  exit 0
-fi
-
 probe_local() {
   probe_context=local-runtime
   local entry=$1 binary=$1 rc=0
@@ -444,8 +452,8 @@ sys.exit(_rpc.main(["--mode", "enabled-bool", sys.argv[1]]))
     absent) reason=prerequisite-missing; detail='no matching repository issue-comment activity' ;;
   esac
 }
-for ((entry_index=excluded_end; entry_index<${#fields[@]}; entry_index++)); do
-  entry=${fields[$entry_index]}
+classify_reviewer() {
+  local entry=$1
   verdict=unreachable reason=check-inconclusive detail= probe_context=budget
   case "$entry" in
     claude|cursor|codex|dsh)
@@ -461,7 +469,27 @@ for ((entry_index=excluded_end; entry_index<${#fields[@]}; entry_index++)); do
     *) reason='value-not-supported'; detail='value is not a supported reviewer' ;;
   esac
   add_record "$entry" "$verdict" "$reason" "$detail" "$probe_context"
+}
+for ((entry_index=excluded_end; entry_index<${#fields[@]}; entry_index++)); do
+  classify_reviewer "${fields[$entry_index]}"
 done
+if [ "$reachable_count" -eq 0 ] && [ "$fallback_state" = defined ] && [ "$policy" = warn ]; then
+  # Never retry an unavailable primary, or substitute after a review dispatch.
+  fallback_seen=false
+  fallback_eligible=true
+  for ((i=0; i<count; i++)); do
+    if [ "${statuses[$i]}" != override-excluded ] && [ "${names[$i]}" = "$fallback_runner" ]; then
+      fallback_seen=true
+    fi
+    if [ "${statuses[$i]}" = unreachable ]; then
+      case "${reasons[$i]}" in runtime-absent|prerequisite-missing) ;; *) fallback_eligible=false ;; esac
+    fi
+  done
+  if [ "$fallback_seen" = false ] && [ "$fallback_eligible" = true ]; then
+    fallback=true; fallback_reason=primary-unavailable
+    classify_reviewer "$fallback_runner"
+  fi
+fi
 [ "$reachable_count" -gt 0 ] || block zero-reachable
 if [ "$unavailable_count" -gt 0 ]; then
   [ "$policy" != fail-if-any-unavailable ] || block policy-forbids-reduced-coverage

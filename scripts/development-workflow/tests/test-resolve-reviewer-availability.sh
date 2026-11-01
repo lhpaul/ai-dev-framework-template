@@ -151,9 +151,10 @@ with tempfile.TemporaryDirectory(prefix='availability-tests-') as tmp:
     reset('[not-a-reviewer]');d=run(expected=1)
     check('T-8 unsupported',d['REVIEWER_1_NAME']=='unknown' and d['REVIEWER_1_REASON']=='value-not-supported')
     reset('[not-a-reviewer, codex]');fake('codex','exit 0');d=run();check('T-9 reduced',d['OUTCOME']=='proceeded-reduced')
-    reset(None);check('T-10 absent fallback',run()['FALLBACK_APPLIED']=='true')
-    reset('[]');check('T-11 empty fallback',run()['CONFIG_LIST_STATE']=='empty')
-    check('T-12 unknown fallback blocked',run('unknown',1)['BLOCK_CAUSE']=='no-driving-runner')
+    reset(None);fake('codex','exit 0');check('T-10 absent default Codex',run()['REACHABLE']=='codex')
+    reset('[]');fake('codex','exit 0');check('T-11 empty default Codex',run()['CONFIG_LIST_STATE']=='empty')
+    (bins/'codex').unlink()
+    check('T-12 unknown driving runner still checks Codex',run('unknown',1)['BLOCK_CAUSE']=='zero-reachable')
     reset('codex');check('T-13 malformed plant',run('codex',1)['BLOCK_CAUSE']=='list-malformed')
     reset('[codex]');check('T-13 repaired guard',run('codex')['OUTCOME']=='proceeded')
     # A genuinely clean git fixture, with outputs/temporary artifacts outside it.
@@ -703,9 +704,9 @@ reviews:
         d=run(driver,extra_env={'WORKFLOW_REVIEWER_AVAILABILITY_TEST_MODE':'1','WORKFLOW_REVIEWER_AVAILABILITY_BUDGET_SECONDS':'2'})
         check(f'T-43 native survives budget {driver}',d['REVIEWER_4_STATUS']=='reachable' and d['REVIEWER_5_REASON']=='value-not-supported' and d['OUTCOME']=='proceeded-reduced')
     reset('[claude,cursor,codex]');local.write_text('review:\n  on_draft:\n    runner: []\n');d=run('codex')
-    check('T-45 empty override fallback',d['REVIEWER_COUNT']=='3' and d['OVERRIDE_EXCLUDED']=='claude,cursor,codex' and d['FALLBACK_APPLIED']=='true' and not d['UNREACHABLE'])
-    reset('[claude,cursor,codex,dsh]');local.write_text('review:\n  on_draft:\n    runner: []\n');d=run('dsh')
-    check('T-45b dsh empty override fallback',d['FALLBACK_APPLIED']=='true' and d['OUTCOME']=='proceeded' and 'dsh' in d['OVERRIDE_EXCLUDED'].split(','))
+    check('T-45 empty override default Codex',d['REVIEWER_COUNT']=='3' and d['OVERRIDE_EXCLUDED']=='claude,cursor' and d['REACHABLE']=='codex' and d['FALLBACK_APPLIED']=='true' and not d['UNREACHABLE'])
+    reset('[claude,cursor,codex,dsh]');fake('codex','exit 0');local.write_text('review:\n  on_draft:\n    runner: []\n');d=run('dsh')
+    check('T-45b dsh empty override default Codex',d['REACHABLE']=='codex' and d['OUTCOME']=='proceeded' and 'dsh' in d['OVERRIDE_EXCLUDED'].split(','))
     for engine in ('fallback', 'timeout-leader-exit'):
         if engine == 'timeout-leader-exit':
             # Mimic GNU timeout's owned group and immediate return when the

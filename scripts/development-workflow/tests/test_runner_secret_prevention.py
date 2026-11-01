@@ -537,7 +537,7 @@ builtins.open = opened
             self.assertEqual(result.stdout.splitlines(), expected)
             effective = self.cli('review-effective')
             self.assertEqual(effective.returncode, 0, effective.stderr)
-            self.assertEqual(json.loads(effective.stdout)['effective_runner'], expected)
+            self.assertEqual(json.loads(effective.stdout)['effective_runner'], expected or ['codex'])
             github = self.cli('review-github-effective')
             self.assertEqual(github.returncode, 0, github.stderr)
             self.assertEqual(json.loads(github.stdout)['effective_on_draft_github'], [])
@@ -550,7 +550,7 @@ builtins.open = opened
             self.assertEqual(snapshot.returncode, 0, snapshot.stderr)
             effective = subprocess.run([sys.executable, str(RESOLVER), 'review-effective', '--repo-root', str(stage)], env=self.env, text=True, capture_output=True)
             self.assertEqual(effective.returncode, 0, effective.stderr)
-            self.assertEqual(json.loads(effective.stdout)['effective_runner'], expected)
+            self.assertEqual(json.loads(effective.stdout)['effective_runner'], expected or ['codex'])
             self.assertEqual(json.loads(effective.stdout)['effective_runner_state'], 'empty' if runner == '[]' else 'defined')
             self.assertNotIn(opaque, (stage / MODULE.LOCAL_CONFIG_NAME).read_text())
 
@@ -1112,7 +1112,8 @@ sys.exit(rc)
                 bash = self.names_from_bash(bucket)
                 self.assertEqual(bash.returncode, 0, bash.stderr)
                 self.assertEqual(bash.stdout.splitlines(), values)
-                self.assertEqual(data[bucket[3]], values)
+                expected_effective = ['codex'] if empty and bucket[2] == 'review-effective' else values
+                self.assertEqual(data[bucket[3]], expected_effective)
 
     def test_reviewer_name_dependency_free_and_shared_fallback(self):
         blocked = self.root / 'blocked-name-yaml'; blocked.mkdir()
