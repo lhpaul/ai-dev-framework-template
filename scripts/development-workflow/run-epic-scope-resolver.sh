@@ -381,8 +381,24 @@ HEAD_REF_TEAM_PREFIX_RE='(([A-Z][A-Z0-9]{1,7}|[a-z][a-z0-9])-)?'
 # Fallback when label-derived base scans miss PRs on integration branches
 # (develop-<slug>) that are not represented by integration-branch:* labels in scope.
 discover_prs_via_head_search() {
+  local issue="$1" cache_file result
+  cache_file="$tmp_dir/prs_head_${issue}.json"
+  # File-backed so results survive command substitutions and base-discovery
+  # subshells. Cache empty results too, retaining the existing discovery fallback rules.
+  if [ -f "$cache_file" ]; then
+    cat "$cache_file"
+    return 0
+  fi
+  if ! result="$(discover_prs_via_head_search_uncached "$issue")"; then
+    return 1
+  fi
+  printf '%s\n' "$result" > "$cache_file"
+  printf '%s\n' "$result"
+}
+
+discover_prs_via_head_search_uncached() {
   local issue="$1"
-  local prefix query numbers number pr_json open merged search_json primary_result primary_count
+  local prefix numbers number pr_json open merged search_json primary_result primary_count
   open='[]'
   merged='[]'
 
@@ -432,9 +448,8 @@ discover_prs_via_head_search() {
   fi
 
   for prefix in spec implementation-plan feature fix refactor hotfix; do
-    query="repo:${repo} is:pr ${issue} in:head head:${prefix}/"
     numbers=""
-    if ! numbers="$(gh search prs "$query" --json number -q '.[].number' 2>/dev/null)"; then
+    if ! numbers="$(gh search prs "${issue} in:head" --repo "$repo" --head "${prefix}/" --json number -q '.[].number' 2>/dev/null)"; then
       numbers=""
     fi
     for number in $numbers; do

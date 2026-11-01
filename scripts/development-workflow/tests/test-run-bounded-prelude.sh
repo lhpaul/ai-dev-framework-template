@@ -221,7 +221,7 @@ run_test "absent_guardrails_policy_source_reported" "conservative-defaults" "$(p
 
 set +e
 invalid_guardrails_out="$(AI_DEV_WORKFLOW_CONFIG_FILE="$invalid_guardrails_config" \
-  "$PRELUDE" --original-command "/run-item LEA-185" --issue LEA-185 --json 2>&1)"
+  "$PRELUDE" --original-command "/run-item LEA-185" --issue LEA-185 --json 2>"$TMP_ROOT/invalid-guardrails.stderr")"
 invalid_guardrails_status=$?
 set -e
 run_test "invalid_guardrails_json_fails" "true" "$([ "$invalid_guardrails_status" -ne 0 ] && echo true || echo false)"
