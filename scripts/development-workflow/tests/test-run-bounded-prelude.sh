@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
 # test-run-bounded-prelude.sh - Fixture tests for shared bounded prelude output shape.
+# covers: scripts/development-workflow/run-bounded-prelude.sh
+# covers: scripts/development-workflow/run-epic-scope-resolver.sh
+# covers: scripts/development-workflow/workflow-lib.sh
 # covers: scripts/development-workflow/tests/test-bounded-prelude-performance.py
 
 set -euo pipefail
