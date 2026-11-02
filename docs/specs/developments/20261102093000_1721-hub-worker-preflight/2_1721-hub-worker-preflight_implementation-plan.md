@@ -1,6 +1,7 @@
 # Hub Worker Preflight — Implementation Plan
 
-**Spec**: [Hub Worker Preflight](1_1721-hub-worker-preflight_specs.md)  
+**Spec**: [Hub Worker Preflight](1_1721-hub-worker-preflight_specs.md)
+
 **Smoke test runbook**: [Worker preflight smoke test](../../../testing/workflow/1721-hub-worker-preflight.smoke-test.md)
 
 ## Summary
