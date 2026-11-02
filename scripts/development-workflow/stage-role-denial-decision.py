@@ -51,7 +51,8 @@ def decide(event):
         'review_gate': 'fresh_review_required' if event.get('review') else 'unchanged',
         'report_destination': 'existing_record' if event.get('record_available') else 'operator_handoff',
         'readonly_blocked': bool(event.get('readonly_stop')),
-        'hold_dependents': not ready,
+        # Recovery permits redispatch, not completion of the prerequisite.
+        'hold_dependents': True,
         'fresh_run_and_profile': bool(ready and event.get('context_changed')),
         'inline_fallback': False,
         'needs_fixes_for_denial': False,
@@ -96,7 +97,17 @@ def decide(event):
                 blocked.update(found)
         sanitizer = runpy.run_path(str(Path(__file__).with_name('workflow-config-resolver.py')))
         report = {k: handoff[k] for k in ('item', 'stage', 'role', 'action', 'state', 'pr')}
-        report['unblock_action'] = 'Correct access, reconcile uncertain effects, and retry the same role.'
+        report['stops'] = list(result['stops'])
+        remedies = {
+            'stage_role_tool_or_path_denied': 'Correct access, reconcile uncertain effects, and retry the same role.',
+            'missing_required_secret_or_permission': 'Correct the identified credential or GitHub permission.',
+            'unclear_requirements': 'Resolve the missing facts with the operator.',
+            'dispatch_handoff_unavailable': 'Restore the applicable handoff or follow the profile remedy.',
+        }
+        report['remedies'] = [remedies[stop] for stop in result['stops']]
+        if result['readonly_blocked']:
+            report['remedies'].append('Resolve the independently established read-only restriction.')
+        report['unblock_action'] = ' '.join(report['remedies']) if report['remedies'] else 'Continue under the existing gates.'
         result['handoff'] = sanitizer['redact_diagnostic_json'](report)
         if handoff['stage'] == 'review':
             result['review_gate'] = 'fresh_review_required'

@@ -112,6 +112,7 @@ with tempfile.TemporaryDirectory() as tmp:
         actual = receive(dict(event, record_available=writable))
         assert actual['handoff']['item'] == 1746 and actual['handoff']['pr'] == 2102
         assert actual['handoff']['role'] == 'cli-reviewer' and actual['handoff']['unblock_action']
+        assert actual['handoff']['stops'] == ['stage_role_tool_or_path_denied'] and actual['handoff']['remedies']
         assert 'private-sentinel' not in repr(actual)
         assert actual['held_dependents'] == ['1750', '1752'] and not actual['durable_recorded']
         assert actual['review_gate'] == 'fresh_review_required' and not actual['inline_fallback']
@@ -121,6 +122,7 @@ with tempfile.TemporaryDirectory() as tmp:
             record.write_text(json.dumps(actual['handoff']))
             assert json.loads(record.read_text()) == actual['handoff']
             assert json.loads(record.read_text())['pr'] == 2102
+            assert json.loads(record.read_text())['stops'] == ['stage_role_tool_or_path_denied']
             record.unlink()
         else:
             # No write is available: the same details go to the operator and
@@ -134,6 +136,15 @@ with tempfile.TemporaryDirectory() as tmp:
         scheduled = candidates - held
         assert held == {'1750', '1752'} and scheduled == {'1751'}
         assert not actual['inline_fallback']
+
+# Corrected access permits a resume attempt but does not satisfy the item
+# prerequisite or release its direct and transitive dependents.
+resumed = receive(dict(event, corrected=True, reconciled=True))
+assert resumed['result'] == 'resume_same_role' and resumed['hold_dependents']
+assert resumed['held_dependents'] == ['1750', '1752']
+mixed_report = receive(dict(event, cause='mixed', readonly_stop=True))['handoff']
+assert mixed_report['stops'] == ['stage_role_tool_or_path_denied', 'missing_required_secret_or_permission']
+assert len(mixed_report['remedies']) == 3
 
 # Hub-only helper remains reachable from a separate product checkout.
 with tempfile.TemporaryDirectory() as product:
