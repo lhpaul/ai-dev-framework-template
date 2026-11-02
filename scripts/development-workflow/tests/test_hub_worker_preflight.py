@@ -1,12 +1,14 @@
 """Synthetic tests for read-only hub worker preflight."""
 import datetime as dt
 import json
+import importlib.util
 import os
 from pathlib import Path
 import subprocess
 import tempfile
 import unittest
 import uuid
+from unittest import mock
 
 SCRIPT = Path(__file__).resolve().parents[1] / "hub-worker-preflight.py"
 
@@ -127,6 +129,46 @@ sys.exit(2)
         self.assertEqual(self.verify(valid, start=self.now(-1), selected=self.now(-5))[0].returncode, 1)
         self.git(self.hub, "remote", "set-url", "origin", "https://github.com/example/other.git")
         self.assertEqual(self.verify(valid)[0].returncode, 1)
+
+    def test_missing_mapping_then_recovery_without_mutation(self):
+        config = self.hub / ".ai-dev-workflow.local.yaml"
+        original = config.read_text()
+        config.write_text(original.replace("local_path: ../two", "local_path: ../missing"))
+        before = [self.git(path, "status", "--porcelain").stdout for path in [self.hub, *self.products]]
+        result, data = self.check()
+        self.assertEqual((result.returncode, data["check"], data["product_ordinal"]), (1, "product_checkout", 2))
+        self.assertEqual(before, [self.git(path, "status", "--porcelain").stdout for path in [self.hub, *self.products]])
+        config.write_text(original)
+        self.assertEqual(self.check()[0].returncode, 0)
+
+    def test_verifier_rejects_invalid_fields_and_timestamps(self):
+        _, valid = self.check()
+        for change in (lambda d: d.update(extra=True),
+                       lambda d: d.update(checked_at="not-a-time"),
+                       lambda d: d.update(worker="unknown"),
+                       lambda d: d["products"][0].update(github="fail")):
+            data = json.loads(json.dumps(valid))
+            change(data)
+            self.assertEqual(self.verify(data)[0].returncode, 1)
+        self.assertEqual(self.verify(valid, selected=self.now(60))[0].returncode, 1)
+
+    def test_timeout_is_safe(self):
+        spec = importlib.util.spec_from_file_location("worker_preflight", SCRIPT)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        with mock.patch.object(module.subprocess, "run", side_effect=subprocess.TimeoutExpired("secret", 1)):
+            with self.assertRaises(module.Failure) as raised:
+                module.command(["ignored"], "github_access", "Retry.")
+        self.assertEqual(raised.exception.check, "github_access")
+        self.assertNotIn("secret", str(raised.exception))
+
+    def test_entrypoint_gate_pointers(self):
+        root = SCRIPT.parents[2]
+        for name in ("run-item.md", "run-items.md", "run-epic.md"):
+            text = (root / ".cursor" / "commands" / name).read_text()
+            self.assertIn("before the first workflow write", text)
+            self.assertIn("current-run preflight", text)
+            self.assertIn("cursor-my-machines.md", text)
 
     def test_same_origin_different_hub(self):
         _, data = self.check()
