@@ -191,6 +191,15 @@ else:
 assert_portfolio_routes(portfolio)
 print('REPAIR: portfolio stage and runner routes verified')
 
+# A missing sanitizer fails closed with a bounded diagnostic, never a traceback.
+with tempfile.TemporaryDirectory() as tmp:
+    isolated = Path(tmp) / 'decision.py'
+    isolated.write_bytes(helper.read_bytes())
+    failed = subprocess.run([sys.executable, str(isolated)], input=json.dumps(event),
+                            text=True, capture_output=True)
+    assert failed.returncode == 2 and 'Traceback' not in failed.stderr
+    assert 'private-sentinel' not in failed.stdout + failed.stderr
+
 # Hub-only helper remains reachable from a separate product checkout.
 with tempfile.TemporaryDirectory() as product:
     assert not (Path(product) / 'scripts/development-workflow/stage-role-denial-decision.py').exists()

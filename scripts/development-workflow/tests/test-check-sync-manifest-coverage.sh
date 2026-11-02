@@ -356,6 +356,41 @@ assert api['safe_config_key']('required_additions[0].private-sentinel') == 'unkn
 PYCODE
 run_test "structured_selector_diagnostic_key" "yes" "yes"
 
+# A legacy read failure remains a diagnostic gap even if the later structured
+# read of the same file succeeds. Inject one transient read error, then recover.
+python3 - "$CHECKER" "$TMP_ROOT" <<'PYCODE'
+from pathlib import Path
+from unittest.mock import patch
+import runpy
+import sys
+api = runpy.run_path(sys.argv[1])
+consumer = Path(sys.argv[2]) / 'transient-consumer'
+consumer.mkdir()
+config = consumer / '.ai-dev-workflow.yaml'
+config.write_text('guardrails:\n  stop_conditions: [stage_role_tool_or_path_denied]\n')
+original = Path.read_text
+attempt = 0
+def transient(path, *args, **kwargs):
+    global attempt
+    if path == config:
+        attempt += 1
+        if attempt == 1:
+            raise OSError('private-sentinel')
+    return original(path, *args, **kwargs)
+entries = [
+    {'path': config.name, 'must_contain': 'legacy'},
+    {'path': config.name, 'must_contain': 'stage_role_tool_or_path_denied',
+     'yaml_list_path': 'guardrails.stop_conditions'},
+]
+with patch.object(Path, 'read_text', transient):
+    lines, missing, errors = api['check_required_additions'](entries, consumer)
+assert errors == 1 and missing == 0
+assert any('REQUIRED_ADDITION_ERROR' in line for line in lines)
+assert any('REQUIRED_ADDITION_PRESENT' in line for line in lines)
+assert 'private-sentinel' not in repr(lines)
+PYCODE
+run_test "structured_transient_legacy_read_error" "yes" "yes"
+
 # Structured selector checks only the declared list, with fail-closed diagnostics.
 LIST_MANIFEST="$TMP_ROOT/list-manifest.yaml"
 python3 - "$FIX/sync-manifest.yaml" "$LIST_MANIFEST" <<'PYCODE'

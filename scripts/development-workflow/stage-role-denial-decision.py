@@ -97,7 +97,12 @@ def decide(event):
                     break
                 held.update(found)
                 blocked.update(found)
-        sanitizer = runpy.run_path(str(Path(__file__).with_name('workflow-config-resolver.py')))
+        try:
+            sanitizer = runpy.run_path(str(Path(__file__).with_name('workflow-config-resolver.py')))
+            redact = sanitizer['redact_diagnostic_json']
+        except Exception as exc:
+            # Do not expose local paths or input details when tooling is missing.
+            raise ValueError('redactor unavailable') from exc
         report = {k: handoff[k] for k in ('item', 'stage', 'role', 'action', 'state', 'pr')}
         report['stops'] = list(result['stops'])
         remedies = {
@@ -110,7 +115,7 @@ def decide(event):
         if result['readonly_blocked']:
             report['remedies'].append('Resolve the independently established read-only restriction.')
         report['unblock_action'] = ' '.join(report['remedies']) if report['remedies'] else 'Continue under the existing gates.'
-        result['handoff'] = sanitizer['redact_diagnostic_json'](report)
+        result['handoff'] = redact(report)
         if handoff['stage'] == 'review':
             result['review_gate'] = 'fresh_review_required'
         result['held_dependents'] = sorted(held)

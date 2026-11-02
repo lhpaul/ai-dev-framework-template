@@ -325,9 +325,11 @@ def check_required_additions(additions: list[dict[str, str]], consumer_root: Pat
             try:
                 text = target.read_text(encoding="utf-8", errors="replace")
             except OSError:
-                # The structured check reports the same unreadable file as an
-                # input error; do not let a preceding legacy entry mask it.
+                # Preserve this error even if the later structured read succeeds
+                # or is not applicable; a transient failure is still a gap.
                 if path in structured_paths:
+                    lines.append("REQUIRED_ADDITION_ERROR reason=consumer_config_unreadable")
+                    errors += 1
                     continue
                 raise
             try:
