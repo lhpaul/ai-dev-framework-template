@@ -19,6 +19,8 @@ from pathlib import Path
 import sys
 import json
 import subprocess
+import os
+import shutil
 root = Path(sys.argv[1])
 base = root / 'docs/workflow/development-workflow'
 item = (base / 'protocols/91-orchestrate-work-protocol.md').read_text()
@@ -164,5 +166,21 @@ with tempfile.TemporaryDirectory() as tmp:
     print('PLANT: runner denial incorrectly accepted at stage boundary')
     assert boundary_exit(helper) == 2
     print('REPAIR: runner denial rejected at stage boundary')
+# Re-run this actual synced suite in a disposable consumer checkout whose
+# project-owned configuration deliberately has no stop_conditions list.
+if sys.argv[2] == 'true' and os.environ.get('STAGE_ROLE_CONSUMER_FIXTURE') != '1':
+    with tempfile.TemporaryDirectory(prefix='stage-role-consumer-') as tmp:
+        consumer = Path(tmp)
+        (consumer / 'scripts').mkdir()
+        (consumer / 'docs/workflow').mkdir(parents=True)
+        shutil.copytree(root / 'scripts/development-workflow', consumer / 'scripts/development-workflow')
+        shutil.copytree(base, consumer / 'docs/workflow/development-workflow')
+        (consumer / '.ai-dev-workflow.yaml').write_text('template:\n  is_template: false\n')
+        env = dict(os.environ, STAGE_ROLE_CONSUMER_FIXTURE='1')
+        run = subprocess.run(['bash', str(consumer / 'scripts/development-workflow/tests/test-stage-role-permission-denial.sh')],
+                             env=env, text=True, capture_output=True)
+        assert run.returncode == 0, run.stdout + run.stderr
+        assert 'PASS: stage-role denial contract' in run.stdout
+    print('PASS: consumer configuration with no stop list')
 print('PASS: stage-role denial contract, boundaries and planted violation')
 PY
