@@ -163,7 +163,7 @@ def portfolio_route(text, report, decision=None):
     end = text.index('### No-redispatch rule', start)
     rules = text[start:end]
     stage_first = rules.find('First classify `STAGE_ROLE_TOOL_OR_PATH_DENIED:`')
-    runner_detection = rules.find("Only when the returned item report contains no stage-denial stop")
+    runner_detection = rules.find("Check whether a separately attributable Work Item Runner's own report")
     separate_rule = 'A quoted or nested occurrence inside a stage-role report is not a separate Work Item Runner denial' in rules
     blocks_inline = 'never run the Work Item Runner inline fallback for that stage denial' in rules
     if ('STAGE_ROLE_TOOL_OR_PATH_DENIED:' in report or 'stage_role_tool_or_path_denied' in report):
