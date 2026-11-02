@@ -401,9 +401,12 @@ entry = "  - path: .ai-dev-workflow.yaml\n    yaml_list_path: guardrails.stop_co
 Path(sys.argv[2]).write_text(s.replace("sync_coverage_exemptions:\n", entry + "\nsync_coverage_exemptions:\n"))
 PYCODE
 mkdir -p "$CONSUMER"
-for case_name in comment lookalike empty block flow absent_list empty_file whitespace invalid duplicate wrong_type; do
+for case_name in comment sibling nested_mapping unsupported_flow lookalike empty block flow absent_list empty_file whitespace invalid duplicate wrong_type; do
   case "$case_name" in
     comment) printf 'guardrails:\n  stop_conditions: [push_verification_failed]\n# stage_role_tool_or_path_denied\n' >"$CONSUMER/.ai-dev-workflow.yaml"; expected=1; marker_line=REQUIRED_ADDITION_MISSING ;;
+    sibling) printf 'guardrails:\n  note: stage_role_tool_or_path_denied\n  stop_conditions: [push_verification_failed]\n' >"$CONSUMER/.ai-dev-workflow.yaml"; expected=1; marker_line=REQUIRED_ADDITION_MISSING ;;
+    nested_mapping) printf 'guardrails:\n  stop_conditions:\n    - name: stage_role_tool_or_path_denied\n' >"$CONSUMER/.ai-dev-workflow.yaml"; expected=2; marker_line=REQUIRED_ADDITION_ERROR ;;
+    unsupported_flow) printf 'guardrails:\n  stop_conditions: [push_verification_failed, [stage_role_tool_or_path_denied]]\n' >"$CONSUMER/.ai-dev-workflow.yaml"; expected=2; marker_line=REQUIRED_ADDITION_ERROR ;;
     lookalike) printf 'guardrails:\n  stop_conditions: [push_verification_failed, stage_role_tool_or_path_denied_extra]\n' >"$CONSUMER/.ai-dev-workflow.yaml"; expected=1; marker_line=REQUIRED_ADDITION_MISSING ;;
     empty) printf 'guardrails:\n  stop_conditions: []\n' >"$CONSUMER/.ai-dev-workflow.yaml"; expected=1; marker_line=REQUIRED_ADDITION_MISSING ;;
     block) printf 'guardrails:\n  stop_conditions:\n    - push_verification_failed\n    - "stage_role_tool_or_path_denied"\n' >"$CONSUMER/.ai-dev-workflow.yaml"; expected=0; marker_line=REQUIRED_ADDITION_PRESENT ;;

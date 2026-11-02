@@ -40,11 +40,13 @@ def receiver_gaps(text):
         'fresh bounded run', 'same role resumes', 'never an automatic retry loop',
         'failed or incomplete review gate', 'not an approval, availability fallback',
         'not claim durable recording', 'without secrets',
+        'receiver must write and independently verify an existing work-item or PR record before claiming durability',
     ]
     return [part for part in expected if part not in contract]
 
 assert not receiver_gaps(item), receiver_gaps(item)
 assert receiver_gaps(item.replace('inspects every returned role report before subsequent mutation', 'ignores role reports'))
+assert receiver_gaps(item.replace('receiver must write and independently verify an existing work-item or PR record before claiming durability', 'receiver assumes durability'))
 assert 'never run the Work Item Runner inline fallback for that stage denial' in portfolio
 assert 'hold all selected dependents' in portfolio
 assert 'hold selected dependents' in epic and 'incomplete PR' in epic
