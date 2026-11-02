@@ -13,6 +13,19 @@ precedence).
 
 ---
 
+## Worker hub preflight
+
+For an operator-identified My Machines / Remote Control workflow-hub run, the
+operator invokes the worker preflight and supplies its current-run result; the
+bounded runner verifies it before any workflow write. Follow the
+[operator runbook](cursor-my-machines.md#preflight-before-starting-workflow-mutations)
+for the command, result requirements, failure handling, and trust limits. The
+preflight does not detect the execution target or replace the profile
+declaration. Read-only checkpoints and other execution targets retain their
+existing rules.
+
+---
+
 ## Why this document exists
 
 The framework's bounded commands assume that when a run needs a specialist

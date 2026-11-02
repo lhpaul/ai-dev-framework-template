@@ -75,42 +75,56 @@ configuration. Use fabricated configuration in regression fixtures.
 
 ## Preflight before starting workflow mutations
 
-Run from the hub checkout, under the same OS user and environment that will run
-the worker. Replace the fabricated product identity with the configured target.
-Stop on any failed command and correct the named path, checkout, or access
-problem before dispatching work.
+For each My Machines / Remote Control hub run, the operator identifies the
+worker target and selected hub, invokes the preflight in the worker environment,
+and gives the bounded runner the resulting file and run details. The runner
+must run the verifier successfully before its first workflow write, including
+branch, file, tracker, or PR changes. Read-only checkpoints do not require the
+preflight. Hosted Cloud, desktop and non-hub runs retain their existing rules.
+
+The following example uses a fabricated path. Run under the worker's OS user;
+select the actual hub and the worker directory registered for that same hub.
+`WORKER_RUN_START` is recorded before selecting the hub, and
+`WORKER_HUB_SELECTED_AT` immediately after selection. The result file stays on
+the worker; share it only with the intended bounded runner.
 
 <!-- workflow-shell-contract: bash-zsh -->
 ```bash
 set -euo pipefail
-cd /path/to/workspace/workflow-hub
-git rev-parse --show-toplevel
-bash scripts/development-workflow/validate-workflow-config.sh --repo sample-app --require-local
-bash scripts/development-workflow/hub-status.sh --all
-gh repo view example/workflow-hub --json nameWithOwner
-gh repo view example/sample-app --json nameWithOwner
-git -C ../products/sample-app ls-remote --exit-code origin refs/heads/develop >/dev/null
+WORKER_RUN_START=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+WORKER_HUB=/path/to/workspace/workflow-hub
+WORKER_DIR="$WORKER_HUB"
+WORKER_HUB_SELECTED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+WORKER_RUN_ID=$(python3 -c 'import uuid; print(uuid.uuid4())')
+WORKER_RESULT_FILE=$(mktemp)
+if ! python3 "$WORKER_HUB/scripts/development-workflow/hub-worker-preflight.py" check \
+  --hub-dir "$WORKER_HUB" --worker-dir "$WORKER_DIR" \
+  --run-id "$WORKER_RUN_ID" > "$WORKER_RESULT_FILE"; then
+  cat "$WORKER_RESULT_FILE"
+  exit 1
+fi
+python3 "$WORKER_HUB/scripts/development-workflow/hub-worker-preflight.py" verify \
+  --hub-dir "$WORKER_HUB" --run-id "$WORKER_RUN_ID" \
+  --run-start "$WORKER_RUN_START" --hub-selected-at "$WORKER_HUB_SELECTED_AT" \
+  --result-file "$WORKER_RESULT_FILE"
 ```
 
-Check the reported root against the intended hub. Validate each product selected
-for this run with `--repo <name> --require-local`; a successful check of one
-product does not validate another. `hub-status.sh --all` reports checkout and
-dirty-state information; it does not accept `--require-local` and does not prove
-authenticated remote access. The `gh` probes check repository visibility, while
-`git ls-remote` checks the Git transport and expected base ref. Neither proves
-write permission; keep the framework's later push-verification gates.
+Pass the result file, selected hub, run UUID and both timestamps to the bounded
+runner. It repeats the verifier before mutation; missing, failed, stale,
+malformed or mismatched evidence stops the run. An explicit `--worker-dir` may
+be used when the worker was registered from another directory, but it must
+identify the selected hub checkout itself. Use a fresh preflight for each run.
+The result records check outcomes, time, run UUID, and opaque hashes of the hub,
+configuration and product identities. These hashes can be guessed and are not
+credentials or tamper-proof evidence; the runner relies on the operator's
+assertion. Keep the output local and do not paste private configuration.
 
-Review dirty state and conflicting active runs before selecting a branch or
-worktree. Do not reset, stash, delete, or switch a checkout owned by another run
-to make preflight pass. Inspection output can contain local paths and remote
-URLs: keep it local and share only sanitized outcomes, never credential-bearing
-URLs or private configuration values.
-
-The dedicated hub-worker preflight is tracked in
-[#1721](https://github.com/lhpaul/ai-dev-framework-template/issues/1721), a sibling
-of this runbook under [#1719](https://github.com/lhpaul/ai-dev-framework-template/issues/1719).
-This checklist uses existing helpers and does not claim that worker detection
-or an automatic preflight hook has been added to bounded commands.
+A failing product check reports a one-based `product_ordinal` in the original
+shared `workflow_hub.product_repos` list order. The operator can inspect that
+entry and its local mapping privately to correct it; the agent must not print
+those configurations. GitHub probes check read visibility on `github.com`, not
+write permission or Git transport. Existing push verification still applies.
+Do not reset, stash, delete, or switch another run's checkout to make it pass.
 
 ## Start and select the worker
 
