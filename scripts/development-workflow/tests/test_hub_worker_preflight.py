@@ -151,6 +151,12 @@ sys.exit(2)
             change(data)
             self.assertEqual(self.verify(data)[0].returncode, 1)
         self.assertEqual(self.verify(valid, selected=self.now(60))[0].returncode, 1)
+        file = self.base / "duplicate.json"
+        file.write_text('{"result":"pass","result":"fail"}')
+        result, data = self.invoke("verify", "--hub-dir", self.hub, "--run-id", self.rid,
+                                   "--result-file", file, "--run-start", self.start,
+                                   "--hub-selected-at", self.selected)
+        self.assertEqual((result.returncode, data["result"]), (1, "fail"))
 
     def test_timeout_is_safe(self):
         spec = importlib.util.spec_from_file_location("worker_preflight", SCRIPT)

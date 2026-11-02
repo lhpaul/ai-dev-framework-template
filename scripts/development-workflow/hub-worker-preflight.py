@@ -51,9 +51,18 @@ def command(args, check, guidance, ordinal=None, github=False):
     return result.stdout
 
 
+def unique_object(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("duplicate JSON key")
+        result[key] = value
+    return result
+
+
 def decode(raw, expected_type, check, guidance, ordinal=None):
     try:
-        value = json.loads(raw)
+        value = json.loads(raw, object_pairs_hook=unique_object)
     except (ValueError, TypeError):
         fail(check, guidance, ordinal)
     if not isinstance(value, expected_type):
@@ -182,7 +191,7 @@ def verify(args):
     start, selected = utc(args.run_start), utc(args.hub_selected_at)
     try:
         with open(args.result_file, encoding="utf-8") as stream:
-            evidence = json.load(stream)
+            evidence = json.load(stream, object_pairs_hook=unique_object)
     except (OSError, ValueError, UnicodeError):
         fail("result", "Provide the current successful preflight result and retry.")
     keys = {"schema", "result", "run_id", "checked_at", "hub_repo_id", "hub_checkout_id",
