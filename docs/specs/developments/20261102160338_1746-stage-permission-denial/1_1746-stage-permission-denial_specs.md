@@ -60,7 +60,7 @@ A workflow item may successfully delegate work to a stage role and still have th
 5. The orchestrator must not evade the denial through another tool, identity, or path, or through inline authorship or review. An operator may explicitly choose a genuinely authorized context for the same role; this is access correction, not an agent-selected workaround. The same stage role remains accountable after an authorized environment or permission correction; reviewer independence and all existing gates remain in force. Merely rewording a denied action or repeatedly dispatching without an operator-confirmed access or environment correction is not recovery. The same rule covers a denied merge or other action that the run assigned to a stage role: the parent cannot replay that denied operation inline as a workaround. Once the operator corrects access, the originally assigned stage role resumes the action, subject to the existing workflow gates and merge authority; a denial does not itself transfer ownership to the parent.
 6. This contract covers stage-role denial at the item-orchestrator boundary across execution environments and dispatch profiles. Existing stricter profile rules still apply; in particular, a parent-orchestrated context does not implement or review product work inline. When a read-only or unavailable-handoff stop also applies, report every independently established applicable stop and satisfy all its conditions; the stricter no-mutation outcome governs until all blocking conditions are resolved.
 7. The Portfolio Orchestrator's existing Work Item Runner denial handling remains scoped to that boundary. A stage-role denial must not be relabeled as a Work Item Runner denial or automatically routed to its inline fallback. If a Work Item Runner reports a separate denial of its own action, its existing contract remains applicable to that separate failure.
-8. Reports contain the exact stop name, affected item and stage, the known denied action or target, the work state known to the runner, and the operator action needed to unblock. Do not expose credentials or private configuration. A denial must not be converted into an approval, clean review, merged state, or completed tracker stage.
+8. Reports contain the exact stop name, affected item and stage, the known denied action or target, the work state known to the runner, and the operator action needed to unblock. Do not expose credentials or private configuration. A denial must not be converted into an approval, clean review, merged state, or completed tracker stage. When the denied stage role is an internal Step 7a reviewer, its dispatch remains a review-gate failure under the existing reviewer-failure contract; the item also stops with the applicable denial condition. This is a failed or incomplete review gate, not a content finding or approval, and a fresh successful review is required after access is corrected.
 
 ## Decision and Recovery Matrix
 
@@ -69,6 +69,7 @@ A workflow item may successfully delegate work to a stage role and still have th
 | Reachable stage role explicitly reports harness tool or local-path access denied | Stop affected item: `stage_role_tool_or_path_denied` | Operator fixes access or chooses an authorized context for the same role; reconcile uncertain work. A changed context requires a fresh run and profile declaration |
 | Reachable role reports missing credential, GitHub permission, or access token only | Existing `missing_required_secret_or_permission` stop | Use its existing credential or permission remedy and preserve role ownership |
 | Both causes independently established | Both relevant stops | Resolve both before the affected action resumes |
+| A reachable Step 7a reviewer is denied a tool or path | Review gate fails and `stage_role_tool_or_path_denied` stops the item | Correct access and run the review again; do not mark it approved or add `needs-fixes` solely for denial |
 | A separately established read-only or handoff stop also applies | Report both applicable stops; no mutation | Resolve all blocking conditions and re-evaluate the active profile |
 | Role cannot be reached | Existing handoff-unavailable behavior for the applicable profile | Follow the existing dispatch-profile stop and recovery rules |
 | An established access refusal has an unknown cause, or a denied action has an uncertain outcome | Stop as `unclear_requirements`, without a false diagnosis or completion | Name the item and stage, inspect durable state, and obtain the missing facts before retry |
@@ -81,11 +82,17 @@ The `/run-item`, `/run-items`, and `/run-epic` command guidance and the portfoli
 
 ## Statuses / Enum Values
 
-| Stop condition | Display label | Meaning |
+| Code value | Display label | Meaning |
 | --- | --- | --- |
 | `stage_role_tool_or_path_denied` | Stage-role tool or path denied | A reachable role reports an explicit harness tool or local-path denial; the affected item stops until access is corrected. |
 
-This stop is cleared only after the operator confirms an access or context correction and the owning role resumes under the applicable gates. A repeated denial stops again. Other named stops retain their existing definitions except the explicitly bounded `unclear_requirements` extension above.
+**Valid transitions**:
+
+- Enter the stop when a reachable stage role reports an explicit harness tool or local-path denial.
+- Clear it only after the operator confirms an access or context correction and the owning role resumes under the applicable gates.
+- If the resumed action is denied again, enter the stop again; do not automatically loop.
+
+Other named stops retain their existing definitions except the explicitly bounded `unclear_requirements` extension above.
 
 ## Operational Visibility
 
@@ -99,7 +106,7 @@ The role's denial report and the item's terminal report let the operator disting
 - [ ] Missing credentials or GitHub access and an unreachable stage role follow their existing distinct contracts; simultaneous established causes and independently applicable read-only or handoff stops are reported separately, and an unknown cause stops as `unclear_requirements` without false classification.
 - [ ] Protocol 90's existing permission-denial fallback is explicitly scoped to the Portfolio Orchestrator–Work Item Runner boundary, and Protocol 91's stage-role denial guidance points to the stage-role mechanism.
 - [ ] A denial alone does not add `needs-fixes`, mark the stage complete, approve a review, or claim that a possibly partial or uncertain action did not occur; dependent items remain held.
-- [ ] The command, Protocol 90, 91 and 95, dispatch-profile, guardrail, and role surfaces replace their current no-recovery guidance and agree on the stop, ownership, recovery, and no-bypass behavior; each applicable path can be exercised with fabricated denial reports without real credential changes.
+- [ ] The command, Protocol 90, 91 (including Step 7a reviewer failures), and 95, dispatch-profile, guardrail, and role surfaces replace their current no-recovery guidance and agree on the stop, ownership, recovery, and no-bypass behavior; each applicable path can be exercised with fabricated denial reports without real credential changes.
 
 ## Out of Scope (MVP)
 
