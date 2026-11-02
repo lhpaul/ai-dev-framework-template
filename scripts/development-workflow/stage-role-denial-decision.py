@@ -15,13 +15,15 @@ def decide(event):
     if not isinstance(event, dict):
         raise ValueError('invalid event')
     allowed = {'cause', 'review', 'readonly_stop', 'handoff_stop', 'record_available',
-               'uncertain', 'corrected', 'reconciled', 'context_changed', 'denied_again', 'handoff'}
+               'uncertain', 'corrected', 'reconciled', 'context_changed', 'denied_again', 'handoff', 'mode'}
     if set(event) - allowed:
         raise ValueError('invalid field')
     cause = event.get('cause')
     if cause not in ('tool_path', 'credential', 'mixed', 'unknown', 'unreachable', 'generic'):
         raise ValueError('invalid cause')
-    for key in allowed - {'cause', 'handoff'}:
+    if event.get('mode', 'manual') not in ('manual', 'assisted', 'delegated', 'autonomous'):
+        raise ValueError('invalid mode')
+    for key in allowed - {'cause', 'handoff', 'mode'}:
         if key in event and not isinstance(event[key], bool):
             raise ValueError('invalid flag')
     stops = []

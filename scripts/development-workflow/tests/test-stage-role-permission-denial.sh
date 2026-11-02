@@ -57,9 +57,9 @@ def receive(event, script=helper):
                             text=True, capture_output=True, check=True)
     return json.loads(result.stdout)
 
-for mode in ('manual', 'supervised', 'autonomous'):
+for mode in ('manual', 'assisted', 'delegated', 'autonomous'):
     for stage in ('implementation', 'spec', 'plan', 'review'):
-        event = {'cause': 'tool_path', 'review': stage == 'review',
+        event = {'cause': 'tool_path', 'mode': mode, 'review': stage == 'review',
                  'record_available': True, 'uncertain': True}
         actual = receive(event)
         assert actual['result'] == 'blocked' and actual['stops'] == ['stage_role_tool_or_path_denied'], (mode, stage)
@@ -87,64 +87,72 @@ assert generic['result'] == 'blocked' and generic['stops'] == ['dispatch_handoff
 invalid = subprocess.run([sys.executable, str(helper)], input='{"cause":"private-sentinel"}', text=True, capture_output=True)
 assert invalid.returncode == 2 and 'private-sentinel' not in invalid.stdout + invalid.stderr
 
-# Feed a fabricated reviewer report and dependency handoff through the actual
-# decision helper; the caller still owns remote persistence and rechecking.
-handoff = {'marker': 'STAGE_ROLE_TOOL_OR_PATH_DENIED', 'item': 1746, 'stage': 'review', 'role': 'cli-reviewer',
-           'action': 'Bash token=private-sentinel', 'state': 'uncertain',
-           'pr': 2102, 'dependencies': {'1750': [1746], '1751': [], '1752': [1750]}}
-for writable in (True, False):
-    actual = receive({'cause': 'tool_path', 'review': True, 'uncertain': True,
-                      'record_available': writable, 'handoff': handoff})
-    assert actual['handoff']['item'] == 1746 and actual['handoff']['pr'] == 2102
-    assert actual['handoff']['role'] == 'cli-reviewer'
-    assert actual['handoff']['unblock_action']
-    assert 'private-sentinel' not in repr(actual)
-    assert actual['held_dependents'] == ['1750', '1752'] and not actual['durable_recorded']
-    assert actual['report_destination'] == ('existing_record' if writable else 'operator_handoff')
-    assert actual['review_gate'] == 'fresh_review_required' and not actual['inline_fallback']
-# Hub-only helper remains reachable from a separate product checkout.
+# Drive concrete synthetic receiver and supervisor handoffs through the helper.
+# A local file is a disposable record double; it is not a real GitHub write.
 import tempfile
+handoff = {'marker': 'STAGE_ROLE_TOOL_OR_PATH_DENIED', 'item': 1746, 'stage': 'review',
+           'role': 'cli-reviewer', 'action': 'Bash token=private-sentinel', 'state': 'uncertain',
+           'pr': 2102, 'dependencies': {'1750': [1746], '1751': [], '1752': [1750]}}
+event = {'cause': 'tool_path', 'review': True, 'uncertain': True, 'handoff': handoff}
+with tempfile.TemporaryDirectory() as tmp:
+    record = Path(tmp) / 'item-record.json'
+    for writable in (True, False):
+        actual = receive(dict(event, record_available=writable))
+        assert actual['handoff']['item'] == 1746 and actual['handoff']['pr'] == 2102
+        assert actual['handoff']['role'] == 'cli-reviewer' and actual['handoff']['unblock_action']
+        assert 'private-sentinel' not in repr(actual)
+        assert actual['held_dependents'] == ['1750', '1752'] and not actual['durable_recorded']
+        assert actual['review_gate'] == 'fresh_review_required' and not actual['inline_fallback']
+        if actual['report_destination'] == 'existing_record':
+            # Simulated permitted write and independent read-back.
+            assert writable
+            record.write_text(json.dumps(actual['handoff']))
+            assert json.loads(record.read_text()) == actual['handoff']
+            assert json.loads(record.read_text())['pr'] == 2102
+            record.unlink()
+        else:
+            # No write is available: the same details go to the operator and
+            # durability must not be claimed.
+            assert not writable and actual['report_destination'] == 'operator_handoff'
+            assert not actual['durable_recorded'] and not record.exists()
+        # Supervisor consumes the actual decision, holds selected dependencies,
+        # permits independent work and never invokes runner inline fallback.
+        candidates = {'1750', '1751', '1752'}
+        held = set(actual['held_dependents'])
+        scheduled = candidates - held
+        assert held == {'1750', '1752'} and scheduled == {'1751'}
+        assert not actual['inline_fallback']
+
+# Hub-only helper remains reachable from a separate product checkout.
 with tempfile.TemporaryDirectory() as product:
     assert not (Path(product) / 'scripts/development-workflow/stage-role-denial-decision.py').exists()
     product_run = subprocess.run([sys.executable, str(helper)], cwd=product,
-                                 input=json.dumps({'cause': 'tool_path', 'handoff': handoff}),
-                                 text=True, capture_output=True, check=True)
+                                 input=json.dumps(event), text=True, capture_output=True, check=True)
     assert json.loads(product_run.stdout)['held_dependents'] == ['1750', '1752']
-# Tracker-prefixed IDs and branch/path work items remain valid across hubs.
 linear = dict(handoff, item='ENG-123', dependencies={'ENG-124': ['ENG-123'], 'ENG-125': []})
 linear_result = receive({'cause': 'tool_path', 'handoff': linear})
 assert linear_result['handoff']['item'] == 'ENG-123' and linear_result['held_dependents'] == ['ENG-124']
-# A separate Work Item Runner denial is not an accepted stage cause.
-runner = subprocess.run([sys.executable, str(helper)], input='{"cause":"SUBAGENT_PERMISSION_DENIAL"}',
-                        text=True, capture_output=True)
-assert runner.returncode == 2
-wrong_boundary = dict(handoff, marker='SUBAGENT_PERMISSION_DENIAL')
-runner = subprocess.run([sys.executable, str(helper)],
-                        input=json.dumps({'cause': 'tool_path', 'handoff': wrong_boundary}),
-                        text=True, capture_output=True)
-assert runner.returncode == 2
 
-# The same real helper assertion fails on a planted dependent-release bug.
-import tempfile
+# Plant a boundary violation in the actual decision helper. The same fabricated
+# Work Item Runner report must be rejected by the original stage receiver but
+# accepted by the mutated receiver; restore and observe rejection again.
+wrong_boundary = dict(handoff, marker='SUBAGENT_PERMISSION_DENIAL')
+boundary_event = dict(event, handoff=wrong_boundary)
+def boundary_exit(script):
+    return subprocess.run([sys.executable, str(script)], input=json.dumps(boundary_event),
+                          text=True, capture_output=True).returncode
+assert boundary_exit(helper) == 2
 with tempfile.TemporaryDirectory() as tmp:
     planted = Path(tmp) / 'decision.py'
     original = helper.read_text()
-    needle = "result['held_dependents'] = sorted(held)"
+    needle = "if handoff['marker'] != 'STAGE_ROLE_TOOL_OR_PATH_DENIED':"
     assert needle in original
-    planted.write_text(original.replace(needle, "result['held_dependents'] = []", 1))
-    # Copy the real sanitizer dependency so this is the same helper in isolation.
+    planted.write_text(original.replace(needle, "if False:", 1))
     (Path(tmp) / 'workflow-config-resolver.py').write_bytes(
         (helper.parent / 'workflow-config-resolver.py').read_bytes())
-    event = {'cause': 'tool_path', 'handoff': handoff}
-    def assert_held(script):
-        assert receive(event, script)['held_dependents'] == ['1750', '1752']
-    try:
-        assert_held(planted)
-    except AssertionError:
-        print('PLANT: guard failed when a blocked dependent was released')
-    else:
-        raise AssertionError('planted routing violation was not detected')
-    assert_held(helper)
-    print('REPAIR: guard passed with the original helper')
+    assert boundary_exit(planted) == 0
+    print('PLANT: runner denial incorrectly accepted at stage boundary')
+    assert boundary_exit(helper) == 2
+    print('REPAIR: runner denial rejected at stage boundary')
 print('PASS: stage-role denial contract, boundaries and planted violation')
 PY
