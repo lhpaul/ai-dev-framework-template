@@ -2252,6 +2252,126 @@ unset -f _1692_hist_one _1692_reset_processing_globals 2>/dev/null || true
 echo "=== Area 1692 complete ==="
 
 # ---------------------------------------------------------------------------
+# Area 2095: evidence freshness at final clean and bounded local drift retry
+# ---------------------------------------------------------------------------
+echo "=== Area 2095: evidence freshness ==="
+
+# Each scenario runs in its own subshell with fabricated evidence and no network.
+# A changed fingerprint represents either a late comment or an in-place edit;
+# both are included by the canonical collector. No shared fixture is mutated.
+_2095_final() (
+  local mode="$1" hash="$2" platform="${3:-local-ai-reviewer}"
+  aggregate_result=clean
+  aggregate_reason=""
+  # shellcheck disable=SC2034 # Consumed by the sourced production function.
+  compare_mode=0
+  # shellcheck disable=SC2034 # Consumed by the sourced production function.
+  pr_number=2095
+  loop_head_sha=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  # shellcheck disable=SC2034 # Deliberately no thread-posting reviewer.
+  unresolved_bot_logins=()
+  platform_result_records=("$(jq -cn --arg hash "$hash" --arg p "$platform" \
+    '{platform:$p,result:"clean",evidence_snapshot_sha256:$hash}')")
+  repo_slug() { printf 'synthetic/repo\n'; }
+  workflow_collect_review_evidence() {
+    [ "$mode" != unavailable ] || return 1
+    if [ "$mode" = malformed ]; then
+      printf '{}\n' >"$4"
+    else
+      printf '{"snapshot_sha256":"current"}\n' >"$4"
+    fi
+  }
+  reviewer_loop_final_evidence_guard
+  printf '%s|%s\n' "$aggregate_result" "$aggregate_reason"
+)
+run_test "2095_unchanged_clean" 'clean|' "$(_2095_final available current)"
+run_test "2095_blank_fingerprint_requires_review" 'needs_rerun|evidence_changed_during_review' \
+  "$(_2095_final available '   ')"
+run_test "2095_late_comment_requires_review" 'needs_rerun|evidence_changed_during_review' \
+  "$(_2095_final available old)"
+run_test "2095_missing_fingerprint_requires_review" 'needs_rerun|evidence_changed_during_review' \
+  "$(_2095_final available '')"
+run_test "2095_pr_agent_stale_requires_review" 'needs_rerun|evidence_changed_during_review' \
+  "$(_2095_final available old pr-agent)"
+run_test "2095_unavailable_not_silence" 'escalate|evidence_context_unavailable' \
+  "$(_2095_final unavailable current)"
+run_test "2095_malformed_not_silence" 'escalate|evidence_context_unavailable' \
+  "$(_2095_final malformed current)"
+run_test "2095_other_platform_unchanged" 'clean|' "$(_2095_final unavailable '' bugbot)"
+run_test "2095_existing_finding_preserved" 'needs_fixes|finding' "$(
+  aggregate_result=needs_fixes; aggregate_reason=finding
+  reviewer_loop_final_evidence_guard
+  printf '%s|%s' "$aggregate_result" "$aggregate_reason"
+)"
+
+_2095_retry() (
+  local mode="$1" out rc=0
+  local fixture fixture_root
+  fixture_root="$(mktemp -d)"
+  fixture="$fixture_root/review fixture [2095]"
+  mkdir -p "$fixture"
+  trap 'rm -rf "$fixture_root"' EXIT
+  mkdir -p "$fixture/scripts/development-workflow"
+  export SYNTHETIC_REVIEW_MODE="$mode" SYNTHETIC_REVIEW_COUNT="$fixture/count"
+  cat >"$fixture/scripts/development-workflow/local-ai-reviewer.sh" <<'REVIEWER'
+#!/usr/bin/env bash
+set -eu
+count=0
+[ ! -f "$SYNTHETIC_REVIEW_COUNT" ] || count="$(cat "$SYNTHETIC_REVIEW_COUNT")"
+count=$((count + 1))
+printf '%s' "$count" >"$SYNTHETIC_REVIEW_COUNT"
+case "$SYNTHETIC_REVIEW_MODE" in
+  retry) [ "$count" -gt 1 ] && { printf 'RESULT=clean\nEVIDENCE_SNAPSHOT_SHA256=current\n'; exit 0; } ;;
+  clean) printf 'RESULT=clean\n'; exit 0 ;;
+  finding) printf 'RESULT=needs_fixes\nREASON=local_ai_review_findings\n'; exit 1 ;;
+  error) printf 'RESULT=escalate\nREASON=evidence_context_unavailable\n'; exit 2 ;;
+  pending) printf 'RESULT=waiting_on_reviewer\n'; exit 4 ;;
+esac
+printf 'RESULT=needs_rerun\nREASON=evidence_changed_during_review\n'
+exit 1
+REVIEWER
+  chmod +x "$fixture/scripts/development-workflow/local-ai-reviewer.sh"
+  workflow_repo_root() { printf '%s\n' "$fixture"; }
+  repo_slug() { printf 'synthetic/repo\n'; }
+  require_gh() { :; }
+  # Keep all configuration resolution synthetic; no private source is read.
+  # shellcheck disable=SC2034 # Consumed by the sourced production function.
+  repo_root="$fixture"
+  # shellcheck disable=SC2034 # Consumed by the sourced production function.
+  config_file=""
+  # shellcheck disable=SC2034 # Consumed by the sourced production function.
+  AI_DEV_WORKFLOW_CONFIG_FILE=""
+  if [ "$mode" = exhausted ]; then
+    date() {
+      if [ -f "$fixture/clock" ]; then printf '30\n'; else
+        touch "$fixture/clock"; printf '0\n'
+      fi
+    }
+  fi
+  out="$(run_local_ai_reviewer_review 2095 fix/2095-evidence 1 30)" || rc=$?
+  printf '%s|%s|%s' "$(kv_value_default RESULT "$out" missing)" "$rc" "$(cat "$fixture/count")"
+)
+run_test "2095_drift_retries_fresh_once" 'clean|0|2' "$(_2095_retry retry)"
+run_test "2095_continued_drift_bounded" 'needs_rerun|1|2' "$(_2095_retry drift)"
+run_test "2095_clean_runs_once" 'clean|0|1' "$(_2095_retry clean)"
+run_test "2095_findings_not_retried" 'needs_fixes|1|1' "$(_2095_retry finding)"
+run_test "2095_read_failure_not_retried" 'escalate|2|1' "$(_2095_retry error)"
+run_test "2095_exhausted_budget_not_retried" 'needs_rerun|1|1' "$(_2095_retry exhausted)"
+run_test "2095_inflight_not_retried" 'waiting_on_reviewer|4|1' "$(_2095_retry pending)"
+
+# Planted-violation proof: bypassing the production guard must make the stale
+# evidence assertion fail. Run the deliberate failure in a subshell so it cannot
+# alter this suite's counters or leave a modified production file behind.
+_2095_plant="$(
+  reviewer_loop_final_evidence_guard() { :; }
+  run_test "2095_planted_guard_bypass" 'needs_rerun|evidence_changed_during_review' \
+    "$(_2095_final available old)"
+)"
+run_contains "2095_guard_bypass_detected" 'FAIL: 2095_planted_guard_bypass' "$_2095_plant"
+unset _2095_plant
+unset -f _2095_final _2095_retry
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 echo ""
