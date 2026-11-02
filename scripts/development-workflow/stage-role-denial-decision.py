@@ -115,7 +115,10 @@ def decide(event):
         if result['readonly_blocked']:
             report['remedies'].append('Resolve the independently established read-only restriction.')
         report['unblock_action'] = ' '.join(report['remedies']) if report['remedies'] else 'Continue under the existing gates.'
-        result['handoff'] = redact(report)
+        try:
+            result['handoff'] = redact(report)
+        except Exception as exc:
+            raise ValueError('redaction failed') from exc
         if handoff['stage'] == 'review':
             result['review_gate'] = 'fresh_review_required'
         result['held_dependents'] = sorted(held)

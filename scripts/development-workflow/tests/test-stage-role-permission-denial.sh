@@ -203,6 +203,12 @@ with tempfile.TemporaryDirectory() as tmp:
                             text=True, capture_output=True)
     assert failed.returncode == 2 and 'Traceback' not in failed.stderr
     assert 'private-sentinel' not in failed.stdout + failed.stderr
+    (Path(tmp) / 'workflow-config-resolver.py').write_text(
+        "def redact_diagnostic_json(value):\n    raise RuntimeError('private-sentinel')\n")
+    failed = subprocess.run([sys.executable, str(isolated)], input=json.dumps(event),
+                            text=True, capture_output=True)
+    assert failed.returncode == 2 and 'Traceback' not in failed.stderr
+    assert 'private-sentinel' not in failed.stdout + failed.stderr
 
 # A CLI reviewer may return both an ordinary verdict and an explicit denial.
 # The Step 7a receiver must prioritize the denial over both approval and fixes.
