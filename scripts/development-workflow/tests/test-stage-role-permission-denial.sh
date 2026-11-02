@@ -158,7 +158,7 @@ assert receive(dict(mixed_recovery, credential_corrected=True))['result'] == 're
 
 # Portfolio receiver fixture is explicitly tied to Protocol 90's ordering and
 # no-fallback rule; the reports are fabricated and no agent is executed.
-def portfolio_route(text, report, decision=None):
+def portfolio_route(text, report, decision=None, runner_report=None):
     start = text.index('## Step 4.1: Subagent Permission-Denial Detection and Inline Fallback')
     end = text.index('### No-redispatch rule', start)
     rules = text[start:end]
@@ -168,7 +168,8 @@ def portfolio_route(text, report, decision=None):
     blocks_inline = 'never run the Work Item Runner inline fallback for that stage denial' in rules
     if ('STAGE_ROLE_TOOL_OR_PATH_DENIED:' in report or 'stage_role_tool_or_path_denied' in report):
         return {'fallback': not (stage_first >= 0 and stage_first < runner_detection and blocks_inline and separate_rule),
-                'held': decision['held_dependents']}
+                'held': decision['held_dependents'],
+                'runner_fallback': bool(runner_report and 'SUBAGENT_PERMISSION_DENIAL:' in runner_report and 'If a separately established Work Item Runner denial is also reported' in rules)}
     if 'SUBAGENT_PERMISSION_DENIAL:' in report and runner_detection >= 0:
         return {'fallback': True, 'held': []}
     return {'fallback': False, 'held': []}
@@ -177,8 +178,9 @@ stage_result = receive(dict(event, record_available=False))
 stage_report = 'STAGE_ROLE_TOOL_OR_PATH_DENIED: stage_role_tool_or_path_denied; SUBAGENT_PERMISSION_DENIAL: quoted context'
 runner_report = 'SUBAGENT_PERMISSION_DENIAL: Bash tool denied on target'
 def assert_portfolio_routes(text):
-    assert portfolio_route(text, stage_report, stage_result) == {'fallback': False, 'held': ['1750', '1752']}
+    assert portfolio_route(text, stage_report, stage_result) == {'fallback': False, 'held': ['1750', '1752'], 'runner_fallback': False}
     assert portfolio_route(text, runner_report) == {'fallback': True, 'held': []}
+    assert portfolio_route(text, stage_report, stage_result, runner_report) == {'fallback': False, 'held': ['1750', '1752'], 'runner_fallback': True}
 assert_portfolio_routes(portfolio)
 plant = portfolio.replace('never run the Work Item Runner inline fallback for that stage denial',
                           'always run the Work Item Runner inline fallback for that stage denial', 1)
@@ -199,6 +201,30 @@ with tempfile.TemporaryDirectory() as tmp:
                             text=True, capture_output=True)
     assert failed.returncode == 2 and 'Traceback' not in failed.stderr
     assert 'private-sentinel' not in failed.stdout + failed.stderr
+
+# A CLI reviewer may return both an ordinary verdict and an explicit denial.
+# The Step 7a receiver must prioritize the denial over both approval and fixes.
+def review_route(protocol, response):
+    precedence = ('The receiver checks the report and established access evidence before applying any ordinary verdict' in protocol
+                  and 'never enters the fixer loop solely as `NEEDS REVISION`' in protocol)
+    if 'STAGE_ROLE_TOOL_OR_PATH_DENIED:' in response and precedence:
+        return 'access_stop'
+    return 'approval' if 'VERDICT: APPROVED' in response else 'fixer'
+def assert_review_precedence(protocol):
+    for verdict in ('VERDICT: APPROVED', 'VERDICT: NEEDS REVISION'):
+        assert review_route(protocol, 'STAGE_ROLE_TOOL_OR_PATH_DENIED: Bash denied; ' + verdict) == 'access_stop'
+    assert review_route(protocol, 'VERDICT: NEEDS REVISION') == 'fixer'
+assert_review_precedence(item)
+plant_review = item.replace('The receiver checks the report and established access evidence before applying any ordinary verdict',
+                            'The receiver applies the ordinary verdict first', 1)
+try:
+    assert_review_precedence(plant_review)
+except AssertionError:
+    print('PLANT: reviewer denial precedence violation detected')
+else:
+    raise AssertionError('reviewer denial precedence violation was not detected')
+assert_review_precedence(item)
+print('REPAIR: reviewer denial precedence verified')
 
 # Hub-only helper remains reachable from a separate product checkout.
 with tempfile.TemporaryDirectory() as product:
