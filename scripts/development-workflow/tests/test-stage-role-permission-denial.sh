@@ -145,6 +145,10 @@ assert resumed['held_dependents'] == ['1750', '1752']
 mixed_report = receive(dict(event, cause='mixed', readonly_stop=True))['handoff']
 assert mixed_report['stops'] == ['stage_role_tool_or_path_denied', 'missing_required_secret_or_permission']
 assert len(mixed_report['remedies']) == 3
+mixed_recovery = dict(event, cause='mixed', corrected=True, reconciled=True)
+assert receive(mixed_recovery)['result'] == 'blocked'
+assert receive(dict(mixed_recovery, corrected=False, credential_corrected=True))['result'] == 'blocked'
+assert receive(dict(mixed_recovery, credential_corrected=True))['result'] == 'resume_same_role'
 
 # Hub-only helper remains reachable from a separate product checkout.
 with tempfile.TemporaryDirectory() as product:
@@ -164,7 +168,9 @@ boundary_event = dict(event, handoff=wrong_boundary)
 def boundary_exit(script):
     return subprocess.run([sys.executable, str(script)], input=json.dumps(boundary_event),
                           text=True, capture_output=True).returncode
-assert boundary_exit(helper) == 2
+def assert_boundary(script):
+    assert boundary_exit(script) == 2
+assert_boundary(helper)
 with tempfile.TemporaryDirectory() as tmp:
     planted = Path(tmp) / 'decision.py'
     original = helper.read_text()
@@ -173,10 +179,14 @@ with tempfile.TemporaryDirectory() as tmp:
     planted.write_text(original.replace(needle, "if False:", 1))
     (Path(tmp) / 'workflow-config-resolver.py').write_bytes(
         (helper.parent / 'workflow-config-resolver.py').read_bytes())
-    assert boundary_exit(planted) == 0
-    print('PLANT: runner denial incorrectly accepted at stage boundary')
-    assert boundary_exit(helper) == 2
-    print('REPAIR: runner denial rejected at stage boundary')
+    try:
+        assert_boundary(planted)
+    except AssertionError:
+        print('PLANT: stage-boundary assertion failed for runner denial')
+    else:
+        raise AssertionError('stage-boundary violation was not detected')
+    assert_boundary(helper)
+    print('REPAIR: stage-boundary assertion passed after restoration')
 # Re-run this actual synced suite in a disposable consumer checkout whose
 # project-owned configuration deliberately has no stop_conditions list.
 if sys.argv[2] == 'true' and os.environ.get('STAGE_ROLE_CONSUMER_FIXTURE') != '1':

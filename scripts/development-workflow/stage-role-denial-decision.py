@@ -15,7 +15,7 @@ def decide(event):
     if not isinstance(event, dict):
         raise ValueError('invalid event')
     allowed = {'cause', 'review', 'readonly_stop', 'handoff_stop', 'record_available',
-               'uncertain', 'corrected', 'reconciled', 'context_changed', 'denied_again', 'handoff', 'mode'}
+               'uncertain', 'corrected', 'credential_corrected', 'reconciled', 'context_changed', 'denied_again', 'handoff', 'mode'}
     if set(event) - allowed:
         raise ValueError('invalid field')
     cause = event.get('cause')
@@ -37,7 +37,9 @@ def decide(event):
         stops.append('dispatch_handoff_unavailable')
     # Recovery here is only a candidate for re-dispatch. Other workflow gates
     # and independently applicable stops remain the caller's responsibility.
-    recoverable = cause == 'tool_path' and not event.get('readonly_stop') and not event.get('handoff_stop')
+    recoverable = (cause in ('tool_path', 'mixed')
+                   and (cause != 'mixed' or event.get('credential_corrected', False))
+                   and not event.get('readonly_stop') and not event.get('handoff_stop'))
     ready = (recoverable and event.get('corrected', False)
              and 'uncertain' in event
              and (not event['uncertain'] or event.get('reconciled', False))
