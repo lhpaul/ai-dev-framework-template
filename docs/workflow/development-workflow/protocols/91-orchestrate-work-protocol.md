@@ -1781,15 +1781,21 @@ bash scripts/development-workflow/resolve-reviewer-availability.sh \
 
 Supported reviewer values are `claude`, `cursor`, `codex`, `dsh` (local-runtime), and
 `coderabbit`, `codex-github` (hosted-service). If no list is defined, the
-helper falls back to the driving runner's own stage reviewer. Consume reviewer
+helper selects `codex` by default, independently of the driving runner. An
+explicit non-empty `review.on_draft.runner` list (or its supported legacy alias)
+keeps precedence. This changes the resolver default, not existing configured
+lists. Consume reviewer
 names only from its indexed `REVIEWER_N_*` fields; aggregate lists are
 display-only and must never be split or `eval`ed. The helper reports local
 override state and `override-excluded` records, which are deliberate omissions
 and never unreachability warnings.
 
 On exit `0`, dispatch each indexed reachable reviewer, in configured order, only after applying the returned `OUTCOME`. Never dispatch unreachable or override-excluded records. When
-`FALLBACK_APPLIED=true`, dispatch the driving runner's own stage reviewer
-exactly once. No reviewer is dispatched until the resolver returns and the
+`FALLBACK_APPLIED=true`, still dispatch only the indexed Reachable records,
+exactly once per pass; never infer a reviewer from the driving session.
+`FALLBACK_REASON=default-codex` identifies default selection;
+`FALLBACK_REASON=primary-unavailable` identifies an explicitly authorized
+pre-dispatch substitution. No reviewer is dispatched until the resolver returns and the
 policy has been applied; a verdict from an earlier cycle is never reused.
 The invocation passes `--runner-kind <actual-driving-session-kind>` and is
 never a value inferred from PATH, the reviewer list, or inherited environment.
@@ -1849,7 +1855,7 @@ validates policy before evaluating the reviewer list, then classifies capability
 and applies policy. Absent, null, bare, or empty policy means `warn` with
 `POLICY_SOURCE=default`. A non-empty unsupported string blocks before list
 fallback; a non-scalar policy or unreadable config file is `policy-unreadable`.
-An absent or empty list falls back to the driving runner's own stage reviewer;
+An absent or empty effective list selects the default `codex` reviewer;
 a malformed non-list or list with non-string members never falls back.
 
 The fixed external ceiling is ten seconds, with an eight-second internal budget
@@ -1904,11 +1910,54 @@ Allowed values: `warn` (default), `fail-if-any-unavailable`.
 | Policy unsupported                                        | Any                       | **Hard-fail** with `BLOCK_CAUSE=policy-unsupported`; dispatch nobody and restore an already-ready PR to draft. |
 | Reviewer list malformed                                   | Any                       | **Hard-fail** with `BLOCK_CAUSE=list-malformed`; dispatch nobody and restore an already-ready PR to draft. |
 | Config resolution timed out | Any | **Hard-fail** with `BLOCK_CAUSE=config-resolution-inconclusive`; do not evaluate the list or dispatch. |
-| No configured list and no driving runner                  | Any                       | **Hard-fail** with `BLOCK_CAUSE=no-driving-runner`. |
-| Zero reviewers reachable                                  | Any                       | **Hard-fail** — post the Step 7a summary comment (as error/blocked comment per Use Case 2) and stop. Do NOT call `gh pr ready`. Escalate to human.                                                                                                                                               |
+| Fallback setting malformed | Any | **Hard-fail** with `BLOCK_CAUSE=fallback-malformed`; dispatch nobody. |
+| No effective configured list | Any | Determine availability of the default `codex` reviewer, including when the driving runner is unknown. |
+| Zero primary reviewers reachable, all reasons are `runtime-absent` or `prerequisite-missing`, explicit fallback is configured and was not already a primary | `warn` | Determine availability of that fallback within the same budget. Proceed with it only if Reachable; record `FALLBACK_REASON=primary-unavailable` and the original unavailable records. |
+| Zero reviewers reachable after any eligible explicit fallback | Any                       | **Hard-fail** — post the Step 7a summary comment (as error/blocked comment per Use Case 2) and stop. Do NOT call `gh pr ready`. Escalate to human.                                                                                                                                               |
 | One or more reviewers unreachable, at least one reachable | `warn` (default)          | Post the reason-and-remedy warning, record each as `skipped (unreachable)`, then proceed with the reachable subset.                                                                                                                        |
 | Any reviewer unreachable                                  | `fail-if-any-unavailable` | **Hard-fail** — same outcome as zero-reachable (no reviewers dispatched, PR stays draft, escalate to human) even when some reviewers are reachable. Post the Step 7a summary comment using the hard-fail comment format **Case B** below and stop. Do NOT call `gh pr ready`. Escalate to human. |
 | All reviewers reachable                                   | Any                       | Proceed normally — no warning comment, no deviation from the existing flow.                                                                                                                                                                                                                      |
+
+#### Explicit fallback before dispatch
+
+`review.on_draft.fallback_runner` is an optional scalar naming one local-runtime
+reviewer: `claude`, `cursor`, `codex`, or `dsh`. It is disabled by default.
+The selected local file overrides the shared setting; an explicit local null or
+empty string disables a shared fallback. Other types and values fail closed
+without printing the rejected value. The validated review-only worktree
+projection preserves this setting; no private file is copied wholesale.
+
+For example, an operator can configure this in the shared manifest or an
+explicitly selected local override:
+
+```yaml
+review:
+  on_draft:
+    runner: [codex]
+    fallback_runner: claude
+```
+
+The fallback is considered only when no primary reviewer is Reachable and every
+primary failure proves absence (`runtime-absent` or `prerequisite-missing`).
+It is never an additional reviewer for a partially reachable primary list, never
+retries a primary, and never circumvents `fail-if-any-unavailable`. A malformed
+list, unsupported reviewer, or inconclusive probe (including a probe not started
+after budget exhaustion) grants no substitution authority. The fallback probe shares the existing aggregate
+availability budget and may itself block.
+
+The helper emits `FALLBACK_RUNNER`, `FALLBACK_CONFIG_STATE`, and
+`FALLBACK_CONFIG_SOURCE`, plus the indexed primary and attempted fallback records.
+When substitution succeeds, post the reduced-coverage warning before dispatch,
+then review with the Reachable fallback and record it in the Step 7a summary.
+Default selection also produces an indexed `codex` record and is subject to the
+same availability checks; it does not approve a review by itself.
+
+Availability is not an authentication or subscription guarantee: a successful
+`--version` probe establishes runtime presence only. Once any review has been
+dispatched, a provider access error, non-zero exit, timeout, permission denial,
+or missing verdict remains a review failure. Do not reclassify it as unavailable,
+retry another provider, or reuse an earlier verdict. In particular, a subscription
+error returned by Claude after dispatch does not activate this fallback.
 
 #### Warning comment format (one or more unreachable, `warn` policy)
 
@@ -1940,7 +1989,7 @@ unpropagated override from the artifact worktree before treating it as final.
 
 **Case C — blocking configuration input or resolver failure:** report
 `BLOCK_CAUSE` (`policy-unreadable`, `policy-unsupported`, `list-malformed`,
-`no-driving-runner`, or `config-resolution-inconclusive`), `POLICY_STATE`,
+`fallback-malformed`, or `config-resolution-inconclusive`), `POLICY_STATE`,
 `POLICY_SOURCE`, the exact `POLICY_INPUT` for an unsupported value, and
 `UNREADABLE_FILE` / `UNREADABLE_DETAIL` for unreadable input. For a malformed
 list, name `CONFIG_LIST_SOURCE` and its malformed state. Explain the corrective
@@ -2150,7 +2199,7 @@ Before running any reviewers, classify the PR branch to determine which executio
 
 ### Multi-reviewer execution rules
 
-Run the selected Reachable internal reviewers **sequentially** in configured order (or the own-stage fallback exactly once per pass). Each reviewer runs against `REVIEW.md`. Native reviewers may apply deterministic fixes and commit + push through their stage protocol. Cross-runner CLI reviewers remain read-only; the parent owns their fixes, commits, pushes, and required review reruns.
+Run the selected Reachable internal reviewers **sequentially** in configured order (including an eligible explicit fallback, exactly once per pass). Each reviewer runs against `REVIEW.md`. Native reviewers may apply deterministic fixes and commit + push through their stage protocol. Cross-runner CLI reviewers remain read-only; the parent owns their fixes, commits, pushes, and required review reruns.
 
 Initialize `internal_review_cycle = 0` at the start of Step 7a. Increment each time the full Pass 1 → Pass 2 cycle is restarted (for implementation PRs) or the full reviewer list is restarted (for non-implementation PRs). Escalate to human when `internal_review_cycle` reaches `max_internal_review_cycles` (default: 5).
 
@@ -2197,7 +2246,7 @@ A Step 7a summary comment **must always be posted to the PR** when the gate exit
 
 Include a per-reviewer verdict for every configured reviewer, with its display
 label and its reason and remedy when unreachable, plus the gate outcome.
-Override-excluded entries appear in the summary and never in the warning. Render names, reasons, remedies, and details from indexed `REVIEWER_N_*` fields, with display labels Reachable, Unreachable, or Excluded by override. Record `FALLBACK_APPLIED` and the own-stage dispatch when fallback applies; do not report success with no reviewer dispatched.
+Override-excluded entries appear in the summary and never in the warning. Render names, reasons, remedies, and details from indexed `REVIEWER_N_*` fields, with display labels Reachable, Unreachable, or Excluded by override. Record `FALLBACK_APPLIED`, `FALLBACK_REASON`, and the indexed reviewer actually dispatched; do not report success with no reviewer dispatched.
 
 Required fields:
 
