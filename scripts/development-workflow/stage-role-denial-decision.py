@@ -61,8 +61,13 @@ def decide(event):
             raise ValueError('invalid handoff')
         if handoff['marker'] != 'STAGE_ROLE_TOOL_OR_PATH_DENIED':
             raise ValueError('invalid role boundary')
-        if type(handoff['item']) is not int or handoff['item'] < 1:
-            raise ValueError('invalid item')
+        def item_id(value):
+            if type(value) is int and value > 0:
+                return str(value)
+            if isinstance(value, str) and value.strip() and len(value) <= 300 and not any(ord(c) < 32 for c in value):
+                return value
+            raise ValueError('invalid item identifier')
+        item_id(handoff['item'])
         if handoff['pr'] is not None and (type(handoff['pr']) is not int or handoff['pr'] < 1):
             raise ValueError('invalid pr')
         for key in ('stage', 'role', 'action', 'state'):
@@ -72,16 +77,17 @@ def decide(event):
         if not isinstance(deps, dict):
             raise ValueError('invalid dependencies')
         for child, prerequisites in deps.items():
-            if not isinstance(child, str) or not child.isascii() or not child.isdecimal() or int(child) < 1:
-                raise ValueError('invalid dependent')
-            if not isinstance(prerequisites, list) or any(type(n) is not int or n < 1 for n in prerequisites):
+            item_id(child)
+            if not isinstance(prerequisites, list):
                 raise ValueError('invalid prerequisites')
+            for parent in prerequisites:
+                item_id(parent)
         held = set()
-        blocked = {handoff['item']}
+        blocked = {item_id(handoff['item'])}
         if result['hold_dependents']:
             while True:
-                found = {int(child) for child, parents in deps.items()
-                         if blocked.intersection(parents)} - blocked
+                found = {item_id(child) for child, parents in deps.items()
+                         if blocked.intersection(item_id(parent) for parent in parents)} - blocked
                 if not found:
                     break
                 held.update(found)

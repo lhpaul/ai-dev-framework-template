@@ -99,7 +99,7 @@ for writable in (True, False):
     assert actual['handoff']['role'] == 'cli-reviewer'
     assert actual['handoff']['unblock_action']
     assert 'private-sentinel' not in repr(actual)
-    assert actual['held_dependents'] == [1750, 1752] and not actual['durable_recorded']
+    assert actual['held_dependents'] == ['1750', '1752'] and not actual['durable_recorded']
     assert actual['report_destination'] == ('existing_record' if writable else 'operator_handoff')
     assert actual['review_gate'] == 'fresh_review_required' and not actual['inline_fallback']
 # Hub-only helper remains reachable from a separate product checkout.
@@ -109,9 +109,18 @@ with tempfile.TemporaryDirectory() as product:
     product_run = subprocess.run([sys.executable, str(helper)], cwd=product,
                                  input=json.dumps({'cause': 'tool_path', 'handoff': handoff}),
                                  text=True, capture_output=True, check=True)
-    assert json.loads(product_run.stdout)['held_dependents'] == [1750, 1752]
+    assert json.loads(product_run.stdout)['held_dependents'] == ['1750', '1752']
+# Tracker-prefixed IDs and branch/path work items remain valid across hubs.
+linear = dict(handoff, item='ENG-123', dependencies={'ENG-124': ['ENG-123'], 'ENG-125': []})
+linear_result = receive({'cause': 'tool_path', 'handoff': linear})
+assert linear_result['handoff']['item'] == 'ENG-123' and linear_result['held_dependents'] == ['ENG-124']
 # A separate Work Item Runner denial is not an accepted stage cause.
 runner = subprocess.run([sys.executable, str(helper)], input='{"cause":"SUBAGENT_PERMISSION_DENIAL"}',
+                        text=True, capture_output=True)
+assert runner.returncode == 2
+wrong_boundary = dict(handoff, marker='SUBAGENT_PERMISSION_DENIAL')
+runner = subprocess.run([sys.executable, str(helper)],
+                        input=json.dumps({'cause': 'tool_path', 'handoff': wrong_boundary}),
                         text=True, capture_output=True)
 assert runner.returncode == 2
 
@@ -128,7 +137,7 @@ with tempfile.TemporaryDirectory() as tmp:
         (helper.parent / 'workflow-config-resolver.py').read_bytes())
     event = {'cause': 'tool_path', 'handoff': handoff}
     def assert_held(script):
-        assert receive(event, script)['held_dependents'] == [1750, 1752]
+        assert receive(event, script)['held_dependents'] == ['1750', '1752']
     try:
         assert_held(planted)
     except AssertionError:
