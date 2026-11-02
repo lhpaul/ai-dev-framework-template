@@ -1630,7 +1630,7 @@ After each Work Item Runner subagent returns, check its output for permission-de
 
 ### Detection (AC1)
 
-Check whether the subagent output contains the substring `SUBAGENT_PERMISSION_DENIAL:`. If it does:
+Only when the returned item report contains no stage-denial stop, check whether its Work Item Runner's own report contains the substring `SUBAGENT_PERMISSION_DENIAL:`. A quoted or nested occurrence inside a stage-role report is not a separate Work Item Runner denial and must never trigger inline fallback. If a separately established Work Item Runner denial is also reported, preserve both reports and apply the Work Item Runner fallback only to that separate denial; the stage-role action remains stopped and must never be authored or reviewed inline. If the runner's own denial is established:
 
 1. Extract the denied tool name(s) from the message.
 2. Log: `[PERMISSION_DENIAL] Item #N: subagent denied access to [tools]. Switching to inline execution.`

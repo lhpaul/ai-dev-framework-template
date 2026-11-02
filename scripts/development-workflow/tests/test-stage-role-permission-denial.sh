@@ -163,10 +163,11 @@ def portfolio_route(text, report, decision=None):
     end = text.index('### No-redispatch rule', start)
     rules = text[start:end]
     stage_first = rules.find('First classify `STAGE_ROLE_TOOL_OR_PATH_DENIED:`')
-    runner_detection = rules.find('Check whether the subagent output contains the substring `SUBAGENT_PERMISSION_DENIAL:`')
+    runner_detection = rules.find("Only when the returned item report contains no stage-denial stop")
+    separate_rule = 'A quoted or nested occurrence inside a stage-role report is not a separate Work Item Runner denial' in rules
     blocks_inline = 'never run the Work Item Runner inline fallback for that stage denial' in rules
     if ('STAGE_ROLE_TOOL_OR_PATH_DENIED:' in report or 'stage_role_tool_or_path_denied' in report):
-        return {'fallback': not (stage_first >= 0 and stage_first < runner_detection and blocks_inline),
+        return {'fallback': not (stage_first >= 0 and stage_first < runner_detection and blocks_inline and separate_rule),
                 'held': decision['held_dependents']}
     if 'SUBAGENT_PERMISSION_DENIAL:' in report and runner_detection >= 0:
         return {'fallback': True, 'held': []}
