@@ -10663,7 +10663,7 @@ reviewer_loop_commit_ancestry() {
 }
 
 # Normalize a companion-script RESULT/REASON pair into the stored platform_results
-# outcome. Prints: clean|needs_fixes|unavailable|not_configured|skipped|
+# outcome. Prints: clean|needs_fixes|needs_rerun|unavailable|not_configured|skipped|
 # no_verdict_yet|unknown
 #
 # #1789 (plan Rule 5 normalizer row): waiting_on_reviewer and a kept
@@ -10678,6 +10678,7 @@ reviewer_loop_normalize_platform_outcome() {
   case "$raw_result" in
     clean) printf 'clean\n' ;;
     needs_fixes) printf 'needs_fixes\n' ;;
+    needs_rerun) printf 'needs_rerun\n' ;;
     waiting_on_reviewer) printf 'no_verdict_yet\n' ;;
     skipped)
       if [ "$no_verdict_flag" = "1" ]; then
@@ -11066,7 +11067,8 @@ reviewer_loop_local_second_pass_failed_for_head() {
   '
 }
 
-# A retry authorizes review, never a verdict. Unknown history stays blocked.
+# A retry authorizes review, never a verdict. Unknown history stays blocked
+# unless a legacy platform record retains the exact raw needs_rerun result.
 reviewer_loop_local_retry_allowed() {
   local payload="$1" head="$2"
   [ "${retry_local_review_head:-}" = "$head" ] || return 1
@@ -11078,7 +11080,8 @@ reviewer_loop_local_retry_allowed() {
        (.local_second_pass_failed_head // "") == $head or
        ((.classification_head // .head_sha) == $head and
         any(.platform_results[]?; .platform == "local-ai-reviewer" and
-            (.result == "needs_fixes" or .result == "needs_rerun"))))] as $failed
+            (.result == "needs_fixes" or .result == "needs_rerun" or
+             (.result == "unknown" and .raw_result == "needs_rerun")))))] as $failed
       | ($failed | length) > 0 and
         all($failed[]; .result == "needs_fixes" or .result == "needs_rerun" or
           (.result == "escalate" and
