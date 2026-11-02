@@ -206,6 +206,28 @@ sys.exit(2)
             self.assertIn("current-run preflight", text)
             self.assertIn("cursor-my-machines.md", text)
 
+    def test_empty_and_whitespace_arguments_are_rejected_safely(self):
+        for value in ("", "   "):
+            result = subprocess.run(["python3", str(SCRIPT), "check", "--hub-dir", str(self.hub),
+                                     "--worker-dir", str(self.hub), "--run-id", value],
+                                    env=self.env, capture_output=True, text=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertEqual(json.loads(result.stdout)["check"], "run_id")
+        missing = subprocess.run(["python3", str(SCRIPT), "check"], env=self.env, capture_output=True, text=True)
+        self.assertNotEqual(missing.returncode, 0)
+        self.assertNotIn("--hub-dir", missing.stderr)
+
+    def test_single_product_in_path_with_spaces(self):
+        other = self.base / "hub with spaces"
+        self.git(self.hub, "worktree", "add", "--detach", str(other))
+        other.joinpath(".ai-dev-workflow.yaml").write_text(
+            "schema_version: 2\nmode: workflow_hub\nworkflow_hub:\n  product_repos:\n"
+            "    - name: first\n      github_repo: example/one\n")
+        other.joinpath(".ai-dev-workflow.local.yaml").write_text(
+            "product_repos:\n  - name: first\n    local_path: ../one\n")
+        result, data = self.invoke("check", "--hub-dir", other, "--worker-dir", other, "--run-id", self.rid)
+        self.assertEqual((result.returncode, len(data["products"])), (0, 1))
+
     def test_linked_worktree_is_valid_hub(self):
         other = self.base / "linked-hub"
         self.git(self.hub, "worktree", "add", "--detach", str(other))
