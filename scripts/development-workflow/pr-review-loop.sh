@@ -5328,7 +5328,7 @@ reviewer_loop_final_evidence_guard() {
     aggregate_reason=evidence_context_unavailable
     return 0
   fi
-  for fingerprint in "${fingerprints[@]}"; do
+  for fingerprint in ${fingerprints[@]+"${fingerprints[@]}"}; do
     if [ "$fingerprint" != "$current" ]; then
       aggregate_result=needs_rerun
       aggregate_reason=evidence_changed_during_review
