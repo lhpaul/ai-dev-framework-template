@@ -356,7 +356,7 @@ entry = "  - path: .ai-dev-workflow.yaml\n    yaml_list_path: guardrails.stop_co
 Path(sys.argv[2]).write_text(s.replace("sync_coverage_exemptions:\n", entry + "\nsync_coverage_exemptions:\n"))
 PYCODE
 mkdir -p "$CONSUMER"
-for case_name in comment lookalike empty block flow absent_list invalid duplicate wrong_type; do
+for case_name in comment lookalike empty block flow absent_list empty_file whitespace invalid duplicate wrong_type; do
   case "$case_name" in
     comment) printf 'guardrails:\n  stop_conditions: [push_verification_failed]\n# stage_role_tool_or_path_denied\n' >"$CONSUMER/.ai-dev-workflow.yaml"; expected=1; marker_line=REQUIRED_ADDITION_MISSING ;;
     lookalike) printf 'guardrails:\n  stop_conditions: [push_verification_failed, stage_role_tool_or_path_denied_extra]\n' >"$CONSUMER/.ai-dev-workflow.yaml"; expected=1; marker_line=REQUIRED_ADDITION_MISSING ;;
@@ -364,6 +364,8 @@ for case_name in comment lookalike empty block flow absent_list invalid duplicat
     block) printf 'guardrails:\n  stop_conditions:\n    - push_verification_failed\n    - "stage_role_tool_or_path_denied"\n' >"$CONSUMER/.ai-dev-workflow.yaml"; expected=0; marker_line=REQUIRED_ADDITION_PRESENT ;;
     flow) printf 'guardrails:\n  stop_conditions: [push_verification_failed, stage_role_tool_or_path_denied]\n' >"$CONSUMER/.ai-dev-workflow.yaml"; expected=0; marker_line=REQUIRED_ADDITION_PRESENT ;;
     absent_list) printf 'guardrails:\n  mode: advisory\n' >"$CONSUMER/.ai-dev-workflow.yaml"; expected=0; marker_line=REQUIRED_ADDITION_NOT_APPLICABLE ;;
+    empty_file) : >"$CONSUMER/.ai-dev-workflow.yaml"; expected=0; marker_line=REQUIRED_ADDITION_NOT_APPLICABLE ;;
+    whitespace) printf '   \n  \n' >"$CONSUMER/.ai-dev-workflow.yaml"; expected=0; marker_line=REQUIRED_ADDITION_NOT_APPLICABLE ;;
     invalid) printf 'guardrails:\n  stop_conditions: [bad\nsecret: private-sentinel\n' >"$CONSUMER/.ai-dev-workflow.yaml"; expected=2; marker_line=REQUIRED_ADDITION_ERROR ;;
     duplicate) printf 'guardrails:\n  stop_conditions: []\n  stop_conditions: []\n' >"$CONSUMER/.ai-dev-workflow.yaml"; expected=2; marker_line=REQUIRED_ADDITION_ERROR ;;
     wrong_type) printf 'guardrails:\n  stop_conditions: wrong\n' >"$CONSUMER/.ai-dev-workflow.yaml"; expected=2; marker_line=REQUIRED_ADDITION_ERROR ;;
