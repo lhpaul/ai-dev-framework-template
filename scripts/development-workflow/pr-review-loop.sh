@@ -5134,14 +5134,34 @@ run_local_ai_reviewer_review() {
   local_ai_stderr_file="$(mktemp)"
   trap 'rm -f "${local_ai_stderr_file:-}"' RETURN
 
-  set +e
-  if [ -n "$local_ai_config_file" ] && [ -f "$local_ai_config_file" ]; then
-    script_output="$(AI_DEV_WORKFLOW_CONFIG_FILE="$local_ai_config_file" "$reviewer_script" "$pr_number" "$owner" "$repo_name" --timeout "$max_wait" --repo-root "$review_repo_root" 2>"$local_ai_stderr_file")"
-  else
-    script_output="$("$reviewer_script" "$pr_number" "$owner" "$repo_name" --timeout "$max_wait" --repo-root "$review_repo_root" 2>"$local_ai_stderr_file")"
-  fi
-  script_exit=$?
-  set -e
+  # Evidence drift is not a code finding. Allow one fresh assessment within
+  # the original wait budget, without replaying the obsolete clean or retrying
+  # actual findings, provider errors, or an uncertain remote submission.
+  local evidence_attempt=0 evidence_started evidence_remaining
+  evidence_started="$(date +%s)"
+  evidence_remaining="$max_wait"
+  while :; do
+    set +e
+    if [ -n "$local_ai_config_file" ] && [ -f "$local_ai_config_file" ]; then
+      script_output="$(AI_DEV_WORKFLOW_CONFIG_FILE="$local_ai_config_file" "$reviewer_script" "$pr_number" "$owner" "$repo_name" --timeout "$evidence_remaining" --repo-root "$review_repo_root" 2>"$local_ai_stderr_file")"
+    else
+      script_output="$("$reviewer_script" "$pr_number" "$owner" "$repo_name" --timeout "$evidence_remaining" --repo-root "$review_repo_root" 2>"$local_ai_stderr_file")"
+    fi
+    script_exit=$?
+    set -e
+    if [ "$script_exit" -ne 1 ] || [ "$evidence_attempt" -ge 1 ] ||
+        [ "$(kv_value_default RESULT "$script_output" "")" != needs_rerun ] ||
+        [ "$(kv_value_default REASON "$script_output" "")" != evidence_changed_during_review ]; then
+      break
+    fi
+    evidence_remaining=$((max_wait - $(date +%s) + evidence_started))
+    [ "$evidence_remaining" -gt 0 ] || break
+    evidence_attempt=$((evidence_attempt + 1))
+    if [ -s "$local_ai_stderr_file" ]; then
+      workflow_redact_file "$local_ai_stderr_file" >&2
+    fi
+    workflow_diagnostic "INFO: review evidence changed; requesting one fresh local assessment within the remaining budget" >&2
+  done
 
   if [ -s "$local_ai_stderr_file" ]; then
     workflow_diagnostic "INFO: local-ai-reviewer.sh stderr:" >&2
@@ -5269,6 +5289,53 @@ run_local_ai_reviewer_review() {
       return 0
       ;;
   esac
+}
+
+# Check evidence after all reviewers and settling, including platforms that
+# never post threads. Keep readiness's independent fingerprint check intact.
+# Mutates only the aggregate verdict; a stale platform clean is retained in the
+# ledger with its original fingerprint so replay cannot grant it fresh authority.
+reviewer_loop_final_evidence_guard() {
+  [ "$aggregate_result" = clean ] || return 0
+  [ "${compare_mode:-0}" -eq 0 ] || return 0
+  local record platform fingerprint context current repo
+  local -a fingerprints=()
+  for record in ${platform_result_records[@]+"${platform_result_records[@]}"}; do
+    platform="$(printf '%s' "$record" | jq -r '.platform // ""')" || return 2
+    case "$platform" in local-ai-reviewer|pr-agent) ;; *) continue ;; esac
+    [ "$(printf '%s' "$record" | jq -r '.result // ""')" = clean ] || continue
+    fingerprint="$(printf '%s' "$record" | jq -r '.evidence_snapshot_sha256 // ""')" || return 2
+    if [ -z "$fingerprint" ]; then
+      aggregate_result=needs_rerun
+      aggregate_reason=evidence_changed_during_review
+      return 0
+    fi
+    fingerprints+=("$fingerprint")
+  done
+  [ "${#fingerprints[@]}" -gt 0 ] || return 0
+  context="$(mktemp)" || return 2
+  repo="$(repo_slug)" || repo=""
+  if ! workflow_collect_review_evidence "$repo" "$pr_number" "$loop_head_sha" "$context"; then
+    rm -f "$context"
+    aggregate_result=escalate
+    aggregate_reason=evidence_context_unavailable
+    return 0
+  fi
+  current="$(jq -er '.snapshot_sha256 | select(type == "string" and length > 0)' "$context")" || current=""
+  rm -f "$context"
+  if [ -z "$current" ]; then
+    aggregate_result=escalate
+    aggregate_reason=evidence_context_unavailable
+    return 0
+  fi
+  for fingerprint in "${fingerprints[@]}"; do
+    if [ "$fingerprint" != "$current" ]; then
+      aggregate_result=needs_rerun
+      aggregate_reason=evidence_changed_during_review
+      workflow_diagnostic "INFO: evidence changed after review; withholding clean and requiring a fresh review" >&2
+      return 0
+    fi
+  done
 }
 
 run_devin_review() {
@@ -17007,6 +17074,13 @@ if [ "$aggregate_result" = "clean" ] && [ -n "$pr_number" ] && [ -n "$loop_head_
     aggregate_result="needs_fixes"
     aggregate_reason="head_moved_during_run"
   fi
+fi
+
+# This guard is independent of POST_CLEAN_RECHECK: comment-only reviewers can
+# change evidence even when no platform exposes a review-thread login.
+if ! reviewer_loop_final_evidence_guard; then
+  aggregate_result=escalate
+  aggregate_reason=evidence_context_unavailable
 fi
 
 if [ "$aggregate_result" != "clean" ]; then
