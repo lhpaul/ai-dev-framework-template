@@ -40,7 +40,7 @@ The new #1746 smoke runbook itself also references the diagnostic. Re-run the se
 
 The design must not infer a universal harness denial grammar. The sample is three observed, independently identifiable outputs or role reports from the repository's historical and current #1746 review runs, between 2026-04-16 and 2026-11-02, across Claude and Codex contexts. They yield three relevant shapes and do not establish saturation:
 
-1. [Issue #172](https://github.com/lhpaul/ai-dev-framework-template/issues/172), 2026-04-16, records Claude item-orchestrator's redacted harness output: “Permission to use [tool] has been denied.”
+1. [Issue #172](https://github.com/lhpaul/ai-dev-framework-template/issues/172), 2026-04-16, records Claude item-orchestrator's redacted harness output: “Permission to use [tool] has been denied.” A read-only capture of the issue body and comments, fetched from GitHub during this review, is `/tmp/1746-plan.wffCni/issue-172.json`; the cited issue remains the durable source.
 2. PR #2101's Claude plan-review attempt, 2026-11-02, reported: “I could not finish the review, because Bash was denied partway through.” The role's complete local result is `/tmp/1746-plan.wffCni/review-1.txt`; the embedded sentence preserves this occurrence if the temporary file expires.
 3. PR #2101's Codex plan-review attempt, 2026-11-02, recorded Git's denied local-cache action: `git: error: couldn't create cache file '/tmp/xcrun_db-[redacted]' (errno=Operation not permitted)`. The full local role result is `/tmp/1746-plan.wffCni/codex-review-1.txt`; the redacted excerpt preserves its relevant shape if the temporary file expires.
 
@@ -106,6 +106,10 @@ Update `docs/workflow/development-workflow/protocols/90-batch-orchestrate-work-p
 | A denied remote mutation actually succeeded | Duplicate or conflicting writes | Reconcile live state before retry; preserve uncertain work and hold dependents. |
 | Consumer list check accepts a comment or unsupported YAML | Baseline stop is silently omitted | Parse the exact list using the supported resolver subset; fail closed on malformed input and plant the comment-only violation. |
 | Mirrored documents drift | Conflicting or missing recovery rules | Re-run discovery queries and record a residual report classifying every match before implementation PR readiness. |
+
+### Reversal
+
+If the implementation must be rolled back, use a reviewed revert PR to restore the previous workflow contracts, stop-list and manifest/checker behavior together. Preserve existing item and PR records and halt affected runs for operator assessment; a revert can remove the new automatic baseline notice and stage-role recovery contract, so already-stopped work must not resume solely because of the revert. Re-run the existing workflow and sync regression suites on the revert. Consumer-owned configuration is not silently changed or rolled back by template sync.
 
 ## Implementation Order
 
