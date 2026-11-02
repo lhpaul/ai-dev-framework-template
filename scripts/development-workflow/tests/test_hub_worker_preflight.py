@@ -80,8 +80,10 @@ sys.exit(2)
                            "--hub-selected-at", selected or self.selected)
 
     def test_success_and_current_result(self):
+        before = [self.git(path, "status", "--porcelain").stdout for path in [self.hub, *self.products]]
         result, data = self.check()
         self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(before, [self.git(path, "status", "--porcelain").stdout for path in [self.hub, *self.products]])
         self.assertEqual(len(data["products"]), 2)
         self.assertNotIn("first", result.stdout)
         self.assertEqual(self.verify(data)[0].returncode, 0)
@@ -147,6 +149,8 @@ sys.exit(2)
         _, valid = self.check()
         for transform in (lambda d: d["products"].pop(),
                           lambda d: d["products"].append(d["products"][0]),
+                          lambda d: d["products"].append({"product_id": "1" * 64, "repo_id": "2" * 64, "checkout": "pass", "github": "pass"}),
+                          lambda d: d["products"][0].update(repo_id="3" * 64),
                           lambda d: d.update(run_id=str(uuid.uuid4())),
                           lambda d: d.update(hub_repo_id="0" * 64)):
             data = json.loads(json.dumps(valid))
