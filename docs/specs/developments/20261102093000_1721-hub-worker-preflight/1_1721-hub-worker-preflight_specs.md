@@ -35,6 +35,17 @@ An operator running a workflow hub with Cursor My Machines / Remote Control need
 - Success is a point-in-time read-access result, not proof of write permission, future access, clean working trees, or permission to bypass subsequent workflow gates.
 - Dispatch profile selection remains declared according to the existing Cursor profile contract; preflight does not infer the execution target or change handoff, review, merge, or checkpoint authority.
 
+## Preflight Decision Gate
+
+| Context and current evidence | Outcome | Required next action |
+| --- | --- | --- |
+| My Machines / Remote Control hub run; all required checks pass | Pass | Continue with the existing dispatch and workflow gates before mutation. |
+| My Machines / Remote Control hub run; any required check fails or cannot be verified | Stop | Report the failed or inconclusive check and a correction; retry before mutation. |
+| A required input is missing, invalid, or ambiguous | Stop | Identify the input to correct; do not treat it as a pass. |
+| Another execution target or repository mode | Existing behavior | Follow its existing workflow; this preflight does not add a requirement there. |
+
+The check uses the worker environment and current configuration at execution time; earlier successful results cannot replace a fresh check for a new run. If a warning and failure occur together, the failure wins. The operator runbook, dispatch-profile documentation, and the three bounded command entrypoints must describe the same gate.
+
 ## Acceptance Criteria
 
 - [ ] An operator can run a documented preflight for a My Machines / Remote Control hub worker, including a worker registered with an explicit directory.
