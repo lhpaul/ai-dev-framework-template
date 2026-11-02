@@ -85,16 +85,17 @@ preflight. Hosted Cloud, desktop and non-hub runs retain their existing rules.
 The following example uses a fabricated path. Run under the worker's OS user;
 select the actual hub and the worker directory registered for that same hub.
 `WORKER_RUN_START` is recorded before selecting the hub, and
-`WORKER_HUB_SELECTED_AT` immediately after selection. The result file stays on
+`WORKER_HUB_SELECTED_AT` immediately after selection, using UTC microsecond
+precision so events within the same second can be ordered. The result file stays on
 the worker; share it only with the intended bounded runner.
 
 <!-- workflow-shell-contract: bash-zsh -->
 ```bash
 set -euo pipefail
-WORKER_RUN_START=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+WORKER_RUN_START=$(python3 -c 'from datetime import datetime, timezone; print(datetime.now(timezone.utc).isoformat(timespec="microseconds").replace("+00:00", "Z"))')
 WORKER_HUB=/path/to/workspace/workflow-hub
 WORKER_DIR="$WORKER_HUB"
-WORKER_HUB_SELECTED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+WORKER_HUB_SELECTED_AT=$(python3 -c 'from datetime import datetime, timezone; print(datetime.now(timezone.utc).isoformat(timespec="microseconds").replace("+00:00", "Z"))')
 WORKER_RUN_ID=$(python3 -c 'import uuid; print(uuid.uuid4())')
 WORKER_RESULT_FILE=$(mktemp)
 if ! python3 "$WORKER_HUB/scripts/development-workflow/hub-worker-preflight.py" check \

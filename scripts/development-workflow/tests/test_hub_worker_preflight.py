@@ -57,7 +57,7 @@ sys.exit(2)
         return subprocess.run(["git", "-C", str(path), *args], check=True, capture_output=True, text=True)
 
     def now(self, seconds=0):
-        return (dt.datetime.now(dt.timezone.utc) + dt.timedelta(seconds=seconds)).isoformat().replace("+00:00", "Z")
+        return (dt.datetime.now(dt.timezone.utc) + dt.timedelta(seconds=seconds)).isoformat(timespec="microseconds").replace("+00:00", "Z")
 
     def write_config(self):
         self.hub.joinpath(".ai-dev-workflow.yaml").write_text("schema_version: 2\nmode: workflow_hub\nworkflow_hub:\n  product_repos:\n" + "".join(f"    - name: {name}\n      github_repo: example/{slug}\n" for name, slug in zip(self.names, ("one", "two"))))
@@ -184,6 +184,10 @@ sys.exit(2)
         spanning = dict(valid, started_at=self.start)
         result, data = self.verify(spanning)
         self.assertEqual((result.returncode, data["check"]), (1, "timestamp"))
+        invoked = dt.datetime.fromisoformat(valid["started_at"].replace("Z", "+00:00"))
+        same_second = (invoked + dt.timedelta(microseconds=1)).isoformat(timespec="microseconds").replace("+00:00", "Z")
+        self.assertEqual(self.verify(valid, selected=same_second)[1]["check"], "timestamp")
+        self.assertEqual(self.verify(valid, selected=self.selected.split(".")[0] + "Z")[1]["check"], "timestamp")
         file = self.base / "duplicate.json"
         file.write_text('{"result":"pass","result":"fail"}')
         result, data = self.invoke("verify", "--hub-dir", self.hub, "--run-id", self.rid,

@@ -191,6 +191,8 @@ def preflight(args, invoked_at):
 
 def verify(args):
     rid = run_id(args.run_id)
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z", args.hub_selected_at):
+        fail("timestamp", "Record hub selection in UTC with microsecond precision and retry.")
     start, selected = utc(args.run_start), utc(args.hub_selected_at)
     try:
         with open(args.result_file, encoding="utf-8") as stream:
