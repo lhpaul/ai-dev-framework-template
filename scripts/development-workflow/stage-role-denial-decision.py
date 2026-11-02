@@ -37,6 +37,8 @@ def decide(event):
     ready = (recoverable and event.get('corrected', False)
              and (not event.get('uncertain', False) or event.get('reconciled', False))
              and not event.get('denied_again', False))
+    if cause == 'generic' and not stops and not event.get('readonly_stop'):
+        return {'result': 'existing_error'}
     return {
         'result': ('existing_error' if cause == 'generic' and not stops and not event.get('readonly_stop')
                    else 'resume_same_role' if ready else 'blocked'),

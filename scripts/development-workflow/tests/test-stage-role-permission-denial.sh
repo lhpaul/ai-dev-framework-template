@@ -80,7 +80,7 @@ assert mixed['stops'] == ['stage_role_tool_or_path_denied', 'missing_required_se
 assert mixed['readonly_blocked'] and mixed['hold_dependents'] and mixed['review_gate'] == 'fresh_review_required'
 assert receive({'cause': 'unknown'})['stops'] == ['unclear_requirements']
 assert receive({'cause': 'unreachable'})['stops'] == ['dispatch_handoff_unavailable']
-assert receive({'cause': 'generic'})['result'] == 'existing_error'
+assert receive({'cause': 'generic'}) == {'result': 'existing_error'}
 generic = receive({'cause': 'generic', 'handoff_stop': True, 'readonly_stop': True})
 assert generic['result'] == 'blocked' and generic['stops'] == ['dispatch_handoff_unavailable'] and generic['readonly_blocked']
 invalid = subprocess.run([sys.executable, str(helper)], input='{"cause":"private-sentinel"}', text=True, capture_output=True)
@@ -89,7 +89,10 @@ assert invalid.returncode == 2 and 'private-sentinel' not in invalid.stdout + in
 # Exercise a concrete fabricated role -> item -> portfolio handoff. The fixture
 # supplies fields and simulates a recording sink and dependency graph; it does
 # not claim to execute an AI agent or mutate a real issue or pull request.
-def fixture_receiver(report, *, writable, mode):
+def fixture_receiver(report, *, writable, mode, protocol=item):
+    # A fabricated handoff is acceptable only while the actual normative
+    # receiver still requires the routing and reporting obligations.
+    assert not receiver_gaps(protocol), receiver_gaps(protocol)
     if report['marker'] == 'SUBAGENT_PERMISSION_DENIAL':
         return {'boundary': 'work-item-runner', 'fallback': True}
     assert report['marker'] == 'STAGE_ROLE_TOOL_OR_PATH_DENIED'
@@ -120,6 +123,18 @@ for mode in ('manual', 'supervised', 'autonomous'):
         assert bool(received['operator_handoff']) != writable
         supervised = fixture_supervisor(received, {1750: [1746], 1751: []})
         assert supervised == {'runner_fallback': False, 'held': [1750]}
+# A change to the actual receiver instruction must make the same concrete
+# handoff fail its contract validation; restoring the original must pass.
+violation = item.replace('inspects every returned role report before subsequent mutation',
+                         'routes stage denials to inline fallback', 1)
+try:
+    fixture_receiver(report, writable=True, mode='manual', protocol=violation)
+except AssertionError:
+    print('PLANT: receiver routing violation failed the concrete handoff')
+else:
+    raise AssertionError('receiver routing violation was not detected')
+fixture_receiver(report, writable=True, mode='manual', protocol=item)
+print('REPAIR: concrete handoff passed against original receiver')
 runner = fixture_receiver({'marker': 'SUBAGENT_PERMISSION_DENIAL'}, writable=False, mode='manual')
 assert fixture_supervisor(runner, {}) == {'runner_fallback': True, 'held': []}
 
