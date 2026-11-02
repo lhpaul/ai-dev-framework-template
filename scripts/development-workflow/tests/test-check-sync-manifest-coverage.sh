@@ -346,6 +346,16 @@ status="$(run_checker "$out" --repo-root "$FIX" --manifest "$NESTED_MANIFEST")"
 run_test "nested_list_entry_exit_2" "2" "$status"
 run_test "nested_list_entry_error" "yes" "$(has_line "$out" "configuration: validation error")"
 
+# The opt-in field remains identifiable in sanitized diagnostic metadata.
+python3 - "$REPO_ROOT/scripts/development-workflow/workflow-config-resolver.py" <<'PYCODE'
+import runpy
+import sys
+api = runpy.run_path(sys.argv[1])
+assert api['safe_config_key']('required_additions[0].yaml_list_path') == 'required_additions[].yaml_list_path'
+assert api['safe_config_key']('required_additions[0].private-sentinel') == 'unknown'
+PYCODE
+run_test "structured_selector_diagnostic_key" "yes" "yes"
+
 # Structured selector checks only the declared list, with fail-closed diagnostics.
 LIST_MANIFEST="$TMP_ROOT/list-manifest.yaml"
 python3 - "$FIX/sync-manifest.yaml" "$LIST_MANIFEST" <<'PYCODE'
