@@ -1,6 +1,7 @@
 # Stage-Role Permission Denial Recovery — Smoke Test
 
-**Spec**: [Stage-role permission denial recovery](../../specs/developments/20261102160338_1746-stage-permission-denial/1_1746-stage-permission-denial_specs.md)  
+**Spec**: [Stage-role permission denial recovery](../../specs/developments/20261102160338_1746-stage-permission-denial/1_1746-stage-permission-denial_specs.md)
+
 **Plan**: [Implementation plan](../../specs/developments/20261102160338_1746-stage-permission-denial/2_1746-stage-permission-denial_implementation-plan.md)
 
 Run against the implementation PR checkout. Use only fabricated reports and temporary consumer configuration. Do not change real credentials, permissions, product checkouts, or live PR state to create a denial. The automated fixtures verify the documented boundary; they do not establish how every real harness formats an error.
