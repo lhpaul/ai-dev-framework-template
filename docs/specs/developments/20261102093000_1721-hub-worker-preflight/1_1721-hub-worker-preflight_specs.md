@@ -14,7 +14,7 @@ An operator running a workflow hub with Cursor My Machines / Remote Control need
 
 **Steps**:
 
-1. The operator identifies the hub checkout used by the worker, including an explicitly registered worker directory when applicable.
+1. The operator declares My Machines / Remote Control as the execution target and identifies the hub checkout used by the worker, including an explicitly registered worker directory when applicable.
 2. Before orchestration mutates any artifact, the runner checks the worker directory, configured local product checkouts, and GitHub access from the worker environment.
 3. The runner reports whether these checks passed or identifies a failed check and how to correct it.
 4. On success, the bounded run continues under the existing dispatch profile and workflow gates. On failure, the operator fixes the environment and starts the checks again before mutation.
@@ -23,7 +23,7 @@ An operator running a workflow hub with Cursor My Machines / Remote Control need
 
 **Information shown**: A concise result and actionable diagnostic for any failed check. Sensitive credential material is not displayed.
 
-**Considerations**: A missing, invalid, or incorrect worker directory, missing local mapping or checkout, inaccessible GitHub repository, and unavailable or unauthenticated GitHub tooling must produce a failure. A warning about a dirty or out-of-sync checkout does not itself authorize changes to it.
+**Considerations**: A missing, invalid, or incorrect worker directory, missing local mapping or checkout, inaccessible GitHub repository, and unavailable or unauthenticated GitHub tooling must produce a failure. Dirty or out-of-sync checkout warnings are optional; if provided, a warning-only result may pass, but does not authorize changes to the checkout.
 
 ## Business Rules
 
@@ -31,9 +31,9 @@ An operator running a workflow hub with Cursor My Machines / Remote Control need
 - Validate the worker's hub directory and every configured local product checkout; an explicit worker directory is acceptable when it identifies the intended hub checkout.
 - Verify GitHub read access to the hub and configured product repositories using the worker's own environment. Inability to verify access is a failure, not a pass.
 - Preflight is read-only: it must not create or change checkouts, configuration, credentials, branches, tracker items, or remote repository state.
-- Diagnostics must not disclose tokens, credential-bearing URLs, or private configuration contents.
+- Diagnostics must identify the failed check and affected checkout or repository when known, and provide a corrective step. The preflight may stop at the first failed check; incomplete checks cannot yield success. Diagnostics must not disclose tokens, credential-bearing URLs, or private configuration contents.
 - Success is a point-in-time read-access result, not proof of write permission, future access, clean working trees, or permission to bypass subsequent workflow gates.
-- Dispatch profile selection remains declared according to the existing Cursor profile contract; preflight does not infer the execution target or change handoff, review, merge, or checkpoint authority.
+- The operator declares the execution target; a missing or ambiguous target cannot be assumed to be a non-worker run to bypass the preflight. Dispatch profile selection remains a separate declaration under the existing Cursor profile contract: a dispatch profile does not by itself identify the execution target. Preflight does not infer the target or change handoff, review, merge, or checkpoint authority.
 
 ## Preflight Decision Gate
 
@@ -41,18 +41,19 @@ An operator running a workflow hub with Cursor My Machines / Remote Control need
 | --- | --- | --- |
 | My Machines / Remote Control hub run; all required checks pass | Pass | Continue with the existing dispatch and workflow gates before mutation. |
 | My Machines / Remote Control hub run; any required check fails or cannot be verified | Stop | Report the failed or inconclusive check and a correction; retry before mutation. |
-| A required input is missing, invalid, or ambiguous | Stop | Identify the input to correct; do not treat it as a pass. |
+| The execution target or another required input is missing, invalid, or ambiguous | Stop | Identify the input to correct; do not treat it as a pass or assume a different target. |
 | Another execution target or repository mode | Existing behavior | Follow its existing workflow; this preflight does not add a requirement there. |
 
-The check uses the worker environment and current configuration at execution time; earlier successful results cannot replace a fresh check for a new run. If a warning and failure occur together, the failure wins. The operator runbook, dispatch-profile documentation, and the three bounded command entrypoints must describe the same gate.
+The check uses the worker environment and current configuration at execution time; earlier successful results cannot replace a fresh check for a new run. If a warning and failure occur together, the failure wins. The operator runbook, Cursor dispatch-profile documentation, and Cursor command entrypoints for `/run-item`, `/run-items`, and `/run-epic` must describe the same gate.
 
 ## Acceptance Criteria
 
 - [ ] An operator can run a documented preflight for a My Machines / Remote Control hub worker, including a worker registered with an explicit directory.
 - [ ] A valid hub worker, configured local product checkouts, and reachable GitHub repositories pass before a bounded run mutates anything.
-- [ ] A wrong or missing worker directory, missing or invalid local product checkout, missing GitHub authentication, or inaccessible configured repository fails before mutation with an actionable diagnostic. A failed or inconclusive check never reports success.
+- [ ] A wrong or missing worker directory, missing or invalid local product checkout, missing GitHub authentication, or inaccessible configured repository fails before mutation with a diagnostic identifying the failed check, affected checkout or repository when known, and a corrective step. A failed, incomplete, or inconclusive check never reports success.
 - [ ] The preflight does not mutate local or remote workflow artifacts or reveal secrets, and its success does not claim write access.
-- [ ] The operator runbook and dispatch-profile documentation explain the preflight and its limitations, and `/run-item`, `/run-items`, and `/run-epic` reference it for My Machines / Remote Control hub execution.
+- [ ] The operator runbook and Cursor dispatch-profile documentation explain the preflight and its limitations, and the Cursor `/run-item`, `/run-items`, and `/run-epic` command entrypoints reference it for My Machines / Remote Control hub execution.
+- [ ] If optional dirty or sync warnings are provided, a warning-only result is reported and may pass without authorizing changes to the checkout.
 - [ ] Existing dispatch profile, review, checkpoint, and merge rules remain in force.
 
 ## Out of Scope
