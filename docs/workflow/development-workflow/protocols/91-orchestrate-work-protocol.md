@@ -2187,7 +2187,7 @@ installed CLI from the artifact root: `claude -p --output-format text`,
 `cursor-agent --print --output-format text`, `codex exec --sandbox read-only`,
 or `DSH_PERMISSION_MODE=read-only dsh --profile headless`.
 The prompt names the stage protocol, `REVIEW.md`, spec/brief and plan paths,
-reviewed base/head, and active pass. Request a read-only review and exactly one
+reviewed base/head, and active pass. Include the `STAGE_ROLE_TOOL_OR_PATH_DENIED:` report contract and instruct the reviewer to report an explicit access denial before returning an ordinary verdict. The receiver checks the report and established access evidence before applying any ordinary verdict; a confirmed denial stops under the stage-role decision contract and never enters the fixer loop solely as `NEEDS REVISION`. A generic `NEEDS REVISION` without evidence of denial retains the normal review path. Request a read-only review and exactly one
 `VERDICT: APPROVED` or `VERDICT: NEEDS REVISION`. The parent applies deterministic
 fixes, commits and pushes them, and re-runs the required reviewers after the push.
 Preserve existing CLI permission controls; never add permission-bypass flags or

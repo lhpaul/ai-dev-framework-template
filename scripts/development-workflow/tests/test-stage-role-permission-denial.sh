@@ -81,11 +81,49 @@ assert mixed['readonly_blocked'] and mixed['hold_dependents'] and mixed['review_
 assert receive({'cause': 'unknown'})['stops'] == ['unclear_requirements']
 assert receive({'cause': 'unreachable'})['stops'] == ['dispatch_handoff_unavailable']
 assert receive({'cause': 'generic'})['result'] == 'existing_error'
+generic = receive({'cause': 'generic', 'handoff_stop': True, 'readonly_stop': True})
+assert generic['result'] == 'blocked' and generic['stops'] == ['dispatch_handoff_unavailable'] and generic['readonly_blocked']
 invalid = subprocess.run([sys.executable, str(helper)], input='{"cause":"private-sentinel"}', text=True, capture_output=True)
 assert invalid.returncode == 2 and 'private-sentinel' not in invalid.stdout + invalid.stderr
 
-# Plant a real routing violation in an isolated copy of the decision helper;
-# the same no-inline check must fail for the plant and pass for the original.
+# Exercise a concrete fabricated role -> item -> portfolio handoff. The fixture
+# supplies fields and simulates a recording sink and dependency graph; it does
+# not claim to execute an AI agent or mutate a real issue or pull request.
+def fixture_receiver(report, *, writable, mode):
+    if report['marker'] == 'SUBAGENT_PERMISSION_DENIAL':
+        return {'boundary': 'work-item-runner', 'fallback': True}
+    assert report['marker'] == 'STAGE_ROLE_TOOL_OR_PATH_DENIED'
+    decision = receive({'cause': 'tool_path', 'review': report['stage'] == 'review',
+                        'record_available': writable, 'uncertain': report['state'] == 'uncertain'})
+    facts = {k: report[k] for k in ('item', 'stage', 'role', 'action', 'state', 'pr')}
+    return {'boundary': 'stage', 'decision': decision, 'facts': facts, 'mode': mode,
+            'durable_record': facts if writable else None,
+            'operator_handoff': facts if not writable else None}
+
+def fixture_supervisor(item_result, graph):
+    if item_result['boundary'] == 'work-item-runner':
+        return {'runner_fallback': item_result['fallback'], 'held': []}
+    assert not item_result['decision']['inline_fallback']
+    blocked = item_result['facts']['item'] if item_result['decision']['hold_dependents'] else None
+    return {'runner_fallback': False, 'held': sorted(k for k, deps in graph.items() if blocked in deps)}
+
+for mode in ('manual', 'supervised', 'autonomous'):
+    report = {'marker': 'STAGE_ROLE_TOOL_OR_PATH_DENIED', 'item': 1746, 'stage': 'review',
+              'role': 'cli-reviewer', 'action': 'Bash', 'state': 'uncertain', 'pr': 2102,
+              'secret': 'private-sentinel'}
+    for writable in (True, False):
+        received = fixture_receiver(report, writable=writable, mode=mode)
+        assert received['facts']['pr'] == 2102 and received['facts']['role'] == 'cli-reviewer'
+        assert received['decision']['review_gate'] == 'fresh_review_required'
+        assert ('private-sentinel' not in repr(received))
+        assert bool(received['durable_record']) == writable
+        assert bool(received['operator_handoff']) != writable
+        supervised = fixture_supervisor(received, {1750: [1746], 1751: []})
+        assert supervised == {'runner_fallback': False, 'held': [1750]}
+runner = fixture_receiver({'marker': 'SUBAGENT_PERMISSION_DENIAL'}, writable=False, mode='manual')
+assert fixture_supervisor(runner, {}) == {'runner_fallback': True, 'held': []}
+
+# Plant a real routing violation in an isolated copy of the decision helper.
 import tempfile
 with tempfile.TemporaryDirectory() as tmp:
     planted = Path(tmp) / 'decision.py'
@@ -94,9 +132,14 @@ with tempfile.TemporaryDirectory() as tmp:
     assert needle in original
     planted.write_text(original.replace(needle, "'inline_fallback': True", 1))
     def assert_no_inline(script):
-        return not receive({'cause': 'tool_path'}, script)['inline_fallback']
-    assert not assert_no_inline(planted)
-    assert assert_no_inline(helper)
-    print('PLANT: inline_fallback=True rejected; original accepted')
+        assert not receive({'cause': 'tool_path'}, script)['inline_fallback']
+    try:
+        assert_no_inline(planted)
+    except AssertionError:
+        print('PLANT: guard failed for inline_fallback=True')
+    else:
+        raise AssertionError('planted routing violation was not detected')
+    assert_no_inline(helper)
+    print('REPAIR: guard passed for original helper')
 print('PASS: stage-role denial contract, boundaries and planted violation')
 PY

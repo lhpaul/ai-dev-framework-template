@@ -22,8 +22,6 @@ def decide(event):
     for key in allowed - {'cause'}:
         if key in event and not isinstance(event[key], bool):
             raise ValueError('invalid flag')
-    if cause == 'generic':
-        return {'result': 'existing_error'}
     stops = []
     if cause in ('tool_path', 'mixed'):
         stops.append('stage_role_tool_or_path_denied')
@@ -40,7 +38,8 @@ def decide(event):
              and (not event.get('uncertain', False) or event.get('reconciled', False))
              and not event.get('denied_again', False))
     return {
-        'result': 'resume_same_role' if ready else 'blocked',
+        'result': ('existing_error' if cause == 'generic' and not stops and not event.get('readonly_stop')
+                   else 'resume_same_role' if ready else 'blocked'),
         'stops': [] if ready else stops,
         'review_gate': 'fresh_review_required' if event.get('review') else 'unchanged',
         'report_destination': 'existing_record' if event.get('record_available') else 'operator_handoff',
