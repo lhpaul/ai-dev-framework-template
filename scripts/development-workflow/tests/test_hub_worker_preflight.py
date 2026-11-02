@@ -106,6 +106,23 @@ sys.exit(2)
         self.assertNotIn(secret, result.stdout + result.stderr)
         self.assertNotIn("user:secret", result.stdout + result.stderr)
 
+    def test_success_hides_sensitive_configured_name(self):
+        secret = "sensitive-token-sentinel"
+        self.names[1] = secret
+        self.write_config()
+        result, data = self.check()
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(data["result"], "pass")
+        self.assertNotIn(secret, result.stdout + result.stderr)
+
+    def test_empty_products_and_non_checkout(self):
+        config = self.hub / ".ai-dev-workflow.yaml"
+        config.write_text("schema_version: 2\nmode: workflow_hub\nworkflow_hub:\n  product_repos: []\n")
+        self.assertEqual(self.check()[1]["result"], "fail")
+        self.write_config()
+        self.git(self.products[1], "remote", "remove", "origin")
+        self.assertEqual(self.check()[1]["check"], "product_origin")
+
     def test_auth_and_repository_failure(self):
         env = self.env.copy()
         for failure in ("auth", "github.com/example/two"):
