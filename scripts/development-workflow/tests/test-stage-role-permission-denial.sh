@@ -101,6 +101,14 @@ for writable in (True, False):
     assert actual['held_dependents'] == [1750] and not actual['durable_recorded']
     assert actual['report_destination'] == ('existing_record' if writable else 'operator_handoff')
     assert actual['review_gate'] == 'fresh_review_required' and not actual['inline_fallback']
+# Hub-only helper remains reachable from a separate product checkout.
+import tempfile
+with tempfile.TemporaryDirectory() as product:
+    assert not (Path(product) / 'scripts/development-workflow/stage-role-denial-decision.py').exists()
+    product_run = subprocess.run([sys.executable, str(helper)], cwd=product,
+                                 input=json.dumps({'cause': 'tool_path', 'handoff': handoff}),
+                                 text=True, capture_output=True, check=True)
+    assert json.loads(product_run.stdout)['held_dependents'] == [1750]
 # A separate Work Item Runner denial is not an accepted stage cause.
 runner = subprocess.run([sys.executable, str(helper)], input='{"cause":"SUBAGENT_PERMISSION_DENIAL"}',
                         text=True, capture_output=True)
