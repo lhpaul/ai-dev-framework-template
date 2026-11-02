@@ -6,20 +6,22 @@ perform mutations, persist reports, or grant authority. The caller independently
 establishes and redacts facts and owns the report and all workflow gates.
 """
 import json
+import runpy
 import sys
+from pathlib import Path
 
 
 def decide(event):
     if not isinstance(event, dict):
         raise ValueError('invalid event')
     allowed = {'cause', 'review', 'readonly_stop', 'handoff_stop', 'record_available',
-               'uncertain', 'corrected', 'reconciled', 'context_changed', 'denied_again'}
+               'uncertain', 'corrected', 'reconciled', 'context_changed', 'denied_again', 'handoff'}
     if set(event) - allowed:
         raise ValueError('invalid field')
     cause = event.get('cause')
     if cause not in ('tool_path', 'credential', 'mixed', 'unknown', 'unreachable', 'generic'):
         raise ValueError('invalid cause')
-    for key in allowed - {'cause'}:
+    for key in allowed - {'cause', 'handoff'}:
         if key in event and not isinstance(event[key], bool):
             raise ValueError('invalid flag')
     stops = []
@@ -39,7 +41,7 @@ def decide(event):
              and not event.get('denied_again', False))
     if cause == 'generic' and not stops and not event.get('readonly_stop'):
         return {'result': 'existing_error'}
-    return {
+    result = {
         'result': ('existing_error' if cause == 'generic' and not stops and not event.get('readonly_stop')
                    else 'resume_same_role' if ready else 'blocked'),
         'stops': [] if ready else stops,
@@ -51,6 +53,29 @@ def decide(event):
         'inline_fallback': False,
         'needs_fixes_for_denial': False,
     }
+    if 'handoff' in event:
+        handoff = event['handoff']
+        keys = {'item', 'stage', 'role', 'action', 'state', 'pr', 'dependents'}
+        if not isinstance(handoff, dict) or set(handoff) != keys:
+            raise ValueError('invalid handoff')
+        if type(handoff['item']) is not int or handoff['item'] < 1:
+            raise ValueError('invalid item')
+        if handoff['pr'] is not None and (type(handoff['pr']) is not int or handoff['pr'] < 1):
+            raise ValueError('invalid pr')
+        for key in ('stage', 'role', 'action', 'state'):
+            if not isinstance(handoff[key], str) or not handoff[key].strip() or len(handoff[key]) > 300:
+                raise ValueError('invalid report field')
+        deps = handoff['dependents']
+        if not isinstance(deps, list) or any(type(n) is not int or n < 1 for n in deps):
+            raise ValueError('invalid dependents')
+        sanitizer = runpy.run_path(str(Path(__file__).with_name('workflow-config-resolver.py')))
+        report = {k: handoff[k] for k in ('item', 'stage', 'role', 'action', 'state', 'pr')}
+        report['unblock_action'] = 'Correct access, reconcile uncertain effects, and retry the same role.'
+        result['handoff'] = sanitizer['redact_diagnostic_json'](report)
+        result['held_dependents'] = sorted(set(deps)) if result['hold_dependents'] else []
+        # The helper plans a write but cannot assert that any remote record was written.
+        result['durable_recorded'] = False
+    return result
 
 
 def main():

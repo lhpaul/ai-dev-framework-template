@@ -86,75 +86,47 @@ assert generic['result'] == 'blocked' and generic['stops'] == ['dispatch_handoff
 invalid = subprocess.run([sys.executable, str(helper)], input='{"cause":"private-sentinel"}', text=True, capture_output=True)
 assert invalid.returncode == 2 and 'private-sentinel' not in invalid.stdout + invalid.stderr
 
-# Exercise a concrete fabricated role -> item -> portfolio handoff. The fixture
-# supplies fields and simulates a recording sink and dependency graph; it does
-# not claim to execute an AI agent or mutate a real issue or pull request.
-def fixture_receiver(report, *, writable, mode, protocol=item):
-    # A fabricated handoff is acceptable only while the actual normative
-    # receiver still requires the routing and reporting obligations.
-    assert not receiver_gaps(protocol), receiver_gaps(protocol)
-    if report['marker'] == 'SUBAGENT_PERMISSION_DENIAL':
-        return {'boundary': 'work-item-runner', 'fallback': True}
-    assert report['marker'] == 'STAGE_ROLE_TOOL_OR_PATH_DENIED'
-    decision = receive({'cause': 'tool_path', 'review': report['stage'] == 'review',
-                        'record_available': writable, 'uncertain': report['state'] == 'uncertain'})
-    facts = {k: report[k] for k in ('item', 'stage', 'role', 'action', 'state', 'pr')}
-    return {'boundary': 'stage', 'decision': decision, 'facts': facts, 'mode': mode,
-            'durable_record': facts if writable else None,
-            'operator_handoff': facts if not writable else None}
+# Feed a fabricated reviewer report and dependency handoff through the actual
+# decision helper; the caller still owns remote persistence and rechecking.
+handoff = {'item': 1746, 'stage': 'review', 'role': 'cli-reviewer',
+           'action': 'Bash token=private-sentinel', 'state': 'uncertain',
+           'pr': 2102, 'dependents': [1750, 1750]}
+for writable in (True, False):
+    actual = receive({'cause': 'tool_path', 'review': True, 'uncertain': True,
+                      'record_available': writable, 'handoff': handoff})
+    assert actual['handoff']['item'] == 1746 and actual['handoff']['pr'] == 2102
+    assert actual['handoff']['role'] == 'cli-reviewer'
+    assert actual['handoff']['unblock_action']
+    assert 'private-sentinel' not in repr(actual)
+    assert actual['held_dependents'] == [1750] and not actual['durable_recorded']
+    assert actual['report_destination'] == ('existing_record' if writable else 'operator_handoff')
+    assert actual['review_gate'] == 'fresh_review_required' and not actual['inline_fallback']
+# A separate Work Item Runner denial is not an accepted stage cause.
+runner = subprocess.run([sys.executable, str(helper)], input='{"cause":"SUBAGENT_PERMISSION_DENIAL"}',
+                        text=True, capture_output=True)
+assert runner.returncode == 2
 
-def fixture_supervisor(item_result, graph):
-    if item_result['boundary'] == 'work-item-runner':
-        return {'runner_fallback': item_result['fallback'], 'held': []}
-    assert not item_result['decision']['inline_fallback']
-    blocked = item_result['facts']['item'] if item_result['decision']['hold_dependents'] else None
-    return {'runner_fallback': False, 'held': sorted(k for k, deps in graph.items() if blocked in deps)}
-
-for mode in ('manual', 'supervised', 'autonomous'):
-    report = {'marker': 'STAGE_ROLE_TOOL_OR_PATH_DENIED', 'item': 1746, 'stage': 'review',
-              'role': 'cli-reviewer', 'action': 'Bash', 'state': 'uncertain', 'pr': 2102,
-              'secret': 'private-sentinel'}
-    for writable in (True, False):
-        received = fixture_receiver(report, writable=writable, mode=mode)
-        assert received['facts']['pr'] == 2102 and received['facts']['role'] == 'cli-reviewer'
-        assert received['decision']['review_gate'] == 'fresh_review_required'
-        assert ('private-sentinel' not in repr(received))
-        assert bool(received['durable_record']) == writable
-        assert bool(received['operator_handoff']) != writable
-        supervised = fixture_supervisor(received, {1750: [1746], 1751: []})
-        assert supervised == {'runner_fallback': False, 'held': [1750]}
-# A change to the actual receiver instruction must make the same concrete
-# handoff fail its contract validation; restoring the original must pass.
-violation = item.replace('inspects every returned role report before subsequent mutation',
-                         'routes stage denials to inline fallback', 1)
-try:
-    fixture_receiver(report, writable=True, mode='manual', protocol=violation)
-except AssertionError:
-    print('PLANT: receiver routing violation failed the concrete handoff')
-else:
-    raise AssertionError('receiver routing violation was not detected')
-fixture_receiver(report, writable=True, mode='manual', protocol=item)
-print('REPAIR: concrete handoff passed against original receiver')
-runner = fixture_receiver({'marker': 'SUBAGENT_PERMISSION_DENIAL'}, writable=False, mode='manual')
-assert fixture_supervisor(runner, {}) == {'runner_fallback': True, 'held': []}
-
-# Plant a real routing violation in an isolated copy of the decision helper.
+# The same real helper assertion fails on a planted dependent-release bug.
 import tempfile
 with tempfile.TemporaryDirectory() as tmp:
     planted = Path(tmp) / 'decision.py'
     original = helper.read_text()
-    needle = "'inline_fallback': False"
+    needle = "result['held_dependents'] = sorted(set(deps)) if result['hold_dependents'] else []"
     assert needle in original
-    planted.write_text(original.replace(needle, "'inline_fallback': True", 1))
-    def assert_no_inline(script):
-        assert not receive({'cause': 'tool_path'}, script)['inline_fallback']
+    planted.write_text(original.replace(needle, "result['held_dependents'] = []", 1))
+    # Copy the real sanitizer dependency so this is the same helper in isolation.
+    (Path(tmp) / 'workflow-config-resolver.py').write_bytes(
+        (helper.parent / 'workflow-config-resolver.py').read_bytes())
+    event = {'cause': 'tool_path', 'handoff': handoff}
+    def assert_held(script):
+        assert receive(event, script)['held_dependents'] == [1750]
     try:
-        assert_no_inline(planted)
+        assert_held(planted)
     except AssertionError:
-        print('PLANT: guard failed for inline_fallback=True')
+        print('PLANT: guard failed when a blocked dependent was released')
     else:
         raise AssertionError('planted routing violation was not detected')
-    assert_no_inline(helper)
-    print('REPAIR: guard passed for original helper')
+    assert_held(helper)
+    print('REPAIR: guard passed with the original helper')
 print('PASS: stage-role denial contract, boundaries and planted violation')
 PY
