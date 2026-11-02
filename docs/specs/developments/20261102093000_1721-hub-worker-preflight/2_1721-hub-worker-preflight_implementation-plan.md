@@ -29,7 +29,7 @@ Evidence collected at `0715f6a1e52db45d6ec160de915565e72f5552cc` on 2026-11-02 U
 | Artifact owner and base | Template repository, `develop`; #1721 only | User scope, merged spec, PR #2096 | 2026-11-02 UTC, `0715f6a1` | #1721; no matching same-surface open PR in the verification log | Verified |
 | Config and access contract | Hub product identities are portable shared config, paths are machine-local; GitHub read access only | `repository-modes.md`, `workflow-config-resolver.py`, merged spec | 2026-11-02 UTC, `0715f6a1` | #1721 and the two documented search queries above | Verified |
 
-Implementation must re-read these sources and same-surface evidence before editing and record `Still valid` or stop for conflict.
+Implementation must re-read these sources, confirm the merged dependency changes remain present in its base, and recheck same-surface evidence before editing. Record `Still valid` only when all remain valid; if a dependency is missing or reverted, or sources conflict, stop before edits and return the stale evidence to the orchestrator.
 
 ## Implementation
 
@@ -61,7 +61,7 @@ For the three named Cursor bounded entrypoints, a worker run proceeds to its exi
 
 ## Testing Strategy
 
-Use a new focused regression suite `scripts/development-workflow/tests/test-hub-worker-preflight.sh` with fabricated shared/local YAML, disposable Git repositories and a fake `gh` executable; no real credentials or product repositories. Cover success for multiple products, a linked worktree and explicit worker directory; wrong/nested/missing hub, absent or malformed local mapping, non-Git and wrong-identity product, empty product list, invalid or credential-bearing remote, missing `gh`, auth/repo denial, malformed output, timeout, and no false success after partial work. Include a later-product failure and verify its ordinal identifies the original shared-list position, so the operator can locate and correct it privately. Assert secrets and raw private values never reach stdout/stderr, no Git or remote mutation is invoked, and existing local/remote contents remain unchanged. Exercise JSON result fields and entrypoint instructions against absent, stale, mismatched, failed, and current result cases. Scenarios are indicative coverage classes, not a binding fixture enumeration.
+Use a new focused regression suite `scripts/development-workflow/tests/test-hub-worker-preflight.sh` with fabricated shared/local YAML, disposable Git repositories and a fake `gh` executable; no real credentials or product repositories. Cover success for multiple products, a linked worktree and explicit worker directory; wrong/nested/missing hub, absent or malformed local mapping, non-Git and wrong-identity product, empty product list, invalid or credential-bearing remote, missing `gh`, auth/repo denial, malformed output, timeout, and no false success after partial work. Include a later-product failure and verify its ordinal identifies the original shared-list position, so the operator can locate and correct it privately. Assert secrets and raw private values never reach stdout/stderr, no Git or remote mutation is invoked, and existing local/remote contents remain unchanged. Exercise JSON result fields and entrypoint instructions against absent, stale, mismatched, failed, and current result cases. For each named entrypoint, verify that read-only checkpoints remain exempt while the existing dispatch declaration and all unrelated workflow gates still apply independently. Scenarios are indicative coverage classes, not a binding fixture enumeration.
 
 Run focused tests, relevant existing hub resolver tests, shell/Python lint as applicable, documentation lint, template-sync coverage validation, and `git diff --check`. Add the new suite to the workflow test discovery/registry if needed, verified against the actual runner. Use the smoke runbook for operator-visible outcomes; never start a live worker or access real product configuration in tests. No seed data beyond disposable fabricated fixtures.
 
@@ -78,6 +78,7 @@ The selector discovers top-level `test-*.sh` suites in `scripts/development-work
 - Operator assertion can be false: explicitly state the trust boundary; do not describe output as tamper-proof or as automatic environment detection.
 - Config drift: repeat the preflight per bounded run; record result time and scope.
 - Regression to non-worker execution: test the three command surfaces and document unchanged paths for other targets.
+- Rollback: revert the implementation PR as a coordinated unit, including the command pointers, documentation, preflight, verifier and tests. Existing dispatch and workflow gates remain in force; do not revert unrelated changes or alter worker credentials.
 
 ## Rule 6 Scoped Obligations
 
