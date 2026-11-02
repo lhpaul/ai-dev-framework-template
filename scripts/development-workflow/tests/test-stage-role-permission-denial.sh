@@ -46,5 +46,26 @@ for path in [base / 'protocols/90-batch-orchestrate-work-protocol.md', base / 'p
     text = path.read_text()
     assert 'no recovery path of any kind' not in text, path
     assert 'no mechanism today recovers a denied stage role' not in text, path
+# Validate concrete synthetic handoff records against the written contract.
+# This checks report invariants; orchestration itself remains agent-driven.
+records = [
+    {'case': 'implementation', 'stops': ['stage_role_tool_or_path_denied'], 'state': 'blocked', 'owner': 'developer'},
+    {'case': 'spec', 'stops': ['stage_role_tool_or_path_denied'], 'state': 'blocked', 'owner': 'spec-writer'},
+    {'case': 'plan', 'stops': ['stage_role_tool_or_path_denied'], 'state': 'blocked', 'owner': 'plan-writer'},
+    {'case': 'review', 'stops': ['stage_role_tool_or_path_denied'], 'state': 'blocked', 'owner': 'reviewer', 'review': 'failed'},
+    {'case': 'mixed', 'stops': ['stage_role_tool_or_path_denied', 'missing_required_secret_or_permission'], 'state': 'blocked', 'owner': 'developer'},
+    {'case': 'unknown', 'stops': ['unclear_requirements'], 'state': 'blocked', 'owner': 'developer'},
+    {'case': 'unreachable', 'stops': ['dispatch_handoff_unavailable'], 'state': 'blocked', 'owner': 'developer'},
+]
+for mode in ('manual', 'supervised', 'autonomous'):
+    for record in records:
+        assert record['state'] == 'blocked' and record['owner'], (mode, record)
+        if 'stage_role_tool_or_path_denied' in record['stops']:
+            assert record.get('review', 'failed') != 'approved'
+            assert 'needs-fixes' not in record['stops']
+assert 'independently established causes are all reported' in item.lower()
+assert 'changed context starts a fresh bounded run' in item
+assert 'another denial stops again' in item
+assert 'generic tool failure with no evidence of refusal retains its normal error contract' in item
 print('PASS: stage-role denial contract, boundaries and planted violation')
 PY
