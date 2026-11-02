@@ -46,23 +46,72 @@ for path in [base / 'protocols/90-batch-orchestrate-work-protocol.md', base / 'p
     text = path.read_text()
     assert 'no recovery path of any kind' not in text, path
     assert 'no mechanism today recovers a denied stage role' not in text, path
-# Validate concrete synthetic handoff records against the written contract.
-# This checks report invariants; orchestration itself remains agent-driven.
-records = [
-    {'case': 'implementation', 'stops': ['stage_role_tool_or_path_denied'], 'state': 'blocked', 'owner': 'developer'},
-    {'case': 'spec', 'stops': ['stage_role_tool_or_path_denied'], 'state': 'blocked', 'owner': 'spec-writer'},
-    {'case': 'plan', 'stops': ['stage_role_tool_or_path_denied'], 'state': 'blocked', 'owner': 'plan-writer'},
-    {'case': 'review', 'stops': ['stage_role_tool_or_path_denied'], 'state': 'blocked', 'owner': 'reviewer', 'review': 'failed'},
-    {'case': 'mixed', 'stops': ['stage_role_tool_or_path_denied', 'missing_required_secret_or_permission'], 'state': 'blocked', 'owner': 'developer'},
-    {'case': 'unknown', 'stops': ['unclear_requirements'], 'state': 'blocked', 'owner': 'developer'},
-    {'case': 'unreachable', 'stops': ['dispatch_handoff_unavailable'], 'state': 'blocked', 'owner': 'developer'},
-]
+# A deliberately small, isolated handoff model exercises inputs and reports
+# against the written receiver contract. This is not the production agent.
+def receive(event, *, plant_inline=False):
+    if event['cause'] == 'generic':
+        return {'result': 'existing_error'}
+    if event['cause'] == 'unreachable':
+        return {'result': 'dispatch_handoff_unavailable'}
+    stops = []
+    if event['cause'] in ('tool', 'mixed'):
+        stops.append('stage_role_tool_or_path_denied')
+    if event['cause'] in ('credential', 'mixed'):
+        stops.append('missing_required_secret_or_permission')
+    if event['cause'] == 'unknown':
+        stops.append('unclear_requirements')
+    if event.get('readonly'):
+        stops.append('dispatch_handoff_unavailable')
+    facts = {key: event[key] for key in ('item', 'stage', 'role', 'action', 'state')}
+    return {
+        'result': 'blocked', 'stops': stops, 'facts': facts,
+        'operator_action': 'correct access and retry the same role',
+        'recorded': bool(event.get('record_writable')),
+        'handoff': not event.get('record_writable'),
+        'review': 'failed' if event['stage'] == 'review' else None,
+        'pr': event.get('pr'), 'held': list(event.get('dependents', [])),
+        'inline': plant_inline,
+        'needs_fixes': False,
+    }
+
+def recovery(event, *, corrected, reconciled, context_changed, denied_again=False):
+    if not corrected or (event['state'] == 'uncertain' and not reconciled) or denied_again:
+        return {'result': 'blocked', 'role': event['role']}
+    return {'result': 'resume', 'role': event['role'],
+            'fresh_run': context_changed, 'declare_profile': context_changed}
+
 for mode in ('manual', 'supervised', 'autonomous'):
-    for record in records:
-        assert record['state'] == 'blocked' and record['owner'], (mode, record)
-        if 'stage_role_tool_or_path_denied' in record['stops']:
-            assert record.get('review', 'failed') != 'approved'
-            assert 'needs-fixes' not in record['stops']
+    for stage, role in [('implementation', 'developer'), ('spec', 'spec-writer'),
+                        ('plan', 'plan-writer'), ('review', 'reviewer')]:
+        request = {'item': 1746, 'stage': stage, 'role': role, 'cause': 'tool',
+                   'action': 'Edit:example.md', 'state': 'uncertain',
+                   'record_writable': True, 'pr': 100, 'dependents': [101],
+                   'secret': 'private-sentinel', 'mode': mode}
+        actual = receive(request)
+        assert actual['result'] == 'blocked' and actual['stops'] == ['stage_role_tool_or_path_denied']
+        assert actual['facts'] == {k: request[k] for k in ('item', 'stage', 'role', 'action', 'state')}
+        assert actual['recorded'] and not actual['handoff'] and actual['pr'] == 100
+        assert actual['held'] == [101] and not actual['inline'] and not actual['needs_fixes']
+        assert 'private-sentinel' not in repr(actual)
+        if stage == 'review':
+            assert actual['review'] == 'failed'
+        assert recovery(request, corrected=True, reconciled=False, context_changed=False)['result'] == 'blocked'
+        assert recovery(request, corrected=True, reconciled=True, context_changed=False) == {
+            'result': 'resume', 'role': role, 'fresh_run': False, 'declare_profile': False}
+        assert recovery(request, corrected=True, reconciled=True, context_changed=True)['declare_profile']
+        assert recovery(request, corrected=True, reconciled=True, context_changed=True, denied_again=True)['result'] == 'blocked'
+        unrecorded = receive(dict(request, record_writable=False))
+        assert not unrecorded['recorded'] and unrecorded['handoff'] and unrecorded['facts'] == actual['facts']
+        # Planted inline routing must violate the same no-bypass assertion.
+        assert receive(request, plant_inline=True)['inline'] != actual['inline']
+
+request = {'item': 1746, 'stage': 'review', 'role': 'cli-reviewer', 'action': 'Bash', 'state': 'known'}
+assert receive(dict(request, cause='credential'))['stops'] == ['missing_required_secret_or_permission']
+assert receive(dict(request, cause='mixed', readonly=True))['stops'] == [
+    'stage_role_tool_or_path_denied', 'missing_required_secret_or_permission', 'dispatch_handoff_unavailable']
+assert receive(dict(request, cause='unknown'))['stops'] == ['unclear_requirements']
+assert receive(dict(request, cause='unreachable'))['result'] == 'dispatch_handoff_unavailable'
+assert receive(dict(request, cause='generic'))['result'] == 'existing_error'
 assert 'independently established causes are all reported' in item.lower()
 assert 'changed context starts a fresh bounded run' in item
 assert 'another denial stops again' in item
