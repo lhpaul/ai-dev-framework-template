@@ -11,7 +11,10 @@
 # they do not simulate actual harness permissions or prove an agent obeys them.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
-python3 - "$ROOT" <<'PY'
+# shellcheck source=scripts/development-workflow/workflow-lib.sh
+source "$ROOT/scripts/development-workflow/workflow-lib.sh"
+IS_TEMPLATE="$(workflow_template_is_template "$ROOT/.ai-dev-workflow.yaml")"
+python3 - "$ROOT" "$IS_TEMPLATE" <<'PY'
 from pathlib import Path
 import sys
 import json
@@ -43,8 +46,15 @@ assert receiver_gaps(item.replace('inspects every returned role report before su
 assert 'never run the Work Item Runner inline fallback for that stage denial' in portfolio
 assert 'hold all selected dependents' in portfolio
 assert 'hold selected dependents' in epic and 'incomplete PR' in epic
-for path in [root / '.ai-dev-workflow.yaml', base / 'README.md', base / 'guardrails.md', base / 'guardrails-enforcement.md']:
+for path in [base / 'README.md', base / 'guardrails.md', base / 'guardrails-enforcement.md']:
     assert 'stage_role_tool_or_path_denied' in path.read_text(), path
+# The configuration is project-owned. Consumers without a declared list are
+# valid; the baseline list assertion belongs only to the template itself.
+def template_config_ok(text, is_template):
+    return not is_template or 'stage_role_tool_or_path_denied' in text
+assert template_config_ok((root / '.ai-dev-workflow.yaml').read_text(), sys.argv[2] == 'true')
+assert template_config_ok('template:\n  is_template: false\n', False)
+assert not template_config_ok('template:\n  is_template: true\n', True)
 for path in [base / 'protocols/90-batch-orchestrate-work-protocol.md', base / 'protocols/91-orchestrate-work-protocol.md', base / 'protocols/95-run-epic-protocol.md', base / 'guardrails-enforcement.md', base / 'integrations/cursor-dispatch-profiles.md']:
     text = path.read_text()
     assert 'no recovery path of any kind' not in text, path
