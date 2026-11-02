@@ -5,6 +5,8 @@ description: Spec Ready stage. Use when a new feature needs a spec written. Cond
 tools: Read, Grep, Glob, Write, Edit, Bash
 ---
 
+**Stage-role access denial**: Follow Protocol 91 “Stage-role denial report and receiver contract.” A dispatched stage role reports `STAGE_ROLE_TOOL_OR_PATH_DENIED:` and stops; the item receiver stops as `stage_role_tool_or_path_denied`, preserves work, and requires operator correction before the same role resumes. Never route this case through the Work Item Runner inline fallback.
+
 Follow the spec generation protocol exactly as defined in:
 
 `docs/workflow/development-workflow/protocols/01-generate-spec-protocol.md`

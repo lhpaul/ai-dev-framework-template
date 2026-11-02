@@ -60,7 +60,7 @@ Named stop conditions (exact strings): `dispatch_profile_declaration_missing`, `
 - `dispatch_handoff_unavailable` -- affected work item: the branch, pull request, or development-folder path the mutating action would have applied to. Human unblocking action: move to an environment where initial handoff is confirmed available and re-run, or explicitly accept the read-only result; for the parent-orchestrated stage-handoff-unavailable cause, first confirm the specific stage role the action needed is reachable in the target environment.
 - `missing_required_secret_or_permission` (reused) -- when a reachable stage role reports a specific delegated action refused for a missing credential, GitHub permission, or access token: grant the identified credential or permission and re-run the same delegated action, or, for a structural restriction, reassign to the same stage role in a different context or explicitly accept the action does not proceed; the absorbing context never performs the action inline. This path never extends to a harness tool or local file-path permission denial.
 
-No named stop for a harness or local-path denial: a reachable stage role's harness tool or local file-path permission denial on a delegated action is not a named stop condition; it is only observably similar to the `SUBAGENT_PERMISSION_DENIAL` contract (Work Item Runner to Portfolio Orchestrator only), and is Out of Scope, tracked as #1746.
+A reachable stage role reporting a harness tool or local-path denial stops the item as `stage_role_tool_or_path_denied` under Protocol 91's stage-role contract. `SUBAGENT_PERMISSION_DENIAL` applies only at the separate Work Item Runner-to-Portfolio boundary; do not use its inline fallback for a stage-role denial.
 
 Invalid-declaration boundaries: an invalid profile value, an invalid accountable role (none named, including empty), an invalid posture for the checkpoint, and a coarse-fact mismatch in either direction (more permissive or less permissive than the assigned outcome) are each a missing declaration. The coarse check governs the initial declaration and coarse-fact re-declarations only; it does not govern the mid-run recovery transitions (stage-handoff loss, native-handoff mid-run failure), which remain valid re-declarations.
 
@@ -342,6 +342,8 @@ CI, merge, cleanup, and post-merge branch validation use the selected product
 repository and the resolved execution base.
 
 ---
+
+A `stage_role_tool_or_path_denied` result from an item runner is a blocked child, not an unavailable runner or an invitation to execute its stage inline. Propagate its report, known PR identity and operator correction to the Portfolio Orchestrator. Steps 5–6 and Step 11 rediscovery hold selected dependents until their prerequisite is satisfied, record the hold and resume condition even for an incomplete PR, and retain independently eligible work under the existing gates.
 
 ## Step 5: Group Items
 

@@ -431,7 +431,7 @@ Control session**, not a simulated one, on the **implementation PR head**.
 
 **Expected result**: No artifact mutation; stop reason matches a valid inline-fallback declaration, not a missing declaration.
 
-### Step 10: Parent-orchestrated inline prohibition + #1746 honesty
+### Step 10: Parent-orchestrated inline prohibition + stage-role denial
 
 **Maps to**: AC19
 
@@ -439,13 +439,12 @@ Control session**, not a simulated one, on the **implementation PR head**.
    protocol/role surface that mentions inline fallback or stage permission denial.
 2. Confirm no document relaxes the parent-orchestrated prohibition on inline
    product work by the absorbing orchestration context.
-3. Confirm #1746 remains an explicit Out-of-Scope / unresolved-gap callout (not
-   solved by this feature).
-4. Confirm `SUBAGENT_PERMISSION_DENIAL` is described as only observably similar
-   to stage-role harness denial (Work Item Runner boundary), not as a recovery
-   path for stage roles.
+3. Confirm a reached stage role's tool/path denial stops the item as
+   `stage_role_tool_or_path_denied`, with same-role recovery after operator correction.
+4. Confirm `SUBAGENT_PERMISSION_DENIAL` and its inline fallback remain scoped
+   to the Work Item Runner boundary, not to stage roles.
 
-**Expected result**: AC19 content present; removing any of the four checks would fail this step.
+**Expected result**: The profile's inline prohibition and both denial boundaries agree with Protocol 91.
 
 ### Step 11: Accountability postures
 

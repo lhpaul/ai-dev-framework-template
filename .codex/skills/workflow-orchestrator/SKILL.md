@@ -112,3 +112,5 @@ the named reason, GraphQL spend/remaining/reset and warnings, skipped work and
 all four distinct portfolio categories. Propose only fully read eligible records;
 partial coverage excludes new Backlog starts. The reserve and ordered decisions
 are canonical in Protocol 90, including its adjacent manual archival guidance.
+
+**Stage-role access denial**: Apply Protocol 91’s stage-role denial report and receiver contract. A reached role’s tool/path denial stops the item; preserve the same owning role and do not use the Work Item Runner inline fallback.

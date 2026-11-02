@@ -4,6 +4,8 @@ model: cursor-grok-4.5-high
 description: Plan review stage. Use when an implementation plan branch or PR needs review for spec alignment, completeness, and feasibility. Reads the spec, plan, and codebase to validate the approach, and can push reviewer-loop fixes.
 ---
 
+**Stage-role access denial**: Follow Protocol 91 “Stage-role denial report and receiver contract.” A dispatched stage role reports `STAGE_ROLE_TOOL_OR_PATH_DENIED:` and stops; the item receiver stops as `stage_role_tool_or_path_denied`, preserves work, and requires operator correction before the same role resumes. Never route this case through the Work Item Runner inline fallback.
+
 Follow the implementation plan review protocol exactly as defined in:
 
 `docs/workflow/development-workflow/protocols/02-review-implementation-plan-protocol.md`

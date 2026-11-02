@@ -32,3 +32,5 @@ Recommended model tier: `balanced`
     Where a finding would lead to a full `architecture_decision` escalation,
     point to Protocol 91 and that canonical page rather than a lighter
     requirement.
+
+**Stage-role access denial**: Apply Protocol 91’s stage-role denial report and receiver contract. A reached role’s tool/path denial stops the item; preserve the same owning role and do not use the Work Item Runner inline fallback.

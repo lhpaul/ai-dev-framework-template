@@ -262,6 +262,7 @@ def check_required_additions(additions: list[dict[str, str]], consumer_root: Pat
     missing = 0
     errors = 0
     resolver = None
+    structured_paths = {entry.get("path") for entry in additions if entry.get("yaml_list_path")}
     for addition in additions:
         path = addition.get("path", "")
         must_contain = addition.get("must_contain", "")
@@ -321,7 +322,14 @@ def check_required_additions(additions: list[dict[str, str]], consumer_root: Pat
             if not target.is_file():
                 lines.append(f"REQUIRED_ADDITION_NOT_APPLICABLE {label} reason=file_absent")
                 continue
-            text = target.read_text(encoding="utf-8", errors="replace")
+            try:
+                text = target.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                # The structured check reports the same unreadable file as an
+                # input error; do not let a preceding legacy entry mask it.
+                if path in structured_paths:
+                    continue
+                raise
             try:
                 applies = not when_pattern or re.search(when_pattern, text, re.MULTILINE) is not None
             except re.error as exc:

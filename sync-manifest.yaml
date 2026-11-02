@@ -508,6 +508,15 @@ required_additions:
       baseline stop conditions are additive and never removable, so a project that
       declares its own stop_conditions list must add "- push_verification_failed" to it.
 
+  - path: .ai-dev-workflow.yaml
+    yaml_list_path: guardrails.stop_conditions
+    must_contain: stage_role_tool_or_path_denied
+    introduced_in: "unreleased"
+    read_by: docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md
+    description: >
+      Add stage_role_tool_or_path_denied to a declared guardrails.stop_conditions
+      list. Baseline stops remain in force even when a local list omits them.
+
 # sync_coverage_exemptions: tracked paths a synced test names without reading them,
 # so check-sync-manifest-coverage.py does not report them as manifest gaps. Every
 # entry needs a reason. Do not use this list to silence a real dependency: ship the

@@ -5,6 +5,8 @@ description: Development review stage. Use when an implementation PR needs revie
 tools: Read, Grep, Glob, Write, Edit, Bash
 ---
 
+**Stage-role access denial**: Follow Protocol 91 “Stage-role denial report and receiver contract.” A dispatched stage role reports `STAGE_ROLE_TOOL_OR_PATH_DENIED:` and stops; the item receiver stops as `stage_role_tool_or_path_denied`, preserves work, and requires operator correction before the same role resumes. Never route this case through the Work Item Runner inline fallback.
+
 Follow the code review protocol exactly as defined in:
 
 `docs/workflow/development-workflow/protocols/03-review-implementation-protocol.md`

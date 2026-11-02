@@ -74,3 +74,5 @@ Recommended model tier: `premium`
     plans and plan PRs hub-owned on the hub artifact base branch, even when the
     product implementation base is different; `product_repo` should report the
     configured hub owner or stop if ownership is ambiguous.
+
+**Stage-role access denial**: Apply Protocol 91’s stage-role denial report and receiver contract. A reached role’s tool/path denial stops the item; preserve the same owning role and do not use the Work Item Runner inline fallback.

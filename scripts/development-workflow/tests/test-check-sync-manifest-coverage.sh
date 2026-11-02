@@ -377,6 +377,23 @@ for case_name in comment lookalike empty block flow absent_list invalid duplicat
     run_test "structured_error_redacts_consumer" "no" "$(has_line "$out" 'private-sentinel')"
   fi
 done
+# A parse gap must not hide independent uncovered and missing findings.
+COMBINED_MANIFEST="$TMP_ROOT/combined-list-manifest.yaml"
+python3 - "$LIST_MANIFEST" "$COMBINED_MANIFEST" <<'PYCODE'
+from pathlib import Path
+import sys
+s = Path(sys.argv[1]).read_text()
+needle = '    - path: .github/workflows/via-var.yml\n      mode_scope: shared\n'
+assert needle in s
+Path(sys.argv[2]).write_text(s.replace(needle, '', 1))
+PYCODE
+printf 'guardrails:\n  stop_conditions: [invalid\n' >"$CONSUMER/.ai-dev-workflow.yaml"
+out="$TMP_ROOT/list-combined.out"
+status="$(run_checker "$out" --repo-root "$FIX" --manifest "$COMBINED_MANIFEST" --consumer-root "$CONSUMER")"
+run_test "structured_combined_exit_2" "2" "$status"
+run_test "structured_combined_uncovered" "yes" "$(has_line "$out" 'UNCOVERED path=.github/workflows/via-var.yml')"
+run_test "structured_combined_missing" "yes" "$(has_line "$out" 'REQUIRED_ADDITION_MISSING path=.ai-dev-workflow.yaml must_contain=push_verification_failed')"
+run_test "structured_combined_error" "yes" "$(has_line "$out" 'REQUIRED_ADDITION_ERROR')"
 rm "$CONSUMER/.ai-dev-workflow.yaml"
 out="$TMP_ROOT/list-absent.out"
 status="$(run_checker "$out" --repo-root "$FIX" --manifest "$LIST_MANIFEST" --consumer-root "$CONSUMER")"
