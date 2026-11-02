@@ -90,6 +90,9 @@ sys.exit(2)
 
     def test_wrong_directory_and_missing_product(self):
         self.assertEqual(self.check(worker=self.base)[1]["result"], "fail")
+        subdir = self.hub / "nested"
+        subdir.mkdir()
+        self.assertEqual(self.check(worker=subdir)[1]["check"], "worker_directory")
         self.git(self.products[1], "remote", "set-url", "origin", "https://github.com/example/wrong.git")
         result, data = self.check()
         self.assertEqual(result.returncode, 1)
@@ -119,6 +122,12 @@ sys.exit(2)
         config = self.hub / ".ai-dev-workflow.yaml"
         config.write_text("schema_version: 2\nmode: workflow_hub\nworkflow_hub:\n  product_repos: []\n")
         self.assertEqual(self.check()[1]["result"], "fail")
+        self.write_config()
+        nongit = self.base / "not-a-checkout"
+        nongit.mkdir()
+        local = self.hub / ".ai-dev-workflow.local.yaml"
+        local.write_text(local.read_text().replace("local_path: ../two", "local_path: ../not-a-checkout"))
+        self.assertEqual(self.check()[1]["check"], "product_checkout")
         self.write_config()
         self.git(self.products[1], "remote", "remove", "origin")
         self.assertEqual(self.check()[1]["check"], "product_origin")
@@ -183,6 +192,10 @@ sys.exit(2)
             with self.assertRaises(module.Failure) as raised:
                 module.command(["ignored"], "github_access", "Retry.")
         self.assertEqual(raised.exception.check, "github_access")
+        with mock.patch.object(module.subprocess, "run", side_effect=FileNotFoundError()):
+            with self.assertRaises(module.Failure) as missing:
+                module.command(["gh"], "github_auth", "Retry.")
+        self.assertEqual(missing.exception.check, "github_auth")
         self.assertNotIn("secret", str(raised.exception))
 
     def test_entrypoint_gate_pointers(self):
@@ -192,6 +205,14 @@ sys.exit(2)
             self.assertIn("before the first workflow write", text)
             self.assertIn("current-run preflight", text)
             self.assertIn("cursor-my-machines.md", text)
+
+    def test_linked_worktree_is_valid_hub(self):
+        other = self.base / "linked-hub"
+        self.git(self.hub, "worktree", "add", "--detach", str(other))
+        other.joinpath(".ai-dev-workflow.yaml").write_text(self.hub.joinpath(".ai-dev-workflow.yaml").read_text())
+        other.joinpath(".ai-dev-workflow.local.yaml").write_text(self.hub.joinpath(".ai-dev-workflow.local.yaml").read_text())
+        result, data = self.invoke("check", "--hub-dir", other, "--worker-dir", other, "--run-id", self.rid)
+        self.assertEqual((result.returncode, data["result"]), (0, "pass"))
 
     def test_same_origin_different_hub(self):
         _, data = self.check()
