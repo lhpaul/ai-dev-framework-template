@@ -24,7 +24,7 @@ A workflow item may successfully delegate work to a stage role and still have th
 
 1. The stage role stops the denied action, reports the denial and its known target to the item orchestrator, and preserves the work already present.
 2. The item orchestrator stops the affected item before dependent mutations or a completion claim. It reports the named stop, affected item and stage, denied tool or path when known, and a concrete action the operator can take.
-3. The operator resolves the denied access or explicitly selects another authorized context in which the same stage role can perform its assigned action. Before resuming, the runner checks durable state and reconciles any action whose outcome was uncertain. A changed context starts a fresh bounded run and declares the applicable dispatch profile again; a same-context resume retains the current profile and rechecks all applicable gates.
+3. The operator resolves the denied access or explicitly selects another authorized context in which the same stage role can perform its assigned action. Before resuming, the runner checks durable state and reconciles any action whose outcome was uncertain. A changed context starts a fresh bounded run and declares the applicable dispatch profile again; a same-context resume retains the current profile and rechecks all applicable gates. This context-change rule applies to the new tool/path-denial recovery; the existing credential-denial route retains its own profile rules.
 4. After the operator confirms an access or environment correction, the same owning stage role resumes the appropriate work under the existing isolation, review, and workflow gates. A single resumed attempt may verify that access now works; a renewed denial stops again and requires a new correction rather than an automatic retry loop.
 
 **Postconditions**: The work resumes only after the denial is resolved and the assigned role can perform the action, or remains stopped with an actionable report. Neither an attempted action nor an incomplete role report is treated as a completed stage.
@@ -59,12 +59,12 @@ A workflow item may successfully delegate work to a stage role and still have th
 | Both causes independently established | Both relevant stops | Resolve both before the affected action resumes |
 | A separately established read-only or handoff stop also applies | Report both applicable stops; no mutation | Resolve all blocking conditions and re-evaluate the active profile |
 | Role cannot be reached | Existing handoff-unavailable behavior for the applicable profile | Follow the existing dispatch-profile stop and recovery rules |
-| Denial or outcome is ambiguous | Stop without a false diagnosis or completion | Inspect the reported action and durable state; obtain the missing facts before retry |
+| Denial or outcome is ambiguous | Stop as `unclear_requirements`, without a false diagnosis or completion | Name the item and stage, inspect durable state, and obtain the missing facts before retry |
 | Work Item Runner itself is denied at the portfolio boundary | Existing Protocol 90 boundary-specific handling | Follow that contract and its isolation requirements, without treating it as stage-role recovery |
 | Access fixed, role available, uncertain state reconciled | Resume same stage role | Apply all existing review, CI, checkpoint, and mutation gates |
 | Access remains denied or operator declines recovery | Item stays stopped | Report blocker; continue unrelated eligible work only where existing rules permit |
 
-The three bounded Cursor commands and the portfolio, item, epic, and stage-role guidance must point to the same outcome. The existing no-named-stop and no-recovery statements for #1746 in Protocols 90, 91, and 95, guardrail enforcement, and Cursor dispatch-profile guidance are superseded for this stage-role case; the #1462 specification remains a historical record of its scope. Examples must not imply that a stopped stage role was unreachable or that denied product work was completed inline.
+The `/run-item`, `/run-items`, and `/run-epic` command guidance and the portfolio, item, epic, and stage-role guidance must point to the same outcome. The read-only `/run-work` scan does not dispatch stage work or use this recovery path; its existing profile and read-only rules remain in force. The existing no-named-stop and no-recovery statements for #1746 in Protocols 90, 91, and 95, guardrail enforcement, and Cursor dispatch-profile guidance are superseded for this stage-role case; the #1462 specification remains a historical record of its scope. Examples must not imply that a stopped stage role was unreachable or that denied product work was completed inline.
 
 ## Operational Visibility
 
