@@ -112,6 +112,9 @@ with tempfile.TemporaryDirectory() as tmp:
         actual = receive(dict(event, record_available=writable))
         assert actual['handoff']['item'] == 1746 and actual['handoff']['pr'] == 2102
         assert actual['handoff']['role'] == 'cli-reviewer' and actual['handoff']['unblock_action']
+        assert actual['handoff']['stage'] == handoff['stage']
+        assert actual['handoff']['state'] == handoff['state']
+        assert actual['handoff']['action'] == 'Bash token=[REDACTED]'
         assert actual['handoff']['stops'] == ['stage_role_tool_or_path_denied'] and actual['handoff']['remedies']
         assert 'private-sentinel' not in repr(actual)
         assert actual['held_dependents'] == ['1750', '1752'] and not actual['durable_recorded']
@@ -122,6 +125,9 @@ with tempfile.TemporaryDirectory() as tmp:
             record.write_text(json.dumps(actual['handoff']))
             assert json.loads(record.read_text()) == actual['handoff']
             assert json.loads(record.read_text())['pr'] == 2102
+            assert json.loads(record.read_text())['stage'] == handoff['stage']
+            assert json.loads(record.read_text())['state'] == handoff['state']
+            assert json.loads(record.read_text())['action'] == 'Bash token=[REDACTED]'
             assert json.loads(record.read_text())['stops'] == ['stage_role_tool_or_path_denied']
             record.unlink()
         else:
@@ -149,6 +155,40 @@ mixed_recovery = dict(event, cause='mixed', corrected=True, reconciled=True)
 assert receive(mixed_recovery)['result'] == 'blocked'
 assert receive(dict(mixed_recovery, corrected=False, credential_corrected=True))['result'] == 'blocked'
 assert receive(dict(mixed_recovery, credential_corrected=True))['result'] == 'resume_same_role'
+
+# Portfolio receiver fixture is explicitly tied to Protocol 90's ordering and
+# no-fallback rule; the reports are fabricated and no agent is executed.
+def portfolio_route(text, report, decision=None):
+    start = text.index('## Step 4.1: Subagent Permission-Denial Detection and Inline Fallback')
+    end = text.index('### No-redispatch rule', start)
+    rules = text[start:end]
+    stage_first = rules.find('First classify `STAGE_ROLE_TOOL_OR_PATH_DENIED:`')
+    runner_detection = rules.find('Check whether the subagent output contains the substring `SUBAGENT_PERMISSION_DENIAL:`')
+    blocks_inline = 'never run the Work Item Runner inline fallback for that stage denial' in rules
+    if ('STAGE_ROLE_TOOL_OR_PATH_DENIED:' in report or 'stage_role_tool_or_path_denied' in report):
+        return {'fallback': not (stage_first >= 0 and stage_first < runner_detection and blocks_inline),
+                'held': decision['held_dependents']}
+    if 'SUBAGENT_PERMISSION_DENIAL:' in report and runner_detection >= 0:
+        return {'fallback': True, 'held': []}
+    return {'fallback': False, 'held': []}
+
+stage_result = receive(dict(event, record_available=False))
+stage_report = 'STAGE_ROLE_TOOL_OR_PATH_DENIED: stage_role_tool_or_path_denied; SUBAGENT_PERMISSION_DENIAL: quoted context'
+runner_report = 'SUBAGENT_PERMISSION_DENIAL: Bash tool denied on target'
+def assert_portfolio_routes(text):
+    assert portfolio_route(text, stage_report, stage_result) == {'fallback': False, 'held': ['1750', '1752']}
+    assert portfolio_route(text, runner_report) == {'fallback': True, 'held': []}
+assert_portfolio_routes(portfolio)
+plant = portfolio.replace('never run the Work Item Runner inline fallback for that stage denial',
+                          'always run the Work Item Runner inline fallback for that stage denial', 1)
+try:
+    assert_portfolio_routes(plant)
+except AssertionError:
+    print('PLANT: portfolio stage-denial fallback was detected')
+else:
+    raise AssertionError('portfolio boundary violation was not detected')
+assert_portfolio_routes(portfolio)
+print('REPAIR: portfolio stage and runner routes verified')
 
 # Hub-only helper remains reachable from a separate product checkout.
 with tempfile.TemporaryDirectory() as product:
