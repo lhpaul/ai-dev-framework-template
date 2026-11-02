@@ -2263,7 +2263,9 @@ _2095_final() (
   local mode="$1" hash="$2" platform="${3:-local-ai-reviewer}"
   aggregate_result=clean
   aggregate_reason=""
+  # shellcheck disable=SC2034 # Consumed by the sourced production function.
   compare_mode=0
+  # shellcheck disable=SC2034 # Consumed by the sourced production function.
   pr_number=2095
   loop_head_sha=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
   # shellcheck disable=SC2034 # Deliberately no thread-posting reviewer.
@@ -2333,8 +2335,11 @@ REVIEWER
   repo_slug() { printf 'synthetic/repo\n'; }
   require_gh() { :; }
   # Keep all configuration resolution synthetic; no private source is read.
+  # shellcheck disable=SC2034 # Consumed by the sourced production function.
   repo_root="$fixture"
+  # shellcheck disable=SC2034 # Consumed by the sourced production function.
   config_file=""
+  # shellcheck disable=SC2034 # Consumed by the sourced production function.
   AI_DEV_WORKFLOW_CONFIG_FILE=""
   if [ "$mode" = exhausted ]; then
     date() {
