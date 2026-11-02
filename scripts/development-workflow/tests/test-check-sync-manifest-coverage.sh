@@ -466,9 +466,22 @@ run_test "structured_combined_error" "yes" "$(has_line "$out" 'REQUIRED_ADDITION
 # The sync-template caller must carry the actual checker's exit-2 gap and
 # actionable findings into its handoff; this models the documented agent path.
 CALLER_SUMMARY="$TMP_ROOT/sync-caller-summary.out"
-python3 - "$out" "$status" "$CALLER_SUMMARY" <<'PYCODE'
+python3 - "$out" "$status" "$CALLER_SUMMARY" "$REPO_ROOT" <<'PYCODE'
 from pathlib import Path
 import sys
+root = Path(sys.argv[4])
+required = 'report the gap and retain any `UNCOVERED` or `REQUIRED_ADDITION_MISSING` findings already printed'
+def verify_caller(text):
+    assert required in text
+for path in ('.claude/commands/sync-template.md', '.claude/skills/sync-template.md', '.cursor/commands/sync-template.md'):
+    instructions = (root / path).read_text()
+    verify_caller(instructions)
+    try:
+        verify_caller(instructions.replace(required, 'report only the diagnostic gap', 1))
+    except AssertionError:
+        pass
+    else:
+        raise AssertionError(f'planted caller regression not detected: {path}')
 lines = Path(sys.argv[1]).read_text().splitlines()
 summary = []
 if sys.argv[2] == '2':
