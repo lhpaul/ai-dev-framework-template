@@ -112,7 +112,7 @@ sys.exit(2)
         self.assertNotIn("user:secret", result.stdout + result.stderr)
 
     def test_success_hides_sensitive_configured_name(self):
-        secret = "sensitive-token-sentinel"
+        secret = "sensitive token sentinel"
         self.names[1] = secret
         self.write_config()
         result, data = self.check()
@@ -187,6 +187,19 @@ sys.exit(2)
                                    "--result-file", file, "--run-start", self.start,
                                    "--hub-selected-at", self.selected)
         self.assertEqual((result.returncode, data["result"]), (1, "fail"))
+
+    def test_malformed_structured_input_and_control_name(self):
+        spec = importlib.util.spec_from_file_location("worker_preflight_decode", SCRIPT)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        for raw in ("", "{", "[]", "null", '{"key":1,"key":2}'):
+            with self.assertRaises(module.Failure):
+                module.decode(raw, dict, "result", "Retry.")
+        self.names[1] = "control\x01sentinel"
+        self.write_config()
+        result, data = self.check()
+        self.assertNotIn("control\x01sentinel", result.stdout + result.stderr)
+        self.assertIn(data["result"], ("pass", "fail"))
 
     def test_timeout_is_safe(self):
         spec = importlib.util.spec_from_file_location("worker_preflight", SCRIPT)
