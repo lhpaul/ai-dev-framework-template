@@ -396,6 +396,22 @@ run_test "structured_combined_exit_2" "2" "$status"
 run_test "structured_combined_uncovered" "yes" "$(has_line "$out" 'UNCOVERED path=.github/workflows/via-var.yml')"
 run_test "structured_combined_missing" "yes" "$(has_line "$out" 'REQUIRED_ADDITION_MISSING path=.ai-dev-workflow.yaml must_contain=push_verification_failed')"
 run_test "structured_combined_error" "yes" "$(has_line "$out" 'REQUIRED_ADDITION_ERROR')"
+# The sync-template caller must carry the actual checker's exit-2 gap and
+# actionable findings into its handoff; this models the documented agent path.
+CALLER_SUMMARY="$TMP_ROOT/sync-caller-summary.out"
+python3 - "$out" "$status" "$CALLER_SUMMARY" <<'PYCODE'
+from pathlib import Path
+import sys
+lines = Path(sys.argv[1]).read_text().splitlines()
+summary = []
+if sys.argv[2] == '2':
+    summary.append('Synced-test coverage: diagnostic gap')
+summary.extend(line for line in lines if line.startswith(('UNCOVERED ', 'REQUIRED_ADDITION_MISSING ')))
+Path(sys.argv[3]).write_text('\n'.join(summary) + '\n')
+PYCODE
+run_test "structured_caller_reports_gap" "yes" "$(has_line "$CALLER_SUMMARY" 'Synced-test coverage: diagnostic gap')"
+run_test "structured_caller_retains_uncovered" "yes" "$(has_line "$CALLER_SUMMARY" 'UNCOVERED path=.github/workflows/via-var.yml')"
+run_test "structured_caller_retains_missing" "yes" "$(has_line "$CALLER_SUMMARY" 'REQUIRED_ADDITION_MISSING path=.ai-dev-workflow.yaml must_contain=push_verification_failed')"
 rm "$CONSUMER/.ai-dev-workflow.yaml"
 out="$TMP_ROOT/list-absent.out"
 status="$(run_checker "$out" --repo-root "$FIX" --manifest "$LIST_MANIFEST" --consumer-root "$CONSUMER")"
