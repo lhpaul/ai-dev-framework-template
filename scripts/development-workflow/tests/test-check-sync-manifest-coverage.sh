@@ -389,6 +389,25 @@ for case_name in comment lookalike empty block flow absent_list empty_file white
     run_test "structured_error_redacts_consumer" "no" "$(has_line "$out" 'private-sentinel')"
   fi
 done
+# Planted proof: preserve the same comment-only fixture while adding the
+# exact list item, and exercise the actual checker before and after repair.
+printf 'guardrails:\n  stop_conditions:\n    - push_verification_failed\n# stage_role_tool_or_path_denied\n' >"$CONSUMER/.ai-dev-workflow.yaml"
+out="$TMP_ROOT/plant-list.out"
+status="$(run_checker "$out" --repo-root "$FIX" --manifest "$LIST_MANIFEST" --consumer-root "$CONSUMER")"
+run_test "structured_plant_missing_exit_1" "1" "$status"
+run_test "structured_plant_missing_line" "yes" "$(has_line "$out" 'REQUIRED_ADDITION_MISSING path=.ai-dev-workflow.yaml must_contain=stage_role_tool_or_path_denied')"
+python3 - "$CONSUMER/.ai-dev-workflow.yaml" <<'PYCODE'
+from pathlib import Path
+import sys
+p = Path(sys.argv[1])
+s = p.read_text()
+assert '    - push_verification_failed\n' in s
+p.write_text(s.replace('    - push_verification_failed\n', '    - push_verification_failed\n    - stage_role_tool_or_path_denied\n', 1))
+PYCODE
+out="$TMP_ROOT/repair-list.out"
+status="$(run_checker "$out" --repo-root "$FIX" --manifest "$LIST_MANIFEST" --consumer-root "$CONSUMER")"
+run_test "structured_repair_present_exit_0" "0" "$status"
+run_test "structured_repair_present_line" "yes" "$(has_line "$out" 'REQUIRED_ADDITION_PRESENT path=.ai-dev-workflow.yaml must_contain=stage_role_tool_or_path_denied')"
 # A parse gap must not hide independent uncovered and missing findings.
 COMBINED_MANIFEST="$TMP_ROOT/combined-list-manifest.yaml"
 python3 - "$LIST_MANIFEST" "$COMBINED_MANIFEST" <<'PYCODE'
