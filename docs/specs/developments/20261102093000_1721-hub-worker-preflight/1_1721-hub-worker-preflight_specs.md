@@ -28,23 +28,24 @@ An operator running a workflow hub with Cursor My Machines / Remote Control need
 ## Business Rules
 
 - Apply the preflight to My Machines / Remote Control workflow-hub runs before any orchestration mutation, including branch, tracker, or PR changes. The `/run-item`, `/run-items`, and `/run-epic` entrypoints must direct such runs to it.
-- Validate the worker's hub directory and every configured local product checkout; an explicit worker directory is acceptable when it identifies the intended hub checkout.
+- Validate the worker's hub directory against the hub checkout selected for this run and every configured local product checkout, even for a single-product item. An explicit worker directory is acceptable when it identifies that same hub checkout. An absent or empty product configuration fails rather than passing vacuously.
 - Verify GitHub read access to the hub and configured product repositories using the worker's own environment. Inability to verify access is a failure, not a pass.
 - Preflight is read-only: it must not create or change checkouts, configuration, credentials, branches, tracker items, or remote repository state.
 - Diagnostics must identify the failed check and affected checkout or repository when known, and provide a corrective step. The preflight may stop at the first failed check; incomplete checks cannot yield success. Diagnostics must not disclose tokens, credential-bearing URLs, or private configuration contents.
 - Success is a point-in-time read-access result, not proof of write permission, future access, clean working trees, or permission to bypass subsequent workflow gates.
-- The operator declares the execution target; a missing or ambiguous target cannot be assumed to be a non-worker run to bypass the preflight. Dispatch profile selection remains a separate declaration under the existing Cursor profile contract: a dispatch profile does not by itself identify the execution target. Preflight does not infer the target or change handoff, review, merge, or checkpoint authority.
+- For each bounded Cursor hub run, the operator or runner declares one execution target: Hosted Cloud, My Machines / Remote Control, or Cursor desktop. A missing, conflicting, or unrecognized target stops that run before mutation with an execution-target declaration diagnostic. This requirement applies to target identification, while explicitly declared non-worker targets retain their existing workflow behavior. Dispatch profile selection remains a separate declaration under the existing Cursor profile contract: a dispatch profile does not by itself identify the execution target. Preflight does not infer the target or change handoff, review, merge, or checkpoint authority.
 
 ## Preflight Decision Gate
 
 | Context and current evidence | Outcome | Required next action |
 | --- | --- | --- |
-| My Machines / Remote Control hub run; all required checks pass | Pass | Continue with the existing dispatch and workflow gates before mutation. |
+| My Machines / Remote Control hub run; all required checks pass without warnings | Pass | Continue with the existing dispatch and workflow gates before mutation. |
+| My Machines / Remote Control hub run; all required checks pass with optional warnings | Pass with warning | Report the warnings and continue with existing gates; do not modify checkouts to clear warnings. |
 | My Machines / Remote Control hub run; any required check fails or cannot be verified | Stop | Report the failed or inconclusive check and a correction; retry before mutation. |
-| The execution target or another required input is missing, invalid, or ambiguous | Stop | Identify the input to correct; do not treat it as a pass or assume a different target. |
-| Another execution target or repository mode | Existing behavior | Follow its existing workflow; this preflight does not add a requirement there. |
+| Cursor hub run; the execution target or another required input is missing, invalid, or ambiguous | Stop | Identify the input to correct; do not treat it as a pass or assume a different target. |
+| Explicitly declared Hosted Cloud or Cursor desktop target, or a non-hub repository mode | Existing behavior | Follow existing workflow gates; do not run the worker preflight. |
 
-The check uses the worker environment and current configuration at execution time; earlier successful results cannot replace a fresh check for a new run. If a warning and failure occur together, the failure wins. The operator runbook, Cursor dispatch-profile documentation, and Cursor command entrypoints for `/run-item`, `/run-items`, and `/run-epic` must describe the same gate.
+Before the first mutation in a bounded Cursor hub run, validate the execution target, then perform worker preflight when required; the existing dispatch profile declaration and its own stop remain separate and must also be satisfied before mutation. Read-only checkpoints keep their existing profile rules and do not require worker preflight. A target declaration failure is reported separately from a profile-declaration failure. The check uses the worker environment and current configuration at execution time; earlier successful results cannot replace a fresh check for a new run. If a warning and failure occur together, the failure wins. The operator runbook, Cursor dispatch-profile documentation, and Cursor command entrypoints for `/run-item`, `/run-items`, and `/run-epic` must describe the same gate.
 
 ## Acceptance Criteria
 
@@ -54,10 +55,12 @@ The check uses the worker environment and current configuration at execution tim
 - [ ] The preflight does not mutate local or remote workflow artifacts or reveal secrets, and its success does not claim write access.
 - [ ] The operator runbook and Cursor dispatch-profile documentation explain the preflight and its limitations, and the Cursor `/run-item`, `/run-items`, and `/run-epic` command entrypoints reference it for My Machines / Remote Control hub execution.
 - [ ] If optional dirty or sync warnings are provided, a warning-only result is reported and may pass without authorizing changes to the checkout.
-- [ ] Existing dispatch profile, review, checkpoint, and merge rules remain in force.
+- [ ] Each bounded Cursor hub run identifies one of the three execution targets before mutation; missing, conflicting, or unrecognized targets stop with an execution-target diagnostic. A dispatch profile alone does not satisfy that declaration.
+- [ ] A single-product run checks all configured products; absent or empty product configuration fails. The worker directory must identify the hub checkout selected for the run.
+- [ ] Existing dispatch profile, review, checkpoint, and merge rules remain in force, independently of the target declaration and preflight.
 
 ## Out of Scope
 
 - Starting or registering a worker, provisioning credentials, or changing Cursor product behavior.
-- Automatically detecting execution targets or changing hosted Cloud and desktop behavior.
+- Automatically detecting execution targets or adding worker preflight to explicitly declared hosted Cloud or desktop runs.
 - Repairing, synchronizing, or cleaning checkouts, and proving write access.
