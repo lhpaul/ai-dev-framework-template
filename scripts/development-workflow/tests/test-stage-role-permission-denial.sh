@@ -68,6 +68,7 @@ for mode in ('manual', 'supervised', 'autonomous'):
         if stage == 'review':
             assert actual['review_gate'] == 'fresh_review_required'
         assert receive(dict(event, corrected=True))['result'] == 'blocked'
+        assert receive({'cause': 'tool_path', 'corrected': True})['result'] == 'blocked'
         same = receive(dict(event, corrected=True, reconciled=True))
         assert same['result'] == 'resume_same_role' and not same['fresh_run_and_profile']
         fresh = receive(dict(event, corrected=True, reconciled=True, context_changed=True))
@@ -88,9 +89,9 @@ assert invalid.returncode == 2 and 'private-sentinel' not in invalid.stdout + in
 
 # Feed a fabricated reviewer report and dependency handoff through the actual
 # decision helper; the caller still owns remote persistence and rechecking.
-handoff = {'item': 1746, 'stage': 'review', 'role': 'cli-reviewer',
+handoff = {'marker': 'STAGE_ROLE_TOOL_OR_PATH_DENIED', 'item': 1746, 'stage': 'review', 'role': 'cli-reviewer',
            'action': 'Bash token=private-sentinel', 'state': 'uncertain',
-           'pr': 2102, 'dependents': [1750, 1750]}
+           'pr': 2102, 'dependencies': {'1750': [1746], '1751': [], '1752': [1750]}}
 for writable in (True, False):
     actual = receive({'cause': 'tool_path', 'review': True, 'uncertain': True,
                       'record_available': writable, 'handoff': handoff})
@@ -98,7 +99,7 @@ for writable in (True, False):
     assert actual['handoff']['role'] == 'cli-reviewer'
     assert actual['handoff']['unblock_action']
     assert 'private-sentinel' not in repr(actual)
-    assert actual['held_dependents'] == [1750] and not actual['durable_recorded']
+    assert actual['held_dependents'] == [1750, 1752] and not actual['durable_recorded']
     assert actual['report_destination'] == ('existing_record' if writable else 'operator_handoff')
     assert actual['review_gate'] == 'fresh_review_required' and not actual['inline_fallback']
 # Hub-only helper remains reachable from a separate product checkout.
@@ -108,7 +109,7 @@ with tempfile.TemporaryDirectory() as product:
     product_run = subprocess.run([sys.executable, str(helper)], cwd=product,
                                  input=json.dumps({'cause': 'tool_path', 'handoff': handoff}),
                                  text=True, capture_output=True, check=True)
-    assert json.loads(product_run.stdout)['held_dependents'] == [1750]
+    assert json.loads(product_run.stdout)['held_dependents'] == [1750, 1752]
 # A separate Work Item Runner denial is not an accepted stage cause.
 runner = subprocess.run([sys.executable, str(helper)], input='{"cause":"SUBAGENT_PERMISSION_DENIAL"}',
                         text=True, capture_output=True)
@@ -119,7 +120,7 @@ import tempfile
 with tempfile.TemporaryDirectory() as tmp:
     planted = Path(tmp) / 'decision.py'
     original = helper.read_text()
-    needle = "result['held_dependents'] = sorted(set(deps)) if result['hold_dependents'] else []"
+    needle = "result['held_dependents'] = sorted(held)"
     assert needle in original
     planted.write_text(original.replace(needle, "result['held_dependents'] = []", 1))
     # Copy the real sanitizer dependency so this is the same helper in isolation.
@@ -127,7 +128,7 @@ with tempfile.TemporaryDirectory() as tmp:
         (helper.parent / 'workflow-config-resolver.py').read_bytes())
     event = {'cause': 'tool_path', 'handoff': handoff}
     def assert_held(script):
-        assert receive(event, script)['held_dependents'] == [1750]
+        assert receive(event, script)['held_dependents'] == [1750, 1752]
     try:
         assert_held(planted)
     except AssertionError:

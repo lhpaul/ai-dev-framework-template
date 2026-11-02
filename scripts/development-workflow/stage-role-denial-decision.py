@@ -37,7 +37,8 @@ def decide(event):
     # and independently applicable stops remain the caller's responsibility.
     recoverable = cause == 'tool_path' and not event.get('readonly_stop') and not event.get('handoff_stop')
     ready = (recoverable and event.get('corrected', False)
-             and (not event.get('uncertain', False) or event.get('reconciled', False))
+             and 'uncertain' in event
+             and (not event['uncertain'] or event.get('reconciled', False))
              and not event.get('denied_again', False))
     if cause == 'generic' and not stops and not event.get('readonly_stop'):
         return {'result': 'existing_error'}
@@ -55,9 +56,11 @@ def decide(event):
     }
     if 'handoff' in event:
         handoff = event['handoff']
-        keys = {'item', 'stage', 'role', 'action', 'state', 'pr', 'dependents'}
+        keys = {'marker', 'item', 'stage', 'role', 'action', 'state', 'pr', 'dependencies'}
         if not isinstance(handoff, dict) or set(handoff) != keys:
             raise ValueError('invalid handoff')
+        if handoff['marker'] != 'STAGE_ROLE_TOOL_OR_PATH_DENIED':
+            raise ValueError('invalid role boundary')
         if type(handoff['item']) is not int or handoff['item'] < 1:
             raise ValueError('invalid item')
         if handoff['pr'] is not None and (type(handoff['pr']) is not int or handoff['pr'] < 1):
@@ -65,14 +68,31 @@ def decide(event):
         for key in ('stage', 'role', 'action', 'state'):
             if not isinstance(handoff[key], str) or not handoff[key].strip() or len(handoff[key]) > 300:
                 raise ValueError('invalid report field')
-        deps = handoff['dependents']
-        if not isinstance(deps, list) or any(type(n) is not int or n < 1 for n in deps):
-            raise ValueError('invalid dependents')
+        deps = handoff['dependencies']
+        if not isinstance(deps, dict):
+            raise ValueError('invalid dependencies')
+        for child, prerequisites in deps.items():
+            if not isinstance(child, str) or not child.isascii() or not child.isdecimal() or int(child) < 1:
+                raise ValueError('invalid dependent')
+            if not isinstance(prerequisites, list) or any(type(n) is not int or n < 1 for n in prerequisites):
+                raise ValueError('invalid prerequisites')
+        held = set()
+        blocked = {handoff['item']}
+        if result['hold_dependents']:
+            while True:
+                found = {int(child) for child, parents in deps.items()
+                         if blocked.intersection(parents)} - blocked
+                if not found:
+                    break
+                held.update(found)
+                blocked.update(found)
         sanitizer = runpy.run_path(str(Path(__file__).with_name('workflow-config-resolver.py')))
         report = {k: handoff[k] for k in ('item', 'stage', 'role', 'action', 'state', 'pr')}
         report['unblock_action'] = 'Correct access, reconcile uncertain effects, and retry the same role.'
         result['handoff'] = sanitizer['redact_diagnostic_json'](report)
-        result['held_dependents'] = sorted(set(deps)) if result['hold_dependents'] else []
+        if handoff['stage'] == 'review':
+            result['review_gate'] = 'fresh_review_required'
+        result['held_dependents'] = sorted(held)
         # The helper plans a write but cannot assert that any remote record was written.
         result['durable_recorded'] = False
     return result
