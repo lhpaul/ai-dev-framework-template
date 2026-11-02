@@ -346,6 +346,49 @@ status="$(run_checker "$out" --repo-root "$FIX" --manifest "$NESTED_MANIFEST")"
 run_test "nested_list_entry_exit_2" "2" "$status"
 run_test "nested_list_entry_error" "yes" "$(has_line "$out" "configuration: validation error")"
 
+# Structured selector checks only the declared list, with fail-closed diagnostics.
+LIST_MANIFEST="$TMP_ROOT/list-manifest.yaml"
+python3 - "$FIX/sync-manifest.yaml" "$LIST_MANIFEST" <<'PYCODE'
+from pathlib import Path
+import sys
+s = Path(sys.argv[1]).read_text()
+entry = "  - path: .ai-dev-workflow.yaml\n    yaml_list_path: guardrails.stop_conditions\n    must_contain: stage_role_tool_or_path_denied\n    introduced_in: test\n"
+Path(sys.argv[2]).write_text(s.replace("sync_coverage_exemptions:\n", entry + "\nsync_coverage_exemptions:\n"))
+PYCODE
+mkdir -p "$CONSUMER"
+for case_name in comment lookalike empty block flow absent_list invalid duplicate wrong_type; do
+  case "$case_name" in
+    comment) printf 'guardrails:\n  stop_conditions: [push_verification_failed]\n# stage_role_tool_or_path_denied\n' >"$CONSUMER/.ai-dev-workflow.yaml"; expected=1; marker_line=REQUIRED_ADDITION_MISSING ;;
+    lookalike) printf 'guardrails:\n  stop_conditions: [push_verification_failed, stage_role_tool_or_path_denied_extra]\n' >"$CONSUMER/.ai-dev-workflow.yaml"; expected=1; marker_line=REQUIRED_ADDITION_MISSING ;;
+    empty) printf 'guardrails:\n  stop_conditions: []\n' >"$CONSUMER/.ai-dev-workflow.yaml"; expected=1; marker_line=REQUIRED_ADDITION_MISSING ;;
+    block) printf 'guardrails:\n  stop_conditions:\n    - push_verification_failed\n    - "stage_role_tool_or_path_denied"\n' >"$CONSUMER/.ai-dev-workflow.yaml"; expected=0; marker_line=REQUIRED_ADDITION_PRESENT ;;
+    flow) printf 'guardrails:\n  stop_conditions: [push_verification_failed, stage_role_tool_or_path_denied]\n' >"$CONSUMER/.ai-dev-workflow.yaml"; expected=0; marker_line=REQUIRED_ADDITION_PRESENT ;;
+    absent_list) printf 'guardrails:\n  mode: advisory\n' >"$CONSUMER/.ai-dev-workflow.yaml"; expected=0; marker_line=REQUIRED_ADDITION_NOT_APPLICABLE ;;
+    invalid) printf 'guardrails:\n  stop_conditions: [bad\nsecret: private-sentinel\n' >"$CONSUMER/.ai-dev-workflow.yaml"; expected=2; marker_line=REQUIRED_ADDITION_ERROR ;;
+    duplicate) printf 'guardrails:\n  stop_conditions: []\n  stop_conditions: []\n' >"$CONSUMER/.ai-dev-workflow.yaml"; expected=2; marker_line=REQUIRED_ADDITION_ERROR ;;
+    wrong_type) printf 'guardrails:\n  stop_conditions: wrong\n' >"$CONSUMER/.ai-dev-workflow.yaml"; expected=2; marker_line=REQUIRED_ADDITION_ERROR ;;
+  esac
+  out="$TMP_ROOT/list-$case_name.out"
+  status="$(run_checker "$out" --repo-root "$FIX" --manifest "$LIST_MANIFEST" --consumer-root "$CONSUMER")"
+  run_test "structured_${case_name}_status" "$expected" "$status"
+  run_test "structured_${case_name}_diagnostic" "yes" "$(has_line "$out" "$marker_line")"
+  if [ "$case_name" = invalid ]; then
+    run_test "structured_error_preserves_legacy_missing" "yes" "$(has_line "$out" 'REQUIRED_ADDITION_MISSING path=.ai-dev-workflow.yaml must_contain=push_verification_failed')"
+    run_test "structured_error_redacts_consumer" "no" "$(has_line "$out" 'private-sentinel')"
+  fi
+done
+rm "$CONSUMER/.ai-dev-workflow.yaml"
+out="$TMP_ROOT/list-absent.out"
+status="$(run_checker "$out" --repo-root "$FIX" --manifest "$LIST_MANIFEST" --consumer-root "$CONSUMER")"
+run_test "structured_absent_status" "0" "$status"
+run_test "structured_absent_diagnostic" "yes" "$(has_line "$out" 'reason=file_absent')"
+ln -s "$TMP_ROOT/no-such-file" "$CONSUMER/.ai-dev-workflow.yaml"
+out="$TMP_ROOT/list-unreadable.out"
+status="$(run_checker "$out" --repo-root "$FIX" --manifest "$LIST_MANIFEST" --consumer-root "$CONSUMER")"
+run_test "structured_unreadable_exit_2" "2" "$status"
+run_test "structured_unreadable_diagnostic" "yes" "$(has_line "$out" 'REQUIRED_ADDITION_ERROR')"
+rm "$CONSUMER/.ai-dev-workflow.yaml"
+
 echo ""
 echo "Results: $PASS_COUNT passed, $FAIL_COUNT failed"
 [ "$FAIL_COUNT" -eq 0 ]
