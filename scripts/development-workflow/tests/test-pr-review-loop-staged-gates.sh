@@ -1675,6 +1675,44 @@ for _2045_case in wrong_head ambiguous unavailable moved unreadable failed skipp
 done
 unset _2045_infra_hist _2045_case
 
+# #2093: recover a retained raw needs_rerun without rewriting legacy history.
+run_test "2093_normalize_needs_rerun" needs_rerun \
+  "$(reviewer_loop_normalize_platform_outcome needs_rerun evidence_changed_during_review)"
+_2093_history="$(jq -cn --arg head "$_1656_guard_head" '{
+  schema:"reviewer_loop_history.v1", entries:[{
+    head_sha:$head, classification_head:$head, result:"needs_rerun",
+    platform_results:[{platform:"local-ai-reviewer", result:"unknown",
+      raw_result:"needs_rerun", raw_reason:"evidence_changed_during_review"}]
+  }]
+}')"
+for _2093_case in legacy normalized unknown missing_raw whitespace_raw wrong_platform wrong_head no_flag unavailable empty malformed aggregate_unknown; do
+  _2093_payload="$_2093_history"
+  retry_local_review_head="$_1656_guard_head"
+  _2093_expected=1
+  case "$_2093_case" in
+    legacy) _2093_expected=0 ;;
+    normalized)
+      _2093_payload="$(printf '%s' "$_2093_payload" | jq '.entries[0].platform_results[0].result="needs_rerun"')"
+      _2093_expected=0 ;;
+    unknown) _2093_payload="$(printf '%s' "$_2093_payload" | jq '.entries[0].platform_results[0].raw_result="unrecognized"')" ;;
+    missing_raw) _2093_payload="$(printf '%s' "$_2093_payload" | jq 'del(.entries[0].platform_results[0].raw_result)')" ;;
+    whitespace_raw) _2093_payload="$(printf '%s' "$_2093_payload" | jq '.entries[0].platform_results[0].raw_result="  "')" ;;
+    wrong_platform) _2093_payload="$(printf '%s' "$_2093_payload" | jq '.entries[0].platform_results[0].platform="pr-agent"')" ;;
+    wrong_head) retry_local_review_head="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" ;;
+    no_flag) unset retry_local_review_head ;;
+    unavailable) _2093_payload="$(printf '%s' "$_2093_payload" | jq '.history_status="unavailable"')" ;;
+    empty) _2093_payload='{"schema":"reviewer_loop_history.v1","entries":[]}' ;;
+    malformed) _2093_payload='{' ;;
+    aggregate_unknown) _2093_payload="$(printf '%s' "$_2093_payload" | jq '.entries[0].result="unknown"')" ;;
+  esac
+  reviewer_loop_local_retry_allowed "$_2093_payload" "$_1656_guard_head" && _st=0 || _st=1
+  run_test "2093_retry_${_2093_case}" "$_2093_expected" "$_st"
+done
+retry_local_review_head=""
+run_test "2093_history_preserved" unknown \
+  "$(printf '%s' "$_2093_history" | jq -r '.entries[0].platform_results[0].result')"
+unset _2093_history _2093_payload _2093_case _2093_expected
+
 # Prior ledger unavailable — close gate before dispatch (P9 / cross-invocation)
 _1656_guard_hist_unavail='{"schema":"reviewer_loop_history.v1","history_status":"unavailable","history_unavailable_reason":"comment_read_failed","entries":[]}'
 _1656_reset_guard_globals
