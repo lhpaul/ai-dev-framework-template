@@ -72,6 +72,8 @@ def decode(raw, expected_type, check, guidance, ordinal=None):
 
 def root(path, check, ordinal=None):
     guidance = "Select an existing non-bare Git checkout root and retry."
+    if not isinstance(path, str) or not path.strip():
+        fail(check, guidance, ordinal)
     try:
         physical = Path(path).resolve(strict=True)
         if not physical.is_dir():
@@ -170,7 +172,7 @@ def github_probe(slug, ordinal=None):
         fail("github_access", "Check the worker's GitHub repository access and retry.", ordinal)
 
 
-def preflight(args):
+def preflight(args, invoked_at):
     rid = run_id(args.run_id)
     hub, hub_slug, products, config_id = configuration(args.hub_dir, args.worker_dir)
     command(["gh", "auth", "status", "--hostname", "github.com"], "github_auth",
@@ -179,6 +181,7 @@ def preflight(args):
     for product in products:
         github_probe(product["repo"], product["ordinal"])
     return {"schema": "hub_worker_preflight.v1", "result": "pass", "run_id": rid,
+            "started_at": invoked_at.isoformat().replace("+00:00", "Z"),
             "checked_at": dt.datetime.now(dt.timezone.utc).isoformat().replace("+00:00", "Z"),
             "hub_repo_id": digest(hub_slug), "hub_checkout_id": digest(str(hub)),
             "config_id": config_id, "worker": "pass", "hub_github": "pass",
@@ -194,13 +197,14 @@ def verify(args):
             evidence = json.load(stream, object_pairs_hook=unique_object)
     except (OSError, ValueError, UnicodeError):
         fail("result", "Provide the current successful preflight result and retry.")
-    keys = {"schema", "result", "run_id", "checked_at", "hub_repo_id", "hub_checkout_id",
+    keys = {"schema", "result", "run_id", "started_at", "checked_at", "hub_repo_id", "hub_checkout_id",
             "config_id", "worker", "hub_github", "products"}
     if not isinstance(evidence, dict) or set(evidence) != keys:
         fail("result", "Provide a complete current preflight result and retry.")
     checked = utc(evidence["checked_at"])
+    invoked = utc(evidence["started_at"])
     now = dt.datetime.now(dt.timezone.utc)
-    if not start <= selected <= checked <= now:
+    if not start <= selected <= invoked <= checked <= now:
         fail("timestamp", "Run preflight after selecting the hub for this run and retry.")
     if (evidence["schema"] != "hub_worker_preflight.v1" or evidence["result"] != "pass"
             or evidence["run_id"] != rid or evidence["worker"] != "pass" or evidence["hub_github"] != "pass"):
@@ -232,6 +236,7 @@ class SafeArgumentParser(argparse.ArgumentParser):
 
 
 def main():
+    invoked_at = dt.datetime.now(dt.timezone.utc)
     parser = SafeArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="action", required=True)
     for action in ("check", "verify"):
@@ -246,7 +251,7 @@ def main():
             p.add_argument("--hub-selected-at", required=True)
     args = parser.parse_args()
     try:
-        result = preflight(args) if args.action == "check" else verify(args)
+        result = preflight(args, invoked_at) if args.action == "check" else verify(args)
     except Failure as error:
         result = {"schema": "hub_worker_preflight.v1", "result": "fail",
                   "check": error.check, "guidance": error.guidance}

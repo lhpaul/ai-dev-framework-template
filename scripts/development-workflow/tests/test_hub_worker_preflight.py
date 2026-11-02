@@ -181,6 +181,9 @@ sys.exit(2)
             change(data)
             self.assertEqual(self.verify(data)[0].returncode, 1)
         self.assertEqual(self.verify(valid, selected=self.now(60))[0].returncode, 1)
+        spanning = dict(valid, started_at=self.start)
+        result, data = self.verify(spanning)
+        self.assertEqual((result.returncode, data["check"]), (1, "timestamp"))
         file = self.base / "duplicate.json"
         file.write_text('{"result":"pass","result":"fail"}')
         result, data = self.invoke("verify", "--hub-dir", self.hub, "--run-id", self.rid,
@@ -230,6 +233,13 @@ sys.exit(2)
                                     env=self.env, capture_output=True, text=True)
             self.assertNotEqual(result.returncode, 0)
             self.assertEqual(json.loads(result.stdout)["check"], "run_id")
+        for flag, check in (("--hub-dir", "hub_directory"), ("--worker-dir", "worker_directory")):
+            for value in ("", "   "):
+                hub = value if flag == "--hub-dir" else str(self.hub)
+                worker = value if flag == "--worker-dir" else str(self.hub)
+                result, data = self.invoke("check", "--hub-dir", hub, "--worker-dir", worker,
+                                           "--run-id", self.rid, cwd=self.hub)
+                self.assertEqual((result.returncode, data["check"]), (1, check))
         missing = subprocess.run(["python3", str(SCRIPT), "check"], env=self.env, capture_output=True, text=True)
         self.assertNotEqual(missing.returncode, 0)
         self.assertNotIn("--hub-dir", missing.stderr)
