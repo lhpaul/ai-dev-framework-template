@@ -150,7 +150,7 @@ ci ci_policy policy required_checks github_app app_id installation_id private_ke
 models dsh tiers roles provider model reasoning_effort role tier guardrails parallelism
 max_concurrent_by_stage spec plan implementation risk_paths category glob when_pattern
 path scope mode_scope mode_scopes categories always_sync special_handling project_specific
-required_additions must_contain sync_coverage_exemptions reason skeleton_role entries
+required_additions must_contain yaml_list_path sync_coverage_exemptions reason skeleton_role entries
 required_for_product_repo generated_example example_only enforce_release_runtime
 reviews auto_review enabled drafts base_branches issue_tracker project_number vcs
 repository_mode configured_product_repo_keys""".split())

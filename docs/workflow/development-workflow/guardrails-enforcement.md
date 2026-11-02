@@ -330,7 +330,7 @@ table is required for consistent stop reporting.
 
 | Stop condition name | When it applies |
 | --- | --- |
-| `unclear_requirements` | A requirement or acceptance criterion is ambiguous and cannot be resolved without a human decision. |
+| `unclear_requirements` | A requirement or acceptance criterion is ambiguous, or an established access refusal cannot be classified as a tool/path or credential denial, and needs a human decision. |
 | `architecture_decision` | An architectural choice requires human input before the agent can safely proceed. |
 | `failing_ci` | One or more required CI checks are red or in a persistent-failure state. |
 | `unresolved_blocking_review` | A blocking review thread from a configured automated reviewer or a human reviewer remains unresolved. |
@@ -343,6 +343,7 @@ table is required for consistent stop reporting.
 | `missing_required_secret_or_permission` | A required credential, GitHub permission, or access token is absent. Also reused, per `integrations/cursor-dispatch-profiles.md`, when a run declared `cursor-parent-orchestrated` delegates an action to a reachable stage role that receives the delegation but reports the action refused because a credential, GitHub permission, or access token it needs is absent (not an inability to reach the role at all, and not a harness tool or local file-path permission denial — see the Cursor dispatch-profile stop conditions subsection below). |
 | `dispatch_profile_declaration_missing` | A bounded Cursor run (`/run-item`, `/run-items`, `/run-epic`, or `/run-work`) reaches a mutating action, or a read-only checkpoint, without a valid dispatch-profile declaration on record — see the Cursor dispatch-profile stop conditions subsection below for the full set of causes and the unblocking action. |
 | `dispatch_handoff_unavailable` | A bounded Cursor run has no handoff of any kind available (or cannot confirm initial handoff availability) for the next mutating action, or a run declared `cursor-parent-orchestrated` or `cursor-native-handoff` discovers mid-run that stage or orchestration handoff has become unavailable — see the Cursor dispatch-profile stop conditions subsection below for the full set of causes and the unblocking action. |
+| `stage_role_tool_or_path_denied` | A reachable dispatched stage role reports an explicit harness tool or local-path denial; stop the item until the operator corrects access and the same role can resume. |
 | `push_verification_failed` | A branch push could not be verified. Either the branch's upstream would send a bare `git push` somewhere other than its own remote branch on `origin`, or the commit the protocol pushed is not present on the remote afterwards. Silence is not success: a refused push prints a multi-line message that shell-output filtering can truncate to nothing. |
 | `guardrails_config_unreadable` | The `guardrails` block in `.ai-dev-workflow.yaml` is missing required fields, uses invalid values, or is internally contradictory. |
 | `budget_deferred` | Durable merge-session admission is absent, unreadable, out of scope or unaffordable. Name the selected item/PRs, report local projection/quota/reset evidence, and require corrected scope/config or explicit recovery after evidence/quota becomes available; no remote merge-operation mutation is allowed. |
@@ -356,7 +357,7 @@ table is required for consistent stop reporting.
 **Additive rule**: These stop conditions may **add** to but may **never remove**
 the framework's baseline human-stop conditions. The baseline stops
 (`unclear_requirements`, `architecture_decision`, `failing_ci`,
-`unresolved_blocking_review`, `high_risk_change`, and `destructive_action`) hold
+`unresolved_blocking_review`, `high_risk_change`, `destructive_action`, and `stage_role_tool_or_path_denied`) hold
 in **all** modes, including `autonomous`. Guardrails may tighten the stop
 surface but may never loosen it below the baseline. This section adds
 `dispatch_profile_declaration_missing` and `dispatch_handoff_unavailable` under
@@ -442,8 +443,7 @@ specific action to the stage role that owns it, and that stage role is
 reachable and receives the delegation but reports that this specific action
 was refused because a credential, GitHub permission, or access token it
 needs is absent — not an inability to reach the role at all, and not a
-harness tool or local file-path permission denial (Out of Scope; tracked
-separately as issue #1746).
+harness tool or local file-path permission denial (handled by `stage_role_tool_or_path_denied`).
 
 - **Affected work item**: the branch, pull request, or development-folder
   path the denied action would have applied to, and the denied target named
@@ -457,28 +457,12 @@ separately as issue #1746).
   different stage role — or explicitly accepts that this action **does not
   proceed** under the current run and records that decision; the absorbing
   context **never performs** the action inline in either case, and the
-  action's owning stage role is unchanged by the reassignment. This
-  reassignment path does not extend to a harness or local file-path
-  permission denial, which stays Out of Scope under issue #1746 with no
-  recovery path of any kind. The run remains declared parent-orchestrated
+  action's owning stage role is unchanged by the reassignment. A harness or local file-path denial follows the separate stage-role stop and its context-recovery rules. The run remains declared parent-orchestrated
   throughout; unlike `dispatch_handoff_unavailable`, no re-declaration or
   environment change is required, because the stage role's onward-handoff
   capability for other actions was never in question.
 
-**No named stop condition for a harness or local file-path denial.** A
-reachable stage role's harness tool (`Edit`, `Write`, or `Bash`) or local
-file-path permission denial on a specific delegated action, dispatched as a
-subagent under Protocol 90/91's batch dispatch mechanism, **is not a named
-stop condition** at all: `missing_required_secret_or_permission` does not
-apply because no credential, GitHub permission, or access token is missing,
-and `dispatch_handoff_unavailable` does not apply because the stage role was
-reached. This failure is only **observably similar** to the
-`SUBAGENT_PERMISSION_DENIAL` contract `91-orchestrate-work-protocol.md`
-defines, which governs solely a Work Item Runner subagent reporting that
-denial to the Portfolio Orchestrator; no corresponding contract exists today
-for a stage role dispatched by an item-orchestrator. This case is declared
-**Out of Scope** and tracked separately as **#1746**; the absorbing context
-never performs the action inline for it.
+**Stage-role tool or path denial.** A reachable stage role's explicit harness tool or local file-path refusal stops the affected item as `stage_role_tool_or_path_denied` in every mode. Protocol 91 defines the role report, receiver, durable or operator handoff, uncertain-effect reconciliation, and same-role recovery. It is distinct from the credential and handoff stops and from the Work Item Runner's `SUBAGENT_PERMISSION_DENIAL` fallback. Report every independently established applicable stop; never perform the denied stage action inline or mark the work complete.
 
 ---
 

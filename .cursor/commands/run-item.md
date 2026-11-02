@@ -114,3 +114,5 @@ repositories may pin other model families (for example Grok or Composer), and
 those pins are honored as written. See that document's "Cursor model source of
 truth" section.
 
+
+**Stage-role access denial**: Apply Protocol 91’s stage-role denial report and receiver contract; a reached role’s tool/path denial stops the affected item, with no inline stage-work fallback.

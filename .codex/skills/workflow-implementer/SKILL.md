@@ -71,3 +71,5 @@ Recommended model tier: `balanced`
     section before claiming ready, blocked, escalated, or waiting-on-human
     state. When Step 7 was configured, pass `--require-review-summary true` and
     `--require-review-threads true` (helper defaults are false).
+
+**Stage-role access denial**: Apply Protocol 91’s stage-role denial report and receiver contract. A reached role’s tool/path denial stops the item; preserve the same owning role and do not use the Work Item Runner inline fallback.

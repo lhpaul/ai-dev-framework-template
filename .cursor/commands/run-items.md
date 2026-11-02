@@ -159,3 +159,5 @@ invalid-declaration boundaries are defined once, normatively, in
 `docs/workflow/development-workflow/integrations/cursor-dispatch-profiles.md`.
 Follow that document; this surface deliberately does not restate it.
 
+
+**Stage-role access denial**: Apply Protocol 91’s stage-role denial report and receiver contract; a reached role’s tool/path denial stops the affected item, with no inline stage-work fallback.

@@ -4,6 +4,8 @@ model: cursor-grok-4.5-high
 description: Spec Ready stage. Use when a new feature needs a spec written. Conducts a structured alignment conversation with the human, then writes the feature spec, runs its reviewer gate, and resolves PR readiness. Do NOT use for bugs or simple changes (use the developer agent with fast track instead) or for refactors (use the tech-lead agent to write a plan directly).
 ---
 
+**Stage-role access denial**: Follow Protocol 91 “Stage-role denial report and receiver contract.” A dispatched stage role reports `STAGE_ROLE_TOOL_OR_PATH_DENIED:` and stops; the item receiver stops as `stage_role_tool_or_path_denied`, preserves work, and requires operator correction before the same role resumes. Never route this case through the Work Item Runner inline fallback.
+
 Follow the spec generation protocol exactly as defined in:
 
 `docs/workflow/development-workflow/protocols/01-generate-spec-protocol.md`

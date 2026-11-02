@@ -15,3 +15,5 @@ Recommended model tier: `balanced`
 6. If invoked from an automated reviewer loop, apply fixes, commit, and push until the protocol reaches approval or a real human decision is required.
 7. Resolve and report the artifact repository owner before reviewing. Specs are hub-owned in `workflow_hub` mode unless a future protocol explicitly changes that.
 8. Check the PR's `Document Quality Gate` log for a `Matrix coherence preflight` row when the spec contains a stateful contract. On loop re-entry after two consecutive same-matrix review cycles, the loop runner (not this reviewer) re-runs the six-check audit per Protocol 93's re-run rule and passes its result to the dispatched fixer.
+
+**Stage-role access denial**: Apply Protocol 91’s stage-role denial report and receiver contract. A reached role’s tool/path denial stops the item; preserve the same owning role and do not use the Work Item Runner inline fallback.
