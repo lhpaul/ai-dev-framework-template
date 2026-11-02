@@ -15,8 +15,8 @@ An operator running a workflow hub with Cursor My Machines / Remote Control need
 **Steps**:
 
 1. For a My Machines / Remote Control run, the operator identifies the hub checkout for this run and the worker directory, including an explicitly registered worker directory when applicable.
-2. Before orchestration mutates any artifact, the runner checks the worker directory, configured local product checkouts, and GitHub access from the worker environment.
-3. The runner reports whether these checks passed or identifies a failed check and how to correct it.
+2. The operator invokes the documented preflight in the worker environment before the bounded run mutates anything. It checks the worker directory, configured local product checkouts, and GitHub access.
+3. The preflight reports whether these checks passed or identifies a failed check and how to correct it; the operator provides the result to the bounded run.
 4. On success, the bounded run continues under the existing dispatch profile and workflow gates. On failure, the operator fixes the environment and starts the checks again before mutation.
 
 **Postconditions**: A successful preflight establishes the required local and GitHub read access for the checked configuration at the time of the check. A failed or inconclusive preflight prevents the bounded run from proceeding to mutation.
@@ -27,7 +27,7 @@ An operator running a workflow hub with Cursor My Machines / Remote Control need
 
 ## Business Rules
 
-- Apply the preflight to My Machines / Remote Control workflow-hub runs before any orchestration mutation, including branch, tracker, or PR changes. The `/run-item`, `/run-items`, and `/run-epic` entrypoints must direct such runs to it.
+- For My Machines / Remote Control workflow-hub runs, the operator invokes the preflight before any orchestration mutation. The `/run-item`, `/run-items`, and `/run-epic` entrypoints instruct the operator to do so and require a successful result for the current run before proceeding. Mutation includes branch or file changes, tracker updates, PR changes, and other local or remote workflow writes.
 - Validate the worker's hub directory against the hub checkout selected for this run and every configured local product checkout, even for a single-product item. An explicit worker directory is acceptable when it identifies that same hub checkout. An absent or empty product configuration fails rather than passing vacuously.
 - Verify GitHub read access to the hub and configured product repositories using the worker's own environment. Inability to verify access is a failure, not a pass.
 - Preflight is read-only: it must not create or change checkouts, configuration, credentials, branches, tracker items, or remote repository state.
@@ -39,25 +39,26 @@ An operator running a workflow hub with Cursor My Machines / Remote Control need
 
 | Context and current evidence | Outcome | Required next action |
 | --- | --- | --- |
-| My Machines / Remote Control hub run; all required checks pass without warnings | Pass | Continue with the existing dispatch and workflow gates before mutation. |
-| My Machines / Remote Control hub run; all required checks pass with optional warnings | Pass with warning | Report the warnings and continue with existing gates; do not modify checkouts to clear warnings. |
+| Operator-invoked preflight for a My Machines / Remote Control hub run; all required checks pass without warnings | Pass | Continue with the existing dispatch and workflow gates before mutation. |
+| Operator-invoked preflight for a My Machines / Remote Control hub run; all required checks pass with optional warnings | Pass with warning | Report the warnings and continue with existing gates; do not modify checkouts to clear warnings. |
 | My Machines / Remote Control hub run; any required check fails or cannot be verified | Stop | Report the failed or inconclusive check and a correction; retry before mutation. |
 | My Machines / Remote Control hub run; the intended hub or another required preflight input is missing, invalid, or ambiguous | Stop | Identify the input to correct; do not treat it as a pass. |
+| My Machines / Remote Control hub run; preflight has not been invoked or its result is unavailable | Stop | Instruct the operator to run the preflight and provide its current result before mutation. |
 | Hosted Cloud or Cursor desktop run, or a non-hub repository mode | Existing behavior | Follow existing workflow gates; this feature adds no worker preflight requirement. |
 
-Before the first mutation in a My Machines / Remote Control hub run, perform worker preflight; the existing dispatch profile declaration and its own stop remain separate and must also be satisfied before mutation. Read-only checkpoints keep their existing profile rules and do not require worker preflight. The check uses the worker environment and current configuration at execution time; earlier successful results cannot replace a fresh check for a new run. If a warning and failure occur together, the failure wins. The operator runbook, Cursor dispatch-profile documentation, and Cursor command entrypoints for `/run-item`, `/run-items`, and `/run-epic` must describe the same gate.
+Before the first mutation in a My Machines / Remote Control hub run, the operator invokes worker preflight and supplies its current result; the existing dispatch profile declaration and its own stop remain separate and must also be satisfied before mutation. Read-only checkpoints keep their existing profile rules and do not require worker preflight. The check uses the worker environment and current configuration at execution time; earlier successful results cannot replace a fresh check for a new run. If a warning and failure occur together, the failure wins. The operator runbook, Cursor dispatch-profile documentation, and Cursor command entrypoints for `/run-item`, `/run-items`, and `/run-epic` must describe the same gate.
 
 ## Acceptance Criteria
 
 - [ ] An operator can run a documented preflight for a My Machines / Remote Control hub worker, including a worker registered with an explicit directory.
-- [ ] A valid hub worker, configured local product checkouts, and reachable GitHub repositories pass before a bounded run mutates anything.
+- [ ] The operator invokes preflight and supplies a successful current result before the bounded run mutates anything; a missing or unavailable result stops mutation with instructions to run it. A valid hub worker, configured local product checkouts, and reachable GitHub repositories pass.
 - [ ] A wrong or missing worker directory, missing or invalid local product checkout, missing GitHub authentication, or inaccessible configured repository fails before mutation with a diagnostic identifying the failed check, affected checkout or repository when known, and a corrective step. A failed, incomplete, or inconclusive check, including a timeout or rate limit, never reports success. Earlier successful results cannot replace a fresh check for a new run.
 - [ ] The preflight does not mutate local or remote workflow artifacts or reveal secrets, and its success does not claim write access.
 - [ ] The operator runbook and Cursor dispatch-profile documentation explain the preflight and its limitations, and the Cursor `/run-item`, `/run-items`, and `/run-epic` command entrypoints reference it for My Machines / Remote Control hub execution.
 - [ ] If optional dirty or sync warnings are provided, a warning-only result is reported and may pass without authorizing changes to the checkout.
 - [ ] A My Machines / Remote Control hub run with a missing or ambiguous operator-selected hub checkout stops before mutation; a dispatch profile alone does not identify the execution target.
 - [ ] A single-product run checks all configured products; absent or empty product configuration fails. The worker directory must identify the hub checkout selected by the operator for the run.
-- [ ] Existing dispatch profile, review, checkpoint, and merge rules remain in force, independently of the target declaration and preflight.
+- [ ] Read-only checkpoints do not require preflight; existing dispatch profile, review, checkpoint, and merge rules remain in force independently of preflight.
 
 ## Out of Scope
 
