@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # covers: scripts/development-workflow/hub-worker-preflight.py
+# covers: scripts/development-workflow/tests/test_hub_worker_preflight.py
 # covers: .cursor/commands/run-item.md
 # covers: .cursor/commands/run-items.md
 # covers: .cursor/commands/run-epic.md
