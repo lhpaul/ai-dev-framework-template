@@ -2545,7 +2545,7 @@ separate; this preflight governs the normal post-approval transition.
 | Draft-loop evidence | Ready-phase telemetry | Decision |
 | --- | --- | --- |
 | Loop exits nonzero | Any | Print its reason, stop without conversion |
-| Missing/malformed/duplicate required telemetry or changed head | Any | Stop without conversion |
+| Missing/malformed/conflicting required telemetry, duplicate non-RESULT keys, or changed head | Any | Stop without conversion |
 | Current-head `clean`, draft-only invocation | `1` | Full loop owns conversion |
 | Current-head `clean`, draft-only invocation | `0` | Convert only if draft, then full loop |
 | `skipped/not_configured`, zero draft platforms, unchanged head | `0` or `1` | Follow conversion ownership above |
@@ -2570,10 +2570,16 @@ printf '%s\n' "$DRAFT_GATE_OUTPUT"
 if [ "$DRAFT_GATE_RC" -ne 0 ]; then
   exit "$DRAFT_GATE_RC"
 fi
+# Accept identical RESULT repetitions from older emitters; every other key
+# remains single-valued. Malformed and conflicting values fail closed.
 ready_gate_value() {
   printf '%s\n' "$DRAFT_GATE_OUTPUT" | awk -F= -v key="$1" '
-    $1 == key { n++; if (NF == 2) value=$2; else bad=1 }
-    END { if (n == 1 && !bad) print value }
+    $1 == key {
+      if (NF != 2 || (n > 0 && value != $2)) bad=1
+      value=$2
+      n++
+    }
+    END { if (n > 0 && !bad && (key == "RESULT" || n == 1)) print value }
   '
 }
 DRAFT_RESULT=$(ready_gate_value RESULT)

@@ -10253,10 +10253,11 @@ restore_regression_label_if_missing() {
           # direct `gh pr edit --add-label` would bypass it. Helper failure
           # keeps the pre-existing WARN-and-proceed behaviour (fail-open is the
           # documented semantics of this summary-comment gate, #805).
-          # Do NOT redirect stderr here: surface errors so failures are
+          # Keep nested helper telemetry on stderr so only this loop owns
+          # stdout RESULT/REASON; surface errors so failures are
           # observable rather than silently swallowed.
           if ! bash "$SCRIPT_DIR/apply-readiness-labels.sh" \
-              --pr "$pr_number" --branch "$branch_name" --repo-root "${repo_root:-$(workflow_local_config_root 2>/dev/null)}" --label "ready-for-regression"; then
+              --pr "$pr_number" --branch "$branch_name" --repo-root "${repo_root:-$(workflow_local_config_root 2>/dev/null)}" --label "ready-for-regression" >&2; then
             workflow_diagnostic "WARN: apply-readiness-labels.sh refused or failed to restore ready-for-regression on PR #${pr_number}; proceeding without it" >&2
           fi
         else
@@ -10271,7 +10272,7 @@ restore_regression_label_if_missing() {
         # redirect stderr here: surface errors so failures are observable.
         workflow_diagnostic "INFO: ready-for-regression label already present on PR #${pr_number} (${branch_name}); revalidating through apply-readiness-labels.sh." >&2
         if ! bash "$SCRIPT_DIR/apply-readiness-labels.sh" \
-            --pr "$pr_number" --branch "$branch_name" --repo-root "${repo_root:-$(workflow_local_config_root 2>/dev/null)}" --label "ready-for-regression"; then
+            --pr "$pr_number" --branch "$branch_name" --repo-root "${repo_root:-$(workflow_local_config_root 2>/dev/null)}" --label "ready-for-regression" >&2; then
           workflow_diagnostic "WARN: apply-readiness-labels.sh refused or failed to revalidate the existing ready-for-regression on PR #${pr_number}; proceeding without change" >&2
         fi
       fi

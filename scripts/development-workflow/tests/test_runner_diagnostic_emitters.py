@@ -1834,7 +1834,7 @@ printf 'PROBE=%s\\n' "$settle_review_probe"
                         self.assertEqual(events[0]['status'], 2 if mode == 'fault' else 1)
                         self.assertIn('WARN: apply-readiness-labels.sh refused or failed', result.stderr)
                         if mode == 'fault': self.assertIn('missing value for --repo-root', result.stderr)
-                        else: self.assertIn('REASON=ownership-mismatch', result.stdout)
+                        else: self.assertIn('REASON=ownership-mismatch', result.stderr)
         self.assertFalse(self.f.log.exists())
 
     def test_D71_new_default_classifier_and_complete_binder_boundary(self):
