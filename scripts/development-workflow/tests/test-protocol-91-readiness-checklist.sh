@@ -244,7 +244,7 @@ cases = [
     ("missing-count", False), ("malformed-count", False), ("duplicate-count", False),
     ("base-ready-checkout-empty", True), ("base-empty-checkout-ready", True),
     ("skipped-empty-no-ready", True), ("no-ready-ownership-changed", False),
-    ("hotfix-skip", True), ("release-skip", True), ("fix-release-skip", False),
+    ("hotfix-skip", False), ("release-skip", True), ("fix-release-skip", False),
     ("hotfix-wrong-branch", False), ("hotfix-wrong-pr", False),
     ("hotfix-duplicate-pr", False),
 ]
@@ -372,7 +372,7 @@ fi
         path.chmod(0o755)
     for name, allowed in cases:
         rc, trace, output = run_case(root, name)
-        if name in {"no-ready", "base-empty-checkout-ready", "skipped-empty-no-ready", "hotfix-skip", "release-skip"}:
+        if name in {"no-ready", "base-empty-checkout-ready", "skipped-empty-no-ready", "release-skip"}:
             expected = ["draft", "manual-ready", "full"]
         elif allowed or name == "full-failed":
             expected = ["draft", "full"]

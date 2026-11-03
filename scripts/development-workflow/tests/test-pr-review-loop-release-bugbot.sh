@@ -78,13 +78,13 @@ run_test "release_guard_release_head_fires" "RELEASE_GUARD_FIRED=1" \
   "$(printf '%s\n' "$_guard_out" | grep "^RELEASE_GUARD_FIRED=")"
 run_test "release_guard_release_head_exit0" "0" "$_guard_exit"
 
-# Test 14.2: hotfix/* head branch detected as release PR (branch provided)
+# Test 14.2: hotfix/* must continue to reviewers (branch provided)
 _guard_out=""
 _guard_exit=0
 _guard_out="$(_check_release_pr_guard "101" "hotfix/v1.0.1")" || _guard_exit=$?
-run_test "release_guard_hotfix_head_fires" "RELEASE_GUARD_FIRED=1" \
+run_test "release_guard_hotfix_head_no_fire" "RELEASE_GUARD_FIRED=0" \
   "$(printf '%s\n' "$_guard_out" | grep "^RELEASE_GUARD_FIRED=")"
-run_test "release_guard_hotfix_head_exit0" "0" "$_guard_exit"
+run_test "release_guard_hotfix_head_exit1" "1" "$_guard_exit"
 
 # Test 14.3: develop-targeting feature branch — guard does NOT fire
 _guard_out=""
@@ -318,35 +318,61 @@ run_test "mainloop_release_guard_readback_failure_result" "RESULT=escalate" \
 run_test "mainloop_release_guard_readback_failure_exit" "1" "$_integ_exit"
 unset INTEG_MOCK_READBACK_MISMATCH INTEG_MOCK_HEAD_JSON
 
-# Test 15.2: hotfix/* head branch → main loop also emits RESULT=skipped, exits 0
-# (expected branch derived from the working directory: no --repo-root). The
-# working directory is another checkout of this repository — same origin as
-# the checkout the loop enters, which is what makes it acceptable.
-_integ_self_origin="$(PATH="$TEST_PR_REVIEW_LOOP_REAL_PATH" git -C "$REPO_ROOT" remote get-url origin 2>/dev/null)" \
-  || _integ_self_origin="https://github.com/example/repo.git"
-_integ_self_slug="${_integ_self_origin%.git}"
-_integ_self_slug="${_integ_self_slug#*github.com[:/]}"
-INTEG_MOCK_HEAD_JSON="$(_integ_head_json hotfix/v9.9.1 "$_integ_self_slug")"
+# Probe the full executable up to the end of its release guard. Only the
+# downstream reviewer/network boundary is replaced; ownership, locking and
+# the main-loop call to the guard remain real. Temporary files isolate runs.
+_hotfix_probe="$_integration_mock_bin/hotfix-probe.sh"
+python3 - "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh" "$_hotfix_probe" <<'HOTFIX_PROBE'
+from pathlib import Path
+import sys
+source, target = map(Path, sys.argv[1:])
+text = source.read_text()
+line = next(line for line in text.splitlines() if line.startswith('SCRIPT_DIR='))
+text = text.replace(line, 'SCRIPT_DIR="${HOTFIX_PROBE_SCRIPT_DIR:?}"', 1)
+marker = '# --- End release PR early-exit guard ---'
+assert text.count(marker) == 1
+text = text.replace(marker, marker + '\nprintf "REVIEW_PATH_REACHED=1\\n"\nprint_kv RESULT clean\nexit 0', 1)
+target.write_text(text)
+HOTFIX_PROBE
 export INTEG_MOCK_HEAD_JSON
-_integ_gh_log="$(mktemp)"
-export INTEG_MOCK_GH_LOG="$_integ_gh_log"
-_integ_out=""
-_integ_exit=0
+INTEG_MOCK_HEAD_JSON="$(_integ_head_json hotfix/v9.9.1)"
 _integ_hotfix_dir="$(_integ_fixture h998 hotfix/v9.9.1)"
-PATH="$TEST_PR_REVIEW_LOOP_REAL_PATH" git -C "$_integ_hotfix_dir" remote set-url origin "$_integ_self_origin"
-set +e
-_integ_out="$(cd "$_integ_hotfix_dir" && _run_loop_derived 998)"
-_integ_exit=$?
-set -e
-run_test "mainloop_hotfix_guard_result_skipped" "RESULT=skipped" \
-  "$(printf '%s\n' "$_integ_out" | grep '^RESULT=')"
-run_test "mainloop_hotfix_guard_exit0" "0" "$_integ_exit"
-run_test "mainloop_hotfix_guard_posts_summary" "1" "$(
-  grep -c -- "api --method POST repos/$_integ_self_slug/issues/998/comments --input" "$_integ_gh_log" 2>/dev/null || true
-)"
-rm -f "$_integ_gh_log"
-unset INTEG_MOCK_GH_LOG
+_integ_exit=0
+_integ_out="$(env GH_REPO= WORKFLOW_TARGET_GITHUB_REPO= \
+  HOTFIX_PROBE_SCRIPT_DIR="$REPO_ROOT/scripts/development-workflow" \
+  PATH="$_integration_mock_bin:$TEST_PR_REVIEW_LOOP_REAL_PATH" \
+  bash "$_hotfix_probe" 998 --repo-root "$_integ_hotfix_dir" 2>/dev/null)" || _integ_exit=$?
+run_test "mainloop_hotfix_reaches_review_path_exit" "0" "$_integ_exit"
+run_test "mainloop_hotfix_reaches_review_path" "REVIEW_PATH_REACHED=1" \
+  "$(printf '%s\n' "$_integ_out" | grep '^REVIEW_PATH_REACHED=')"
+run_test "mainloop_hotfix_no_release_skip" "0" \
+  "$(printf '%s\n' "$_integ_out" | grep -c '^REASON=release_pr' || true)"
 unset INTEG_MOCK_HEAD_JSON
+
+# Test 15.2: hotfix and backport heads must reach ordinary reviewer dispatch.
+# The release guard is the only branch exemption before the configured phases.
+for _hotfix_head in hotfix/v9.9.1 backport/hotfix/v9.9.1; do
+  _guard_exit=0
+  _guard_out="$(_check_release_pr_guard 998 "$_hotfix_head")" || _guard_exit=$?
+  run_test "review_dispatch_${_hotfix_head}_guard_continues" "1" "$_guard_exit"
+  # Keep the real phase filter and dispatcher; replace only external adapters.
+  _hotfix_dispatch="$(
+    platforms=(bugbot ronda)
+    # shellcheck disable=SC2034 # Read by the sourced phase filter.
+    phase_after_clean_platforms=(ronda)
+    filter_phase_after_clean_platforms
+    run_bugbot_review() { printf 'REVIEW=draft:%s\n' "$2"; }
+    run_ronda_review() { printf 'REVIEW=ready:%s\n' "$2"; }
+    if ! _check_release_pr_guard 998 "$_hotfix_head" >/dev/null; then
+      for _configured_reviewer in ${platforms[@]+"${platforms[@]}"}; do
+        run_platform_review "$_configured_reviewer" 998 "$_hotfix_head" 1 1
+      done
+    fi
+  )"
+  run_test "review_dispatch_${_hotfix_head}_both_buckets" \
+    "$(printf 'REVIEW=draft:%s\nREVIEW=ready:%s' "$_hotfix_head" "$_hotfix_head")" \
+    "$_hotfix_dispatch"
+done
 
 # Test 15.3: --branch release/v9.9.9 flag → the PR ownership guard (#1444)
 # confirms PR 997 is that branch's PR, then the release guard fires on the

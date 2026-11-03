@@ -2119,6 +2119,12 @@ echo "Post-create assertion passed: PR base is '$ACTUAL_BASE'"
 
 ### Step 9: Handoff to Work Item Runner
 
+Hotfixes contain new production code: run the configured draft and ready
+reviewers exactly as for `fix/*`, even though the PR targets `main`.
+`skipped/release_pr` is not valid hotfix review evidence. Only `release/*`
+retains that exemption. A `backport/hotfix/*` PR may keep the abbreviated
+loop because its code was reviewed on the original hotfix PR.
+
 Hand off to the Work Item Runner per Path 1 `### Step 9: Handoff to Work Item Runner`. **Label derivation rule**: `hotfix/*` branches always require `ready-for-regression` based on branch prefix, not content type. See `91-orchestrate-work-protocol.md` Step 8a for the full branch-prefix-to-label table.
 
 **After the `hotfix/*` PR merges to `main`**: perform the mandatory backport to prevent `main` and `develop` from drifting apart.

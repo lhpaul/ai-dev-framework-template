@@ -14794,18 +14794,17 @@ reviewer_loop_fetch_latest_summary_body() {
 # ---------------------------------------------------------------------------
 # _check_release_pr_guard <pr_number> [<branch_name>]
 #
-# Determines whether the given PR is a release or hotfix PR that should skip
+# Determines whether the given PR is a release PR that should skip
 # the automated reviewer loop. Returns 0 (guard fires → skip) or 1 (guard
 # does not fire → continue normally).
 #
 # Detection is based exclusively on the head branch name:
 #   release/* — release PR (release/vX.Y.Z → main or develop backport)
-#   hotfix/*  — hotfix PR (hotfix/vX.Y.Z → main)
+#   hotfix/* runs the configured draft and ready reviewers, like fix/*.
 #
 # Relying on the head branch name (not base branch) avoids false-positive
 # matches for non-release PRs that might target main outside the standard
-# gitflow workflow. In this workflow, all release and hotfix PRs use the
-# release/* or hotfix/* prefix by convention.
+# gitflow workflow. Only release/* carries already-reviewed release content.
 #
 # Output (stdout, key=value lines):
 #   RELEASE_GUARD_HEAD=<head branch or empty>
@@ -14828,7 +14827,7 @@ _check_release_pr_guard() {
     #
     # Fail-safe design: if the branch cannot be determined (gh failure, empty
     # JSON, or jq error), guard_head stays empty. An empty guard_head does NOT
-    # match release/* or hotfix/*, so the guard does not fire and the reviewer
+    # match release/*, so the guard does not fire and the reviewer
     # loop runs normally. For this SKIP guard (not a BLOCK guard), failing open
     # means running the reviewer loop — the safe default, not a dangerous one.
     local _gh_json=""
@@ -14849,7 +14848,7 @@ _check_release_pr_guard() {
   fi
 
   case "$guard_head" in
-    release/*|hotfix/*) is_release=1 ;;
+    release/*) is_release=1 ;;
   esac
 
   printf 'RELEASE_GUARD_HEAD=%s\n' "$guard_head"
@@ -15537,15 +15536,9 @@ if ! _check_execution_budget; then
 fi
 
 # --- Release PR early-exit guard ---
-# Release PRs (release/* -> main) and hotfix PRs (hotfix/* -> main) carry
-# large diffs that were already reviewed when each feature/fix PR merged into
-# develop. Running external reviewer tools (Haystack, CodeRabbit, PR-Agent,
-# etc.) on these PRs produces no review value and wastes the poll timeout
-# (historically ~40 min for large-diff Haystack waits). Skip the reviewer
-# loop entirely for these PR types and return RESULT=skipped so callers treat
-# the result as a clean non-blocking outcome.
-#
-# Detection: head branch matches release/* or hotfix/*
+# Release PRs (release/*) carry changes already reviewed on implementation PRs.
+# Hotfix PRs carry new code cut from main and run draft and ready reviewers.
+# Detection: head branch matches release/* only.
 _release_guard_output=""
 set +e
 _release_guard_output="$(_check_release_pr_guard "$pr_number" "${branch_name:-}")"
@@ -15575,10 +15568,10 @@ post_release_guard_summary() {
   _comment_body="$(cat <<EOF
 ### Automated Reviewer Loop Summary
 
-**Result:** skipped — release/hotfix PR reviewer loop intentionally skipped
+**Result:** skipped — release PR reviewer loop intentionally skipped
 **Platforms:** none
 **Findings:** 0 blocking, 0 suggestions
-**Release readiness:** Review happens on develop-targeting feature/fix PRs. For \`${_branch_name:-release/hotfix}\` PRs targeting \`main\`, validate release artifacts, run \`pr-ci-loop.sh\`, then apply \`ready-for-human-review\` when CI is green.
+**Release readiness:** Review happens on develop-targeting feature/fix PRs. For \`${_branch_name:-release}\` PRs targeting \`main\`, validate release artifacts, run \`pr-ci-loop.sh\`, then apply \`ready-for-human-review\` when CI is green.
 
 *Posted automatically by \`pr-review-loop.sh\`.*
 EOF
@@ -15632,7 +15625,7 @@ EOF
 
 if [ "$_release_guard_fired" -eq 0 ]; then
   workflow_diagnostic "Release PR detected — reviewer loop skipped." >&2
-  workflow_diagnostic "Review happens on develop-targeting feature/fix PRs, not on release/* or hotfix/* branches." >&2
+  workflow_diagnostic "Review happens on develop-targeting feature/fix PRs, not on release/* branches." >&2
   workflow_diagnostic "Release readiness path: validate release artifacts → run pr-ci-loop.sh → apply ready-for-human-review when CI is green." >&2
   # Remove any stale reviewer-failed label left from a prior failed run so the
   # PR is not misleadingly labeled after a clean release-guard skip exit.

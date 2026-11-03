@@ -434,7 +434,7 @@ configured real regression checks, or an explicitly enabled placeholder, can run
   --pr <pr_number> --label ready-for-regression
 ```
 
-This mirrors Step 7b in `91` for implementation PRs, but scoped here to the release PR targeting `main`. The helper classifies `release/*` (and `hotfix/*`) heads as non-implementation, so it skips the reviewer leg entirely — no reviewer check run is required — while still enforcing the CI leg; `ready-for-regression` permits pending non-reviewer checks (the label triggers the regression workflow), so a freshly opened release PR is not deadlocked. Treat `RESULT=refused` as a stop: fix or wait per the printed `REASON`, then re-run. The release PR's content was already reviewer-gated on each constituent implementation PR.
+This mirrors Step 7b in `91` for implementation PRs, but scoped here to the release PR targeting `main`. The helper classifies `release/*` heads as non-implementation, so it skips the reviewer leg entirely — no reviewer check run is required — while still enforcing the CI leg; `ready-for-regression` permits pending non-reviewer checks (the label triggers the regression workflow), so a freshly opened release PR is not deadlocked. Treat `RESULT=refused` as a stop: fix or wait per the printed `REASON`, then re-run. The release PR's content was already reviewer-gated on each constituent implementation PR.
 
 ### 7.4 CI loop
 

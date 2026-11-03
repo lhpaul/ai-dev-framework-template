@@ -16,19 +16,10 @@
 # "reviewer clean". The same applies to a `neutral` check run that accompanies a
 # Bugbot usage/spend-limit notice: the reviewer never actually reviewed.
 #
-# The reviewer leg applies to implementation branches only (`feature/*`,
-# `fix/*`, `refactor/*`, `backport/hotfix/*`) — the same boundary Protocol 91
-# draws for `IS_IMPLEMENTATION_PR` and for its Step 7b label derivation table.
-# Ready-phase reviewers are not dispatched on `spec/*`,
-# `implementation-plan/*`, graduation (`develop-<slug>`), `release/*`, or
-# `hotfix/*` PRs, so no check run can exist for them; gating on one would
-# refuse every doc-stage, release, and hotfix PR. `hotfix/*` is exempt the
-# same way `release/*` is because pr-review-loop.sh's `_check_release_pr_guard`
-# skips the reviewer loop for `release/*` AND `hotfix/*` head branches — no
-# reviewer check is ever dispatched on a hotfix, so requiring one would
-# permanently refuse both readiness labels `reviewer-check-absent`. Hotfix PRs
-# still get what release PRs get: the CI leg applies unchanged (PR #1818
-# finding 1, round 7). The CI leg still applies on those branches.
+# The reviewer leg applies to implementation branches: feature/*, fix/*,
+# refactor/*, hotfix/* and backport/hotfix/*. Hotfixes carry new production code
+# and require the same reviewer evidence as fixes. Documentation, graduation
+# and release branches skip the reviewer leg; the CI leg still applies.
 #
 # `ready-for-regression` blocks on failing non-reviewer checks but permits
 # pending ones: that label is what *starts* the configured regression workflow,
@@ -620,9 +611,8 @@ platforms from the base configuration, so head-only additions are never
 required, but a head cannot waive a base-configured reviewer. The base policy
 is resolved with local review overrides applied (the same effective policy
 the loop dispatches); an absent .ai-dev-workflow.local.yaml falls back to the
-shared policy. hotfix/* branches are exempt from the reviewer leg exactly as
-release/* branches are — the reviewer loop is never dispatched on them — but
-the CI leg still applies.
+shared policy. hotfix/* branches require reviewer evidence like fix/*;
+release/* branches skip the reviewer leg but still require CI.
 USAGE
 }
 
@@ -2084,15 +2074,9 @@ fi
 # Implementation branches are the ones that carry a ready-phase reviewer check
 # run and a required `ready-for-regression` label (Protocol 91's label derivation
 # table). Doc-stage, graduation, and release PRs are not reviewer-gated.
-# `hotfix/*` is exempt from the reviewer leg — same handling as `release/*`
-# (PR #1818 finding 1, round 7): `_check_release_pr_guard` in
-# pr-review-loop.sh skips the reviewer loop for `release/*` AND `hotfix/*`
-# head branches, so no ready-phase reviewer check run can ever exist on a
-# hotfix and requiring one would permanently refuse both readiness labels
-# `reviewer-check-absent`. The CI leg below still applies unchanged — that is
-# the release-branch handling this mirrors.
+# Hotfixes run the same reviewer gate as other new implementation code.
 case "$head_ref_name" in
-  feature/*|fix/*|refactor/*|backport/hotfix/*) is_implementation_pr="true" ;;
+  feature/*|fix/*|refactor/*|hotfix/*|backport/hotfix/*) is_implementation_pr="true" ;;
   *) is_implementation_pr="false" ;;
 esac
 
