@@ -15,6 +15,7 @@ from pathlib import Path
 
 CONTEXT_SCHEMA = "review_evidence_context.v1"
 PROOF_SCHEMA = "review_evidence_verification.v1"
+MANIFEST_SCHEMA = "review_evidence_manifest.v1"
 BOOKKEEPING = (
     "### Automated Reviewer Loop Summary",
     "### Step 7a Internal Review Gate Summary",
@@ -34,6 +35,19 @@ def bookkeeping(body):
     """Only an exact opening marker/heading is excluded, never a substring."""
     first = body.strip().split("\n", 1)[0].rstrip("\r")
     return first in BOOKKEEPING
+
+
+def text_sha256(text):
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def manifest(content, fingerprint):
+    """Diagnostic metadata only; it never substitutes for snapshot equality."""
+    return {"schema": MANIFEST_SCHEMA, "snapshot_sha256": fingerprint,
+            **{k: content[k] for k in ("repository", "pr_number", "head_sha")},
+            "body_sha256": text_sha256(content["body"]),
+            "comments": [{"id": c["id"], "body_sha256": text_sha256(c["body"]),
+                          "updated_at": c["updated_at"]} for c in content["comments"]]}
 
 
 def snapshot(raw):
@@ -72,9 +86,69 @@ def snapshot(raw):
                "body": body, "comments": sorted(eligible, key=lambda c: c["id"])}
     encoded = json.dumps(content, ensure_ascii=False, sort_keys=True,
                          separators=(",", ":")).encode("utf-8")
+    fingerprint = hashlib.sha256(encoded).hexdigest()
     return {"schema": CONTEXT_SCHEMA, **content, "available": True,
             "review_comments": sorted(review_comments, key=lambda c: c["id"]),
-            "snapshot_sha256": hashlib.sha256(encoded).hexdigest()}
+            "snapshot_sha256": fingerprint,
+            "manifest": manifest(content, fingerprint)}
+
+
+def differences(context, previous, expected_sha):
+    """Compare a saved manifest with live evidence without emitting remote text.
+
+    Older ledgers lack a manifest: name that limitation rather than guessing
+    which comment changed. No diagnostic result can authorize a stale verdict.
+    """
+    unavailable = {"status": "manifest_unavailable", "changes": []}
+    sha = re.compile(r"[0-9a-f]{64}")
+    if (not isinstance(expected_sha, str) or not sha.fullmatch(expected_sha)
+            or not isinstance(previous, dict)
+            or previous.get("schema") != MANIFEST_SCHEMA
+            or previous.get("snapshot_sha256") != expected_sha):
+        return unavailable
+    try:
+        current = snapshot(context)
+    except (ValueError, TypeError):
+        return {"status": "context_unavailable", "changes": []}
+    if (not current["available"]
+            or current["snapshot_sha256"] != context.get("snapshot_sha256")):
+        return {"status": "context_unavailable", "changes": []}
+    if any(previous.get(k) != current[k] for k in ("repository", "pr_number", "head_sha")):
+        return {"status": "identity_mismatch", "changes": []}
+    old_comments = previous.get("comments")
+    if (not isinstance(previous.get("body_sha256"), str)
+            or not sha.fullmatch(previous["body_sha256"])
+            or not isinstance(old_comments, list)):
+        return unavailable
+    old = {}
+    for comment in old_comments:
+        if (not isinstance(comment, dict) or not positive_int(comment.get("id"))
+                or comment["id"] in old
+                or not isinstance(comment.get("body_sha256"), str)
+                or not sha.fullmatch(comment["body_sha256"])
+                or not isinstance(comment.get("updated_at"), str)
+                or not comment["updated_at"]):
+            return unavailable
+        old[comment["id"]] = comment
+    live = current["manifest"]
+    new = {c["id"]: c for c in live["comments"]}
+    changes = []
+    if previous["body_sha256"] != live["body_sha256"]:
+        changes.append({"source": "body", "kind": "edited"})
+    for ident in sorted(old.keys() | new.keys()):
+        source = "comment:" + str(ident)
+        if ident not in old:
+            changes.append({"source": source, "kind": "added"})
+        elif ident not in new:
+            changes.append({"source": source, "kind": "removed"})
+        else:
+            if old[ident]["body_sha256"] != new[ident]["body_sha256"]:
+                changes.append({"source": source, "kind": "body_edited"})
+            if old[ident]["updated_at"] != new[ident]["updated_at"]:
+                changes.append({"source": source, "kind": "revision_changed"})
+    status = "changed" if changes else (
+        "unchanged" if expected_sha == current["snapshot_sha256"] else "manifest_inconsistent")
+    return {"status": status, "changes": changes}
 
 
 def verify(context, result, request_id):
@@ -138,12 +212,18 @@ def main():
     check.add_argument("--context", required=True)
     check.add_argument("--result", required=True)
     check.add_argument("--request-id", required=True, type=int)
+    diff = commands.add_parser("diff", help="Diagnose drift; never authorize readiness")
+    diff.add_argument("--context", required=True)
+    diff.add_argument("--manifest", required=True)
+    diff.add_argument("--expected-sha", required=True)
     args = parser.parse_args()
     try:
         if args.command == "snapshot":
             output = snapshot(read_json(args.input))
-        else:
+        elif args.command == "verify":
             output = verify(read_json(args.context), read_json(args.result), args.request_id)
+        else:
+            output = differences(read_json(args.context), read_json(args.manifest), args.expected_sha)
     except (ValueError, OSError, TypeError, OverflowError, RecursionError):
         # Never include remote content or a source file's bytes in diagnostics.
         print("review evidence: invalid or unavailable input", file=sys.stderr)
