@@ -1717,8 +1717,12 @@ emit_verdict() {
     FAILING_CHECK_COUNT "$failing_count" \
     DRY_RUN "$dry_run"
   if [ -n "${_adapter_evidence_diff:-}" ]; then
+    local evidence_recovery_command
+    printf -v evidence_recovery_command \
+      'bash scripts/development-workflow/pr-review-loop.sh %q --repo %q --branch %q' \
+      "$pr_number" "$repo" "$head_ref_name"
     workflow_diagnostic_kvs EVIDENCE_DIFF_JSON "$_adapter_evidence_diff" \
-      EVIDENCE_RECOVERY "Inspect the named comment IDs at https://github.com/$repo/pull/$pr_number#issuecomment-ID (body means PR description). Keep readiness withheld. Restore unintended changes if possible; revision changes remain evidence changes. From the PR branch checkout, run the standard ready review: bash scripts/development-workflow/pr-review-loop.sh $pr_number --repo $repo --branch $head_ref_name. Then retry readiness; do not edit evidence comments after review. Missing manifests require a fresh standard review to establish a diagnosable baseline."
+      EVIDENCE_RECOVERY "Inspect the named comment IDs at https://github.com/$repo/pull/$pr_number#issuecomment-ID (body means PR description). Keep readiness withheld. Restore unintended changes if possible; revision changes remain evidence changes. From the PR branch checkout, run the standard ready review: $evidence_recovery_command . Then retry readiness; do not edit evidence comments after review. Missing manifests require a fresh standard review to establish a diagnosable baseline."
   fi
   if [ "$json_output" = "true" ]; then
     python3 -c 'import json,sys; print(json.dumps(dict(result=sys.argv[1], reason=sys.argv[2], prNumber=sys.argv[3], repo=sys.argv[4], label=sys.argv[5], headSha=sys.argv[6], reviewerReport=sys.argv[7], blockingFindingCount=int(sys.argv[8]), pendingCheckCount=int(sys.argv[9]), failingCheckCount=int(sys.argv[10]), dryRun=(sys.argv[11] == "true"))))' \

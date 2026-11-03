@@ -1945,7 +1945,7 @@ _2103_payload="$(jq -cn --arg head "$HEAD" --argjson baseline "$_2103_baseline" 
    reviewed_heads:[{platform:"local-ai-reviewer",reviewed_head:$head}],
    platform_results:[{platform:"local-ai-reviewer",result:"clean",
      evidence_snapshot_sha256:$baseline.snapshot_sha256,evidence_manifest:$baseline.manifest}]}]}')"
-for _2103_case in unchanged edited revision added removed missing malformed; do
+for _2103_case in unchanged edited revision added removed missing malformed shell_branch; do
   _2103_current_payload="$_2103_payload"
   [ "$_2103_case" != missing ] || _2103_current_payload="$(printf '%s' "$_2103_payload" | jq 'del(.entries[0].platform_results[0].evidence_manifest)')"
   [ "$_2103_case" != malformed ] || _2103_current_payload="$(printf '%s' "$_2103_payload" | jq '.entries[0].platform_results[0].evidence_manifest.comments="bad"')"
@@ -1953,12 +1953,17 @@ for _2103_case in unchanged edited revision added removed missing malformed; do
   MOCK_ISSUE_COMMENTS="$(jq -cn --argjson baseline "$_2103_baseline" \
     --argjson summary "$(_ledger_comment loop-runner OWNER 933 "$_2103_summary")" '$baseline.comments + $summary')"
   case "$_2103_case" in
-    edited|missing|malformed) MOCK_ISSUE_COMMENTS="$(printf '%s' "$MOCK_ISSUE_COMMENTS" | jq '.[0].body += " amended"')" ;;
+    edited|missing|malformed|shell_branch) MOCK_ISSUE_COMMENTS="$(printf '%s' "$MOCK_ISSUE_COMMENTS" | jq '.[0].body += " amended"')" ;;
     revision) MOCK_ISSUE_COMMENTS="$(printf '%s' "$MOCK_ISSUE_COMMENTS" | jq '.[0].updated_at="2026-01-10"')" ;;
     added) MOCK_ISSUE_COMMENTS="$(printf '%s' "$MOCK_ISSUE_COMMENTS" | jq '. + [{id:21,body:"New reviewer finding",updated_at:"2026-01-10"}]')" ;;
     removed) MOCK_ISSUE_COMMENTS="$(printf '%s' "$MOCK_ISSUE_COMMENTS" | jq 'del(.[0])')" ;;
   esac
+  _2103_saved_pr="$MOCK_PR_JSON"
+  if [ "$_2103_case" = shell_branch ]; then
+    MOCK_PR_JSON="$(printf '%s' "$MOCK_PR_JSON" | jq '.headRefName="fix/2103;id"')"
+  fi
   result="$(run_helper_platform "$_codex_config")"
+  MOCK_PR_JSON="$_2103_saved_pr"
   if [ "$_2103_case" = unchanged ]; then
     run_test "2103_removed_plant_labels" labeled "$(field "$result" RESULT)"
     run_test "2103_unchanged_no_drift_message" '' "$(field "$result" EVIDENCE_DIFF_JSON)"
@@ -1978,10 +1983,14 @@ for _2103_case in unchanged edited revision added removed missing malformed; do
         ;;
     esac
     run_test "2103_${_2103_case}_recovery" present \
-      "$(if field "$result" EVIDENCE_RECOVERY | grep -Fq 'standard ready review'; then printf present; else printf absent; fi)"
+      "$(if grep -Fq 'standard ready review' <<<"$(field "$result" EVIDENCE_RECOVERY)"; then printf present; else printf absent; fi)"
+    if [ "$_2103_case" = shell_branch ]; then
+      run_test "2103_recovery_escapes_remote_branch" escaped \
+        "$(if grep -Fq 'fix/2103\;id' <<<"$(field "$result" EVIDENCE_RECOVERY)"; then printf escaped; else printf unsafe; fi)"
+    fi
   fi
 done
-unset _2103_baseline _2103_payload _2103_current_payload _2103_case _2103_summary _2103_diff _2103_source _2103_kind
+unset _2103_baseline _2103_payload _2103_current_payload _2103_case _2103_summary _2103_diff _2103_source _2103_kind _2103_saved_pr
 # #1789 (T2.10): a current-head no_verdict_yet record (the reviewer's wait ran
 # out with no verdict) is an absent verdict — refuses reviewer-check-absent,
 # never a label and never reviewer-evidence-unreadable.
