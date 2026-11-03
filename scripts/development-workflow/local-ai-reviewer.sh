@@ -1266,6 +1266,7 @@ if ! workflow_collect_review_evidence "$OWNER/$REPO" "$PR_NUMBER" "$HEAD_SHA" "$
   workflow_diagnostic 'INFO: published evidence context is unavailable; it cannot satisfy a finding' >&2
 fi
 evidence_snapshot_sha256="$(jq -r '.snapshot_sha256 // ""' "$evidence_context_file")"
+evidence_manifest_json="$(jq -c '.manifest // {}' "$evidence_context_file")"
 context_file="$(mktemp)"
 stdout_file="$(mktemp)"
 stderr_file="$(mktemp)"
@@ -1708,6 +1709,7 @@ write_evidence_file() {
     --arg head_branch "$HEAD_BRANCH" \
     --arg reviewed_head "$HEAD_SHA" \
     --arg evidence_snapshot_sha256 "$evidence_snapshot_sha256" \
+    --argjson evidence_manifest "$evidence_manifest_json" \
     --argjson evidence_verification "$evidence_verification_json" \
     --arg graph_context "$graph_context" \
     --arg pr_body "$PR_BODY" \
@@ -1736,6 +1738,7 @@ write_evidence_file() {
       head_branch: $head_branch,
       reviewed_head: $reviewed_head,
       evidence_snapshot_sha256: $evidence_snapshot_sha256,
+      evidence_manifest: $evidence_manifest,
       evidence_verification: $evidence_verification,
       graph_context: $graph_context,
       counts: {
@@ -1783,6 +1786,7 @@ emit_ordinary_and_strict() {
   print_result "$final_result" "$final_comment_count" "$final_blocking_count" \
     "$final_suggestion_count" "$final_reason" "$final_display"
   print_kv EVIDENCE_SNAPSHOT_SHA256 "$evidence_snapshot_sha256"
+  print_kv EVIDENCE_MANIFEST_JSON "$evidence_manifest_json"
   print_kv EVIDENCE_VERIFICATION_JSON "$evidence_verification_json"
   if [ "$final_result" = "needs_fixes" ]; then
     printf '%s\n' "$parse_result" | awk '/^BLOCKING_[0-9]+_(PATH|LINE|BODY)=/ { print }' | workflow_redact_text

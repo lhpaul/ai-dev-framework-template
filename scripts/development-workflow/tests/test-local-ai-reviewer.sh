@@ -2405,6 +2405,14 @@ run_test "2061_bookkeeping_visible_for_review" 3 "$(jq -r '.evidence_context.rev
 _proof_line="$(line_for EVIDENCE_VERIFICATION_JSON)"
 run_test "2061_explicit_verified_metadata" verified "$(printf '%s' "${_proof_line#*=}" | jq -r '.status')"
 run_test "2061_snapshot_metadata_round_trip" "$(jq -r '.evidence_context.snapshot_sha256' "$MOCK_CONTEXT_CAPTURE")" "$(printf '%s' "${_proof_line#*=}" | jq -r '.snapshot_sha256')"
+_2103_manifest_line="$(line_for EVIDENCE_MANIFEST_JSON)"
+run_test "2103_manifest_metadata_round_trip" "$(jq -c '.evidence_context.manifest' "$MOCK_CONTEXT_CAPTURE")" \
+  "${_2103_manifest_line#*=}"
+run_test "2103_manifest_excludes_bookkeeping" '10,20' \
+  "$(printf '%s' "${_2103_manifest_line#*=}" | jq -r '[.comments[].id | tostring] | join(",")')"
+run_test "2103_manifest_contains_no_remote_body" false \
+  "$(printf '%s' "${_2103_manifest_line#*=}" | jq -r 'tostring | contains("Synthetic")')"
+unset _2103_manifest_line
 
 for MOCK_EVIDENCE_PROOF_MODE in missing unverified stale code; do
   export MOCK_EVIDENCE_PROOF_MODE
