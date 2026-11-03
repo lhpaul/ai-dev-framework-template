@@ -1935,6 +1935,53 @@ MOCK_BASE_CONFIG='review:
 MOCK_ISSUE_COMMENTS="$(_ledger_comment loop-runner OWNER 933 "$(_ledger_entry clean "$HEAD" 3)")"
 result="$(run_helper_platform "$_codex_config")"
 run_test "local_ai_reviewer_current_head_ledger_labels_result" "labeled" "$(field "$result" RESULT)"
+# #2103: preserve a reviewed baseline and plant post-review changes. The real
+# snapshot helper and readiness adapter run together; no GitHub API is called.
+_2103_baseline="$(jq -cn --arg head "$HEAD" '{repository:"acme/widgets",pr_number:42,
+  head_sha:$head,body:"",available:true,comments:[{id:20,body:"Synthetic report",updated_at:"2026-01-09"}]}' |
+  python3 "$REPO_ROOT/scripts/development-workflow/review-evidence-context.py" snapshot --input -)"
+_2103_payload="$(jq -cn --arg head "$HEAD" --argjson baseline "$_2103_baseline" '
+  {schema:"reviewer_loop_history.v1",entries:[{iteration:3,
+   reviewed_heads:[{platform:"local-ai-reviewer",reviewed_head:$head}],
+   platform_results:[{platform:"local-ai-reviewer",result:"clean",
+     evidence_snapshot_sha256:$baseline.snapshot_sha256,evidence_manifest:$baseline.manifest}]}]}')"
+for _2103_case in unchanged edited revision added removed missing malformed; do
+  _2103_current_payload="$_2103_payload"
+  [ "$_2103_case" != missing ] || _2103_current_payload="$(printf '%s' "$_2103_payload" | jq 'del(.entries[0].platform_results[0].evidence_manifest)')"
+  [ "$_2103_case" != malformed ] || _2103_current_payload="$(printf '%s' "$_2103_payload" | jq '.entries[0].platform_results[0].evidence_manifest.comments="bad"')"
+  _2103_summary="$(printf '### Automated Reviewer Loop Summary\n*Posted automatically by `pr-review-loop.sh`.*\n<!-- reviewer-loop-history:v1 -->\n```json\n%s\n```\n' "$_2103_current_payload")"
+  MOCK_ISSUE_COMMENTS="$(jq -cn --argjson baseline "$_2103_baseline" \
+    --argjson summary "$(_ledger_comment loop-runner OWNER 933 "$_2103_summary")" '$baseline.comments + $summary')"
+  case "$_2103_case" in
+    edited|missing|malformed) MOCK_ISSUE_COMMENTS="$(printf '%s' "$MOCK_ISSUE_COMMENTS" | jq '.[0].body += " amended"')" ;;
+    revision) MOCK_ISSUE_COMMENTS="$(printf '%s' "$MOCK_ISSUE_COMMENTS" | jq '.[0].updated_at="2026-01-10"')" ;;
+    added) MOCK_ISSUE_COMMENTS="$(printf '%s' "$MOCK_ISSUE_COMMENTS" | jq '. + [{id:21,body:"New reviewer finding",updated_at:"2026-01-10"}]')" ;;
+    removed) MOCK_ISSUE_COMMENTS="$(printf '%s' "$MOCK_ISSUE_COMMENTS" | jq 'del(.[0])')" ;;
+  esac
+  result="$(run_helper_platform "$_codex_config")"
+  if [ "$_2103_case" = unchanged ]; then
+    run_test "2103_removed_plant_labels" labeled "$(field "$result" RESULT)"
+    run_test "2103_unchanged_no_drift_message" '' "$(field "$result" EVIDENCE_DIFF_JSON)"
+  else
+    run_test "2103_${_2103_case}_refuses" reviewer-evidence-unreadable "$(field "$result" REASON)"
+    run_test "2103_${_2103_case}_no_label" 0 "$(grep -c 'add-label ready-for-human-review' "$_LABEL_LOG" || true)"
+    _2103_diff="$(field "$result" EVIDENCE_DIFF_JSON)"
+    case "$_2103_case" in
+      missing|malformed) run_test "2103_${_2103_case}_explicit" manifest_unavailable "$(printf '%s' "$_2103_diff" | jq -r .status)" ;;
+      *)
+        _2103_source=comment:20; _2103_kind=body_edited
+        [ "$_2103_case" != revision ] || _2103_kind=revision_changed
+        [ "$_2103_case" != added ] || { _2103_source=comment:21; _2103_kind=added; }
+        [ "$_2103_case" != removed ] || _2103_kind=removed
+        run_test "2103_${_2103_case}_names_comment" "$_2103_source|$_2103_kind" \
+          "$(printf '%s' "$_2103_diff" | jq -r '.changes[0] | .source + "|" + .kind')"
+        ;;
+    esac
+    run_test "2103_${_2103_case}_recovery" present \
+      "$(if field "$result" EVIDENCE_RECOVERY | grep -Fq 'standard ready review'; then printf present; else printf absent; fi)"
+  fi
+done
+unset _2103_baseline _2103_payload _2103_current_payload _2103_case _2103_summary _2103_diff _2103_source _2103_kind
 # #1789 (T2.10): a current-head no_verdict_yet record (the reviewer's wait ran
 # out with no verdict) is an absent verdict — refuses reviewer-check-absent,
 # never a label and never reviewer-evidence-unreadable.

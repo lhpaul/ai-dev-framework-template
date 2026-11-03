@@ -125,7 +125,7 @@ _2061_adapter_output="$(
   mkdir -p "$_2061_root/scripts/development-workflow"
   cat >"$_2061_root/scripts/development-workflow/local-ai-reviewer.sh" <<'SYNTHETIC_REVIEW'
 #!/usr/bin/env bash
-printf '%s\n' 'RESULT=clean' 'REVIEW_STAGE=implementation' 'REVIEW_STAGE_SOURCE=synthetic' 'REVIEW_CHECKLISTS=Code Review Checklist' 'REVIEWED_HEAD=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' 'EVIDENCE_SNAPSHOT_SHA256=synthetic-current' 'EVIDENCE_VERIFICATION_JSON={"schema":"review_evidence_verification.v1","status":"verified"}'
+printf '%s\n' 'RESULT=clean' 'REVIEW_STAGE=implementation' 'REVIEW_STAGE_SOURCE=synthetic' 'REVIEW_CHECKLISTS=Code Review Checklist' 'REVIEWED_HEAD=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' 'EVIDENCE_SNAPSHOT_SHA256=synthetic-current' 'EVIDENCE_MANIFEST_JSON={"schema":"review_evidence_manifest.v1","comments":[{"id":20}]}' 'EVIDENCE_VERIFICATION_JSON={"schema":"review_evidence_verification.v1","status":"verified"}'
 SYNTHETIC_REVIEW
   chmod +x "$_2061_root/scripts/development-workflow/local-ai-reviewer.sh"
   workflow_repo_root() { printf '%s\n' "$_2061_root"; }
@@ -139,6 +139,8 @@ run_test "2061_real_local_adapter_forwards_snapshot" synthetic-current \
   "$(kv_value_default EVIDENCE_SNAPSHOT_SHA256 "$_2061_adapter_output" missing)"
 run_test "2061_real_local_adapter_forwards_proof" verified \
   "$(kv_value_default EVIDENCE_VERIFICATION_JSON "$_2061_adapter_output" '{}' | jq -r .status)"
+run_test "2103_real_local_adapter_forwards_manifest" 20 \
+  "$(kv_value_default EVIDENCE_MANIFEST_JSON "$_2061_adapter_output" '{}' | jq -r '.comments[0].id')"
 unset _2061_adapter_output
 
 # #2061: exercise the production pre-dispatch preparation, real durable

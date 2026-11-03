@@ -1184,6 +1184,7 @@ coderabbit_cli_local_ai_ledger_verdict() {
   _adapter_ledger_clean=0
   _adapter_refusal_reason="reviewer-evidence-unreadable"
   _adapter_ledger_started_at=""
+  _adapter_evidence_diff=""
   local summary_record ledger_body ledger_started_at payload verdict outcome verdict_head
   local invoker_login
   # Round 18 (thread PRRT_kwDORWAxaM6m36Wn): the marker strings are public,
@@ -1266,6 +1267,7 @@ coderabbit_cli_local_ai_ledger_verdict() {
           | ((.platform_results // [])[]
              | select(.platform == $platform)
              | {outcome: (.result // "unknown"), evidence_snapshot_sha256: (.evidence_snapshot_sha256 // ""),
+                evidence_manifest: (.evidence_manifest // {}),
                 head_sha: (
                   ($entry.reviewed_heads // [])
                   | map(select(.platform == $platform))
@@ -1300,8 +1302,19 @@ coderabbit_cli_local_ai_ledger_verdict() {
     fingerprint="$(printf '%s' "$verdict" | jq -r '.evidence_snapshot_sha256 // ""')"
     [ -n "$fingerprint" ] || { _adapter_refusal_reason=reviewer-evidence-unreadable; return; }
     context="$(mktemp)" || return
-    if ! workflow_collect_review_evidence "$repo" "$pr_number" "$head_sha" "$context" ||
-        [ "$(jq -r .snapshot_sha256 "$context")" != "$fingerprint" ]; then
+    if ! workflow_collect_review_evidence "$repo" "$pr_number" "$head_sha" "$context"; then
+      _adapter_evidence_diff='{"status":"context_unavailable","changes":[]}'
+      rm -f "$context"; _adapter_refusal_reason=reviewer-evidence-unreadable; return
+    fi
+    if [ "$(jq -r .snapshot_sha256 "$context")" != "$fingerprint" ]; then
+      local manifest_file
+      manifest_file="$(mktemp)" || { rm -f "$context"; return; }
+      if ! printf '%s' "$verdict" | jq '.evidence_manifest // {}' >"$manifest_file" ||
+          ! _adapter_evidence_diff="$(python3 "$SCRIPT_DIR/review-evidence-context.py" diff \
+            --context "$context" --manifest "$manifest_file" --expected-sha "$fingerprint")"; then
+        _adapter_evidence_diff='{"status":"diagnostic_unavailable","changes":[]}'
+      fi
+      rm -f "$manifest_file"
       rm -f "$context"; _adapter_refusal_reason=reviewer-evidence-unreadable; return
     fi
     rm -f "$context"
@@ -1703,6 +1716,10 @@ emit_verdict() {
     PENDING_CHECK_COUNT "$pending_count" \
     FAILING_CHECK_COUNT "$failing_count" \
     DRY_RUN "$dry_run"
+  if [ -n "${_adapter_evidence_diff:-}" ]; then
+    workflow_diagnostic_kvs EVIDENCE_DIFF_JSON "$_adapter_evidence_diff" \
+      EVIDENCE_RECOVERY "Inspect the named comment IDs at https://github.com/$repo/pull/$pr_number#issuecomment-ID (body means PR description). Keep readiness withheld. Restore unintended changes if possible; revision changes remain evidence changes. From the PR branch checkout, run the standard ready review: bash scripts/development-workflow/pr-review-loop.sh $pr_number --repo $repo --branch $head_ref_name. Then retry readiness; do not edit evidence comments after review. Missing manifests require a fresh standard review to establish a diagnosable baseline."
+  fi
   if [ "$json_output" = "true" ]; then
     python3 -c 'import json,sys; print(json.dumps(dict(result=sys.argv[1], reason=sys.argv[2], prNumber=sys.argv[3], repo=sys.argv[4], label=sys.argv[5], headSha=sys.argv[6], reviewerReport=sys.argv[7], blockingFindingCount=int(sys.argv[8]), pendingCheckCount=int(sys.argv[9]), failingCheckCount=int(sys.argv[10]), dryRun=(sys.argv[11] == "true"))))' \
       "$result" "$reason" "$pr_number" "$repo" "$label" "$head_sha" "$reviewer_report" "$blocking_count" "$pending_count" "$failing_count" "$dry_run" | workflow_redact_json

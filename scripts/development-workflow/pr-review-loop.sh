@@ -5170,6 +5170,7 @@ run_local_ai_reviewer_review() {
   rm -f "$local_ai_stderr_file"
 
   print_kv EVIDENCE_SNAPSHOT_SHA256 "$(kv_value_default EVIDENCE_SNAPSHOT_SHA256 "$script_output" "")"
+  print_kv EVIDENCE_MANIFEST_JSON "$(kv_value_default EVIDENCE_MANIFEST_JSON "$script_output" "{}")"
   print_kv EVIDENCE_VERIFICATION_JSON "$(kv_value_default EVIDENCE_VERIFICATION_JSON "$script_output" "{}")"
   blocking_count="$(kv_value_default BLOCKING_COUNT "$script_output" 0)"
   suggestion_count="$(kv_value_default SUGGESTION_COUNT "$script_output" 0)"
@@ -11492,7 +11493,7 @@ reviewer_loop_stage_skip_resolve() {
 reviewer_loop_platform_evidence_metadata() {
   printf '%s' "$1" | jq -c --arg platform "$2" '
     [.entries[]? | .platform_results[]? | select(.platform == $platform)] | last // {} |
-    {evidence_snapshot_sha256, evidence_verification, evidence_verifier} |
+    {evidence_snapshot_sha256, evidence_manifest, evidence_verification, evidence_verifier} |
     with_entries(select(.value != null))'
 }
 
@@ -11501,6 +11502,7 @@ reviewer_loop_stage_skip_output() {
   if [ -n "${2:-}" ]; then
     metadata="$(reviewer_loop_platform_evidence_metadata "$stage_skip_history_payload" "$2")"
     print_kv EVIDENCE_SNAPSHOT_SHA256 "$(printf '%s' "$metadata" | jq -r '.evidence_snapshot_sha256 // ""')"
+    print_kv EVIDENCE_MANIFEST_JSON "$(printf '%s' "$metadata" | jq -c '.evidence_manifest // {}')"
     print_kv EVIDENCE_VERIFICATION_JSON "$(printf '%s' "$metadata" | jq -c '.evidence_verification // {}')"
     print_kv EVIDENCE_VERIFIER "$(printf '%s' "$metadata" | jq -r '.evidence_verifier // ""')"
   fi
@@ -11801,8 +11803,10 @@ reviewer_loop_process_platform_output() {
   proof_extra="$(jq -cn --argjson timing "$proof_timing" \
     --arg verifier "$(kv_value_default EVIDENCE_VERIFIER "$platform_output" "")" \
     --arg hash "$(kv_value_default EVIDENCE_SNAPSHOT_SHA256 "$platform_output" "")" \
+    --argjson manifest "$(kv_value_default EVIDENCE_MANIFEST_JSON "$platform_output" "{}")" \
     --argjson proof "$(kv_value_default EVIDENCE_VERIFICATION_JSON "$platform_output" "{}")" \
     '$timing + (if $verifier != "" then {evidence_verifier:$verifier} else {} end) + (if $hash != "" then {evidence_snapshot_sha256:$hash} else {} end) +
+     (if $manifest != {} then {evidence_manifest:$manifest} else {} end) +
      (if $proof != {} then {evidence_verification:$proof} else {} end)')" || proof_extra="$reviewer_loop_last_timing_json"
   platform_result_records+=("$(reviewer_loop_platform_result_record_json "$platform_name" "$platform_result" "$platform_reason" "$(kv_value_default NO_VERDICT_YET "$platform_output" 0)" "$proof_extra")")
   if [ "$platform_name" = pr-agent ] &&

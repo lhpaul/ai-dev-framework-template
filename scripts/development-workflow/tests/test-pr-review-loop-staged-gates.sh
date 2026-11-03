@@ -2229,6 +2229,23 @@ run_test "2061_verification_replay_requires_live_trust_check" no_evidence "$(
 )"
 run_test "2061_replayed_snapshot_persists" synthetic-current \
   "$(printf '%s' "$_1692_composed" | jq -r '.entries[-1].platform_results[] | select(.platform=="local-ai-reviewer") | .evidence_snapshot_sha256')"
+# #2103: both fresh recording and current-head reuse must carry the original
+# manifest. Replacing it with the live snapshot would conceal post-review edits.
+_1692_reset_processing_globals
+_2103_manifest='{"schema":"review_evidence_manifest.v1","snapshot_sha256":"synthetic-current","comments":[{"id":20,"body_sha256":"baseline"}]}'
+reviewer_loop_process_platform_output local-ai-reviewer 1 "$(printf 'RESULT=clean\nREVIEWED_HEAD=%s\nEVIDENCE_SNAPSHOT_SHA256=synthetic-current\nEVIDENCE_MANIFEST_JSON=%s\n' "$_1692_head" "$_2103_manifest")" 0 1 >/dev/null 2>&1
+run_test "2103_fresh_manifest_recorded" "$_2103_manifest" \
+  "$(printf '%s' "${platform_result_records[0]}" | jq -c .evidence_manifest)"
+stage_skip_history_payload="$(jq -cn --argjson record "${platform_result_records[0]}" \
+  '{entries:[{platform_results:[$record]}]}')"
+_2103_skip="$(reviewer_loop_stage_skip_output "$_1692_head" local-ai-reviewer)"
+run_test "2103_skip_preserves_reviewed_manifest" "$_2103_manifest" \
+  "$(kv_value_default EVIDENCE_MANIFEST_JSON "$_2103_skip" '{}')"
+_1692_reset_processing_globals
+reviewer_loop_process_platform_output local-ai-reviewer 1 "$_2103_skip" 0 1 >/dev/null 2>&1
+run_test "2103_reused_manifest_recorded" "$_2103_manifest" \
+  "$(printf '%s' "${platform_result_records[0]}" | jq -c .evidence_manifest)"
+unset _2103_manifest _2103_skip
 _1692_reset_processing_globals
 local_second_pass_failed_head_record=""
 reviewer_loop_process_platform_output pr-agent 1 "$(printf 'RESULT=needs_fixes\nREASON=proof_pending\nEVIDENCE_REVIEW_FAILED_HEAD=%s\nREVIEWED_HEAD=%s\n' "$_1692_head" "$_1692_head")" 1 1 >/dev/null 2>&1
