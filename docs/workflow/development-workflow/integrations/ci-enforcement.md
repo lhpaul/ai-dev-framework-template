@@ -85,9 +85,10 @@ The verdict is read from the **latest** matching summary comment (#1810):
 
 - `success` — its `Result:` is `clean` and the last reviewer-loop history
   entry's `head_sha` matches the PR's current head.
-- `success` — its `Result:` is `skipped` (release/hotfix PRs to `main`, or no
+- `success` — its `Result:` is `skipped` on a branch other than `hotfix/*` (release PRs, or no
   reviewers configured). A skipped summary is a branch- or config-scoped
   decision that may carry no head history, so it is not head-bound.
+- `failure` — a `hotfix/*` PR has a `skipped` summary, including `release_pr`. Hotfixes require completed review.
 - `failure` — its `Result:` is anything else (for example `escalate`), so an
   escalated, non-converged PR cannot pass the guard.
 - `failure` — its `Result:` is `clean` but the recorded head is older than the

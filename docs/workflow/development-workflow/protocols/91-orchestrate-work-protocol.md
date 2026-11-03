@@ -2549,7 +2549,7 @@ separate; this preflight governs the normal post-approval transition.
 | Current-head `clean`, draft-only invocation | `1` | Full loop owns conversion |
 | Current-head `clean`, draft-only invocation | `0` | Convert only if draft, then full loop |
 | `skipped/not_configured`, zero draft platforms, unchanged head | `0` or `1` | Follow conversion ownership above |
-| `skipped/release_pr`, matching PR/branch, `release/*` or `hotfix/*`, unchanged head | Intentionally absent | Preserve the existing release skip; guarded manual conversion, then full-loop skip |
+| `skipped/release_pr`, matching PR/branch, `release/*`, unchanged head | Intentionally absent | Preserve the existing release skip; guarded manual conversion, then full-loop skip |
 | Other skipped/failed/missing verdict | Any | Stop without conversion |
 
 <!-- protocol-91-ready-transition:start -->
@@ -2595,7 +2595,7 @@ if [ "$LIVE_HEAD" != "$DRAFT_HEAD" ]; then
 fi
 if [ "$DRAFT_RESULT" = skipped ] && [ "$DRAFT_REASON" = release_pr ]; then
   case "$BRANCH" in
-    release/*|hotfix/*) : ;;
+    release/*) : ;;
     *) echo "ERROR: release skip does not apply to this branch." >&2; exit 1 ;;
   esac
   if [ "$(ready_gate_value PR_NUMBER)" != "$PR_NUMBER" ] || [ "$(ready_gate_value BRANCH)" != "$BRANCH" ]; then

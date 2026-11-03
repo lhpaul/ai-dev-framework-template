@@ -281,6 +281,9 @@ jobs:
             if [ "${FOUND:-0}" -le 0 ]; then
               STATE="failure"
               DESCRIPTION="No reviewer-loop summary found. Run the automated reviewer loop before merging."
+            elif [[ "${BRANCH:-}" == hotfix/* ]] && [ "$LATEST_SUMMARY_RESULT" = "skipped" ]; then
+              STATE="failure"
+              DESCRIPTION="Hotfix PRs require reviewer completion; skipped summaries are not accepted."
             elif [ "$LATEST_SUMMARY_RESULT" = "skipped" ]; then
               STATE="success"
               DESCRIPTION="Reviewer loop intentionally skipped."

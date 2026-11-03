@@ -855,25 +855,24 @@ MOCK_HEAD_CONFIG=''
 MOCK_BASE_CONFIG=''
 MOCK_LOCAL_OVERRIDE_ROOT=''
 
-# Finding 1 (P1): pr-review-loop.sh's _check_release_pr_guard skips the
-# reviewer loop for hotfix/* head branches exactly as it does for release/*,
-# so no ready-phase reviewer check run can ever exist on a hotfix. Requiring
-# one permanently refused both readiness labels reviewer-check-absent.
-# Planted failing case: a hotfix branch with the empty check-run set must NOT
-# refuse on the reviewer leg (it still runs the CI leg, so a failing check
-# still refuses — asserted right after).
+# #2077: new hotfix code requires reviewer evidence before either readiness
+# label. Missing reviewer evidence is a planted violation, not an exemption.
 MOCK_PR_JSON='{"headRefOid":"'"$HEAD"'","headRefName":"hotfix/v9.9.9","baseRefOid":"'"$BASE_SHA"'","labels":[],"statusCheckRollup":[]}'
 MOCK_CHECK_RUNS='{"check_runs":[]}'
 result="$(run_helper)"
-run_test "hotfix_branch_not_reviewer_gated_exit" "0" "${result%%|*}"
-run_test "hotfix_branch_not_reviewer_gated_result" "labeled" "$(field "$result" RESULT)"
-run_test "hotfix_branch_not_reviewer_gated_report" "none" "$(field "$result" REVIEWER_REPORT)"
+run_test "hotfix_branch_reviewer_gated_exit" "1" "${result%%|*}"
+run_test "hotfix_branch_reviewer_gated_result" "refused" "$(field "$result" RESULT)"
+run_test "hotfix_branch_reviewer_gated_report" "Cursor Bugbot" "$(field "$result" REVIEWER_REPORT)"
+MOCK_CHECK_RUNS="$_bugbot_ok"
+result="$(run_helper)"
+run_test "hotfix_clean_reviewer_allows_label" "labeled" "$(field "$result" RESULT)"
 # The CI leg still applies on hotfix branches (the same handling release
 # branches get): a failing non-reviewer check refuses.
 MOCK_PR_JSON='{"headRefOid":"'"$HEAD"'","headRefName":"hotfix/v9.9.9","baseRefOid":"'"$BASE_SHA"'","labels":[],"statusCheckRollup":[{"__typename":"CheckRun","name":"ShellCheck","workflowName":"ShellCheck","status":"COMPLETED","conclusion":"FAILURE"}]}'
 result="$(run_helper)"
 run_test "hotfix_branch_ci_leg_still_applies_reason" "ci-failing" "$(field "$result" REASON)"
 # backport/hotfix/* is an implementation branch and stays reviewer-gated.
+MOCK_CHECK_RUNS='{"check_runs":[]}'
 MOCK_PR_JSON='{"headRefOid":"'"$HEAD"'","headRefName":"backport/hotfix/v9.9.9","baseRefOid":"'"$BASE_SHA"'","labels":[],"statusCheckRollup":[]}'
 result="$(run_helper)"
 run_test "backport_hotfix_still_reviewer_gated_reason" "reviewer-check-absent" "$(field "$result" REASON)"
