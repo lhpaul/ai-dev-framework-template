@@ -402,6 +402,10 @@ else: sys.exit(1)
         altered["comments"].reverse()
         self.assertEqual(evidence.differences(self.context, altered, self.context["snapshot_sha256"])["status"],
                          "unchanged")
+        inconsistent = copy.deepcopy(baseline)
+        inconsistent["snapshot_sha256"] = "b" * 64
+        self.assertEqual(evidence.differences(self.context, inconsistent, "b" * 64),
+                         {"status": "manifest_inconsistent", "changes": []})
         context = copy.deepcopy(self.context)
         context["body"] += " tampered"
         self.assertEqual(evidence.differences(context, baseline, self.context["snapshot_sha256"])["status"],

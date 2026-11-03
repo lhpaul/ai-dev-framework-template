@@ -1307,6 +1307,7 @@ coderabbit_cli_local_ai_ledger_verdict() {
       rm -f "$context"; _adapter_refusal_reason=reviewer-evidence-unreadable; return
     fi
     if [ "$(jq -r .snapshot_sha256 "$context")" != "$fingerprint" ]; then
+      _adapter_evidence_diff='{"status":"diagnostic_unavailable","changes":[]}'
       local manifest_file
       manifest_file="$(mktemp)" || { rm -f "$context"; return; }
       if ! printf '%s' "$verdict" | jq '.evidence_manifest // {}' >"$manifest_file" ||
@@ -1722,7 +1723,7 @@ emit_verdict() {
       'bash scripts/development-workflow/pr-review-loop.sh %q --repo %q --branch %q' \
       "$pr_number" "$repo" "$head_ref_name"
     workflow_diagnostic_kvs EVIDENCE_DIFF_JSON "$_adapter_evidence_diff" \
-      EVIDENCE_RECOVERY "Inspect the named comment IDs at https://github.com/$repo/pull/$pr_number#issuecomment-ID (body means PR description). Keep readiness withheld. Restore unintended changes if possible; revision changes remain evidence changes. From the PR branch checkout, run the standard ready review: $evidence_recovery_command . Then retry readiness; do not edit evidence comments after review. Missing manifests require a fresh standard review to establish a diagnosable baseline."
+      EVIDENCE_RECOVERY "Inspect the named comment IDs at https://github.com/$repo/pull/$pr_number#issuecomment-ID (body means PR description). Keep readiness withheld. Restore unintended changes if possible; revision changes remain evidence changes. From the PR branch checkout, run the standard ready review: $evidence_recovery_command . Then retry readiness; do not edit evidence comments after review. Missing or inconsistent manifests cannot reliably identify changed sources and require a fresh standard review to establish a diagnosable baseline."
   fi
   if [ "$json_output" = "true" ]; then
     python3 -c 'import json,sys; print(json.dumps(dict(result=sys.argv[1], reason=sys.argv[2], prNumber=sys.argv[3], repo=sys.argv[4], label=sys.argv[5], headSha=sys.argv[6], reviewerReport=sys.argv[7], blockingFindingCount=int(sys.argv[8]), pendingCheckCount=int(sys.argv[9]), failingCheckCount=int(sys.argv[10]), dryRun=(sys.argv[11] == "true"))))' \

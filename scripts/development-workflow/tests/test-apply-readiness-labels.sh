@@ -1945,7 +1945,7 @@ _2103_payload="$(jq -cn --arg head "$HEAD" --argjson baseline "$_2103_baseline" 
    reviewed_heads:[{platform:"local-ai-reviewer",reviewed_head:$head}],
    platform_results:[{platform:"local-ai-reviewer",result:"clean",
      evidence_snapshot_sha256:$baseline.snapshot_sha256,evidence_manifest:$baseline.manifest}]}]}')"
-for _2103_case in unchanged edited revision added removed missing malformed shell_branch; do
+for _2103_case in unchanged edited revision added removed missing malformed shell_branch temp_failure; do
   _2103_current_payload="$_2103_payload"
   [ "$_2103_case" != missing ] || _2103_current_payload="$(printf '%s' "$_2103_payload" | jq 'del(.entries[0].platform_results[0].evidence_manifest)')"
   [ "$_2103_case" != malformed ] || _2103_current_payload="$(printf '%s' "$_2103_payload" | jq '.entries[0].platform_results[0].evidence_manifest.comments="bad"')"
@@ -1953,7 +1953,7 @@ for _2103_case in unchanged edited revision added removed missing malformed shel
   MOCK_ISSUE_COMMENTS="$(jq -cn --argjson baseline "$_2103_baseline" \
     --argjson summary "$(_ledger_comment loop-runner OWNER 933 "$_2103_summary")" '$baseline.comments + $summary')"
   case "$_2103_case" in
-    edited|missing|malformed|shell_branch) MOCK_ISSUE_COMMENTS="$(printf '%s' "$MOCK_ISSUE_COMMENTS" | jq '.[0].body += " amended"')" ;;
+    edited|missing|malformed|shell_branch|temp_failure) MOCK_ISSUE_COMMENTS="$(printf '%s' "$MOCK_ISSUE_COMMENTS" | jq '.[0].body += " amended"')" ;;
     revision) MOCK_ISSUE_COMMENTS="$(printf '%s' "$MOCK_ISSUE_COMMENTS" | jq '.[0].updated_at="2026-01-10"')" ;;
     added) MOCK_ISSUE_COMMENTS="$(printf '%s' "$MOCK_ISSUE_COMMENTS" | jq '. + [{id:21,body:"New reviewer finding",updated_at:"2026-01-10"}]')" ;;
     removed) MOCK_ISSUE_COMMENTS="$(printf '%s' "$MOCK_ISSUE_COMMENTS" | jq 'del(.[0])')" ;;
@@ -1962,7 +1962,27 @@ for _2103_case in unchanged edited revision added removed missing malformed shel
   if [ "$_2103_case" = shell_branch ]; then
     MOCK_PR_JSON="$(printf '%s' "$MOCK_PR_JSON" | jq '.headRefName="fix/2103;id"')"
   fi
+  if [ "$_2103_case" = temp_failure ]; then
+    # The collector's directory allocation succeeds; only the following
+    # manifest-file allocation fails. Existing evidence must still be refused.
+    [ ! -e "$_BIN/mktemp" ]
+    _2103_real_mktemp="$(command -v mktemp)"
+    printf '#!/usr/bin/env bash\nreal_mktemp=%q\n' "$_2103_real_mktemp" >"$_BIN/mktemp"
+    cat >>"$_BIN/mktemp" <<'SYNTHETIC_MKTEMP'
+if [ "$#" -eq 1 ] && [ "$1" = -d ]; then
+  : >"$MOCK_TMP_ROOT/2103-collector-seen"
+fi
+if [ "$#" -eq 0 ] && [ -f "$MOCK_TMP_ROOT/2103-collector-seen" ]; then
+  exit 1
+fi
+exec "$real_mktemp" "$@"
+SYNTHETIC_MKTEMP
+    chmod +x "$_BIN/mktemp"
+  fi
   result="$(run_helper_platform "$_codex_config")"
+  if [ "$_2103_case" = temp_failure ]; then
+    rm -f "$_BIN/mktemp" "$TMP_ROOT/2103-collector-seen"
+  fi
   MOCK_PR_JSON="$_2103_saved_pr"
   if [ "$_2103_case" = unchanged ]; then
     run_test "2103_removed_plant_labels" labeled "$(field "$result" RESULT)"
@@ -1973,6 +1993,7 @@ for _2103_case in unchanged edited revision added removed missing malformed shel
     _2103_diff="$(field "$result" EVIDENCE_DIFF_JSON)"
     case "$_2103_case" in
       missing|malformed) run_test "2103_${_2103_case}_explicit" manifest_unavailable "$(printf '%s' "$_2103_diff" | jq -r .status)" ;;
+      temp_failure) run_test "2103_temp_failure_explicit" diagnostic_unavailable "$(printf '%s' "$_2103_diff" | jq -r .status)" ;;
       *)
         _2103_source=comment:20; _2103_kind=body_edited
         [ "$_2103_case" != revision ] || _2103_kind=revision_changed
@@ -1990,7 +2011,7 @@ for _2103_case in unchanged edited revision added removed missing malformed shel
     fi
   fi
 done
-unset _2103_baseline _2103_payload _2103_current_payload _2103_case _2103_summary _2103_diff _2103_source _2103_kind _2103_saved_pr
+unset _2103_baseline _2103_payload _2103_current_payload _2103_case _2103_summary _2103_diff _2103_source _2103_kind _2103_saved_pr _2103_real_mktemp
 # #1789 (T2.10): a current-head no_verdict_yet record (the reviewer's wait ran
 # out with no verdict) is an absent verdict — refuses reviewer-check-absent,
 # never a label and never reviewer-evidence-unreadable.
