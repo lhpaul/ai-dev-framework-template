@@ -1355,6 +1355,7 @@ trap cleanup EXIT
 
 round_start_epoch="$(date +%s)"
 
+quota_error_pattern='usage[[:space:]_-]*limit|quota[[:space:]_-]*(exhaust|exceed)|out of (quota|credits)|hit your usage'
 capacity_attempt=1
 while :; do
   set +e
@@ -1434,7 +1435,9 @@ ${command_stderr}"
   # Capacity failures are provider availability signals, even when their
   # diagnostics also say the selected model is unavailable. A valid verdict
   # still wins over diagnostic prose, just as it does for the setup probes.
-  if [ -n "$setup_probe_output" ] && grep -Eiq 'server_overloaded|at[[:space:]_-]+capacity|(^|[^[:alnum:]_])overloaded([^[:alnum:]_]|$)|(^|[^[:alnum:]_])429([^[:alnum:]_]|$)' <<< "$setup_probe_output"; then
+  # Explicit quota exhaustion must keep its escalation/reset-time handling;
+  # providers also report exhausted quota with HTTP 429.
+  if [ -n "$setup_probe_output" ] && ! grep -Eiq "$quota_error_pattern" <<< "$setup_probe_output" && grep -Eiq 'server_overloaded|at[[:space:]_-]+capacity|(^|[^[:alnum:]_])overloaded([^[:alnum:]_]|$)|(^|[^[:alnum:]_])429([^[:alnum:]_]|$)' <<< "$setup_probe_output"; then
     if [ "$capacity_attempt" -ge 3 ]; then
       workflow_diagnostic "WARN: local AI reviewer provider capacity unavailable after 3 attempts" >&2
       print_result needs_rerun 0 0 0 provider_overloaded
@@ -1455,7 +1458,7 @@ if [ -n "$setup_probe_output" ] && grep -Eiq 'missing[[:space:]_-]+credentials|c
   print_result escalate 0 0 0 missing_credentials missing_credentials
   exit 2
 fi
-if [ -n "$setup_probe_output" ] && grep -Eiq 'usage[[:space:]_-]*limit|quota[[:space:]_-]*(exhaust|exceed)|out of (quota|credits)|hit your usage' <<< "$setup_probe_output"; then
+if [ -n "$setup_probe_output" ] && grep -Eiq "$quota_error_pattern" <<< "$setup_probe_output"; then
   quota_reset_at="$(
     printf '%s\n' "$setup_probe_output" \
       | workflow_redact_text \

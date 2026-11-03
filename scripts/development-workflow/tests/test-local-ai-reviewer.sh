@@ -104,8 +104,10 @@ install_local_reviewer_mock() {
 #!/usr/bin/env bash
 if [ -n "${MOCK_CAPACITY_ATTEMPTS_FILE:-}" ]; then
   printf 'attempt\n' >> "$MOCK_CAPACITY_ATTEMPTS_FILE"
-  if [ "${MOCK_CAPACITY_RECOVER:-0}" = 1 ] && [ "$(wc -l < "$MOCK_CAPACITY_ATTEMPTS_FILE" | tr -d ' ')" -gt 1 ]; then
-    printf '{"result":"clean","findings":[]}\n'
+  if [ "${MOCK_CAPACITY_RECOVER:-0}" != 0 ] && [ "$(wc -l < "$MOCK_CAPACITY_ATTEMPTS_FILE" | tr -d ' ')" -gt 1 ]; then
+    if [ "$MOCK_CAPACITY_RECOVER" != empty ]; then
+      printf '{"result":"clean","findings":[]}\n'
+    fi
     exit 0
   fi
 fi
@@ -445,6 +447,41 @@ export LOCAL_AI_REVIEWER_COMMAND MOCK_LOCAL_REVIEWER_STDOUT MOCK_LOCAL_REVIEWER_
 run_reviewer "$MOCK_BIN:$PATH"
 run_test "capacity_prose_valid_verdict_wins" "RESULT=needs_fixes" "$(line_for RESULT)"
 run_test "capacity_prose_no_retry" "1" "$(wc -l < "$MOCK_CAPACITY_ATTEMPTS_FILE" | tr -d ' ')"
+
+# A later attempt with no output must not inherit the earlier capacity error.
+# run_with_timeout truncates both capture files via > on each invocation.
+reset_mocks
+LOCAL_AI_REVIEWER_COMMAND=local-reviewer-mock
+set_mock_stdout '{"error":{"message":"Selected model is at capacity"}}'
+MOCK_LOCAL_REVIEWER_STDERR='server_overloaded'
+MOCK_CAPACITY_ATTEMPTS_FILE="$MOCK_BIN/capacity-attempts"
+: > "$MOCK_CAPACITY_ATTEMPTS_FILE"
+MOCK_CAPACITY_RECOVER=empty
+MOCK_LOCAL_REVIEWER_EXIT=1
+export LOCAL_AI_REVIEWER_COMMAND MOCK_LOCAL_REVIEWER_STDOUT MOCK_LOCAL_REVIEWER_STDERR MOCK_CAPACITY_ATTEMPTS_FILE MOCK_CAPACITY_RECOVER MOCK_LOCAL_REVIEWER_EXIT
+run_reviewer "$MOCK_BIN:$PATH"
+run_test "capacity_empty_retry_result" "RESULT=escalate" "$(line_for RESULT)"
+run_test "capacity_empty_retry_reason" "REASON=malformed_output" "$(line_for REASON)"
+run_test "capacity_empty_retry_exit" "2" "$(exit_code)"
+run_test "capacity_empty_retry_discards_both_streams" "2" "$(wc -l < "$MOCK_CAPACITY_ATTEMPTS_FILE" | tr -d ' ')"
+
+for quota_message in \
+  'HTTP 429: quota exceeded. Try again at Sep 7th, 2026 1:17 PM.' \
+  'server_overloaded: usage limit reached. Try again at Sep 7th, 2026 1:17 PM.'; do
+  reset_mocks
+  LOCAL_AI_REVIEWER_COMMAND=local-reviewer-mock
+  MOCK_LOCAL_REVIEWER_STDERR="$quota_message"
+  MOCK_CAPACITY_ATTEMPTS_FILE="$MOCK_BIN/capacity-attempts"
+  : > "$MOCK_CAPACITY_ATTEMPTS_FILE"
+  MOCK_LOCAL_REVIEWER_EXIT=1
+  export LOCAL_AI_REVIEWER_COMMAND MOCK_LOCAL_REVIEWER_STDERR MOCK_CAPACITY_ATTEMPTS_FILE MOCK_LOCAL_REVIEWER_EXIT
+  run_reviewer "$MOCK_BIN:$PATH"
+  run_test "capacity_quota_overlap_result:$quota_message" "RESULT=escalate" "$(line_for RESULT)"
+  run_test "capacity_quota_overlap_reason:$quota_message" "REASON=quota_exhausted" "$(line_for REASON)"
+  run_test "capacity_quota_overlap_reset:$quota_message" "QUOTA_RESET_AT=Sep 7th, 2026 1:17 PM" "$(line_for QUOTA_RESET_AT)"
+  run_test "capacity_quota_overlap_exit:$quota_message" "2" "$(exit_code)"
+  run_test "capacity_quota_overlap_no_retry:$quota_message" "1" "$(wc -l < "$MOCK_CAPACITY_ATTEMPTS_FILE" | tr -d ' ')"
+done
 
 for access_message in 'missing model access' 'Selected model unavailable for this account'; do
   reset_mocks
