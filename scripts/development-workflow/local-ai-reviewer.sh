@@ -1355,80 +1355,101 @@ trap cleanup EXIT
 
 round_start_epoch="$(date +%s)"
 
-set +e
-LOCAL_AI_REVIEWER_MODE=ordinary \
-CONTEXT_BUNDLE_PATH="$context_file" \
-PR_NUMBER="$PR_NUMBER" \
-OWNER="$OWNER" \
-REPO="$REPO" \
-BASE_BRANCH="$BASE_BRANCH" \
-HEAD_BRANCH="$HEAD_BRANCH" \
-REVIEWED_HEAD="$HEAD_SHA" \
-REVIEW_STAGE="$review_stage" \
-REVIEW_STAGE_SOURCE="$review_stage_source" \
-REVIEW_CHECKLISTS="$review_checklists_csv" \
-REVIEW_DOCTRINE_STATE="$review_doctrine_state" \
-REVIEW_DOCTRINE_PATTERN_COUNT="$review_doctrine_pattern_count" \
-REVIEW_DOCTRINE_VERSION="$review_doctrine_version" \
-LOCAL_AI_REVIEWER_TIMEOUT="$TIMEOUT" \
-  run_with_timeout "$TIMEOUT" "$stdout_file" "$stderr_file" sh -c "$LOCAL_AI_REVIEWER_COMMAND"
-command_exit=$?
-set -e
+quota_error_pattern='usage[[:space:]_-]*limit|quota[[:space:]_-]*(exhaust|exceed)|out of (quota|credits)|hit your usage'
+capacity_attempt=1
+while :; do
+  set +e
+  LOCAL_AI_REVIEWER_MODE=ordinary \
+  CONTEXT_BUNDLE_PATH="$context_file" \
+  PR_NUMBER="$PR_NUMBER" \
+  OWNER="$OWNER" \
+  REPO="$REPO" \
+  BASE_BRANCH="$BASE_BRANCH" \
+  HEAD_BRANCH="$HEAD_BRANCH" \
+  REVIEWED_HEAD="$HEAD_SHA" \
+  REVIEW_STAGE="$review_stage" \
+  REVIEW_STAGE_SOURCE="$review_stage_source" \
+  REVIEW_CHECKLISTS="$review_checklists_csv" \
+  REVIEW_DOCTRINE_STATE="$review_doctrine_state" \
+  REVIEW_DOCTRINE_PATTERN_COUNT="$review_doctrine_pattern_count" \
+  REVIEW_DOCTRINE_VERSION="$review_doctrine_version" \
+  LOCAL_AI_REVIEWER_TIMEOUT="$TIMEOUT" \
+    run_with_timeout "$TIMEOUT" "$stdout_file" "$stderr_file" sh -c "$LOCAL_AI_REVIEWER_COMMAND"
+  command_exit=$?
+  set -e
 
-command_stdout="$(cat "$stdout_file" 2>/dev/null || true)"
-command_stderr="$(cat "$stderr_file" 2>/dev/null || true)"
+  command_stdout="$(cat "$stdout_file" 2>/dev/null || true)"
+  command_stderr="$(cat "$stderr_file" 2>/dev/null || true)"
 
-# #1789 (plan D4): only the watchdog flag means the budget ran out while the
-# reviewer was still running. That is No verdict yet, not a failure, and the
-# stopped process's partial output is not inspected. A command that itself
-# exited 124 or 137 before the budget leaves the flag at 0 and reaches the
-# ordinary non-zero handling below.
-if [ "${RUN_WITH_TIMEOUT_EXPIRED:-0}" = "1" ]; then
-  workflow_diagnostic "WARN: local AI reviewer had not returned a verdict after ${TIMEOUT}s; stopped at the wait budget (no verdict yet)" >&2
-  print_kv RESULT waiting_on_reviewer
-  print_kv REASON reviewer-no-verdict-yet
-  print_kv NO_VERDICT_YET 1
-  print_kv WAIT_EXPIRED_DETAIL stopped_at_budget
-  print_kv COMMENT_COUNT 0
-  print_kv BLOCKING_COUNT 0
-  print_kv SUGGESTION_COUNT 0
-  exit 4
-fi
+  # #1789 (plan D4): only the watchdog flag means the budget ran out while the
+  # reviewer was still running. That is No verdict yet, not a failure, and the
+  # stopped process's partial output is not inspected. A command that itself
+  # exited 124 or 137 before the budget leaves the flag at 0 and reaches the
+  # ordinary non-zero handling below.
+  if [ "${RUN_WITH_TIMEOUT_EXPIRED:-0}" = "1" ]; then
+    workflow_diagnostic "WARN: local AI reviewer had not returned a verdict after ${TIMEOUT}s; stopped at the wait budget (no verdict yet)" >&2
+    print_kv RESULT waiting_on_reviewer
+    print_kv REASON reviewer-no-verdict-yet
+    print_kv NO_VERDICT_YET 1
+    print_kv WAIT_EXPIRED_DETAIL stopped_at_budget
+    print_kv COMMENT_COUNT 0
+    print_kv BLOCKING_COUNT 0
+    print_kv SUGGESTION_COUNT 0
+    exit 4
+  fi
 
-combined_output="${command_stdout}
+  combined_output="${command_stdout}
 ${command_stderr}"
-# Only a stdout object that matches the downstream parser's accepted verdict shape outranks
-# the stderr heuristics or reaches the verdict parser. Anything else — non-JSON, empty stdout,
-# or schemaless/mistyped JSON such as "{}" or {"issues":"quota exceeded"} — keeps the probes
-# in force and is later rejected as malformed, so a provider failure is never downgraded to
-# an inferred clean verdict.
-stdout_is_verdict=0
-if printf '%s\n' "$command_stdout" | jq -s -e '
-    length == 1
-    and (
-      .[0]
-      | type == "object"
-        and (
-          if (.result? // "") != "" then
-            ((.result | type) == "string"
-             and ((.result | ascii_downcase | gsub("-"; "_")) as $r
-                  | ["clean","needs_fixes","needs_rerun","skipped","escalate"] | index($r)))
-          else
-            ((.findings? | type) == "array"
-             or (.comments? | type) == "array"
-             or (.issues? | type) == "array")
-          end
-        )
-    )
-  ' >/dev/null 2>&1; then
-  stdout_is_verdict=1
-fi
+  # Only a stdout object that matches the downstream parser's accepted verdict shape outranks
+  # the stderr heuristics or reaches the verdict parser. Anything else — non-JSON, empty stdout,
+  # or schemaless/mistyped JSON such as "{}" or {"issues":"quota exceeded"} — keeps the probes
+  # in force and is later rejected as malformed, so a provider failure is never downgraded to
+  # an inferred clean verdict.
+  stdout_is_verdict=0
+  if printf '%s\n' "$command_stdout" | jq -s -e '
+      length == 1
+      and (
+        .[0]
+        | type == "object"
+          and (
+            if (.result? // "") != "" then
+              ((.result | type) == "string"
+               and ((.result | ascii_downcase | gsub("-"; "_")) as $r
+                    | ["clean","needs_fixes","needs_rerun","skipped","escalate"] | index($r)))
+            else
+              ((.findings? | type) == "array"
+               or (.comments? | type) == "array"
+               or (.issues? | type) == "array")
+            end
+          )
+      )
+    ' >/dev/null 2>&1; then
+    stdout_is_verdict=1
+  fi
 
-if [ "$stdout_is_verdict" -eq 1 ]; then
-  setup_probe_output=""
-else
-  setup_probe_output="$combined_output"
-fi
+  if [ "$stdout_is_verdict" -eq 1 ]; then
+    setup_probe_output=""
+  else
+    setup_probe_output="$combined_output"
+  fi
+  # Capacity failures are provider availability signals, even when their
+  # diagnostics also say the selected model is unavailable. A valid verdict
+  # still wins over diagnostic prose, just as it does for the setup probes.
+  # Explicit quota exhaustion must keep its escalation/reset-time handling;
+  # providers also report exhausted quota with HTTP 429.
+  if [ -n "$setup_probe_output" ] && ! grep -Eiq "$quota_error_pattern" <<< "$setup_probe_output" && grep -Eiq 'server_overloaded|at[[:space:]_-]+capacity|(^|[^[:alnum:]_])overloaded([^[:alnum:]_]|$)|(^|[^[:alnum:]_])429([^[:alnum:]_]|$)' <<< "$setup_probe_output"; then
+    if [ "$capacity_attempt" -ge 3 ]; then
+      workflow_diagnostic "WARN: local AI reviewer provider capacity unavailable after 3 attempts" >&2
+      print_result needs_rerun 0 0 0 provider_overloaded
+      exit 1
+    fi
+    workflow_diagnostic "WARN: local AI reviewer provider overloaded; retrying after ${capacity_attempt}s" >&2
+    sleep "$capacity_attempt"
+    capacity_attempt=$((capacity_attempt + 1))
+    continue
+  fi
+  break
+done
 if [ -n "$setup_probe_output" ] && grep -Eiq 'missing[[:space:]_-]+model|model[[:space:]_-]+access|model.*unavailable' <<< "$setup_probe_output"; then
   print_result escalate 0 0 0 missing_model_access missing_model_access
   exit 2
@@ -1437,7 +1458,7 @@ if [ -n "$setup_probe_output" ] && grep -Eiq 'missing[[:space:]_-]+credentials|c
   print_result escalate 0 0 0 missing_credentials missing_credentials
   exit 2
 fi
-if [ -n "$setup_probe_output" ] && grep -Eiq 'usage[[:space:]_-]*limit|quota[[:space:]_-]*(exhaust|exceed)|out of (quota|credits)|hit your usage' <<< "$setup_probe_output"; then
+if [ -n "$setup_probe_output" ] && grep -Eiq "$quota_error_pattern" <<< "$setup_probe_output"; then
   quota_reset_at="$(
     printf '%s\n' "$setup_probe_output" \
       | workflow_redact_text \
