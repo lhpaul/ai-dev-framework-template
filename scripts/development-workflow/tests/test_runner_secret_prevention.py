@@ -869,7 +869,8 @@ sys.exit(rc)
     def test_composed_diagnostic_boundaries(self):
         scripts = self.checkout / 'scripts/development-workflow'; scripts.mkdir(parents=True)
         for name in ('workflow-lib.sh', 'workflow-config-resolver.py', 'resolve-reviewer-availability.sh',
-                     'local-ai-reviewer.sh', 'pr-review-loop.sh', 'run-epic-audit-trail.sh', 'reviewer_preflight_coderabbit.py', 'codex-github-evidence-lib.sh'):
+                     'local-ai-reviewer.sh', 'pr-review-loop.sh', 'run-epic-audit-trail.sh', 'reviewer_preflight_coderabbit.py', 'codex-github-evidence-lib.sh',
+                     'review-evidence-context.py'):
             shutil.copyfile(SCRIPTS / name, scripts / name)
         bindir = self.root / 'bin'; bindir.mkdir()
         gh = bindir / 'gh'

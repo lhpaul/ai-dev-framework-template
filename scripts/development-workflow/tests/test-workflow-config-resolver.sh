@@ -1,5 +1,11 @@
 #!/usr/bin/env bash
 # test-workflow-config-resolver.sh - repository-context config resolver tests.
+# covers: scripts/development-workflow/workflow-config-resolver.sh
+# covers: scripts/development-workflow/workflow-config-resolver.py
+# covers: scripts/development-workflow/tests/test_runner_secret_prevention.py
+# covers: scripts/development-workflow/local-ai-reviewer.sh
+# covers: scripts/development-workflow/workflow-lib.sh
+# covers: scripts/development-workflow/review-evidence-context.py
 #
 # Usage: bash scripts/development-workflow/tests/test-workflow-config-resolver.sh
 
