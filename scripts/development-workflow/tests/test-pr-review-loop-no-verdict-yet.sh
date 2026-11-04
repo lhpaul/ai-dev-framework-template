@@ -2683,7 +2683,7 @@ _2018_run_with_frozen_clock() (
       esac
       args+=("$arg")
     done
-    command jq "${args[@]}"
+    command jq ${args[@]+"${args[@]}"}
   }
   _1789_run_gh "$@"
 )
