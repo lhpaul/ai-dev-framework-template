@@ -1938,16 +1938,33 @@ echo "=== Area 1946: PR-Agent review format fixtures ==="
 # Fixtures are inline to keep the Fast Track exception scoped to the existing
 # suites. These exercise the actual acquisition and classification path, with
 # the visible current-head marker used by PR-Agent, not just a regex in a test.
-_fixture_dir_1946="$(mktemp -d)"
+# The shared harness's EXIT trap owns MOCK_BIN, including early failures.
+# Nest this fixture there instead of installing a competing EXIT trap.
+_fixture_dir_1946="$(mktemp -d "$MOCK_BIN/fixture-1946.XXXXXX")"
+# Exercise the existing trap on an early nonzero exit in an isolated child.
+_fixture_cleanup_probe_1960="$(mktemp -d "$MOCK_BIN/cleanup-1960.XXXXXX")"
+_fixture_cleanup_rc_1960=0
+(
+  MOCK_BIN=$_fixture_cleanup_probe_1960
+  _METRICS_DIR= _CONFIG_DIR= _ADVISORY_TMP=
+  trap _harness_exit EXIT
+  mkdir "$MOCK_BIN/fixture-1946"
+  exit 7
+) || _fixture_cleanup_rc_1960=$?
+run_test "1960_fixture_cleanup_preserves_failure" 7 "$_fixture_cleanup_rc_1960"
+run_test "1960_fixture_cleanup_on_early_exit" absent "$([ -e "$_fixture_cleanup_probe_1960" ] && printf present || printf absent)"
+unset _fixture_cleanup_probe_1960 _fixture_cleanup_rc_1960
 cat > "$_fixture_dir_1946/gh" <<'GH1946'
 #!/usr/bin/env bash
 case "$*" in
+  "auth status") exit 0 ;;
   *"api user"*) printf 'loop-runner\n' ;;
   *"api -X POST "*"issues/42/comments"*) printf '%s\n' '{"id":99,"created_at":"2020-01-01T00:00:03Z","body":"/review"}' ;;
   *"repo view"*) printf 'owner/repo\n' ;;
   *"pr view"*"--json headRefOid,body"*) printf '%s\n' '{"headRefOid":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","body":"Synthetic regression proof"}' ;;
   *"--jq .head.sha"*) printf '%s\n' 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' ;;
   *"--jq .commit.committer.date"*) printf '%s\n' '2020-01-01T00:00:00Z' ;;
+  *"api repos/owner/repo/commits/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/check-runs --paginate"*) printf '%s\n' '{"check_runs":[]}' ;;
   *"issues/42/comments"*)
     if [ -n "${PR_AGENT_FIXTURE_POLL_MARKER:-}" ] && [ ! -e "$PR_AGENT_FIXTURE_POLL_MARKER" ]; then
       : >"$PR_AGENT_FIXTURE_POLL_MARKER"
@@ -1959,10 +1976,18 @@ case "$*" in
       exit 0
     fi
     jq -nc --arg body "$PR_AGENT_FIXTURE_BODY" --arg args "$*" '[{id:10,user:{login:"github-actions[bot]"},created_at:"2020-01-01T00:00:02Z",updated_at:"2020-01-01T00:00:02Z",body:$body}] | if ($args | contains("--slurp")) then [.] else . end' ;;
-  *) printf '[]\n' ;;
+  *)
+    : >"${0%/*}/unexpected-call"
+    printf 'ERROR: unexpected fixture gh invocation\n' >&2
+    exit 64 ;;
 esac
 GH1946
 chmod +x "$_fixture_dir_1946/gh"
+_fixture_unknown_rc_1960=0
+"$_fixture_dir_1946/gh" unexpected-fixture-command >/dev/null 2>&1 || _fixture_unknown_rc_1960=$?
+run_test "1960_fixture_unknown_gh_fails" 64 "$_fixture_unknown_rc_1960"
+rm -f "$_fixture_dir_1946/unexpected-call"
+unset _fixture_unknown_rc_1960
 _fixture_header_1946=$'## PR Reviewer Guide 🔍\n#### (Review updated until commit https://github.com/owner/repo/commit/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa)\n'
 _fixture_ticket_1946=$'<table>\n<tr><td>\n**🎫 Ticket compliance analysis ✅**\n\n**[42](https://example.test/issues/42) - Fully compliant**\n\nCompliant requirements:\n\n- All required behavior is implemented.\n\n</td></tr>\n</table>\n'
 _fixture_focus_1946=$'### Recommended focus areas for review\n<strong>Possible Issue</strong><br>A path with spaces, *glob* and tabs\tremains quoted.\n'
@@ -2710,9 +2735,12 @@ done
 unset -f _2061_platform_entry
 unset _2061_entry _2061_history _2061_ledger_body _2061_ready_verdict _2061_poll_marker
 unset _2061_request _2061_case _2061_prior _2061_output _2061_local_result _2061_proof_status _2061_expected _2061_expected_dispatch
+run_test "1960_fixture_has_no_unexpected_gh_calls" absent "$([ -e "$_fixture_dir_1946/unexpected-call" ] && printf present || printf absent)"
 rm -rf "$_fixture_dir_1946"
 unset _fixture_dir_1946 _fixture_header_1946 _fixture_ticket_1946 _fixture_focus_1946
-unset -f fixture_test_1946
+if declare -F fixture_test_1946 >/dev/null; then
+  unset -f fixture_test_1946
+fi
 
 # ---------------------------------------------------------------------------
 # Summary
