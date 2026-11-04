@@ -1256,8 +1256,19 @@ def begin(args):
     store.mkdir(mode=0o700, exist_ok=True)
     if store.stat().st_mode & 0o077 or store.stat().st_uid != os.getuid():
         raise Stop("owner session store must be private")
+    # Persist even an existing entry: a prior interrupted creator may not have.
+    fd = os.open(store.parent, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
     directory = store / str(uuid.uuid4())
     directory.mkdir(mode=0o700)
+    fd = os.open(store, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
     path = directory / "state.json"
     state["session"] = str(path)
     seen = set()

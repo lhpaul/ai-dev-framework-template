@@ -1802,7 +1802,21 @@ def set_local_product_repo_path(repo_root: Path, repo_name: str, local_path_valu
     envelope = snapshot.envelope
     if envelope and not envelope.endswith(b"\n"):
         envelope += b"\n"
-    local_path.write_bytes(envelope + tail)
+    fd, temporary = tempfile.mkstemp(prefix=".workflow-config-", dir=local_path.parent)
+    try:
+        with os.fdopen(fd, "wb") as stream:
+            stream.write(envelope + tail)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, local_path)
+        parent_fd = os.open(local_path.parent, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(parent_fd)
+        finally:
+            os.close(parent_fd)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
     return local_path
 
 
@@ -3202,8 +3216,15 @@ def cmd_review_snapshot(args: argparse.Namespace) -> int:
                 temporary = stream.name
                 os.chmod(temporary, 0o600)
                 stream.write("\n".join(dump_review_projection(projection)) + "\n")
+                stream.flush()
+                os.fsync(stream.fileno())
             os.replace(temporary, staged)
             temporary = None
+            parent_fd = os.open(destination, os.O_RDONLY | os.O_DIRECTORY)
+            try:
+                os.fsync(parent_fd)
+            finally:
+                os.close(parent_fd)
         except OSError as exc:
             raise ConfigError("review-snapshot: atomic staging failed") from exc
         finally:
