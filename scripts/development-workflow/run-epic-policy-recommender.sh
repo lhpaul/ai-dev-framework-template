@@ -592,8 +592,8 @@ recommendation_json="$(printf '%s\n' "$scope_json" | jq -c \
     },
     copyPasteCommand: (
       canonical_scope_command +
-      (if value_bool($delegateReviewOverride; $recReview) then " --delegate-review" else "" end) +
-      (if value_bool($mayMergeOverride; $recMerge) then " --may-merge" else "" end) +
+      (if value_bool($delegateReviewOverride; $recReview) then " --delegate-review" else " --no-delegate-review" end) +
+      (if value_bool($mayMergeOverride; $recMerge) then " --may-merge" else " --no-may-merge" end) +
       " --may-start-backlog " + (value_bool($mayStartBacklogOverride; $recStart) | tostring) +
       " --max-risk " + (value_string($maxRiskOverride; $recRisk) | tostring) +
       (if value_string($baseOverride; $recBase) == null then "" else " --base " + (value_string($baseOverride; $recBase) | tostring) end) +
@@ -606,8 +606,8 @@ recommendation_json="$(printf '%s\n' "$scope_json" | jq -c \
       else
         "./scripts/development-workflow/run-epic-policy-recommender.sh --scope <resolver-json> --original-command \""
         + $originalCommand + "\""
-        + (if value_bool($delegateReviewOverride; $recReview) then " --delegate-review" else "" end)
-        + (if value_bool($mayMergeOverride; $recMerge) then " --may-merge" else "" end)
+        + (if value_bool($delegateReviewOverride; $recReview) then " --delegate-review" else " --no-delegate-review" end)
+        + (if value_bool($mayMergeOverride; $recMerge) then " --may-merge" else " --no-may-merge" end)
         + " --may-start-backlog " + (value_bool($mayStartBacklogOverride; $recStart) | tostring)
         + " --max-risk " + (value_string($maxRiskOverride; $recRisk) | tostring)
         + (if value_string($baseOverride; $recBase) == null then "" else " --base " + (value_string($baseOverride; $recBase) | tostring) end)
