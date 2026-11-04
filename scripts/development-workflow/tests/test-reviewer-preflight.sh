@@ -26,18 +26,18 @@ def check(name, condition, detail=''):
 
 
 def run(root, *args, env=None, expected=None):
-    # Default to a generous, explicit test-mode budget/cap so a briefly loaded
-    # CI/sandbox host does not flake a test that is not itself exercising the
-    # timeout path (T-7 supplies its own, deliberately tight, override).
+    # Allow slow macOS process startup in tests of outcomes rather than time.
+    # The delayed-builder T-4 regression exceeds the former 20s cap; timeout
+    # tests still supply independent, deliberately tight overrides.
     base_env = {
         'WORKFLOW_REVIEWER_PREFLIGHT_TEST_MODE': '1',
-        'WORKFLOW_REVIEWER_PREFLIGHT_BUDGET_SECONDS': '45',
-        'WORKFLOW_REVIEWER_PREFLIGHT_PER_PLATFORM_CAP_SECONDS': '20',
+        'WORKFLOW_REVIEWER_PREFLIGHT_BUDGET_SECONDS': '99',
+        'WORKFLOW_REVIEWER_PREFLIGHT_PER_PLATFORM_CAP_SECONDS': '45',
     }
     full_env = {**os.environ, **base_env, **(env or {})}
     result = subprocess.run(
         [bash, str(helper), '--repo-root', str(root), *args],
-        env=full_env, text=True, capture_output=True, timeout=90,
+        env=full_env, text=True, capture_output=True, timeout=150,
     )
     if expected is not None and result.returncode != expected:
         raise AssertionError(
@@ -135,6 +135,25 @@ with tempfile.TemporaryDirectory(prefix='reviewer-preflight-tests-') as tmp:
     )
     check('T-4 empty remaining-stages is no-review-remaining', data.get('OUTCOME') == 'no-review-remaining', data)
     check('T-4 no platforms computed', data.get('PLATFORM_COUNT') == '0', data)
+
+    # #1960: model slow macOS process startup without depending on host load.
+    # Only the input builder stalls; timeout-specific cases below still pass
+    # their own tight budgets and must keep detecting real stalls.
+    slow_builder_bin = root / 'slow-builder-bin'
+    slow_builder_bin.mkdir()
+    slow_builder_python = slow_builder_bin / 'python3'
+    slow_builder_python.write_text(
+        '#!/bin/bash\n'
+        'case "$1" in */reviewer_preflight_build_input.py) sleep 21;; esac\n'
+        f'exec {sys.executable!r} "$@"\n'
+    )
+    slow_builder_python.chmod(0o755)
+    rc, data, out, err = run(
+        repo1, '--mode', 'pre-dispatch', '--target-base', 'develop', '--remaining-stages', '',
+        env={'PATH': f'{slow_builder_bin}:{os.environ.get("PATH", "")}'}, expected=0,
+    )
+    check('T-4 slow builder still reports no-review-remaining', data.get('OUTCOME') == 'no-review-remaining', data)
+    check('T-4 slow builder computes no platforms', data.get('PLATFORM_COUNT') == '0', data)
 
     # T-5: branch-resume reads the platform's own config from the branch, not the base.
     repo5 = root / 'repo5'
@@ -1020,7 +1039,7 @@ with tempfile.TemporaryDirectory(prefix='reviewer-preflight-tests-') as tmp:
     # sleep duration.
     # These stall tests reserve 30s total / 10s per step for loaded-host
     # setup. Their 45s wall bound remains below each deliberate 100s stall
-    # and the harness's 90s subprocess guard. Keep the failure-site checks.
+    # and the harness's 150s subprocess guard. Keep the failure-site checks.
     repo33 = root / 'repo33'
     write_repo(repo33, coherent_shared, coherent_coderabbit)
     bins33 = root / 'bin33'
