@@ -750,6 +750,26 @@ class SyncTests(unittest.TestCase):
         self.assertFalse((self.consumer / "shared/staged.md").exists())
         self.assertEqual((self.consumer / "shared/a.md").read_text(), TEXT)
 
+    def test_sync_metadata_is_private_and_payload_preserves_permissions(self):
+        payload = self.consumer / "shared/a.md"
+        payload.chmod(0o750)
+        state = self.consumer / merge.STATE_PATH
+        self.preview()
+        merge.write_private_plan(self.plan, self.plan.read_bytes(), (self.template, self.consumer))
+        self.apply()
+        self.assertEqual(state.stat().st_mode & 0o777, 0o600)
+        self.assertEqual(self.plan.stat().st_mode & 0o777, 0o600)
+        state.chmod(0o640)
+        self.plan.chmod(0o640)
+        self.write(self.template, "shared/a.md", TEXT + "upstream\n")
+        self.incoming = self.save(self.template)
+        self.preview()
+        merge.write_private_plan(self.plan, self.plan.read_bytes(), (self.template, self.consumer))
+        self.apply()
+        self.assertEqual(state.stat().st_mode & 0o777, 0o600)
+        self.assertEqual(self.plan.stat().st_mode & 0o777, 0o600)
+        self.assertEqual(payload.stat().st_mode & 0o777, 0o750)
+
     def test_modes_binary_and_independent_exec_change(self):
         (self.consumer / "shared/a.md").chmod(0o700)
         self.write(self.template, "shared/a.md", TEXT + "upstream\n"); self.incoming = self.save(self.template)

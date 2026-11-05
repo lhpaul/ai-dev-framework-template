@@ -730,7 +730,7 @@ def apply_plan(path: Path, approved_digest: str):
             raise SyncError(f"{STATE_PATH}: baseline changed during apply")
         written.append(STATE_PATH)
         state_output = {"mode": "100644", "data": encoded(json_bytes(state)),
-                        "permissions": fresh["state_before"].get("permissions", 0o644) if fresh["state_before"] else 0o644}
+                        "permissions": 0o600}
         write_snapshot(root, STATE_PATH, state_output, created)
         if local_snapshot(root, STATE_PATH) != state_output:
             raise SyncError(f"{STATE_PATH}: persistence validation failed")

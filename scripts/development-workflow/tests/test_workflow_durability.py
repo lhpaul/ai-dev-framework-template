@@ -155,6 +155,18 @@ class Durability(unittest.TestCase):
                 self.assertEqual(result['outcome'], 'Deferred')
                 self.assertTrue(Path(result['session']).is_file())
 
+    def test_session_state_publication_is_private(self):
+        destination = self.root / 'state.json'
+        for existing in (False, True):
+            with self.subTest(existing=existing):
+                if existing:
+                    destination.write_bytes(b'original\n')
+                    destination.chmod(0o640)
+                with self.observed(destination) as events:
+                    budget.publish(destination, {'synthetic': True})
+                self.assertEqual(events, ['file', 'replace', 'directory'])
+                self.assertEqual(stat.S_IMODE(destination.stat().st_mode), 0o600)
+
     def test_session_directory_sync_failure_prevents_admission(self):
         common = self.root / '.git'
         common.mkdir()
@@ -180,6 +192,7 @@ class Durability(unittest.TestCase):
             with self.subTest(existing=existing):
                 if existing:
                     destination.write_bytes(b'original\n')
+                    destination.chmod(0o640)
                 with self.observed(destination) as events:
                     self.assertEqual(self.write_config(), destination)
                 self.assertEqual(events, ['file', 'replace', 'directory'])
@@ -269,6 +282,20 @@ class Durability(unittest.TestCase):
         calls = client.graphql.call_count
         self.assertEqual(reader.fallback(client, 7, 'fixture-project', 'org/repo', cache_dir=str(cache), cache_pid='123'), result)
         self.assertEqual(client.graphql.call_count, calls)
+
+    def test_existing_cache_publication_is_private(self):
+        cache = self.root / 'cache'
+        cache.mkdir(mode=0o700)
+        client = self.cache_client()
+        reader.fallback(client, 7, 'fixture-project', 'org/repo', cache_dir=str(cache), cache_pid='123')
+        destination, = cache.glob('*.json')
+        self.assertEqual(stat.S_IMODE(destination.stat().st_mode), 0o600)
+        destination.write_bytes(b'original\n')  # Invalid fabricated cache forces publication.
+        destination.chmod(0o640)
+        with self.observed(destination) as events:
+            reader.fallback(client, 7, 'fixture-project', 'org/repo', cache_dir=str(cache), cache_pid='123')
+        self.assertEqual(events, ['file', 'replace', 'directory'])
+        self.assertEqual(stat.S_IMODE(destination.stat().st_mode), 0o600)
 
     def test_cache_fsync_failures_are_reported_and_temporary_is_removed(self):
         cache = self.root / 'cache'
