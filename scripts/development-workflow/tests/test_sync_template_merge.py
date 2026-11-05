@@ -487,6 +487,57 @@ class SyncTests(unittest.TestCase):
         self.assertNotIn("RESULT=applied", output)
         print("PROOF cleanup ownership race: competing lock, journal, and consumer bytes unchanged; rollback skipped with explicit diagnostic")
 
+    def test_completed_competing_transaction_prevents_rollback_after_reacquisition(self):
+        self.write(self.template, "shared/a.md", TEXT + "upstream\n")
+        self.write(self.template, "shared/new/deep/file.md", "new file\n")
+        self.incoming = self.save(self.template)
+        self.preview()
+        lock = self.consumer / merge.LOCK_PATH
+        parent = self.consumer.stat()
+        fsync, rmdir = os.fsync, os.rmdir
+        completed = False
+        failed = False
+        competing_files = None
+
+        def complete_after_release(path, *args, **kwargs):
+            nonlocal completed, competing_files
+            rmdir(path, *args, **kwargs)
+            if path == lock.name:
+                lock.mkdir(mode=0o700)
+                journal = lock / "recovery.json"
+                journal.write_bytes(b'{"owner":"completed second transaction"}\n')
+                self.write(self.consumer, "shared/a.md", "completed second transaction bytes\n")
+                self.write(self.consumer, "shared/new/deep/file.md", "completed second transaction new bytes\n")
+                self.write(self.consumer, merge.STATE_PATH, '{"owner":"completed second transaction"}\n')
+                journal.unlink()
+                rmdir(lock)
+                completed = True
+                competing_files = self.fingerprint()
+
+        def fail_once_after_completion(fd):
+            nonlocal failed
+            info = os.fstat(fd)
+            if completed and not failed and (info.st_dev, info.st_ino) == (parent.st_dev, parent.st_ino):
+                failed = True
+                raise OSError("planted parent fsync failure after competing completion")
+            fsync(fd)
+
+        stderr = io.StringIO()
+        with patch.object(os, "rmdir", complete_after_release), patch.object(os, "fsync", fail_once_after_completion), \
+             patch.object(merge, "write_snapshot", wraps=merge.write_snapshot) as writer, \
+             patch.object(merge, "write_recovery", wraps=merge.write_recovery) as recovery, \
+             patch("sys.stderr", stderr):
+            output = self.apply(expected=2)
+        self.assertTrue(completed and failed, "plant both competing completion and parent sync failure")
+        actual = {key: value for key, value in self.fingerprint().items() if not key.startswith(merge.LOCK_PATH)}
+        self.assertEqual(actual, competing_files)
+        self.assertEqual(recovery.call_count, 2, "reacquisition and journal restoration actually succeeded")
+        self.assertTrue((lock / "recovery.json").is_file())
+        self.assertEqual(writer.call_count, 3, "no rollback of completed competing writes or state")
+        self.assertIn("ownership continuity cannot be verified; rollback skipped", stderr.getvalue())
+        self.assertNotIn("RESULT=applied", output)
+        print("PROOF ownership continuity: completed competitor bytes/state unchanged after successful reacquisition; rollback skipped")
+
     def test_cleanup_failures_roll_back_and_preserve_recovery(self):
         self.write(self.template, "shared/a.md", TEXT + "upstream\n")
         self.incoming = self.save(self.template)

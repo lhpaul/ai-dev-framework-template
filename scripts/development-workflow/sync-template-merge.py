@@ -38,7 +38,7 @@ class SyncError(Exception):
 
 
 class LockOwnershipLost(SyncError):
-    """Cleanup released the lock and could not reacquire exclusive ownership."""
+    """Cleanup interrupted the transaction's exclusive ownership continuity."""
 
 
 class SyncConfigError(SyncError):
@@ -630,7 +630,7 @@ def write_recovery(lock: Path, data: bytes):
         os.fsync(parent_fd)  # Persist the lock directory before any consumer write.
 
 
-def release_lock(lock: Path, recovery_data):
+def release_lock(lock: Path, recovery_data, release_state=None):
     """Do not lose the recovery journal if releasing the lock fails."""
     removed = False
     try:
@@ -643,6 +643,8 @@ def release_lock(lock: Path, recovery_data):
         with directory_fd(lock.parent) as root_fd:
             os.rmdir(lock.name, dir_fd=root_fd)
             removed = True
+            if release_state is not None:
+                release_state["released"] = True
             os.fsync(root_fd)
     except OSError as exc:
         if removed:
@@ -687,6 +689,7 @@ def apply_plan(path: Path, approved_digest: str):
     originals = {}
     recovery_data = None
     cleanup_failed = False
+    release_state = {"released": False}
     try:
         # Authority is separate from preview bytes; freshness is checked under lock.
         fresh = build_preview(inputs, lock_owned=True)
@@ -732,7 +735,7 @@ def apply_plan(path: Path, approved_digest: str):
         if local_snapshot(root, STATE_PATH) != state_output:
             raise SyncError(f"{STATE_PATH}: persistence validation failed")
         try:
-            release_lock(lock, recovery_data)
+            release_lock(lock, recovery_data, release_state)
         except (OSError, SyncError):
             cleanup_failed = True
             raise
@@ -740,6 +743,11 @@ def apply_plan(path: Path, approved_digest: str):
         # A subsequent transaction may already be writing under its own lock.
         raise
     except BaseException as exc:
+        if release_state["released"]:
+            raise LockOwnershipLost(
+                f"{LOCK_PATH}: lock was released; ownership continuity cannot be verified; "
+                "rollback skipped; preserve current consumer files and inspect recovery before retrying"
+            ) from exc
         failures = []
         for rel in reversed(written):
             try:
@@ -762,7 +770,7 @@ def apply_plan(path: Path, approved_digest: str):
             raise SyncError(f"rollback incomplete; preserve {LOCK_PATH}/recovery.json and repair named paths: " + "; ".join(failures)) from exc
         if cleanup_failed:
             raise SyncError(f"rollback complete after cleanup failure; preserve {LOCK_PATH}/recovery.json and inspect before retrying") from exc
-        release_lock(lock, recovery_data)
+        release_lock(lock, recovery_data, release_state)
         raise
     fresh["result"] = "applied"
     show(fresh)
