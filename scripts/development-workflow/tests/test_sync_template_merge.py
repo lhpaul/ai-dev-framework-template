@@ -445,6 +445,48 @@ class SyncTests(unittest.TestCase):
                 self.assertEqual((lock / "recovery.json").read_bytes(), data)
                 merge.release_lock(lock, data)
 
+    def test_cleanup_reacquisition_race_leaves_other_transaction_untouched(self):
+        self.write(self.template, "shared/a.md", TEXT + "upstream\n")
+        self.write(self.template, "shared/new/deep/file.md", "new file\n")
+        self.incoming = self.save(self.template)
+        self.preview()
+        lock = self.consumer / merge.LOCK_PATH
+        parent = self.consumer.stat()
+        fsync, rmdir = os.fsync, os.rmdir
+        acquired = False
+        competing_snapshot = None
+
+        def acquire_after_release(path, *args, **kwargs):
+            nonlocal acquired, competing_snapshot
+            rmdir(path, *args, **kwargs)
+            if path == lock.name:
+                lock.mkdir(mode=0o700)
+                (lock / "recovery.json").write_bytes(b'{"owner":"second transaction"}\n')
+                self.write(self.consumer, "shared/a.md", "second transaction bytes\n")
+                self.write(self.consumer, "shared/new/deep/file.md", "second transaction new bytes\n")
+                acquired = True
+                competing_snapshot = self.fingerprint()
+
+        def fail_after_release(fd):
+            info = os.fstat(fd)
+            if acquired and (info.st_dev, info.st_ino) == (parent.st_dev, parent.st_ino):
+                raise OSError("planted parent fsync failure after competing acquisition")
+            fsync(fd)
+
+        stderr = io.StringIO()
+        with patch.object(os, "rmdir", acquire_after_release), patch.object(os, "fsync", fail_after_release), \
+             patch.object(merge, "write_snapshot", wraps=merge.write_snapshot) as writer, \
+             patch.object(merge, "write_recovery", wraps=merge.write_recovery) as recovery, \
+             patch("sys.stderr", stderr):
+            output = self.apply(expected=2)
+        self.assertTrue(acquired, "the competing acquisition must actually be planted")
+        self.assertEqual(self.fingerprint(), competing_snapshot)
+        self.assertEqual(recovery.call_count, 1, "never restore recovery into another owner's lock")
+        self.assertEqual(writer.call_count, 3, "only the two planned writes and state; no rollback writes")
+        self.assertIn("exclusive ownership could not be reacquired; rollback skipped", stderr.getvalue())
+        self.assertNotIn("RESULT=applied", output)
+        print("PROOF cleanup ownership race: competing lock, journal, and consumer bytes unchanged; rollback skipped with explicit diagnostic")
+
     def test_cleanup_failures_roll_back_and_preserve_recovery(self):
         self.write(self.template, "shared/a.md", TEXT + "upstream\n")
         self.incoming = self.save(self.template)

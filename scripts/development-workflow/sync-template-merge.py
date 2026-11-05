@@ -37,6 +37,10 @@ class SyncError(Exception):
     """A named failure which cannot authorize a write."""
 
 
+class LockOwnershipLost(SyncError):
+    """Cleanup released the lock and could not reacquire exclusive ownership."""
+
+
 class SyncConfigError(SyncError):
     """Configuration failure whose rendering cannot reproduce source content."""
 
@@ -641,13 +645,18 @@ def release_lock(lock: Path, recovery_data):
             removed = True
             os.fsync(root_fd)
     except OSError as exc:
+        if removed:
+            try:
+                with directory_fd(lock.parent) as root_fd:
+                    os.mkdir(lock.name, mode=0o700, dir_fd=root_fd)
+            except OSError as reacquire_error:
+                raise LockOwnershipLost(
+                    f"{LOCK_PATH}: cleanup failed after releasing lock; exclusive ownership "
+                    "could not be reacquired; rollback skipped; leave the active lock and "
+                    "consumer files untouched and inspect before retrying"
+                ) from reacquire_error
         if recovery_data is not None:
             try:
-                # A parent fsync can fail after rmdir succeeded. Recreate the
-                # lock before restoring recovery, so retry cannot look clean.
-                if removed:
-                    with directory_fd(lock.parent) as root_fd:
-                        os.mkdir(lock.name, mode=0o700, dir_fd=root_fd)
                 write_recovery(lock, recovery_data)
             except FileExistsError:
                 pass
@@ -727,6 +736,9 @@ def apply_plan(path: Path, approved_digest: str):
         except (OSError, SyncError):
             cleanup_failed = True
             raise
+    except LockOwnershipLost:
+        # A subsequent transaction may already be writing under its own lock.
+        raise
     except BaseException as exc:
         failures = []
         for rel in reversed(written):
