@@ -6,13 +6,16 @@ covers: scripts/development-workflow/workflow-config-resolver.py
 covers: scripts/development-workflow/workflow-project-reader.py
 """
 import argparse
+import ast
 from contextlib import contextmanager
 from concurrent.futures import ThreadPoolExecutor
 import importlib.util
 import json
 import os
 from pathlib import Path
+import shutil
 import stat
+import subprocess
 import sys
 import tempfile
 import threading
@@ -41,6 +44,56 @@ class Durability(unittest.TestCase):
         self.scratch = tempfile.TemporaryDirectory(prefix='workflow-durability-2005-')
         self.addCleanup(self.scratch.cleanup)
         self.root = Path(self.scratch.name).resolve()
+
+    def test_required_fsync_omission_proofs(self):
+        """Run failing mutants and restored passing tests only in copied fixtures."""
+        cases = (
+            ('workflow-merge-budget.py', 'def begin(args):', '        os.fsync(fd)\n',
+             'test_workflow_durability.py', 'Durability.test_session_ancestors_are_synced_before_journal_publication'),
+            ('workflow-config-resolver.py', 'def set_local_product_repo_path(', '            os.fsync(stream.fileno())\n',
+             'test_workflow_durability.py', 'Durability.test_config_atomic_durable_and_private'),
+            ('workflow-project-reader.py', 'def fallback(', '                os.fsync(stream.fileno())\n',
+             'test_workflow_durability.py', 'Durability.test_project_cache_durable_and_readable'),
+            ('sync-template-merge.py', 'def write_snapshot(',
+             '            os.fsync(parent_fd)  # Persist replacement before recovery can be removed.\n',
+             'test_sync_template_merge.py', 'SyncTests.test_directory_entries_are_durable_before_writes_and_recovery_cleanup'),
+        )
+        sources = [case[0] for case in cases] + [
+            'select-sync-manifest-entries.py', 'check-sync-manifest-coverage.py']
+        for index, (filename, anchor, barrier, test_file, test_name) in enumerate(cases):
+            with self.subTest(script=filename):
+                copied = self.root / str(index) / 'scripts/development-workflow'
+                (copied / 'tests').mkdir(parents=True)
+                for source in sources:
+                    shutil.copyfile(ROOT / source, copied / source)
+                for source in ('test_workflow_durability.py', 'test_sync_template_merge.py'):
+                    shutil.copyfile(ROOT / 'tests' / source, copied / 'tests' / source)
+                original = (ROOT / filename).read_bytes()
+                text = original.decode()
+                offset = text.index(barrier, text.index(anchor))
+                line = text[:offset].count('\n') + 1
+                test_source = ROOT / 'tests' / test_file
+                test_line = next(node.lineno for node in ast.walk(ast.parse(test_source.read_text()))
+                                 if isinstance(node, ast.FunctionDef) and node.name == test_name.split('.')[-1])
+                command = [sys.executable, str(copied / 'tests' / test_file), '-v', test_name]
+                indentation = barrier[:len(barrier) - len(barrier.lstrip())]
+                mutant = text[:offset] + indentation + 'pass  # planted fsync omission\n' + text[offset + len(barrier):]
+                target = copied / filename
+                try:
+                    target.write_text(mutant)
+                    failed = subprocess.run(command, capture_output=True, text=True, timeout=60)
+                finally:
+                    target.write_bytes(original)
+                self.assertEqual(target.read_bytes(), original)
+                print(f'PLANTED_PROOF {filename}:{line} TEST=tests/{test_file}:{test_line}', flush=True)
+                print('COMMAND=' + ' '.join(command), flush=True)
+                print(f'OMITTED_FSYNC_EXPECTED_FAILURE EXIT={failed.returncode}\n' + failed.stdout + failed.stderr, flush=True)
+                self.assertEqual(failed.returncode, 1, failed.stdout + failed.stderr)
+                self.assertIn('FAIL: ' + test_name.split('.')[-1], failed.stderr)
+                restored = subprocess.run(command, capture_output=True, text=True, timeout=60)
+                print(f'RESTORED_FSYNC_EXPECTED_PASS EXIT={restored.returncode}\n' + restored.stdout + restored.stderr, flush=True)
+                self.assertEqual(restored.returncode, 0, restored.stdout + restored.stderr)
+                self.assertEqual((ROOT / filename).read_bytes(), original)
 
     @contextmanager
     def observed(self, destination, fail=None):
