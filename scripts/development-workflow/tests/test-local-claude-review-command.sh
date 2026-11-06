@@ -323,6 +323,16 @@ head -c 10000 /dev/zero | tr '\0' 'Q' > "$TMP_ROOT/big.txt"
 run_preset "$FX" REVIEWED_HEAD="$HEAD_SHA" STANDIN_EXIT=1 STANDIN_STDOUT_FILE="$TMP_ROOT/big.txt"
 big_count="$(tr -cd 'Q' < "$ERR" | wc -c | tr -d ' ')"
 run_test "T-C9_truncated" "yes" "$([ "$big_count" -eq 2000 ] && echo yes || echo no)"
+# A multi-byte character cut at the boundary, and a non-UTF-8 byte, must not
+# make the redactor drop the excerpt (the reviewer's probes read it).
+{ head -c 1999 /dev/zero | tr '\0' 'Q'; printf '\342\202\254 usage limit tail'; } > "$TMP_ROOT/cut.txt"
+run_preset "$FX" REVIEWED_HEAD="$HEAD_SHA" STANDIN_EXIT=1 STANDIN_STDOUT_FILE="$TMP_ROOT/cut.txt"
+run_test "T-C9_cut_character_excerpt_kept" "yes" "$(yes_no err_has "QQQQ")"
+run_test "T-C9_cut_character_no_sanitizer_refusal" "no" "$(yes_no err_has "sanitization failed")"
+printf 'You have hit your usage limit \377 today\n' > "$TMP_ROOT/binary.txt"
+run_preset "$FX" REVIEWED_HEAD="$HEAD_SHA" STANDIN_EXIT=1 STANDIN_STDOUT_FILE="$TMP_ROOT/binary.txt"
+run_test "T-C9_non_utf8_excerpt_kept" "yes" "$(yes_no err_has "hit your usage limit")"
+run_test "T-C9_non_utf8_no_sanitizer_refusal" "no" "$(yes_no err_has "sanitization failed")"
 
 # ---------------------------------------------------------------------------
 # T-C10 to T-C16: verdict gate (parser cases E1-E20)

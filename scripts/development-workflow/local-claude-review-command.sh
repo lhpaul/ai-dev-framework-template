@@ -97,10 +97,13 @@ sgit() {
 }
 
 # excerpt <label> <file>: a bounded, redacted excerpt on stderr (plan D4.8).
+# The first 2000 bytes are decoded as UTF-8 with invalid bytes dropped, so a
+# character cut at the boundary (or non-UTF-8 output) cannot make the
+# redactor refuse the excerpt and hide the CLI's failure text.
 excerpt() {
   local label="$1" file="$2" text
   [ -s "$file" ] || return 0
-  text="$(head -c 2000 "$file" 2>/dev/null)" || return 0
+  text="$(python3 -I -c 'import sys; sys.stdout.write(open(sys.argv[1], "rb").read(2000).decode("utf-8", "ignore"))' "$file" 2>/dev/null)" || return 0
   say "$label (first 2000 bytes):"
   printf '%s\n' "$text" | workflow_redact_text >&2
 }
