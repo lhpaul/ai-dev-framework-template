@@ -240,7 +240,7 @@ if [ -n "${CONTEXT_BUNDLE_PATH:-}" ] && [ -f "${CONTEXT_BUNDLE_PATH}" ]; then
 fi
 # Exclusive, no-follow creation: O_EXCL fails on any existing entry, including
 # a symlink, so nothing is followed or overwritten (plan D4.4 item 3).
-if ! python3 -I - "${place_args[@]}" >/dev/null 2>&1 <<'PY'
+if ! python3 -I - ${place_args[@]+"${place_args[@]}"} >/dev/null 2>&1 <<'PY'
 import os
 import sys
 
@@ -373,7 +373,7 @@ cli_status=0
   strip_git_env
   export CLAUDE_CODE_DISABLE_GIT_INSTRUCTIONS=1
   cd "$copy"
-  exec "$claude_path" "${claude_args[@]}"
+  exec "$claude_path" ${claude_args[@]+"${claude_args[@]}"}
 ) </dev/null >"$work_dir/out" 2>"$work_dir/err" || cli_status=$?
 
 # --- P6: containment ---------------------------------------------------------
