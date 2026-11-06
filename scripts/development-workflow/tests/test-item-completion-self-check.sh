@@ -95,9 +95,12 @@ JSON
 {"number":17,"baseRefName":"develop","headRefName":"feature/1202-self-check","headRefOid":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","isDraft":false,"labels":[{"name":"ready-for-human-review"}],"files":[{"path":"docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md"}],"statusCheckRollup":[{"name":"ci","status":"COMPLETED","conclusion":"SUCCESS"}],"comments":[{"body":"Automated Reviewer Loop Summary\n\nResult: clean"}]}
 JSON
       ;;
-    local_head_dynamic)
+    local_head_dynamic|local_head_dynamic_ci_failure)
+      ci_conclusion=SUCCESS
+      [ "${MOCK_GH_PR_MODE:-}" != "local_head_dynamic_ci_failure" ] || ci_conclusion=FAILURE
       jq -n \
         --arg headOid "${MOCK_GH_HEAD_OID:?MOCK_GH_HEAD_OID must be set for local_head_dynamic}" \
+        --arg ciConclusion "$ci_conclusion" \
         '{
           number: 17,
           baseRefName: "develop",
@@ -106,7 +109,7 @@ JSON
           isDraft: false,
           labels: [{name: "ready-for-human-review"}],
           files: [{path: "docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md"}],
-          statusCheckRollup: [{name: "ci", status: "COMPLETED", conclusion: "SUCCESS"}],
+          statusCheckRollup: [{name: "ci", status: "COMPLETED", conclusion: $ciConclusion}],
           comments: [{body: "Automated Reviewer Loop Summary\n\nResult: clean"}]
         }'
       ;;
@@ -128,6 +131,11 @@ if [ "$1" = "api" ]; then
     *) false ;;
   esac && {
   case "${MOCK_GH_SUMMARY_MODE:-${MOCK_GH_PR_MODE:-happy}}" in
+    small_findings_evidence)
+      _body_text="$(printf '### Automated Reviewer Loop Summary\n\nResult: clean\n\n<!-- reviewer-loop-history:v1 -->\n```json\n'; cat "$MOCK_GH_LEDGER_FILE"; printf '\n```\n')"
+      jq -n --arg body "$_body_text" \
+        '{body:$body, created_at:"2026-01-01T00:00:00Z", updated_at:"2026-01-01T00:00:00Z"}'
+      ;;
     fetch_failed)
       printf 'issue comments unavailable\n' >&2
       exit 3
@@ -1516,6 +1524,85 @@ out="$(self_check_output \
   --claim "runtime|true|")"
 run_test "required_claim_exit_one" "1" "$(status_code "$out")"
 run_contains "required_claim_unavailable" "| external.runtime | unavailable_required | missing evidence |" "$(body "$out")"
+
+# #2124: feed the production loop decision into the completion self-check.
+# Fabricated ledger only; never read a real repository's private config.
+repo="$(make_repo small-findings-completion)"
+bind_local_head_fixture "$repo"
+export AI_DEV_WORKFLOW_CONFIG_FILE="$local_ai_config"
+export MOCK_GH_SUMMARY_MODE=small_findings_evidence
+export MOCK_GH_LEDGER_FILE="$TMP_ROOT/small-findings-ledger.json"
+(
+  HARNESS_MODE=1 source "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh"
+  h="$MOCK_GH_HEAD_OID"
+  entry="$(jq -nc --arg h "$h" '{
+    iteration:1, classification_head:$h, head_sha:$h,
+    result:"needs_fixes", reason:"blocking_feedback", blocking_count:1,
+    small_findings_only:true, small_findings_stop:false,
+    small_findings_rounds:1, small_findings_required_rounds:2,
+    small_findings_paths:["CHANGELOG.md"], unresolved_thread_count:0,
+    contributing_platforms:["local-ai-reviewer"],
+    platform_results:[{platform:"local-ai-reviewer",result:"needs_fixes",raw_result:"needs_fixes"}],
+    reviewed_heads:[{platform:"local-ai-reviewer",reviewed_head:$h,state:"current"}]
+  }')"
+  prior="$(jq -nc --argjson e "$entry" '{schema:"reviewer_loop_history.v1",entries:[$e]}')"
+  summary="$(printf '<!-- reviewer-loop-history:v1 -->\n```json\n%s\n```\n' "$prior")"
+  decision="$(printf '%s\n' '{"path":"CHANGELOG.md","platform":"local-ai-reviewer","body":"cosmetic typo"}' \
+    | reviewer_loop_evaluate_small_findings_terminal "$summary" "$h" 2 0 "local-ai-reviewer:$h")"
+  jq -n --argjson e "$entry" --argjson d "$decision" '{schema:"reviewer_loop_history.v1",
+    entries:[$e, ($e + $d + {iteration:2})]}' > "$MOCK_GH_LEDGER_FILE"
+)
+valid_small_ledger="$(cat "$MOCK_GH_LEDGER_FILE")"
+run_test "small_findings_loop_result" "clean" "$(jq -r '.entries[-1].result' "$MOCK_GH_LEDGER_FILE")"
+run_test "small_findings_loop_reason" "small_findings_terminal" "$(jq -r '.entries[-1].reason' "$MOCK_GH_LEDGER_FILE")"
+
+small_completion_check() {
+  self_check_output --repo-root "$repo" --issue 2124 \
+    --branch feature/1202-self-check --stage implementation --worktree-path "$repo" \
+    --pr 17 --expected-base develop --require-review-summary true \
+    --require-review-threads true --require-ci-green true
+}
+out="$(small_completion_check)"
+run_test "small_findings_completion_accepts" "0" "$(status_code "$out")"
+run_contains "small_findings_preserves_verdict_diagnostic" "local verdict remains needs_fixes" "$(body "$out")"
+run_test "small_findings_ledger_unchanged" "$valid_small_ledger" "$(cat "$MOCK_GH_LEDGER_FILE")"
+
+# Planted violations: retain aggregate clean but remove one owed piece of proof.
+while IFS='|' read -r name mutation; do
+  [ -n "$name" ] || continue
+  printf '%s\n' "$valid_small_ledger" | jq "$mutation" > "$MOCK_GH_LEDGER_FILE"
+  out="$(small_completion_check)"
+  run_test "small_findings_${name}_blocked" "1" "$(status_code "$out")"
+  run_contains "small_findings_${name}_actionable" "rerun reviewer loop on current head" "$(body "$out")"
+done <<'CASES'
+missing_prior|.entries = [.entries[-1]]
+wrong_schema|.schema = "unknown"
+missing_threshold|del(.entries[-1].small_findings_required_rounds)
+invalid_threshold|.entries[-1].small_findings_required_rounds = "2"
+invalid_round_count|.entries[-1].small_findings_rounds = "2"
+insufficient_rounds|.entries[-1].small_findings_rounds = 1
+stale_prior|.entries[0].classification_head = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+stale_contributor|.entries[0].reviewed_heads[0].reviewed_head = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+missing_contributors|.entries[0].contributing_platforms = []
+unknown_head|.entries[-1].reviewed_heads[0].reviewed_head = "unknown-head"
+missing_head|del(.entries[-1].reviewed_heads)
+non_small|.entries[0].small_findings_only = false
+missing_stop|.entries[-1].small_findings_stop = false
+unresolved_threads|.entries[-1].unresolved_thread_count = 1
+local_skipped|.entries[-1].platform_results[0].result = "skipped"
+later_local_block|.entries += [(.entries[-1] + {result:"needs_fixes",reason:"small_findings_terminal",small_findings_stop:false})]
+CASES
+printf '%s\n' "$valid_small_ledger" > "$MOCK_GH_LEDGER_FILE"
+export MOCK_GH_PR_MODE=local_head_dynamic_ci_failure
+out="$(small_completion_check)"
+run_test "small_findings_ci_still_blocks" "1" "$(status_code "$out")"
+run_contains "small_findings_ci_failure_observed" "| pull_request.ci | discrepancy |" "$(body "$out")"
+run_contains "small_findings_ci_independent_of_head" "local verdict remains needs_fixes" "$(body "$out")"
+bind_local_head_fixture "$repo"
+export MOCK_GH_SUMMARY_MODE=small_findings_evidence
+out="$(small_completion_check)"
+run_test "small_findings_restored_proof_passes" "0" "$(status_code "$out")"
+unset MOCK_GH_LEDGER_FILE
 
 echo ""
 echo "=== Results ==="
