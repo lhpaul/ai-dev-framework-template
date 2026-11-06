@@ -416,6 +416,11 @@ cat > "$CONTEXT_BUNDLE_PATH" <<'EOF'
 EOF
 
 # Backend resolution through local-ai-reviewer.sh
+# #1957 (plan D7): pin the shared workflow configuration to a neutral file so
+# a consumer's review.local_ai_reviewer.backend cannot change these cases.
+NEUTRAL_WORKFLOW_CONFIG="$WORK_DIR/neutral-workflow-config.yaml"
+: > "$NEUTRAL_WORKFLOW_CONFIG"
+export AI_DEV_WORKFLOW_CONFIG_FILE="$NEUTRAL_WORKFLOW_CONFIG"
 unset LOCAL_AI_REVIEWER_COMMAND
 LOCAL_AI_REVIEWER_BACKEND=http
 export LOCAL_AI_REVIEWER_BACKEND

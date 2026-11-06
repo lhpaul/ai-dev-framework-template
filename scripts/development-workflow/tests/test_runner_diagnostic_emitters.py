@@ -671,6 +671,31 @@ esac
         self.assertEqual(result.stdout, '')
         self.assertIn('[REDACTED]', result.stderr)
 
+    def test_D35b_claude_companion_preserves_response_and_redacts_failure(self):
+        # #1957: the Claude preset forwards the functional verdict unchanged on
+        # stdout and redacts the bounded CLI excerpt it writes on failure.
+        self.companion_environment()
+        (self.f.checkout / 'claude-change.txt').write_text('change\n')
+        for args in (['git', 'add', 'claude-change.txt'], ['git', 'commit', '-qm', 'Synthetic reviewed change']):
+            subprocess.run(args, cwd=self.f.checkout, env=self.f.env, check=True, capture_output=True)
+        head = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=self.f.checkout, env=self.f.env, text=True).strip()
+        self.f.env['REVIEWED_HEAD'] = head
+        command = self.f.bin / 'claude'
+        payload = {'result': 'needs_fixes', 'reason': 'token=' + self.secret, 'findings': []}
+        command.write_text('#!/bin/sh\nprintf "%s" ' + shlex.quote(json.dumps(payload)) +
+                           '\nprintf "token=' + self.secret + '\\n" >&2\nexit 0\n')
+        command.chmod(0o755)
+        result = self.entry('local-claude-review-command.sh')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        forwarded = json.loads(result.stdout)
+        self.assertEqual(forwarded['reason'], 'token=' + self.secret)  # Functional response, retained.
+        self.assertEqual(forwarded['reviewed_head'], head)
+        self.assertNotIn(self.secret, result.stderr)
+        command.write_text('#!/bin/sh\nprintf "password: ' + self.secret + '\\n" >&2\nexit 7\n')
+        result = self.safe(self.entry('local-claude-review-command.sh'), 7)
+        self.assertEqual(result.stdout, '')
+        self.assertIn('[REDACTED]', result.stderr)
+
     def test_D36_compatibility_aliases_delegate_to_safe_local_entry(self):
         for name in ('local-codex-reviewer.sh', 'local-http-reviewer.sh'):
             with self.subTest(entry=name):
@@ -1629,7 +1654,8 @@ printf 'PROBE=%s\\n' "$settle_review_probe"
         # statement in an isolated tooling directory; no provider body runs.
         names = ['claude-code-action-reviewer.sh', 'codex-github-reviewer.sh',
                  'local-codex-review-command.sh', 'local-http-review-command.sh',
-                 'pr-ownership-guard.sh', 'resolve-reviewer-availability.sh']
+                 'pr-ownership-guard.sh', 'resolve-reviewer-availability.sh',
+                 'local-claude-review-command.sh']
         for index, name in enumerate(names, 10):
             lines = (self.f.runtime / name).read_text().splitlines()
             end = next(i for i, line in enumerate(lines) if line.startswith('source ') and '/workflow-lib.sh"' in line)
@@ -3238,7 +3264,7 @@ gh() { printf 'fixture/repo\n'; }
             prefix = 'HARNESS_MODE=1 source ' + shlex.quote(str(self.f.runtime / 'local-ai-reviewer.sh')) + '\n'
             result = self.safe(self.run_command([shell, '-c', prefix + 'LOCAL_AI_REVIEWER_COMMAND=\nLOCAL_AI_REVIEWER_DISABLE_DEFAULT=0\nLOCAL_AI_REVIEWER_BACKEND=' + shlex.quote(self.secret) + '\nresolve_local_ai_reviewer_command']), 1)
             self.assertIn('configuration validation error; key=LOCAL_AI_REVIEWER_BACKEND', result.stderr)
-            for backend in ('codex', 'http'):
+            for backend in ('codex', 'http', 'claude'):
                 with self.subTest(shell=shell, backend=backend):
                     body = prefix + 'LOCAL_AI_REVIEWER_COMMAND=\nLOCAL_AI_REVIEWER_DISABLE_DEFAULT=0\nLOCAL_AI_REVIEWER_BACKEND=' + backend + '\nresolve_local_ai_reviewer_command\n'
                     body += 'test -n "$LOCAL_AI_REVIEWER_COMMAND"\nprintf "BACKEND_RESOLVED\\n"\n'

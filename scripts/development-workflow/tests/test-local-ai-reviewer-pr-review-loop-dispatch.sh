@@ -3,6 +3,7 @@
 # covers: scripts/development-workflow/tests/lib/review-retry-fixture.sh
 # covers: scripts/development-workflow/pr-review-loop.sh
 # covers: scripts/development-workflow/local-ai-reviewer.sh
+# covers: scripts/development-workflow/local-claude-review-command.sh
 
 set -euo pipefail
 
@@ -154,6 +155,84 @@ run_test "2061_dispatch_stops_at_lifetime_cap_new_runs" \
 run_test "2061_dispatch_requires_verified_reservation" \
   '0|cycle_count_unavailable|2 2 available' "$(_retry2061_exercise uncertain_write)"
 unset -f _retry2061_exercise
+
+# #1957 T-L1 (AC-6): under the loop, the backend comes from the configuration
+# the loop hands to the reviewer (the PR base branch snapshot in config_file),
+# not from the working-tree .ai-dev-workflow.yaml, and an operator's
+# AI_DEV_WORKFLOW_CONFIG_FILE still takes priority. The real adapter runs the
+# real local-ai-reviewer.sh from a copied tooling tree (plan D7) whose root
+# file selects claude; the two presets are stand-ins that record their name.
+_1957_out="$(
+  _1957_root="$(mktemp -d)"
+  _1957_root="$(CDPATH='' cd -- "$_1957_root" && pwd -P)"
+  trap 'rm -rf "$_1957_root"' EXIT
+  unset AI_DEV_WORKFLOW_CONFIG_FILE LOCAL_AI_REVIEWER_BACKEND LOCAL_AI_REVIEWER_COMMAND LOCAL_AI_REVIEWER_DISABLE_DEFAULT
+  export GIT_CONFIG_GLOBAL="$_1957_root/global.gitconfig" GIT_CONFIG_NOSYSTEM=1 LOCAL_AI_REVIEWER_GRAPH_STRATEGY=none
+  : > "$GIT_CONFIG_GLOBAL"
+  _1957_tools="$_1957_root/scripts/development-workflow"
+  mkdir -p "$_1957_tools" "$_1957_root/bin"
+  while IFS= read -r -d '' _1957_path; do
+    case "$_1957_path" in
+      scripts/development-workflow/*/*) ;;
+      scripts/development-workflow/*.sh|scripts/development-workflow/*.py) cp -p "$REPO_ROOT/$_1957_path" "$_1957_root/$_1957_path" ;;
+    esac
+  done < <(git -C "$REPO_ROOT" ls-files -z -- scripts/development-workflow)
+  for _1957_preset in codex claude; do
+    printf '#!/usr/bin/env bash\nprintf "%%s\\n" %s >> "$_1957_REC"\nprintf "{\\"result\\":\\"clean\\",\\"reviewed_head\\":\\"%%s\\",\\"findings\\":[]}\\n" "$REVIEWED_HEAD"\n' \
+      "$_1957_preset" > "$_1957_tools/local-${_1957_preset}-review-command.sh"
+    chmod +x "$_1957_tools/local-${_1957_preset}-review-command.sh"
+  done
+  printf 'review:\n  local_ai_reviewer:\n    backend: claude\n' > "$_1957_root/.ai-dev-workflow.yaml"
+  printf '# Review contract\n' > "$_1957_root/REVIEW.md"
+  git -C "$_1957_root" init -q -b main
+  git -C "$_1957_root" config user.email fixture@example.test
+  git -C "$_1957_root" config user.name Fixture
+  git -C "$_1957_root" remote add origin git@github.com:owner/repo.git
+  git -C "$_1957_root" add REVIEW.md .ai-dev-workflow.yaml
+  git -C "$_1957_root" commit -qm fixture
+  export _1957_HEAD
+  _1957_HEAD="$(git -C "$_1957_root" rev-parse HEAD)"
+  cat > "$_1957_root/bin/gh" <<'MOCK_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"pr view 1957"*"--json baseRefName,headRefName,headRefOid"*)
+    printf '{"baseRefName":"develop","headRefName":"feature/1957-x","headRefOid":"%s"}\n' "$_1957_HEAD" ;;
+  *"pr diff 1957"*"--name-only"*) printf '%s\n' REVIEW.md ;;
+  *) exit 1 ;;
+esac
+MOCK_GH
+  chmod +x "$_1957_root/bin/gh"
+  export PATH="$_1957_root/bin:$PATH"
+  export _1957_REC="$_1957_root/presets.log"
+  printf 'review:\n  on_ready:\n    github:\n      - local-ai-reviewer\n' > "$_1957_root/base-without-key.yaml"
+  printf 'review:\n  local_ai_reviewer:\n    backend: claude\n' > "$_1957_root/base-with-claude.yaml"
+  printf 'review:\n  local_ai_reviewer:\n    backend: codex\n' > "$_1957_root/operator-codex.yaml"
+  workflow_repo_root() { printf '%s\n' "$_1957_root"; }
+  repo_slug() { printf 'owner/repo\n'; }
+  require_gh() { :; }
+  # shellcheck disable=SC2034 # Read by the sourced production local adapter.
+  repo_root="$_1957_root"
+  _1957_case() {
+    : > "$_1957_REC"
+    run_local_ai_reviewer_review 1957 feature/1957-x 1 60 >/dev/null 2>&1 || true
+    printf '%s=%s\n' "$1" "$(tr '\n' ',' < "$_1957_REC")"
+  }
+  # shellcheck disable=SC2034 # Read by the sourced production local adapter.
+  config_file="$_1957_root/base-without-key.yaml"
+  _1957_case base_without_key
+  # shellcheck disable=SC2034 # Read by the sourced production local adapter.
+  config_file="$_1957_root/base-with-claude.yaml"
+  _1957_case base_with_claude
+  export AI_DEV_WORKFLOW_CONFIG_FILE="$_1957_root/operator-codex.yaml"
+  _1957_case operator_override
+)"
+run_test "1957_T-L1_base_without_key_runs_codex" "codex," \
+  "$(sed -n 's/^base_without_key=//p' <<< "$_1957_out")"
+run_test "1957_T-L1_base_with_claude_runs_claude" "claude," \
+  "$(sed -n 's/^base_with_claude=//p' <<< "$_1957_out")"
+run_test "1957_T-L1_operator_config_takes_priority" "codex," \
+  "$(sed -n 's/^operator_override=//p' <<< "$_1957_out")"
+unset _1957_out
 
 if [ "$FAIL_COUNT" -ne 0 ]; then
   echo "FAIL: $FAIL_COUNT test(s) failed"

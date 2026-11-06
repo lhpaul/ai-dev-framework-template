@@ -101,9 +101,16 @@ review:
   on_draft:
     github:
       # local-ai-reviewer: local-only CLI reviewer. When
-      # LOCAL_AI_REVIEWER_COMMAND is unset, local-ai-reviewer.sh defaults to
-      # scripts/development-workflow/local-codex-review-command.sh (Codex CLI).
-      # Missing codex binary, credentials, model access, or malformed output
+      # LOCAL_AI_REVIEWER_COMMAND is unset, local-ai-reviewer.sh runs the
+      # bundled preset of the selected backend: codex (default, Codex CLI),
+      # http (Chat Completions API), or claude (Claude Code CLI). Backend
+      # order, first match wins: LOCAL_AI_REVIEWER_COMMAND,
+      # LOCAL_AI_REVIEWER_DISABLE_DEFAULT=1 (no command), a non-empty
+      # LOCAL_AI_REVIEWER_BACKEND, review.local_ai_reviewer.backend (read
+      # from the PR base branch), then codex. The claude preset reads
+      # LOCAL_CLAUDE_REVIEWER_BIN, LOCAL_CLAUDE_REVIEWER_MODEL,
+      # LOCAL_CLAUDE_REVIEWER_PROMPT, and LOCAL_CLAUDE_REVIEWER_STRICT_PROMPT.
+      # A missing CLI, credentials, model access, or malformed output
       # escalates; a review still running when its wait budget ends reports
       # No verdict yet. Set LOCAL_AI_REVIEWER_DISABLE_DEFAULT=1 to require an
       # explicit LOCAL_AI_REVIEWER_COMMAND. Set LOCAL_AI_REVIEWER_DISABLED=1
