@@ -76,15 +76,23 @@ has no UI, so the runbook has no fidelity step.
    is 300 s. The integration guide's Claude section tells the operator to add
    `--timeout 900` in this case.
 
-7. **Through the reviewer loop** (AC-6, AC-11). On a disposable test PR whose
-   own branch adds `review.local_ai_reviewer.backend: claude` while
-   `develop` does not, run
-   `./scripts/development-workflow/pr-review-loop.sh <test-pr> --platform local-ai-reviewer`
-   with `LOCAL_AI_REVIEWER_BACKEND` unset. **Expected**: the local-ai-reviewer
-   stderr names the **Codex** preset, because the loop reads the base-branch
-   configuration. `PLATFORM_WAIT_BUDGETS` shows `local-ai-reviewer:1200:default`
-   (or the configured value) whatever the backend. Close the test PR without
-   merging it.
+7. **Through the reviewer loop** (AC-6, AC-11). Create a disposable branch
+   from the implementation branch, so it carries the new scripts, and add one
+   commit that sets `review.local_ai_reviewer.backend: claude` in its
+   `.ai-dev-workflow.yaml`. Open a test PR from it against `develop`, which
+   does not have the key. Check that branch out so the local `HEAD` equals the
+   test PR head; otherwise the local reviewer stops as `head_mismatch`. In a
+   shell where `LOCAL_AI_REVIEWER_BACKEND`, `LOCAL_AI_REVIEWER_COMMAND`, and
+   `AI_DEV_WORKFLOW_CONFIG_FILE` are all unset (the loop passes an exported
+   `AI_DEV_WORKFLOW_CONFIG_FILE` ahead of the base snapshot, so a value left
+   over from steps 2–5 would defeat this step), run
+   `./scripts/development-workflow/pr-review-loop.sh <test-pr> --platform local-ai-reviewer`.
+   **Expected**: the local-ai-reviewer stderr names the **Codex** preset,
+   because the loop reads the base-branch configuration, and no Claude budget
+   line appears. `PLATFORM_WAIT_BUDGETS` shows `local-ai-reviewer:1200:default`,
+   or the configured value, or `local-ai-reviewer:2400:default:large_diff`
+   when the test PR changes more files than the large-diff threshold, whatever
+   the backend. Close the test PR without merging it, and delete the branch.
 
 8. **Documentation check** (AC-8, AC-21). Read `--help`, the
    `.ai-dev-workflow.yaml` local-reviewer comments, the
