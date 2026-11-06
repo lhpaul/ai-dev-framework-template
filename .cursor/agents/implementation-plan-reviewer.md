@@ -1,6 +1,6 @@
 ---
 name: implementation-plan-reviewer
-model: cursor-grok-4.5-high
+model: claude-opus-5-5-high
 description: Plan review stage. Use when an implementation plan branch or PR needs review for spec alignment, completeness, and feasibility. Reads the spec, plan, and codebase to validate the approach, and can push reviewer-loop fixes.
 ---
 
