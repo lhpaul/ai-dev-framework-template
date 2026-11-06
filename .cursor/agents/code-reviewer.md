@@ -1,6 +1,6 @@
 ---
 name: code-reviewer
-model: cursor-grok-4.5-high
+model: composer-2.5
 description: Development review stage. Use when an implementation PR needs review against the spec, plan, and best practices. Applies fixes directly for blocking and important issues. Reports issues requiring human/product decisions.
 ---
 
