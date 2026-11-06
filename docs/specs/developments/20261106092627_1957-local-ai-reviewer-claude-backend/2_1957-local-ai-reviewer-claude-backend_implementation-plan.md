@@ -68,8 +68,9 @@ CLI in scratch repositories and do not depend on the revision.
 | V17 | Tests that run the real reviewer with default resolution (Rule 5, D7) | `git grep -ln "local-ai-reviewer.sh" -- scripts/development-workflow/tests`, then per file `grep -c "LOCAL_AI_REVIEWER_COMMAND\|LOCAL_AI_REVIEWER_BACKEND\|LOCAL_AI_REVIEWER_DISABLE"` | Only `test-local-ai-reviewer.sh` (`default_command_*` at `:250-251`, `1653_s0_default_command_quotes_spaces` at `:1528`) and `test-local-http-review-command.sh` (`:418-463`) reach default resolution. Every other match sets an explicit command, stubs the companion, or only reads the source. |
 | V18 | Today's decoder accepts a `review.local_ai_reviewer` block, so a template revert ignores a kept key (Reversal; Rule 4) | Write `review:` / `  local_ai_reviewer:` / `    backend: claude` to a scratch file, load `scripts/development-workflow/workflow-config-resolver.py` with `importlib`, and call `validate_selected_yaml(raw, path, review_fields=True)`; `git diff --stat 49e71117 3bf2f772 -- scripts/` | Returns `{'review': {'local_ai_reviewer': {'backend': 'claude'}}}` with no `ConfigError`, run at `3bf2f772`. The diff is empty, so the result holds at `49e71117`. |
 | V19 | Git status does not see every byte change in a checkout, so containment cannot rely on it (D4.4; Rule 4) | With Git `2.56.0`: in a scratch repository, set `filter.strip.clean` to `tr Z x`, commit `.gitattributes` with `g.txt filter=strip` and `g.txt` holding `x` plus a newline, run `git worktree add --detach`, run `git status --porcelain=v1 -z --untracked-files=all --ignored`, overwrite `g.txt` in the new worktree with `Z` plus a newline (same size), and run the same status again. Control: the same steps with `tr -d Z` and `Z` appended instead. Repeat with `core.autocrlf=true` and a CRLF-to-LF rewrite of a checked-out text file. | The same-size clean-filter edit gives empty status output both times, and `git diff --quiet` exits 0, so the edit is invisible. The appended-`Z` control is reported as `M`, because Git reports a size change without running the filter, so a fixture must keep the size. The CRLF-to-LF rewrite was reported as `M` on this Git version, but whether Git reports it depends on Git's line-ending rules and version, so D4.4 does not rely on it. |
-| V20 | `git worktree add` runs developer-configured filter and `core.fsmonitor` programs, and per-driver overrides stop them (D4.3; Rule 4) | With Git `2.56.0`, in a scratch repository whose developer configuration sets marker-writing programs as `filter.a.b.smudge`, `filter.a.b.clean`, `filter.p.process` with `filter.p.required=true`, `filter.x=y.smudge`, `filter.lfs.process` with `filter.lfs.required=true`, and `core.fsmonitor`, and whose committed `.gitattributes` maps a file to each driver: (control) `GIT_LFS_SKIP_SMUDGE=1 git -c core.hooksPath=/dev/null worktree add --detach <dir> <head>`; (fix) the same without `GIT_LFS_SKIP_SMUDGE`, with `-c core.fsmonitor=false` and with one `GIT_CONFIG_KEY_<n>`/`GIT_CONFIG_VALUE_<n>` pair per key printed by `git config -z --name-only --get-regexp '^filter\..+\.(smudge\|clean\|process\|required)$'` (value empty, or `false` for `required`); then `git diff --no-ext-diff --no-textconv --no-color <base>...<head>` in the new worktree and `git worktree remove --force` with no override. Also: only `-c filter.<name>.smudge=` while `required=true` stays. | The control runs the smudge, process, and `core.fsmonitor` programs and writes the markers. `GIT_LFS_SKIP_SMUDGE` does not stop a configured `filter.lfs.process`, and the required process driver fails the checkout (exit 128). With the fix, no marker is written, the exit status is 0, each file holds its committed blob bytes, and the subsection names `a.b` and `x=y` are handled because the key goes through the environment, not `-c` parsing. The tree-to-tree diff and `worktree remove --force` write no marker. An empty smudge alone with `required=true` fails the checkout (`smudge filter mark failed`), so `required=false` is needed. |
+| V20 | `git worktree add` runs developer-configured filter and `core.fsmonitor` programs, and per-driver overrides stop them (D4.3; Rule 4) | With Git `2.56.0`, in a scratch repository whose developer configuration sets marker-writing programs as `filter.a.b.smudge`, `filter.a.b.clean`, `filter.p.process` with `filter.p.required=true`, `filter.x=y.smudge`, `filter.lfs.process` with `filter.lfs.required=true`, and `core.fsmonitor`, and whose committed `.gitattributes` maps a file to each driver: (control) `GIT_LFS_SKIP_SMUDGE=1 git -c core.hooksPath=/dev/null worktree add --detach <dir> <head>`; (fix) the same without `GIT_LFS_SKIP_SMUDGE`, with `-c core.fsmonitor=false` and with one `GIT_CONFIG_KEY_<n>`/`GIT_CONFIG_VALUE_<n>` pair per key printed by `git config -z --name-only --get-regexp '^filter\..+\.(smudge\|clean\|process\|required)$'` (value empty, or `false` for `required`); then `git diff --no-ext-diff --no-textconv --no-color <base>...<head>` in the new worktree and `git worktree remove --force` with no override. Also: only `-c filter.<name>.smudge=` while `required=true` stays. | The control runs the smudge, process, and `core.fsmonitor` programs and writes the markers. `GIT_LFS_SKIP_SMUDGE` does not stop a configured `filter.lfs.process`, and the required process driver fails the checkout (exit 128). With the fix, no marker is written, the exit status is 0, each file holds its committed blob bytes (no `core.autocrlf`, `core.eol`, or `text`/`eol` attribute was set), and the subsection names `a.b` and `x=y` are handled because the key goes through the environment, not `-c` parsing. The tree-to-tree diff and `worktree remove --force` write no marker. An empty smudge alone with `required=true` fails the checkout (`smudge filter mark failed`), so `required=false` is needed. Re-run with `core.autocrlf=true` and the fix: no marker is written, and LF-committed text files, including a driver-mapped one, are written with CRLF, so the fix does not turn off Git's built-in end-of-line conversion. |
 | V21 | The Claude CLI's own startup Git calls start the developer's clean filter unless `CLAUDE_CODE_DISABLE_GIT_INSTRUCTIONS=1` is set (D4.5; Rule 4) | With Claude Code `2.1.318` and Git `2.56.0`, in a scratch repository whose developer configuration sets a marker-writing `filter.m.clean`, with `g.txt filter=m` committed and `g.txt` touched, run `claude -p` with the D4.5 flags and a one-word prompt through a `git` shim on `PATH` that logs each call's argv and environment; repeat with `GIT_CONFIG_COUNT` overrides and `GIT_CEILING_DIRECTORIES` set, and again with `CLAUDE_CODE_DISABLE_GIT_INSTRUCTIONS=1`. | Without the variable the CLI runs `ls-files --error-unmatch`, `remote get-url origin`, `remote`, `status --short`, `log --oneline -n 5`, and `config user.name`, each with its own `-c core.hooksPath=/dev/null -c core.fsmonitor=`, and the marker is written by `status`. The CLI replaces `GIT_CONFIG_COUNT` and its keys with its own and drops `GIT_CEILING_DIRECTORIES` for `status`, so the caller's overrides do not apply. With the variable only `ls-files`, `remote get-url origin`, and `remote` run, and no marker is written. |
+| V22 | The `review_fields=True` decoder returns quoted whitespace and control characters in `backend` verbatim (D1; Rule 4) | Python 3, at plan head `52ae2e80` (`workflow-config-resolver.py` unchanged since `49e71117`): load the resolver as a module and call `validate_selected_yaml(raw, "x.yaml", review_fields=True)` on `review:` / `  local_ai_reviewer:` / `    backend: <v>` for `<v>` in `"claude\n"`, `"\n"`, `" claude"`, `"cl\taude"`, `'claude '`, and `"claude\u0000"`. | The first five decode to `'claude\n'`, `'\n'`, `' claude'`, `'cl\taude'`, and `'claude '`. `"claude\u0000"` raises `ConfigError` (`unsupported YAML scalar`), which is R2. A shell `$(...)` read of the first two would give `claude` and the empty string, so D1 checks the grammar before emission. |
 
 ---
 
@@ -165,7 +166,13 @@ Add `review-local-ai-backend --file <path>` to
 the `--file` path and never calls `resolve_local_config`. It decodes the file
 with `validate_selected_yaml(raw, path, review_fields=True)`, the decoder that
 every other `review.*` reader uses. It walks `review` → `local_ai_reviewer` →
-`backend`. It does not validate backend names; D2 owns the name set.
+`backend`. It does not decide which names are known; D2 owns the name set.
+It does check the name grammar in Python before writing anything (R7, R8,
+using `re.fullmatch` with ASCII classes). The shell reads the value through
+`$(...)`, which strips trailing newlines, and the decoder returns quoted
+whitespace verbatim (V22). Without the check, `backend: "claude\n"` would
+select `claude` and `backend: "\n"` would count as not set. With it, the
+value that reaches the shell has no character that `$(...)` can drop.
 
 | # | Input | stdout | Exit |
 | --- | --- | --- | --- |
@@ -175,12 +182,15 @@ every other `review.*` reader uses. It walks `review` → `local_ai_reviewer` �
 | R4 | `backend` is the empty string | empty | 0 |
 | R5 | `review` or `local_ai_reviewer` present but neither a mapping nor `null` | empty | 3 |
 | R6 | `backend` present and not a string (list, mapping, number, boolean) | empty | 3 |
-| R7 | `backend` is a non-empty string | the string and a newline | 0 |
+| R7 | `backend` is a non-empty string that does not match `^[A-Za-z0-9_-]+$` (for example `"claude\n"`, `"\n"`, `" claude"`, `"cl\taude"`) | empty | 3 |
+| R8 | `backend` is a non-empty string matching `^[A-Za-z0-9_-]+$` | the string and a newline | 0 |
 
 Rows are evaluated top to bottom, and the first match wins. Exit 3 means
 invalid (BR-5). Exit 4 means "counts as not set" (BR-4) and gets a warning
-(D2). The subcommand catches its own exceptions, so the generic `main`
-handler's exit 2 does not occur for these inputs.
+(D2). R7 therefore gives `invalid_backend` with the unchanged shared-default
+diagnostic (D2 step 4), as an unknown name does. The subcommand catches its
+own exceptions, so the generic `main` handler's exit 2 does not occur for
+these inputs.
 
 ### D2 — Backend resolution in `local-ai-reviewer.sh`
 
@@ -287,10 +297,13 @@ value, or `false` for a `required` key, and then exports the new
 `GIT_CONFIG_COUNT`. The environment form is used instead of `-c`, because a
 driver name may contain `=`. The checkout therefore runs no hook, filter
 driver (including Git LFS, whose drivers are ordinary `filter.lfs.*` keys),
-or `core.fsmonitor` program (V20): each file in the copy holds its committed
-blob bytes, and a commit's `.gitattributes` can select only drivers that are
-then empty. The overrides live only in that subshell, so neither the diff,
-the CLI, nor cleanup inherits them. Raw CLI output goes in `"$work_dir"`,
+or `core.fsmonitor` program (V20), and a commit's `.gitattributes` can select
+only drivers that are then empty. That is the whole checkout guarantee: no
+developer- or commit-selected program runs. It is not byte equality with the
+committed blobs, because Git's built-in end-of-line conversion still applies
+(D4.4 item 5 states that policy and why it does not weaken BR-12). The
+overrides live only in that subshell, so neither the diff, the CLI, nor
+cleanup inherits them. Raw CLI output goes in `"$work_dir"`,
 outside the copy. `REVIEW.md` and agent
 guidance stay in the copy (BR-8).
 
@@ -354,7 +367,10 @@ CLI exits and compare the two (P6).
    CLI wrote. Comparing raw bytes after placement makes the result
    independent of how the copy was checked out. The checkout therefore keeps
    the developer's `core.autocrlf` and `core.eol` configuration, as any
-   checkout of theirs does, and no `-c core.autocrlf=false` is added. Filter
+   checkout of theirs does, and no `-c core.autocrlf=false` is added. This
+   does not weaken BR-12: both fingerprints are taken after checkout, so a
+   converted line ending is part of the baseline, and any later byte change
+   differs from it. Filter
    drivers are disabled at checkout by D4.3, not here. Nothing runs in the copy between the two fingerprints except the CLI.
 6. **Fail closed.** If the baseline manifest cannot be read in full, refuse
    with `review copy fingerprint not taken` (row 3, exit 2) before the CLI
@@ -589,7 +605,7 @@ mirrored in help text, configuration comments, and two integration guides.
 
 | Gate (spec matrix) | Inputs | Allowed outcomes | Next action per outcome | Tests | Mirror surfaces | Examples |
 | --- | --- | --- | --- | --- | --- | --- |
-| Backend resolution rows 1–8 | disabled flag, explicit command, default-disabled flag, environment selection, shared default (R1–R7) | Skipped; explicit command; `missing_command`; preset (`codex`/`http`/`claude`); `invalid_backend` with the environment or shared key | Skipped: no review evidence. Reviewer failed: operator fixes the configuration and re-runs. Preset: review runs. | T-B1 to T-B5, T-R1 to T-R7, existing `disabled_*` / `missing_command_*` | `local-ai-reviewer.sh` usage text, `.ai-dev-workflow.yaml` comments, `integrations/local-ai-reviewer.md` Configuration, `integrations/pr-review-platform.md` comment | Guide snippets: environment selection and shared-default YAML |
+| Backend resolution rows 1–8 | disabled flag, explicit command, default-disabled flag, environment selection, shared default (R1–R8) | Skipped; explicit command; `missing_command`; preset (`codex`/`http`/`claude`); `invalid_backend` with the environment or shared key | Skipped: no review evidence. Reviewer failed: operator fixes the configuration and re-runs. Preset: review runs. | T-B1 to T-B5, T-R1 to T-R7, existing `disabled_*` / `missing_command_*` | `local-ai-reviewer.sh` usage text, `.ai-dev-workflow.yaml` comments, `integrations/local-ai-reviewer.md` Configuration, `integrations/pr-review-platform.md` comment | Guide snippets: environment selection and shared-default YAML |
 | Direct-run budget rows 1–4 | `--timeout`, `LOCAL_AI_REVIEWER_TIMEOUT`, command source | given value; 900 with INFO; 300 | Budget passed to the watchdog | T-B6 to T-B9 | usage `--timeout` line, YAML `LOCAL_AI_REVIEWER_TIMEOUT` comment, guide budget paragraph | Guide: explicit command plus `--timeout 900` |
 | Preset outcomes rows 1–11 | D4.2 P1–P8, plus the watchdog | Reviewer failed, No verdict yet, Needs rerun (existing capacity rule), Clean, Needs fixes, strict report or `strict_pass_failed` | Existing loop handling for each class; no new class | T-C1 to T-C22, T-B10 to T-B13 | guide Failure Semantics table | None (not an example surface) |
 | Loop budget (AC-11 regression) | branch type, override, configured, built-in, backend selection | the existing budget, the same for every backend | unchanged | T-L2 | none changed: Protocol 93 budget table (`:612`) already states 1200 | None |
@@ -658,12 +674,13 @@ calls the resolver CLI directly.
 | Y3 | `review:` present without `local_ai_reviewer` | R3 | T-R1 |
 | Y4 | `backend:` with no value, or `backend: null` | R3 | T-R2 |
 | Y5 | `backend: ""` | R4 | T-R2 |
-| Y6 | `backend: claude`, `backend: "claude"`, `backend: claude # note` | R7 `claude` | T-R3 |
+| Y6 | `backend: claude`, `backend: "claude"`, `backend: claude # note` | R8 `claude` | T-R3 |
 | Y7 | `backend: [claude]`, a block mapping under `backend`, `backend: 3`, `backend: true` | R6 | T-R4 |
 | Y8 | `local_ai_reviewer: claude` (a scalar) | R5 | T-R4 |
 | Y9 | invalid YAML, a duplicate `backend` key, a non-UTF-8 byte, a flow mapping such as `local_ai_reviewer: {backend: claude}` (the `review_fields=True` decoder rejects non-empty flow mappings) | R2 | T-R5 |
-| Y10 | `backend: CLAUDE` or `backend: " claude"` | R7 raw value; D2 rejects it as `invalid_backend` | T-R6 |
+| Y10 | `backend: CLAUDE` | R8 raw value; D2 rejects it as `invalid_backend` | T-R6 |
 | Y11 | other `review.*` keys around the new block (`on_draft`, `wait_budgets`) | the platform lists and wait budgets read by the existing awk and resolver readers are unchanged | T-R7 |
+| Y12 | `backend: "claude\n"`, `backend: "\n"`, `backend: " claude"`, `backend: "cl\taude"` (the decoder returns each verbatim, V22) | R7: exit 3, empty stdout; through D2, `invalid_backend` with the `review.local_ai_reviewer.backend` diagnostic, never `claude` and never Codex | T-R6, T-B5 |
 
 ---
 
@@ -750,7 +767,7 @@ the preset invoked directly with the D4.1 environment.
 | T-C20 | AC-17 / P2: strict mode without `CONTEXT_BUNDLE_PATH` gives exit 2 before any copy is created. |
 | T-C21 | AC-13 / BR-10 / P3 (D4.4): the fixture's reviewed commit adds a reserved path as (a) a symlink `.review-diff.patch` to a sentinel file outside the fixture and the temporary directory, (b) a symlink `.review-context.json` to a second sentinel, with a bundle supplied, (c) a dangling symlink `.review-diff.patch` whose target path is outside both, (d) a regular file `.review-context.json` with no bundle supplied, and (e) a directory `.review-diff.patch/`. Each gives exit 2, "reserved path" in the message, empty stdout, and no stand-in record. Each sentinel's bytes and `git hash-object` are unchanged, the dangling target is still absent, the fixture status is unchanged, and no `local-claude-review.*` directory or worktree entry remains. |
 | T-C22 | AC-15 / BR-12 (D4.4 items 4–6): edits that Git status cannot see. (a) Clean filter: the fixture's developer configuration sets `filter.strip.clean` to `tr Z x`, and the reviewed commit's `.gitattributes` maps `g.txt`, which holds `x` plus a newline, to it. The stand-in overwrites `g.txt` with `Z` plus a newline, which keeps the size (V19), and records the copy's `git status --porcelain=v1 -z --untracked-files=all --ignored` before and after its edit to a file outside the copy; the test asserts the two are equal, which proves the edit is invisible to Git status. (b) End of line: the fixture's developer configuration sets `core.autocrlf=true`, and the reviewed commit has an LF-committed text file, which the checkout writes with CRLF, and a file committed with CRLF. The stand-in rewrites each CRLF file in the copy to LF. The status-equality assertion is not made here, because whether Git reports this edit depends on the Git version (V19). (c) Unreadable entry: the stand-in creates a directory with mode `000` that holds a file; the run fails either on the changed digest or on the unreadable post-run manifest, and both are row 6. No `local-claude-review.*` directory or worktree entry remains afterwards (D5). Each prints a clean verdict and gives exit 3, "modified" in the message, and empty stdout. (d) A run whose stand-in only reads files gives the forwarded verdict, so `atime` changes do not count. |
-| T-C23 | AC-12 / BR-10 (D4.3): checkout runs no developer-configured program. The fixture's developer configuration sets stand-in programs that each append to a marker file outside the fixture and the temporary directory as `filter.mark.smudge`, `filter.mark.clean`, `filter.proc.process` with `filter.proc.required=true`, `filter.lfs.process` with `filter.lfs.required=true`, and `core.fsmonitor`, and the reviewed commit's `.gitattributes` maps one file to each driver. The stand-in runs no Git command and copies each mapped file's bytes to a record directory outside the copy. The run gives the forwarded verdict, and no marker file exists afterwards. The test then checks that each recorded file equals `git -C <fixture> cat-file blob <head>:<path>`. A control run of the same fixture through plain `git worktree add --detach` writes the markers, which proves the stand-ins are reachable. |
+| T-C23 | AC-12 / BR-10 (D4.3): checkout runs no developer-configured program. The fixture's developer configuration sets stand-in programs that each append to a marker file outside the fixture and the temporary directory as `filter.mark.smudge`, `filter.mark.clean`, `filter.proc.process` with `filter.proc.required=true`, `filter.lfs.process` with `filter.lfs.required=true`, and `core.fsmonitor`, and the reviewed commit's `.gitattributes` maps one file to each driver. The stand-in runs no Git command and copies each mapped file's bytes to a record directory outside the copy. The run gives the forwarded verdict, and no marker file exists afterwards. The fixture's developer configuration also sets `core.autocrlf=false` and `core.eol=lf`, and its `.gitattributes` sets no `text` or `eol` attribute, so no built-in end-of-line conversion applies (D4.4 item 5). The test then checks that each recorded file equals `git -C <fixture> cat-file blob <head>:<path>`. A control run of the same fixture through plain `git worktree add --detach` writes the markers, which proves the stand-ins are reachable. |
 
 **New suite `scripts/development-workflow/tests/test-local-ai-reviewer-backend.sh`**
 (`# covers:` `local-ai-reviewer.sh`, `local-claude-review-command.sh`,
@@ -764,7 +781,7 @@ the fixture, and stand-in `claude` and `codex` binaries.
 | T-B2 | AC-2: no command, no environment, and a neutral configuration run Codex, and the stand-in `claude` is not invoked. |
 | T-B3 | AC-3: an explicit command runs whatever the environment and shared settings say. `LOCAL_AI_REVIEWER_DISABLE_DEFAULT=1` with shared `claude` gives `missing_command`. |
 | T-B4 | AC-4: shared `claude` runs Claude. Shared `claude` with env `http` gives the HTTP INFO line. An empty environment selection with shared `claude` runs Claude. |
-| T-B5 | AC-5: shared `codex`, `http`, `openai_compat`, and `claude` each select their preset. Absent, empty, missing, or unparseable configuration gives Codex, and unparseable also emits the D2 WARN line. The missing case runs a copied tooling tree with no `.ai-dev-workflow.yaml` (D7). A list value gives `invalid_backend`. A `.ai-dev-workflow.local.yaml` with `backend: claude`, placed both next to the pinned neutral shared file and in the `--repo-root` fixture, with no environment selection, still gives Codex. |
+| T-B5 | AC-5: shared `codex`, `http`, `openai_compat`, and `claude` each select their preset. Absent, empty, missing, or unparseable configuration gives Codex, and unparseable also emits the D2 WARN line. The missing case runs a copied tooling tree with no `.ai-dev-workflow.yaml` (D7). A list value, and `"claude\n"` (Y12), each give `invalid_backend` with the `review.local_ai_reviewer.backend` diagnostic and never run the Claude or Codex preset. A `.ai-dev-workflow.local.yaml` with `backend: claude`, placed both next to the pinned neutral shared file and in the `--repo-root` fixture, with no environment selection, still gives Codex. |
 | T-B6 | AC-9: a Claude direct run with no timeouts emits the budget INFO line, and the stand-in records `LOCAL_AI_REVIEWER_TIMEOUT=900` in its environment. `local-ai-reviewer.sh:1376` exports the resolved budget to the command, and the preset passes its environment through to the CLI. No 900 s sleep is run. |
 | T-B7 | AC-9: `--timeout 120` makes the stand-in record 120. `LOCAL_AI_REVIEWER_TIMEOUT=600` makes it record 600. Neither emits the budget INFO line. |
 | T-B8 | AC-9: an invalid `--timeout` or `LOCAL_AI_REVIEWER_TIMEOUT` still gives `configuration validation error; key=--timeout` and exit 2. |
@@ -775,7 +792,7 @@ the fixture, and stand-in `claude` and `codex` binaries.
 | T-B13 | AC-18: a stand-in that sleeps past `--timeout 3` gives `RESULT=waiting_on_reviewer`, exit 4, and no leftover directory after the grace period. A following run on the same checkout succeeds. |
 | T-B14 | AC-7: an unknown env selection gives exactly the D2 environment-key line, and an unknown shared default gives exactly the D2 shared-key line, each as a whole stderr line. A rejected planted marker value appears in neither stdout nor stderr. Neither stand-in is invoked. |
 | T-B15 | AC-8: the `--help` output names `claude`, `review.local_ai_reviewer.backend`, and each `LOCAL_CLAUDE_REVIEWER_*` setting. |
-| T-R1 to T-R7 | D1 cases Y1–Y11, through `python3 workflow-config-resolver.py review-local-ai-backend --file …` (and the existing readers for Y11) |
+| T-R1 to T-R7 | D1 cases Y1–Y12, through `python3 workflow-config-resolver.py review-local-ai-backend --file …` (and the existing readers for Y11) |
 
 **Changes to existing suites**
 
@@ -905,7 +922,7 @@ No step is irreversible.
 | A strict pass is starved on documentation branches (the 1200 s loop budget is shared with a roughly 900 s pass) | Medium | Low (`strict_pass_failed` is non-blocking) | Guide recommendation (AC-21); the default is unchanged (spec Consumer Impact) |
 | Model prose matches a probe pattern and is misclassified | Low | Low (still Reviewer failed or Needs rerun, never Clean) | Same exposure as the Codex preset (D4.8). Preset messages avoid the probe vocabulary (T-B11). |
 | A stale worktree entry after a KILL confuses the developer | Low | Low | D5 plus the documented `git worktree prune` |
-| Files under a filter attribute (for example Git LFS) appear in the review copy as their committed blobs, such as LFS pointer text, not as the developer's working-tree view | Medium where filters are used | Low | The diff in the copy is also blob to blob, so the reviewer sees what the pull request commits. D4.3 disables the drivers so that no developer program runs for a throwaway copy (V20). |
+| Files under a filter attribute (for example Git LFS) appear in the review copy as their committed content, such as LFS pointer text (with only Git's built-in end-of-line conversion, D4.4 item 5), not as the developer's working-tree view | Medium where filters are used | Low | The diff in the copy is also blob to blob, so the reviewer sees what the pull request commits. D4.3 disables the drivers so that no developer program runs for a throwaway copy (V20). |
 | A large repository makes the review copy slow | Medium | Low | The copy time and the two raw-byte manifest reads (D4.4) count against the budget, so the worst case is No verdict yet, never an unchecked Clean. A No verdict yet is retried once by the loop. Raise the configured budget if needed. |
 | A consumer opts in and its old synced tests fail | Medium without D7 | Medium | D7 |
 | The loop cannot snapshot the base-branch configuration and falls back to the working-tree file, so a PR could select its own backend | Low | Low | This is the existing #756 fallback (V8), unchanged and shared by every reviewer setting. The smoke runbook's step 7 checks the normal path. |
