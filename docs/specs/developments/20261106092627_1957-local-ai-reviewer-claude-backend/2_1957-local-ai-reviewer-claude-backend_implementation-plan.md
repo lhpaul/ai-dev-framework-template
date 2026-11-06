@@ -263,7 +263,7 @@ The first failure exits, and nothing is written to stdout.
 | --- | --- | --- | --- |
 | P1 | `command -v "$LOCAL_CLAUDE_REVIEWER_BIN"` resolves | diagnostic names `LOCAL_CLAUDE_REVIEWER_BIN` (outcome row 1) | 127 |
 | P2 | Strict mode: `CONTEXT_BUNDLE_PATH` names a file. The marker is `strict_plan_checks` when `jq -e 'has("strict_plan_checks")'` succeeds, else `strict_spec_checks`. | refusal (row 2) | 2 |
-| P3 | `REVIEWED_HEAD` matches `^[0-9a-f]{40}$` or `^[0-9a-f]{64}$`. The current directory is in a Git work tree, and the review copy is created (D4.3). | refusal: review copy not created (row 3) | 2 |
+| P3 | `REVIEWED_HEAD` matches `^[0-9a-f]{40}$` or `^[0-9a-f]{64}$`. The current directory is in a Git work tree, the review copy is created (D4.3), and neither reserved path exists in it (D4.4). | refusal: review copy not created, or reserved path present (row 3) | 2 |
 | P4 | `BASE_BRANCH` is non-empty and does not start with `-`. The diff is computed (D4.4) and is non-empty. | refusal: diff not computed, or empty diff (row 4) | 2 |
 | P5 | Run the CLI (D4.5). The watchdog in `local-ai-reviewer.sh` owns the budget (row 5). | — | — |
 | P6 | Containment fingerprint unchanged (D4.4) | discard output; diagnostic: review copy modified (row 6) | 3 |
@@ -279,14 +279,38 @@ directory. Disabling hooks and LFS smudge keeps the developer's
 Raw CLI output goes in `"$work_dir"`, outside the copy. `REVIEW.md` and agent
 guidance stay in the copy (BR-8).
 
-**D4.4 Prepared files and containment.** Write the diff to
-`"$work_dir/review/.review-diff.patch"` with
-`git -C "$work_dir/review" diff --no-ext-diff --no-textconv --no-color "origin/$BASE_BRANCH...$REVIEWED_HEAD"`.
-If that fails, use the same command with `"$BASE_BRANCH...$REVIEWED_HEAD"`.
-If both fail, or the file is empty, refuse (P4). These options stop a
-developer's external diff or textconv drivers from running. When
-`CONTEXT_BUNDLE_PATH` names a file, copy it to
-`"$work_dir/review/.review-context.json"`. After both writes, take the
+**D4.4 Prepared files and containment.** The two prepared files live at the
+root of the review copy, as BR-10 and BO-3 require: the reserved paths
+`"$work_dir/review/.review-diff.patch"` and
+`"$work_dir/review/.review-context.json"`. The copy's tree comes from the
+reviewed commit, so the preset never writes through anything that commit
+controls:
+
+1. **Reserved-path refusal.** Right after the copy is created, and before any
+   write into it, check each reserved path with
+   `[ -e "$path" ] || [ -L "$path" ]`. If either exists in any form (regular
+   file, directory, or symlink, including a dangling one), refuse at P3 with
+   `review copy has a reserved path committed: <name>`. This applies whether
+   or not a context bundle was supplied. The reserved paths sit directly in
+   `"$work_dir/review"`, which `git worktree add` creates inside the
+   preset's own `mktemp -d` directory, so no parent component comes from the
+   reviewed commit.
+2. **Diff outside the copy first.** Write
+   `git -C "$work_dir/review" diff --no-ext-diff --no-textconv --no-color "origin/$BASE_BRANCH...$REVIEWED_HEAD"`
+   to `"$work_dir/diff.patch"`, outside the copy. If that fails, use the same
+   command with `"$BASE_BRANCH...$REVIEWED_HEAD"`. If both fail, or the file
+   is empty, refuse (P4). These options stop a developer's external diff or
+   textconv drivers from running.
+3. **Exclusive no-follow placement.** Copy `"$work_dir/diff.patch"`, and
+   `CONTEXT_BUNDLE_PATH` when it names a file, to the reserved paths with an
+   embedded Python step that opens each destination with
+   `os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)`.
+   `O_EXCL` fails on any existing entry, including a symlink, so nothing is
+   followed or overwritten even if step 1 were bypassed. Neither `cp`, a
+   shell `>` redirection, nor `set -o noclobber` is used for these writes. A
+   failed open refuses with the same message (row 3, exit 2).
+
+After both writes, take the
 baseline fingerprint, so the preset's own preparation never counts as a
 modification (BR-12). The fingerprint is one digest: pipe the output of
 `git -C "$work_dir/review" status --porcelain=v1 -z --untracked-files=all --ignored`,
@@ -367,6 +391,8 @@ Codex preset has today.
 **D4.9 Differences from the MOME reference.** The spec takes precedence. The
 template keeps `REVIEW.md`, `AGENTS.md`, and `.cursor/rules` in the copy. It
 uses no default model. It reviews `REVIEWED_HEAD`, not the checkout `HEAD`.
+It refuses a reviewed commit that holds a reserved path, and it places the
+prepared files with exclusive no-follow creation instead of `>` and `cp`.
 It uses fail-closed extraction of one complete top-level object, with a
 single decode attempt at the first `{`, instead of a greedy `\{.*\}`. Its
 containment adds `--ignored` and content hashes. Its diff and copy creation
@@ -506,7 +532,7 @@ mirrored in help text, configuration comments, and two integration guides.
 | --- | --- | --- | --- | --- | --- | --- |
 | Backend resolution rows 1–8 | disabled flag, explicit command, default-disabled flag, environment selection, shared default (R1–R7) | Skipped; explicit command; `missing_command`; preset (`codex`/`http`/`claude`); `invalid_backend` with the environment or shared key | Skipped: no review evidence. Reviewer failed: operator fixes the configuration and re-runs. Preset: review runs. | T-B1 to T-B5, T-R1 to T-R7, existing `disabled_*` / `missing_command_*` | `local-ai-reviewer.sh` usage text, `.ai-dev-workflow.yaml` comments, `integrations/local-ai-reviewer.md` Configuration, `integrations/pr-review-platform.md` comment | Guide snippets: environment selection and shared-default YAML |
 | Direct-run budget rows 1–4 | `--timeout`, `LOCAL_AI_REVIEWER_TIMEOUT`, command source | given value; 900 with INFO; 300 | Budget passed to the watchdog | T-B6 to T-B9 | usage `--timeout` line, YAML `LOCAL_AI_REVIEWER_TIMEOUT` comment, guide budget paragraph | Guide: explicit command plus `--timeout 900` |
-| Preset outcomes rows 1–11 | D4.2 P1–P8, plus the watchdog | Reviewer failed, No verdict yet, Needs rerun (existing capacity rule), Clean, Needs fixes, strict report or `strict_pass_failed` | Existing loop handling for each class; no new class | T-C1 to T-C20, T-B10 to T-B13 | guide Failure Semantics table | None (not an example surface) |
+| Preset outcomes rows 1–11 | D4.2 P1–P8, plus the watchdog | Reviewer failed, No verdict yet, Needs rerun (existing capacity rule), Clean, Needs fixes, strict report or `strict_pass_failed` | Existing loop handling for each class; no new class | T-C1 to T-C21, T-B10 to T-B13 | guide Failure Semantics table | None (not an example surface) |
 | Loop budget (AC-11 regression) | branch type, override, configured, built-in, backend selection | the existing budget, the same for every backend | unchanged | T-L2 | none changed: Protocol 93 budget table (`:612`) already states 1200 | None |
 
 ---
@@ -663,6 +689,7 @@ the preset invoked directly with the D4.1 environment.
 | T-C18 | BR-10: a stale registered worktree and directory from an earlier run (simulated) does not stop a new run, and the fixture status is unchanged. |
 | T-C19 | AC-19: the default prompt contains `REVIEW.md`, each `REVIEW_CHECKLISTS` entry, the untrusted-data sentence, `review_evidence_verification.v1`, `verification_request_id`, the read-only sentence, and the report-instead-of-fixing sentence. `REVIEW.md` exists in the copy. For parity, run `local-codex-review-command.sh` with a stand-in `codex` that records its prompt, and assert that the shared sentences in both prompts are identical. |
 | T-C20 | AC-17 / P2: strict mode without `CONTEXT_BUNDLE_PATH` gives exit 2 before any copy is created. |
+| T-C21 | AC-13 / BR-10 / P3 (D4.4): the fixture's reviewed commit adds a reserved path as (a) a symlink `.review-diff.patch` to a sentinel file outside the fixture and the temporary directory, (b) a symlink `.review-context.json` to a second sentinel, with a bundle supplied, (c) a dangling symlink `.review-diff.patch` whose target path is outside both, (d) a regular file `.review-context.json` with no bundle supplied, and (e) a directory `.review-diff.patch/`. Each gives exit 2, "reserved path" in the message, empty stdout, and no stand-in record. Each sentinel's bytes and `git hash-object` are unchanged, the dangling target is still absent, the fixture status is unchanged, and no `local-claude-review.*` directory or worktree entry remains. |
 
 **New suite `scripts/development-workflow/tests/test-local-ai-reviewer-backend.sh`**
 (`# covers:` `local-ai-reviewer.sh`, `local-claude-review-command.sh`,
@@ -710,7 +737,7 @@ scripts. The shell suites above, selected in CI by `select-test-suites.sh`
 AC-3 T-B3; AC-4 T-B4; AC-5 T-B5 and T-R1 to T-R6; AC-6 T-L1 plus the smoke
 runbook; AC-7 T-B14 plus the existing `:445`; AC-8 T-B15 plus the
 documentation steps; AC-9 T-B6 to T-B8; AC-10 T-B9 plus the guide; AC-11 T-L2;
-AC-12 T-C1; AC-13 T-C2 and T-C3; AC-14 T-C4 and T-C5; AC-15 T-C7; AC-16
+AC-12 T-C1; AC-13 T-C2, T-C3, and T-C21 (reserved-path refusal); AC-14 T-C4 and T-C5; AC-15 T-C7; AC-16
 T-C10 to T-C14 (invalid JSON includes the E18 truncated-container refusal in
 T-C12) and T-B1; AC-17 T-C15, T-C16, and T-C20; AC-18 T-C6, T-C8, T-C9, and
 T-B10 to T-B13; AC-19 T-C19; AC-20 T-C17; AC-21 is the guide (verified in the
@@ -854,7 +881,7 @@ Cross-Cutting Operational Assumption Check rows.
    first). Run the new suite, `bash scripts/development-workflow/tests/test-workflow-config-resolver.sh`,
    and `bash scripts/development-workflow/tests/test-selected-private-yaml.sh`.
 2. **Preset (D4, D5)**: `local-claude-review-command.sh` plus
-   `test-local-claude-review-command.sh` (T-C1 to T-C20). Confirm that
+   `test-local-claude-review-command.sh` (T-C1 to T-C21). Confirm that
    `shellcheck --severity=warning` and
    `python3 scripts/lint/workflow-shell-guard-lint.py --base-ref origin/develop`
    report nothing for the new file.
