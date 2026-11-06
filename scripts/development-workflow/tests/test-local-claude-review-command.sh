@@ -155,7 +155,9 @@ leftover_dirs() {
 }
 
 worktree_count() {
-  git -C "$1" worktree list --porcelain | grep -c '^worktree ' || true
+  local list
+  list="$(git -C "$1" worktree list --porcelain)"
+  grep -c '^worktree ' <<< "$list" || true
 }
 
 err_has() { grep -Fq -- "$1" "$ERR"; }
@@ -637,7 +639,7 @@ for t23_file in m.txt p.txt l.txt; do
   git -C "$FX_DRV" cat-file blob "$DRV_HEAD:$t23_file" > "$TMP_ROOT/blob"
   run_test "T-C23a_${t23_file}_committed_bytes" "yes" "$(yes_no cmp -s "$TMP_ROOT/blob" "$STANDIN_DIR/files/$t23_file")"
 done
-git -C "$FX_DRV" worktree add -q --detach "$TMP_ROOT/control-a/review" "$DRV_HEAD" >/dev/null 2>&1 || true
+git -C "$FX_DRV" worktree add -q --detach "$TMP_ROOT/control-a/review" "$DRV_HEAD" >/dev/null 2>&1 || true # workflow-shell-guard: allow SH001 - control run: a required driver may abort this checkout; the marker file is the assertion
 run_test "T-C23a_control_reaches_programs" "yes" "$([ "$(markers_written)" -gt 0 ] && echo yes || echo no)"
 rm -rf "$TMP_ROOT/control-a"
 git -C "$FX_DRV" worktree prune
@@ -674,7 +676,7 @@ run_test "T-C23b_no_marker" "0" "$(markers_written)"
 run_test "T-C23b_every_path_present" "0" "$(cat "$STANDIN_DIR/missing" 2>/dev/null || echo unknown)"
 run_test "T-C23b_exec_bit_kept" "yes" "$(yes_no test -e "$STANDIN_DIR/exec")"
 run_test "T-C23b_symlink_target_kept" "c.txt" "$(cat "$STANDIN_DIR/link" 2>/dev/null || true)"
-git -C "$FX_COND" worktree add -q --detach "$TMP_ROOT/control-b/review" "$COND_HEAD" >/dev/null 2>&1 || true
+git -C "$FX_COND" worktree add -q --detach "$TMP_ROOT/control-b/review" "$COND_HEAD" >/dev/null 2>&1 || true # workflow-shell-guard: allow SH001 - control run: a required driver may abort this checkout; the marker file is the assertion
 run_test "T-C23b_control_reaches_programs" "yes" "$([ "$(markers_written)" -gt 0 ] && echo yes || echo no)"
 rm -rf "$TMP_ROOT/control-b"
 git -C "$FX_COND" worktree prune
@@ -734,7 +736,7 @@ git -C "$FX_DRV" config --unset alias.reviewpreset
     n=$((n + 1))
   done < <(git -C "$ctl" config -z --name-only --get-regexp '^filter\..+\.(smudge|clean|process|required)$')
   export GIT_CONFIG_COUNT="$n"
-  git -C "$ctl" read-tree --reset -u --no-recurse-submodules "$DRV_HEAD" >/dev/null 2>&1 || true
+  git -C "$ctl" read-tree --reset -u --no-recurse-submodules "$DRV_HEAD" >/dev/null 2>&1 || true # workflow-shell-guard: allow SH001 - control run: a required driver may abort this checkout; the marker file is the assertion
 )
 run_test "T-C23d1_control_reaches_program" "yes" "$(yes_no test -s "$MARKERS/env-smudge")"
 rm -rf "$TMP_ROOT/control-d1"
@@ -755,7 +757,7 @@ git -C "$FX_PLAIN" add -A
 git -C "$FX_PLAIN" commit -qm plain
 ( export GIT_CONFIG_COUNT=2 GIT_CONFIG_KEY_0=filter.mark.smudge GIT_CONFIG_VALUE_0="$ENV_MARK" \
     GIT_CONFIG_KEY_1=filter.mark.required GIT_CONFIG_VALUE_1=true
-  git -C "$FX_PLAIN" worktree add -q --detach "$TMP_ROOT/control-d2/review" HEAD >/dev/null 2>&1 || true )
+  git -C "$FX_PLAIN" worktree add -q --detach "$TMP_ROOT/control-d2/review" HEAD >/dev/null 2>&1 || true ) # workflow-shell-guard: allow SH001 - control run: a required driver may abort this checkout; the marker file is the assertion
 run_test "T-C23d2_control_reaches_program" "yes" "$(yes_no test -s "$MARKERS/env-smudge")"
 clear_markers
 
@@ -766,7 +768,7 @@ other_list="$(git -C "$FX_OTHER" worktree list --porcelain)"
 other_status="$(git -C "$FX_OTHER" status --porcelain)"
 stray_index="$TMP_ROOT/stray-index"
 git -C "$FX_DRV" ls-tree -r --name-only "$DRV_HEAD" > "$TMP_ROOT/drv-paths"
-d3_control="$(cd "$FX_DRV" && GIT_DIR="$FX_OTHER/.git" GIT_WORK_TREE="$FX_OTHER" git rev-parse --show-toplevel 2>/dev/null || true)"
+d3_control="$(cd "$FX_DRV" && GIT_DIR="$FX_OTHER/.git" GIT_WORK_TREE="$FX_OTHER" git rev-parse --show-toplevel 2>/dev/null || true)" # workflow-shell-guard: allow SH001 - control probe; an empty result fails the assertion that follows
 run_test "T-C23d3_control_names_second_repo" "$FX_OTHER" "$d3_control"
 # shellcheck disable=SC2016 # expanded by the stand-in, not here
 run_preset "$FX_DRV" REVIEWED_HEAD="$DRV_HEAD" GIT_DIR="$FX_OTHER/.git" GIT_WORK_TREE="$FX_OTHER" \
