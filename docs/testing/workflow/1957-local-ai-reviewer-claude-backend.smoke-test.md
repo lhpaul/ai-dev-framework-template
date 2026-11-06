@@ -64,11 +64,15 @@ has no UI, so the runbook has no fidelity step.
 
 5. **Shared default** (AC-4, AC-5). With `LOCAL_AI_REVIEWER_BACKEND` unset,
    point `AI_DEV_WORKFLOW_CONFIG_FILE` at a temporary YAML file with
-   `review.local_ai_reviewer.backend: claude`, and run the step-4 command
-   with `--timeout 60`. **Expected**: the Claude preset is selected, and there
-   is no 900s line because `--timeout` was given. Then also export
-   `LOCAL_AI_REVIEWER_BACKEND=http`. **Expected**: the HTTP preset is
-   selected. Its own setup failure is acceptable here.
+   `review.local_ai_reviewer.backend: claude`, and run
+   `./scripts/development-workflow/local-ai-reviewer.sh "$PR" "$OWNER" "$REPO" --repo-root "$PWD" --timeout 60`,
+   with no `LOCAL_AI_REVIEWER_BACKEND=` prefix, so the shared default
+   selects the backend. **Expected**: the Claude preset is selected, and
+   there is no 900s line because `--timeout` was given. Then also export
+   `LOCAL_AI_REVIEWER_BACKEND=http` and run the same command again, still
+   with no prefix. **Expected**: the HTTP preset is selected, because the
+   environment value overrides the shared default. Its own setup failure is
+   acceptable here.
 
 6. **Explicit command and budget** (AC-3, AC-10). Run
    `LOCAL_AI_REVIEWER_COMMAND="$PWD/scripts/development-workflow/local-claude-review-command.sh" ./scripts/development-workflow/local-ai-reviewer.sh "$PR" "$OWNER" "$REPO" --repo-root "$PWD"`.

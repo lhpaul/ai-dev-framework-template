@@ -44,7 +44,7 @@ its acceptance criteria are stack-neutral.
 All repository commands were run at `49e71117` (`origin/develop`, which
 contains the merged spec) in the worktree
 `/Users/lhpaul/Git/DevStack/adf-1957-worktree` on 2026-11-06, except V18, which was run at the plan revision `3bf2f772` and
-shown to hold at `49e71117`, and V19 to V21, which test Git and the Claude
+shown to hold at `49e71117`, and V19 to V21 and V23, which test Git and the Claude
 CLI in scratch repositories and do not depend on the revision.
 
 | ID | Check | Command / query | Result |
@@ -71,6 +71,7 @@ CLI in scratch repositories and do not depend on the revision.
 | V20 | `git worktree add` runs developer-configured filter and `core.fsmonitor` programs, and per-driver overrides stop them (D4.3; Rule 4) | With Git `2.56.0`, in a scratch repository whose developer configuration sets marker-writing programs as `filter.a.b.smudge`, `filter.a.b.clean`, `filter.p.process` with `filter.p.required=true`, `filter.x=y.smudge`, `filter.lfs.process` with `filter.lfs.required=true`, and `core.fsmonitor`, and whose committed `.gitattributes` maps a file to each driver: (control) `GIT_LFS_SKIP_SMUDGE=1 git -c core.hooksPath=/dev/null worktree add --detach <dir> <head>`; (fix) the same without `GIT_LFS_SKIP_SMUDGE`, with `-c core.fsmonitor=false` and with one `GIT_CONFIG_KEY_<n>`/`GIT_CONFIG_VALUE_<n>` pair per key printed by `git config -z --name-only --get-regexp '^filter\..+\.(smudge\|clean\|process\|required)$'` (value empty, or `false` for `required`); then `git diff --no-ext-diff --no-textconv --no-color <base>...<head>` in the new worktree and `git worktree remove --force` with no override. Also: only `-c filter.<name>.smudge=` while `required=true` stays. | The control runs the smudge, process, and `core.fsmonitor` programs and writes the markers. `GIT_LFS_SKIP_SMUDGE` does not stop a configured `filter.lfs.process`, and the required process driver fails the checkout (exit 128). With the fix, no marker is written, the exit status is 0, each file holds its committed blob bytes (no `core.autocrlf`, `core.eol`, or `text`/`eol` attribute was set), and the subsection names `a.b` and `x=y` are handled because the key goes through the environment, not `-c` parsing. The tree-to-tree diff and `worktree remove --force` write no marker. An empty smudge alone with `required=true` fails the checkout (`smudge filter mark failed`), so `required=false` is needed. Re-run with `core.autocrlf=true` and the fix: no marker is written, and LF-committed text files, including a driver-mapped one, are written with CRLF, so the fix does not turn off Git's built-in end-of-line conversion. |
 | V21 | The Claude CLI's own startup Git calls start the developer's clean filter unless `CLAUDE_CODE_DISABLE_GIT_INSTRUCTIONS=1` is set (D4.5; Rule 4) | With Claude Code `2.1.318` and Git `2.56.0`, in a scratch repository whose developer configuration sets a marker-writing `filter.m.clean`, with `g.txt filter=m` committed and `g.txt` touched, run `claude -p` with the D4.5 flags and a one-word prompt through a `git` shim on `PATH` that logs each call's argv and environment; repeat with `GIT_CONFIG_COUNT` overrides and `GIT_CEILING_DIRECTORIES` set, and again with `CLAUDE_CODE_DISABLE_GIT_INSTRUCTIONS=1`. | Without the variable the CLI runs `ls-files --error-unmatch`, `remote get-url origin`, `remote`, `status --short`, `log --oneline -n 5`, and `config user.name`, each with its own `-c core.hooksPath=/dev/null -c core.fsmonitor=`, and the marker is written by `status`. The CLI replaces `GIT_CONFIG_COUNT` and its keys with its own and drops `GIT_CEILING_DIRECTORIES` for `status`, so the caller's overrides do not apply. With the variable only `ls-files`, `remote get-url origin`, and `remote` run, and no marker is written. |
 | V22 | The `review_fields=True` decoder returns quoted whitespace and control characters in `backend` verbatim (D1; Rule 4) | Python 3, at plan head `52ae2e80` (`workflow-config-resolver.py` unchanged since `49e71117`): load the resolver as a module and call `validate_selected_yaml(raw, "x.yaml", review_fields=True)` on `review:` / `  local_ai_reviewer:` / `    backend: <v>` for `<v>` in `"claude\n"`, `"\n"`, `" claude"`, `"cl\taude"`, `'claude '`, and `"claude\u0000"`. | The first five decode to `'claude\n'`, `'\n'`, `' claude'`, `'cl\taude'`, and `'claude '`. `"claude\u0000"` raises `ConfigError` (`unsupported YAML scalar`), which is R2. A shell `$(...)` read of the first two would give `claude` and the empty string, so D1 checks the grammar before emission. |
+| V23 | A conditional include that matches only the new worktree adds a driver that `repo_root` cannot see, and creating the copy without files, then reading its keys from inside it, stops that driver (D4.3; Rule 4) | With Git `2.56.0`, in a scratch repository with no driver in its own or global configuration, the global configuration holds `[includeIf "gitdir:**/worktrees/review"]` pointing at a file that sets marker-writing `filter.cond.smudge`, `filter.cond.clean`, `filter.cp.process` with `filter.cp.required=true`, and `core.fsmonitor`; the commit maps `a.txt` and `p.txt` to `cond` and `cp` and also holds an executable file, a symlink, and a nested file. Check which patterns match by running `git -C <copy> config --get filter.cond.smudge` with `gitdir:<copy>/`, `gitdir:<common dir>/worktrees/review`, and `gitdir:**/worktrees/review/`. (old) Enumerate in `repo_root`, then `worktree add --detach` with those pairs. (new) The two D4.3 steps, then `git status --porcelain=v1 -z --untracked-files=all --ignored` and `ls-files` in the copy with the pairs set, the D4.4 diff, and `git worktree remove --force` with no override. Also: `core.autocrlf=true`, no driver, `worktree add --no-checkout`, key enumeration, then `read-tree --reset -u`. | `git -C <copy> rev-parse --git-dir` is `<common dir>/worktrees/review`, which `gitdir:<common dir>/worktrees/review` and `gitdir:**/worktrees/review` match; `gitdir:<copy>/` and `gitdir:**/worktrees/review/` (a trailing slash adds `/**`) do not. The old flow finds no key in `repo_root`, runs the smudge and process programs, and the required process driver fails the checkout (exit 128). The new flow writes no file at the `--no-checkout` step, finds the four keys inside the copy, exits 0, and writes no marker during population, status, the diff, or removal. Status is empty, `ls-files` lists the commit's 6 paths, the symlink and executable bit are kept, and each file holds its committed bytes. With no driver, the enumeration exits 1, and `read-tree -u` still writes CRLF for an LF-committed text file under `core.autocrlf=true`. |
 
 ---
 
@@ -285,27 +286,43 @@ The first failure exits, and nothing is written to stdout.
 | P8 | Verdict gate (D4.7) | diagnostic naming the reason plus a bounded stdout excerpt (row 8) | 3 |
 
 **D4.3 Review copy.** `work_dir="$(mktemp -d "${TMPDIR:-/tmp}/local-claude-review.XXXXXX")"`,
-and the copy is `"$work_dir/review"`. Create it with
-`git -C "$repo_root" -c core.hooksPath=/dev/null -c core.fsmonitor=false worktree add --detach "$work_dir/review" "$REVIEWED_HEAD"`,
-where `repo_root` is `git rev-parse --show-toplevel` of the current
-directory. That command runs in a subshell that first disables every
-configured filter driver: for each key printed by
-`git -C "$repo_root" config -z --name-only --get-regexp '^filter\..+\.(smudge|clean|process|required)$'`,
-the subshell appends one `GIT_CONFIG_KEY_<n>` / `GIT_CONFIG_VALUE_<n>` pair,
-numbered from the caller's `GIT_CONFIG_COUNT` (0 when unset), with an empty
-value, or `false` for a `required` key, and then exports the new
-`GIT_CONFIG_COUNT`. The environment form is used instead of `-c`, because a
-driver name may contain `=`. The checkout therefore runs no hook, filter
-driver (including Git LFS, whose drivers are ordinary `filter.lfs.*` keys),
-or `core.fsmonitor` program (V20), and a commit's `.gitattributes` can select
-only drivers that are then empty. That is the whole checkout guarantee: no
-developer- or commit-selected program runs. It is not byte equality with the
-committed blobs, because Git's built-in end-of-line conversion still applies
-(D4.4 item 5 states that policy and why it does not weaken BR-12). The
-overrides live only in that subshell, so neither the diff, the CLI, nor
-cleanup inherits them. Raw CLI output goes in `"$work_dir"`,
-outside the copy. `REVIEW.md` and agent
-guidance stay in the copy (BR-8).
+and the copy is `"$work_dir/review"`. It is made in two steps, so that the
+drivers are read from the copy's own configuration before any file is
+written:
+
+1. **Create without files.** Run
+   `git -C "$repo_root" -c core.hooksPath=/dev/null -c core.fsmonitor=false worktree add --detach --no-checkout "$work_dir/review" "$REVIEWED_HEAD"`,
+   where `repo_root` is `git rev-parse --show-toplevel` of the current
+   directory. No file is written, so no driver runs.
+2. **Populate with drivers disabled.** In a subshell, for each key printed by
+   `git -C "$work_dir/review" config -z --name-only --get-regexp '^filter\..+\.(smudge|clean|process|required)$'`,
+   append one `GIT_CONFIG_KEY_<n>` / `GIT_CONFIG_VALUE_<n>` pair, numbered
+   from the caller's `GIT_CONFIG_COUNT` (0 when unset), with an empty value,
+   or `false` for a `required` key, and then export the new
+   `GIT_CONFIG_COUNT`. Exit status 1 means no driver is configured and adds
+   no pair; any other non-zero status refuses at P3. The subshell then runs
+   `git -C "$work_dir/review" -c core.hooksPath=/dev/null -c core.fsmonitor=false read-tree --reset -u "$REVIEWED_HEAD"`,
+   which writes the index and every file of the commit, including symlinks
+   and executable bits. A non-zero status refuses at P3.
+
+The keys are read from inside the copy because Git evaluates the copy's
+configuration against the copy's own Git directory
+(`<common dir>/worktrees/<name>`), so a conditional include such as
+`[includeIf "gitdir:**/worktrees/review"]` can add a driver that
+`repo_root` never sees (V23). Reading from inside the copy also includes
+every other scope Git reads there, such as `config.worktree` when
+`extensions.worktreeConfig` is set. The environment form is used instead of
+`-c`, because a driver name may contain `=`. The checkout therefore runs no
+hook, filter driver (including Git LFS, whose drivers are ordinary
+`filter.lfs.*` keys), or `core.fsmonitor` program (V20, V23), and a commit's
+`.gitattributes` can select only drivers that are then empty. That is the
+whole checkout guarantee: no developer- or commit-selected program runs. It
+is not byte equality with the committed blobs, because Git's built-in
+end-of-line conversion still applies (D4.4 item 5 states that policy and
+why it does not weaken BR-12). The overrides live only in that subshell, so
+neither the diff, the CLI, nor cleanup inherits them. Raw CLI output goes in
+`"$work_dir"`, outside the copy. `REVIEW.md` and agent guidance stay in the
+copy (BR-8).
 
 **D4.4 Prepared files and containment.** The two prepared files live at the
 root of the review copy, as BR-10 and BO-3 require: the reserved paths
@@ -708,7 +725,7 @@ time.
   the same TERM and KILL.
 - **Race conditions at initialization**: A TERM before `work_dir` exists runs
   a cleanup that tolerates unset paths (`${work_dir:-}` guards). A TERM during
-  `worktree add` leaves at most a half-created entry, which a later run does
+  `worktree add` or `read-tree` leaves at most a half-created entry, which a later run does
   not reuse.
 - **Race conditions at teardown**: A KILL during cleanup can leave the
   directory and the worktree entry. BR-10 accepts that, and test T-C18 proves
@@ -767,7 +784,7 @@ the preset invoked directly with the D4.1 environment.
 | T-C20 | AC-17 / P2: strict mode without `CONTEXT_BUNDLE_PATH` gives exit 2 before any copy is created. |
 | T-C21 | AC-13 / BR-10 / P3 (D4.4): the fixture's reviewed commit adds a reserved path as (a) a symlink `.review-diff.patch` to a sentinel file outside the fixture and the temporary directory, (b) a symlink `.review-context.json` to a second sentinel, with a bundle supplied, (c) a dangling symlink `.review-diff.patch` whose target path is outside both, (d) a regular file `.review-context.json` with no bundle supplied, and (e) a directory `.review-diff.patch/`. Each gives exit 2, "reserved path" in the message, empty stdout, and no stand-in record. Each sentinel's bytes and `git hash-object` are unchanged, the dangling target is still absent, the fixture status is unchanged, and no `local-claude-review.*` directory or worktree entry remains. |
 | T-C22 | AC-15 / BR-12 (D4.4 items 4–6): edits that Git status cannot see. (a) Clean filter: the fixture's developer configuration sets `filter.strip.clean` to `tr Z x`, and the reviewed commit's `.gitattributes` maps `g.txt`, which holds `x` plus a newline, to it. The stand-in overwrites `g.txt` with `Z` plus a newline, which keeps the size (V19), and records the copy's `git status --porcelain=v1 -z --untracked-files=all --ignored` before and after its edit to a file outside the copy; the test asserts the two are equal, which proves the edit is invisible to Git status. (b) End of line: the fixture's developer configuration sets `core.autocrlf=true`, and the reviewed commit has an LF-committed text file, which the checkout writes with CRLF, and a file committed with CRLF. The stand-in rewrites each CRLF file in the copy to LF. The status-equality assertion is not made here, because whether Git reports this edit depends on the Git version (V19). (c) Unreadable entry: the stand-in creates a directory with mode `000` that holds a file; the run fails either on the changed digest or on the unreadable post-run manifest, and both are row 6. No `local-claude-review.*` directory or worktree entry remains afterwards (D5). Each prints a clean verdict and gives exit 3, "modified" in the message, and empty stdout. (d) A run whose stand-in only reads files gives the forwarded verdict, so `atime` changes do not count. |
-| T-C23 | AC-12 / BR-10 (D4.3): checkout runs no developer-configured program. The fixture's developer configuration sets stand-in programs that each append to a marker file outside the fixture and the temporary directory as `filter.mark.smudge`, `filter.mark.clean`, `filter.proc.process` with `filter.proc.required=true`, `filter.lfs.process` with `filter.lfs.required=true`, and `core.fsmonitor`, and the reviewed commit's `.gitattributes` maps one file to each driver. The stand-in runs no Git command and copies each mapped file's bytes to a record directory outside the copy. The run gives the forwarded verdict, and no marker file exists afterwards. The fixture's developer configuration also sets `core.autocrlf=false` and `core.eol=lf`, and its `.gitattributes` sets no `text` or `eol` attribute, so no built-in end-of-line conversion applies (D4.4 item 5). The test then checks that each recorded file equals `git -C <fixture> cat-file blob <head>:<path>`. A control run of the same fixture through plain `git worktree add --detach` writes the markers, which proves the stand-ins are reachable. |
+| T-C23 | AC-12 / BR-10 (D4.3): checkout runs no developer-configured program. (a) The fixture's developer configuration sets stand-in programs that each append to a marker file outside the fixture and the temporary directory as `filter.mark.smudge`, `filter.mark.clean`, `filter.proc.process` with `filter.proc.required=true`, `filter.lfs.process` with `filter.lfs.required=true`, and `core.fsmonitor`, and the reviewed commit's `.gitattributes` maps one file to each driver. The stand-in runs no Git command and copies each mapped file's bytes to a record directory outside the copy. The run gives the forwarded verdict, and no marker file exists afterwards. The fixture's developer configuration also sets `core.autocrlf=false` and `core.eol=lf`, and its `.gitattributes` sets no `text` or `eol` attribute, so no built-in end-of-line conversion applies (D4.4 item 5). The test then checks that each recorded file equals `git -C <fixture> cat-file blob <head>:<path>`. A control run of the same fixture through plain `git worktree add --detach` writes the markers, which proves the stand-ins are reachable. (b) Destination-only drivers (V23): a second fixture defines no driver in its own or global configuration, except that the global configuration holds `[includeIf "gitdir:**/worktrees/review*"]` pointing at a file outside the fixture that sets marker-writing `filter.cond.smudge`, `filter.cond.clean`, and `filter.condp.process` with `filter.condp.required=true`. The reviewed commit maps one file to each of `cond` and `condp` and also holds an executable file and a symlink. The test first asserts that `git -C <fixture> config --get-regexp '^filter\.'` exits 1, so a `repo_root` enumeration would find nothing. The run gives the forwarded verdict, no marker file exists afterwards, and the stand-in records that the copy has every path of `git ls-tree -r --name-only <head>`, the executable bit, and the symlink target. A control run that adds a worktree at a path ending in `review` through plain `git worktree add --detach` writes the markers. |
 
 **New suite `scripts/development-workflow/tests/test-local-ai-reviewer-backend.sh`**
 (`# covers:` `local-ai-reviewer.sh`, `local-claude-review-command.sh`,
