@@ -130,6 +130,19 @@ review:
   #   bugbot: 2700
   #   local-ai-reviewer: 1500
   #
+  # Optional: the shared default backend for local-ai-reviewer (#1957): codex
+  # (built-in default), http (alias: openai_compat), or claude. Backend order,
+  # first match wins: LOCAL_AI_REVIEWER_COMMAND, then
+  # LOCAL_AI_REVIEWER_DISABLE_DEFAULT=1 (no command), then a non-empty
+  # LOCAL_AI_REVIEWER_BACKEND, then this key, then codex. Under
+  # pr-review-loop.sh this key is read from the PR base branch's copy of this
+  # file, so a PR that adds or changes it takes effect only after it merges.
+  # The private local configuration is never read for it. With claude, raise
+  # wait_budgets.local-ai-reviewer when strict checks share the budget.
+  # Uncomment to opt in:
+  # local_ai_reviewer:
+  #   backend: claude
+  #
   # Bugbot is the default ready-phase GitHub reviewer for this repository.
   # CodeRabbit remains supported as an opt-in reviewer (`coderabbit` for the
   # GitHub App, `coderabbit-cli` for the local CLI), but it is not a default
@@ -144,11 +157,19 @@ review:
   # in on_draft.github by default before PR-Agent and ready-phase reviewers):
   #   LOCAL_AI_REVIEWER_COMMAND        — optional override; when unset,
   #                                      local-ai-reviewer.sh defaults from
-  #                                      LOCAL_AI_REVIEWER_BACKEND
-  #   LOCAL_AI_REVIEWER_BACKEND         — codex (default) or http (alias: openai_compat)
+  #                                      LOCAL_AI_REVIEWER_BACKEND, then
+  #                                      review.local_ai_reviewer.backend
+  #   LOCAL_AI_REVIEWER_BACKEND         — codex (default), http (alias:
+  #                                      openai_compat), or claude
   #   LOCAL_AI_REVIEWER_DISABLE_DEFAULT=1 — do not apply a bundled preset default
   #   LOCAL_CODEX_REVIEWER_BIN         — Codex binary for the bundled preset (default: codex)
   #   LOCAL_CODEX_REVIEWER_MODEL       — optional model for the bundled Codex preset
+  #   LOCAL_CLAUDE_REVIEWER_BIN        — Claude Code CLI for the claude preset
+  #                                      (default: claude; installed and logged in)
+  #   LOCAL_CLAUDE_REVIEWER_MODEL      — optional model for the claude preset
+  #                                      (default: the CLI's own default)
+  #   LOCAL_CLAUDE_REVIEWER_PROMPT     — override the ordinary-pass Claude prompt
+  #   LOCAL_CLAUDE_REVIEWER_STRICT_PROMPT — override the strict-pass Claude prompt
   #   LOCAL_AI_REVIEWER_MODEL           — model id for http
   #                                      (example: deepseek-v4-pro)
   #   LOCAL_AI_REVIEWER_API_BASE_URL   — Chat Completions API base URL for http
@@ -156,7 +177,10 @@ review:
   #                                      falls back to OPENAI_BASE_URL when unset)
   #   LOCAL_AI_REVIEWER_API_KEY         — API key for http (or DEEPSEEK_API_KEY /
   #                                      OPENAI_API_KEY / LOCAL_AI_REVIEWER_API_KEY_COMMAND)
-  #   LOCAL_AI_REVIEWER_TIMEOUT        — default local command timeout (default: 300)
+  #   LOCAL_AI_REVIEWER_TIMEOUT        — default local command timeout for direct
+  #                                      runs (default: 300, or 900 for the
+  #                                      bundled claude preset; pr-review-loop.sh
+  #                                      always passes its own wait budget)
   #   LOCAL_AI_REVIEWER_GRAPH_STRATEGY — none|auto|code-review-graph|graphify
   #   LOCAL_AI_REVIEWER_DISABLED=1     — intentionally skip with
   #                                      REASON=disabled_by_config
