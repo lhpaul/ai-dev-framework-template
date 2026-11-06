@@ -104,11 +104,13 @@ contains the merged spec) in the worktree
   **stdout** with a non-zero exit and diagnostics on stderr.
 - **Saturation**: The successes stopped producing new variants after
   occurrence 1. Failure classes were sampled once.
-- **Adequacy rationale**: No contract fixes the model's text, so the design is
-  tolerant (D4.7). It relies only on a JSON object with a known `result` or
-  `mode`. Everything else is Reviewer failed, never Clean, and the parser
-  also tolerates unobserved wrappers (a markdown fence, or prose around one
-  object). The sample is heterogeneous: it covers the ordinary, strict, and
+- **Adequacy rationale**: No contract fixes the model's text, so the design
+  accepts a small set of wrappers but fails closed (D4.7). It relies only on
+  one complete top-level JSON object with a known `result` or `mode`.
+  Everything else is Reviewer failed, never Clean. The unobserved wrappers it
+  accepts are a markdown fence and bracket-free prose around one object; a
+  malformed or truncated container is never recovered from a nested object.
+  The sample is heterogeneous: it covers the ordinary, strict, and
   CLI-failure classes. Usage-limit and capacity messages could not be induced.
   The design does not bind to their wording. The preset forwards a bounded
   excerpt of both streams (D4.8), and the reviewer's existing quota and
@@ -326,13 +328,19 @@ it is always appended.
 parser-risk addendum for edge cases):
 
 1. Strip whitespace. If the text is wrapped in one markdown code fence,
-   remove the fence.
+   remove the fence and strip again.
 2. If the whole text decodes as JSON: a JSON object is the candidate.
    Anything else fails with "not a JSON object".
-3. Otherwise scan left to right with `json.JSONDecoder().raw_decode` at each
-   `{`. Keep each decoded object, and continue after its end. Zero objects
-   fails with "no JSON object". Two or more fails with "more than one JSON
-   object". Exactly one is the candidate.
+3. Otherwise there is exactly one decode attempt. Find the **first** `{`;
+   if there is none, fail with "no JSON object". Run
+   `json.JSONDecoder().raw_decode` at that `{` only. If it fails, fail with
+   "invalid JSON". The extractor never retries at a later `{`, so a
+   truncated or malformed enclosing object or array is never recovered from
+   an object nested inside it (BR-13 invalid JSON). If it succeeds, the text
+   before and after the decoded object must contain none of `{`, `}`, `[`,
+   or `]`; otherwise fail with "JSON outside the verdict object". This
+   rejects a second object, a truncated enclosing array, and stray closing
+   brackets. Otherwise the decoded object is the candidate.
 4. Ordinary mode: `result` must be exactly `clean` or `needs_fixes`, and
    `findings`, when present, must be a list. An absent `findings` becomes
    `[]`. Set `reviewed_head = REVIEWED_HEAD` and pass every other key through
@@ -357,7 +365,8 @@ Codex preset has today.
 **D4.9 Differences from the MOME reference.** The spec takes precedence. The
 template keeps `REVIEW.md`, `AGENTS.md`, and `.cursor/rules` in the copy. It
 uses no default model. It reviews `REVIEWED_HEAD`, not the checkout `HEAD`.
-It uses tolerant single-object extraction instead of a greedy `\{.*\}`. Its
+It uses fail-closed extraction of one complete top-level object, with a
+single decode attempt at the first `{`, instead of a greedy `\{.*\}`. Its
 containment adds `--ignored` and content hashes. Its diff and copy creation
 are hook-, driver-, and LFS-free. It forwards a strict response as
 `{mode, findings}` only. It also excerpts CLI stdout on failure.
@@ -532,11 +541,11 @@ so suppression semantics are not applicable.
 | --- | --- | --- | --- |
 | E1 | bare object, `result:"clean"` (Rule 1 variant a) | forwarded with `reviewed_head` stamped | T-C10 |
 | E2 | object inside a json-tagged code fence | forwarded | T-C11 |
-| E3 | prose, then one object, then prose | forwarded | T-C11 |
-| E4 | prose with `{braces}` that are not JSON, then one object | forwarded | T-C11 |
-| E5 | two separate objects | Reviewer failed: more than one object | T-C12 |
+| E3 | prose without brackets, then one object, then prose without brackets | forwarded | T-C11 |
+| E4 | prose with `{braces}` that are not JSON, then one object | Reviewer failed: invalid JSON (the single decode attempt is at the first `{`) | T-C12 |
+| E5 | two separate objects | Reviewer failed: JSON outside the verdict object | T-C12 |
 | E6 | no `{` at all, or empty output | Reviewer failed: no object | T-C12 |
-| E7 | truncated object `{"result":"clean"` | Reviewer failed: no object | T-C12 |
+| E7 | truncated object `{"result":"clean"` | Reviewer failed: invalid JSON | T-C12 |
 | E8 | whole output is a JSON array holding one verdict | Reviewer failed: not an object | T-C12 |
 | E9 | `result` missing, with a `findings` array (BO-12 lookalike) | Reviewer failed | T-C13 |
 | E10 | `result:"Clean"`, `"needs-fixes"`, or `"skipped"` | Reviewer failed (exact match) | T-C13 |
@@ -546,7 +555,10 @@ so suppression semantics are not applicable.
 | E14 | strict: correct marker, `findings: []` | `{"mode":…,"findings":[]}` only | T-C15 |
 | E15 | strict: wrong marker, missing marker, or non-list findings | refusal, exit 3 | T-C16 |
 | E16 | strict: extra `result` / `reviewed_head` keys | stripped from the output | T-C15 |
-| E17 | a nested object inside a valid verdict | counted as one object (outer decode) | T-C10 |
+| E17 | a nested object inside a valid verdict, bare or after bracket-free prose | forwarded as one object (outer decode) | T-C10 |
+| E18 | truncated enclosing verdict whose findings hold a nested verdict: `{"result":"needs_fixes","findings":[{"result":"clean"}]` | Reviewer failed: invalid JSON; the nested `clean` object is never forwarded, and stdout is empty | T-C12 |
+| E19 | truncated enclosing array `[{"result":"clean"}` | Reviewer failed: JSON outside the verdict object | T-C12 |
+| E20 | one valid object followed by a stray `}` or `]` | Reviewer failed: JSON outside the verdict object | T-C12 |
 
 **Edge-case enumeration — shared default (D1).** Unit tests are in
 `scripts/development-workflow/tests/test-local-ai-reviewer-backend.sh`, which
@@ -644,7 +656,7 @@ the preset invoked directly with the D4.1 environment.
 | T-C7 | AC-15: the stand-in creates a new file, edits a tracked file, writes an ignored file, or edits `.review-diff.patch`, and prints a clean verdict. Each gives exit 3, "modified" in the message, and empty stdout. |
 | T-C8 | AC-18: a missing binary gives exit 127, `LOCAL_CLAUDE_REVIEWER_BIN` in the message, and empty stdout. |
 | T-C9 | AC-18 / BR-15: the stand-in exits 1 with text on stdout only, then on stderr only. Each gives the status plus a bounded excerpt on stderr; a 10 kB output is truncated. |
-| T-C10 to T-C16 | AC-16, AC-17: parser cases E1–E17 |
+| T-C10 to T-C16 | AC-16, AC-17: parser cases E1–E20. T-C12 holds every extraction refusal (E4–E8, E18–E20); each asserts exit 3, empty stdout, and no `clean` text forwarded. E18 is the required truncated-container counterexample (BR-13 invalid JSON). |
 | T-C17 | AC-20: `LOCAL_CLAUDE_REVIEWER_MODEL=opus` adds `--model opus`; unset adds no `--model`. The two prompt overrides replace the ordinary and strict instructions, and the operating note is still appended. |
 | T-C18 | BR-10: a stale registered worktree and directory from an earlier run (simulated) does not stop a new run, and the fixture status is unchanged. |
 | T-C19 | AC-19: the default prompt contains `REVIEW.md`, each `REVIEW_CHECKLISTS` entry, the untrusted-data sentence, `review_evidence_verification.v1`, `verification_request_id`, the read-only sentence, and the report-instead-of-fixing sentence. `REVIEW.md` exists in the copy. For parity, run `local-codex-review-command.sh` with a stand-in `codex` that records its prompt, and assert that the shared sentences in both prompts are identical. |
@@ -668,7 +680,7 @@ the fixture, and stand-in `claude` and `codex` binaries.
 | T-B8 | AC-9: an invalid `--timeout` or `LOCAL_AI_REVIEWER_TIMEOUT` still gives `configuration validation error; key=--timeout` and exit 2. |
 | T-B9 | AC-10: the Codex and HTTP stand-ins record 300. An explicit command naming `local-claude-review-command.sh` makes the Claude stand-in record 300, with no budget INFO line. |
 | T-B10 | AC-18 / BR-15: a usage-limit message on the stand-in's stdout, then on its stderr, each with exit 1, gives `REASON=quota_exhausted`. A `model access` message gives `REASON=missing_model_access` (spec-review note b). Both are Reviewer failed. |
-| T-B11 | AC-18 / D4.8: each preset refusal (missing CLI, copy, empty diff, modified copy, malformed output) gives `RESULT=escalate` and `REASON=malformed_output`, never a probe reason. |
+| T-B11 | AC-18 / D4.8: each preset refusal (missing CLI, copy, empty diff, modified copy, malformed output, using the E18 truncated-container output as the malformed case) gives `RESULT=escalate` and `REASON=malformed_output`, never a probe reason. |
 | T-B12 | AC-18: a capacity message (`overloaded`) is retried and ends `RESULT=needs_rerun` / `provider_overloaded`, never Clean. |
 | T-B13 | AC-18: a stand-in that sleeps past `--timeout 3` gives `RESULT=waiting_on_reviewer`, exit 4, and no leftover directory after the grace period. A following run on the same checkout succeeds. |
 | T-B14 | AC-7: an unknown env selection gives exactly the D2 environment-key line, and an unknown shared default gives exactly the D2 shared-key line, each as a whole stderr line. A rejected planted marker value appears in neither stdout nor stderr. Neither stand-in is invoked. |
@@ -697,7 +709,8 @@ AC-3 T-B3; AC-4 T-B4; AC-5 T-B5 and T-R1 to T-R6; AC-6 T-L1 plus the smoke
 runbook; AC-7 T-B14 plus the existing `:445`; AC-8 T-B15 plus the
 documentation steps; AC-9 T-B6 to T-B8; AC-10 T-B9 plus the guide; AC-11 T-L2;
 AC-12 T-C1; AC-13 T-C2 and T-C3; AC-14 T-C4 and T-C5; AC-15 T-C7; AC-16
-T-C10 to T-C14 and T-B1; AC-17 T-C15, T-C16, and T-C20; AC-18 T-C6, T-C8, T-C9, and
+T-C10 to T-C14 (invalid JSON includes the E18 truncated-container refusal in
+T-C12) and T-B1; AC-17 T-C15, T-C16, and T-C20; AC-18 T-C6, T-C8, T-C9, and
 T-B10 to T-B13; AC-19 T-C19; AC-20 T-C17; AC-21 is the guide (verified in the
 smoke runbook); AC-22 is the diagnostic-emitter changes.
 
@@ -756,6 +769,41 @@ suite's temporary directories (stand-in CLI, fixture repository, YAML files).
 - **Mirrors**: none (V16).
 - **Sync manifest**: only the D8 note. The new script is covered by the
   existing glob (V12).
+
+---
+
+## Reversal
+
+Every change is additive and reversible. It writes no persisted state: no
+database, no cache, no tracker field, and no file that outlives a run. The
+only leftover a run can leave is a stale review copy after a KILL (D5), which
+`git worktree prune` and deleting the `local-claude-review.*` directory
+remove. Changes to the two published surfaces are undone as follows.
+
+- **Shared default `review.local_ai_reviewer.backend` (D1, D2).** An opted-in
+  consumer removes the key, or sets it to `codex`, in `.ai-dev-workflow.yaml`
+  and merges that to the base branch. Later pull requests run Codex again
+  (BR-4). A contributor who opted in through the environment unsets
+  `LOCAL_AI_REVIEWER_BACKEND` or sets it to `codex`. Either change takes
+  effect on the next run, with no clean-up.
+- **Direct-run budget (D3).** The 900 s default applies only to direct runs
+  of the bundled Claude preset without an explicit budget. To restore the
+  previous 300 s on such a run, pass `--timeout 300` or set
+  `LOCAL_AI_REVIEWER_TIMEOUT=300`. Switching the backend back to `codex` also
+  restores 300 s. Loop budgets are not changed (D6), so they need no reversal.
+- **Template revert of the scripts.** Reverting the implementation PR
+  restores the earlier `local-ai-reviewer.sh` and resolver and removes the
+  preset. The earlier scripts never read `review.local_ai_reviewer` (V3), and
+  today's `validate_selected_yaml(raw, path, review_fields=True)` decodes a
+  file that contains the block without error (checked at plan revision
+  `3bf2f772` on a one-block fixture). A consumer that keeps the key after
+  such a revert therefore runs Codex with 300 s, and its other review
+  settings still load. An environment selection of `claude` gets the
+  existing `invalid_backend` diagnostic until it is unset. The reverting PR
+  also removes the D8 migration note, or a later release supersedes it,
+  because the note's step 2 tells consumers to set the key.
+
+No step is irreversible.
 
 ---
 
