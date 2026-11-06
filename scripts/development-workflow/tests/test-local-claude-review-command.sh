@@ -254,6 +254,12 @@ assert_refused "T-C5_no_base" 2 "diff not computed"
 assert_no_leftover "T-C5_no_base" "$FX_NOBASE"
 run_preset "$FX_NOBASE" REVIEWED_HEAD="$(git -C "$FX_NOBASE" rev-parse HEAD)" BASE_BRANCH=-develop
 assert_refused "T-C5_option_like_base" 2 "diff not computed"
+# A base that Git would parse as --output=<file> is refused before any Git
+# command sees it, so no file is written outside the copy.
+run_preset "$FX" REVIEWED_HEAD="$HEAD_SHA" BASE_BRANCH="--output=$TMP_ROOT/planted-out"
+assert_refused "T-C5_output_option_base" 2 "diff not computed"
+run_test "T-C5_output_option_base_no_file_written" "0" \
+  "$(find "$TMP_ROOT" -maxdepth 1 -name 'planted-out*' | grep -c . || true)"
 
 # ---------------------------------------------------------------------------
 # T-C6: reviewed commit not available, or not a full commit id
@@ -391,6 +397,9 @@ for t12_case in \
   assert_discarded "T-C12_${t12_id}" 3 "no usable verdict"
   run_test "T-C12_${t12_id}_no_clean_forwarded" "no" "$(yes_no grep -q clean "$OUT")"
 done
+# E8 is refused by the object-type check itself, not by a gate crash.
+gate '[{"result":"clean","findings":[]}]'
+run_test "T-C12_E8_named_reason" "yes" "$(yes_no err_has "no usable verdict in CLI output: not a JSON object")"
 
 # T-C13: E9 no result; E10 inexact results; E11 non-list findings.
 for t13_case in \
