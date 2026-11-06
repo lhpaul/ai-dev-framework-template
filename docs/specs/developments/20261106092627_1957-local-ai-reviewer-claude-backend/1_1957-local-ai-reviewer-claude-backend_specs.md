@@ -225,7 +225,9 @@ are part of the product contract.
    runs directly, it is the repository's workflow configuration. If the
    configuration is missing, unreadable, or cannot be parsed, the shared
    default counts as not set, which preserves today's Codex behavior; a
-   parseable value that is not a string backend name is invalid (BR-5).
+   parseable value that is not a string backend name is invalid (BR-5). The
+   private local workflow configuration is never a source for the shared
+   default, even where it overrides other reviewer settings (DN-5).
 5. **BR-5 Invalid backend.** An unknown backend name, whether from the
    environment selection or the shared default, stops the review as Reviewer
    failed with reason `invalid_backend`. It never falls back to another
@@ -307,11 +309,13 @@ are part of the product contract.
     strict check being applied (spec or plan, from the context bundle). It
     forwards findings without a verdict or reviewed head, in the shape the
     Codex preset uses. A missing context bundle, a wrong or missing marker, or
-    non-list findings is a refusal. Strict findings never change the ordinary
-    verdict, as today.
+    non-list findings is a refusal, which the reviewer reports as the strict
+    check being unavailable, as today. Neither strict findings nor a strict
+    refusal ever change the ordinary verdict.
 15. **BR-15 CLI failures.** A missing CLI binary, a non-zero CLI exit, a
     missing login, or an exhausted usage limit is Reviewer failed. A bounded
-    excerpt of the CLI's error output is surfaced so the reviewer's existing
+    excerpt of the CLI's failure message is surfaced, whether the CLI wrote it
+    to its error output or its standard output, so the reviewer's existing
     credential, quota, and capacity classification applies; under that
     existing classification a capacity message is retried and can end as
     Needs rerun rather than Reviewer failed. A budget that
@@ -368,7 +372,7 @@ Checks run in the order listed. The first failing check decides the outcome.
 | # | Condition | Outcome class | Display label |
 | --- | --- | --- | --- |
 | 1 | CLI binary not found | Reviewer failed | Reviewer failed |
-| 2 | Strict pass without a context bundle | Reviewer failed | Reviewer failed |
+| 2 | Strict pass without a context bundle | Strict check unavailable (see below) | (strict report) |
 | 3 | Review copy of the reviewed commit cannot be created | Reviewer failed | Reviewer failed |
 | 4 | Diff cannot be computed or is empty | Reviewer failed | Reviewer failed |
 | 5 | The preset was still running when the budget ran out | No verdict yet | No verdict yet |
@@ -384,6 +388,13 @@ can stop the preset at any point. When it does, row 5 decides the outcome
 whatever stage the preset had reached, and the stopped run's partial output
 is not inspected. Rows 6–11 apply only to a run that finished within the
 budget.
+
+The outcome classes in rows 1 and 3–10 are those of an ordinary pass. In a
+strict contract pass, any failing check (rows 1–8) is reported through the
+reviewer's existing strict-pass failure report: the strict check is
+unavailable (`strict_pass_failed`), and the ordinary verdict is unchanged. A
+strict pass never produces Reviewer failed, No verdict yet, or Needs rerun on
+its own. Row 11 is the only strict success.
 
 ## Statuses / Enum Values
 
@@ -437,7 +448,9 @@ arguments and the prompt and returns scripted output.
   `claude`, with the same meaning as the environment selection. An absent or
   empty key, or a missing or unparseable configuration file, gives the Codex
   preset. A non-string value (for example a list) gives Reviewer failed /
-  `invalid_backend`.
+  `invalid_backend`. A backend value placed in the private local workflow
+  configuration is ignored: with no environment selection and no shared
+  default, the Codex preset runs.
 - [ ] **AC-6** Under the reviewer loop, a pull request whose own branch adds
   `review.local_ai_reviewer.backend: claude`, against a base branch without
   it, is reviewed with the backend the base configuration selects. After the
@@ -499,13 +512,14 @@ arguments and the prompt and returns scripted output.
 - [ ] **AC-17** Strict pass: a response with the expected marker (spec or plan,
   according to the context bundle) and a findings list is forwarded as strict
   findings. A wrong or missing marker, non-list findings, or a strict pass
-  with no context bundle is refused. The ordinary verdict is unaffected in
-  every case.
+  with no context bundle is refused and reported as the strict check being
+  unavailable. The ordinary verdict is unaffected in every case.
 - [ ] **AC-18** A missing CLI binary gives Reviewer failed, with a diagnostic
   naming `LOCAL_CLAUDE_REVIEWER_BIN`. A stand-in CLI that exits non-zero gives
   Reviewer failed, with a bounded error excerpt. A stand-in that prints a
-  usage-limit message the reviewer's existing quota rules recognize is
-  classified by those rules. A stand-in that outlives the budget gives No
+  usage-limit message the reviewer's existing quota rules recognize, on
+  either its error output or its standard output, is classified by those
+  rules. A stand-in that outlives the budget gives No
   verdict yet, and a later run on the same checkout is not affected by any
   leftover review copy. A stand-in that prints a capacity message is handled
   by the existing capacity rule (retried, then Needs rerun), never Clean. When
