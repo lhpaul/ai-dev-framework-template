@@ -18,11 +18,16 @@ EXIT_FILE="$(mktemp)"
 EVIDENCE_FILE="$(mktemp)"
 RELATIVE_EVIDENCE_FILE="local-ai-reviewer-relative-evidence.json"
 VALID_REPO_ROOT="$(mktemp -d)"
+# #1957 (plan D7): default backend resolution reads the shared workflow
+# configuration. Pin it to a neutral file so a consumer that sets
+# review.local_ai_reviewer.backend keeps this suite's Codex expectations.
+NEUTRAL_WORKFLOW_CONFIG="$(mktemp)"
+export AI_DEV_WORKFLOW_CONFIG_FILE="$NEUTRAL_WORKFLOW_CONFIG"
 
 cleanup() {
   local status=$?
   rm -rf "$MOCK_BIN" "$NO_GRAPH_BIN" "$FALLBACK_BIN" "$VALID_REPO_ROOT"
-  rm -f "$OUTPUT_FILE" "$STDERR_FILE" "$EXIT_FILE" "$EVIDENCE_FILE" "$RELATIVE_EVIDENCE_FILE"
+  rm -f "$OUTPUT_FILE" "$STDERR_FILE" "$EXIT_FILE" "$EVIDENCE_FILE" "$RELATIVE_EVIDENCE_FILE" "$NEUTRAL_WORKFLOW_CONFIG"
   exit "$status"
 }
 trap cleanup EXIT
