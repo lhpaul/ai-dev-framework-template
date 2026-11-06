@@ -140,8 +140,8 @@ review:
   # The private local configuration is never read for it. With claude, raise
   # wait_budgets.local-ai-reviewer when strict checks share the budget.
   # Uncomment to opt in:
-  # local_ai_reviewer:
-  #   backend: claude
+  local_ai_reviewer:
+    backend: claude
   #
   # Bugbot is the default ready-phase GitHub reviewer for this repository.
   # CodeRabbit remains supported as an opt-in reviewer (`coderabbit` for the
