@@ -809,7 +809,50 @@ if [ -n "$pr_number" ]; then
               | {reviewed_head}
               // empty
             ')"; then
-            if [ -z "$ledger_local_record" ]; then
+            # Keep this branch self-contained when completion harnesses load it alone.
+            # Verify the persisted small-findings exception, not a clean local verdict.
+            # These are the existing Protocol 93 terminal fields and counted-round head
+            # requirements. The local needs_fixes record remains unchanged (#2124).
+            small_findings_completion_evidence() {
+              local payload="$1" live_head="$2"
+              printf '%s\n' "$payload" | jq -e --arg head "$live_head" '
+                def current_head:
+                  type == "string" and test("^[0-9a-fA-F]{40}$")
+                  and (ascii_downcase == ($head | ascii_downcase));
+                def current_small_round:
+                  . as $round
+                  | .small_findings_only == true
+                    and (.classification_head | current_head)
+                    and ((.contributing_platforms | type) == "array")
+                    and (.contributing_platforms | length > 0)
+                    and all(.contributing_platforms[];
+                      . as $platform
+                      | [$round.reviewed_heads[]? | select(.platform == $platform)] as $heads
+                      | ($heads | length == 1)
+                        and ($heads[0].reviewed_head | current_head));
+                . as $history
+                | .entries[-1] as $terminal
+                | $terminal.small_findings_required_rounds as $required
+                | .schema == "reviewer_loop_history.v1"
+                  and ((.history_status // "available") == "available")
+                  and ($terminal.result == "clean")
+                  and ($terminal.reason == "small_findings_terminal")
+                  and ($terminal.small_findings_stop == true)
+                  and ($terminal.unresolved_thread_count == 0)
+                  and ($required | type == "number" and . >= 1 and . <= 999 and floor == .)
+                  and ($terminal.small_findings_rounds | type == "number" and floor == . and . >= $required)
+                  and ($history.entries | length >= $required)
+                  and all($history.entries[-$required:][]; current_small_round)
+                  and ($terminal.contributing_platforms | index("local-ai-reviewer") != null)
+                  and ([$terminal.platform_results[]? | select(.platform == "local-ai-reviewer")]
+                    | length == 1 and .[0].result == "needs_fixes")
+              ' >/dev/null 2>&1
+            }
+            if small_findings_completion_evidence "$ledger_payload" "${pr_head_oid:-}"; then
+              add_row "pull_request.local_reviewer_head" "verified" "small_findings_terminal evidence matches live headRefOid; local verdict remains needs_fixes" "reviewer_loop_history.v1 consecutive current-head small rounds and zero unresolved threads"
+            elif [ -z "$ledger_local_record" ] && printf '%s\n' "$ledger_payload" | jq -e '.entries[-1].reason == "small_findings_terminal"' >/dev/null 2>&1; then
+              add_row "pull_request.local_reviewer_head" "discrepancy" "small_findings_terminal evidence incomplete or stale; rerun reviewer loop on current head and inspect counted rounds, contributor heads, local verdict, and thread audit" "reviewer_loop_history.v1 terminal evidence"
+            elif [ -z "$ledger_local_record" ]; then
               add_row "pull_request.local_reviewer_head" "unavailable_required" "local-ai-reviewer head not recorded" "latest local-ai-reviewer reviewed_heads entry"
             elif ! ledger_local_head="$(printf '%s\n' "$ledger_local_record" | jq -r '.reviewed_head // ""')"; then
               add_row "pull_request.local_reviewer_head" "unavailable_required" "ledger parse failed" "reviewer_loop_history.v1 reviewed_heads"
