@@ -43,7 +43,8 @@ its acceptance criteria are stack-neutral.
 
 All repository commands were run at `49e71117` (`origin/develop`, which
 contains the merged spec) in the worktree
-`/Users/lhpaul/Git/DevStack/adf-1957-worktree` on 2026-11-06.
+`/Users/lhpaul/Git/DevStack/adf-1957-worktree` on 2026-11-06, except V18, which was run at the plan revision `3bf2f772` and
+shown to hold at `49e71117`.
 
 | ID | Check | Command / query | Result |
 | --- | --- | --- | --- |
@@ -64,6 +65,7 @@ contains the merged spec) in the worktree
 | V15 | Claude CLI flags exist (Rule 4; unverified in CI) | `claude --version`; `claude --help \| grep -E -- "--setting-sources\|--strict-mcp-config\|--no-session-persistence\|--tools\|--allowedTools\|--output-format\|--model"` | Claude Code `2.1.318` lists all seven flags. `--tools` accepts a comma list or `""`. `--setting-sources` takes a comma list of `user, project, local`. |
 | V16 | Doc surfaces naming the backend selection (Rule 4) | `git grep -ln "LOCAL_AI_REVIEWER_BACKEND\|local-ai-reviewer.md" -- ':!docs/specs/developments'` | `.ai-dev-workflow.local.env.example`, `.ai-dev-workflow.yaml`, `CHANGELOG.md`, `docs/testing/workflow/1653-*.smoke-test.md`, `docs/testing/workflow/1654-*.smoke-test.md`, `docs/workflow/development-workflow/integrations/local-ai-reviewer.md`, `docs/workflow/development-workflow/integrations/pr-review-platform.md`, `docs/workflow/development-workflow/protocols/93-automated-reviewer-loop-protocol.md`, `scripts/development-workflow/local-ai-reviewer.sh`, and tests. No `.agents/`, `.codex/`, `.cursor/`, or `.claude/` mirror names the backend. |
 | V17 | Tests that run the real reviewer with default resolution (Rule 5, D7) | `git grep -ln "local-ai-reviewer.sh" -- scripts/development-workflow/tests`, then per file `grep -c "LOCAL_AI_REVIEWER_COMMAND\|LOCAL_AI_REVIEWER_BACKEND\|LOCAL_AI_REVIEWER_DISABLE"` | Only `test-local-ai-reviewer.sh` (`default_command_*` at `:250-251`, `1653_s0_default_command_quotes_spaces` at `:1528`) and `test-local-http-review-command.sh` (`:418-463`) reach default resolution. Every other match sets an explicit command, stubs the companion, or only reads the source. |
+| V18 | Today's decoder accepts a `review.local_ai_reviewer` block, so a template revert ignores a kept key (Reversal; Rule 4) | Write `review:` / `  local_ai_reviewer:` / `    backend: claude` to a scratch file, load `scripts/development-workflow/workflow-config-resolver.py` with `importlib`, and call `validate_selected_yaml(raw, path, review_fields=True)`; `git diff --stat 49e71117 3bf2f772 -- scripts/` | Returns `{'review': {'local_ai_reviewer': {'backend': 'claude'}}}` with no `ConfigError`, run at `3bf2f772`. The diff is empty, so the result holds at `49e71117`. |
 
 ---
 
@@ -795,8 +797,7 @@ remove. Changes to the two published surfaces are undone as follows.
   restores the earlier `local-ai-reviewer.sh` and resolver and removes the
   preset. The earlier scripts never read `review.local_ai_reviewer` (V3), and
   today's `validate_selected_yaml(raw, path, review_fields=True)` decodes a
-  file that contains the block without error (checked at plan revision
-  `3bf2f772` on a one-block fixture). A consumer that keeps the key after
+  file that contains the block without error (V18). A consumer that keeps the key after
   such a revert therefore runs Codex with 300 s, and its other review
   settings still load. An environment selection of `claude` gets the
   existing `invalid_backend` diagnostic until it is unset. The reverting PR
