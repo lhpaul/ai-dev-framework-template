@@ -255,6 +255,22 @@ run_test "guard_skipped_without_head_history_succeeds" "success" \
   "$(guard_state_for 1 "$(summary_fixture 'skipped — release/hotfix PR reviewer loop intentionally skipped' "")")"
 run_test "guard_skipped_with_stale_history_succeeds" "success" \
   "$(guard_state_for 1 "$(summary_fixture 'skipped — not_configured' "$STALE_HEAD")")"
+# Synthetic branch-scoped violation: skipped release evidence must fail on a
+# hotfix, while a clean current-head review restores success. Subshells isolate
+# all state, so concurrent runs cannot share a fixture or mutate GitHub.
+export BRANCH=hotfix/2077-synthetic
+run_test "hotfix_skipped_release_summary_fails" "failure" \
+  "$(guard_state_for 1 "$(summary_fixture 'skipped — release_pr' "$LIVE_HEAD")")"
+run_test "hotfix_clean_current_head_succeeds" "success" \
+  "$(guard_state_for 1 "$(summary_fixture clean "$LIVE_HEAD")")"
+export BRANCH=release/v1.0.0
+run_test "release_skipped_summary_succeeds" "success" \
+  "$(guard_state_for 1 "$(summary_fixture 'skipped — release_pr' "")")"
+export BRANCH=backport/hotfix/2077-synthetic
+run_test "backport_skipped_summary_unchanged" "success" \
+  "$(guard_state_for 1 "$(summary_fixture 'skipped — release_pr' "")")"
+unset BRANCH
+
 run_test "guard_missing_summary_fails" "failure" \
   "$(guard_state_for 0 "")"
 run_test "guard_no_longer_passes_on_presence_alone" "yes" \

@@ -16,19 +16,10 @@
 # "reviewer clean". The same applies to a `neutral` check run that accompanies a
 # Bugbot usage/spend-limit notice: the reviewer never actually reviewed.
 #
-# The reviewer leg applies to implementation branches only (`feature/*`,
-# `fix/*`, `refactor/*`, `backport/hotfix/*`) — the same boundary Protocol 91
-# draws for `IS_IMPLEMENTATION_PR` and for its Step 7b label derivation table.
-# Ready-phase reviewers are not dispatched on `spec/*`,
-# `implementation-plan/*`, graduation (`develop-<slug>`), `release/*`, or
-# `hotfix/*` PRs, so no check run can exist for them; gating on one would
-# refuse every doc-stage, release, and hotfix PR. `hotfix/*` is exempt the
-# same way `release/*` is because pr-review-loop.sh's `_check_release_pr_guard`
-# skips the reviewer loop for `release/*` AND `hotfix/*` head branches — no
-# reviewer check is ever dispatched on a hotfix, so requiring one would
-# permanently refuse both readiness labels `reviewer-check-absent`. Hotfix PRs
-# still get what release PRs get: the CI leg applies unchanged (PR #1818
-# finding 1, round 7). The CI leg still applies on those branches.
+# The reviewer leg applies to implementation branches: feature/*, fix/*,
+# refactor/*, hotfix/* and backport/hotfix/*. Hotfixes carry new production code
+# and require the same reviewer evidence as fixes. Documentation, graduation
+# and release branches skip the reviewer leg; the CI leg still applies.
 #
 # `ready-for-regression` blocks on failing non-reviewer checks but permits
 # pending ones: that label is what *starts* the configured regression workflow,
@@ -62,7 +53,8 @@ from html import unescape
 from html.parser import HTMLParser
 
 body = sys.stdin.read()
-mask_review_code = runpy.run_path(sys.argv[2])["mask_review_code"]
+runtime = runpy.run_path(sys.argv[2])
+mask_review_code = runtime["mask_review_code"]
 blockers = {"critical", "must fix", "breaking change", "security concern",
             "api change", "backward compatibility"}
 # Verdict-bearing values are closed sets. Descriptive requirement bullets are
@@ -337,6 +329,10 @@ def visible_review(body):
 
 
 def focus_labels(body):
+    try:
+        explicit = runtime["explicit_finding_labels"](body)
+    except ValueError:
+        return [""]
     # Focus prefixes are presentation; a known hard blocker still counts.
     focus_name = "Recommended focus areas for review"
     parts = []
@@ -370,14 +366,36 @@ def focus_labels(body):
         return [""]  # A valid section cannot hide a later unknown section.
     if not headings:
         return None
-    # Start immediately after the heading: HTML findings can share its line.
-    content = re.split(r"</td>|^[ \t]*#{1,6}[ \t]+\S|^---$", body[headings[0].end():], maxsplit=1, flags=re.M)[0]
+    # Structured findings own the complete HTML cell. Markdown headings/rules
+    # inside that cell cannot terminate evidence scanning (#2086).
+    if explicit is not None:
+        try:
+            parsed, _ = runtime["focus_title_nodes"](body)
+        except ValueError:
+            return [""]
+        cells = [node for node in parsed.nodes if node.tag == "td"
+                 and node.open_end <= headings[0].start() < node.close_start]
+        if len(cells) != 1:
+            return [""]
+        # Only marked strong titles carry structured finding metadata. Other
+        # HTML emphasis cannot inherit their advisory verdict (#2086).
+        if any(node.tag in {"b", "em"}
+               and headings[0].end() <= node.start < cells[0].close_start
+               for node in parsed.nodes):
+            return [""]
+        content = body[headings[0].end():cells[0].close_start]
+    else:
+        # Legacy Markdown sections still end at their next section boundary.
+        content = re.split(r"</td>|^[ \t]*#{1,6}[ \t]+\S|^---$", body[headings[0].end():], maxsplit=1, flags=re.M)[0]
     rendered = FocusLabels()
     rendered.feed(content)
     html_labels = rendered.labels
     markdown_labels = re.findall(r"\*\*([^*\n]*)\*\*", content)
     if len(html_labels) != rendered.count or content.count("**") != 2 * len(markdown_labels):
         return [""]  # A complete earlier label must not hide a broken one.
+    if explicit is not None:
+        # Metadata may replace title interpretation, never hide extra evidence.
+        return [""] if markdown_labels else explicit
     return [" ".join(label.split()) for label in html_labels] + [" ".join(unescape(label).split()) for label in markdown_labels]
 
 
@@ -474,6 +492,8 @@ def classify(body):
         value = unescape(re.sub(r"<[^>]*>", "", security_sections[0].group(1))).strip()
         security_verdict = value_verdict(value, security_negatives, security_findings)
         if security_verdict == "escalate":
+            return "escalate"
+        if security_verdict == "needs_fixes" and "data-pr-agent-finding" in body:
             return "escalate"
         needs_fixes = needs_fixes or security_verdict == "needs_fixes"
     # Both rendered focus headings use the same hard-blocker/advisory labels.
@@ -591,9 +611,8 @@ platforms from the base configuration, so head-only additions are never
 required, but a head cannot waive a base-configured reviewer. The base policy
 is resolved with local review overrides applied (the same effective policy
 the loop dispatches); an absent .ai-dev-workflow.local.yaml falls back to the
-shared policy. hotfix/* branches are exempt from the reviewer leg exactly as
-release/* branches are — the reviewer loop is never dispatched on them — but
-the CI leg still applies.
+shared policy. hotfix/* branches require reviewer evidence like fix/*;
+release/* branches skip the reviewer leg but still require CI.
 USAGE
 }
 
@@ -1155,6 +1174,7 @@ coderabbit_cli_local_ai_ledger_verdict() {
   _adapter_ledger_clean=0
   _adapter_refusal_reason="reviewer-evidence-unreadable"
   _adapter_ledger_started_at=""
+  _adapter_evidence_diff=""
   local summary_record ledger_body ledger_started_at payload verdict outcome verdict_head
   local invoker_login
   # Round 18 (thread PRRT_kwDORWAxaM6m36Wn): the marker strings are public,
@@ -1237,6 +1257,7 @@ coderabbit_cli_local_ai_ledger_verdict() {
           | ((.platform_results // [])[]
              | select(.platform == $platform)
              | {outcome: (.result // "unknown"), evidence_snapshot_sha256: (.evidence_snapshot_sha256 // ""),
+                evidence_manifest: (.evidence_manifest // {}),
                 head_sha: (
                   ($entry.reviewed_heads // [])
                   | map(select(.platform == $platform))
@@ -1271,8 +1292,20 @@ coderabbit_cli_local_ai_ledger_verdict() {
     fingerprint="$(printf '%s' "$verdict" | jq -r '.evidence_snapshot_sha256 // ""')"
     [ -n "$fingerprint" ] || { _adapter_refusal_reason=reviewer-evidence-unreadable; return; }
     context="$(mktemp)" || return
-    if ! workflow_collect_review_evidence "$repo" "$pr_number" "$head_sha" "$context" ||
-        [ "$(jq -r .snapshot_sha256 "$context")" != "$fingerprint" ]; then
+    if ! workflow_collect_review_evidence "$repo" "$pr_number" "$head_sha" "$context"; then
+      _adapter_evidence_diff='{"status":"context_unavailable","changes":[]}'
+      rm -f "$context"; _adapter_refusal_reason=reviewer-evidence-unreadable; return
+    fi
+    if [ "$(jq -r .snapshot_sha256 "$context")" != "$fingerprint" ]; then
+      _adapter_evidence_diff='{"status":"diagnostic_unavailable","changes":[]}'
+      local manifest_file
+      manifest_file="$(mktemp)" || { rm -f "$context"; return; }
+      if ! printf '%s' "$verdict" | jq '.evidence_manifest // {}' >"$manifest_file" ||
+          ! _adapter_evidence_diff="$(python3 "$SCRIPT_DIR/review-evidence-context.py" diff \
+            --context "$context" --manifest "$manifest_file" --expected-sha "$fingerprint")"; then
+        _adapter_evidence_diff='{"status":"diagnostic_unavailable","changes":[]}'
+      fi
+      rm -f "$manifest_file"
       rm -f "$context"; _adapter_refusal_reason=reviewer-evidence-unreadable; return
     fi
     rm -f "$context"
@@ -1674,6 +1707,14 @@ emit_verdict() {
     PENDING_CHECK_COUNT "$pending_count" \
     FAILING_CHECK_COUNT "$failing_count" \
     DRY_RUN "$dry_run"
+  if [ -n "${_adapter_evidence_diff:-}" ]; then
+    local evidence_recovery_command
+    printf -v evidence_recovery_command \
+      'bash scripts/development-workflow/pr-review-loop.sh %q --repo %q --branch %q' \
+      "$pr_number" "$repo" "$head_ref_name"
+    workflow_diagnostic_kvs EVIDENCE_DIFF_JSON "$_adapter_evidence_diff" \
+      EVIDENCE_RECOVERY "Inspect the named comment IDs at https://github.com/$repo/pull/$pr_number#issuecomment-ID (body means PR description). Keep readiness withheld. Restore unintended changes if possible; revision changes remain evidence changes. From the PR branch checkout, run the standard ready review: $evidence_recovery_command . Then retry readiness; do not edit evidence comments after review. Missing or inconsistent manifests cannot reliably identify changed sources and require a fresh standard review to establish a diagnosable baseline."
+  fi
   if [ "$json_output" = "true" ]; then
     python3 -c 'import json,sys; print(json.dumps(dict(result=sys.argv[1], reason=sys.argv[2], prNumber=sys.argv[3], repo=sys.argv[4], label=sys.argv[5], headSha=sys.argv[6], reviewerReport=sys.argv[7], blockingFindingCount=int(sys.argv[8]), pendingCheckCount=int(sys.argv[9]), failingCheckCount=int(sys.argv[10]), dryRun=(sys.argv[11] == "true"))))' \
       "$result" "$reason" "$pr_number" "$repo" "$label" "$head_sha" "$reviewer_report" "$blocking_count" "$pending_count" "$failing_count" "$dry_run" | workflow_redact_json
@@ -2033,15 +2074,9 @@ fi
 # Implementation branches are the ones that carry a ready-phase reviewer check
 # run and a required `ready-for-regression` label (Protocol 91's label derivation
 # table). Doc-stage, graduation, and release PRs are not reviewer-gated.
-# `hotfix/*` is exempt from the reviewer leg — same handling as `release/*`
-# (PR #1818 finding 1, round 7): `_check_release_pr_guard` in
-# pr-review-loop.sh skips the reviewer loop for `release/*` AND `hotfix/*`
-# head branches, so no ready-phase reviewer check run can ever exist on a
-# hotfix and requiring one would permanently refuse both readiness labels
-# `reviewer-check-absent`. The CI leg below still applies unchanged — that is
-# the release-branch handling this mirrors.
+# Hotfixes run the same reviewer gate as other new implementation code.
 case "$head_ref_name" in
-  feature/*|fix/*|refactor/*|backport/hotfix/*) is_implementation_pr="true" ;;
+  feature/*|fix/*|refactor/*|hotfix/*|backport/hotfix/*) is_implementation_pr="true" ;;
   *) is_implementation_pr="false" ;;
 esac
 

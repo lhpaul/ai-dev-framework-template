@@ -133,6 +133,18 @@ Routing specification: `docs/workflow/development-workflow/protocols/96-run-work
 
 ---
 
+## My Machines / Remote Control hub preflight
+
+For an operator-identified My Machines / Remote Control `workflow_hub` run,
+before the first workflow write, request the operator's current-run preflight
+result and verify it from the worker with the selected hub, run UUID, run-start
+and hub-selection timestamps. Follow the command and evidence procedure in
+`docs/workflow/development-workflow/integrations/cursor-my-machines.md`.
+A missing, failed, stale, malformed, mismatched, or unverifiable result stops
+before mutation; ask the operator to correct the named check and rerun it.
+Read-only checkpoints and non-worker runs retain existing behavior. This gate
+is separate from the dispatch-profile declaration and all other workflow gates.
+
 ## Cursor dispatch profile
 
 In a Cursor environment only, declare the dispatch profile in force before any
@@ -147,3 +159,5 @@ invalid-declaration boundaries are defined once, normatively, in
 `docs/workflow/development-workflow/integrations/cursor-dispatch-profiles.md`.
 Follow that document; this surface deliberately does not restate it.
 
+
+**Stage-role access denial**: Apply Protocol 91’s stage-role denial report and receiver contract; a reached role’s tool/path denial stops the affected item, with no inline stage-work fallback.

@@ -232,7 +232,7 @@ head = "a" * 40
 other = "b" * 40
 cases = [
     ("clean", True), ("blocked", False), ("missing", False),
-    ("duplicate", False), ("malformed", False), ("stale", False),
+    ("duplicate", True), ("conflicting", False), ("conflicting-first", False), ("malformed", False), ("stale", False),
     ("moved", False), ("missing-mode", False), ("wrong-mode", False),
     ("nonzero", False), ("head-failed", False), ("empty-head", False),
     ("ownership-failed", False), ("skipped-configured", False),
@@ -244,7 +244,7 @@ cases = [
     ("missing-count", False), ("malformed-count", False), ("duplicate-count", False),
     ("base-ready-checkout-empty", True), ("base-empty-checkout-ready", True),
     ("skipped-empty-no-ready", True), ("no-ready-ownership-changed", False),
-    ("hotfix-skip", True), ("release-skip", True), ("fix-release-skip", False),
+    ("hotfix-skip", False), ("release-skip", True), ("fix-release-skip", False),
     ("hotfix-wrong-branch", False), ("hotfix-wrong-pr", False),
     ("hotfix-duplicate-pr", False),
 ]
@@ -351,6 +351,8 @@ case "$TEST_CASE" in
   blocked|no-ready-blocked) echo RESULT=needs_fixes ;;
   missing) ;;
   duplicate) printf 'RESULT=clean\\nRESULT=clean\\n' ;;
+  conflicting) printf 'RESULT=clean\\nRESULT=needs_fixes\\n' ;;
+  conflicting-first) printf 'RESULT=needs_fixes\\nRESULT=clean\\n' ;;
   malformed) echo RESULT=clean-extra ;;
   equals-result) echo RESULT=clean=invalid ;;
   skipped-wrong-reason) printf 'RESULT=skipped\\nREASON=unavailable\\n' ;;
@@ -370,7 +372,7 @@ fi
         path.chmod(0o755)
     for name, allowed in cases:
         rc, trace, output = run_case(root, name)
-        if name in {"no-ready", "base-empty-checkout-ready", "skipped-empty-no-ready", "hotfix-skip", "release-skip"}:
+        if name in {"no-ready", "base-empty-checkout-ready", "skipped-empty-no-ready", "release-skip"}:
             expected = ["draft", "manual-ready", "full"]
         elif allowed or name == "full-failed":
             expected = ["draft", "full"]
@@ -395,8 +397,62 @@ fi
 print(f"verified:{len(cases) + 2}")
 PYTEST
 )"
-run_test "ready_transition_executable_matrix_and_plant" "verified:42" "$_ready_transition_report"
+run_test "ready_transition_executable_matrix_and_plant" "verified:44" "$_ready_transition_report"
 
+
+# Both nested helper paths must keep verdicts observable on stderr only.
+_nested_report="$(python3 - "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh" <<'PYTEST'
+from pathlib import Path
+import os
+import subprocess
+import sys
+import tempfile
+
+source = Path(sys.argv[1]).read_text()
+function = source.split("restore_regression_label_if_missing() {", 1)[1].split(
+    "\ndoc_branch_default_max_wait()", 1
+)[0]
+function = "restore_regression_label_if_missing() {" + function
+with tempfile.TemporaryDirectory(prefix="nested-result-") as directory:
+    root = Path(directory)
+    helper = root / "apply-readiness-labels.sh"
+    helper.write_text('printf "RESULT=labeled\\nREASON=synthetic\\n"\nexit "$HELPER_RC"\n')
+    stubs = r'''
+workflow_diagnostic() { printf '%s\n' "$*"; }
+workflow_command_with_safe_stderr() { "$@"; }
+workflow_local_config_root() { printf '%s\n' "$SCRIPT_DIR"; }
+gh() {
+  case "$*" in
+    *labels*) printf '%s\n' "$HAS_LABEL" ;;
+    *headRefOid*) printf 'synthetic-head\n' ;;
+    api*) return 1 ;;
+    *) return 99 ;;
+  esac
+}
+repo_slug() { printf 'synthetic/repo\n'; }
+'''
+    for present in ("true", "false"):
+        for rc in ("0", "1"):
+            env = dict(os.environ, SCRIPT_DIR=str(root), HAS_LABEL=present, HELPER_RC=rc)
+            code = stubs + function + '\nrestore_regression_label_if_missing 42 fix/42-synthetic\nprintf "RESULT=clean\\n"\n'
+            result = subprocess.run(["bash", "-euo", "pipefail", "-c", code],
+                                    cwd=root, env=env, text=True, capture_output=True)
+            assert result.returncode == 0, result.stderr
+            assert result.stdout == "RESULT=clean\n", result.stdout
+            assert "RESULT=labeled" in result.stderr, result.stderr
+            if rc == "1":
+                assert "refused or failed" in result.stderr, result.stderr
+            # Prove detection of the original leak without any real mutations.
+            planted = code.replace('--label "ready-for-regression" >&2;',
+                                   '--label "ready-for-regression";')
+            assert planted != code
+            broken = subprocess.run(["bash", "-euo", "pipefail", "-c", planted],
+                                    cwd=root, env=env, text=True, capture_output=True)
+            assert broken.stdout != "RESULT=clean\n", broken.stdout
+print("verified:4")
+PYTEST
+)"
+run_test "nested_helper_single_result_and_failure_diagnostics" "verified:4" "$_nested_report"
 
 echo "${PASS_COUNT} passed, ${FAIL_COUNT} failed"
 

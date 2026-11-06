@@ -537,7 +537,7 @@ builtins.open = opened
             self.assertEqual(result.stdout.splitlines(), expected)
             effective = self.cli('review-effective')
             self.assertEqual(effective.returncode, 0, effective.stderr)
-            self.assertEqual(json.loads(effective.stdout)['effective_runner'], expected)
+            self.assertEqual(json.loads(effective.stdout)['effective_runner'], expected or ['codex'])
             github = self.cli('review-github-effective')
             self.assertEqual(github.returncode, 0, github.stderr)
             self.assertEqual(json.loads(github.stdout)['effective_on_draft_github'], [])
@@ -550,7 +550,7 @@ builtins.open = opened
             self.assertEqual(snapshot.returncode, 0, snapshot.stderr)
             effective = subprocess.run([sys.executable, str(RESOLVER), 'review-effective', '--repo-root', str(stage)], env=self.env, text=True, capture_output=True)
             self.assertEqual(effective.returncode, 0, effective.stderr)
-            self.assertEqual(json.loads(effective.stdout)['effective_runner'], expected)
+            self.assertEqual(json.loads(effective.stdout)['effective_runner'], expected or ['codex'])
             self.assertEqual(json.loads(effective.stdout)['effective_runner_state'], 'empty' if runner == '[]' else 'defined')
             self.assertNotIn(opaque, (stage / MODULE.LOCAL_CONFIG_NAME).read_text())
 
@@ -869,7 +869,8 @@ sys.exit(rc)
     def test_composed_diagnostic_boundaries(self):
         scripts = self.checkout / 'scripts/development-workflow'; scripts.mkdir(parents=True)
         for name in ('workflow-lib.sh', 'workflow-config-resolver.py', 'resolve-reviewer-availability.sh',
-                     'local-ai-reviewer.sh', 'pr-review-loop.sh', 'run-epic-audit-trail.sh', 'reviewer_preflight_coderabbit.py', 'codex-github-evidence-lib.sh'):
+                     'local-ai-reviewer.sh', 'pr-review-loop.sh', 'run-epic-audit-trail.sh', 'reviewer_preflight_coderabbit.py', 'codex-github-evidence-lib.sh',
+                     'review-evidence-context.py'):
             shutil.copyfile(SCRIPTS / name, scripts / name)
         bindir = self.root / 'bin'; bindir.mkdir()
         gh = bindir / 'gh'
@@ -1112,7 +1113,8 @@ sys.exit(rc)
                 bash = self.names_from_bash(bucket)
                 self.assertEqual(bash.returncode, 0, bash.stderr)
                 self.assertEqual(bash.stdout.splitlines(), values)
-                self.assertEqual(data[bucket[3]], values)
+                expected_effective = ['codex'] if empty and bucket[2] == 'review-effective' else values
+                self.assertEqual(data[bucket[3]], expected_effective)
 
     def test_reviewer_name_dependency_free_and_shared_fallback(self):
         blocked = self.root / 'blocked-name-yaml'; blocked.mkdir()

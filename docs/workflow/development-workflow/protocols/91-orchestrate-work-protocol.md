@@ -62,7 +62,7 @@ Named stop conditions (exact strings): `dispatch_profile_declaration_missing`, `
 - `dispatch_handoff_unavailable` -- affected work item: the branch, pull request, or development-folder path the mutating action would have applied to. Human unblocking action: move to an environment where initial handoff is confirmed available and re-run, or explicitly accept the read-only result; for the parent-orchestrated stage-handoff-unavailable cause, first confirm the specific stage role the action needed is reachable in the target environment.
 - `missing_required_secret_or_permission` (reused) -- when a reachable stage role reports a specific delegated action refused for a missing credential, GitHub permission, or access token: grant the identified credential or permission and re-run the same delegated action, or, for a structural restriction, reassign to the same stage role in a different context or explicitly accept the action does not proceed; the absorbing context never performs the action inline. This path never extends to a harness tool or local file-path permission denial.
 
-No named stop for a harness or local-path denial: a reachable stage role's harness tool or local file-path permission denial on a delegated action is not a named stop condition; it is only observably similar to the `SUBAGENT_PERMISSION_DENIAL` contract (Work Item Runner to Portfolio Orchestrator only), and is Out of Scope, tracked as #1746.
+A reachable stage role reporting a harness tool or local-path denial stops the item as `stage_role_tool_or_path_denied` under Protocol 91's stage-role contract. `SUBAGENT_PERMISSION_DENIAL` applies only at the separate Work Item Runner-to-Portfolio boundary; do not use its inline fallback for a stage-role denial.
 
 Invalid-declaration boundaries: an invalid profile value, an invalid accountable role (none named, including empty), an invalid posture for the checkpoint, and a coarse-fact mismatch in either direction (more permissive or less permissive than the assigned outcome) are each a missing declaration. The coarse check governs the initial declaration and coarse-fact re-declarations only; it does not govern the mid-run recovery transitions (stage-handoff loss, native-handoff mid-run failure), which remain valid re-declarations.
 
@@ -1515,7 +1515,19 @@ single-item runs where `BATCH_CONTEXT=true` is absent. Mutating explicit-list
 batch dispatch, including sequential fallback, must use the Protocol 90
 manifest-assigned worktree path.
 
-**Permission-denial early exit (subagent runs only)**: If at any point during the run the harness responds with the known harness failure pattern — a message containing the phrase `"Permission to use"` AND a denied tool name (`Edit`, `Write`, or `Bash`) — the subagent must **immediately stop all further work** and return the following structured string to the Portfolio Orchestrator:
+### Stage-role denial report and receiver contract
+
+Before every spec, plan, implementation, fixer or review stage-role dispatch (including native and cross-runner Step 7a reviewers), include this reporting contract in the handoff. On an explicit harness tool or local-path access denial, the reached role stops its assigned action and returns `STAGE_ROLE_TOOL_OR_PATH_DENIED:` with the item, stage, owning role, known denied action or target, and known partial or uncertain state. Do not invent a target or infer a universal third-party error grammar. Do not substitute a different tool, identity, path, inline work or review to evade the denial. The item-orchestrator inspects every returned role report before subsequent mutation or completion; this contract also applies when the assigned action is a merge. Do not transfer ownership to the parent.
+
+The item receiver evaluates established facts with `python3 "$WORKFLOW_TOOL_ROOT/scripts/development-workflow/stage-role-denial-decision.py"`, passing one JSON object on stdin. In `workflow_hub` mode, `WORKFLOW_TOOL_ROOT` is the resolved workflow-hub checkout, including when the active artifact checkout is a separate product repository. In `single_repo` mode set it to the artifact repository root. If the root or helper is unavailable, stop as a tooling failure; do not infer that a product checkout contains hub-only scripts. Set `cause` to `tool_path`, `credential`, `mixed`, `unknown`, `unreachable`, or `generic` only after the role report establishes the facts; set `mode` to `manual`, `assisted`, `delegated`, or `autonomous` (default `manual`); set boolean `review`, `readonly_stop`, `handoff_stop`, `record_available`, `uncertain`, `corrected`, `credential_corrected`, `reconciled`, `context_changed`, and `denied_again` only when known. Omitted flags are false except that an omitted `uncertain` leaves effect state unknown and must never permit a resume candidate. Set `uncertain: false` only when the action effect is established as certain. For a mixed denial, `corrected` confirms the tool/path correction and `credential_corrected` independently confirms the credential correction; both are required before the same role may resume. Do not pass raw reports, credentials, or private configuration to this decision input. For a resumable stop, provide a `handoff` object containing the `marker` value `STAGE_ROLE_TOOL_OR_PATH_DENIED`, an `item` identifier (positive GitHub issue number or a nonblank tracker, branch, or path identifier), nonblank `stage`, `role`, `action` and `state`, a positive numeric `pr` or null, and `dependencies`, a mapping of selected item identifiers to their known prerequisite identifiers. The action and other text must be redacted by the caller; the helper applies the existing diagnostic redactor as defense in depth. Nonzero exit is a failed decision, never a clean outcome. The helper emits the redacted handoff and held dependent IDs together with decision codes; it neither writes a report nor executes a retry. `durable_recorded` is always false: the receiver must write and independently verify an existing work-item or PR record before claiming durability, or return the handoff to the operator. The portfolio supervisor holds the returned direct and transitive dependent IDs and rechecks their prerequisites; it must not assume the supplied list proves dependency discovery is complete. `resume_same_role` is only a candidate: all applicable existing isolation, profile, credential, and review gates still govern. Use `unreachable`/`handoff_stop` only when the applicable profile establishes that named stop; `readonly_stop` records an independent read-only restriction without inventing a stop name.
+
+On a confirmed stage tool/path denial, stop the affected item as `stage_role_tool_or_path_denied`, preserve existing work and PR identity and review state, and report the known facts and a concrete operator correction without secrets. When permitted, record a resumable report in the existing item or PR record with item, stage, role, denied action, known state and unblock action. If recording is unavailable, return those facts in an operator handoff and do not claim durable recording. The Work Item Runner reports the blocked item and its dependency consequences to the Portfolio Orchestrator; Protocols 90 and 95 hold dependents, while independently eligible work may continue under its own gates.
+
+Credential/GitHub permission or token denial follows `missing_required_secret_or_permission`; an unreachable role follows the existing handoff stop. Independently established causes are all reported and all must be resolved, including any separate read-only or handoff stop. An established access refusal whose cause cannot be classified stops as `unclear_requirements`; a generic tool failure with no evidence of refusal retains its normal error contract. A confirmed denial with uncertain effects keeps the denial stop and requires live-state reconciliation before retry.
+
+The operator corrects access or explicitly chooses an authorized context for the same owning stage role. Same-context recovery retains the profile and rechecks its gates; a changed context starts a fresh bounded run with a new dispatch-profile declaration. After correction and reconciliation, the same role resumes. One attempt may verify access; another denial stops again and requires a new correction, never an automatic retry loop. A Step 7a reviewer denial remains a failed or incomplete review gate plus this stop, not an approval, availability fallback, or `needs-fixes` solely for denial; require a fresh successful review. Pre-dispatch reviewer-unavailability fallback does not apply after a reached reviewer is denied.
+
+**Permission-denial early exit (Work Item Runner to Portfolio Orchestrator only)**: If at any point during the run the harness responds with the known harness failure pattern — a message containing the phrase `"Permission to use"` AND a denied tool name (`Edit`, `Write`, or `Bash`) — the subagent must **immediately stop all further work** and return the following structured string to the Portfolio Orchestrator:
 
 ```
 SUBAGENT_PERMISSION_DENIAL: [tool] tool denied on <denied-target>. No partial work committed. Falling back to orchestrator inline execution.
@@ -1781,15 +1793,21 @@ bash scripts/development-workflow/resolve-reviewer-availability.sh \
 
 Supported reviewer values are `claude`, `cursor`, `codex`, `dsh` (local-runtime), and
 `coderabbit`, `codex-github` (hosted-service). If no list is defined, the
-helper falls back to the driving runner's own stage reviewer. Consume reviewer
+helper selects `codex` by default, independently of the driving runner. An
+explicit non-empty `review.on_draft.runner` list (or its supported legacy alias)
+keeps precedence. This changes the resolver default, not existing configured
+lists. Consume reviewer
 names only from its indexed `REVIEWER_N_*` fields; aggregate lists are
 display-only and must never be split or `eval`ed. The helper reports local
 override state and `override-excluded` records, which are deliberate omissions
 and never unreachability warnings.
 
 On exit `0`, dispatch each indexed reachable reviewer, in configured order, only after applying the returned `OUTCOME`. Never dispatch unreachable or override-excluded records. When
-`FALLBACK_APPLIED=true`, dispatch the driving runner's own stage reviewer
-exactly once. No reviewer is dispatched until the resolver returns and the
+`FALLBACK_APPLIED=true`, still dispatch only the indexed Reachable records,
+exactly once per pass; never infer a reviewer from the driving session.
+`FALLBACK_REASON=default-codex` identifies default selection;
+`FALLBACK_REASON=primary-unavailable` identifies an explicitly authorized
+pre-dispatch substitution. No reviewer is dispatched until the resolver returns and the
 policy has been applied; a verdict from an earlier cycle is never reused.
 The invocation passes `--runner-kind <actual-driving-session-kind>` and is
 never a value inferred from PATH, the reviewer list, or inherited environment.
@@ -1849,7 +1867,7 @@ validates policy before evaluating the reviewer list, then classifies capability
 and applies policy. Absent, null, bare, or empty policy means `warn` with
 `POLICY_SOURCE=default`. A non-empty unsupported string blocks before list
 fallback; a non-scalar policy or unreadable config file is `policy-unreadable`.
-An absent or empty list falls back to the driving runner's own stage reviewer;
+An absent or empty effective list selects the default `codex` reviewer;
 a malformed non-list or list with non-string members never falls back.
 
 The fixed external ceiling is ten seconds, with an eight-second internal budget
@@ -1904,11 +1922,54 @@ Allowed values: `warn` (default), `fail-if-any-unavailable`.
 | Policy unsupported                                        | Any                       | **Hard-fail** with `BLOCK_CAUSE=policy-unsupported`; dispatch nobody and restore an already-ready PR to draft. |
 | Reviewer list malformed                                   | Any                       | **Hard-fail** with `BLOCK_CAUSE=list-malformed`; dispatch nobody and restore an already-ready PR to draft. |
 | Config resolution timed out | Any | **Hard-fail** with `BLOCK_CAUSE=config-resolution-inconclusive`; do not evaluate the list or dispatch. |
-| No configured list and no driving runner                  | Any                       | **Hard-fail** with `BLOCK_CAUSE=no-driving-runner`. |
-| Zero reviewers reachable                                  | Any                       | **Hard-fail** — post the Step 7a summary comment (as error/blocked comment per Use Case 2) and stop. Do NOT call `gh pr ready`. Escalate to human.                                                                                                                                               |
+| Fallback setting malformed | Any | **Hard-fail** with `BLOCK_CAUSE=fallback-malformed`; dispatch nobody. |
+| No effective configured list | Any | Determine availability of the default `codex` reviewer, including when the driving runner is unknown. |
+| Zero primary reviewers reachable, all reasons are `runtime-absent` or `prerequisite-missing`, explicit fallback is configured and was not already a primary | `warn` | Determine availability of that fallback within the same budget. Proceed with it only if Reachable; record `FALLBACK_REASON=primary-unavailable` and the original unavailable records. |
+| Zero reviewers reachable after any eligible explicit fallback | Any                       | **Hard-fail** — post the Step 7a summary comment (as error/blocked comment per Use Case 2) and stop. Do NOT call `gh pr ready`. Escalate to human.                                                                                                                                               |
 | One or more reviewers unreachable, at least one reachable | `warn` (default)          | Post the reason-and-remedy warning, record each as `skipped (unreachable)`, then proceed with the reachable subset.                                                                                                                        |
 | Any reviewer unreachable                                  | `fail-if-any-unavailable` | **Hard-fail** — same outcome as zero-reachable (no reviewers dispatched, PR stays draft, escalate to human) even when some reviewers are reachable. Post the Step 7a summary comment using the hard-fail comment format **Case B** below and stop. Do NOT call `gh pr ready`. Escalate to human. |
 | All reviewers reachable                                   | Any                       | Proceed normally — no warning comment, no deviation from the existing flow.                                                                                                                                                                                                                      |
+
+#### Explicit fallback before dispatch
+
+`review.on_draft.fallback_runner` is an optional scalar naming one local-runtime
+reviewer: `claude`, `cursor`, `codex`, or `dsh`. It is disabled by default.
+The selected local file overrides the shared setting; an explicit local null or
+empty string disables a shared fallback. Other types and values fail closed
+without printing the rejected value. The validated review-only worktree
+projection preserves this setting; no private file is copied wholesale.
+
+For example, an operator can configure this in the shared manifest or an
+explicitly selected local override:
+
+```yaml
+review:
+  on_draft:
+    runner: [codex]
+    fallback_runner: claude
+```
+
+The fallback is considered only when no primary reviewer is Reachable and every
+primary failure proves absence (`runtime-absent` or `prerequisite-missing`).
+It is never an additional reviewer for a partially reachable primary list, never
+retries a primary, and never circumvents `fail-if-any-unavailable`. A malformed
+list, unsupported reviewer, or inconclusive probe (including a probe not started
+after budget exhaustion) grants no substitution authority. The fallback probe shares the existing aggregate
+availability budget and may itself block.
+
+The helper emits `FALLBACK_RUNNER`, `FALLBACK_CONFIG_STATE`, and
+`FALLBACK_CONFIG_SOURCE`, plus the indexed primary and attempted fallback records.
+When substitution succeeds, post the reduced-coverage warning before dispatch,
+then review with the Reachable fallback and record it in the Step 7a summary.
+Default selection also produces an indexed `codex` record and is subject to the
+same availability checks; it does not approve a review by itself.
+
+Availability is not an authentication or subscription guarantee: a successful
+`--version` probe establishes runtime presence only. Once any review has been
+dispatched, a provider access error, non-zero exit, timeout, permission denial,
+or missing verdict remains a review failure. Do not reclassify it as unavailable,
+retry another provider, or reuse an earlier verdict. In particular, a subscription
+error returned by Claude after dispatch does not activate this fallback.
 
 #### Warning comment format (one or more unreachable, `warn` policy)
 
@@ -1940,7 +2001,7 @@ unpropagated override from the artifact worktree before treating it as final.
 
 **Case C — blocking configuration input or resolver failure:** report
 `BLOCK_CAUSE` (`policy-unreadable`, `policy-unsupported`, `list-malformed`,
-`no-driving-runner`, or `config-resolution-inconclusive`), `POLICY_STATE`,
+`fallback-malformed`, or `config-resolution-inconclusive`), `POLICY_STATE`,
 `POLICY_SOURCE`, the exact `POLICY_INPUT` for an unsupported value, and
 `UNREADABLE_FILE` / `UNREADABLE_DETAIL` for unreadable input. For a malformed
 list, name `CONFIG_LIST_SOURCE` and its malformed state. Explain the corrective
@@ -2126,7 +2187,7 @@ installed CLI from the artifact root: `claude -p --output-format text`,
 `cursor-agent --print --output-format text`, `codex exec --sandbox read-only`,
 or `DSH_PERMISSION_MODE=read-only dsh --profile headless`.
 The prompt names the stage protocol, `REVIEW.md`, spec/brief and plan paths,
-reviewed base/head, and active pass. Request a read-only review and exactly one
+reviewed base/head, and active pass. Include the `STAGE_ROLE_TOOL_OR_PATH_DENIED:` report contract and instruct the reviewer to report an explicit access denial before returning an ordinary verdict. The receiver checks the report and established access evidence before applying any ordinary verdict; a confirmed denial stops under the stage-role decision contract and never enters the fixer loop solely as `NEEDS REVISION`. A generic `NEEDS REVISION` without evidence of denial retains the normal review path. Request a read-only review and exactly one
 `VERDICT: APPROVED` or `VERDICT: NEEDS REVISION`. The parent applies deterministic
 fixes, commits and pushes them, and re-runs the required reviewers after the push.
 Preserve existing CLI permission controls; never add permission-bypass flags or
@@ -2150,7 +2211,7 @@ Before running any reviewers, classify the PR branch to determine which executio
 
 ### Multi-reviewer execution rules
 
-Run the selected Reachable internal reviewers **sequentially** in configured order (or the own-stage fallback exactly once per pass). Each reviewer runs against `REVIEW.md`. Native reviewers may apply deterministic fixes and commit + push through their stage protocol. Cross-runner CLI reviewers remain read-only; the parent owns their fixes, commits, pushes, and required review reruns.
+Run the selected Reachable internal reviewers **sequentially** in configured order (including an eligible explicit fallback, exactly once per pass). Each reviewer runs against `REVIEW.md`. Native reviewers may apply deterministic fixes and commit + push through their stage protocol. Cross-runner CLI reviewers remain read-only; the parent owns their fixes, commits, pushes, and required review reruns.
 
 Initialize `internal_review_cycle = 0` at the start of Step 7a. Increment each time the full Pass 1 → Pass 2 cycle is restarted (for implementation PRs) or the full reviewer list is restarted (for non-implementation PRs). Escalate to human when `internal_review_cycle` reaches `max_internal_review_cycles` (default: 5).
 
@@ -2197,7 +2258,7 @@ A Step 7a summary comment **must always be posted to the PR** when the gate exit
 
 Include a per-reviewer verdict for every configured reviewer, with its display
 label and its reason and remedy when unreachable, plus the gate outcome.
-Override-excluded entries appear in the summary and never in the warning. Render names, reasons, remedies, and details from indexed `REVIEWER_N_*` fields, with display labels Reachable, Unreachable, or Excluded by override. Record `FALLBACK_APPLIED` and the own-stage dispatch when fallback applies; do not report success with no reviewer dispatched.
+Override-excluded entries appear in the summary and never in the warning. Render names, reasons, remedies, and details from indexed `REVIEWER_N_*` fields, with display labels Reachable, Unreachable, or Excluded by override. Record `FALLBACK_APPLIED`, `FALLBACK_REASON`, and the indexed reviewer actually dispatched; do not report success with no reviewer dispatched.
 
 Required fields:
 
@@ -2484,11 +2545,11 @@ separate; this preflight governs the normal post-approval transition.
 | Draft-loop evidence | Ready-phase telemetry | Decision |
 | --- | --- | --- |
 | Loop exits nonzero | Any | Print its reason, stop without conversion |
-| Missing/malformed/duplicate required telemetry or changed head | Any | Stop without conversion |
+| Missing/malformed/conflicting required telemetry, duplicate non-RESULT keys, or changed head | Any | Stop without conversion |
 | Current-head `clean`, draft-only invocation | `1` | Full loop owns conversion |
 | Current-head `clean`, draft-only invocation | `0` | Convert only if draft, then full loop |
 | `skipped/not_configured`, zero draft platforms, unchanged head | `0` or `1` | Follow conversion ownership above |
-| `skipped/release_pr`, matching PR/branch, `release/*` or `hotfix/*`, unchanged head | Intentionally absent | Preserve the existing release skip; guarded manual conversion, then full-loop skip |
+| `skipped/release_pr`, matching PR/branch, `release/*`, unchanged head | Intentionally absent | Preserve the existing release skip; guarded manual conversion, then full-loop skip |
 | Other skipped/failed/missing verdict | Any | Stop without conversion |
 
 <!-- protocol-91-ready-transition:start -->
@@ -2509,10 +2570,16 @@ printf '%s\n' "$DRAFT_GATE_OUTPUT"
 if [ "$DRAFT_GATE_RC" -ne 0 ]; then
   exit "$DRAFT_GATE_RC"
 fi
+# Accept identical RESULT repetitions from older emitters; every other key
+# remains single-valued. Malformed and conflicting values fail closed.
 ready_gate_value() {
   printf '%s\n' "$DRAFT_GATE_OUTPUT" | awk -F= -v key="$1" '
-    $1 == key { n++; if (NF == 2) value=$2; else bad=1 }
-    END { if (n == 1 && !bad) print value }
+    $1 == key {
+      if (NF != 2 || (n > 0 && value != $2)) bad=1
+      value=$2
+      n++
+    }
+    END { if (n > 0 && !bad && (key == "RESULT" || n == 1)) print value }
   '
 }
 DRAFT_RESULT=$(ready_gate_value RESULT)
@@ -2528,7 +2595,7 @@ if [ "$LIVE_HEAD" != "$DRAFT_HEAD" ]; then
 fi
 if [ "$DRAFT_RESULT" = skipped ] && [ "$DRAFT_REASON" = release_pr ]; then
   case "$BRANCH" in
-    release/*|hotfix/*) : ;;
+    release/*) : ;;
     *) echo "ERROR: release skip does not apply to this branch." >&2; exit 1 ;;
   esac
   if [ "$(ready_gate_value PR_NUMBER)" != "$PR_NUMBER" ] || [ "$(ready_gate_value BRANCH)" != "$BRANCH" ]; then

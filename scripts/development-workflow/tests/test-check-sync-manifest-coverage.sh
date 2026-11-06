@@ -346,6 +346,164 @@ status="$(run_checker "$out" --repo-root "$FIX" --manifest "$NESTED_MANIFEST")"
 run_test "nested_list_entry_exit_2" "2" "$status"
 run_test "nested_list_entry_error" "yes" "$(has_line "$out" "configuration: validation error")"
 
+# The opt-in field remains identifiable in sanitized diagnostic metadata.
+python3 - "$REPO_ROOT/scripts/development-workflow/workflow-config-resolver.py" <<'PYCODE'
+import runpy
+import sys
+api = runpy.run_path(sys.argv[1])
+assert api['safe_config_key']('required_additions[0].yaml_list_path') == 'required_additions[].yaml_list_path'
+assert api['safe_config_key']('required_additions[0].private-sentinel') == 'unknown'
+PYCODE
+run_test "structured_selector_diagnostic_key" "yes" "yes"
+
+# A legacy read failure remains a diagnostic gap even if the later structured
+# read of the same file succeeds. Inject one transient read error, then recover.
+python3 - "$CHECKER" "$TMP_ROOT" <<'PYCODE'
+from pathlib import Path
+from unittest.mock import patch
+import runpy
+import sys
+api = runpy.run_path(sys.argv[1])
+consumer = Path(sys.argv[2]) / 'transient-consumer'
+consumer.mkdir()
+config = consumer / '.ai-dev-workflow.yaml'
+config.write_text('guardrails:\n  stop_conditions: [stage_role_tool_or_path_denied]\n')
+original = Path.read_text
+attempt = 0
+def transient(path, *args, **kwargs):
+    global attempt
+    if path == config:
+        attempt += 1
+        if attempt == 1:
+            raise OSError('private-sentinel')
+    return original(path, *args, **kwargs)
+entries = [
+    {'path': config.name, 'must_contain': 'legacy'},
+    {'path': config.name, 'must_contain': 'stage_role_tool_or_path_denied',
+     'yaml_list_path': 'guardrails.stop_conditions'},
+]
+with patch.object(Path, 'read_text', transient):
+    lines, missing, errors = api['check_required_additions'](entries, consumer)
+assert errors == 1 and missing == 0
+assert any('REQUIRED_ADDITION_ERROR' in line for line in lines)
+assert any('REQUIRED_ADDITION_PRESENT' in line for line in lines)
+assert 'private-sentinel' not in repr(lines)
+PYCODE
+run_test "structured_transient_legacy_read_error" "yes" "yes"
+
+# Structured selector checks only the declared list, with fail-closed diagnostics.
+LIST_MANIFEST="$TMP_ROOT/list-manifest.yaml"
+python3 - "$FIX/sync-manifest.yaml" "$LIST_MANIFEST" <<'PYCODE'
+from pathlib import Path
+import sys
+s = Path(sys.argv[1]).read_text()
+entry = "  - path: .ai-dev-workflow.yaml\n    yaml_list_path: guardrails.stop_conditions\n    must_contain: stage_role_tool_or_path_denied\n    introduced_in: test\n"
+Path(sys.argv[2]).write_text(s.replace("sync_coverage_exemptions:\n", entry + "\nsync_coverage_exemptions:\n"))
+PYCODE
+mkdir -p "$CONSUMER"
+for case_name in comment sibling nested_mapping unsupported_flow lookalike empty block flow absent_list empty_file whitespace invalid duplicate wrong_type; do
+  case "$case_name" in
+    comment) printf 'guardrails:\n  stop_conditions: [push_verification_failed]\n# stage_role_tool_or_path_denied\n' >"$CONSUMER/.ai-dev-workflow.yaml"; expected=1; marker_line=REQUIRED_ADDITION_MISSING ;;
+    sibling) printf 'guardrails:\n  note: stage_role_tool_or_path_denied\n  stop_conditions: [push_verification_failed]\n' >"$CONSUMER/.ai-dev-workflow.yaml"; expected=1; marker_line=REQUIRED_ADDITION_MISSING ;;
+    nested_mapping) printf 'guardrails:\n  stop_conditions:\n    - name: stage_role_tool_or_path_denied\n' >"$CONSUMER/.ai-dev-workflow.yaml"; expected=2; marker_line=REQUIRED_ADDITION_ERROR ;;
+    unsupported_flow) printf 'guardrails:\n  stop_conditions: [push_verification_failed, [stage_role_tool_or_path_denied]]\n' >"$CONSUMER/.ai-dev-workflow.yaml"; expected=2; marker_line=REQUIRED_ADDITION_ERROR ;;
+    lookalike) printf 'guardrails:\n  stop_conditions: [push_verification_failed, stage_role_tool_or_path_denied_extra]\n' >"$CONSUMER/.ai-dev-workflow.yaml"; expected=1; marker_line=REQUIRED_ADDITION_MISSING ;;
+    empty) printf 'guardrails:\n  stop_conditions: []\n' >"$CONSUMER/.ai-dev-workflow.yaml"; expected=1; marker_line=REQUIRED_ADDITION_MISSING ;;
+    block) printf 'guardrails:\n  stop_conditions:\n    - push_verification_failed\n    - "stage_role_tool_or_path_denied"\n' >"$CONSUMER/.ai-dev-workflow.yaml"; expected=0; marker_line=REQUIRED_ADDITION_PRESENT ;;
+    flow) printf 'guardrails:\n  stop_conditions: [push_verification_failed, stage_role_tool_or_path_denied]\n' >"$CONSUMER/.ai-dev-workflow.yaml"; expected=0; marker_line=REQUIRED_ADDITION_PRESENT ;;
+    absent_list) printf 'guardrails:\n  mode: advisory\n' >"$CONSUMER/.ai-dev-workflow.yaml"; expected=0; marker_line=REQUIRED_ADDITION_NOT_APPLICABLE ;;
+    empty_file) : >"$CONSUMER/.ai-dev-workflow.yaml"; expected=0; marker_line=REQUIRED_ADDITION_NOT_APPLICABLE ;;
+    whitespace) printf '   \n  \n' >"$CONSUMER/.ai-dev-workflow.yaml"; expected=0; marker_line=REQUIRED_ADDITION_NOT_APPLICABLE ;;
+    invalid) printf 'guardrails:\n  stop_conditions: [bad\nsecret: private-sentinel\n' >"$CONSUMER/.ai-dev-workflow.yaml"; expected=2; marker_line=REQUIRED_ADDITION_ERROR ;;
+    duplicate) printf 'guardrails:\n  stop_conditions: []\n  stop_conditions: []\n' >"$CONSUMER/.ai-dev-workflow.yaml"; expected=2; marker_line=REQUIRED_ADDITION_ERROR ;;
+    wrong_type) printf 'guardrails:\n  stop_conditions: wrong\n' >"$CONSUMER/.ai-dev-workflow.yaml"; expected=2; marker_line=REQUIRED_ADDITION_ERROR ;;
+  esac
+  out="$TMP_ROOT/list-$case_name.out"
+  status="$(run_checker "$out" --repo-root "$FIX" --manifest "$LIST_MANIFEST" --consumer-root "$CONSUMER")"
+  run_test "structured_${case_name}_status" "$expected" "$status"
+  run_test "structured_${case_name}_diagnostic" "yes" "$(has_line "$out" "$marker_line")"
+  if [ "$case_name" = invalid ]; then
+    run_test "structured_error_preserves_legacy_missing" "yes" "$(has_line "$out" 'REQUIRED_ADDITION_MISSING path=.ai-dev-workflow.yaml must_contain=push_verification_failed')"
+    run_test "structured_error_redacts_consumer" "no" "$(has_line "$out" 'private-sentinel')"
+  fi
+done
+# Planted proof: preserve the same comment-only fixture while adding the
+# exact list item, and exercise the actual checker before and after repair.
+printf 'guardrails:\n  stop_conditions:\n    - push_verification_failed\n# stage_role_tool_or_path_denied\n' >"$CONSUMER/.ai-dev-workflow.yaml"
+out="$TMP_ROOT/plant-list.out"
+status="$(run_checker "$out" --repo-root "$FIX" --manifest "$LIST_MANIFEST" --consumer-root "$CONSUMER")"
+run_test "structured_plant_missing_exit_1" "1" "$status"
+run_test "structured_plant_missing_line" "yes" "$(has_line "$out" 'REQUIRED_ADDITION_MISSING path=.ai-dev-workflow.yaml must_contain=stage_role_tool_or_path_denied')"
+python3 - "$CONSUMER/.ai-dev-workflow.yaml" <<'PYCODE'
+from pathlib import Path
+import sys
+p = Path(sys.argv[1])
+s = p.read_text()
+assert '    - push_verification_failed\n' in s
+p.write_text(s.replace('    - push_verification_failed\n', '    - push_verification_failed\n    - stage_role_tool_or_path_denied\n', 1))
+PYCODE
+out="$TMP_ROOT/repair-list.out"
+status="$(run_checker "$out" --repo-root "$FIX" --manifest "$LIST_MANIFEST" --consumer-root "$CONSUMER")"
+run_test "structured_repair_present_exit_0" "0" "$status"
+run_test "structured_repair_present_line" "yes" "$(has_line "$out" 'REQUIRED_ADDITION_PRESENT path=.ai-dev-workflow.yaml must_contain=stage_role_tool_or_path_denied')"
+# A parse gap must not hide independent uncovered and missing findings.
+COMBINED_MANIFEST="$TMP_ROOT/combined-list-manifest.yaml"
+python3 - "$LIST_MANIFEST" "$COMBINED_MANIFEST" <<'PYCODE'
+from pathlib import Path
+import sys
+s = Path(sys.argv[1]).read_text()
+needle = '    - path: .github/workflows/via-var.yml\n      mode_scope: shared\n'
+assert needle in s
+Path(sys.argv[2]).write_text(s.replace(needle, '', 1))
+PYCODE
+printf 'guardrails:\n  stop_conditions: [invalid\n' >"$CONSUMER/.ai-dev-workflow.yaml"
+out="$TMP_ROOT/list-combined.out"
+status="$(run_checker "$out" --repo-root "$FIX" --manifest "$COMBINED_MANIFEST" --consumer-root "$CONSUMER")"
+run_test "structured_combined_exit_2" "2" "$status"
+run_test "structured_combined_uncovered" "yes" "$(has_line "$out" 'UNCOVERED path=.github/workflows/via-var.yml')"
+run_test "structured_combined_missing" "yes" "$(has_line "$out" 'REQUIRED_ADDITION_MISSING path=.ai-dev-workflow.yaml must_contain=push_verification_failed')"
+run_test "structured_combined_error" "yes" "$(has_line "$out" 'REQUIRED_ADDITION_ERROR')"
+# The sync-template caller must carry the actual checker's exit-2 gap and
+# actionable findings into its handoff; this models the documented agent path.
+CALLER_SUMMARY="$TMP_ROOT/sync-caller-summary.out"
+python3 - "$out" "$status" "$CALLER_SUMMARY" "$REPO_ROOT" <<'PYCODE'
+from pathlib import Path
+import sys
+root = Path(sys.argv[4])
+required = 'report the gap and retain any `UNCOVERED` or `REQUIRED_ADDITION_MISSING` findings already printed'
+def verify_caller(text):
+    assert required in text
+for path in ('.claude/commands/sync-template.md', '.claude/skills/sync-template.md', '.cursor/commands/sync-template.md'):
+    instructions = (root / path).read_text()
+    verify_caller(instructions)
+    try:
+        verify_caller(instructions.replace(required, 'report only the diagnostic gap', 1))
+    except AssertionError:
+        pass
+    else:
+        raise AssertionError(f'planted caller regression not detected: {path}')
+lines = Path(sys.argv[1]).read_text().splitlines()
+summary = []
+if sys.argv[2] == '2':
+    summary.append('Synced-test coverage: diagnostic gap')
+summary.extend(line for line in lines if line.startswith(('UNCOVERED ', 'REQUIRED_ADDITION_MISSING ')))
+Path(sys.argv[3]).write_text('\n'.join(summary) + '\n')
+PYCODE
+run_test "structured_caller_reports_gap" "yes" "$(has_line "$CALLER_SUMMARY" 'Synced-test coverage: diagnostic gap')"
+run_test "structured_caller_retains_uncovered" "yes" "$(has_line "$CALLER_SUMMARY" 'UNCOVERED path=.github/workflows/via-var.yml')"
+run_test "structured_caller_retains_missing" "yes" "$(has_line "$CALLER_SUMMARY" 'REQUIRED_ADDITION_MISSING path=.ai-dev-workflow.yaml must_contain=push_verification_failed')"
+rm "$CONSUMER/.ai-dev-workflow.yaml"
+out="$TMP_ROOT/list-absent.out"
+status="$(run_checker "$out" --repo-root "$FIX" --manifest "$LIST_MANIFEST" --consumer-root "$CONSUMER")"
+run_test "structured_absent_status" "0" "$status"
+run_test "structured_absent_diagnostic" "yes" "$(has_line "$out" 'reason=file_absent')"
+ln -s "$TMP_ROOT/no-such-file" "$CONSUMER/.ai-dev-workflow.yaml"
+out="$TMP_ROOT/list-unreadable.out"
+status="$(run_checker "$out" --repo-root "$FIX" --manifest "$LIST_MANIFEST" --consumer-root "$CONSUMER")"
+run_test "structured_unreadable_exit_2" "2" "$status"
+run_test "structured_unreadable_diagnostic" "yes" "$(has_line "$out" 'REQUIRED_ADDITION_ERROR')"
+rm "$CONSUMER/.ai-dev-workflow.yaml"
+
 echo ""
 echo "Results: $PASS_COUNT passed, $FAIL_COUNT failed"
 [ "$FAIL_COUNT" -eq 0 ]

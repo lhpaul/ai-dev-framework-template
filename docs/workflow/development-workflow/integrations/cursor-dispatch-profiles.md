@@ -13,6 +13,19 @@ precedence).
 
 ---
 
+## Worker hub preflight
+
+For an operator-identified My Machines / Remote Control workflow-hub run, the
+operator invokes the worker preflight and supplies its current-run result; the
+bounded runner verifies it before any workflow write. Follow the
+[operator runbook](cursor-my-machines.md#preflight-before-starting-workflow-mutations)
+for the command, result requirements, failure handling, and trust limits. The
+preflight does not detect the execution target or replace the profile
+declaration. Read-only checkpoints and other execution targets retain their
+existing rules.
+
+---
+
 ## Why this document exists
 
 The framework's bounded commands assume that when a run needs a specialist
@@ -34,7 +47,7 @@ product inline.
 | --- | --- | --- |
 | `cursor-native-handoff` | Native handoff | The current context can hand orchestration to a separate role, and that role can hand stage work onward. Roles run in their own contexts, as designed. |
 | `cursor-parent-orchestrated` | Parent orchestrated | Onward handoff is unavailable, so the current context absorbs the full orchestration contract for the active layer and hands off stage work only. |
-| `cursor-inline-fallback` | Inline fallback | No handoff is available for the current mutating action — either because no handoff of any kind is available to the run at all, or because, under parent-orchestrated, the specific stage handoff the current action requires has become unavailable (the stage role cannot be reached — not merely that a reachable stage role refused that one action by a tool or permission denial; that case does not transition this profile. When the refusal is a missing credential, GitHub permission, or access token, it is instead handled by the `missing_required_secret_or_permission` named stop condition. When the refusal is a harness tool or local file-path permission denial reported by a stage role dispatched as a subagent, no existing mechanism recovers it; that gap is Out of Scope for this feature and tracked separately as issue #1746) even though the current context's own initial handoff remains available for other actions. The run is read-only: it reports what it can determine and stops before any mutating action. |
+| `cursor-inline-fallback` | Inline fallback | No handoff is available for the current mutating action — either because no handoff of any kind is available to the run at all, or because, under parent-orchestrated, the specific stage handoff the current action requires has become unavailable (the stage role cannot be reached — not merely that a reachable stage role refused that one action by a tool or permission denial; that case does not transition this profile. When the refusal is a missing credential, GitHub permission, or access token, it is instead handled by the `missing_required_secret_or_permission` named stop condition. When a reached stage role reports a harness tool or local file-path denial, stop the item as `stage_role_tool_or_path_denied` under Protocol 91 and retain the role) even though the current context's own initial handoff remains available for other actions. The run is read-only: it reports what it can determine and stops before any mutating action. |
 
 **Valid transitions** (the exact wording of the spec's Statuses / Enum Values
 section — this document does not add or remove a transition):
@@ -378,7 +391,7 @@ onward-handoff capability.
 | A run currently declared native handoff discovers, mid-run, that the orchestration role it handed off to can no longer be relied on for the two-hop native path (it becomes unreachable outright, or remains reachable but loses its own onward-handoff capability), and initial handoff to one further role remains confirmed available at the point of discovery | Parent orchestrated (re-declared) | Re-declare as parent-orchestrated, absorb the orchestration role per Use Case 3, hand off stage work only from that point forward; mutations already completed before the failure are preserved as they stand and are not undone or retroactively re-verified as a whole | Continuing to depend on the role for the two-hop native path it can no longer support; performing the orchestration role's work inline instead of re-declaring and absorbing it under the parent-orchestrated contract |
 | A run currently declared native handoff discovers, mid-run, that the orchestration role it handed off to can no longer be relied on for the two-hop native path (it becomes unreachable outright, or remains reachable but loses its own onward-handoff capability), and the invoking context's own initial handoff capability is also lost or cannot be confirmed at the point of discovery | Inline fallback (re-declared) | Re-declare as inline-fallback with the reason, then stop the next mutating action with the `dispatch_handoff_unavailable` named stop condition (see § Named stop reporting below), the affected work item, and the conditions for proceeding; mutations already completed before the failure are preserved as they stand and are not undone or retroactively re-verified as a whole | Assuming parent-orchestrated is still reachable and absorbing the role; performing the next mutating action inline instead of stopping |
 | A run currently declared parent-orchestrated discovers, mid-run, that stage handoff for a specific action is no longer available | Inline fallback (re-declared) | Re-declare as inline-fallback with the reason, then stop that action with the `dispatch_handoff_unavailable` named stop condition (see § Named stop reporting below), the affected work item, and the conditions for proceeding; mutations already completed under parent-orchestrated before this point are preserved as they stand and are not undone or retroactively re-verified as a whole | Performing the affected stage's work inline instead of re-declaring; continuing to declare parent-orchestrated once stage handoff has proven unavailable for that action |
-| A run currently declared parent-orchestrated delegates a specific action to the stage role that owns it, and that stage role is reachable and receives the delegation but reports that this specific action was refused because a credential, GitHub permission, or access token it needs is absent — not an inability to reach the role at all, and not a harness tool or local file-path permission denial (Out of Scope; see issue #1746) | Parent orchestrated (unchanged — no re-declaration) | Stop that specific action with the `missing_required_secret_or_permission` named stop condition (see § Named stop reporting below), naming the denied target and the credential or permission the stage role's report identified as needed; remain declared parent-orchestrated, because the stage role's onward-handoff capability for other actions is unaffected | Performing the denied action inline instead of stopping it; retrying the same denied action unchanged; treating this as stage-handoff unavailability and re-declaring inline-fallback |
+| A run currently declared parent-orchestrated delegates a specific action to the stage role that owns it, and that stage role is reachable and receives the delegation but reports that this specific action was refused because a credential, GitHub permission, or access token it needs is absent — not an inability to reach the role at all, and not a harness tool or local file-path permission denial (covered separately by `stage_role_tool_or_path_denied`) | Parent orchestrated (unchanged — no re-declaration) | Stop that specific action with the `missing_required_secret_or_permission` named stop condition (see § Named stop reporting below), naming the denied target and the credential or permission the stage role's report identified as needed; remain declared parent-orchestrated, because the stage role's onward-handoff capability for other actions is unaffected | Performing the denied action inline instead of stopping it; retrying the same denied action unchanged; treating this as stage-handoff unavailability and re-declaring inline-fallback |
 | No handoff of any kind available, or initial orchestration-handoff availability itself cannot be confirmed as available or unavailable, and the command is read-only | Inline fallback | Declare the profile and the observing posture for the orchestration role, complete the read-only work in the current context, report; when initial handoff availability is unconfirmed rather than confirmed unavailable, record that it is unconfirmed | Escalating the scan into execution; declaring parent-orchestrated or native handoff on unconfirmed initial handoff |
 | No handoff of any kind available, or initial orchestration-handoff availability itself cannot be confirmed as available or unavailable, and the command would mutate | Inline fallback | Declare the profile and the observing posture for the orchestration role, report what was determined, stop with the `dispatch_handoff_unavailable` named stop condition (see § Named stop reporting below), the affected work item, and the conditions for proceeding; when initial handoff availability is unconfirmed rather than confirmed unavailable, record that it is unconfirmed | Performing the mutation inline; declaring parent-orchestrated or native handoff on unconfirmed initial handoff |
 | Declaration missing at the first mutating action | None in force | Stop before mutating with the `dispatch_profile_declaration_missing` named stop condition (see § Named stop reporting below), the affected work item, and the missing declaration | Assuming a profile and continuing |
@@ -456,27 +469,7 @@ distinct outcomes depending on a fact about that delegation:
    parent-orchestrated — with the `missing_required_secret_or_permission`
    named stop condition, naming the denied target and the credential or
    permission the stage role's report identified as needed.
-3. **Stage role reachable but reports a harness tool (`Edit`, `Write`, or
-   `Bash`) or local file-path permission denial**, dispatched as a subagent
-   under Protocol 90/91's batch dispatch mechanism — a failure observably
-   similar to, but not covered by, the `SUBAGENT_PERMISSION_DENIAL` contract
-   `91-orchestrate-work-protocol.md` defines, which governs solely a Work
-   Item Runner subagent reporting that denial to the Portfolio Orchestrator
-   and does not define a corresponding contract for a stage role dispatched
-   by an item-orchestrator. `missing_required_secret_or_permission` does not
-   apply because no credential, GitHub permission, or access token is
-   missing; `dispatch_handoff_unavailable` does not apply because the stage
-   role was reached. This is not a named stop condition at all. Protocol 90
-   Step 4.1's existing inline-fallback path recovers a denied **Work Item
-   Runner** at the Portfolio Orchestrator level; it does not cover a denied
-   **stage role** dispatched by an item-orchestrator, and routing this case
-   there would itself be the inline product work this section prohibits. No
-   mechanism in the framework today recovers a denied stage role at this
-   level, and this document does not invent one. **This sub-case is Out of
-   Scope for this feature** and is tracked separately as **issue #1746**; the
-   prohibition on performing product work inline for the absorbing context
-   applies to it unqualified, exactly as it applies to every other situation
-   this section covers.
+3. **Stage role reachable but reports a harness tool or local-path denial** — stop the item as `stage_role_tool_or_path_denied` under Protocol 91. Preserve the owning stage role, reconcile uncertain effects, and resume only after operator-confirmed access correction. A changed context requires a fresh run and profile declaration. Do not use the Work Item Runner fallback or perform the action inline.
 
 ### § Named stop reporting
 
@@ -561,17 +554,9 @@ explicit-list preamble, and in the merged spec's Named Stop-Condition
 Mapping table (each carrying the identical
 `explicit_list_invocation_targets=<t1>,<t2>,...` format string).
 
-### § No-named-stop denial treatment
+### Stage-role denial treatment
 
-A reachable stage role's harness tool or local file-path permission denial on
-a specific delegated action **is not a named stop condition at
-all** — `missing_required_secret_or_permission` does not apply to it. This
-failure is only **observably similar** to the `SUBAGENT_PERMISSION_DENIAL`
-contract `91-orchestrate-work-protocol.md` defines, which governs solely a
-Work Item Runner subagent reporting that denial to the Portfolio
-Orchestrator; no corresponding contract exists today for a stage role
-dispatched by an item-orchestrator. It is declared **Out of Scope** and
-tracked separately as **#1746**.
+A reached stage role's explicit harness tool or local-path denial stops the item as `stage_role_tool_or_path_denied`. Protocol 91 owns the report and same-role recovery; the Portfolio–Work Item Runner `SUBAGENT_PERMISSION_DENIAL` fallback is a separate boundary and never authorizes inline stage work. Credential and unreachable-role stops remain distinct, and independently established stops all apply.
 
 ---
 
@@ -670,10 +655,4 @@ merely lacks native Work Item Runner handoff.
 - **#1745** — the batch-context marker's absence does not stop a receiving
   stage role today (see § Stage-handoff metadata → Batch-context marker
   honesty).
-- **#1746** — no mechanism today recovers a denied stage role at the
-  individual-action level under `cursor-parent-orchestrated` when the denial
-  is a harness tool or local file-path permission denial (see § Delegation
-  failures, outcome 3, and § No-named-stop denial treatment).
-
-Neither gap is solved by this document; both are referenced so an operator
-does not mistake the absence of a mechanism for an oversight.
+Stage-role tool/path denial recovery is defined in Protocol 91; #1745 remains a separate gap.

@@ -44,7 +44,7 @@ If you prefer different names (`small/medium/large`, `fast/standard/pro`, etc.),
 Use the tier names as stable policy and map them to whatever your current runner and provider support.
 
 - In Claude Code, map the tier to the model family or explicit model ID configured in `.claude/agents/*.md`.
-- In Cursor, set `.cursor/agents/*.md` to `auto` for ordinary coordination and QA agents, and pin an explicit high-reasoning model for agents that author or deeply review specs, plans, and code. Those `model:` fields are the source of truth for Cursor runs (see "Cursor model source of truth" below).
+- In Cursor, set `.cursor/agents/*.md` to `auto` for ordinary QA agents, pin `composer-2.5` for coordination loops and for code implementation and review, and pin a high-reasoning model for agents that author or review specs and plans. Those `model:` fields are the source of truth for Cursor runs (see "Cursor model source of truth" below).
 - In Codex, keep skills tier-based (`economy`, `balanced`, `premium`) and explicitly select a supported task model/effort or dispatch a configured native role. Skill prose does not enforce a model. See [Codex model routing](integrations/codex-model-routing.md).
 - In DSH, optional `models.dsh.tiers` and `models.dsh.roles` map this canonical catalogue to child routes. Before each fresh dispatch, the parent resolves the role, passes provider/model and configured reasoning_effort when the frozen session allowlist permits them, and records SOURCE/file/tier plus actual dispatch. Disabled selection or an exact-pair denial produces a visible inherited fallback. No policy inherits the session; the headless default remains separately pinned by its profile/overlay. DSH has no in-repo per-role agent files. See [`integrations/dsh.md`](integrations/dsh.md#project-role-and-tier-routing).
 
@@ -121,16 +121,18 @@ Switching the Composer model affects only agents whose resolved `model:` is
 These are the values this template ships in `.cursor/agents/*.md`. Read the
 local files for the values in force; see "Cursor model source of truth" above.
 
-Set models in `.cursor/agents/*.md` so subagents do not inherit the parent Composer model during long orchestration or review-fix loops. The template default is `fast` for economy coordination agents, `auto` for lower-risk balanced agents, and `cursor-grok-4.5-high` for complex authoring and review work. If Cursor's model picker exposes Grok 4.5 under a different local ID, update the pinned value but preserve the same split. See the Cursor model field value guide below for when `inherit` is acceptable.
+Set models in `.cursor/agents/*.md` so subagents do not inherit the parent Composer model during long orchestration or review-fix loops. The template default is `composer-2.5` for economy coordination agents and for code implementation and review, `auto` for lower-risk balanced agents, and `claude-opus-5-5-high` for authoring and reviewing specs and plans. `composer-2.5` is Composer 2.5 with Fast mode off, the cheapest Cursor model; Opus 5.5 is the premium choice and has low cache-read pricing for long definition sessions. If Cursor exposes these models under different IDs (check with `cursor-agent models`), update the pinned value but preserve the same split. See the Cursor model field value guide below for when `inherit` is acceptable.
 
-The `fast` economy assignments below are intentional for high-volume orchestration loops where predictable cost and latency matter more than deep reasoning. The remaining `auto` assignments are for lower-risk balanced agents that primarily verify or run checklist-style workflows; Cursor may route those runs to different concrete models over time, so their cost and latency can vary by workspace settings. Balanced agents that author production code or perform deep review stay pinned to Grok 4.5 High to keep complex reasoning capacity predictable.
+The `composer-2.5` economy assignments below are intentional for high-volume orchestration loops where predictable cost and latency matter more than deep reasoning. The remaining `auto` assignments are for lower-risk balanced agents that primarily verify or run checklist-style workflows; Cursor may route those runs to different concrete models over time, so their cost and latency can vary by workspace settings. `developer` and `code-reviewer` also use `composer-2.5` because their sessions are long and dominated by cache reads; move a single run to a stronger pinned model (see "Overriding the Model for a Task") when a task needs it. Spec and plan authors and reviewers stay pinned to Opus 5.5 to keep definition quality predictable.
 
 Cursor Task/subagent runs consume quota for the model selected by the subagent's
 `model` field. Setting the Composer to a cheaper or more expensive model does
-not automatically change a pinned subagent. Treat `fast`, `auto`, pinned IDs,
+not automatically change a pinned subagent. Treat `auto`, pinned IDs,
 and `inherit` as quota controls:
 
-- `fast` is the predictable low-cost path for high-volume coordination.
+- `composer-2.5` is the predictable low-cost path for high-volume coordination.
+  Avoid `-fast` variants in long loops: Composer 2.5 Fast costs about 6x more
+  per token.
 - `auto` lets Cursor choose the backing model, so quality, latency, and quota
   usage can change with workspace settings.
 - A pinned model gives predictable capability and predictable quota class, but
@@ -140,20 +142,20 @@ and `inherit` as quota controls:
 
 | Agent | Tier | Cursor `model` (template default) |
 | ----- | ---- | ----------------------------------- |
-| `orchestrator` | `economy` | `fast` |
-| `automated-reviewer-loop` | `economy` | `fast` |
+| `orchestrator` | `economy` | `composer-2.5` |
+| `automated-reviewer-loop` | `economy` | `composer-2.5` |
 | `item-orchestrator` | `balanced` | `auto` |
-| `developer` | `balanced` | `cursor-grok-4.5-high` |
-| `code-reviewer` | `balanced` | `cursor-grok-4.5-high` |
-| `spec-reviewer` | `balanced` | `cursor-grok-4.5-high` |
-| `implementation-plan-reviewer` | `balanced` | `cursor-grok-4.5-high` |
+| `developer` | `balanced` | `composer-2.5` |
+| `code-reviewer` | `balanced` | `composer-2.5` |
+| `spec-reviewer` | `balanced` | `claude-opus-5-5-high` |
+| `implementation-plan-reviewer` | `balanced` | `claude-opus-5-5-high` |
 | `smoke-tester` | `balanced` | `auto` |
 | `retrospective` | `balanced` | `auto` |
 | `project-setup` | `balanced` | `auto` |
 | `design-reviewer` | `balanced` | `auto` |
 | `post-merge-qa` | `balanced` | `auto` |
-| `product-manager` | `premium` | `cursor-grok-4.5-high` |
-| `tech-lead` | `premium` | `cursor-grok-4.5-high` |
+| `product-manager` | `premium` | `claude-opus-5-5-high` |
+| `tech-lead` | `premium` | `claude-opus-5-5-high` |
 
 Update pinned IDs and tier mappings when your provider deprecates a model; keep the tier intent stable.
 
@@ -193,15 +195,15 @@ layer: the next run declares afresh.
 
 **Model assignment per environment x layer** (evidence marker in the last
 column; the tiers come from the Agent Assignments table above — Portfolio
-Orchestrator `economy`/`fast`, Work Item Runner `balanced`/`auto`; the epic
+Orchestrator `economy`/`composer-2.5`, Work Item Runner `balanced`/`auto`; the epic
 layer has no dedicated agent file, so it takes the Work Item Runner tier
 (`balanced`) as its floor; stage roles always keep their own configured
 models under every profile):
 
 | Environment | Portfolio layer model | Epic layer model | Item layer model | Evidence marker |
 | --- | --- | --- | --- | --- |
-| Cursor Desktop | Portfolio Orchestrator agent's own model: `economy` / `fast` | Epic-layer role's model: `balanced` / `auto` | Work Item Runner agent's own model: `balanced` / `auto` | explicit assumption (the framework documents that a Cursor subagent's frontmatter `model` applies on native handoff, but no model observation is recorded) |
-| Cursor Remote Control | The floor is the highest tier among the layers the run absorbs: a `/run-work` scan absorbs nothing (observing), so the `economy` floor applies (`fast` where selectable); `/run-items` absorbs the portfolio **and** item layers, so the `balanced` floor applies (`auto` where selectable) | Absorbing current context must run at `balanced` or higher, `auto` where selectable | Absorbing current context must run at `balanced` or higher, `auto` where selectable | explicit assumption at every layer (the remote session's model is not switched by role frontmatter, and no model observation is recorded) |
+| Cursor Desktop | Portfolio Orchestrator agent's own model: `economy` / `composer-2.5` | Epic-layer role's model: `balanced` / `auto` | Work Item Runner agent's own model: `balanced` / `auto` | explicit assumption (the framework documents that a Cursor subagent's frontmatter `model` applies on native handoff, but no model observation is recorded) |
+| Cursor Remote Control | The floor is the highest tier among the layers the run absorbs: a `/run-work` scan absorbs nothing (observing), so the `economy` floor applies (`composer-2.5` where selectable); `/run-items` absorbs the portfolio **and** item layers, so the `balanced` floor applies (`auto` where selectable) | Absorbing current context must run at `balanced` or higher, `auto` where selectable | Absorbing current context must run at `balanced` or higher, `auto` where selectable | explicit assumption at every layer (the remote session's model is not switched by role frontmatter, and no model observation is recorded) |
 | Cursor Cloud Agents | No role absorbed (inline fallback, read-only): the session's own model reports findings; no role floor applies | Same as Cloud portfolio | Same as Cloud portfolio | explicit assumption (profile and model). When an operator later confirms initial handoff, the next run uses the Remote Control or Desktop row the confirmed facts assign, including its model floor |
 
 Under `cursor-parent-orchestrated`, the absorbing context never uses `inherit`
@@ -268,7 +270,7 @@ Use this decision path before overriding Cursor models:
    temporarily move only that role to the next higher tier or a pinned
    high-reasoning model.
 3. If quota or latency is the blocker and the task is mechanical, temporarily
-   move only that role to `fast` or `auto`.
+   move only that role to `composer-2.5` or `auto`.
 4. If you need the subagent to follow the current Composer model for one run,
    use `inherit` deliberately and record why; do not leave long-running
    orchestrators, item runners, reviewer loops, or fix-loop agents on `inherit`.
@@ -279,15 +281,15 @@ Use this decision path before overriding Cursor models:
 Edit the model configuration for the agent:
 
 - **Claude Code**: Edit the `model` field in `.claude/agents/*.md`
-- **Cursor**: Edit the `model` field in `.cursor/agents/*.md` (values: `auto`, `fast`, `inherit`, or a specific model ID)
+- **Cursor**: Edit the `model` field in `.cursor/agents/*.md` (values: `auto`, `inherit`, or a specific model ID)
 
 This affects all future invocations until changed back.
 
 **Cursor model field values:**
 
-- `fast`: Uses Cursor's fast model (template default for economy coordination agents where predictable cost and latency matter most)
+- `composer-2.5`: Composer 2.5 with Fast mode off (template default for economy coordination agents and for code implementation and review). The old `fast` value no longer appears in Cursor's model catalog
 - `auto`: Lets Cursor route to an appropriate model (template default for lower-risk balanced QA, setup, and retrospective agents)
-- Pinned model ID: Uses that exact model (template default for complex authoring and review agents, e.g. `cursor-grok-4.5-high`)
+- Pinned model ID: Uses that exact model (template default for spec and plan authoring and review agents, e.g. `claude-opus-5-5-high`)
 - `inherit`: Uses the current Composer model — **discouraged** for orchestrators, item runners, fixer agents, and reviewer-loop agents because it leaks parent-session cost into long runs; reserve for intentional one-off overrides
 
 **Precedence**: When multiple agent locations exist (`.cursor/agents/`, `.claude/agents/`, `.codex/agents/`), Cursor uses `.cursor/agents/` first, then `.claude/agents/`, then `.codex/agents/`.

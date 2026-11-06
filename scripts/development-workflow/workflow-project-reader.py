@@ -259,7 +259,14 @@ def fallback(client, number, project_id, repo, preferred='', cache_dir=None, cac
         try:
             with os.fdopen(fd, 'w') as stream:
                 json.dump(result, stream)
+                stream.flush()
+                os.fsync(stream.fileno())
             os.replace(tmp, cache_file)
+            parent_fd = os.open(cache_file.parent, os.O_RDONLY | os.O_DIRECTORY)
+            try:
+                os.fsync(parent_fd)
+            finally:
+                os.close(parent_fd)
         finally:
             if os.path.exists(tmp):
                 os.unlink(tmp)

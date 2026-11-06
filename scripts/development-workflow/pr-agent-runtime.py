@@ -414,6 +414,109 @@ def plain_text(source):
     return " ".join(unescape(re.sub(r"<[^>]*>", " ", source)).split())
 
 
+FINDING_MARKER = "data-pr-agent-finding"
+FINDING_FIELDS = {FINDING_MARKER, "data-category", "data-severity"}
+FINDING_LEVELS = {"advisory": {"low", "medium"}, "blocking": {"high", "critical"}}
+
+
+def finding_prompt_schema(template):
+    """Extend the pinned producer schema, never classify a free-text title."""
+    anchor = "class KeyIssuesComponentLink(BaseModel):\n"
+    fields = (
+        '    category: Literal["advisory", "blocking"] = Field(description="Explicit finding category: '
+        'blocking for an actionable defect requiring a fix before merge, advisory otherwise. Never encode this in issue_header.")\n'
+        '    severity: Literal["low", "medium", "high", "critical"] = Field(description="Explicit finding severity: '
+        'low or medium for advisory; high or critical for blocking. Use exactly these English literals.")\n'
+    )
+    if template.count(anchor + fields) == 1:
+        return template
+    if template.count(anchor) != 1:
+        raise RuntimeError("incompatible PR-Agent finding schema")
+    return template.replace(anchor, anchor + fields).replace(
+        "      issue_header: |", "      category: advisory\n      severity: low\n      issue_header: |")
+
+
+def focus_title_nodes(source):
+    """Find the producer focus cell and its visible emphasized fields."""
+    parsed = ReviewSpans(source)
+    headings = [n for n in parsed.nodes if n.tag == "strong"
+                and plain_text(source[n.open_end:n.close_start]) in
+                {"Recommended focus areas for review", "Key issues to review"}]
+    if len(headings) != 1 or headings[0].parent is None or headings[0].parent.tag != "td":
+        raise ValueError("unsupported finding cell")
+    heading = headings[0]
+    cell = heading.parent
+    return parsed, [n for n in parsed.nodes if n.tag == "strong"
+                    and heading.end <= n.start < cell.close_start]
+
+
+def annotate_finding_metadata(source, output_data):
+    """Bind explicit source fields to each rendered title; unknown stays unknown."""
+    if not isinstance(output_data, dict) or not isinstance(output_data.get("review"), dict):
+        return source
+    findings = output_data["review"].get("key_issues_to_review")
+    if not isinstance(findings, list) or not findings:
+        return source
+    try:
+        _, titles = focus_title_nodes(source)
+        if len(titles) != len(findings):
+            raise ValueError("finding count mismatch")
+        replacements = []
+        for node, finding in zip(titles, findings):
+            if not isinstance(finding, dict) or not isinstance(finding.get("issue_header"), str):
+                raise ValueError("invalid finding source")
+            title = finding["issue_header"].strip()
+            if title.lower() == "possible bug":
+                title = "Possible Issue"  # The pinned renderer normalizes this label.
+            if node.attrs or plain_text(source[node.open_end:node.close_start]) != title:
+                raise ValueError("finding title mismatch")
+            category, severity = finding.get("category"), finding.get("severity")
+            if (not isinstance(category, str) or not isinstance(severity, str)
+                    or severity not in FINDING_LEVELS.get(category, set())):
+                category = severity = "unknown"
+            opening = (f'<strong {FINDING_MARKER}="v1" data-category="{category}" '
+                       f'data-severity="{severity}">')
+            replacements.append((node.start, node.open_end, opening))
+        for start, end, opening in reversed(replacements):
+            source = source[:start] + opening + source[end:]
+        return source
+    except ValueError:
+        # A producer layout mismatch must not publish an unmarked clean finding.
+        return source + "\n\nVerification: required\nFinding metadata could not be bound.\n"
+
+
+def explicit_finding_labels(source):
+    """Validate the fixed per-title marker before returning category labels."""
+    if not re.search(r"data-(?:pr-agent-finding|category|severity)\b", source):
+        return None  # Existing closed-label reviews retain their separate grammar.
+    parsed, titles = focus_title_nodes(source)
+    tables = [n for n in parsed.nodes if n.tag == "table"]
+    markers = re.findall(r"^#### \(Review updated until commit https://[^\s()]+/commit/([0-9a-f]{40})\)$", source, re.M)
+    if len(tables) != 1 or len(markers) != 1 or not titles:
+        raise ValueError("unbound finding metadata")
+    for title in titles:
+        parent = title.parent
+        while parent is not None and parent.tag != "table":
+            parent = parent.parent
+        if parent is not tables[0]:
+            raise ValueError("finding outside review table")
+    marked = [n for n in parsed.nodes if any(k in FINDING_FIELDS for k, _ in n.attrs)]
+    if marked != titles:
+        raise ValueError("partial or misplaced finding metadata")
+    labels = []
+    for node in titles:
+        attrs = dict(node.attrs)
+        if len(attrs) != len(node.attrs) or set(attrs) != FINDING_FIELDS or attrs[FINDING_MARKER] != "v1":
+            raise ValueError("invalid finding metadata marker")
+        category, severity = attrs["data-category"], attrs["data-severity"]
+        if severity not in FINDING_LEVELS.get(category, set()):
+            raise ValueError("unknown or contradictory finding metadata")
+        if category == "blocking":
+            raise ValueError("explicit blocking finding requires escalation")
+        labels.append("Possible Issue")
+    return labels
+
+
 def remove_spans(source, spans):
     for start, end in sorted(spans, reverse=True):
         source = source[:start] + source[end:]
@@ -657,10 +760,32 @@ def install_hooks():
     if getattr(GithubProvider, "_workflow_immutable_review_hook", False):
         return
 
+    # The pinned model forbids extra fields. Extend the actual validation tree
+    # as well as the prompt, retaining all existing types and extra-field guards.
+    from pydantic import create_model
+    from typing import Literal
+    import pr_agent.algo.output_models as models
+    finding_model = create_model(
+        "WorkflowFinding", __base__=models.KeyIssuesComponentLink,
+        category=(Literal["advisory", "blocking"], ...),
+        severity=(Literal["low", "medium", "high", "critical"], ...),
+    )
+    review_model = create_model(
+        "WorkflowReview", __base__=models.Review,
+        key_issues_to_review=(list[finding_model], ...),
+    )
+    output_model = create_model(
+        "WorkflowPRReview", __base__=models.PRReview, review=(review_model, ...),
+    )
+    from pr_agent.config_loader import get_settings
+    settings = get_settings()
+    settings.set("pr_review_prompt.system", finding_prompt_schema(settings.pr_review_prompt.system))
+
     def source_renderer(output_data, gfm_supported=True, incremental_review=None,
                         git_provider=None, files=None):
         rendering_data = normalize_review_render_data(output_data) if gfm_supported else output_data
-        return renderer(rendering_data, gfm_supported, incremental_review, git_provider, files)
+        rendered = renderer(rendering_data, gfm_supported, incremental_review, git_provider, files)
+        return annotate_finding_metadata(rendered, output_data) if gfm_supported else rendered
 
     def deferred_composer(review_body, state, max_chars=None):
         return composer(review_body, state, max_chars=None)
@@ -699,6 +824,7 @@ def install_hooks():
 
     utils.convert_to_markdown_v2 = source_renderer
     reviewer.convert_to_markdown_v2 = source_renderer
+    reviewer.PRReview = output_model
     state_api.append_review_state = deferred_composer
     reviewer.append_review_state = deferred_composer
     GithubProvider.limit_output_characters = publication_limiter

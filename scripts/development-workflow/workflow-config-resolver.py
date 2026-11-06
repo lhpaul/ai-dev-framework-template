@@ -140,7 +140,7 @@ CONFIG_ERROR_TYPES = frozenset({
     'workflow_hub.product_repos[] must define github_repo or git_url',
     'workflow_hub.product_repos[].name is required',
 })
-CONFIG_ERROR_KEYS = frozenset("""schema_version mode review on_draft on_ready runner github
+CONFIG_ERROR_KEYS = frozenset("""schema_version mode review on_draft on_ready runner fallback_runner github
 internal_reviewers platforms phase_after_clean internal_reviewers_unavailable_policy
 coderabbit_cli rate_limit_policy workflow_hub product_repo product_repos name github_repo
 git_url default_branch default_branch_strategy local_path checkout_path checkout_root
@@ -150,7 +150,7 @@ ci ci_policy policy required_checks github_app app_id installation_id private_ke
 models dsh tiers roles provider model reasoning_effort role tier guardrails parallelism
 max_concurrent_by_stage spec plan implementation risk_paths category glob when_pattern
 path scope mode_scope mode_scopes categories always_sync special_handling project_specific
-required_additions must_contain sync_coverage_exemptions reason skeleton_role entries
+required_additions must_contain yaml_list_path sync_coverage_exemptions reason skeleton_role entries
 required_for_product_repo generated_example example_only enforce_release_runtime
 reviews auto_review enabled drafts base_branches issue_tracker project_number vcs
 repository_mode configured_product_repo_keys""".split())
@@ -1802,7 +1802,21 @@ def set_local_product_repo_path(repo_root: Path, repo_name: str, local_path_valu
     envelope = snapshot.envelope
     if envelope and not envelope.endswith(b"\n"):
         envelope += b"\n"
-    local_path.write_bytes(envelope + tail)
+    fd, temporary = tempfile.mkstemp(prefix=".workflow-config-", dir=local_path.parent)
+    try:
+        with os.fdopen(fd, "wb") as stream:
+            stream.write(envelope + tail)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, local_path)
+        parent_fd = os.open(local_path.parent, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(parent_fd)
+        finally:
+            os.close(parent_fd)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
     return local_path
 
 
@@ -2297,6 +2311,16 @@ def review_policy_state(value: Any, present: bool) -> tuple[str, Any, str]:
     return "", None, "unsupported"
 
 
+def review_fallback_runner_state(value: Any, present: bool) -> tuple[str, str]:
+    if not present:
+        return "", "absent"
+    if value is None or value == "":
+        return "", "empty"
+    if isinstance(value, str) and value in {"claude", "cursor", "codex", "dsh"}:
+        return value, "defined"
+    return "", "malformed"
+
+
 def resolve_review_effective(args: argparse.Namespace) -> dict[str, Any]:
     """Resolve the Step 7a config without collapsing parse-state distinctions."""
     repo_root = repo_root_from_args(args.repo_root)
@@ -2311,6 +2335,9 @@ def resolve_review_effective(args: argparse.Namespace) -> dict[str, Any]:
 
     base = {
         "effective_runner": [],
+        "effective_fallback_runner": "",
+        "effective_fallback_runner_state": "absent",
+        "effective_fallback_runner_source": "",
         "effective_runner_state": "malformed",
         "effective_runner_source": "",
         "shipped_runner": [],
@@ -2374,6 +2401,25 @@ def resolve_review_effective(args: argparse.Namespace) -> dict[str, Any]:
         )
     )
     effective_runner, effective_runner_state = review_runner_state(runner_raw, runner_present)
+    if effective_runner_state in {"absent", "empty"}:
+        effective_runner = ["codex"]
+
+    fallback_path = ["review", "on_draft", "fallback_runner"]
+    shared_fallback, shared_fallback_present, shared_fallback_error = review_effective_value_from_path(
+        shared, fallback_path
+    )
+    local_fallback, local_fallback_present, local_fallback_error = review_effective_value_from_path(
+        local, fallback_path
+    )
+    if local_fallback_present or local_fallback_error:
+        fallback_raw, fallback_present, fallback_error = local_fallback, local_fallback_present, local_fallback_error
+        fallback_source = str(local_path)
+    else:
+        fallback_raw, fallback_present, fallback_error = shared_fallback, shared_fallback_present, shared_fallback_error
+        fallback_source = str(shared_path) if shared_fallback_present or shared_fallback_error else ""
+    fallback_runner, fallback_state = review_fallback_runner_state(fallback_raw, fallback_present)
+    if fallback_error:
+        fallback_state = "malformed"
 
     shipped_policy_raw, shipped_policy_present, shipped_policy_structure_error = review_effective_value_from_path(
         shared, ["review", "internal_reviewers_unavailable_policy"]
@@ -2386,6 +2432,8 @@ def resolve_review_effective(args: argparse.Namespace) -> dict[str, Any]:
         or local_runner_structure_error
         or local_policy_present
         or local_policy_structure_error
+        or local_fallback_present
+        or local_fallback_error
     )
     policy_raw, policy_present, policy_source = (
         (local_policy_raw, True, str(local_path)) if local_policy_present else (shipped_policy_raw, shipped_policy_present, str(shared_path) if shipped_policy_present else "")
@@ -2429,6 +2477,9 @@ def resolve_review_effective(args: argparse.Namespace) -> dict[str, Any]:
 
     base.update({
         "effective_runner": effective_runner,
+        "effective_fallback_runner": fallback_runner,
+        "effective_fallback_runner_state": fallback_state,
+        "effective_fallback_runner_source": fallback_source,
         "effective_runner_state": effective_runner_state,
         "effective_runner_source": runner_source,
         "shipped_runner": shipped_runner,
@@ -3102,6 +3153,12 @@ def project_review_settings(data: dict[str, Any], path: Path) -> dict[str, Any]:
     runner = selected_list(raw, present, invalid, "review.on_draft.runner")
     if runner is not None:
         review.setdefault("on_draft", {})["runner"] = runner
+    raw, present, invalid = review_effective_value_from_path(data, ["review", "on_draft", "fallback_runner"])
+    _, state = review_fallback_runner_state(raw, present)
+    if invalid or state == "malformed":
+        raise ConfigError('invalid reviewer-field schema', key="review.on_draft.fallback_runner")
+    if present:
+        review.setdefault("on_draft", {})["fallback_runner"] = raw
     for phase in ("on_draft", "on_ready"):
         raw, present, invalid = local_review_list_value(data, phase, "github")
         values = selected_list(raw, present, invalid, f"review.{phase}.github")
@@ -3159,8 +3216,15 @@ def cmd_review_snapshot(args: argparse.Namespace) -> int:
                 temporary = stream.name
                 os.chmod(temporary, 0o600)
                 stream.write("\n".join(dump_review_projection(projection)) + "\n")
+                stream.flush()
+                os.fsync(stream.fileno())
             os.replace(temporary, staged)
             temporary = None
+            parent_fd = os.open(destination, os.O_RDONLY | os.O_DIRECTORY)
+            try:
+                os.fsync(parent_fd)
+            finally:
+                os.close(parent_fd)
         except OSError as exc:
             raise ConfigError("review-snapshot: atomic staging failed") from exc
         finally:

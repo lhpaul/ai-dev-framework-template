@@ -49,6 +49,7 @@ import argparse
 import fnmatch
 import importlib.util
 import re
+import runpy
 import subprocess
 import sys
 from pathlib import Path
@@ -254,38 +255,98 @@ def referenced_paths(text: str, tracked: set[str]) -> set[str]:
     return found
 
 
-def check_required_additions(additions: list[dict[str, str]], consumer_root: Path) -> tuple[list[str], int]:
+def check_required_additions(additions: list[dict[str, str]], consumer_root: Path) -> tuple[list[str], int, int]:
     if not consumer_root.is_dir():
-        # A missing checkout would make every entry "not applicable" and pass.
-        raise InputError(f"consumer root {consumer_root} is not a directory")
+        raise InputError("consumer root is not a directory")
     lines: list[str] = []
     missing = 0
+    errors = 0
+    resolver = None
+    structured_paths = {entry.get("path") for entry in additions if entry.get("yaml_list_path")}
     for addition in additions:
         path = addition.get("path", "")
         must_contain = addition.get("must_contain", "")
         when_pattern = addition.get("when_pattern", "")
+        selector = addition.get("yaml_list_path", "")
         if not path or not must_contain:
             raise InputError("required_additions entry needs path and must_contain")
+        if "yaml_list_path" in addition and selector != "guardrails.stop_conditions":
+            raise InputError("unsupported required_additions list selector")
         target = consumer_root / path
         label = f"path={path} must_contain={must_contain} introduced_in={addition.get('introduced_in', '')}"
-        if not target.is_file():
-            lines.append(f"REQUIRED_ADDITION_NOT_APPLICABLE {label} reason=file_absent")
-            continue
-        text = target.read_text(encoding="utf-8", errors="replace")
-        try:
-            applies = not when_pattern or re.search(when_pattern, text, re.MULTILINE) is not None
-        except re.error as exc:
-            raise InputError(f"required_additions entry for {path} has an invalid when_pattern: {exc}") from exc
-        if not applies:
-            lines.append(f"REQUIRED_ADDITION_NOT_APPLICABLE {label} reason=when_pattern_absent")
-            continue
-        if must_contain in text:
+        if selector:
+            try:
+                # lstat distinguishes an absent entry from an unreadable or invalid one.
+                target.lstat()
+            except FileNotFoundError:
+                lines.append(f"REQUIRED_ADDITION_NOT_APPLICABLE {label} reason=file_absent")
+                continue
+            except OSError:
+                lines.append("REQUIRED_ADDITION_ERROR reason=consumer_config_unreadable")
+                errors += 1
+                continue
+            try:
+                text = target.read_text(encoding="utf-8")
+                if when_pattern and not re.search(when_pattern, text, re.MULTILINE):
+                    lines.append(f"REQUIRED_ADDITION_NOT_APPLICABLE {label} reason=when_pattern_absent")
+                    continue
+                if resolver is None:
+                    resolver = runpy.run_path(str(Path(__file__).with_name("workflow-config-resolver.py")))
+                data = resolver["parse_review_yaml"](target, raw=text, review_fields=False)
+                guardrails = data.get("guardrails")
+                if "guardrails" not in data:
+                    lines.append(f"REQUIRED_ADDITION_NOT_APPLICABLE {label} reason=list_absent")
+                    continue
+                if not isinstance(guardrails, dict):
+                    raise ValueError("invalid guardrails")
+                if "stop_conditions" not in guardrails:
+                    lines.append(f"REQUIRED_ADDITION_NOT_APPLICABLE {label} reason=list_absent")
+                    continue
+                values = guardrails["stop_conditions"]
+                if not isinstance(values, list) or any(not isinstance(value, str) for value in values):
+                    raise ValueError("invalid stop list")
+                present = must_contain in values
+            except (OSError, UnicodeError, ValueError, re.error, KeyError, RecursionError):
+                lines.append("REQUIRED_ADDITION_ERROR reason=consumer_config_invalid")
+                errors += 1
+                continue
+            except Exception as exc:
+                # The resolver uses its own ConfigError class; its text may contain
+                # private consumer input, so never print it.
+                if resolver is None or not isinstance(exc, resolver["ConfigError"]):
+                    raise
+                lines.append("REQUIRED_ADDITION_ERROR reason=consumer_config_invalid")
+                errors += 1
+                continue
+        else:
+            if not target.is_file():
+                lines.append(f"REQUIRED_ADDITION_NOT_APPLICABLE {label} reason=file_absent")
+                continue
+            try:
+                text = target.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                # Preserve this error even if the later structured read succeeds
+                # or is not applicable; a transient failure is still a gap.
+                if path in structured_paths:
+                    lines.append("REQUIRED_ADDITION_ERROR reason=consumer_config_unreadable")
+                    errors += 1
+                    continue
+                raise
+            try:
+                applies = not when_pattern or re.search(when_pattern, text, re.MULTILINE) is not None
+            except re.error as exc:
+                raise InputError(f"required_additions entry for {path} has an invalid when_pattern: {exc}") from exc
+            if not applies:
+                lines.append(f"REQUIRED_ADDITION_NOT_APPLICABLE {label} reason=when_pattern_absent")
+                continue
+            present = must_contain in text
+        if present:
             lines.append(f"REQUIRED_ADDITION_PRESENT {label}")
             continue
         missing += 1
         reader = addition.get("read_by", "")
         lines.append(f"REQUIRED_ADDITION_MISSING {label} read_by={reader}")
-    return lines, missing
+    return lines, missing, errors
 
 
 def run(argv: list[str]) -> int:
@@ -369,11 +430,15 @@ def run(argv: list[str]) -> int:
 
     missing_additions = 0
     if args.consumer_root:
-        addition_lines, missing_additions = check_required_additions(additions, Path(args.consumer_root).resolve())
+        addition_lines, missing_additions, addition_errors = check_required_additions(additions, Path(args.consumer_root).resolve())
         print(f"REQUIRED_ADDITION_COUNT={len(additions)}")
         print(f"REQUIRED_ADDITION_MISSING_COUNT={missing_additions}")
         for line in addition_lines:
             print(line)
+        if addition_errors:
+            print("RESULT=diagnostic_gap")
+            print("configuration: consumer configuration validation error", file=sys.stderr)
+            return 2
 
     failed = counts["uncovered"] or missing_additions
     print(f"RESULT={'gaps_found' if failed else 'clean'}")

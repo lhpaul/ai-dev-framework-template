@@ -4561,29 +4561,31 @@ _workflow_lowti_candidate_keys_json() {
 # reuse the same mapping without a second convention.
 extract_github_issue_number() {
   local dev_path="$1"
-  local doc_files=() issue_number="" line
+  local doc_files=() issue_number="" line f slug
+  local issue_pattern='^\*\*Issue\*\*:[[:space:]]*\[?#([0-9]+)'
 
   while IFS= read -r f; do
     doc_files+=("$f")
   done < <(find "$dev_path" -maxdepth 1 -name '*.md' | sort)
 
-  # Scan markdown files for "**Issue**: #NNN" or "**Issue**: [#NNN](...)"
+  # Keep sorted-document/first-complete-line precedence. Bash's ERE matcher
+  # avoids launching grep (and a pipeline) for every line of every document.
   for f in "${doc_files[@]}"; do
     while IFS= read -r line; do
-      # Match: **Issue**: #123  or  **Issue**: [#123](url)
-      if printf '%s\n' "$line" | grep -qE '^\*\*Issue\*\*:[[:space:]]*\[?#[0-9]+'; then
-        issue_number="$(printf '%s\n' "$line" | grep -oE '#[0-9]+' | head -1 | tr -d '#')"
+      if [[ "$line" =~ $issue_pattern ]]; then
+        issue_number="${BASH_REMATCH[1]}"
         break 2
       fi
     done < "$f"
   done
 
-  # Fallback: extract leading issue number from folder slug (e.g. "291-some-slug").
   if [ -z "$issue_number" ]; then
-    local slug
-    slug="$(basename "$dev_path" | sed 's/^[0-9]\{14\}_//')"
-    if printf '%s\n' "$slug" | grep -qE '^[0-9]+-'; then
-      issue_number="$(printf '%s\n' "$slug" | grep -oE '^[0-9]+')"
+    slug="$(basename "$dev_path")"
+    if [[ "$slug" =~ ^[0-9]{14}_(.*)$ ]]; then
+      slug="${BASH_REMATCH[1]}"
+    fi
+    if [[ "$slug" =~ ^([0-9]+)- ]]; then
+      issue_number="${BASH_REMATCH[1]}"
     fi
   fi
 

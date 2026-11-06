@@ -1,9 +1,11 @@
 ---
 name: developer
-model: cursor-grok-4.5-high
+model: composer-2.5
 description: In Development stage. Handles four paths — Full Pipeline (feature with spec+plan), Refactor (code restructuring with plan only, no spec), Fast Track (bug or simple change, no spec/plan needed), and Hotfix (critical production bug from main). Implements code, verifies build/lint/tests, opens PRs, and resolves reviewer / CI readiness.
 tools: Read, Grep, Glob, Write, Edit, Bash
 ---
+
+**Stage-role access denial**: Follow Protocol 91 “Stage-role denial report and receiver contract.” A dispatched stage role reports `STAGE_ROLE_TOOL_OR_PATH_DENIED:` and stops; the item receiver stops as `stage_role_tool_or_path_denied`, preserves work, and requires operator correction before the same role resumes. Never route this case through the Work Item Runner inline fallback.
 
 Follow the implementation protocol exactly as defined in:
 

@@ -252,7 +252,7 @@ is_devin_status_stale() {
 # those are not GitHub Actions workflow runs and are not what disappears when
 # a PR goes CONFLICTING.
 # workflow_run_names_for_sha <repo> <sha>
-# Prints the distinct workflow-run names for <sha>, one per line. Returns
+# Prints distinct workflow paths for <sha>, never dynamic run-name values. Returns
 # non-zero when the lookup itself failed, so the caller can tell "this head
 # ran no workflows" from "we do not know what it ran" — a gate that exists to
 # stop a false green must not be satisfied by its own lookup erroring out.
@@ -263,7 +263,9 @@ workflow_run_names_for_sha() {
   local repo="$1" sha="$2"
   [ -n "$sha" ] || return 1
   gh api "repos/$repo/actions/runs?head_sha=$sha&per_page=100" --paginate --slurp 2>/dev/null \
-    | jq -r '[.[].workflow_runs[]?.name] | unique | .[]'
+    | jq -r '[.[].workflow_runs[]? | .path
+        | if type == "string" and test("^\\.github/workflows/[^/]+\\.ya?ml$")
+          then . else error("missing workflow identity") end] | unique | .[]'
 }
 
 # Filter prior workflow runs using their definitions at the current PR head.
@@ -342,21 +344,19 @@ for page in pages:
     if not isinstance(page, dict) or not isinstance(page.get("workflow_runs"), list):
         raise ValueError("invalid workflow runs")
     for run in page["workflow_runs"]:
-        name = run.get("name")
-        if not isinstance(name, str) or not name:
-            raise ValueError("missing workflow name")
+        # The REST run name can be a dynamic run-name containing the SHA.
+        # Compare the workflow file identity on both heads instead.
+        name = run.get("path")
+        if not isinstance(name, str) or not re.fullmatch(r"\.github/workflows/[^/]+\.ya?ml", name):
+            raise ValueError("missing workflow identity")
         if name in current:
             names.add(name)
             continue
-        # Only pull_request definitions can justify exclusions from PR HEAD.
-        # Target/other/unknown events may execute a definition from elsewhere;
-        # retain their expectations without consulting an untrusted head copy.
+        # Target/other events retain expectations without trusting head filters.
         if run.get("event") != "pull_request":
             names.add(name)
             continue
-        path = run.get("path")
-        if not isinstance(path, str) or not re.fullmatch(r"\.github/workflows/[^/]+\.ya?ml", path):
-            raise ValueError("missing workflow identity")
+        path = name
         response = subprocess.run(
             ["gh", "api", "repos/" + repo + "/contents/" + quote(path, safe="/") + "?ref=" + context["headRefOid"]],
             check=True, capture_output=True, text=True, timeout=30,

@@ -345,6 +345,84 @@ else: sys.exit(1)
         for result in ({"result": "clean", "reviewed_head": "a" * 40}, {}, None):
             self.assertFalse(evidence.verify(self.context, result, 10)["verified"])
 
+    def test_manifest_diagnoses_post_review_drift_without_remote_text(self):
+        baseline = self.context["manifest"]
+        for mutation, expected in (
+                ("body", [{"source": "body", "kind": "edited"}]),
+                ("edit", [{"source": "comment:20", "kind": "body_edited"}]),
+                ("revision", [{"source": "comment:20", "kind": "revision_changed"}]),
+                ("delete", [{"source": "comment:20", "kind": "removed"}]),
+                ("add", [{"source": "comment:30", "kind": "added"}])):
+            with self.subTest(mutation=mutation):
+                raw = copy.deepcopy(self.raw)
+                if mutation == "body": raw["body"] += " amended"
+                if mutation == "edit": raw["comments"][1]["body"] += " amended"
+                if mutation == "revision": raw["comments"][1]["updated_at"] = "2026-01-02"
+                if mutation == "delete": raw["comments"].pop()
+                if mutation == "add": raw["comments"].append(
+                    {"id": 30, "body": "New reviewer finding", "updated_at": "2026-01-02"})
+                current = evidence.snapshot(raw)
+                diff = evidence.differences(current, baseline, self.context["snapshot_sha256"])
+                self.assertEqual(diff, {"status": "changed", "changes": expected})
+                self.assertFalse(evidence.verify(current, self.result, 10)["verified"])
+                self.assertNotIn("Synthetic", json.dumps(diff))
+                self.assertNotIn("Synthetic", json.dumps(baseline))
+        # Removing the planted edit restores the ordinary proof; diagnostics do
+        # not relax the verifier, even for metadata-only revision changes.
+        self.assertTrue(evidence.verify(evidence.snapshot(self.raw), self.result, 10)["verified"])
+        self.assertEqual(evidence.differences(self.context, baseline, self.context["snapshot_sha256"]),
+                         {"status": "unchanged", "changes": []})
+
+    def test_manifest_missing_malformed_and_wrong_binding_are_explicit(self):
+        baseline = self.context["manifest"]
+        variants = [None, {}, [], "invalid"]
+        for key, value in (("schema", "unknown"), ("snapshot_sha256", "b" * 64),
+                           ("body_sha256", "bad"), ("comments", {})):
+            altered = copy.deepcopy(baseline)
+            altered[key] = value
+            variants.append(altered)
+        for value in (True, 0, "20"):
+            altered = copy.deepcopy(baseline)
+            altered["comments"][0]["id"] = value
+            variants.append(altered)
+        for altered_comments in ([baseline["comments"][0]] * 2, [None],
+                                 [{"id": 10, "body_sha256": "b" * 64, "updated_at": ""}]):
+            altered = copy.deepcopy(baseline)
+            altered["comments"] = altered_comments
+            variants.append(altered)
+        for previous in variants:
+            with self.subTest(previous=previous):
+                self.assertEqual(evidence.differences(self.context, previous, self.context["snapshot_sha256"]),
+                                 {"status": "manifest_unavailable", "changes": []})
+        wrong_identity = copy.deepcopy(baseline)
+        wrong_identity["head_sha"] = "b" * 40
+        self.assertEqual(evidence.differences(self.context, wrong_identity, self.context["snapshot_sha256"])["status"],
+                         "identity_mismatch")
+        altered = copy.deepcopy(baseline)
+        altered["comments"].reverse()
+        self.assertEqual(evidence.differences(self.context, altered, self.context["snapshot_sha256"])["status"],
+                         "unchanged")
+        inconsistent = copy.deepcopy(baseline)
+        inconsistent["snapshot_sha256"] = "b" * 64
+        self.assertEqual(evidence.differences(self.context, inconsistent, "b" * 64),
+                         {"status": "manifest_inconsistent", "changes": []})
+        context = copy.deepcopy(self.context)
+        context["body"] += " tampered"
+        self.assertEqual(evidence.differences(context, baseline, self.context["snapshot_sha256"])["status"],
+                         "context_unavailable")
+
+    def test_manifest_keeps_bookkeeping_out_of_drift_and_keeps_hash_contract(self):
+        raw = copy.deepcopy(self.raw)
+        raw["comments"].append({"id": 30, "body": "### Automated Reviewer Loop Summary\nhistory",
+                                "updated_at": "2026-01-01"})
+        raw["comments"].reverse()
+        self.assertEqual(evidence.snapshot(raw)["manifest"], self.context["manifest"])
+        content = {k: self.context[k] for k in ("repository", "pr_number", "head_sha", "body", "comments")}
+        import hashlib
+        digest = hashlib.sha256(json.dumps(content, ensure_ascii=False, sort_keys=True,
+                                          separators=(",", ":")).encode("utf-8")).hexdigest()
+        self.assertEqual(digest, self.context["snapshot_sha256"])
+
     def test_code_finding_or_wrong_head_cannot_be_overridden_by_proof(self):
         for key, value in (("result", "needs_fixes"), ("reviewed_head", "b" * 40)):
             result = copy.deepcopy(self.result)

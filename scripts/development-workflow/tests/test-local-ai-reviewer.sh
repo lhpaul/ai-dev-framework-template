@@ -102,6 +102,15 @@ MOCK_GH
 install_local_reviewer_mock() {
   cat > "$MOCK_BIN/local-reviewer-mock" <<'MOCK_REVIEWER'
 #!/usr/bin/env bash
+if [ -n "${MOCK_CAPACITY_ATTEMPTS_FILE:-}" ]; then
+  printf 'attempt\n' >> "$MOCK_CAPACITY_ATTEMPTS_FILE"
+  if [ "${MOCK_CAPACITY_RECOVER:-0}" != 0 ] && [ "$(wc -l < "$MOCK_CAPACITY_ATTEMPTS_FILE" | tr -d ' ')" -gt 1 ]; then
+    if [ "$MOCK_CAPACITY_RECOVER" != empty ]; then
+      printf '{"result":"clean","findings":[]}\n'
+    fi
+    exit 0
+  fi
+fi
 if [ -n "${MOCK_CONTEXT_CAPTURE:-}" ]; then
   cat "$CONTEXT_BUNDLE_PATH" > "$MOCK_CONTEXT_CAPTURE"
 fi
@@ -150,6 +159,7 @@ reset_mocks() {
   install_gh_mock
   install_local_reviewer_mock
   unset MOCK_PR_HEAD_SHA MOCK_PR_DIFF_EXIT MOCK_PR_DIFF_FILES MOCK_LOCAL_REVIEWER_STDOUT MOCK_LOCAL_REVIEWER_STDERR
+  unset MOCK_CAPACITY_ATTEMPTS_FILE MOCK_CAPACITY_RECOVER
   unset MOCK_LOCAL_REVIEWER_EXIT MOCK_LOCAL_REVIEWER_SLEEP
   unset MOCK_LOCAL_REVIEWER_GRANDCHILD_PIDFILE MOCK_LOCAL_REVIEWER_GRANDCHILD_IGNORE_TERM MOCK_PR_HEAD_BRANCH
   unset LOCAL_AI_REVIEWER_COMMAND LOCAL_AI_REVIEWER_DISABLED LOCAL_AI_REVIEWER_TIMEOUT
@@ -389,6 +399,104 @@ export LOCAL_AI_REVIEWER_COMMAND MOCK_LOCAL_REVIEWER_STDERR MOCK_LOCAL_REVIEWER_
 run_reviewer "$MOCK_BIN:$PATH"
 run_test "missing_model_result" "RESULT=escalate" "$(line_for RESULT)"
 run_test "missing_model_reason" "REASON=missing_model_access" "$(line_for REASON)"
+
+# Provider failures must not masquerade as missing model permissions (#1995).
+# Exercise both output streams, overlap with the broad model.*unavailable probe,
+# exhaustion, recovery, and verdict precedence using only synthetic responses.
+for capacity_message in \
+  '{"error":{"message":"Selected model is at capacity. Please try a different model.","codex_error_info":"server_overloaded"}}' \
+  'model temporarily unavailable: server_overloaded' \
+  'HTTP 429: Too Many Requests' \
+  'backend overloaded'; do
+  reset_mocks
+  LOCAL_AI_REVIEWER_COMMAND=local-reviewer-mock
+  MOCK_CAPACITY_ATTEMPTS_FILE="$MOCK_BIN/capacity-attempts"
+  : > "$MOCK_CAPACITY_ATTEMPTS_FILE"
+  MOCK_LOCAL_REVIEWER_STDERR="$capacity_message"
+  MOCK_LOCAL_REVIEWER_EXIT=1
+  export LOCAL_AI_REVIEWER_COMMAND MOCK_CAPACITY_ATTEMPTS_FILE MOCK_LOCAL_REVIEWER_STDERR MOCK_LOCAL_REVIEWER_EXIT
+  run_reviewer "$MOCK_BIN:$PATH"
+  run_test "capacity_exhausted_result:$capacity_message" "RESULT=needs_rerun" "$(line_for RESULT)"
+  run_test "capacity_exhausted_reason:$capacity_message" "REASON=provider_overloaded" "$(line_for REASON)"
+  run_test "capacity_exhausted_exit:$capacity_message" "1" "$(exit_code)"
+  run_test "capacity_bounded_attempts:$capacity_message" "3" "$(wc -l < "$MOCK_CAPACITY_ATTEMPTS_FILE" | tr -d ' ')"
+  run_test "capacity_no_findings:$capacity_message" "BLOCKING_COUNT=0" "$(line_for BLOCKING_COUNT)"
+  run_test "capacity_backoff:$capacity_message" "2" "$(grep -c 'retrying after [12]s' "$STDERR_FILE")"
+done
+
+reset_mocks
+LOCAL_AI_REVIEWER_COMMAND=local-reviewer-mock
+set_mock_stdout '{"error":{"message":"Selected model is at capacity","codex_error_info":"server_overloaded"}}'
+MOCK_CAPACITY_ATTEMPTS_FILE="$MOCK_BIN/capacity-attempts"
+: > "$MOCK_CAPACITY_ATTEMPTS_FILE"
+MOCK_CAPACITY_RECOVER=1
+MOCK_LOCAL_REVIEWER_EXIT=1
+export LOCAL_AI_REVIEWER_COMMAND MOCK_LOCAL_REVIEWER_STDOUT MOCK_CAPACITY_ATTEMPTS_FILE MOCK_CAPACITY_RECOVER MOCK_LOCAL_REVIEWER_EXIT
+run_reviewer "$MOCK_BIN:$PATH"
+run_test "capacity_stdout_recovery_result" "RESULT=clean" "$(line_for RESULT)"
+run_test "capacity_stdout_recovery_exit" "0" "$(exit_code)"
+run_test "capacity_recovery_stops_retrying" "2" "$(wc -l < "$MOCK_CAPACITY_ATTEMPTS_FILE" | tr -d ' ')"
+
+reset_mocks
+LOCAL_AI_REVIEWER_COMMAND=local-reviewer-mock
+set_mock_stdout '{"result":"needs_fixes","findings":[{"severity":"blocking","message":"Handle HTTP 429 when model is at capacity"}]}'
+MOCK_LOCAL_REVIEWER_STDERR='model unavailable: server_overloaded'
+MOCK_CAPACITY_ATTEMPTS_FILE="$MOCK_BIN/capacity-attempts"
+: > "$MOCK_CAPACITY_ATTEMPTS_FILE"
+export LOCAL_AI_REVIEWER_COMMAND MOCK_LOCAL_REVIEWER_STDOUT MOCK_LOCAL_REVIEWER_STDERR MOCK_CAPACITY_ATTEMPTS_FILE
+run_reviewer "$MOCK_BIN:$PATH"
+run_test "capacity_prose_valid_verdict_wins" "RESULT=needs_fixes" "$(line_for RESULT)"
+run_test "capacity_prose_no_retry" "1" "$(wc -l < "$MOCK_CAPACITY_ATTEMPTS_FILE" | tr -d ' ')"
+
+# A later attempt with no output must not inherit the earlier capacity error.
+# run_with_timeout truncates both capture files via > on each invocation.
+reset_mocks
+LOCAL_AI_REVIEWER_COMMAND=local-reviewer-mock
+set_mock_stdout '{"error":{"message":"Selected model is at capacity"}}'
+MOCK_LOCAL_REVIEWER_STDERR='server_overloaded'
+MOCK_CAPACITY_ATTEMPTS_FILE="$MOCK_BIN/capacity-attempts"
+: > "$MOCK_CAPACITY_ATTEMPTS_FILE"
+MOCK_CAPACITY_RECOVER=empty
+MOCK_LOCAL_REVIEWER_EXIT=1
+export LOCAL_AI_REVIEWER_COMMAND MOCK_LOCAL_REVIEWER_STDOUT MOCK_LOCAL_REVIEWER_STDERR MOCK_CAPACITY_ATTEMPTS_FILE MOCK_CAPACITY_RECOVER MOCK_LOCAL_REVIEWER_EXIT
+run_reviewer "$MOCK_BIN:$PATH"
+run_test "capacity_empty_retry_result" "RESULT=escalate" "$(line_for RESULT)"
+run_test "capacity_empty_retry_reason" "REASON=malformed_output" "$(line_for REASON)"
+run_test "capacity_empty_retry_exit" "2" "$(exit_code)"
+run_test "capacity_empty_retry_discards_both_streams" "2" "$(wc -l < "$MOCK_CAPACITY_ATTEMPTS_FILE" | tr -d ' ')"
+
+for quota_message in \
+  'HTTP 429: quota exceeded. Try again at Sep 7th, 2026 1:17 PM.' \
+  'server_overloaded: usage limit reached. Try again at Sep 7th, 2026 1:17 PM.'; do
+  reset_mocks
+  LOCAL_AI_REVIEWER_COMMAND=local-reviewer-mock
+  MOCK_LOCAL_REVIEWER_STDERR="$quota_message"
+  MOCK_CAPACITY_ATTEMPTS_FILE="$MOCK_BIN/capacity-attempts"
+  : > "$MOCK_CAPACITY_ATTEMPTS_FILE"
+  MOCK_LOCAL_REVIEWER_EXIT=1
+  export LOCAL_AI_REVIEWER_COMMAND MOCK_LOCAL_REVIEWER_STDERR MOCK_CAPACITY_ATTEMPTS_FILE MOCK_LOCAL_REVIEWER_EXIT
+  run_reviewer "$MOCK_BIN:$PATH"
+  run_test "capacity_quota_overlap_result:$quota_message" "RESULT=escalate" "$(line_for RESULT)"
+  run_test "capacity_quota_overlap_reason:$quota_message" "REASON=quota_exhausted" "$(line_for REASON)"
+  run_test "capacity_quota_overlap_reset:$quota_message" "QUOTA_RESET_AT=Sep 7th, 2026 1:17 PM" "$(line_for QUOTA_RESET_AT)"
+  run_test "capacity_quota_overlap_exit:$quota_message" "2" "$(exit_code)"
+  run_test "capacity_quota_overlap_no_retry:$quota_message" "1" "$(wc -l < "$MOCK_CAPACITY_ATTEMPTS_FILE" | tr -d ' ')"
+done
+
+for access_message in 'missing model access' 'Selected model unavailable for this account'; do
+  reset_mocks
+  LOCAL_AI_REVIEWER_COMMAND=local-reviewer-mock
+  MOCK_LOCAL_REVIEWER_STDERR="$access_message"
+  MOCK_CAPACITY_ATTEMPTS_FILE="$MOCK_BIN/capacity-attempts"
+  : > "$MOCK_CAPACITY_ATTEMPTS_FILE"
+  MOCK_LOCAL_REVIEWER_EXIT=1
+  export LOCAL_AI_REVIEWER_COMMAND MOCK_LOCAL_REVIEWER_STDERR MOCK_CAPACITY_ATTEMPTS_FILE MOCK_LOCAL_REVIEWER_EXIT
+  run_reviewer "$MOCK_BIN:$PATH"
+  run_test "real_model_access_result:$access_message" "RESULT=escalate" "$(line_for RESULT)"
+  run_test "real_model_access_reason:$access_message" "REASON=missing_model_access" "$(line_for REASON)"
+  run_test "real_model_access_exit:$access_message" "2" "$(exit_code)"
+  run_test "real_model_access_no_retry:$access_message" "1" "$(wc -l < "$MOCK_CAPACITY_ATTEMPTS_FILE" | tr -d ' ')"
+done
 
 reset_mocks
 LOCAL_AI_REVIEWER_COMMAND=local-reviewer-mock
@@ -2405,6 +2513,14 @@ run_test "2061_bookkeeping_visible_for_review" 3 "$(jq -r '.evidence_context.rev
 _proof_line="$(line_for EVIDENCE_VERIFICATION_JSON)"
 run_test "2061_explicit_verified_metadata" verified "$(printf '%s' "${_proof_line#*=}" | jq -r '.status')"
 run_test "2061_snapshot_metadata_round_trip" "$(jq -r '.evidence_context.snapshot_sha256' "$MOCK_CONTEXT_CAPTURE")" "$(printf '%s' "${_proof_line#*=}" | jq -r '.snapshot_sha256')"
+_2103_manifest_line="$(line_for EVIDENCE_MANIFEST_JSON)"
+run_test "2103_manifest_metadata_round_trip" "$(jq -c '.evidence_context.manifest' "$MOCK_CONTEXT_CAPTURE")" \
+  "${_2103_manifest_line#*=}"
+run_test "2103_manifest_excludes_bookkeeping" '10,20' \
+  "$(printf '%s' "${_2103_manifest_line#*=}" | jq -r '[.comments[].id | tostring] | join(",")')"
+run_test "2103_manifest_contains_no_remote_body" false \
+  "$(printf '%s' "${_2103_manifest_line#*=}" | jq -r 'tostring | contains("Synthetic")')"
+unset _2103_manifest_line
 
 for MOCK_EVIDENCE_PROOF_MODE in missing unverified stale code; do
   export MOCK_EVIDENCE_PROOF_MODE

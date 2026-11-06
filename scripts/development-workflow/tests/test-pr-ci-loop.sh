@@ -90,7 +90,7 @@ emit() {
   if [[ "$payload" == *workflow_runs* ]]; then
     payload="$(printf %s "$payload" | jq --arg missing "${MOCK_MISSING_PATH:-0}" '
       .workflow_runs |= map(. + {event: (.event // "pull_request")}
-        | if $missing == "1" then . else . + {path: (.path // ".github/workflows/synthetic.yml")} end)')"
+        | if $missing == "1" then . else . + {path: (.path // (".github/workflows/" + (.name | gsub(" "; "-")) + ".yml"))} end)')"
   fi
   case "$*" in *) ;; esac
   if [ "$slurped" = "1" ]; then
@@ -206,13 +206,26 @@ run_test "full_check_set_is_green" "RESULT=green" "$(grep '^RESULT=' <<<"$_out" 
 run_test "green_reports_head_sha" "HEAD_SHA=aaaa111000000000000" "$(grep '^HEAD_SHA=' <<<"$_out" || true)"
 run_test "green_reports_ci_evidence_present" "CI_EVIDENCE=present" "$(grep '^CI_EVIDENCE=' <<<"$_out" || true)"
 
+# #2088: run-name changes with the head, while the workflow path is stable.
+_e2e_previous='{"workflow_runs":[{"name":"E2E bbbb222","path":".github/workflows/e2e.yml"}]}'
+_e2e_current='{"workflow_runs":[{"name":"E2E aaaa111","path":".github/workflows/e2e.yml"}]}'
+_out="$(run_ci MOCK_ROLLUP="$_success_rollup" MOCK_PREV_CHECKS="$_e2e_previous" MOCK_CURRENT_RUNS="$_e2e_current" MOCK_PR_COMMITS="$_commits_two")"
+run_test "sha_run_name_changes_stay_green_2088" "RESULT=green" "$(grep '^RESULT=' <<<"$_out" || true)"
+run_test "sha_run_name_current_head_evidence_2088" "CI_EVIDENCE=present" "$(grep '^CI_EVIDENCE=' <<<"$_out" || true)"
+_out="$(run_ci MOCK_ROLLUP="$_success_rollup" MOCK_PREV_CHECKS="$_e2e_previous" MOCK_CURRENT_RUNS="$_runs_one" MOCK_PR_COMMITS="$_commits_two")"
+run_test "missing_e2e_still_blocks_2088" "RESULT=red" "$(grep '^RESULT=' <<<"$_out" || true)"
+# A matching display name on a different workflow must not satisfy evidence.
+_e2e_other='{"workflow_runs":[{"name":"E2E bbbb222","path":".github/workflows/other.yml"}]}'
+_out="$(run_ci MOCK_ROLLUP="$_success_rollup" MOCK_PREV_CHECKS="$_e2e_previous" MOCK_CURRENT_RUNS="$_e2e_other" MOCK_PR_COMMITS="$_commits_two")"
+run_test "same_run_name_different_path_blocks_2088" "RESULT=red" "$(grep '^RESULT=' <<<"$_out" || true)"
+
 # 2. A workflow that ran on the previous head is absent now → red, named.
 #    This is the PR #1577 shape: a conflicting PR whose pull_request workflows
 #    never started, leaving a passing subset that used to read as green.
 _out="$(run_ci MOCK_ROLLUP="$_subset_rollup" MOCK_PREV_CHECKS="$_runs_two" MOCK_CURRENT_RUNS="$_runs_one" MOCK_PR_COMMITS="$_commits_two")"
 run_test "missing_workflow_is_red" "RESULT=red" "$(grep '^RESULT=' <<<"$_out" || true)"
 run_test "missing_workflow_reason" "REASON=expected_checks_missing" "$(grep '^REASON=' <<<"$_out" || true)"
-run_test "missing_workflow_is_named" "MISSING_CHECKS=workflow test harnesses" "$(grep '^MISSING_CHECKS=' <<<"$_out" || true)"
+run_test "missing_workflow_is_named" "MISSING_CHECKS=.github/workflows/workflow-test-harnesses.yml" "$(grep '^MISSING_CHECKS=' <<<"$_out" || true)"
 
 # 3. Zero checks with no previous head → green (unchanged) but evidence=none,
 #    so the readiness gate can refuse rather than label on absence.
@@ -265,7 +278,7 @@ run_test "paginated_lookup_still_green" "RESULT=green" "$(grep '^RESULT=' <<<"$_
 _commits_three='[{"sha":"bbbb222000000000000"},{"sha":"cccc333000000000000"},{"sha":"aaaa111000000000000"}]'
 _out="$(run_ci MOCK_ROLLUP="$_subset_rollup" MOCK_PREV_CHECKS="$_runs_two" MOCK_CURRENT_RUNS="$_runs_one" MOCK_PR_COMMITS="$_commits_three" MOCK_EMPTY_RUN_SHA=cccc333000000000000)"
 run_test "penultimate_without_runs_still_uses_earlier_evidence" "RESULT=red" "$(grep '^RESULT=' <<<"$_out" || true)"
-run_test "penultimate_without_runs_names_missing_workflow" "MISSING_CHECKS=workflow test harnesses" "$(grep '^MISSING_CHECKS=' <<<"$_out" || true)"
+run_test "penultimate_without_runs_names_missing_workflow" "MISSING_CHECKS=.github/workflows/workflow-test-harnesses.yml" "$(grep '^MISSING_CHECKS=' <<<"$_out" || true)"
 
 # 5. A genuinely failing check is still red (the gate did not displace it).
 _fail_rollup='{"statusCheckRollup":[{"__typename":"CheckRun","name":"ShellCheck","status":"COMPLETED","conclusion":"FAILURE"}]}'
@@ -315,7 +328,7 @@ for _workflow in \
   $'on:\n  pull_request_target:\n    branches: ["release/**", develop]\n'; do
   _out="$(run_ci MOCK_ROLLUP="$_subset_rollup" MOCK_PREV_CHECKS="$_tracker_prior" MOCK_CURRENT_RUNS="$_runs_one" MOCK_PR_COMMITS="$_commits_two" MOCK_WORKFLOW="$_workflow")"
   run_test "applicable_missing_workflow_blocks_1964" "RESULT=red" "$(grep ^RESULT= <<<"$_out" || true)"
-  run_test "applicable_missing_workflow_named_1964" "MISSING_CHECKS=Update tracker status on PR merge" "$(grep ^MISSING_CHECKS= <<<"$_out" || true)"
+  run_test "applicable_missing_workflow_named_1964" "MISSING_CHECKS=.github/workflows/Update-tracker-status-on-PR-merge.yml" "$(grep ^MISSING_CHECKS= <<<"$_out" || true)"
 done
 # Event/base applicability, independent of workflow names.
 for _workflow in \
@@ -328,7 +341,7 @@ done
 # A newest earlier SHA carrying only a closed-only run must not conceal a
 # genuinely applicable missing workflow on an older head.
 _out="$(run_ci MOCK_ROLLUP="$_subset_rollup" MOCK_PREV_CHECKS="$_runs_two" MOCK_CURRENT_RUNS="$_runs_one" MOCK_PR_COMMITS="$_commits_three" MOCK_CLOSED_RUN_SHA=cccc333000000000000)"
-run_test "closed_only_earlier_head_does_not_conceal_missing_check_1964" "MISSING_CHECKS=workflow test harnesses" "$(grep ^MISSING_CHECKS= <<<"$_out" || true)"
+run_test "closed_only_earlier_head_does_not_conceal_missing_check_1964" "MISSING_CHECKS=.github/workflows/workflow-test-harnesses.yml" "$(grep ^MISSING_CHECKS= <<<"$_out" || true)"
 for _failure in MOCK_CONTENTS_FAIL=1 MOCK_MISSING_PATH=1 \
   MOCK_WORKFLOW=invalid MOCK_WORKFLOW='   ' \
   MOCK_WORKFLOW=$'on:\n  pull_request:\n    types: [synchronize]\n    types: [closed]\n' \
@@ -353,7 +366,7 @@ for _head_definition in \
   printf '%s\n' "$_head_definition" > "$TMP_ROOT/head-workflow.yml"
   _out="$(run_ci MOCK_ROLLUP="$_subset_rollup" MOCK_PREV_CHECKS="$_target_prior" MOCK_CURRENT_RUNS="$_runs_one" MOCK_PR_COMMITS="$_commits_two" MOCK_HEAD_DEFINITION="$TMP_ROOT/head-workflow.yml" MOCK_BASE_DEFINITION="$TMP_ROOT/base-workflow.yml" MOCK_CONTENTS_LOG="$TMP_ROOT/target-definition-reads")"
   run_test "divergent_target_definition_red_1964" "RESULT=red" "$(grep ^RESULT= <<<"$_out" || true)"
-  run_test "divergent_target_definition_named_1964" "MISSING_CHECKS=target policy" "$(grep ^MISSING_CHECKS= <<<"$_out" || true)"
+  run_test "divergent_target_definition_named_1964" "MISSING_CHECKS=.github/workflows/target.yml" "$(grep ^MISSING_CHECKS= <<<"$_out" || true)"
   run_test "divergent_target_definition_exit_1964" "---STATUS=1" "$(grep ^---STATUS= <<<"$_out" || true)"
   run_test "target_definition_not_trusted_from_head_1964" "absent" "$(if [ -e "$TMP_ROOT/target-definition-reads" ]; then echo present; else echo absent; fi)"
 done
@@ -369,7 +382,7 @@ for _workflow in 'on: pull_request' 'on: [pull_request]' \
   $'on:\n  pull_request:\n    branches: ["release/**"]\n' \
   $'on:\n  pull_request:\n    branches-ignore: ["develop*"]\n'; do
   _out="$(run_ci MOCK_ROLLUP="$_subset_rollup" MOCK_PREV_CHECKS="$_tracker_prior" MOCK_CURRENT_RUNS="$_runs_one" MOCK_PR_COMMITS="$_commits_two" MOCK_WORKFLOW="$_workflow")"
-  run_test "applicable_or_unknown_triggers_stay_expected_2037" "MISSING_CHECKS=Update tracker status on PR merge" "$(grep ^MISSING_CHECKS= <<<"$_out" || true)"
+  run_test "applicable_or_unknown_triggers_stay_expected_2037" "MISSING_CHECKS=.github/workflows/Update-tracker-status-on-PR-merge.yml" "$(grep ^MISSING_CHECKS= <<<"$_out" || true)"
 done
 for _workflow in \
   $'on: {pull_request: {types: [synchronize], types: [closed]}}\n' \
@@ -384,7 +397,7 @@ for _workflow in \
 done
 # Even unreadable head contents cannot drop a target-event expectation.
 _out="$(run_ci MOCK_ROLLUP="$_subset_rollup" MOCK_PREV_CHECKS="$_target_prior" MOCK_CURRENT_RUNS="$_runs_one" MOCK_PR_COMMITS="$_commits_two" MOCK_CONTENTS_FAIL=1)"
-run_test "target_without_head_definition_still_expected_1964" "MISSING_CHECKS=target policy" "$(grep ^MISSING_CHECKS= <<<"$_out" || true)"
+run_test "target_without_head_definition_still_expected_1964" "MISSING_CHECKS=.github/workflows/target.yml" "$(grep ^MISSING_CHECKS= <<<"$_out" || true)"
 
 _pending_rollup='{"statusCheckRollup":[{"__typename":"CheckRun","name":"ShellCheck","status":"IN_PROGRESS","conclusion":null}]}'
 _out="$(run_ci MOCK_ROLLUP="$_pending_rollup" MOCK_WORKFLOW="$_closed_workflow")"

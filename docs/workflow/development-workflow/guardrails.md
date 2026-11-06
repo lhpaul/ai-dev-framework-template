@@ -295,7 +295,7 @@ The following stop conditions are always in force:
 
 | Condition                             | When it fires                                                                          |
 | ------------------------------------- | -------------------------------------------------------------------------------------- |
-| `unclear_requirements`                | A requirement or acceptance criterion is ambiguous and cannot be safely resolved.      |
+| `unclear_requirements`                | A requirement or acceptance criterion is ambiguous, or an established access refusal cannot be classified as a tool/path or credential denial, and needs a human decision.      |
 | `architecture_decision`               | The work requires a human decision on architecture or technology.                      |
 | `failing_ci`                          | Required CI checks are red.                                                            |
 | `unresolved_blocking_review`          | A blocking review thread (from a reviewer or automated tool) is unresolved.            |
@@ -305,6 +305,7 @@ The following stop conditions are always in force:
 | `security_sensitive_advisory_pending` | A security-sensitive advisory finding (per the classifier in `scripts/development-workflow/security-advisory-classifier.sh`) lacks a fixed commit or a verified human accept/reject decision at the PR's current head SHA. |
 | `missing_tracker_context`             | The work item is missing required tracker metadata (status, type, or linked spec).     |
 | `missing_required_secret_or_permission` | A required credential or GitHub permission is absent.                                |
+| `stage_role_tool_or_path_denied` | A reachable stage role reports an explicit harness tool or local-path denial; stop until access is corrected and the same role resumes. |
 | `push_verification_failed`            | A branch push could not be verified: the branch's upstream would send it somewhere other than its own remote branch, or the pushed commit is not present on the remote. |
 
 **These stops hold in all modes, including `autonomous`.** A repository cannot
@@ -455,6 +456,7 @@ guardrails:
     - missing_tracker_context
     - missing_required_secret_or_permission
     - push_verification_failed
+    - stage_role_tool_or_path_denied
   audit:
     pr_disposition_record: required
     work_item_ledger_record: required

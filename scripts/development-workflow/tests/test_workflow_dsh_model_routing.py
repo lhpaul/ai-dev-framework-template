@@ -537,7 +537,7 @@ class ModelRoutingTests(unittest.TestCase):
             original_read = os.open
             reads = []
             def observed(path, flags, *args, **kwargs):
-                if (flags & os.O_ACCMODE) == os.O_RDONLY:
+                if (flags & os.O_ACCMODE) == os.O_RDONLY and not (flags & os.O_DIRECTORY):
                     reads.append(Path(path))
                 return original_read(path, flags, *args, **kwargs)
             with self.subTest(active=active), \

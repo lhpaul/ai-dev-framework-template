@@ -1,8 +1,10 @@
 ---
 name: tech-lead
-model: cursor-grok-4.5-high
+model: claude-opus-5-5-high
 description: Plan Ready stage. Use when an implementation plan needs to be written. For Full Pipeline items, a spec must be approved first. For Refactor items, the work item brief replaces the spec. Reads the codebase, resolves technical approach questions, then writes the implementation plan, runs its reviewer gate, and resolves PR readiness.
 ---
+
+**Stage-role access denial**: Follow Protocol 91 “Stage-role denial report and receiver contract.” A dispatched stage role reports `STAGE_ROLE_TOOL_OR_PATH_DENIED:` and stops; the item receiver stops as `stage_role_tool_or_path_denied`, preserves work, and requires operator correction before the same role resumes. Never route this case through the Work Item Runner inline fallback.
 
 Follow the implementation plan generation protocol exactly as defined in:
 

@@ -19,7 +19,7 @@ This protocol is **standalone**: it can be invoked for any open PR (or set of PR
 - You want to advance one or more open PRs through automated review and CI without running full workflow discovery
 - After pushing fixes to a PR, to re-run the loop until clean or escalate
 
-> **Release PR exemption**: The automated reviewer loop applies only to develop-targeting PRs (feature, fix, refactor, hotfix backport). PRs whose head branch matches `release/*` or `hotfix/*` are **exempt** — `pr-review-loop.sh` automatically exits with `RESULT=skipped` and `REASON=release_pr` for these PRs. All changes in a release PR were already reviewed when their individual feature/fix PRs merged into `develop`. For release PR readiness, follow [`05-prepare-release-protocol.md`](05-prepare-release-protocol.md) Step 7 instead.
+> **Release PR exemption**: Only `release/*` heads are exempt: `pr-review-loop.sh` exits with `RESULT=skipped` and `REASON=release_pr` because their constituent changes were already reviewed on implementation PRs. `hotfix/*` carries new code from `main` and runs configured draft and ready reviewers like `fix/*`. `backport/hotfix/*` may retain its abbreviated loop for already-reviewed code. For release readiness, follow [`05-prepare-release-protocol.md`](05-prepare-release-protocol.md) Step 7.
 
 > **Run in the foreground — do not background-and-yield**: This protocol reuses Step 7 and Step 8 of [`91-orchestrate-work-protocol.md`](91-orchestrate-work-protocol.md) as-is, including the mandatory foreground-execution rule defined in those steps ("run in the foreground, never background-and-yield"). See that document for the full rule and rationale; it applies here exactly as written there.
 
@@ -76,7 +76,7 @@ ready transition happens after the draft gate:
 After Step 7a APPROVED, run the executable **ready-transition preflight** in
 [Protocol 91](91-orchestrate-work-protocol.md#draft-github-gate-before-ready-phase-reviewers).
 It verifies fresh draft-gate output before invoking the full loop. The existing
-`release/*` and `hotfix/*` intentional skip remains allowed only with matching
+`release/*` intentional skip remains allowed only with matching
 PR/branch skip evidence and an unchanged head.
 
 The preflight invokes the full loop only after verifying the draft verdict.

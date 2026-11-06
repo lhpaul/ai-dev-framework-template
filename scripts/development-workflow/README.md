@@ -1112,6 +1112,7 @@ What it does:
 - Prints `UNCOVERED`, `PROJECT_OWNED`, and `EXEMPT` lines (`--show-covered`
   adds `COVERED`). Exemptions come from the manifest's
   `sync_coverage_exemptions`, each with a reason.
+- A `required_additions` entry can opt into `yaml_list_path: guardrails.stop_conditions` for exact list membership. Missing files or undeclared lists are not applicable; malformed, unreadable, duplicate or wrong-type consumer YAML emits a sanitized diagnostic gap and exits 2. Retain any uncovered or missing findings printed before that error.
 - With `--consumer-root`, prints `REQUIRED_ADDITION_MISSING`, `_PRESENT`, or
   `_NOT_APPLICABLE` for each `required_additions` entry.
 - Exits `0` when clean, `1` on any uncovered path or missing required

@@ -493,7 +493,9 @@ rename_detections:
 #   path          - project-owned file the addition belongs in
 #   when_pattern  - Python regex (multiline); the addition applies only when the file
 #                   matches it (for example, only when the project declares the list)
-#   must_contain  - literal text the file must contain once the addition is made
+#   must_contain  - required literal text; with yaml_list_path, an exact list item
+#   yaml_list_path - optional guardrails.stop_conditions selector; malformed or
+#                   unreadable declared YAML is a diagnostic gap, not a clean result
 #   introduced_in - template version that introduced the requirement
 #   read_by       - synced test or protocol that fails without it
 #   description   - what to add and why
@@ -507,6 +509,15 @@ required_additions:
       guardrails.stop_conditions gained push_verification_failed in v0.45.0 (#1700). The
       baseline stop conditions are additive and never removable, so a project that
       declares its own stop_conditions list must add "- push_verification_failed" to it.
+
+  - path: .ai-dev-workflow.yaml
+    yaml_list_path: guardrails.stop_conditions
+    must_contain: stage_role_tool_or_path_denied
+    introduced_in: "unreleased"
+    read_by: docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md
+    description: >
+      Add stage_role_tool_or_path_denied to a declared guardrails.stop_conditions
+      list. Baseline stops remain in force even when a local list omits them.
 
 # sync_coverage_exemptions: tracked paths a synced test names without reading them,
 # so check-sync-manifest-coverage.py does not report them as manifest gaps. Every

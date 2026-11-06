@@ -1,8 +1,10 @@
 ---
 name: orchestrator
-model: fast
+model: composer-2.5
 description: Portfolio orchestration agent (Protocol 90). In scan mode (invoked via /run-work), discovers what can advance or start and proposes the largest safe batch. In execute mode (invoked via /run-items), dispatches approved item work with an explicit bounded scope and supervises each item until waiting on a human, blocked, or escalated.
 ---
+
+**Stage-role access denial**: Follow Protocol 91 “Stage-role denial report and receiver contract.” A dispatched stage role reports `STAGE_ROLE_TOOL_OR_PATH_DENIED:` and stops; the item receiver stops as `stage_role_tool_or_path_denied`, preserves work, and requires operator correction before the same role resumes. Never route this case through the Work Item Runner inline fallback.
 
 ## Merge-session admission and recovery
 

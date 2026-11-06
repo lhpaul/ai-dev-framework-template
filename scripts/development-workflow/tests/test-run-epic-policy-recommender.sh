@@ -668,6 +668,74 @@ blocked_schema_output="$(recommend_json "$blocked_schema_fixture" "\$run-epic --
 run_test "blocked_item_skips_checkpoint_recommendation" "0" "$(printf '%s\n' "$blocked_schema_output" | jq -r '.recommendedPolicy.checkpoints | length')"
 
 echo ""
+# Re-run generated options through the production recommender parser. The scope
+# is synthetic; replace only the command prefix and documented file placeholders.
+# Each run has an isolated temporary directory and no external writes.
+python3 - "$HELPER" "$schema_fixture" "$TMP_ROOT" <<'PY_ROUNDTRIP'
+import itertools
+import json
+from pathlib import Path
+import shlex
+import subprocess
+import sys
+
+helper, fixture, scratch = sys.argv[1:]
+scope = json.loads(Path(fixture).read_text())
+scope.update(scopeSource="item", itemInput="200")
+scope_path = Path(scratch) / "round trip scope.json"
+scope_path.write_text(json.dumps(scope))
+
+
+def recommend(options):
+    result = subprocess.run(
+        [helper, "--scope", str(scope_path), "--original-command",
+         "/run-item 200", *options, "--json"],
+        check=True, capture_output=True, text=True,
+    )
+    return json.loads(result.stdout)
+
+
+for review, merge, checkpoints in itertools.product((False, True), repeat=3):
+    options = [
+        "--delegate-review" if review else "--no-delegate-review",
+        "--may-merge" if merge else "--no-may-merge",
+        "--may-start-backlog", "false", "--max-risk", "medium",
+        "--base", "develop",
+    ]
+    if not checkpoints:
+        scope["items"][0].update(title="Narrow text fix", body="", labels=[])
+        scope["groups"]["eligible"] = scope["items"]
+    else:
+        scope = json.loads(Path(fixture).read_text())
+        scope.update(scopeSource="item", itemInput="200")
+    scope_path.write_text(json.dumps(scope))
+    original = recommend(options)
+    checkpoint_path = Path(scratch) / "round trip checkpoints.json"
+    checkpoint_path.write_text(json.dumps(original["checkpointPolicyExport"]))
+    for field in ("copyPasteCommand", "copyPasteCheckpointCommand"):
+        command = original[field]
+        if command is None:
+            assert not checkpoints, (field, original)
+            continue
+        argv = shlex.split(command)
+        if field == "copyPasteCommand":
+            assert argv[:2] == ["/run-item", "200"], argv
+            argv = argv[2:]
+        else:
+            assert argv[1:5] == ["--scope", "<resolver-json>",
+                                 "--original-command", "/run-item 200"], argv
+            argv = argv[5:]
+        argv = [str(checkpoint_path) if arg == "checkpoint-policy.json" else arg
+                for arg in argv]
+        for flag in (options[0], options[1]):
+            assert flag in argv, (field, flag, argv)
+        replay = recommend(argv)
+        assert replay["effectivePolicy"] == original["effectivePolicy"], (
+            field, original["effectivePolicy"], replay["effectivePolicy"]
+        )
+        print(f"PASS: policy_round_trip {field} review={review} merge={merge} checkpoints={checkpoints}")
+PY_ROUNDTRIP
+
 echo "=== Summary ==="
 echo "Passed: $PASS_COUNT"
 echo "Failed: $FAIL_COUNT"

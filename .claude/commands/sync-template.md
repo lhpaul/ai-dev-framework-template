@@ -279,7 +279,7 @@ Check for known CI/CD configuration mismatches between the template and the proj
    - `PROJECT_OWNED` lines — informational. A synced suite reads a project-owned file (for example `AGENTS.md` or `.ai-dev-workflow.yaml`); sync never overwrites it.
    - `REQUIRED_ADDITION_MISSING` lines — a project-owned file lacks an addition a synced test or protocol depends on (for example `push_verification_failed` in a declared `guardrails.stop_conditions` list). Carry each one into Step 3 under **Required additive updates**.
 
-   Exit `1` means at least one `UNCOVERED` or `REQUIRED_ADDITION_MISSING` line; it is a finding, not a reason to abort. Exit `2` means the check itself could not run — report it as a diagnostic gap. When the template does not ship the helper, report `Synced-test coverage: not checked (template predates #1874)`.
+   Exit `1` means at least one `UNCOVERED` or `REQUIRED_ADDITION_MISSING` line; it is a finding, not a reason to abort. Exit `2` means a diagnostic gap, including invalid or unreadable consumer configuration; report the gap and retain any `UNCOVERED` or `REQUIRED_ADDITION_MISSING` findings already printed. The opt-in `yaml_list_path` check matches the declared list, not comments or unrelated fields. When the template does not ship the helper, report `Synced-test coverage: not checked (template predates #1874)`.
 
 ### Category 3 — CHANGELOG structure issues
 

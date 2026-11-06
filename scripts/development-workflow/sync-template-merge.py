@@ -37,6 +37,10 @@ class SyncError(Exception):
     """A named failure which cannot authorize a write."""
 
 
+class LockOwnershipLost(SyncError):
+    """Cleanup interrupted the transaction's exclusive ownership continuity."""
+
+
 class SyncConfigError(SyncError):
     """Configuration failure whose rendering cannot reproduce source content."""
 
@@ -198,6 +202,7 @@ def directory_fd(root: Path, relative: str = ".", created=None):
                 try:
                     os.mkdir(component, dir_fd=fd)
                     created.append(root.joinpath(*prefix))
+                    os.fsync(fd)  # Persist the new directory entry in its parent.
                 except FileExistsError:
                     pass
                 next_fd = os.open(component, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
@@ -587,6 +592,7 @@ def write_snapshot(root: Path, path: str, snapshot, created: list[Path]):
                 os.unlink(leaf.name, dir_fd=parent_fd)
             except FileNotFoundError:
                 pass
+            os.fsync(parent_fd)
             return
         replacement = ".sync-write-" + secrets.token_hex(16)
         made = False
@@ -605,6 +611,7 @@ def write_snapshot(root: Path, path: str, snapshot, created: list[Path]):
                     os.fsync(stream.fileno())
             os.replace(replacement, leaf.name, src_dir_fd=parent_fd, dst_dir_fd=parent_fd)
             made = False
+            os.fsync(parent_fd)  # Persist replacement before recovery can be removed.
         finally:
             if made:
                 os.unlink(replacement, dir_fd=parent_fd)
@@ -618,19 +625,38 @@ def write_recovery(lock: Path, data: bytes):
             stream.write(data)
             stream.flush()
             os.fsync(stream.fileno())
+        os.fsync(lock_fd)  # Persist recovery.json's directory entry.
+    with directory_fd(lock.parent) as parent_fd:
+        os.fsync(parent_fd)  # Persist the lock directory before any consumer write.
 
 
-def release_lock(lock: Path, recovery_data):
+def release_lock(lock: Path, recovery_data, release_state=None):
     """Do not lose the recovery journal if releasing the lock fails."""
+    removed = False
     try:
         with directory_fd(lock.parent, lock.name) as lock_fd:
             try:
                 os.unlink("recovery.json", dir_fd=lock_fd)
             except FileNotFoundError:
                 pass
+            os.fsync(lock_fd)
         with directory_fd(lock.parent) as root_fd:
             os.rmdir(lock.name, dir_fd=root_fd)
+            removed = True
+            if release_state is not None:
+                release_state["released"] = True
+            os.fsync(root_fd)
     except OSError as exc:
+        if removed:
+            try:
+                with directory_fd(lock.parent) as root_fd:
+                    os.mkdir(lock.name, mode=0o700, dir_fd=root_fd)
+            except OSError as reacquire_error:
+                raise LockOwnershipLost(
+                    f"{LOCK_PATH}: cleanup failed after releasing lock; exclusive ownership "
+                    "could not be reacquired; rollback skipped; leave the active lock and "
+                    "consumer files untouched and inspect before retrying"
+                ) from reacquire_error
         if recovery_data is not None:
             try:
                 write_recovery(lock, recovery_data)
@@ -663,6 +689,7 @@ def apply_plan(path: Path, approved_digest: str):
     originals = {}
     recovery_data = None
     cleanup_failed = False
+    release_state = {"released": False}
     try:
         # Authority is separate from preview bytes; freshness is checked under lock.
         fresh = build_preview(inputs, lock_owned=True)
@@ -703,16 +730,24 @@ def apply_plan(path: Path, approved_digest: str):
             raise SyncError(f"{STATE_PATH}: baseline changed during apply")
         written.append(STATE_PATH)
         state_output = {"mode": "100644", "data": encoded(json_bytes(state)),
-                        "permissions": fresh["state_before"].get("permissions", 0o644) if fresh["state_before"] else 0o644}
+                        "permissions": 0o600}
         write_snapshot(root, STATE_PATH, state_output, created)
         if local_snapshot(root, STATE_PATH) != state_output:
             raise SyncError(f"{STATE_PATH}: persistence validation failed")
         try:
-            release_lock(lock, recovery_data)
+            release_lock(lock, recovery_data, release_state)
         except (OSError, SyncError):
             cleanup_failed = True
             raise
+    except LockOwnershipLost:
+        # A subsequent transaction may already be writing under its own lock.
+        raise
     except BaseException as exc:
+        if release_state["released"]:
+            raise LockOwnershipLost(
+                f"{LOCK_PATH}: lock was released; ownership continuity cannot be verified; "
+                "rollback skipped; preserve current consumer files and inspect recovery before retrying"
+            ) from exc
         failures = []
         for rel in reversed(written):
             try:
@@ -724,6 +759,10 @@ def apply_plan(path: Path, approved_digest: str):
                 relative = directory.relative_to(root)
                 with directory_fd(root, str(relative.parent)) as parent_fd:
                     os.rmdir(relative.name, dir_fd=parent_fd)
+                    try:
+                        os.fsync(parent_fd)
+                    except OSError as sync_error:
+                        failures.append(f"{relative.parent}: {sync_error}")
             except OSError:
                 # Never remove third-party content placed in a created directory.
                 pass
@@ -731,7 +770,7 @@ def apply_plan(path: Path, approved_digest: str):
             raise SyncError(f"rollback incomplete; preserve {LOCK_PATH}/recovery.json and repair named paths: " + "; ".join(failures)) from exc
         if cleanup_failed:
             raise SyncError(f"rollback complete after cleanup failure; preserve {LOCK_PATH}/recovery.json and inspect before retrying") from exc
-        release_lock(lock, recovery_data)
+        release_lock(lock, recovery_data, release_state)
         raise
     fresh["result"] = "applied"
     show(fresh)

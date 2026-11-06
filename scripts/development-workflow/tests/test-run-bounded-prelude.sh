@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
 # test-run-bounded-prelude.sh - Fixture tests for shared bounded prelude output shape.
+# covers: scripts/development-workflow/run-bounded-prelude.sh
+# covers: scripts/development-workflow/run-epic-scope-resolver.sh
+# covers: scripts/development-workflow/workflow-lib.sh
+# covers: scripts/development-workflow/tests/test-bounded-prelude-performance.py
 
 set -euo pipefail
 
@@ -221,7 +225,7 @@ run_test "absent_guardrails_policy_source_reported" "conservative-defaults" "$(p
 
 set +e
 invalid_guardrails_out="$(AI_DEV_WORKFLOW_CONFIG_FILE="$invalid_guardrails_config" \
-  "$PRELUDE" --original-command "/run-item LEA-185" --issue LEA-185 --json 2>&1)"
+  "$PRELUDE" --original-command "/run-item LEA-185" --issue LEA-185 --json 2>"$TMP_ROOT/invalid-guardrails.stderr")"
 invalid_guardrails_status=$?
 set -e
 run_test "invalid_guardrails_json_fails" "true" "$([ "$invalid_guardrails_status" -ne 0 ] && echo true || echo false)"
@@ -284,3 +288,6 @@ fi
 
 printf '\nResults: %d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
+
+# Keep the synthetic deadline/search/extractor regressions in the selected CI suite.
+python3 "$SCRIPT_DIR/test-bounded-prelude-performance.py"

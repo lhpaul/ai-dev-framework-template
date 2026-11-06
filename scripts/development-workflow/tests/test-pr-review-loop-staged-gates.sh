@@ -1675,6 +1675,44 @@ for _2045_case in wrong_head ambiguous unavailable moved unreadable failed skipp
 done
 unset _2045_infra_hist _2045_case
 
+# #2093: recover a retained raw needs_rerun without rewriting legacy history.
+run_test "2093_normalize_needs_rerun" needs_rerun \
+  "$(reviewer_loop_normalize_platform_outcome needs_rerun evidence_changed_during_review)"
+_2093_history="$(jq -cn --arg head "$_1656_guard_head" '{
+  schema:"reviewer_loop_history.v1", entries:[{
+    head_sha:$head, classification_head:$head, result:"needs_rerun",
+    platform_results:[{platform:"local-ai-reviewer", result:"unknown",
+      raw_result:"needs_rerun", raw_reason:"evidence_changed_during_review"}]
+  }]
+}')"
+for _2093_case in legacy normalized unknown missing_raw whitespace_raw wrong_platform wrong_head no_flag unavailable empty malformed aggregate_unknown; do
+  _2093_payload="$_2093_history"
+  retry_local_review_head="$_1656_guard_head"
+  _2093_expected=1
+  case "$_2093_case" in
+    legacy) _2093_expected=0 ;;
+    normalized)
+      _2093_payload="$(printf '%s' "$_2093_payload" | jq '.entries[0].platform_results[0].result="needs_rerun"')"
+      _2093_expected=0 ;;
+    unknown) _2093_payload="$(printf '%s' "$_2093_payload" | jq '.entries[0].platform_results[0].raw_result="unrecognized"')" ;;
+    missing_raw) _2093_payload="$(printf '%s' "$_2093_payload" | jq 'del(.entries[0].platform_results[0].raw_result)')" ;;
+    whitespace_raw) _2093_payload="$(printf '%s' "$_2093_payload" | jq '.entries[0].platform_results[0].raw_result="  "')" ;;
+    wrong_platform) _2093_payload="$(printf '%s' "$_2093_payload" | jq '.entries[0].platform_results[0].platform="pr-agent"')" ;;
+    wrong_head) retry_local_review_head="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" ;;
+    no_flag) unset retry_local_review_head ;;
+    unavailable) _2093_payload="$(printf '%s' "$_2093_payload" | jq '.history_status="unavailable"')" ;;
+    empty) _2093_payload='{"schema":"reviewer_loop_history.v1","entries":[]}' ;;
+    malformed) _2093_payload='{' ;;
+    aggregate_unknown) _2093_payload="$(printf '%s' "$_2093_payload" | jq '.entries[0].result="unknown"')" ;;
+  esac
+  reviewer_loop_local_retry_allowed "$_2093_payload" "$_1656_guard_head" && _st=0 || _st=1
+  run_test "2093_retry_${_2093_case}" "$_2093_expected" "$_st"
+done
+retry_local_review_head=""
+run_test "2093_history_preserved" unknown \
+  "$(printf '%s' "$_2093_history" | jq -r '.entries[0].platform_results[0].result')"
+unset _2093_history _2093_payload _2093_case _2093_expected
+
 # Prior ledger unavailable — close gate before dispatch (P9 / cross-invocation)
 _1656_guard_hist_unavail='{"schema":"reviewer_loop_history.v1","history_status":"unavailable","history_unavailable_reason":"comment_read_failed","entries":[]}'
 _1656_reset_guard_globals
@@ -2191,6 +2229,23 @@ run_test "2061_verification_replay_requires_live_trust_check" no_evidence "$(
 )"
 run_test "2061_replayed_snapshot_persists" synthetic-current \
   "$(printf '%s' "$_1692_composed" | jq -r '.entries[-1].platform_results[] | select(.platform=="local-ai-reviewer") | .evidence_snapshot_sha256')"
+# #2103: both fresh recording and current-head reuse must carry the original
+# manifest. Replacing it with the live snapshot would conceal post-review edits.
+_1692_reset_processing_globals
+_2103_manifest='{"schema":"review_evidence_manifest.v1","snapshot_sha256":"synthetic-current","comments":[{"id":20,"body_sha256":"baseline"}]}'
+reviewer_loop_process_platform_output local-ai-reviewer 1 "$(printf 'RESULT=clean\nREVIEWED_HEAD=%s\nEVIDENCE_SNAPSHOT_SHA256=synthetic-current\nEVIDENCE_MANIFEST_JSON=%s\n' "$_1692_head" "$_2103_manifest")" 0 1 >/dev/null 2>&1
+run_test "2103_fresh_manifest_recorded" "$_2103_manifest" \
+  "$(printf '%s' "${platform_result_records[0]}" | jq -c .evidence_manifest)"
+stage_skip_history_payload="$(jq -cn --argjson record "${platform_result_records[0]}" \
+  '{entries:[{platform_results:[$record]}]}')"
+_2103_skip="$(reviewer_loop_stage_skip_output "$_1692_head" local-ai-reviewer)"
+run_test "2103_skip_preserves_reviewed_manifest" "$_2103_manifest" \
+  "$(kv_value_default EVIDENCE_MANIFEST_JSON "$_2103_skip" '{}')"
+_1692_reset_processing_globals
+reviewer_loop_process_platform_output local-ai-reviewer 1 "$_2103_skip" 0 1 >/dev/null 2>&1
+run_test "2103_reused_manifest_recorded" "$_2103_manifest" \
+  "$(printf '%s' "${platform_result_records[0]}" | jq -c .evidence_manifest)"
+unset _2103_manifest _2103_skip
 _1692_reset_processing_globals
 local_second_pass_failed_head_record=""
 reviewer_loop_process_platform_output pr-agent 1 "$(printf 'RESULT=needs_fixes\nREASON=proof_pending\nEVIDENCE_REVIEW_FAILED_HEAD=%s\nREVIEWED_HEAD=%s\n' "$_1692_head" "$_1692_head")" 1 1 >/dev/null 2>&1
@@ -2212,6 +2267,126 @@ unset _1692_head _1692_other
 unset -f _1692_hist_one _1692_reset_processing_globals 2>/dev/null || true
 
 echo "=== Area 1692 complete ==="
+
+# ---------------------------------------------------------------------------
+# Area 2095: evidence freshness at final clean and bounded local drift retry
+# ---------------------------------------------------------------------------
+echo "=== Area 2095: evidence freshness ==="
+
+# Each scenario runs in its own subshell with fabricated evidence and no network.
+# A changed fingerprint represents either a late comment or an in-place edit;
+# both are included by the canonical collector. No shared fixture is mutated.
+_2095_final() (
+  local mode="$1" hash="$2" platform="${3:-local-ai-reviewer}"
+  aggregate_result=clean
+  aggregate_reason=""
+  # shellcheck disable=SC2034 # Consumed by the sourced production function.
+  compare_mode=0
+  # shellcheck disable=SC2034 # Consumed by the sourced production function.
+  pr_number=2095
+  loop_head_sha=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  # shellcheck disable=SC2034 # Deliberately no thread-posting reviewer.
+  unresolved_bot_logins=()
+  platform_result_records=("$(jq -cn --arg hash "$hash" --arg p "$platform" \
+    '{platform:$p,result:"clean",evidence_snapshot_sha256:$hash}')")
+  repo_slug() { printf 'synthetic/repo\n'; }
+  workflow_collect_review_evidence() {
+    [ "$mode" != unavailable ] || return 1
+    if [ "$mode" = malformed ]; then
+      printf '{}\n' >"$4"
+    else
+      printf '{"snapshot_sha256":"current"}\n' >"$4"
+    fi
+  }
+  reviewer_loop_final_evidence_guard
+  printf '%s|%s\n' "$aggregate_result" "$aggregate_reason"
+)
+run_test "2095_unchanged_clean" 'clean|' "$(_2095_final available current)"
+run_test "2095_blank_fingerprint_requires_review" 'needs_rerun|evidence_changed_during_review' \
+  "$(_2095_final available '   ')"
+run_test "2095_late_comment_requires_review" 'needs_rerun|evidence_changed_during_review' \
+  "$(_2095_final available old)"
+run_test "2095_missing_fingerprint_requires_review" 'needs_rerun|evidence_changed_during_review' \
+  "$(_2095_final available '')"
+run_test "2095_pr_agent_stale_requires_review" 'needs_rerun|evidence_changed_during_review' \
+  "$(_2095_final available old pr-agent)"
+run_test "2095_unavailable_not_silence" 'escalate|evidence_context_unavailable' \
+  "$(_2095_final unavailable current)"
+run_test "2095_malformed_not_silence" 'escalate|evidence_context_unavailable' \
+  "$(_2095_final malformed current)"
+run_test "2095_other_platform_unchanged" 'clean|' "$(_2095_final unavailable '' bugbot)"
+run_test "2095_existing_finding_preserved" 'needs_fixes|finding' "$(
+  aggregate_result=needs_fixes; aggregate_reason=finding
+  reviewer_loop_final_evidence_guard
+  printf '%s|%s' "$aggregate_result" "$aggregate_reason"
+)"
+
+_2095_retry() (
+  local mode="$1" out rc=0
+  local fixture fixture_root
+  fixture_root="$(mktemp -d)"
+  fixture="$fixture_root/review fixture [2095]"
+  mkdir -p "$fixture"
+  trap 'rm -rf "$fixture_root"' EXIT
+  mkdir -p "$fixture/scripts/development-workflow"
+  export SYNTHETIC_REVIEW_MODE="$mode" SYNTHETIC_REVIEW_COUNT="$fixture/count"
+  cat >"$fixture/scripts/development-workflow/local-ai-reviewer.sh" <<'REVIEWER'
+#!/usr/bin/env bash
+set -eu
+count=0
+[ ! -f "$SYNTHETIC_REVIEW_COUNT" ] || count="$(cat "$SYNTHETIC_REVIEW_COUNT")"
+count=$((count + 1))
+printf '%s' "$count" >"$SYNTHETIC_REVIEW_COUNT"
+case "$SYNTHETIC_REVIEW_MODE" in
+  retry) [ "$count" -gt 1 ] && { printf 'RESULT=clean\nEVIDENCE_SNAPSHOT_SHA256=current\n'; exit 0; } ;;
+  clean) printf 'RESULT=clean\n'; exit 0 ;;
+  finding) printf 'RESULT=needs_fixes\nREASON=local_ai_review_findings\n'; exit 1 ;;
+  error) printf 'RESULT=escalate\nREASON=evidence_context_unavailable\n'; exit 2 ;;
+  pending) printf 'RESULT=waiting_on_reviewer\n'; exit 4 ;;
+esac
+printf 'RESULT=needs_rerun\nREASON=evidence_changed_during_review\n'
+exit 1
+REVIEWER
+  chmod +x "$fixture/scripts/development-workflow/local-ai-reviewer.sh"
+  workflow_repo_root() { printf '%s\n' "$fixture"; }
+  repo_slug() { printf 'synthetic/repo\n'; }
+  require_gh() { :; }
+  # Keep all configuration resolution synthetic; no private source is read.
+  # shellcheck disable=SC2034 # Consumed by the sourced production function.
+  repo_root="$fixture"
+  # shellcheck disable=SC2034 # Consumed by the sourced production function.
+  config_file=""
+  # shellcheck disable=SC2034 # Consumed by the sourced production function.
+  AI_DEV_WORKFLOW_CONFIG_FILE=""
+  if [ "$mode" = exhausted ]; then
+    date() {
+      if [ -f "$fixture/clock" ]; then printf '30\n'; else
+        touch "$fixture/clock"; printf '0\n'
+      fi
+    }
+  fi
+  out="$(run_local_ai_reviewer_review 2095 fix/2095-evidence 1 30)" || rc=$?
+  printf '%s|%s|%s' "$(kv_value_default RESULT "$out" missing)" "$rc" "$(cat "$fixture/count")"
+)
+run_test "2095_drift_retries_fresh_once" 'clean|0|2' "$(_2095_retry retry)"
+run_test "2095_continued_drift_bounded" 'needs_rerun|1|2' "$(_2095_retry drift)"
+run_test "2095_clean_runs_once" 'clean|0|1' "$(_2095_retry clean)"
+run_test "2095_findings_not_retried" 'needs_fixes|1|1' "$(_2095_retry finding)"
+run_test "2095_read_failure_not_retried" 'escalate|2|1' "$(_2095_retry error)"
+run_test "2095_exhausted_budget_not_retried" 'needs_rerun|1|1' "$(_2095_retry exhausted)"
+run_test "2095_inflight_not_retried" 'waiting_on_reviewer|4|1' "$(_2095_retry pending)"
+
+# Planted-violation proof: bypassing the production guard must make the stale
+# evidence assertion fail. Run the deliberate failure in a subshell so it cannot
+# alter this suite's counters or leave a modified production file behind.
+_2095_plant="$(
+  reviewer_loop_final_evidence_guard() { :; }
+  run_test "2095_planted_guard_bypass" 'needs_rerun|evidence_changed_during_review' \
+    "$(_2095_final available old)"
+)"
+run_contains "2095_guard_bypass_detected" 'FAIL: 2095_planted_guard_bypass' "$_2095_plant"
+unset _2095_plant
+unset -f _2095_final _2095_retry
 
 # ---------------------------------------------------------------------------
 # Summary

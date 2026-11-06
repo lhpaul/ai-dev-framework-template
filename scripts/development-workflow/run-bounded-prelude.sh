@@ -3,6 +3,86 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)"
+# A single supervisor owns the whole prelude deadline, including configuration
+# resolution and shell builtins. Killing the session also stops stalled CLI
+# descendants; a per-command timeout alone cannot bound folder extraction.
+if [ "${_BOUNDED_PRELUDE_WORKER:-}" != "1" ]; then
+  exec python3 - "$SCRIPT_DIR/run-bounded-prelude.sh" "$@" <<'PY_BUDGET'
+import json
+import os
+from pathlib import Path
+import signal
+import subprocess
+import sys
+import tempfile
+import time
+
+# Unexpected supervisor errors must not render subprocess argv or source paths.
+sys.excepthook = lambda *_: print("bounded-prelude: result=error stage=supervisor", file=sys.stderr)
+raw_budget = os.environ.get("BOUNDED_PRELUDE_TIMEOUT_SECONDS", "90")
+if len(raw_budget) > 4 or not raw_budget.isascii() or not raw_budget.isdecimal() or not 1 <= int(raw_budget) <= 3600:
+    print("bounded-prelude: invalid timeout budget (expected 1..3600 seconds)", file=sys.stderr)
+    sys.exit(64)
+budget = int(raw_budget)
+started = time.monotonic()
+with tempfile.TemporaryDirectory(prefix="bounded-prelude-") as temp:
+    stage_file = Path(temp) / "stage"
+    stage_file.write_text("startup")
+    trace_file = Path(temp) / "stages"
+    trace_file.write_text("")
+    env = dict(os.environ, _BOUNDED_PRELUDE_WORKER="1", _BOUNDED_PRELUDE_STAGE_FILE=str(stage_file),
+               _BOUNDED_PRELUDE_TRACE_FILE=str(trace_file))
+    process = subprocess.Popen(["bash", sys.argv[1], *sys.argv[2:]], env=env,
+                               stdin=subprocess.DEVNULL, start_new_session=True)
+
+    def stop_tree():
+        # Always signal the group, even if its leader has already exited.
+        for sig in (signal.SIGTERM, signal.SIGKILL):
+            try:
+                os.killpg(process.pid, sig)
+            except ProcessLookupError:
+                pass
+            if sig == signal.SIGTERM:
+                time.sleep(0.1)
+                # Reap an exited leader before signalling its group again
+                # (macOS may return EPERM for an unreaped, zombie-only group).
+                process.poll()
+        process.wait()
+
+    def interrupted(signum, _frame):
+        stop_tree()
+        sys.exit(128 + signum)
+
+    signal.signal(signal.SIGTERM, interrupted)
+    signal.signal(signal.SIGINT, interrupted)
+    try:
+        result = process.wait(timeout=max(0, budget - (time.monotonic() - started)))
+    except subprocess.TimeoutExpired:
+        stop_tree()
+        # Only fixed stage names cross this diagnostic boundary. No argv,
+        # configuration bytes, remote output or user-supplied values are logged.
+        stage = stage_file.read_text().strip()
+        if stage not in {"startup", "configuration", "guardrails", "scope", "artifacts", "policy", "output"}:
+            stage = "unknown"
+        print(f"bounded-prelude: result=timeout stage={stage} budget_seconds={budget}", file=sys.stderr)
+        if "--json" in sys.argv[2:]:
+            print(json.dumps({"stopCondition": "prelude_timeout", "stage": stage,
+                              "budgetSeconds": budget,
+                              "readOnlyGuarantee": "No tracker or artifact mutations were performed."}))
+        sys.exit(124)
+    # Fatal configuration errors have a strict metadata-only stderr contract.
+    # Buffer progress until success; timeout already reports the last stage.
+    if result == 0:
+        print(trace_file.read_text(), end="", file=sys.stderr)
+    sys.exit(result if result >= 0 else 128 - result)
+PY_BUDGET
+fi
+unset _BOUNDED_PRELUDE_WORKER
+prelude_stage() {
+  printf '%s' "$1" > "$_BOUNDED_PRELUDE_STAGE_FILE"
+  printf 'bounded-prelude: stage=%s elapsed_seconds=%s\n' "$1" "$SECONDS" >> "$_BOUNDED_PRELUDE_TRACE_FILE"
+}
+prelude_stage configuration
 # shellcheck source=scripts/development-workflow/workflow-lib.sh
 source "$SCRIPT_DIR/workflow-lib.sh"
 
@@ -17,6 +97,8 @@ Usage:
 Read-only shared bounded prelude for /run-item and /run-epic: scope resolution,
 repository guardrails snapshot, and policy/checkpoint recommendation. No tracker,
 branch, PR, merge, or cleanup mutation.
+Global deadline: BOUNDED_PRELUDE_TIMEOUT_SECONDS (default 90; range 1..3600).
+Safe stage diagnostics go to stderr; timeout exits 124.
 EOF
 }
 
@@ -432,6 +514,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
+prelude_stage guardrails
 guardrails_error_file="$tmp_dir/guardrails-error.txt"
 if ! guardrails_json="$(read_guardrails_json 2>"$guardrails_error_file")"; then
   guardrails_detail="$(awk 'BEGIN{out=""} {out = out (out == "" ? "" : " ") $0} END{print out}' "$guardrails_error_file")" || guardrails_detail=""
@@ -471,6 +554,7 @@ resolver_common=()
 [ -n "$may_start_backlog_override" ] && resolver_common+=(--may-start-backlog "$may_start_backlog_override")
 [ -n "$max_risk_override" ] && resolver_common+=(--max-risk "$max_risk_override")
 
+prelude_stage scope
 case "$scope_mode" in
   epic)
   if ! "$SCRIPT_DIR/run-epic-scope-resolver.sh" --epic "$epic_number" "${resolver_common[@]+"${resolver_common[@]}"}" --json > "$scope_file"; then
@@ -495,6 +579,7 @@ case "$scope_mode" in
     ;;
 esac
 
+prelude_stage artifacts
 # framework-mode-backlog-type-gate.sh wiring (#1583) — item scope only. The
 # `items` and `epic` scope modes are deliberately not wired; see the plan's
 # Out of Scope section (deferred to #1779).
@@ -552,6 +637,7 @@ if [ "$scope_mode" = "item" ] && [ "$(workflow_template_is_template)" = "true" ]
   fi
 fi
 
+prelude_stage policy
 if [ -z "$may_merge_override" ]; then
   may_merge_override="$(guardrails_scope_may_merge "$guardrails_json" "$scope_file")"
   may_merge_source="$guardrails_source"
@@ -689,6 +775,7 @@ if ! jq -c \
 fi
 mv "$policy_summary_file" "$policy_file"
 
+prelude_stage output
 prelude_json="$(jq -nc \
   --slurpfile scope "$scope_file" \
   --slurpfile policy "$policy_file" \
