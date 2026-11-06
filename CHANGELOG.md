@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.50.0] - 2026-11-06
+
+### Added
+
+- **Cursor hub worker preflight** (#1721): verify worker checkouts, local products and GitHub visibility before Remote Control orchestration writes.
+- **Stage access recovery** (#1746): provide a named stop and recovery within the same role for tool or path denials, with list-aware consumer sync diagnostics.
+- **Codex internal review** (#2076): default to Codex when no reviewer list is configured; allow explicit runtime fallback for proven pre-dispatch unavailability while preserving strict coverage and post-dispatch failures.
+
+### Changed
+
+- **Cursor subagent models** (#2127): pin coordination, implementation and code review to `composer-2.5`, and spec/plan authors and reviewers to `claude-opus-5-5-high`.
+
+### Fixed
+
+- **Reviewer test reliability** (#1960, #2018): clean up interrupted PR-Agent fixtures, reject unexpected mock calls, freeze recent-trigger fixture clocks and allow for slow macOS startup while retaining timeout coverage.
+- **Reviewer capacity retries** (#1995): retry transient overload with bounded backoff and return `needs_rerun` on exhaustion, preserving distinct model-access and quota failures.
+- **Reviewer telemetry** (#2036): keep nested helper results off stdout and accept identical repeated results while rejecting conflicting outcomes.
+- **Hotfix review gates** (#2077): require configured draft and ready reviewers for new hotfix code and enforce evidence before readiness; release PRs retain their exemption.
+- **PR-Agent finding metadata** (#2086): separate explicit category and severity markers from free-form titles; escalate malformed metadata, blocking findings and positive security rows.
+- **Stable CI evidence** (#2088): compare workflows by file path so commit-specific E2E run names remain recognizable after pushes; missing workflows still block readiness.
+- **Bounded workflow prelude** (#2089): correct PR searches, reuse issue-scoped results and accelerate folder lookup; enforce a configurable 90-second deadline with safe diagnostics and exit 124 on timeout.
+- **Local review retries** (#2093): preserve raw `needs_rerun` evidence and permit explicit retries on the same commit without rewriting history or accepting unknown outcomes.
+- **Review evidence freshness** (#2095): recheck evidence before a clean verdict and allow one fresh local assessment within the original wait budget when evidence changes.
+- **Readiness diagnostics** (#2103): identify edited, added or removed review comments and PR description changes, report missing fingerprint manifests and reject stale clean verdicts.
+- **Policy command fidelity** (#2114): preserve explicit `--no-may-merge` and `--no-delegate-review` flags in generated commands.
+- **Durable workflow writes** (#2005): publish configuration, caches and template-sync recovery atomically with file and directory fsync, and persist merge-session directories so interruptions preserve recovery state.
+- **Diagnostic evidence tests** (#2123): restore the synthetic runner fixture's review evidence helper and select its suite when evidence dependencies change, preserving JSON and secret-redaction assertions.
+- **Small-findings completion** (#2124): accept verified current-head terminal evidence while retaining the reviewer's `needs_fixes` verdict; reject stale or incomplete evidence and retain CI and thread checks.
+
 ## [0.49.0] - 2026-10-30
 
 ### Added
@@ -3412,7 +3441,8 @@ Known limitation: human-verification headings split by HTML comments can still b
 - `.claude/settings.json` with pre-approved permissions for common git and fetch operations; `.claude/settings.local.json.example` documenting machine-specific overrides for optional integrations
 - `.gitignore` covering local Claude settings, `.env` files, and common system files
 
-[Unreleased]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.49.0...HEAD
+[Unreleased]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.50.0...HEAD
+[0.50.0]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.49.0...v0.50.0
 [0.49.0]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.48.9...v0.49.0
 [0.48.9]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.48.8...v0.48.9
 [0.48.8]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.48.7...v0.48.8
