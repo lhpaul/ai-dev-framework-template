@@ -44,7 +44,8 @@ its acceptance criteria are stack-neutral.
 All repository commands were run at `49e71117` (`origin/develop`, which
 contains the merged spec) in the worktree
 `/Users/lhpaul/Git/DevStack/adf-1957-worktree` on 2026-11-06, except V18, which was run at the plan revision `3bf2f772` and
-shown to hold at `49e71117`.
+shown to hold at `49e71117`, and V19, which tests Git itself in scratch
+repositories and does not depend on the revision.
 
 | ID | Check | Command / query | Result |
 | --- | --- | --- | --- |
@@ -66,6 +67,7 @@ shown to hold at `49e71117`.
 | V16 | Doc surfaces naming the backend selection (Rule 4) | `git grep -ln "LOCAL_AI_REVIEWER_BACKEND\|local-ai-reviewer.md" -- ':!docs/specs/developments'` | `.ai-dev-workflow.local.env.example`, `.ai-dev-workflow.yaml`, `CHANGELOG.md`, `docs/testing/workflow/1653-*.smoke-test.md`, `docs/testing/workflow/1654-*.smoke-test.md`, `docs/workflow/development-workflow/integrations/local-ai-reviewer.md`, `docs/workflow/development-workflow/integrations/pr-review-platform.md`, `docs/workflow/development-workflow/protocols/93-automated-reviewer-loop-protocol.md`, `scripts/development-workflow/local-ai-reviewer.sh`, and tests. No `.agents/`, `.codex/`, `.cursor/`, or `.claude/` mirror names the backend. |
 | V17 | Tests that run the real reviewer with default resolution (Rule 5, D7) | `git grep -ln "local-ai-reviewer.sh" -- scripts/development-workflow/tests`, then per file `grep -c "LOCAL_AI_REVIEWER_COMMAND\|LOCAL_AI_REVIEWER_BACKEND\|LOCAL_AI_REVIEWER_DISABLE"` | Only `test-local-ai-reviewer.sh` (`default_command_*` at `:250-251`, `1653_s0_default_command_quotes_spaces` at `:1528`) and `test-local-http-review-command.sh` (`:418-463`) reach default resolution. Every other match sets an explicit command, stubs the companion, or only reads the source. |
 | V18 | Today's decoder accepts a `review.local_ai_reviewer` block, so a template revert ignores a kept key (Reversal; Rule 4) | Write `review:` / `  local_ai_reviewer:` / `    backend: claude` to a scratch file, load `scripts/development-workflow/workflow-config-resolver.py` with `importlib`, and call `validate_selected_yaml(raw, path, review_fields=True)`; `git diff --stat 49e71117 3bf2f772 -- scripts/` | Returns `{'review': {'local_ai_reviewer': {'backend': 'claude'}}}` with no `ConfigError`, run at `3bf2f772`. The diff is empty, so the result holds at `49e71117`. |
+| V19 | Git status does not see every byte change in a checkout, so containment cannot rely on it (D4.4; Rule 4) | With Git `2.56.0`: in a scratch repository, set `filter.strip.clean` to `tr -d Z`, commit `.gitattributes` with `g.txt filter=strip` and `g.txt` holding `x`, run `git worktree add --detach`, append `Z` to `g.txt` in the new worktree, then run `git status --porcelain=v1 -z --untracked-files=all --ignored`. Repeat with `core.autocrlf=true` and a CRLF-to-LF rewrite of a checked-out text file. | The clean-filter edit gives empty status output, so the edit is invisible. The CRLF-to-LF rewrite was reported as `M` on this Git version, but whether Git reports it depends on Git's line-ending rules and version, so D4.4 does not rely on it. |
 
 ---
 
@@ -264,9 +266,9 @@ The first failure exits, and nothing is written to stdout.
 | P1 | `command -v "$LOCAL_CLAUDE_REVIEWER_BIN"` resolves | diagnostic names `LOCAL_CLAUDE_REVIEWER_BIN` (outcome row 1) | 127 |
 | P2 | Strict mode: `CONTEXT_BUNDLE_PATH` names a file. The marker is `strict_plan_checks` when `jq -e 'has("strict_plan_checks")'` succeeds, else `strict_spec_checks`. | refusal (row 2) | 2 |
 | P3 | `REVIEWED_HEAD` matches `^[0-9a-f]{40}$` or `^[0-9a-f]{64}$`. The current directory is in a Git work tree, the review copy is created (D4.3), and neither reserved path exists in it (D4.4). | refusal: review copy not created, or reserved path present (row 3) | 2 |
-| P4 | `BASE_BRANCH` is non-empty and does not start with `-`. The diff is computed (D4.4) and is non-empty. | refusal: diff not computed, or empty diff (row 4) | 2 |
+| P4 | `BASE_BRANCH` is non-empty and does not start with `-`. The diff is computed (D4.4) and is non-empty. The prepared files are placed and the baseline fingerprint is taken (D4.4). | refusal: diff not computed, empty diff (row 4); placement or baseline fingerprint failed (row 3) | 2 |
 | P5 | Run the CLI (D4.5). The watchdog in `local-ai-reviewer.sh` owns the budget (row 5). | — | — |
-| P6 | Containment fingerprint unchanged (D4.4) | discard output; diagnostic: review copy modified (row 6) | 3 |
+| P6 | Raw-byte containment fingerprint unchanged and fully read (D4.4) | discard output; diagnostic: review copy modified (row 6) | 3 |
 | P7 | CLI exit status is 0 | diagnostic with the status plus bounded excerpts (D4.8) (row 7) | the CLI's status |
 | P8 | Verdict gate (D4.7) | diagnostic naming the reason plus a bounded stdout excerpt (row 8) | 3 |
 
@@ -310,15 +312,46 @@ controls:
    shell `>` redirection, nor `set -o noclobber` is used for these writes. A
    failed open refuses with the same message (row 3, exit 2).
 
-After both writes, take the
-baseline fingerprint, so the preset's own preparation never counts as a
-modification (BR-12). The fingerprint is one digest: pipe the output of
-`git -C "$work_dir/review" status --porcelain=v1 -z --untracked-files=all --ignored`,
-followed by `git hash-object --no-filters` of each prepared file (or the
-literal `absent`), into `git hash-object --stdin`. Piping keeps the NUL
-separators out of Bash command substitution, which would drop them. The `--ignored` and `--untracked-files=all` options catch
-writes to ignored paths. The content hashes catch edits to the untracked
-prepared files, which porcelain status alone cannot see.
+After both writes, take the baseline fingerprint, so the preset's own
+preparation never counts as a modification (BR-12). Take it again after the
+CLI exits and compare the two (P6).
+
+4. **Raw-byte manifest.** The fingerprint is a SHA-256 digest that an
+   embedded Python step computes over a manifest of every entry under
+   `"$work_dir/review"`, including the root, the linked worktree's `.git`
+   file, and untracked and ignored entries. It walks with
+   `os.walk(top, followlinks=False, onerror=<raise>)`, visits names in sorted
+   byte order, and calls `os.lstat` on each entry. Each record holds the
+   relative path as bytes, the entry type, and `stat.S_IMODE`. A directory
+   adds nothing else, so an added or removed empty directory changes the
+   digest. A symlink adds its `os.readlink` target string and is never
+   followed. A regular file adds its size and the SHA-256 of its raw bytes,
+   read through `os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)`
+   after checking that `os.fstat` gives the same device and inode as the
+   `lstat`. Any other type (FIFO, socket, device) is recorded by type only and
+   is never opened. Each field is length-prefixed, so record boundaries cannot
+   be forged. Timestamps are not recorded, so the CLI's reads do not count.
+   The step prints only the 64-hex digest, which the preset keeps in a shell
+   variable.
+5. **No Git view.** The fingerprint runs no Git command. `git status`
+   compares content after Git's input conversion, so an edit that a clean
+   filter or end-of-line conversion maps back to the indexed blob is
+   invisible to it (V19). Running Git there would also start the
+   developer's clean-filter and `core.fsmonitor` programs on bytes that the
+   CLI wrote. Comparing raw bytes after placement makes the result
+   independent of how the copy was checked out. The checkout therefore keeps
+   the developer's `core.autocrlf`, `core.eol`, and filter configuration, as
+   any checkout of theirs does, and no `-c core.autocrlf=false` is added. That
+   option would not neutralize `.gitattributes` `eol` or filter drivers in any
+   case. Nothing runs in the copy between the two fingerprints except the CLI.
+6. **Fail closed.** If the baseline manifest cannot be read in full, refuse
+   with `review copy fingerprint not taken` (row 3, exit 2) before the CLI
+   runs. If the post-run manifest cannot be read in full, or the digests
+   differ, discard the output (row 6, exit 3). There is no size or entry
+   bound, so no part of the copy goes unchecked. The cost is two full reads
+   of a fresh checkout, which is linear in its size and runs inside the
+   watchdog budget. On a very large repository the worst case is therefore
+   No verdict yet, never an unchecked Clean.
 
 **D4.5 CLI invocation.** Run from inside the copy, with stdin from
 `/dev/null`, stdout to `"$work_dir/out"`, and stderr to `"$work_dir/err"`.
@@ -395,7 +428,7 @@ It refuses a reviewed commit that holds a reserved path, and it places the
 prepared files with exclusive no-follow creation instead of `>` and `cp`.
 It uses fail-closed extraction of one complete top-level object, with a
 single decode attempt at the first `{`, instead of a greedy `\{.*\}`. Its
-containment adds `--ignored` and content hashes. Its diff and copy creation
+containment is a raw-byte manifest of the whole copy instead of Git status. Its diff and copy creation
 are hook-, driver-, and LFS-free. It forwards a strict response as
 `{mode, findings}` only. It also excerpts CLI stdout on failure.
 
@@ -532,7 +565,7 @@ mirrored in help text, configuration comments, and two integration guides.
 | --- | --- | --- | --- | --- | --- | --- |
 | Backend resolution rows 1–8 | disabled flag, explicit command, default-disabled flag, environment selection, shared default (R1–R7) | Skipped; explicit command; `missing_command`; preset (`codex`/`http`/`claude`); `invalid_backend` with the environment or shared key | Skipped: no review evidence. Reviewer failed: operator fixes the configuration and re-runs. Preset: review runs. | T-B1 to T-B5, T-R1 to T-R7, existing `disabled_*` / `missing_command_*` | `local-ai-reviewer.sh` usage text, `.ai-dev-workflow.yaml` comments, `integrations/local-ai-reviewer.md` Configuration, `integrations/pr-review-platform.md` comment | Guide snippets: environment selection and shared-default YAML |
 | Direct-run budget rows 1–4 | `--timeout`, `LOCAL_AI_REVIEWER_TIMEOUT`, command source | given value; 900 with INFO; 300 | Budget passed to the watchdog | T-B6 to T-B9 | usage `--timeout` line, YAML `LOCAL_AI_REVIEWER_TIMEOUT` comment, guide budget paragraph | Guide: explicit command plus `--timeout 900` |
-| Preset outcomes rows 1–11 | D4.2 P1–P8, plus the watchdog | Reviewer failed, No verdict yet, Needs rerun (existing capacity rule), Clean, Needs fixes, strict report or `strict_pass_failed` | Existing loop handling for each class; no new class | T-C1 to T-C21, T-B10 to T-B13 | guide Failure Semantics table | None (not an example surface) |
+| Preset outcomes rows 1–11 | D4.2 P1–P8, plus the watchdog | Reviewer failed, No verdict yet, Needs rerun (existing capacity rule), Clean, Needs fixes, strict report or `strict_pass_failed` | Existing loop handling for each class; no new class | T-C1 to T-C22, T-B10 to T-B13 | guide Failure Semantics table | None (not an example surface) |
 | Loop budget (AC-11 regression) | branch type, override, configured, built-in, backend selection | the existing budget, the same for every backend | unchanged | T-L2 | none changed: Protocol 93 budget table (`:612`) already states 1200 | None |
 
 ---
@@ -681,7 +714,7 @@ the preset invoked directly with the D4.1 environment.
 | T-C4 | AC-14: empty diff (head equals `origin/develop`) gives exit 2, a refusal message, and no stand-in record. |
 | T-C5 | AC-14: no `origin/develop` and no local `develop` gives exit 2 and no stand-in record. |
 | T-C6 | AC-18: `REVIEWED_HEAD` not in the repository, or not hex, gives exit 2, "review copy" in the message, and no stand-in record. |
-| T-C7 | AC-15: the stand-in creates a new file, edits a tracked file, writes an ignored file, or edits `.review-diff.patch`, and prints a clean verdict. Each gives exit 3, "modified" in the message, and empty stdout. |
+| T-C7 | AC-15: the stand-in creates a new file, edits a tracked file, writes an ignored file, edits `.review-diff.patch`, creates an empty directory, removes an empty directory it finds, changes a tracked file's mode, or retargets a committed symlink, and prints a clean verdict. Each gives exit 3, "modified" in the message, and empty stdout. |
 | T-C8 | AC-18: a missing binary gives exit 127, `LOCAL_CLAUDE_REVIEWER_BIN` in the message, and empty stdout. |
 | T-C9 | AC-18 / BR-15: the stand-in exits 1 with text on stdout only, then on stderr only. Each gives the status plus a bounded excerpt on stderr; a 10 kB output is truncated. |
 | T-C10 to T-C16 | AC-16, AC-17: parser cases E1–E20. T-C12 holds every extraction refusal (E4–E8, E18–E20); each asserts exit 3, empty stdout, and no `clean` text forwarded. E18 is the required truncated-container counterexample (BR-13 invalid JSON). |
@@ -690,6 +723,7 @@ the preset invoked directly with the D4.1 environment.
 | T-C19 | AC-19: the default prompt contains `REVIEW.md`, each `REVIEW_CHECKLISTS` entry, the untrusted-data sentence, `review_evidence_verification.v1`, `verification_request_id`, the read-only sentence, and the report-instead-of-fixing sentence. `REVIEW.md` exists in the copy. For parity, run `local-codex-review-command.sh` with a stand-in `codex` that records its prompt, and assert that the shared sentences in both prompts are identical. |
 | T-C20 | AC-17 / P2: strict mode without `CONTEXT_BUNDLE_PATH` gives exit 2 before any copy is created. |
 | T-C21 | AC-13 / BR-10 / P3 (D4.4): the fixture's reviewed commit adds a reserved path as (a) a symlink `.review-diff.patch` to a sentinel file outside the fixture and the temporary directory, (b) a symlink `.review-context.json` to a second sentinel, with a bundle supplied, (c) a dangling symlink `.review-diff.patch` whose target path is outside both, (d) a regular file `.review-context.json` with no bundle supplied, and (e) a directory `.review-diff.patch/`. Each gives exit 2, "reserved path" in the message, empty stdout, and no stand-in record. Each sentinel's bytes and `git hash-object` are unchanged, the dangling target is still absent, the fixture status is unchanged, and no `local-claude-review.*` directory or worktree entry remains. |
+| T-C22 | AC-15 / BR-12 (D4.4 items 4–6): edits that Git status cannot see. (a) Clean filter: the fixture's developer configuration sets `filter.strip.clean` to `tr -d Z` and the reviewed commit's `.gitattributes` maps `g.txt` to it. The stand-in appends `Z` to `g.txt`, and records the copy's `git status --porcelain=v1 -z --untracked-files=all --ignored` before and after its edit to a file outside the copy; the test asserts the two are equal, which proves the edit is invisible to Git status. (b) End of line: the fixture's developer configuration sets `core.autocrlf=true`, and the reviewed commit has an LF-committed text file, which the checkout writes with CRLF, and a file committed with CRLF. The stand-in rewrites each CRLF file in the copy to LF. The status-equality assertion is not made here, because whether Git reports this edit depends on the Git version (V19). (c) Unreadable entry: the stand-in creates a directory with mode `000` that holds a file; the run fails either on the changed digest or on the unreadable post-run manifest, and both are row 6. Each prints a clean verdict and gives exit 3, "modified" in the message, and empty stdout. (d) A run whose stand-in only reads files gives the forwarded verdict, so `atime` changes do not count. |
 
 **New suite `scripts/development-workflow/tests/test-local-ai-reviewer-backend.sh`**
 (`# covers:` `local-ai-reviewer.sh`, `local-claude-review-command.sh`,
@@ -737,7 +771,7 @@ scripts. The shell suites above, selected in CI by `select-test-suites.sh`
 AC-3 T-B3; AC-4 T-B4; AC-5 T-B5 and T-R1 to T-R6; AC-6 T-L1 plus the smoke
 runbook; AC-7 T-B14 plus the existing `:445`; AC-8 T-B15 plus the
 documentation steps; AC-9 T-B6 to T-B8; AC-10 T-B9 plus the guide; AC-11 T-L2;
-AC-12 T-C1; AC-13 T-C2, T-C3, and T-C21 (reserved-path refusal); AC-14 T-C4 and T-C5; AC-15 T-C7; AC-16
+AC-12 T-C1; AC-13 T-C2, T-C3, and T-C21 (reserved-path refusal); AC-14 T-C4 and T-C5; AC-15 T-C7 and T-C22 (edits invisible to Git status); AC-16
 T-C10 to T-C14 (invalid JSON includes the E18 truncated-container refusal in
 T-C12) and T-B1; AC-17 T-C15, T-C16, and T-C20; AC-18 T-C6, T-C8, T-C9, and
 T-B10 to T-B13; AC-19 T-C19; AC-20 T-C17; AC-21 is the guide (verified in the
@@ -844,7 +878,7 @@ No step is irreversible.
 | A strict pass is starved on documentation branches (the 1200 s loop budget is shared with a roughly 900 s pass) | Medium | Low (`strict_pass_failed` is non-blocking) | Guide recommendation (AC-21); the default is unchanged (spec Consumer Impact) |
 | Model prose matches a probe pattern and is misclassified | Low | Low (still Reviewer failed or Needs rerun, never Clean) | Same exposure as the Codex preset (D4.8). Preset messages avoid the probe vocabulary (T-B11). |
 | A stale worktree entry after a KILL confuses the developer | Low | Low | D5 plus the documented `git worktree prune` |
-| A large repository makes the review copy slow | Medium | Low | The copy time counts against the budget. A No verdict yet is retried once by the loop. Raise the configured budget if needed. |
+| A large repository makes the review copy slow | Medium | Low | The copy time and the two raw-byte manifest reads (D4.4) count against the budget, so the worst case is No verdict yet, never an unchecked Clean. A No verdict yet is retried once by the loop. Raise the configured budget if needed. |
 | A consumer opts in and its old synced tests fail | Medium without D7 | Medium | D7 |
 | The loop cannot snapshot the base-branch configuration and falls back to the working-tree file, so a PR could select its own backend | Low | Low | This is the existing #756 fallback (V8), unchanged and shared by every reviewer setting. The smoke runbook's step 7 checks the normal path. |
 
@@ -881,7 +915,7 @@ Cross-Cutting Operational Assumption Check rows.
    first). Run the new suite, `bash scripts/development-workflow/tests/test-workflow-config-resolver.sh`,
    and `bash scripts/development-workflow/tests/test-selected-private-yaml.sh`.
 2. **Preset (D4, D5)**: `local-claude-review-command.sh` plus
-   `test-local-claude-review-command.sh` (T-C1 to T-C21). Confirm that
+   `test-local-claude-review-command.sh` (T-C1 to T-C22). Confirm that
    `shellcheck --severity=warning` and
    `python3 scripts/lint/workflow-shell-guard-lint.py --base-ref origin/develop`
    report nothing for the new file.
