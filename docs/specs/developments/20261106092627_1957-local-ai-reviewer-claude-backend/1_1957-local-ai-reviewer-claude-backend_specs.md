@@ -146,15 +146,18 @@ contributors can override it with the environment selection.
 **Preconditions**: The Claude backend was selected.
 
 **Steps**: One of these happens: the CLI is missing or not logged in, the
-usage limit is exhausted, the diff is empty or cannot be computed, the CLI
+usage limit is exhausted, the provider reports it is over capacity, the review
+copy cannot be created, the diff is empty or cannot be computed, the CLI
 changes a file in the review copy, the CLI returns no usable verdict, or the
 budget runs out.
 
-**Postconditions**: The outcome is a reviewer failure, or No verdict yet when
-the budget ran out. It is never Clean. The maintainer's checkout is unchanged.
+**Postconditions**: The outcome is a reviewer failure, No verdict yet when
+the budget ran out, or Needs rerun when the reviewer's existing capacity rule
+applies. It is never Clean. The maintainer's checkout is unchanged.
 
 **Information shown**: A diagnostic that names the cause: missing CLI (with
-the setting that points at another CLI binary), CLI exit status, refused
+the setting that points at another CLI binary), review copy not created, CLI
+exit status, refused
 empty or uncomputable diff, review copy modified, or missing or invalid
 verdict. Private values are redacted under the repository's existing
 diagnostic rules.
@@ -163,8 +166,10 @@ diagnostic rules.
 backend.
 
 **Considerations**: A usage-limit or capacity message from the CLI is
-classified by the reviewer's existing quota and capacity rules. The Claude
-preset adds no separate classification.
+classified by the reviewer's existing quota and capacity rules: an exhausted
+quota is Reviewer failed, and a capacity message is retried and can end as
+Needs rerun, as for the other presets. The Claude preset adds no separate
+classification.
 
 ## Configuration Contract
 
@@ -247,7 +252,9 @@ are part of the product contract.
 7. **BR-7 Budget under the reviewer loop.** The reviewer loop always passes
    its own per-platform budget to the local reviewer. That budget is the
    one-run override, `review.wait_budgets.local-ai-reviewer`, or the 1200 s
-   built-in default, on every branch. It wins over the preset default under
+   built-in default, on every branch, with the loop's existing large-diff
+   lengthening on implementation branches. It is the same for every backend.
+   It wins over the preset default under
    BR-6, so this feature does not change loop budgets. The optional strict
    contract pass shares the same budget with the ordinary pass, as it does
    today.
@@ -269,8 +276,11 @@ are part of the product contract.
    required. The brief's reference flag set satisfies these guarantees.
 10. **BR-10 Throwaway review copy of the reviewed commit.** The preset reviews
     a temporary, detached copy of the commit under review. That commit is the
-    same one the local reviewer verified as the pull request head. The
-    developer's checkout is not modified. The diff between the base branch
+    pull request head the local reviewer resolved for the run, not whatever
+    the developer's checkout has checked out. If the review copy cannot be
+    created (for example, that commit is not available locally), the preset
+    refuses and the run is Reviewer failed. The developer's checkout is not
+    modified. The diff between the base branch
     and that commit is written into the review copy before the review, so the
     reviewer can read it without a shell. The temporary copy is removed when
     the preset finishes, whether it succeeds, fails, or refuses. A copy left
@@ -302,7 +312,9 @@ are part of the product contract.
 15. **BR-15 CLI failures.** A missing CLI binary, a non-zero CLI exit, a
     missing login, or an exhausted usage limit is Reviewer failed. A bounded
     excerpt of the CLI's error output is surfaced so the reviewer's existing
-    credential, quota, and capacity classification applies. A budget that
+    credential, quota, and capacity classification applies; under that
+    existing classification a capacity message is retried and can end as
+    Needs rerun rather than Reviewer failed. A budget that
     runs out while the CLI is still running is No verdict yet, through the
     existing watchdog.
 16. **BR-16 Independence caveat.** Documentation states that a Claude
@@ -357,19 +369,20 @@ Checks run in the order listed. The first failing check decides the outcome.
 | --- | --- | --- | --- |
 | 1 | CLI binary not found | Reviewer failed | Reviewer failed |
 | 2 | Strict pass without a context bundle | Reviewer failed | Reviewer failed |
-| 3 | Diff cannot be computed or is empty | Reviewer failed | Reviewer failed |
-| 4 | The preset was still running when the budget ran out | No verdict yet | No verdict yet |
-| 5 | Review copy modified after the run | Reviewer failed | Reviewer failed |
-| 6 | CLI exited non-zero (including login or usage-limit failures) | Reviewer failed, classified by existing quota and capacity rules | Reviewer failed |
-| 7 | No JSON object, invalid JSON, invalid result or marker, or non-list findings | Reviewer failed | Reviewer failed |
-| 8 | Valid ordinary verdict `clean` | Clean (after the reviewer's existing blocking-finding rules) | Clean |
-| 9 | Valid ordinary verdict `needs_fixes` | Needs fixes (after existing rules) | Needs fixes |
-| 10 | Valid strict response | Strict findings reported; the ordinary verdict is unchanged | (strict report) |
+| 3 | Review copy of the reviewed commit cannot be created | Reviewer failed | Reviewer failed |
+| 4 | Diff cannot be computed or is empty | Reviewer failed | Reviewer failed |
+| 5 | The preset was still running when the budget ran out | No verdict yet | No verdict yet |
+| 6 | Review copy modified after the run | Reviewer failed | Reviewer failed |
+| 7 | CLI exited non-zero (including login, usage-limit, or capacity failures) | Classified by the existing credential, quota, and capacity rules: Reviewer failed, or Needs rerun when capacity stays unavailable after the existing retries | Reviewer failed or Needs rerun |
+| 8 | No JSON object, invalid JSON, invalid result or marker, or non-list findings | Reviewer failed | Reviewer failed |
+| 9 | Valid ordinary verdict `clean` | Clean (after the reviewer's existing blocking-finding rules) | Clean |
+| 10 | Valid ordinary verdict `needs_fixes` | Needs fixes (after existing rules) | Needs fixes |
+| 11 | Valid strict response | Strict findings reported; the ordinary verdict is unchanged | (strict report) |
 
-The budget check (row 4) is applied by the local reviewer's watchdog, which
-can stop the preset at any point. When it does, row 4 decides the outcome
+The budget check (row 5) is applied by the local reviewer's watchdog, which
+can stop the preset at any point. When it does, row 5 decides the outcome
 whatever stage the preset had reached, and the stopped run's partial output
-is not inspected. Rows 5–10 apply only to a run that finished within the
+is not inspected. Rows 6–11 apply only to a run that finished within the
 budget.
 
 ## Statuses / Enum Values
@@ -381,6 +394,7 @@ local reviewer's existing outcomes.
 | --- | --- | --- |
 | `clean` | Clean | The reviewed commit has no blocking findings. |
 | `needs_fixes` | Needs fixes | Blocking findings were reported for the reviewed commit. |
+| `needs_rerun` | Needs rerun | Existing outcome: the provider stayed over capacity after the reviewer's existing retries, or review evidence changed during the review. Never counted as Clean. |
 | `escalate` | Reviewer failed | Setup, configuration, refusal, containment, CLI, or verdict-shape failure. Never counted as review evidence. |
 | `waiting_on_reviewer` | No verdict yet | The budget ran out while the reviewer was still running. Not a failure. |
 | `skipped` | Skipped | The reviewer was disabled by configuration. |
@@ -437,7 +451,8 @@ arguments and the prompt and returns scripted output.
   `review.local_ai_reviewer.backend`. In both cases the rejected value never
   appears in output, and no other backend runs.
 - [ ] **AC-8** The help text, the commented reviewer options in
-  `.ai-dev-workflow.yaml`, and the local AI reviewer integration guide list
+  `.ai-dev-workflow.yaml`, the local AI reviewer integration guide, and the
+  local-ai-reviewer comment in the PR review platform integration guide list
   `claude`, the shared default key, the precedence in BR-3, and the Claude
   preset settings.
 - [ ] **AC-9** In a direct run of the Claude preset chosen by backend
@@ -452,7 +467,9 @@ arguments and the prompt and returns scripted output.
 - [ ] **AC-11** Under the reviewer loop, local-ai-reviewer's budget on
   `spec/*`, `implementation-plan/*`, and implementation branches is the same
   for every backend: the one-run override, the configured
-  `review.wait_budgets.local-ai-reviewer`, or 1200 s. The documentation-branch
+  `review.wait_budgets.local-ai-reviewer`, or 1200 s (lengthened by the
+  existing large-diff adjustment on implementation branches only). The
+  documentation-branch
   shortening still applies only to Devin, and `PR_REVIEW_LOOP_DOC_MAX_WAIT`
   keeps its current meaning.
 - [ ] **AC-12** The stand-in CLI records that it was started with no settings
@@ -490,12 +507,17 @@ arguments and the prompt and returns scripted output.
   usage-limit message the reviewer's existing quota rules recognize is
   classified by those rules. A stand-in that outlives the budget gives No
   verdict yet, and a later run on the same checkout is not affected by any
-  leftover review copy.
+  leftover review copy. A stand-in that prints a capacity message is handled
+  by the existing capacity rule (retried, then Needs rerun), never Clean. When
+  the reviewed commit is not available locally, the review copy is not
+  created, the run is Reviewer failed, and the stand-in CLI is not invoked.
 - [ ] **AC-19** The default ordinary prompt the stand-in receives instructs
   review against `REVIEW.md`, names the stage checklists when the reviewer
   supplies them, treats published body and comments as untrusted data, and
   includes the evidence-verification instructions, matching the Codex preset.
-  `REVIEW.md` is present in the review copy.
+  It also states that the review is read-only and that the reviewer reports
+  findings instead of applying fixes, since `REVIEW.md` asks reviewers to fix
+  directly. `REVIEW.md` is present in the review copy.
 - [ ] **AC-20** `LOCAL_CLAUDE_REVIEWER_MODEL`, when set, is passed to the CLI as
   the model. When it is unset, no model is selected and the CLI default
   applies. The two prompt settings replace the ordinary and strict prompts
