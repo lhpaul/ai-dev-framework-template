@@ -55,7 +55,7 @@ contains the merged spec) in the worktree
 | V6 | Consumers of `TIMEOUT` in `local-ai-reviewer.sh` (Rule 5) | `grep -n 'TIMEOUT' scripts/development-workflow/local-ai-reviewer.sh` | Assignment `:1061`, `--timeout` `:1067`, validation `:1087`, strict remaining `:800,:837`, ordinary run `:1376-1377` (exported as `LOCAL_AI_REVIEWER_TIMEOUT` and passed to `run_with_timeout`), no-verdict diagnostic `:1390`. |
 | V7 | Loop budget for local-ai-reviewer, which DN-1 and AC-11 rely on (Rule 4) | `sed -n 10360,10365p;10453,10486p scripts/development-workflow/pr-review-loop.sh` | `reviewer_platform_reviews_documentation_branches` returns 1 only for `devin`. `reviewer_wait_budget_resolve` returns the override first, then the configured value, then the built-in default. It shortens only non-reviewing platforms on documentation branches. It applies `large_diff` only when the branch is not a documentation branch and no override was given. Existing test `tests/test-pr-review-loop-no-verdict-yet.sh:187` asserts `1200 default none` for local-ai-reviewer on a documentation branch. |
 | V8 | How the loop hands configuration to the local reviewer (Rule 4) | `sed -n 5133,5150p;15648,15674p scripts/development-workflow/pr-review-loop.sh` | `local_ai_config_file="${AI_DEV_WORKFLOW_CONFIG_FILE:-${config_file:-}}"` is exported as `AI_DEV_WORKFLOW_CONFIG_FILE` to `local-ai-reviewer.sh`. `config_file` is `git show "origin/${_pr_base}:.ai-dev-workflow.yaml"` written to a temporary file. When that fails, it falls back to `workflow_config_file`. |
-| V9 | Shared-file config helper used by peer reviewers (Rule 4) | `grep -n "workflow_effective_config_file" scripts/development-workflow/workflow-lib.sh scripts/development-workflow/coderabbit-cli-reviewer.sh` | Defined at `workflow-lib.sh:136`. It returns `AI_DEV_WORKFLOW_CONFIG_FILE` when that names an existing file, else `<runtime repo>/.ai-dev-workflow.yaml` when present, else status 1. `coderabbit-cli-reviewer.sh:149` uses it. |
+| V9 | Shared-file config helper used by peer reviewers (Rule 4) | `grep -n "workflow_effective_config_file" scripts/development-workflow/workflow-lib.sh scripts/development-workflow/coderabbit-cli-reviewer.sh`; `grep -n "^workflow_repo_root()\|^workflow_config_file()" -A6 scripts/development-workflow/workflow-lib.sh` | Defined at `workflow-lib.sh:135`. It returns `AI_DEV_WORKFLOW_CONFIG_FILE` when that names an existing file, else `workflow_config_file` when present, else status 1. `workflow_config_file` (`workflow-lib.sh:124`) is `<workflow_repo_root>/.ai-dev-workflow.yaml` outside a merge-budget session, and `workflow_repo_root` (`workflow-lib.sh:32`) is `workflow_script_dir/../..`: the checkout that holds the scripts. It is not `--repo-root`, the loop's `repo_root`, or the current directory. `coderabbit-cli-reviewer.sh:149` uses it. |
 | V10 | The private review projection does not carry the new key (Rule 4, DN-5) | `sed -n 3142,3175p scripts/development-workflow/workflow-config-resolver.py` | `project_review_settings` projects only `on_draft.runner`, `on_draft.fallback_runner`, `on_*.github`, and `internal_reviewers_unavailable_policy`. |
 | V11 | Editing `.ai-dev-workflow.yaml` comments does not require a parity-fixture update (Rule 4; corrects a spec-writer note) | `git grep -n '"base"' -- scripts/development-workflow/tests/fixtures/1993-selected-yaml-parity.json`; `sed -n 293,303p scripts/development-workflow/tests/test_selected_private_yaml.py`; `git log --oneline 25e702d2..HEAD -- .ai-dev-workflow.yaml`; `git show --stat cf01e299` | The corpus is pinned to base `25e702d2…` and P11 parses the stored `raw` strings only. It never re-reads the live file. `cf01e299` (#2102) edited `.ai-dev-workflow.yaml` after that base without touching the fixture. |
 | V12 | Sync coverage for new files (Rule 4) | `sed -n 109,112p;310,316p sync-manifest.yaml` | `scripts/development-workflow/` (glob `**/*`) is synced, so the new preset ships without a manifest edit. `.ai-dev-workflow.yaml` is `product_repo_injection` with template-owned comments. |
@@ -125,6 +125,7 @@ contains the merged spec) in the worktree
 | The private local configuration is never read for the backend (D1) | The `review-local-ai-backend` subcommand and its only caller, `local_ai_reviewer_shared_backend` | Implementation Order step 1 (reader takes only `--file`); test T-B5 |
 | Preset diagnostics avoid the reviewer's probe vocabulary (D4.8) | Every message the preset itself writes to stderr, but not the forwarded CLI excerpt | Implementation Order step 2; test T-B11 |
 | Existing suites stay hermetic against a consumer's shared default (D7) | The test sites listed in V17 that reach default resolution | Implementation Order step 5 |
+| A "no shared file" or fallback-file case runs a copied tooling tree (D7) | T-B5's missing-configuration case and T-L1's working-tree case | Implementation Order steps 3 and 4 |
 | Migration note version comparison (D8) | `/sync-template` runs whose `template.last_synced_version` is below the D8 version | Implementation Order step 7; release PR check in step 9 |
 
 ---
@@ -392,6 +393,18 @@ neutral fixture file (an empty YAML document created by the suite) at each
 default-resolution site in V17. The new suites also pin it, to their own
 fixtures.
 
+Pinning cannot express "no shared file": an unset or missing
+`AI_DEV_WORKFLOW_CONFIG_FILE` falls back to the `.ai-dev-workflow.yaml` of
+the checkout that holds the scripts (V9). That fallback is a consumer's own
+file after sync. A test case whose input is "no shared file", or "the
+fallback file holds a value", runs a copied tooling tree. The tracked
+`scripts/development-workflow/*.sh` and `*.py` files are copied into a
+fixture checkout, and the fixture root holds the `.ai-dev-workflow.yaml` the
+case needs, or none. `test_private_source_consumers.py:107-116` already
+builds its runtime this way. This governs T-B5's missing-configuration
+case and T-L1's working-tree case. Steps 3 and 4 discharge it. Every other
+new case pins the variable.
+
 ### D8 — Consumer migration note in `sync-manifest.yaml`
 
 Add a `migration_notes` entry with `version` and `applies_if_syncing_from_before`
@@ -645,11 +658,11 @@ the fixture, and stand-in `claude` and `codex` binaries.
 
 | Test | Covers |
 | --- | --- |
-| T-B1 | AC-1: env `claude` runs Claude. The INFO line names the Claude preset. The `codex` stand-in record is empty. `RESULT=clean` / `needs_fixes` follows the stand-in verdict. |
+| T-B1 | AC-1: env `claude` runs Claude. The INFO line names the Claude preset. The `codex` stand-in record is empty. `RESULT=clean` / `needs_fixes` follows the stand-in verdict. A stand-in `clean` verdict that omits `reviewed_head`, and one that reports a different SHA, each still give `RESULT=clean` with `REVIEWED_HEAD` equal to the PR head, not a `head_mismatch` parse status (AC-16 at the `local-ai-reviewer.sh:1542` head comparison). |
 | T-B2 | AC-2: no command, no environment, and a neutral configuration run Codex, and the stand-in `claude` is not invoked. |
 | T-B3 | AC-3: an explicit command runs whatever the environment and shared settings say. `LOCAL_AI_REVIEWER_DISABLE_DEFAULT=1` with shared `claude` gives `missing_command`. |
 | T-B4 | AC-4: shared `claude` runs Claude. Shared `claude` with env `http` gives the HTTP INFO line. An empty environment selection with shared `claude` runs Claude. |
-| T-B5 | AC-5: shared `codex`, `http`, `openai_compat`, and `claude` each select their preset. Absent, empty, missing, or unparseable configuration gives Codex, and unparseable also emits the D2 WARN line. A list value gives `invalid_backend`. A `.ai-dev-workflow.local.yaml` with `backend: claude`, placed both next to the pinned neutral shared file and in the `--repo-root` fixture, with no environment selection, still gives Codex. |
+| T-B5 | AC-5: shared `codex`, `http`, `openai_compat`, and `claude` each select their preset. Absent, empty, missing, or unparseable configuration gives Codex, and unparseable also emits the D2 WARN line. The missing case runs a copied tooling tree with no `.ai-dev-workflow.yaml` (D7). A list value gives `invalid_backend`. A `.ai-dev-workflow.local.yaml` with `backend: claude`, placed both next to the pinned neutral shared file and in the `--repo-root` fixture, with no environment selection, still gives Codex. |
 | T-B6 | AC-9: a Claude direct run with no timeouts emits the budget INFO line, and the stand-in records `LOCAL_AI_REVIEWER_TIMEOUT=900` in its environment. `local-ai-reviewer.sh:1376` exports the resolved budget to the command, and the preset passes its environment through to the CLI. No 900 s sleep is run. |
 | T-B7 | AC-9: `--timeout 120` makes the stand-in record 120. `LOCAL_AI_REVIEWER_TIMEOUT=600` makes it record 600. Neither emits the budget INFO line. |
 | T-B8 | AC-9: an invalid `--timeout` or `LOCAL_AI_REVIEWER_TIMEOUT` still gives `configuration validation error; key=--timeout` and exit 2. |
@@ -666,7 +679,7 @@ the fixture, and stand-in `claude` and `codex` binaries.
 
 | Suite | Change | Covers |
 | --- | --- | --- |
-| `tests/test-local-ai-reviewer-pr-review-loop-dispatch.sh` | T-L1: source the loop with `HARNESS_MODE=1`, unset `AI_DEV_WORKFLOW_CONFIG_FILE`, and set `repo_root` to a fixture whose working-tree YAML has `backend: claude`. Set `config_file` to a base-snapshot file without the key, and call the real `run_local_ai_reviewer_review`. Expect the Codex stand-in. Then point `config_file` at a snapshot with `claude` and expect the Claude stand-in. Then set an operator `AI_DEV_WORKFLOW_CONFIG_FILE` and expect it to take priority (spec-review note c). Add the `# covers:` line for `local-claude-review-command.sh`. | AC-6 at the composed call site. The `git show origin/<base>` snapshot construction (V8) is existing behavior; no test of it was found by a search of `tests/test-pr-review-loop*.sh` and `tests/lib/`, so the smoke runbook covers the full loop path. |
+| `tests/test-local-ai-reviewer-pr-review-loop-dispatch.sh` | T-L1: source the loop with `HARNESS_MODE=1`, unset `AI_DEV_WORKFLOW_CONFIG_FILE`, and run against a copied tooling tree (D7) whose root `.ai-dev-workflow.yaml` has `backend: claude`, with `workflow_repo_root` and `repo_root` both resolving to that root, so that working-tree file is the real `local-ai-reviewer.sh` fallback. Set `config_file` to a base-snapshot file without the key, and call the real `run_local_ai_reviewer_review`. Expect the Codex stand-in. Then point `config_file` at a snapshot with `claude` and expect the Claude stand-in. Then set an operator `AI_DEV_WORKFLOW_CONFIG_FILE` and expect it to take priority (spec-review note c). Add the `# covers:` line for `local-claude-review-command.sh`. | AC-6 at the composed call site. The `git show origin/<base>` snapshot construction (V8) is existing behavior; no test of it was found by a search of `tests/test-pr-review-loop*.sh` and `tests/lib/`, so the smoke runbook covers the full loop path. |
 | `tests/test-pr-review-loop-no-verdict-yet.sh` | T-L2: with `LOCAL_AI_REVIEWER_BACKEND=claude` exported, `reviewer_wait_budget_resolve local-ai-reviewer` gives `1200 default none` on `spec/*` and `implementation-plan/*`, `2400 default large_diff` on a feature branch above the threshold, `1500 configured none` with a configured value, and `40 override none` with an override, which is not lengthened. | AC-11 |
 | `tests/test_runner_diagnostic_emitters.py` and `tests/test-runner-diagnostic-emitters.sh` | Add a D35-style test for the Claude companion: the secret in the stand-in's stderr is redacted, and the functional JSON is retained on stdout. Add `local-claude-review-command.sh` to the D67 bootstrap list. Add `claude` to the `:3243` backend loop. Add the `# covers:` line. | AC-22 |
 | `tests/test-local-ai-reviewer.sh`, `tests/test-local-http-review-command.sh` | D7: pin `AI_DEV_WORKFLOW_CONFIG_FILE` to a neutral fixture at the default-resolution sites (V17). Keep every existing assertion unchanged, including `backend_alias_error_names_http`. | AC-2, AC-7, consumer hermeticity |
@@ -684,7 +697,7 @@ AC-3 T-B3; AC-4 T-B4; AC-5 T-B5 and T-R1 to T-R6; AC-6 T-L1 plus the smoke
 runbook; AC-7 T-B14 plus the existing `:445`; AC-8 T-B15 plus the
 documentation steps; AC-9 T-B6 to T-B8; AC-10 T-B9 plus the guide; AC-11 T-L2;
 AC-12 T-C1; AC-13 T-C2 and T-C3; AC-14 T-C4 and T-C5; AC-15 T-C7; AC-16
-T-C10 to T-C14; AC-17 T-C15, T-C16, and T-C20; AC-18 T-C6, T-C8, T-C9, and
+T-C10 to T-C14 and T-B1; AC-17 T-C15, T-C16, and T-C20; AC-18 T-C6, T-C8, T-C9, and
 T-B10 to T-B13; AC-19 T-C19; AC-20 T-C17; AC-21 is the guide (verified in the
 smoke runbook); AC-22 is the diagnostic-emitter changes.
 
@@ -716,6 +729,11 @@ suite's temporary directories (stand-in CLI, fixture repository, YAML files).
 - [ ] `docs/workflow/development-workflow/integrations/pr-review-platform.md`:
   the local-ai-reviewer YAML comment (about `:103-110`) names `claude`, the
   shared default key, and the BR-3 order (AC-8).
+- [ ] `.ai-dev-workflow.local.env.example` (public placeholder example, found
+  by V16 at line 5): add `claude` to the accepted values documented for
+  `LOCAL_AI_REVIEWER_BACKEND`, adding a comment if none lists them. Keep the
+  example's assigned value unchanged, so the example does not opt anyone in
+  (DN-7). Add no real value.
 - [ ] `changelog.d/1957.added.local-ai-reviewer-claude-backend.md`: see
   Implementation Order step 8.
 - `docs/project/`, `docs/best-practices/`, `AGENTS.md`, `REVIEW.md`, and
