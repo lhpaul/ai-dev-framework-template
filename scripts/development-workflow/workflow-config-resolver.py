@@ -153,7 +153,7 @@ path scope mode_scope mode_scopes categories always_sync special_handling projec
 required_additions must_contain yaml_list_path sync_coverage_exemptions reason skeleton_role entries
 required_for_product_repo generated_example example_only enforce_release_runtime
 reviews auto_review enabled drafts base_branches issue_tracker project_number vcs
-repository_mode configured_product_repo_keys""".split())
+repository_mode configured_product_repo_keys local_ai_reviewer backend""".split())
 
 
 def safe_config_key(value: Any) -> str:
@@ -3363,6 +3363,52 @@ def cmd_review_local_list(args: argparse.Namespace) -> int:
     return 0
 
 
+# #1957 (plan D1): the backend-name grammar is checked here, before emission,
+# because the shell reads the value through $(...), which strips trailing
+# newlines, and the decoder returns quoted whitespace verbatim.
+LOCAL_AI_BACKEND_NAME = re.compile(r"[A-Za-z0-9_-]+", re.ASCII)
+
+
+def cmd_review_local_ai_backend(args: argparse.Namespace) -> int:
+    """Print review.local_ai_reviewer.backend from one shared file (#1957 D1).
+
+    Reads only --file and never the private local configuration (BR-4, DN-5).
+    It does not decide which names are known; local-ai-reviewer.sh owns that.
+    Exit 0 with empty stdout means not set, 3 invalid, 4 unreadable.
+    """
+    path = Path(args.file)
+    try:
+        if not path.is_file():
+            return 0  # R1
+        raw = capture_config_text(path)
+        if raw is None:
+            return 0  # R1: removed between the check and the read.
+        data = validate_selected_yaml(raw, path, review_fields=True)
+    except (ConfigError, UnicodeError, OSError, ValueError, TypeError, RecursionError):
+        return 4  # R2
+    review = data.get("review") if isinstance(data, dict) else None
+    if review is None:
+        return 0  # R3
+    if not isinstance(review, dict):
+        return 3  # R5
+    section = review.get("local_ai_reviewer")
+    if section is None:
+        return 0  # R3
+    if not isinstance(section, dict):
+        return 3  # R5
+    backend = section.get("backend")
+    if backend is None:
+        return 0  # R3
+    if not isinstance(backend, str):
+        return 3  # R6
+    if backend == "":
+        return 0  # R4
+    if LOCAL_AI_BACKEND_NAME.fullmatch(backend) is None:
+        return 3  # R7
+    print(backend)  # R8
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = DiagnosticArgumentParser(description="Resolve AI workflow repository context")
     subcommands = parser.add_subparsers(dest="command", required=True)
@@ -3406,6 +3452,11 @@ def build_parser() -> argparse.ArgumentParser:
     review_list.add_argument("--phase", choices=("on_draft", "on_ready"), required=True)
     review_list.add_argument("--key", choices=("runner", "github"), required=True)
     review_list.set_defaults(func=cmd_review_list)
+
+    local_ai_backend = subcommands.add_parser(
+        "review-local-ai-backend", help="print review.local_ai_reviewer.backend from one shared file")
+    local_ai_backend.add_argument("--file", required=True)
+    local_ai_backend.set_defaults(func=cmd_review_local_ai_backend)
 
     mode = subcommands.add_parser("mode", help="print the effective workflow mode")
     mode.add_argument("--repo-root")
