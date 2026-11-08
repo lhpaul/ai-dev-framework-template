@@ -83,6 +83,15 @@ Any PR that adds or materially modifies an automated check, guard, lint rule, or
 
 **Exemption**: Pure refactors of already-proven validation logic, with no behavior change, are exempt from re-proof; state the exemption rationale in the PR.
 
+**Trigger- or gate-only changes**: some changes alter only *when* an existing check runs — its event types, `paths:` / `paths-ignore:` or branch filters, or a job-level `if:` — and touch no step, command, or assertion of the check. Such a change has no failing state: the gated job either runs or is skipped. The check's validation logic keeps its existing proof, and no failing-check run is required. Prove the new gate instead:
+
+1. Choose one plant that the gate's filters match (for example, a file under a path the `paths:` filter selects).
+2. Show a live run where the gate must let the check run, and it runs.
+3. Show a live run with the same plant where the gate must skip the check, and it is skipped.
+4. Cite each gate location (file and line) and the run IDs in the PR.
+
+Reviewers recognise the case from the diff: for the check concerned it touches only trigger keys (`on:` and its filters) and job-level `if:` keys, and no `run:`, `uses:`, or step `name:` / `with:`. If the diff also changes a step, command, or assertion, the full planted-violation proof above applies. The variant changes only the form of the evidence; whether the check may be skipped where it now skips is still reviewed on its merits.
+
 See `REVIEW.md` → Code Review Checklist → Pass 2 → "PRs that add or modify an automated check, guard, lint rule, or CI job" for the reviewer-facing enforcement of this rule.
 
 For a worked instance of this rule — a regex-based key-extraction scanner, its full edge-case table, and a named dynamic-key concatenation gap (`t('x.' + k)`) that a naive first version missed and a fix closed with documented regression cases — see [`docs/best-practices/stack/i18n.md` § Key-extraction scanner and the dynamic-key pitfall](stack/i18n.md#key-extraction-scanner-and-the-dynamic-key-pitfall).
