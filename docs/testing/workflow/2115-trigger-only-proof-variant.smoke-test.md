@@ -214,9 +214,10 @@ rm -rf "$WORK"
 
 Recorded 2026-11-08 with Codex CLI 0.160.1. Baseline ref: `origin/develop` at
 `46d14b28` (before this change). Candidate refs: the first commit of this
-branch, `8f59ada2`, and `8909afb3`, which rewords the variant so the two runs
-differ only in the input the gate keys on. Each run is an independent model
-call.
+branch, `8f59ada2`; `8909afb3`, which rewords the variant so the two runs
+differ only in the input the gate keys on; and `5719ef34`, which adds the
+no-run evidence form for skips by a workflow-level filter. Each run is an
+independent model call.
 
 | Contract | Evidence in body | Runs | Result |
 | --- | --- | --- | --- |
@@ -224,6 +225,8 @@ call.
 | Candidate (`8f59ada2`) | one direction | 2 | `needs_fixes`, 1 blocking (2/2) |
 | Candidate (`8909afb3`) | both directions | 2 | `clean`, 0 blocking (2/2) |
 | Candidate (`8909afb3`) | one direction | 2 | `needs_fixes`, 1 blocking (2/2) |
+| Candidate (`5719ef34`) | both directions | 2 | `clean`, 0 blocking (2/2) |
+| Candidate (`5719ef34`) | one direction | 2 | `needs_fixes`, 1 blocking (2/2) |
 | Baseline (`46d14b28`) | both directions | 2 | `clean`, 0 blocking (2/2) |
 | Baseline (`46d14b28`) | one direction | 2 | `needs_fixes`, 1 blocking (2/2) |
 
@@ -235,6 +238,10 @@ Blocking findings in the one-direction runs (abridged, `build.yml:12`):
 - Candidate `8909afb3`: "REVIEW.md requires live run-and-skip evidence for
   trigger/gate-only changes. Supply a draft-PR run showing both jobs skipped,
   retaining the same path-matching plant and varying only PR state/event …"
+- Candidate `5719ef34`: "REVIEW.md requires both run and skip evidence for
+  this gate-only change. Add a live draft-PR run showing docker-build and
+  integration-tests skipped, retaining the same plant and varying only the
+  gate input … no failing-check run is required."
 - Baseline: "REVIEW.md requires bidirectional planted-violation proof for
   materially modified CI controls … demonstrates neither a targeted violation
   nor the draft-blocking direction … Unchanged steps do not exempt the changed
@@ -255,6 +262,9 @@ The fragment was added to the fixture; those runs are not counted above.
   the reviewer asks for a "targeted violation" — the failing-check demand that
   blocked the downstream pull request. Under the new contract it asks only for
   the missing direction and states that no failing-check run is required.
+- The fixture covers a job-level `if:` gate, where both directions create a
+  run. The no-run evidence form for skips by a workflow-level filter is
+  reviewed as text only; no fixture exercises it.
 - This fixture does not reproduce the downstream false positive on the old
   contract when two-direction evidence is present (baseline `clean`, 2/2).
   The model's verdict varies with how the body argues the case, so the
