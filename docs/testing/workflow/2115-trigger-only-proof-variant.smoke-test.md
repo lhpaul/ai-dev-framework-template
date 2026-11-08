@@ -213,21 +213,28 @@ rm -rf "$WORK"
 ## Recorded runs
 
 Recorded 2026-11-08 with Codex CLI 0.160.1. Baseline ref: `origin/develop` at
-`46d14b28` (before this change). Candidate ref: the first commit of this
-branch, `8f59ada2`. Each run is an independent model call.
+`46d14b28` (before this change). Candidate refs: the first commit of this
+branch, `8f59ada2`, and `8909afb3`, which rewords the variant so the two runs
+differ only in the input the gate keys on. Each run is an independent model
+call.
 
 | Contract | Evidence in body | Runs | Result |
 | --- | --- | --- | --- |
 | Candidate (`8f59ada2`) | both directions | 2 | `clean`, 0 blocking (2/2) |
 | Candidate (`8f59ada2`) | one direction | 2 | `needs_fixes`, 1 blocking (2/2) |
+| Candidate (`8909afb3`) | both directions | 2 | `clean`, 0 blocking (2/2) |
+| Candidate (`8909afb3`) | one direction | 2 | `needs_fixes`, 1 blocking (2/2) |
 | Baseline (`46d14b28`) | both directions | 2 | `clean`, 0 blocking (2/2) |
 | Baseline (`46d14b28`) | one direction | 2 | `needs_fixes`, 1 blocking (2/2) |
 
 Blocking findings in the one-direction runs (abridged, `build.yml:12`):
 
-- Candidate: "REVIEW.md requires live run IDs in both directions for
+- Candidate `8f59ada2`: "REVIEW.md requires live run IDs in both directions for
   trigger/gate-only changes … This is missing verification proof, not an
   identified code defect; no failing-check run is required."
+- Candidate `8909afb3`: "REVIEW.md requires live run-and-skip evidence for
+  trigger/gate-only changes. Supply a draft-PR run showing both jobs skipped,
+  retaining the same path-matching plant and varying only PR state/event …"
 - Baseline: "REVIEW.md requires bidirectional planted-violation proof for
   materially modified CI controls … demonstrates neither a targeted violation
   nor the draft-blocking direction … Unchanged steps do not exempt the changed
