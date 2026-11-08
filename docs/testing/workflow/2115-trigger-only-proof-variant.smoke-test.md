@@ -15,6 +15,44 @@ request is opened. The reviewer itself is real: the bundled Codex preset of
 `scripts/development-workflow/local-ai-reviewer.sh`. No private local
 configuration, credential or user data is read or copied.
 
+## Consistency matrix
+
+The variant is a review decision gate with several inputs, so this matrix lists
+its inputs, outcomes and mirror surfaces (`REVIEW.md` → Code Review Checklist →
+"Complex workflow decision-gate matrix"). Line numbers are at this branch's
+head.
+
+Inputs: what the diff touches for the check concerned, and which gate it
+changes. Outcome: the evidence that satisfies the rule. Anything short of that
+evidence is a blocking finding before `ready-for-human-review`.
+
+| Diff touches | Gate kind | Required evidence | Run direction | Skip direction | Missing or insufficient |
+| --- | --- | --- | --- | --- | --- |
+| Any step, command or assertion (`run:`, `uses:`, step `name:` / `with:`), alone or with trigger keys | — | Full planted-violation proof | Check fails with the plant | Check passes once the plant is removed | Blocking |
+| Only already-proven logic, no behavior change | — | Exemption rationale in the PR | — | — | Missing rationale is blocking |
+| Only job-level `if:` | Job condition | Variant, no failing-check run | Run ID, check runs | Run ID, check skipped; same plant, only PR state or event varies | One direction or no run IDs: blocking |
+| Only `on:` event or activity types | Workflow-level filter | Variant, no failing-check run | Run ID, check runs | No run: commit SHA, event and activity, plus one listing of the same workflow file that shows the other direction's run and no run for the skip | One direction, or a listing without the other direction's run: blocking |
+| Only `paths:` / `paths-ignore:` | Workflow-level filter | Variant, no failing-check run | Run ID for a plant the filter selects | No run for a plant it does not select, plus the same listing rule | Same as above |
+| Only branch filters | Workflow-level filter | Variant, no failing-check run | Run ID for a target branch the filter selects | No run for a target branch it excludes, plus the same listing rule (`gh run list` without `--branch` when the branches differ) | Same as above |
+
+In every variant row the gate location is cited as file and line, and whether
+the check may be skipped where it now skips is still reviewed on its merits.
+
+Mirror surfaces and what each carries:
+
+| Surface | Location | Carries |
+| --- | --- | --- |
+| Rule | `REVIEW.md:48` (Verification Discipline) | Recognition, evidence per gate kind, no-run form, merits clause |
+| Blocking checklist entry | `REVIEW.md:418` (Pass 2) | Diff-based recognition keys, evidence, no-run form, merits clause; points to the rule for the gate-input cases |
+| Workflow Policy item 4 | `REVIEW.md:500` | Two-direction evidence; the plant must change the run-or-skip decision |
+| Implementer guide | `docs/best-practices/3-testing.md:86` | Four steps, gate-input cases, no-run form, recognition keys, merits clause |
+| Proportionality guide | `docs/workflow/development-workflow/test-scope-proportionality.md:149` | Pointer to the rule only |
+| Release note | `changelog.d/2115.fixed.trigger-only-proof-variant.md` | Summary of the variant and the no-run form |
+
+Examples: `3-testing.md:90` (draft-only gate with one path-matching plant) and
+the fixture below, a job-level `if:` gate. No example or fixture covers a
+workflow-level filter, so the no-run rows are reviewed as text only.
+
 ## Fixture
 
 - Base commit: `.github/workflows/build.yml` with two jobs (`docker-build`,
