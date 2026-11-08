@@ -19,7 +19,8 @@ Usage: local-ai-reviewer.sh <pr_number> <owner> <repo> [--timeout <seconds>] [--
 
 Options:
   --timeout <seconds>  Maximum seconds to wait for LOCAL_AI_REVIEWER_COMMAND.
-                       Defaults to LOCAL_AI_REVIEWER_TIMEOUT or 300.
+                       Defaults to LOCAL_AI_REVIEWER_TIMEOUT, then the bundled
+                       Claude preset's 900, then 300.
   --repo-root <path>   Repository checkout to review. When supplied, HEAD must
                        match the pull request head SHA before review runs.
                        Enables local git diff fallback when GitHub cannot
@@ -37,9 +38,9 @@ Exit codes:
      and was stopped (no verdict yet; not a failure)
 
 Environment:
-  LOCAL_AI_REVIEWER_COMMAND         Optional. When unset, defaults from
-                                    LOCAL_AI_REVIEWER_BACKEND (codex or
-                                    http) unless
+  LOCAL_AI_REVIEWER_COMMAND         Optional. When unset, defaults to the
+                                    bundled preset of the selected backend
+                                    (codex, http, or claude) unless
                                     LOCAL_AI_REVIEWER_DISABLE_DEFAULT=1.
                                     The command receives CONTEXT_BUNDLE_PATH,
                                     PR_NUMBER, OWNER, REPO, BASE_BRANCH,
@@ -49,9 +50,9 @@ Environment:
                                     REVIEW_DOCTRINE_PATTERN_COUNT,
                                     REVIEW_DOCTRINE_VERSION, and
                                     LOCAL_AI_REVIEWER_MODE (ordinary|strict) in env.
-  LOCAL_AI_REVIEWER_BACKEND         codex (default) or http. Used only
-                                    when LOCAL_AI_REVIEWER_COMMAND is unset.
-                                    Alias: openai_compat (deprecated).
+  LOCAL_AI_REVIEWER_BACKEND         codex (default), http, or claude. Used
+                                    only when LOCAL_AI_REVIEWER_COMMAND is
+                                    unset. Alias: openai_compat (deprecated).
   LOCAL_AI_REVIEWER_DISABLE_DEFAULT=1
                                     Do not apply a bundled preset default.
   LOCAL_AI_REVIEWER_DISABLED=1      Emit RESULT=skipped / disabled_by_config.
@@ -80,6 +81,26 @@ Environment:
   LOCAL_AI_REVIEWER_DIFF_MAX_BYTES Bound for the inlined unified diff
                                     (default 200000).
   LOCAL_AI_REVIEWER_CURL_BIN        curl binary override (tests).
+  LOCAL_CLAUDE_REVIEWER_BIN         Claude Code CLI for the claude preset
+                                    (default: claude). The CLI must be
+                                    installed and logged in.
+  LOCAL_CLAUDE_REVIEWER_MODEL       Optional model for the claude preset
+                                    (default: the CLI's own default).
+  LOCAL_CLAUDE_REVIEWER_PROMPT      Override the ordinary-pass Claude prompt only.
+  LOCAL_CLAUDE_REVIEWER_STRICT_PROMPT
+                                    Override the strict-pass Claude prompt only.
+
+Backend selection (first match wins):
+  1. LOCAL_AI_REVIEWER_COMMAND, used as is.
+  2. LOCAL_AI_REVIEWER_DISABLE_DEFAULT=1: no command (missing_command).
+  3. A non-empty LOCAL_AI_REVIEWER_BACKEND.
+  4. A non-empty review.local_ai_reviewer.backend in the shared workflow
+     configuration (AI_DEV_WORKFLOW_CONFIG_FILE, else .ai-dev-workflow.yaml;
+     under pr-review-loop.sh, the PR base branch's copy). The private local
+     configuration is never read for it.
+  5. codex.
+  An unknown name is Reviewer failed / invalid_backend; the diagnostic names
+  the key that supplied it and never echoes the value.
 
 Strict contract checks (#1650 spec, #1655 plan):
   Two registry entries (spec and plan) each report STRICT_<entry>_STATE on every
@@ -97,7 +118,27 @@ Strict contract checks (#1650 spec, #1655 plan):
 EOF
 }
 
+# local_ai_reviewer_shared_backend (#1957, plan D1/D2)
+# Prints review.local_ai_reviewer.backend from the shared workflow
+# configuration this run receives (AI_DEV_WORKFLOW_CONFIG_FILE, else the
+# tooling checkout's .ai-dev-workflow.yaml). Never reads the private local
+# configuration. Status 0 with empty output means not set; 3 means invalid;
+# any other non-zero status means unreadable.
+local_ai_reviewer_shared_backend() {
+  local config
+  if ! config="$(workflow_effective_config_file 2>/dev/null)" || [ -z "$config" ]; then
+    return 0
+  fi
+  workflow_command_with_safe_stderr python3 "$(workflow_config_resolver_script 2>/dev/null)" \
+    review-local-ai-backend --file "$config"
+}
+
+# Set by resolve_local_ai_reviewer_command to the selected bundled preset's
+# default direct-run budget in seconds, or empty (plan D2/D3).
+LOCAL_AI_REVIEWER_PRESET_TIMEOUT=""
+
 resolve_local_ai_reviewer_command() {
+  LOCAL_AI_REVIEWER_PRESET_TIMEOUT=""
   if [ -n "${LOCAL_AI_REVIEWER_COMMAND:-}" ]; then
     return 0
   fi
@@ -105,10 +146,31 @@ resolve_local_ai_reviewer_command() {
     return 0
   fi
 
-  local backend="${LOCAL_AI_REVIEWER_BACKEND:-codex}"
+  # BR-3: a non-empty environment selection wins, and the shared default is
+  # then not read; otherwise the shared default; otherwise codex.
+  local backend="${LOCAL_AI_REVIEWER_BACKEND:-}"
+  local backend_key="LOCAL_AI_REVIEWER_BACKEND"
+  local shared_backend="" shared_status=0
+  if [ -z "$backend" ]; then
+    shared_backend="$(local_ai_reviewer_shared_backend)" || shared_status=$?
+    if [ "$shared_status" -eq 3 ]; then
+      workflow_diagnostic "ERROR: configuration validation error; key=review.local_ai_reviewer.backend" >&2
+      return 1
+    elif [ "$shared_status" -ne 0 ]; then
+      workflow_diagnostic "WARN: configuration unreadable; key=review.local_ai_reviewer.backend; using the built-in default backend" >&2
+      shared_backend=""
+    fi
+    if [ -n "$shared_backend" ]; then
+      backend="$shared_backend"
+      backend_key="review.local_ai_reviewer.backend"
+    fi
+  fi
+  backend="${backend:-codex}"
+
   local default_command=""
   local default_command_quoted
   local preset_label=""
+  local preset_timeout=""
   case "$backend" in
     http|openai_compat)
       # openai_compat is a deprecated alias for http.
@@ -119,8 +181,14 @@ resolve_local_ai_reviewer_command() {
       default_command="$SCRIPT_DIR/local-codex-review-command.sh"
       preset_label="Codex"
       ;;
+    claude)
+      default_command="$SCRIPT_DIR/local-claude-review-command.sh"
+      preset_label="Claude"
+      preset_timeout=900
+      ;;
     *)
-      workflow_diagnostic "ERROR: configuration validation error; key=LOCAL_AI_REVIEWER_BACKEND" >&2
+      # The rejected value is never echoed; it may be private.
+      workflow_diagnostic "ERROR: configuration validation error; key=${backend_key}" >&2
       return 1
       ;;
   esac
@@ -129,6 +197,7 @@ resolve_local_ai_reviewer_command() {
     default_command_quoted="$(printf '%s' "$default_command" | sed "s/'/'\\\\''/g; 1s/^/'/; \$s/\$/'/")"
     LOCAL_AI_REVIEWER_COMMAND="$default_command_quoted"
     export LOCAL_AI_REVIEWER_COMMAND
+    LOCAL_AI_REVIEWER_PRESET_TIMEOUT="$preset_timeout"
     workflow_diagnostic "INFO: LOCAL_AI_REVIEWER_COMMAND defaulted to bundled ${preset_label} preset: $default_command" >&2
   fi
 }
@@ -1059,12 +1128,17 @@ if ! valid_slug_component "$REPO"; then
 fi
 
 TIMEOUT="${LOCAL_AI_REVIEWER_TIMEOUT:-300}"
+# Plan D3: an explicit budget (--timeout or a non-empty
+# LOCAL_AI_REVIEWER_TIMEOUT) always wins over a bundled preset's default.
+TIMEOUT_EXPLICIT=0
+[ -n "${LOCAL_AI_REVIEWER_TIMEOUT:-}" ] && TIMEOUT_EXPLICIT=1
 REPO_ROOT=""
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --timeout)
       [ "$#" -ge 2 ] && [ -n "${2:-}" ] || { workflow_diagnostic "ERROR: --timeout requires a value" >&2; exit 2; }
       TIMEOUT="$2"
+      TIMEOUT_EXPLICIT=1
       shift 2
       ;;
     --repo-root)
@@ -1107,6 +1181,11 @@ fi
 if ! resolve_local_ai_reviewer_command; then
   print_result escalate 0 0 0 invalid_backend invalid_backend
   exit 2
+fi
+
+if [ "$TIMEOUT_EXPLICIT" -eq 0 ] && [ -n "${LOCAL_AI_REVIEWER_PRESET_TIMEOUT:-}" ]; then
+  TIMEOUT="$LOCAL_AI_REVIEWER_PRESET_TIMEOUT"
+  workflow_diagnostic "INFO: local AI reviewer timeout defaulted to ${TIMEOUT}s for the bundled Claude preset" >&2
 fi
 
 if [ -z "${LOCAL_AI_REVIEWER_COMMAND:-}" ]; then

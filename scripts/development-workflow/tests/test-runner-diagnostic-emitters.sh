@@ -16,6 +16,7 @@
 # covers: scripts/development-workflow/claude-code-action-reviewer.sh
 # covers: scripts/development-workflow/local-http-review-command.sh
 # covers: scripts/development-workflow/local-codex-review-command.sh
+# covers: scripts/development-workflow/local-claude-review-command.sh
 # covers: scripts/development-workflow/local-http-reviewer.sh
 # covers: scripts/development-workflow/local-codex-reviewer.sh
 # covers: scripts/development-workflow/reviewer-effectiveness-report.sh
