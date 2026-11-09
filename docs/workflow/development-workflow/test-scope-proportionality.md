@@ -146,7 +146,9 @@ the Coverage-Harm Statement threshold above:
 - **Planted-violation proof** — any PR that adds or materially modifies an
   automated check, guard, lint rule, or CI job must still prove, at a
   concrete file and line, that the check fails on the violation and passes
-  once it is removed.
+  once it is removed. A trigger- or gate-only change proves its gate with
+  live runs in both directions instead, as `REVIEW.md` → Verification
+  Discipline describes.
 - **E2E fixture contract** — a feature PR in a repository with a committed
   E2E suite must still extend the suite's seed/fixture data with the
   feature's edge cases.
