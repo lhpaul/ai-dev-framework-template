@@ -655,8 +655,26 @@ release ref is unavailable or PR resolution fails for any commit in range
 `RELEASE_SCOPE_INCOMPLETE` (`reason=release_ref_unavailable` or
 `unresolved_shas=...`) and fails closed. Explicit `--issue` / `--issues` are
 unioned with the derived scope and never filtered. GitHub Projects / GitHub
-Issues `--from-changelog` behavior is unchanged (missing CHANGELOG file/section
-still fails closed).
+Issues `--from-changelog` behavior is unchanged by #1982 (missing CHANGELOG
+file/section still fails closed).
+
+For **GitHub Projects / GitHub Issues**, a release section can cite an older
+issue as context, for example "follow-up to v1.20.0 (#1552)" (#1328). When a
+reference in the release section is also cited in an earlier release section,
+the helper reads that issue from GitHub. If the issue is closed and its
+milestone is a release older than the one being cleaned up, the reference is
+left out of the changelog-derived scope and reported as
+`RELEASE_SCOPE_SKIPPED issue=<N> reason=shipped_in_earlier_release
+milestone=<earlier> version=<current> changelog_section=<section>`. A
+prerelease milestone of the same version does not count as earlier. Any other
+answer keeps the issue in scope, as before: an open issue, no milestone, a
+milestone that is not a release version, or a different version prefix. A
+failed read also keeps it and prints `RELEASE_SCOPE_HISTORY_UNVERIFIED
+issue=<N> reason=<issue_read_failed|repository_unavailable>`, so check that
+issue by hand. References cited only in the current section are never read.
+A historical reference to an issue that no earlier section lists is still
+treated as shipped; pass the intended scope with `--issues` in that case.
+Explicit `--issue` / `--issues` are never filtered.
 
 #### Linear release scope decision gate (consistency matrix)
 

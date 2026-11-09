@@ -629,6 +629,69 @@ union_explicit_issue_numbers() {
   done
 }
 
+# changelog_issue_shipped_earlier <issue> <version> <earlier-section>
+#
+# GitHub providers only (#1328). Returns 0 when a changelog reference that is
+# also cited in an earlier release section belongs to an issue that already
+# shipped: the issue is closed and its milestone is a release version older
+# than <version>. The reference is then historical context, so it is reported
+# as RELEASE_SCOPE_SKIPPED and left out of the changelog-derived scope.
+#
+# Returns 1 (keep the issue) in every other case, including a reopened issue,
+# a missing or non-release milestone, or a tracker read that fails. A failed
+# read prints RELEASE_SCOPE_HISTORY_UNVERIFIED so the operator can check the
+# issue by hand. Explicit --issue / --issues are never passed through here.
+changelog_issue_shipped_earlier() {
+  local issue="$1" version="$2" earlier_section="$3"
+  local repo_owner repo_name issue_fields issue_state issue_milestone
+
+  repo_owner="$(workflow_resolve_github_repo_owner)"
+  repo_name="$(workflow_resolve_github_repo_name)"
+  if [ -z "$repo_owner" ] || [ -z "$repo_name" ]; then
+    cleanup_log "RELEASE_SCOPE_HISTORY_UNVERIFIED issue=${issue} reason=repository_unavailable changelog_section=${earlier_section}"
+    return 1
+  fi
+  if ! issue_fields="$(gh api "repos/${repo_owner}/${repo_name}/issues/${issue}" \
+      --jq '[.state, (.milestone.title // "")] | @tsv')"; then
+    cleanup_log "RELEASE_SCOPE_HISTORY_UNVERIFIED issue=${issue} reason=issue_read_failed changelog_section=${earlier_section}"
+    return 1
+  fi
+  IFS=$'\t' read -r issue_state issue_milestone <<< "$issue_fields"
+  if [ "$issue_state" != "closed" ] || [ -z "$issue_milestone" ]; then
+    return 1
+  fi
+  if ! python3 - "$issue_milestone" "$version" <<'PY'
+import re
+import sys
+
+PATTERN = re.compile(r"^(?P<prefix>.*?)(\d+)\.(\d+)\.(\d+)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$")
+
+
+def parse(value):
+    match = PATTERN.fullmatch(value.strip())
+    if not match:
+        return None
+    prefix = match.group("prefix")
+    if prefix == "v":
+        prefix = ""
+    # Compare release cores only: a prerelease milestone of this same version
+    # (v1.2.3-rc.1 while releasing v1.2.3) is not an earlier release.
+    return prefix, (int(match.group(2)), int(match.group(3)), int(match.group(4)))
+
+
+milestone = parse(sys.argv[1])
+current = parse(sys.argv[2])
+if milestone is None or current is None or milestone[0] != current[0]:
+    sys.exit(1)
+sys.exit(0 if milestone[1] < current[1] else 1)
+PY
+  then
+    return 1
+  fi
+  cleanup_log "RELEASE_SCOPE_SKIPPED issue=${issue} reason=shipped_in_earlier_release milestone=${issue_milestone} version=${version} changelog_section=${earlier_section}"
+  return 0
+}
+
 append_issues_from_changelog() {
   local version="$1"
   local changelog_path="${CHANGELOG_PATH:-CHANGELOG.md}"
@@ -645,7 +708,10 @@ append_issues_from_changelog() {
   fi
 
   # Branch on provider BEFORE parsing. GitHub providers keep origin/develop's
-  # parser byte-identical; Linear-only heading/complement rules live below.
+  # section parser; Linear-only heading/complement rules live below. The one
+  # GitHub addition (#1328): a reference also cited in an earlier release
+  # section is checked against the tracker and dropped when the issue already
+  # shipped in an earlier release (see changelog_issue_shipped_earlier).
   if [ "$TRACKER_PROVIDER" != "linear" ]; then
     # --- github_projects / github_issues: develop append_issues_from_changelog ---
     if [ -z "$RELEASE_HEAD" ] && [ ! -f "$changelog_path" ]; then
@@ -716,17 +782,36 @@ if not issues:
     print(f"CHANGELOG_NO_ISSUES_FOUND version=v{version}", file=sys.stderr)
     sys.exit(1)
 
-print("\n".join(issues))
+# #1328: note the newest earlier release section that also cites each
+# reference. Such a reference may be historical context ("follow-up to #N")
+# rather than shipped work; the caller confirms that against the tracker.
+earlier = {}
+older_text = text[section_end:]
+older_headings = list(re.finditer(r"^## \[([^\]]+)\].*$", older_text, re.MULTILINE))
+for index, older in enumerate(older_headings):
+    older_version = older.group(1).strip()
+    if older_version.lower() == "unreleased":
+        continue
+    older_end = older_headings[index + 1].start() if index + 1 < len(older_headings) else len(older_text)
+    for item in re.finditer(r"(?<![\w-])#([1-9][0-9]*)\b", older_text[older.end():older_end]):
+        earlier.setdefault(item.group(1), older_version)
+
+print("\n".join(f"{issue}\t{earlier[issue]}" if issue in earlier else issue for issue in issues))
 PY
     )"; then
       return 1
     fi
 
-    while IFS= read -r issue; do
+    local earlier_section
+    while IFS=$'\t' read -r issue earlier_section; do
       [ -z "$issue" ] && continue
       if ! is_valid_issue_token "$issue"; then
         echo "Invalid issue token '$issue' extracted from CHANGELOG." >&2
         return 1
+      fi
+      if [ -n "$earlier_section" ] && \
+        changelog_issue_shipped_earlier "$issue" "$version" "$earlier_section"; then
+        continue
       fi
       ISSUE_NUMBERS+=("$issue")
     done <<< "$extracted"

@@ -1009,6 +1009,161 @@ run_test "milestone_stamp_exits_zero" "0" "$status"
 run_contains "milestone_stamp_release_stamped" "RELEASE_STAMPED issue=101" "$output"
 
 echo ""
+echo "=== Historical changelog references (#1328) ==="
+
+# A v1.17.0 bullet cites issues that a v1.16.0 bullet already listed. Only an
+# issue that is closed with an earlier release milestone is historical context;
+# every other answer from the tracker keeps the issue in scope.
+#   90  closed, milestone v1.16.0        -> skipped
+#   91  open (reopened), milestone v1.16.0 -> kept
+#   92  closed, no milestone             -> kept
+#   93  closed, milestone v1.17.0        -> kept (same release, not earlier)
+#   94  issue read fails                 -> kept, RELEASE_SCOPE_HISTORY_UNVERIFIED
+#   95  closed, milestone v1.17.0-rc.1   -> kept (prerelease of v1.17.0 is not an earlier release)
+#   96  closed, milestone "Sprint 5"     -> kept (not a release milestone)
+#   97  closed, milestone v1.9.0         -> skipped (numeric, not string, comparison)
+#  101  only in v1.17.0                   -> kept, tracker never read
+HISTORY_BIN="$TMP_ROOT/history-bin"
+HISTORY_CALLS="$TMP_ROOT/history-calls.log"
+mkdir -p "$HISTORY_BIN"
+cat > "$HISTORY_BIN/gh" <<MOCK_GH_HISTORY
+#!/usr/bin/env bash
+printf 'gh %s\n' "\$*" >> "$HISTORY_CALLS"
+issue_read_jq='[.state, (.milestone.title // "")] | @tsv'
+case "\$*" in
+  "api repos/test-owner/test-repo/issues/90 --jq \$issue_read_jq") printf 'closed\tv1.16.0\n' ;;
+  "api repos/test-owner/test-repo/issues/91 --jq \$issue_read_jq") printf 'open\tv1.16.0\n' ;;
+  "api repos/test-owner/test-repo/issues/92 --jq \$issue_read_jq") printf 'closed\t\n' ;;
+  "api repos/test-owner/test-repo/issues/93 --jq \$issue_read_jq") printf 'closed\tv1.17.0\n' ;;
+  "api repos/test-owner/test-repo/issues/94 --jq \$issue_read_jq")
+    printf 'HTTP 502: Bad Gateway\n' >&2
+    exit 1
+    ;;
+  "api repos/test-owner/test-repo/issues/95 --jq \$issue_read_jq") printf 'closed\tv1.17.0-rc.1\n' ;;
+  "api repos/test-owner/test-repo/issues/96 --jq \$issue_read_jq") printf 'closed\tSprint 5\n' ;;
+  "api repos/test-owner/test-repo/issues/97 --jq \$issue_read_jq") printf 'closed\tv1.9.0\n' ;;
+  api\ repos/test-owner/test-repo/issues/*)
+    printf 'unexpected issue read: gh %s\n' "\$*" >&2
+    exit 64
+    ;;
+  api\ -X\ PATCH\ repos/test-owner/test-repo/issues/*\ -F\ milestone=42)
+    printf '{"milestone":{"number":42}}\n'
+    ;;
+  issue\ view\ *\ --json\ state\ --jq\ .state) printf 'closed\n' ;;
+  *) exec "$MILESTONE_BIN/gh" "\$@" ;;
+esac
+MOCK_GH_HISTORY
+cp "$MILESTONE_BIN/git" "$HISTORY_BIN/git"
+chmod +x "$HISTORY_BIN/gh" "$HISTORY_BIN/git"
+
+fixture_history_repo() {
+  local name="$1"
+  local provider="$2"
+  local path
+  path="$(fixture_github_projects_repo "$name")"
+  if [ "$provider" = "github_issues" ]; then
+    cat > "$path/.ai-dev-workflow.yaml" <<'YAML'
+schema_version: 2
+issue_tracker:
+  provider: github_issues
+YAML
+  fi
+  cat > "$path/CHANGELOG.md" <<'MD'
+# Changelog
+
+## [Unreleased]
+
+- Upcoming work (#90).
+
+## [1.17.0] - 2026-06-11
+
+### Fixed
+
+- **Fix A** (#101): follow-up to the v1.16.0 provider work (#90), see also #91,
+  #92, #93, #94, #95, #96 and #97.
+
+## [1.16.0] - 2026-06-01
+
+- **Provider work** (#90, #91, #92, #93).
+
+## [1.9.0] - 2026-04-01
+
+- **Early work** (#94, #95, #96, #97).
+MD
+  printf '%s\n' "$path"
+}
+
+for history_provider in github_projects github_issues; do
+  : > "$HISTORY_CALLS"
+  repo_history="$(fixture_history_repo "history-${history_provider}" "$history_provider")"
+  result="$(run_cleanup_with_bin "$HISTORY_BIN" "$repo_history" v1.17.0 --from-changelog --best-effort)"
+  status="$(printf '%s\n' "$result" | sed -n '1p')"
+  output="$(printf '%s\n' "$result" | sed '1d')"
+  history_calls="$(cat "$HISTORY_CALLS")"
+  run_test "history_${history_provider}_exits_zero" "0" "$status"
+  run_contains "history_${history_provider}_skips_90" \
+    "RELEASE_SCOPE_SKIPPED issue=90 reason=shipped_in_earlier_release milestone=v1.16.0 version=v1.17.0 changelog_section=1.16.0" \
+    "$output"
+  run_contains "history_${history_provider}_skips_97" \
+    "RELEASE_SCOPE_SKIPPED issue=97 reason=shipped_in_earlier_release milestone=v1.9.0 version=v1.17.0 changelog_section=1.9.0" \
+    "$output"
+  run_not_contains "history_${history_provider}_no_stamp_90" "RELEASE_STAMPED issue=90 " "$output"
+  run_not_contains "history_${history_provider}_no_patch_90" "issues/90 -F milestone" "$history_calls"
+  run_not_contains "history_${history_provider}_no_stamp_97" "RELEASE_STAMPED issue=97 " "$output"
+  for kept_issue in 91 92 93 94 95 96 101; do
+    run_contains "history_${history_provider}_stamps_${kept_issue}" \
+      "RELEASE_STAMPED issue=${kept_issue} " "$output"
+  done
+  run_contains "history_${history_provider}_unverified_94" \
+    "RELEASE_SCOPE_HISTORY_UNVERIFIED issue=94 reason=issue_read_failed changelog_section=1.9.0" \
+    "$output"
+  run_not_contains "history_${history_provider}_no_read_101" \
+    "api repos/test-owner/test-repo/issues/101 " "$history_calls"
+  run_not_contains "history_${history_provider}_no_unexpected_gh" "unexpected" "$output"
+done
+
+# Explicit --issue keeps an issue the changelog filter would drop.
+repo_history_explicit="$(fixture_history_repo history-explicit github_projects)"
+result="$(run_cleanup_with_bin "$HISTORY_BIN" "$repo_history_explicit" v1.17.0 --from-changelog --issue 90 --best-effort)"
+output="$(printf '%s\n' "$result" | sed '1d')"
+run_contains "history_explicit_issue_stamps_90" "RELEASE_STAMPED issue=90 " "$output"
+
+# Missing repository identity cannot verify history, so the issue stays in scope.
+HISTORY_NO_REPO_BIN="$TMP_ROOT/history-no-repo-bin"
+mkdir -p "$HISTORY_NO_REPO_BIN"
+cat > "$HISTORY_NO_REPO_BIN/gh" <<MOCK_GH_HISTORY_NO_REPO
+#!/usr/bin/env bash
+case "\$*" in
+  "repo view --json owner --jq .owner.login"|"repo view --json name --jq .name") exit 1 ;;
+  *) exec "$HISTORY_BIN/gh" "\$@" ;;
+esac
+MOCK_GH_HISTORY_NO_REPO
+cat > "$HISTORY_NO_REPO_BIN/git" <<'MOCK_GIT_HISTORY_NO_REPO'
+#!/usr/bin/env bash
+case "$*" in
+  "remote get-url origin") exit 2 ;;
+  *) exit 0 ;;
+esac
+MOCK_GIT_HISTORY_NO_REPO
+chmod +x "$HISTORY_NO_REPO_BIN/gh" "$HISTORY_NO_REPO_BIN/git"
+repo_history_no_repo="$(fixture_history_repo history-no-repo github_issues)"
+result="$(run_cleanup_with_bin "$HISTORY_NO_REPO_BIN" "$repo_history_no_repo" v1.17.0 --from-changelog --best-effort)"
+output="$(printf '%s\n' "$result" | sed '1d')"
+run_contains "history_no_repo_unverified_90" \
+  "RELEASE_SCOPE_HISTORY_UNVERIFIED issue=90 reason=repository_unavailable changelog_section=1.16.0" \
+  "$output"
+run_not_contains "history_no_repo_no_skip" "RELEASE_SCOPE_SKIPPED issue=" "$output"
+
+# Planted violation: the frozen pre-#1328 parser stamps the historical
+# reference, so the assertions above fail without this fix.
+HISTORY_BASELINE="$REPO_ROOT/scripts/development-workflow/tests/fixtures/prepare-release-post-merge-cleanup.develop-baseline"
+repo_history_baseline="$(fixture_history_repo history-baseline github_projects)"
+cp "$HISTORY_BASELINE" "$repo_history_baseline/scripts/development-workflow/prepare-release-post-merge-cleanup.sh"
+result="$(run_cleanup_with_bin "$HISTORY_BIN" "$repo_history_baseline" v1.17.0 --from-changelog --best-effort)"
+output="$(printf '%s\n' "$result" | sed '1d')"
+run_contains "history_baseline_reproduces_bug" "RELEASE_STAMPED issue=90 " "$output"
+
+echo ""
 echo "=== Omitted merged items detection ==="
 
 # Test: --from-changelog with github_projects; no extra Merged items in project.
