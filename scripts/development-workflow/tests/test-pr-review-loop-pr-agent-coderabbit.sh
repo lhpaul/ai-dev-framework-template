@@ -2747,6 +2747,7 @@ for _2116_case in disabled failed_on_head not_configured; do
   : >"$_fixture_dir_1946/dispatch"
   _2061_prior='{"schema":"reviewer_loop_history.v1","entries":[]}'
   _2061_local_result=clean
+  # shellcheck disable=SC2034 # Read by the sourced production handler.
   local_review_retry_head_record=""
   # shellcheck disable=SC2034 # Read by the sourced production handler.
   repo_review_platforms=(local-ai-reviewer pr-agent)
