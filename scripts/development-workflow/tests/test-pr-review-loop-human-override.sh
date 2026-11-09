@@ -246,10 +246,10 @@ _ho_processor_case() (
   out="$(PATH="$_ho_dir:$PATH" reviewer_loop_local_ai_human_override_output 42 fix/2116-test 2>/dev/null)"
   PATH="$_ho_dir:$PATH" reviewer_loop_process_platform_output local-ai-reviewer 2 "$out" 0 1 >/dev/null
   jq -cn --arg aggregate "$aggregate_result" \
-    --argjson records "$(printf '%s\n' "${platform_result_records[@]}" | jq -s '.')" \
-    --argjson heads "$(reviewer_loop_head_evidence_json "$loop_head_sha" "${platform_reviewed_heads[@]}")" \
+    --argjson records "$(printf '%s\n' ${platform_result_records[@]+"${platform_result_records[@]}"} | jq -s '.')" \
+    --argjson heads "$(reviewer_loop_head_evidence_json "$loop_head_sha" ${platform_reviewed_heads[@]+"${platform_reviewed_heads[@]}"})" \
     --arg tokens "${platform_result_tokens[*]}" \
-    --arg summary "$(reviewer_loop_human_override_summary_section "${human_override_records[@]}" "${human_override_records[@]}")" \
+    --arg summary "$(reviewer_loop_human_override_summary_section ${human_override_records[@]+"${human_override_records[@]}"} ${human_override_records[@]+"${human_override_records[@]}"})" \
     '{aggregate:$aggregate,records:$records,heads:$heads,tokens:$tokens,summary:$summary}'
 )
 _ho_entry="$(_ho_processor_case)"

@@ -16496,7 +16496,7 @@ $(reviewer_loop_head_evidence_render "${loop_head_sha:-}" "${platform_reviewed_h
   # #2116: human overrides applied in this run (audit trail).
   local human_override_section=""
   if declare -p human_override_records >/dev/null 2>&1 && [ "${#human_override_records[@]}" -gt 0 ]; then
-    human_override_section="$(reviewer_loop_human_override_summary_section "${human_override_records[@]}")"
+    human_override_section="$(reviewer_loop_human_override_summary_section ${human_override_records[@]+"${human_override_records[@]}"})"
   fi
 
   local phase_section=""
