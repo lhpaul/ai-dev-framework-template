@@ -4921,8 +4921,9 @@ workflow_review_evidence_ledger_proof() {
 #     permission is admin, maintain or write.
 # The marker must open the comment, so a summary or doc quoting it does not
 # count. Agents never post this marker; it is a human decision. The reason is
-# flattened to one line and "<" / ">" become "‹" / "›" so it cannot open an
-# HTML comment or a ledger marker where it is echoed.
+# flattened to one line, "<" / ">" become "‹" / "›" and backticks become
+# quotes, so it cannot open an HTML comment, a ledger marker or a code fence
+# where it is echoed.
 # Prints one JSON object {platform, head, by, reason, comment_id, comment_url,
 # created_at} for the newest valid override and returns 0; returns 1 when
 # there is none or anything cannot be read (fail closed).
@@ -4946,7 +4947,7 @@ workflow_reviewer_human_override_json() {
         | select(($c.user.type // "") == "User" and (($c.user.login // "") | length) > 0)
         | select((($o.by // $c.user.login) | tostring) == $c.user.login)
         | {platform: $platform, head: $head, by: $c.user.login,
-           reason: ($o.reason | trim | gsub("[\\r\\n\\t]+"; " ") | gsub("<"; "‹") | gsub(">"; "›") | .[0:500]),
+           reason: ($o.reason | trim | gsub("[\\r\\n\\t]+"; " ") | gsub("<"; "‹") | gsub(">"; "›") | gsub("`"; "\u0027") | .[0:500]),
            comment_id: ($c.id // null), comment_url: ($c.html_url // ""),
            created_at: ($c.created_at // "")}]
       | sort_by(.created_at) | reverse | .[]')" || return 1

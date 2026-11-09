@@ -144,6 +144,9 @@ _ho_check newest_trusted_override_wins admin1
 _ho_set_comments "$(_ho_marker_comment 1 maint User "$(_ho_payload "$_ho_head" "a <!-- reviewer-loop-history:v1 --> b")")"
 run_test "2116a_reason_cannot_open_html_comment" "a ‹!-- reviewer-loop-history:v1 --› b" \
   "$(PATH="$_ho_dir:$PATH" workflow_reviewer_human_override_json acme/widgets 42 "$_ho_head" local-ai-reviewer | jq -r .reason)"
+_ho_set_comments "$(_ho_marker_comment 1 maint User "$(_ho_payload "$_ho_head" "see \`\`\`fence\`\`\` here")")"
+run_test "2116a_reason_cannot_open_code_fence" "see '''fence''' here" \
+  "$(PATH="$_ho_dir:$PATH" workflow_reviewer_human_override_json acme/widgets 42 "$_ho_head" local-ai-reviewer | jq -r .reason)"
 _ho_set_comments "$(_ho_marker_comment 1 maint User "$(_ho_payload "$_ho_head")")"
 run_test "2116a_comments_read_failure_fails_closed" 1 \
   "$(HO_COMMENTS_FAIL=1 PATH="$_ho_dir:$PATH" workflow_reviewer_human_override_json acme/widgets 42 "$_ho_head" local-ai-reviewer >/dev/null 2>&1; echo $?)"
@@ -262,11 +265,11 @@ run_test "2116c_ledger_records_reason" "doctrine gap" "$(printf '%s' "$_ho_recor
 run_test "2116c_ledger_reviewed_head_is_override_head" "$_ho_head" \
   "$(printf '%s' "$_ho_entry" | jq -r '.heads[] | select(.platform == "local-ai-reviewer") | .reviewed_head')"
 run_test "2116c_skip_keeps_clean_aggregate" clean "$(printf '%s' "$_ho_entry" | jq -r .aggregate)"
-run_test "2116c_platform_token_names_override" "local-ai-reviewer:skipped (human override by @maint)" \
+run_test "2116c_platform_token_names_override" "local-ai-reviewer:skipped (human override by maint)" \
   "$(printf '%s' "$_ho_entry" | jq -r .tokens)"
 _ho_summary="$(printf '%s' "$_ho_entry" | jq -r .summary)"
 run_test "2116c_summary_has_heading" 1 "$(grep -c '^\*\*Human override:\*\*$' <<<"$_ho_summary")"
-run_test "2116c_summary_line_deduplicated" 1 "$(grep -c "^- \`local-ai-reviewer\` skipped on head \`$_ho_head\` by @maint: doctrine gap (\[override comment\](https://example.test/c/1))$" <<<"$_ho_summary")"
+run_test "2116c_summary_line_deduplicated" 1 "$(grep -c "^- \`local-ai-reviewer\` skipped on head \`$_ho_head\` by \`maint\`: doctrine gap (\[override comment\](https://example.test/c/1))$" <<<"$_ho_summary")"
 run_test "2116c_summary_notes_rearm" 1 "$(grep -c 'A new push re-arms it.' <<<"$_ho_summary")"
 run_test "2116c_summary_empty_without_records" "" "$(reviewer_loop_human_override_summary_section)"
 unset -f _ho_processor_case
@@ -333,6 +336,7 @@ _ho_second_pass_case() (
   # production does (in a conditional), not with a set +e window.
   status=0
   PATH="$_ho_dir:$PATH" reviewer_loop_second_local_pass_before_ready_gate 42 >/dev/null 2>&1 || status=$?
+  # shellcheck disable=SC2154 # Set by the sourced production gate.
   printf 'STATUS=%s\nREASON=%s\nAGGREGATE=%s\nAGGREGATE_REASON=%s\nDISPATCHES=%s\nRECORDS=%s\n' \
     "$status" "$local_second_pass_reason" "$aggregate_result" "$aggregate_reason" \
     "$(wc -l <"$_ho_dir/dispatch" | tr -d ' ')" "${#human_override_records[@]}"

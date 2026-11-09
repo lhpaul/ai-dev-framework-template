@@ -9207,7 +9207,7 @@ reviewer_loop_human_override_summary_section() {
     [.[] | select(type == "object" and (.by // "") != "" and (.head // "") != "")]
     | unique_by([.comment_id, .head, .platform])
     | .[]
-    | "- `\(.platform)` skipped on head `\(.head)` by @\(.by): \(.reason)" +
+    | "- `\(.platform)` skipped on head `\(.head)` by `\(.by)`: \(.reason)" +
       (if (.comment_url // "") != "" then " ([override comment](\(.comment_url)))" else "" end)
   ' 2>/dev/null)" || return 0
   [ -n "$lines" ] || return 0
@@ -9232,10 +9232,10 @@ reviewer_loop_local_ai_human_override_output() {
   by="$(printf '%s' "$override_json" | jq -r '.by // ""')" || return 1
   reason="$(printf '%s' "$override_json" | jq -r '.reason // ""')" || return 1
   url="$(printf '%s' "$override_json" | jq -r '.comment_url // ""')" || url=""
-  workflow_diagnostic "INFO: local-ai-reviewer overridden by @${by} for head ${loop_head_sha} (${url:-no url}); the reviewer is not run on this head" >&2
+  workflow_diagnostic "INFO: local-ai-reviewer overridden by ${by} for head ${loop_head_sha} (${url:-no url}); the reviewer is not run on this head" >&2
   print_kv RESULT skipped
   print_kv REASON human_override
-  print_kv DISPLAY_RESULT "skipped (human override by @${by})"
+  print_kv DISPLAY_RESULT "skipped (human override by ${by})"
   print_kv REVIEWED_HEAD "$loop_head_sha"
   print_kv HUMAN_OVERRIDE_BY "$by"
   print_kv HUMAN_OVERRIDE_HEAD "$loop_head_sha"

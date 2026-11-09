@@ -2750,10 +2750,10 @@ for _2116_case in disabled failed_on_head not_configured; do
   local_review_retry_head_record=""
   # shellcheck disable=SC2034 # Read by the sourced production handler.
   repo_review_platforms=(local-ai-reviewer pr-agent)
+  # shellcheck disable=SC2034 # repo_review_platforms is read by the sourced production handler.
   case "$_2116_case" in
     disabled) _2061_local_result=skipped ;;
     failed_on_head) _2061_prior="$_2116_failed_prior" ;;
-    # shellcheck disable=SC2034 # Read by the sourced production handler.
     not_configured) repo_review_platforms=(pr-agent) ;;
   esac
   _2116_output="$(PATH="$_fixture_dir_1946:$PATH" PR_AGENT_FIXTURE_POLL_MARKER="" PR_AGENT_FIXTURE_BODY="${_fixture_header_1946}${_2116_request}" \
