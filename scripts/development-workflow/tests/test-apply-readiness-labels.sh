@@ -2018,6 +2018,48 @@ MOCK_ISSUE_COMMENTS="$(_ledger_comment loop-runner OWNER 939 "$(_ledger_entry no
 result="$(run_helper_platform "$_codex_config")"
 run_test "1789_local_ai_reviewer_no_verdict_yet_ledger_refuses_reason" "reviewer-check-absent" "$(field "$result" REASON)"
 run_test "1789_local_ai_reviewer_no_verdict_yet_ledger_no_label" "0" "$(grep -c 'add-label ready-for-human-review' "$_LABEL_LOG" || true)"
+# #2116: a local-ai-reviewer skip recorded as a human override labels only
+# while a live marker for THIS head from a write-access User still exists.
+# Planted violations: an old-head marker, a read-only author, no marker at
+# all, and a non-override skip reason must each refuse.
+_2116_ledger() {
+  # _2116_ledger <raw_reason>
+  jq -cn --arg head "$HEAD" --arg reason "$1" '{schema:"reviewer_loop_history.v1",entries:[{iteration:4,updated_at:"2026-01-09T00:00:00Z",
+    platform_results:[{platform:"local-ai-reviewer",result:"skipped",raw_result:"skipped",raw_reason:$reason,
+      human_override:{platform:"local-ai-reviewer",head:$head,by:"maintainer",reason:"doctrine gap"}}],
+    reviewed_heads:[{platform:"local-ai-reviewer",reviewed_head:$head,state:"current"}]}]}' |
+    { printf '### Automated Reviewer Loop Summary\n\n*Posted automatically by `pr-review-loop.sh`.*\n\n<!-- reviewer-loop-history:v1 -->\n```json\n'; cat; printf '\n```\n'; }
+}
+_2116_marker() {
+  # _2116_marker <head>
+  jq -cn --arg head "$1" '[{id:950,user:{login:"maintainer",type:"User"},author_association:"MEMBER",
+    created_at:"2026-01-09T00:00:01Z",updated_at:"2026-01-09T00:00:01Z",
+    body:("<!-- reviewer-loop-human-override:v1 " + ({platform:"local-ai-reviewer",head:$head,reason:"doctrine gap"} | tojson) + " -->\nOverriding the local finding.")}]'
+}
+for _2116_case in valid old_head no_write absent other_skip; do
+  _2116_reason=human_override
+  _2116_marker_head="$HEAD"
+  MOCK_PERMS='maintainer=write'
+  case "$_2116_case" in
+    old_head) _2116_marker_head=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb ;;
+    no_write) MOCK_PERMS='maintainer=read' ;;
+    other_skip) _2116_reason=disabled_by_config ;;
+  esac
+  MOCK_ISSUE_COMMENTS="$(_ledger_comment loop-runner OWNER 951 "$(_2116_ledger "$_2116_reason")")"
+  if [ "$_2116_case" != absent ]; then
+    MOCK_ISSUE_COMMENTS="$(jq -cn --argjson a "$MOCK_ISSUE_COMMENTS" --argjson b "$(_2116_marker "$_2116_marker_head")" '$b + $a')"
+  fi
+  result="$(run_helper_platform "$_codex_config")"
+  if [ "$_2116_case" = valid ]; then
+    run_test "2116_readiness_override_valid_labels" "labeled" "$(field "$result" RESULT)"
+  else
+    run_test "2116_readiness_override_${_2116_case}_refuses" "reviewer-evidence-unreadable" "$(field "$result" REASON)"
+    run_test "2116_readiness_override_${_2116_case}_no_label" "0" "$(grep -c 'add-label ready-for-human-review' "$_LABEL_LOG" || true)"
+  fi
+done
+MOCK_PERMS=''
+unset -f _2116_ledger _2116_marker
+unset _2116_case _2116_reason _2116_marker_head
 # #2064: ticket-only commentary needs no matched proof. Independent security
 # and outside verification still refuse actual readiness labels.
 MOCK_HEAD_CONFIG="$_pr_agent_platform_yaml"

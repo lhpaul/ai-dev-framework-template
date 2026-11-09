@@ -351,6 +351,11 @@ call. The ordinary-pass bundle file is never rewritten.
 
 Use `LOCAL_AI_REVIEWER_DISABLED=1` to intentionally skip the local platform
 with `RESULT=skipped` and `REASON=disabled_by_config`.
+A disabled reviewer is not a readiness pass. To overrule a local-ai-reviewer
+finding for one head, a human with write access posts the head-bound override
+marker described in Protocol 93, "Human override of a local-ai-reviewer
+verdict" (`protocols/93-automated-reviewer-loop-protocol.md`). Agents never
+post it.
 
 Set `LOCAL_AI_REVIEWER_EVIDENCE_FILE=/path/to/file.json` or pass
 `--evidence-file` to `local-codex-reviewer.sh` to persist a local evidence

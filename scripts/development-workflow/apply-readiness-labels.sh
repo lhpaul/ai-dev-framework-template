@@ -1256,7 +1256,8 @@ coderabbit_cli_local_ai_ledger_verdict() {
           | . as $entry
           | ((.platform_results // [])[]
              | select(.platform == $platform)
-             | {outcome: (.result // "unknown"), evidence_snapshot_sha256: (.evidence_snapshot_sha256 // ""),
+             | {outcome: (.result // "unknown"), raw_reason: (.raw_reason // ""),
+                evidence_snapshot_sha256: (.evidence_snapshot_sha256 // ""),
                 evidence_manifest: (.evidence_manifest // {}),
                 head_sha: (
                   ($entry.reviewed_heads // [])
@@ -1280,6 +1281,20 @@ coderabbit_cli_local_ai_ledger_verdict() {
     # #1789: no_verdict_yet (a waiting record or a kept expired-wait skip) is
     # an absent verdict, never a pass.
     not_yet_run|unknown|no_verdict_yet) _adapter_refusal_reason="reviewer-check-absent"; return ;;
+    # #2116: a local-ai-reviewer skip recorded as a human override passes only
+    # when the ledger names THIS head and the live override marker is still
+    # valid for it now (author still has write access, marker not removed).
+    # The ledger record alone is not trusted; any other skip still refuses.
+    skipped)
+      if [ "$platform_arg" = local-ai-reviewer ] &&
+          [ "$(printf '%s\n' "$verdict" | jq -r '.raw_reason // ""' 2>/dev/null)" = human_override ] &&
+          [ -n "$verdict_head" ] && [ "$verdict_head" = "$head_sha" ] &&
+          workflow_reviewer_human_override_json "$repo" "$pr_number" "$head_sha" local-ai-reviewer >/dev/null; then
+        _adapter_ledger_started_at="${ledger_started_at:-}"
+        _adapter_ledger_clean=1
+        return
+      fi
+      _adapter_refusal_reason="reviewer-evidence-unreadable"; return ;;
     *) _adapter_refusal_reason="reviewer-evidence-unreadable"; return ;;
   esac
   if [ -z "$verdict_head" ] || [ "$verdict_head" != "$head_sha" ]; then
