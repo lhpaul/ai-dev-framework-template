@@ -931,10 +931,24 @@ Outputs stable key=value lines including:
   PHASE_AFTER_CLEAN_SKIP_REASON=<result> (emitted when the phase never starts)
   PHASE_AFTER_CLEAN_NET_NEW_BLOCKER=0|1 (compatibility alias for READY_PHASE_NET_NEW_BLOCKER)
   LOCAL_SECOND_PASS=0|1 (1 when a second local pass ran before the ready-phase gate)
-  LOCAL_SECOND_PASS_REASON=not_required|head_changed|prior_findings|no_evidence|no_local_reviewer|failed_for_head|head_moved_during_pass|local_pass_unavailable
+  LOCAL_SECOND_PASS_REASON=not_required|head_changed|prior_findings|no_evidence|no_local_reviewer|failed_for_head|head_moved_during_pass|local_pass_unavailable|human_override
     (head_moved_during_pass: live PR head != loop_head_sha on a proceed path,
     including not_required/no_local_reviewer when no pass ran, and after a
-    clean pass; aggregate REASON remains head_moved_during_run)
+    clean pass; aggregate REASON remains head_moved_during_run;
+    human_override: a valid human override for this head stood in for the pass)
+  Human override of local-ai-reviewer (#2116): when a PR comment opens with
+    <!-- reviewer-loop-human-override:v1 {"platform":"local-ai-reviewer","head":"<sha>","reason":"<why>"} -->
+    and its author is a live write/maintain/admin User, local-ai-reviewer is not
+    run on that head and reports, per platform:
+    RESULT=skipped REASON=human_override REVIEWED_HEAD=<head>
+    HUMAN_OVERRIDE_BY=<login> HUMAN_OVERRIDE_HEAD=<head> HUMAN_OVERRIDE_REASON=<reason>
+    HUMAN_OVERRIDE_JSON=<object>; the ledger record carries human_override and
+    the summary comment lists it. A marker for another head has no effect.
+  PR-Agent verification that needs local-ai-reviewer but cannot get it (not
+    configured, disabled, failed on the head without an explicit retry):
+    RESULT=escalate REASON=pr_agent_verification_requires_local_reviewer
+    HUMAN_ACTION=<what to do> (a human override does not acknowledge PR-Agent
+    verification items)
   POST_CLEAN_RECHECK=0|1 (1 when the post-clean settle-and-recheck ran)
   POST_CLEAN_RECHECK_SKIP_REASON=<reason> (present only when POST_CLEAN_RECHECK=0: not_clean,
     compare_mode, skip_env, no_thread_posting_platforms, or no_pr_number — so a caller can tell
@@ -6369,8 +6383,19 @@ _EXTRACT_POSSIBLE_ISSUE_LABELS_
     return 0
   }
 
+  # #2116: PR-Agent verification needs a local-ai-reviewer pass and cannot get
+  # one. Named distinctly from pr_agent_ambiguous_review, which means PR-Agent
+  # output could not be classified.
+  _pr_agent_verification_dead_end() {
+    local state="$1"
+    print_kv VERDICT escalate
+    print_kv VERDICT_REASON pr_agent_verification_requires_local_reviewer
+    print_kv VERIFICATION_LOCAL_REVIEWER_STATE "$state"
+    print_kv HUMAN_ACTION "PR-Agent verification on head ${head_sha} needs a local-ai-reviewer pass (${state}). Configure or enable local-ai-reviewer and re-run the loop; after a failed local review on this head, re-run with --retry-local-review-head ${head_sha}; or resolve the PR-Agent verification items yourself. A reviewer-loop-human-override marker does not acknowledge PR-Agent verification."
+  }
+
   _pr_agent_classify() {
-    local verdict output status=0 prior tmp proof normalized previous_local
+    local verdict output status=0 prior tmp proof normalized previous_local raw_local
     verdict="$(workflow_pr_agent_evidence_verdict "$repo" "$pr_number" "$head_sha" "$pr_agent_bound_id" "$1")"
     if [ "$verdict" = clean ]; then
       tmp="$(mktemp)" || { print_kv VERDICT escalate; return; }
@@ -6391,7 +6416,7 @@ _EXTRACT_POSSIBLE_ISSUE_LABELS_
       local configured_local
       configured_local="$(reviewer_loop_repo_configured_platforms)" || configured_local=""
       if ! grep -Fxq local-ai-reviewer <<<"$configured_local"; then
-        print_kv VERDICT escalate; return
+        _pr_agent_verification_dead_end not_configured; return
       fi
       prior="$(reviewer_loop_prior_history_payload_from_pr "$pr_number")"
       if ! printf '%s' "$prior" | jq -e '(.history_status // "available") == "available" and (.entries | type) == "array"' >/dev/null 2>&1; then
@@ -6403,7 +6428,7 @@ _EXTRACT_POSSIBLE_ISSUE_LABELS_
           printf '%s' "$previous_local" | jq -e --arg head "$head_sha" \
             '.head_sha == $head and (.outcome == "needs_fixes" or .outcome == "needs_rerun")' >/dev/null 2>&1; then
         if [ "${local_review_retry_head_record:-}" != "$head_sha" ]; then
-          print_kv VERDICT escalate; return
+          _pr_agent_verification_dead_end failed_on_head; return
         fi
       fi
       local evidence_wait evidence_poll _evidence_budget_details
@@ -6412,6 +6437,10 @@ _EXTRACT_POSSIBLE_ISSUE_LABELS_
       output="$(LOCAL_AI_REVIEWER_VERIFICATION_REQUEST_ID="$pr_agent_bound_id" LOCAL_AI_REVIEWER_REQUIRE_EVIDENCE=1 \
         run_local_ai_reviewer_review "$pr_number" "$branch_name" "$evidence_poll" "$evidence_wait")" || status=$?
       verdict="$(kv_value_default RESULT "$output" escalate)"
+      raw_local="$verdict"
+      if [ "$raw_local" = skipped ]; then
+        _pr_agent_verification_dead_end "skipped:$(kv_value_default REASON "$output" unknown)"; return
+      fi
       if [ "$status" -ne 0 ] && [ "$verdict" = clean ]; then verdict=escalate; fi
       case "$verdict" in
         clean|needs_fixes|needs_rerun|waiting_on_reviewer|escalate) ;;
@@ -6465,7 +6494,7 @@ _EXTRACT_POSSIBLE_ISSUE_LABELS_
   if _pr_agent_bound_summary phase1; then
     comment_body="$pr_agent_bound_body"
   fi
-  local verdict classified
+  local verdict classified _pr_agent_human_action=""
   classified="$(_pr_agent_classify "$comment_body")"
   verdict="$(kv_value_default VERDICT "$classified" escalate)"
   printf '%s\n' "$classified" | sed -n '/^EVIDENCE_/p'
@@ -6528,7 +6557,9 @@ _EXTRACT_POSSIBLE_ISSUE_LABELS_
       ;;
     escalate)
       print_kv RESULT escalate
-      print_kv REASON pr_agent_ambiguous_review
+      print_kv REASON "$(kv_value_default VERDICT_REASON "$classified" pr_agent_ambiguous_review)"
+      _pr_agent_human_action="$(kv_value_default HUMAN_ACTION "$classified" "")"
+      [ -z "$_pr_agent_human_action" ] || print_kv HUMAN_ACTION "$_pr_agent_human_action"
       print_kv PLATFORM "$platform"
       print_kv PR_NUMBER "$pr_number"
       print_kv BRANCH "$branch_name"
@@ -6678,7 +6709,9 @@ _EXTRACT_POSSIBLE_ISSUE_LABELS_
       ;;
     *)
       print_kv RESULT escalate
-      print_kv REASON pr_agent_ambiguous_review
+      print_kv REASON "$(kv_value_default VERDICT_REASON "$classified" pr_agent_ambiguous_review)"
+      _pr_agent_human_action="$(kv_value_default HUMAN_ACTION "$classified" "")"
+      [ -z "$_pr_agent_human_action" ] || print_kv HUMAN_ACTION "$_pr_agent_human_action"
       print_kv PLATFORM "$platform"
       print_kv PR_NUMBER "$pr_number"
       print_kv BRANCH "$branch_name"
@@ -9162,6 +9195,61 @@ check_unresolved_threads() {
   printf '%d\n' "$unresolved_count"
 }
 
+# reviewer_loop_human_override_summary_section <override_json>...
+#
+# Issue #2116: renders the summary comment's audit lines for the human
+# overrides applied in this run (deduplicated by comment id). Prints nothing
+# when no argument is a readable override object.
+reviewer_loop_human_override_summary_section() {
+  local lines
+  [ "$#" -gt 0 ] || return 0
+  lines="$(printf '%s\n' "$@" | jq -rs '
+    [.[] | select(type == "object" and (.by // "") != "" and (.head // "") != "")]
+    | unique_by([.comment_id, .head, .platform])
+    | .[]
+    | "- `\(.platform)` skipped on head `\(.head)` by @\(.by): \(.reason)" +
+      (if (.comment_url // "") != "" then " ([override comment](\(.comment_url)))" else "" end)
+  ' 2>/dev/null)" || return 0
+  [ -n "$lines" ] || return 0
+  printf '\n\n**Human override:**\n%s\nThe overridden reviewer did not run on this head. A new push re-arms it.' "$lines"
+}
+
+# reviewer_loop_local_ai_human_override_output <pr_number> <branch_name>
+#
+# Issue #2116: a human may overrule local-ai-reviewer for ONE head with a PR
+# comment marker (workflow_reviewer_human_override_json in workflow-lib.sh
+# defines the marker and its validity rules). When a valid override names
+# this run's head (loop_head_sha), prints the platform output contract with
+# RESULT=skipped / REASON=human_override, the audit fields, and returns 0.
+# The reviewer is not run. Returns 1 when there is no valid override, so the
+# caller runs the reviewer as usual. A new push re-arms the reviewer because
+# the marker no longer names the head.
+reviewer_loop_local_ai_human_override_output() {
+  local pr_number_arg="${1:-}" branch_arg="${2:-}" override_json by reason url
+  [ -n "${loop_head_sha:-}" ] || return 1
+  override_json="$(workflow_reviewer_human_override_json "$(repo_slug)" "$pr_number_arg" "$loop_head_sha" local-ai-reviewer)" || return 1
+  [ -n "$override_json" ] || return 1
+  by="$(printf '%s' "$override_json" | jq -r '.by // ""')" || return 1
+  reason="$(printf '%s' "$override_json" | jq -r '.reason // ""')" || return 1
+  url="$(printf '%s' "$override_json" | jq -r '.comment_url // ""')" || url=""
+  workflow_diagnostic "INFO: local-ai-reviewer overridden by @${by} for head ${loop_head_sha} (${url:-no url}); the reviewer is not run on this head" >&2
+  print_kv RESULT skipped
+  print_kv REASON human_override
+  print_kv DISPLAY_RESULT "skipped (human override by @${by})"
+  print_kv REVIEWED_HEAD "$loop_head_sha"
+  print_kv HUMAN_OVERRIDE_BY "$by"
+  print_kv HUMAN_OVERRIDE_HEAD "$loop_head_sha"
+  print_kv HUMAN_OVERRIDE_REASON "$reason"
+  print_kv HUMAN_OVERRIDE_JSON "$(printf '%s' "$override_json" | jq -c .)"
+  print_kv PLATFORM local-ai-reviewer
+  print_kv PR_NUMBER "$pr_number_arg"
+  print_kv BRANCH "$branch_arg"
+  print_kv COMMENT_COUNT 0
+  print_kv BLOCKING_COUNT 0
+  print_kv SUGGESTION_COUNT 0
+  return 0
+}
+
 run_platform_review() {
   local platform="$1"
   local pr_number="$2"
@@ -9183,7 +9271,8 @@ run_platform_review() {
       run_coderabbit_cli_review "$pr_number" "$branch_name" "$poll_interval" "$max_wait"
       ;;
     local-ai-reviewer)
-      run_local_ai_reviewer_review "$pr_number" "$branch_name" "$poll_interval" "$max_wait"
+      reviewer_loop_local_ai_human_override_output "$pr_number" "$branch_name" ||
+        run_local_ai_reviewer_review "$pr_number" "$branch_name" "$poll_interval" "$max_wait"
       ;;
     pr-agent)
       run_pr_agent_review "$pr_number" "$branch_name" "$poll_interval" "$max_wait"
@@ -11608,6 +11697,24 @@ reviewer_loop_second_local_pass_before_ready_gate() {
     return 1
   fi
 
+  # #2116: a valid human override for this head stands in for the second
+  # local pass, including after a failed local review on the head (the case a
+  # human overrides). It is recorded like any local result; the live head is
+  # re-confirmed before the ready phase.
+  local _sl_override_output=""
+  if _sl_override_output="$(reviewer_loop_local_ai_human_override_output "$pr_number_arg" "$branch_name")"; then
+    local_second_pass=1
+    local_second_pass_reason="human_override"
+    _sl_platform_index=$((${#platforms[@]} + 1))
+    reviewer_loop_platform_loop_should_break=0
+    reviewer_loop_process_platform_output "local-ai-reviewer" "$_sl_platform_index" "$_sl_override_output" 0 0
+    local_second_pass_result="$reviewer_loop_last_platform_result"
+    if ! reviewer_loop_second_local_pass_confirm_live_head "$pr_number_arg"; then
+      return 1
+    fi
+    return 0
+  fi
+
   if [ "$(printf '%s' "$_sl_prior_payload" | jq -r '.history_status // "available"')" = "unavailable" ]; then
     local_second_pass_reason="local_pass_unavailable"
     aggregate_result="escalate"
@@ -11798,17 +11905,29 @@ reviewer_loop_process_platform_output() {
   # #1789 (plan D12): budget, request, and latency for this outcome (or the
   # #1692 reused marker), printed and carried into the ledger record.
   reviewer_loop_record_platform_timing "$platform_name" "$platform_index" "$platform_output" "$platform_result" "$platform_reason"
-  local proof_extra proof_timing
+  local proof_extra proof_timing human_override_json='{}'
   proof_timing="$reviewer_loop_last_timing_json"
   [ -n "$proof_timing" ] || proof_timing='{}'
+  # #2116: the human override (who, head, reason, comment) travels with the
+  # platform record into the ledger and the summary comment.
+  if [ "$platform_name" = local-ai-reviewer ] && [ "$platform_result" = skipped ] &&
+      [ "$platform_reason" = human_override ]; then
+    human_override_json="$(kv_value_default HUMAN_OVERRIDE_JSON "$platform_output" "{}" | jq -c 'if type == "object" then . else {} end' 2>/dev/null)" || human_override_json='{}'
+    [ -n "$human_override_json" ] || human_override_json='{}'
+    if [ "$human_override_json" != '{}' ]; then
+      human_override_records+=("$human_override_json")
+    fi
+  fi
   proof_extra="$(jq -cn --argjson timing "$proof_timing" \
     --arg verifier "$(kv_value_default EVIDENCE_VERIFIER "$platform_output" "")" \
     --arg hash "$(kv_value_default EVIDENCE_SNAPSHOT_SHA256 "$platform_output" "")" \
     --argjson manifest "$(kv_value_default EVIDENCE_MANIFEST_JSON "$platform_output" "{}")" \
     --argjson proof "$(kv_value_default EVIDENCE_VERIFICATION_JSON "$platform_output" "{}")" \
+    --argjson override "$human_override_json" \
     '$timing + (if $verifier != "" then {evidence_verifier:$verifier} else {} end) + (if $hash != "" then {evidence_snapshot_sha256:$hash} else {} end) +
      (if $manifest != {} then {evidence_manifest:$manifest} else {} end) +
-     (if $proof != {} then {evidence_verification:$proof} else {} end)')" || proof_extra="$reviewer_loop_last_timing_json"
+     (if $proof != {} then {evidence_verification:$proof} else {} end) +
+     (if $override != {} then {human_override:$override} else {} end)')" || proof_extra="$reviewer_loop_last_timing_json"
   platform_result_records+=("$(reviewer_loop_platform_result_record_json "$platform_name" "$platform_result" "$platform_reason" "$(kv_value_default NO_VERDICT_YET "$platform_output" 0)" "$proof_extra")")
   if [ "$platform_name" = pr-agent ] &&
       [ "$(kv_value_default EVIDENCE_REVIEW_FAILED_HEAD "$platform_output" "")" = "${loop_head_sha:-}" ] &&
@@ -15868,6 +15987,9 @@ fi
 # Per-platform result tokens for the PR summary comment.
 # Each entry is "platform_name:display_token" (e.g. "haystack:unavailable").
 declare -a platform_result_tokens=()
+# #2116: valid human overrides applied in this run (JSON objects), for the
+# summary comment's audit section.
+declare -a human_override_records=()
 # Per-platform reviewed heads for head-evidence surfaces (issue #1648).
 declare -a platform_reviewed_heads=()
 # Per-platform raw outcomes for missed-finding telemetry (issue #1651).
@@ -16371,6 +16493,12 @@ $(reviewer_loop_head_evidence_render "${loop_head_sha:-}" "${platform_reviewed_h
 **Second local pass:** second local pass: ${local_second_pass_reason:-unknown} → ${local_second_pass_result}"
   fi
 
+  # #2116: human overrides applied in this run (audit trail).
+  local human_override_section=""
+  if declare -p human_override_records >/dev/null 2>&1 && [ "${#human_override_records[@]}" -gt 0 ]; then
+    human_override_section="$(reviewer_loop_human_override_summary_section "${human_override_records[@]}")"
+  fi
+
   local phase_section=""
   if [ "$phase_enabled" -eq 1 ]; then
     local _phase_value_line
@@ -16607,7 +16735,7 @@ ${_attr_line}"
 **Result:** ${result_line}
 **Platforms:** ${platform_list:-none}${policy_status_section}
 **Findings:** ${blocking} blocking, ${suggestions} suggestions
-${small_findings_section}${missed_findings_section}${attribution_section}${missed_finding_telemetry_section}${head_evidence_section}${reviewer_timing_section}${expensive_gate_section}${second_local_pass_section}${phase_section}${compare_section}${advisory_section}${advisory_checks_section}${strict_spec_summary_section}${strict_plan_summary_section}${regression_label_section}
+${small_findings_section}${missed_findings_section}${attribution_section}${missed_finding_telemetry_section}${head_evidence_section}${reviewer_timing_section}${expensive_gate_section}${second_local_pass_section}${human_override_section}${phase_section}${compare_section}${advisory_section}${advisory_checks_section}${strict_spec_summary_section}${strict_plan_summary_section}${regression_label_section}
 
 *Posted automatically by \`pr-review-loop.sh\`.*
 EOF

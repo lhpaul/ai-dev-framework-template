@@ -802,11 +802,12 @@ if [ -n "$pr_number" ]; then
                 | select(($entry.platform_results? | type) == "array")
                 | ($entry.platform_results[]? | select(.platform == "local-ai-reviewer")) as $local_result
                 | ($entry.reviewed_heads[]? | select(.platform == "local-ai-reviewer")) as $local_head
-                | {result: ($local_result.result // ""), reviewed_head: ($local_head.reviewed_head // "")}
+                | {result: ($local_result.result // ""), raw_reason: ($local_result.raw_reason // ""),
+                   reviewed_head: ($local_head.reviewed_head // "")}
               ]
               | last
-              | select(.result == "clean")
-              | {reviewed_head}
+              | select(.result == "clean" or (.result == "skipped" and .raw_reason == "human_override"))
+              | {reviewed_head, human_override: (.result == "skipped")}
               // empty
             ')"; then
             # Keep this branch self-contained when completion harnesses load it alone.
@@ -858,6 +859,15 @@ if [ -n "$pr_number" ]; then
               add_row "pull_request.local_reviewer_head" "unavailable_required" "ledger parse failed" "reviewer_loop_history.v1 reviewed_heads"
             elif [ -z "${pr_head_oid:-}" ]; then
               add_row "pull_request.local_reviewer_head" "unavailable_required" "live headRefOid unavailable" "gh pr view headRefOid"
+            elif [ "$ledger_local_head" = "$pr_head_oid" ] &&
+                [ "$(printf '%s\n' "$ledger_local_record" | jq -r '.human_override // false')" = true ]; then
+              # #2116: a human override counts only while its live marker is
+              # still valid for the live head; the ledger record alone does not.
+              if local_override_json="$(workflow_reviewer_human_override_json "$pr_repo" "$pr_number" "$pr_head_oid" local-ai-reviewer)"; then
+                add_row "pull_request.local_reviewer_head" "verified" "human override by @$(printf '%s\n' "$local_override_json" | jq -r '.by // ""') matches live headRefOid; local-ai-reviewer did not run on this head" "reviewer_loop_history.v1 reviewed_heads + live reviewer-loop-human-override marker"
+              else
+                add_row "pull_request.local_reviewer_head" "discrepancy" "ledger records a human override but no valid live override marker exists for ${pr_head_oid}" "live reviewer-loop-human-override marker"
+              fi
             elif [ "$ledger_local_head" = "$pr_head_oid" ]; then
               add_row "pull_request.local_reviewer_head" "verified" "ledger head matches live headRefOid" "reviewer_loop_history.v1 reviewed_heads"
             else

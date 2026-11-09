@@ -4907,6 +4907,61 @@ workflow_review_evidence_ledger_proof() {
   printf '%s' "$verified"
 }
 
+# Human override of a local-ai-reviewer verdict (#2116). A human records the
+# decision as a PR conversation comment whose FIRST line is exactly:
+#
+#   <!-- reviewer-loop-human-override:v1 {"platform":"local-ai-reviewer","head":"<40-hex sha>","reason":"<why>"} -->
+#
+# The override is valid only when all of these hold at read time:
+#   - platform is local-ai-reviewer (the only platform this override covers);
+#   - head equals the CURRENT PR head passed by the caller (a push re-arms
+#     the reviewer, because the old marker names another head);
+#   - reason is a non-empty string, and an optional "by" equals the author;
+#   - the author is a GitHub User (not a Bot/App) whose live repository
+#     permission is admin, maintain or write.
+# The marker must open the comment, so a summary or doc quoting it does not
+# count. Agents never post this marker; it is a human decision. The reason is
+# flattened to one line and "<" / ">" become "‹" / "›" so it cannot open an
+# HTML comment or a ledger marker where it is echoed.
+# Prints one JSON object {platform, head, by, reason, comment_id, comment_url,
+# created_at} for the newest valid override and returns 0; returns 1 when
+# there is none or anything cannot be read (fail closed).
+workflow_reviewer_human_override_json() {
+  local repo="${1:-}" pr="${2:-}" head="${3:-}" platform="${4:-}"
+  local candidates candidate login permission
+  [ -n "$repo" ] && [[ "$pr" =~ ^[1-9][0-9]*$ ]] || return 1
+  [[ "$head" =~ ^[0-9a-f]{40}$ ]] || return 1
+  [ "$platform" = local-ai-reviewer ] || return 1
+  candidates="$(set -o pipefail; gh api "repos/$repo/issues/$pr/comments" --paginate --slurp 2>/dev/null |
+    jq -c --arg head "$head" --arg platform "$platform" '
+      def trim: gsub("^\\s+|\\s+$"; "");
+      [.[]? | if type == "array" then .[] else . end | select(type == "object")
+        | . as $c
+        | (($c.body // "") | capture("\\A[ \\t\\r\\n]*<!-- reviewer-loop-human-override:v1 (?<json>\\{[^\\n]*\\}) -->[ \\t]*(?:\\r?\\n|\\z)")?) as $m
+        | select($m != null)
+        | ($m.json | try fromjson catch null) as $o
+        | select(($o | type) == "object")
+        | select(($o.platform // "") == $platform and ($o.head // "") == $head)
+        | select((($o.reason // null) | type) == "string" and ($o.reason | trim | length) > 0)
+        | select(($c.user.type // "") == "User" and (($c.user.login // "") | length) > 0)
+        | select((($o.by // $c.user.login) | tostring) == $c.user.login)
+        | {platform: $platform, head: $head, by: $c.user.login,
+           reason: ($o.reason | trim | gsub("[\\r\\n\\t]+"; " ") | gsub("<"; "‹") | gsub(">"; "›") | .[0:500]),
+           comment_id: ($c.id // null), comment_url: ($c.html_url // ""),
+           created_at: ($c.created_at // "")}]
+      | sort_by(.created_at) | reverse | .[]')" || return 1
+  while IFS= read -r candidate; do
+    [ -n "$candidate" ] || continue
+    login="$(printf '%s' "$candidate" | jq -r '.by // ""')" || continue
+    [ -n "$login" ] || continue
+    permission="$(gh api "repos/$repo/collaborators/$login/permission" --jq '.permission // ""' 2>/dev/null)" || continue
+    case "$permission" in
+      admin|maintain|write) printf '%s\n' "$candidate"; return 0 ;;
+    esac
+  done <<<"$candidates"
+  return 1
+}
+
 # Shared loop/readiness decision. The caller authenticates the request and
 # binds it to this head using the existing PR-Agent selector before calling.
 workflow_pr_agent_evidence_verdict() {

@@ -125,12 +125,40 @@ JSON
   exit 0
 fi
 
+# #2116: human override marker + live permission for local_head_human_override.
+if [ "$1" = "api" ] && [ "${MOCK_GH_SUMMARY_MODE:-}" = "local_head_human_override" ]; then
+  case "$*" in
+    *"/issues/17/comments"*"--slurp"*)
+      jq -nc --arg mhead "${MOCK_GH_OVERRIDE_HEAD:-${MOCK_GH_HEAD_OID:?}}" \
+        '[[{id:91,user:{login:"maintainer",type:"User"},created_at:"2026-01-01T00:00:01Z",html_url:"https://example.test/c/91",
+            body:("<!-- reviewer-loop-human-override:v1 " + ({platform:"local-ai-reviewer",head:$mhead,reason:"doctrine gap"} | tojson) + " -->\nOverride.")}]]'
+      exit 0 ;;
+    *"/collaborators/maintainer/permission"*)
+      printf '%s\n' "${MOCK_GH_OVERRIDE_PERMISSION:-write}"
+      exit 0 ;;
+  esac
+fi
+
 if [ "$1" = "api" ]; then
   case "${2:-}" in
     repos/*/issues/17/comments) ;;
     *) false ;;
   esac && {
   case "${MOCK_GH_SUMMARY_MODE:-${MOCK_GH_PR_MODE:-happy}}" in
+    local_head_human_override)
+      _history_json="$(jq -nc --arg headOid "${MOCK_GH_HEAD_OID:?MOCK_GH_HEAD_OID must be set for local_head_human_override}" \
+        '{schema:"reviewer_loop_history.v1",entries:[{iteration:1,result:"clean",platform_results:[{platform:"local-ai-reviewer",result:"skipped",raw_result:"skipped",raw_reason:"human_override",human_override:{platform:"local-ai-reviewer",head:$headOid,by:"maintainer",reason:"doctrine gap"}}],reviewed_heads:[{platform:"local-ai-reviewer",reviewed_head:$headOid,state:"current",reason:""}]}]}')"
+      _body_text="Automated Reviewer Loop Summary
+
+Result: clean
+
+<!-- reviewer-loop-history:v1 -->
+\`\`\`json
+${_history_json}
+\`\`\`"
+      jq -n --arg body "$_body_text" \
+        '{body:$body, created_at:"2026-01-01T00:00:00Z", updated_at:"2026-01-01T00:00:00Z"}'
+      ;;
     small_findings_evidence)
       _body_text="$(printf '### Automated Reviewer Loop Summary\n\nResult: clean\n\n<!-- reviewer-loop-history:v1 -->\n```json\n'; cat "$MOCK_GH_LEDGER_FILE"; printf '\n```\n')"
       jq -n --arg body "$_body_text" \
@@ -994,6 +1022,38 @@ out="$(self_check_output \
   --require-ci-green false)"
 run_test "local_head_later_non_clean_platform_result_exit_one" "1" "$(status_code "$out")"
 run_contains "local_head_later_non_clean_platform_result_blocks" "| pull_request.local_reviewer_head | unavailable_required | local-ai-reviewer head not recorded |" "$(body "$out")"
+
+# #2116: a human override of local-ai-reviewer counts only with a live,
+# current-head marker from a write-access author.
+for _ho_case in valid old_head no_write; do
+  repo="$(make_repo "local-head-human-override-${_ho_case}")"
+  bind_local_head_fixture "$repo"
+  export MOCK_GH_SUMMARY_MODE=local_head_human_override
+  unset MOCK_GH_OVERRIDE_HEAD MOCK_GH_OVERRIDE_PERMISSION
+  case "$_ho_case" in
+    old_head) export MOCK_GH_OVERRIDE_HEAD=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb ;;
+    no_write) export MOCK_GH_OVERRIDE_PERMISSION=read ;;
+  esac
+  export AI_DEV_WORKFLOW_CONFIG_FILE="$local_ai_config"
+  out="$(self_check_output \
+    --repo-root "$repo" \
+    --issue 1648 \
+    --branch feature/1202-self-check \
+    --stage implementation \
+    --worktree-path "$repo" \
+    --pr 17 \
+    --expected-base develop \
+    --require-review-summary true \
+    --require-ci-green false)"
+  if [ "$_ho_case" = valid ]; then
+    run_test "2116_human_override_valid_exit_zero" "0" "$(status_code "$out")"
+    run_contains "2116_human_override_valid_verified" "| pull_request.local_reviewer_head | verified | human override by @maintainer matches live headRefOid" "$(body "$out")"
+  else
+    run_test "2116_human_override_${_ho_case}_exit_one" "1" "$(status_code "$out")"
+    run_contains "2116_human_override_${_ho_case}_discrepancy" "| pull_request.local_reviewer_head | discrepancy | ledger records a human override but no valid live override marker" "$(body "$out")"
+  fi
+done
+unset _ho_case MOCK_GH_OVERRIDE_HEAD MOCK_GH_OVERRIDE_PERMISSION
 
 repo="$(make_repo local-head-missing-platform-results)"
 bind_local_head_fixture "$repo"
