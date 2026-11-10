@@ -518,6 +518,25 @@ review AI_DEV_WORKFLOW_CONFIG_FILE="$NEUTRAL_CFG" LOCAL_AI_REVIEWER_BACKEND=clau
 run_test "T-B12_result" "needs_rerun" "$(kv RESULT)"
 run_test "T-B12_reason" "provider_overloaded" "$(kv REASON)"
 
+# T-B12b (#2151, capacity_budget_*): capacity retries share one round budget.
+# Each attempt gets only the time left, and a backoff that no longer fits ends
+# the round as needs_rerun instead of starting another full-budget attempt.
+t12_start=$SECONDS
+review AI_DEV_WORKFLOW_CONFIG_FILE="$NEUTRAL_CFG" LOCAL_AI_REVIEWER_BACKEND=claude STANDIN_EXIT=1 \
+  STANDIN_STDOUT="API Error: overloaded" -- --timeout 5
+t12_elapsed=$((SECONDS - t12_start))
+t12_last="$(cat "$CLAUDE_REC/timeout" 2>/dev/null || echo 0)"
+run_test "T-B12b_capacity_budget_result" "needs_rerun/provider_overloaded" "$(kv RESULT)/$(kv REASON)"
+run_test "T-B12b_capacity_budget_last_attempt_shrunk" "yes" "$(yes_no test "$t12_last" -lt 5)"
+run_test "T-B12b_capacity_budget_within_budget" "yes" "$(yes_no test "$t12_elapsed" -le 5)"
+t12_start=$SECONDS
+review AI_DEV_WORKFLOW_CONFIG_FILE="$NEUTRAL_CFG" LOCAL_AI_REVIEWER_BACKEND=claude STANDIN_EXIT=1 \
+  STANDIN_SLEEP=1 STANDIN_STDOUT="API Error: overloaded" -- --timeout 2
+t12_elapsed=$((SECONDS - t12_start))
+run_test "T-B12b_capacity_budget_no_room_result" "needs_rerun/provider_overloaded" "$(kv RESULT)/$(kv REASON)"
+run_test "T-B12b_capacity_budget_no_room_stops" "yes" "$(yes_no test "$t12_elapsed" -le 3)"
+run_test "T-B12b_capacity_budget_no_room_diag" "yes" "$(yes_no rerr_has 'no budget left for another attempt')"
+
 # T-B13: a run past the budget is No verdict yet and leaves no copy behind.
 review AI_DEV_WORKFLOW_CONFIG_FILE="$NEUTRAL_CFG" LOCAL_AI_REVIEWER_BACKEND=claude STANDIN_SLEEP=30 -- --timeout 3
 run_test "T-B13_result" "waiting_on_reviewer" "$(kv RESULT)"
