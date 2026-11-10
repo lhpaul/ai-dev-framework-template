@@ -1832,7 +1832,7 @@ _1591_run() {
   local dir
   dir="$(mktemp -d)"
   printf '%s' "$body" > "$dir/body.txt"
-  export _1591_DIR="$dir" _1591_CREATED="$created" _1591_DYNAMIC="$dynamic" _1591_EXTRA_BODY="${_1591_EXTRA:-}" _1591_QUOTA_AFTER="${_1591_QUOTA:-0}" _1591_QUOTA_POLLS="${_1591_QUOTA_POLLS_N:-999999}"
+  export _1591_DIR="$dir" _1591_CREATED="$created" _1591_DYNAMIC="$dynamic" _1591_EXTRA_BODY="${_1591_EXTRA:-}" _1591_QUOTA_AFTER="${_1591_QUOTA:-0}" _1591_QUOTA_POLLS="${_1591_QUOTA_POLLS_N:-999999}" _1591_HOLD_POLLS="${_1591_HOLD_N:-}"
   cat > "$dir/gh" <<'CR_GH_1591'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$_1591_DIR/calls.log"
@@ -1864,7 +1864,20 @@ case "$*" in
         && [ "$(awk '/pr comment 42 --body @coderabbitai full review/{f=1; next} f && /issues\/42\/comments/{c++} END{print c+0}' "$_1591_DIR/calls.log")" -le "${_1591_QUOTA_POLLS:-999999}" ]; then
       q="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
     fi
-    jq -n --rawfile b "$_1591_DIR/body.txt" --arg c "$_1591_CREATED" --argjson n "${n:-0}" --arg x "${_1591_EXTRA_BODY:-}" --arg q "$q" \
+    # _1591_HOLD_POLLS=K: a live quota refusal is served for the first K comment
+    # reads (the loop records a hold), then it expires and a walkthrough arrives.
+    xb="${_1591_EXTRA_BODY:-}"
+    if [ -n "${_1591_HOLD_POLLS:-}" ]; then
+      reads="$(grep -c 'issues/42/comments' "$_1591_DIR/calls.log")"
+      if [ "$reads" -le "$_1591_HOLD_POLLS" ]; then
+        q="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+        xb=""
+      else
+        xb="## Walkthrough
+CodeRabbit summary of the changes in this pull request."
+      fi
+    fi
+    jq -n --rawfile b "$_1591_DIR/body.txt" --arg c "$_1591_CREATED" --argjson n "${n:-0}" --arg x "$xb" --arg q "$q" \
       '[range(0; $n + 1) | {id: (1000 + .), user: {login: "coderabbitai[bot]"}, created_at: $c, updated_at: $c, body: $b}]
        + (if $x == "" then [] else [{id: 1, user: {login: "coderabbitai[bot]"}, created_at: $c, updated_at: $c, body: $x}] end)
        + (if $q == "" then [] else [{id: 2, user: {login: "coderabbitai[bot]"}, created_at: $q, updated_at: $q, body: "⚠️ Action not completed\nReview rate limited."}] end)'
@@ -1879,7 +1892,7 @@ CR_GH_1591
     CODERABBIT_RATE_LIMIT_WAIT=1 CODERABBIT_RATE_LIMIT_MIN_WAIT=1 \
     run_coderabbit_review "42" "fix/42-test" "1" "$max_wait" >"$dir/stdout.log" 2>"$dir/stderr.log" || true
   _1591_last_dir="$dir"
-  unset _1591_DIR _1591_CREATED _1591_DYNAMIC _1591_EXTRA_BODY _1591_QUOTA_AFTER _1591_QUOTA_POLLS
+  unset _1591_DIR _1591_CREATED _1591_DYNAMIC _1591_EXTRA_BODY _1591_QUOTA_AFTER _1591_QUOTA_POLLS _1591_HOLD_POLLS
 }
 _1591_count() { grep_count_or_zero "$1" "$2"; }
 _1591_full='pr comment 42 --body @coderabbitai full review'
@@ -1984,6 +1997,16 @@ _1591_reask_dir="$_1591_last_dir"
 run_test "1591_refusal_is_asked_again_after_the_quota_returns" "2" \
   "$(_1591_count "$_1591_full" "$_1591_reask_dir/calls.log")"
 
+# A hold the loop recorded earlier must not disable the recovery once a walkthrough
+# has set the generic-activity flag and the quota has expired (reviewer finding):
+# the quota is revalidated live, not read from the historical hold flag.
+_1591_HOLD_N=6
+_1591_run holdthenwalk "$_1591_refusal_body" "$_1591_before_trigger" 1 0 40
+unset _1591_HOLD_N
+_1591_holdthenwalk_dir="$_1591_last_dir"
+run_test "1591_recovery_survives_a_recorded_hold_then_walkthrough" "1" \
+  "$(_1591_count "$_1591_full" "$_1591_holdthenwalk_dir/calls.log")"
+
 # AC-3 (c): cap 0 posts nothing.
 _1591_run zerocap "$_1591_refusal_body" "$_1591_before_trigger" 0 1
 _1591_zerocap_dir="$_1591_last_dir"
@@ -2019,10 +2042,10 @@ _1591_quota_dir="$_1591_last_dir"
 run_test "1591_quota_refusal_is_not_answered_with_full_review" "0" \
   "$(_1591_count 'full review' "$_1591_quota_dir/calls.log")"
 
-rm -rf "$_1591_answered_dir" "$_1591_capped_dir" "$_1591_capped3_dir" "$_1591_failpost_dir" "$_1591_walkthrough_dir" "$_1591_held_dir" "$_1591_refund_dir" "$_1591_reask_dir" "$_1591_zerocap_dir" "$_1591_mutated0_dir" "$_1591_stale_dir" "$_1591_quota_dir"
+rm -rf "$_1591_answered_dir" "$_1591_capped_dir" "$_1591_capped3_dir" "$_1591_failpost_dir" "$_1591_walkthrough_dir" "$_1591_held_dir" "$_1591_refund_dir" "$_1591_reask_dir" "$_1591_holdthenwalk_dir" "$_1591_zerocap_dir" "$_1591_mutated0_dir" "$_1591_stale_dir" "$_1591_quota_dir"
 unset -f _1591_run _1591_count
 unset _1591_last_dir _1591_refusal_body _1591_quota_body _1591_before_trigger _1591_full _1591_real_re \
-  _1591_answered_dir _1591_capped_dir _1591_capped3_dir _1591_failpost_dir _1591_walkthrough_dir _1591_held_dir _1591_refund_dir _1591_reask_dir _1591_zerocap_dir _1591_mutated0_dir _1591_stale_dir _1591_quota_dir
+  _1591_answered_dir _1591_capped_dir _1591_capped3_dir _1591_failpost_dir _1591_walkthrough_dir _1591_held_dir _1591_refund_dir _1591_reask_dir _1591_holdthenwalk_dir _1591_zerocap_dir _1591_mutated0_dir _1591_stale_dir _1591_quota_dir
 
 # ---------------------------------------------------------------------------
 echo "=== Area 1648: reviewer-loop current-head evidence ==="

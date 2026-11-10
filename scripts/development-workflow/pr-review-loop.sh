@@ -8404,8 +8404,12 @@ run_coderabbit_review() {
     # an adopted recorded request (#1789 D11/D12): that mode carries the recorded
     # request forward, and a new trigger would leave REVIEW_REQUESTED_AT pointing
     # at the old one.
+    #
+    # Not gated on coderabbit_rate_limit_hold_seen either: that flag is a history of
+    # an earlier hold, and the rate-limit block that clears it is itself gated on
+    # coderabbit_any_activity == 0. The quota is revalidated below, against the
+    # live rate-limit comment, on every iteration that has a refusal to answer.
     if [ "$coderabbit_rewait_adopted" -eq 0 ] \
-        && [ "$coderabbit_rate_limit_hold_seen" -eq 0 ] \
         && [ "$coderabbit_refusal_retriggers" -lt "$coderabbit_rate_limit_max_retries" ]; then
       local refusal_json="" refusal_status=0
       refusal_json="$(coderabbit_newest_already_reviewed_refusal "$repo" "$pr_number" "$bot_login" "$since_iso" "$coderabbit_answered_refusal_ids")" || refusal_status=$?
