@@ -1039,7 +1039,8 @@ if [ "${#followups[@]}" -gt 0 ]; then
             # addresses tracker issues when the two repositories coincide. A
             # failed scan must fail this whole group: it is never read as
             # "no closing keyword".
-            if [ "$followup_tracker_repo" = "$followup_repo" ]; then
+            # Slugs compare case-insensitively, as post-merge-cleanup.sh does.
+            if [ "$(printf '%s' "$followup_tracker_repo" | tr '[:upper:]' '[:lower:]')" = "$(printf '%s' "$followup_repo" | tr '[:upper:]' '[:lower:]')" ]; then
               printf '%s' "$followup_text_title_body" | closing_keyword_live_refs || exit 1
               printf '%s' "$followup_text_commits" | closing_keyword_live_refs || exit 1
             fi

@@ -194,7 +194,15 @@ export MOCK_FAIL_HUB=1
 out="$(check --pr 7 --followup 1895=deferred)"
 expect_status "hub_unresolvable_blocks" 1 "$out"
 expect_row "hub_unresolvable_row" "| followup.#1895 | unavailable_required | cannot resolve tracker repository" "$out"
-unset MOCK_FAIL_HUB MOCK_PRODUCT_ISSUE_1895 WORKFLOW_TARGET_GITHUB_REPO
+unset MOCK_FAIL_HUB MOCK_PRODUCT_ISSUE_1895
+
+# Same repository spelled with different case is still the same repository:
+# a bare closing keyword must still count.
+export WORKFLOW_TARGET_GITHUB_REPO="Example/Repo"
+export MOCK_PR_BODY='Closes #1895'
+out="$(check --pr 7 --followup 1895=deferred)"
+expect_status "slug_case_difference_still_same_repo_blocks" 1 "$out"
+unset WORKFLOW_TARGET_GITHUB_REPO
 
 # Without --followup nothing is added.
 out="$(check --pr 7)"

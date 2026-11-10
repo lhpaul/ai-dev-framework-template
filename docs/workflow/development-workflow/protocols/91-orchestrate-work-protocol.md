@@ -328,8 +328,7 @@ follow-ups that omits `--followup` for any of them has not completed this gate.
 Each `followup.#<N>` row resolves as follows. Follow-up issue numbers are read in
 the tracker repository (the hub repository in `workflow_hub` mode, otherwise the
 PR's repository); in hub mode only a qualified `<hub owner/repo>#N` closing
-reference counts, because a bare `#N` names a product-repository issue. Row text
-is the exact helper output.
+reference counts, because a bare `#N` names a product-repository issue.
 
 | Disposition | Issue state | PR title/body/commits scan | Result | Required next action |
 | --- | --- | --- | --- | --- |
