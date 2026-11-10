@@ -1656,7 +1656,7 @@ _1579_sel() {
 run_test "1579_selector_matches_html_marker_shape" "yes" \
   "$(_1579_sel '<!-- rate limited by coderabbit.ai --> Review limit reached')"
 run_test "1579_selector_matches_command_refusal_shape" "yes" \
-  "$(_1579_sel 'Review rate limited.')"
+  "$(_1579_sel 'Review rate limited. Your next included review will be available in 7 minutes.')"
 # The visible-text-only shape: no HTML marker, no literal "rate limit".
 run_test "1579_selector_matches_visible_text_without_marker" "yes" \
   "$(_1579_sel '## Review limit reached

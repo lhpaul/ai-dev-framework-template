@@ -8544,14 +8544,18 @@ run_coderabbit_review() {
         if coderabbit_rate_limit_is_live "$rate_limit_comment_json" "$coderabbit_last_trigger_iso"; then
           if [ -n "$coderabbit_last_trigger_iso" ] && [ "$coderabbit_last_quota_refusal_trigger_iso" != "$coderabbit_last_trigger_iso" ]; then
             coderabbit_last_quota_refusal_trigger_iso="$coderabbit_last_trigger_iso"
-            if [ "$coderabbit_rate_limit_retries" -gt 0 ]; then
+            # A full-review trigger never incremented the rate-limit counter
+            # (it spends the refusal counter), so refund only the counter that
+            # trigger actually spent.
+            if [ "$coderabbit_last_trigger_was_full" -eq 1 ]; then
+              if [ "$coderabbit_refusal_retriggers" -gt 0 ]; then
+                coderabbit_refusal_retriggers=$((coderabbit_refusal_retriggers - 1))
+              fi
+              coderabbit_last_trigger_was_full=0
+            elif [ "$coderabbit_rate_limit_retries" -gt 0 ]; then
               coderabbit_rate_limit_retries=$((coderabbit_rate_limit_retries - 1))
             fi
             workflow_diagnostic "INFO: CodeRabbit quota refusal observed for last trigger — not counting it toward CODERABBIT_RATE_LIMIT_MAX_RETRIES" >&2
-            if [ "$coderabbit_last_trigger_was_full" -eq 1 ] && [ "$coderabbit_refusal_retriggers" -gt 0 ]; then
-              coderabbit_refusal_retriggers=$((coderabbit_refusal_retriggers - 1))
-              coderabbit_last_trigger_was_full=0
-            fi
           fi
           rate_limit_comment_count=1
         else
