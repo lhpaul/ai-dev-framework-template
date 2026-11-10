@@ -767,7 +767,19 @@ if [ "$ORIGINAL_REF_KIND" = "branch" ] && [ "$ORIGINAL_REF" = "$TO_DELETE" ] \
   CALLER_ON_MERGED_BRANCH=1
 fi
 
-if [ "$CALLER_ON_MERGED_BRANCH" -eq 1 ]; then
+# #1450: the caller sits on an unrelated branch (neither the base nor the merged
+# branch) with uncommitted tracked changes. Checking the base out there can fail
+# on an overwrite error before any branch delete runs, so fast-forward the base
+# ref without a checkout and leave the caller's branch and edits untouched.
+CALLER_DIRTY_OTHER_BRANCH=0
+if [ "$CALLER_ON_MERGED_BRANCH" -eq 0 ] && [ "$ORIGINAL_REF_KIND" = "branch" ] \
+  && [ "$ORIGINAL_REF" != "$TO_DELETE" ] && [ "$ORIGINAL_REF" != "$DEVELOP_BRANCH" ] \
+  && [ -n "$(git status --porcelain --untracked-files=no 2>/dev/null)" ]; then
+  CALLER_DIRTY_OTHER_BRANCH=1
+  print_kv BASE_CHECKOUT_SKIPPED "dirty_other_branch"
+fi
+
+if [ "$CALLER_ON_MERGED_BRANCH" -eq 1 ] || [ "$CALLER_DIRTY_OTHER_BRANCH" -eq 1 ]; then
   echo "Fast-forwarding $DEVELOP_BRANCH without checking it out in the calling worktree..."
   # Same outcomes as the --ff-only pull on the other path: create the branch
   # when it is missing, do nothing when it already contains origin's tip
@@ -1509,6 +1521,10 @@ elif [ "$CALLER_ON_MERGED_BRANCH" -eq 1 ] && [ "$SKIP_LOCAL_DELETE" -eq 0 ]; the
   echo "Done. $DEVELOP_BRANCH is updated; the calling worktree $CLEANUP_REPO_ROOT is detached at it; local branch '$TO_DELETE' has been removed locally."
 elif [ "$CALLER_ON_MERGED_BRANCH" -eq 1 ]; then
   echo "Done. $DEVELOP_BRANCH is updated; local branch '$TO_DELETE' was KEPT and the calling worktree $CLEANUP_REPO_ROOT stays on it because it could not be detached (see LOCAL_DELETE_REASON)."
+elif [ "$CALLER_DIRTY_OTHER_BRANCH" -eq 1 ] && [ "$SKIP_LOCAL_DELETE" -eq 0 ]; then
+  echo "Done. $DEVELOP_BRANCH is updated without a checkout; $CLEANUP_REPO_ROOT stayed on '$ORIGINAL_REF' with its uncommitted changes; local branch '$TO_DELETE' has been removed locally."
+elif [ "$CALLER_DIRTY_OTHER_BRANCH" -eq 1 ]; then
+  echo "Done. $DEVELOP_BRANCH is updated without a checkout; $CLEANUP_REPO_ROOT stayed on '$ORIGINAL_REF' with its uncommitted changes; local branch '$TO_DELETE' was KEPT because its calling worktree could not be detached (see LOCAL_DELETE_REASON)."
 elif [ "$SKIP_LOCAL_DELETE" -eq 1 ]; then
   echo "Done. $DEVELOP_BRANCH is updated; exit cleanup will restore '$FINAL_REF_AFTER_CLEANUP'; local branch '$TO_DELETE' was KEPT because its calling worktree could not be detached (see LOCAL_DELETE_REASON)."
 else
