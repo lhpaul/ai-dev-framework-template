@@ -503,14 +503,26 @@ workflow bookkeeping headings are excluded from the fingerprint to avoid a
 summary invalidating itself; those comments cannot be proof sources. API or
 pagination failure leaves context unavailable.
 
-For a structurally recognized PR-Agent ticket request requiring further
-verification, the configured local reviewer must verify every requested item
-against eligible body/comment sources. Its clean ordinary/strict review and
-`review_evidence_verification.v1` proof must match the repository/PR/head snapshot
-and selected authenticated request. Only compact proof metadata is persisted
-in the existing trusted reviewer-loop ledger. Readiness independently checks
-current context and trusted author/write permission. Independent code/security
-findings, human decisions, malformed or unknown statuses remain blocking.
+Ticket-analysis exception (#2064, #2154): recognized, structurally valid
+PR-Agent ticket analysis (Fully compliant, Partially compliant, Not compliant,
+PR Code Verified) is informational. A verification request confined to that
+validated section needs no local ticket proof and does not require a
+`review_evidence_verification.v1` record; `apply-readiness-labels.sh
+--inspect-pr-agent` reports `verification_only: false` for it, as
+[`integrations/pr-agent.md`](../integrations/pr-agent.md) describes. Unknown
+status, malformed, duplicate, empty or truncated ticket analysis still
+escalates as `pr_agent_ambiguous_review`; the exception never certifies that an
+epic is complete.
+
+For any other PR-Agent verification request, the configured local reviewer must
+verify every requested item against eligible body/comment sources. Its clean
+ordinary/strict review and `review_evidence_verification.v1` proof must match
+the repository/PR/head snapshot and selected authenticated request. Only
+compact proof metadata is persisted in the existing trusted reviewer-loop
+ledger. Readiness independently checks current context and trusted author/write
+permission. Independent code/security findings, human decisions, malformed or
+unknown statuses remain blocking, as do verification requests, unavailable or
+malformed evidence outside the validated ticket-analysis section.
 
 **Scope note**: This pre-flight checks `review.on_draft.github` and
 `review.on_ready.github` (external reviewers used by Protocol 93 / Step 7). The
