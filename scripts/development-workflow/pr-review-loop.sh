@@ -8188,6 +8188,9 @@ run_coderabbit_review() {
   # full review. Dedupes by id rather than by timestamp (see
   # coderabbit_newest_already_reviewed_refusal).
   local coderabbit_answered_refusal_ids=""
+  # The id the newest full review answered, so a quota refusal of that full review
+  # can make the refusal pending again (see the refund block).
+  local coderabbit_last_answered_refusal_id=""
   local coderabbit_last_trigger_was_full=0
   # Defaults are sized against CodeRabbit's *hourly* quota reset: 4 retries x 900 s
   # covers 60 minutes of waiting, so a loop that hits the cap early in an hour can
@@ -8364,7 +8367,15 @@ run_coderabbit_review() {
           coderabbit_refusal_retriggers=$((coderabbit_refusal_retriggers - 1))
         fi
         coderabbit_last_trigger_was_full=0
-        workflow_diagnostic "INFO: CodeRabbit quota refusal observed for the full-review trigger — refunding its refusal slot" >&2
+        # The refused full review delivered nothing, so the refusal it answered is
+        # pending again. Without this the refusal id stays "answered" and, once the
+        # quota returns, nothing re-asks: the generic-activity flag disables the
+        # silent and rate-limit retriggers, and the loop would time out.
+        if [ -n "$coderabbit_last_answered_refusal_id" ]; then
+          coderabbit_answered_refusal_ids="$(printf ',%s,' "$coderabbit_answered_refusal_ids" | sed "s/,${coderabbit_last_answered_refusal_id},/,/" | sed 's/^,//; s/,$//')"
+          coderabbit_last_answered_refusal_id=""
+        fi
+        workflow_diagnostic "INFO: CodeRabbit quota refusal observed for the full-review trigger — refunding its refusal slot and re-opening the refusal" >&2
       fi
     fi
 
@@ -8424,7 +8435,8 @@ run_coderabbit_review() {
             # A failed post is still bounded by max_wait, because elapsed is not
             # reset for it.
             coderabbit_refusal_retriggers=$((coderabbit_refusal_retriggers + 1))
-            coderabbit_answered_refusal_ids="${coderabbit_answered_refusal_ids:+$coderabbit_answered_refusal_ids,}$(printf '%s' "$refusal_json" | jq -r '.id // empty' 2>/dev/null)"
+            coderabbit_last_answered_refusal_id="$(printf '%s' "$refusal_json" | jq -r '.id // empty' 2>/dev/null)"
+            coderabbit_answered_refusal_ids="${coderabbit_answered_refusal_ids:+$coderabbit_answered_refusal_ids,}${coderabbit_last_answered_refusal_id}"
             coderabbit_trigger_attempts=$((coderabbit_trigger_attempts + 1))
             coderabbit_last_trigger_iso="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
             coderabbit_last_trigger_was_full=1
