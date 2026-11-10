@@ -896,6 +896,20 @@ run_contains "branch_issue_still_closed" "Closing issue #1520..." "$multi_output
 run_contains "body_extra_ref_processed" "Processing issue #1517 from PR #1521" "$multi_output"
 run_contains "extras_announced" "PR #1521 also closes: 1517" "$multi_output"
 
+# #1401: feat/ is an alias of feature/, so cleanup must parse the issue number
+# from the branch and run the implementation-branch tracker/close path.
+feat_branch="feat/1401-alias-cleanup"
+feat_repo="$(make_repo feat-alias "$feat_branch" yes)"
+feat_output="$(
+  GH_MERGED_HEAD="$feat_branch" \
+  GH_MERGED_PR=1402 \
+  GH_ISSUE_STATE=OPEN \
+  WORKFLOW_TARGET_GITHUB_REPO=example/repo \
+  PATH="$stub_bin:$PATH" \
+  "$HELPER" --repo-root "$feat_repo" --base develop --pr 1402 "$feat_branch"
+)"
+run_contains "feat_alias_issue_closed" "Closing issue #1401..." "$feat_output"
+
 commitmsg_branch="fix/1600-commit-ref"
 commitmsg_repo="$(make_repo commitmsg-close "$commitmsg_branch" yes)"
 commitmsg_output="$(
