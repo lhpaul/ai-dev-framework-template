@@ -139,6 +139,16 @@ for body in 'hotfix #1895' 'disclose #1895' $'```\nCloses #1895\n```'; do
   expect_status "not_a_closing_reference: ${body%%$'\n'*}" 0 "$out"
 done
 
+# Large closing-reference output must not turn a match into "absent" (grep -q
+# under pipefail would SIGPIPE its writer).
+export MOCK_PR_BODY='Closes #1331'
+MOCK_PR_COMMITS="$(seq 20000 60000 | sed 's/^/Closes #/')"$'\nCloses #1895'
+export MOCK_PR_COMMITS
+out="$(check --pr 7 --followup 1895=deferred)"
+expect_status "large_reference_output_still_detects_match" 1 "$out"
+expect_row "large_reference_output_row" "| followup.#1895 | discrepancy |" "$out"
+unset MOCK_PR_COMMITS
+
 # A longer issue number sharing the prefix is not a match.
 export MOCK_PR_BODY='Closes #18950'
 out="$(check --pr 7 --followup 1895=deferred)"
