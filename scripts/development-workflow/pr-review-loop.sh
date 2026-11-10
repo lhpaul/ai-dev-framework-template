@@ -7896,7 +7896,10 @@ coderabbit_newest_rate_limit_comment() {
 # Print the newest CodeRabbit "Already reviewed the last commit" refusal posted
 # after since_iso whose comment id is not in answered_ids (a comma-separated
 # list of refusals this run already answered), as a JSON object, or nothing
-# when there is none.
+# when there is none. min_created_iso (the created_at of the newest refusal this
+# run answered, compared against the vendor's own timestamps so there is no clock
+# skew) keeps an OLDER still-visible refusal from being answered after a newer one:
+# one full review covers every refusal that preceded it.
 #
 # Deduplication is by comment id, never by comparing created_at to the time the
 # loop recorded its own trigger: that time is taken after the POST returns, at
@@ -7906,11 +7909,11 @@ coderabbit_newest_rate_limit_comment() {
 # Exit status 2 means the comments could not be read (distinct from "none"),
 # the same contract as coderabbit_newest_rate_limit_comment.
 coderabbit_newest_already_reviewed_refusal() {
-  if [ "$#" -lt 4 ] || [ "$#" -gt 5 ] || [ -z "${1:-}" ] || [ -z "${2:-}" ] || [ -z "${3:-}" ] || [ -z "${4:-}" ]; then
-    workflow_diagnostic "ERROR: coderabbit_newest_already_reviewed_refusal requires repo pr_number bot_login since_iso [answered_ids]" >&2
+  if [ "$#" -lt 4 ] || [ "$#" -gt 6 ] || [ -z "${1:-}" ] || [ -z "${2:-}" ] || [ -z "${3:-}" ] || [ -z "${4:-}" ]; then
+    workflow_diagnostic "ERROR: coderabbit_newest_already_reviewed_refusal requires repo pr_number bot_login since_iso [answered_ids [min_created_iso]]" >&2
     return 2
   fi
-  local repo="$1" pr_number="$2" bot_login="$3" since_iso="$4" answered_ids="${5:-}"
+  local repo="$1" pr_number="$2" bot_login="$3" since_iso="$4" answered_ids="${5:-}" min_created_iso="${6:-}"
   local raw="" status=0
   raw="$(gh api "repos/$repo/issues/$pr_number/comments" --paginate 2>/dev/null)" || status=$?
   if [ "$status" -ne 0 ]; then
@@ -7919,10 +7922,11 @@ coderabbit_newest_already_reviewed_refusal() {
   fi
   local selected="" jq_status=0
   selected="$(printf '%s' "$raw" | jq -cs --arg bot "$bot_login" --arg since "$since_iso" \
-      --arg answered ",${answered_ids}," --arg re "$CODERABBIT_ALREADY_REVIEWED_RE" '
+      --arg answered ",${answered_ids}," --arg minc "$min_created_iso" --arg re "$CODERABBIT_ALREADY_REVIEWED_RE" '
         [.[].[] | select(
             .user.login == $bot and
             .created_at > $since and
+            ($minc == "" or .created_at >= $minc) and
             ((("," + (.id | tostring) + ",") as $key | ($answered | contains($key)) | not) and
             ((.body // "") | test($re; "i")))
         )]
@@ -8191,6 +8195,8 @@ run_coderabbit_review() {
   # The id the newest full review answered, so a quota refusal of that full review
   # can make the refusal pending again (see the refund block).
   local coderabbit_last_answered_refusal_id=""
+  # created_at of the newest refusal answered (see the helper's min_created_iso).
+  local coderabbit_answered_refusal_created=""
   local coderabbit_last_trigger_was_full=0
   # Defaults are sized against CodeRabbit's *hourly* quota reset: 4 retries x 900 s
   # covers 60 minutes of waiting, so a loop that hits the cap early in an hour can
@@ -8412,7 +8418,7 @@ run_coderabbit_review() {
     if [ "$coderabbit_rewait_adopted" -eq 0 ] \
         && [ "$coderabbit_refusal_retriggers" -lt "$coderabbit_rate_limit_max_retries" ]; then
       local refusal_json="" refusal_status=0
-      refusal_json="$(coderabbit_newest_already_reviewed_refusal "$repo" "$pr_number" "$bot_login" "$since_iso" "$coderabbit_answered_refusal_ids")" || refusal_status=$?
+      refusal_json="$(coderabbit_newest_already_reviewed_refusal "$repo" "$pr_number" "$bot_login" "$since_iso" "$coderabbit_answered_refusal_ids" "$coderabbit_answered_refusal_created")" || refusal_status=$?
       if [ "$refusal_status" -ne 0 ]; then
         workflow_diagnostic "WARN: could not read CodeRabbit refusals for PR #$pr_number — not posting a full review on an unread signal" >&2
         refusal_json=""
@@ -8440,6 +8446,7 @@ run_coderabbit_review() {
             # reset for it.
             coderabbit_refusal_retriggers=$((coderabbit_refusal_retriggers + 1))
             coderabbit_last_answered_refusal_id="$(printf '%s' "$refusal_json" | jq -r '.id // empty' 2>/dev/null)"
+            coderabbit_answered_refusal_created="$(printf '%s' "$refusal_json" | jq -r '.created_at // empty' 2>/dev/null)"
             coderabbit_answered_refusal_ids="${coderabbit_answered_refusal_ids:+$coderabbit_answered_refusal_ids,}${coderabbit_last_answered_refusal_id}"
             coderabbit_trigger_attempts=$((coderabbit_trigger_attempts + 1))
             coderabbit_last_trigger_iso="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
