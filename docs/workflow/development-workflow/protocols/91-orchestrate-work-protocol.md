@@ -4177,11 +4177,14 @@ set -euo pipefail
   evidence.
 - Before reporting post-merge cleanup or tracker reconciliation complete, run
   `item-completion-self-check.sh` for the cleanup claim, using the current base
-  branch (the merged workflow branch should already be deleted), the current
-  base worktree path, `--stage cleanup`, and
-  `--expected-tracker-status "<expected status>"`, plus `--pr <merged-pr>` and
-  one `--followup <issue>=<fixed|deferred>` per follow-up issue filed during the
-  item, so every `deferred` issue is confirmed still open. Paste the
+  worktree path, `--stage cleanup`, and
+  `--expected-tracker-status "<expected status>"`. When the item filed
+  follow-ups, also pass `--pr <merged-pr>`, the merged workflow branch as
+  `--branch` (it is verified against the PR head, not the local checkout),
+  `--expected-base <current base branch>`, and one
+  `--followup <issue>=<fixed|deferred>` per follow-up issue, so every
+  `deferred` issue is confirmed still open. Without follow-ups, omit those
+  flags and use the current base branch as `--branch`, as before. Paste the
   `## Ground-Truth Completion Verification` section into the cleanup report.
   Any `discrepancy` or `unavailable_required` result keeps cleanup non-terminal.
 - If manual cleanup is required, clean up local branches and worktrees associated with the merged PR:

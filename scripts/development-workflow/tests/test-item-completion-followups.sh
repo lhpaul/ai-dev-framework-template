@@ -21,7 +21,13 @@ cat > "$MOCK_BIN/gh" <<'MOCK_GH'
 # MOCK_PR_BODY; MOCK_FAIL_ISSUES / MOCK_FAIL_PR_BODY simulate read failures.
 if [ "$1" = "repo" ] && [ "$2" = "view" ]; then
   if [ "${MOCK_FAIL_HUB:-}" = "1" ]; then echo "repo view failed" >&2; exit 1; fi
-  printf 'example/repo\n'
+  # Distinct checkout identities: the product checkout reports the product
+  # repository, every other directory (the hub/tooling checkout) the tracker.
+  if [ -n "${MOCK_PRODUCT_CHECKOUT:-}" ] && [ "$(pwd -P)" = "$MOCK_PRODUCT_CHECKOUT" ]; then
+    printf 'example/product\n'
+  else
+    printf 'example/repo\n'
+  fi
   exit 0
 fi
 if [ "$1" = "issue" ] && [ "$2" = "view" ]; then
@@ -76,7 +82,7 @@ repo="$(CDPATH='' cd -- "$repo" && pwd -P)"
 check() {
   local status output
   set +e
-  output="$("$HELPER" --repo-root "$repo" --issue 1331 --branch fix/1331-followups \
+  output="$(cd "${CHECK_CWD:-.}" && "$HELPER" --repo-root "$repo" --issue 1331 --branch fix/1331-followups \
     --stage implementation --worktree-path "$repo" --require-ci-green false "$@" 2>&1)"
   status=$?
   set -e
@@ -177,6 +183,8 @@ expect_status "no_pr_fixed_still_lists" 0 "$out"
 # The product repo's own issue #1895 (a trap) is OPEN throughout: reading it
 # instead of the tracker's would hide a closed hub issue.
 export WORKFLOW_TARGET_GITHUB_REPO="example/product"
+# Run from the product checkout so a tracker lookup keyed on cwd would be wrong.
+export MOCK_PRODUCT_CHECKOUT="$repo" CHECK_CWD="$repo"
 export MOCK_PRODUCT_ISSUE_1895=OPEN
 export MOCK_ISSUE_1895=CLOSED
 export MOCK_PR_BODY='Closes #1331'
@@ -194,7 +202,7 @@ export MOCK_FAIL_HUB=1
 out="$(check --pr 7 --followup 1895=deferred)"
 expect_status "hub_unresolvable_blocks" 1 "$out"
 expect_row "hub_unresolvable_row" "| followup.#1895 | unavailable_required | cannot resolve tracker repository" "$out"
-unset MOCK_FAIL_HUB MOCK_PRODUCT_ISSUE_1895
+unset MOCK_FAIL_HUB MOCK_PRODUCT_ISSUE_1895 MOCK_PRODUCT_CHECKOUT CHECK_CWD
 
 # Same repository spelled with different case is still the same repository:
 # a bare closing keyword must still count.
@@ -203,6 +211,17 @@ export MOCK_PR_BODY='Closes #1895'
 out="$(check --pr 7 --followup 1895=deferred)"
 expect_status "slug_case_difference_still_same_repo_blocks" 1 "$out"
 unset WORKFLOW_TARGET_GITHUB_REPO
+
+# Cleanup claim: run from the base checkout, naming the merged item branch.
+git -C "$repo" switch -q develop
+export MOCK_PR_BODY='Closes #1331'
+out="$("$HELPER" --repo-root "$repo" --issue 1331 --branch fix/1331-followups --stage cleanup --worktree-path "$repo" --pr 7 --expected-base develop --require-ci-green false --followup 1895=deferred 2>&1; echo "rc=$?")"
+if grep -Fq "| followup.#1895 | verified | deferred to future PR" <<< "$out" && ! grep -Fq "pull_request.head | discrepancy" <<< "$out"; then
+  echo "PASS: cleanup_claim_shape_verifies_deferred_without_head_discrepancy"; PASS_COUNT=$((PASS_COUNT + 1))
+else
+  echo "FAIL: cleanup_claim_shape_verifies_deferred_without_head_discrepancy"; echo "$out"; FAIL_COUNT=$((FAIL_COUNT + 1))
+fi
+git -C "$repo" switch -q fix/1331-followups
 
 # Without --followup nothing is added.
 out="$(check --pr 7)"

@@ -1013,7 +1013,9 @@ if [ "${#followups[@]}" -gt 0 ]; then
   if ! followup_repo="$(repo_slug 2>&1)"; then
     followup_setup_error="$followup_repo"
   elif [ -n "${WORKFLOW_TARGET_GITHUB_REPO:-}" ]; then
-    if ! followup_tracker_repo="$(cd "$repo_root" && gh repo view --json nameWithOwner --jq '.nameWithOwner' 2>&1)" || [ -z "$followup_tracker_repo" ]; then
+    # The tracker is the repository that owns these scripts (the hub), not the
+    # artifact checkout being verified, which may be the product checkout.
+    if ! followup_tracker_repo="$(cd "$(workflow_repo_root)" && gh repo view --json nameWithOwner --jq '.nameWithOwner' 2>&1)" || [ -z "$followup_tracker_repo" ]; then
       followup_setup_error="cannot resolve tracker repository: $followup_tracker_repo"
     fi
   else
