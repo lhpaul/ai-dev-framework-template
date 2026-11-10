@@ -8382,7 +8382,9 @@ run_coderabbit_review() {
         fi
         if [ "$refusal_blocked" -eq 0 ]; then
           workflow_diagnostic "INFO: CodeRabbit refused with 'Already reviewed the last commit' for a head with no bound review (attempt $((coderabbit_refusal_retriggers + 1))/${coderabbit_rate_limit_max_retries}) — posting @coderabbitai full review" >&2
+          local refusal_post_accepted=0
           if gh pr comment "$pr_number" --body "@coderabbitai full review" >/dev/null 2>&1; then
+            refusal_post_accepted=1
             # Count the slot only for an ACCEPTED post: a transient failure spends
             # nothing, so one failed POST cannot disable the recovery for the run.
             # A failed post is still bounded by max_wait, because elapsed is not
@@ -8404,9 +8406,11 @@ run_coderabbit_review() {
           fi
           _interruptible_sleep "$poll_interval"
           elapsed=$((elapsed + poll_interval))
-          # A failed post does not reset elapsed, so once max_wait is reached fall
-          # through to the timeout/escalation path instead of retrying forever.
-          if [ "$elapsed" -lt "$max_wait" ]; then
+          # An accepted post always continues (elapsed was reset, and the trigger
+          # needs a polling window even when poll_interval >= max_wait). A failed
+          # post does not reset elapsed, so once max_wait is reached fall through
+          # to the timeout/escalation path instead of retrying forever.
+          if [ "$refusal_post_accepted" -eq 1 ] || [ "$elapsed" -lt "$max_wait" ]; then
             continue
           fi
         fi
