@@ -30,7 +30,10 @@ surface exits non-zero.
 (the fix is in this PR's diff; eligible to close on merge) or "deferred"
 (future-work issue; must stay open). A deferred issue that is closed, or that
 the PR body closes with a closing keyword (Closes/Fixes/Resolves #N), is a
-discrepancy. Deferred issues whose state cannot be read are unavailable_required.
+discrepancy. Deferred issues whose state or PR text cannot be read, or checked
+without --pr, are unavailable_required. In workflow_hub mode the issue state is
+read from the tracker (hub) repository and only qualified <hub>#N references
+count as closing it.
 
 For tests or constrained runners, WORKFLOW_SELF_CHECK_TRACKER_STATUS can provide
 the tracker status directly. Set it to __FAIL__ to simulate an unavailable
@@ -997,13 +1000,29 @@ if [ -n "$issue" ]; then
 fi
 
 if [ "${#followups[@]}" -gt 0 ]; then
+  # Two repositories can be involved. The PR lives in the product repository
+  # (repo_slug honours WORKFLOW_TARGET_GITHUB_REPO); follow-up issue numbers
+  # belong to the tracker repository, which in workflow_hub mode is the hub
+  # checkout's own repository (same resolution post-merge-cleanup.sh uses).
   followup_repo=""
-  followup_pr_body=""
+  followup_tracker_repo=""
+  followup_setup_error=""
   followup_live_refs=""
-  followup_pr_body_ok="not_requested"
+  followup_text_ok="not_requested"
+  followup_text_error=""
   if ! followup_repo="$(repo_slug 2>&1)"; then
+    followup_setup_error="$followup_repo"
+  elif [ -n "${WORKFLOW_TARGET_GITHUB_REPO:-}" ]; then
+    if ! followup_tracker_repo="$(cd "$repo_root" && gh repo view --json nameWithOwner --jq '.nameWithOwner' 2>&1)" || [ -z "$followup_tracker_repo" ]; then
+      followup_setup_error="cannot resolve tracker repository: $followup_tracker_repo"
+    fi
+  else
+    followup_tracker_repo="$followup_repo"
+  fi
+
+  if [ -n "$followup_setup_error" ]; then
     for followup in "${followups[@]}"; do
-      add_row "followup.#${followup%%=*}" "unavailable_required" "$followup_repo" "repo_slug"
+      add_row "followup.#${followup%%=*}" "unavailable_required" "$followup_setup_error" "repo_slug / tracker repository"
     done
   else
     if [ -n "$pr_number" ]; then
@@ -1016,24 +1035,28 @@ if [ "${#followups[@]}" -gt 0 ]; then
         && followup_text_commits="$(gh pr view "$pr_number" --repo "$followup_repo" --json commits --jq '[.commits[] | ((.messageHeadline // "") + "\n" + (.messageBody // ""))] | join("\n")' 2>&1)" \
         && followup_live_refs="$(
           {
-            # Any scan failure must fail this whole group: a failed scan is
-            # never read as "no closing keyword".
-            printf '%s' "$followup_text_title_body" | closing_keyword_live_refs || exit 1
-            printf '%s' "$followup_text_commits" | closing_keyword_live_refs || exit 1
-            # Conservative extra: owner/repo#N qualified references to this repo.
+            # Bare "#N" names an issue in the PR's own repository, so it only
+            # addresses tracker issues when the two repositories coincide. A
+            # failed scan must fail this whole group: it is never read as
+            # "no closing keyword".
+            if [ "$followup_tracker_repo" = "$followup_repo" ]; then
+              printf '%s' "$followup_text_title_body" | closing_keyword_live_refs || exit 1
+              printf '%s' "$followup_text_commits" | closing_keyword_live_refs || exit 1
+            fi
+            # Qualified owner/repo#N references to the tracker repository.
             for q_src in "$followup_text_title_body" "$followup_text_commits"; do
               q_stripped="$(printf '%s' "$q_src" | strip_fenced_pr_body_blocks)" || exit 1
               q_status=0
-              q_hits="$(printf '%s' "$q_stripped" | grep -ioE "(^|[^[:alnum:]_])(close[sd]?|fix(es|ed)?|resolve[sd]?)[[:space:]]+(issue[[:space:]]+)?${followup_repo//./\\.}#[0-9]+")" || q_status=$?
+              q_hits="$(printf '%s' "$q_stripped" | grep -ioE "(^|[^[:alnum:]_])(close[sd]?|fix(es|ed)?|resolve[sd]?)[[:space:]]+(issue[[:space:]]+)?${followup_tracker_repo//./\\.}#[0-9]+")" || q_status=$?
               [ "$q_status" -le 1 ] || exit 1
               [ -z "$q_hits" ] || printf '%s\n' "$q_hits" | grep -oE '[0-9]+$'
             done
           }
         )"; then
-        followup_pr_body_ok="true"
+        followup_text_ok="true"
       else
-        followup_pr_body_ok="false"
-        followup_pr_body="$followup_text_title_body $followup_text_commits"
+        followup_text_ok="false"
+        followup_text_error="${followup_text_title_body:-} ${followup_text_commits:-}"
       fi
     fi
     for followup in "${followups[@]}"; do
@@ -1041,7 +1064,7 @@ if [ "${#followups[@]}" -gt 0 ]; then
       followup_class="${followup#*=}"
       followup_surface="followup.#$followup_number"
       followup_closing="unknown"
-      if [ "$followup_pr_body_ok" = "true" ]; then
+      if [ "$followup_text_ok" = "true" ]; then
         if printf '%s\n' "$followup_live_refs" | grep -qxF "$followup_number"; then
           followup_closing="present"
         else
@@ -1053,16 +1076,18 @@ if [ "${#followups[@]}" -gt 0 ]; then
         continue
       fi
       followup_state=""
-      if ! followup_state="$(gh issue view "$followup_number" --repo "$followup_repo" --json state --jq '.state' 2>&1)"; then
-        add_row "$followup_surface" "unavailable_required" "deferred; state unreadable: $followup_state" "gh issue view $followup_number --json state"
+      if ! followup_state="$(gh issue view "$followup_number" --repo "$followup_tracker_repo" --json state --jq '.state' 2>&1)"; then
+        add_row "$followup_surface" "unavailable_required" "deferred; state unreadable: $followup_state" "gh issue view $followup_number --repo $followup_tracker_repo --json state"
       elif [ "$followup_state" != "OPEN" ]; then
-        add_row "$followup_surface" "discrepancy" "deferred but state=$followup_state; must remain open" "gh issue view $followup_number --json state"
+        add_row "$followup_surface" "discrepancy" "deferred but state=$followup_state; must remain open" "gh issue view $followup_number --repo $followup_tracker_repo --json state"
       elif [ "$followup_closing" = "present" ]; then
         add_row "$followup_surface" "discrepancy" "deferred but PR title, body or commit messages close it with a closing keyword" "gh pr view $pr_number --json body,title,commits"
-      elif [ "$followup_closing" = "unknown" ] && [ "$followup_pr_body_ok" = "false" ]; then
-        add_row "$followup_surface" "unavailable_required" "deferred; open; PR text unreadable: $followup_pr_body" "gh pr view $pr_number --json body,title,commits"
+      elif [ "$followup_text_ok" = "false" ]; then
+        add_row "$followup_surface" "unavailable_required" "deferred; open; PR text unreadable: $followup_text_error" "gh pr view $pr_number --json body,title,commits"
+      elif [ "$followup_text_ok" = "not_requested" ]; then
+        add_row "$followup_surface" "unavailable_required" "deferred; open; closing keywords not checked because --pr was omitted" "--followup $followup requires --pr to prove the PR does not close it"
       else
-        add_row "$followup_surface" "verified" "deferred to future PR; open; not closed by PR (closing keyword $followup_closing)" "gh issue view $followup_number --json state"
+        add_row "$followup_surface" "verified" "deferred to future PR; open; not closed by PR (closing keyword absent)" "gh issue view $followup_number --repo $followup_tracker_repo --json state"
       fi
     done
   fi

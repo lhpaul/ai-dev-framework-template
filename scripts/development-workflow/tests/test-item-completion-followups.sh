@@ -19,10 +19,16 @@ cat > "$MOCK_BIN/gh" <<'MOCK_GH'
 #!/usr/bin/env bash
 # Minimal gh double. Issue states come from MOCK_ISSUE_<N>; the PR body from
 # MOCK_PR_BODY; MOCK_FAIL_ISSUES / MOCK_FAIL_PR_BODY simulate read failures.
+if [ "$1" = "repo" ] && [ "$2" = "view" ]; then
+  if [ "${MOCK_FAIL_HUB:-}" = "1" ]; then echo "repo view failed" >&2; exit 1; fi
+  printf 'example/repo\n'
+  exit 0
+fi
 if [ "$1" = "issue" ] && [ "$2" = "view" ]; then
   n="$3"
   if [ "${MOCK_FAIL_ISSUES:-}" = "1" ]; then echo "issue read failed" >&2; exit 1; fi
   var="MOCK_ISSUE_$n"
+  case "$*" in *"--repo example/product"*) var="MOCK_PRODUCT_ISSUE_$n" ;; esac
   printf '%s\n' "${!var:-OPEN}"
   exit 0
 fi
@@ -53,7 +59,7 @@ exec "$REAL_PY" "$@"
 SHIM
 chmod +x "$MOCK_BIN/python3"
 export PATH="$MOCK_BIN:$PATH"
-export WORKFLOW_TARGET_GITHUB_REPO="example/repo"
+unset WORKFLOW_TARGET_GITHUB_REPO
 export WORKFLOW_SELF_CHECK_TRACKER_STATUS="In Development"
 
 repo="$TMP_ROOT/repo"
@@ -159,10 +165,36 @@ unset MOCK_FAIL_PY
 expect_status "scan_failure_blocks" 1 "$out"
 expect_row "scan_failure_row" "| followup.#1895 | unavailable_required |" "$out"
 
-# Without a PR the deferred issue is still checked for open state.
+# Without a PR the closing-keyword proof is impossible: fail closed.
 out="$(check --followup 1895=deferred)"
-expect_status "no_pr_deferred_open_passes" 0 "$out"
-expect_row "no_pr_keyword_unknown" "closing keyword unknown" "$out"
+expect_status "no_pr_deferred_unproven_blocks" 1 "$out"
+expect_row "no_pr_deferred_row" "| followup.#1895 | unavailable_required | deferred; open; closing keywords not checked because --pr was omitted |" "$out"
+out="$(check --followup 1894=fixed)"
+expect_status "no_pr_fixed_still_lists" 0 "$out"
+
+# workflow_hub: follow-up numbers belong to the tracker (hub) repository,
+# example/repo here; the PR lives in the product repository, example/product.
+# The product repo's own issue #1895 (a trap) is OPEN throughout: reading it
+# instead of the tracker's would hide a closed hub issue.
+export WORKFLOW_TARGET_GITHUB_REPO="example/product"
+export MOCK_PRODUCT_ISSUE_1895=OPEN
+export MOCK_ISSUE_1895=CLOSED
+export MOCK_PR_BODY='Closes #1331'
+out="$(check --pr 7 --followup 1895=deferred)"
+expect_status "hub_closed_tracker_issue_blocks" 1 "$out"
+expect_row "hub_closed_row" "deferred but state=CLOSED" "$out"
+unset MOCK_ISSUE_1895
+export MOCK_PR_BODY=$'Closes #1331\nCloses example/repo#1895'
+out="$(check --pr 7 --followup 1895=deferred)"
+expect_status "hub_qualified_reference_blocks" 1 "$out"
+export MOCK_PR_BODY='Closes #1895'
+out="$(check --pr 7 --followup 1895=deferred)"
+expect_status "hub_bare_reference_names_product_issue_passes" 0 "$out"
+export MOCK_FAIL_HUB=1
+out="$(check --pr 7 --followup 1895=deferred)"
+expect_status "hub_unresolvable_blocks" 1 "$out"
+expect_row "hub_unresolvable_row" "| followup.#1895 | unavailable_required | cannot resolve tracker repository" "$out"
+unset MOCK_FAIL_HUB MOCK_PRODUCT_ISSUE_1895 WORKFLOW_TARGET_GITHUB_REPO
 
 # Without --followup nothing is added.
 out="$(check --pr 7)"
