@@ -540,7 +540,9 @@ branch_prefix() {
   case "$1" in
     spec/*) printf 'spec\n' ;;
     implementation-plan/*) printf 'implementation-plan\n' ;;
-    feature/*) printf 'feature\n' ;;
+    # feat/* is an alias of feature/* (#1401): one token keeps every consumer
+    # `case` (cleanup, reviewer, next-action) correct without per-site edits.
+    feature/*|feat/*) printf 'feature\n' ;;
     refactor/*) printf 'refactor\n' ;;
     fix/*) printf 'fix\n' ;;
     hotfix/*) printf 'hotfix\n' ;;
