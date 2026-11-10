@@ -553,6 +553,54 @@ run_contains "dirty_no_base_tracker_processing_still_runs" \
   "Issue #1391 is already CLOSED, skipping close." \
   "$dirty_nobase_output"
 
+# #1450: the caller is on an unrelated branch with uncommitted tracked changes
+# that a base checkout would overwrite. Cleanup must not abort on the checkout:
+# it fast-forwards the base ref without checking it out, leaves the caller's
+# branch and edit alone, and still deletes the merged local and remote branch.
+dirty_other_branch="feature/1450-dirty-other-branch"
+dirty_other_repo="$(make_repo dirty-other "$dirty_other_branch" yes)"
+install_cleanup_helper "$dirty_other_repo"
+"$REAL_GIT" -C "$dirty_other_repo" checkout -q -b ops/current
+printf 'current\n' >"$dirty_other_repo/README.md"
+"$REAL_GIT" -C "$dirty_other_repo" commit -q -am "diverge README on current branch"
+dirty_other_pusher="$TMP_ROOT/dirty-other-pusher"
+"$REAL_GIT" clone -q -b develop "$TMP_ROOT/dirty-other.git" "$dirty_other_pusher"
+"$REAL_GIT" -C "$dirty_other_pusher" -c user.email=fixture@example.com -c user.name=Fixture \
+  commit -q --allow-empty -m "advance develop"
+"$REAL_GIT" -C "$dirty_other_pusher" push -q origin develop
+dirty_other_remote_tip="$("$REAL_GIT" -C "$dirty_other_pusher" rev-parse HEAD)"
+printf 'uncommitted edit\n' >"$dirty_other_repo/README.md"
+set +e
+dirty_other_output="$(
+  cd "$dirty_other_repo" &&
+    GH_MERGED_HEAD="$dirty_other_branch" \
+    GH_MERGED_PR=1450 \
+    WORKFLOW_TARGET_GITHUB_REPO=example/repo \
+    PATH="$stub_bin:$PATH" \
+    "$dirty_other_repo/scripts/development-workflow/post-merge-cleanup.sh" \
+      --base develop \
+      --pr 1450 \
+      "$dirty_other_branch" 2>&1
+)"
+dirty_other_status=$?
+set -e
+run_test "dirty_other_exit_status" "0" "$dirty_other_status"
+run_contains "dirty_other_checkout_skipped" "BASE_CHECKOUT_SKIPPED=dirty_other_branch" "$dirty_other_output"
+run_test "dirty_other_base_fast_forwarded" "$dirty_other_remote_tip" \
+  "$("$REAL_GIT" -C "$dirty_other_repo" rev-parse develop)"
+run_test "dirty_other_caller_stays_on_branch" "ops/current" \
+  "$("$REAL_GIT" -C "$dirty_other_repo" symbolic-ref --quiet --short HEAD)"
+run_test "dirty_other_edit_survives" "uncommitted edit" "$(cat "$dirty_other_repo/README.md" 2>/dev/null || true)"
+run_test "dirty_other_local_branch_removed" "no" "$(
+  if "$REAL_GIT" -C "$dirty_other_repo" show-ref --quiet "refs/heads/$dirty_other_branch"; then
+    printf 'yes'
+  else
+    printf 'no'
+  fi
+)"
+run_contains "dirty_other_remote_deleted" "REMOTE_DELETE_RESULT=deleted" "$dirty_other_output"
+run_test "dirty_other_remote_ref_absent" "" "$("$REAL_GIT" -C "$dirty_other_repo" ls-remote --heads origin "$dirty_other_branch")"
+
 # Step 7a review: a local base that is ahead of origin (unpushed commits) must
 # not stop cleanup, just as `git pull --ff-only` does not.
 ahead_branch="feature/1392-base-ahead"

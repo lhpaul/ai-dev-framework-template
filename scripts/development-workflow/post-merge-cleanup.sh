@@ -767,7 +767,19 @@ if [ "$ORIGINAL_REF_KIND" = "branch" ] && [ "$ORIGINAL_REF" = "$TO_DELETE" ] \
   CALLER_ON_MERGED_BRANCH=1
 fi
 
-if [ "$CALLER_ON_MERGED_BRANCH" -eq 1 ]; then
+# #1450: the caller sits on an unrelated branch (neither the base nor the merged
+# branch) with uncommitted tracked changes. Checking the base out there can fail
+# on an overwrite error before any branch delete runs, so fast-forward the base
+# ref without a checkout and leave the caller's branch and edits untouched.
+CALLER_DIRTY_OTHER_BRANCH=0
+if [ "$CALLER_ON_MERGED_BRANCH" -eq 0 ] && [ "$ORIGINAL_REF_KIND" = "branch" ] \
+  && [ "$ORIGINAL_REF" != "$TO_DELETE" ] && [ "$ORIGINAL_REF" != "$DEVELOP_BRANCH" ] \
+  && [ -n "$(git status --porcelain --untracked-files=no 2>/dev/null)" ]; then
+  CALLER_DIRTY_OTHER_BRANCH=1
+  print_kv BASE_CHECKOUT_SKIPPED "dirty_other_branch"
+fi
+
+if [ "$CALLER_ON_MERGED_BRANCH" -eq 1 ] || [ "$CALLER_DIRTY_OTHER_BRANCH" -eq 1 ]; then
   echo "Fast-forwarding $DEVELOP_BRANCH without checking it out in the calling worktree..."
   # Same outcomes as the --ff-only pull on the other path: create the branch
   # when it is missing, do nothing when it already contains origin's tip
