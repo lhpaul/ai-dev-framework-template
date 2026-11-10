@@ -8382,8 +8382,12 @@ run_coderabbit_review() {
         fi
         if [ "$refusal_blocked" -eq 0 ]; then
           workflow_diagnostic "INFO: CodeRabbit refused with 'Already reviewed the last commit' for a head with no bound review (attempt $((coderabbit_refusal_retriggers + 1))/${coderabbit_rate_limit_max_retries}) — posting @coderabbitai full review" >&2
-          coderabbit_refusal_retriggers=$((coderabbit_refusal_retriggers + 1))
           if gh pr comment "$pr_number" --body "@coderabbitai full review" >/dev/null 2>&1; then
+            # Count the slot only for an ACCEPTED post: a transient failure spends
+            # nothing, so one failed POST cannot disable the recovery for the run.
+            # A failed post is still bounded by max_wait, because elapsed is not
+            # reset for it.
+            coderabbit_refusal_retriggers=$((coderabbit_refusal_retriggers + 1))
             coderabbit_answered_refusal_ids="${coderabbit_answered_refusal_ids:+$coderabbit_answered_refusal_ids,}$(printf '%s' "$refusal_json" | jq -r '.id // empty' 2>/dev/null)"
             coderabbit_trigger_attempts=$((coderabbit_trigger_attempts + 1))
             coderabbit_last_trigger_iso="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
@@ -8393,11 +8397,11 @@ run_coderabbit_review() {
               coderabbit_request_recorded=1
             fi
             workflow_diagnostic "INFO: @coderabbitai full review trigger posted" >&2
+            # Reset the elapsed timer to give the retrigger a full polling window.
+            elapsed=0
           else
-            workflow_diagnostic "WARN: failed to post @coderabbitai full review trigger" >&2
+            workflow_diagnostic "WARN: failed to post @coderabbitai full review trigger — not counting it; the refusal stays unanswered and is retried on the next poll" >&2
           fi
-          # Reset the elapsed timer to give the retrigger a full polling window.
-          elapsed=0
           _interruptible_sleep "$poll_interval"
           elapsed=$((elapsed + poll_interval))
           continue
