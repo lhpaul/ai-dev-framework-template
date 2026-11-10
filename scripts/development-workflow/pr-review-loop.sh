@@ -8629,17 +8629,16 @@ run_coderabbit_review() {
         rate_limit_comment_body="$(printf '%s' "$rate_limit_comment_json" | jq -r '.body // ""' 2>/dev/null)" || rate_limit_comment_body=""
         rate_limit_comment_created="$(printf '%s' "$rate_limit_comment_json" | jq -r '.effective_at // .created_at // ""' 2>/dev/null)" || rate_limit_comment_created=""
         if coderabbit_rate_limit_is_live "$rate_limit_comment_json" "$coderabbit_last_trigger_iso"; then
-          if [ -n "$coderabbit_last_trigger_iso" ] && [ "$coderabbit_last_quota_refusal_trigger_iso" != "$coderabbit_last_trigger_iso" ]; then
+          # A quota-refused FULL review is refunded and its refusal re-opened by the
+          # dedicated refund block above, in one place (#1591). This path stays
+          # out of it (was_full == 1) so it can neither refund the wrong counter
+          # nor refund without re-opening the refusal if that block's own lookup
+          # missed the reply; the block retries on its next iteration.
+          if [ "$coderabbit_last_trigger_was_full" -eq 0 ] \
+              && [ -n "$coderabbit_last_trigger_iso" ] \
+              && [ "$coderabbit_last_quota_refusal_trigger_iso" != "$coderabbit_last_trigger_iso" ]; then
             coderabbit_last_quota_refusal_trigger_iso="$coderabbit_last_trigger_iso"
-            # A full-review trigger never incremented the rate-limit counter
-            # (it spends the refusal counter), so refund only the counter that
-            # trigger actually spent.
-            if [ "$coderabbit_last_trigger_was_full" -eq 1 ]; then
-              if [ "$coderabbit_refusal_retriggers" -gt 0 ]; then
-                coderabbit_refusal_retriggers=$((coderabbit_refusal_retriggers - 1))
-              fi
-              coderabbit_last_trigger_was_full=0
-            elif [ "$coderabbit_rate_limit_retries" -gt 0 ]; then
+            if [ "$coderabbit_rate_limit_retries" -gt 0 ]; then
               coderabbit_rate_limit_retries=$((coderabbit_rate_limit_retries - 1))
             fi
             workflow_diagnostic "INFO: CodeRabbit quota refusal observed for last trigger — not counting it toward CODERABBIT_RATE_LIMIT_MAX_RETRIES" >&2

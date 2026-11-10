@@ -1832,7 +1832,7 @@ _1591_run() {
   local dir
   dir="$(mktemp -d)"
   printf '%s' "$body" > "$dir/body.txt"
-  export _1591_DIR="$dir" _1591_CREATED="$created" _1591_DYNAMIC="$dynamic" _1591_EXTRA_BODY="${_1591_EXTRA:-}" _1591_QUOTA_AFTER="${_1591_QUOTA:-0}" _1591_QUOTA_POLLS="${_1591_QUOTA_POLLS_N:-999999}" _1591_HOLD_POLLS="${_1591_HOLD_N:-}" _1591_OLDER_REFUSAL="${_1591_OLDER:-0}"
+  export _1591_DIR="$dir" _1591_CREATED="$created" _1591_DYNAMIC="$dynamic" _1591_EXTRA_BODY="${_1591_EXTRA:-}" _1591_QUOTA_AFTER="${_1591_QUOTA:-0}" _1591_QUOTA_POLLS="${_1591_QUOTA_POLLS_N:-999999}" _1591_HOLD_POLLS="${_1591_HOLD_N:-}" _1591_OLDER_REFUSAL="${_1591_OLDER:-0}" _1591_FAIL_READ_N="${_1591_FAILREAD:-}"
   cat > "$dir/gh" <<'CR_GH_1591'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$_1591_DIR/calls.log"
@@ -1850,6 +1850,13 @@ case "$*" in
     fi
     exit 0 ;;
   *"issues/42/comments"*)
+    # _1591_FAIL_READ_N=K: the K-th comment read after the first full review fails
+    # once (exit 1), so a lookup that runs early in the iteration misses the reply.
+    if [ -n "${_1591_FAIL_READ_N:-}" ] \
+        && [ "$(grep -c 'pr comment 42 --body @coderabbitai full review' "$_1591_DIR/calls.log")" -ge 1 ] \
+        && [ "$(awk '/pr comment 42 --body @coderabbitai full review/{f=1; next} f && /issues\/42\/comments/{c++} END{print c+0}' "$_1591_DIR/calls.log")" -eq "$_1591_FAIL_READ_N" ]; then
+      exit 1
+    fi
     n=0
     if [ "$_1591_DYNAMIC" = 1 ]; then
       n="$(grep -c 'pr comment 42 --body @coderabbitai full review' "$_1591_DIR/calls.log" || true)"
@@ -1899,7 +1906,7 @@ CR_GH_1591
     CODERABBIT_RATE_LIMIT_WAIT=1 CODERABBIT_RATE_LIMIT_MIN_WAIT=1 \
     run_coderabbit_review "42" "fix/42-test" "1" "$max_wait" >"$dir/stdout.log" 2>"$dir/stderr.log" || true
   _1591_last_dir="$dir"
-  unset _1591_DIR _1591_CREATED _1591_DYNAMIC _1591_EXTRA_BODY _1591_QUOTA_AFTER _1591_QUOTA_POLLS _1591_HOLD_POLLS _1591_OLDER_REFUSAL
+  unset _1591_DIR _1591_CREATED _1591_DYNAMIC _1591_EXTRA_BODY _1591_QUOTA_AFTER _1591_QUOTA_POLLS _1591_HOLD_POLLS _1591_OLDER_REFUSAL _1591_FAIL_READ_N
 }
 _1591_count() { grep_count_or_zero "$1" "$2"; }
 _1591_full='pr comment 42 --body @coderabbitai full review'
@@ -2032,6 +2039,23 @@ _1591_twosame_dir="$_1591_last_dir"
 run_test "1591_a_same_second_older_refusal_does_not_draw_a_second_full_review" "1" \
   "$(_1591_count "$_1591_full" "$_1591_twosame_dir/calls.log")"
 
+# The reply to a full review is first seen by the LATER rate-limit lookup (the
+# refund block's own read failed, reviewer finding): the refusal must still be
+# re-opened and asked again once the quota returns. Run for several read
+# positions so the test does not depend on the exact read order.
+_1591_late_counts=""
+_1591_late_dirs=()
+for _1591_k in 2 3 4; do
+  _1591_QUOTA=1
+  _1591_QUOTA_POLLS_N=8
+  _1591_FAILREAD="$_1591_k"
+  _1591_run "latelookup$_1591_k" "$_1591_refusal_body" "$_1591_before_trigger" 1 0 60
+  unset _1591_QUOTA _1591_QUOTA_POLLS_N _1591_FAILREAD
+  _1591_late_dirs+=("$_1591_last_dir")
+  _1591_late_counts="${_1591_late_counts:+$_1591_late_counts }$(_1591_count "$_1591_full" "$_1591_last_dir/calls.log")"
+done
+run_test "1591_a_late_quota_reply_still_reopens_the_refusal" "2 2 2" "$_1591_late_counts"
+
 # AC-3 (c): cap 0 posts nothing.
 _1591_run zerocap "$_1591_refusal_body" "$_1591_before_trigger" 0 1
 _1591_zerocap_dir="$_1591_last_dir"
@@ -2067,7 +2091,7 @@ _1591_quota_dir="$_1591_last_dir"
 run_test "1591_quota_refusal_is_not_answered_with_full_review" "0" \
   "$(_1591_count 'full review' "$_1591_quota_dir/calls.log")"
 
-rm -rf "$_1591_answered_dir" "$_1591_capped_dir" "$_1591_capped3_dir" "$_1591_failpost_dir" "$_1591_walkthrough_dir" "$_1591_held_dir" "$_1591_refund_dir" "$_1591_reask_dir" "$_1591_holdthenwalk_dir" "$_1591_twoold_dir" "$_1591_twosame_dir" "$_1591_zerocap_dir" "$_1591_mutated0_dir" "$_1591_stale_dir" "$_1591_quota_dir"
+rm -rf "$_1591_answered_dir" "$_1591_capped_dir" "$_1591_capped3_dir" "$_1591_failpost_dir" "$_1591_walkthrough_dir" "$_1591_held_dir" "$_1591_refund_dir" "$_1591_reask_dir" "$_1591_holdthenwalk_dir" "$_1591_twoold_dir" "$_1591_twosame_dir" "${_1591_late_dirs[@]}" "$_1591_zerocap_dir" "$_1591_mutated0_dir" "$_1591_stale_dir" "$_1591_quota_dir"
 unset -f _1591_run _1591_count
 unset _1591_last_dir _1591_refusal_body _1591_quota_body _1591_before_trigger _1591_full _1591_real_re \
   _1591_answered_dir _1591_capped_dir _1591_capped3_dir _1591_failpost_dir _1591_walkthrough_dir _1591_held_dir _1591_refund_dir _1591_reask_dir _1591_holdthenwalk_dir _1591_twoold_dir _1591_twosame_dir _1591_zerocap_dir _1591_mutated0_dir _1591_stale_dir _1591_quota_dir
