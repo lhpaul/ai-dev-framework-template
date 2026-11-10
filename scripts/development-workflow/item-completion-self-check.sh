@@ -1023,7 +1023,7 @@ if [ "${#followups[@]}" -gt 0 ]; then
   fi
 
   if [ -n "$followup_setup_error" ]; then
-    for followup in "${followups[@]}"; do
+    for followup in ${followups[@]+"${followups[@]}"}; do
       add_row "followup.#${followup%%=*}" "unavailable_required" "$followup_setup_error" "repo_slug / tracker repository"
     done
   else
@@ -1037,7 +1037,7 @@ if [ "${#followups[@]}" -gt 0 ]; then
         && followup_text_commits="$(gh pr view "$pr_number" --repo "$followup_repo" --json commits --jq '[.commits[] | ((.messageHeadline // "") + "\n" + (.messageBody // ""))] | join("\n")' 2>&1)" \
         && followup_live_refs="$(
           {
-            # Bare "#N" names an issue in the PR's own repository, so it only
+            # A bare "#N" names an issue in the repository of the PR itself, so it only
             # addresses tracker issues when the two repositories coincide. A
             # failed scan must fail this whole group: it is never read as
             # "no closing keyword".
@@ -1062,7 +1062,7 @@ if [ "${#followups[@]}" -gt 0 ]; then
         followup_text_error="${followup_text_title_body:-} ${followup_text_commits:-}"
       fi
     fi
-    for followup in "${followups[@]}"; do
+    for followup in ${followups[@]+"${followups[@]}"}; do
       followup_number="${followup%%=*}"
       followup_class="${followup#*=}"
       followup_surface="followup.#$followup_number"

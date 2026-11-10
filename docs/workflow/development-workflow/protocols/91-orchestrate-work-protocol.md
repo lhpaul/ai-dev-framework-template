@@ -278,8 +278,9 @@ escalated, waiting on human review, waiting on merge, or post-merge cleanup
 complete — run the completion self-check and paste its
 `## Ground-Truth Completion Verification` section into the summary:
 
+<!-- workflow-shell-contract: bash -->
 ```bash
-./scripts/development-workflow/item-completion-self-check.sh \
+bash ./scripts/development-workflow/item-completion-self-check.sh \
   --issue <issue-number> \
   --branch <workflow-branch> \
   --stage <spec|plan|implementation|cleanup> \
