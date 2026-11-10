@@ -7969,6 +7969,37 @@ coderabbit_rate_limit_is_live() {
   coderabbit_rate_limit_comment_is_current "$body" "$created" "$last_trigger_iso"
 }
 
+# ---------------------------------------------------------------------------
+# coderabbit_settle_quota_refused_full_review (#1591)
+#
+# A `@coderabbitai full review` this run posted was refused for quota, so it
+# delivered nothing: give its refusal slot back and re-open the refusal it
+# answered, so the recovery can ask again once the quota returns. Both places
+# that can observe the quota reply call this one function, so neither can refund
+# without re-opening (or the reverse).
+#
+# It deliberately reads and writes run_coderabbit_review's locals through bash's
+# dynamic scoping (coderabbit_last_trigger_iso, *_refusal_retriggers,
+# *_answered_refusal_ids, *_last_answered_refusal_id, *_last_trigger_was_full,
+# *_last_quota_refusal_trigger_iso). It must only be called from inside that
+# function.
+coderabbit_settle_quota_refused_full_review() {
+  coderabbit_last_quota_refusal_trigger_iso="$coderabbit_last_trigger_iso"
+  if [ "$coderabbit_refusal_retriggers" -gt 0 ]; then
+    coderabbit_refusal_retriggers=$((coderabbit_refusal_retriggers - 1))
+  fi
+  coderabbit_last_trigger_was_full=0
+  # The refused full review delivered nothing, so the refusal it answered is
+  # pending again. Without this the refusal id stays "answered" and, once the
+  # quota returns, nothing re-asks: the generic-activity flag disables the
+  # silent and rate-limit retriggers, and the loop would time out.
+  if [ -n "$coderabbit_last_answered_refusal_id" ]; then
+    coderabbit_answered_refusal_ids="$(printf ',%s,' "$coderabbit_answered_refusal_ids" | sed "s/,${coderabbit_last_answered_refusal_id},/,/" | sed 's/^,//; s/,$//')"
+    coderabbit_last_answered_refusal_id=""
+  fi
+  workflow_diagnostic "INFO: CodeRabbit quota refusal observed for the full-review trigger — refunding its refusal slot and re-opening the refusal" >&2
+}
+
 run_coderabbit_review() {
   local pr_number="$1"
   local branch_name="$2"
@@ -8373,20 +8404,7 @@ run_coderabbit_review() {
       fullq_json="$(coderabbit_newest_rate_limit_comment "$repo" "$pr_number" "$bot_login" "$since_iso")" || fullq_status=$?
       if [ "$fullq_status" -eq 0 ] && [ -n "$fullq_json" ] \
           && coderabbit_rate_limit_is_live "$fullq_json" "$coderabbit_last_trigger_iso"; then
-        coderabbit_last_quota_refusal_trigger_iso="$coderabbit_last_trigger_iso"
-        if [ "$coderabbit_refusal_retriggers" -gt 0 ]; then
-          coderabbit_refusal_retriggers=$((coderabbit_refusal_retriggers - 1))
-        fi
-        coderabbit_last_trigger_was_full=0
-        # The refused full review delivered nothing, so the refusal it answered is
-        # pending again. Without this the refusal id stays "answered" and, once the
-        # quota returns, nothing re-asks: the generic-activity flag disables the
-        # silent and rate-limit retriggers, and the loop would time out.
-        if [ -n "$coderabbit_last_answered_refusal_id" ]; then
-          coderabbit_answered_refusal_ids="$(printf ',%s,' "$coderabbit_answered_refusal_ids" | sed "s/,${coderabbit_last_answered_refusal_id},/,/" | sed 's/^,//; s/,$//')"
-          coderabbit_last_answered_refusal_id=""
-        fi
-        workflow_diagnostic "INFO: CodeRabbit quota refusal observed for the full-review trigger — refunding its refusal slot and re-opening the refusal" >&2
+        coderabbit_settle_quota_refused_full_review
       fi
     fi
 
@@ -8629,19 +8647,19 @@ run_coderabbit_review() {
         rate_limit_comment_body="$(printf '%s' "$rate_limit_comment_json" | jq -r '.body // ""' 2>/dev/null)" || rate_limit_comment_body=""
         rate_limit_comment_created="$(printf '%s' "$rate_limit_comment_json" | jq -r '.effective_at // .created_at // ""' 2>/dev/null)" || rate_limit_comment_created=""
         if coderabbit_rate_limit_is_live "$rate_limit_comment_json" "$coderabbit_last_trigger_iso"; then
-          # A quota-refused FULL review is refunded and its refusal re-opened by the
-          # dedicated refund block above, in one place (#1591). This path stays
-          # out of it (was_full == 1) so it can neither refund the wrong counter
-          # nor refund without re-opening the refusal if that block's own lookup
-          # missed the reply; the block retries on its next iteration.
-          if [ "$coderabbit_last_trigger_was_full" -eq 0 ] \
-              && [ -n "$coderabbit_last_trigger_iso" ] \
-              && [ "$coderabbit_last_quota_refusal_trigger_iso" != "$coderabbit_last_trigger_iso" ]; then
-            coderabbit_last_quota_refusal_trigger_iso="$coderabbit_last_trigger_iso"
-            if [ "$coderabbit_rate_limit_retries" -gt 0 ]; then
-              coderabbit_rate_limit_retries=$((coderabbit_rate_limit_retries - 1))
+          if [ -n "$coderabbit_last_trigger_iso" ] && [ "$coderabbit_last_quota_refusal_trigger_iso" != "$coderabbit_last_trigger_iso" ]; then
+            if [ "$coderabbit_last_trigger_was_full" -eq 1 ]; then
+              # A quota-refused FULL review: the same settlement as the dedicated
+              # block above, so it is applied even when that block's own lookup
+              # missed the reply and before any plain trigger replaces the state.
+              coderabbit_settle_quota_refused_full_review
+            else
+              coderabbit_last_quota_refusal_trigger_iso="$coderabbit_last_trigger_iso"
+              if [ "$coderabbit_rate_limit_retries" -gt 0 ]; then
+                coderabbit_rate_limit_retries=$((coderabbit_rate_limit_retries - 1))
+              fi
+              workflow_diagnostic "INFO: CodeRabbit quota refusal observed for last trigger — not counting it toward CODERABBIT_RATE_LIMIT_MAX_RETRIES" >&2
             fi
-            workflow_diagnostic "INFO: CodeRabbit quota refusal observed for last trigger — not counting it toward CODERABBIT_RATE_LIMIT_MAX_RETRIES" >&2
           fi
           rate_limit_comment_count=1
         else
