@@ -1016,13 +1016,17 @@ if [ "${#followups[@]}" -gt 0 ]; then
         && followup_text_commits="$(gh pr view "$pr_number" --repo "$followup_repo" --json commits --jq '[.commits[] | ((.messageHeadline // "") + "\n" + (.messageBody // ""))] | join("\n")' 2>&1)" \
         && followup_live_refs="$(
           {
-            printf '%s' "$followup_text_title_body" | closing_keyword_live_refs
-            printf '%s' "$followup_text_commits" | closing_keyword_live_refs
+            # Any scan failure must fail this whole group: a failed scan is
+            # never read as "no closing keyword".
+            printf '%s' "$followup_text_title_body" | closing_keyword_live_refs || exit 1
+            printf '%s' "$followup_text_commits" | closing_keyword_live_refs || exit 1
             # Conservative extra: owner/repo#N qualified references to this repo.
             for q_src in "$followup_text_title_body" "$followup_text_commits"; do
-              printf '%s' "$q_src" | strip_fenced_pr_body_blocks \
-                | grep -ioE "(^|[^[:alnum:]_])(close[sd]?|fix(es|ed)?|resolve[sd]?)[[:space:]]+(issue[[:space:]]+)?${followup_repo//./\\.}#[0-9]+" \
-                | grep -oE '[0-9]+$' || true
+              q_stripped="$(printf '%s' "$q_src" | strip_fenced_pr_body_blocks)" || exit 1
+              q_status=0
+              q_hits="$(printf '%s' "$q_stripped" | grep -ioE "(^|[^[:alnum:]_])(close[sd]?|fix(es|ed)?|resolve[sd]?)[[:space:]]+(issue[[:space:]]+)?${followup_repo//./\\.}#[0-9]+")" || q_status=$?
+              [ "$q_status" -le 1 ] || exit 1
+              [ -z "$q_hits" ] || printf '%s\n' "$q_hits" | grep -oE '[0-9]+$'
             done
           }
         )"; then

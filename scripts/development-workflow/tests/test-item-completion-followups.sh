@@ -39,6 +39,19 @@ echo "unexpected gh invocation: gh $*" >&2
 exit 64
 MOCK_GH
 chmod +x "$MOCK_BIN/gh"
+# python3 shim so a closing-keyword scan failure can be simulated.
+export REAL_PY
+REAL_PY="$(command -v python3)"
+cat > "$MOCK_BIN/python3" <<'SHIM'
+#!/usr/bin/env bash
+case "$*" in
+  *strip_inline_code_spans*)
+    if [ "${MOCK_FAIL_PY:-}" = "1" ]; then echo "python failed" >&2; exit 1; fi
+    ;;
+esac
+exec "$REAL_PY" "$@"
+SHIM
+chmod +x "$MOCK_BIN/python3"
 export PATH="$MOCK_BIN:$PATH"
 export WORKFLOW_TARGET_GITHUB_REPO="example/repo"
 export WORKFLOW_SELF_CHECK_TRACKER_STATUS="In Development"
@@ -137,6 +150,14 @@ export MOCK_FAIL_PR_BODY=1
 out="$(check --pr 7 --followup 1895=deferred)"
 expect_status "unreadable_pr_body_blocks" 1 "$out"
 unset MOCK_FAIL_PR_BODY
+
+# A failed closing-keyword scan is not read as "no closing keyword".
+export MOCK_PR_BODY='Closes #1331'
+export MOCK_FAIL_PY=1
+out="$(check --pr 7 --followup 1895=deferred)"
+unset MOCK_FAIL_PY
+expect_status "scan_failure_blocks" 1 "$out"
+expect_row "scan_failure_row" "| followup.#1895 | unavailable_required |" "$out"
 
 # Without a PR the deferred issue is still checked for open state.
 out="$(check --followup 1895=deferred)"
