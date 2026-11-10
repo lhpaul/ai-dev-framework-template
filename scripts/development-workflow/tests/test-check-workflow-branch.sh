@@ -102,5 +102,11 @@ expect "unknown branch exits 1 with missing line" 1 "missing: fix/9-does-not-exi
 run_check fix/1-local
 expect "partial name does not match a longer branch" 1 "missing: fix/1-local"
 
+run_check fix/2-remote
+expect "partial name does not match a longer remote branch" 1 "missing: fix/2-remote"
+
+run_check fix/3-in
+expect "partial name does not match a longer worktree branch" 1 "missing: fix/3-in"
+
 printf '\n%s passed, %s failed\n' "$PASS_COUNT" "$FAIL_COUNT"
 [ "$FAIL_COUNT" -eq 0 ]
