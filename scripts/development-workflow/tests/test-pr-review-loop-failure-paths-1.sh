@@ -375,7 +375,7 @@ case "$*" in
   *"issues/comments/"*"/reactions"*) printf '[]\n'; exit 0 ;;
   *"pulls/"*"/comments"*) printf '[]\n'; exit 0 ;;
   *"pulls/"*"/reviews"*)
-    printf '[{"id":401,"submitted_at":"2026-01-01T00:00:02Z","state":"COMMENTED","user":{"login":"chatgpt-codex-connector[bot]"},"body":"%s"}]\n' "${MOCK_REVIEW_BODY:-No blocking issues found. Reviewed commit: \`abcmixed1234567890\`}"
+    printf '[{"id":401,"submitted_at":"2026-01-01T00:00:02Z","state":"COMMENTED","commit_id":"abcmixed1234567890","user":{"login":"chatgpt-codex-connector[bot]"},"body":"%s"}]\n' "${MOCK_REVIEW_BODY:-No blocking issues found. Reviewed commit: \`abcmixed1234567890\`}"
     exit 0 ;;
   *"issues/"*"/timeline"*)
     printf '[]\n'; exit 0 ;;
@@ -416,6 +416,77 @@ run_test "codex_mixed_fetch_not_connected_matches_usage_limit" \
   "$_codex_mixed_usage_exit" "$_codex_mixed_blocking_exit"
 rm -rf "$_codex_mixed_dir"
 unset _codex_mixed_dir _codex_mixed_exit _codex_mixed_blocking_exit _codex_mixed_usage_exit
+
+# --- #1587: a same-fetch BLOCKING review must survive every refusal form.
+# The mock review carries commit_id: the reviews-endpoint filter keeps only
+# reviews bound to the live head, so a review without it never reaches the
+# evidence combiner and the case would be vacuous. Matrix: 3 refusal forms x
+# (blocking review, non-blocking review).
+_codex_1587_dir="$(mktemp -d)"
+cat > "$_codex_1587_dir/gh" <<'CODEX_1587_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*) exit 0 ;;
+  *"pr view"*headRefOid*) printf 'abc1587head1234567890\n'; exit 0 ;;
+  *"--method POST"*) printf '{"id":101,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*) printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*) printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[{"id":401,"submitted_at":"2026-01-01T00:00:02Z","state":"%s","commit_id":"abc1587head1234567890","user":{"login":"chatgpt-codex-connector[bot]"},"body":"%s"}]\n' "$MOCK_REVIEW_STATE" "$MOCK_REVIEW_BODY"
+    exit 0 ;;
+  *"issues/"*"/timeline"*) printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[{"id":201,"created_at":"2026-01-01T00:00:03Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"%s"}]\n' "$MOCK_REFUSAL"
+    exit 0 ;;
+  *) printf 'ERROR=unexpected-gh-invocation\n' >&2; exit 64 ;;
+esac
+CODEX_1587_GH
+chmod +x "$_codex_1587_dir/gh"
+# Runs the reviewer once; sets _codex_1587_exit and _codex_1587_out.
+_codex_1587_run() {
+  _codex_1587_exit=0
+  MOCK_REVIEW_STATE="$1" MOCK_REVIEW_BODY="$2" MOCK_REFUSAL="$3" \
+  PATH="$_codex_1587_dir:$PATH" \
+    "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+    42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+    >"$_codex_1587_dir/out.txt" 2>&1 || _codex_1587_exit=$?
+  _codex_1587_out="$(cat "$_codex_1587_dir/out.txt")"
+}
+_codex_1587_usage="You have reached your Codex usage limits for code reviews."
+_codex_1587_env="To use Codex here, create an environment for this repo."
+_codex_1587_conn="To use Codex here, [create a Codex account and connect to github](https://chatgpt.com/codex/cloud/settings/connectors)."
+_codex_1587_neutral="See the inline notes. Reviewed commit: \`abc1587head1234567890\`"
+_codex_1587_clean="No blocking issues found. Reviewed commit: \`abc1587head1234567890\`"
+_codex_1587_bodyblock="Changes requested: must fix the null deref. Reviewed commit: \`abc1587head1234567890\`"
+for _codex_1587_form in usage env conn; do
+  case "$_codex_1587_form" in
+    usage) _codex_1587_refusal="$_codex_1587_usage"; _codex_1587_reason="REASON=codex-github-usage-limit"; _codex_1587_unavail_exit=3 ;;
+    env)   _codex_1587_refusal="$_codex_1587_env";   _codex_1587_reason="REASON=codex-github-environment-missing"; _codex_1587_unavail_exit=2 ;;
+    conn)  _codex_1587_refusal="$_codex_1587_conn";  _codex_1587_reason="REASON=codex-github-account-not-connected"; _codex_1587_unavail_exit=3 ;;
+  esac
+  # AC-1: structurally blocking review (CHANGES_REQUESTED) wins: exit 1.
+  _codex_1587_run "CHANGES_REQUESTED" "$_codex_1587_neutral" "$_codex_1587_refusal"
+  run_test "codex_1587_${_codex_1587_form}_blocking_review_exit" "1" "$_codex_1587_exit"
+  run_test "codex_1587_${_codex_1587_form}_blocking_review_verdict" "VERDICT: NEEDS_REVISION" \
+    "$(printf '%s\n' "$_codex_1587_out" | grep "^VERDICT:" || true)"
+  # AC-1 (body assertion): never reported as the refusal's unavailability
+  # verdict; it escalates (correlation_missing) rather than being dropped.
+  _codex_1587_run "COMMENTED" "$_codex_1587_bodyblock" "$_codex_1587_refusal"
+  run_test "codex_1587_${_codex_1587_form}_blocking_body_not_unavailable" "0" \
+    "$(printf '%s\n' "$_codex_1587_out" | grep -c "$_codex_1587_reason" || true)"
+  run_test "codex_1587_${_codex_1587_form}_blocking_body_escalates" "VERDICT: ESCALATE" \
+    "$(printf '%s\n' "$_codex_1587_out" | grep "^VERDICT:" | cut -c1-17 || true)"
+  # AC-2: a non-blocking same-fetch review still yields the refusal verdict.
+  _codex_1587_run "COMMENTED" "$_codex_1587_clean" "$_codex_1587_refusal"
+  run_test "codex_1587_${_codex_1587_form}_nonblocking_review_exit" "$_codex_1587_unavail_exit" "$_codex_1587_exit"
+  run_test "codex_1587_${_codex_1587_form}_nonblocking_review_reason" "$_codex_1587_reason" \
+    "$(printf '%s\n' "$_codex_1587_out" | grep "^REASON=" || true)"
+done
+rm -rf "$_codex_1587_dir"
+unset _codex_1587_dir _codex_1587_exit _codex_1587_out _codex_1587_usage _codex_1587_env _codex_1587_conn \
+  _codex_1587_neutral _codex_1587_clean _codex_1587_bodyblock _codex_1587_form _codex_1587_refusal \
+  _codex_1587_reason _codex_1587_unavail_exit
+unset -f _codex_1587_run
 
 # --- #1526: a trigger already answered with a refusal must be re-triggered,
 # so a restored quota/connection can review the same commit. Without the fix
