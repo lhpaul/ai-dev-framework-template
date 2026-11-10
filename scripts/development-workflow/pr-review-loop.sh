@@ -8359,8 +8359,13 @@ run_coderabbit_review() {
     # refuses both verbs cannot loop forever. A full review that is itself quota-
     # refused is given back (see the rate-limit block), so a quota refusal does
     # not spend the cap.
-    if [ "$coderabbit_any_activity" -eq 0 ] \
-        && [ "$coderabbit_rate_limit_hold_seen" -eq 0 ] \
+    #
+    # Deliberately NOT gated on coderabbit_any_activity: that flag is also set by a
+    # walkthrough/summary comment, which carries no commit and may belong to an
+    # older head (#1789 D15), and would suppress this recovery for the whole run.
+    # A review, failure status or success status bound to the head has already
+    # ended the wait above, so reaching this point means no bound verdict exists.
+    if [ "$coderabbit_rate_limit_hold_seen" -eq 0 ] \
         && [ "$coderabbit_refusal_retriggers" -lt "$coderabbit_rate_limit_max_retries" ]; then
       local refusal_json="" refusal_status=0
       refusal_json="$(coderabbit_newest_already_reviewed_refusal "$repo" "$pr_number" "$bot_login" "$since_iso" "$coderabbit_answered_refusal_ids")" || refusal_status=$?

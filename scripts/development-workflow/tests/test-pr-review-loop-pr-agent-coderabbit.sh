@@ -1832,7 +1832,7 @@ _1591_run() {
   local dir
   dir="$(mktemp -d)"
   printf '%s' "$body" > "$dir/body.txt"
-  export _1591_DIR="$dir" _1591_CREATED="$created" _1591_DYNAMIC="$dynamic"
+  export _1591_DIR="$dir" _1591_CREATED="$created" _1591_DYNAMIC="$dynamic" _1591_EXTRA_BODY="${_1591_EXTRA:-}"
   cat > "$dir/gh" <<'CR_GH_1591'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$_1591_DIR/calls.log"
@@ -1854,8 +1854,9 @@ case "$*" in
     if [ "$_1591_DYNAMIC" = 1 ]; then
       n="$(grep -c 'pr comment 42 --body @coderabbitai full review' "$_1591_DIR/calls.log" || true)"
     fi
-    jq -n --rawfile b "$_1591_DIR/body.txt" --arg c "$_1591_CREATED" --argjson n "${n:-0}" \
-      '[range(0; $n + 1) | {id: (1000 + .), user: {login: "coderabbitai[bot]"}, created_at: $c, updated_at: $c, body: $b}]'
+    jq -n --rawfile b "$_1591_DIR/body.txt" --arg c "$_1591_CREATED" --argjson n "${n:-0}" --arg x "${_1591_EXTRA_BODY:-}" \
+      '[range(0; $n + 1) | {id: (1000 + .), user: {login: "coderabbitai[bot]"}, created_at: $c, updated_at: $c, body: $b}]
+       + (if $x == "" then [] else [{id: 1, user: {login: "coderabbitai[bot]"}, created_at: $c, updated_at: $c, body: $x}] end)'
     exit 0 ;;
   *"api graphql"*)
     printf '{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]}\n'; exit 0 ;;
@@ -1867,7 +1868,7 @@ CR_GH_1591
     CODERABBIT_RATE_LIMIT_WAIT=1 CODERABBIT_RATE_LIMIT_MIN_WAIT=1 \
     run_coderabbit_review "42" "fix/42-test" "1" "$max_wait" >"$dir/stdout.log" 2>"$dir/stderr.log" || true
   _1591_last_dir="$dir"
-  unset _1591_DIR _1591_CREATED _1591_DYNAMIC
+  unset _1591_DIR _1591_CREATED _1591_DYNAMIC _1591_EXTRA_BODY
 }
 _1591_count() { grep_count_or_zero "$1" "$2"; }
 _1591_full='pr comment 42 --body @coderabbitai full review'
@@ -1921,6 +1922,17 @@ unset _1591_FAIL_ALL
 run_test "1591_persistent_failed_post_is_bounded_by_max_wait" "yes" \
   "$([ "$(_1591_count "$_1591_full" "$_1591_failall_dir/calls.log")" -le 8 ] && echo yes || echo no)"
 
+# A CodeRabbit walkthrough comment (generic activity, no commit binding) next to
+# an unanswered refusal must not suppress the recovery (reviewer finding): the
+# generic-activity flag does not mean a verdict is bound to the head.
+_1591_EXTRA='## Walkthrough
+CodeRabbit summary of the changes in this pull request.'
+_1591_run walkthrough "$_1591_refusal_body" "$_1591_before_trigger" 1 0 8
+unset _1591_EXTRA
+_1591_walkthrough_dir="$_1591_last_dir"
+run_test "1591_walkthrough_activity_does_not_suppress_the_recovery" "1" \
+  "$(_1591_count "$_1591_full" "$_1591_walkthrough_dir/calls.log")"
+
 # AC-3 (c): cap 0 posts nothing.
 _1591_run zerocap "$_1591_refusal_body" "$_1591_before_trigger" 0 1
 _1591_zerocap_dir="$_1591_last_dir"
@@ -1956,10 +1968,10 @@ _1591_quota_dir="$_1591_last_dir"
 run_test "1591_quota_refusal_is_not_answered_with_full_review" "0" \
   "$(_1591_count 'full review' "$_1591_quota_dir/calls.log")"
 
-rm -rf "$_1591_answered_dir" "$_1591_capped_dir" "$_1591_capped3_dir" "$_1591_failpost_dir" "$_1591_zerocap_dir" "$_1591_mutated0_dir" "$_1591_stale_dir" "$_1591_quota_dir"
+rm -rf "$_1591_answered_dir" "$_1591_capped_dir" "$_1591_capped3_dir" "$_1591_failpost_dir" "$_1591_walkthrough_dir" "$_1591_zerocap_dir" "$_1591_mutated0_dir" "$_1591_stale_dir" "$_1591_quota_dir"
 unset -f _1591_run _1591_count
 unset _1591_last_dir _1591_refusal_body _1591_quota_body _1591_before_trigger _1591_full _1591_real_re \
-  _1591_answered_dir _1591_capped_dir _1591_capped3_dir _1591_failpost_dir _1591_zerocap_dir _1591_mutated0_dir _1591_stale_dir _1591_quota_dir
+  _1591_answered_dir _1591_capped_dir _1591_capped3_dir _1591_failpost_dir _1591_walkthrough_dir _1591_zerocap_dir _1591_mutated0_dir _1591_stale_dir _1591_quota_dir
 
 # ---------------------------------------------------------------------------
 echo "=== Area 1648: reviewer-loop current-head evidence ==="
