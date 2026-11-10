@@ -89,12 +89,15 @@ fi
 
 run_check fix/3-in-worktree
 expect "worktree branch is reported" 0 "worktree: "
-if grep -Fq "[fix/3-in-worktree]" <<<"$OUT" && grep -Fq "local: fix/3-in-worktree" <<<"$OUT"; then
-  pass "worktree branch also reports its local match"
-else
-  fail "worktree branch also reports its local match"
-  printf '%s\n' "$OUT" >&2
-fi
+case "$OUT" in
+  *"[fix/3-in-worktree]"*"local: fix/3-in-worktree"* | *"local: fix/3-in-worktree"*"[fix/3-in-worktree]"*)
+    pass "worktree branch also reports its local match"
+    ;;
+  *)
+    fail "worktree branch also reports its local match"
+    printf '%s\n' "$OUT" >&2
+    ;;
+esac
 
 run_check fix/9-does-not-exist
 expect "unknown branch exits 1 with missing line" 1 "missing: fix/9-does-not-exist"
