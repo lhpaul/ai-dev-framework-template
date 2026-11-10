@@ -790,6 +790,9 @@ What it does:
   or expected.
 - Records external runtime/browser/database claims through explicit
   `--claim <name|required|evidence>` records.
+- Records each filed follow-up issue's disposition through repeatable
+  `--followup <issue>=<fixed|deferred>` (#1331): `deferred` issues must be open
+  and not closed by the PR body; `fixed` issues are listed as eligible to close.
 - Exits non-zero for any `discrepancy` or `unavailable_required` result.
 
 Use this when:
