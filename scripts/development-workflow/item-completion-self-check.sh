@@ -5,6 +5,8 @@ set -euo pipefail
 SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)"
 # shellcheck source=scripts/development-workflow/workflow-lib.sh
 source "$SCRIPT_DIR/workflow-lib.sh"
+# shellcheck source=scripts/development-workflow/closing-keyword-lib.sh
+source "$SCRIPT_DIR/closing-keyword-lib.sh"
 
 usage() {
   cat <<'EOF'
@@ -154,22 +156,11 @@ while [ "$#" -gt 0 ]; do
       ;;
     --followup)
       require_option_value "$@"
-      case "$2" in
-        [1-9]*=fixed|[1-9]*=deferred)
-          case "${2%%=*}" in
-            *[!0-9]*)
-              workflow_diagnostic "--followup requires <issue-number>=<fixed|deferred>." >&2
-              usage >&2
-              exit 64
-              ;;
-          esac
-          ;;
-        *)
-          workflow_diagnostic "--followup requires <issue-number>=<fixed|deferred>." >&2
-          usage >&2
-          exit 64
-          ;;
-      esac
+      if ! [[ "$2" =~ ^[1-9][0-9]*=(fixed|deferred)$ ]]; then
+        workflow_diagnostic "--followup requires <issue-number>=<fixed|deferred>." >&2
+        usage >&2
+        exit 64
+      fi
       followups+=("$2")
       shift 2
       ;;
@@ -1008,6 +999,7 @@ fi
 if [ "${#followups[@]}" -gt 0 ]; then
   followup_repo=""
   followup_pr_body=""
+  followup_live_refs=""
   followup_pr_body_ok="not_requested"
   if ! followup_repo="$(repo_slug 2>&1)"; then
     for followup in "${followups[@]}"; do
@@ -1015,10 +1007,29 @@ if [ "${#followups[@]}" -gt 0 ]; then
     done
   else
     if [ -n "$pr_number" ]; then
-      if followup_pr_body="$(gh pr view "$pr_number" --repo "$followup_repo" --json body --jq '.body // ""' 2>&1)"; then
+      # Same reading post-merge-cleanup.sh uses to decide what to close:
+      # title, body and commit messages, fenced/quoted examples stripped, each
+      # source stripped separately so one unclosed fence cannot hide another.
+      followup_text_title_body=""
+      followup_text_commits=""
+      if followup_text_title_body="$(gh pr view "$pr_number" --repo "$followup_repo" --json body,title --jq '(.title // "") + "\n" + (.body // "")' 2>&1)" \
+        && followup_text_commits="$(gh pr view "$pr_number" --repo "$followup_repo" --json commits --jq '[.commits[] | ((.messageHeadline // "") + "\n" + (.messageBody // ""))] | join("\n")' 2>&1)" \
+        && followup_live_refs="$(
+          {
+            printf '%s' "$followup_text_title_body" | closing_keyword_live_refs
+            printf '%s' "$followup_text_commits" | closing_keyword_live_refs
+            # Conservative extra: owner/repo#N qualified references to this repo.
+            for q_src in "$followup_text_title_body" "$followup_text_commits"; do
+              printf '%s' "$q_src" | strip_fenced_pr_body_blocks \
+                | grep -ioE "(^|[^[:alnum:]_])(close[sd]?|fix(es|ed)?|resolve[sd]?)[[:space:]]+(issue[[:space:]]+)?${followup_repo//./\\.}#[0-9]+" \
+                | grep -oE '[0-9]+$' || true
+            done
+          }
+        )"; then
         followup_pr_body_ok="true"
       else
         followup_pr_body_ok="false"
+        followup_pr_body="$followup_text_title_body $followup_text_commits"
       fi
     fi
     for followup in "${followups[@]}"; do
@@ -1027,7 +1038,7 @@ if [ "${#followups[@]}" -gt 0 ]; then
       followup_surface="followup.#$followup_number"
       followup_closing="unknown"
       if [ "$followup_pr_body_ok" = "true" ]; then
-        if printf '%s\n' "$followup_pr_body" | grep -Eiq "(close[sd]?|fix(e[sd])?|resolve[sd]?)[: ]+([A-Za-z0-9._-]+/[A-Za-z0-9._-]+)?#${followup_number}([^0-9]|$)"; then
+        if printf '%s\n' "$followup_live_refs" | grep -qxF "$followup_number"; then
           followup_closing="present"
         else
           followup_closing="absent"
@@ -1043,9 +1054,9 @@ if [ "${#followups[@]}" -gt 0 ]; then
       elif [ "$followup_state" != "OPEN" ]; then
         add_row "$followup_surface" "discrepancy" "deferred but state=$followup_state; must remain open" "gh issue view $followup_number --json state"
       elif [ "$followup_closing" = "present" ]; then
-        add_row "$followup_surface" "discrepancy" "deferred but PR body closes it with a closing keyword" "gh pr view $pr_number --json body"
+        add_row "$followup_surface" "discrepancy" "deferred but PR title, body or commit messages close it with a closing keyword" "gh pr view $pr_number --json body,title,commits"
       elif [ "$followup_closing" = "unknown" ] && [ "$followup_pr_body_ok" = "false" ]; then
-        add_row "$followup_surface" "unavailable_required" "deferred; open; PR body unreadable: $followup_pr_body" "gh pr view $pr_number --json body"
+        add_row "$followup_surface" "unavailable_required" "deferred; open; PR text unreadable: $followup_pr_body" "gh pr view $pr_number --json body,title,commits"
       else
         add_row "$followup_surface" "verified" "deferred to future PR; open; not closed by PR (closing keyword $followup_closing)" "gh issue view $followup_number --json state"
       fi

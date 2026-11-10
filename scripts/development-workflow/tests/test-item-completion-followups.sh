@@ -29,6 +29,7 @@ fi
 if [ "$1" = "pr" ] && [ "$2" = "view" ]; then
   if [ "${MOCK_FAIL_PR_BODY:-}" = "1" ]; then echo "pr read failed" >&2; exit 1; fi
   case "$*" in
+    *commits*--jq*) printf '%s\n' "${MOCK_PR_COMMITS:-}" ;;
     *--jq*) printf '%s\n' "${MOCK_PR_BODY:-}" ;;
     *) printf '%s\n' '{"number":7,"baseRefName":"develop","headRefName":"fix/1331-followups","isDraft":false,"labels":[],"files":[],"statusCheckRollup":[],"comments":[]}' ;;
   esac
@@ -90,13 +91,27 @@ expect_row "deferred_enumerated" "| followup.#1895 | verified | deferred to futu
 export MOCK_PR_BODY=$'Closes #1331\nCloses #1895'
 out="$(check --pr 7 --followup 1895=deferred)"
 expect_status "deferred_closed_by_pr_body_blocks" 1 "$out"
-expect_row "deferred_closed_by_pr_body_row" "| followup.#1895 | discrepancy | deferred but PR body closes it with a closing keyword |" "$out"
+expect_row "deferred_closed_by_pr_body_row" "| followup.#1895 | discrepancy | deferred but PR title, body or commit messages close it with a closing keyword |" "$out"
 
-# Closing keyword variants and cross-repo form are all caught.
-for body in 'fixes #1895' 'Resolved: #1895' 'closed example/repo#1895'; do
+# Closing keyword variants and the qualified same-repo form are all caught.
+for body in 'fixes #1895' '(Resolves issue #1895)' 'closed example/repo#1895'; do
   export MOCK_PR_BODY="$body"
   out="$(check --pr 7 --followup 1895=deferred)"
   expect_status "keyword_variant_blocks: $body" 1 "$out"
+done
+
+# Commit messages count (post-merge-cleanup reads them too).
+export MOCK_PR_BODY='Closes #1331'
+export MOCK_PR_COMMITS=$'fix: thing\n\nCloses #1895'
+out="$(check --pr 7 --followup 1895=deferred)"
+expect_status "deferred_closed_by_commit_blocks" 1 "$out"
+unset MOCK_PR_COMMITS
+
+# Not closing references: word-embedded keywords and fenced examples.
+for body in 'hotfix #1895' 'disclose #1895' $'```\nCloses #1895\n```'; do
+  export MOCK_PR_BODY="$body"
+  out="$(check --pr 7 --followup 1895=deferred)"
+  expect_status "not_a_closing_reference: ${body%%$'\n'*}" 0 "$out"
 done
 
 # A longer issue number sharing the prefix is not a match.
