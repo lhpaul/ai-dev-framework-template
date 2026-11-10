@@ -1052,7 +1052,9 @@ if [ "${#followups[@]}" -gt 0 ]; then
               q_status=0
               q_hits="$(printf '%s' "$q_stripped" | grep -ioE "(^|[^[:alnum:]_])(close[sd]?|fix(es|ed)?|resolve[sd]?)[[:space:]]+(issue[[:space:]]+)?${followup_tracker_repo//./\\.}#[0-9]+")" || q_status=$?
               [ "$q_status" -le 1 ] || exit 1
-              [ -z "$q_hits" ] || printf '%s\n' "$q_hits" | grep -oE '[0-9]+$'
+              if [ -n "$q_hits" ]; then
+                printf '%s\n' "$q_hits" | grep -oE '[0-9]+$' || exit 1
+              fi
             done
           }
         )"; then
