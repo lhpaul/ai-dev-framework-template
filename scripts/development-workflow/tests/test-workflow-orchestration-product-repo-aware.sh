@@ -447,6 +447,19 @@ run_contains "workflow_pr_without_repo_hub_only_continues" "ROUTING_CONTINUE_ALL
 run_contains "workflow_pr_without_repo_hub_owned" "ACTION_REPOSITORY_KIND=hub_owned" "$workflow_pr_output"
 run_contains "workflow_pr_without_repo_no_selection_required" "NEXT_ACTION=resolve-pr-readiness" "$workflow_pr_output"
 
+# #1401: a feat/ branch is an alias of feature/, so a hub-only (Workflow-typed)
+# feat/ PR must resolve its issue number and route hub-only too, not demand a
+# product repository selection.
+feat_workflow_pr_output="$(
+  GH_PR_VIEW_JSON='{"headRefName":"feat/901-routing","labels":[],"isDraft":false,"comments":[],"statusCheckRollup":[]}' \
+  PATH="$stub_bin:$PATH" WORKFLOW_SKIP_FETCH=1 "$REPO_ROOT/scripts/development-workflow/workflow-next-action.sh" \
+    --repo-root "$typed_hub_dir" \
+    --pr 901
+)"
+run_contains "feat_workflow_pr_hub_only_outcome" "ROUTING_OUTCOME_CODE=hub_only" "$feat_workflow_pr_output"
+run_contains "feat_workflow_pr_hub_owned" "ACTION_REPOSITORY_KIND=hub_owned" "$feat_workflow_pr_output"
+run_contains "feat_workflow_pr_no_selection_required" "NEXT_ACTION=resolve-pr-readiness" "$feat_workflow_pr_output"
+
 # A spec or plan PR (or any hub-owned implementation branch) without --repo
 # must resolve directly too: the implementation-only preflight used to run
 # unconditionally for every --pr invocation, and implementation_issue_number()

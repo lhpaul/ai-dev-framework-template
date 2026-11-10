@@ -118,7 +118,7 @@ implementation_issue_number() {
   local slug=""
 
   if [ -n "$source" ]; then
-    if [[ "$source" =~ ^(feature|fix|refactor|hotfix)/([A-Za-z]{2,8}-)?([0-9]+)($|-) ]]; then
+    if [[ "$source" =~ ^(feature|feat|fix|refactor|hotfix)/([A-Za-z]{2,8}-)?([0-9]+)($|-) ]]; then
       printf '%s\n' "${BASH_REMATCH[3]}"
       return 0
     fi
