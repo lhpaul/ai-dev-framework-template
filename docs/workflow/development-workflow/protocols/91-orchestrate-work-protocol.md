@@ -291,8 +291,33 @@ complete — run the completion self-check and paste its
   [--forbid-label needs-fixes] \
   [--require-review-summary true] \
   [--require-review-threads true] \
-  [--expected-tracker-status "<status>"]
+  [--expected-tracker-status "<status>"] \
+  [--followup <issue>=<fixed|deferred>]...
 ```
+
+**Follow-up issue disposition (issue #1331).** Before the merge step and in every
+terminal summary, enumerate every follow-up issue filed during this item's run
+and classify each exactly once, passing one `--followup <issue>=<class>` per
+issue:
+
+- `fixed` — **Fixed in this PR**: the fix is present in the PR diff. Only these
+  issues are eligible to close on merge (via a closing keyword in the PR body
+  that this PR actually earns).
+- `deferred` — **Deferred to future PR**: filed as future work. It must remain
+  open; merging this PR does not close it, and no closing keyword for it may
+  appear in the PR body, the commit messages, or any close/cleanup step.
+
+Never infer the class from the issue being a follow-up, from the epic it
+belongs to, or from the runner's completion plan. Classify from the PR diff. The
+merge step and `post-merge-cleanup` close only `fixed` issues. The helper reads
+each `deferred` issue live and reports a `discrepancy` when it is closed or when
+the PR body closes it, and `unavailable_required` when its state cannot be read.
+The helper's `followup.#<N>` rows (each issue with its disposition, and deferred
+issues confirmed still open) are part of the pasted
+`## Ground-Truth Completion Verification` section and therefore part of the PR
+merge completion record. Run the check again after merge for the cleanup claim
+so continued-open status is verified against the merged state. A run with filed
+follow-ups that omits `--followup` for any of them has not completed this gate.
 
 Every claimed surface in the summary must be `verified`, `not_applicable`, or
 `unavailable_*` with a reason in that section. Use flags that match the state
@@ -4132,7 +4157,9 @@ set -euo pipefail
   `item-completion-self-check.sh` for the cleanup claim, using the current base
   branch (the merged workflow branch should already be deleted), the current
   base worktree path, `--stage cleanup`, and
-  `--expected-tracker-status "<expected status>"`. Paste the
+  `--expected-tracker-status "<expected status>"`, plus one
+  `--followup <issue>=<fixed|deferred>` per follow-up issue filed during the
+  item, so every `deferred` issue is confirmed still open. Paste the
   `## Ground-Truth Completion Verification` section into the cleanup report.
   Any `discrepancy` or `unavailable_required` result keeps cleanup non-terminal.
 - If manual cleanup is required, clean up local branches and worktrees associated with the merged PR:

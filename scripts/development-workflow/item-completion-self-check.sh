@@ -16,12 +16,19 @@ Usage:
     [--require-clean true|false] [--require-ci-green true|false] \
     [--require-review-summary true|false] [--require-review-threads true|false] \
     [--tracker-required true|false] [--expected-tracker-status <status>] \
-    [--changed-file-prefix <prefix>] [--claim <name|required|evidence>]
+    [--changed-file-prefix <prefix>] [--claim <name|required|evidence>] \
+    [--followup <issue>=<fixed|deferred>]...
 
 Prints a stable Markdown section headed "## Ground-Truth Completion Verification".
 Rows are marked verified, not_applicable, unavailable_optional,
 unavailable_required, or discrepancy. Any discrepancy or unavailable_required
 surface exits non-zero.
+
+--followup classifies each follow-up issue filed during the item as "fixed"
+(the fix is in this PR's diff; eligible to close on merge) or "deferred"
+(future-work issue; must stay open). A deferred issue that is closed, or that
+the PR body closes with a closing keyword (Closes/Fixes/Resolves #N), is a
+discrepancy. Deferred issues whose state cannot be read are unavailable_required.
 
 For tests or constrained runners, WORKFLOW_SELF_CHECK_TRACKER_STATUS can provide
 the tracker status directly. Set it to __FAIL__ to simulate an unavailable
@@ -55,6 +62,7 @@ changed_file_prefix=""
 expected_labels=()
 forbidden_labels=()
 claims=()
+followups=()
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -142,6 +150,27 @@ while [ "$#" -gt 0 ]; do
     --claim)
       require_option_value "$@"
       claims+=("$2")
+      shift 2
+      ;;
+    --followup)
+      require_option_value "$@"
+      case "$2" in
+        [1-9]*=fixed|[1-9]*=deferred)
+          case "${2%%=*}" in
+            *[!0-9]*)
+              workflow_diagnostic "--followup requires <issue-number>=<fixed|deferred>." >&2
+              usage >&2
+              exit 64
+              ;;
+          esac
+          ;;
+        *)
+          workflow_diagnostic "--followup requires <issue-number>=<fixed|deferred>." >&2
+          usage >&2
+          exit 64
+          ;;
+      esac
+      followups+=("$2")
       shift 2
       ;;
     -h|--help)
@@ -973,6 +1002,54 @@ if [ -n "$issue" ]; then
     add_row "tracker.status" "unavailable_required" "$tracker_status" "get_tracker_status_for_issue $issue"
   else
     add_row "tracker.status" "unavailable_optional" "${tracker_status:-not claimed}" "tracker status not required for this terminal claim"
+  fi
+fi
+
+if [ "${#followups[@]}" -gt 0 ]; then
+  followup_repo=""
+  followup_pr_body=""
+  followup_pr_body_ok="not_requested"
+  if ! followup_repo="$(repo_slug 2>&1)"; then
+    for followup in "${followups[@]}"; do
+      add_row "followup.#${followup%%=*}" "unavailable_required" "$followup_repo" "repo_slug"
+    done
+  else
+    if [ -n "$pr_number" ]; then
+      if followup_pr_body="$(gh pr view "$pr_number" --repo "$followup_repo" --json body --jq '.body // ""' 2>&1)"; then
+        followup_pr_body_ok="true"
+      else
+        followup_pr_body_ok="false"
+      fi
+    fi
+    for followup in "${followups[@]}"; do
+      followup_number="${followup%%=*}"
+      followup_class="${followup#*=}"
+      followup_surface="followup.#$followup_number"
+      followup_closing="unknown"
+      if [ "$followup_pr_body_ok" = "true" ]; then
+        if printf '%s\n' "$followup_pr_body" | grep -Eiq "(close[sd]?|fix(e[sd])?|resolve[sd]?)[: ]+([A-Za-z0-9._-]+/[A-Za-z0-9._-]+)?#${followup_number}([^0-9]|$)"; then
+          followup_closing="present"
+        else
+          followup_closing="absent"
+        fi
+      fi
+      if [ "$followup_class" = "fixed" ]; then
+        add_row "$followup_surface" "verified" "fixed in this PR; eligible to close on merge; closing keyword $followup_closing" "--followup $followup"
+        continue
+      fi
+      followup_state=""
+      if ! followup_state="$(gh issue view "$followup_number" --repo "$followup_repo" --json state --jq '.state' 2>&1)"; then
+        add_row "$followup_surface" "unavailable_required" "deferred; state unreadable: $followup_state" "gh issue view $followup_number --json state"
+      elif [ "$followup_state" != "OPEN" ]; then
+        add_row "$followup_surface" "discrepancy" "deferred but state=$followup_state; must remain open" "gh issue view $followup_number --json state"
+      elif [ "$followup_closing" = "present" ]; then
+        add_row "$followup_surface" "discrepancy" "deferred but PR body closes it with a closing keyword" "gh pr view $pr_number --json body"
+      elif [ "$followup_closing" = "unknown" ] && [ "$followup_pr_body_ok" = "false" ]; then
+        add_row "$followup_surface" "unavailable_required" "deferred; open; PR body unreadable: $followup_pr_body" "gh pr view $pr_number --json body"
+      else
+        add_row "$followup_surface" "verified" "deferred to future PR; open; not closed by PR (closing keyword $followup_closing)" "gh issue view $followup_number --json state"
+      fi
+    done
   fi
 fi
 
