@@ -1199,12 +1199,12 @@ ISSUE_IDENTIFIER=""
 ISSUE_ID_TYPE=""
 BRANCH_TYPE=""
 
-if [[ "$TO_DELETE" =~ ^(fix|feature|hotfix|refactor)/([0-9]+)($|-) ]]; then
+if [[ "$TO_DELETE" =~ ^(fix|feature|feat|hotfix|refactor)/([0-9]+)($|-) ]]; then
   ISSUE_NUMBER="${BASH_REMATCH[2]}"
   ISSUE_IDENTIFIER="$ISSUE_NUMBER"
   ISSUE_ID_TYPE="numeric"
   BRANCH_TYPE="implementation"
-elif [[ "$TO_DELETE" =~ ^(fix|feature|hotfix|refactor)/([a-zA-Z]{2,6}-([0-9]+))($|-) ]]; then
+elif [[ "$TO_DELETE" =~ ^(fix|feature|feat|hotfix|refactor)/([a-zA-Z]{2,6}-([0-9]+))($|-) ]]; then
   ISSUE_IDENTIFIER="${BASH_REMATCH[2]}"
   ISSUE_NUMBER="${BASH_REMATCH[3]}"
   ISSUE_ID_TYPE="team-prefixed"
