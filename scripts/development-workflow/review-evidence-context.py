@@ -24,7 +24,15 @@ BOOKKEEPING = (
     "<!-- run-epic:epic-ledger -->",
     "<!-- run-epic:checkpoint-status -->",
     "<!-- documentation-stage-alignment -->",
+    "<!-- codex-review-receipt:v1 -->",
+    "<!-- codex-pull-request-review-summary -->",
 )
+# The runner's own reviewer trigger: the whole body is this one line, i.e.
+# "<@mention> review (review triggered by workflow runner, commit: <sha>)".
+# The runner publishes a 12-character lowercase SHA; 7-40 is accepted.
+RUNNER_TRIGGER = re.compile(
+    r"@[A-Za-z0-9_-]+ review \(review triggered by workflow runner, "
+    r"commit: [0-9a-f]{7,40}\)")
 
 
 def positive_int(value):
@@ -32,9 +40,11 @@ def positive_int(value):
 
 
 def bookkeeping(body):
-    """Only an exact opening marker/heading is excluded, never a substring."""
-    first = body.strip().split("\n", 1)[0].rstrip("\r")
-    return first in BOOKKEEPING
+    """Only an exact opening marker/heading or the runner's exact trigger line
+    is excluded, never a substring, extra line, free prefix or uppercase SHA."""
+    stripped = body.strip()
+    first = stripped.split("\n", 1)[0].rstrip("\r")
+    return first in BOOKKEEPING or RUNNER_TRIGGER.fullmatch(stripped) is not None
 
 
 def text_sha256(text):
