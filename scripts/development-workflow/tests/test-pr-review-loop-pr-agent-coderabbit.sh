@@ -2091,7 +2091,7 @@ _1591_quota_dir="$_1591_last_dir"
 run_test "1591_quota_refusal_is_not_answered_with_full_review" "0" \
   "$(_1591_count 'full review' "$_1591_quota_dir/calls.log")"
 
-rm -rf "$_1591_answered_dir" "$_1591_capped_dir" "$_1591_capped3_dir" "$_1591_failpost_dir" "$_1591_walkthrough_dir" "$_1591_held_dir" "$_1591_refund_dir" "$_1591_reask_dir" "$_1591_holdthenwalk_dir" "$_1591_twoold_dir" "$_1591_twosame_dir" "${_1591_late_dirs[@]}" "$_1591_zerocap_dir" "$_1591_mutated0_dir" "$_1591_stale_dir" "$_1591_quota_dir"
+rm -rf "$_1591_answered_dir" "$_1591_capped_dir" "$_1591_capped3_dir" "$_1591_failpost_dir" "$_1591_walkthrough_dir" "$_1591_held_dir" "$_1591_refund_dir" "$_1591_reask_dir" "$_1591_holdthenwalk_dir" "$_1591_twoold_dir" "$_1591_twosame_dir" ${_1591_late_dirs[@]+"${_1591_late_dirs[@]}"} "$_1591_zerocap_dir" "$_1591_mutated0_dir" "$_1591_stale_dir" "$_1591_quota_dir"
 unset -f _1591_run _1591_count
 unset _1591_last_dir _1591_refusal_body _1591_quota_body _1591_before_trigger _1591_full _1591_real_re \
   _1591_answered_dir _1591_capped_dir _1591_capped3_dir _1591_failpost_dir _1591_walkthrough_dir _1591_held_dir _1591_refund_dir _1591_reask_dir _1591_holdthenwalk_dir _1591_twoold_dir _1591_twosame_dir _1591_zerocap_dir _1591_mutated0_dir _1591_stale_dir _1591_quota_dir
