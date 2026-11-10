@@ -459,6 +459,29 @@ else: sys.exit(1)
         raw["comments"][-1]["body"] = "Mention ### Automated Reviewer Loop Summary in proof"
         self.assertNotEqual(self.context["snapshot_sha256"], evidence.snapshot(raw)["snapshot_sha256"])
 
+    def test_runner_trigger_and_codex_receipts_are_bookkeeping_but_lookalikes_are_not(self):
+        base = self.context["snapshot_sha256"]
+        trigger = "@codex review (review triggered by workflow runner, commit: 0123456789ab)"
+        exact = [trigger, trigger + "\n", "  " + trigger,
+                 "@codex review (review triggered by workflow runner, commit: 0123456)",
+                 "<!-- codex-review-receipt:v1 -->\n\nCodex Review: Didn't find any major issues.",
+                 "<!-- codex-pull-request-review-summary -->\nSummary"]
+        for body in exact:
+            raw = copy.deepcopy(self.raw)
+            raw["comments"].append({"id": 30, "body": body, "updated_at": "2026-01-01T00:01:00Z"})
+            self.assertEqual(base, evidence.snapshot(raw)["snapshot_sha256"], body)
+        counted = [trigger + "\nextra line", "see: " + trigger, "please " + trigger,
+                   "review (review triggered by workflow runner, commit: 0123456789ab)",
+                   "@codex review (review triggered by workflow runner, commit: 0123456789AB)",
+                   "@codex review (review triggered by workflow runner, commit: 012345)",
+                   "@codex review (review triggered by workflow runner, commit: " + "a" * 41 + ")",
+                   "Mention <!-- codex-review-receipt:v1 --> in proof",
+                   "text\n<!-- codex-pull-request-review-summary -->"]
+        for body in counted:
+            raw = copy.deepcopy(self.raw)
+            raw["comments"].append({"id": 30, "body": body, "updated_at": "2026-01-01T00:01:00Z"})
+            self.assertNotEqual(base, evidence.snapshot(raw)["snapshot_sha256"], body)
+
     def test_unknown_self_empty_duplicate_or_malformed_proof_is_rejected(self):
         for sources in ([], ["comment:10"], ["comment:999"], ["comment:020"],
                         ["comment:20", "comment:20"], [True], None):
