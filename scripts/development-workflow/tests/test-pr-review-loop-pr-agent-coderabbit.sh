@@ -1933,6 +1933,19 @@ _1591_walkthrough_dir="$_1591_last_dir"
 run_test "1591_walkthrough_activity_does_not_suppress_the_recovery" "1" \
   "$(_1591_count "$_1591_full" "$_1591_walkthrough_dir/calls.log")"
 
+# A refusal next to a LIVE rate limit is held, not answered (the #1597 rule
+# applied to the new retrigger): exercises the refusal_blocked path itself, not
+# only the matcher.
+_1591_EXTRA='⚠️ Action not completed
+Review rate limited.'
+_1591_run held "$_1591_refusal_body" "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" 1 0 3
+unset _1591_EXTRA
+_1591_held_dir="$_1591_last_dir"
+run_test "1591_live_rate_limit_holds_the_refusal_retrigger" "0" \
+  "$(_1591_count 'full review' "$_1591_held_dir/calls.log")"
+run_test "1591_live_rate_limit_hold_is_logged" "yes" \
+  "$([ "$(_1591_count 'holding the full-review retrigger until it elapses' "$_1591_held_dir/stderr.log")" -ge 1 ] && echo yes || echo no)"
+
 # AC-3 (c): cap 0 posts nothing.
 _1591_run zerocap "$_1591_refusal_body" "$_1591_before_trigger" 0 1
 _1591_zerocap_dir="$_1591_last_dir"
@@ -1968,10 +1981,10 @@ _1591_quota_dir="$_1591_last_dir"
 run_test "1591_quota_refusal_is_not_answered_with_full_review" "0" \
   "$(_1591_count 'full review' "$_1591_quota_dir/calls.log")"
 
-rm -rf "$_1591_answered_dir" "$_1591_capped_dir" "$_1591_capped3_dir" "$_1591_failpost_dir" "$_1591_walkthrough_dir" "$_1591_zerocap_dir" "$_1591_mutated0_dir" "$_1591_stale_dir" "$_1591_quota_dir"
+rm -rf "$_1591_answered_dir" "$_1591_capped_dir" "$_1591_capped3_dir" "$_1591_failpost_dir" "$_1591_walkthrough_dir" "$_1591_held_dir" "$_1591_zerocap_dir" "$_1591_mutated0_dir" "$_1591_stale_dir" "$_1591_quota_dir"
 unset -f _1591_run _1591_count
 unset _1591_last_dir _1591_refusal_body _1591_quota_body _1591_before_trigger _1591_full _1591_real_re \
-  _1591_answered_dir _1591_capped_dir _1591_capped3_dir _1591_failpost_dir _1591_walkthrough_dir _1591_zerocap_dir _1591_mutated0_dir _1591_stale_dir _1591_quota_dir
+  _1591_answered_dir _1591_capped_dir _1591_capped3_dir _1591_failpost_dir _1591_walkthrough_dir _1591_held_dir _1591_zerocap_dir _1591_mutated0_dir _1591_stale_dir _1591_quota_dir
 
 # ---------------------------------------------------------------------------
 echo "=== Area 1648: reviewer-loop current-head evidence ==="

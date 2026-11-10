@@ -8365,7 +8365,13 @@ run_coderabbit_review() {
     # older head (#1789 D15), and would suppress this recovery for the whole run.
     # A review, failure status or success status bound to the head has already
     # ended the wait above, so reaching this point means no bound verdict exists.
-    if [ "$coderabbit_rate_limit_hold_seen" -eq 0 ] \
+    #
+    # Like the other conditional retriggers it is not posted in re-wait mode with
+    # an adopted recorded request (#1789 D11/D12): that mode carries the recorded
+    # request forward, and a new trigger would leave REVIEW_REQUESTED_AT pointing
+    # at the old one.
+    if [ "$coderabbit_rewait_adopted" -eq 0 ] \
+        && [ "$coderabbit_rate_limit_hold_seen" -eq 0 ] \
         && [ "$coderabbit_refusal_retriggers" -lt "$coderabbit_rate_limit_max_retries" ]; then
       local refusal_json="" refusal_status=0
       refusal_json="$(coderabbit_newest_already_reviewed_refusal "$repo" "$pr_number" "$bot_login" "$since_iso" "$coderabbit_answered_refusal_ids")" || refusal_status=$?
