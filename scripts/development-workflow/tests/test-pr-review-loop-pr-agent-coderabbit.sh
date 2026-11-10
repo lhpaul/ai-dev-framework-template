@@ -32,6 +32,7 @@
 #   Area 19: post-clean settle and updated_at activity (#1556)
 #   Area 20: late-thread re-check contract (#1574)
 #   Area 14: CodeRabbit rate-limit window parsing (issue #1579)
+#   Area 1591: CodeRabbit 'Already reviewed the last commit' refusal (issue #1591)
 #   Area 1648: reviewer-loop current-head evidence
 #
 # Usage: bash scripts/development-workflow/tests/test-pr-review-loop-pr-agent-coderabbit.sh [--area <name>]... [--list-areas]
@@ -1655,7 +1656,7 @@ _1579_sel() {
 run_test "1579_selector_matches_html_marker_shape" "yes" \
   "$(_1579_sel '<!-- rate limited by coderabbit.ai --> Review limit reached')"
 run_test "1579_selector_matches_command_refusal_shape" "yes" \
-  "$(_1579_sel 'Review rate limited. Your next included review will be available in 7 minutes.')"
+  "$(_1579_sel 'Review rate limited.')"
 # The visible-text-only shape: no HTML marker, no literal "rate limit".
 run_test "1579_selector_matches_visible_text_without_marker" "yes" \
   "$(_1579_sel '## Review limit reached
@@ -1796,6 +1797,123 @@ unset _1579_E2E_CALL_LOG2 _1579_E2E_LIVE_CREATED _1579_e2e_mock_dir2 _1579_e2e_c
 
 unset -f _1579_ago _1579_ago_s _1579_state _1579_live
 unset _1579_window _1579_nowindow _1579_real_parser _1579_loop_src _1579_rl_branch
+
+# ---------------------------------------------------------------------------
+echo "=== Area 1591: CodeRabbit 'Already reviewed the last commit' refusal (issue #1591) ==="
+
+# Fixture: the refusal body as fetched from PR #1588 on 2026-08-24T03:41:09Z
+# (quoted in issue #1591). It is the real text, including the HTML marker and
+# the mid-sentence line wrap — the visible sentence and the marker differ, and a
+# hand-written fixture silently matches nothing.
+_1591_refusal_body='<!-- CodeRabbit review command invocation: eda08424-098f-4422-b2c0-25f396a239de -->
+⚠️ Action not completed
+Already reviewed the last commit. Use `@coderabbitai full review` to rerun a
+review of the entire changeset'
+# The quota refusal shares the "Action not completed" wrapper but is a different
+# state (issue #1591, comment 2). It must NOT be answered with a full review.
+# No stated window: a stated one makes the loop wait that long, defeating the bounded run.
+_1591_quota_body='<!-- CodeRabbit review command invocation: 6a1c0d2e-0000-4000-8000-000000000000 -->
+⚠️ Action not completed
+Review rate limited.'
+
+# _1591_run <label> <comment-body> <comment-created> <max-retries> [max-wait]
+# Runs the real run_coderabbit_review poll loop against a scripted gh whose
+# issue-comments endpoint returns exactly one CodeRabbit comment.
+_1591_run() {
+  local body="$2" created="$3" retries="$4" max_wait="${5:-4}"
+  local dir
+  dir="$(mktemp -d)"
+  jq -n --arg b "$body" --arg c "$created" \
+    '[{user:{login:"coderabbitai[bot]"},created_at:$c,updated_at:$c,body:$b}]' > "$dir/comments.json"
+  export _1591_DIR="$dir"
+  cat > "$dir/gh" <<'CR_GH_1591'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$_1591_DIR/calls.log"
+case "$*" in
+  "auth status") exit 0 ;;
+  *"repo view"*"nameWithOwner"*) printf 'owner/repo\n'; exit 0 ;;
+  *"pulls/42 --jq .head.sha"*) printf 'sha1591\n'; exit 0 ;;
+  *"commits/sha1591 --jq .commit.committer.date"*) printf '2000-01-01T00:00:00Z\n'; exit 0 ;;
+  *"pr comment 42"*) exit 0 ;;
+  *"issues/42/comments"*) cat "$_1591_DIR/comments.json"; exit 0 ;;
+  *"api graphql"*)
+    printf '{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]}\n'; exit 0 ;;
+  *) printf '[]\n'; exit 0 ;;
+esac
+CR_GH_1591
+  chmod +x "$dir/gh"
+  PATH="$dir:$PATH" CODERABBIT_NO_TRIGGER_TIMEOUT=999 CODERABBIT_RATE_LIMIT_MAX_RETRIES="$retries" \
+    CODERABBIT_RATE_LIMIT_WAIT=1 CODERABBIT_RATE_LIMIT_MIN_WAIT=1 \
+    run_coderabbit_review "42" "fix/42-test" "1" "$max_wait" >"$dir/stdout.log" 2>"$dir/stderr.log" || true
+  _1591_last_dir="$dir"
+  unset _1591_DIR
+}
+_1591_count() { grep_count_or_zero "$1" "$2"; }
+
+# A refusal timestamped after any trigger the loop can post, so it is always
+# "newer than the latest trigger" and the cap is what stops the loop.
+_1591_future='2099-01-01T00:00:00Z'
+
+# AC-1 / AC-2: the refusal is not activity, and answering it posts `full review`.
+_1591_run answered "$_1591_refusal_body" "$_1591_future" 1
+_1591_answered_dir="$_1591_last_dir"
+run_test "1591_refusal_posts_full_review" "1" \
+  "$(_1591_count 'pr comment 42 --body @coderabbitai full review' "$_1591_answered_dir/calls.log")"
+run_test "1591_refusal_logs_the_full_review_path" "yes" \
+  "$([ "$(_1591_count "Already reviewed the last commit' for a head with no bound review" "$_1591_answered_dir/stderr.log")" -ge 1 ] && echo yes || echo no)"
+run_test "1591_refusal_counts_as_a_trigger_attempt" "CODERABBIT_TRIGGER_ATTEMPTS=1" \
+  "$(grep '^CODERABBIT_TRIGGER_ATTEMPTS=' "$_1591_answered_dir/stdout.log" | tail -n 1)"
+run_test "1591_refusal_queried_issue_comments" "yes" \
+  "$([ "$(_1591_count 'issues/42/comments' "$_1591_answered_dir/calls.log")" -ge 1 ] && echo yes || echo no)"
+
+# AC-3 / AC-4(c): a vendor that refuses both verbs is bounded by the existing cap.
+_1591_run capped "$_1591_refusal_body" "$_1591_future" 2 8
+_1591_capped_dir="$_1591_last_dir"
+run_test "1591_cap_bounds_full_review_posts" "2" \
+  "$(_1591_count 'pr comment 42 --body @coderabbitai full review' "$_1591_capped_dir/calls.log")"
+_1591_run zerocap "$_1591_refusal_body" "$_1591_future" 0
+_1591_zerocap_dir="$_1591_last_dir"
+run_test "1591_cap_zero_posts_no_full_review" "0" \
+  "$(_1591_count 'full review' "$_1591_zerocap_dir/calls.log")"
+
+# AC-1 (a): the refusal must not read as review activity. Not observable from
+# the retrigger alone, so compare the cap-0 outcome (retrigger disabled) with
+# the same comment treated as activity (pattern disabled, see the mutation
+# below): the verdict must differ, or the exclusion is not doing anything.
+# A refusal older than the head commit (mock committer date 2000-01-01) belongs
+# to an earlier head and is not answered.
+_1591_run stale "$_1591_refusal_body" "1999-01-01T00:00:00Z" 3
+_1591_stale_dir="$_1591_last_dir"
+run_test "1591_refusal_older_than_head_is_not_answered" "0" \
+  "$(_1591_count 'full review' "$_1591_stale_dir/calls.log")"
+
+# The quota refusal shares the wrapper but must never be answered with a full
+# review (keying on the wrapper would spend a review during a live limit).
+# Created "now" so the limit is live; mirrors the #1597 live-limit fixture above.
+_1591_run quota "$_1591_quota_body" "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" 1 3
+_1591_quota_dir="$_1591_last_dir"
+run_test "1591_quota_refusal_is_not_answered_with_full_review" "0" \
+  "$(_1591_count 'full review' "$_1591_quota_dir/calls.log")"
+
+# Mutation: if the refusal pattern stops matching, AC-2 must go red.
+_1591_real_re="$CODERABBIT_ALREADY_REVIEWED_RE"
+# shellcheck disable=SC2034  # read by pr-review-loop.sh
+CODERABBIT_ALREADY_REVIEWED_RE='matches-nothing-1591'
+_1591_run mutated "$_1591_refusal_body" "$_1591_future" 1
+_1591_mutated_dir="$_1591_last_dir"
+run_test "1591_mutation_dead_pattern_posts_no_full_review" "0" \
+  "$(_1591_count 'full review' "$_1591_mutated_dir/calls.log")"
+_1591_run mutated0 "$_1591_refusal_body" "$_1591_future" 0
+_1591_mutated0_dir="$_1591_last_dir"
+run_test "1591_refusal_not_activity_changes_the_verdict" "differs" \
+  "$(cmp -s "$_1591_zerocap_dir/stdout.log" "$_1591_mutated0_dir/stdout.log" && echo same || echo differs)"
+# shellcheck disable=SC2034  # read by pr-review-loop.sh
+CODERABBIT_ALREADY_REVIEWED_RE="$_1591_real_re"
+
+rm -rf "$_1591_answered_dir" "$_1591_capped_dir" "$_1591_zerocap_dir" "$_1591_mutated0_dir" "$_1591_stale_dir" "$_1591_quota_dir" "$_1591_mutated_dir"
+unset -f _1591_run _1591_count
+unset _1591_last_dir _1591_refusal_body _1591_quota_body _1591_future _1591_real_re \
+  _1591_answered_dir _1591_capped_dir _1591_zerocap_dir  _1591_mutated0_dir _1591_stale_dir _1591_quota_dir _1591_mutated_dir
 
 # ---------------------------------------------------------------------------
 echo "=== Area 1648: reviewer-loop current-head evidence ==="
