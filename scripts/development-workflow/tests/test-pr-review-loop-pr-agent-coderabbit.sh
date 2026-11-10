@@ -1843,6 +1843,7 @@ case "$*" in
   *"commits/sha1591 --jq .commit.committer.date"*) printf '2000-01-01T00:00:00Z\n'; exit 0 ;;
   *"pr comment 42"*)
     # _1591_FAIL_FIRST=1: the first full-review POST fails (transient error).
+    if [ "${_1591_FAIL_ALL:-0}" = 1 ]; then exit 1; fi
     if [ "${_1591_FAIL_FIRST:-0}" = 1 ] \
         && [ "$(grep -c 'pr comment 42 --body @coderabbitai full review' "$_1591_DIR/calls.log")" -le 1 ]; then
       exit 1
@@ -1910,6 +1911,15 @@ run_test "1591_failed_post_does_not_spend_the_cap" "2" \
   "$(_1591_count "$_1591_full" "$_1591_failpost_dir/calls.log")"
 run_test "1591_failed_post_then_retry_counts_one_accepted_trigger" "CODERABBIT_TRIGGER_ATTEMPTS=1" \
   "$(grep '^CODERABBIT_TRIGGER_ATTEMPTS=' "$_1591_failpost_dir/stdout.log" | tail -n 1)"
+
+# A persistently failing POST must still end at max_wait (not loop forever):
+# the run returns, and the posts are bounded by max_wait / poll interval.
+export _1591_FAIL_ALL=1
+_1591_run failall "$_1591_refusal_body" "$_1591_before_trigger" 3 0 8
+_1591_failall_dir="$_1591_last_dir"
+unset _1591_FAIL_ALL
+run_test "1591_persistent_failed_post_is_bounded_by_max_wait" "yes" \
+  "$([ "$(_1591_count "$_1591_full" "$_1591_failall_dir/calls.log")" -le 8 ] && echo yes || echo no)"
 
 # AC-3 (c): cap 0 posts nothing.
 _1591_run zerocap "$_1591_refusal_body" "$_1591_before_trigger" 0 1

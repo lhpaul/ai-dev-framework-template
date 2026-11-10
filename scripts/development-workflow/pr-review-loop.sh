@@ -8404,7 +8404,11 @@ run_coderabbit_review() {
           fi
           _interruptible_sleep "$poll_interval"
           elapsed=$((elapsed + poll_interval))
-          continue
+          # A failed post does not reset elapsed, so once max_wait is reached fall
+          # through to the timeout/escalation path instead of retrying forever.
+          if [ "$elapsed" -lt "$max_wait" ]; then
+            continue
+          fi
         fi
       fi
     fi
