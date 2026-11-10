@@ -588,6 +588,7 @@ run_test "dirty_other_exit_status" "0" "$dirty_other_status"
 run_contains "dirty_other_checkout_skipped" "BASE_CHECKOUT_SKIPPED=dirty_other_branch" "$dirty_other_output"
 run_test "dirty_other_base_fast_forwarded" "$dirty_other_remote_tip" \
   "$("$REAL_GIT" -C "$dirty_other_repo" rev-parse develop)"
+run_contains "dirty_other_done_message" "stayed on 'ops/current' with its uncommitted changes; local branch '$dirty_other_branch' has been removed locally" "$dirty_other_output"
 run_test "dirty_other_caller_stays_on_branch" "ops/current" \
   "$("$REAL_GIT" -C "$dirty_other_repo" symbolic-ref --quiet --short HEAD)"
 run_test "dirty_other_edit_survives" "uncommitted edit" "$(cat "$dirty_other_repo/README.md" 2>/dev/null || true)"

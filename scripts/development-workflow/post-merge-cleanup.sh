@@ -1521,6 +1521,10 @@ elif [ "$CALLER_ON_MERGED_BRANCH" -eq 1 ] && [ "$SKIP_LOCAL_DELETE" -eq 0 ]; the
   echo "Done. $DEVELOP_BRANCH is updated; the calling worktree $CLEANUP_REPO_ROOT is detached at it; local branch '$TO_DELETE' has been removed locally."
 elif [ "$CALLER_ON_MERGED_BRANCH" -eq 1 ]; then
   echo "Done. $DEVELOP_BRANCH is updated; local branch '$TO_DELETE' was KEPT and the calling worktree $CLEANUP_REPO_ROOT stays on it because it could not be detached (see LOCAL_DELETE_REASON)."
+elif [ "$CALLER_DIRTY_OTHER_BRANCH" -eq 1 ] && [ "$SKIP_LOCAL_DELETE" -eq 0 ]; then
+  echo "Done. $DEVELOP_BRANCH is updated without a checkout; $CLEANUP_REPO_ROOT stayed on '$ORIGINAL_REF' with its uncommitted changes; local branch '$TO_DELETE' has been removed locally."
+elif [ "$CALLER_DIRTY_OTHER_BRANCH" -eq 1 ]; then
+  echo "Done. $DEVELOP_BRANCH is updated without a checkout; $CLEANUP_REPO_ROOT stayed on '$ORIGINAL_REF' with its uncommitted changes; local branch '$TO_DELETE' was KEPT because its calling worktree could not be detached (see LOCAL_DELETE_REASON)."
 elif [ "$SKIP_LOCAL_DELETE" -eq 1 ]; then
   echo "Done. $DEVELOP_BRANCH is updated; exit cleanup will restore '$FINAL_REF_AFTER_CLEANUP'; local branch '$TO_DELETE' was KEPT because its calling worktree could not be detached (see LOCAL_DELETE_REASON)."
 else
