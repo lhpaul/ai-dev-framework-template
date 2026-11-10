@@ -8380,7 +8380,7 @@ run_coderabbit_review() {
     # same second as the trigger), and the
     # attempts are capped by CODERABBIT_RATE_LIMIT_MAX_RETRIES so a vendor that
     # refuses both verbs cannot loop forever. A full review that is itself quota-
-    # refused is given back (see the rate-limit block), so a quota refusal does
+    # refused is given back (see the refund block above), so a quota refusal does
     # not spend the cap.
     #
     # Deliberately NOT gated on coderabbit_any_activity: that flag is also set by a
