@@ -8345,6 +8345,29 @@ run_coderabbit_review() {
       fi
     fi
 
+    # --- Refund a quota-refused full review (#1591) ---
+    # A `full review` this run posted may itself be refused for quota. It then
+    # delivered nothing, so its refusal slot goes back. This is deliberately NOT
+    # inside the rate-limit block below: that block is gated on
+    # coderabbit_any_activity == 0, and a commit-unbound walkthrough comment sets
+    # the flag, which would leave the slot spent and the recovery exhausted once
+    # the quota returns.
+    if [ "$coderabbit_last_trigger_was_full" -eq 1 ] \
+        && [ -n "$coderabbit_last_trigger_iso" ] \
+        && [ "$coderabbit_last_quota_refusal_trigger_iso" != "$coderabbit_last_trigger_iso" ]; then
+      local fullq_json="" fullq_status=0
+      fullq_json="$(coderabbit_newest_rate_limit_comment "$repo" "$pr_number" "$bot_login" "$since_iso")" || fullq_status=$?
+      if [ "$fullq_status" -eq 0 ] && [ -n "$fullq_json" ] \
+          && coderabbit_rate_limit_is_live "$fullq_json" "$coderabbit_last_trigger_iso"; then
+        coderabbit_last_quota_refusal_trigger_iso="$coderabbit_last_trigger_iso"
+        if [ "$coderabbit_refusal_retriggers" -gt 0 ]; then
+          coderabbit_refusal_retriggers=$((coderabbit_refusal_retriggers - 1))
+        fi
+        coderabbit_last_trigger_was_full=0
+        workflow_diagnostic "INFO: CodeRabbit quota refusal observed for the full-review trigger — refunding its refusal slot" >&2
+      fi
+    fi
+
     # --- Auto-retrigger: CodeRabbit "Already reviewed the last commit" refusal (#1591) ---
     # CodeRabbit can answer a `@coderabbitai review` trigger with "Action not
     # completed — Already reviewed the last commit" for a head it never reviewed
