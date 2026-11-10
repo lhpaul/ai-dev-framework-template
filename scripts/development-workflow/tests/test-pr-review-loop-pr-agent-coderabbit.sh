@@ -1881,6 +1881,8 @@ CodeRabbit summary of the changes in this pull request."
     # still on the PR next to the newest one.
     older=""
     [ "${_1591_OLDER_REFUSAL:-0}" = 1 ] && older="2000-01-01T12:00:00Z"
+    # same: the older refusal (smaller id) shares the newest one's created_at second.
+    [ "${_1591_OLDER_REFUSAL:-0}" = same ] && older="$_1591_CREATED"
     jq -n --rawfile b "$_1591_DIR/body.txt" --arg c "$_1591_CREATED" --argjson n "${n:-0}" --arg x "$xb" --arg q "$q" --arg o "$older" \
       '[range(0; $n + 1) | {id: (1000 + .), user: {login: "coderabbitai[bot]"}, created_at: $c, updated_at: $c, body: $b}]
        + (if $x == "" then [] else [{id: 1, user: {login: "coderabbitai[bot]"}, created_at: $c, updated_at: $c, body: $x}] end)
@@ -2021,6 +2023,15 @@ _1591_twoold_dir="$_1591_last_dir"
 run_test "1591_an_older_refusal_does_not_draw_a_second_full_review" "1" \
   "$(_1591_count "$_1591_full" "$_1591_twoold_dir/calls.log")"
 
+# Same-second tie (reviewer finding): the older refusal shares the newest one's
+# created_at second, and only its smaller comment id orders it first.
+_1591_OLDER=same
+_1591_run twosame "$_1591_refusal_body" "$_1591_before_trigger" 3 0 8
+unset _1591_OLDER
+_1591_twosame_dir="$_1591_last_dir"
+run_test "1591_a_same_second_older_refusal_does_not_draw_a_second_full_review" "1" \
+  "$(_1591_count "$_1591_full" "$_1591_twosame_dir/calls.log")"
+
 # AC-3 (c): cap 0 posts nothing.
 _1591_run zerocap "$_1591_refusal_body" "$_1591_before_trigger" 0 1
 _1591_zerocap_dir="$_1591_last_dir"
@@ -2056,10 +2067,10 @@ _1591_quota_dir="$_1591_last_dir"
 run_test "1591_quota_refusal_is_not_answered_with_full_review" "0" \
   "$(_1591_count 'full review' "$_1591_quota_dir/calls.log")"
 
-rm -rf "$_1591_answered_dir" "$_1591_capped_dir" "$_1591_capped3_dir" "$_1591_failpost_dir" "$_1591_walkthrough_dir" "$_1591_held_dir" "$_1591_refund_dir" "$_1591_reask_dir" "$_1591_holdthenwalk_dir" "$_1591_twoold_dir" "$_1591_zerocap_dir" "$_1591_mutated0_dir" "$_1591_stale_dir" "$_1591_quota_dir"
+rm -rf "$_1591_answered_dir" "$_1591_capped_dir" "$_1591_capped3_dir" "$_1591_failpost_dir" "$_1591_walkthrough_dir" "$_1591_held_dir" "$_1591_refund_dir" "$_1591_reask_dir" "$_1591_holdthenwalk_dir" "$_1591_twoold_dir" "$_1591_twosame_dir" "$_1591_zerocap_dir" "$_1591_mutated0_dir" "$_1591_stale_dir" "$_1591_quota_dir"
 unset -f _1591_run _1591_count
 unset _1591_last_dir _1591_refusal_body _1591_quota_body _1591_before_trigger _1591_full _1591_real_re \
-  _1591_answered_dir _1591_capped_dir _1591_capped3_dir _1591_failpost_dir _1591_walkthrough_dir _1591_held_dir _1591_refund_dir _1591_reask_dir _1591_holdthenwalk_dir _1591_twoold_dir _1591_zerocap_dir _1591_mutated0_dir _1591_stale_dir _1591_quota_dir
+  _1591_answered_dir _1591_capped_dir _1591_capped3_dir _1591_failpost_dir _1591_walkthrough_dir _1591_held_dir _1591_refund_dir _1591_reask_dir _1591_holdthenwalk_dir _1591_twoold_dir _1591_twosame_dir _1591_zerocap_dir _1591_mutated0_dir _1591_stale_dir _1591_quota_dir
 
 # ---------------------------------------------------------------------------
 echo "=== Area 1648: reviewer-loop current-head evidence ==="
