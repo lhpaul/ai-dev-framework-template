@@ -41,7 +41,16 @@ fi
 if [ "$1" = "pr" ] && [ "$2" = "view" ]; then
   if [ "${MOCK_FAIL_PR_BODY:-}" = "1" ]; then echo "pr read failed" >&2; exit 1; fi
   case "$*" in
-    *commits*--jq*) printf '%s\n' "${MOCK_PR_COMMITS:-}" ;;
+    *commits*--jq*)
+      if [ "${MOCK_PR_COMMITS_LARGE:-}" = "1" ]; then
+        # Generated here, not exported: a ~500 KB environment string would
+        # exceed the per-string exec limit on Linux CI.
+        seq 20000 60000 | sed 's/^/Closes #/'
+        printf 'Closes #1895\n'
+      else
+        printf '%s\n' "${MOCK_PR_COMMITS:-}"
+      fi
+      ;;
     *--jq*) printf '%s\n' "${MOCK_PR_BODY:-}" ;;
     *) printf '%s\n' '{"number":7,"baseRefName":"develop","headRefName":"fix/1331-followups","isDraft":false,"labels":[],"files":[],"statusCheckRollup":[],"comments":[]}' ;;
   esac
@@ -142,12 +151,11 @@ done
 # Large closing-reference output must not turn a match into "absent" (grep -q
 # under pipefail would SIGPIPE its writer).
 export MOCK_PR_BODY='Closes #1331'
-MOCK_PR_COMMITS="$(seq 20000 60000 | sed 's/^/Closes #/')"$'\nCloses #1895'
-export MOCK_PR_COMMITS
+export MOCK_PR_COMMITS_LARGE=1
 out="$(check --pr 7 --followup 1895=deferred)"
 expect_status "large_reference_output_still_detects_match" 1 "$out"
 expect_row "large_reference_output_row" "| followup.#1895 | discrepancy |" "$out"
-unset MOCK_PR_COMMITS
+unset MOCK_PR_COMMITS_LARGE
 
 # A longer issue number sharing the prefix is not a match.
 export MOCK_PR_BODY='Closes #18950'
