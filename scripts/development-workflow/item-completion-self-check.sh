@@ -1068,15 +1068,11 @@ if [ "${#followups[@]}" -gt 0 ]; then
       followup_surface="followup.#$followup_number"
       followup_closing="unknown"
       if [ "$followup_text_ok" = "true" ]; then
-        # A here-string, not a pipe: grep -q exits at the first match, and under
-        # pipefail a large input would turn the writer's SIGPIPE into a false
-        # "no match". Only status 1 means absent; any other status is an error.
-        followup_member_status=0
-        grep -qxF -- "$followup_number" <<< "$followup_live_refs" || followup_member_status=$?
-        case "$followup_member_status" in
-          0) followup_closing="present" ;;
-          1) followup_closing="absent" ;;
-          *) followup_closing="error" ;;
+        # Pure-Bash membership: no pipe, temp file or child process, so there is
+        # no SIGPIPE or redirection failure that could be mistaken for "absent".
+        case $'\n'"$followup_live_refs"$'\n' in
+          *$'\n'"$followup_number"$'\n'*) followup_closing="present" ;;
+          *) followup_closing="absent" ;;
         esac
       fi
       if [ "$followup_class" = "fixed" ]; then
@@ -1088,8 +1084,6 @@ if [ "${#followups[@]}" -gt 0 ]; then
         add_row "$followup_surface" "unavailable_required" "deferred; state unreadable: $followup_state" "gh issue view $followup_number --repo $followup_tracker_repo --json state"
       elif [ "$followup_state" != "OPEN" ]; then
         add_row "$followup_surface" "discrepancy" "deferred but state=$followup_state; must remain open" "gh issue view $followup_number --repo $followup_tracker_repo --json state"
-      elif [ "$followup_closing" = "error" ]; then
-        add_row "$followup_surface" "unavailable_required" "deferred; open; closing-reference membership check failed" "grep -qxF over scanned closing references"
       elif [ "$followup_closing" = "present" ]; then
         add_row "$followup_surface" "discrepancy" "deferred but PR title, body or commit messages close it with a closing keyword" "gh pr view $pr_number --json body,title,commits"
       elif [ "$followup_text_ok" = "false" ]; then
