@@ -235,6 +235,7 @@ d="${CLAUDE_REC:?}"
 mkdir -p "$d"
 : > "$d/ran"
 printf '%s\n' "${LOCAL_AI_REVIEWER_TIMEOUT:-}" > "$d/timeout"
+printf '%s\n' "${LOCAL_AI_REVIEWER_TIMEOUT:-}" >> "$d/timeouts"
 if [ -n "${STANDIN_ACTION:-}" ]; then eval "$STANDIN_ACTION"; fi
 if [ -n "${STANDIN_SLEEP:-}" ]; then sleep "$STANDIN_SLEEP"; fi
 if [ -n "${STANDIN_STDERR:-}" ]; then printf '%s\n' "$STANDIN_STDERR" >&2; fi
@@ -438,7 +439,8 @@ review AI_DEV_WORKFLOW_CONFIG_FILE="$TMP_ROOT/no-such-config.yaml" --
 run_test "T-B5_missing_pinned_file_codex" "yes" "$(yes_no rerr_has "$codex_info")"
 REVIEWER_UNDER_TEST="$REVIEWER"
 
-# T-B6 to T-B9: the direct-run budget.
+# T-B6 to T-B9: the direct-run budget. The first attempt gets the exact budget
+# (#2151), however long the setup before it took.
 review AI_DEV_WORKFLOW_CONFIG_FILE="$NEUTRAL_CFG" LOCAL_AI_REVIEWER_BACKEND=claude --
 run_test "T-B6_budget_info" "yes" "$(yes_no grep -Fxq "INFO: local AI reviewer $budget_info" "$RERR")"
 run_test "T-B6_budget_900" "900" "$(cat "$CLAUDE_REC/timeout" 2>/dev/null || true)"
@@ -517,6 +519,36 @@ review AI_DEV_WORKFLOW_CONFIG_FILE="$NEUTRAL_CFG" LOCAL_AI_REVIEWER_BACKEND=clau
   STANDIN_STDOUT="API Error: overloaded" --
 run_test "T-B12_result" "needs_rerun" "$(kv RESULT)"
 run_test "T-B12_reason" "provider_overloaded" "$(kv REASON)"
+
+# T-B12b (#2151, capacity_budget_*): capacity retries share one round budget.
+# Each attempt gets only the time left, and a backoff that no longer fits ends
+# the round as needs_rerun instead of starting another full-budget attempt.
+# The stand-in logs every attempt's budget, so these checks read attempt counts
+# and budgets instead of wall-clock time, which a loaded runner stretches.
+# capacity_budget_fits: attempt k follows backoffs 1..k-1, so its budget plus
+# those backoffs must fit in the round budget given as $1.
+capacity_budget_fits() {
+  awk -v budget="$1" '{ k++; waited += k - 1; if ($1 + waited > budget) bad = 1 }
+    END { exit (k == 0 || bad) }' "$CLAUDE_REC/timeouts" 2>/dev/null
+}
+capacity_attempts() { awk 'END { print NR }' "$CLAUDE_REC/timeouts" 2>/dev/null || echo 0; }
+review AI_DEV_WORKFLOW_CONFIG_FILE="$NEUTRAL_CFG" LOCAL_AI_REVIEWER_BACKEND=claude STANDIN_EXIT=1 \
+  STANDIN_STDOUT="API Error: overloaded" -- --timeout 5
+t12_last="$(cat "$CLAUDE_REC/timeout" 2>/dev/null || echo 0)"
+run_test "T-B12b_capacity_budget_result" "needs_rerun/provider_overloaded" "$(kv RESULT)/$(kv REASON)"
+run_test "T-B12b_capacity_budget_retried" "yes" "$(yes_no test "$(capacity_attempts)" -ge 2)"
+# The first attempt always gets the whole round budget; only retries shrink.
+run_test "T-B12b_capacity_budget_first_attempt_full" "5" "$(head -n 1 "$CLAUDE_REC/timeouts" 2>/dev/null || true)"
+run_test "T-B12b_capacity_budget_last_attempt_shrunk" "yes" "$(yes_no test "$t12_last" -lt 5)"
+run_test "T-B12b_capacity_budget_within_budget" "yes" "$(yes_no capacity_budget_fits 5)"
+# A first attempt that uses half the budget leaves no room for backoff plus
+# another attempt, so the round stops after exactly one attempt.
+review AI_DEV_WORKFLOW_CONFIG_FILE="$NEUTRAL_CFG" LOCAL_AI_REVIEWER_BACKEND=claude STANDIN_EXIT=1 \
+  STANDIN_SLEEP=1 STANDIN_STDOUT="API Error: overloaded" -- --timeout 2
+run_test "T-B12b_capacity_budget_no_room_result" "needs_rerun/provider_overloaded" "$(kv RESULT)/$(kv REASON)"
+run_test "T-B12b_capacity_budget_no_room_stops" "1" "$(capacity_attempts)"
+run_test "T-B12b_capacity_budget_no_room_first_attempt_full" "2" "$(head -n 1 "$CLAUDE_REC/timeouts" 2>/dev/null || true)"
+run_test "T-B12b_capacity_budget_no_room_diag" "yes" "$(yes_no rerr_has 'no budget left for another attempt')"
 
 # T-B13: a run past the budget is No verdict yet and leaves no copy behind.
 review AI_DEV_WORKFLOW_CONFIG_FILE="$NEUTRAL_CFG" LOCAL_AI_REVIEWER_BACKEND=claude STANDIN_SLEEP=30 -- --timeout 3

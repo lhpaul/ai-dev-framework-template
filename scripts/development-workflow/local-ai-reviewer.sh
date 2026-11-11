@@ -1437,6 +1437,17 @@ round_start_epoch="$(date +%s)"
 quota_error_pattern='usage[[:space:]_-]*limit|quota[[:space:]_-]*(exhaust|exceed)|out of (quota|credits)|hit your usage'
 capacity_attempt=1
 while :; do
+  # #2151: the round budget (TIMEOUT) is shared by every capacity retry. The
+  # first attempt always gets the full budget; each retry gets only what is
+  # left of it, so backoff plus retries can never stretch a round past the
+  # requested budget.
+  attempt_timeout="$TIMEOUT"
+  if [ "$capacity_attempt" -gt 1 ]; then
+    attempt_timeout=$((TIMEOUT - ($(date +%s) - round_start_epoch)))
+    if [ "$attempt_timeout" -lt 1 ]; then
+      attempt_timeout=1
+    fi
+  fi
   set +e
   LOCAL_AI_REVIEWER_MODE=ordinary \
   CONTEXT_BUNDLE_PATH="$context_file" \
@@ -1452,8 +1463,8 @@ while :; do
   REVIEW_DOCTRINE_STATE="$review_doctrine_state" \
   REVIEW_DOCTRINE_PATTERN_COUNT="$review_doctrine_pattern_count" \
   REVIEW_DOCTRINE_VERSION="$review_doctrine_version" \
-  LOCAL_AI_REVIEWER_TIMEOUT="$TIMEOUT" \
-    run_with_timeout "$TIMEOUT" "$stdout_file" "$stderr_file" sh -c "$LOCAL_AI_REVIEWER_COMMAND"
+  LOCAL_AI_REVIEWER_TIMEOUT="$attempt_timeout" \
+    run_with_timeout "$attempt_timeout" "$stdout_file" "$stderr_file" sh -c "$LOCAL_AI_REVIEWER_COMMAND"
   command_exit=$?
   set -e
 
@@ -1519,6 +1530,14 @@ ${command_stderr}"
   if [ -n "$setup_probe_output" ] && ! grep -Eiq "$quota_error_pattern" <<< "$setup_probe_output" && grep -Eiq 'server_overloaded|at[[:space:]_-]+capacity|(^|[^[:alnum:]_])overloaded([^[:alnum:]_]|$)|(^|[^[:alnum:]_])429([^[:alnum:]_]|$)' <<< "$setup_probe_output"; then
     if [ "$capacity_attempt" -ge 3 ]; then
       workflow_diagnostic "WARN: local AI reviewer provider capacity unavailable after 3 attempts" >&2
+      print_result needs_rerun 0 0 0 provider_overloaded
+      exit 1
+    fi
+    # Retry only when the backoff and at least one more second of attempt both
+    # fit in what is left of the round budget; otherwise the round ends here.
+    capacity_remaining=$((TIMEOUT - ($(date +%s) - round_start_epoch)))
+    if [ "$capacity_remaining" -le "$capacity_attempt" ]; then
+      workflow_diagnostic "WARN: local AI reviewer provider capacity unavailable; no budget left for another attempt within ${TIMEOUT}s" >&2
       print_result needs_rerun 0 0 0 provider_overloaded
       exit 1
     fi
