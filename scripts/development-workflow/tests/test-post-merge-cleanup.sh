@@ -876,6 +876,54 @@ run_fails_contains \
     PATH="$stub_bin:$PATH" \
     "$HELPER" --repo-root "$hub_repo" --base develop --pr 86 "backport/hotfix/86-carry"
 
+# #2158 positive proof: with the product repository selected, the same
+# backport/* branch resolves to the product worktree and its branch is removed.
+backport_product_branch="backport/hotfix/87-carry"
+backport_product_repo="$(make_repo backport-product "$backport_product_branch" yes)"
+backport_product_worktree="$TMP_ROOT/backport-product-worktree"
+"$REAL_GIT" -C "$backport_product_repo" worktree add -q "$backport_product_worktree" "$backport_product_branch"
+backport_hub_repo="$TMP_ROOT/workflow-hub-backport"
+"$REAL_GIT" init -q -b develop "$backport_hub_repo"
+"$REAL_GIT" -C "$backport_hub_repo" config user.email "fixture@example.com"
+"$REAL_GIT" -C "$backport_hub_repo" config user.name "Fixture User"
+cat >"$backport_hub_repo/.ai-dev-workflow.yaml" <<BACKPORT_HUB_CONFIG
+schema_version: 2
+mode: workflow_hub
+workflow_hub:
+  product_repos:
+    - name: mobile-app
+      github_repo: example/repo
+      default_branch: develop
+      role: mobile
+      scope: fixture app
+      tracker:
+        component: mobile
+BACKPORT_HUB_CONFIG
+cat >"$backport_hub_repo/.ai-dev-workflow.local.yaml" <<BACKPORT_HUB_LOCAL_CONFIG
+product_repos:
+  - name: mobile-app
+    local_path: "$backport_product_worktree"
+BACKPORT_HUB_LOCAL_CONFIG
+"$REAL_GIT" -C "$backport_hub_repo" add .ai-dev-workflow.yaml .ai-dev-workflow.local.yaml
+"$REAL_GIT" -C "$backport_hub_repo" commit -q -m "hub config"
+backport_product_output="$(
+  GH_MERGED_HEAD="$backport_product_branch" \
+  GH_MERGED_PR=87 \
+  PATH="$stub_bin:$PATH" \
+  "$HELPER" --repo-root "$backport_hub_repo" --repo mobile-app --base develop --pr 87 "$backport_product_branch"
+)"
+run_contains \
+  "workflow_hub_backport_reentry_uses_product_base_worktree" \
+  "CLEANUP_REPO_ROOT=$backport_product_repo" \
+  "$backport_product_output"
+run_test "workflow_hub_backport_removes_product_branch" "no" "$(
+  if "$REAL_GIT" -C "$backport_product_repo" show-ref --quiet "refs/heads/$backport_product_branch"; then
+    printf 'yes'
+  else
+    printf 'no'
+  fi
+)"
+
 fail_branch="feature/noissue-delete-fails"
 fail_repo="$(make_repo delete-fails "$fail_branch" yes)"
 fail_bin="$TMP_ROOT/fail-bin"
