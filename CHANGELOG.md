@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.51.0] - 2026-11-11
+
+### Added
+
+- **Workflow guard test suites** (#1572): `check-workflow-branch.sh`, `run-advisory-checks.sh` and `worktree-cwd-guard.sh` each get a dedicated suite covering success and every documented failure exit, so test selection exercises the touched guard.
+- **Local AI reviewer Claude backend** (#1957): `local-ai-reviewer` adds a read-only `claude` backend (900 s default budget for direct runs), selectable with `review.local_ai_reviewer.backend`; the default stays `codex`. Consumers with a locally patched Claude backend must set `review.local_ai_reviewer.backend: claude` after syncing.
+
+### Fixed
+
+- **Release stamping of historical references** (#1328): `--from-changelog` cleanup no longer stamps issues a release section cites only as context; closed issues with an earlier release milestone are reported as `RELEASE_SCOPE_SKIPPED`, failed checks as `RELEASE_SCOPE_HISTORY_UNVERIFIED`, and explicit `--issue` / `--issues` are never filtered.
+- **Follow-up issue dispositions** (#1331): `item-completion-self-check.sh` accepts `--followup <issue>=<fixed|deferred>` and flags deferred follow-ups that are closed or closed by the PR; Protocol 91 requires classifying every filed follow-up and closing only the fixed ones.
+- **`feat/` branch alias** (#1401): `feat/*` is treated as `feature/*` for cleanup, reviewer assignment, routing and issue-number parsing.
+- **Cleanup with a dirty unrelated checkout** (#1450): `post-merge-cleanup.sh` fast-forwards the base ref without checking it out (`BASE_CHECKOUT_SKIPPED=dirty_other_branch`), leaves the caller's edits untouched, and still deletes the merged branch.
+- **Codex refusal with a same-fetch blocking review** (#1587): regression coverage ensures a blocking review keeps its `NEEDS_REVISION` verdict instead of being reported as reviewer unavailability.
+- **CodeRabbit "Already reviewed the last commit" refusal** (#1591): no longer counted as review activity; the loop posts `@coderabbitai full review` within the existing retry cap instead of waiting out `max_wait`.
+- **Planted-violation proof for trigger- or gate-only changes** (#2115): `REVIEW.md` and testing guidance describe proving changes that only alter when a check runs with live runs in both directions, so reviewers no longer demand an impossible failing-check run.
+- **Head-bound human override for local-ai-reviewer** (#2116): a write-access human can overrule a `local-ai-reviewer` verdict for one head with a `reviewer-loop-human-override:v1` comment; it is reported as `skipped` / `human_override`, recorded in the ledger, revalidated by readiness helpers, and re-armed on a new push. PR-Agent verification now escalates with `pr_agent_verification_requires_local_reviewer`.
+- **Capacity retries share the round budget** (#2151): `local-ai-reviewer.sh` retries use only the time left in the round and end as `needs_rerun` / `provider_overloaded` when it runs out, instead of stretching a round to about 3x its budget.
+- **Runner bookkeeping no longer invalidates review evidence** (#2152): the runner's own reviewer-trigger comment and Codex receipt/summary comments no longer cause `evidence_changed_during_review` on clean rounds.
+- **Explicit local retry on an already clean round** (#2153): `--retry-local-review-head` consumes the retry without paying for an identical second local review when the round already holds a clean evaluation of the current head.
+- **Protocol 93 ticket-analysis evidence** (#2154): the PR-Agent evidence paragraph matches the ticket-analysis exception; unknown or malformed analysis, verification requests and security blockers still escalate or block.
+- **`backport/*` branch class** (#2158): `backport/*` is an implementation-branch class for cleanup, `code-reviewer` assignment, routing and delegated merge; backport PRs still do not close or advance items.
+
 ## [0.50.0] - 2026-11-06
 
 ### Added
@@ -3441,7 +3464,8 @@ Known limitation: human-verification headings split by HTML comments can still b
 - `.claude/settings.json` with pre-approved permissions for common git and fetch operations; `.claude/settings.local.json.example` documenting machine-specific overrides for optional integrations
 - `.gitignore` covering local Claude settings, `.env` files, and common system files
 
-[Unreleased]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.50.0...HEAD
+[Unreleased]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.51.0...HEAD
+[0.51.0]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.50.0...v0.51.0
 [0.50.0]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.49.0...v0.50.0
 [0.49.0]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.48.9...v0.49.0
 [0.48.9]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.48.8...v0.48.9
