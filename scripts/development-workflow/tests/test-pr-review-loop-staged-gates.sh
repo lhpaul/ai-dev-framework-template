@@ -1731,7 +1731,7 @@ run_test "2093_retry_clean_round_reason" "not_required" "$local_second_pass_reas
 run_test "2093_retry_clean_round_consumed" "" "$retry_local_review_head"
 run_test "2093_retry_clean_round_audit_head" "$_1656_guard_head" "$local_review_retry_head_record"
 run_test "2093_retry_clean_round_retains_head" "local-ai-reviewer:${_1656_guard_head}" \
-  "$(printf '%s\n' "${platform_reviewed_heads[@]:-}")"
+  "$(printf '%s\n' ${platform_reviewed_heads[@]+"${platform_reviewed_heads[@]}"})"
 
 # The consumed authorization still re-confirms the live head before ready.
 _1656_reset_guard_globals
