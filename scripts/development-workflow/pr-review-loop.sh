@@ -11919,7 +11919,16 @@ reviewer_loop_second_local_pass_before_ready_gate() {
   _sl_composed="$(reviewer_loop_compose_current_round_payload "$_sl_prior_payload" "$_sl_next_iteration")"
   _sl_required="$(reviewer_loop_local_pass_required "$_sl_composed" "$loop_head_sha" "$_sl_configured")"
   if [ "${retry_local_review_head:-}" = "$loop_head_sha" ] && [ "${local_review_retry_head_record:-}" = "$loop_head_sha" ]; then
-    _sl_required=explicit_retry
+    if [ "$_sl_required" = "not_required" ]; then
+      # #2153: the draft dispatch already re-ran the local reviewer for this
+      # head and the round holds a clean current evaluation, so the explicit
+      # retry is spent. Consume the authorization (the audit head record
+      # stays) instead of paying an identical second pass. Every other state
+      # remains explicit_retry.
+      retry_local_review_head=""
+    else
+      _sl_required=explicit_retry
+    fi
   fi
   local_second_pass_reason="$_sl_required"
 
