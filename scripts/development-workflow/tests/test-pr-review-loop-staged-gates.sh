@@ -1721,6 +1721,7 @@ _1656_reset_guard_globals
 _1656_guard_hist_payload="$_1656_guard_hist_clean"
 retry_local_review_head="$_1656_guard_head"
 local_review_retry_head_record="$_1656_guard_head"
+# shellcheck disable=SC2034 # Read by the sourced production second-pass guard.
 local_review_retry_attempt_json="$(jq -cn --arg head "$_1656_guard_head" '{id:"00000000-0000-4000-8000-000000000003",head_sha:$head,run_id:"run-synthetic"}')"
 reviewer_loop_second_local_pass_before_ready_gate 1693 && _st=0 || _st=$?
 run_test "2093_retry_clean_round_proceeds" "0" "$_st"
