@@ -253,7 +253,7 @@ case "$(branch_prefix "$TO_DELETE")" in
       branch_owner_kind="implementation"
     fi
     ;;
-  fix|refactor|hotfix)
+  fix|refactor|hotfix|backport)
     branch_owner_kind="implementation"
     ;;
   spec|implementation-plan)

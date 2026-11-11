@@ -406,7 +406,7 @@ _resolve_lock_repo_key() {
 # _is_trusted_workflow_branch <branch> — true for branches that belong to one
 # workflow item and can vouch for a PR number: the workflow prefixes known to
 # branch_prefix (spec, implementation-plan, feature, refactor, fix, hotfix,
-# release) plus backport/* and develop-<slug> graduation branches. develop,
+# release, backport) plus develop-<slug> graduation branches. develop,
 # main, and anything else are shared or unknown and return false (#1444).
 _is_trusted_workflow_branch() {
   case "$1" in

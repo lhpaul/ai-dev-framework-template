@@ -47,9 +47,18 @@ assert_eq "bare feat is unknown" "unknown"             "$(branch_prefix feat)"
 assert_eq "featx/ is unknown"    "unknown"             "$(branch_prefix featx/1-x)"
 assert_eq "develop is unknown"   "unknown"             "$(branch_prefix develop)"
 
+# #2158: backport/* is its own class (implementation-branch behavior), not an
+# alias of hotfix/ or feature/. A bare or empty-remainder backport stays unknown.
+assert_eq "backport"             "backport"            "$(branch_prefix backport/1-x)"
+assert_eq "backport hotfix"      "backport"            "$(branch_prefix backport/hotfix/1-x)"
+assert_eq "bare backport unknown" "unknown"            "$(branch_prefix backport)"
+assert_eq "empty backport/ unknown" "unknown"          "$(branch_prefix backport/)"
+assert_eq "backportx/ is unknown" "unknown"            "$(branch_prefix backportx/1-x)"
+
 # reviewer_for_branch: feat/ must get a code reviewer like feature/.
 assert_eq "reviewer feature"     "code-reviewer"       "$(reviewer_for_branch feature/1-x)"
 assert_eq "reviewer feat alias"  "code-reviewer"       "$(reviewer_for_branch feat/1-x)"
+assert_eq "reviewer backport"    "code-reviewer"       "$(reviewer_for_branch backport/1-x)"
 assert_eq "reviewer spec"        "spec-reviewer"       "$(reviewer_for_branch spec/1-x)"
 assert_eq "reviewer unknown"     "none"                "$(reviewer_for_branch chore/1-x)"
 

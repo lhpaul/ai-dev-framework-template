@@ -355,6 +355,18 @@ pr_selection_output="$(
 run_contains "workflow_pr_requires_repo_selection" "NEXT_ACTION=resolve-repository-selection" "$pr_selection_output"
 run_contains "workflow_pr_selection_required_context" "ACTION_REPOSITORY_KIND=repository_selection_required" "$pr_selection_output"
 
+# #2158: a backport/* PR is an implementation branch, so with no --repo in a
+# workflow hub it must demand product repository selection instead of being
+# classified hub-owned (branch_prefix used to return unknown for backport/*).
+backport_pr_selection_output="$(
+  GH_PR_VIEW_JSON='{"headRefName":"backport/hotfix/123-fix","labels":[],"isDraft":false,"comments":[],"statusCheckRollup":[]}' \
+  PATH="$stub_bin:$PATH" WORKFLOW_SKIP_FETCH=1 "$REPO_ROOT/scripts/development-workflow/workflow-next-action.sh" \
+    --repo-root "$hub_dir" \
+    --pr 123
+)"
+run_contains "backport_pr_requires_repo_selection" "NEXT_ACTION=resolve-repository-selection" "$backport_pr_selection_output"
+run_contains "backport_pr_selection_required_context" "ACTION_REPOSITORY_KIND=repository_selection_required" "$backport_pr_selection_output"
+
 run_fails_contains \
   "workflow_next_action_repo_requires_value" \
   "--repo requires a value." \
