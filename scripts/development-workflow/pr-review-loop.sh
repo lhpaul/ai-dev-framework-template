@@ -219,6 +219,19 @@ _check_execution_budget() {
 # and no backslash escapes that differ between the two.
 CODERABBIT_SKIP_BANNER_RE='skip review by coderabbit|> *#{1,6} *review skipped|auto reviews are disabled'
 
+# CodeRabbit's refusal to review: it answers a `@coderabbitai review` trigger with
+# "Action not completed — Already reviewed the last commit. Use `@coderabbitai
+# full review` to rerun a review of the entire changeset" (#1591). The claim can
+# be false — it was measured refusing a head it had never reviewed — so the
+# comment is neither review activity nor proof the head was reviewed.
+#
+# Matched on the VISIBLE sentence, never the wrapper: "Action not completed" is
+# shared with the quota refusal ("Review rate limited"), which is a different
+# state with a different remedy, and the HTML marker CodeRabbit stamps on
+# command replies is present on accepted commands too. The body wraps mid-
+# sentence, so the gaps are [[:space:]]+ (valid in Oniguruma, the jq engine).
+CODERABBIT_ALREADY_REVIEWED_RE='already[[:space:]]+reviewed[[:space:]]+the[[:space:]]+last[[:space:]]+commit'
+
 # ---------------------------------------------------------------------------
 # Lock key resolution (repository-scoped single-instance lock)
 #
@@ -7878,6 +7891,60 @@ coderabbit_newest_rate_limit_comment() {
 }
 
 # ---------------------------------------------------------------------------
+# coderabbit_newest_already_reviewed_refusal (#1591)
+#
+# Print the newest CodeRabbit "Already reviewed the last commit" refusal posted
+# after since_iso whose comment id is not in answered_ids (a comma-separated
+# list of refusals this run already answered), as a JSON object, or nothing
+# when there is none. min_created_iso (the created_at of the newest refusal this
+# run answered, compared against the vendor's own timestamps so there is no clock
+# skew) and min_id (that refusal's comment id, which breaks a same-second tie
+# because ids grow monotonically) keep an OLDER still-visible refusal from being
+# answered after a newer one: one full review covers every refusal that preceded
+# it. The pair is inclusive, so a refusal re-opened after a quota refusal still
+# qualifies, and a genuinely newer same-second reply (a larger id) is admitted.
+#
+# Deduplication is by comment id, never by comparing created_at to the time the
+# loop recorded its own trigger: that time is taken after the POST returns, at
+# second precision, so a refusal created during the request or in the same
+# second would compare as "older than the trigger" and be dropped permanently,
+# losing the retry the vendor asked for.
+# Exit status 2 means the comments could not be read (distinct from "none"),
+# the same contract as coderabbit_newest_rate_limit_comment.
+coderabbit_newest_already_reviewed_refusal() {
+  if [ "$#" -lt 4 ] || [ "$#" -gt 7 ] || [ -z "${1:-}" ] || [ -z "${2:-}" ] || [ -z "${3:-}" ] || [ -z "${4:-}" ]; then
+    workflow_diagnostic "ERROR: coderabbit_newest_already_reviewed_refusal requires repo pr_number bot_login since_iso [answered_ids [min_created_iso [min_id]]]" >&2
+    return 2
+  fi
+  local repo="$1" pr_number="$2" bot_login="$3" since_iso="$4" answered_ids="${5:-}" min_created_iso="${6:-}" min_id="${7:-}"
+  local raw="" status=0
+  raw="$(gh api "repos/$repo/issues/$pr_number/comments" --paginate 2>/dev/null)" || status=$?
+  if [ "$status" -ne 0 ]; then
+    workflow_diagnostic "WARN: coderabbit_newest_already_reviewed_refusal: could not read comments for PR #$pr_number (gh exited $status) — reporting a lookup failure, not an absence of refusals" >&2
+    return 2
+  fi
+  local selected="" jq_status=0
+  selected="$(printf '%s' "$raw" | jq -cs --arg bot "$bot_login" --arg since "$since_iso" \
+      --arg answered ",${answered_ids}," --arg minc "$min_created_iso" --arg minid "$min_id" --arg re "$CODERABBIT_ALREADY_REVIEWED_RE" '
+        [.[].[] | select(
+            .user.login == $bot and
+            .created_at > $since and
+            ($minc == "" or .created_at > $minc or
+              (.created_at == $minc and ($minid == "" or .id >= ($minid | tonumber)))) and
+            ((("," + (.id | tostring) + ",") as $key | ($answered | contains($key)) | not) and
+            ((.body // "") | test($re; "i")))
+        )]
+        | sort_by([.created_at, .id])
+        | (last // empty)
+      ' 2>/dev/null)" || jq_status=$?
+  if [ "$jq_status" -ne 0 ]; then
+    workflow_diagnostic "WARN: coderabbit_newest_already_reviewed_refusal: could not parse comments for PR #$pr_number (jq exited $jq_status) — reporting a lookup failure" >&2
+    return 2
+  fi
+  printf '%s' "$selected"
+}
+
+# ---------------------------------------------------------------------------
 # coderabbit_rate_limit_is_live
 #
 # Given the JSON object from coderabbit_newest_rate_limit_comment, return 0
@@ -7900,6 +7967,37 @@ coderabbit_rate_limit_is_live() {
   # created_at only for an object that did not come from that selector.
   created="$(printf '%s' "$comment_json" | jq -r '.effective_at // .created_at // ""' 2>/dev/null)" || created=""
   coderabbit_rate_limit_comment_is_current "$body" "$created" "$last_trigger_iso"
+}
+
+# ---------------------------------------------------------------------------
+# coderabbit_settle_quota_refused_full_review (#1591)
+#
+# A `@coderabbitai full review` this run posted was refused for quota, so it
+# delivered nothing: give its refusal slot back and re-open the refusal it
+# answered, so the recovery can ask again once the quota returns. Both places
+# that can observe the quota reply call this one function, so neither can refund
+# without re-opening (or the reverse).
+#
+# It deliberately reads and writes run_coderabbit_review's locals through bash's
+# dynamic scoping (coderabbit_last_trigger_iso, *_refusal_retriggers,
+# *_answered_refusal_ids, *_last_answered_refusal_id, *_last_trigger_was_full,
+# *_last_quota_refusal_trigger_iso). It must only be called from inside that
+# function.
+coderabbit_settle_quota_refused_full_review() {
+  coderabbit_last_quota_refusal_trigger_iso="$coderabbit_last_trigger_iso"
+  if [ "$coderabbit_refusal_retriggers" -gt 0 ]; then
+    coderabbit_refusal_retriggers=$((coderabbit_refusal_retriggers - 1))
+  fi
+  coderabbit_last_trigger_was_full=0
+  # The refused full review delivered nothing, so the refusal it answered is
+  # pending again. Without this the refusal id stays "answered" and, once the
+  # quota returns, nothing re-asks: the generic-activity flag disables the
+  # silent and rate-limit retriggers, and the loop would time out.
+  if [ -n "$coderabbit_last_answered_refusal_id" ]; then
+    coderabbit_answered_refusal_ids="$(printf ',%s,' "$coderabbit_answered_refusal_ids" | sed "s/,${coderabbit_last_answered_refusal_id},/,/" | sed 's/^,//; s/,$//')"
+    coderabbit_last_answered_refusal_id=""
+  fi
+  workflow_diagnostic "INFO: CodeRabbit quota refusal observed for the full-review trigger — refunding its refusal slot and re-opening the refusal" >&2
 }
 
 run_coderabbit_review() {
@@ -8120,6 +8218,22 @@ run_coderabbit_review() {
   local coderabbit_last_trigger_iso=""
   local coderabbit_last_quota_refusal_trigger_iso=""
   local coderabbit_rate_limit_hold_seen=0
+  # #1591: `@coderabbitai full review` re-triggers posted in answer to an
+  # "Already reviewed the last commit" refusal, bounded by the same cap as the
+  # other CodeRabbit retriggers. coderabbit_last_trigger_was_full marks that the
+  # newest trigger was one, so a quota refusal of it can give the slot back.
+  local coderabbit_refusal_retriggers=0
+  # Comma-separated ids of the refusal comments this run already answered with a
+  # full review. Dedupes by id rather than by timestamp (see
+  # coderabbit_newest_already_reviewed_refusal).
+  local coderabbit_answered_refusal_ids=""
+  # The id the newest full review answered, so a quota refusal of that full review
+  # can make the refusal pending again (see the refund block).
+  local coderabbit_last_answered_refusal_id=""
+  # created_at of the newest refusal answered (see the helper's min_created_iso).
+  local coderabbit_answered_refusal_created=""
+  local coderabbit_answered_refusal_watermark_id=""
+  local coderabbit_last_trigger_was_full=0
   # Defaults are sized against CodeRabbit's *hourly* quota reset: 4 retries x 900 s
   # covers 60 minutes of waiting, so a loop that hits the cap early in an hour can
   # still succeed once the vendor window rolls over. The previous 2 x 180 s (~6 min)
@@ -8237,21 +8351,25 @@ run_coderabbit_review() {
     # timeout guard already accepted updated_at; this probe did not.
     # Exclude "Reviews paused" comments (pause marker), "rate limit" comments (rate-limit
     # marker), "Reviews resumed" acknowledgement comments, and "Review skipped" banners
-    # (skip marker — see CODERABBIT_SKIP_BANNER_RE) — none of these represent a
-    # completed review and must not trigger an early break from the poll loop.
+    # (skip marker — see CODERABBIT_SKIP_BANNER_RE) and "Already reviewed the last
+    # commit" refusals (see CODERABBIT_ALREADY_REVIEWED_RE, #1591) — none of these
+    # represent a completed review and must not trigger an early break from the
+    # poll loop.
     if [ "$coderabbit_any_activity" -eq 0 ]; then
       local activity_count
       activity_count="$(
         gh api "repos/$repo/issues/$pr_number/comments" --paginate 2>"${coderabbit_read_err_file:-/dev/null}" \
           | jq -s --arg bot "$bot_login" --arg since "$since_iso" \
-               --arg skip_re "$CODERABBIT_SKIP_BANNER_RE" '
+               --arg skip_re "$CODERABBIT_SKIP_BANNER_RE" \
+               --arg refusal_re "$CODERABBIT_ALREADY_REVIEWED_RE" '
               [.[].[] | select(
                   .user.login == $bot and
                   (.created_at > $since or (.updated_at // .created_at) > $since) and
                   ((.body // "") | test("Reviews paused|review paused"; "i") | not) and
                   ((.body // "") | test("rate.?limit"; "i") | not) and
                   ((.body // "") | test("reviews resumed"; "i") | not) and
-                  ((.body // "") | test($skip_re; "i") | not)
+                  ((.body // "") | test($skip_re; "i") | not) and
+                  ((.body // "") | test($refusal_re; "i") | not)
               )] | length
             '
       )"
@@ -8269,6 +8387,114 @@ run_coderabbit_review() {
         # only a review bound to the head or a CodeRabbit status on the head
         # does.
         coderabbit_any_activity=1
+      fi
+    fi
+
+    # --- Refund a quota-refused full review (#1591) ---
+    # A `full review` this run posted may itself be refused for quota. It then
+    # delivered nothing, so its refusal slot goes back. This is deliberately NOT
+    # inside the rate-limit block below: that block is gated on
+    # coderabbit_any_activity == 0, and a commit-unbound walkthrough comment sets
+    # the flag, which would leave the slot spent and the recovery exhausted once
+    # the quota returns.
+    if [ "$coderabbit_last_trigger_was_full" -eq 1 ] \
+        && [ -n "$coderabbit_last_trigger_iso" ] \
+        && [ "$coderabbit_last_quota_refusal_trigger_iso" != "$coderabbit_last_trigger_iso" ]; then
+      local fullq_json="" fullq_status=0
+      fullq_json="$(coderabbit_newest_rate_limit_comment "$repo" "$pr_number" "$bot_login" "$since_iso")" || fullq_status=$?
+      if [ "$fullq_status" -eq 0 ] && [ -n "$fullq_json" ] \
+          && coderabbit_rate_limit_is_live "$fullq_json" "$coderabbit_last_trigger_iso"; then
+        coderabbit_settle_quota_refused_full_review
+      fi
+    fi
+
+    # --- Auto-retrigger: CodeRabbit "Already reviewed the last commit" refusal (#1591) ---
+    # CodeRabbit can answer a `@coderabbitai review` trigger with "Action not
+    # completed — Already reviewed the last commit" for a head it never reviewed
+    # (measured on PR #1588). The refusal is excluded from the activity probe
+    # above, so without this block the loop would wait out max_wait on a comment
+    # that is an explicit refusal. `@coderabbitai full review` is the vendor's own
+    # named remedy and the only verb that clears it; plain `review` stays refused.
+    # A refusal is answered at most once, tracked by comment id (a timestamp
+    # comparison against our own trigger time would drop a reply created in the
+    # same second as the trigger), and the
+    # attempts are capped by CODERABBIT_RATE_LIMIT_MAX_RETRIES so a vendor that
+    # refuses both verbs cannot loop forever. A full review that is itself quota-
+    # refused is given back (see the refund block above), so a quota refusal does
+    # not spend the cap.
+    #
+    # Deliberately NOT gated on coderabbit_any_activity: that flag is also set by a
+    # walkthrough/summary comment, which carries no commit and may belong to an
+    # older head (#1789 D15), and would suppress this recovery for the whole run.
+    # A review, failure status or success status bound to the head has already
+    # ended the wait above, so reaching this point means no bound verdict exists.
+    #
+    # Like the other conditional retriggers it is not posted in re-wait mode with
+    # an adopted recorded request (#1789 D11/D12): that mode carries the recorded
+    # request forward, and a new trigger would leave REVIEW_REQUESTED_AT pointing
+    # at the old one.
+    #
+    # Not gated on coderabbit_rate_limit_hold_seen either: that flag is a history of
+    # an earlier hold, and the rate-limit block that clears it is itself gated on
+    # coderabbit_any_activity == 0. The quota is revalidated below, against the
+    # live rate-limit comment, on every iteration that has a refusal to answer.
+    if [ "$coderabbit_rewait_adopted" -eq 0 ] \
+        && [ "$coderabbit_refusal_retriggers" -lt "$coderabbit_rate_limit_max_retries" ]; then
+      local refusal_json="" refusal_status=0
+      refusal_json="$(coderabbit_newest_already_reviewed_refusal "$repo" "$pr_number" "$bot_login" "$since_iso" "$coderabbit_answered_refusal_ids" "$coderabbit_answered_refusal_created" "$coderabbit_answered_refusal_watermark_id")" || refusal_status=$?
+      if [ "$refusal_status" -ne 0 ]; then
+        workflow_diagnostic "WARN: could not read CodeRabbit refusals for PR #$pr_number — not posting a full review on an unread signal" >&2
+        refusal_json=""
+      fi
+      if [ -n "$refusal_json" ]; then
+        # Never spend a review while a quota refusal is live: the allowance is
+        # the same one the loop would be spending (#1597).
+        local refusal_rate_json="" refusal_rate_status=0 refusal_blocked=0
+        refusal_rate_json="$(coderabbit_newest_rate_limit_comment "$repo" "$pr_number" "$bot_login" "$since_iso")" || refusal_rate_status=$?
+        if [ "$refusal_rate_status" -ne 0 ]; then
+          workflow_diagnostic "WARN: could not determine CodeRabbit rate-limit state for PR #$pr_number — holding the full-review retrigger rather than spending a review on an unread signal" >&2
+          refusal_blocked=1
+        elif [ -n "$refusal_rate_json" ] && coderabbit_rate_limit_is_live "$refusal_rate_json" "$coderabbit_last_trigger_iso"; then
+          workflow_diagnostic "INFO: CodeRabbit refused with 'Already reviewed the last commit' but a rate limit is live — holding the full-review retrigger until it elapses" >&2
+          refusal_blocked=1
+        fi
+        if [ "$refusal_blocked" -eq 0 ]; then
+          workflow_diagnostic "INFO: CodeRabbit refused with 'Already reviewed the last commit' for a head with no bound review (attempt $((coderabbit_refusal_retriggers + 1))/${coderabbit_rate_limit_max_retries}) — posting @coderabbitai full review" >&2
+          local refusal_post_accepted=0
+          if gh pr comment "$pr_number" --body "@coderabbitai full review" >/dev/null 2>&1; then
+            refusal_post_accepted=1
+            # Count the slot only for an ACCEPTED post: a transient failure spends
+            # nothing, so one failed POST cannot disable the recovery for the run.
+            # A failed post is still bounded by max_wait, because elapsed is not
+            # reset for it.
+            coderabbit_refusal_retriggers=$((coderabbit_refusal_retriggers + 1))
+            coderabbit_last_answered_refusal_id="$(printf '%s' "$refusal_json" | jq -r '.id // empty' 2>/dev/null)"
+            coderabbit_answered_refusal_created="$(printf '%s' "$refusal_json" | jq -r '.created_at // empty' 2>/dev/null)"
+            coderabbit_answered_refusal_watermark_id="$coderabbit_last_answered_refusal_id"
+            coderabbit_answered_refusal_ids="${coderabbit_answered_refusal_ids:+$coderabbit_answered_refusal_ids,}${coderabbit_last_answered_refusal_id}"
+            coderabbit_trigger_attempts=$((coderabbit_trigger_attempts + 1))
+            coderabbit_last_trigger_iso="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+            coderabbit_last_trigger_was_full=1
+            if [ "$coderabbit_request_recorded" -eq 0 ]; then
+              print_review_request_keys "$coderabbit_last_trigger_iso" ""
+              coderabbit_request_recorded=1
+            fi
+            workflow_diagnostic "INFO: @coderabbitai full review trigger posted" >&2
+            # Reset the elapsed timer to give the retrigger a full polling window.
+            elapsed=0
+          else
+            workflow_diagnostic "WARN: failed to post @coderabbitai full review trigger — not counting it; the refusal stays unanswered and is retried on the next poll" >&2
+          fi
+          _interruptible_sleep "$poll_interval"
+          elapsed=$((elapsed + poll_interval))
+          # An accepted post always continues (elapsed was reset, and the trigger
+          # needs a polling window even when poll_interval >= max_wait). A failed
+          # post does not reset elapsed, so once max_wait is reached fall through
+          # to the timeout/escalation path instead of retrying forever.
+          if [ "$refusal_post_accepted" -eq 1 ] || [ "$elapsed" -lt "$max_wait" ]; then
+            continue
+          fi
+        fi
       fi
     fi
 
@@ -8372,6 +8598,7 @@ run_coderabbit_review() {
           coderabbit_rate_limit_hold_seen=0
           coderabbit_trigger_attempts=$((coderabbit_trigger_attempts + 1))
           coderabbit_last_trigger_iso="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+          coderabbit_last_trigger_was_full=0
           if [ "$coderabbit_request_recorded" -eq 0 ]; then
             print_review_request_keys "$coderabbit_last_trigger_iso" ""
             coderabbit_request_recorded=1
@@ -8421,11 +8648,18 @@ run_coderabbit_review() {
         rate_limit_comment_created="$(printf '%s' "$rate_limit_comment_json" | jq -r '.effective_at // .created_at // ""' 2>/dev/null)" || rate_limit_comment_created=""
         if coderabbit_rate_limit_is_live "$rate_limit_comment_json" "$coderabbit_last_trigger_iso"; then
           if [ -n "$coderabbit_last_trigger_iso" ] && [ "$coderabbit_last_quota_refusal_trigger_iso" != "$coderabbit_last_trigger_iso" ]; then
-            coderabbit_last_quota_refusal_trigger_iso="$coderabbit_last_trigger_iso"
-            if [ "$coderabbit_rate_limit_retries" -gt 0 ]; then
-              coderabbit_rate_limit_retries=$((coderabbit_rate_limit_retries - 1))
+            if [ "$coderabbit_last_trigger_was_full" -eq 1 ]; then
+              # A quota-refused FULL review: the same settlement as the dedicated
+              # block above, so it is applied even when that block's own lookup
+              # missed the reply and before any plain trigger replaces the state.
+              coderabbit_settle_quota_refused_full_review
+            else
+              coderabbit_last_quota_refusal_trigger_iso="$coderabbit_last_trigger_iso"
+              if [ "$coderabbit_rate_limit_retries" -gt 0 ]; then
+                coderabbit_rate_limit_retries=$((coderabbit_rate_limit_retries - 1))
+              fi
+              workflow_diagnostic "INFO: CodeRabbit quota refusal observed for last trigger — not counting it toward CODERABBIT_RATE_LIMIT_MAX_RETRIES" >&2
             fi
-            workflow_diagnostic "INFO: CodeRabbit quota refusal observed for last trigger — not counting it toward CODERABBIT_RATE_LIMIT_MAX_RETRIES" >&2
           fi
           rate_limit_comment_count=1
         else
@@ -8437,6 +8671,7 @@ run_coderabbit_review() {
               coderabbit_rate_limit_retries=$((coderabbit_rate_limit_retries + 1))
               coderabbit_trigger_attempts=$((coderabbit_trigger_attempts + 1))
               coderabbit_last_trigger_iso="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+              coderabbit_last_trigger_was_full=0
               if [ "$coderabbit_request_recorded" -eq 0 ]; then
                 print_review_request_keys "$coderabbit_last_trigger_iso" ""
                 coderabbit_request_recorded=1
@@ -8555,6 +8790,7 @@ run_coderabbit_review() {
             coderabbit_rate_limit_retries=$((coderabbit_rate_limit_retries + 1))
             coderabbit_trigger_attempts=$((coderabbit_trigger_attempts + 1))
             coderabbit_last_trigger_iso="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+            coderabbit_last_trigger_was_full=0
             if [ "$coderabbit_request_recorded" -eq 0 ]; then
               print_review_request_keys "$coderabbit_last_trigger_iso" ""
               coderabbit_request_recorded=1

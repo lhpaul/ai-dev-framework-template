@@ -22,6 +22,7 @@
 #   test-pr-review-loop-failure-paths-4.sh
 #   test-pr-review-loop-release-bugbot.sh
 #   test-pr-review-loop-pr-agent-coderabbit.sh
+#   test-pr-review-loop-coderabbit-refusal.sh
 #   test-pr-review-loop-staged-gates.sh
 #   test-pr-review-loop-no-verdict-yet.sh
 #
