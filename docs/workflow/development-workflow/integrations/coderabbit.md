@@ -344,6 +344,8 @@ CodeRabbit posts as `coderabbitai[bot]`. Use this login to filter its comments a
 
 The helper does post one **conditional** trigger. When no CodeRabbit activity has appeared after `CODERABBIT_NO_TRIGGER_TIMEOUT` seconds — because CodeRabbit stayed silent after a push, or because it declined with a `Review skipped` banner — the loop posts `@coderabbitai review`, which works even when auto review is disabled. This is bounded by `CODERABBIT_RATE_LIMIT_MAX_RETRIES`, shared with the rate-limit retry path so there is a single knob for total nudge attempts. A separate `@coderabbitai resume` is posted for the pause banner.
 
+**"Already reviewed the last commit" refusal (#1591).** CodeRabbit can answer a `@coderabbitai review` trigger with `Action not completed — Already reviewed the last commit` for a head it never reviewed. The loop does not count that comment as review activity. When it answers a head with no review bound to it, the loop posts `@coderabbitai full review` — the only verb that clears the refusal — once per refusal comment (tracked by comment id). Each accepted post spends one slot of the same `CODERABBIT_RATE_LIMIT_MAX_RETRIES` cap; a failed post spends nothing and is bounded by the wait budget. The retrigger is held while a rate limit is live or unreadable, and a full review that is itself quota-refused gives its slot back. The `Action not completed — Review rate limited` wrapper is a different state and is never answered with `full review`.
+
 ### Step 7.2 — Detect review completion
 
 CodeRabbit signals completion by posting a review (typically `COMMENTED` or `CHANGES_REQUESTED`) on the PR after analyzing the pushed commit.

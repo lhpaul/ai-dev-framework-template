@@ -540,11 +540,17 @@ branch_prefix() {
   case "$1" in
     spec/*) printf 'spec\n' ;;
     implementation-plan/*) printf 'implementation-plan\n' ;;
-    feature/*) printf 'feature\n' ;;
+    # feat/* is an alias of feature/* (#1401): one token keeps every consumer
+    # `case` (cleanup, reviewer, next-action) correct without per-site edits.
+    feature/*|feat/*) printf 'feature\n' ;;
     refactor/*) printf 'refactor\n' ;;
     fix/*) printf 'fix\n' ;;
     hotfix/*) printf 'hotfix\n' ;;
     release/*) printf 'release\n' ;;
+    # backport/* is its own class with implementation-branch behavior (#2158,
+    # Option A): consumers list `backport` beside feature|refactor|fix|hotfix.
+    # A bare `backport/` (empty remainder) stays unknown.
+    backport/?*) printf 'backport\n' ;;
     *) printf 'unknown\n' ;;
   esac
 }
@@ -553,7 +559,7 @@ reviewer_for_branch() {
   case "$(branch_prefix "$1")" in
     spec) printf 'spec-reviewer\n' ;;
     implementation-plan) printf 'implementation-plan-reviewer\n' ;;
-    feature|refactor|fix|hotfix) printf 'code-reviewer\n' ;;
+    feature|refactor|fix|hotfix|backport) printf 'code-reviewer\n' ;;
     *) printf 'none\n' ;;
   esac
 }
@@ -4905,6 +4911,62 @@ workflow_review_evidence_ledger_proof() {
   rm -f "$tmp"
   printf '%s' "$verified" | jq -e '.verified == true' >/dev/null 2>&1 || return 1
   printf '%s' "$verified"
+}
+
+# Human override of a local-ai-reviewer verdict (#2116). A human records the
+# decision as a PR conversation comment whose FIRST line is exactly:
+#
+#   <!-- reviewer-loop-human-override:v1 {"platform":"local-ai-reviewer","head":"<40-hex sha>","reason":"<why>"} -->
+#
+# The override is valid only when all of these hold at read time:
+#   - platform is local-ai-reviewer (the only platform this override covers);
+#   - head equals the CURRENT PR head passed by the caller (a push re-arms
+#     the reviewer, because the old marker names another head);
+#   - reason is a non-empty string, and an optional "by" equals the author;
+#   - the author is a GitHub User (not a Bot/App) whose live repository
+#     permission is admin, maintain or write.
+# The marker must open the comment, so a summary or doc quoting it does not
+# count. Agents never post this marker; it is a human decision. The reason is
+# flattened to one line, "<" / ">" become "‹" / "›" and backticks become
+# quotes, so it cannot open an HTML comment, a ledger marker or a code fence
+# where it is echoed.
+# Prints one JSON object {platform, head, by, reason, comment_id, comment_url,
+# created_at} for the newest valid override and returns 0; returns 1 when
+# there is none or anything cannot be read (fail closed).
+workflow_reviewer_human_override_json() {
+  local repo="${1:-}" pr="${2:-}" head="${3:-}" platform="${4:-}"
+  local candidates candidate login permission
+  [ -n "$repo" ] && [[ "$pr" =~ ^[1-9][0-9]*$ ]] || return 1
+  [[ "$head" =~ ^[0-9a-f]{40}$ ]] || return 1
+  [ "$platform" = local-ai-reviewer ] || return 1
+  candidates="$(set -o pipefail; gh api "repos/$repo/issues/$pr/comments" --paginate --slurp 2>/dev/null |
+    jq -c --arg head "$head" --arg platform "$platform" '
+      def trim: gsub("^\\s+|\\s+$"; "");
+      [.[]? | if type == "array" then .[] else . end | select(type == "object")
+        | . as $c
+        | (($c.body // "") | capture("\\A[ \\t\\r\\n]*<!-- reviewer-loop-human-override:v1 (?<json>\\{[^\\n]*\\}) -->[ \\t]*(?:\\r?\\n|\\z)")?) as $m
+        | select($m != null)
+        | ($m.json | try fromjson catch null) as $o
+        | select(($o | type) == "object")
+        | select(($o.platform // "") == $platform and ($o.head // "") == $head)
+        | select((($o.reason // null) | type) == "string" and ($o.reason | trim | length) > 0)
+        | select(($c.user.type // "") == "User" and (($c.user.login // "") | length) > 0)
+        | select((($o.by // $c.user.login) | tostring) == $c.user.login)
+        | {platform: $platform, head: $head, by: $c.user.login,
+           reason: ($o.reason | trim | gsub("[\\r\\n\\t]+"; " ") | gsub("<"; "‹") | gsub(">"; "›") | gsub("`"; "\u0027") | .[0:500]),
+           comment_id: ($c.id // null), comment_url: ($c.html_url // ""),
+           created_at: ($c.created_at // "")}]
+      | sort_by(.created_at) | reverse | .[]')" || return 1
+  while IFS= read -r candidate; do
+    [ -n "$candidate" ] || continue
+    login="$(printf '%s' "$candidate" | jq -r '.by // ""')" || continue
+    [ -n "$login" ] || continue
+    permission="$(gh api "repos/$repo/collaborators/$login/permission" --jq '.permission // ""' 2>/dev/null)" || continue
+    case "$permission" in
+      admin|maintain|write) printf '%s\n' "$candidate"; return 0 ;;
+    esac
+  done <<<"$candidates"
+  return 1
 }
 
 # Shared loop/readiness decision. The caller authenticates the request and

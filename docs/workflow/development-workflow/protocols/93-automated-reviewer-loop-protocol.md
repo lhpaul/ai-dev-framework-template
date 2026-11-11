@@ -396,6 +396,7 @@ local reviewer still owes a pass when evidence is stale.
 | `failed_for_head` | A prior pass failed on this head; refusing without dispatch |
 | `head_moved_during_pass` | Live PR head does not match `loop_head_sha` on a proceed path. This includes a clean second pass whose head then moved, and also `not_required` / `no_local_reviewer` paths that never dispatched a pass because the live-head re-read failed the equality test. The cycle still uses aggregate `REASON=head_moved_during_run`. |
 | `local_pass_unavailable` | Pass skipped, escalated, unparseable, or clean without current-head `REVIEWED_HEAD` evidence |
+| `human_override` | A valid human override for `loop_head_sha` stands in for the pass (see below); the reviewer is not run |
 
 After a pass returns `RESULT=clean`, the guard verifies the pass output's
 `REVIEWED_HEAD` classifies as current on `loop_head_sha` (via
@@ -429,6 +430,65 @@ counts, exhausted per-run/lifetime caps, or unverified persistence prevent
 reviewer dispatch. A clean result in the final admitted slot can still proceed.
 Changing run ID resets only the per-run axis; changing SHA resets neither.
 
+### Human override of a local-ai-reviewer verdict (#2116)
+
+A human with write access can overrule `local-ai-reviewer` for **one head**,
+for example when it keeps blocking on a doctrine gap the human has judged. The
+decision is a PR conversation comment whose **first line** is the marker:
+
+```text
+<!-- reviewer-loop-human-override:v1 {"platform":"local-ai-reviewer","head":"<full 40-character head SHA>","reason":"<why the finding is overruled>"} -->
+```
+
+Free text may follow on later lines. The override is valid only when all of
+these hold when the loop or readiness reads it:
+
+- `platform` is `local-ai-reviewer`. No other platform can be overridden, and
+  the marker never acknowledges PR-Agent verification items or a PR-Agent
+  `escalate` verdict.
+- `head` equals the current PR head. A new push re-arms the reviewer, because
+  the old marker names another head.
+- `reason` is a non-empty string. An optional `by` field must equal the
+  comment author.
+- The author is a GitHub user (not a bot or app) whose live repository
+  permission is `admin`, `maintain` or `write`.
+
+The marker must open the comment, so a summary or document that quotes it does
+not count. When several valid markers name the head, the newest wins.
+
+Agents never post this marker, even when they run on the owner's token. It is
+the human's decision, and the loop reads it without ever writing it.
+
+With a valid override, the loop does not run `local-ai-reviewer` on that head
+and reports it as `RESULT=skipped`, `REASON=human_override`, plus
+`REVIEWED_HEAD`, `HUMAN_OVERRIDE_BY`, `HUMAN_OVERRIDE_HEAD`,
+`HUMAN_OVERRIDE_REASON` and `HUMAN_OVERRIDE_JSON`. That covers both the
+platform dispatch and the second local pass, including after a failed local
+review on the head (`LOCAL_SECOND_PASS_REASON=human_override`). A skip does not
+turn a clean aggregate into a failure.
+
+Audit trail: the ledger record for `local-ai-reviewer` carries
+`raw_reason: "human_override"` and a `human_override` object (who, head,
+reason, comment). The summary comment adds a **Human override:** section
+naming the platform, head, author and reason.
+
+Readiness does not trust that record on its own. `apply-readiness-labels.sh`
+(the ledger adapter) and `item-completion-self-check.sh`
+(`pull_request.local_reviewer_head`) accept a `skipped` / `human_override`
+record only when it names the current head **and** a valid live marker still
+exists for that head. A removed marker, a revoked permission or a new head
+refuses as before. Any other `skipped` reason, such as
+`LOCAL_AI_REVIEWER_DISABLED=1` (`disabled_by_config`), still refuses readiness.
+
+If PR-Agent verification needs a local-ai-reviewer pass and cannot get one,
+because the reviewer is not configured, is disabled, or already failed on the
+head without `--retry-local-review-head`, the PR-Agent platform escalates
+with `REASON=pr_agent_verification_requires_local_reviewer` and a
+`HUMAN_ACTION` line, not `pr_agent_ambiguous_review` (which means PR-Agent
+output could not be classified). This path is latent while
+`apply-readiness-labels.sh --inspect-pr-agent` reports
+`verification_only: false` (since #2069), and the override does not satisfy it.
+
 ### Published evidence and verification
 
 The local reviewer receives the complete PR body and every issue-comment page
@@ -443,14 +503,26 @@ workflow bookkeeping headings are excluded from the fingerprint to avoid a
 summary invalidating itself; those comments cannot be proof sources. API or
 pagination failure leaves context unavailable.
 
-For a structurally recognized PR-Agent ticket request requiring further
-verification, the configured local reviewer must verify every requested item
-against eligible body/comment sources. Its clean ordinary/strict review and
-`review_evidence_verification.v1` proof must match the repository/PR/head snapshot
-and selected authenticated request. Only compact proof metadata is persisted
-in the existing trusted reviewer-loop ledger. Readiness independently checks
-current context and trusted author/write permission. Independent code/security
-findings, human decisions, malformed or unknown statuses remain blocking.
+Ticket-analysis exception (#2064, #2154): recognized, structurally valid
+PR-Agent ticket analysis (Fully compliant, Partially compliant, Not compliant,
+PR Code Verified) is informational. A verification request confined to that
+validated section needs no local ticket proof and does not require a
+`review_evidence_verification.v1` record; `apply-readiness-labels.sh
+--inspect-pr-agent` reports `verification_only: false` for it, as
+[`integrations/pr-agent.md`](../integrations/pr-agent.md) describes. Unknown
+status, malformed, duplicate, empty or truncated ticket analysis still
+escalates as `pr_agent_ambiguous_review`; the exception never certifies that an
+epic is complete.
+
+For any other PR-Agent verification request, the configured local reviewer must
+verify every requested item against eligible body/comment sources. Its clean
+ordinary/strict review and `review_evidence_verification.v1` proof must match
+the repository/PR/head snapshot and selected authenticated request. Only
+compact proof metadata is persisted in the existing trusted reviewer-loop
+ledger. Readiness independently checks current context and trusted author/write
+permission. Independent code/security findings, human decisions, malformed or
+unknown statuses remain blocking, as do verification requests, unavailable or
+malformed evidence outside the validated ticket-analysis section.
 
 **Scope note**: This pre-flight checks `review.on_draft.github` and
 `review.on_ready.github` (external reviewers used by Protocol 93 / Step 7). The

@@ -28,14 +28,59 @@ review:
 ```
 
 Set the local command in the runner environment when you need a custom command.
-When `LOCAL_AI_REVIEWER_COMMAND` is unset, `local-ai-reviewer.sh` defaults to
-the bundled Codex preset at
-`scripts/development-workflow/local-codex-review-command.sh` (requires the
-`codex` CLI on `PATH` and a working Codex login). Set
-`LOCAL_AI_REVIEWER_BACKEND=http` to use the HTTP Chat Completions preset at
-`scripts/development-workflow/local-http-review-command.sh` instead (`openai_compat` remains a deprecated alias). Set
-`LOCAL_AI_REVIEWER_DISABLE_DEFAULT=1` to restore the old missing-command
-behavior for tests or minimal environments.
+When `LOCAL_AI_REVIEWER_COMMAND` is unset, `local-ai-reviewer.sh` runs the
+bundled preset of the selected backend:
+
+| Backend | Preset | Needs |
+| --- | --- | --- |
+| `codex` (built-in default) | `scripts/development-workflow/local-codex-review-command.sh` | the `codex` CLI on `PATH` and a working Codex login |
+| `http` (deprecated alias `openai_compat`) | `scripts/development-workflow/local-http-review-command.sh` | a Chat Completions API model, base URL, and key |
+| `claude` | `scripts/development-workflow/local-claude-review-command.sh` | the Claude Code CLI installed and logged in (see [Claude backend](#claude-backend)) |
+
+The backend is chosen in this order; the first rule that applies wins:
+
+1. `LOCAL_AI_REVIEWER_COMMAND` is used as is. No preset or backend setting
+   applies.
+2. `LOCAL_AI_REVIEWER_DISABLE_DEFAULT=1` leaves no command, so the run
+   escalates as `missing_command` (the old behavior, for tests or minimal
+   environments).
+3. A non-empty `LOCAL_AI_REVIEWER_BACKEND` chooses the backend for this
+   machine or run.
+4. A non-empty `review.local_ai_reviewer.backend` in the shared
+   `.ai-dev-workflow.yaml` chooses the repository default.
+5. Otherwise the backend is `codex`.
+
+An empty value counts as not set. `LOCAL_AI_REVIEWER_DISABLED=1` is checked
+before all of this and still reports Skipped. A repository makes Claude its
+default without patching any script:
+
+```yaml
+review:
+  local_ai_reviewer:
+    backend: claude
+```
+
+The shared default is read from the workflow configuration the reviewer
+receives for the run. Under `pr-review-loop.sh` that is the pull request base
+branch's copy of `.ai-dev-workflow.yaml`, so a pull request that adds or
+changes the key is still reviewed with the backend its base selects; the
+change applies to later pull requests once it is merged. A direct run reads
+`AI_DEV_WORKFLOW_CONFIG_FILE` when it names a file, else the tooling
+checkout's `.ai-dev-workflow.yaml`. A missing, unreadable, or unparseable file
+counts as not set (with a `WARN: configuration unreadable` line when the file
+exists but cannot be decoded), so Codex runs. The private
+`.ai-dev-workflow.local.yaml` is never read for the backend; use
+`LOCAL_AI_REVIEWER_BACKEND` for a per-developer choice.
+
+An unknown backend name stops the run as Reviewer failed / `invalid_backend`,
+never falling back to another backend. The diagnostic names only the key that
+supplied it and never echoes the value:
+`ERROR: configuration validation error; key=LOCAL_AI_REVIEWER_BACKEND` for the
+environment selection, and
+`ERROR: configuration validation error; key=review.local_ai_reviewer.backend`
+for the shared default (which also rejects a non-string value or a name with
+characters outside `A-Z`, `a-z`, `0-9`, `_`, and `-`). Backend names are case
+sensitive.
 
 <!-- workflow-shell-contract: bash-zsh -->
 ```bash
@@ -51,6 +96,11 @@ export LOCAL_AI_REVIEWER_API_BASE_URL='https://api.deepseek.com'
 export LOCAL_AI_REVIEWER_API_KEY="$DEEPSEEK_API_KEY"
 # Prefer LOCAL_AI_REVIEWER_API_BASE_URL over a global OPENAI_BASE_URL fallback
 # so an unrelated OpenAI SDK env does not silently redirect review traffic.
+
+# Claude Code CLI backend (uses your existing Claude login; no API key):
+export LOCAL_AI_REVIEWER_BACKEND='claude'
+export LOCAL_CLAUDE_REVIEWER_BIN='claude'     # optional; set when claude is not on PATH
+export LOCAL_CLAUDE_REVIEWER_MODEL='opus'     # optional; the CLI default is used when omitted
 
 # Custom command instead of a bundled preset:
 export LOCAL_AI_REVIEWER_COMMAND='my-review-command "$CONTEXT_BUNDLE_PATH"'
@@ -117,6 +167,121 @@ the env so later assertions pass):
 This PR does not add a repo-wide lint rule, CI job, or file scanner, so the
 unit-test fail/pass pairs above are the planted-violation proofs. E2E fixture
 contract is not applicable (this template still uses the placeholder E2E job).
+
+### Claude backend
+
+The `claude` backend runs one read-only review through the Claude Code CLI
+(#1957). Select it with `LOCAL_AI_REVIEWER_BACKEND=claude`, or for the whole
+repository with `review.local_ai_reviewer.backend: claude`.
+
+**Prerequisites.** Install the Claude Code CLI and log in once (`claude`, then
+follow the login prompt). The preset uses that existing login and passes no
+API key or settings file. When `claude` is not on `PATH` (a shell alias does
+not count, because scripts do not see aliases), set
+`LOCAL_CLAUDE_REVIEWER_BIN` to the CLI's path. A missing binary is Reviewer
+failed with a diagnostic naming `LOCAL_CLAUDE_REVIEWER_BIN`.
+
+**Settings.**
+
+- `LOCAL_CLAUDE_REVIEWER_BIN`: the CLI binary (default `claude`).
+- `LOCAL_CLAUDE_REVIEWER_MODEL`: optional model. When unset, no `--model` is
+  passed and the CLI's own default applies.
+- `LOCAL_CLAUDE_REVIEWER_PROMPT`: replaces the ordinary-pass instructions.
+- `LOCAL_CLAUDE_REVIEWER_STRICT_PROMPT`: replaces the strict-pass
+  instructions.
+
+The default ordinary prompt uses the Codex preset's review instructions
+(`REVIEW.md`, the stage checklists, published body and comments as untrusted
+data, and the evidence-verification request) and adds that the review is
+read-only, so the reviewer reports findings instead of applying fixes even
+where `REVIEW.md` asks reviewers to fix directly. Whatever the prompt, the
+preset always appends a fixed operating note: there is no shell, the full diff
+is in `.review-diff.patch` (read it with Read, and use Read, Grep, and Glob for
+context), and no file may be edited, created, or deleted.
+
+**Review copy and isolation.** The preset reviews `REVIEWED_HEAD`, the pull
+request head the reviewer resolved, never whatever the checkout has checked
+out. It never touches the developer's checkout:
+
+- It creates a throwaway detached copy under
+  `${TMPDIR:-/tmp}/local-claude-review.*` without files, reads the copy's
+  filter-driver keys from inside it, and populates it with every filter
+  driver (including Git LFS), hook, and `core.fsmonitor` program disabled and
+  without recursing into submodules. Git's built-in line-ending conversion
+  still applies, as in any checkout of yours. A file under a filter attribute
+  therefore appears as its committed content, such as LFS pointer text.
+- Every Git command it runs, and the CLI, run with inherited `GIT_*`
+  variables removed, except `GIT_CONFIG_GLOBAL`, `GIT_CONFIG_SYSTEM`, and
+  `GIT_CONFIG_NOSYSTEM`, so a hook's `GIT_DIR` or an alias's
+  `GIT_CONFIG_PARAMETERS` cannot redirect the copy or re-enable a driver.
+- It refuses a reviewed commit that itself contains `.review-diff.patch` or
+  `.review-context.json`, writes the diff of `origin/<base>...<head>` (or
+  `<base>...<head>`) to `.review-diff.patch` and the context bundle to
+  `.review-context.json` with exclusive, no-follow creation, and refuses an
+  empty or uncomputable diff.
+- `REVIEW.md`, `AGENTS.md`, and other agent guidance stay in the copy.
+- The CLI runs with `--setting-sources ""` (no user, project, or local
+  settings, so no hooks, plugins, or permission allowlists),
+  `--strict-mcp-config` (no MCP servers), `--no-session-persistence`, and
+  `--tools`/`--allowedTools` `Read,Grep,Glob` (no shell, edit, write, or
+  network tools), with `CLAUDE_CODE_DISABLE_GIT_INSTRUCTIONS=1` so its
+  startup `git status` cannot start a filter driver.
+- A raw-byte manifest of every entry in the copy is taken after the prepared
+  files are placed and again after the CLI exits. Any difference, or an entry
+  that cannot be read, discards the output as Reviewer failed ("review copy
+  modified").
+- Only one complete JSON object with `result` exactly `clean` or
+  `needs_fixes` (or, in a strict pass, the expected `mode` marker) is
+  forwarded, with `reviewed_head` stamped by the preset. Anything else is
+  Reviewer failed, never Clean.
+
+The copy is removed on every exit, including a stop at the wait budget. A run
+killed outright (`SIGKILL`) can leave a `local-claude-review.*` directory and a
+stale `git worktree` entry. Neither affects later reviews or your checkout.
+To tidy up, delete the leftover directory and run `git worktree prune`; the
+preset never prunes, because that could remove another run's entry.
+
+**Budget.** One Claude pass takes about 900 s. A direct run whose backend
+resolution selected the Claude preset, with no `--timeout` and no
+`LOCAL_AI_REVIEWER_TIMEOUT`, gets 900 s and prints
+`INFO: local AI reviewer timeout defaulted to 900s for the bundled Claude preset`.
+An explicit `LOCAL_AI_REVIEWER_COMMAND` that names
+`local-claude-review-command.sh` is not a backend selection and keeps 300 s,
+so pass `--timeout 900` with it:
+
+<!-- workflow-shell-contract: bash-zsh -->
+```bash
+LOCAL_AI_REVIEWER_COMMAND="$PWD/scripts/development-workflow/local-claude-review-command.sh" \
+  ./scripts/development-workflow/local-ai-reviewer.sh <pr-number> <owner> <repo> \
+  --repo-root "$PWD" --timeout 900
+```
+
+Under `pr-review-loop.sh` the loop always passes its own budget:
+`review.wait_budgets.local-ai-reviewer`, or 1200 s by default, on every branch
+and for every backend. On `spec/*` and `implementation-plan/*` branches the
+strict contract pass shares that budget with an ordinary pass of about 900 s,
+so raise `review.wait_budgets.local-ai-reviewer` (for example to 2100) when
+you use the Claude backend with strict checks.
+
+**Independence caveat.** A Claude reviewer may share a model family with the
+agents that wrote the change, so a Clean result is weaker independent
+evidence. Human review keeps its full weight, especially on security,
+authorization, and data-migration changes.
+
+**Migration from a local Claude patch.** A consumer that patched
+`local-ai-reviewer.sh` to add a Claude backend or change the default (for
+example MOME issue 3814) loses that patch when it syncs this template, and the
+template's `local-claude-review-command.sh` replaces a local file with the same
+name. To keep Claude as the repository default after syncing, set
+`review.local_ai_reviewer.backend: claude` in `.ai-dev-workflow.yaml` and merge
+it to the base branch; it applies to later pull requests. Existing
+`LOCAL_CLAUDE_REVIEWER_*` settings keep working; set
+`LOCAL_CLAUDE_REVIEWER_MODEL` to keep a pinned model, because the template uses
+the CLI default. Unlike such a patch, the template keeps `REVIEW.md` and agent
+guidance in the review copy. A patch that raised the documentation-branch wait
+for local-ai-reviewer is no longer needed, because local-ai-reviewer already
+gets 1200 s on every branch. The sync migration note in `sync-manifest.yaml`
+lists the same steps.
 
 The command runs under `sh -c` with these environment variables:
 
@@ -186,6 +351,11 @@ call. The ordinary-pass bundle file is never rewritten.
 
 Use `LOCAL_AI_REVIEWER_DISABLED=1` to intentionally skip the local platform
 with `RESULT=skipped` and `REASON=disabled_by_config`.
+A disabled reviewer is not a readiness pass. To overrule a local-ai-reviewer
+finding for one head, a human with write access posts the head-bound override
+marker described in Protocol 93, "Human override of a local-ai-reviewer
+verdict" (`protocols/93-automated-reviewer-loop-protocol.md`). Agents never
+post it.
 
 Set `LOCAL_AI_REVIEWER_EVIDENCE_FILE=/path/to/file.json` or pass
 `--evidence-file` to `local-codex-reviewer.sh` to persist a local evidence
@@ -374,6 +544,8 @@ The local reviewer fails closed:
 | Condition | Result |
 | --- | --- |
 | Missing `LOCAL_AI_REVIEWER_COMMAND` | `RESULT=escalate`, `REASON=missing_command` |
+| Unknown backend name (`LOCAL_AI_REVIEWER_BACKEND` or `review.local_ai_reviewer.backend`) | `RESULT=escalate`, `REASON=invalid_backend`; the diagnostic names `key=LOCAL_AI_REVIEWER_BACKEND` or `key=review.local_ai_reviewer.backend` and never the value |
+| Claude preset refusal: CLI binary not found, review copy not created or holding a reserved path, empty or uncomputable diff, review copy modified, or no usable verdict | `RESULT=escalate`, `REASON=malformed_output` (Reviewer failed); a forwarded CLI failure excerpt that matches the model-access, credential, quota, or capacity rules is classified by those rules instead |
 | Missing model access | `RESULT=escalate`, `REASON=missing_model_access` |
 | Missing credentials or auth failure | `RESULT=escalate`, `REASON=missing_credentials` |
 | Provider usage/quota refusal (no verdict on stdout) | `RESULT=escalate`, `REASON=quota_exhausted` (optional `QUOTA_RESET_AT`) |

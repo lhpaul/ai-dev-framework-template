@@ -19,6 +19,7 @@
 #   test-pr-review-loop-failure-paths-4.sh
 #   test-pr-review-loop-release-bugbot.sh
 #   test-pr-review-loop-pr-agent-coderabbit.sh
+#   test-pr-review-loop-coderabbit-refusal.sh
 #   test-pr-review-loop-staged-gates.sh
 #   test-pr-review-loop-no-verdict-yet.sh
 #
@@ -244,6 +245,42 @@ run_test "1789_T1.7_doc_branch_not_extended" "1200 default none" "$(reviewer_wai
 branch_name="feature/1789-x"
 changed_files_count=-1
 unset large_diff_threshold large_diff_max_wait
+
+# --- 1957 T-L2 (AC-11): the local-ai-reviewer loop budget is the same for
+# every backend; selecting claude changes neither branch handling nor sources.
+_1957_saved_backend="${LOCAL_AI_REVIEWER_BACKEND-}"
+export LOCAL_AI_REVIEWER_BACKEND=claude
+# shellcheck disable=SC2034  # read by functions sourced from pr-review-loop.sh
+large_diff_threshold=50
+# shellcheck disable=SC2034  # read by functions sourced from pr-review-loop.sh
+large_diff_max_wait=2400
+changed_files_count=80
+config_file="$_1789_none_cfg"
+branch_name="spec/x"
+run_test "1957_T-L2_claude_spec_default" "1200 default none" "$(reviewer_wait_budget_resolve local-ai-reviewer)"
+branch_name="implementation-plan/x"
+run_test "1957_T-L2_claude_plan_default" "1200 default none" "$(reviewer_wait_budget_resolve local-ai-reviewer)"
+branch_name="feature/1957-x"
+run_test "1957_T-L2_claude_feature_large_diff" "2400 default large_diff" "$(reviewer_wait_budget_resolve local-ai-reviewer)"
+config_file="$(_1789_cfg l2_configured 'review:
+  wait_budgets:
+    local-ai-reviewer: 1500')"
+branch_name="implementation-plan/x"
+run_test "1957_T-L2_claude_plan_configured" "1500 configured none" "$(reviewer_wait_budget_resolve local-ai-reviewer)"
+branch_name="feature/1957-x"
+run_test "1957_T-L2_claude_feature_configured_large_diff" "2400 configured large_diff" "$(reviewer_wait_budget_resolve local-ai-reviewer)"
+# shellcheck disable=SC2034  # read by functions sourced from pr-review-loop.sh
+max_wait_override=40
+run_test "1957_T-L2_claude_override_not_lengthened" "40 override none" "$(reviewer_wait_budget_resolve local-ai-reviewer)"
+unset max_wait_override
+if [ -n "$_1957_saved_backend" ]; then
+  export LOCAL_AI_REVIEWER_BACKEND="$_1957_saved_backend"
+else
+  unset LOCAL_AI_REVIEWER_BACKEND
+fi
+unset _1957_saved_backend large_diff_threshold large_diff_max_wait
+changed_files_count=-1
+branch_name="feature/1789-x"
 
 # --- Per-run cache and PLATFORM_WAIT_BUDGETS value
 branch_name="implementation-plan/x"

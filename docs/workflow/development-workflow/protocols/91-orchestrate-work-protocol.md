@@ -278,8 +278,9 @@ escalated, waiting on human review, waiting on merge, or post-merge cleanup
 complete — run the completion self-check and paste its
 `## Ground-Truth Completion Verification` section into the summary:
 
+<!-- workflow-shell-contract: bash -->
 ```bash
-./scripts/development-workflow/item-completion-self-check.sh \
+bash ./scripts/development-workflow/item-completion-self-check.sh \
   --issue <issue-number> \
   --branch <workflow-branch> \
   --stage <spec|plan|implementation|cleanup> \
@@ -291,8 +292,55 @@ complete — run the completion self-check and paste its
   [--forbid-label needs-fixes] \
   [--require-review-summary true] \
   [--require-review-threads true] \
-  [--expected-tracker-status "<status>"]
+  [--expected-tracker-status "<status>"] \
+  [--followup <issue>=<fixed|deferred>]...
 ```
+
+**Follow-up issue disposition (issue #1331).** Before the merge step and in every
+terminal summary, enumerate every follow-up issue filed during this item's run
+and classify each exactly once, passing one `--followup <issue>=<class>` per
+issue:
+
+- `fixed` — **Fixed in this PR**: the fix is present in the PR diff. Only these
+  issues are eligible to close on merge (via a closing keyword in the PR body
+  that this PR actually earns).
+- `deferred` — **Deferred to future PR**: filed as future work. It must remain
+  open; merging this PR does not close it, and no closing keyword for it may
+  appear in the PR body, the commit messages, or any close/cleanup step.
+
+Never infer the class from the issue being a follow-up, from the epic it
+belongs to, or from the runner's completion plan. Classify from the PR diff. The
+merge step and `post-merge-cleanup` close only `fixed` issues: the runner must
+not name a `deferred` issue in any closing keyword, and must not run an explicit
+close for it. The helper detects violations rather than preventing them. It reads
+each `deferred` issue live and reports a `discrepancy` when it is closed or when
+the PR title, body or commit messages close it (same closing-keyword reading
+`post-merge-cleanup.sh` uses, via `closing-keyword-lib.sh`), and
+`unavailable_required` when its state or the PR text cannot be read. The helper
+cannot know which follow-ups were filed, so enumerating all of them is the
+runner's obligation.
+The helper's `followup.#<N>` rows (each issue with its disposition, and deferred
+issues confirmed still open) are part of the pasted
+`## Ground-Truth Completion Verification` section and therefore part of the PR
+merge completion record. Run the check again after merge for the cleanup claim
+so continued-open status is verified against the merged state. A run with filed
+follow-ups that omits `--followup` for any of them has not completed this gate.
+
+Each `followup.#<N>` row resolves as follows. Follow-up issue numbers are read in
+the tracker repository (the hub repository in `workflow_hub` mode, otherwise the
+PR's repository); in hub mode only a qualified `<hub owner/repo>#N` closing
+reference counts, because a bare `#N` names a product-repository issue.
+
+| Disposition | Issue state | PR title/body/commits scan | Result | Required next action |
+| --- | --- | --- | --- | --- |
+| `fixed` | any | any (`present`/`absent`/not run) | `verified`, listed as eligible to close | Close on merge only through the PR's own closing keyword; confirm the fix is in the diff |
+| `deferred` | `OPEN` | no closing keyword | `verified` | None; keep open, re-check in the cleanup claim |
+| `deferred` | `OPEN` | closing keyword present | `discrepancy` | Remove the keyword from the PR body or commit message before merge; never merge |
+| `deferred` | not `OPEN` | any | `discrepancy` | Stop; reopen only with human direction, record in the summary |
+| `deferred` | unreadable | any | `unavailable_required` | Fix access, rerun; no success claim |
+| `deferred` | `OPEN` | PR text unreadable or scan failed | `unavailable_required` | Rerun; a failed scan is never read as "no closing keyword" |
+| `deferred` | `OPEN` | not run (`--pr` omitted) | `unavailable_required` | Rerun with `--pr`; for the cleanup claim pass the merged PR number |
+| any | n/a | tracker repository unresolvable | `unavailable_required` | Fix repository resolution, rerun |
 
 Every claimed surface in the summary must be `verified`, `not_applicable`, or
 `unavailable_*` with a reason in that section. Use flags that match the state
@@ -4130,9 +4178,14 @@ set -euo pipefail
   evidence.
 - Before reporting post-merge cleanup or tracker reconciliation complete, run
   `item-completion-self-check.sh` for the cleanup claim, using the current base
-  branch (the merged workflow branch should already be deleted), the current
-  base worktree path, `--stage cleanup`, and
-  `--expected-tracker-status "<expected status>"`. Paste the
+  worktree path, `--stage cleanup`, and
+  `--expected-tracker-status "<expected status>"`. When the item filed
+  follow-ups, also pass `--pr <merged-pr>`, the merged workflow branch as
+  `--branch` (it is verified against the PR head, not the local checkout),
+  `--expected-base <current base branch>`, and one
+  `--followup <issue>=<fixed|deferred>` per follow-up issue, so every
+  `deferred` issue is confirmed still open. Without follow-ups, omit those
+  flags and use the current base branch as `--branch`, as before. Paste the
   `## Ground-Truth Completion Verification` section into the cleanup report.
   Any `discrepancy` or `unavailable_required` result keeps cleanup non-terminal.
 - If manual cleanup is required, clean up local branches and worktrees associated with the merged PR:

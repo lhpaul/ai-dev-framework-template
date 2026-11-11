@@ -553,6 +553,55 @@ run_contains "dirty_no_base_tracker_processing_still_runs" \
   "Issue #1391 is already CLOSED, skipping close." \
   "$dirty_nobase_output"
 
+# #1450: the caller is on an unrelated branch with uncommitted tracked changes
+# that a base checkout would overwrite. Cleanup must not abort on the checkout:
+# it fast-forwards the base ref without checking it out, leaves the caller's
+# branch and edit alone, and still deletes the merged local and remote branch.
+dirty_other_branch="feature/1450-dirty-other-branch"
+dirty_other_repo="$(make_repo dirty-other "$dirty_other_branch" yes)"
+install_cleanup_helper "$dirty_other_repo"
+"$REAL_GIT" -C "$dirty_other_repo" checkout -q -b ops/current
+printf 'current\n' >"$dirty_other_repo/README.md"
+"$REAL_GIT" -C "$dirty_other_repo" commit -q -am "diverge README on current branch"
+dirty_other_pusher="$TMP_ROOT/dirty-other-pusher"
+"$REAL_GIT" clone -q -b develop "$TMP_ROOT/dirty-other.git" "$dirty_other_pusher"
+"$REAL_GIT" -C "$dirty_other_pusher" -c user.email=fixture@example.com -c user.name=Fixture \
+  commit -q --allow-empty -m "advance develop"
+"$REAL_GIT" -C "$dirty_other_pusher" push -q origin develop
+dirty_other_remote_tip="$("$REAL_GIT" -C "$dirty_other_pusher" rev-parse HEAD)"
+printf 'uncommitted edit\n' >"$dirty_other_repo/README.md"
+set +e
+dirty_other_output="$(
+  cd "$dirty_other_repo" &&
+    GH_MERGED_HEAD="$dirty_other_branch" \
+    GH_MERGED_PR=1450 \
+    WORKFLOW_TARGET_GITHUB_REPO=example/repo \
+    PATH="$stub_bin:$PATH" \
+    "$dirty_other_repo/scripts/development-workflow/post-merge-cleanup.sh" \
+      --base develop \
+      --pr 1450 \
+      "$dirty_other_branch" 2>&1
+)"
+dirty_other_status=$?
+set -e
+run_test "dirty_other_exit_status" "0" "$dirty_other_status"
+run_contains "dirty_other_checkout_skipped" "BASE_CHECKOUT_SKIPPED=dirty_other_branch" "$dirty_other_output"
+run_test "dirty_other_base_fast_forwarded" "$dirty_other_remote_tip" \
+  "$("$REAL_GIT" -C "$dirty_other_repo" rev-parse develop)"
+run_contains "dirty_other_done_message" "stayed on 'ops/current' with its uncommitted changes; local branch '$dirty_other_branch' has been removed locally" "$dirty_other_output"
+run_test "dirty_other_caller_stays_on_branch" "ops/current" \
+  "$("$REAL_GIT" -C "$dirty_other_repo" symbolic-ref --quiet --short HEAD)"
+run_test "dirty_other_edit_survives" "uncommitted edit" "$(cat "$dirty_other_repo/README.md" 2>/dev/null || true)"
+run_test "dirty_other_local_branch_removed" "no" "$(
+  if "$REAL_GIT" -C "$dirty_other_repo" show-ref --quiet "refs/heads/$dirty_other_branch"; then
+    printf 'yes'
+  else
+    printf 'no'
+  fi
+)"
+run_contains "dirty_other_remote_deleted" "REMOTE_DELETE_RESULT=deleted" "$dirty_other_output"
+run_test "dirty_other_remote_ref_absent" "" "$("$REAL_GIT" -C "$dirty_other_repo" ls-remote --heads origin "$dirty_other_branch")"
+
 # Step 7a review: a local base that is ahead of origin (unpushed commits) must
 # not stop cleanup, just as `git pull --ff-only` does not.
 ahead_branch="feature/1392-base-ahead"
@@ -817,6 +866,64 @@ run_test "workflow_hub_journal_owner_binding" "$(cd "$hub_repo" && pwd -P)" "$(j
 run_test "workflow_hub_product_worktree_one_session_completed" "Completed" "$(jq -r '.outcome' "${hub_budget_states[0]}")"
 run_test "workflow_hub_product_worktree_declared_participants" "true" "$(jq -r --arg root "$(cd "$hub_product_repo" && pwd -P)" '.participants | index($root)!=null' "${hub_budget_states[0]}")"
 
+# #2158: backport/* is an implementation branch. In a workflow hub, cleanup
+# (and --inspect-targets, which the merge budget runs) must require the product
+# repository selection instead of treating the branch as hub-owned.
+run_fails_contains \
+  "workflow_hub_backport_requires_product_repo" \
+  "product repository selection is required for implementation branch cleanup" \
+  env GH_MERGED_HEAD="backport/hotfix/86-carry" GH_MERGED_PR=86 \
+    PATH="$stub_bin:$PATH" \
+    "$HELPER" --repo-root "$hub_repo" --base develop --pr 86 "backport/hotfix/86-carry"
+
+# #2158 positive proof: with the product repository selected, the same
+# backport/* branch resolves to the product worktree and its branch is removed.
+backport_product_branch="backport/hotfix/87-carry"
+backport_product_repo="$(make_repo backport-product "$backport_product_branch" yes)"
+backport_product_worktree="$TMP_ROOT/backport-product-worktree"
+"$REAL_GIT" -C "$backport_product_repo" worktree add -q "$backport_product_worktree" "$backport_product_branch"
+backport_hub_repo="$TMP_ROOT/workflow-hub-backport"
+"$REAL_GIT" init -q -b develop "$backport_hub_repo"
+"$REAL_GIT" -C "$backport_hub_repo" config user.email "fixture@example.com"
+"$REAL_GIT" -C "$backport_hub_repo" config user.name "Fixture User"
+cat >"$backport_hub_repo/.ai-dev-workflow.yaml" <<BACKPORT_HUB_CONFIG
+schema_version: 2
+mode: workflow_hub
+workflow_hub:
+  product_repos:
+    - name: mobile-app
+      github_repo: example/repo
+      default_branch: develop
+      role: mobile
+      scope: fixture app
+      tracker:
+        component: mobile
+BACKPORT_HUB_CONFIG
+cat >"$backport_hub_repo/.ai-dev-workflow.local.yaml" <<BACKPORT_HUB_LOCAL_CONFIG
+product_repos:
+  - name: mobile-app
+    local_path: "$backport_product_worktree"
+BACKPORT_HUB_LOCAL_CONFIG
+"$REAL_GIT" -C "$backport_hub_repo" add .ai-dev-workflow.yaml .ai-dev-workflow.local.yaml
+"$REAL_GIT" -C "$backport_hub_repo" commit -q -m "hub config"
+backport_product_output="$(
+  GH_MERGED_HEAD="$backport_product_branch" \
+  GH_MERGED_PR=87 \
+  PATH="$stub_bin:$PATH" \
+  "$HELPER" --repo-root "$backport_hub_repo" --repo mobile-app --base develop --pr 87 "$backport_product_branch"
+)"
+run_contains \
+  "workflow_hub_backport_reentry_uses_product_base_worktree" \
+  "CLEANUP_REPO_ROOT=$backport_product_repo" \
+  "$backport_product_output"
+run_test "workflow_hub_backport_removes_product_branch" "no" "$(
+  if "$REAL_GIT" -C "$backport_product_repo" show-ref --quiet "refs/heads/$backport_product_branch"; then
+    printf 'yes'
+  else
+    printf 'no'
+  fi
+)"
+
 fail_branch="feature/noissue-delete-fails"
 fail_repo="$(make_repo delete-fails "$fail_branch" yes)"
 fail_bin="$TMP_ROOT/fail-bin"
@@ -895,6 +1002,20 @@ multi_output="$(
 run_contains "branch_issue_still_closed" "Closing issue #1520..." "$multi_output"
 run_contains "body_extra_ref_processed" "Processing issue #1517 from PR #1521" "$multi_output"
 run_contains "extras_announced" "PR #1521 also closes: 1517" "$multi_output"
+
+# #1401: feat/ is an alias of feature/, so cleanup must parse the issue number
+# from the branch and run the implementation-branch tracker/close path.
+feat_branch="feat/1401-alias-cleanup"
+feat_repo="$(make_repo feat-alias "$feat_branch" yes)"
+feat_output="$(
+  GH_MERGED_HEAD="$feat_branch" \
+  GH_MERGED_PR=1402 \
+  GH_ISSUE_STATE=OPEN \
+  WORKFLOW_TARGET_GITHUB_REPO=example/repo \
+  PATH="$stub_bin:$PATH" \
+  "$HELPER" --repo-root "$feat_repo" --base develop --pr 1402 "$feat_branch"
+)"
+run_contains "feat_alias_issue_closed" "Closing issue #1401..." "$feat_output"
 
 commitmsg_branch="fix/1600-commit-ref"
 commitmsg_repo="$(make_repo commitmsg-close "$commitmsg_branch" yes)"

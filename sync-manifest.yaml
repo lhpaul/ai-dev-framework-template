@@ -371,6 +371,26 @@ categories:
 #   applies_if_syncing_from_before - show this note when last_synced_version < this value
 #   manual_steps                  - ordered list of shell commands or instructions the maintainer must run
 migration_notes:
+  - version: "0.51.0"
+    title: "local-ai-reviewer Claude backend replaces local Claude patches"
+    description: >
+      From #1957, local-ai-reviewer.sh ships a bundled claude backend
+      (scripts/development-workflow/local-claude-review-command.sh, Claude Code
+      CLI, read-only, throwaway review copy) and reads a shared default backend
+      from review.local_ai_reviewer.backend in .ai-dev-workflow.yaml. The
+      built-in default stays codex. A consumer that patched local-ai-reviewer.sh
+      to add a Claude backend or change the default loses that patch on sync,
+      the template's local-claude-review-command.sh overwrites a local file
+      with the same name, and the default returns to codex until the shared key
+      is set. Consumers that never patched the reviewer see no change.
+    applies_if_syncing_from_before: "0.51.0"
+    manual_steps:
+      - "Before syncing, look for a local patch to scripts/development-workflow/local-ai-reviewer.sh that adds a claude backend or changes the default backend, and for a local scripts/development-workflow/local-claude-review-command.sh, which the template file with the same name overwrites."
+      - "After syncing, to keep Claude as the repository default, set review.local_ai_reviewer.backend: claude in .ai-dev-workflow.yaml and merge that change to the base branch; pr-review-loop.sh reads the base branch's copy, so it takes effect on later pull requests."
+      - "LOCAL_CLAUDE_REVIEWER_* settings keep working. Set LOCAL_CLAUDE_REVIEWER_MODEL to keep a pinned model, because the template uses the Claude Code CLI's default model."
+      - "REVIEW.md and agent guidance now stay in the review copy; drop any local step that removed them."
+      - "Drop any doc_branch_default_max_wait patch for local-ai-reviewer; local-ai-reviewer already gets 1200 s on every branch."
+      - "Raise review.wait_budgets.local-ai-reviewer when strict checks share the budget with a Claude pass of about 900 s."
   - version: "0.48.5"
     title: "workflow-tests nightly/path-filter; pr-policy drops issue_comment"
     description: >

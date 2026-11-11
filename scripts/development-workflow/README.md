@@ -87,6 +87,7 @@ mid-step. The suites share their preamble through
 | `test-pr-review-loop-failure-paths-1.sh` … `-4.sh` | 13 PR #801 failure paths |
 | `test-pr-review-loop-release-bugbot.sh` | 14–16 release guard and Bugbot |
 | `test-pr-review-loop-pr-agent-coderabbit.sh` | 17 PR-Agent, CodeRabbit, 19, 20, 1648 |
+| `test-pr-review-loop-coderabbit-refusal.sh` | 1591 CodeRabbit "Already reviewed the last commit" refusal recovery (slow: real polling sleeps) |
 | `test-pr-review-loop-staged-gates.sh` | 1649–1692 expensive gate, ledgers, staging |
 | `test-pr-review-loop-no-verdict-yet.sh` | 1789 wait budgets and no-verdict-yet |
 
@@ -790,6 +791,9 @@ What it does:
   or expected.
 - Records external runtime/browser/database claims through explicit
   `--claim <name|required|evidence>` records.
+- Records each filed follow-up issue's disposition through repeatable
+  `--followup <issue>=<fixed|deferred>` (#1331): `deferred` issues must be open
+  and not closed by the PR body; `fixed` issues are listed as eligible to close.
 - Exits non-zero for any `discrepancy` or `unavailable_required` result.
 
 Use this when:

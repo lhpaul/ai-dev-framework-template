@@ -20,6 +20,7 @@
 #   test-pr-review-loop-failure-paths-4.sh
 #   test-pr-review-loop-release-bugbot.sh
 #   test-pr-review-loop-pr-agent-coderabbit.sh
+#   test-pr-review-loop-coderabbit-refusal.sh
 #   test-pr-review-loop-staged-gates.sh
 #   test-pr-review-loop-no-verdict-yet.sh
 #
@@ -2735,6 +2736,50 @@ done
 unset -f _2061_platform_entry
 unset _2061_entry _2061_history _2061_ledger_body _2061_ready_verdict _2061_poll_marker
 unset _2061_request _2061_case _2061_prior _2061_output _2061_local_result _2061_proof_status _2061_expected _2061_expected_dispatch
+# #2116: the latent PR-Agent verification path (unreachable while
+# --inspect-pr-agent reports verification_only=false since #2069) must name
+# its dead end distinctly, with a HUMAN_ACTION, instead of reusing
+# pr_agent_ambiguous_review. The verdict helper is stubbed to reach it.
+eval "_2116_saved_verdict_fn() $(declare -f workflow_pr_agent_evidence_verdict | tail -n +2)"
+workflow_pr_agent_evidence_verdict() { printf 'verification_pending'; }
+_2116_request=$'### Recommended focus areas for review\n**No major issues detected**\n'
+_2116_failed_prior='{"schema":"reviewer_loop_history.v1","entries":[{"result":"needs_fixes","local_second_pass_failed_head":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]}'
+for _2116_case in disabled failed_on_head not_configured; do
+  : >"$_fixture_dir_1946/dispatch"
+  _2061_prior='{"schema":"reviewer_loop_history.v1","entries":[]}'
+  _2061_local_result=clean
+  # shellcheck disable=SC2034 # Read by the sourced production handler.
+  local_review_retry_head_record=""
+  # shellcheck disable=SC2034 # Read by the sourced production handler.
+  repo_review_platforms=(local-ai-reviewer pr-agent)
+  # shellcheck disable=SC2034 # repo_review_platforms is read by the sourced production handler.
+  case "$_2116_case" in
+    disabled) _2061_local_result=skipped ;;
+    failed_on_head) _2061_prior="$_2116_failed_prior" ;;
+    not_configured) repo_review_platforms=(pr-agent) ;;
+  esac
+  _2116_output="$(PATH="$_fixture_dir_1946:$PATH" PR_AGENT_FIXTURE_POLL_MARKER="" PR_AGENT_FIXTURE_BODY="${_fixture_header_1946}${_2116_request}" \
+    run_pr_agent_review 42 feature/42-test 1 0 2>/dev/null || true)"
+  run_test "2116_verification_${_2116_case}_escalates" "RESULT=escalate" "$(printf '%s\n' "$_2116_output" | grep '^RESULT=')"
+  run_test "2116_verification_${_2116_case}_distinct_reason" "pr_agent_verification_requires_local_reviewer" \
+    "$(kv_value_default REASON "$_2116_output" missing)"
+  run_test "2116_verification_${_2116_case}_not_ambiguous" 0 "$(grep -c '^REASON=pr_agent_ambiguous_review$' <<<"$_2116_output" || true)"
+  run_test "2116_verification_${_2116_case}_human_action" present \
+    "$(if grep -Fq -- '--retry-local-review-head aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' <<<"$(kv_value_default HUMAN_ACTION "$_2116_output" "")"; then printf present; else printf absent; fi)"
+  run_test "2116_verification_${_2116_case}_override_not_acknowledgment" present \
+    "$(if grep -Fq 'does not acknowledge PR-Agent verification' <<<"$(kv_value_default HUMAN_ACTION "$_2116_output" "")"; then printf present; else printf absent; fi)"
+done
+# Control: the same stub with a working local reviewer still verifies clean.
+_2061_prior='{"schema":"reviewer_loop_history.v1","entries":[]}'
+_2061_local_result=needs_fixes
+# shellcheck disable=SC2034 # Read by the sourced production handler.
+repo_review_platforms=(local-ai-reviewer pr-agent)
+_2116_output="$(PATH="$_fixture_dir_1946:$PATH" PR_AGENT_FIXTURE_POLL_MARKER="" PR_AGENT_FIXTURE_BODY="${_fixture_header_1946}${_2116_request}" \
+  run_pr_agent_review 42 feature/42-test 1 0 2>/dev/null || true)"
+run_test "2116_verification_local_findings_stay_needs_fixes" "RESULT=needs_fixes" "$(printf '%s\n' "$_2116_output" | grep '^RESULT=')"
+eval "workflow_pr_agent_evidence_verdict() $(declare -f _2116_saved_verdict_fn | tail -n +2)"
+unset -f _2116_saved_verdict_fn
+unset _2116_request _2116_failed_prior _2116_case _2116_output
 run_test "1960_fixture_has_no_unexpected_gh_calls" absent "$([ -e "$_fixture_dir_1946/unexpected-call" ] && printf present || printf absent)"
 rm -rf "$_fixture_dir_1946"
 unset _fixture_dir_1946 _fixture_header_1946 _fixture_ticket_1946 _fixture_focus_1946

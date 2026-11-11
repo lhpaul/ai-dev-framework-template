@@ -355,6 +355,18 @@ pr_selection_output="$(
 run_contains "workflow_pr_requires_repo_selection" "NEXT_ACTION=resolve-repository-selection" "$pr_selection_output"
 run_contains "workflow_pr_selection_required_context" "ACTION_REPOSITORY_KIND=repository_selection_required" "$pr_selection_output"
 
+# #2158: a backport/* PR is an implementation branch, so with no --repo in a
+# workflow hub it must demand product repository selection instead of being
+# classified hub-owned (branch_prefix used to return unknown for backport/*).
+backport_pr_selection_output="$(
+  GH_PR_VIEW_JSON='{"headRefName":"backport/hotfix/123-fix","labels":[],"isDraft":false,"comments":[],"statusCheckRollup":[]}' \
+  PATH="$stub_bin:$PATH" WORKFLOW_SKIP_FETCH=1 "$REPO_ROOT/scripts/development-workflow/workflow-next-action.sh" \
+    --repo-root "$hub_dir" \
+    --pr 123
+)"
+run_contains "backport_pr_requires_repo_selection" "NEXT_ACTION=resolve-repository-selection" "$backport_pr_selection_output"
+run_contains "backport_pr_selection_required_context" "ACTION_REPOSITORY_KIND=repository_selection_required" "$backport_pr_selection_output"
+
 run_fails_contains \
   "workflow_next_action_repo_requires_value" \
   "--repo requires a value." \
@@ -446,6 +458,19 @@ run_contains "workflow_pr_without_repo_hub_only_outcome" "ROUTING_OUTCOME_CODE=h
 run_contains "workflow_pr_without_repo_hub_only_continues" "ROUTING_CONTINUE_ALLOWED=true" "$workflow_pr_output"
 run_contains "workflow_pr_without_repo_hub_owned" "ACTION_REPOSITORY_KIND=hub_owned" "$workflow_pr_output"
 run_contains "workflow_pr_without_repo_no_selection_required" "NEXT_ACTION=resolve-pr-readiness" "$workflow_pr_output"
+
+# #1401: a feat/ branch is an alias of feature/, so a hub-only (Workflow-typed)
+# feat/ PR must resolve its issue number and route hub-only too, not demand a
+# product repository selection.
+feat_workflow_pr_output="$(
+  GH_PR_VIEW_JSON='{"headRefName":"feat/901-routing","labels":[],"isDraft":false,"comments":[],"statusCheckRollup":[]}' \
+  PATH="$stub_bin:$PATH" WORKFLOW_SKIP_FETCH=1 "$REPO_ROOT/scripts/development-workflow/workflow-next-action.sh" \
+    --repo-root "$typed_hub_dir" \
+    --pr 901
+)"
+run_contains "feat_workflow_pr_hub_only_outcome" "ROUTING_OUTCOME_CODE=hub_only" "$feat_workflow_pr_output"
+run_contains "feat_workflow_pr_hub_owned" "ACTION_REPOSITORY_KIND=hub_owned" "$feat_workflow_pr_output"
+run_contains "feat_workflow_pr_no_selection_required" "NEXT_ACTION=resolve-pr-readiness" "$feat_workflow_pr_output"
 
 # A spec or plan PR (or any hub-owned implementation branch) without --repo
 # must resolve directly too: the implementation-only preflight used to run

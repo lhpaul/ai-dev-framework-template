@@ -5,6 +5,8 @@ set -euo pipefail
 SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)"
 # shellcheck source=scripts/development-workflow/workflow-lib.sh
 source "$SCRIPT_DIR/workflow-lib.sh"
+# shellcheck source=scripts/development-workflow/closing-keyword-lib.sh
+source "$SCRIPT_DIR/closing-keyword-lib.sh"
 
 usage() {
   cat <<'EOF'
@@ -16,12 +18,22 @@ Usage:
     [--require-clean true|false] [--require-ci-green true|false] \
     [--require-review-summary true|false] [--require-review-threads true|false] \
     [--tracker-required true|false] [--expected-tracker-status <status>] \
-    [--changed-file-prefix <prefix>] [--claim <name|required|evidence>]
+    [--changed-file-prefix <prefix>] [--claim <name|required|evidence>] \
+    [--followup <issue>=<fixed|deferred>]...
 
 Prints a stable Markdown section headed "## Ground-Truth Completion Verification".
 Rows are marked verified, not_applicable, unavailable_optional,
 unavailable_required, or discrepancy. Any discrepancy or unavailable_required
 surface exits non-zero.
+
+--followup classifies each follow-up issue filed during the item as "fixed"
+(the fix is in this PR's diff; eligible to close on merge) or "deferred"
+(future-work issue; must stay open). A deferred issue that is closed, or that
+the PR body closes with a closing keyword (Closes/Fixes/Resolves #N), is a
+discrepancy. Deferred issues whose state or PR text cannot be read, or checked
+without --pr, are unavailable_required. In workflow_hub mode the issue state is
+read from the tracker (hub) repository and only qualified <hub>#N references
+count as closing it.
 
 For tests or constrained runners, WORKFLOW_SELF_CHECK_TRACKER_STATUS can provide
 the tracker status directly. Set it to __FAIL__ to simulate an unavailable
@@ -55,6 +67,7 @@ changed_file_prefix=""
 expected_labels=()
 forbidden_labels=()
 claims=()
+followups=()
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -142,6 +155,16 @@ while [ "$#" -gt 0 ]; do
     --claim)
       require_option_value "$@"
       claims+=("$2")
+      shift 2
+      ;;
+    --followup)
+      require_option_value "$@"
+      if ! [[ "$2" =~ ^[1-9][0-9]*=(fixed|deferred)$ ]]; then
+        workflow_diagnostic "--followup requires <issue-number>=<fixed|deferred>." >&2
+        usage >&2
+        exit 64
+      fi
+      followups+=("$2")
       shift 2
       ;;
     -h|--help)
@@ -802,11 +825,12 @@ if [ -n "$pr_number" ]; then
                 | select(($entry.platform_results? | type) == "array")
                 | ($entry.platform_results[]? | select(.platform == "local-ai-reviewer")) as $local_result
                 | ($entry.reviewed_heads[]? | select(.platform == "local-ai-reviewer")) as $local_head
-                | {result: ($local_result.result // ""), reviewed_head: ($local_head.reviewed_head // "")}
+                | {result: ($local_result.result // ""), raw_reason: ($local_result.raw_reason // ""),
+                   reviewed_head: ($local_head.reviewed_head // "")}
               ]
               | last
-              | select(.result == "clean")
-              | {reviewed_head}
+              | select(.result == "clean" or (.result == "skipped" and .raw_reason == "human_override"))
+              | {reviewed_head, human_override: (.result == "skipped")}
               // empty
             ')"; then
             # Keep this branch self-contained when completion harnesses load it alone.
@@ -858,6 +882,15 @@ if [ -n "$pr_number" ]; then
               add_row "pull_request.local_reviewer_head" "unavailable_required" "ledger parse failed" "reviewer_loop_history.v1 reviewed_heads"
             elif [ -z "${pr_head_oid:-}" ]; then
               add_row "pull_request.local_reviewer_head" "unavailable_required" "live headRefOid unavailable" "gh pr view headRefOid"
+            elif [ "$ledger_local_head" = "$pr_head_oid" ] &&
+                [ "$(printf '%s\n' "$ledger_local_record" | jq -r '.human_override // false')" = true ]; then
+              # #2116: a human override counts only while its live marker is
+              # still valid for the live head; the ledger record alone does not.
+              if local_override_json="$(workflow_reviewer_human_override_json "$pr_repo" "$pr_number" "$pr_head_oid" local-ai-reviewer)"; then
+                add_row "pull_request.local_reviewer_head" "verified" "human override by @$(printf '%s\n' "$local_override_json" | jq -r '.by // ""') matches live headRefOid; local-ai-reviewer did not run on this head" "reviewer_loop_history.v1 reviewed_heads + live reviewer-loop-human-override marker"
+              else
+                add_row "pull_request.local_reviewer_head" "discrepancy" "ledger records a human override but no valid live override marker exists for ${pr_head_oid}" "live reviewer-loop-human-override marker"
+              fi
             elif [ "$ledger_local_head" = "$pr_head_oid" ]; then
               add_row "pull_request.local_reviewer_head" "verified" "ledger head matches live headRefOid" "reviewer_loop_history.v1 reviewed_heads"
             else
@@ -963,6 +996,106 @@ if [ -n "$issue" ]; then
     add_row "tracker.status" "unavailable_required" "$tracker_status" "get_tracker_status_for_issue $issue"
   else
     add_row "tracker.status" "unavailable_optional" "${tracker_status:-not claimed}" "tracker status not required for this terminal claim"
+  fi
+fi
+
+if [ "${#followups[@]}" -gt 0 ]; then
+  # Two repositories can be involved. The PR lives in the product repository
+  # (repo_slug honours WORKFLOW_TARGET_GITHUB_REPO); follow-up issue numbers
+  # belong to the tracker repository, which in workflow_hub mode is the hub
+  # checkout's own repository (same resolution post-merge-cleanup.sh uses).
+  followup_repo=""
+  followup_tracker_repo=""
+  followup_setup_error=""
+  followup_live_refs=""
+  followup_text_ok="not_requested"
+  followup_text_error=""
+  if ! followup_repo="$(repo_slug 2>&1)"; then
+    followup_setup_error="$followup_repo"
+  elif [ -n "${WORKFLOW_TARGET_GITHUB_REPO:-}" ]; then
+    # The tracker is the repository that owns these scripts (the hub), not the
+    # artifact checkout being verified, which may be the product checkout.
+    if ! followup_tracker_repo="$(cd "$(workflow_repo_root)" && gh repo view --json nameWithOwner --jq '.nameWithOwner' 2>&1)" || [ -z "$followup_tracker_repo" ]; then
+      followup_setup_error="cannot resolve tracker repository: $followup_tracker_repo"
+    fi
+  else
+    followup_tracker_repo="$followup_repo"
+  fi
+
+  if [ -n "$followup_setup_error" ]; then
+    for followup in ${followups[@]+"${followups[@]}"}; do
+      add_row "followup.#${followup%%=*}" "unavailable_required" "$followup_setup_error" "repo_slug / tracker repository"
+    done
+  else
+    if [ -n "$pr_number" ]; then
+      # Same reading post-merge-cleanup.sh uses to decide what to close:
+      # title, body and commit messages, fenced/quoted examples stripped, each
+      # source stripped separately so one unclosed fence cannot hide another.
+      followup_text_title_body=""
+      followup_text_commits=""
+      if followup_text_title_body="$(gh pr view "$pr_number" --repo "$followup_repo" --json body,title --jq '(.title // "") + "\n" + (.body // "")' 2>&1)" \
+        && followup_text_commits="$(gh pr view "$pr_number" --repo "$followup_repo" --json commits --jq '[.commits[] | ((.messageHeadline // "") + "\n" + (.messageBody // ""))] | join("\n")' 2>&1)" \
+        && followup_live_refs="$(
+          {
+            # A bare "#N" names an issue in the repository of the PR itself, so it only
+            # addresses tracker issues when the two repositories coincide. A
+            # failed scan must fail this whole group: it is never read as
+            # "no closing keyword".
+            # Slugs compare case-insensitively, as post-merge-cleanup.sh does.
+            if [ "$(printf '%s' "$followup_tracker_repo" | tr '[:upper:]' '[:lower:]')" = "$(printf '%s' "$followup_repo" | tr '[:upper:]' '[:lower:]')" ]; then
+              printf '%s' "$followup_text_title_body" | closing_keyword_live_refs || exit 1
+              printf '%s' "$followup_text_commits" | closing_keyword_live_refs || exit 1
+            fi
+            # Qualified owner/repo#N references to the tracker repository.
+            for q_src in "$followup_text_title_body" "$followup_text_commits"; do
+              q_stripped="$(printf '%s' "$q_src" | strip_fenced_pr_body_blocks)" || exit 1
+              q_status=0
+              q_hits="$(printf '%s' "$q_stripped" | grep -ioE "(^|[^[:alnum:]_])(close[sd]?|fix(es|ed)?|resolve[sd]?)[[:space:]]+(issue[[:space:]]+)?${followup_tracker_repo//./\\.}#[0-9]+")" || q_status=$?
+              [ "$q_status" -le 1 ] || exit 1
+              if [ -n "$q_hits" ]; then
+                printf '%s\n' "$q_hits" | grep -oE '[0-9]+$' || exit 1
+              fi
+            done
+          }
+        )"; then
+        followup_text_ok="true"
+      else
+        followup_text_ok="false"
+        followup_text_error="${followup_text_title_body:-} ${followup_text_commits:-}"
+      fi
+    fi
+    for followup in ${followups[@]+"${followups[@]}"}; do
+      followup_number="${followup%%=*}"
+      followup_class="${followup#*=}"
+      followup_surface="followup.#$followup_number"
+      followup_closing="unknown"
+      if [ "$followup_text_ok" = "true" ]; then
+        # Pure-Bash membership: no pipe, temp file or child process, so there is
+        # no SIGPIPE or redirection failure that could be mistaken for "absent".
+        case $'\n'"$followup_live_refs"$'\n' in
+          *$'\n'"$followup_number"$'\n'*) followup_closing="present" ;;
+          *) followup_closing="absent" ;;
+        esac
+      fi
+      if [ "$followup_class" = "fixed" ]; then
+        add_row "$followup_surface" "verified" "fixed in this PR; eligible to close on merge; closing keyword $followup_closing" "--followup $followup"
+        continue
+      fi
+      followup_state=""
+      if ! followup_state="$(gh issue view "$followup_number" --repo "$followup_tracker_repo" --json state --jq '.state' 2>&1)"; then
+        add_row "$followup_surface" "unavailable_required" "deferred; state unreadable: $followup_state" "gh issue view $followup_number --repo $followup_tracker_repo --json state"
+      elif [ "$followup_state" != "OPEN" ]; then
+        add_row "$followup_surface" "discrepancy" "deferred but state=$followup_state; must remain open" "gh issue view $followup_number --repo $followup_tracker_repo --json state"
+      elif [ "$followup_closing" = "present" ]; then
+        add_row "$followup_surface" "discrepancy" "deferred but PR title, body or commit messages close it with a closing keyword" "gh pr view $pr_number --json body,title,commits"
+      elif [ "$followup_text_ok" = "false" ]; then
+        add_row "$followup_surface" "unavailable_required" "deferred; open; PR text unreadable: $followup_text_error" "gh pr view $pr_number --json body,title,commits"
+      elif [ "$followup_text_ok" = "not_requested" ]; then
+        add_row "$followup_surface" "unavailable_required" "deferred; open; closing keywords not checked because --pr was omitted" "--followup $followup requires --pr to prove the PR does not close it"
+      else
+        add_row "$followup_surface" "verified" "deferred to future PR; open; not closed by PR (closing keyword absent)" "gh issue view $followup_number --repo $followup_tracker_repo --json state"
+      fi
+    done
   fi
 fi
 
