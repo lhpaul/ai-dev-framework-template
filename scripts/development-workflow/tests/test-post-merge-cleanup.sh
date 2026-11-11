@@ -866,6 +866,16 @@ run_test "workflow_hub_journal_owner_binding" "$(cd "$hub_repo" && pwd -P)" "$(j
 run_test "workflow_hub_product_worktree_one_session_completed" "Completed" "$(jq -r '.outcome' "${hub_budget_states[0]}")"
 run_test "workflow_hub_product_worktree_declared_participants" "true" "$(jq -r --arg root "$(cd "$hub_product_repo" && pwd -P)" '.participants | index($root)!=null' "${hub_budget_states[0]}")"
 
+# #2158: backport/* is an implementation branch. In a workflow hub, cleanup
+# (and --inspect-targets, which the merge budget runs) must require the product
+# repository selection instead of treating the branch as hub-owned.
+run_fails_contains \
+  "workflow_hub_backport_requires_product_repo" \
+  "product repository selection is required for implementation branch cleanup" \
+  env GH_MERGED_HEAD="backport/hotfix/86-carry" GH_MERGED_PR=86 \
+    PATH="$stub_bin:$PATH" \
+    "$HELPER" --repo-root "$hub_repo" --base develop --pr 86 "backport/hotfix/86-carry"
+
 fail_branch="feature/noissue-delete-fails"
 fail_repo="$(make_repo delete-fails "$fail_branch" yes)"
 fail_bin="$TMP_ROOT/fail-bin"

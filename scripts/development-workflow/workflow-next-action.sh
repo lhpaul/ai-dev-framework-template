@@ -369,7 +369,7 @@ if [ -n "$pr_number" ]; then
       # exists for.
       if [ -n "$branch_name" ]; then
         case "$(branch_prefix "$branch_name")" in
-          feature|refactor|fix|hotfix) pr_probe_needs_implementation_routing=true ;;
+          feature|refactor|fix|hotfix|backport) pr_probe_needs_implementation_routing=true ;;
           *) pr_probe_needs_implementation_routing=false ;;
         esac
       fi
@@ -426,7 +426,7 @@ if [ -n "$pr_number" ]; then
   fi
   labels="$(printf '%s\n' "$pr_json" | jq -r '[.labels[].name] | join(",")')"
   case "$(branch_prefix "$branch_name")" in
-    feature|refactor|fix|hotfix) pr_action_kind="implementation" ;;
+    feature|refactor|fix|hotfix|backport) pr_action_kind="implementation" ;;
     *) pr_action_kind="hub" ;;
   esac
   set +e
@@ -485,7 +485,7 @@ fi
 
 if [ -n "$branch_name" ]; then
   case "$(branch_prefix "$branch_name")" in
-    feature|refactor|fix|hotfix) action_kind="implementation" ;;
+    feature|refactor|fix|hotfix|backport) action_kind="implementation" ;;
     *) action_kind="hub" ;;
   esac
   set +e
@@ -582,7 +582,7 @@ if [ -n "$branch_name" ]; then
     implementation-plan)
       print_kv NEXT_ACTION run-plan-review-and-open-pr
       ;;
-    feature|refactor|fix|hotfix)
+    feature|refactor|fix|hotfix|backport)
       print_kv NEXT_ACTION run-code-review-and-open-pr
       ;;
     *)

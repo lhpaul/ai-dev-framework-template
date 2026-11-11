@@ -547,6 +547,10 @@ branch_prefix() {
     fix/*) printf 'fix\n' ;;
     hotfix/*) printf 'hotfix\n' ;;
     release/*) printf 'release\n' ;;
+    # backport/* is its own class with implementation-branch behavior (#2158,
+    # Option A): consumers list `backport` beside feature|refactor|fix|hotfix.
+    # A bare `backport/` (empty remainder) stays unknown.
+    backport/?*) printf 'backport\n' ;;
     *) printf 'unknown\n' ;;
   esac
 }
@@ -555,7 +559,7 @@ reviewer_for_branch() {
   case "$(branch_prefix "$1")" in
     spec) printf 'spec-reviewer\n' ;;
     implementation-plan) printf 'implementation-plan-reviewer\n' ;;
-    feature|refactor|fix|hotfix) printf 'code-reviewer\n' ;;
+    feature|refactor|fix|hotfix|backport) printf 'code-reviewer\n' ;;
     *) printf 'none\n' ;;
   esac
 }
