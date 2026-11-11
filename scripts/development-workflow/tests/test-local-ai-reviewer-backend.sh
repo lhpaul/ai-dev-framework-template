@@ -439,7 +439,8 @@ review AI_DEV_WORKFLOW_CONFIG_FILE="$TMP_ROOT/no-such-config.yaml" --
 run_test "T-B5_missing_pinned_file_codex" "yes" "$(yes_no rerr_has "$codex_info")"
 REVIEWER_UNDER_TEST="$REVIEWER"
 
-# T-B6 to T-B9: the direct-run budget.
+# T-B6 to T-B9: the direct-run budget. The first attempt gets the exact budget
+# (#2151), however long the setup before it took.
 review AI_DEV_WORKFLOW_CONFIG_FILE="$NEUTRAL_CFG" LOCAL_AI_REVIEWER_BACKEND=claude --
 run_test "T-B6_budget_info" "yes" "$(yes_no grep -Fxq "INFO: local AI reviewer $budget_info" "$RERR")"
 run_test "T-B6_budget_900" "900" "$(cat "$CLAUDE_REC/timeout" 2>/dev/null || true)"
@@ -536,6 +537,8 @@ review AI_DEV_WORKFLOW_CONFIG_FILE="$NEUTRAL_CFG" LOCAL_AI_REVIEWER_BACKEND=clau
 t12_last="$(cat "$CLAUDE_REC/timeout" 2>/dev/null || echo 0)"
 run_test "T-B12b_capacity_budget_result" "needs_rerun/provider_overloaded" "$(kv RESULT)/$(kv REASON)"
 run_test "T-B12b_capacity_budget_retried" "yes" "$(yes_no test "$(capacity_attempts)" -ge 2)"
+# The first attempt always gets the whole round budget; only retries shrink.
+run_test "T-B12b_capacity_budget_first_attempt_full" "5" "$(head -n 1 "$CLAUDE_REC/timeouts" 2>/dev/null || true)"
 run_test "T-B12b_capacity_budget_last_attempt_shrunk" "yes" "$(yes_no test "$t12_last" -lt 5)"
 run_test "T-B12b_capacity_budget_within_budget" "yes" "$(yes_no capacity_budget_fits 5)"
 # A first attempt that uses half the budget leaves no room for backoff plus
@@ -544,6 +547,7 @@ review AI_DEV_WORKFLOW_CONFIG_FILE="$NEUTRAL_CFG" LOCAL_AI_REVIEWER_BACKEND=clau
   STANDIN_SLEEP=1 STANDIN_STDOUT="API Error: overloaded" -- --timeout 2
 run_test "T-B12b_capacity_budget_no_room_result" "needs_rerun/provider_overloaded" "$(kv RESULT)/$(kv REASON)"
 run_test "T-B12b_capacity_budget_no_room_stops" "1" "$(capacity_attempts)"
+run_test "T-B12b_capacity_budget_no_room_first_attempt_full" "2" "$(head -n 1 "$CLAUDE_REC/timeouts" 2>/dev/null || true)"
 run_test "T-B12b_capacity_budget_no_room_diag" "yes" "$(yes_no rerr_has 'no budget left for another attempt')"
 
 # T-B13: a run past the budget is No verdict yet and leaves no copy behind.

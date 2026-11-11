@@ -1437,12 +1437,16 @@ round_start_epoch="$(date +%s)"
 quota_error_pattern='usage[[:space:]_-]*limit|quota[[:space:]_-]*(exhaust|exceed)|out of (quota|credits)|hit your usage'
 capacity_attempt=1
 while :; do
-  # #2151: the round budget (TIMEOUT) is shared by every capacity retry. Each
-  # attempt gets only what is left of it, so backoff plus retries can never
-  # stretch a round past the requested budget.
-  attempt_timeout=$((TIMEOUT - ($(date +%s) - round_start_epoch)))
-  if [ "$attempt_timeout" -lt 1 ]; then
-    attempt_timeout=1
+  # #2151: the round budget (TIMEOUT) is shared by every capacity retry. The
+  # first attempt always gets the full budget; each retry gets only what is
+  # left of it, so backoff plus retries can never stretch a round past the
+  # requested budget.
+  attempt_timeout="$TIMEOUT"
+  if [ "$capacity_attempt" -gt 1 ]; then
+    attempt_timeout=$((TIMEOUT - ($(date +%s) - round_start_epoch)))
+    if [ "$attempt_timeout" -lt 1 ]; then
+      attempt_timeout=1
+    fi
   fi
   set +e
   LOCAL_AI_REVIEWER_MODE=ordinary \
