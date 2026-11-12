@@ -63,15 +63,30 @@ by backlog authors, outside this project's control).
   population of that form. The origin consumer's own tracker is not a GitHub
   tracker, so its GitHub issues returned no hits and are not part of the
   population.
-- Occurrences examined, excluding #2155 itself (which quotes the phrases):
-  #1529 (heading "Concrete instances already fixed (as evidence of the
-  pattern)"), #1574 ("Why this is not already fixed by #1556"), #1531,
-  #372 and #554/#593 (search token matches where "already" and "fixed" are not
-  a claim about the item), #299 (template prose "Already fixed upstream in
-  vX.Y.Z"), #1584 ("#1391 is partly fixed on `develop`", a statement about
-  another item) and #1722 (token match "Fixed per-job overhead").
+- Occurrences examined, excluding #2155 itself (which quotes the phrases).
+  Each entry names its source (issue body, public repository, captured
+  2026-11-12) and embeds the matched text verbatim, truncated with "…":
+  - #1529: "## Concrete instances already fixed (as evidence of the
+    pattern)" — evidence-list heading.
+  - #1574: "## Why this is not already fixed by #1556" — negation.
+  - #1531: "…the Batch 52 / PR #650 pause-banner incident, both of which were
+    already fixed for their own banner shapes." — statement about other
+    incidents.
+  - #372: "Fix commits were pushed 1–2 minutes after Devin had already
+    started reviewing the previous commit." — incidental token match.
+  - #554: "…classified without knowing whether they are `already-tracked`,
+    `already-fixed`, or `contribute-upstream`." — classification label.
+  - #593: "…classifying each finding as `already-tracked`,
+    `already-fixed`, `contribute-upstream`, or `check-unavailable`." —
+    classification label.
+  - #299: "…present as \"Already fixed upstream in vX.Y.Z (you are on
+    vA.B.C)…\"" — quoted template prose.
+  - #1584: "**#1391 is partly fixed on `develop`.**" — statement about
+    another item.
+  - #1722: "2. **Fixed per-job overhead is paid 85 times.**" — incidental
+    token match.
 - Distinct variants: evidence-list heading, negation, incidental token match,
-  quoted template prose, statement about another item. None is a claim that
+  classification label, quoted template prose, statement about another item. None is a claim that
   the item's own work shipped.
 - Saturation: not reached; the population holds no true positive.
 - Adequacy rationale: the sample is heterogeneous and dominated by false
