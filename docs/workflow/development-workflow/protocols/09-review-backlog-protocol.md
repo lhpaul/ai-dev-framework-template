@@ -267,11 +267,19 @@ Applies to every gate close:
 - A returned value different from the requested one is `drift` and counts as
   unapplied.
 - A readback that fails or cannot be read is a rejection: the item is
-  `not applied` and the gate stops.
+  `not applied (readback failed — outcome unknown)` and the gate stops. The
+  write may still have landed, so the report says the outcome is unknown, not
+  that the write did not happen.
 - A tracker rejection mid-write stops the gate at once: report the applied
   prefix (the last identifier that read back clean), list everything after it
   as `not applied (<reason>)`, and report the recovery step that resumes from
   the first unapplied identifier. Do not retry inside the run.
+- **Reconcile before resubmitting.** The recovery step re-reads every
+  `not applied` item whose write was sent (a failed readback, a malformed or
+  timed-out response) and resubmits only a write the re-read proves did not
+  take effect. An item creation is never replayed until the tracker has been
+  searched for the item the first attempt may have created, so a recovery
+  never produces a duplicate.
 - Malformed tracker responses during writes and their readback are
   rejections; they never count as applied.
 

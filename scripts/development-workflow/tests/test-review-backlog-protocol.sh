@@ -62,6 +62,7 @@ PROTOCOL_FRAGMENTS = {
         "There is no flag", "the exact set",
         "print the **observed value** per row", "is `drift` and counts as\n  unapplied",
         "A readback that fails or cannot be read is a rejection",
+        "**Reconcile before resubmitting.**",
         "A confirmation naming that item, or a group the run presented by name",
         "explicit per-item or per-group form",
         "delivered as proposed text",
