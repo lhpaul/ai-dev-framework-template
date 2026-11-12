@@ -176,8 +176,10 @@ confirmed set, and never presents a partial read as full.
   outstanding unless the maintainer explicitly asked to rank the set as-is
   (that choice is recorded as an override). Gate 3 opens only after Gate 2
   closed clean, except in repository-only mode, where Gate 3 closes Gate 1
-  alone. A partial read ends at the Gate 1 close. Grouping findings by class
-  is allowed; removing a confirmation is not.
+  alone. A partial read (the initial read, or the board re-read after the
+  Gate 1 writes) ends at the Gate 1 close; a partial board re-read after the
+  Gate 2 writes only marks Gate 3's final backlog state `partial`. Grouping
+  findings by class is allowed; removing a confirmation is not.
 - BR2 (confirmation is the authority): No mutation happens before the
   maintainer answers the gate that proposes it. No flag is required or
   accepted as a substitute. Before writing, the exact set (identifiers and
@@ -262,7 +264,7 @@ in.
 | --- | --- | --- |
 | `full` | full | Every item in scope read; budget sampled |
 | `full-unmetered` | full (sin presupuesto) | Every item read; the tracker exposes no readable budget |
-| `partial` | partial | Budget-limited read; omitted items named; run ends at Gate 1 close |
+| `partial` | partial | Budget-limited read; omitted items named; run ends at Gate 1 close, except a re-read after the Gate 2 writes, which only marks Gate 3's final state |
 | `deferred` | deferred | Budget too low for a useful read; run ends, nothing proposed |
 | `repository-only` | n/a (sin tracker) | No tracker; repository evidence only; a budget-limited repository read names what it omitted |
 | `ready-to-confirm` | LISTO PARA CONFIRMAR | Evidence-only findings the run applies once confirmed |
@@ -378,7 +380,9 @@ capability or as applied.
   every write is read back with the observed value reported, drift counts as
   unapplied, and a failed readback counts as a rejection; that cancel, duplicate
   merge, and item creation need explicit per-item or per-group confirmation;
-  and that body edits are delivered as proposed text and never applied.
+  that a gate confirmation authorizes only the writable actions of BR4; that
+  status regressions, dependency edits, and tracker rank fields are reported
+  only; and that body edits are delivered as proposed text and never applied.
 - [ ] AC8: The workflow guide and the protocol both state that the backlog
   review complements `/run-work` and does not replace it, and give the intended
   sequence.
@@ -408,7 +412,9 @@ capability or as applied.
 - [ ] AC17: The protocol states write admission once per gate (whole confirmed
   set or nothing when the budget is measurable; ordered apply stopping at the
   first rejection when it is not) and the gate-opening conditions of the Valid
-  transitions above, including that a partial read ends at the Gate 1 close.
+  transitions above, including that a partial initial read or post-Gate-1
+  re-read ends at the Gate 1 close and a partial post-Gate-2 re-read only marks
+  Gate 3's final backlog state `partial`.
 
 ## Brief Objective List and Coverage Matrix
 
