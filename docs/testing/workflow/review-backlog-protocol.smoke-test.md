@@ -18,6 +18,11 @@
   `.ai-dev-workflow.local.*` file.
 - [ ] Answer every gate with a rejection (`no` to every finding) unless a
   step says otherwise, so no real tracker item changes.
+- [ ] Before any step that confirms or accepts a finding (steps 6, 8 and 9),
+  tell the runner to simulate every write and its readback without sending
+  them to the tracker, and after the run spot-check that the named items are
+  unchanged. The behaviour under test must never be the only thing preventing
+  a real write.
 
 ---
 
@@ -106,8 +111,10 @@ capability; every other check still runs; the run does not fail.
 
 **Maps to**: AC7
 
-1. In the step 2 run (or a new one), answer a range or class whose members are
-   only cancel or duplicate-merge findings, for example `C1-C3 sí`. Never
+1. In a new run, after telling the runner to simulate every write without
+   sending it to the tracker (Prerequisites), answer a range or class whose
+   members are only cancel or duplicate-merge findings, for example
+   `C1-C3 sí`. Never
    include a `LISTO PARA CONFIRMAR` status, classification, priority or label
    finding in that range, because a range authorizes those writes.
 2. Answer `recomendación` to a question whose recommendation is a body edit.
@@ -143,7 +150,9 @@ widened silently.
 **Maps to**: AC17, BR15
 
 1. In the scratch copy with the project configuration, tell the runner to treat
-   the item-closure capability as not exposed, and run `/review-backlog`.
+   the item-closure capability as not exposed and to simulate every write
+   without sending it to the tracker (Prerequisites), and run
+   `/review-backlog`.
 2. Explicitly confirm one cancel finding by its identifier, answer `no` to
    every other finding, and decline to rank as-is.
 

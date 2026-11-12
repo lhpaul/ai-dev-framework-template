@@ -145,9 +145,12 @@ the spec's Statuses table. The changes from the origin are:
   spell out multi-word Status names; the pre-dispatch status is called "the
   initial backlog status".
 - [ ] **L1.5 Classification by reference (AC14, BR11).** 1c cites
-  `00-add-backlog-item-protocol.md` for the classification values and
-  heuristics and the agent guide's Tracker Classification section for the
-  framework-mode rule; it does not list the values.
+  `00-add-backlog-item-protocol.md` for the classification values, the
+  heuristics and the framework-mode rule (that protocol states all three); it
+  does not list the values. It does not cite the agent guide's Tracker
+  Classification section: that section sits outside the agent guide's
+  template-owned block, so a consumer's copy may lack it (the same
+  project-ownership T2 handles).
 - [ ] **L1.6 Mutation authority (AC7, BR2–BR6).** Replace the origin's
   "never" list with the spec's three classes:
   - gate-confirmable writes: upward status changes, classification changes,
