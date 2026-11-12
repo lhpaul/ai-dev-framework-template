@@ -264,7 +264,7 @@ in.
 | --- | --- | --- |
 | `full` | full | Every item in scope read; budget sampled |
 | `full-unmetered` | full (sin presupuesto) | Every item read; the tracker exposes no readable budget |
-| `partial` | partial | Budget-limited read; omitted items named; run ends at Gate 1 close, except a re-read after the Gate 2 writes, which only marks Gate 3's final state |
+| `partial` | partial | Budget-limited read that is not `deferred`; omitted items named (when the listing itself was cut short, the unlisted remainder of the scope is declared unread); run ends at Gate 1 close, except a re-read after the Gate 2 writes, which only marks Gate 3's final state |
 | `deferred` | deferred | The measured budget sampled before the read cannot cover listing every item in scope (the minimum a `partial` read needs to name its omitted items); run ends, nothing proposed. An unmeasurable budget is never `deferred` |
 | `repository-only` | n/a (sin tracker) | No tracker; repository evidence only; a budget-limited repository read names what it omitted |
 | `ready-to-confirm` | LISTO PARA CONFIRMAR | Evidence-only findings the run applies once confirmed |
@@ -319,7 +319,7 @@ they only turn the dependent check into "no aplica".
 | No project concept, no milestone configured (or no milestone concept) | Scope = whole repository, stated in header | Read and continue | Protocol |
 | No tracker | Repository-only mode | Gate 1 repository checks; Gate 2 "no aplica"; Gate 3 closes Gate 1; nothing written | Protocol, aliases, smoke runbook |
 | Measured pre-read budget cannot cover listing every item in scope | `deferred` | End; report budget and reset | Protocol, smoke runbook |
-| Listing of the scope fits, but the budget runs out before every listed item is read (initial read, or the board re-read after the Gate 1 writes) | `partial` | Ledger of what was read; no queue; end at Gate 1 close | Protocol, smoke runbook |
+| A read that is not `deferred` and does not reach every item in scope (initial read, or the board re-read after the Gate 1 writes), including a listing cut short after the pre-read sample or under an unmeasurable budget | `partial` | Ledger of what was read; omitted items named, or, when the listing itself was cut short, the unlisted remainder of the scope declared unread; no queue; end at Gate 1 close | Protocol, smoke runbook |
 | Board re-read after the Gate 2 writes is `partial` | Gate 3 opens | Closeout with final backlog state marked `partial`, omitted items named | Protocol, smoke runbook |
 | No readable budget, all read | `full-unmetered` | Proceed; ordered apply, stop at first rejection | Protocol, smoke runbook |
 | Capability missing (hierarchy, priority, priority that can be left unset, labels, classification carrier, budget surface) | Dependent check "no aplica", capability named | Continue other checks | Protocol, smoke runbook |
