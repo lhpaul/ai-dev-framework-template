@@ -314,6 +314,10 @@ run_test "canonical rule still fails a stamp two or more commits behind" \
   "yes" "$(canon_has "two or more commits behind the head")"
 run_test "canonical rule names the helper" \
   "yes" "$(canon_has "outcome-record-revision-check.sh")"
+run_test "canonical manual summary diff pins the helper's config overrides" \
+  "yes" "$(canon_has "git diff --no-ext-diff --no-relative --ignore-submodules=none --summary <stated> <head>")"
+run_test "canonical manual patch diff pins the helper's config overrides" \
+  "yes" "$(canon_has "git diff --no-ext-diff --no-relative --ignore-submodules=none --submodule=short --no-textconv -U0 <stated> <head>")"
 
 printf '\nResults: %s passed, %s failed\n' "$PASS_COUNT" "$FAIL_COUNT"
 [ "$FAIL_COUNT" -eq 0 ]
