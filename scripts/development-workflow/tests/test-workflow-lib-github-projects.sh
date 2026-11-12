@@ -14,6 +14,9 @@
 #   7. When issue.projectItems is empty but the card is on the board (org
 #      project + unlinked personal repository), Status/Type/membership reads
 #      fall back to one per-target cached filtered candidate page (issue #1801)
+#   8. workflow_correct_stale_in_development_status really applies the bounded
+#      In Development -> Plan Ready correction and refuses every other source
+#      Status, while a plain backward call stays blocked (issue #1811)
 #
 # Usage: bash scripts/development-workflow/tests/test-workflow-lib-github-projects.sh
 # covers: scripts/development-workflow/workflow-lib.sh
@@ -169,6 +172,14 @@ JSON
 	          cat <<'JSON'
 	{"data":{"repository":{"issue":{"projectItems":{"nodes":[{"id":"PVTI_item_824","project":{"id":"PVT_project_1","number":1},"status":{"name":"Spec Ready"},"content":{"issueType":null},"customType":{"name":"Refactor"},"type":{"name":"Bug"}}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}}
 JSON
+	        elif [ "${MOCK_PROJECT_ITEM_MODE:-existing}" = "in_development" ]; then
+	          cat <<'JSON'
+	{"data":{"repository":{"issue":{"projectItems":{"nodes":[{"id":"PVTI_item_824","project":{"id":"PVT_project_1","number":1},"status":{"name":"In Development"},"type":{"name":"Bug"}}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}}
+JSON
+	        elif [ "${MOCK_PROJECT_ITEM_MODE:-existing}" = "development_in_review" ]; then
+	          cat <<'JSON'
+	{"data":{"repository":{"issue":{"projectItems":{"nodes":[{"id":"PVTI_item_824","project":{"id":"PVT_project_1","number":1},"status":{"name":"Development in Review"},"type":{"name":"Bug"}}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}}
+JSON
 	        elif [ "${MOCK_PROJECT_ITEM_MODE:-existing}" = "released" ]; then
 	          cat <<'JSON'
 	{"data":{"repository":{"issue":{"projectItems":{"nodes":[{"id":"PVTI_item_824","project":{"id":"PVT_project_1","number":1},"status":{"name":"Released"},"type":{"name":"Workflow"}}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}}
@@ -215,6 +226,11 @@ JSON
 JSON
               ;;
           esac
+        elif [ "${MOCK_STATUS_FIELD_MODE:-existing}" = "full_status_vocabulary" ]; then
+          # The canonical Status options, including Plan Ready (issue #1811).
+          cat <<'JSON'
+{"data":{"node":{"fields":{"nodes":[{"id":"PVTSSF_status","name":"Status","options":[{"id":"OPT_backlog","name":"Backlog"},{"id":"OPT_spec_ready","name":"Spec Ready"},{"id":"OPT_plan_ready","name":"Plan Ready"},{"id":"OPT_in_development","name":"In Development"},{"id":"OPT_development_in_review","name":"Development in Review"},{"id":"OPT_merged","name":"Merged"},{"id":"OPT_released","name":"Released"}]}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}
+JSON
         elif [ "${MOCK_STATUS_FIELD_MODE:-existing}" = "configured_type" ]; then
           cat <<'JSON'
 {"data":{"node":{"fields":{"nodes":[{"id":"PVTSSF_custom_type","name":"Custom Type","options":[{"id":"OPT_workflow_custom","name":"Workflow"}]},{"id":"PVTSSF_configured_type","name":"Configured Type","options":[{"id":"OPT_workflow_configured","name":"Workflow"}]},{"id":"PVTSSF_type","name":"Type","options":[{"id":"OPT_workflow","name":"Workflow"}]}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}
@@ -734,6 +750,78 @@ case "$update_output" in
 esac
 run_test "status_update_allows_explicit_backward_move" "updated" "$update_result"
 run_test "status_update_explicit_backward_mutates_project_item" "1" "$(count_log_matches 'updateProjectV2ItemFieldValue')"
+
+# Stale "In Development" correction (issue #1811). The protocol call used to be
+# update_tracker_status_best_effort <n> "Plan Ready" with no allow-backward,
+# which the rollback guard always skipped. Pin that the plain call is still a
+# no-op (the guard is unchanged) and that the dedicated helper is the bounded
+# path that really applies In Development -> Plan Ready.
+export MOCK_STATUS_FIELD_MODE=full_status_vocabulary
+
+reset_log
+export MOCK_PROJECT_ITEM_MODE=in_development
+update_output="$(update_tracker_status_best_effort 824 "Plan Ready")"
+case "$update_output" in
+  *"already at status 'In Development' (more advanced than 'Plan Ready'); skipping rollback"*) update_result="rollback-skipped" ;;
+  *) update_result="$update_output" ;;
+esac
+run_test "stale_correction_plain_call_is_still_blocked" "rollback-skipped" "$update_result"
+run_test "stale_correction_plain_call_no_mutation" "0" "$(count_log_matches 'updateProjectV2ItemFieldValue')"
+
+reset_log
+update_output="$(workflow_correct_stale_in_development_status 824)"
+case "$update_output" in
+  *"Updating tracker status for issue #824 to 'Plan Ready'"*"TRACKER_STATUS_APPLIED issue=824 status='Plan Ready'"*) update_result="applied" ;;
+  *) update_result="$update_output" ;;
+esac
+run_test "stale_correction_helper_applies_plan_ready" "applied" "$update_result"
+run_test "stale_correction_helper_mutates_once" "1" "$(count_log_matches 'updateProjectV2ItemFieldValue')"
+run_test "stale_correction_helper_writes_plan_ready_option" "1" "$(count_log_matches 'optionId=OPT_plan_ready')"
+
+reset_log
+export MOCK_PROJECT_ITEM_MODE=development_in_review
+update_output="$(workflow_correct_stale_in_development_status 824)"
+case "$update_output" in
+  *"current status 'Development in Review' does not match required source status 'In Development'; skipping update"*) update_result="source-mismatch-skipped" ;;
+  *) update_result="$update_output" ;;
+esac
+run_test "stale_correction_helper_refuses_other_source_status" "source-mismatch-skipped" "$update_result"
+run_test "stale_correction_helper_other_source_no_mutation" "0" "$(count_log_matches 'updateProjectV2ItemFieldValue')"
+
+reset_log
+export MOCK_PROJECT_ITEM_MODE=released
+update_output="$(workflow_correct_stale_in_development_status 824)"
+case "$update_output" in
+  *"current status 'Released' does not match required source status 'In Development'; skipping update"*) update_result="source-mismatch-skipped" ;;
+  *) update_result="$update_output" ;;
+esac
+run_test "stale_correction_helper_never_rolls_back_released" "source-mismatch-skipped" "$update_result"
+run_test "stale_correction_helper_released_no_mutation" "0" "$(count_log_matches 'updateProjectV2ItemFieldValue')"
+
+reset_log
+update_output="$(workflow_correct_stale_in_development_status "")"
+case "$update_output" in
+  *"no issue number given; skipping stale 'In Development' correction"*) update_result="skipped" ;;
+  *) update_result="$update_output" ;;
+esac
+run_test "stale_correction_helper_requires_issue_number" "skipped" "$update_result"
+run_test "stale_correction_helper_missing_issue_no_gh_calls" "0" "$(count_log_matches 'api graphql')"
+
+unset MOCK_PROJECT_ITEM_MODE
+unset MOCK_STATUS_FIELD_MODE
+
+# The protocol text must route the correction through the helper: a bare
+# `update_tracker_status_best_effort "$ISSUE_NUMBER" "Plan Ready"` code line is
+# the #1811 no-op and must not come back.
+for stale_protocol in \
+  "$REPO_ROOT/docs/workflow/development-workflow/protocols/90-batch-orchestrate-work-protocol.md" \
+  "$REPO_ROOT/docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md"; do
+  stale_protocol_name="$(basename "$stale_protocol" .md)"
+  run_test "stale_correction_protocol_uses_helper_${stale_protocol_name}" "yes" \
+    "$(grep -Fq 'workflow_correct_stale_in_development_status "$ISSUE_NUMBER"' "$stale_protocol" && echo yes || echo no)"
+  run_test "stale_correction_protocol_no_bare_backward_call_${stale_protocol_name}" "0" \
+    "$(grep -cE '^[[:space:]]*update_tracker_status_best_effort "\$ISSUE_NUMBER" "Plan Ready"[[:space:]]*$' "$stale_protocol" || true)"
+done
 
 reset_log
 type_update_output="$(update_tracker_type_best_effort 824 "Workflow")"

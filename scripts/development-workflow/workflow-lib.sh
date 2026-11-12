@@ -3142,7 +3142,10 @@ ensure_on_project_board() {
 #   tracker-status-for.sh) rather than typing it; see
 #   docs/workflow/development-workflow/tracker-status-mapping.md.
 # - Respects status progression ordering and never rolls status backward
-#   (GitHub Projects path only; ordering is not enforced for Linear).
+#   unless the caller passes allow-backward (GitHub Projects path only;
+#   ordering is not enforced for Linear). For the stale "In Development"
+#   correction use workflow_correct_stale_in_development_status instead of
+#   passing allow-backward by hand (issue #1811).
 # - Owner is resolved via workflow_resolve_github_project_owner (see that function
 #   for the tiered fallback chain: env var → gh repo view → git remote URL).
 # - project_number falls back to issue_tracker.project_number in .ai-dev-workflow.yaml.
@@ -3347,6 +3350,35 @@ update_tracker_status_best_effort() {
     bash -c 'source "$1/workflow-lib.sh"; shift; _workflow_update_tracker_status_best_effort_impl "$@"' \
       budget-tracker "$helper_dir" "$@" || return 0
   return 0
+}
+
+# workflow_correct_stale_in_development_status <issue_number>
+#
+# The stale-tracker-status correction of Protocol 90 ("Stale `In Development`
+# correction") and Protocol 91 (its BATCH_CONTEXT equivalent), issue #1811.
+#
+# update_tracker_status_best_effort refuses every backward move unless the
+# caller passes allow-backward, so a plain "Plan Ready" call against an item at
+# "In Development" is always skipped as a rollback. This helper is the one
+# sanctioned backward move for that step, and it is bounded on both ends:
+# - the target is fixed to "Plan Ready"; callers cannot choose another status;
+# - the source must be exactly "In Development" (required_current_status), so
+#   an item at any other Status, including one further along such as
+#   "Development in Review", "Merged" or "Released", is skipped with no write.
+# Only that one pair receives allow-backward; every other caller keeps the
+# default rollback guard.
+#
+# The caller still owns the stale evidence (no implementation branch and no
+# open PR for the item) and must establish it before calling. Output and exit
+# status are those of update_tracker_status_best_effort: the reset happened
+# only when the output carries a TRACKER_STATUS_APPLIED line.
+workflow_correct_stale_in_development_status() {
+  local issue_number="${1:-}"
+  if [ -z "$issue_number" ]; then
+    echo "Warning: no issue number given; skipping stale 'In Development' correction."
+    return 0
+  fi
+  update_tracker_status_best_effort "$issue_number" "Plan Ready" "In Development" "allow-backward"
 }
 
 # workflow_github_milestone_number <version>
