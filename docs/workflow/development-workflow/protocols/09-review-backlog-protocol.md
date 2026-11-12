@@ -117,7 +117,7 @@ name.
 | project scope | The configured tracker is project-based: its configuration takes a project identifier (resolved when one is configured). A tracker configured without projects does not detect it, even when the same API also serves projects | Scope resolution | Scope falls through to milestone scope; see Scope | GitHub Projects (`github_projects`): `project_number`, see [`github-projects.md`](../integrations/github-projects.md). Linear (`linear`): `project_url` or the project key in `issue_tracker.custom_fields`, see [`linear.md`](../integrations/linear.md) |
 | milestone scope | The tracker exposes a milestone or release field for items | Scope resolution | Scope is the whole repository | GitHub Issues (`github_issues`) milestones, see [`issue-tracker.md`](../integrations/issue-tracker.md) |
 | parent/child hierarchy | Reading a known item returns a parent field or a child list the API can traverse | 1j epic sweep; `integration-branch:<slug>` sibling check in 1c | `no aplica — parent/child hierarchy` | GitHub Projects and GitHub Issues: native sub-issues, see [`github-projects.md`](../integrations/github-projects.md). Linear: parent/sub-issues, see [`linear.md`](../integrations/linear.md) |
-| priority field | Items expose a priority field with a readable option list | 2a sort key 2; Gate 2 priority writes; header "sin prioridad" count | `no aplica — priority field`; the order sorts by due date then creation date | GitHub Projects: a single-select Priority field. Linear: native priority. GitHub Issues without a project: none, see [`issue-tracker.md`](../integrations/issue-tracker.md) |
+| priority field | Items expose a priority field with a readable option list | 2a sort key 2; Gate 2 priority writes; header "sin prioridad" count | `no aplica — priority field`; the order reconstruction is not reproduced (2a prints the due-date and creation-date order as `solo contexto` only) and no queue is proposed | GitHub Projects: a single-select Priority field. Linear: native priority. GitHub Issues without a project: none, see [`issue-tracker.md`](../integrations/issue-tracker.md) |
 | priority that can be left unset | The priority field accepts and returns an empty value | 2a "priority as a hiding place" | `no aplica — priority that can be left unset`; a forced default is never counted as untriaged | GitHub Projects: empty single-select. Linear: "No priority" value |
 | classification carrier | Items expose a native type field, a single-select classification field, or exactly one known classification label | 1c classification and its write | `no aplica — classification carrier`: the inferred classification is reported as context, nothing written | GitHub Projects: the Type field, see [`github-projects.md`](../integrations/github-projects.md). Linear: labels or custom field per [`linear.md`](../integrations/linear.md). GitHub Issues: labels, see [`issue-tracker.md`](../integrations/issue-tracker.md) |
 | free-form labels | Items expose a label set the API can read and edit | 1c label half; label corrections | `no aplica — free-form labels`; the classification half of 1c still runs | GitHub Issues and GitHub Projects: repository labels. Linear: team labels |
@@ -796,6 +796,12 @@ DECISIONES ABIERTAS (<n>)
   1. <ID-a> vs <ID-b> → <el trade-off real>
      Recomiendo: <orden> · Por qué: <evidencia> · Si no: <costo> · Confianza: <nivel>
 ```
+
+Without the priority field there is no proposed queue: print `COLA PROPUESTA:
+no aplica — priority field` in place of that block, still list the defects and
+open decisions that need no priority, and let Gate 2 write only classification
+and label changes. The Gate 2 close then prints the new effective order as
+`solo contexto` instead of next to a queue.
 
 Every unchanged item is listed under `Sin cambios`. The **priority tier** is
 the durable deliverable; numbering within a tier is advisory because the
