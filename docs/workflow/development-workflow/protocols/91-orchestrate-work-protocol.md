@@ -765,7 +765,7 @@ canonical Status, or no Status field at all. That is a
      STALE_STATUS_CORRECTION: issue #<N> tracker shows 'In Development' but no branch or PR found. Correcting to 'Plan Ready'.
      ```
 
-   - Update the tracker status to `Plan Ready` using `update_tracker_status_best_effort` (BR-6).
+   - Reset the tracker status to `Plan Ready` with `workflow_correct_stale_in_development_status "$ISSUE_NUMBER"` (BR-6, issue #1811), the same bounded helper Protocol 90's stale correction uses. A plain `update_tracker_status_best_effort "$ISSUE_NUMBER" "Plan Ready"` call is always skipped by the rollback guard, so it must not be used here. The helper moves Status backward only from exactly `In Development` to `Plan Ready` and skips any other Status with no write. Report the reset as done only when its output carries `TRACKER_STATUS_APPLIED`; otherwise report the correction as not applied, quoting the helper's warning or skip line, and continue (best-effort).
 
    - Continue dispatching the implementation stage as if the item was `Plan Ready` (the pre-dispatch tracker status update, which ran earlier in this step and was a no-op because the status was already "In Development", will re-run for the corrected dispatch and advance the tracker back to `In Development`). The brief "Plan Ready" state between the stale reset and the new dispatch is intentional and transient — the orchestrator runs sequentially, so no concurrent observer will act on this intermediate value.
 
