@@ -59,12 +59,17 @@ commit_all() {
   git -C "$REPO" rev-parse HEAD
 }
 
+# Hermetic: ignore the caller's global and system git configuration.
+export GIT_CONFIG_GLOBAL="$TMP_ROOT/global.gitconfig" GIT_CONFIG_NOSYSTEM=1
+: > "$GIT_CONFIG_GLOBAL"
+
 REPO="$TMP_ROOT/repo"
 mkdir -p "$REPO"
 git_q init -q
 git_q config user.email "fixture@example.invalid"
 git_q config user.name "Fixture"
 git_q config commit.gpgsign false
+git_q config core.hooksPath /dev/null
 
 PLAN="$REPO/plan.md"
 cat > "$PLAN" <<'EOF'
@@ -146,6 +151,27 @@ MODE_SHA="$(commit_all "docs: mode change")"
 run_test "mode change after the stamped revision fails" \
   "1|not_current|structural_change" "$(check_result "$FIX_SHORT" "$MODE_SHA")"
 chmod -x "$PLAN"
+
+# A deleted line whose content is "-- x" renders as "--- x" and must not be
+# mistaken for a file header.
+git_q reset -q --hard "$FIX_SHA"
+printf -- '-- dashed note\n' >> "$PLAN"
+DASH_BASE_SHA="$(commit_all "plan: dashed note")"
+sed "s/^Plan revision: \`0000000\`/Plan revision: \`$FIX_SHORT\`/" "$PLAN" | grep -v '^-- dashed note$' > "$PLAN.tmp"
+mv "$PLAN.tmp" "$PLAN"
+DASH_SHA="$(commit_all "docs: stamp plus deleted dashed line")"
+run_test "stamp bundled with a deleted '-- x' line fails" \
+  "1|not_current|substantive_change" "$(check_result "$DASH_BASE_SHA" "$DASH_SHA")"
+
+# diff.noprefix must not change the verdict for a stamp-only push.
+git_q reset -q --hard "$FIX_SHA"
+sed "s/^Plan revision: \`0000000\`/Plan revision: \`$FIX_SHORT\`/" "$PLAN" > "$PLAN.tmp"
+mv "$PLAN.tmp" "$PLAN"
+NOPFX_SHA="$(commit_all "docs: stamp again")"
+git_q config diff.noprefix true
+run_test "stamp-only push is current under diff.noprefix" \
+  "0|current|stamp_lag_stamp_only" "$(check_result "$FIX_SHORT" "$NOPFX_SHA")"
+git_q config --unset diff.noprefix
 
 # --- Merge head ---------------------------------------------------------------
 git_q reset -q --hard "$FIX_SHA"

@@ -161,7 +161,10 @@ summary="$(git -C "$repo_root" diff --no-ext-diff --summary "$stated_sha" "$head
 if [ -n "$summary" ]; then
   not_current "structural_change" "$stated_sha" "$parent_sha"
 fi
-if git -C "$repo_root" diff --no-ext-diff --numstat "$stated_sha" "$head_sha" | grep -q '^-'; then
+# Capture first: `grep -q` exiting early would SIGPIPE git and, under pipefail,
+# turn a binary-file match into a false "no match".
+numstat="$(git -C "$repo_root" diff --no-ext-diff --no-textconv --numstat "$stated_sha" "$head_sha")"
+if printf '%s\n' "$numstat" | grep -q '^-'; then
   not_current "structural_change" "$stated_sha" "$parent_sha"
 fi
 
@@ -180,11 +183,13 @@ verdict="$(printf '%s\n' "$diff_text" | awk '
     gsub(/[0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]+/, "<sha>", s)
     return s
   }
-  /^diff --git / { next }
-  /^index / { next }
-  /^--- / { next }
-  /^\+\+\+ / { file = substr($0, 5); next }
-  /^@@/ { next }
+  # Header lines are only recognized before a hunk starts; inside a hunk a
+  # removed "-- x" or added "++ x" line looks like "--- x" or "+++ x".
+  /^diff --git / { inhdr = 1; next }
+  inhdr && /^\+\+\+ / { file = substr($0, 5); next }
+  inhdr && /^@@/ { inhdr = 0; next }
+  inhdr { next }
+  /^Binary files / || /^GIT binary patch/ { bad = 1; exit }
   /^[+-]/ {
     sign = substr($0, 1, 1)
     body = substr($0, 2)
