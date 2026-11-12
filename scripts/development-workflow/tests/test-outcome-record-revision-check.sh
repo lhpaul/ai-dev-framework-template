@@ -201,6 +201,35 @@ MERGE_SHA="$(git -C "$REPO" rev-parse HEAD)"
 run_test "merge commit head fails even when a parent is stamped" \
   "1|not_current|merge_head" "$(check_result "$FIX_SHORT" "$MERGE_SHA")"
 
+# --- diff.relative must not hide changes outside --repo-root ----------------
+# With diff.relative=true, git diff run from a subdirectory only reports paths
+# under it; the substantive change to plan.md (repo root) must still count.
+mkdir -p "$REPO/sub"
+git_q config diff.relative true
+set +e
+relative_output="$("$CHECK" --repo-root "$REPO/sub" --stated "$FIX_SHORT" --head "$SUBST_SHA" 2>&1)"
+relative_status=$?
+set -e
+git_q config --unset diff.relative
+run_test "diff.relative from a subdirectory does not hide a substantive change" \
+  "1|not_current|substantive_change" \
+  "$relative_status|$(printf '%s\n' "$relative_output" | sed -n 's/^RESULT=//p')|$(printf '%s\n' "$relative_output" | sed -n 's/^REASON=//p')"
+
+# --- diff.ignoreSubmodules must not hide a moved submodule pointer -----------
+git_q reset -q --hard "$FIX_SHA"
+git_q update-index --add --cacheinfo "160000,$BASE_SHA,mod"
+# Commit directly: commit_all's `add -A` would drop a gitlink with no checkout.
+git_q commit -q -m "chore: add gitlink"
+GITLINK_BASE="$(git -C "$REPO" rev-parse HEAD)"
+GITLINK_BASE_SHORT="$(git -C "$REPO" rev-parse --short=8 "$GITLINK_BASE")"
+git_q update-index --cacheinfo "160000,$FIX_SHA,mod"
+git_q commit -q -m "chore: move gitlink"
+GITLINK_MOVED="$(git -C "$REPO" rev-parse HEAD)"
+git_q config diff.ignoreSubmodules all
+run_test "diff.ignoreSubmodules=all does not hide a moved submodule pointer" \
+  "1|not_current|substantive_change" "$(check_result "$GITLINK_BASE_SHORT" "$GITLINK_MOVED")"
+git_q config --unset diff.ignoreSubmodules
+
 # --- Missing, malformed, unresolved, off-branch ---------------------------------
 run_test "missing stated revision fails" \
   "1|not_current|missing" "$(check_result "" "$FIX_SHA")"
