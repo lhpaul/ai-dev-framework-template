@@ -353,7 +353,14 @@ def resolved_history_trailer_end(source, start):
             return None
         visible = rest[:markers[0]]
     closing = re.search(r"\r?\n[ \t]*\r?\n(</details>)\s*\Z", visible)
-    return None if closing is None else start + closing.start(1)
+    if closing is None:
+        return None
+    # The final closer must belong to this opener. Any other details tag text
+    # in the body, quoted or raw, could close the section early and expose
+    # (or hide) live content; such a body keeps the strict parse instead.
+    if re.search(r"<\s*/?\s*details\b", visible[len("<details>"):closing.start(1)], re.I):
+        return None
+    return start + closing.start(1)
 
 
 def review_state_comment_end(source, start):

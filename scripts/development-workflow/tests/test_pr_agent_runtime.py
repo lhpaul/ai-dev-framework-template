@@ -535,10 +535,15 @@ class InlineProducerHTMLTests(unittest.TestCase):
         for sample in (invalid,
                        prefix + "<span>Example `</span>`</span>\n\n</details>",
                        prefix + "<strong>Example `<!-- sample -->`</strong>\n\n</details>"):
-            # #2177: as the canonical final block its body is ignored...
             final = review() + "\n" + sample
-            self.assertEqual("clean", classify(final))
-            self.assertEqual(len(final), len(runtime.mask_review_code(final)))
+            if "<details><summary>Example" in sample:
+                # #2177: any other details tag in the body could close the
+                # section early, so it is never ignored and still escalates.
+                self.assertEqual("escalate", classify(final))
+            else:
+                # #2177: as the canonical final block its body is ignored...
+                self.assertEqual("clean", classify(final))
+                self.assertEqual(len(final), len(runtime.mask_review_code(final)))
             # ...but any live content after it keeps the strict parse.
             body = final + "\n\nTrailing live prose.\n"
             self.assertEqual("escalate", classify(body))
@@ -705,6 +710,17 @@ class ResolvedHistoryTrailerTests(unittest.TestCase):
             "second_marker": visible + history + marker + marker,
             "malformed_marker": visible + history + "<!-- pr-agent-review-state:v1\n{not json}\n-->\n",
             "non_canonical_summary": visible + history.replace("✅ Resolved findings", "Resolved findings") + marker,
+            # An early closer must not let the final closer mask live content.
+            "early_closer_live_blocker": visible + body + "\n\n</details>\n\n"
+                                        "<strong>Must fix</strong> live\n\n</details>\n" + marker,
+            "early_closer_live_ambiguous_span": visible + body + "\n\n</details>\n\n"
+                                               "Live `trailing\\`\n\n</details>\n" + marker,
+            "early_closer_second_details": visible + body + "\n\n</details>\n\n"
+                                           "<details><summary>Live</summary>\n\nLive `trailing\\`\n\n"
+                                           "</details>\n\n</details>\n" + marker,
+            # A quoted opener cannot balance an early raw closer either.
+            "quoted_opener_balances_early_closer": visible + body + "\n\nQuoted `<details>`.\n\n</details>\n\n"
+                                                   "Live `trailing\\`\n\n</details>\n" + marker,
         }
         for name, source in cases.items():
             with self.subTest(case=name):
