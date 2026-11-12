@@ -89,6 +89,20 @@ capability it detected and every one it found missing.
 - A capability is never inferred from the provider's name. The last column of
   the reference only tells the runner where a configured integration exposes
   the capability; the probe decides.
+- **Probes target the configured tracker**, not every surface the same API
+  happens to offer: a tracker configured without projects does not detect
+  project scope because the API behind it also serves projects.
+- **Write capabilities** (item closure, duplicate relation, label editing,
+  field writes) are detected from what the read surface advertises — the
+  operation exists for the configured tracker and the run's credentials are
+  permitted to perform it — never by test-writing. A write that later fails is
+  a rejection under the Write contract, not a missing capability.
+- A **definite not-found** answer to a configured identifier (the tracker
+  answers that it does not exist) is "cannot find" under Scope; only a
+  transport error or a malformed answer makes a capability `unverified`.
+- When the run stops at Scope before reading any item, capabilities whose
+  probe needs an item are listed as `no sondeadas`, not as detected or
+  missing.
 
 <!-- capability-resolution:start -->
 
@@ -100,7 +114,7 @@ name.
 
 | Capability | How the run detects it | Checks that depend on it | Outcome when missing | Where configured integrations expose it |
 | --- | --- | --- | --- | --- |
-| project scope | The tracker resolves a configured project identifier, or its API offers projects at all | Scope resolution | Scope falls through to milestone scope; see Scope | GitHub Projects (`github_projects`): `project_number`, see [`github-projects.md`](../integrations/github-projects.md). Linear (`linear`): `project_url` or the project key in `issue_tracker.custom_fields`, see [`linear.md`](../integrations/linear.md) |
+| project scope | The configured tracker is project-based: its configuration takes a project identifier (resolved when one is configured). A tracker configured without projects does not detect it, even when the same API also serves projects | Scope resolution | Scope falls through to milestone scope; see Scope | GitHub Projects (`github_projects`): `project_number`, see [`github-projects.md`](../integrations/github-projects.md). Linear (`linear`): `project_url` or the project key in `issue_tracker.custom_fields`, see [`linear.md`](../integrations/linear.md) |
 | milestone scope | The tracker exposes a milestone or release field for items | Scope resolution | Scope is the whole repository | GitHub Issues (`github_issues`) milestones, see [`issue-tracker.md`](../integrations/issue-tracker.md) |
 | parent/child hierarchy | Reading a known item returns a parent field or a child list the API can traverse | 1j epic sweep; `integration-branch:<slug>` sibling check in 1c | `no aplica — parent/child hierarchy` | GitHub Projects and GitHub Issues: native sub-issues, see [`github-projects.md`](../integrations/github-projects.md). Linear: parent/sub-issues, see [`linear.md`](../integrations/linear.md) |
 | priority field | Items expose a priority field with a readable option list | 2a sort key 2; Gate 2 priority writes; header "sin prioridad" count | `no aplica — priority field`; the order sorts by due date then creation date | GitHub Projects: a single-select Priority field. Linear: native priority. GitHub Issues without a project: none, see [`issue-tracker.md`](../integrations/issue-tracker.md) |
@@ -289,7 +303,8 @@ Applies to every gate close:
 
 Resolve scope (Scope above) and capabilities (Capability detection) first.
 Then fetch every item in scope whose status is not terminal, plus every item
-carrying the merged status, with: identifier, title, status, priority (when
+carrying the merged status, plus every item that is still open in the tracker
+and has children (an **open epic**, whatever its status), with: identifier, title, status, priority (when
 the priority field is detected), classification and labels (when their
 capabilities are detected), assignee, `createdAt`, `updatedAt`, due date,
 description, **every comment posted after the body's last edit**, and
@@ -300,9 +315,11 @@ promotes them to the released status once a release section carries their
 whole scope; a read set that stops at non-terminal items misses that drift.
 
 A fixed tail of comments is not a substitute: a scope decision can be followed
-by any number of unrelated comments. Read to the body's last edit; when the
-tracker cannot order comments against that edit, hold the item and say the
-history could not be established.
+by any number of unrelated comments. Read to the body's last edit. When the
+tracker does not expose the body's last-edit time, read **every** comment
+instead, say so once in the header (`historial: sin hora de edición del
+body`), and apply conditions 2 and 3 below without condition 1; hold an item
+only when two comments that each pass conditions 2 and 3 disagree.
 
 Comments can supersede the body, but recency alone is not authority. Let a
 comment supersede the body only when all three hold, and otherwise hold the
@@ -453,6 +470,11 @@ Report each group with the survivor, the members to merge, and what each would
 contribute. The merge is an explicit-confirmation action for that named group;
 the survivor's rewritten scope is a body edit and stays proposed text.
 
+A member of a confirmed duplicate group never also appears as a status row in
+`LISTO PARA CONFIRMAR`, even when its scope already shipped: the explicit
+group confirmation governs it, so a range or class answer can never stamp a
+duplicate with a terminal status. Cite the shipped evidence in the group row.
+
 ### 1e. Dependencies
 
 - A dependency on an item carrying the merged or released status is satisfied:
@@ -517,7 +539,7 @@ The commonest real drift is an item whose own body says the fix shipped while
 its status never caught up. Run this sweep on the whole live set on every full
 run, not on a sample:
 
-1. Search bodies for landed-but-filed phrases. The list is a **seed, not
+1. Search bodies **and comments** for landed-but-filed phrases. The list is a **seed, not
    exhaustive**: `fixed in this branch`, `landed in the same change`,
    `already fixed`, `fixed on <date>`, `fixed in the same change`,
    `FIXED —`, `file it anyway`, `for the record`. A phrase only nominates a
@@ -547,7 +569,8 @@ Needs the parent/child hierarchy capability; without it, report
 `no aplica — parent/child hierarchy` and move on. Never substitute a label or
 a body convention for real hierarchy.
 
-For each open epic:
+For each open epic (read in Step 1 whatever its status, so an epic whose
+status already reads terminal while it still has open children is swept):
 
 1. List its children and their states through the hierarchy. The list must be
    **nonempty and successfully read** before any conclusion; an empty list is
@@ -592,6 +615,7 @@ are part of the contract the aliases and the smoke runbook rely on.
 ```text
 Backlog Review — <scope> (<cómo se resolvió>)
 Capacidades: detectadas <lista> · faltantes <lista> · unverified <lista o "ninguna">
+Clasificación: carrier <tipo detectado> (o no aplica — classification carrier)
 Leí: <n> abiertos · <k> en estado merged · <m> branches · <p> PRs · <q> releases · cobertura: full|full (sin presupuesto)|partial|deferred|n/a (sin tracker)
 Presupuesto: <n> restantes · reset <iso> · presupuesto: medido|sin medir
 Más viejo: <ID> (<n>d) · Sin prioridad: <n>/<n> (o no aplica — priority field)
@@ -705,9 +729,11 @@ The remaining set sorts:
    priority option list and state which of its values the dispatcher
    recognizes and which collapse to routine; never map a custom value to a
    higher tier by judgement. Unrecognized values are reported as a
-   configuration defect with a rename recommendation. Without the priority
-   field, report this key as `no aplica — priority field` and say the order is
-   thinner than the dispatcher's.
+   configuration defect with a rename recommendation.
+   Without the priority field, the order reconstruction reports
+   `no aplica — priority field`: the dispatcher's order cannot be reproduced.
+   The run may print the due-date and creation-date order beneath it,
+   labelled `solo contexto`, and proposes no queue.
 3. **Creation date**, earliest first.
 
 Print that order, then name its defects:
