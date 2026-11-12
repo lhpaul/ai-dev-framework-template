@@ -125,7 +125,7 @@ if [ -z "$stated_clean" ]; then
 fi
 
 if ! printf '%s\n' "$stated_clean" | grep -Eq '^[0-9a-fA-F]{7,40}$'; then
-  not_current "malformed"
+  not_current "malformed" "$stated_clean"
 fi
 
 stated_sha="$(git -C "$repo_root" rev-parse --verify --quiet "${stated_clean}^{commit}" 2>/dev/null)" || stated_sha=""
@@ -215,7 +215,9 @@ verdict="$(printf '%s\n' "$diff_text" | awk '
   /^[+-]/ {
     sign = substr($0, 1, 1)
     body = substr($0, 2)
-    if (body !~ /^[ \t]*(\*\*)?Plan revision:(\*\*)?[ \t]/) { bad = 1; exit }
+    # The label may be followed directly by the SHA, bold, or a code span;
+    # norm() consumes those, and everything else must match literally.
+    if (body !~ /^[ \t]*(\*\*)?Plan revision:/) { bad = 1; exit }
     key = file "\034" norm(body)
     if (sign == "-") { removed[key]++ } else { added[key]++ }
     changed = 1

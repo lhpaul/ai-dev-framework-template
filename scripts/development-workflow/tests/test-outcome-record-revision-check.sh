@@ -201,6 +201,25 @@ MERGE_SHA="$(git -C "$REPO" rev-parse HEAD)"
 run_test "merge commit head fails even when a parent is stamped" \
   "1|not_current|merge_head" "$(check_result "$FIX_SHORT" "$MERGE_SHA")"
 
+# --- Stamp formatting variants stay stamp-only -------------------------------
+for variant in nospace boldcode; do
+  git_q reset -q --hard "$FIX_SHA"
+  case "$variant" in
+    nospace) fmt_old='Plan revision:`0000000`'; fmt_new="Plan revision:\`$FIX_SHORT\`" ;;
+    boldcode) fmt_old='Plan revision: **`0000000`**'; fmt_new="Plan revision: **\`$FIX_SHORT\`**" ;;
+  esac
+  sed "s/^Plan revision: \`0000000\` (live PR head at time of writing)/$fmt_old (live PR head at time of writing)/" "$PLAN" > "$PLAN.tmp"
+  mv "$PLAN.tmp" "$PLAN"
+  variant_base="$(commit_all "docs: $variant stamp format")"
+  variant_base_short="$(git -C "$REPO" rev-parse --short=8 "$variant_base")"
+  fmt_new="${fmt_new//$FIX_SHORT/$variant_base_short}"
+  awk -v old="$fmt_old" -v new="$fmt_new" 'index($0, old) == 1 { $0 = new substr($0, length(old) + 1) } { print }' "$PLAN" > "$PLAN.tmp"
+  mv "$PLAN.tmp" "$PLAN"
+  variant_head="$(commit_all "docs: $variant stamp update")"
+  run_test "stamp-only update in $variant format is current" \
+    "0|current|stamp_lag_stamp_only" "$(check_result "$variant_base_short" "$variant_head")"
+done
+
 # --- diff.relative must not hide changes outside --repo-root ----------------
 # With diff.relative=true, git diff run from a subdirectory only reports paths
 # under it; the substantive change to plan.md (repo root) must still count.
@@ -235,6 +254,9 @@ run_test "missing stated revision fails" \
   "1|not_current|missing" "$(check_result "" "$FIX_SHA")"
 run_test "malformed stated revision fails" \
   "1|not_current|malformed" "$(check_result "live-head" "$FIX_SHA")"
+malformed_output="$("$CHECK" --repo-root "$REPO" --stated "live-head" --head "$FIX_SHA" 2>&1 || true)"
+run_test "malformed stated revision is echoed in STATED" \
+  "live-head" "$(printf '%s\n' "$malformed_output" | sed -n 's/^STATED=//p')"
 run_test "nonexistent stated revision fails" \
   "1|not_current|unresolved" "$(check_result "deadbeefdeadbeef" "$FIX_SHA")"
 run_test "stated revision not on the head's branch fails" \
