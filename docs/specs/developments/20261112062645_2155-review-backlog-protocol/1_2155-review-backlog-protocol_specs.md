@@ -102,7 +102,8 @@ reported as drift or unapplied. Nothing outside the confirmed set changed.
 - Explicitly confirm a cancellation, duplicate merge, or item creation for a
   named item or group.
 - Ask to rank the set as-is while confirmed set-changing actions are still
-  outstanding; the queue then flags those items.
+  outstanding; the queue then flags those items, and the choice is recorded as
+  an override.
 
 **Considerations**:
 
@@ -167,11 +168,14 @@ confirmed set, and never presents a partial read as full.
 ## Business Rules
 
 - BR1 (gates): The three gates run in order and each waits for the
-  maintainer. Gate 2 opens only after Gate 1 closed clean on a full read, with
-  no rejected, drifted, deferred, or unapplied confirmed write. Gate 3 opens
-  only after Gate 2 closed clean, except in repository-only mode, where Gate 3
-  closes Gate 1 alone. A partial read ends at the Gate 1 close. Grouping findings by class is
-  allowed; removing a confirmation is not.
+  maintainer. Gate 2 opens only after Gate 1 closed clean on a full read
+  (coverage `full` or `full-unmetered`): no rejected, drifted, or unapplied
+  confirmed write, and no confirmed cancel, merge, or create action still
+  outstanding unless the maintainer explicitly asked to rank the set as-is
+  (that choice is recorded as an override). Gate 3 opens only after Gate 2
+  closed clean, except in repository-only mode, where Gate 3 closes Gate 1
+  alone. A partial read ends at the Gate 1 close. Grouping findings by class
+  is allowed; removing a confirmation is not.
 - BR2 (confirmation is the authority): No mutation happens before the
   maintainer answers the gate that proposes it. No flag is required or
   accepted as a substitute. Before writing, the exact set (identifiers and
@@ -192,8 +196,10 @@ confirmed set, and never presents a partial read as full.
   tracker rank fields are reported only. An epic is never moved to a child's
   stage.
 - BR7 (write admission): Writes are admitted once per gate, before its first
-  write. When the budget is measurable, either the whole confirmed set fits and
-  is applied, or nothing is applied. When it is not measurable, the set is
+  write. When the budget is measurable, admission uses a budget sample taken
+  after that gate's reads, and the projection covers every confirmed write,
+  its readback, and the board re-read that follows; either the whole confirmed
+  set fits and is applied, or nothing is applied. When it is not measurable, the set is
   applied in order and the first rejection stops it. A partial prefix is only
   ever the result of a tracker rejection.
 - BR8 (capability detection): The run detects each capability from the
@@ -208,15 +214,19 @@ confirmed set, and never presents a partial read as full.
   ask. Scope is never widened silently.
 - BR10 (provider-neutral text): The protocol's normative text names no tracker
   product. Any provider-specific vocabulary appears only in the single
-  capability-resolution reference.
+  capability-resolution reference. Tracker reads and writes go through the
+  template's generic tracker contract, with the configured provider resolved
+  by the runner as the other orchestration protocols do.
 - BR11 (shared vocabulary): Status values come from the template's canonical
   tracker-status mapping; classification values and the framework-mode rule
   come from the existing backlog-item and type-routing rules. The review
   references them and does not redefine them.
 - BR12 (evidence over claims): A finding that relies on an item being done,
   superseded, or duplicated cites the repository or tracker evidence checked.
-  An item's own text is a claim, not evidence. Two sweeps are mandatory on every
-  full run: shipped work still queued, and epics whose children have shipped.
+  An item's own text is a claim, not evidence. A finding whose evidence would
+  be an unread item (on a `partial` read) is held, never guessed. Two sweeps
+  are mandatory on every full run: shipped work still queued, and epics whose
+  children have shipped.
 - BR13 (recommendations): Every question that needs the maintainer's judgement
   carries one recommendation, the evidence for it, the cost of overriding it,
   and a declared confidence. A menu of options is not a recommendation.
@@ -254,6 +264,9 @@ in.
 | `not-applicable` | no aplica | Check skipped because a named capability is missing |
 | `applied` | aplicado | Written and read back with the requested value |
 | `drift` | drift | Written, but read back with a different value; counts as unapplied |
+| `unapplied` | not applied | Confirmed but not written (after a rejection, or refused for budget); the reason is shown |
+| `pending-maintainer` | PENDIENTE DE TI | Confirmed or proposed action the run does not perform (proposed body text, an action the tracker cannot perform); delivered in Gate 3 |
+| `unverified` | unverified | Repository-only mode: the tracker side of a finding could not be checked |
 
 **Valid transitions** (per gate):
 
@@ -264,7 +277,8 @@ in.
 - Gate 1 → end when coverage is `partial` (after the Gate 1 close, with Gate 2
   named as deferred pending a full read) or `deferred`, or the set was rejected, drifted,
   or refused for budget (recovery step reported).
-- Gate 2 → Gate 3 when the confirmed set is fully applied without drift.
+- Gate 2 → Gate 3 when the confirmed set is fully applied without drift, or
+  nothing was confirmed.
 - Gate 2 → end when the set was rejected, drifted, or refused for budget.
 
 ## Decision-Gate Consistency Matrix
@@ -292,7 +306,8 @@ they only turn the dependent check into "no aplica".
 | Measured budget insufficient for the confirmed set | Nothing written | Report cost and reset; hold next gate | Protocol, smoke runbook |
 | Tracker rejects mid-write | Applied prefix + unapplied list | Stop; hold next gate; report recovery step | Protocol, smoke runbook |
 | Readback differs from request | Drift (unapplied) | Hold next gate; report drifted identifiers | Protocol, smoke runbook |
-| Nothing confirmed in Gate 1 | No write | Open Gate 2 (when coverage is full) | Protocol |
+| Nothing confirmed in Gate 1 | No write | Open Gate 2 (when coverage is `full` or `full-unmetered`) | Protocol |
+| Nothing confirmed in Gate 2 | No write | Open Gate 3 | Protocol |
 | Confirmed cancel/merge/create outstanding | Gate 2 held | Name outstanding actions; or rank as-is on explicit request, flagging those items | Protocol, aliases |
 | Cancel/merge/create confirmed only by class or gate | Not authorized | Ask for explicit per-item or per-group confirmation | Protocol, aliases, smoke runbook |
 | Body edit accepted | Not applied | Deliver proposed text as pending | Protocol, aliases, smoke runbook |
@@ -316,8 +331,9 @@ capability or as applied.
 ## Acceptance Criteria
 
 - [ ] AC1: The protocol's normative text names no tracker product. A text search
-  of the protocol for tracker product names finds matches only inside the
-  single capability-resolution reference.
+  of the protocol for the tracker product names "Linear", "Jira", "GitHub
+  Issues", and "GitHub Projects" (and their provider configuration values)
+  finds matches only inside the single capability-resolution reference.
 - [ ] AC2: The capability reference is organized by capability (one row per
   capability), and each row states how the capability is detected, which checks
   depend on it, and the "no aplica" outcome that names it when missing.
@@ -325,11 +341,13 @@ capability or as applied.
   the header declares repository-only mode, every tracker-dependent check
   reports "no aplica" naming its missing capability, Gate 2 reports "no aplica",
   Gate 3 closes Gate 1 alone, and nothing is written.
-- [ ] AC4: On a tracker that exposes parent/child hierarchy and a priority
-  field (as the template's GitHub issue and project providers do), the smoke
-  runbook shows the epic sweep listing children through the detected hierarchy
-  and the order reconstruction using the tracker's own priority values, naming
-  which of them the dispatcher recognizes.
+- [ ] AC4: For each of the template's GitHub Issues and GitHub Projects
+  provider configurations, the smoke runbook records the capabilities the run
+  detected and shows the epic sweep listing children through the detected
+  hierarchy (or "no aplica" naming the hierarchy capability when it is not
+  detected) and the order reconstruction using the tracker's own priority
+  values, naming which of them the dispatcher recognizes (or "no aplica"
+  naming the priority capability when no priority field is detected).
 - [ ] AC5: On a tracker missing hierarchy, an unsettable priority, or labels,
   the corresponding check reports "no aplica" naming that capability, and no
   other check fails.
