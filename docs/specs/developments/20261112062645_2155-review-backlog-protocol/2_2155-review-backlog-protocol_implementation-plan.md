@@ -37,12 +37,14 @@ contract test; no runtime script, configuration, or workflow change.
 | V4 | Alias directories already synced | `sed -n 68,222p sync-manifest.yaml \| grep -n 'path: \.claude/commands/\|path: \.cursor/commands/\|path: \.agents/skills/\|path: docs/workflow/'` at V0 | all four directory entries present under `always_sync` |
 | V5 | Runbook needs its own entry | `grep -n 'docs/testing/workflow/' sync-manifest.yaml` at V0 | only per-file entries exist (for example `retrospective-protocol.smoke-test.md`); no directory entry |
 | V6 | Project-owned docs directory | `grep -n 'path: docs/project/' sync-manifest.yaml` at V0 | present under `project_specific` |
-| V7 | Suite discovery | `sed -n 11,30p scripts/development-workflow/select-test-suites.sh` at V0 | a suite declares covered paths with `# covers:` lines; new suites are wired without workflow edits |
+| V7 | Suite discovery | `sed -n 1,30p scripts/development-workflow/select-test-suites.sh` at V0 | a suite declares covered paths with `# covers:` lines; new suites are wired without workflow edits |
 | V8 | Dispatcher priority vocabulary | `grep -n PRIORITY_RANK scripts/development-workflow/workflow-portfolio-scan.py scripts/development-workflow/workflow-batch-overlap.sh` at V0 | both define `urgent`/`high`/`normal`/`medium`/`low`, with `normal` = `medium` |
 | V9 | Canonical status events | `./scripts/development-workflow/tracker-status-for.sh --help` at V0 | events `dispatch`, `ready-for-human-review`, `merged`, `released` per stage `spec`/`plan`/`implementation` |
 | V10 | Manifest coverage baseline | `python3 scripts/development-workflow/check-sync-manifest-coverage.py` at V0 | `RESULT=clean` |
-| V11 | Codex installer picks up new skills | `sed -n 1,12p scripts/development-workflow/install-codex-skills.sh` at V0 | copies every directory under `.agents/skills/`; no registry to edit |
+| V11 | Codex installer picks up new skills | `sed -n 1,51p scripts/development-workflow/install-codex-skills.sh` at V0 | links every directory under `.agents/skills/` (`for skill_dir in "$source_dir"/*` with `ln -sfn`, lines 27 and 44); no registry to edit |
 | V12 | Open PRs on the same surfaces | `gh pr list --state open` at plan time | none open |
+| V13 | No sentry-triage protocol | `git ls-tree -r --name-only 7b64564d \| grep -i sentry` and `git grep -il sentry-triage 7b64564d -- .` (whole tree) | no output for either |
+| V14 | Tracker integration pages | `ls docs/workflow/development-workflow/integrations/` at V0 | `issue-tracker.md` (generic), `github-projects.md`, `linear.md`; no page for Jira or for repository issues without a project |
 
 ## Factual claim evidence
 
@@ -52,26 +54,32 @@ by backlog authors, outside this project's control).
 - Producer: humans and agents writing tracker item bodies.
 - Population and window: all issues (open and closed) of
   `lhpaul/ai-dev-framework-template` up to 2026-11-12, searched with
-  `gh issue list --state all --search '"<phrase>" in:body'` for each seed
-  phrase of the origin protocol (`already fixed`, `fixed in this branch`,
+  `gh issue list --state all --search '"<phrase>" in:body'` for seven of the
+  origin protocol's eight seed forms (`already fixed`, `fixed in this branch`,
   `landed in the same change`, `fixed in the same change`, `file it anyway`,
-  `for the record`). The origin consumer's own tracker is not a GitHub tracker,
-  so its GitHub issues returned no hits and are not part of the population.
+  `for the record`, and `fixed on` for `fixed on <date>`). The eighth,
+  `FIXED —`, is not sampled separately: the forge's search ignores case and
+  punctuation, so it reduces to the bare word "fixed", whose hits are not a
+  population of that form. The origin consumer's own tracker is not a GitHub
+  tracker, so its GitHub issues returned no hits and are not part of the
+  population.
 - Occurrences examined, excluding #2155 itself (which quotes the phrases):
   #1529 (heading "Concrete instances already fixed (as evidence of the
   pattern)"), #1574 ("Why this is not already fixed by #1556"), #1531,
   #372 and #554/#593 (search token matches where "already" and "fixed" are not
   a claim about the item), #299 (template prose "Already fixed upstream in
-  vX.Y.Z").
+  vX.Y.Z"), #1584 ("#1391 is partly fixed on `develop`", a statement about
+  another item) and #1722 (token match "Fixed per-job overhead").
 - Distinct variants: evidence-list heading, negation, incidental token match,
-  quoted template prose. None is a claim that the item's own work shipped.
+  quoted template prose, statement about another item. None is a claim that
+  the item's own work shipped.
 - Saturation: not reached; the population holds no true positive.
 - Adequacy rationale: the sample is heterogeneous and dominated by false
   positives, which is exactly what the design must tolerate. The design binds
   to no phrase: the phrase list is a non-exhaustive seed that only nominates
   candidates, every candidate is classified by the artifact found (merged,
   partial, live branch, abandoned, absent) or by "no claim" for a negated or
-  incidental match, and items with no phrase at all are still covered by the
+  incidental match or a statement about another item, and items with no phrase at all are still covered by the
   status-drift check. An output outside the observed variants therefore
   changes only which items become candidates, never a status outcome.
 
@@ -116,7 +124,9 @@ the spec's Statuses table. The changes from the origin are:
   is `full (sin presupuesto)` with unmetered admission, not "no aplica"), and
   a last column "where configured integrations expose it" — the only place a
   provider or configuration value is named, each cell pointing at that
-  provider's integration page under `integrations/`. Every other section
+  provider's integration page under `integrations/` where one exists
+  (`github-projects.md`, `linear.md`) and at `integrations/issue-tracker.md`
+  otherwise (V14). Every other section
   refers to capabilities by the row name.
 - [ ] **L1.2 Detection failure is not a missing capability.** A probe that
   errors or returns a malformed response marks the capability `unverified`:
@@ -185,14 +195,16 @@ the spec's Statuses table. The changes from the origin are:
   template-owned and would be overwritten on synchronization.
 - [ ] **L1.12 Landed-work sweep (AC15, BR12).** Keep 1i with the phrase list
   marked "seed, not exhaustive" and the per-candidate "no claim" outcome for
-  negated or incidental matches (Rule 1 record above).
+  negated or incidental matches and statements about another item (Rule 1
+  record above).
 - [ ] **L1.13 Tracker path (BR10).** Prerequisites and both gate closes point
   at `integrations/issue-tracker.md`, including its deferred-action protocol
   for providers the shell cannot reach.
 - [ ] **L1.14 Relationship section (AC8, BR16).** State that the review
   complements `/run-work` (Protocol 96), never dispatches, and runs before
   batch selection; relate it to Protocols 00, 06, 07, 90 and 91. Drop the
-  origin's reference to a sentry-triage protocol the template does not have.
+  origin's reference to a sentry-triage protocol the template does not have
+  (V13).
 
 ### L2 — Command aliases (AC9, BR17)
 
@@ -232,8 +244,12 @@ the sense that they must not contradict the protocol.
 
 - [ ] **L5.1** Add an `always_sync` entry for
   `docs/testing/workflow/review-backlog-protocol.smoke-test.md` with
-  `mode_scope: shared` and a note naming the suite that reads it. Shared, not
-  hub-only, because the suite reads the runbook unconditionally (L6).
+  `mode_scope: hub_only` and a note naming the suite that reads it. Hub-only,
+  the scope of the protocol, the aliases and the suite (V4; the suite lives
+  under the `hub_only` `scripts/development-workflow/` entry), and the scope
+  of the existing suite-read runbooks (V5, for example
+  `retrospective-protocol.smoke-test.md`): a role that does not receive the
+  suite or the protocol has no use for the runbook.
 - [ ] **L5.2** No entry for the protocol or the aliases: their directories are
   already `always_sync` (V4). The obligation "every new file is shipped" binds
   each file added by L1, L2 and L6 and is discharged by
@@ -242,7 +258,7 @@ the sense that they must not contradict the protocol.
 ### L6 — Contract test suite (`scripts/development-workflow/tests/test-review-backlog-protocol.sh`, new) (AC11)
 
 - [ ] `# covers:` header for the protocol, the three alias paths, the runbook,
-  and the workflow guide.
+  the workflow guide, and `AGENTS.md` (read by the T2 assertion).
 - [ ] A Python heredoc, following `test-dsh-model-routing.sh`, with fixed
   substring checks and one bounded regex, cases in Testing Strategy T1.
 - [ ] Planted-violation proofs (T3), printed as `PROOF <name>: FAIL at
@@ -345,7 +361,7 @@ gaps described in the runbook; no fixture data is committed.
 | Risk | Likelihood | Impact | Mitigation |
 | --- | --- | --- | --- |
 | Provider vocabulary leaks into normative prose during the port | Med | Med | T1 AC1 regex and proof T3(a) |
-| A consumer that synced an older template lacks the runbook | Low | Low | L5.1 ships it with `mode_scope: shared` |
+| A consumer that synced an older template lacks the runbook | Low | Low | L5.1 ships it with the suite that reads it |
 | The suite asserts template-only state in a consumer | Low | Med | T2 mode branch |
 | An agent reads a range answer as authority to cancel | Med | High | L1.6 refusal rule and its smoke step |
 
