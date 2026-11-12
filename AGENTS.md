@@ -69,6 +69,7 @@ Repository-specific workflow providers are declared in [`.ai-dev-workflow.yaml`]
 | --- | --- | --- | --- | --- | --- |
 | Project Setup | `project-setup` agent | `/setup-project` | `workflow-project-setup` skill | `workflow-project-setup` skill | Follow `docs/workflow/setup/protocol.md` |
 | Add backlog item | `/add-backlog-item` | `/add-backlog-item` | `/add-backlog-item` alias | `/add-backlog-item` alias | Follow `docs/workflow/development-workflow/protocols/00-add-backlog-item-protocol.md` |
+| Review backlog | `/review-backlog` | `/review-backlog` | `/review-backlog` alias | `/review-backlog` alias | Follow `docs/workflow/development-workflow/protocols/09-review-backlog-protocol.md` — periodic three-gate backlog audit; complements `/run-work` |
 | Write Spec | `product-manager` agent | `/generate-new-feature` | `workflow-spec-writer` skill | `workflow-spec-writer` skill | Follow `docs/workflow/development-workflow/protocols/01-generate-spec-protocol.md` |
 | Write Plan | `tech-lead` agent | `/generate-implementation-plan` | `workflow-plan-writer` skill | `workflow-plan-writer` skill | Follow `docs/workflow/development-workflow/protocols/02-generate-implementation-plan-protocol.md` |
 | Implement | `developer` agent | `/implement-development` | `workflow-implementer` skill | `workflow-implementer` skill | Follow `docs/workflow/development-workflow/protocols/03-implement-development-protocol.md` |
@@ -93,7 +94,7 @@ Repository-specific workflow providers are declared in [`.ai-dev-workflow.yaml`]
 
 The repository ships Codex skill definitions in two compatible locations:
 
-- `.agents/skills/`: repo-scoped Codex discovery path, including command-style aliases such as `/add-backlog-item`, `/run-work`, `/run-item`, `/run-items`, `/run-item-work` (deprecated alias), `/run-epic`, `/run-reviewer-loop`, `/batch-merge`, `/post-merge-cleanup`, `/post-merge-qa` (alias `/merged-qa-tester`), `/prepare-release`, `/graduate-development`, `/retrospective`, and `/sync-template`.
+- `.agents/skills/`: repo-scoped Codex discovery path, including command-style aliases such as `/add-backlog-item`, `/review-backlog`, `/run-work`, `/run-item`, `/run-items`, `/run-item-work` (deprecated alias), `/run-epic`, `/run-reviewer-loop`, `/batch-merge`, `/post-merge-cleanup`, `/post-merge-qa` (alias `/merged-qa-tester`), `/prepare-release`, `/graduate-development`, `/retrospective`, and `/sync-template`.
 - `.codex/skills/`: legacy canonical workflow skill definitions used by existing template integrations.
 
 Install them into your local Codex skill directories before first use:
