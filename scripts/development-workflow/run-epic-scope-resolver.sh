@@ -380,6 +380,15 @@ HEAD_REF_TEAM_PREFIX_RE='(([A-Z][A-Z0-9]{1,7}|[a-z][a-z0-9])-)?'
 
 # Fallback when label-derived base scans miss PRs on integration branches
 # (develop-<slug>) that are not represented by integration-branch:* labels in scope.
+#
+# Emits {open: [...], merged: [...], unavailable: <bool>} (#1805). The
+# `unavailable` flag is internal to this script: enrich_item surfaces it as the
+# per-item `prEvidenceUnavailable` field and keeps `pullRequests` in its
+# original {open, merged} shape. It is true only when the per-prefix fallback
+# search — the exhaustive lookup — could not complete (a `gh search prs` or
+# `gh pr view` call failed), so empty arrays are not proof that no PR exists.
+# A failed or empty primary `gh pr list` search alone does not set it, because
+# the fallback that follows covers the same head-ref space.
 discover_prs_via_head_search() {
   local issue="$1" cache_file result
   cache_file="$tmp_dir/prs_head_${issue}.json"
@@ -399,6 +408,7 @@ discover_prs_via_head_search() {
 discover_prs_via_head_search_uncached() {
   local issue="$1"
   local prefix numbers number pr_json open merged search_json primary_result primary_count
+  local unavailable=false
   open='[]'
   merged='[]'
 
@@ -442,7 +452,7 @@ discover_prs_via_head_search_uncached() {
     elif ! primary_count="$(printf '%s\n' "$primary_result" | jq '(.open | length) + (.merged | length)')"; then
       primary_count=0
     elif [ "$primary_count" -gt 0 ]; then
-      printf '%s\n' "$primary_result"
+      printf '%s\n' "$primary_result" | jq -c '. + {unavailable: false}'
       return 0
     fi
   fi
@@ -451,11 +461,13 @@ discover_prs_via_head_search_uncached() {
     numbers=""
     if ! numbers="$(gh search prs "${issue} in:head" --repo "$repo" --head "${prefix}/" --json number -q '.[].number' 2>/dev/null)"; then
       numbers=""
+      unavailable=true
     fi
     for number in $numbers; do
       [ -n "$number" ] || continue
       pr_json=""
       if ! pr_json="$(gh pr view "$number" --json number,title,state,headRefName,baseRefName,isDraft,labels,mergedAt 2>/dev/null)"; then
+        unavailable=true
         continue
       fi
       if ! printf '%s\n' "$pr_json" | jq -e \
@@ -493,7 +505,8 @@ discover_prs_via_head_search_uncached() {
       fi
     done
   done
-  jq -n --argjson open "$open" --argjson merged "$merged" '{open: $open, merged: $merged}'
+  jq -n --argjson open "$open" --argjson merged "$merged" --argjson unavailable "$unavailable" \
+    '{open: $open, merged: $merged, unavailable: $unavailable}'
 }
 
 discover_integration_bases_for_issue() {
@@ -558,7 +571,7 @@ linked_pr_json() {
   # branch naming convention gives us a precise, issue-scoped lookup.
   if [ -z "$integration_label" ] && [ "$bases" = "develop" ]; then
     discover_prs_via_head_search "$issue" \
-      | jq '{open: (.open | unique_by(.number)), merged: (.merged | unique_by(.number))}'
+      | jq '{open: (.open | unique_by(.number)), merged: (.merged | unique_by(.number)), unavailable: (.unavailable // false)}'
     return 0
   fi
 
@@ -605,12 +618,15 @@ $bases
 EOF
 
   local _linked_result
+  # Base scans that fail to read stop the resolver (fetch_prs_for_base), so a
+  # base-scan result is conclusive; only the head-search fallback can report
+  # unavailable evidence (#1805).
   _linked_result="$(jq -n --argjson open "$open_prs" --argjson merged "$merged_prs" \
-    '{open: ($open | unique_by(.number)), merged: ($merged | unique_by(.number))}')"
+    '{open: ($open | unique_by(.number)), merged: ($merged | unique_by(.number)), unavailable: false}')"
   if [ "$(printf '%s\n' "$_linked_result" | jq '(.open | length) + (.merged | length)')" -eq 0 ]; then
     _linked_result="$(discover_prs_via_head_search "$issue")"
   fi
-  _linked_result="$(printf '%s\n' "$_linked_result" | jq '{open: (.open | unique_by(.number)), merged: (.merged | unique_by(.number))}')"
+  _linked_result="$(printf '%s\n' "$_linked_result" | jq '{open: (.open | unique_by(.number)), merged: (.merged | unique_by(.number)), unavailable: (.unavailable // false)}')"
   printf '%s\n' "$_linked_result"
 }
 
@@ -666,6 +682,7 @@ enrich_item() {
   local issue="$1"
   local issue_json title state state_reason labels integration_label status type priority pr_json dep_json group body
   local merged_impl_count open_review_count dep_state ambiguity_reason scope_base_ambiguity_reason
+  local pr_evidence_unavailable
 
   if ! issue_json="$(gh issue view "$issue" --json number,title,state,stateReason,body,labels,projectItems 2>/dev/null)"; then
     jq -n --argjson number "$issue" '{number:$number,title:"",state:"UNKNOWN",group:"ambiguous",ambiguityReason:"issue could not be read"}'
@@ -716,9 +733,16 @@ enrich_item() {
     scope_base_ambiguity_reason="scope integration branch candidates could not be fully resolved"
   fi
   if [ -n "$scope_base_ambiguity_reason" ]; then
-    pr_json="$(jq -n '{open: [], merged: []}')"
+    # No PR lookup ran, so empty arrays here are not confirmed absence (#1805).
+    pr_json="$(jq -n '{open: [], merged: [], unavailable: true}')"
   else
     pr_json="$(linked_pr_json "$issue" "$integration_label")"
+  fi
+  if ! pr_evidence_unavailable="$(printf '%s\n' "$pr_json" | jq -r 'if .unavailable == true then "true" else "false" end')"; then
+    error_exit "failed to parse PR evidence availability for issue #${issue}."
+  fi
+  if ! pr_json="$(printf '%s\n' "$pr_json" | jq -c '{open: .open, merged: .merged}')"; then
+    error_exit "failed to normalize PR state for issue #${issue}."
   fi
   dep_json="$(dependency_json "$body")"
   if ! merged_impl_count="$(printf '%s\n' "$pr_json" | jq '[.merged[] | select(.headRefName | test("^(feature|fix|refactor|hotfix)/"))] | length')"; then
@@ -766,6 +790,7 @@ enrich_item() {
     --arg type "$type" \
     --arg priority "$priority" \
     --argjson prs "$pr_json" \
+    --argjson prEvidenceUnavailable "$pr_evidence_unavailable" \
     --argjson dependencies "$dep_json" \
     --arg group "$group" \
     --arg ambiguityReason "$ambiguity_reason" \
@@ -782,6 +807,7 @@ enrich_item() {
       priority: $priority,
       dependencies: $dependencies,
       pullRequests: $prs,
+      prEvidenceUnavailable: $prEvidenceUnavailable,
       group: $group,
       ambiguityReason: (if $ambiguityReason == "" then null else $ambiguityReason end)
     }'
