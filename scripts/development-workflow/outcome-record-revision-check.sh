@@ -116,15 +116,33 @@ not_current() {
   exit 1
 }
 
-# Strip surrounding whitespace and Markdown code-span backticks a reader may
-# have copied along with the SHA.
-stated_clean="$(printf '%s' "$stated" | tr -d '`[:space:]')"
+# Strip only the surrounding whitespace and Markdown code-span backticks a
+# reader may have copied along with the SHA. Whitespace, backticks, or line
+# breaks inside the token stay, so a split or wrapped marker is malformed.
+trim_blanks() {
+  local s="$1"
+  s="${s#"${s%%[![:space:]]*}"}"
+  s="${s%"${s##*[![:space:]]}"}"
+  printf '%s' "$s"
+}
+stated_clean="$(trim_blanks "$stated")"
+while [ "${stated_clean#\`}" != "$stated_clean" ]; do stated_clean="${stated_clean#\`}"; done
+while [ "${stated_clean%\`}" != "$stated_clean" ]; do stated_clean="${stated_clean%\`}"; done
+stated_clean="$(trim_blanks "$stated_clean")"
 
 if [ -z "$stated_clean" ]; then
   not_current "missing"
 fi
 
-if ! printf '%s\n' "$stated_clean" | grep -Eq '^[0-9a-fA-F]{7,40}$'; then
+# Validate the whole token (a line-oriented grep would accept one good line of
+# a multi-line value). Line breaks are flattened in the echoed STATED value so
+# the key=value output stays one record per line.
+case "$stated_clean" in
+  *[!0-9a-fA-F]*)
+    not_current "malformed" "$(printf '%s' "$stated_clean" | tr '\r\n' '  ')"
+    ;;
+esac
+if [ "${#stated_clean}" -lt 7 ] || [ "${#stated_clean}" -gt 40 ]; then
   not_current "malformed" "$stated_clean"
 fi
 

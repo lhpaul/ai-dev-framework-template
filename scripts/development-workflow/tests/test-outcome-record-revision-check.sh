@@ -257,6 +257,23 @@ run_test "malformed stated revision fails" \
 malformed_output="$("$CHECK" --repo-root "$REPO" --stated "live-head" --head "$FIX_SHA" 2>&1 || true)"
 run_test "malformed stated revision is echoed in STATED" \
   "live-head" "$(printf '%s\n' "$malformed_output" | sed -n 's/^STATED=//p')"
+FIX_FULL_HEAD="$(printf '%s' "$FIX_SHA" | cut -c1-20)"
+FIX_FULL_TAIL="$(printf '%s' "$FIX_SHA" | cut -c21-40)"
+run_test "stated SHA split by inner whitespace is malformed" \
+  "1|not_current|malformed" "$(check_result "$FIX_FULL_HEAD $FIX_FULL_TAIL" "$FIX_SHA")"
+run_test "stated SHA split by an inner backtick is malformed" \
+  "1|not_current|malformed" "$(check_result "$FIX_FULL_HEAD\`$FIX_FULL_TAIL" "$FIX_SHA")"
+run_test "stated SHA wrapped across lines is malformed" \
+  "1|not_current|malformed" "$(check_result "$FIX_FULL_HEAD
+$FIX_FULL_TAIL" "$FIX_SHA")"
+multiline_output="$("$CHECK" --repo-root "$REPO" --stated "$FIX_SHORT
+RESULT=current" --head "$FIX_SHA" 2>&1 || true)"
+run_test "multi-line stated value cannot inject output records" \
+  "1" "$(printf '%s\n' "$multiline_output" | grep -c '^RESULT=')"
+run_test "padded code span around the SHA is accepted" \
+  "0|current|same_head" "$(check_result " \` $FIX_SHORT \` " "$FIX_SHA")"
+run_test "SHA longer than 40 hex characters is malformed" \
+  "1|not_current|malformed" "$(check_result "${FIX_SHA}0" "$FIX_SHA")"
 run_test "nonexistent stated revision fails" \
   "1|not_current|unresolved" "$(check_result "deadbeefdeadbeef" "$FIX_SHA")"
 run_test "stated revision not on the head's branch fails" \
