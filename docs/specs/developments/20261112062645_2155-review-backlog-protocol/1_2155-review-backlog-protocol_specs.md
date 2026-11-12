@@ -110,7 +110,8 @@ reported as drift or unapplied. Nothing outside the confirmed set changed.
 - A tracker rejection mid-write stops the gate immediately; the applied prefix
   and every unapplied identifier are reported, and the next gate does not open.
 - Confirmed set-changing actions the run did not perform hold Gate 2 by
-  default.
+  default: the run ends at the Gate 1 close, names them as pending for the
+  maintainer, and a later run opens Gate 2.
 
 ### Use Case 2: Review a repository with no tracker
 
@@ -158,9 +159,10 @@ exposes no readable budget.
 
 1. The run samples the budget before reading.
 2. It declares one coverage value and acts on it (see Statuses).
-3. Before the first write of a gate, it decides once whether the whole
-   confirmed set fits; if not, it writes nothing and reports the projected cost
-   and reset time.
+3. Before the first write of a gate, when the budget is measurable, it decides
+   once whether the whole confirmed set fits; if not, it writes nothing and
+   reports the projected cost and reset time. When the budget is not
+   measurable, it applies the set in order and stops at the first rejection.
 
 **Postconditions**: The run never applies a self-chosen partial prefix of a
 confirmed set, and never presents a partial read as full.
@@ -265,18 +267,21 @@ in.
 | `applied` | aplicado | Written and read back with the requested value |
 | `drift` | drift | Written, but read back with a different value; counts as unapplied |
 | `unapplied` | not applied | Confirmed but not written (after a rejection, or refused for budget); the reason is shown |
-| `pending-maintainer` | PENDIENTE DE TI | Confirmed or proposed action the run does not perform (proposed body text, an action the tracker cannot perform); delivered in Gate 3 |
+| `pending-maintainer` | PENDIENTE DE TI | Confirmed or proposed action the run does not perform (proposed body text, an action the tracker cannot perform); delivered in Gate 3, or in the gate close report when the run ends before Gate 3 |
 | `unverified` | unverified | Repository-only mode: the tracker side of a finding could not be checked |
 
 **Valid transitions** (per gate):
 
-- Gate 1 → Gate 2 when the confirmed set is fully applied without drift, no
-  confirmed set-changing action is outstanding (or the maintainer chose to rank
-  as-is), and coverage is `full` or `full-unmetered`.
+- Gate 1 → Gate 2 when the confirmed set is fully applied without drift (or
+  nothing was confirmed), no confirmed set-changing action is outstanding (or
+  the maintainer chose to rank as-is), and coverage is `full` or
+  `full-unmetered`.
 - Gate 1 → Gate 3 (Gate 1 closeout only) when coverage is `repository-only`.
 - Gate 1 → end when coverage is `partial` (after the Gate 1 close, with Gate 2
   named as deferred pending a full read) or `deferred`, or the set was rejected, drifted,
-  or refused for budget (recovery step reported).
+  or refused for budget (recovery step reported), or a confirmed set-changing
+  action is outstanding and the maintainer did not ask to rank as-is (outstanding
+  actions named as pending for the maintainer; a later run opens Gate 2).
 - Gate 2 → Gate 3 when the confirmed set is fully applied without drift, or
   nothing was confirmed.
 - Gate 2 → end when the set was rejected, drifted, or refused for budget.
@@ -301,14 +306,14 @@ they only turn the dependent check into "no aplica".
 | Budget too low | `deferred` | End; report budget and reset | Protocol, smoke runbook |
 | Budget runs out mid-read | `partial` | Ledger of what was read; no queue; end at Gate 1 close | Protocol, smoke runbook |
 | No readable budget, all read | `full-unmetered` | Proceed; ordered apply, stop at first rejection | Protocol, smoke runbook |
-| Capability missing (hierarchy, priority, unsettable priority, labels, classification carrier, budget surface) | Dependent check "no aplica", capability named | Continue other checks | Protocol, smoke runbook |
+| Capability missing (hierarchy, priority, priority that can be left unset, labels, classification carrier, budget surface) | Dependent check "no aplica", capability named | Continue other checks | Protocol, smoke runbook |
 | Gate confirmed set fits (or unmetered), all read back equal | Applied | Re-read board; open next gate | Protocol, aliases |
-| Measured budget insufficient for the confirmed set | Nothing written | Report cost and reset; hold next gate | Protocol, smoke runbook |
-| Tracker rejects mid-write | Applied prefix + unapplied list | Stop; hold next gate; report recovery step | Protocol, smoke runbook |
-| Readback differs from request | Drift (unapplied) | Hold next gate; report drifted identifiers | Protocol, smoke runbook |
+| Measured budget insufficient for the confirmed set | Nothing written | Report cost and reset; next gate not opened; end | Protocol, smoke runbook |
+| Tracker rejects mid-write | Applied prefix + unapplied list | Stop; next gate not opened; report recovery step; end | Protocol, smoke runbook |
+| Readback differs from request | Drift (unapplied) | Next gate not opened; report drifted identifiers and recovery step; end | Protocol, smoke runbook |
 | Nothing confirmed in Gate 1 | No write | Open Gate 2 (when coverage is `full` or `full-unmetered`) | Protocol |
 | Nothing confirmed in Gate 2 | No write | Open Gate 3 | Protocol |
-| Confirmed cancel/merge/create outstanding | Gate 2 held | Name outstanding actions; or rank as-is on explicit request, flagging those items | Protocol, aliases |
+| Confirmed cancel/merge/create outstanding | Gate 2 held | Name outstanding actions as pending for the maintainer and end (a later run opens Gate 2); or rank as-is on explicit request, flagging those items | Protocol, aliases |
 | Cancel/merge/create confirmed only by class or gate | Not authorized | Ask for explicit per-item or per-group confirmation | Protocol, aliases, smoke runbook |
 | Body edit accepted | Not applied | Deliver proposed text as pending | Protocol, aliases, smoke runbook |
 | Gate 3 with overrides / without overrides | Precedent lines emitted / none | Closeout; no repository file written | Protocol |
@@ -348,9 +353,9 @@ capability or as applied.
   detected) and the order reconstruction using the tracker's own priority
   values, naming which of them the dispatcher recognizes (or "no aplica"
   naming the priority capability when no priority field is detected).
-- [ ] AC5: On a tracker missing hierarchy, an unsettable priority, or labels,
-  the corresponding check reports "no aplica" naming that capability, and no
-  other check fails.
+- [ ] AC5: On a tracker missing hierarchy, a priority that can be left unset,
+  or labels, the corresponding check reports "no aplica" naming that
+  capability, and no other check fails.
 - [ ] AC6: The protocol states three gates in order (ledger, order, closeout),
   that each waits for confirmation, and that grouping by class never removes a
   confirmation.
@@ -371,6 +376,24 @@ capability or as applied.
 - [ ] AC11: A smoke-test runbook for the backlog review exists, and a test suite
   that reads it (and the protocol and aliases) passes in CI.
 - [ ] AC12: The implementation includes a changelog fragment.
+- [ ] AC13: The protocol states scope resolution by capability (configured
+  project, else configured milestone, else whole repository), and that a
+  project-capable tracker with no project configured, conflicting configured
+  scopes, or an unresolvable scope stop before reading and ask.
+- [ ] AC14: The protocol takes status values from the canonical tracker-status
+  mapping and classification values from the existing backlog-item and
+  type-routing rules by reference, without restating their value lists.
+- [ ] AC15: The protocol makes the shipped-work-still-queued and
+  epics-with-shipped-children sweeps mandatory on every full run, requires each
+  done, superseded, or duplicate finding to cite repository or tracker
+  evidence, and holds a finding that depends on an unread item.
+- [ ] AC16: The protocol requires every question that needs the maintainer's
+  judgement to carry exactly one recommendation, its evidence, the cost of
+  overriding it, and a declared confidence.
+- [ ] AC17: The protocol states write admission once per gate (whole confirmed
+  set or nothing when the budget is measurable; ordered apply stopping at the
+  first rejection when it is not) and the gate-opening conditions of the Valid
+  transitions above, including that a partial read ends at the Gate 1 close.
 
 ## Brief Objective List and Coverage Matrix
 
@@ -378,16 +401,16 @@ capability or as applied.
 | --- | --- |
 | Port the protocol into the template without coupling it to one tracker | AC1, AC2; BR8, BR10 |
 | Tracker read/write path through the generic tracker contract | BR10, BR11; AC1 |
-| Scope resolution without a provider-only project field | BR9; matrix scope rows |
+| Scope resolution without a provider-only project field | AC13; BR9; matrix scope rows |
 | Epic sweep through detected hierarchy, "no aplica" when absent | AC4, AC5; BR8, BR12 |
 | Order reconstruction with the tracker's own priority vocabulary | AC4; BR14 |
 | "No priority" check degrades when priority cannot be unset | AC5; BR8 |
 | Labels check degrades when labels do not exist | AC3, AC5; BR8 |
-| Status and Type referenced, not redefined | BR11 |
-| Shipped-but-queued and epic-with-shipped-children sweeps | BR12 |
-| One recommendation per judgement question | BR13 |
-| Decision 1: three gates | AC6; BR1 |
-| Decision 2: conversational confirmation, explicit confirmation classes, body edits as text | AC7; BR2–BR6 |
+| Status and Type referenced, not redefined | AC14; BR11 |
+| Shipped-but-queued and epic-with-shipped-children sweeps | AC15; BR12 |
+| One recommendation per judgement question | AC16; BR13 |
+| Decision 1: three gates | AC6, AC17; BR1 |
+| Decision 2: conversational confirmation, explicit confirmation classes, body edits as text | AC7, AC17; BR2–BR7 |
 | Decision 3: complements `/run-work`, README says so | AC8; BR16 |
 | Correction: capability detection, table by capability | AC2, AC5; BR8 |
 | Aliases for each runner | AC9; BR17 |
