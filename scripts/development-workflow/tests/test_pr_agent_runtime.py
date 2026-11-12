@@ -377,6 +377,54 @@ CURRENT_REVIEW_1978 = (
 )
 
 
+# Reduced producer comment from #2176 (issuecomment 6832456684, head 43bb424f).
+# Its resolved history carries escaped backticks (source line 102) and an
+# unpaired backtick (source line 126); both made the draft gate escalate (#2177).
+REAL_2176_REVIEW = (
+    '## PR Reviewer Guide 🔍\n'
+    '\n'
+    '#### (Review updated until commit https://github.com/lhpaul/ai-dev-framework-template/commit/43bb424f8f345c1e007b79524206b5d86e9425c5)\n'
+    '\n'
+    'Here are some key observations to aid the review process:\n'
+    '\n'
+    '<table>\n'
+    '<tr><td>⏱️&nbsp;<strong>Estimated effort to review</strong>: 4 🔵🔵🔵🔵⚪</td></tr>\n'
+    '<tr><td>🧪&nbsp;<strong>PR contains tests</strong></td></tr>\n'
+    '<tr><td>🔒&nbsp;<strong>No security concerns identified</strong></td></tr>\n'
+    '<tr><td>⚡&nbsp;<strong>Recommended focus areas for review</strong><br><br>\n'
+    '\n'
+    '<details><summary><a href=\'https://github.com/lhpaul/ai-dev-framework-template/pull/2176/files#diff-c6bea10b75b7a9b71aa6959d2118e3a7bc820eea6e9ca8ce61260f43e2aa057dR127-R134\'><strong data-pr-agent-finding="v1" data-category="advisory" data-severity="low">Ambiguous short SHA resolution</strong></a>\n'
+    '\n'
+    '`git rev-parse --verify --quiet "${stated_clean}^{commit}"` accepts any 7-40 hex string. A short SHA that is ambiguous within the repository will fail to resolve and be reported as `unresolved`, which is a reasonable outcome, but a short SHA that happens to resolve to a different commit than the author intended (e.g., after a fetch brought in colliding objects) would silently be treated as the stated revision. This is inherent to short-SHA usage and matches git behavior; noting only because the rule text permits 7-40 chars.\n'
+    '</summary>\n'
+    '</details>\n'
+    '\n'
+    '</td></tr>\n'
+    '</table>\n'
+    '\n'
+    '<details>\n'
+    '<summary>✅ Resolved findings</summary>\n'
+    '\n'
+    '### scripts/development-workflow/outcome-record-revision-check.sh:187-219\n'
+    '\n'
+    '**Stamp-line detection too narrow**\n'
+    '\n'
+    'The awk body check requires the `Plan revision:` label to be followed by a space or tab (`[ \\t]`), and the `norm` function only strips `*`, backtick and whitespace between the label and the SHA. A stamp written as `Plan revision:\\`abc1234\\`` (no space) or `Plan revision: **\\`abc1234\\`**` with the bold outside the backticks is treated as a substantive change, so a legitimate stamp-only push is reported `not_current`. This is a false-negative that re-creates the deadlock the PR is meant to fix for those formatting variants. The canonical doc does not constrain the exact spacing, so the helper is stricter than the rule it claims to apply.\n'
+    '\n'
+    '### scripts/development-workflow/outcome-record-revision-check.sh:119-129\n'
+    '\n'
+    '**Possible Issue**\n'
+    '\n'
+    "The `--stated` value is stripped of all whitespace and backticks via `tr -d '`[:space:]'` before validation. This means a stated revision containing internal whitespace (e.g. `abc 1234`) is silently concatenated into `abc1234` and may resolve to a different commit than intended, or a value like `dead beef` becomes `deadbeef`. For a read-only check this is low impact, but it can mask a malformed marker that should fail as `malformed` rather than being coerced into a valid-looking SHA. Consider stripping only surrounding whitespace/backticks rather than all internal whitespace.\n"
+    '\n'
+    '</details>\n'
+    '\n'
+    '<!-- pr-agent-review-state:v1\n'
+    '{"findings":[],"last_run":{"complete":true,"head_sha":"43bb424f8f345c1e007b79524206b5d86e9425c5","kind":"full"},"schema_version":1}\n'
+    '-->\n'
+)
+
+
 class InlineProducerHTMLTests(unittest.TestCase):
     def labels(self, body):
         return subprocess.run(
@@ -465,8 +513,12 @@ class InlineProducerHTMLTests(unittest.TestCase):
             source = unsupported if unsupported == history else review() + "\n" + unsupported
             self.assertEqual("escalate", classify(source))
         for bad in ("`unclosed", "``mismatched`", "`two\nlines`", '<span title="`bad`">text</span>'):
-            self.assertEqual("escalate", classify(review() + "\n" + history.replace(
-                "Example `</summary>` and `<?php` and `<!-- literal -->`.", bad)))
+            sample = review() + "\n" + history.replace(
+                "Example `</summary>` and `<?php` and `<!-- literal -->`.", bad)
+            # #2177: the canonical final history body is ignored entirely.
+            self.assertEqual("clean", classify(sample))
+            # The same body followed by live content is parsed and escalates.
+            self.assertEqual("escalate", classify(sample + "\n\nTrailing live prose.\n"))
         # History recognition never extends to a later, unrelated raw block.
         self.assertEqual("escalate", classify(body + "\n<span>`Critical`</span>"))
         for label in ("Must fix", "Critical"):
@@ -483,7 +535,12 @@ class InlineProducerHTMLTests(unittest.TestCase):
         for sample in (invalid,
                        prefix + "<span>Example `</span>`</span>\n\n</details>",
                        prefix + "<strong>Example `<!-- sample -->`</strong>\n\n</details>"):
-            body = review() + "\n" + sample
+            # #2177: as the canonical final block its body is ignored...
+            final = review() + "\n" + sample
+            self.assertEqual("clean", classify(final))
+            self.assertEqual(len(final), len(runtime.mask_review_code(final)))
+            # ...but any live content after it keeps the strict parse.
+            body = final + "\n\nTrailing live prose.\n"
             self.assertEqual("escalate", classify(body))
             for preserve in (True, False):
                 with self.subTest(sample=sample, preserve=preserve):
@@ -583,6 +640,86 @@ class InlineProducerHTMLTests(unittest.TestCase):
         self.assertIn(" then act.", masked)
         self.assertIn("<strong>Possible Issue</strong>", masked)
         self.assertNotIn("helper()", masked)
+
+
+class ResolvedHistoryTrailerTests(unittest.TestCase):
+    """#2177: only the canonical final history block is ignored."""
+
+    HISTORY_START = "<details>\n<summary>✅ Resolved findings</summary>\n\n"
+    LINE_102 = "`Plan revision:\\`abc1234\\``"
+    LINE_126 = "`tr -d '`[:space:]'`"
+
+    def split(self):
+        start = REAL_2176_REVIEW.index(self.HISTORY_START)
+        marker = REAL_2176_REVIEW.index("<!-- pr-agent-review-state")
+        return REAL_2176_REVIEW[:start], REAL_2176_REVIEW[start:marker], REAL_2176_REVIEW[marker:]
+
+    def history_line(self, needle):
+        _, history, _ = self.split()
+        return next(line for line in history.splitlines() if needle in line)
+
+    def test_real_2176_review_classifies_clean(self):
+        for needle in (self.LINE_102, self.LINE_126):
+            self.assertIn(needle, REAL_2176_REVIEW)
+        self.assertEqual("clean", classify(REAL_2176_REVIEW))
+        labels = subprocess.run(
+            ["bash", str(ROOT / "scripts/development-workflow/apply-readiness-labels.sh"),
+             "--pr-agent-focus-labels"], input=REAL_2176_REVIEW, text=True, capture_output=True,
+            check=True).stdout.strip().splitlines()
+        self.assertEqual(["Possible Issue"], labels)
+        for preserve in (True, False):
+            masked = runtime.mask_review_code(REAL_2176_REVIEW, preserve_offsets=preserve)
+            self.assertNotIn("Plan revision:", masked)
+            self.assertNotIn("[:space:]", masked)
+            self.assertIn("<summary>✅ Resolved findings</summary>", masked)
+        self.assertEqual(len(REAL_2176_REVIEW), len(runtime.mask_review_code(REAL_2176_REVIEW)))
+        visible, history, _ = self.split()
+        # Without a state marker the history is still the final block.
+        self.assertEqual("clean", classify(visible + history))
+
+    def test_ambiguous_spans_outside_the_history_still_escalate(self):
+        visible, history, marker = self.split()
+        for needle in (self.LINE_102, self.LINE_126):
+            line = self.history_line(needle)
+            with self.subTest(needle=needle, where="open findings table"):
+                in_table = visible.replace("is inherent to short-SHA usage", line, 1)
+                self.assertNotEqual(visible, in_table)
+                self.assertEqual("escalate", classify(in_table + history + marker))
+            with self.subTest(needle=needle, where="live prose"):
+                live = visible + line + "\n\n" + history + marker
+                self.assertEqual("escalate", classify(live))
+                with self.assertRaises(ValueError):
+                    runtime.mask_review_code(live)
+
+    def test_fake_or_malformed_history_cannot_hide_content(self):
+        visible, history, marker = self.split()
+        body = history[:-len("</details>\n")].rstrip("\n")
+        outer = "<details>\n<summary>Outer</summary>\n\n"
+        cases = {
+            "no_producer_table": history + marker,
+            "nested_in_container": visible + outer + history + "\n</details>\n" + marker,
+            "unclosed": visible + body + "\n\n" + marker,
+            "closer_without_blank_line": visible + body + "\n</details>\n" + marker,
+            "live_prose_after": visible + history + "\nTrailing live prose.\n\n" + marker,
+            "live_prose_after_marker": visible + history + marker + "\nTrailing live prose.\n",
+            "second_marker": visible + history + marker + marker,
+            "malformed_marker": visible + history + "<!-- pr-agent-review-state:v1\n{not json}\n-->\n",
+            "non_canonical_summary": visible + history.replace("✅ Resolved findings", "Resolved findings") + marker,
+        }
+        for name, source in cases.items():
+            with self.subTest(case=name):
+                self.assertEqual("escalate", classify(source))
+
+    def test_live_blockers_survive_an_ignored_history(self):
+        visible, history, marker = self.split()
+        title = ('<strong data-pr-agent-finding="v1" data-category="advisory" '
+                 'data-severity="low">Ambiguous short SHA resolution</strong>')
+        self.assertIn(title, visible)
+        blocker = visible.replace(title, "<strong>Must fix</strong>", 1)
+        self.assertEqual("needs_fixes", classify(blocker + history + marker))
+        # Live status after the block disqualifies it instead of being hidden.
+        self.assertEqual("escalate", classify(
+            visible + history + "\n<strong>Must fix</strong> `trailing\\`\n\n" + marker))
 
 
 class FittingTests(unittest.TestCase):

@@ -291,11 +291,26 @@ def mask_review_code(source, preserve_offsets=True):
             name = re.match(r"<\s*(/?)\s*([A-Za-z][A-Za-z0-9-]*)", tag)
             if name:
                 closing, tag_name = name.group(1), name.group(2).lower()
-                if (not closing and tag_name == "details" and not html_depth
-                        and producer_table_closed
-                        and re.match(r"<details>\s*<summary>✅ Resolved findings</summary>"
-                                     r"[ \t]*\r?\n[ \t]*\r?\n", source[index:])):
+                history = None
+                if not closing and tag_name == "details" and not html_depth and producer_table_closed:
+                    history = re.match(r"<details>\s*<summary>✅ Resolved findings</summary>"
+                                       r"[ \t]*\r?\n[ \t]*\r?\n", source[index:])
+                if history:
                     resolved_history = True
+                    history_end = resolved_history_trailer_end(source, index)
+                    if history_end is not None:
+                        # The canonical final history is ignored for
+                        # classification (#2177): keep its own container
+                        # tags, mask every byte of its body, and let the
+                        # line-leading closing tag end it normally.
+                        body_start = index + history.end()
+                        if not source[line_start:index].strip():
+                            html_block = tag_name
+                        html_depth.append(tag_name)
+                        parts.append(source[index:body_start])
+                        parts.append(masked(body_start, history_end))
+                        index = history_end
+                        continue
                 if not source[line_start:index].strip():
                     html_block = tag_name
                 if closing:
@@ -314,6 +329,31 @@ def mask_review_code(source, preserve_offsets=True):
         parts.append(source[index])
         index += 1
     return "".join(parts)
+
+
+def resolved_history_trailer_end(source, start):
+    """Offset of the canonical history's own ``</details>``, else None.
+
+    The producer appends resolved history after the visible review and before
+    its optional state marker. Only that final block qualifies: closed by a
+    line-leading tag after a blank line and followed by nothing but whitespace
+    and one valid state marker. Any live content after it disqualifies it.
+    """
+    rest = source[start:]
+    markers = [m.start() for m in re.finditer(r"<!--\s*pr-agent-review-state", rest)]
+    if len(markers) > 1:
+        return None
+    visible = rest
+    if markers:
+        try:
+            end = review_state_comment_end(source, start + markers[0])
+        except ValueError:
+            return None
+        if source[end:].strip():
+            return None
+        visible = rest[:markers[0]]
+    closing = re.search(r"\r?\n[ \t]*\r?\n(</details>)\s*\Z", visible)
+    return None if closing is None else start + closing.start(1)
 
 
 def review_state_comment_end(source, start):
