@@ -218,6 +218,9 @@ categories:
     - path: docs/testing/workflow/tracker-type-field-classification.smoke-test.md
       mode_scope: hub_only
       note: protocol-level runbook that test-framework-mode-type-routing.sh asserts on (#1874)
+    - path: docs/testing/workflow/review-backlog-protocol.smoke-test.md
+      mode_scope: hub_only
+      note: protocol-level runbook that test-review-backlog-protocol.sh asserts on (#2155)
 
   special_handling:
     - path: .claude/settings.json

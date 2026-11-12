@@ -68,6 +68,14 @@ item is not enough to create a dependency: the workflow records relationships as
 decisions from tracker comments or current-session context, and stops for a
 human decision when ambiguity could change product scope.
 
+The backlog itself needs periodic review. `/review-backlog`
+([Protocol 09](protocols/09-review-backlog-protocol.md)) audits whether the
+backlog's data and order are still right, in three confirmed gates
+(structural ledger, order, closeout). `/run-work` decides what to advance next.
+The review complements `/run-work` and neither replaces the other: run the
+periodic review first, then let `/run-work` select the batch from the reviewed
+backlog.
+
 ### Spec
 
 The spec explains **what** should happen and **why** it matters. It should describe actors, workflows, business rules, acceptance criteria, scope boundaries, and any product-facing measurement requirements in product terms.
@@ -241,6 +249,7 @@ The sections below keep this document usable as a master reference after the nar
 | Stage | Claude Code | Cursor | Codex | DSH | Any AI tool |
 | --- | --- | --- | --- | --- | --- |
 | Add backlog item | `/add-backlog-item` | `/add-backlog-item` | `/add-backlog-item` alias | `/add-backlog-item` alias | `docs/workflow/development-workflow/protocols/00-add-backlog-item-protocol.md` |
+| Review backlog | `/review-backlog` | `/review-backlog` | `/review-backlog` alias | `/review-backlog` alias | `docs/workflow/development-workflow/protocols/09-review-backlog-protocol.md` — periodic three-gate backlog audit; complements `/run-work` |
 | Write spec | `product-manager` agent | `/generate-new-feature` | `workflow-spec-writer` skill | `workflow-spec-writer` skill | `docs/workflow/development-workflow/protocols/01-generate-spec-protocol.md` |
 | Write plan | `tech-lead` agent | `/generate-implementation-plan` | `workflow-plan-writer` skill | `workflow-plan-writer` skill | `docs/workflow/development-workflow/protocols/02-generate-implementation-plan-protocol.md` |
 | Implement | `developer` agent | `/implement-development` | `workflow-implementer` skill | `workflow-implementer` skill | `docs/workflow/development-workflow/protocols/03-implement-development-protocol.md` |
@@ -273,7 +282,7 @@ Codex skills are stored in `.agents/skills/` for repo-scoped Codex discovery, wi
 ./scripts/development-workflow/install-codex-skills.sh
 ```
 
-These skills are thin wrappers around the same workflow protocols used by the other tools. Command-style aliases such as `/add-backlog-item`, `/run-work`, `/run-item`, `/run-items`, `/run-item-work` (deprecated alias), `/run-epic`, `/run-reviewer-loop`, `/batch-merge`, `/post-merge-cleanup`, `/post-merge-qa` (alias `/merged-qa-tester`), `/prepare-release`, `/graduate-development`, `/retrospective`, and `/sync-template` map to the canonical workflow skills or protocols so Codex can be used with names similar to Claude Code commands. `/run-item` and `/run-epic` are the primary bounded commands (shared prelude + Protocol 91 or 95). `/run-item` prints `policyRecommendation.confirmationSummary` before mutation and records an invocation-scoped item/policy binding after explicit autonomy flags or human acceptance so the same selected policy is not re-prompted. `/run-items` is the bounded multi-item batch execute command (Protocol 90 `explicit_list` mode — two or more items). `/run-work` is the read-only portfolio scan entrypoint via `run-work-router.sh` (Protocol 96) — it proposes batch options but does not execute; single/epic targets redirect to `/run-item` / `/run-epic`. In no-target scan mode, `/run-work` separates `INFORMATIONAL - not actionable in this proposal`, `ACTIONABLE RESUME - can advance now`, `PROPOSED BATCH - your decision`, and `HELD - not included in proposed batch` records; approval or the recommended `/run-items` command applies only to proposed-batch records. `/run-item-work` remains a deprecated alias identical to `/run-item`.
+These skills are thin wrappers around the same workflow protocols used by the other tools. Command-style aliases such as `/add-backlog-item`, `/review-backlog`, `/run-work`, `/run-item`, `/run-items`, `/run-item-work` (deprecated alias), `/run-epic`, `/run-reviewer-loop`, `/batch-merge`, `/post-merge-cleanup`, `/post-merge-qa` (alias `/merged-qa-tester`), `/prepare-release`, `/graduate-development`, `/retrospective`, and `/sync-template` map to the canonical workflow skills or protocols so Codex can be used with names similar to Claude Code commands. `/run-item` and `/run-epic` are the primary bounded commands (shared prelude + Protocol 91 or 95). `/run-item` prints `policyRecommendation.confirmationSummary` before mutation and records an invocation-scoped item/policy binding after explicit autonomy flags or human acceptance so the same selected policy is not re-prompted. `/run-items` is the bounded multi-item batch execute command (Protocol 90 `explicit_list` mode — two or more items). `/run-work` is the read-only portfolio scan entrypoint via `run-work-router.sh` (Protocol 96) — it proposes batch options but does not execute; single/epic targets redirect to `/run-item` / `/run-epic`. In no-target scan mode, `/run-work` separates `INFORMATIONAL - not actionable in this proposal`, `ACTIONABLE RESUME - can advance now`, `PROPOSED BATCH - your decision`, and `HELD - not included in proposed batch` records; approval or the recommended `/run-items` command applies only to proposed-batch records. `/run-item-work` remains a deprecated alias identical to `/run-item`.
 
 ### Workflow Capabilities And Fallbacks
 
