@@ -192,7 +192,8 @@ confirmed set, and never presents a partial read as full.
   adding a missing integration-branch label shared by an epic's siblings).
 - BR5 (explicit-confirmation actions): Cancelling or closing an item, merging
   duplicates, and creating items each need an explicit confirmation naming that
-  item or group; a class or gate-wide confirmation does not authorize them.
+  item or a group the run presented by name (such as a duplicate group); a
+  class, range, or gate-wide confirmation does not authorize them.
   Creation goes through the existing backlog-item protocol. When the tracker
   cannot perform the action, it is delivered as pending for the maintainer.
 - BR6 (never performed by the run): Body, title, and description edits are
@@ -289,7 +290,9 @@ in.
   action is outstanding and the maintainer did not ask to rank as-is (outstanding
   actions named as pending for the maintainer; a later run opens Gate 2).
 - Gate 2 → Gate 3 when the confirmed set is fully applied without drift, or
-  nothing was confirmed.
+  nothing was confirmed. A board re-read after the Gate 2 writes that
+  downgrades coverage to `partial` still opens Gate 3, which marks its final
+  backlog state `partial` and names the omitted items.
 - Gate 2 → end when the set was rejected, drifted, or refused for budget.
 
 ## Decision-Gate Consistency Matrix
@@ -322,7 +325,7 @@ they only turn the dependent check into "no aplica".
 | Nothing confirmed in Gate 1 | No write | Open Gate 2 (when coverage is `full` or `full-unmetered`) | Protocol |
 | Nothing confirmed in Gate 2 | No write | Open Gate 3 | Protocol |
 | Confirmed cancel/merge/create outstanding | Gate 2 held | Name outstanding actions as pending for the maintainer and end (a later run opens Gate 2); or rank as-is on explicit request, flagging those items | Protocol, aliases |
-| Cancel/merge/create confirmed only by class or gate | Not authorized | Ask for explicit per-item or per-group confirmation | Protocol, aliases, smoke runbook |
+| Cancel/merge/create confirmed only by class, range, or gate | Not authorized | Ask for explicit per-item or per-group confirmation | Protocol, aliases, smoke runbook |
 | Body edit accepted | Not applied | Deliver proposed text as pending | Protocol, aliases, smoke runbook |
 | Gate 3 with overrides / without overrides | Precedent lines emitted / none | Closeout; no repository file written | Protocol |
 
