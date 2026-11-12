@@ -178,10 +178,29 @@ fi
 # that only the SHA itself changed.
 diff_text="$(git -C "$repo_root" diff --no-ext-diff --no-color --no-textconv -U0 "$stated_sha" "$head_sha")"
 verdict="$(printf '%s\n' "$diff_text" | awk '
-  function norm(s) {
-    # Seven or more hex characters; spelled out because mawk lacks {m,n}.
-    gsub(/[0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]+/, "<sha>", s)
-    return s
+  # Replace only the SHA token that directly follows the "Plan revision:"
+  # label (after optional bold, backtick, or blank characters). Any other hex
+  # run on the line stays literal, so changing it is a substantive change.
+  function norm(s,    i, head, tail, lead, hex, c) {
+    i = index(s, "Plan revision:")
+    head = substr(s, 1, i + 13)
+    tail = substr(s, i + 14)
+    lead = ""
+    while (tail != "") {
+      c = substr(tail, 1, 1)
+      if (index("*` \t", c) == 0) { break }
+      lead = lead c
+      tail = substr(tail, 2)
+    }
+    hex = ""
+    while (tail != "") {
+      c = substr(tail, 1, 1)
+      if (index("0123456789abcdefABCDEF", c) == 0) { break }
+      hex = hex c
+      tail = substr(tail, 2)
+    }
+    if (length(hex) >= 7) { return head lead "<sha>" tail }
+    return head lead hex tail
   }
   # Header lines are only recognized before a hunk starts; inside a hunk a
   # removed "-- x" or added "++ x" line looks like "--- x" or "+++ x".

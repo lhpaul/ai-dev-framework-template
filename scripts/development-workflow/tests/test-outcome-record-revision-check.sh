@@ -140,6 +140,23 @@ run_test "stamp line whose non-SHA text changes fails" \
   "1|not_current|substantive_change" "$(check_result "$FIX_SHORT" "$REWORD_SHA")"
 
 git_q reset -q --hard "$FIX_SHA"
+sed "s/^Plan revision: \`0000000\` (live PR head at time of writing)/Plan revision: \`0000000\` (evidence at cafe1234)/" "$PLAN" > "$PLAN.tmp"
+mv "$PLAN.tmp" "$PLAN"
+SECOND_HEX_BASE="$(commit_all "docs: stamp line cites another revision")"
+SECOND_HEX_BASE_SHORT="$(git -C "$REPO" rev-parse --short=8 "$SECOND_HEX_BASE")"
+sed "s/^Plan revision: \`0000000\` (evidence at cafe1234)/Plan revision: \`$SECOND_HEX_BASE_SHORT\` (evidence at beef5678)/" "$PLAN" > "$PLAN.tmp"
+mv "$PLAN.tmp" "$PLAN"
+SECOND_HEX_SHA="$(commit_all "docs: stamp plus a changed second revision")"
+run_test "second hex token changed on the stamp line fails" \
+  "1|not_current|substantive_change" "$(check_result "$SECOND_HEX_BASE_SHORT" "$SECOND_HEX_SHA")"
+git_q reset -q --hard "$SECOND_HEX_BASE"
+sed "s/^Plan revision: \`0000000\` (evidence at cafe1234)/Plan revision: \`$SECOND_HEX_BASE_SHORT\` (evidence at cafe1234)/" "$PLAN" > "$PLAN.tmp"
+mv "$PLAN.tmp" "$PLAN"
+SECOND_HEX_OK_SHA="$(commit_all "docs: stamp only, second revision unchanged")"
+run_test "stamp-only change keeps an unchanged second hex token current" \
+  "0|current|stamp_lag_stamp_only" "$(check_result "$SECOND_HEX_BASE_SHORT" "$SECOND_HEX_OK_SHA")"
+
+git_q reset -q --hard "$FIX_SHA"
 printf 'new file\n' > "$REPO/extra.md"
 ADD_SHA="$(commit_all "docs: add a file")"
 run_test "added file after the stamped revision fails" \
