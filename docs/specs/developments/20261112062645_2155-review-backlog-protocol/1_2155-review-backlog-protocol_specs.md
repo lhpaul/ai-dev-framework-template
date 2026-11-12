@@ -298,7 +298,9 @@ in.
 ## Decision-Gate Consistency Matrix
 
 Precedence, highest first: missing or conflicting scope stops before reading;
-`deferred` ends the run; repository-only mode; `partial` read; write outcome
+`deferred` ends the run; repository-only mode; `partial` read (the initial
+read or the board re-read after the Gate 1 writes; a `partial` re-read after
+the Gate 2 writes only marks Gate 3's final state); write outcome
 of the current gate; then, at the Gate 1 close only, a confirmed cancel,
 merge, or create action still outstanding, which holds Gate 2 even after a
 clean application or when nothing else was confirmed. Within a gate, a
@@ -315,7 +317,8 @@ they only turn the dependent check into "no aplica".
 | No project concept, no milestone configured (or no milestone concept) | Scope = whole repository, stated in header | Read and continue | Protocol |
 | No tracker | Repository-only mode | Gate 1 repository checks; Gate 2 "no aplica"; Gate 3 closes Gate 1; nothing written | Protocol, aliases, smoke runbook |
 | Budget too low | `deferred` | End; report budget and reset | Protocol, smoke runbook |
-| Budget runs out mid-read | `partial` | Ledger of what was read; no queue; end at Gate 1 close | Protocol, smoke runbook |
+| Budget runs out mid-read (initial read, or the board re-read after the Gate 1 writes) | `partial` | Ledger of what was read; no queue; end at Gate 1 close | Protocol, smoke runbook |
+| Board re-read after the Gate 2 writes is `partial` | Gate 3 opens | Closeout with final backlog state marked `partial`, omitted items named | Protocol, smoke runbook |
 | No readable budget, all read | `full-unmetered` | Proceed; ordered apply, stop at first rejection | Protocol, smoke runbook |
 | Capability missing (hierarchy, priority, priority that can be left unset, labels, classification carrier, budget surface) | Dependent check "no aplica", capability named | Continue other checks | Protocol, smoke runbook |
 | Gate confirmed set fits (or unmetered), all read back equal | Applied | Re-read board; open next gate | Protocol, aliases |
