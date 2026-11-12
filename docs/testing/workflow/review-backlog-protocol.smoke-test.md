@@ -168,9 +168,12 @@ the step as not exercisable on this backlog.
 
 In the scratch copy with the project configuration, run `/review-backlog` once
 per case below, telling the runner which tracker response to simulate. For the
-write cases, confirm exactly one `LISTO PARA CONFIRMAR` finding and tell the
-runner to simulate the write and its readback without sending them to the
-tracker; answer `no` to everything else.
+write cases d–g, confirm exactly one `LISTO PARA CONFIRMAR` finding (case h
+confirms one Gate 2 change instead) and tell the runner to simulate the write
+and its readback without sending them to the tracker; answer `no` to
+everything else. When Gate 1 proposes no `LISTO PARA CONFIRMAR` finding on
+this backlog, record cases d–g as not exercisable here, with the run header
+as evidence.
 
 | Case | Simulated response | Expected result |
 | --- | --- | --- |
@@ -181,7 +184,7 @@ tracker; answer `no` to everything else.
 | e | tracker rejects the write | item `not applied` with the reason; recovery step reported; Gate 2 not opened |
 | f | readback returns a different value | item `drift` with the observed value; recovery step reported; Gate 2 not opened |
 | g | readback fails | treated as a rejection: item `not applied`; Gate 2 not opened |
-| h | board re-read after the Gate 2 writes is cut short (nothing confirmed in Gate 1 or Gate 2) | Gate 3 opens with the final backlog state marked `partial` and the omitted items named |
+| h | Gate 2: confirm exactly one priority change, simulate its write with a readback equal to the request, then cut the board re-read that follows short | the change is reported `aplicado`; Gate 3 opens with the final backlog state marked `partial` and the omitted items named |
 
 ### Step 10: Distribution and guides
 

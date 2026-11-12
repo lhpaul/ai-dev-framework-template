@@ -368,6 +368,15 @@ gaps described in the runbook; no fixture data is committed.
 | The suite asserts template-only state in a consumer | Low | Med | T2 mode branch |
 | An agent reads a range answer as authority to cancel | Med | High | L1.6 refusal rule and its smoke step |
 
+**Reversal.** Everything this plan adds is reversible with one revert PR on
+`develop`: delete Protocol 09, the three aliases, the suite, the runbook and
+its manifest entry, and remove the guide rows and the changelog fragment.
+Consumers that already synchronized the files keep their copies until their
+next `/sync-template`; files removed upstream are not deleted downstream
+automatically, so the revert PR's changelog entry must tell consumers to
+delete them. Tracker writes made by runs of the protocol are not reverted by
+removing it; each one is already confirmed and read back per L1.7.
+
 ---
 
 ## Implementation Order
