@@ -36,5 +36,8 @@ canonical gate matrix) and the plan PR's per-rule outcome record. For each
 rule recorded as firing, re-run its evidence at the recorded revision; raise a
 blocking finding per the canonical gate matrix for missing, non-reproducing,
 or contradicted evidence, and for a missing, stale, or malformed outcome
-record. Verify the record's plan revision resolves to and equals the PR's
-current head before approving.
+record. Before approving, verify the record's plan revision is current for
+the PR head per the canonical file's "When the outcome record's stated
+revision is current" section: the head itself, or the head's only parent when
+nothing but the `Plan revision:` SHA changed since (a one-push stamp lag).
+Anything older or with other changes fails.
