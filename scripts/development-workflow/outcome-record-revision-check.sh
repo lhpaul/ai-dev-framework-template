@@ -177,7 +177,9 @@ fi
 # stamp-only change.
 # Every diff below pins --no-relative and --ignore-submodules=none so user or
 # repository git config (diff.relative, diff.ignoreSubmodules) cannot hide a
-# change outside --repo-root or a moved submodule pointer.
+# change outside --repo-root or a moved submodule pointer. The patch diff also
+# pins --submodule=short, so diff.submodule=log or diff cannot render a moved
+# gitlink as a summary without +/- lines.
 summary="$(git -C "$repo_root" diff --no-ext-diff --no-relative --ignore-submodules=none --summary "$stated_sha" "$head_sha")"
 if [ -n "$summary" ]; then
   not_current "structural_change" "$stated_sha" "$parent_sha"
@@ -197,7 +199,7 @@ fi
 # Every changed line must be a `Plan revision:` line, and the removed and added
 # lines of each file must be identical once hex SHA tokens are normalized, so
 # that only the SHA itself changed.
-diff_text="$(git -C "$repo_root" diff --no-ext-diff --no-relative --ignore-submodules=none --no-color --no-textconv -U0 "$stated_sha" "$head_sha")"
+diff_text="$(git -C "$repo_root" diff --no-ext-diff --no-relative --ignore-submodules=none --submodule=short --no-color --no-textconv -U0 "$stated_sha" "$head_sha")"
 verdict="$(printf '%s\n' "$diff_text" | awk '
   # Replace only the SHA token that directly follows the "Plan revision:"
   # label (after optional bold, backtick, or blank characters). Any other hex

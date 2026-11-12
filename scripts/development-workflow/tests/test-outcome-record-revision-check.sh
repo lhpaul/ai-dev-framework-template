@@ -249,6 +249,19 @@ run_test "diff.ignoreSubmodules=all does not hide a moved submodule pointer" \
   "1|not_current|substantive_change" "$(check_result "$GITLINK_BASE_SHORT" "$GITLINK_MOVED")"
 git_q config --unset diff.ignoreSubmodules
 
+# --- diff.submodule=log must not hide a gitlink move bundled with a stamp -----
+git_q reset -q --hard "$GITLINK_BASE"
+sed "s/^Plan revision: \`0000000\`/Plan revision: \`$GITLINK_BASE_SHORT\`/" "$PLAN" > "$PLAN.tmp"
+mv "$PLAN.tmp" "$PLAN"
+git_q add plan.md
+git_q update-index --cacheinfo "160000,$FIX_SHA,mod"
+git_q commit -q -m "docs: stamp outcome record revision and move gitlink"
+GITLINK_STAMP_MOVED="$(git -C "$REPO" rev-parse HEAD)"
+git_q config diff.submodule log
+run_test "diff.submodule=log does not hide a gitlink move bundled with a stamp" \
+  "1|not_current|substantive_change" "$(check_result "$GITLINK_BASE_SHORT" "$GITLINK_STAMP_MOVED")"
+git_q config --unset diff.submodule
+
 # --- Missing, malformed, unresolved, off-branch ---------------------------------
 run_test "missing stated revision fails" \
   "1|not_current|missing" "$(check_result "" "$FIX_SHA")"
