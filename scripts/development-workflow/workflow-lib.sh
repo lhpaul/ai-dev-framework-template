@@ -4769,15 +4769,20 @@ workflow_branch_pr_evidence() {
   fi
 }
 
-# workflow_branch_pr_evidence_single_item <issue_number> <tracker_read_deferred> <pull_requests_json>
+# workflow_branch_pr_evidence_single_item <issue_number> <tracker_read_deferred> <pull_requests_json> [pr_evidence_unavailable]
 #
 # Single-item-path combiner: live branch (both ref namespaces, local `git
 # show-ref`, no API call) + the PR evidence already carried in the resolved
 # scope JSON. Costs no extra tracker/API call, per #1583's tracker-read-cost
 # accounting. A deferred (Linear placeholder) scope is always `unavailable`.
+# <pr_evidence_unavailable> is the scope item's `prEvidenceUnavailable` value
+# (#1805): when `true`, the resolver's PR lookup could not complete, so an
+# empty PR list reads as `unavailable` rather than `none`. A matching PR still
+# reads as `present`. Omitted or any other value keeps the prior behavior.
 # Prints one of: present | none | unavailable.
 workflow_branch_pr_evidence_single_item() {
   local issue_number="$1" tracker_read_deferred="$2" prs_json="$3"
+  local pr_evidence_unavailable="${4:-false}"
   local ref_evidence json_evidence
 
   if [ "$tracker_read_deferred" = "true" ]; then
@@ -4795,6 +4800,9 @@ workflow_branch_pr_evidence_single_item() {
   if [ "$json_evidence" = "present" ]; then
     printf 'present\n'
     return 0
+  fi
+  if [ "$pr_evidence_unavailable" = "true" ]; then
+    json_evidence="unavailable"
   fi
 
   if [ "$ref_evidence" = "unavailable" ] || [ "$json_evidence" = "unavailable" ]; then

@@ -591,6 +591,9 @@ if [ "$scope_mode" = "item" ] && [ "$(workflow_template_is_template)" = "true" ]
     fm_status="$(jq -r '.items[0].status // ""' "$scope_file")"
     fm_type="$(jq -r '.items[0].type // ""' "$scope_file")"
     fm_prs_json="$(jq -c '.items[0].pullRequests // {open: [], merged: []}' "$scope_file")"
+    # #1805: a failed resolver PR lookup is not confirmed absence. A scope
+    # without the field (older resolver) keeps the prior `false` reading.
+    fm_pr_evidence_unavailable="$(jq -r 'if .items[0].prEvidenceUnavailable == true then "true" else "false" end' "$scope_file")"
 
     # Resolve the item's development folder — the reverse of the mapping
     # extract_github_issue_number already provides (issue number from a
@@ -623,7 +626,7 @@ if [ "$scope_mode" = "item" ] && [ "$(workflow_template_is_template)" = "true" ]
         fi
       fi
 
-      fm_branch_pr_evidence="$(workflow_branch_pr_evidence_single_item "$fm_issue_number" "$fm_tracker_read_deferred" "$fm_prs_json")"
+      fm_branch_pr_evidence="$(workflow_branch_pr_evidence_single_item "$fm_issue_number" "$fm_tracker_read_deferred" "$fm_prs_json" "$fm_pr_evidence_unavailable")"
       fm_gate_output="$("$SCRIPT_DIR/framework-mode-backlog-type-gate.sh" \
         --issue "$fm_issue_number" --status "$fm_status" --type "$fm_type" \
         --artifact-stage "$fm_artifact_stage" --branch-pr-evidence "$fm_branch_pr_evidence" \
