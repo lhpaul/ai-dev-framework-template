@@ -182,8 +182,10 @@ confirmed set, and never presents a partial read as full.
   maintainer answers the gate that proposes it. No flag is required or
   accepted as a substitute. Before writing, the exact set (identifiers and
   values) is shown.
-- BR3 (readback): Every write is read back. A returned value different from
-  the requested value is drift and counts as unapplied.
+- BR3 (readback): Every write is read back and the observed value is
+  reported. A returned value different from the requested value is drift and
+  counts as unapplied. A readback that fails or cannot be read is treated as a
+  rejection: the item counts as unapplied and the gate stops.
 - BR4 (writable actions): A gate confirmation authorizes only upward status
   changes, classification changes, priority changes, and the narrow label
   corrections the review defines (removing a superseded classification hint,
@@ -209,11 +211,12 @@ confirmed set, and never presents a partial read as full.
   reports "no aplica" naming the capability. Missing capabilities never fail
   the run, and no capability is inferred from the provider's name.
 - BR9 (scope): Scope is resolved by capability: the configured project when the
-  tracker supports projects; the configured milestone when it does not; the
-  whole repository when it supports neither. A project-capable tracker with no
-  project configured stops before reading and asks once (or accepts an explicit
-  widen-to-all-projects instruction). Conflicting configured scopes stop and
-  ask. Scope is never widened silently.
+  tracker supports projects; the configured milestone when it does not and a
+  milestone is configured; otherwise the whole repository. A project-capable
+  tracker with no project configured stops before reading and asks once (or
+  accepts an explicit widen-to-all-projects instruction). Conflicting
+  configured scopes (two configured identifiers naming different projects, or
+  different milestones) stop and ask. Scope is never widened silently.
 - BR10 (provider-neutral text): The protocol's normative text names no tracker
   product. Any provider-specific vocabulary appears only in the single
   capability-resolution reference. Tracker reads and writes go through the
@@ -237,8 +240,9 @@ confirmed set, and never presents a partial read as full.
   Priority tier is the durable deliverable; order within a tier is labelled
   advisory.
 - BR15 (precedents): The run reads the repository's recorded backlog-review
-  precedents when they exist. Gate 3 emits override lines for that record but
-  the run never writes repository files.
+  precedents when they exist. Gate 3 emits override lines for that record (the
+  gate close report emits them when the run ends before Gate 3), but the run
+  never writes repository files.
 - BR16 (relationship to `/run-work`): The review never dispatches, starts, or
   runs an item. The workflow guide and the protocol both state that the review
   complements `/run-work` and precedes batch selection.
@@ -259,14 +263,14 @@ in.
 | `full-unmetered` | full (sin presupuesto) | Every item read; the tracker exposes no readable budget |
 | `partial` | partial | Budget-limited read; omitted items named; run ends at Gate 1 close |
 | `deferred` | deferred | Budget too low for a useful read; run ends, nothing proposed |
-| `repository-only` | n/a (sin tracker) | No tracker; repository evidence only |
+| `repository-only` | n/a (sin tracker) | No tracker; repository evidence only; a budget-limited repository read names what it omitted |
 | `ready-to-confirm` | LISTO PARA CONFIRMAR | Evidence-only findings the run applies once confirmed |
 | `report-only` | SOLO REPORTE | Delivered, never applied by a gate confirmation |
 | `needs-judgement` | NECESITA TU CRITERIO | Questions with one recommendation each |
 | `not-applicable` | no aplica | Check skipped because a named capability is missing |
 | `applied` | aplicado | Written and read back with the requested value |
 | `drift` | drift | Written, but read back with a different value; counts as unapplied |
-| `unapplied` | not applied | Confirmed but not written (after a rejection, or refused for budget); the reason is shown |
+| `unapplied` | not applied | Confirmed but not written (after a rejection, or refused for budget), or written but its readback failed; the reason is shown |
 | `pending-maintainer` | PENDIENTE DE TI | Confirmed or proposed action the run does not perform (proposed body text, an action the tracker cannot perform); delivered in Gate 3, or in the gate close report when the run ends before Gate 3 |
 | `unverified` | unverified | Repository-only mode: the tracker side of a finding could not be checked |
 
@@ -275,7 +279,9 @@ in.
 - Gate 1 → Gate 2 when the confirmed set is fully applied without drift (or
   nothing was confirmed), no confirmed set-changing action is outstanding (or
   the maintainer chose to rank as-is), and coverage is `full` or
-  `full-unmetered`.
+  `full-unmetered`, including on the board re-read after the Gate 1 writes.
+  A re-read that downgrades coverage to `partial` ends the run at the Gate 1
+  close.
 - Gate 1 → Gate 3 (Gate 1 closeout only) when coverage is `repository-only`.
 - Gate 1 → end when coverage is `partial` (after the Gate 1 close, with Gate 2
   named as deferred pending a full read) or `deferred`, or the set was rejected, drifted,
@@ -290,18 +296,20 @@ in.
 
 Precedence, highest first: missing or conflicting scope stops before reading;
 `deferred` ends the run; repository-only mode; `partial` read; write outcome
-of the current gate. Within a gate, a rejection outranks drift, and drift
-outranks clean application. Missing capabilities never change a gate outcome;
+of the current gate; then, at the Gate 1 close only, a confirmed cancel,
+merge, or create action still outstanding, which holds Gate 2 even after a
+clean application or when nothing else was confirmed. Within a gate, a
+rejection outranks drift, and drift outranks clean application. Missing capabilities never change a gate outcome;
 they only turn the dependent check into "no aplica".
 
 | Inputs | Allowed outcome | Required next action | Mirror surfaces |
 | --- | --- | --- | --- |
 | Project-capable tracker, project configured | Scope = that project | Read and continue | Protocol, aliases, smoke runbook |
 | Project-capable tracker, no project configured | Stop before reading | Ask once, or accept explicit widen-to-all-projects | Protocol, aliases, smoke runbook |
-| Two configured scopes disagree | Stop before reading | Ask which governs | Protocol, smoke runbook |
+| Two configured identifiers name different projects (or different milestones) | Stop before reading | Ask which governs | Protocol, smoke runbook |
 | Configured scope does not resolve | Stop before reading | Ask once, naming what is missing | Protocol, smoke runbook |
 | No project concept, milestone configured | Scope = that milestone | Read and continue | Protocol |
-| No project concept, no milestone | Scope = whole repository, stated in header | Read and continue | Protocol |
+| No project concept, no milestone configured (or no milestone concept) | Scope = whole repository, stated in header | Read and continue | Protocol |
 | No tracker | Repository-only mode | Gate 1 repository checks; Gate 2 "no aplica"; Gate 3 closes Gate 1; nothing written | Protocol, aliases, smoke runbook |
 | Budget too low | `deferred` | End; report budget and reset | Protocol, smoke runbook |
 | Budget runs out mid-read | `partial` | Ledger of what was read; no queue; end at Gate 1 close | Protocol, smoke runbook |
@@ -319,7 +327,7 @@ they only turn the dependent check into "no aplica".
 | Gate 3 with overrides / without overrides | Precedent lines emitted / none | Closeout; no repository file written | Protocol |
 
 Unknown or malformed tracker responses are treated as unread items (they lower
-coverage) or as rejections (during writes); they never count as a missing
+coverage) or as rejections (during writes and their readback); they never count as a missing
 capability or as applied.
 
 ## Operational Visibility
@@ -361,7 +369,8 @@ capability or as applied.
   confirmation.
 - [ ] AC7: The protocol states that conversational confirmation is the write
   authority with no apply flag; that the exact set is shown before writing; that
-  every write is read back and drift counts as unapplied; that cancel, duplicate
+  every write is read back with the observed value reported, drift counts as
+  unapplied, and a failed readback counts as a rejection; that cancel, duplicate
   merge, and item creation need explicit per-item or per-group confirmation;
   and that body edits are delivered as proposed text and never applied.
 - [ ] AC8: The workflow guide and the protocol both state that the backlog
