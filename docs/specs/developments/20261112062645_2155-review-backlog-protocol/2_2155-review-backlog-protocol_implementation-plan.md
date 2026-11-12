@@ -72,8 +72,9 @@ by backlog authors, outside this project's control).
   - #1531: "…the Batch 52 / PR #650 pause-banner incident, both of which were
     already fixed for their own banner shapes." — statement about other
     incidents.
-  - #372: "Fix commits were pushed 1–2 minutes after Devin had already
-    started reviewing the previous commit." — incidental token match.
+  - #372: "…Devin finds issues on commit N-1 that were already fixed in
+    commit N, triggering another full review round." — statement about other
+    findings.
   - #554: "…classified without knowing whether they are `already-tracked`,
     `already-fixed`, or `contribute-upstream`." — classification label.
   - #593: "…classifying each finding as `already-tracked`,
@@ -83,11 +84,12 @@ by backlog authors, outside this project's control).
     vA.B.C)…\"" — quoted template prose.
   - #1584: "**#1391 is partly fixed on `develop`.**" — statement about
     another item.
-  - #1722: "2. **Fixed per-job overhead is paid 85 times.**" — incidental
-    token match.
+  - #1722: "## Impact if fixed" followed by the next paragraph's opening
+    "On the measured 9-day window…" — incidental token match across a
+    heading boundary.
 - Distinct variants: evidence-list heading, negation, incidental token match,
-  classification label, quoted template prose, statement about another item. None is a claim that
-  the item's own work shipped.
+  classification label, quoted template prose, statement about another item.
+  None is a claim that the item's own work shipped.
 - Saturation: not reached; the population holds no true positive.
 - Adequacy rationale: the sample is heterogeneous and dominated by false
   positives, which is exactly what the design must tolerate. The design binds
