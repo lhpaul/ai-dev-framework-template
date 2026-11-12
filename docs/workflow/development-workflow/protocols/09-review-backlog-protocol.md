@@ -666,7 +666,8 @@ skips a gate.
 **Early-end delivery.** Any run that ends before Gate 3 prints, in its last
 gate close report, the `PENDIENTE DE TI` list (proposed body text, actions the
 tracker cannot perform, outstanding explicit-confirmation actions) and the
-precedent lines for the overrides recorded so far.
+precedent lines for the overrides recorded so far. A `deferred` run ends before
+Gate 1 is delivered, so it has no gate close report and records no overrides.
 
 ---
 
