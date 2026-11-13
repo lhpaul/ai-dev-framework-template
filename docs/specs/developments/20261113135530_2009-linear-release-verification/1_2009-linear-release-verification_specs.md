@@ -101,8 +101,8 @@ Linear team (neither as a team label nor as a workspace label). This includes pa
 
 **Steps**:
 
-1. Cleanup names the exact release label each item must carry. When no read
-   of an in-scope item shows that label, cleanup also reports, as an explicit
+1. Cleanup names the exact release label each item must carry. When no usable
+   read of an in-scope item shows that label, cleanup also reports, as an explicit
    action item, that the label may be missing from the owning team and must
    exist before items can be labelled.
 2. The operator creates the label through the Linear integration, then labels
@@ -189,7 +189,9 @@ exit behaviour are unchanged from the current release.
   release version started, shows both the release label for this exact version
   and the Released status. Re-running cleanup or verification for the same
   release version does not move that starting point, so a read taken after
-  fixing an item and before the re-run counts.
+  fixing an item and before the re-run counts. When no earlier cleanup run for
+  this release version is on record, the current run is the first one and its
+  start is the starting point.
 - BR3: Printed guidance, a deferred action signal, the operator's assertion, or
   the response echoed by the write itself never counts as a read.
 - BR4: The release label is the configured release label prefix followed by the
@@ -216,7 +218,10 @@ exit behaviour are unchanged from the current release.
 - BR10: GitHub Projects and GitHub Issues release behaviour is unchanged.
 - BR11: The verification can be re-run any number of times; each run evaluates
   only the reads supplied to it and the current release scope.
-- BR12: When more than one read is supplied for the same in-scope item, the
+- BR12: A read is usable for an in-scope item only when it can be understood,
+  states when it was taken, is for that item and this release version, comes
+  from the item's owning Linear team, and was taken after the starting point in
+  BR2. When more than one read is supplied for the same in-scope item, the
   most recently taken usable read decides that item's result. Usable reads
   taken at the same time that disagree leave the item Not verified. When none
   of the supplied reads is usable, the item is Not verified and every reason is
@@ -247,6 +252,10 @@ Overall release cleanup outcome for Linear:
   verification run with a usable read that satisfies BR2.
 - The outcome moves from Incomplete to Complete only on a verification run in
   which every in-scope item is Verified.
+- Results are recomputed on every run from the reads supplied to that run
+  (BR11). A later run can therefore report a previously Verified item as not
+  Verified (for example when no read, or a newer read showing another state, is
+  supplied), and the outcome then moves from Complete back to Incomplete.
 
 ## Operational Visibility
 
@@ -281,7 +290,8 @@ Overall release cleanup outcome for Linear:
 - [ ] AC6: A read supplied for an item that shows a different release version
   or a different item, a read from a team other than the owning one, a read
   taken before the first cleanup run for this release version started, or an
-  unreadable read leaves the item Not verified with the reason shown.
+  unreadable read (including one that does not state when it was taken) leaves
+  the item Not verified with the reason shown.
 - [ ] AC7: With explicit best-effort acceptance and unverified items, the run
   may end without an error but still reports Incomplete and lists the
   unverified items.
@@ -353,7 +363,7 @@ Complete only when every in-scope item ends in the Verified row.
 | Linear, release scope empty | Existing empty-scope behaviour; no verification outcome | As today | Protocol 05 §9.1; Linear guide | Range with no Linear IDs |
 | Linear, release scope cannot be resolved | Existing scope-failure behaviour; no verification outcome | As today | Protocol 05 §9.1; Linear guide | Previous release boundary unavailable |
 | Linear, no read supplied for the item | Not verified (no read) | Read the item back and re-run | Protocol 05 §9.4–9.5; Linear guide | Operator skipped the read |
-| Linear, read cannot be understood | Not verified (unreadable) | Supply a well-formed read | Same | Truncated read |
+| Linear, read cannot be understood or does not state when it was taken | Not verified (unreadable) | Supply a well-formed read | Same | Truncated read |
 | Linear, usable reads for the item taken at the same time disagree | Not verified (conflicting) | Read the item again and re-run | Same | Two reads with the same time, one Released and one Merged |
 | Linear, read supplied for the item shows another item, version or team | Not verified (mismatch) | Read the right item from the owning team | Same | Read for `v1.29.0` during `v1.29.1` |
 | Linear, read taken before the first cleanup run for this release version started | Not verified (stale) | Read again after stamping | Same | Read saved before this release's cleanup began |
@@ -361,7 +371,7 @@ Complete only when every in-scope item ends in the Verified row.
 | Linear, current read, label absent, status Released | Missing release label | Create the label if needed, apply it, re-read | Same | Label never applied |
 | Linear, current read, label present, status not Released | Not released | Move to Released, re-read | Same | Item left in Merged |
 | Linear, current read, label absent, status not Released | Missing release label and not released | Apply label and status, re-read | Same | Handoff not done |
-| Linear (release level), release label not observed on any in-scope item read | Action item naming the label as possibly missing from the owning team | Create the label if absent, apply, re-read | Same | Hotfix `release/v1.29.1` never created |
+| Linear (release level), release label not observed on any usable read of an in-scope item | Action item naming the label as possibly missing from the owning team | Create the label if absent, apply, re-read | Same | Hotfix `release/v1.29.1` never created |
 | Linear (release level), read for an item outside scope | Ignored; no effect on outcome | None | Same | Extra item read |
 | Linear (release level), best-effort accepted, any item not Verified | Run may end without error; outcome Incomplete | Complete tracker work outside the workflow | Protocol 05 §9.5 | Human accepted manual completion |
 
