@@ -277,9 +277,23 @@ jobs:
           # branch- or config-scoped decision (release/hotfix PRs to main, or
           # no reviewers configured) that may carry no head history, so it
           # is not head-bound.
+          #
+          # Pending window (#1838): on pull_request_target, a missing summary
+          # (ready_for_review before the loop's first post) or a clean summary
+          # recorded for an older head (synchronize after a push) is the loop
+          # not having run yet, not a failed loop. Those two cases post the
+          # status `pending` and leave the job green; the workflow_dispatch run
+          # that pr-review-loop.sh triggers after posting its summary then
+          # flips the same status context to success or failure. A dispatch
+          # run, a non-clean latest summary, a skipped hotfix summary, a clean
+          # summary with no head history, and any fetch failure still fail.
           reviewer_loop_guard_verdict() {
             if [ "${FOUND:-0}" -le 0 ]; then
-              STATE="failure"
+              if [ "${EVENT_NAME:-}" = "pull_request_target" ]; then
+                STATE="pending"
+              else
+                STATE="failure"
+              fi
               DESCRIPTION="No reviewer-loop summary found. Run the automated reviewer loop before merging."
             elif [[ "${BRANCH:-}" == hotfix/* ]] && [ "$LATEST_SUMMARY_RESULT" = "skipped" ]; then
               STATE="failure"
@@ -291,7 +305,12 @@ jobs:
               STATE="failure"
               DESCRIPTION="Latest reviewer-loop summary is not clean (escalated or incomplete)."
             elif [ "$LATEST_SUMMARY_HEAD_MATCHES" != "true" ]; then
-              STATE="failure"
+              if [ "${EVENT_NAME:-}" = "pull_request_target" ] &&
+                [ -n "${LATEST_SUMMARY_HEAD_SHA:-}" ]; then
+                STATE="pending"
+              else
+                STATE="failure"
+              fi
               DESCRIPTION="Reviewer-loop clean summary does not cover the current head. Re-run the loop."
             else
               STATE="success"
@@ -524,6 +543,14 @@ jobs:
           if [ "$STATE" = "failure" ]; then
             echo "Guard FAILED: ${DESCRIPTION}"
             exit 1
+          fi
+
+          # Pending (#1838) is not a pass: the guard status stays pending on
+          # the head until the loop's summary dispatch resolves it. The job
+          # exits 0 so its check does not contradict that status forever.
+          if [ "$STATE" = "pending" ]; then
+            echo "Guard PENDING: ${DESCRIPTION} Awaiting the reviewer-loop summary dispatch."
+            exit 0
           fi
 
           echo "Guard PASSED: ${DESCRIPTION}"
