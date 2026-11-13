@@ -62,5 +62,15 @@ assert_eq "reviewer backport"    "code-reviewer"       "$(reviewer_for_branch ba
 assert_eq "reviewer spec"        "spec-reviewer"       "$(reviewer_for_branch spec/1-x)"
 assert_eq "reviewer unknown"     "none"                "$(reviewer_for_branch chore/1-x)"
 
+# workflow_branch_is_implementation (#2183): the single source of truth for
+# reviewer-gated implementation-ness, derived from branch_prefix().
+is_impl() { if workflow_branch_is_implementation "$1"; then printf 'yes'; else printf 'no'; fi; }
+for b in feature/1-x feat/1-x fix/1-x refactor/1-x hotfix/1-x backport/v1.2.3 backport/hotfix/1-x; do
+  assert_eq "implementation ${b}" "yes" "$(is_impl "$b")"
+done
+for b in spec/1-x implementation-plan/1-x release/v1.2.3 backport/ backport chore/1-x develop develop-epic ""; do
+  assert_eq "not implementation '${b}'" "no" "$(is_impl "$b")"
+done
+
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

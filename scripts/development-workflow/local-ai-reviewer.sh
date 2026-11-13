@@ -968,13 +968,20 @@ strict_run_all_registry_entries() {
 # ---------------------------------------------------------------------------
 
 # Branch tier. Literal prefixes, never a regex: `specification/foo` must not
-# match `spec/*`.
+# match `spec/*`. Implementation-ness comes from branch_prefix() via
+# workflow_branch_is_implementation (#2183), so feat/* and backport/* PRs get
+# the implementation checklist; a bare `backport/` stays `default`.
 reviewer_stage_for_branch() {
   case "${1:-}" in
     spec/*) printf 'spec\n' ;;
     implementation-plan/*) printf 'plan\n' ;;
-    feature/*|refactor/*|fix/*|hotfix/*) printf 'implementation\n' ;;
-    *) printf 'default\n' ;;
+    *)
+      if workflow_branch_is_implementation "${1:-}"; then
+        printf 'implementation\n'
+      else
+        printf 'default\n'
+      fi
+      ;;
   esac
 }
 

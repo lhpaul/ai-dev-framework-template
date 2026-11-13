@@ -564,6 +564,31 @@ reviewer_for_branch() {
   esac
 }
 
+# workflow_branch_is_implementation <branch>
+#
+# Returns 0 when <branch> belongs to an implementation branch class according
+# to branch_prefix(): feature (including the feat/ alias, #1401), fix,
+# refactor, hotfix, and backport (including backport/hotfix/*, #2158). A bare
+# `backport/` is `unknown` and returns 1, as do spec, plan, release and any
+# other branch. This is the single source of truth for reviewer-gated
+# implementation-ness (#2183): readiness labels, the Step 7b regression-label
+# checks and the local reviewer's checklist tier read it instead of keeping
+# their own glob lists.
+#
+# Deliberately not routed through this helper (#2183 review):
+#   - workflow_tracker_stage_for_branch: backport/* never owns an item's
+#     tracker Status (a backport carries already-merged work), so only the
+#     feat/ alias is added there.
+#   - run-item-scope-resolver.sh / run-work-router.sh target-token parsing and
+#     run-nested-artifact-guard.sh issue matching: they resolve which work item
+#     a branch belongs to, not whether it is reviewer-gated.
+workflow_branch_is_implementation() {
+  case "$(branch_prefix "${1:-}")" in
+    feature|fix|refactor|hotfix|backport) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 print_kv() {
   printf '%s=%s\n' "$1" "$2"
 }
@@ -2116,13 +2141,17 @@ workflow_canonical_tracker_statuses() {
 # workflow_tracker_stage_for_branch <branch>
 #
 # Prints the workflow stage (spec | plan | implementation) that owns a workflow
-# branch. Returns 1 with no output for any other branch (release/*,
-# backport/*, develop-<slug>, ...), which never drives an item's Status here.
+# branch. feat/* is the feature/* alias (#1401) and owns the implementation
+# stage like feature/* (#2183). Returns 1 with no output for any other branch
+# (release/*, backport/*, develop-<slug>, ...), which never drives an item's
+# Status here: a backport carries work whose item Status was already driven by
+# its original implementation branch, so it stays out even though
+# workflow_branch_is_implementation() counts it as reviewer-gated.
 workflow_tracker_stage_for_branch() {
   case "$1" in
     spec/?*) printf 'spec\n' ;;
     implementation-plan/?*) printf 'plan\n' ;;
-    feature/?*|fix/?*|refactor/?*|hotfix/?*) printf 'implementation\n' ;;
+    feature/?*|feat/?*|fix/?*|refactor/?*|hotfix/?*) printf 'implementation\n' ;;
     *) return 1 ;;
   esac
 }

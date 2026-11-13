@@ -10509,8 +10509,13 @@ METRICS_HEADER
 restore_regression_label_if_missing() {
   local pr_number="$1"
   local branch_name="$2"
-  case "${branch_name:-}" in
-    feature/*|fix/*|refactor/*|hotfix/*)
+  # Implementation-ness comes from branch_prefix() (#2183): feat/* and
+  # backport/* PRs carry ready-for-regression like the other implementation
+  # classes, so they get the same restore.
+  local _rfr_branch_class="other"
+  workflow_branch_is_implementation "${branch_name:-}" && _rfr_branch_class="implementation"
+  case "$_rfr_branch_class" in
+    implementation)
       local _rfr_has_label=""
       # pipefail is needed here: if gh fails, jq would still see empty input and
       # output "false", causing a spurious re-apply. Use command substitution with
@@ -16768,7 +16773,7 @@ _ADVISORY_ENTRY_LINES_
   fi
 
   # Step 7b regression-label assertion (clean path, implementation PRs only).
-  # When the reviewer loop exits clean for a feature/fix/refactor/hotfix branch,
+  # When the reviewer loop exits clean for an implementation branch,
   # the next required step is Step 7b (apply ready-for-regression before Step 8).
   # Check whether the label is already present and append a warning to the summary
   # comment if it is missing. This makes the missing label visible to agents and
@@ -16777,8 +16782,12 @@ _ADVISORY_ENTRY_LINES_
   # the script's exit code or prevent the summary comment from being posted.
   local regression_label_section=""
   if [ "$result" = "clean" ]; then
-    case "${branch_name:-}" in
-      feature/*|fix/*|refactor/*|hotfix/*)
+    # Implementation-ness comes from branch_prefix() (#2183), so feat/* and
+    # backport/* PRs get the same Step 7b assertion.
+    local _step7b_branch_class="other"
+    workflow_branch_is_implementation "${branch_name:-}" && _step7b_branch_class="implementation"
+    case "$_step7b_branch_class" in
+      implementation)
         local _has_regression_label
         _has_regression_label="$(gh pr view "$pr_number" --json labels \
           --jq '[.labels[].name] | any(. == "ready-for-regression")' 2>/dev/null)" \

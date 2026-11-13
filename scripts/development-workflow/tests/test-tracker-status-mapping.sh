@@ -108,10 +108,12 @@ run_test "mapping_emits_only_canonical_statuses" "" "$unknown_emitted"
 # --- 3. Branch -> stage and refusals -----------------------------------------
 run_test "stage_spec_branch" "spec" "$(workflow_tracker_stage_for_branch spec/12-x)"
 run_test "stage_plan_branch" "plan" "$(workflow_tracker_stage_for_branch implementation-plan/12-x)"
-for prefix in feature fix refactor hotfix; do
+for prefix in feature feat fix refactor hotfix; do
   run_test "stage_${prefix}_branch" "implementation" "$(workflow_tracker_stage_for_branch "${prefix}/12-x")"
 done
-for branch in release/v1.2.3 backport/hotfix/12-x develop-epic develop spec/ ""; do
+# backport/* never owns an item's Status, even though it is reviewer-gated
+# (#2183): only the feat/ alias joins the implementation stage.
+for branch in release/v1.2.3 backport/hotfix/12-x backport/v1.2.3 feat/ develop-epic develop spec/ ""; do
   rc=0
   workflow_tracker_stage_for_branch "$branch" >/dev/null 2>&1 || rc=$?
   run_test "stage_refused_for_'${branch}'" "1" "$rc"

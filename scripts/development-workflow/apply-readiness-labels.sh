@@ -16,10 +16,13 @@
 # "reviewer clean". The same applies to a `neutral` check run that accompanies a
 # Bugbot usage/spend-limit notice: the reviewer never actually reviewed.
 #
-# The reviewer leg applies to implementation branches: feature/*, fix/*,
-# refactor/*, hotfix/* and backport/hotfix/*. Hotfixes carry new production code
-# and require the same reviewer evidence as fixes. Documentation, graduation
-# and release branches skip the reviewer leg; the CI leg still applies.
+# The reviewer leg applies to implementation branches as classified by
+# workflow_branch_is_implementation() (workflow-lib.sh, from branch_prefix()):
+# feature/* (and its feat/* alias), fix/*, refactor/*, hotfix/* and backport/*
+# (including backport/hotfix/*). A bare `backport/` is not an implementation
+# branch. Hotfixes and backports carry production code and require the same
+# reviewer evidence as fixes. Documentation, graduation and release branches
+# skip the reviewer leg; the CI leg still applies.
 #
 # `ready-for-regression` blocks on failing non-reviewer checks but permits
 # pending ones: that label is what *starts* the configured regression workflow,
@@ -2090,10 +2093,14 @@ fi
 # run and a required `ready-for-regression` label (Protocol 91's label derivation
 # table). Doc-stage, graduation, and release PRs are not reviewer-gated.
 # Hotfixes run the same reviewer gate as other new implementation code.
-case "$head_ref_name" in
-  feature/*|fix/*|refactor/*|hotfix/*|backport/hotfix/*) is_implementation_pr="true" ;;
-  *) is_implementation_pr="false" ;;
-esac
+# Implementation-ness comes from branch_prefix() via
+# workflow_branch_is_implementation (#2183), so feat/* and backport/* PRs stay
+# reviewer-gated and no second glob list can drift from it.
+if workflow_branch_is_implementation "$head_ref_name"; then
+  is_implementation_pr="true"
+else
+  is_implementation_pr="false"
+fi
 
 # --- 2. Ready-phase reviewer check runs for the current head ----------------
 

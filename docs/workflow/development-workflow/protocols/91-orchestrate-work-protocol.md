@@ -2254,7 +2254,7 @@ Every dispatched failure is a review failure under either policy.
 
 Before running any reviewers, classify the PR branch to determine which execution path applies:
 
-- **Implementation PR**: branch matches `feature/*`, `fix/*`, `refactor/*`, `hotfix/*`, or `backport/hotfix/*`. These PRs follow the **two-pass** review procedure below.
+- **Implementation PR**: branch matches `feature/*` (or its `feat/*` alias), `fix/*`, `refactor/*`, `hotfix/*`, or `backport/*` (including `backport/hotfix/*`; a bare `backport/` is not an implementation branch) — the classes `workflow_branch_is_implementation` in `workflow-lib.sh` derives from `branch_prefix()`. These PRs follow the **two-pass** review procedure below.
 - **Non-implementation PR**: branch matches `spec/*` or `implementation-plan/*`. These PRs follow the existing **single-pass** review procedure and are not affected by this section's two-pass rules.
 
 ### Multi-reviewer execution rules
@@ -2974,12 +2974,12 @@ discarded when the orchestration session ends.
 
 After Step 7 completes with result `clean` or `skipped`, and **before** entering Step 8, apply the `ready-for-regression` label on implementation PRs to trigger configured real regression CI checks, or an explicitly enabled placeholder regression workflow.
 
-**Applies to**: PRs on branches `feature/*`, `fix/*`, `refactor/*`, `hotfix/*`, `backport/hotfix/*`
+**Applies to**: PRs on branches `feature/*` (or `feat/*`), `fix/*`, `refactor/*`, `hotfix/*`, `backport/*` (including `backport/hotfix/*`)
 **Does not apply to**: PRs on branches `spec/*`, `implementation-plan/*`, or graduation PRs (`develop-<slug>` → `develop`) — see the label derivation table in Step 8a for the graduation PR exemption (BR-6)
 
 > **`refactor/*` is not exempt**: `refactor/*` branches require `ready-for-regression` exactly like `fix/*` and `feature/*` branches. Refactors that reach `ready-for-human-review` without this label will bypass e2e/regression CI. Apply the label unconditionally for any `refactor/*` PR — do not infer exemption from the content of the refactor (e.g., "it's documentation-only" or "it changes no logic").
 
-**`BATCH_CONTEXT=true` — this step is mandatory and must not be skipped in parallel dispatch**: When agents are dispatched with `BATCH_CONTEXT=true`, they follow a compressed execution path (worktree isolation, branch-skip rules, reduced context). Step 7b is a required step in that path and must be executed **between Step 7 and Step 8** without exception for **all** implementation branch types (`feature/*`, `fix/*`, `refactor/*`, `hotfix/*`, `backport/hotfix/*`). The orchestrator's Step 5.1 catches a missing label at the end of the batch, but the agent is the primary responsible party and must not rely on Step 5.1 as a fallback.
+**`BATCH_CONTEXT=true` — this step is mandatory and must not be skipped in parallel dispatch**: When agents are dispatched with `BATCH_CONTEXT=true`, they follow a compressed execution path (worktree isolation, branch-skip rules, reduced context). Step 7b is a required step in that path and must be executed **between Step 7 and Step 8** without exception for **all** implementation branch types (`feature/*`, `feat/*`, `fix/*`, `refactor/*`, `hotfix/*`, `backport/*`). The orchestrator's Step 5.1 catches a missing label at the end of the batch, but the agent is the primary responsible party and must not rely on Step 5.1 as a fallback.
 
 > **Readiness labels are helper-applied only (issue #1408).** Agents **must not call `gh pr edit --add-label ready-*`** directly, and **must not call `apply-readiness-labels.sh` for a `ready-*` label** unless the helper's own gate runs first. Readiness labels are input to the merge gates (`run-epic-delegated-gate.sh`, `batch-merge.sh`, `workflow-next-action.sh`), so a label applied on an agent's judgement asserts readiness no reviewer verdict supports. An agent that applies one by hand has not completed this step — it has skipped it.
 
@@ -2987,8 +2987,8 @@ After Step 7 completes with result `clean` or `skipped`, and **before** entering
 ```bash
 set -euo pipefail
 ./scripts/development-workflow/pr-ownership-guard.sh --pr <pr_number> --expected-branch <branch_name> || exit $?
-# Only for implementation PRs (feature/*, fix/*, refactor/*, hotfix/*,
-# backport/hotfix/*). The helper refuses unless every configured ready-phase
+# Only for implementation PRs (feature/*, feat/*, fix/*, refactor/*, hotfix/*,
+# backport/*). The helper refuses unless every configured ready-phase
 # reviewer check run is `completed` for the current head SHA and the reviewer
 # posted no blocking findings on that SHA. It emits RESULT= and REASON= for the
 # run summary.
@@ -3165,7 +3165,7 @@ Interpret the result as follows:
 
 When adding a new gate to this checklist, allocate the next unused exit code and update this table. Exit codes must not collide.
 
-> **Critical**: For implementation PRs (`feature/*`, `fix/*`, `refactor/*`, `hotfix/*`, `backport/hotfix/*`), you **must** confirm that `ready-for-regression` was applied in Step 7b **before** reaching this checklist. If it was not, apply it now (see Check 2 below) — do not proceed to `ready-for-human-review` without it. The orchestrator's Step 5.1 will catch and correct a missing `ready-for-regression` label, but the agent is the primary responsible party and must not rely on the orchestrator as a fallback.
+> **Critical**: For implementation PRs (`feature/*`, `feat/*`, `fix/*`, `refactor/*`, `hotfix/*`, `backport/*`), you **must** confirm that `ready-for-regression` was applied in Step 7b **before** reaching this checklist. If it was not, apply it now (see Check 2 below) — do not proceed to `ready-for-human-review` without it. The orchestrator's Step 5.1 will catch and correct a missing `ready-for-regression` label, but the agent is the primary responsible party and must not rely on the orchestrator as a fallback.
 
 ### Label derivation rule
 
@@ -3173,11 +3173,11 @@ Required labels are determined by the **branch prefix**, not by the content of t
 
 | Branch prefix                                    | Requires `ready-for-regression` | When to apply                                                                                                                                                    |
 | ------------------------------------------------ | ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `feature/*`                                      | Yes                             | Step 7b (before Step 8); confirmed here in Step 8a Check 2                                                                                                      |
+| `feature/*` (and the `feat/*` alias)             | Yes                             | Step 7b (before Step 8); confirmed here in Step 8a Check 2                                                                                                      |
 | `fix/*`                                          | Yes                             | Step 7b (before Step 8); confirmed here in Step 8a Check 2                                                                                                      |
 | `refactor/*`                                     | Yes                             | Step 7b (before Step 8); confirmed here in Step 8a Check 2                                                                                                      |
 | `hotfix/*`                                       | Yes                             | Step 7b (before Step 8); confirmed here in Step 8a Check 2                                                                                                      |
-| `backport/hotfix/*`                              | Yes                             | Step 7b (before Step 8); confirmed here in Step 8a Check 2. See Protocol 03 Path 4 backport readiness steps.                                                    |
+| `backport/*` (including `backport/hotfix/*`)     | Yes                             | Step 7b (before Step 8); confirmed here in Step 8a Check 2. See Protocol 03 Path 4 backport readiness steps.                                                    |
 | `spec/*`                                         | No                              | —                                                                                                                                                                |
 | `implementation-plan/*`                          | No                              | —                                                                                                                                                                |
 | `develop-<slug>` (graduation PR, base `develop`) | No — explicitly exempt (BR-6)   | Graduation PRs carry no new implementation; label not required. Do not log the absence as a protocol deviation. See `05b-graduate-development-protocol.md` Step 4. |
@@ -3343,19 +3343,20 @@ if ! ./scripts/development-workflow/pr-ownership-guard.sh --pr "$PR_NUMBER" \
   exit 14  # Exit code 14 = "PR ownership not verified"
 fi
 
-# Determine PR type (implementation vs. spec/plan)
-case "$BRANCH" in
-  feature/*|fix/*|hotfix/*|refactor/*|backport/hotfix/*)
-    IS_IMPLEMENTATION_PR=true
-    ;;
-  spec/*|implementation-plan/*)
-    IS_IMPLEMENTATION_PR=false
-    ;;
-  *)
-    IS_IMPLEMENTATION_PR=false
-    echo "WARNING: Branch '$BRANCH' does not match a recognized prefix (feature/*, fix/*, refactor/*, hotfix/*, backport/hotfix/*, spec/*, implementation-plan/*). Treating as non-implementation PR. Report this anomaly to the human."
-    ;;
-esac
+# Determine PR type (implementation vs. spec/plan) from branch_prefix() via
+# workflow_branch_is_implementation (#2183), the same classifier the
+# readiness-label helper uses.
+if bash -c 'source ./scripts/development-workflow/workflow-lib.sh && workflow_branch_is_implementation "$1"' _ "$BRANCH"; then
+  IS_IMPLEMENTATION_PR=true
+else
+  IS_IMPLEMENTATION_PR=false
+  case "$BRANCH" in
+    spec/*|implementation-plan/*) ;;
+    *)
+      echo "WARNING: Branch '$BRANCH' does not match a recognized prefix (feature/*, feat/*, fix/*, refactor/*, hotfix/*, backport/*, spec/*, implementation-plan/*). Treating as non-implementation PR. Report this anomaly to the human."
+      ;;
+  esac
+fi
 
 # Check 0: CI must be green on the PR's head SHA.
 # This is a hard gate — do NOT apply ready-for-human-review when any check is
@@ -4053,7 +4054,7 @@ Verify all of the following. If any check fails, **do not report ready** — tre
 | Base branch                                     | When `BASE_BRANCH` is present in the handoff metadata: `<BASE_BRANCH>` for all item types except `hotfix/*`. When `BASE_BRANCH` is absent: `develop` for `feature/*`, `fix/*`, `refactor/*`, `spec/*`, `implementation-plan/*`; `main` for `hotfix/*`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
 | PR is non-draft                                 | `isDraft: false`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | `ready-for-human-review` label                  | Present in `labels[].name`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| `ready-for-regression` label                    | Present in `labels[].name` for `feature/*`, `fix/*`, `refactor/*`, `hotfix/*`, `backport/hotfix/*`; absent/ignored for `spec/*`, `implementation-plan/*`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| `ready-for-regression` label                    | Present in `labels[].name` for `feature/*`, `feat/*`, `fix/*`, `refactor/*`, `hotfix/*`, `backport/*`; absent/ignored for `spec/*`, `implementation-plan/*`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
 | No `needs-fixes` label                          | `needs-fixes` absent from `labels[].name`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | `needs-setup` label (if present)                | **Valid co-label** — `needs-setup` may be present alongside `ready-for-human-review` when the diff contains infrastructure dependency signals. Its presence does **not** constitute a verification failure and does not block this check. Do not remove it.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | `human-checkpoint-required` label (when checkpoints in scope) | When the run carries checkpoint policy for this item: present if and only if applicable checkpoints remain `pending`; absent when all applicable checkpoints are `satisfied` or `waived`. Valid co-label with `ready-for-human-review`. When no checkpoint policy is in scope, ignore this check. |
