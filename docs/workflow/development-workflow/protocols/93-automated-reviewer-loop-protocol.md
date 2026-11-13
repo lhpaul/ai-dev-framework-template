@@ -433,8 +433,11 @@ reviewer's context bundle carries) that the failing review saw.
   record a rationale as a PR conversation comment to re-arm the review.
 - An infrastructure failure (escalate, timeout, crash, unavailable pass)
   allows exactly one automatic retry on the head
-  (`LOCAL_SECOND_PASS_REASON=infrastructure_retry`); a second run that failed
-  for an infrastructure reason on that head refuses.
+  (`LOCAL_SECOND_PASS_REASON=infrastructure_retry`); a second loop invocation
+  that failed for an infrastructure reason on that head refuses. Invocations
+  are counted by ledger entry (`iteration`), not by `run_id`, because
+  `PR_REVIEW_LOOP_RUN_ID` is shared by every invocation of one orchestration
+  run.
 - Fail closed: a record written before #1853 (no kind), a `needs_fixes` record
   without its fingerprint, or current evidence that cannot be collected
   refuses as before. Prior failures stay in the history; each re-review spends

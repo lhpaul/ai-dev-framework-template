@@ -11476,9 +11476,12 @@ reviewer_loop_local_second_pass_failed_for_head() {
 #   review_inputs_changed  every needs_fixes failure on the head reviewed
 #                          evidence (PR body and eligible comments) that differs
 #                          from <current_evidence_sha>
-#   infrastructure_retry   exactly one run on the head failed for an
-#                          infrastructure reason (timeout, crash, unavailable
-#                          pass), so the one bounded retry is still unspent
+#   infrastructure_retry   exactly one loop invocation on the head failed for
+#                          an infrastructure reason (timeout, crash, unavailable
+#                          pass), so the one bounded retry is still unspent.
+#                          Invocations are counted by ledger iteration, never
+#                          by run_id: PR_REVIEW_LOOP_RUN_ID is shared by every
+#                          invocation of one orchestration run.
 # Fail closed: a legacy record without the kind, a needs_fixes record without
 # its evidence, an unknown current evidence, a second infrastructure failure,
 # or an unreadable payload all print refuse.
@@ -11486,10 +11489,13 @@ reviewer_loop_local_failed_head_decision() {
   local payload="${1:-}" head="${2:-}" current="${3:-}" decision=""
   [ -n "$payload" ] || payload='{}'
   decision="$(printf '%s' "$payload" | jq -r --arg head "$head" --arg current "$current" '
-    [(.entries // [])[] | select((.local_second_pass_failed_head // "") == $head)] as $failed
+    [(.entries // []) | to_entries[]
+      | select((.value.local_second_pass_failed_head // "") == $head)
+      | .value + {_key: (if (.value.iteration | type) == "number"
+                         then "iteration:\(.value.iteration)" else "entry:\(.key)" end)}
+    ] as $failed
     | [$failed[] | select(.local_second_pass_failed_kind == "needs_fixes")] as $findings
-    | ([$failed[] | select(.local_second_pass_failed_kind == "infrastructure")
-        | ((.run_id // "") | if . == "" then null else . end) // "iteration:\(.iteration // 0)"]
+    | ([$failed[] | select(.local_second_pass_failed_kind == "infrastructure") | ._key]
        | unique | length) as $infra
     | if ($failed | length) == 0 then "none"
       elif any($failed[]; (.local_second_pass_failed_kind // "") as $kind

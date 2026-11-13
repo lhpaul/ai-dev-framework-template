@@ -1716,10 +1716,16 @@ run_test "1853_decision_one_timeout_retries" infrastructure_retry \
   "$(_1853_decide "$(_1853_hist "$(_1853_entry 1 r1 infrastructure)")")"
 run_test "1853_decision_second_timeout_refuses" refuse \
   "$(_1853_decide "$(_1853_hist "$(_1853_entry 1 r1 infrastructure)" "$(_1853_entry 2 r2 infrastructure)")")"
-run_test "1853_decision_same_run_counts_once" infrastructure_retry \
+# PR_REVIEW_LOOP_RUN_ID is shared across the invocations of one orchestration
+# run, so each failed invocation (ledger iteration) counts, not each run_id.
+run_test "1853_decision_shared_run_id_counts_each_invocation" refuse \
   "$(_1853_decide "$(_1853_hist "$(_1853_entry 1 r1 infrastructure)" "$(_1853_entry 2 r1 infrastructure)")")"
-run_test "1853_decision_runless_entries_count_by_iteration" refuse \
-  "$(_1853_decide "$(_1853_hist "$(_1853_entry 1 "" infrastructure)" "$(_1853_entry 2 "" infrastructure)")")"
+run_test "1853_decision_shared_run_id_four_timeouts_refuse" refuse \
+  "$(_1853_decide "$(_1853_hist "$(_1853_entry 1 r1 infrastructure)" "$(_1853_entry 2 r1 infrastructure)" "$(_1853_entry 3 r1 infrastructure)" "$(_1853_entry 4 r1 infrastructure)")")"
+run_test "1853_decision_replayed_iteration_counts_once" infrastructure_retry \
+  "$(_1853_decide "$(_1853_hist "$(_1853_entry 1 r1 infrastructure)" "$(_1853_entry 1 r1 infrastructure)")")"
+run_test "1853_decision_iterationless_entries_count_each" refuse \
+  "$(_1853_decide "$(_1853_hist "$(_1853_entry 1 r1 infrastructure | jq -c 'del(.iteration)')" "$(_1853_entry 1 r1 infrastructure | jq -c 'del(.iteration)')")")"
 run_test "1853_decision_changed_finding_after_timeout" review_inputs_changed \
   "$(_1853_decide "$(_1853_hist "$(_1853_entry 1 r1 infrastructure)" "$(_1853_entry 2 r2 needs_fixes old)")")"
 run_test "1853_decision_spent_retry_still_refuses_after_edit" refuse \
