@@ -589,6 +589,57 @@ class InlineProducerHTMLTests(unittest.TestCase):
                 self.assertEqual("needs_fixes", classify(blocker))
                 self.assertEqual(["Critical"], self.labels(blocker))
 
+    def test_html_only_inline_respects_quoted_attributes(self):
+        # #1979: "<", ">" and comment delimiters inside a quoted attribute
+        # value belong to the tag, so the span is still HTML-only.
+        for content in ('<a title="</summary">example</a>',
+                        '<span title="<!-- literal -->">example</span>',
+                        '<a title="</summary>">example</a>',
+                        "<a title='</summary>'>example</a>",
+                        "<span title='<!-- literal -->'>example</span>",
+                        '<a href="x" title=\'"<b>"\'>example</a>'):
+            with self.subTest(content=content):
+                body = self.finding("Example `" + content + "`.")
+                self.assertEqual("clean", classify(body))
+                self.assertEqual(["Possible Issue"], self.labels(body))
+                self.assertEqual(body, runtime.ReviewSpans(body).source)
+                for preserve in (True, False):
+                    masked = runtime.mask_review_code(body, preserve_offsets=preserve)
+                    self.assertEqual(body.count("\n"), masked.count("\n"))
+                    self.assertNotIn(content, masked)
+                masked = runtime.mask_review_code(body)
+                self.assertEqual(len(body), len(masked))
+                self.assertIn("<strong>Possible Issue</strong>", masked)
+                blocker = self.finding("Example `" + content + "`.", "Critical")
+                self.assertEqual("needs_fixes", classify(blocker))
+                self.assertEqual(["Critical"], self.labels(blocker))
+
+    def test_malformed_quoted_attributes_and_mixtures_still_escalate(self):
+        # Unterminated or mismatched quotes are not attribute boundaries, and
+        # prose beside quoted-attribute HTML is still a mixture.
+        for content in ('<a title="</summary>example</a>',
+                        "<a title='</summary\">example</a>",
+                        "<a title=\"</summary'>example</a>",
+                        '<a title=</summary>example</a>',
+                        'prose <a title="</summary">example</a>',
+                        '<a title="</summary">example</a> prose',
+                        '<span title="<!-- literal -->">example</span> <!DOCTYPE html>'):
+            with self.subTest(content=content):
+                body = self.finding("Example `" + content + "`.")
+                self.assertEqual("escalate", classify(body))
+                for preserve in (True, False):
+                    with self.assertRaises(ValueError):
+                        runtime.mask_review_code(body, preserve_offsets=preserve)
+        # Unsupported raw containers and incomplete delimiters keep refusing.
+        for source in ('<div>`<a title="</summary">example</a>`</div>',
+                       '<span>`<span title="<!-- literal -->">example</span>`</span>'):
+            with self.subTest(source=source):
+                self.assertEqual("escalate", classify(review() + "\n" + source))
+        for content in ('`<a title="</summary">example</a>',
+                        '``<a title="</summary">example</a>`'):
+            with self.subTest(content=content):
+                self.assertEqual("escalate", classify(self.finding(content)))
+
     def test_comment_delimiters_in_complete_inline_expressions(self):
         for content in ('source.startswith("<!--", index)',
                         're.match(r"<!--\\s*pr-agent-review-state", source[index:])',
