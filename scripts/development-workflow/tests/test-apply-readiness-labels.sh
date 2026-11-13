@@ -876,6 +876,31 @@ MOCK_CHECK_RUNS='{"check_runs":[]}'
 MOCK_PR_JSON='{"headRefOid":"'"$HEAD"'","headRefName":"backport/hotfix/v9.9.9","baseRefOid":"'"$BASE_SHA"'","labels":[],"statusCheckRollup":[]}'
 result="$(run_helper)"
 run_test "backport_hotfix_still_reviewer_gated_reason" "reviewer-check-absent" "$(field "$result" REASON)"
+# #2183: implementation-ness comes from branch_prefix(), so the feat/* alias
+# and release backports (backport/<version>) are reviewer-gated too. Planted
+# violation: before the fix both heads matched no implementation glob and were
+# labeled with no reviewer check run at all.
+MOCK_PR_JSON='{"headRefOid":"'"$HEAD"'","headRefName":"feat/2183-x","baseRefOid":"'"$BASE_SHA"'","labels":[],"statusCheckRollup":[]}'
+result="$(run_helper)"
+run_test "2183_feat_alias_reviewer_gated_exit" "1" "${result%%|*}"
+run_test "2183_feat_alias_reviewer_gated_reason" "reviewer-check-absent" "$(field "$result" REASON)"
+MOCK_PR_JSON='{"headRefOid":"'"$HEAD"'","headRefName":"backport/v1.2.3","baseRefOid":"'"$BASE_SHA"'","labels":[],"statusCheckRollup":[]}'
+result="$(run_helper)"
+run_test "2183_backport_version_reviewer_gated_exit" "1" "${result%%|*}"
+run_test "2183_backport_version_reviewer_gated_reason" "reviewer-check-absent" "$(field "$result" REASON)"
+# With a clean reviewer run, the same heads are labeled: the gate is the
+# reviewer evidence, not the branch name.
+MOCK_CHECK_RUNS="$_bugbot_ok"
+MOCK_PR_JSON='{"headRefOid":"'"$HEAD"'","headRefName":"feat/2183-x","baseRefOid":"'"$BASE_SHA"'","labels":[],"statusCheckRollup":[]}'
+result="$(run_helper)"
+run_test "2183_feat_alias_clean_reviewer_labels" "labeled" "$(field "$result" RESULT)"
+# A bare `backport/` is not an implementation branch (branch_prefix: unknown):
+# no reviewer leg, so an empty check-run set does not refuse it.
+MOCK_CHECK_RUNS='{"check_runs":[]}'
+MOCK_PR_JSON='{"headRefOid":"'"$HEAD"'","headRefName":"backport/","baseRefOid":"'"$BASE_SHA"'","labels":[],"statusCheckRollup":[]}'
+result="$(run_helper)"
+run_test "2183_bare_backport_not_reviewer_gated_result" "labeled" "$(field "$result" RESULT)"
+run_test "2183_bare_backport_reviewer_report" "none" "$(field "$result" REVIEWER_REPORT)"
 MOCK_PR_JSON="$_empty_rollup"
 MOCK_CHECK_RUNS="$_bugbot_ok"
 

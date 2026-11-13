@@ -1545,6 +1545,12 @@ run_test "1653_s1_feature" "implementation" "$(reviewer_stage_for_branch 'featur
 run_test "1653_s1_refactor" "implementation" "$(reviewer_stage_for_branch 'refactor/foo')"
 run_test "1653_s1_fix" "implementation" "$(reviewer_stage_for_branch 'fix/foo')"
 run_test "1653_s1_hotfix" "implementation" "$(reviewer_stage_for_branch 'hotfix/foo')"
+# #2183: implementation tier follows branch_prefix().
+run_test "2183_s1_feat_alias" "implementation" "$(reviewer_stage_for_branch 'feat/foo')"
+run_test "2183_s1_backport" "implementation" "$(reviewer_stage_for_branch 'backport/v1.2.3')"
+run_test "2183_s1_backport_hotfix" "implementation" "$(reviewer_stage_for_branch 'backport/hotfix/foo')"
+run_test "2183_s2_bare_backport" "default" "$(reviewer_stage_for_branch 'backport/')"
+run_test "2183_s2_release" "default" "$(reviewer_stage_for_branch 'release/v1.2.3')"
 
 run_test "1653_s2_empty" "default" "$(reviewer_stage_for_branch '')"
 run_test "1653_s2_main" "default" "$(reviewer_stage_for_branch 'main')"

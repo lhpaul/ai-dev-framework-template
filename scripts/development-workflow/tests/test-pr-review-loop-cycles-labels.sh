@@ -1520,6 +1520,26 @@ run_test "restore_label_hotfix_branch_calls_gh_edit" "1" "$_edit_calls"
 rm -f "$_call_log_11"
 unset MOCK_GH_CALL_LOG MOCK_GH_COMMENTS_OUTPUT MOCK_GH_HEAD_SHA MOCK_GH_OWNERSHIP_BRANCH
 
+# Test 11.5b (#2183): feat/* and backport/* are implementation branches per
+# branch_prefix(), so the restore path covers them like hotfix/*.
+for _rfr_branch in "feat/77-alias" "backport/v1.2.3"; do
+  if ! _call_log_11="$(mktemp)"; then
+    echo "ERROR: failed to allocate regression-label test temp file" >&2
+    exit 1
+  fi
+  export MOCK_GH_OUTPUT="false"
+  export MOCK_GH_HEAD_SHA="$_SUMMARY_CURRENT_HEAD_SHA"
+  export MOCK_GH_COMMENTS_OUTPUT="$_SUMMARY_COMMENT_JSON"
+  export MOCK_GH_CALL_LOG="$_call_log_11"
+  export MOCK_GH_OWNERSHIP_BRANCH="$_rfr_branch"
+  restore_regression_label_if_missing "77" "$_rfr_branch" 2>/dev/null
+  _edit_calls="$(grep -c -- '--add-label' "$_call_log_11" 2>/dev/null)" || _edit_calls="0"
+  run_test "2183_restore_label_${_rfr_branch%%/*}_branch_calls_gh_edit" "1" "$_edit_calls"
+  rm -f "$_call_log_11"
+  unset MOCK_GH_CALL_LOG MOCK_GH_COMMENTS_OUTPUT MOCK_GH_HEAD_SHA MOCK_GH_OWNERSHIP_BRANCH
+done
+unset _rfr_branch
+
 # Test 11.6: restore function is defined before the HARNESS_MODE return point
 # (source-level ordering check — ensures the function remains testable after
 # future refactors move it).
