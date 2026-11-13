@@ -1842,6 +1842,31 @@ local_review_retry_attempt_json="$(jq -cn --arg head "$_1656_guard_head" '{id:"0
 reviewer_loop_second_local_pass_before_ready_gate 1693 && _st=0 || _st=$?
 run_test "1853_explicit_retry_after_spent_retry" "0|1" "${_st}|${local_second_pass}"
 run_test "1853_explicit_retry_consumed" "" "$retry_local_review_head"
+# Every automatic same-head re-review spends a cycle on both axes, so repeated
+# input edits cannot evade max_cycles / max_total_cycles.
+_1853_cycle_body() { # <payload>
+  printf '### Automated Reviewer Loop Summary\n\n<!-- reviewer-loop-history:v1 -->\n```json\n%s\n```\n' "$1"
+}
+_1853_rereviews="$(jq -cn --arg head "$_1656_guard_head" '{schema:"reviewer_loop_history.v1", history_status:"available",
+  entries:([{iteration:1, head_sha:$head, result:"needs_fixes", run_id:"run-A", local_second_pass_reason:"no_evidence"}]
+    + [range(2;22) | {iteration:., head_sha:$head, result:"needs_fixes", run_id:"run-A",
+                      local_second_pass_reason:"review_inputs_changed"}])}')"
+run_test "1853_cycles_each_rereview_counts" "21 21 available" \
+  "$(reviewer_loop_history_entries_count "$(_1853_cycle_body "$_1853_rereviews")" run-A)"
+run_test "1853_cycles_rereview_exceeds_cap" "1" \
+  "$(read -r _l _r _s < <(reviewer_loop_history_entries_count "$(_1853_cycle_body "$_1853_rereviews")" run-A); [ "$_r" -ge 10 ] && echo 1 || echo 0)"
+_1853_infra_retry="$(jq -cn --arg head "$_1656_guard_head" '{schema:"reviewer_loop_history.v1", history_status:"available",
+  entries:[{iteration:1, head_sha:$head, result:"needs_fixes", run_id:"run-A", local_second_pass_reason:"prior_findings"},
+           {iteration:2, head_sha:$head, result:"needs_fixes", run_id:"run-A", local_second_pass_reason:"infrastructure_retry"}]}')"
+run_test "1853_cycles_infrastructure_retry_counts" "2 2 available" \
+  "$(reviewer_loop_history_entries_count "$(_1853_cycle_body "$_1853_infra_retry")" run-A)"
+# Ordinary same-head entries keep the historical (head_sha, result) dedupe.
+_1853_plain="$(jq -cn --arg head "$_1656_guard_head" '{schema:"reviewer_loop_history.v1", history_status:"available",
+  entries:[range(1;4) | {iteration:., head_sha:$head, result:"needs_fixes", run_id:"run-A", local_second_pass_reason:"prior_findings"}]}')"
+run_test "1853_cycles_ordinary_same_head_dedupe_unchanged" "1 1 available" \
+  "$(reviewer_loop_history_entries_count "$(_1853_cycle_body "$_1853_plain")" run-A)"
+unset -f _1853_cycle_body
+unset _1853_rereviews _1853_infra_retry _1853_plain _l _r _s
 unset -f _1853_entry _1853_hist _1853_decide _1853_unreadable_case _1853_evidence_reads_case
 rm -f "$_1853_diag"
 unset _1853_entry_json _1853_after_retry _1853_diag

@@ -14211,6 +14211,10 @@ reviewer_loop_resolve_run_id() {
 #            auto-fix, then a different NEW issue found on that state) —
 #            see the block comment above for why deduping by head_sha
 #            alone would be too aggressive.
+#            An automatic same-head re-review (#1853:
+#            local_second_pass_reason review_inputs_changed or
+#            infrastructure_retry) adds its ledger iteration to the key, so
+#            every such re-review spends a cycle on both axes.
 #   run_count — the same DISTINCT-(head_sha,result)-PAIR count, but
 #            restricted to entries whose `run_id` field exactly equals
 #            <run_id> — i.e. the per-run-cap count (Protocol 91's `cycle`
@@ -14286,11 +14290,20 @@ reviewer_loop_history_entries_count() {
           | select((.result // "") == "needs_fixes" or (.result // "") == "needs_rerun")
           | select((.reason // "") != "head_moved_during_run")
         ] as $qualifying
-        | ($qualifying
-            | [.[] | select((.head_sha // "") | length > 0) | ((.head_sha // "") + "|" + (.result // ""))]
+        # #1853: an automatic same-head re-review (review inputs changed, or
+        # the one infrastructure retry) is its own dispatch, so its key adds
+        # the ledger iteration instead of collapsing into (head_sha, result).
+        | def cycle_key:
+            (.head_sha // "") + "|" + (.result // "")
+            + (if ((.local_second_pass_reason // "") == "review_inputs_changed"
+                   or (.local_second_pass_reason // "") == "infrastructure_retry")
+               then "|rereview:" + ((.iteration // .recorded_at // "") | tostring)
+               else "" end);
+          ($qualifying
+            | [.[] | select((.head_sha // "") | length > 0) | cycle_key]
             | unique | length) as $legacyLifetime
         | ($qualifying
-            | [.[] | select(($runId | length) > 0 and (.run_id // "") == $runId and ((.head_sha // "") | length > 0)) | ((.head_sha // "") + "|" + (.result // ""))]
+            | [.[] | select(($runId | length) > 0 and (.run_id // "") == $runId and ((.head_sha // "") | length > 0)) | cycle_key]
             | unique | length) as $legacyRun
         | ($new | map(.local_review_retry_attempt) | unique_by(.id)) as $attempts
         | "\($legacyLifetime + ($attempts | length)) \($legacyRun + ([$attempts[] | select(.run_id == $runId)] | length))"

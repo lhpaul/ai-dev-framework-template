@@ -440,8 +440,13 @@ reviewer's context bundle carries) that the failing review saw.
   run.
 - Fail closed: a record written before #1853 (no kind), a `needs_fixes` record
   without its fingerprint, or current evidence that cannot be collected
-  refuses as before. Prior failures stay in the history; each re-review spends
-  cycles like any other run.
+  refuses as before. Prior failures stay in the history.
+- Each automatic same-head re-review spends a cycle on both axes
+  (`max_cycles` and `max_total_cycles`): a `needs_fixes` or `needs_rerun`
+  entry whose `local_second_pass_reason` is `review_inputs_changed` or
+  `infrastructure_retry` is counted by its own ledger `iteration` instead of
+  being deduplicated by `(head_sha, result)`, so repeated input edits cannot
+  evade the caps.
 
 An explicit `--retry-local-review-head <full-lowercase-sha>` can request a fresh
 configured local review after infrastructure repair or publication of relevant
