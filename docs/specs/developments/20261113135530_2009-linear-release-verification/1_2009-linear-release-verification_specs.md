@@ -196,9 +196,10 @@ exit behaviour are unchanged from the current release.
   the response echoed by the write itself never counts as a read.
 - BR4: The release label is the configured release label prefix followed by the
   release version (default `release/vX.Y.Z`), including patch and hotfix
-  versions. Projects that record releases in a configured release field
-  instead of a label keep their current behaviour; verifying that field is
-  out of scope (deferral note 4).
+  versions. Projects that configure a release field keep their current
+  behaviour even when a release label prefix is also configured, because a
+  configured release field already takes precedence over the label today;
+  verifying that field is out of scope (deferral note 4).
 - BR5: A missing release label in the owning team is either created by the
   operator before stamping or reported as an explicit action item naming the
   label. It is never skipped silently.
@@ -223,8 +224,10 @@ exit behaviour are unchanged from the current release.
   states when it was taken, is for that item and this release version, comes
   from the item's owning Linear team, and was taken after the starting point in
   BR2. When more than one read is supplied for the same in-scope item, the
-  most recently taken usable read decides that item's result. Usable reads
-  taken at the same time that disagree leave the item Not verified. When none
+  most recently taken usable read decides that item's result. When two or
+  more usable reads share that most recent time and disagree on the release
+  label or the status, the item is Not verified; older usable reads never
+  decide a result once a newer usable read exists. When none
   of the supplied reads is usable, the item is Not verified and every reason is
   shown.
 
@@ -315,9 +318,9 @@ Overall release cleanup outcome for Linear:
 - [ ] AC13: For a Linear release with an empty scope, or whose scope cannot be
   resolved, cleanup keeps its existing behaviour and reports no Complete
   outcome.
-- [ ] AC14: For a Linear project that records releases in a configured release
-  field instead of a label, cleanup keeps its existing fail-closed handoff
-  behaviour and reports no verification outcome.
+- [ ] AC14: For a Linear project that configures a release field (with or
+  without a release label prefix), cleanup keeps its existing fail-closed
+  handoff behaviour and reports no verification outcome.
 
 ## Brief Objective List and Coverage Matrix
 
@@ -350,8 +353,8 @@ Overall release cleanup outcome for Linear:
    repair, not workflow behaviour. Human confirmation: not requested.
 4. *Release-field verification* — projects that record releases in a
    configured Linear release field instead of a label. Rationale: the brief
-   covers the release label only, the Linear guide describes the field as an
-   optional future write target, and the expected field value is not defined.
+   covers the release label only, and the Linear guide describes the field as
+   an optional future write target without defining the value it must hold.
    These projects keep the current fail-closed handoff unchanged, so nothing
    regresses. Human confirmation: requested at spec review; a follow-up item
    can define the field value if wanted.
@@ -371,12 +374,12 @@ Complete only when every in-scope item ends in the Verified row.
 | --- | --- | --- | --- | --- |
 | Provider is GitHub Projects or GitHub Issues | Existing behaviour | None new | Protocol 05 §9.4–9.5; release cleanup tests | GitHub milestone stamping |
 | Provider is none or another non-Linear provider | Existing behaviour | None new | Protocol 05 §9.4 | Release stamp skipped as today |
-| Linear with a configured release field instead of a label | Existing behaviour (fail-closed handoff); no verification outcome | As today | Protocol 05 §9.4; Linear guide | Team tracks releases in a custom field |
+| Linear with a configured release field (with or without a label prefix) | Existing behaviour (fail-closed handoff); no verification outcome | As today | Protocol 05 §9.4; Linear guide | Team tracks releases in a custom field |
 | Linear, release scope empty | Existing empty-scope behaviour; no verification outcome | As today | Protocol 05 §9.1; Linear guide | Range with no Linear IDs |
 | Linear, release scope cannot be resolved | Existing scope-failure behaviour; no verification outcome | As today | Protocol 05 §9.1; Linear guide | Previous release boundary unavailable |
 | Linear, no read supplied for the item | Not verified (no read) | Read the item back and re-run | Protocol 05 §9.4–9.5; Linear guide | Operator skipped the read |
 | Linear, read cannot be understood or does not state when it was taken | Not verified (unreadable) | Supply a well-formed read | Same | Truncated read |
-| Linear, usable reads for the item taken at the same time disagree | Not verified (conflicting) | Read the item again and re-run | Same | Two reads with the same time, one Released and one Merged |
+| Linear, the most recently taken usable reads for the item share the same time and disagree on label or status | Not verified (conflicting) | Read the item again and re-run | Same | Two reads with the same time, one Released and one Merged |
 | Linear, read supplied for the item shows another item, version or team | Not verified (mismatch) | Read the right item from the owning team | Same | Read for `v1.29.0` during `v1.29.1` |
 | Linear, read taken before the first cleanup run for this release version started | Not verified (stale) | Read again after stamping | Same | Read saved before this release's cleanup began |
 | Linear, current read, label present, status Released | Verified | None | Same | Item stamped and Released |
