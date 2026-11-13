@@ -150,7 +150,7 @@ accepted in place of an independent read.
 **Information shown**:
 
 - Per item, the reason the read does not count: no read supplied, a read
-  supplied for the item that shows a different item or release version, read
+  supplied for the item that is for a different item or release version, read
   taken before the first cleanup run for this release version started, read
   from a team other than the owning one, a read that cannot be understood, or
   usable reads taken at the same time that disagree.
@@ -230,7 +230,10 @@ exit behaviour are unchanged from the current release.
   label or the status, the item is Not verified; older usable reads never
   decide a result once a newer usable read exists. When none
   of the supplied reads is usable, the item is Not verified and every reason is
-  shown.
+  shown. The item and release version a read is for are the ones the read
+  itself identifies, not the release labels it shows: a usable read that shows
+  a release label for another version but not this version's label is decided
+  by the label rules (Missing release label), not treated as a mismatch.
 
 ## Statuses / Enum Values
 
@@ -293,7 +296,7 @@ Overall release cleanup outcome for Linear:
   skipped.
 - [ ] AC5: With no read-back supplied, every in-scope item is Not verified and
   the outcome is Incomplete; printed guidance alone never yields Complete.
-- [ ] AC6: A read supplied for an item that shows a different release version
+- [ ] AC6: A read supplied for an item that is for a different release version
   or a different item, a read from a team other than the owning one, a read
   taken before the first cleanup run for this release version started, or an
   unreadable read (including one that does not state when it was taken) leaves
@@ -382,7 +385,7 @@ Complete only when every in-scope item ends in the Verified row.
 | Linear, no read supplied for the item | Not verified (no read) | Read the item back and re-run | Protocol 05 §9.4–9.5; Linear guide | Operator skipped the read |
 | Linear, read cannot be understood or does not state when it was taken | Not verified (unreadable) | Supply a well-formed read | Same | Truncated read |
 | Linear, the most recently taken usable reads for the item share the same time and disagree on label or status | Not verified (conflicting) | Read the item again and re-run | Same | Two reads with the same time, one Released and one Merged |
-| Linear, read supplied for the item shows another item, version or team | Not verified (mismatch) | Read the right item from the owning team | Same | Read for `v1.29.0` during `v1.29.1` |
+| Linear, read supplied for the item is for another item or release version, or comes from another team | Not verified (mismatch) | Read the right item from the owning team | Same | Read for `v1.29.0` during `v1.29.1` |
 | Linear, read taken before the first cleanup run for this release version started | Not verified (stale) | Read again after stamping | Same | Read saved before this release's cleanup began |
 | Linear, current read, label present, status Released | Verified | None | Same | Item stamped and Released |
 | Linear, current read, label absent, status Released | Missing release label | Create the label if needed, apply it, re-read | Same | Label never applied |
