@@ -944,10 +944,15 @@ Outputs stable key=value lines including:
   PHASE_AFTER_CLEAN_SKIP_REASON=<result> (emitted when the phase never starts)
   PHASE_AFTER_CLEAN_NET_NEW_BLOCKER=0|1 (compatibility alias for READY_PHASE_NET_NEW_BLOCKER)
   LOCAL_SECOND_PASS=0|1 (1 when a second local pass ran before the ready-phase gate)
-  LOCAL_SECOND_PASS_REASON=not_required|head_changed|prior_findings|no_evidence|no_local_reviewer|failed_for_head|head_moved_during_pass|local_pass_unavailable|human_override
+  LOCAL_SECOND_PASS_REASON=not_required|head_changed|prior_findings|no_evidence|no_local_reviewer|failed_for_head|review_inputs_changed|infrastructure_retry|head_moved_during_pass|local_pass_unavailable|human_override
     (head_moved_during_pass: live PR head != loop_head_sha on a proceed path,
     including not_required/no_local_reviewer when no pass ran, and after a
     clean pass; aggregate REASON remains head_moved_during_run;
+    failed_for_head: a failed review on this head refuses while the head and
+    the review inputs are unchanged (#1853);
+    review_inputs_changed: every needs_fixes failure on this head reviewed a
+    different PR body/comment evidence snapshot, so the head is re-reviewed;
+    infrastructure_retry: the one bounded retry after a timeout/crash on this head;
     human_override: a valid human override for this head stood in for the pass)
   Human override of local-ai-reviewer (#2116): when a PR comment opens with
     <!-- reviewer-loop-human-override:v1 {"platform":"local-ai-reviewer","head":"<sha>","reason":"<why>"} -->
@@ -11461,6 +11466,87 @@ reviewer_loop_local_second_pass_failed_for_head() {
   '
 }
 
+# reviewer_loop_local_failed_head_decision <history_payload> <head_sha> <current_evidence_sha>
+#
+# #1853: decides whether failed local reviews recorded for <head_sha> still
+# refuse a re-review. The refusal is keyed on the head and on the review
+# inputs, not on the head alone. Prints exactly one of:
+#   none                   no failed review is recorded for the head
+#   refuse                 the anti-thrash refusal (REASON=failed_for_head)
+#   review_inputs_changed  every needs_fixes failure on the head reviewed
+#                          evidence (PR body and eligible comments) that differs
+#                          from <current_evidence_sha>
+#   infrastructure_retry   exactly one run on the head failed for an
+#                          infrastructure reason (timeout, crash, unavailable
+#                          pass), so the one bounded retry is still unspent
+# Fail closed: a legacy record without the kind, a needs_fixes record without
+# its evidence, an unknown current evidence, a second infrastructure failure,
+# or an unreadable payload all print refuse.
+reviewer_loop_local_failed_head_decision() {
+  local payload="${1:-}" head="${2:-}" current="${3:-}" decision=""
+  [ -n "$payload" ] || payload='{}'
+  decision="$(printf '%s' "$payload" | jq -r --arg head "$head" --arg current "$current" '
+    [(.entries // [])[] | select((.local_second_pass_failed_head // "") == $head)] as $failed
+    | [$failed[] | select(.local_second_pass_failed_kind == "needs_fixes")] as $findings
+    | ([$failed[] | select(.local_second_pass_failed_kind == "infrastructure")
+        | ((.run_id // "") | if . == "" then null else . end) // "iteration:\(.iteration // 0)"]
+       | unique | length) as $infra
+    | if ($failed | length) == 0 then "none"
+      elif any($failed[]; (.local_second_pass_failed_kind // "") as $kind
+             | $kind != "needs_fixes" and $kind != "infrastructure") then "refuse"
+      elif any($findings[]; (.local_second_pass_failed_evidence // "") as $seen
+             | $seen == "" or $current == "" or $seen == $current) then "refuse"
+      elif $infra >= 2 then "refuse"
+      elif ($findings | length) > 0 then "review_inputs_changed"
+      else "infrastructure_retry"
+      end
+  ' 2>/dev/null)" || decision=""
+  case "$decision" in
+    none|refuse|review_inputs_changed|infrastructure_retry) printf '%s\n' "$decision" ;;
+    *) printf 'refuse\n' ;;
+  esac
+}
+
+# reviewer_loop_current_review_evidence_sha <pr_number> <head_sha>
+#
+# #1853: the canonical review-evidence fingerprint (PR body plus eligible
+# conversation comments, the inputs the local reviewer's context bundle
+# carries) for the live head. Prints an empty string when the evidence cannot
+# be collected, which the failed-head decision treats as unchanged inputs.
+reviewer_loop_current_review_evidence_sha() {
+  local pr="${1:-}" head="${2:-}" context="" repo="" sha=""
+  context="$(mktemp)" || { printf '\n'; return 0; }
+  repo="$(repo_slug 2>/dev/null)" || repo=""
+  if [ -n "$repo" ] && [ -n "$pr" ] && [ -n "$head" ] &&
+      workflow_collect_review_evidence "$repo" "$pr" "$head" "$context" 2>/dev/null; then
+    sha="$(jq -r '.snapshot_sha256 // ""' "$context" 2>/dev/null)" || sha=""
+  fi
+  rm -f "$context"
+  printf '%s\n' "$sha"
+}
+
+# reviewer_loop_record_local_failed_head <needs_fixes|infrastructure> [evidence_sha]
+#
+# #1853: records this run's failed-head key: the head, the failure kind, and
+# for needs_fixes the review evidence the failing review saw. Within one run a
+# needs_fixes record is never downgraded to infrastructure, and two needs_fixes
+# failures that saw different evidence keep no evidence, so the record refuses.
+reviewer_loop_record_local_failed_head() {
+  local kind="${1:-infrastructure}" evidence="${2:-}"
+  [ "$kind" = needs_fixes ] || { kind=infrastructure; evidence=""; }
+  if [ "${local_second_pass_failed_head_record:-}" = "${loop_head_sha:-}" ] &&
+      [ "${local_second_pass_failed_kind_record:-}" = needs_fixes ]; then
+    if [ "$kind" = needs_fixes ] &&
+        [ "$evidence" != "${local_second_pass_failed_evidence_record:-}" ]; then
+      local_second_pass_failed_evidence_record=""
+    fi
+    return 0
+  fi
+  local_second_pass_failed_head_record="${loop_head_sha:-}"
+  local_second_pass_failed_kind_record="$kind"
+  local_second_pass_failed_evidence_record="$evidence"
+}
+
 # A retry authorizes review, never a verdict. Unknown history stays blocked
 # unless a legacy platform record retains the exact raw needs_rerun result.
 reviewer_loop_local_retry_allowed() {
@@ -11970,7 +12056,16 @@ reviewer_loop_second_local_pass_before_ready_gate() {
     return 1
   fi
 
-  if [ "$(reviewer_loop_local_second_pass_failed_for_head "$_sl_prior_payload" "$loop_head_sha")" -gt 0 ] 2>/dev/null; then
+  # #1853: the refusal is keyed on the head and the review inputs. A probe value
+  # that can never equal a fingerprint shows whether the evidence can change
+  # the decision; only then is the current evidence collected.
+  local _sl_failed_decision
+  _sl_failed_decision="$(reviewer_loop_local_failed_head_decision "$_sl_prior_payload" "$loop_head_sha" "#probe")"
+  if [ "$_sl_failed_decision" = review_inputs_changed ]; then
+    _sl_failed_decision="$(reviewer_loop_local_failed_head_decision "$_sl_prior_payload" "$loop_head_sha" \
+      "$(reviewer_loop_current_review_evidence_sha "$pr_number_arg" "$loop_head_sha")")"
+  fi
+  if [ "$_sl_failed_decision" != none ]; then
     if [ "${retry_local_review_head:-}" = "$loop_head_sha" ] && [ "${local_review_retry_head_record:-}" = "$loop_head_sha" ] && [ "${local_review_retry_attempt_json:-null}" != null ]; then
       # Consume before dispatch, including failed/unknown-head attempts.
       local_review_retry_head_record="$retry_local_review_head"
@@ -11979,6 +12074,9 @@ reviewer_loop_second_local_pass_before_ready_gate() {
         return 1
       fi
       workflow_diagnostic "INFO: explicitly retrying failed local review for ${loop_head_sha}; prior history retained" >&2
+    elif [ "$_sl_failed_decision" = review_inputs_changed ] || [ "$_sl_failed_decision" = infrastructure_retry ]; then
+      local_second_pass_reason="$_sl_failed_decision"
+      workflow_diagnostic "INFO: re-reviewing ${loop_head_sha} after a failed local review (${_sl_failed_decision}); prior history retained" >&2
     else
       local_second_pass=0
       local_second_pass_reason="failed_for_head"
@@ -12048,7 +12146,11 @@ reviewer_loop_second_local_pass_before_ready_gate() {
     last_platform="local-ai-reviewer"
     return 1
   fi
-  local_second_pass_failed_head_record="$loop_head_sha"
+  if [ "$_sl_gate_result" = "needs_fixes" ]; then
+    reviewer_loop_record_local_failed_head needs_fixes "$(kv_value_default EVIDENCE_SNAPSHOT_SHA256 "$_sl_output" "")"
+  else
+    reviewer_loop_record_local_failed_head infrastructure
+  fi
   if [ "$_sl_gate_result" = "needs_fixes" ]; then
     aggregate_output="$(printf 'RESULT=needs_fixes\nREASON=%s\nCOMMENT_COUNT=%s\nBLOCKING_COUNT=%s\nSUGGESTION_COUNT=%s\n' \
       "${_sl_gate_reason:-}" \
@@ -12177,7 +12279,7 @@ reviewer_loop_process_platform_output() {
   if [ "$platform_name" = pr-agent ] &&
       [ "$(kv_value_default EVIDENCE_REVIEW_FAILED_HEAD "$platform_output" "")" = "${loop_head_sha:-}" ] &&
       { [ "$platform_result" = needs_fixes ] || [ "$platform_result" = needs_rerun ]; }; then
-    local_second_pass_failed_head_record="$loop_head_sha"
+    reviewer_loop_record_local_failed_head needs_fixes "$(kv_value_default EVIDENCE_SNAPSHOT_SHA256 "$platform_output" "")"
   fi
   platform_blocking_outputs+=("${platform_name}"$'\036'"${platform_output}")
 
@@ -13583,6 +13685,8 @@ reviewer_loop_history_build_entry() {
     --argjson localSecondPass "${local_second_pass:-0}" \
     --arg localSecondPassReason "${local_second_pass_reason:-not_required}" \
     --arg localSecondPassFailedHead "${local_second_pass_failed_head_record:-}" \
+    --arg localSecondPassFailedKind "${local_second_pass_failed_kind_record:-}" \
+    --arg localSecondPassFailedEvidence "${local_second_pass_failed_evidence_record:-}" \
     --arg localReviewRetryHead "${local_review_retry_head_record:-}" \
     --argjson localRetryAttempt "${local_review_retry_attempt_json:-null}" \
     '{
@@ -13678,6 +13782,10 @@ reviewer_loop_history_build_entry() {
       }
     | if ($localSecondPassFailedHead | length) > 0 then
         . + {local_second_pass_failed_head: $localSecondPassFailedHead}
+        + (if ($localSecondPassFailedKind | length) > 0
+            then {local_second_pass_failed_kind: $localSecondPassFailedKind} else {} end)
+        + (if ($localSecondPassFailedEvidence | length) > 0
+            then {local_second_pass_failed_evidence: $localSecondPassFailedEvidence} else {} end)
       else
         .
       end'
@@ -16281,6 +16389,8 @@ local_second_pass=0
 local_second_pass_reason="not_required"
 local_second_pass_result=""
 local_second_pass_failed_head_record=""
+local_second_pass_failed_kind_record=""
+local_second_pass_failed_evidence_record=""
 reviewer_loop_platform_loop_should_break=0
 reviewer_loop_last_platform_result=""
 reviewer_loop_last_platform_reason=""

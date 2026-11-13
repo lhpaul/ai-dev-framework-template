@@ -393,7 +393,9 @@ local reviewer still owes a pass when evidence is stale.
 | `prior_findings` | Verdict is not clean |
 | `no_evidence` | Configured local reviewer has not reported on this head |
 | `no_local_reviewer` | Repository has no local reviewer configured; gate proceeds |
-| `failed_for_head` | A prior pass failed on this head; refusing without dispatch |
+| `failed_for_head` | A prior pass failed on this head and neither the head nor the review inputs changed; refusing without dispatch |
+| `review_inputs_changed` | Every `needs_fixes` failure on this head reviewed different PR body/comment evidence than the current one; the head is re-reviewed |
+| `infrastructure_retry` | One run on this head failed for an infrastructure reason (timeout, crash, unavailable pass); the one bounded retry runs |
 | `head_moved_during_pass` | Live PR head does not match `loop_head_sha` on a proceed path. This includes a clean second pass whose head then moved, and also `not_required` / `no_local_reviewer` paths that never dispatched a pass because the live-head re-read failed the equality test. The cycle still uses aggregate `REASON=head_moved_during_run`. |
 | `local_pass_unavailable` | Pass skipped, escalated, unparseable, or clean without current-head `REVIEWED_HEAD` evidence |
 | `human_override` | A valid human override for `loop_head_sha` stands in for the pass (see below); the reviewer is not run |
@@ -415,7 +417,29 @@ When a pass fails on an unchanged head, the ledger entry records
 `**Second local pass:** second local pass: <reason> → <result>` when a pass ran.
 
 An ordinary pass retains the existing cycle accounting. A failed pass on an
-unchanged head refuses with `RESULT=escalate`, `REASON=failed_for_head` by default.
+unchanged head with unchanged review inputs refuses with `RESULT=escalate`,
+`REASON=failed_for_head` by default (#1853). The ledger keys the refusal on
+`local_second_pass_failed_head` plus `local_second_pass_failed_kind`
+(`needs_fixes` or `infrastructure`) and, for `needs_fixes`,
+`local_second_pass_failed_evidence`: the review-evidence fingerprint (PR body
+and eligible conversation comments, the same `snapshot_sha256` the local
+reviewer's context bundle carries) that the failing review saw.
+
+- A `needs_fixes` failure refuses while the current fingerprint equals the
+  recorded one. A description edit or a new PR conversation comment changes
+  the fingerprint, so the next run re-reviews the same head
+  (`LOCAL_SECOND_PASS_REASON=review_inputs_changed`) without an empty commit.
+  Review-thread replies and thread resolution are not part of the fingerprint;
+  record a rationale as a PR conversation comment to re-arm the review.
+- An infrastructure failure (escalate, timeout, crash, unavailable pass)
+  allows exactly one automatic retry on the head
+  (`LOCAL_SECOND_PASS_REASON=infrastructure_retry`); a second run that failed
+  for an infrastructure reason on that head refuses.
+- Fail closed: a record written before #1853 (no kind), a `needs_fixes` record
+  without its fingerprint, or current evidence that cannot be collected
+  refuses as before. Prior failures stay in the history; each re-review spends
+  cycles like any other run.
+
 An explicit `--retry-local-review-head <full-lowercase-sha>` can request a fresh
 configured local review after infrastructure repair or publication of relevant
 proof for recorded findings. It never supplies a clean verdict itself.
