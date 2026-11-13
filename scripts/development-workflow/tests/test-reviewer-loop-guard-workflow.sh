@@ -342,7 +342,7 @@ guard_exit_for() {
   ) > /dev/null 2>&1 && echo 0 || echo 1
 }
 run_test "guard_exit_block_extractable" "yes" \
-  "$(printf '%s\n' "$GUARD_EXIT_BLOCK" | grep -q 'Guard PENDING' && echo yes || echo no)"
+  "$(grep -Fq 'Guard PENDING' <<<"$GUARD_EXIT_BLOCK" && echo yes || echo no)"
 run_test "guard_exit_pending_is_zero" "0" "$(guard_exit_for pending)"
 run_test "guard_exit_failure_is_one" "1" "$(guard_exit_for failure)"
 run_test "guard_exit_success_is_zero" "0" "$(guard_exit_for success)"
