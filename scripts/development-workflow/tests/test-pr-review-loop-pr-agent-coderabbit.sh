@@ -2142,6 +2142,13 @@ for _tag_1959 in div pre style script textarea blockquote span custom details su
   fixture_test_1946 conservative_html_same_line "$_html_verdict_1967" "${_fixture_ticket_1946}"$'\n'"<${_tag_1959}>"'`<span title="a" title="b">bad</span>`'"</${_tag_1959}>"
 done
 unset _boundary_1959 _ticks_1959 _tag_1959 _html_verdict_1967
+# #1979: quoted attribute values may hold "<", ">" and comment delimiters;
+# an unterminated quote is still malformed and keeps the refusal.
+fixture_test_1946 quoted_attribute_closer clean "${_fixture_ticket_1946}"$'\n<table>\n`<a title="</summary">example</a>`\n</table>'
+fixture_test_1946 quoted_attribute_closer_gt clean "${_fixture_ticket_1946}"$'\n<table>\n`<a title="</summary>">example</a>`\n</table>'
+fixture_test_1946 quoted_attribute_comment clean "${_fixture_ticket_1946}"$'\n<table>\n`<span title="<!-- literal -->">example</span>`\n</table>'
+fixture_test_1946 quoted_attribute_unterminated escalate "${_fixture_ticket_1946}"$'\n<table>\n`<a title="</summary>example</a>`\n</table>'
+fixture_test_1946 quoted_attribute_raw_wrapper escalate "${_fixture_ticket_1946}"$'\n<div>\n`<a title="</summary">example</a>`\n</div>'
 fixture_test_1946 conservative_attribute escalate "${_fixture_ticket_1946}"$'\n<span title="`">Text</span>\n'
 fixture_test_1946 conservative_comment clean "${_fixture_ticket_1946}"$'\n<!-- `Critical` -->\n'
 fixture_test_1946 conservative_unmatched escalate "${_fixture_ticket_1946}"$'\nUnmatched ` example.\n'

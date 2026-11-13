@@ -188,7 +188,12 @@ def mask_review_code(source, preserve_offsets=True):
             return True
         depth = 0
         end = 0
-        for token in re.finditer(r"<!--.*?-->|<\?.*?\?>|</?[A-Za-z][^<>]*>", content):
+        # A quoted attribute value may hold "<", ">" or comment delimiters
+        # (#1979). An unterminated quote never matches, so the tag fails
+        # recognition and the content stays a mixture.
+        tag_token = (r"<!--.*?-->|<\?.*?\?>"
+                     r"|</?[A-Za-z](?:[^<>\"']|\"[^\"]*\"|'[^']*')*>")
+        for token in re.finditer(tag_token, content):
             if content[end:token.start()].strip() and depth == 0:
                 return False
             tag = token.group()
