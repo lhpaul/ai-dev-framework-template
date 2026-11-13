@@ -29,7 +29,8 @@ access through the Linear integration the workflow already documents.
 
 1. Run release cleanup for the release version.
 2. Cleanup lists every in-scope item with the release label it must carry and
-   the required Released status, and reports the release as not yet verified.
+   the required Released status. No item has been read back yet, so every item
+   is Not verified and the outcome is Incomplete (Use Case 4).
 3. The operator makes sure the release label is available to each item's
    owning Linear team (as a team or workspace label), applies it to every listed item, and moves every listed item to Released.
 4. The operator reads each listed item back from Linear, independently of the
@@ -209,8 +210,8 @@ exit behaviour are unchanged from the current release.
   best-effort acceptance. Without best-effort acceptance, an Incomplete outcome
   ends the cleanup run with an error, as today. Explicit best-effort acceptance
   keeps its current meaning (the operator takes over tracker completion outside
-  the workflow). It may end the cleanup run without an error, but the reported
-  outcome stays Incomplete and the unverified items are still listed.
+  the workflow). It ends the cleanup run without an error, as today, but the
+  reported outcome stays Incomplete and the unverified items are still listed.
 - BR8: Verification reads tracker state; it never moves items, never removes
   labels, and never changes items outside the release scope.
 - BR9: Release scope is decided exactly as today. This feature does not change
@@ -241,7 +242,7 @@ Per-item verification results:
 | `missing_label` | Missing release label | Read shows Released but not the release label. |
 | `not_released` | Not released | Read shows the release label but a status other than Released. |
 | `missing_label_and_not_released` | Missing release label and not released | Read shows neither requirement. |
-| `not_verified` | Not verified | No usable read for the item; the reason is shown. |
+| `not_verified` | Not verified | No usable read for the item, or the most recent usable reads share a time and disagree (BR12); the reason is shown. |
 
 Overall release cleanup outcome for Linear:
 
@@ -263,7 +264,8 @@ Overall release cleanup outcome for Linear:
 
 ## Operational Visibility
 
-- **Logs**: Every Linear release cleanup run prints the release version, the
+- **Logs**: Every Linear release cleanup run that evaluates verification (not
+  the empty-scope, unresolved-scope or release-field cases) prints the release version, the
   release label, one line per in-scope item with its result and read state,
   counts per result, and the overall outcome. Missing labels appear as explicit
   action items.
@@ -297,8 +299,8 @@ Overall release cleanup outcome for Linear:
   unreadable read (including one that does not state when it was taken) leaves
   the item Not verified with the reason shown.
 - [ ] AC7: With explicit best-effort acceptance and unverified items, the run
-  may end without an error but still reports Incomplete and lists the
-  unverified items.
+  ends without an error but still reports Incomplete and lists the unverified
+  items.
 - [ ] AC8: A read for an item outside the release scope is reported as ignored
   and does not change the outcome.
 - [ ] AC9: GitHub Projects and GitHub Issues release cleanup keep their
@@ -388,7 +390,7 @@ Complete only when every in-scope item ends in the Verified row.
 | Linear, current read, label absent, status not Released | Missing release label and not released | Apply label and status, re-read | Same | Handoff not done |
 | Linear (release level), release label not observed on any usable read of an in-scope item | Action item naming the label as possibly missing from the owning team | Create the label if absent, apply, re-read | Same | Hotfix `release/v1.29.1` never created |
 | Linear (release level), read for an item outside scope | Ignored; no effect on outcome | None | Same | Extra item read |
-| Linear (release level), best-effort accepted, any item not Verified | Run may end without error; outcome Incomplete | Complete tracker work outside the workflow | Protocol 05 §9.5 | Human accepted manual completion |
+| Linear (release level), best-effort accepted, any item not Verified | Run ends without error; outcome Incomplete | Complete tracker work outside the workflow | Protocol 05 §9.5 | Human accepted manual completion |
 
 ## Out of Scope (MVP)
 
