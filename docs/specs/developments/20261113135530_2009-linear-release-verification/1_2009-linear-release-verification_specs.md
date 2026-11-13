@@ -196,8 +196,9 @@ exit behaviour are unchanged from the current release.
   the response echoed by the write itself never counts as a read.
 - BR4: The release label is the configured release label prefix followed by the
   release version (default `release/vX.Y.Z`), including patch and hotfix
-  versions. When the project records releases in a configured release field
-  instead of a label, the same rules apply to that field's value.
+  versions. Projects that record releases in a configured release field
+  instead of a label keep their current behaviour; verifying that field is
+  out of scope (deferral note 4).
 - BR5: A missing release label in the owning team is either created by the
   operator before stamping or reported as an explicit action item naming the
   label. It is never skipped silently.
@@ -314,6 +315,9 @@ Overall release cleanup outcome for Linear:
 - [ ] AC13: For a Linear release with an empty scope, or whose scope cannot be
   resolved, cleanup keeps its existing behaviour and reports no Complete
   outcome.
+- [ ] AC14: For a Linear project that records releases in a configured release
+  field instead of a label, cleanup keeps its existing fail-closed handoff
+  behaviour and reports no verification outcome.
 
 ## Brief Objective List and Coverage Matrix
 
@@ -344,6 +348,13 @@ Overall release cleanup outcome for Linear:
 3. *Backfilling past releases* — the downstream repository already backfilled
    its historical releases by hand on 2026-10-21. Rationale: a one-off data
    repair, not workflow behaviour. Human confirmation: not requested.
+4. *Release-field verification* — projects that record releases in a
+   configured Linear release field instead of a label. Rationale: the brief
+   covers the release label only, the Linear guide describes the field as an
+   optional future write target, and the expected field value is not defined.
+   These projects keep the current fail-closed handoff unchanged, so nothing
+   regresses. Human confirmation: requested at spec review; a follow-up item
+   can define the field value if wanted.
 
 ## Workflow Decision-Gate Consistency Matrix
 
@@ -360,6 +371,7 @@ Complete only when every in-scope item ends in the Verified row.
 | --- | --- | --- | --- | --- |
 | Provider is GitHub Projects or GitHub Issues | Existing behaviour | None new | Protocol 05 §9.4–9.5; release cleanup tests | GitHub milestone stamping |
 | Provider is none or another non-Linear provider | Existing behaviour | None new | Protocol 05 §9.4 | Release stamp skipped as today |
+| Linear with a configured release field instead of a label | Existing behaviour (fail-closed handoff); no verification outcome | As today | Protocol 05 §9.4; Linear guide | Team tracks releases in a custom field |
 | Linear, release scope empty | Existing empty-scope behaviour; no verification outcome | As today | Protocol 05 §9.1; Linear guide | Range with no Linear IDs |
 | Linear, release scope cannot be resolved | Existing scope-failure behaviour; no verification outcome | As today | Protocol 05 §9.1; Linear guide | Previous release boundary unavailable |
 | Linear, no read supplied for the item | Not verified (no read) | Read the item back and re-run | Protocol 05 §9.4–9.5; Linear guide | Operator skipped the read |
@@ -387,5 +399,7 @@ Complete only when every in-scope item ends in the Verified row.
   helpers.
 - Any change to GitHub Projects or GitHub Issues release behaviour, or to other
   providers.
+- Verifying a configured Linear release field (deferral note 4); those
+  projects keep their current behaviour.
 - Merge-session (Protocol 94) bridge semantics, which already require
   independent Linear read-back for admitted sessions.
