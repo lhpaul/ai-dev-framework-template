@@ -591,18 +591,90 @@ if [ "$worktree_list_available" = "true" ]; then
   fi
 fi
 
+# detached_head_returned_to_base <pr-number> <expected-base>
+#
+# Issue #1846: after a merged PR, post-merge-cleanup.sh detaches the caller's
+# own worktree onto the updated base instead of deleting the branch it stands
+# on (#1386/#1831), so `git rev-parse --abbrev-ref HEAD` reports `HEAD`. That
+# detached checkout has returned to the expected base when the PR is merged and
+# HEAD equals or descends from the base tip (the local base branch, or the
+# origin remote-tracking base when no local branch exists). Prints the
+# accepted evidence on success, or the reason the detached HEAD was not
+# accepted on failure. A PR that is not merged never qualifies, so unmerged
+# items keep the existing branch-name rule.
+detached_head_returned_to_base() {
+  local pr="$1"
+  local base="$2"
+  local slug="" state_json="" pr_state="" base_ref="" base_tip="" head_oid=""
+
+  if ! git check-ref-format --branch "$base" >/dev/null 2>&1; then
+    printf 'expected base %s is not a valid branch name\n' "$base"
+    return 1
+  fi
+  if ! slug="$(repo_slug 2>&1)"; then
+    printf 'PR #%s state unavailable: %s\n' "$pr" "$slug"
+    return 1
+  fi
+  if ! state_json="$(gh pr view "$pr" --repo "$slug" --json state 2>&1)" \
+    || ! pr_state="$(printf '%s\n' "$state_json" | jq -r '.state // ""' 2>/dev/null)"; then
+    printf 'PR #%s state unavailable\n' "$pr"
+    return 1
+  fi
+  if [ "$pr_state" != "MERGED" ]; then
+    printf 'PR #%s is not merged (state=%s)\n' "$pr" "${pr_state:-unknown}"
+    return 1
+  fi
+  for base_ref in "refs/heads/$base" "refs/remotes/origin/$base"; do
+    if base_tip="$(git rev-parse --verify --quiet "${base_ref}^{commit}")" && [ -n "$base_tip" ]; then
+      break
+    fi
+    base_tip=""
+  done
+  if [ -z "$base_tip" ]; then
+    printf 'expected base %s not found locally\n' "$base"
+    return 1
+  fi
+  if ! head_oid="$(git rev-parse --verify --quiet "HEAD^{commit}")" || [ -z "$head_oid" ]; then
+    printf 'unable to read detached HEAD\n'
+    return 1
+  fi
+  if ! git merge-base --is-ancestor "$base_tip" "$head_oid" 2>/dev/null; then
+    printf 'detached HEAD %s does not equal or descend from %s tip %s\n' "${head_oid:0:12}" "$base_ref" "${base_tip:0:12}"
+    return 1
+  fi
+  if [ "$head_oid" = "$base_tip" ]; then
+    printf 'detached HEAD %s equals %s tip; PR #%s merged\n' "${head_oid:0:12}" "$base_ref" "$pr"
+  else
+    printf 'detached HEAD %s descends from %s tip %s; PR #%s merged\n' "${head_oid:0:12}" "$base_ref" "${base_tip:0:12}" "$pr"
+  fi
+}
+
 current_branch=""
 returned_to_expected_base="false"
+returned_to_base_evidence="local checkout returned to expected base; PR head check verifies item branch"
+detached_head_rejection=""
 if current_branch="$(git rev-parse --abbrev-ref HEAD 2>&1)"; then
   if [ -n "$pr_number" ] && [ -n "$expected_base" ] && [ "$current_branch" = "$expected_base" ]; then
     returned_to_expected_base="true"
+  elif [ -n "$pr_number" ] && [ -n "$expected_base" ] && [ "$current_branch" = "HEAD" ] \
+    && [ "$current_branch" != "$expected_branch" ]; then
+    if detached_evidence="$(detached_head_returned_to_base "$pr_number" "$expected_base")"; then
+      returned_to_expected_base="true"
+      returned_to_base_evidence="local checkout returned to expected base ($detached_evidence); PR head check verifies item branch"
+    else
+      detached_head_rejection="$detached_evidence"
+    fi
   fi
   if [ "$current_branch" = "$expected_branch" ]; then
     add_row "repository.branch" "verified" "$current_branch" "git rev-parse --abbrev-ref HEAD"
   elif is_true "$returned_to_expected_base"; then
-    add_row "repository.branch" "verified" "$current_branch" "local checkout returned to expected base; PR head check verifies item branch"
+    add_row "repository.branch" "verified" "$current_branch" "$returned_to_base_evidence"
   else
-    add_row "repository.branch" "discrepancy" "expected=$expected_branch observed=$current_branch" "git rev-parse --abbrev-ref HEAD"
+    branch_evidence="git rev-parse --abbrev-ref HEAD"
+    if [ -n "$detached_head_rejection" ]; then
+      branch_evidence="$branch_evidence; detached HEAD not accepted as expected base: $detached_head_rejection"
+    fi
+    add_row "repository.branch" "discrepancy" "expected=$expected_branch observed=$current_branch" "$branch_evidence"
     if [ "$caller_worktree_path_mismatch" = "true" ]; then
       add_row "caller.worktree_path" "discrepancy" "expected branch $expected_branch is checked out at $resolved_expected_branch_worktree_path, not the supplied --worktree-path $resolved_worktree_path; re-run this check with --worktree-path $resolved_expected_branch_worktree_path" "git worktree list --porcelain"
     fi
@@ -641,7 +713,7 @@ if [ "$worktree_list_available" = "true" ]; then
   if printf '%s\n' "$worktree_list" | grep -Fq "branch refs/heads/$expected_branch"; then
     add_row "workspace.worktrees" "verified" "expected branch present; path=$resolved_worktree_path" "git worktree list --porcelain"
   elif is_true "$returned_to_expected_base"; then
-    add_row "workspace.worktrees" "verified" "local checkout returned to expected base; PR head check verifies item branch" "git worktree list --porcelain"
+    add_row "workspace.worktrees" "verified" "$returned_to_base_evidence" "git worktree list --porcelain"
   else
     add_row "workspace.worktrees" "discrepancy" "expected branch $expected_branch not found in worktree list" "git worktree list --porcelain"
   fi

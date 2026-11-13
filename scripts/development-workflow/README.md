@@ -784,6 +784,13 @@ What it does:
 - Prints a Markdown section headed `## Ground-Truth Completion Verification`.
 - Verifies current branch, HEAD, worktree path, workspace cleanliness, and
   `git worktree list` evidence.
+- With `--pr` and `--expected-base`, a checkout that has returned to the base
+  passes `repository.branch` and `workspace.worktrees`: either the base branch
+  is checked out, or (#1846) the PR is merged and a detached HEAD equals or
+  descends from the base tip (`refs/heads/<base>`, else
+  `refs/remotes/origin/<base>`) — the state `post-merge-cleanup.sh` leaves in
+  the caller's own worktree. A detached HEAD for an unmerged PR, behind the
+  base, or with an unreadable PR state stays a discrepancy.
 - When `--pr` is supplied, verifies live PR head/base, draft state, labels,
   changed files, CI rollup, reviewer-loop summary, and optionally review
   threads.

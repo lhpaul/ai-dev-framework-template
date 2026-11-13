@@ -28,6 +28,20 @@ if [ -n "${MOCK_GH_LOG:-}" ]; then
   printf 'gh %s\n' "$*" >> "$MOCK_GH_LOG"
 fi
 
+# #1846: the detached-HEAD returned-to-base rule reads only the PR state.
+if [ "$1" = "pr" ] && [ "$2" = "view" ] && [[ " $* " == *" --json state "* ]]; then
+  case "${MOCK_GH_PR_STATE:-OPEN}" in
+    __FAIL__)
+      printf 'pr state unavailable\n' >&2
+      exit 1
+      ;;
+    *)
+      jq -nc --arg state "${MOCK_GH_PR_STATE:-OPEN}" '{state: $state}'
+      exit 0
+      ;;
+  esac
+fi
+
 if [ "$1" = "pr" ] && [ "$2" = "view" ]; then
   case "${MOCK_GH_PR_MODE:-happy}" in
     wrong_base)
@@ -664,6 +678,122 @@ out="$(self_check_output \
 run_test "returned_to_base_exit_zero" "0" "$(status_code "$out")"
 run_contains "returned_to_base_branch_allowed" "| repository.branch | verified | develop | local checkout returned to expected base; PR head check verifies item branch |" "$(body "$out")"
 run_contains "returned_to_base_worktree_allowed" "| workspace.worktrees | verified | local checkout returned to expected base; PR head check verifies item branch |" "$(body "$out")"
+
+# Regression coverage for issue #1846: post-merge-cleanup.sh detaches the
+# caller's own worktree onto the updated base instead of deleting the branch
+# it stands on, so `git rev-parse --abbrev-ref HEAD` reports HEAD. For a merged
+# PR with a known base, a detached HEAD that equals or descends from the base
+# tip counts as returned to the expected base in both repository.branch and
+# workspace.worktrees. Unmerged PRs, a HEAD behind or off the base, an
+# unreadable PR state, and runs without --pr keep the discrepancy.
+
+# make_detached_after_cleanup <name>
+# Main clone holds develop; the item worktree's feature branch was merged into
+# develop, then the worktree was detached onto develop and the branch deleted —
+# the state post-merge-cleanup.sh leaves behind. Prints the worktree path.
+make_detached_after_cleanup() {
+  local name="$1" main worktree
+  main="$(make_repo "$name")"
+  worktree="$TMP_ROOT/$name/item-worktree"
+  git -C "$main" switch -q develop
+  git -C "$main" branch -D feature/1202-self-check >/dev/null
+  git -C "$main" worktree add -q -b feature/1202-self-check "$worktree"
+  printf 'item\n' > "$worktree/item.txt"
+  git -C "$worktree" add item.txt
+  git -C "$worktree" commit -q -m "item change"
+  git -C "$main" merge -q --no-ff -m "merge item" feature/1202-self-check
+  git -C "$worktree" checkout -q --detach "$(git -C "$main" rev-parse develop)"
+  git -C "$main" branch -q -D feature/1202-self-check
+  CDPATH='' cd -- "$worktree" && pwd -P
+}
+
+detached_self_check() {
+  local worktree="$1"
+  shift
+  self_check_output \
+    --repo-root "$worktree" \
+    --issue 1202 \
+    --branch feature/1202-self-check \
+    --stage implementation \
+    --worktree-path "$worktree" \
+    --expected-label ready-for-human-review \
+    --tracker-required false \
+    "$@"
+}
+
+export WORKFLOW_SELF_CHECK_TRACKER_STATUS="Development in Review"
+
+worktree="$(make_detached_after_cleanup detached-equal-base)"
+base_tip="$(git -C "$worktree" rev-parse --short=12 develop)"
+export MOCK_GH_PR_STATE=MERGED
+out="$(detached_self_check "$worktree" --pr 17 --expected-base develop)"
+run_test "detached_equal_base_exit_zero" "0" "$(status_code "$out")"
+run_contains "detached_equal_base_result" "- Result: verified" "$(body "$out")"
+run_contains "detached_equal_base_branch_verified" "| repository.branch | verified | HEAD | local checkout returned to expected base (detached HEAD $base_tip equals refs/heads/develop tip; PR #17 merged); PR head check verifies item branch |" "$(body "$out")"
+run_contains "detached_equal_base_worktree_verified" "| workspace.worktrees | verified | local checkout returned to expected base (detached HEAD $base_tip equals refs/heads/develop tip; PR #17 merged); PR head check verifies item branch |" "$(body "$out")"
+
+worktree="$(make_detached_after_cleanup detached-descends-base)"
+printf 'later\n' > "$worktree/later.txt"
+git -C "$worktree" add later.txt
+git -C "$worktree" commit -q -m "later base commit"
+out="$(detached_self_check "$worktree" --pr 17 --expected-base develop)"
+run_test "detached_descends_base_exit_zero" "0" "$(status_code "$out")"
+run_contains "detached_descends_base_branch_verified" "| repository.branch | verified | HEAD | local checkout returned to expected base (detached HEAD $(git -C "$worktree" rev-parse --short=12 HEAD) descends from refs/heads/develop tip" "$(body "$out")"
+run_contains "detached_descends_base_worktree_verified" "| workspace.worktrees | verified | local checkout returned to expected base (detached HEAD" "$(body "$out")"
+
+# No local base branch: the origin remote-tracking base tip is used instead.
+worktree="$(make_detached_after_cleanup detached-remote-base)"
+git -C "$worktree" update-ref refs/remotes/origin/main-line "$(git -C "$worktree" rev-parse develop)"
+base_tip="$(git -C "$worktree" rev-parse --short=12 develop)"
+out="$(detached_self_check "$worktree" --pr 17 --expected-base main-line)"
+# The mocked PR targets develop, so only the two #1846 rows are asserted here.
+run_contains "detached_remote_base_branch_verified" "| repository.branch | verified | HEAD | local checkout returned to expected base (detached HEAD $base_tip equals refs/remotes/origin/main-line tip; PR #17 merged)" "$(body "$out")"
+run_contains "detached_remote_base_worktree_verified" "| workspace.worktrees | verified | local checkout returned to expected base (detached HEAD $base_tip equals refs/remotes/origin/main-line tip" "$(body "$out")"
+
+# Behavior for unmerged items is unchanged: a detached HEAD on the unmerged
+# item tip descends from the base tip but the PR is still open.
+repo="$(make_repo detached-open-pr)"
+printf 'item\n' > "$repo/item.txt"
+git -C "$repo" add item.txt
+git -C "$repo" commit -q -m "item change"
+git -C "$repo" checkout -q --detach
+export MOCK_GH_PR_STATE=OPEN
+out="$(detached_self_check "$repo" --pr 17 --expected-base develop)"
+run_test "detached_open_pr_exit_one" "1" "$(status_code "$out")"
+run_contains "detached_open_pr_branch_discrepancy" "| repository.branch | discrepancy | expected=feature/1202-self-check observed=HEAD | git rev-parse --abbrev-ref HEAD; detached HEAD not accepted as expected base: PR #17 is not merged (state=OPEN) |" "$(body "$out")"
+run_contains "detached_open_pr_worktree_discrepancy" "| workspace.worktrees | discrepancy | expected branch feature/1202-self-check not found in worktree list |" "$(body "$out")"
+
+worktree="$(make_detached_after_cleanup detached-behind-base)"
+git -C "$worktree" checkout -q --detach "$(git -C "$worktree" rev-parse 'develop^1')"
+export MOCK_GH_PR_STATE=MERGED
+out="$(detached_self_check "$worktree" --pr 17 --expected-base develop)"
+run_test "detached_behind_base_exit_one" "1" "$(status_code "$out")"
+run_contains "detached_behind_base_branch_discrepancy" "does not equal or descend from refs/heads/develop tip" "$(body "$out")"
+run_contains "detached_behind_base_worktree_discrepancy" "| workspace.worktrees | discrepancy |" "$(body "$out")"
+
+worktree="$(make_detached_after_cleanup detached-state-unavailable)"
+export MOCK_GH_PR_STATE=__FAIL__
+out="$(detached_self_check "$worktree" --pr 17 --expected-base develop)"
+run_test "detached_state_unavailable_exit_one" "1" "$(status_code "$out")"
+run_contains "detached_state_unavailable_discrepancy" "detached HEAD not accepted as expected base: PR #17 state unavailable" "$(body "$out")"
+
+worktree="$(make_detached_after_cleanup detached-missing-base)"
+export MOCK_GH_PR_STATE=MERGED
+out="$(detached_self_check "$worktree" --pr 17 --expected-base no-such-base)"
+run_test "detached_missing_base_exit_one" "1" "$(status_code "$out")"
+run_contains "detached_missing_base_discrepancy" "expected base no-such-base not found locally" "$(body "$out")"
+
+worktree="$(make_detached_after_cleanup detached-no-pr)"
+gh_log="$TMP_ROOT/detached-no-pr-gh.log"
+export MOCK_GH_LOG="$gh_log"
+: > "$gh_log"
+out="$(detached_self_check "$worktree" --expected-base develop --require-ci-green false)"
+unset MOCK_GH_LOG
+run_test "detached_no_pr_exit_one" "1" "$(status_code "$out")"
+run_contains "detached_no_pr_branch_discrepancy" "| repository.branch | discrepancy | expected=feature/1202-self-check observed=HEAD | git rev-parse --abbrev-ref HEAD |" "$(body "$out")"
+run_contains "detached_no_pr_worktree_discrepancy" "| workspace.worktrees | discrepancy |" "$(body "$out")"
+run_not_contains "detached_no_pr_no_state_read" "--json state" "$(cat "$gh_log")"
+unset MOCK_GH_PR_STATE
 
 repo="$(make_repo wrong-base)"
 export MOCK_GH_PR_MODE=wrong_base
