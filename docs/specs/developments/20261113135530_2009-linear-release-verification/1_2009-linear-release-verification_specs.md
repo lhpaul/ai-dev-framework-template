@@ -284,11 +284,11 @@ Overall release cleanup outcome for Linear:
   item as Verified with the label and status read and when they were read,
   shows the counts per result, ends without an error without best-effort
   acceptance, and retains the read-back used with the run.
-- [ ] AC2: In a Linear release where one item is read back in Merged, cleanup
+- [ ] AC2: In a Linear release where one item is read back in Merged with the release label, cleanup
   reports Incomplete, names that item as Not released, lists the others as
   Verified, and, without best-effort acceptance, ends with an error.
-- [ ] AC3: In a Linear release where one item is read back without the release
-  label, cleanup reports Incomplete and names that item as Missing release
+- [ ] AC3: In a Linear release where one item is read back as Released without
+  the release label, cleanup reports Incomplete and names that item as Missing release
   label.
 - [ ] AC4: In a Linear hotfix release (for example `v1.29.1`) whose label does
   not exist yet, cleanup names the label as an action item; with no read-back
@@ -296,7 +296,7 @@ Overall release cleanup outcome for Linear:
   skipped.
 - [ ] AC5: With no read-back supplied, every in-scope item is Not verified and
   the outcome is Incomplete; printed guidance alone never yields Complete.
-- [ ] AC6: A read supplied for an item that is for a different release version
+- [ ] AC6: When an item has no usable read, a read supplied for it that is for a different release version
   or a different item, a read from a team other than the owning one, a read
   taken before the first cleanup run for this release version started, or an
   unreadable read (including one that does not state when it was taken) leaves
