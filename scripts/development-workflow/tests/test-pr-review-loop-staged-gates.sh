@@ -1477,6 +1477,7 @@ run_platform_review() {
     clean_no_head) printf 'RESULT=clean\n' ;;
     skipped) printf 'RESULT=skipped\nREASON=unavailable\n' ;;
     needs_fixes) printf 'RESULT=needs_fixes\nREASON=blocking\nBLOCKING_COUNT=1\n' ;;
+    needs_fixes_evidence) printf 'RESULT=needs_fixes\nREASON=blocking\nBLOCKING_COUNT=1\nREVIEWED_HEAD=%s\nEVIDENCE_SNAPSHOT_SHA256=synthetic-current\n' "${loop_head_sha:-}" ;;
     needs_rerun) printf 'RESULT=needs_rerun\nREASON=stale_verdict\n' ;;
     escalate_pass) printf 'RESULT=escalate\nREASON=timeout\n' ;;
     waiting_pass) printf 'RESULT=waiting_on_reviewer\nREASON=reviewer-no-verdict-yet\nNO_VERDICT_YET=1\nWAIT_EXPIRED_DETAIL=stopped_at_budget\nPENDING_REVIEWER=local-ai-reviewer\nPENDING_REVIEW_HEAD_SHA=%s\nCOMMENT_COUNT=0\nBLOCKING_COUNT=0\nSUGGESTION_COUNT=0\n' "${loop_head_sha:-}"; return 4 ;;
@@ -1521,6 +1522,8 @@ _1656_reset_guard_globals() {
   # shellcheck disable=SC2034  # read by functions sourced from pr-review-loop.sh
   local_second_pass_result=""
   local_second_pass_failed_head_record=""
+  local_second_pass_failed_kind_record=""
+  local_second_pass_failed_evidence_record=""
   loop_head_sha="$_1656_guard_head"
   # shellcheck disable=SC2034  # read by functions sourced from pr-review-loop.sh
   branch_name="refactor/1656-second-local-pass"
@@ -1675,6 +1678,198 @@ for _2045_case in wrong_head ambiguous unavailable moved unreadable failed skipp
   esac
 done
 unset _2045_infra_hist _2045_case
+
+# #1853: the failed-head refusal is keyed on the head AND the review inputs.
+# The synthetic snapshot stub reports current evidence "synthetic-current".
+_1853_entry() { # <iteration> <run_id> <kind|-> [evidence]
+  jq -cn --arg head "$_1656_guard_head" --argjson it "$1" --arg run "$2" --arg kind "$3" --arg ev "${4:-}" '
+    {iteration:$it, run_id:$run, local_second_pass_failed_head:$head, result:"needs_fixes"}
+    + (if $kind == "-" then {} else {local_second_pass_failed_kind:$kind} end)
+    + (if $ev == "" then {} else {local_second_pass_failed_evidence:$ev} end)'
+}
+_1853_hist() { jq -cn '{schema:"reviewer_loop_history.v1", entries:[inputs]}' < <(printf '%s\n' "$@"); }
+_1853_decide() { reviewer_loop_local_failed_head_decision "$1" "$_1656_guard_head" "${2-synthetic-current}"; }
+# run_platform_review runs in a command substitution, so dispatch is observed
+# through local_second_pass and the guard's stderr diagnostic.
+_1853_diag="$(mktemp)"
+
+run_test "1853_decision_no_record" none \
+  "$(_1853_decide "$(_1853_hist)")"
+run_test "1853_decision_other_head_ignored" none \
+  "$(_1853_decide "$(_1853_hist "$(_1853_entry 1 r1 needs_fixes old | jq -c '.local_second_pass_failed_head="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"')")")"
+run_test "1853_decision_body_edit_rereviews" review_inputs_changed \
+  "$(_1853_decide "$(_1853_hist "$(_1853_entry 1 r1 needs_fixes seen-before-edit)")")"
+run_test "1853_decision_unchanged_inputs_refuse" refuse \
+  "$(_1853_decide "$(_1853_hist "$(_1853_entry 1 r1 needs_fixes synthetic-current)")")"
+run_test "1853_decision_any_unchanged_finding_refuses" refuse \
+  "$(_1853_decide "$(_1853_hist "$(_1853_entry 1 r1 needs_fixes old)" "$(_1853_entry 2 r2 needs_fixes synthetic-current)")")"
+run_test "1853_decision_finding_without_evidence_refuses" refuse \
+  "$(_1853_decide "$(_1853_hist "$(_1853_entry 1 r1 needs_fixes)")")"
+run_test "1853_decision_unknown_current_evidence_refuses" refuse \
+  "$(_1853_decide "$(_1853_hist "$(_1853_entry 1 r1 needs_fixes old)")" "")"
+run_test "1853_decision_legacy_record_refuses" refuse \
+  "$(_1853_decide "$(_1853_hist "$(_1853_entry 1 r1 -)")")"
+run_test "1853_decision_unknown_kind_refuses" refuse \
+  "$(_1853_decide "$(_1853_hist "$(_1853_entry 1 r1 surprise)")")"
+run_test "1853_decision_malformed_payload_refuses" refuse "$(_1853_decide '{')"
+run_test "1853_decision_one_timeout_retries" infrastructure_retry \
+  "$(_1853_decide "$(_1853_hist "$(_1853_entry 1 r1 infrastructure)")")"
+run_test "1853_decision_second_timeout_refuses" refuse \
+  "$(_1853_decide "$(_1853_hist "$(_1853_entry 1 r1 infrastructure)" "$(_1853_entry 2 r2 infrastructure)")")"
+# PR_REVIEW_LOOP_RUN_ID is shared across the invocations of one orchestration
+# run, so each failed invocation (ledger iteration) counts, not each run_id.
+run_test "1853_decision_shared_run_id_counts_each_invocation" refuse \
+  "$(_1853_decide "$(_1853_hist "$(_1853_entry 1 r1 infrastructure)" "$(_1853_entry 2 r1 infrastructure)")")"
+run_test "1853_decision_shared_run_id_four_timeouts_refuse" refuse \
+  "$(_1853_decide "$(_1853_hist "$(_1853_entry 1 r1 infrastructure)" "$(_1853_entry 2 r1 infrastructure)" "$(_1853_entry 3 r1 infrastructure)" "$(_1853_entry 4 r1 infrastructure)")")"
+run_test "1853_decision_replayed_iteration_counts_once" infrastructure_retry \
+  "$(_1853_decide "$(_1853_hist "$(_1853_entry 1 r1 infrastructure)" "$(_1853_entry 1 r1 infrastructure)")")"
+run_test "1853_decision_iterationless_entries_count_each" refuse \
+  "$(_1853_decide "$(_1853_hist "$(_1853_entry 1 r1 infrastructure | jq -c 'del(.iteration)')" "$(_1853_entry 1 r1 infrastructure | jq -c 'del(.iteration)')")")"
+run_test "1853_decision_changed_finding_after_timeout" review_inputs_changed \
+  "$(_1853_decide "$(_1853_hist "$(_1853_entry 1 r1 infrastructure)" "$(_1853_entry 2 r2 needs_fixes old)")")"
+run_test "1853_decision_spent_retry_still_refuses_after_edit" refuse \
+  "$(_1853_decide "$(_1853_hist "$(_1853_entry 1 r1 infrastructure)" "$(_1853_entry 2 r2 infrastructure)" "$(_1853_entry 3 r3 needs_fixes old)")")"
+
+# Recording: kind and evidence; needs_fixes never downgrades within a run, and
+# two findings that saw different evidence keep none (so the record refuses).
+_1656_reset_guard_globals
+reviewer_loop_record_local_failed_head needs_fixes ev-1
+run_test "1853_record_head" "$_1656_guard_head" "$local_second_pass_failed_head_record"
+run_test "1853_record_kind" needs_fixes "$local_second_pass_failed_kind_record"
+run_test "1853_record_evidence" ev-1 "$local_second_pass_failed_evidence_record"
+reviewer_loop_record_local_failed_head infrastructure
+run_test "1853_record_no_downgrade" needs_fixes "$local_second_pass_failed_kind_record"
+run_test "1853_record_no_downgrade_keeps_evidence" ev-1 "$local_second_pass_failed_evidence_record"
+reviewer_loop_record_local_failed_head needs_fixes ev-2
+run_test "1853_record_conflicting_evidence_cleared" "" "$local_second_pass_failed_evidence_record"
+_1656_reset_guard_globals
+reviewer_loop_record_local_failed_head infrastructure ignored
+run_test "1853_record_infrastructure_kind" infrastructure "$local_second_pass_failed_kind_record"
+run_test "1853_record_infrastructure_no_evidence" "" "$local_second_pass_failed_evidence_record"
+reviewer_loop_record_local_failed_head needs_fixes ev-3
+run_test "1853_record_upgrade_to_findings" "needs_fixes|ev-3" \
+  "${local_second_pass_failed_kind_record}|${local_second_pass_failed_evidence_record}"
+
+# The ledger entry carries the key, and omits it when nothing failed.
+_1853_entry_json="$(reviewer_loop_history_build_entry 1 needs_fixes blocking "local-ai-reviewer" 1 0 0 "" 0 0 "")"
+run_test "1853_ledger_kind" needs_fixes "$(printf '%s' "$_1853_entry_json" | jq -r '.local_second_pass_failed_kind // ""')"
+run_test "1853_ledger_evidence" ev-3 "$(printf '%s' "$_1853_entry_json" | jq -r '.local_second_pass_failed_evidence // ""')"
+_1656_reset_guard_globals
+local_second_pass_failed_kind_record=""
+local_second_pass_failed_evidence_record=""
+_1853_entry_json="$(reviewer_loop_history_build_entry 1 clean "" "local-ai-reviewer" 0 0 0 "" 0 0 "")"
+run_test "1853_ledger_no_key_without_failure" "false|false" \
+  "$(printf '%s' "$_1853_entry_json" | jq -r '"\(has("local_second_pass_failed_kind"))|\(has("local_second_pass_failed_evidence"))"')"
+
+# Guard integration. Acceptance Test 1: needs_fixes on H, then a PR body edit,
+# then a re-run on H dispatches the review.
+_1656_reset_guard_globals
+_1656_guard_hist_payload="$(_1853_hist "$(_1853_entry 1 r1 needs_fixes seen-before-edit)")"
+reviewer_loop_second_local_pass_before_ready_gate 1693 2>"$_1853_diag" && _st=0 || _st=$?
+run_test "1853_t1_body_edit_dispatches" 1 "$local_second_pass"
+run_test "1853_t1_body_edit_diagnostic" 1 "$(grep -c 'after a failed local review (review_inputs_changed)' "$_1853_diag")"
+run_test "1853_t1_body_edit_reason" review_inputs_changed "$local_second_pass_reason"
+run_test "1853_t1_body_edit_clean_proceeds" 0 "$_st"
+
+# A finding on the re-review records the new inputs, so the next unchanged
+# re-run refuses again.
+_1656_reset_guard_globals
+_1656_guard_hist_payload="$(_1853_hist "$(_1853_entry 1 r1 needs_fixes seen-before-edit)")"
+_1656_stub_pass_result=needs_fixes_evidence
+reviewer_loop_second_local_pass_before_ready_gate 1693 && _st=0 || _st=$?
+run_test "1853_t1_refinding_blocks" 1 "$_st"
+run_test "1853_t1_refinding_kind" needs_fixes "$local_second_pass_failed_kind_record"
+run_test "1853_t1_refinding_evidence" synthetic-current "$local_second_pass_failed_evidence_record"
+
+# Acceptance Test 2: needs_fixes on H with no change still refuses.
+_1656_reset_guard_globals
+_1656_guard_hist_payload="$(_1853_hist "$(_1853_entry 1 r1 needs_fixes synthetic-current)")"
+reviewer_loop_second_local_pass_before_ready_gate 1693 && _st=0 || _st=$?
+run_test "1853_t2_unchanged_refuses" 1 "$_st"
+run_test "1853_t2_unchanged_no_dispatch" 0 "$local_second_pass"
+run_test "1853_t2_unchanged_reason" failed_for_head "$aggregate_reason"
+run_test "1853_t2_unchanged_escalates" escalate "$aggregate_result"
+
+# Unreadable current evidence is treated as unchanged inputs.
+_1656_reset_guard_globals
+_1656_guard_hist_payload="$(_1853_hist "$(_1853_entry 1 r1 needs_fixes seen-before-edit)")"
+_1853_unreadable_case() (
+  workflow_collect_review_evidence() { return 1; }
+  reviewer_loop_second_local_pass_before_ready_gate 1693 >/dev/null 2>&1 && _st=0 || _st=$?
+  printf '%s|%s|%s\n' "$_st" "$local_second_pass" "$aggregate_reason"
+)
+run_test "1853_unreadable_evidence_refuses" "1|0|failed_for_head" "$(_1853_unreadable_case)"
+
+# A legacy or infrastructure-only record never reads the evidence.
+_1853_evidence_reads_case() (
+  _1853_reads=0
+  workflow_collect_review_evidence() { _1853_reads=$((_1853_reads + 1)); printf '%s\n' '{"snapshot_sha256":"synthetic-current"}' >"$4"; }
+  reviewer_loop_second_local_pass_before_ready_gate 1693 >/dev/null 2>&1 || true
+  printf '%s\n' "$_1853_reads"
+)
+_1656_reset_guard_globals
+_1656_guard_hist_payload="$(_1853_hist "$(_1853_entry 1 r1 -)")"
+run_test "1853_legacy_record_reads_no_evidence" 0 "$(_1853_evidence_reads_case)"
+_1656_reset_guard_globals
+_1656_guard_hist_payload="$(_1853_hist "$(_1853_entry 1 r1 infrastructure)")"
+run_test "1853_infrastructure_record_reads_no_evidence" 0 "$(_1853_evidence_reads_case)"
+
+# Acceptance Test 3: a timeout on H allows exactly one retry on H.
+_1656_reset_guard_globals
+_1656_guard_hist_payload="$(_1853_hist "$(_1853_entry 1 r1 infrastructure)")"
+_1656_stub_pass_result=escalate_pass
+reviewer_loop_second_local_pass_before_ready_gate 1693 2>"$_1853_diag" && _st=0 || _st=$?
+run_test "1853_t3_first_retry_dispatches" 1 "$local_second_pass"
+run_test "1853_t3_first_retry_reason" 1 "$(grep -c 'after a failed local review (infrastructure_retry)' "$_1853_diag")"
+run_test "1853_t3_retry_timeout_blocks" "1|escalate" "${_st}|${aggregate_result}"
+run_test "1853_t3_retry_timeout_recorded" "infrastructure|$_1656_guard_head" \
+  "${local_second_pass_failed_kind_record}|${local_second_pass_failed_head_record}"
+_1853_after_retry="$(_1853_hist "$(_1853_entry 1 r1 infrastructure)" "$(_1853_entry 2 r2 infrastructure)")"
+_1656_reset_guard_globals
+_1656_guard_hist_payload="$_1853_after_retry"
+reviewer_loop_second_local_pass_before_ready_gate 1693 && _st=0 || _st=$?
+run_test "1853_t3_second_retry_refused" 1 "$_st"
+run_test "1853_t3_second_retry_no_dispatch" 0 "$local_second_pass"
+run_test "1853_t3_second_retry_reason" failed_for_head "$aggregate_reason"
+
+# The explicit retry still recovers a spent automatic retry.
+_1656_reset_guard_globals
+_1656_guard_hist_payload="$_1853_after_retry"
+retry_local_review_head="$_1656_guard_head"
+local_review_retry_head_record="$_1656_guard_head"
+local_review_retry_attempt_json="$(jq -cn --arg head "$_1656_guard_head" '{id:"00000000-0000-4000-8000-000000001853",head_sha:$head,run_id:"run-synthetic"}')"
+reviewer_loop_second_local_pass_before_ready_gate 1693 && _st=0 || _st=$?
+run_test "1853_explicit_retry_after_spent_retry" "0|1" "${_st}|${local_second_pass}"
+run_test "1853_explicit_retry_consumed" "" "$retry_local_review_head"
+# Every automatic same-head re-review spends a cycle on both axes, so repeated
+# input edits cannot evade max_cycles / max_total_cycles.
+_1853_cycle_body() { # <payload>
+  printf '### Automated Reviewer Loop Summary\n\n<!-- reviewer-loop-history:v1 -->\n```json\n%s\n```\n' "$1"
+}
+_1853_rereviews="$(jq -cn --arg head "$_1656_guard_head" '{schema:"reviewer_loop_history.v1", history_status:"available",
+  entries:([{iteration:1, head_sha:$head, result:"needs_fixes", run_id:"run-A", local_second_pass_reason:"no_evidence"}]
+    + [range(2;22) | {iteration:., head_sha:$head, result:"needs_fixes", run_id:"run-A",
+                      local_second_pass_reason:"review_inputs_changed"}])}')"
+run_test "1853_cycles_each_rereview_counts" "21 21 available" \
+  "$(reviewer_loop_history_entries_count "$(_1853_cycle_body "$_1853_rereviews")" run-A)"
+run_test "1853_cycles_rereview_exceeds_cap" "1" \
+  "$(read -r _l _r _s < <(reviewer_loop_history_entries_count "$(_1853_cycle_body "$_1853_rereviews")" run-A); [ "$_r" -ge 10 ] && echo 1 || echo 0)"
+_1853_infra_retry="$(jq -cn --arg head "$_1656_guard_head" '{schema:"reviewer_loop_history.v1", history_status:"available",
+  entries:[{iteration:1, head_sha:$head, result:"needs_fixes", run_id:"run-A", local_second_pass_reason:"prior_findings"},
+           {iteration:2, head_sha:$head, result:"needs_fixes", run_id:"run-A", local_second_pass_reason:"infrastructure_retry"}]}')"
+run_test "1853_cycles_infrastructure_retry_counts" "2 2 available" \
+  "$(reviewer_loop_history_entries_count "$(_1853_cycle_body "$_1853_infra_retry")" run-A)"
+# Ordinary same-head entries keep the historical (head_sha, result) dedupe.
+_1853_plain="$(jq -cn --arg head "$_1656_guard_head" '{schema:"reviewer_loop_history.v1", history_status:"available",
+  entries:[range(1;4) | {iteration:., head_sha:$head, result:"needs_fixes", run_id:"run-A", local_second_pass_reason:"prior_findings"}]}')"
+run_test "1853_cycles_ordinary_same_head_dedupe_unchanged" "1 1 available" \
+  "$(reviewer_loop_history_entries_count "$(_1853_cycle_body "$_1853_plain")" run-A)"
+unset -f _1853_cycle_body
+unset _1853_rereviews _1853_infra_retry _1853_plain _l _r _s
+unset -f _1853_entry _1853_hist _1853_decide _1853_unreadable_case _1853_evidence_reads_case
+rm -f "$_1853_diag"
+unset _1853_entry_json _1853_after_retry _1853_diag
 
 # #2093: recover a retained raw needs_rerun without rewriting legacy history.
 run_test "2093_normalize_needs_rerun" needs_rerun \
