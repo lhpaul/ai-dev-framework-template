@@ -597,7 +597,10 @@ class InlineProducerHTMLTests(unittest.TestCase):
                         '<a title="</summary>">example</a>',
                         "<a title='</summary>'>example</a>",
                         "<span title='<!-- literal -->'>example</span>",
-                        '<a href="x" title=\'"<b>"\'>example</a>'):
+                        '<a href="x" title=\'"<b>"\'>example</a>',
+                        # Boundaries: empty quoted values and a bare quoted ">".
+                        '<a title="">example</a>', "<span title=''></span>",
+                        '<a title=">">example</a>'):
             with self.subTest(content=content):
                 body = self.finding("Example `" + content + "`.")
                 self.assertEqual("clean", classify(body))
