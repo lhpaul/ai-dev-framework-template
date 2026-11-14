@@ -58,18 +58,25 @@ sections refer to it by its ID.
   V13), otherwise to `issue` when that is valid. A read with neither is
   reported as ignored with reason `unattributable`. A read attributed to an
   identifier outside the release scope is reported as ignored with reason
-  `out_of_scope` (spec AC8). Ignored reads never change any result.
+  `out_of_scope` (spec AC8). Ignored reads never change any result. The
+  owning team of an identifier is the part before its single `-` (the V13
+  pattern allows no `-` in that part). A scope identifier without a team part
+  (the cleanup script also accepts numeric identifiers, V13) is `not_verified`
+  with reason `unsupported_identifier`, no read is evaluated for it, and it
+  is left out of the D8 `teams=` list.
 - **D4 — Read usability.** For an attributed in-scope read, the first failing
   check below gives the read's reason; a read passing every check is usable.
   Identifiers and team keys are compared case-insensitively; labels, release
   version and status name are compared exactly.
   1. `unreadable` — `provider` is not `"linear"`; any required D2 field is
      missing or has the wrong type; `observedAt` does not parse, has no offset,
-     or is later than the evaluation time; or `mutationRequestId` equals
+     or, truncated to whole seconds, is later than the evaluation time (which
+     has whole-second precision); or `mutationRequestId` equals
      `readRequestId` (an echoed write is not a read, spec BR3).
   2. `mismatch` — `issue` differs from the attributed item, `releaseVersion`
      differs from the run's release version, or `team` differs from the owning
-     team, which is the part of the attributed identifier before its last `-`.
+     team of the attributed identifier (D3). `releaseVersion` must equal the
+     script's `RELEASE_VERSION` exactly, including its `v` prefix.
   3. `stale` — `observedAt` is not strictly later than the D6 starting point.
 - **D5 — Per-item result.** With no attributed read, the result is
   `not_verified` with reason `no_read`. With attributed reads but no usable
@@ -88,9 +95,10 @@ sections refer to it by its ID.
   `<git-common-dir>/ai-dev-workflow/linear-release-verification/<key>/first-run.json`,
   where `<key>` is the release branch with every `/` replaced by `__`. The
   record holds `releaseBranch`, `releaseVersion` and `firstRunStartedAt`. When
-  it is absent, the evaluator creates it with exclusive-create semantics using
-  the current run's start, so concurrent first runs keep exactly one record and
-  later runs never move it (spec BR2). The run start is the UTC second the
+  it is absent, the evaluator writes a complete temporary file and publishes it
+  with `os.link` to the final name (fails if the name exists), using the
+  current run's start, so concurrent first runs keep exactly one record, no
+  reader sees a partial record, and later runs never move it (spec BR2). The run start is the UTC second the
   cleanup script started, captured once at script start. A record that exists
   but cannot be read or does not match the release branch makes the evaluator
   report `unavailable` (D9).
@@ -104,8 +112,9 @@ sections refer to it by its ID.
   - `LINEAR_RELEASE_VERIFICATION release_version=<v> release_label=<label> required_status=<json> first_run_started_at=<ts> run_started_at=<ts> readback=<supplied|none>`
   - one `LINEAR_RELEASE_ITEM issue=<id> result=<code> ...` line per in-scope
     item, in scope order; a decided item adds `label=<present|absent>
-    status=<json> read_at=<ts>`, a `not_verified` item adds
-    `reasons=<r1[,r2...]>`
+    status=<json> labels_read=<json> read_at=<ts>`, a `not_verified` item adds
+    `reasons=<r1[,r2...]>` and, when it has attributed reads, `reads=<json>`
+    summarizing each read's reason, `statusName` and `observedAt` (spec BR6)
   - one `LINEAR_RELEASE_READ_IGNORED issue=<json> reason=<reason>` line per
     ignored read
   - `LINEAR_RELEASE_LABEL_ACTION label=<label> teams=<k1[,k2...]> action=create_label_in_owning_team_if_missing_then_apply`
@@ -117,8 +126,8 @@ sections refer to it by its ID.
   - for `incomplete` only, `TRACKER_ISSUES_UNVERIFIED=<id[,id...]>` naming
     every item that is not `verified` (spec BR6)
 
-  Any value that comes from the read-back file (`status`, an ignored read's
-  `issue`) is printed JSON-encoded, so a crafted value cannot add a line or
+  Any value that comes from the read-back file (`status`, `labels_read`,
+  `reads`, an ignored read's `issue`) is printed JSON-encoded on one line, so a crafted value cannot add a line or
   forge another key. Identifiers printed unquoted are only scope identifiers,
   which already passed the script's identifier validation.
 - **D9 — Evaluator exit codes.** `0` complete, `1` incomplete, `3` unavailable
@@ -126,8 +135,11 @@ sections refer to it by its ID.
   directory unresolvable, or any unexpected exception, which the evaluator
   catches as reason `internal_error`), `2` usage error. On `3` the evaluator prints only
   `LINEAR_RELEASE_VERIFICATION_UNAVAILABLE reason=<reason>` and no item,
-  count or outcome line. The read-back file failing to parse is not `3`: every
-  in-scope item is then `not_verified` with reason `unreadable` (spec AC6).
+  count or outcome line. A read-back file that is not JSON, is not an object,
+  has a `schemaVersion` other than `linear_release_readback.v1`, or lacks a
+  `reads` array is not `3`: every in-scope item is then `not_verified` with
+  reason `unreadable` (spec AC6). A non-object entry inside `reads` is
+  reported as ignored with reason `unattributable`.
 - **D10 — Run record.** Before printing, the evaluator writes
   `<state>/<key>/runs/<run-started-at>-<pid>.json` (temporary file then
   rename) holding the run's inputs, the verbatim read-back content, every
@@ -136,7 +148,8 @@ sections refer to it by its ID.
 - **D11 — Shell wiring in the Linear branch.** In
   `prepare-release-post-merge-cleanup.sh`, the existing
   `if [ "$TRACKER_PROVIDER" = "linear" ]` tracker block (V2) changes as
-  follows, and nothing else in that block or before it changes:
+  follows. Nothing else in that block changes; the only other edits to the
+  script are D12 and L2:
   - when `issue_tracker.custom_fields.release_field` is configured, the block
     runs exactly as today and no verification line is printed; if
     `--linear-readback` was passed, one stderr notice
@@ -146,8 +159,12 @@ sections refer to it by its ID.
     evaluator. When the helper file is missing, the shell prints
     `LINEAR_RELEASE_VERIFICATION_UNAVAILABLE reason=verifier_missing` and
     continues as for evaluator `3`. The shell treats an exit `0` whose output
-    lacks `LINEAR_RELEASE_OUTCOME=complete`, and any exit other than `0` or
-    `1`, as evaluator `3`, so no failure path can end as Complete;
+    lacks `LINEAR_RELEASE_OUTCOME=complete`, an exit `1` whose output lacks
+    `LINEAR_RELEASE_OUTCOME=incomplete`, and any other exit, as evaluator `3`;
+    in that case it discards the evaluator's stdout and prints one
+    `LINEAR_RELEASE_VERIFICATION_UNAVAILABLE reason=evaluator_contract`
+    line, so no failure path can end as Complete or print a contradictory
+    outcome;
   - evaluator `0`: print its lines, then `STAMPED=...` as today, emit the
     component JSON `complete`/`true`/`complete` when in component JSON mode,
     print `Release post-merge cleanup complete.` and exit `0`. The manual
@@ -163,13 +180,17 @@ sections refer to it by its ID.
   argument parsing and before any mutation, the script exits `2` when the
   provider is not `linear` (`--linear-readback is only supported with
   issue_tracker.provider: linear`) or when the path is not a readable regular
-  file. The read-only `--inspect-targets` path and the empty-scope and
+  file, or when `--merge-session` is also passed (`--linear-readback is not
+  supported with --merge-session`; the session route never reaches the Linear
+  block, D13). The read-only `--inspect-targets` path and the empty-scope and
   scope-failure exits (V2, before the Linear block) are not changed, so they
   report no verification outcome (spec AC13, BR9).
 - **D13 — Merge sessions.** The merge-session route (`--merge-session`) and
   the read-only projection it requests are not changed (spec Out of Scope).
-  A session child that reaches the Linear block evaluates exactly as a
-  standalone run with the same argv (V6).
+  The session's cleanup child re-runs the operator's original argv, which
+  still carries `--merge-session`, so it takes the session route again and
+  never reaches the Linear block (V6); combining the flag with a session is
+  therefore rejected by D12 instead of being silently ignored.
 
 ---
 
@@ -183,7 +204,7 @@ sections refer to it by its ID.
 | V3 | No read-back verification exists today | `grep -n -i -e readback -e read-back -e observedAt scripts/development-workflow/prepare-release-post-merge-cleanup.sh` and `ls scripts/development-workflow \| grep -i 'linear-release'` at V0 | no output for either |
 | V4 | GitHub parity suite exists | `grep -n 'Differential GitHub parity' scripts/development-workflow/tests/test-prepare-release-tracker-cleanup.sh` at V0 | section at lines 4168–4741, comparing HEAD with the frozen develop baseline for both GitHub providers |
 | V5 | Consumers of the cleanup script | `git grep -l prepare-release-post-merge-cleanup -- . ':!docs/specs/developments'` at V0 | listed in the Rule 5 consumer table below |
-| V6 | Merge-budget invocations | `grep -n 'prepare-release-post-merge-cleanup.sh\|args.argv + \["--release-head"' scripts/development-workflow/workflow-merge-budget.py` at V0 | line 562 builds an `--inspect-targets` argv (read-only projection); the cleanup child reuses the operator's original argv plus `--release-head` |
+| V6 | Merge-budget invocations | `grep -n 'prepare-release-post-merge-cleanup.sh\|args.argv + \["--release-head"' scripts/development-workflow/workflow-merge-budget.py`, `grep -n 'ORIGINAL_ARGS\|if \[ -n "\$MERGE_SESSION" \]; then' scripts/development-workflow/prepare-release-post-merge-cleanup.sh` at V0 | line 562 builds an `--inspect-targets` argv (read-only projection); the cleanup child (line 2262) reuses the operator's original argv plus `--release-head`; that argv is `ORIGINAL_ARGS` (line 70), which keeps `--merge-session`, so the child re-enters the session route (line 2614) before the Linear block |
 | V7 | Release label and field precedence | `sed -n 3552,3561p scripts/development-workflow/workflow-lib.sh` at V0 | Linear prints `release_field=` when configured, else `release_label=<prefix><version>` with prefix default `release/` |
 | V8 | Sync coverage of a new helper | `sed -n 109,112p sync-manifest.yaml` at V0 | `scripts/development-workflow/` with glob `**/*` (`hub_only`) already ships any new file there; the cleanup script itself has no individual entry |
 | V9 | Suite discovery | `sed -n 24,27p scripts/development-workflow/select-test-suites.sh` and `grep -n "name 'test-\*.sh'" scripts/development-workflow/select-test-suites.sh` at V0 | suites are `tests/test-*.sh`; `test-<name>.sh` covers `<name>.sh` and `<name>.py` by default; extra paths via `# covers:` |
@@ -191,7 +212,7 @@ sections refer to it by its ID.
 | V11 | Prepare-release mirrors that describe the Linear handoff | `git grep -l linear_mcp_or_api_required -- . ':!docs/specs/developments' ':!CHANGELOG.md'` at V0 | `.agents/skills/prepare-release/SKILL.md`, `.claude/commands/prepare-release.md`, `.cursor/commands/prepare-release.md`, `integrations/linear.md`, Protocol 05, `scripts/development-workflow/README.md`, the script, its frozen baseline and its suite |
 | V12 | Existing Linear read-back proof shape | `sed -n 169,200p docs/workflow/development-workflow/integrations/linear.md` at V0 | bridge proof fields `provider`, `issue`, `repo`, `statusName`, `statusId`, `mutationRequestId`, `readRequestId`, `observedAt`; "an echoed mutation response is not an independent read"; "No new Linear API client is introduced" |
 | V13 | Linear identifier pattern | `sed -n 585,594p scripts/development-workflow/prepare-release-post-merge-cleanup.sh` at V0 | `^[A-Za-z][A-Za-z0-9_]*-[0-9]+$` when the provider is `linear` |
-| V14 | Linear fixtures copy only two scripts | `sed -n 1665,1679p scripts/development-workflow/tests/test-prepare-release-tracker-cleanup.sh` at V0 | `init_linear_git_repo` copies `workflow-lib.sh` and the cleanup script only |
+| V14 | No existing fixture installs the new helper | `grep -n 'cp "$REPO_ROOT/scripts/development-workflow/' scripts/development-workflow/tests/test-prepare-release-tracker-cleanup.sh` and `grep -n linear-release-verification scripts/development-workflow/tests/test-prepare-release-tracker-cleanup.sh` at V0 | first lists every copied workflow file, none of them `linear-release-verification.py`; second has no output |
 
 ## Factual claim evidence
 
@@ -202,7 +223,7 @@ whole working tree, where scripts, tests, commands, skills and docs live):
 | Consumer | Path through the change | Outcome after the change |
 | --- | --- | --- |
 | `workflow-merge-budget.py` projection (line 562) | `--inspect-targets` exits before the Linear block (V2) | Unchanged; no new flag passed |
-| `workflow-merge-budget.py` cleanup child (V6) | Original operator argv; reaches the Linear block only as a standalone run would | Same outcome as a standalone run with that argv (D13) |
+| `workflow-merge-budget.py` cleanup child (V6) | Original operator argv including `--merge-session`; re-enters the session route and never reaches the Linear block | Unchanged; `--linear-readback` with `--merge-session` exits 2 at D12 (D13) |
 | `test-workflow-merge-budget*.sh`, `test_workflow_merge_budget.py`, its frozen baseline, `test_pr_agent_runtime.py`, `test-run-epic-risk-classifier.sh` | Reference or drive the script without `--linear-readback` | Unchanged results; run in Implementation Order step 6 |
 | `test-prepare-release-tracker-cleanup.sh` existing Linear cases | Reach the Linear block without the flag; fixtures lack the helper (V14) | Evaluator treated as unavailable (D11), so exit codes and every existing asserted line are unchanged; new verification lines are added |
 | GitHub parity section (V4) | GitHub providers never enter the Linear block or D12 | Byte-identical outputs and call logs vs the frozen baseline (spec AC9) |
@@ -216,7 +237,8 @@ whole working tree, where scripts, tests, commands, skills and docs live):
   `release_field` is configured; it is discharged by the release-field case in
   the cleanup suite (Testing Strategy, I7).
 - D12's rejection governs every invocation that passes `--linear-readback`
-  with a non-Linear provider or an unreadable path; it is discharged at the
+  with a non-Linear provider, an unreadable path, or `--merge-session`; it is
+  discharged at the
   validation step right after argument parsing and before the first mutation,
   and checked by I8.
 - D6's "never moves" governs every evaluator run for the same release branch
@@ -260,14 +282,14 @@ whole working tree, where scripts, tests, commands, skills and docs live):
 - [ ] Parse `--linear-readback` and validate it per D12; add it to `usage()`
   and to the header comment, including the D11 exit behaviour.
 - [ ] In the Linear tracker block, apply D11. Resolve the state directory
-  with `git -C "$HUB_REPO_ROOT" rev-parse --git-common-dir`; an unresolvable
+  with `git -C "$HUB_REPO_ROOT" rev-parse --path-format=absolute --git-common-dir`; an unresolvable
   directory is evaluator outcome `3` with reason `state_unavailable`.
 
 ### L3 — Tests
 
 - [ ] New suite `scripts/development-workflow/tests/test-linear-release-verification.sh`
   (covered by naming convention, V9) driving the evaluator CLI directly with
-  temporary state directories and read-back files (cases U1–U14).
+  temporary state directories and read-back files (cases U1–U15).
 - [ ] New section `=== Linear release verification (#2009) ===` in
   `scripts/development-workflow/tests/test-prepare-release-tracker-cleanup.sh`
   for the shell wiring (cases I1–I9), reusing the Linear scope fixtures with
@@ -335,13 +357,17 @@ new decision logic and the shell change only routes its exit classes (D11).
   → printed JSON-encoded on one line; outcome remains `incomplete` (D8).
 - U14 identifiers and team keys in different case still match; label case
   difference does not (D4).
+- U15 numeric scope identifier → `not_verified unsupported_identifier`, not
+  listed in `teams=` (D3).
 
 **Integration cases (`test-prepare-release-tracker-cleanup.sh`)**:
 
 - I1 Linear, every item verified, no `--best-effort` → exit 0, no
-  `TRACKER_ACTION=` line, `Release post-merge cleanup complete.` (AC1).
+  `TRACKER_ACTION=` line, `Release post-merge cleanup complete.`, and the
+  stubbed `gh` call log has no tracker-mutating call (AC1, BR8).
 - I2 Linear, one item not released, no `--best-effort` → exit 1, existing
-  handoff lines present, `TRACKER_ISSUES_UNVERIFIED` names the item (AC2).
+  handoff lines present, `TRACKER_ISSUES_UNVERIFIED` names the item, and no
+  tracker-mutating `gh` call (AC2, BR8).
 - I3 Same with `--best-effort` → exit 0, outcome `incomplete` (AC7).
 - I4 Linear without `--linear-readback` → exit 1 as today; all `no_read`
   (AC5).
@@ -350,10 +376,12 @@ new decision logic and the shell change only routes its exit classes (D11).
   existing exits, no `LINEAR_RELEASE_OUTCOME` line (AC13).
 - I7 Linear with `release_field` configured and `--linear-readback` → existing
   handoff, skipped notice, no outcome line (AC14).
-- I8 `--linear-readback` with `github_projects`, and with a missing file → exit
-  2 before any `gh pr list` call (D12, AC9).
-- I9 Helper missing from the fixture, and a stub helper that exits 0 without
-  an outcome line → unavailable handling, existing handoff, exit 1 (D11).
+- I8 `--linear-readback` with `github_projects`, with a missing file, and
+  together with `--merge-session` → exit 2 before any `gh pr list` call (D12,
+  D13, AC9).
+- I9 Helper missing from the fixture, and a stub helper that exits 0 while
+  printing `LINEAR_RELEASE_OUTCOME=incomplete` → one unavailable line, none of
+  the stub's lines, existing handoff, exit 1 (D11).
 
 **Regression**: the existing GitHub parity section (V4) and every other case
 in the cleanup suite pass unchanged (AC9); the merge-budget suites in the
@@ -371,15 +399,18 @@ The evaluator parses a structured JSON file, so this addendum applies.
   `observedAt` with `Z`, with `+00:00`, with a non-UTC offset, without an
   offset, empty, and not a date; identifiers that look like Linear IDs but do
   not match V13 (`LEA_1`, `-1`, `LEA-`); identifiers in lower case; a team key
-  that is a prefix of the owning key (`LE` for `LEA-1`); multi-hyphen team
-  derivation (`AB-CD-12` → team `AB-CD`); status and label values containing
+  that is a prefix of the owning key (`LE` for `LEA-1`); a numeric scope
+  identifier (`232` → `unsupported_identifier`); `observedAt` with a fraction
+  of a second inside the current second (not future-dated); status and label
+  values containing
   quotes, spaces or newlines; duplicate identical reads (same instant, same
   state — not a conflict).
 - **Unit test mapping**: all in
   `scripts/development-workflow/tests/test-linear-release-verification.sh`:
   shape errors → U7; per-read type errors and timestamp forms → U5 (one
-  assertion per form); identifier and case forms → U8 and U14; team-prefix and
-  multi-hyphen derivation → U5; value injection → U13; duplicate identical
+  assertion per form, including the fractional-second form); identifier and
+  case forms → U8 and U14; team-prefix → U5; numeric scope identifier → U15;
+  value injection → U13; duplicate identical
   reads → U9.
 - **Suppression semantics**: not applicable — the format has no directives.
 
