@@ -393,7 +393,11 @@ example the state directory cannot be written), cleanup prints
 existing handoff.
 
 Projects that configure `release_field` keep the existing handoff and report
-no verification outcome; verifying a release field is not implemented.
+no verification outcome; verifying a release field is not implemented. When
+`--from-changelog` scope resolution fails and `--best-effort` lets the run
+continue with explicit `--issue` identifiers, cleanup prints
+`LINEAR_RELEASE_VERIFICATION_SKIPPED reason=scope_unresolved` and reports no
+outcome, because those identifiers are not the release scope.
 `--linear-readback` is rejected with `--merge-session`, which keeps its own
 durable bridge read-back.
 

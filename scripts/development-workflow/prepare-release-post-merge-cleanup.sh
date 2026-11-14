@@ -117,6 +117,9 @@ COMPONENT_LOCK_DIR=""
 COMPONENT_LOCK_CREATED=false
 LINEAR_READBACK=""
 LINEAR_READBACK_SET=false
+# Set when --from-changelog scope resolution failed and --best-effort let the
+# run continue: Linear verification then reports no outcome (#2009, BR9).
+RELEASE_SCOPE_UNRESOLVED=false
 # Set to "true" once component mode (--evidence-file) and --json are both
 # confirmed. When true, cleanup_log() routes progress/diagnostic output to
 # stderr so stdout carries only the final JSON summary the documented
@@ -2688,6 +2691,7 @@ if [ "$FROM_CHANGELOG" = "true" ]; then
     if [ "$BEST_EFFORT" != "true" ] || [ "$INSPECT_TARGETS" = "true" ]; then
       exit 1
     fi
+    RELEASE_SCOPE_UNRESOLVED=true
   fi
 fi
 
@@ -2863,11 +2867,15 @@ if [ "$TRACKER_PROVIDER" = "linear" ]; then
   done
   # Verified completion from the operator's independent read-back (#2009).
   # Projects with a configured release_field keep the existing handoff.
+  # An unresolved release scope (continued only under --best-effort) reports
+  # no verification outcome: the explicit identifiers left are not the scope.
   LINEAR_VERIFICATION_EXIT=""
   if [ -n "$(workflow_issue_tracker_custom_field release_field)" ]; then
     if [ "$LINEAR_READBACK_SET" = "true" ]; then
       echo "LINEAR_RELEASE_VERIFICATION_SKIPPED reason=release_field_configured" >&2
     fi
+  elif [ "$RELEASE_SCOPE_UNRESOLVED" = "true" ]; then
+    cleanup_log "LINEAR_RELEASE_VERIFICATION_SKIPPED reason=scope_unresolved"
   else
     run_linear_release_verification
     while IFS= read -r verification_line; do

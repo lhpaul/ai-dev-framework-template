@@ -4327,6 +4327,18 @@ output="$(printf '%s\n' "$result" | sed '1d')"
 run_test "linear_2009_unresolved_scope_exits_one" "1" "$status"
 run_contains "linear_2009_unresolved_scope_existing" "TRACKER_INCOMPLETE=1 REASON=changelog_scope_unavailable" "$output"
 run_not_contains "linear_2009_unresolved_scope_no_outcome" "LINEAR_RELEASE_OUTCOME" "$output"
+# Unresolved scope continued under --best-effort with explicit identifiers:
+# the explicit subset is not the release scope, so no outcome is reported.
+write_verify_readback "$repo_unresolved/readback-v999.json" \
+  "$(verify_read LEA-302 Released '["release/v9.9.9"]' | jq -c '.releaseVersion = "v9.9.9"')"
+result="$(run_linear_verify "$repo_unresolved" v9.9.9 --from-changelog --issue LEA-302 --best-effort --linear-readback readback-v999.json)"
+status="$(printf '%s\n' "$result" | sed -n '1p')"
+output="$(printf '%s\n' "$result" | sed '1d')"
+run_test "linear_2009_unresolved_best_effort_exits_zero" "0" "$status"
+run_contains "linear_2009_unresolved_best_effort_scope_failure" "TRACKER_INCOMPLETE=1 REASON=changelog_scope_unavailable" "$output"
+run_contains "linear_2009_unresolved_best_effort_skipped" "LINEAR_RELEASE_VERIFICATION_SKIPPED reason=scope_unresolved" "$output"
+run_not_contains "linear_2009_unresolved_best_effort_no_outcome" "LINEAR_RELEASE_OUTCOME" "$output"
+run_contains "linear_2009_unresolved_best_effort_handoff" "TRACKER_ACTION=linear_mcp_or_api_required" "$output"
 
 # I7: configured release_field -> existing handoff, skipped notice, no outcome.
 repo_field="$(fixture_linear_verify_repo linear-2009-release-field)"
