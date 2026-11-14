@@ -299,7 +299,7 @@ guard and D6/D9 state behaviour. The I cases cover each D11/D12 branch once,
 because the decision logic itself is already covered by U. The lists are
 indicative: an implementer may merge or split cases if every listed class
 stays covered. The suite sizes are proportionate: the evaluator is the only
-new decision logic and the shell change is a branch with four exits.
+new decision logic and the shell change only routes its exit classes (D11).
 
 **Unit cases (`test-linear-release-verification.sh`)**:
 
@@ -444,7 +444,7 @@ written during implementation.
 3. Wire the cleanup script (L2).
 4. Add the integration section and `# covers:` header (L3, I1–I9).
 5. Update the documentation (L4).
-6. Run, and confirm each passes: the two suites above,
+6. Run, and confirm each passes: the suites from steps 2 and 4,
    `test-workflow-merge-budget.sh` and its parts,
    `python3 scripts/development-workflow/tests/test_workflow_merge_budget.py`,
    `bash scripts/development-workflow/select-test-suites.sh --report-gaps`
