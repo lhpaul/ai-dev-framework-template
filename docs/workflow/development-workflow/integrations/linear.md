@@ -307,6 +307,103 @@ orchestrator or a Linear MCP runner must apply the release label/custom field
 and then transition every listed `TRACKER_ISSUES` item from `Merged` to
 `Released` before reporting the release as complete.
 
+#### Verified release completion
+
+A Linear release that is stamped with a label (no `release_field`) and has a
+resolved, non-empty scope is complete only when cleanup verifies it from an
+independent read of every in-scope item (#2009). Complete covers that resolved
+scope: changelog-only mentions reported as `RELEASE_SCOPE_SKIPPED` are not part
+of it. Printed guidance, a deferred
+action signal, the operator's assertion, or the response echoed by a write
+never counts as a read.
+
+1. Run cleanup for the release. Its first run for a release branch records a
+   starting point (see below) and lists every in-scope item as Not verified.
+2. Make sure the release label exists for each owning team (team or workspace
+   label), including hotfix versions such as `release/v1.29.1`. A
+   `LINEAR_RELEASE_LABEL_ACTION label=<label> teams=<keys>` line names the
+   label whenever no usable read shows it.
+3. Apply the label and move every item to `Released` through the Linear MCP
+   server or API.
+4. Read every in-scope item back with a separate read call and write the reads
+   to a file in the schema below. Supply reads for **every** in-scope item on
+   every run: each run evaluates only the reads supplied to it.
+5. Re-run cleanup with `--linear-readback <file>`.
+
+Read-back schema (`linear_release_readback.v1`). Field names follow the
+durable merge-operation bridge proof:
+
+```json
+{
+  "schemaVersion": "linear_release_readback.v1",
+  "reads": [
+    {
+      "suppliedFor": "LEA-346",
+      "provider": "linear",
+      "issue": "LEA-346",
+      "team": "LEA",
+      "releaseVersion": "v1.29.1",
+      "labels": ["release/v1.29.1", "bug"],
+      "statusName": "Released",
+      "observedAt": "2026-10-21T14:05:09Z",
+      "readRequestId": "read-request-id-from-the-read-response",
+      "mutationRequestId": "request-id-of-the-write-if-any"
+    }
+  ]
+}
+```
+
+- `suppliedFor` is the in-scope item the read is supplied for; `issue`, `team`,
+  `labels`, `statusName` and `observedAt` are what the read itself returned.
+- `releaseVersion` must equal the cleanup release version exactly, including
+  its `v` prefix (`v1.29.1`, not `1.29.1`).
+- `observedAt` is an ISO 8601 instant with `Z` or an offset.
+- `mutationRequestId` is optional; when it equals `readRequestId` the read is
+  an echoed write and does not count.
+
+A read counts only when it can be understood, is for that item and this
+release version, comes from the item's owning team (the identifier's key, for
+example `LEA` in `LEA-346`), and was observed strictly after the starting
+point. The most recently observed usable read decides each item; usable reads
+observed at the same instant that disagree leave the item Not verified with
+reason `conflicting`. Identifiers and team keys compare case-insensitively;
+labels, release version and status name compare exactly; the status must
+equal the configured Released status name (`GITHUB_PROJECT_STATUS_RELEASED`,
+default `Released`).
+
+**Starting point and records**: the first cleanup run for a release branch
+stores its start time in
+`<git-common-dir>/ai-dev-workflow/linear-release-verification/<branch>/first-run.json`;
+re-runs never move it. Each verification run also keeps a record under
+`runs/` in the same directory, with the verbatim read-back and every result
+(`LINEAR_RELEASE_VERIFICATION_RECORD path=...`). The state is local to the
+clone: running cleanup from a different clone starts a new starting point, so
+reads taken before that run must be taken again.
+
+**Output**: one `LINEAR_RELEASE_ITEM issue=<id> result=<result>` line per
+in-scope item (`verified`, `missing_label`, `not_released`,
+`missing_label_and_not_released`, or `not_verified` with
+`reasons=no_read|unreadable|mismatch|stale|conflicting|unsupported_identifier`),
+`LINEAR_RELEASE_READ_IGNORED` for reads outside the scope,
+`LINEAR_RELEASE_COUNTS`, and `LINEAR_RELEASE_OUTCOME=complete|incomplete`.
+Values copied from the read-back are printed JSON-encoded. Complete ends the
+run with exit 0 and no `TRACKER_ACTION` handoff. Incomplete keeps the existing
+handoff lines, adds `TRACKER_ISSUES_UNVERIFIED=<ids>`, and exits non-zero
+unless `--best-effort` is passed; with `--best-effort` the run ends without an
+error but the outcome stays Incomplete. When verification cannot run (for
+example the state directory cannot be written), cleanup prints
+`LINEAR_RELEASE_VERIFICATION_UNAVAILABLE reason=<reason>` and keeps the
+existing handoff.
+
+Projects that configure `release_field` keep the existing handoff and report
+no verification outcome; verifying a release field is not implemented. When
+`--from-changelog` scope resolution fails and `--best-effort` lets the run
+continue with explicit `--issue` identifiers, cleanup prints
+`LINEAR_RELEASE_VERIFICATION_SKIPPED reason=scope_unresolved` and reports no
+outcome, because those identifiers are not the release scope.
+`--linear-readback` is rejected with `--merge-session`, which keeps its own
+durable bridge read-back.
+
 When cleanup is invoked with `--from-changelog`, Linear scope is **not** the set
 of IDs matched in the CHANGELOG version section alone (#1982). The canonical
 **consistency matrix** (gate inputs, allowed outcomes, required next actions,

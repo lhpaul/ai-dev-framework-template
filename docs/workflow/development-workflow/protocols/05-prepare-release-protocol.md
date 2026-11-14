@@ -775,6 +775,11 @@ Use `--issues <issue1,issue2,...>` or repeated `--issue <issue>` only when the
 CHANGELOG section cannot be used and a human has confirmed the shipped issue
 scope.
 
+For the Linear provider, pass `--linear-readback <file>` once the release
+label and `Released` status are applied, so cleanup can verify completion from
+an independent read of every in-scope item (see 9.4). The flag is rejected for
+other providers, for an unreadable file, and together with `--merge-session`.
+
 ### 9.3 Manual equivalent (when script cannot be used)
 
 <!-- workflow-shell-contract: bash-zsh -->
@@ -804,10 +809,22 @@ Use the provider-routed release-stamp operation documented in [`issue-tracker.md
 - GitHub providers stamp releases with a Milestone named `vX.Y.Z`, assign it to each shipped issue, and close the milestone after cleanup succeeds.
 - Unsupported providers log a release-stamp skip/warning and continue; release stamping is best effort and must not block status transitions.
 - Linear providers require MCP/API completion after shell cleanup. If the helper
-  emits `TRACKER_ACTION=linear_mcp_or_api_required`, transition every listed
-  `TRACKER_ISSUES` item from `Merged` to `Released` with Linear MCP/API before
-  treating the release as complete. The helper exits non-zero unless
-  `--best-effort` is passed.
+  emits `TRACKER_ACTION=linear_mcp_or_api_required`, make sure the release
+  label (`release_label_prefix` + version, default `release/vX.Y.Z`, including
+  hotfix versions) exists for each owning team, apply it, and transition every
+  listed `TRACKER_ISSUES` item from `Merged` to `Released` with Linear MCP/API.
+  Then read every in-scope item back independently, write the reads to a
+  `linear_release_readback.v1` file (schema in
+  [`integrations/linear.md`](../integrations/linear.md#verified-release-completion)),
+  and re-run cleanup with `--linear-readback <file>`. Cleanup prints one
+  `LINEAR_RELEASE_ITEM` line per item (`verified`, `missing_label`,
+  `not_released`, `missing_label_and_not_released` or `not_verified` with its
+  reasons), a `LINEAR_RELEASE_LABEL_ACTION` line when no usable read shows the
+  release label, the counts, and `LINEAR_RELEASE_OUTCOME=complete` or
+  `incomplete`. Complete ends the run with exit 0 and no handoff. Incomplete
+  keeps the handoff, names the items in `TRACKER_ISSUES_UNVERIFIED`, and exits
+  non-zero unless `--best-effort` is passed. Projects that configure a
+  Linear `release_field` keep the handoff without verification.
 
 Only transition work items explicitly confirmed as part of the shipped release. Do not bulk-move all project items in `Merged` unless a human explicitly asks for that scope.
 
@@ -818,6 +835,14 @@ either succeed or a human explicitly accepts `--best-effort` handling. A cleanup
 run that emits `TRACKER_INCOMPLETE=1` is a handoff signal, not a success state:
 complete the named tracker action and rerun/verify before reporting the release
 closed.
+
+A Linear release with label-based stamping (no `release_field`) and a
+resolved, non-empty scope is complete only when cleanup reports
+`LINEAR_RELEASE_OUTCOME=complete`. Release-field projects, empty or unresolved
+scope, and `--merge-session` runs report no verification outcome and keep
+their existing completion paths. `--best-effort` lets the run end without an
+error, but the outcome stays Incomplete and the unverified items stay listed;
+printed guidance or an operator's assertion never counts as verification.
 
 If release stamping needs manual repair, use the provider-native release marker
 for each shipped issue (for example, GitHub Milestone `vX.Y.Z`, Jira Fix
