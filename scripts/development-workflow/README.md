@@ -1472,6 +1472,7 @@ unavailable (state or record cannot be kept). The cleanup script is the normal
 caller. For diagnosis, run it against a scratch state directory so the real
 first-run record is not created early:
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
 python3 scripts/development-workflow/linear-release-verification.py evaluate \
   --state-dir "$(mktemp -d)" \
