@@ -2407,10 +2407,10 @@ run_linear_release_verification() {
   if [ -n "$LINEAR_READBACK" ]; then
     args+=(--readback "$LINEAR_READBACK")
   fi
-  for issue in "${ISSUE_NUMBERS[@]}"; do
+  for issue in ${ISSUE_NUMBERS[@]+"${ISSUE_NUMBERS[@]}"}; do
     args+=(--scope "$issue")
   done
-  output="$(python3 "$helper" "${args[@]}")" || rc=$?
+  output="$(python3 "$helper" ${args[@]+"${args[@]}"})" || rc=$?
   # Exact-line checks via case patterns (no pipe, so no SIGPIPE under pipefail).
   case "$rc" in
     0)

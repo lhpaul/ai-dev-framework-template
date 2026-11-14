@@ -1460,6 +1460,26 @@ Use this when:
 - You want explicit, scoped tracker transitions to the terminal shipped status.
 - You want `--from-changelog` to derive the shipped issue scope from the finalized version section instead of manually copying issue IDs.
 - You need a fail-closed handoff for Linear: `TRACKER_ACTION=linear_mcp_or_api_required` means the listed issues still need MCP/API status transitions before release closeout is complete.
+- You need verified Linear completion: after stamping, re-run with `--linear-readback <file>` (a `linear_release_readback.v1` file of independent reads). `LINEAR_RELEASE_OUTCOME=complete` ends the run with exit 0 and no handoff; Incomplete keeps the handoff and names each item. See [`integrations/linear.md`](../../docs/workflow/development-workflow/integrations/linear.md#verified-release-completion).
+
+### `linear-release-verification.py`
+
+Evaluator behind `prepare-release-post-merge-cleanup.sh --linear-readback`
+(#2009). It compares the operator's normalized Linear reads with the release
+scope and prints `LINEAR_RELEASE_*` lines; it never contacts Linear or changes
+tracker state. Exit codes: `0` complete, `1` incomplete, `2` usage error, `3`
+unavailable (state or record cannot be kept). The cleanup script is the normal
+caller. For diagnosis, run it against a scratch state directory so the real
+first-run record is not created early:
+
+```bash
+python3 scripts/development-workflow/linear-release-verification.py evaluate \
+  --state-dir "$(mktemp -d)" \
+  --release-branch release/v1.2.3 --release-version v1.2.3 \
+  --release-label release/v1.2.3 --released-status Released \
+  --run-started-at 2026-01-01T00:00:00Z --now "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+  --readback readback.json --scope LEA-1 --scope LEA-2
+```
 
 ### `batch-merge.sh`
 

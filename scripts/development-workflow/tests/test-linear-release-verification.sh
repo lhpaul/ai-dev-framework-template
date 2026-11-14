@@ -121,7 +121,7 @@ evaluate() {
     args+=(--scope "$scope")
   done
   RC=0
-  OUT="$(python3 "$EVALUATOR" "${args[@]}" 2>"$TMP_ROOT/stderr")" || RC=$?
+  OUT="$(python3 "$EVALUATOR" ${args[@]+"${args[@]}"} 2>"$TMP_ROOT/stderr")" || RC=$?
 }
 
 VERIFIED_10="$(read_json LEA-10 Released "[\"$LABEL\",\"bug\"]")"
