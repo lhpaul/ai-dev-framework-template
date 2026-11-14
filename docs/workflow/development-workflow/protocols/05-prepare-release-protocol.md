@@ -836,8 +836,11 @@ run that emits `TRACKER_INCOMPLETE=1` is a handoff signal, not a success state:
 complete the named tracker action and rerun/verify before reporting the release
 closed.
 
-A Linear release (label-based stamping) is complete only when cleanup reports
-`LINEAR_RELEASE_OUTCOME=complete`. `--best-effort` lets the run end without an
+A Linear release with label-based stamping (no `release_field`) and a
+resolved, non-empty scope is complete only when cleanup reports
+`LINEAR_RELEASE_OUTCOME=complete`. Release-field projects, empty or unresolved
+scope, and `--merge-session` runs report no verification outcome and keep
+their existing completion paths. `--best-effort` lets the run end without an
 error, but the outcome stays Incomplete and the unverified items stay listed;
 printed guidance or an operator's assertion never counts as verification.
 

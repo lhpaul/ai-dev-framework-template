@@ -309,8 +309,11 @@ and then transition every listed `TRACKER_ISSUES` item from `Merged` to
 
 #### Verified release completion
 
-A Linear release is complete only when cleanup verifies it from an
-independent read of every in-scope item (#2009). Printed guidance, a deferred
+A Linear release that is stamped with a label (no `release_field`) and has a
+resolved, non-empty scope is complete only when cleanup verifies it from an
+independent read of every in-scope item (#2009). Complete covers that resolved
+scope: changelog-only mentions reported as `RELEASE_SCOPE_SKIPPED` are not part
+of it. Printed guidance, a deferred
 action signal, the operator's assertion, or the response echoed by a write
 never counts as a read.
 

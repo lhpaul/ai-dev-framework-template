@@ -22,9 +22,13 @@ This is the Codex command-style alias for Claude Code `/prepare-release`.
 7. After both release PRs merge, run post-merge cleanup with `--from-changelog`
    or an explicit `--issues` scope, then complete any emitted tracker handoff
    such as `TRACKER_ACTION=linear_mcp_or_api_required` before calling the
-   release done. A Linear release is done only when cleanup, re-run with
-   `--linear-readback` holding an independent read of every in-scope item,
-   reports `LINEAR_RELEASE_OUTCOME=complete`. For Linear, `--from-changelog` scopes Released from merged PRs
+   release done. For a Linear project that stamps releases with a label (no
+   `release_field`) and a resolved, non-empty release scope, the release is
+   done only when cleanup, re-run with `--linear-readback` holding an
+   independent read of every in-scope item, reports
+   `LINEAR_RELEASE_OUTCOME=complete`; release-field projects, empty or
+   unresolved scope, and `--merge-session` runs keep their existing completion
+   paths and report no such outcome. For Linear, `--from-changelog` scopes Released from merged PRs
    in the release commit range (IDs from PR branch/title only; changelog is
    complement), reports `RELEASE_SCOPE_SKIPPED` for changelog-only IDs, and
    fails closed on `RELEASE_SCOPE_INCOMPLETE` when PR resolution fails. For
