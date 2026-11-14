@@ -21,6 +21,7 @@
 # covers: scripts/development-workflow/component-release-target.sh
 # covers: scripts/development-workflow/workflow-config-resolver.py
 # covers: scripts/development-workflow/workflow-merge-budget.py
+# covers: scripts/development-workflow/linear-release-verification.py
 
 set -euo pipefail
 
@@ -4164,6 +4165,232 @@ for provider in github_projects github_issues; do
   run_not_contains "${provider}_mobile_input_no_bare_mobile_version" \
     "Release version: mobile-v1.1.0" "$output"
 done
+
+# --- Linear release verification (#2009) ---
+# Shell wiring for --linear-readback: Complete exits 0 without the Linear
+# handoff; Incomplete keeps the existing handoff and exits; release-field,
+# empty-scope and unresolved-scope runs report no outcome; the flag is rejected
+# for other providers, unreadable paths and merge sessions; a missing or
+# misbehaving evaluator fails closed. Decision rules are covered by
+# test-linear-release-verification.sh.
+echo ""
+echo "=== Linear release verification (#2009) ==="
+VERIFY_BIN="$TMP_ROOT/linear-verify-bin"
+VERIFY_GH_LOG="$TMP_ROOT/linear-verify-gh.log"
+mkdir -p "$VERIFY_BIN"
+cat > "$VERIFY_BIN/gh" <<MOCK_GH_VERIFY_LOG
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "$VERIFY_GH_LOG"
+exec "$LINEAR_SCOPE_BIN/gh" "\$@"
+MOCK_GH_VERIFY_LOG
+chmod +x "$VERIFY_BIN/gh"
+
+seed_linear_first_run() {
+  local repo="$1" branch="$2" started="$3"
+  local dir="$repo/.git/ai-dev-workflow/linear-release-verification/${branch//\//__}"
+  mkdir -p "$dir"
+  printf '{"schemaVersion":"linear_release_first_run.v1","releaseBranch":"%s","firstRunStartedAt":"%s"}\n' \
+    "$branch" "$started" > "$dir/first-run.json"
+}
+
+fixture_linear_verify_repo() {
+  local repo
+  repo="$(fixture_linear_scope_repo "$1")"
+  cp "$REPO_ROOT/scripts/development-workflow/linear-release-verification.py" \
+    "$repo/scripts/development-workflow/linear-release-verification.py"
+  if [ "${2:-seed}" = "seed" ]; then
+    seed_linear_first_run "$repo" release/v1.29.0 2026-01-01T00:00:00Z
+  fi
+  printf '%s\n' "$repo"
+}
+
+# verify_read <issue> <status> <labels-json>
+verify_read() {
+  jq -cn --arg issue "$1" --arg status "$2" --argjson labels "$3" \
+    '{suppliedFor:$issue, provider:"linear", issue:$issue, team:"LEA",
+      releaseVersion:"v1.29.0", labels:$labels, statusName:$status,
+      observedAt:"2026-03-01T12:00:00Z", readRequestId:("read-" + $issue)}'
+}
+
+write_verify_readback() {
+  local file="$1"
+  shift
+  jq -n --argjson reads "$(printf '%s\n' "$@" | jq -cs .)" \
+    '{schemaVersion:"linear_release_readback.v1", reads:$reads}' > "$file"
+}
+
+run_linear_verify() {
+  local repo="$1"
+  shift
+  local output="" rc=0
+  : > "$VERIFY_GH_LOG"
+  set +e
+  output="$(
+    cd "$repo" && PATH="$VERIFY_BIN:$LINEAR_SCOPE_BIN:$(dirname "$REAL_GIT"):$PATH" \
+      LINEAR_SCOPE_MAP_FILE="$LINEAR_SCOPE_MAP_FILE" \
+      WORKFLOW_SKIP_FETCH=1 \
+      ./scripts/development-workflow/prepare-release-post-merge-cleanup.sh "$@" 2>&1
+  )"
+  rc=$?
+  set -e
+  printf '%s\n%s\n' "$rc" "$output"
+}
+
+assert_no_tracker_mutation() {
+  local name="$1" mutations
+  mutations="$(grep -E '^(api .*-X (POST|PATCH|PUT|DELETE)|api graphql|issue (edit|close)|project item-edit)' "$VERIFY_GH_LOG" || true)"
+  if [ -z "$mutations" ]; then
+    echo "PASS: $name"
+    PASS_COUNT=$((PASS_COUNT + 1))
+  else
+    echo "FAIL: $name - tracker-mutating gh calls: $mutations"
+    FAIL_COUNT=$((FAIL_COUNT + 1))
+  fi
+}
+
+LABEL_OK='["release/v1.29.0"]'
+
+# I1: every item verified -> exit 0, no handoff, no tracker mutation.
+repo_verify="$(fixture_linear_verify_repo linear-2009-complete)"
+write_verify_readback "$repo_verify/readback.json" \
+  "$(verify_read LEA-302 Released "$LABEL_OK")" "$(verify_read LEA-303 Released "$LABEL_OK")"
+result="$(run_linear_verify "$repo_verify" v1.29.0 --issue LEA-302 --issue LEA-303 --linear-readback readback.json)"
+status="$(printf '%s\n' "$result" | sed -n '1p')"
+output="$(printf '%s\n' "$result" | sed '1d')"
+run_test "linear_2009_complete_exits_zero" "0" "$status"
+run_contains "linear_2009_complete_outcome" "LINEAR_RELEASE_OUTCOME=complete" "$output"
+run_contains "linear_2009_complete_item" "LINEAR_RELEASE_ITEM issue=LEA-303 result=verified" "$output"
+run_contains "linear_2009_complete_finished" "Release post-merge cleanup complete." "$output"
+run_not_contains "linear_2009_complete_no_handoff" "TRACKER_ACTION=linear_mcp_or_api_required" "$output"
+run_not_contains "linear_2009_complete_no_incomplete" "TRACKER_INCOMPLETE=1" "$output"
+assert_no_tracker_mutation "linear_2009_complete_no_tracker_mutation"
+
+# I2: one item still Merged -> exit 1, existing handoff kept, item named.
+write_verify_readback "$repo_verify/readback-merged.json" \
+  "$(verify_read LEA-302 Released "$LABEL_OK")" "$(verify_read LEA-303 Merged "$LABEL_OK")"
+result="$(run_linear_verify "$repo_verify" v1.29.0 --issue LEA-302 --issue LEA-303 --linear-readback readback-merged.json)"
+status="$(printf '%s\n' "$result" | sed -n '1p')"
+output="$(printf '%s\n' "$result" | sed '1d')"
+run_test "linear_2009_incomplete_exits_one" "1" "$status"
+run_contains "linear_2009_incomplete_item" "LINEAR_RELEASE_ITEM issue=LEA-303 result=not_released" "$output"
+run_contains "linear_2009_incomplete_unverified" "TRACKER_ISSUES_UNVERIFIED=LEA-303" "$output"
+run_contains "linear_2009_incomplete_handoff" "TRACKER_ACTION=linear_mcp_or_api_required" "$output"
+run_contains "linear_2009_incomplete_reason" "TRACKER_INCOMPLETE=1 REASON=linear_status_transition_required" "$output"
+assert_no_tracker_mutation "linear_2009_incomplete_no_tracker_mutation"
+
+# I3: same with --best-effort -> exit 0, outcome stays Incomplete.
+result="$(run_linear_verify "$repo_verify" v1.29.0 --issue LEA-302 --issue LEA-303 --linear-readback readback-merged.json --best-effort)"
+status="$(printf '%s\n' "$result" | sed -n '1p')"
+output="$(printf '%s\n' "$result" | sed '1d')"
+run_test "linear_2009_best_effort_exits_zero" "0" "$status"
+run_contains "linear_2009_best_effort_incomplete" "LINEAR_RELEASE_OUTCOME=incomplete" "$output"
+
+# I4: no read-back -> every item no_read, existing exit 1.
+result="$(run_linear_verify "$repo_verify" v1.29.0 --issue LEA-302)"
+status="$(printf '%s\n' "$result" | sed -n '1p')"
+output="$(printf '%s\n' "$result" | sed '1d')"
+run_test "linear_2009_no_readback_exits_one" "1" "$status"
+run_contains "linear_2009_no_readback_no_read" "LINEAR_RELEASE_ITEM issue=LEA-302 result=not_verified reasons=no_read" "$output"
+run_contains "linear_2009_no_readback_label_action" "LINEAR_RELEASE_LABEL_ACTION label=release/v1.29.0 teams=LEA" "$output"
+
+# I5: the first run creates the record; a re-run never moves it.
+repo_first="$(fixture_linear_verify_repo linear-2009-first-run noseed)"
+first_record="$repo_first/.git/ai-dev-workflow/linear-release-verification/release__v1.29.0/first-run.json"
+run_linear_verify "$repo_first" v1.29.0 --issue LEA-302 >/dev/null
+if [ -f "$first_record" ]; then
+  first_value="$(jq -r .firstRunStartedAt "$first_record")"
+  run_test "linear_2009_first_run_recorded" "true" "$([ -n "$first_value" ] && echo true || echo false)"
+  sleep 1
+  run_linear_verify "$repo_first" v1.29.0 --issue LEA-302 >/dev/null
+  run_test "linear_2009_first_run_not_moved" "$first_value" "$(jq -r .firstRunStartedAt "$first_record")"
+else
+  run_test "linear_2009_first_run_recorded" "true" "false"
+fi
+
+# I6: empty scope and unresolved scope -> existing exits, no outcome line.
+result="$(run_linear_verify "$repo_verify" v1.29.0 --linear-readback readback.json)"
+status="$(printf '%s\n' "$result" | sed -n '1p')"
+output="$(printf '%s\n' "$result" | sed '1d')"
+run_test "linear_2009_empty_scope_exits_one" "1" "$status"
+run_contains "linear_2009_empty_scope_existing" "TRACKER_INCOMPLETE=1 REASON=no_issue_scope" "$output"
+run_not_contains "linear_2009_empty_scope_no_outcome" "LINEAR_RELEASE_OUTCOME" "$output"
+repo_unresolved="$TMP_ROOT/linear-2009-unresolved"
+init_linear_git_repo "$repo_unresolved"
+cp "$REPO_ROOT/scripts/development-workflow/linear-release-verification.py" \
+  "$repo_unresolved/scripts/development-workflow/linear-release-verification.py"
+"$REAL_GIT" -C "$repo_unresolved" add .
+"$REAL_GIT" -C "$repo_unresolved" commit -q -m "chore: baseline"
+write_verify_readback "$repo_unresolved/readback.json" "$(verify_read LEA-302 Released "$LABEL_OK")"
+result="$(run_linear_verify "$repo_unresolved" v9.9.9 --from-changelog --linear-readback readback.json)"
+status="$(printf '%s\n' "$result" | sed -n '1p')"
+output="$(printf '%s\n' "$result" | sed '1d')"
+run_test "linear_2009_unresolved_scope_exits_one" "1" "$status"
+run_contains "linear_2009_unresolved_scope_existing" "TRACKER_INCOMPLETE=1 REASON=changelog_scope_unavailable" "$output"
+run_not_contains "linear_2009_unresolved_scope_no_outcome" "LINEAR_RELEASE_OUTCOME" "$output"
+
+# I7: configured release_field -> existing handoff, skipped notice, no outcome.
+repo_field="$(fixture_linear_verify_repo linear-2009-release-field)"
+printf '  custom_fields:\n    release_field: Release\n' >> "$repo_field/.ai-dev-workflow.yaml"
+write_verify_readback "$repo_field/readback.json" "$(verify_read LEA-302 Released "$LABEL_OK")"
+result="$(run_linear_verify "$repo_field" v1.29.0 --issue LEA-302 --linear-readback readback.json)"
+status="$(printf '%s\n' "$result" | sed -n '1p')"
+output="$(printf '%s\n' "$result" | sed '1d')"
+run_test "linear_2009_release_field_exits_one" "1" "$status"
+run_contains "linear_2009_release_field_stamp" "release_field=Release" "$output"
+run_contains "linear_2009_release_field_handoff" "TRACKER_ACTION=linear_mcp_or_api_required" "$output"
+run_contains "linear_2009_release_field_skipped" "LINEAR_RELEASE_VERIFICATION_SKIPPED reason=release_field_configured" "$output"
+run_not_contains "linear_2009_release_field_no_verification" "LINEAR_RELEASE_VERIFICATION " "$output"
+run_not_contains "linear_2009_release_field_no_outcome" "LINEAR_RELEASE_OUTCOME" "$output"
+
+# I8: rejected before any PR lookup.
+repo_github="$TMP_ROOT/linear-2009-github"
+init_linear_git_repo "$repo_github"
+cat > "$repo_github/.ai-dev-workflow.yaml" <<'YAML'
+schema_version: 2
+issue_tracker:
+  provider: github_projects
+  project_number: 1
+YAML
+printf '{}\n' > "$repo_github/readback.json"
+for case_args in "github|$repo_github|--linear-readback readback.json" \
+                 "missing|$repo_verify|--linear-readback no-such-file.json" \
+                 "session|$repo_verify|--linear-readback readback.json --merge-session $TMP_ROOT/no-session"; do
+  case_name="${case_args%%|*}"
+  rest="${case_args#*|}"
+  case_repo="${rest%%|*}"
+  # shellcheck disable=SC2086 # deliberate word splitting of fixed flag lists
+  result="$(run_linear_verify "$case_repo" v1.29.0 --issue 302 ${rest#*|})"
+  status="$(printf '%s\n' "$result" | sed -n '1p')"
+  run_test "linear_2009_rejected_${case_name}_exits_two" "2" "$status"
+  if grep -q '^pr list' "$VERIFY_GH_LOG"; then
+    run_test "linear_2009_rejected_${case_name}_before_pr_lookup" "no pr list" "pr list called"
+  else
+    run_test "linear_2009_rejected_${case_name}_before_pr_lookup" "no pr list" "no pr list"
+  fi
+done
+
+# I9: missing helper and a helper that breaks the output contract fail closed.
+repo_missing="$(fixture_linear_scope_repo linear-2009-helper-missing)"
+write_verify_readback "$repo_missing/readback.json" "$(verify_read LEA-302 Released "$LABEL_OK")"
+result="$(run_linear_verify "$repo_missing" v1.29.0 --issue LEA-302 --linear-readback readback.json)"
+status="$(printf '%s\n' "$result" | sed -n '1p')"
+output="$(printf '%s\n' "$result" | sed '1d')"
+run_test "linear_2009_helper_missing_exits_one" "1" "$status"
+run_contains "linear_2009_helper_missing_unavailable" "LINEAR_RELEASE_VERIFICATION_UNAVAILABLE reason=verifier_missing" "$output"
+run_contains "linear_2009_helper_missing_handoff" "TRACKER_ACTION=linear_mcp_or_api_required" "$output"
+cat > "$repo_missing/scripts/development-workflow/linear-release-verification.py" <<'PY'
+import sys
+print("LINEAR_RELEASE_ITEM issue=LEA-302 result=verified")
+print("LINEAR_RELEASE_OUTCOME=incomplete")
+sys.exit(0)
+PY
+result="$(run_linear_verify "$repo_missing" v1.29.0 --issue LEA-302 --linear-readback readback.json)"
+status="$(printf '%s\n' "$result" | sed -n '1p')"
+output="$(printf '%s\n' "$result" | sed '1d')"
+run_test "linear_2009_contract_exits_one" "1" "$status"
+run_contains "linear_2009_contract_unavailable" "LINEAR_RELEASE_VERIFICATION_UNAVAILABLE reason=evaluator_contract" "$output"
+run_not_contains "linear_2009_contract_discards_output" "LINEAR_RELEASE_ITEM" "$output"
+run_not_contains "linear_2009_contract_no_outcome" "LINEAR_RELEASE_OUTCOME" "$output"
 
 # --- Differential GitHub parity vs frozen develop baseline (#1982) ---
 # Runs HEAD and the checked-in develop baseline against identical fixtures and

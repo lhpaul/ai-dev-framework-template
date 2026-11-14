@@ -9,7 +9,19 @@
 #   fail-closed tracker handoff when shell automation cannot complete them
 #
 # Usage:
-#   ./scripts/development-workflow/prepare-release-post-merge-cleanup.sh <version|release-branch> [--repo NAME --repo-root PATH --evidence-file PATH] [--backport-base BRANCH] [--from-changelog] [--issue N]... [--issues N,N,...] [--best-effort]
+#   ./scripts/development-workflow/prepare-release-post-merge-cleanup.sh <version|release-branch> [--repo NAME --repo-root PATH --evidence-file PATH] [--backport-base BRANCH] [--from-changelog] [--issue N]... [--issues N,N,...] [--best-effort] [--linear-readback PATH]
+#
+# --linear-readback PATH (Linear only, #2009):
+#   A linear_release_readback.v1 JSON file holding the operator's independent
+#   Linear reads of the in-scope items (see integrations/linear.md, Release
+#   Stamping). linear-release-verification.py compares them with the release
+#   scope and prints LINEAR_RELEASE_* lines. LINEAR_RELEASE_OUTCOME=complete
+#   (every item read back with the release label and Released) ends the run
+#   with exit 0 and no Linear handoff. Otherwise the existing handoff lines and
+#   exits are kept: exit 1 unless --best-effort. Without the flag every item is
+#   Not verified. Projects with a configured release_field keep the existing
+#   handoff and report no verification outcome. Rejected (exit 2) for other
+#   providers, an unreadable path, or together with --merge-session.
 #
 # --from-changelog:
 #   GitHub Projects / GitHub Issues: extract #NNN references from the CHANGELOG
@@ -68,6 +80,11 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ORIGINAL_ARGS=("$@")
+# Linear release verification (#2009): the run start anchors the first-run
+# record, and relative --linear-readback paths resolve against the caller's
+# directory (the script changes to the repository root below).
+CLEANUP_RUN_STARTED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+CLEANUP_INVOCATION_DIR="$PWD"
 # shellcheck source=scripts/development-workflow/workflow-lib.sh
 . "$SCRIPT_DIR/workflow-lib.sh"
 
@@ -98,6 +115,8 @@ SESSION_CHILD=false
 COMPONENT_TARGET_FILE=""
 COMPONENT_LOCK_DIR=""
 COMPONENT_LOCK_CREATED=false
+LINEAR_READBACK=""
+LINEAR_READBACK_SET=false
 # Set to "true" once component mode (--evidence-file) and --json are both
 # confirmed. When true, cleanup_log() routes progress/diagnostic output to
 # stderr so stdout carries only the final JSON summary the documented
@@ -109,11 +128,14 @@ declare -a ISSUE_NUMBERS=()
 declare -a EXPLICIT_ISSUE_NUMBERS=()
 
 usage() {
-  echo "Usage: $0 <version|release-branch> [--repo NAME --repo-root PATH --evidence-file PATH] [--backport-base BRANCH] [--from-changelog] [--issue N]... [--issues N,N,...] [--best-effort] [--json] [--inspect-targets --release-head SHA [--target-root PATH]] [--merge-session PATH]" >&2
+  echo "Usage: $0 <version|release-branch> [--repo NAME --repo-root PATH --evidence-file PATH] [--backport-base BRANCH] [--from-changelog] [--issue N]... [--issues N,N,...] [--best-effort] [--json] [--inspect-targets --release-head SHA [--target-root PATH]] [--merge-session PATH] [--linear-readback PATH]" >&2
   echo "  --from-changelog  GitHub: scope from CHANGELOG #NNN refs. Linear: scope from" >&2
   echo "                    merged PRs in the release commit range (IDs from PR" >&2
   echo "                    headRefName/head.ref and title); changelog-only IDs" >&2
   echo "                    are skipped. Explicit --issue/--issues are always kept." >&2
+  echo "  --linear-readback Linear only: linear_release_readback.v1 file with the" >&2
+  echo "                    operator's independent reads; Complete ends the run" >&2
+  echo "                    without the Linear handoff (see integrations/linear.md)." >&2
 }
 
 # Parallel arrays populated when Linear --from-changelog omits changelog-only IDs.
@@ -2346,6 +2368,82 @@ PY
   fi
 }
 
+# run_linear_release_verification
+#
+# Linear release verification (#2009). Runs linear-release-verification.py on
+# the operator's read-back and sets LINEAR_VERIFICATION_EXIT (0 complete,
+# 1 incomplete, 3 unavailable) and LINEAR_VERIFICATION_OUTPUT (lines to log).
+# Fails closed: a missing helper, an unresolvable state directory, or an
+# evaluator whose exit and outcome line disagree is reported as unavailable,
+# so no failure path can end as Complete.
+run_linear_release_verification() {
+  local helper="$SCRIPT_DIR/linear-release-verification.py"
+  local common_dir="" label_prefix output="" rc=0 issue
+  local -a args=()
+  LINEAR_VERIFICATION_EXIT=3
+  LINEAR_VERIFICATION_OUTPUT=""
+  if [ ! -f "$helper" ]; then
+    LINEAR_VERIFICATION_OUTPUT="LINEAR_RELEASE_VERIFICATION_UNAVAILABLE reason=verifier_missing"
+    return 0
+  fi
+  common_dir="$(git -C "$HUB_REPO_ROOT" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" || common_dir=""
+  case "$common_dir" in
+    /*) ;;
+    *)
+      LINEAR_VERIFICATION_OUTPUT="LINEAR_RELEASE_VERIFICATION_UNAVAILABLE reason=state_unavailable"
+      return 0
+      ;;
+  esac
+  label_prefix="$(workflow_issue_tracker_custom_field release_label_prefix)"
+  label_prefix="${label_prefix:-release/}"
+  args=(evaluate
+    --state-dir "$common_dir/ai-dev-workflow/linear-release-verification"
+    --release-branch "$RELEASE_BRANCH"
+    --release-version "$RELEASE_VERSION"
+    --release-label "${label_prefix}${RELEASE_VERSION}"
+    --released-status "$RELEASED_LABEL"
+    --run-started-at "$CLEANUP_RUN_STARTED_AT"
+    --now "$(date -u +%Y-%m-%dT%H:%M:%SZ)")
+  if [ -n "$LINEAR_READBACK" ]; then
+    args+=(--readback "$LINEAR_READBACK")
+  fi
+  for issue in "${ISSUE_NUMBERS[@]}"; do
+    args+=(--scope "$issue")
+  done
+  output="$(python3 "$helper" "${args[@]}")" || rc=$?
+  # Exact-line checks via case patterns (no pipe, so no SIGPIPE under pipefail).
+  case "$rc" in
+    0)
+      case $'\n'"$output"$'\n' in
+        *$'\n'"LINEAR_RELEASE_OUTCOME=incomplete"$'\n'*) ;;
+        *$'\n'"LINEAR_RELEASE_OUTCOME=complete"$'\n'*)
+          LINEAR_VERIFICATION_EXIT=0
+          LINEAR_VERIFICATION_OUTPUT="$output"
+          return 0
+          ;;
+      esac
+      ;;
+    1)
+      case $'\n'"$output"$'\n' in
+        *$'\n'"LINEAR_RELEASE_OUTCOME=complete"$'\n'*) ;;
+        *$'\n'"LINEAR_RELEASE_OUTCOME=incomplete"$'\n'*)
+          LINEAR_VERIFICATION_EXIT=1
+          LINEAR_VERIFICATION_OUTPUT="$output"
+          return 0
+          ;;
+      esac
+      ;;
+    3)
+      if [[ "$output" =~ ^LINEAR_RELEASE_VERIFICATION_UNAVAILABLE\ reason=[a-z_]+$ ]]; then
+        LINEAR_VERIFICATION_OUTPUT="$output"
+        return 0
+      fi
+      ;;
+  esac
+  LINEAR_VERIFICATION_OUTPUT="LINEAR_RELEASE_VERIFICATION_UNAVAILABLE reason=evaluator_contract"
+  return 0
+}
+
 while [ $# -gt 0 ]; do
   case "$1" in
     --issue)
@@ -2434,6 +2532,15 @@ while [ $# -gt 0 ]; do
       RELEASE_TARGET_ROOT="$2"
       shift 2
       ;;
+    --linear-readback)
+      if [ $# -lt 2 ] || [ -z "$2" ] || [ "${2#--}" != "$2" ]; then
+        echo "--linear-readback requires a nonempty read-back file path." >&2
+        exit 2
+      fi
+      LINEAR_READBACK="$2"
+      LINEAR_READBACK_SET=true
+      shift 2
+      ;;
     --merge-session)
       if [ $# -lt 2 ] || [ -z "$2" ] || [ "${2#--}" != "$2" ]; then
         echo "--merge-session requires a nonempty session path." >&2
@@ -2463,6 +2570,26 @@ while [ $# -gt 0 ]; do
       ;;
   esac
 done
+
+# Validate --linear-readback before any session check, lease or mutation (#2009).
+if [ "$LINEAR_READBACK_SET" = "true" ]; then
+  if [ "$TRACKER_PROVIDER" != "linear" ]; then
+    echo "--linear-readback is only supported with issue_tracker.provider: linear." >&2
+    exit 2
+  fi
+  if [ -n "$MERGE_SESSION" ]; then
+    echo "--linear-readback is not supported with --merge-session." >&2
+    exit 2
+  fi
+  case "$LINEAR_READBACK" in
+    /*) ;;
+    *) LINEAR_READBACK="$CLEANUP_INVOCATION_DIR/$LINEAR_READBACK" ;;
+  esac
+  if [ ! -f "$LINEAR_READBACK" ] || [ ! -r "$LINEAR_READBACK" ]; then
+    echo "--linear-readback must name a readable regular file: $LINEAR_READBACK" >&2
+    exit 2
+  fi
+fi
 
 if [ -n "$RELEASE_TARGET_ROOT" ]; then
   if [ "$INSPECT_TARGETS" != "true" ] || [ -n "$MERGE_SESSION" ]; then
@@ -2734,6 +2861,28 @@ if [ "$TRACKER_PROVIDER" = "linear" ]; then
       LINEAR_STAMP_FAILED=$((LINEAR_STAMP_FAILED + 1))
     fi
   done
+  # Verified completion from the operator's independent read-back (#2009).
+  # Projects with a configured release_field keep the existing handoff.
+  LINEAR_VERIFICATION_EXIT=""
+  if [ -n "$(workflow_issue_tracker_custom_field release_field)" ]; then
+    if [ "$LINEAR_READBACK_SET" = "true" ]; then
+      echo "LINEAR_RELEASE_VERIFICATION_SKIPPED reason=release_field_configured" >&2
+    fi
+  else
+    run_linear_release_verification
+    while IFS= read -r verification_line; do
+      cleanup_log "$verification_line"
+    done <<< "$LINEAR_VERIFICATION_OUTPUT"
+  fi
+  if [ "$LINEAR_VERIFICATION_EXIT" = "0" ]; then
+    cleanup_log "Linear release verified: every in-scope item was read back with the release label and '$RELEASED_LABEL'."
+    cleanup_log "STAMPED=$LINEAR_STAMPED STAMP_SKIPPED=$LINEAR_STAMP_SKIPPED STAMP_FAILED=$LINEAR_STAMP_FAILED UPDATED=0 SKIPPED=0 FAILED=0"
+    if [ "$COMPONENT_JSON_MODE" = "true" ]; then
+      emit_component_cleanup_json "complete" "true" "complete"
+    fi
+    cleanup_log "Release post-merge cleanup complete."
+    exit 0
+  fi
   cleanup_log "Linear tracker detected: automatic '$MERGED_LABEL' -> '$RELEASED_LABEL' transitions are not supported by this script."
   cleanup_log "Manually transition the following issue(s) to '$RELEASED_LABEL' in Linear (via MCP server or API):"
   for issue in "${ISSUE_NUMBERS[@]}"; do
