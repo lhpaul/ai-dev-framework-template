@@ -404,8 +404,10 @@ The evaluator parses a structured JSON file, so this addendum applies.
   Incomplete.
 - [ ] `docs/workflow/development-workflow/integrations/linear.md` — Release
   Stamping: the D2 schema with one example, how to read items independently,
-  the starting point and its local scope (D6), the outcome lines (D8), and
-  that release-field projects keep the existing handoff.
+  the starting point and its local scope (D6), that every run evaluates only
+  the reads supplied to it, so a re-run supplies reads for every in-scope item
+  and not only the fixed ones (spec BR11), the outcome lines (D8), and that
+  release-field projects keep the existing handoff.
 - [ ] `scripts/development-workflow/README.md` — the cleanup entry gains the
   flag and the Complete/Incomplete meaning; add an entry for
   `linear-release-verification.py`.
