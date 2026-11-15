@@ -120,6 +120,23 @@ matching reason (`mismatch`, `mismatch`, `stale`, `unreadable`,
 **Expected result**: the status is printed JSON-encoded on the item's own
 line; the only outcome line reads `LINEAR_RELEASE_OUTCOME=incomplete`.
 
+### Step 6b: Unsupported identifiers and a broken evaluator fail closed
+
+**Maps to**: plan D3 and D11
+
+1. Run the evaluator with scope `232` (a numeric identifier) and no
+   `--readback`.
+2. Optional: in a disposable fixture, replace the helper with a stub that
+   exits 0 while printing `LINEAR_RELEASE_OUTCOME=incomplete`, then run
+   cleanup with `--linear-readback` (the I9 case of the cleanup suite does
+   this).
+
+**Expected result**: `232` is `not_verified` with reason
+`unsupported_identifier`, and the label action line shows `teams=none`. The
+stubbed run prints only
+`LINEAR_RELEASE_VERIFICATION_UNAVAILABLE reason=evaluator_contract`, keeps the
+existing handoff and exits 1.
+
 ### Step 7: Cleanup wiring and GitHub behaviour
 
 **Maps to**: AC7, AC9, AC13, AC14
