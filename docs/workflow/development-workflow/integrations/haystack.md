@@ -65,6 +65,37 @@ Use Haystack in three layers, each with a different failure mode:
 
 Prefer deterministic checks for rules that can be expressed mechanically. Keep `.haystack/pr-rules.yml` focused on judgement calls: shell control-flow risk, review-state freshness, unsafe API payload construction, and workflow-contract drift. When Haystack reports a non-blocking finding, record the disposition in the reviewer-loop summary instead of silently ignoring it.
 
+**Reading `action_required` with a positive rating.** A `Haystack / Review`
+check run that concludes `action_required` while its summary shows a positive
+rating (for example `5/5`) and `**Findings:** 0` is a review-policy flag, not
+a code-finding failure. Haystack's review-policy rules matched content that
+they route to a human, such as a security-sensitive migration or a
+permissions change. Read it as "Haystack requests a human look at this PR",
+not as "the automated check found problems". It differs in kind from a
+`failure` conclusion that lists findings and from a reviewer-loop
+`RESULT=needs_fixes`, which require code changes. The reviewer loop handles
+it as follows:
+
+- `haystack-reviewer.sh` decides from the findings the check run reports, not
+  from its conclusion alone. When the `Haystack / Review` check run is
+  the result source (the check-run fallback) and it concludes
+  `action_required` with no category lines and an explicit `**Findings:** 0`,
+  the result is `RESULT=clean` with `BLOCKING_COUNT=0`; no code change is
+  needed to clear it. If the summary has no parseable category lines and no
+  explicit zero findings count, the adapter fails closed to
+  `RESULT=needs_fixes`.
+- When the CLI path completes, the same policy signal arrives through
+  `haystack pr-status` (`needsHumanReview: true` or
+  `analysisVerdict: "needs-review"`). With no blocking findings the result
+  stays `RESULT=clean`, and the summary comment shows
+  `haystack (needs-review: policy)` with `disposition=policy-human-review` in
+  its policy acknowledgements.
+
+In both cases the PR still goes to human review; the flag tells the reviewer
+to look closely at the policy-matched content, not to wait for a fix. See
+[`haystack-triage.md` → Review Policy Verdicts](haystack-triage.md#review-policy-verdicts)
+for the full output contract.
+
 Mirror guidance is calibrated against the live repository surface map. For this template, the mirrored agent-doc surfaces are the files under `.claude/agents/` and `.cursor/agents/`, while `.cursor/skills/` is intentionally absent and must not be treated as a required mirror. Tool-specific front matter differences are advisory unless the shared workflow body really diverges.
 
 For repositories that open implementation PRs as drafts, configure Haystack in
