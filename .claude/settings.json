@@ -22,10 +22,6 @@
       "WebFetch(domain:github.com)"
     ],
     "deny": [
-      "Read(**/.ai-dev-workflow.local.yaml)",
-      "Read(**/.ai-dev-workflow.local.yaml.*)",
-      "Read(**/.ai-dev-workflow.local.yml)",
-      "Read(**/.ai-dev-workflow.local.yml.*)",
       "Read(**/.ai-dev-workflow.local.env)",
       "Read(**/.ai-dev-workflow.local.env.bak)",
       "Read(**/.ai-dev-workflow.local.env.retired)",

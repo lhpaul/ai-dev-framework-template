@@ -975,14 +975,18 @@ sys.exit(rc)
         self.assertIn('Bash(git status:*)', policy['allow'])
         for operation in ('Read', 'Edit'):
             patterns = [rule[len(operation)+1:-1] for rule in policy['deny'] if rule.startswith(operation + '(')]
-            for name in ('.ai-dev-workflow.local.yaml', '.ai-dev-workflow.local.env', 'private.key',
+            denied = lambda name: any(fnmatch.fnmatch('fixture/' + name, pattern) for pattern in patterns)
+            for name in ('.ai-dev-workflow.local.env', '.ai-dev-workflow.local.private.yaml', 'private.key',
                          'service-key.pem', 'id_ed25519', 'credentials.json'):
-                self.assertTrue(any(fnmatch.fnmatch('fixture/' + name, pattern) for pattern in patterns), (operation, name))
+                self.assertTrue(denied(name), (operation, name))
             for name in public:
-                self.assertFalse(any(fnmatch.fnmatch('fixture/' + name, pattern) for pattern in patterns), (operation, name))
+                self.assertFalse(denied(name), (operation, name))
+            # The shared local workflow config holds no secret values: agents read it, but do not edit it.
+            self.assertEqual(denied('.ai-dev-workflow.local.yaml'), operation == 'Edit', operation)
         guidance = (ROOT / 'AGENTS.md').read_text()
         self.assertIn('not agent inspection or editing targets', guidance)
-        self.assertIn('Authorized protocol scripts deliberately read', guidance)
+        self.assertIn('Agents may read it and run protocol scripts that read it', guidance)
+        self.assertIn('Protocol scripts read the selected local configuration', guidance)
         self.assertIn('disposable synthetic repositories', guidance)
 
     @unittest.skipUnless(IS_TEMPLATE, "release fragments belong to the template repository")
