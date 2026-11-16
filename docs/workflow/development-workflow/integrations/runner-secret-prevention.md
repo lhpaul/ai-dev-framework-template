@@ -1,6 +1,6 @@
 # Private runner configuration: upgrade and prevention
 
-> `.ai-dev-workflow.local.yaml` is machine-local (never committed) but not secret: it holds paths,
+> `.ai-dev-workflow.local.yaml` (or `.yml`) is machine-local (never committed) but not secret: it holds paths,
 > settings and secret references, never secret values. Agents may read it and run protocol scripts
 > that read it; they do not edit it unless asked. Secret values belong in `.ai-dev-workflow.local.env`,
 > `.ai-dev-workflow.local.private.*`, env files or a secret manager, which agents never inspect.
