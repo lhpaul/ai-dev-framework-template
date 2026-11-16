@@ -962,7 +962,8 @@ sys.exit(rc)
         subprocess.run(['git', 'init', '-q', str(self.checkout)], check=True, capture_output=True)
         shutil.copyfile(ROOT / '.gitignore', self.checkout / '.gitignore')
         private = ('.ai-dev-workflow.local.yaml', '.ai-dev-workflow.local.yaml.retired',
-                   '.ai-dev-workflow.local.private.yaml', '.ai-dev-workflow.local.env',
+                   '.ai-dev-workflow.local.private.yaml', '.ai-dev-workflow.local.private.json',
+                   '.ai-dev-workflow.local.env',
                    '.ai-dev-workflow.local.env.bak', '.env', '.env.production', '.env.local',
                    'private.key', 'service-key.pem', 'service.private.pem', 'private_key.pem',
                    'id_rsa', 'id_ed25519', '.netrc', '.aws/credentials', 'credentials.json')
@@ -976,8 +977,9 @@ sys.exit(rc)
         for operation in ('Read', 'Edit'):
             patterns = [rule[len(operation)+1:-1] for rule in policy['deny'] if rule.startswith(operation + '(')]
             denied = lambda name: any(fnmatch.fnmatch('fixture/' + name, pattern) for pattern in patterns)
-            for name in ('.ai-dev-workflow.local.env', '.ai-dev-workflow.local.private.yaml', 'private.key',
-                         'service-key.pem', 'id_ed25519', 'credentials.json'):
+            for name in ('.ai-dev-workflow.local.env', '.ai-dev-workflow.local.private.yaml',
+                         '.ai-dev-workflow.local.private.json', '.ai-dev-workflow.local.private.yaml.bak',
+                         'private.key', 'service-key.pem', 'id_ed25519', 'credentials.json'):
                 self.assertTrue(denied(name), (operation, name))
             for name in public:
                 self.assertFalse(denied(name), (operation, name))
