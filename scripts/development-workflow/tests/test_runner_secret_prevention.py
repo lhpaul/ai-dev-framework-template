@@ -979,12 +979,15 @@ sys.exit(rc)
             denied = lambda name: any(fnmatch.fnmatch('fixture/' + name, pattern) for pattern in patterns)
             for name in ('.ai-dev-workflow.local.env', '.ai-dev-workflow.local.private.yaml',
                          '.ai-dev-workflow.local.private.json', '.ai-dev-workflow.local.private.yaml.bak',
+                         '.ai-dev-workflow.local.yaml.retired', '.ai-dev-workflow.local.yml.bak',
                          'private.key', 'service-key.pem', 'id_ed25519', 'credentials.json'):
                 self.assertTrue(denied(name), (operation, name))
             for name in public:
                 self.assertFalse(denied(name), (operation, name))
             # The shared local workflow config holds no secret values: agents read it, but do not edit it.
-            self.assertEqual(denied('.ai-dev-workflow.local.yaml'), operation == 'Edit', operation)
+            # Its backups (.yaml.*, .yml.*) may predate that rule, so they stay denied for both above.
+            for name in ('.ai-dev-workflow.local.yaml', '.ai-dev-workflow.local.yml'):
+                self.assertEqual(denied(name), operation == 'Edit', (operation, name))
         guidance = (ROOT / 'AGENTS.md').read_text()
         self.assertIn('not agent inspection or editing targets', guidance)
         self.assertIn('Agents may read it and run protocol scripts that read it', guidance)

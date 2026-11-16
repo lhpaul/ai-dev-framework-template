@@ -561,7 +561,7 @@ guardrails:
 
 Important implementation notes:
 
-- Repository mode fields are `mode`, `workflow_hub.product_repos[]`, and `product_repo.workflow_hub`. Shared product repository entries may contain stable non-secret identity and metadata such as `name`, `github_repo` or `git_url`, `default_branch`, `role`, `scope`, `tracker` hints, and non-secret app identifiers. Local checkout paths, private key paths, secret values, and machine-specific tool settings belong only in `.ai-dev-workflow.local.yaml`. See [`repository-modes.md`](repository-modes.md) and [`integrations/workflow-hub-github-app.md`](integrations/workflow-hub-github-app.md) for examples and validation commands.
+- Repository mode fields are `mode`, `workflow_hub.product_repos[]`, and `product_repo.workflow_hub`. Shared product repository entries may contain stable non-secret identity and metadata such as `name`, `github_repo` or `git_url`, `default_branch`, `role`, `scope`, `tracker` hints, and non-secret app identifiers. Local checkout paths, private key paths, secret references (`secret_ref`), and machine-specific tool settings belong only in `.ai-dev-workflow.local.yaml`. Secret values never go there: keep them in `.ai-dev-workflow.local.env`, a `.ai-dev-workflow.local.private.*` file or a secret manager. See [`repository-modes.md`](repository-modes.md) and [`integrations/workflow-hub-github-app.md`](integrations/workflow-hub-github-app.md) for examples and validation commands.
 - Product-repository-aware orchestration scripts emit ownership fields such as
   `WORKFLOW_MODE`, `ACTION_REPOSITORY_KIND`, `ACTION_REPOSITORY`, and
   `ACTION_GITHUB_REPO` so orchestrators can distinguish hub-owned planning work
