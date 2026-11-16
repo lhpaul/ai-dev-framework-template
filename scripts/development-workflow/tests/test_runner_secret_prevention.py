@@ -962,7 +962,8 @@ sys.exit(rc)
         subprocess.run(['git', 'init', '-q', str(self.checkout)], check=True, capture_output=True)
         shutil.copyfile(ROOT / '.gitignore', self.checkout / '.gitignore')
         private = ('.ai-dev-workflow.local.yaml', '.ai-dev-workflow.local.yaml.retired',
-                   '.ai-dev-workflow.local.private.yaml', '.ai-dev-workflow.local.env',
+                   '.ai-dev-workflow.local.private.yaml', '.ai-dev-workflow.local.private.json',
+                   '.ai-dev-workflow.local.env',
                    '.ai-dev-workflow.local.env.bak', '.env', '.env.production', '.env.local',
                    'private.key', 'service-key.pem', 'service.private.pem', 'private_key.pem',
                    'id_rsa', 'id_ed25519', '.netrc', '.aws/credentials', 'credentials.json')
@@ -975,14 +976,22 @@ sys.exit(rc)
         self.assertIn('Bash(git status:*)', policy['allow'])
         for operation in ('Read', 'Edit'):
             patterns = [rule[len(operation)+1:-1] for rule in policy['deny'] if rule.startswith(operation + '(')]
-            for name in ('.ai-dev-workflow.local.yaml', '.ai-dev-workflow.local.env', 'private.key',
-                         'service-key.pem', 'id_ed25519', 'credentials.json'):
-                self.assertTrue(any(fnmatch.fnmatch('fixture/' + name, pattern) for pattern in patterns), (operation, name))
+            denied = lambda name: any(fnmatch.fnmatch('fixture/' + name, pattern) for pattern in patterns)
+            for name in ('.ai-dev-workflow.local.env', '.ai-dev-workflow.local.private.yaml',
+                         '.ai-dev-workflow.local.private.json', '.ai-dev-workflow.local.private.yaml.bak',
+                         '.ai-dev-workflow.local.yaml.retired', '.ai-dev-workflow.local.yml.bak',
+                         'private.key', 'service-key.pem', 'id_ed25519', 'credentials.json'):
+                self.assertTrue(denied(name), (operation, name))
             for name in public:
-                self.assertFalse(any(fnmatch.fnmatch('fixture/' + name, pattern) for pattern in patterns), (operation, name))
+                self.assertFalse(denied(name), (operation, name))
+            # The shared local workflow config holds no secret values: agents read it, but do not edit it.
+            # Its backups (.yaml.*, .yml.*) may predate that rule, so they stay denied for both above.
+            for name in ('.ai-dev-workflow.local.yaml', '.ai-dev-workflow.local.yml'):
+                self.assertEqual(denied(name), operation == 'Edit', (operation, name))
         guidance = (ROOT / 'AGENTS.md').read_text()
         self.assertIn('not agent inspection or editing targets', guidance)
-        self.assertIn('Authorized protocol scripts deliberately read', guidance)
+        self.assertIn('Agents may read it and run protocol scripts that read it', guidance)
+        self.assertIn('Protocol scripts read the selected local configuration', guidance)
         self.assertIn('disposable synthetic repositories', guidance)
 
     @unittest.skipUnless(IS_TEMPLATE, "release fragments belong to the template repository")

@@ -22,9 +22,7 @@
       "WebFetch(domain:github.com)"
     ],
     "deny": [
-      "Read(**/.ai-dev-workflow.local.yaml)",
       "Read(**/.ai-dev-workflow.local.yaml.*)",
-      "Read(**/.ai-dev-workflow.local.yml)",
       "Read(**/.ai-dev-workflow.local.yml.*)",
       "Read(**/.ai-dev-workflow.local.env)",
       "Read(**/.ai-dev-workflow.local.env.bak)",
@@ -74,11 +72,9 @@
       "Edit(**/credentials.json)",
       "Edit(**/credentials.yaml)",
       "Edit(**/credentials.yml)",
-      "Read(**/.ai-dev-workflow.local.private.yaml)",
-      "Read(**/.ai-dev-workflow.local.private.env)",
+      "Read(**/.ai-dev-workflow.local.private.*)",
       "Read(**/.claude/settings.local.json)",
-      "Edit(**/.ai-dev-workflow.local.private.yaml)",
-      "Edit(**/.ai-dev-workflow.local.private.env)",
+      "Edit(**/.ai-dev-workflow.local.private.*)",
       "Edit(**/.claude/settings.local.json)"
     ]
   }
