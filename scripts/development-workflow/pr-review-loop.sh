@@ -8868,12 +8868,26 @@ run_coderabbit_review() {
         # CodeRabbit didn't review this HEAD. Check for stale findings before skipping.
         # Only consider unresolved inline comments here. Exclude resolved findings
         # (replies starting with ✅ resolve their parent comment) — same pattern as Devin.
+        #
+        # Also exclude comments whose GraphQL review thread is resolved (#1578).
+        # A finding keeps its original 🔴/🟠 badge after its thread is resolved,
+        # and the resolution is not always visible as a ✅-prefixed REST reply, so
+        # without this filter a rate-limit exhaustion on a PR whose findings were
+        # all fixed reported needs_fixes for threads nobody can act on. The IDs
+        # come from the same helper the thread gate's REST supplement uses; on a
+        # GraphQL failure it returns [] and this scan keeps its previous,
+        # conservative behavior instead of turning a finding into a false clean.
+        local stale_resolved_ids_json
+        stale_resolved_ids_json="$(get_resolved_thread_comment_ids "$pr_number" "$repo" "${bot_login%\[bot\]}")"
+        if ! printf '%s\n' "${stale_resolved_ids_json:-}" | jq -e 'type == "array"' >/dev/null 2>&1; then
+          stale_resolved_ids_json="[]"
+        fi
         local stale_count=0
         local stale_blocking_count=0
         local stale_comments
         stale_comments="$(
           workflow_command_with_safe_stderr gh api "repos/$repo/pulls/$pr_number/comments" --paginate \
-            | jq -s -r --arg bot "$bot_login" '
+            | jq -s -r --arg bot "$bot_login" --argjson thread_resolved_ids "$stale_resolved_ids_json" '
                 (
                   [
                     .[][]
@@ -8891,7 +8905,8 @@ run_coderabbit_review() {
                     .in_reply_to_id == null and
                     ((.body // "") | test("^✅") | not) and
                     ((.body // "") | test("✅ Addressed") | not) and
-                    (.id as $comment_id | ($resolved_ids | index($comment_id) | not))
+                    (.id as $comment_id | ($resolved_ids | index($comment_id) | not)) and
+                    (.id as $comment_id | ($thread_resolved_ids | index($comment_id) | not))
                   )
                 | { path, line: (.line // .original_line // 0), body: (.body // ""), commit_id: (.commit_id // "") }
                 | @json
