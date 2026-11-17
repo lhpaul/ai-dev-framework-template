@@ -837,9 +837,10 @@ bot_login_for_platform() {
   esac
 }
 
-print_kv_escaped() {
-  local value="$2" control escaped code octal
-  local LC_ALL=C
+# Escape one bounded chunk into _WORKFLOW_KV_ESCAPED_CHUNK. Callers set
+# LC_ALL=C (dynamic scope) so every expansion below is byte-oriented.
+_workflow_kv_escape_chunk() {
+  local value="$1" control escaped code octal
   value="${value//\\/\\\\}"
   value="${value//$'\r'/\\r}"
   value="${value//$'\n'/\\n}"
@@ -864,7 +865,40 @@ print_kv_escaped() {
       value="${value//$control/$escaped}"
     done
   fi
-  printf '%s=%s\n' "$1" "$value"
+  _WORKFLOW_KV_ESCAPED_CHUNK="$value"
+}
+
+# Bash 3.2's ${var//pattern/replacement} is quadratic in the string length
+# (issue #1539: 58 KB took 18 s). A value longer than one chunk is therefore
+# streamed: read 512 bytes at a time, escape each chunk and print it at once.
+# Slicing or accumulating the whole string would copy it once per chunk and
+# stay quadratic. Every escape maps one byte, or one UTF-8 C1 pair (\302
+# followed by \200-\237), to a fixed spelling, so escaping chunks
+# independently is byte-identical to escaping the whole value as long as no
+# chunk splits such a pair: a chunk-final \302 is carried into the next chunk.
+print_kv_escaped() {
+  local value="$2" chunk="" carry="" status=0
+  local LC_ALL=C
+  if [ "${#value}" -le 512 ]; then
+    _workflow_kv_escape_chunk "$value"
+    printf '%s=%s\n' "$1" "$_WORKFLOW_KV_ESCAPED_CHUNK"
+    return
+  fi
+  printf '%s=' "$1" || status=$?
+  while IFS= read -r -d '' -n 512 chunk || [ -n "$chunk" ]; do
+    chunk="$carry$chunk"
+    carry=""
+    if [ "${chunk: -1}" = $'\302' ]; then
+      carry=$'\302'
+      chunk="${chunk%?}"
+    fi
+    _workflow_kv_escape_chunk "$chunk"
+    printf '%s' "$_WORKFLOW_KV_ESCAPED_CHUNK" || status=$?
+    chunk=""
+  done < <(printf '%s' "$value")
+  # A lone trailing \302 is not a C1 pair and is printed unchanged.
+  printf '%s\n' "$carry" || status=$?
+  return "$status"
 }
 
 soft_suggestion_prefixes() {
