@@ -40,11 +40,9 @@ SHELLS=()
 add_shell() {
   local candidate="$1" existing
   [ -n "$candidate" ] && [ -x "$candidate" ] || return 0
-  if [ "${#SHELLS[@]}" -gt 0 ]; then
-    for existing in "${SHELLS[@]}"; do
-      [ "$existing" = "$candidate" ] && return 0
-    done
-  fi
+  for existing in ${SHELLS[@]+"${SHELLS[@]}"}; do
+    [ "$existing" = "$candidate" ] && return 0
+  done
   SHELLS+=("$candidate")
 }
 add_shell "${BASH:-}"
@@ -130,7 +128,7 @@ for name, data in cases.items():
 PY
 
 # AC-1: byte-identical to the original across every fixture, in every shell.
-for shell in "${SHELLS[@]}"; do
+for shell in ${SHELLS[@]+"${SHELLS[@]}"}; do
   version="$("$shell" -c 'printf %s "$BASH_VERSION"')"
   mismatches=""
   for fixture in "$FIXTURES"/*; do
@@ -176,7 +174,7 @@ decoded = re.sub(rb"\\(?:[\\rnt]|x[0-9a-f]{2}|u00[89][0-9a-f])", decode, body)
 if decoded != source:
     sys.exit("decoded value differs from the input")
 PY
-for shell in "${SHELLS[@]}"; do
+for shell in ${SHELLS[@]+"${SHELLS[@]}"}; do
   version="$("$shell" -c 'printf %s "$BASH_VERSION"')"
   failures=""
   for fixture in "$FIXTURES"/*; do
@@ -205,7 +203,7 @@ large_bytes="$(wc -c <"$LARGE" | tr -d ' ')"
 
 # AC-2 / AC-3: runtime bound in every shell. The run is killed at the bound so
 # a quadratic regression fails here instead of hanging the suite.
-for shell in "${SHELLS[@]}"; do
+for shell in ${SHELLS[@]+"${SHELLS[@]}"}; do
   version="$("$shell" -c 'printf %s "$BASH_VERSION"')"
   timing_status=0
   elapsed="$(python3 - "$RUNTIME_BOUND_SECONDS" "$WORK_DIR/large.out" "$shell" -c \
