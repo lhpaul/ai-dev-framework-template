@@ -837,9 +837,10 @@ bot_login_for_platform() {
   esac
 }
 
-print_kv_escaped() {
-  local value="$2" control escaped code octal
-  local LC_ALL=C
+# Escape one bounded chunk into _WORKFLOW_KV_ESCAPED_CHUNK. Callers set
+# LC_ALL=C (dynamic scope) so every expansion below is byte-oriented.
+_workflow_kv_escape_chunk() {
+  local value="$1" control escaped code octal
   value="${value//\\/\\\\}"
   value="${value//$'\r'/\\r}"
   value="${value//$'\n'/\\n}"
@@ -864,7 +865,32 @@ print_kv_escaped() {
       value="${value//$control/$escaped}"
     done
   fi
-  printf '%s=%s\n' "$1" "$value"
+  _WORKFLOW_KV_ESCAPED_CHUNK="$value"
+}
+
+# Bash 3.2's ${var//pattern/replacement} is quadratic in the string length
+# (issue #1539: 58 KB took 18 s). Escape bounded chunks instead so the cost is
+# linear in the input. Every escape maps one byte, or one UTF-8 C1 pair
+# (\302 followed by \200-\237), to a fixed spelling, so escaping chunks
+# independently is byte-identical to escaping the whole value as long as no
+# chunk splits such a pair.
+print_kv_escaped() {
+  local value="$2" escaped_value="" length offset=0 size next
+  local LC_ALL=C
+  length=${#value}
+  while [ "$offset" -lt "$length" ]; do
+    size=512
+    if [ $((offset + size)) -lt "$length" ] && [ "${value:offset+size-1:1}" = $'\302' ]; then
+      next="${value:offset+size:1}"
+      if [[ "$next" == [$'\200'-$'\237'] ]]; then
+        size=$((size + 1))
+      fi
+    fi
+    _workflow_kv_escape_chunk "${value:offset:size}"
+    escaped_value+="$_WORKFLOW_KV_ESCAPED_CHUNK"
+    offset=$((offset + size))
+  done
+  printf '%s=%s\n' "$1" "$escaped_value"
 }
 
 soft_suggestion_prefixes() {
