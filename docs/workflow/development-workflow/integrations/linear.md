@@ -64,6 +64,8 @@ Rules:
   epic is still `Backlog` or `Todo`, the orchestrator sets the epic to
   `In Progress` through the Linear MCP bridge, once, before dispatching
   children. If the epic is already `In Progress` or later, leave it unchanged.
+  The write is best-effort and never blocks child dispatch; Protocol 95 lists
+  the outcomes for an unreadable or unrecognized status and a failed write.
 - **Never from the helpers.** `In Progress` is out of band, like `Cancelled`.
   It is not part of the canonical vocabulary, and
   `tracker-status-for.sh` never resolves it. No helper emits it in

@@ -304,6 +304,23 @@ sub-issue enumeration. Apply this flow instead:
    not in the canonical vocabulary, and `tracker-status-for.sh` never resolves
    it.
 
+   The write is best-effort: no outcome below blocks child dispatch. Record
+   each skip with the Protocol 90 format
+   `TRACKER_SYNC_SKIPPED: issue=<epic-id> action=set_epic_in_progress reason=<reason>`.
+
+   | Live epic status read | Next action |
+   | --- | --- |
+   | `Backlog` or `Todo` | Write `In Progress` once, then read back. |
+   | `In Progress`, a canonical status after `Backlog`, or `Cancelled` | No write. |
+   | Any other or unrecognized status | No write; record `reason=status_unrecognized`. |
+   | Read fails or returns no status | No write, never guess; record `reason=status_read_failed`. |
+
+   | Write and read-back result | Next action |
+   | --- | --- |
+   | Read-back shows `In Progress` | Done. |
+   | The team has no `In Progress` status | Record `reason=status_option_missing`; the human adds the status to the Linear team. |
+   | Write fails, or read-back still differs | Apply the `TRACKER_WRITE_UNCONFIRMED` retry-once rule in [`linear.md`](../integrations/linear.md#priority-drift-detection), then record `reason=write_unconfirmed_after_retry`. |
+
 6. **Keep children on the fine-grained chain** — each child keeps the canonical
    stage chain from
    [`tracker-status-mapping.md`](../tracker-status-mapping.md). Do not move the
