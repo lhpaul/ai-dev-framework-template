@@ -42,6 +42,45 @@ Configure the following statuses in your Linear team settings:
 | Merged                | Feature/fix PR merged to `develop`                                                                 |
 | Released              | Released to production                                                                             |
 
+#### Epic parents: `In Progress`
+
+A Linear parent **Epic** does not walk the chain above. Its children do. The
+epic itself uses one extra status, `In Progress`, while its children are in
+flight. Add `In Progress` to your Linear team statuses if your team runs epics.
+
+| Linear Status | Applies to       | Meaning                                                  |
+| ------------- | ---------------- | -------------------------------------------------------- |
+| In Progress   | Epic parent only | At least one child is active; the epic outcome is open.  |
+
+Rules:
+
+- **Children keep the fine-grained chain.** Each child moves through
+  `Writing Spec` … `In Development` → `Merged` → `Released` exactly as the
+  table above and [`tracker-status-mapping.md`](../tracker-status-mapping.md)
+  define. Do not move the epic through `Writing Spec`, `In Development`, or
+  `Merged` each time a child reaches that stage.
+- **Set once, by the bridge.** When `/run-epic` starts mutating work
+  ([Protocol 95](../protocols/95-run-epic-protocol.md#linear-provider)) and the
+  epic is still `Backlog` or `Todo`, the orchestrator sets the epic to
+  `In Progress` through the Linear MCP bridge, once, before dispatching
+  children. If the epic is already `In Progress` or later, leave it unchanged.
+  The write is best-effort and never blocks child dispatch; Protocol 95 lists
+  the outcomes for an unreadable or unrecognized status and a failed write.
+- **Never from the helpers.** `In Progress` is out of band, like `Cancelled`.
+  It is not part of the canonical vocabulary, and
+  `tracker-status-for.sh` never resolves it. No helper emits it in
+  `TRACKER_ACTION_REQUIRED=set_status`. Never apply it to a child item.
+- **`Released` only after production acceptance.** Move the epic to
+  `Released` only when the epic outcome is accepted in production. A child
+  reaching `Released`, or every child being `Merged`, is not enough on its own.
+- **Forward-only order.** For the bridge's forward-only check below, an epic in
+  `In Progress` is before every canonical status, so a later canonical
+  transition for the epic (for example graduation closeout toward `Merged`, or
+  `Released`) still applies.
+
+GitHub Projects boards are unaffected: this exception exists only for Linear
+epic parents.
+
 ### Labels
 
 **Type labels** (one per work item):
@@ -132,7 +171,10 @@ the update when the item is already at or beyond the target in
 [`tracker-status-mapping.md`](../tracker-status-mapping.md) (e.g. target
 `Merged` while the item is `Released`), recording the skip. Helpers may still
 emit `TRACKER_ACTION_REQUIRED=set_status` on re-runs; the bridge must not
-regress status.
+regress status. An epic parent in the out-of-band `In Progress` status
+([Epic parents](#epic-parents-in-progress)) counts as before every canonical
+status. The one-time `In Progress` write for an epic is the orchestrator's own
+Protocol 95 step, not a deferred action.
 
 **Quoting convention**: when a field value contains spaces, it is
 single-quoted in the output — for example, `target_status='Plan in Review'`

@@ -293,6 +293,43 @@ sub-issue enumeration. Apply this flow instead:
    Apply the statuses from your pre-resolved context when grouping items as
    eligible, blocked, in review, etc.
 
+5. **Set the epic parent to `In Progress` once** — for `--epic`, after the
+   policy is confirmed and before dispatching the first child, read the epic's
+   live Linear status via MCP. If it is `Backlog` or `Todo`, set it to
+   `In Progress` via the Linear MCP, once, and read it back. If it is already
+   `In Progress` or later, leave it unchanged. This is the only time
+   `/run-epic` writes `In Progress`. `In Progress` is an out-of-band, epic-only
+   Linear status
+   ([`linear.md`](../integrations/linear.md#epic-parents-in-progress)); it is
+   not in the canonical vocabulary, and `tracker-status-for.sh` never resolves
+   it.
+
+   The write is best-effort: no outcome below blocks child dispatch. Record
+   each skip with the Protocol 90 format
+   `TRACKER_SYNC_SKIPPED: issue=<epic-id> action=set_epic_in_progress reason=<reason>`.
+
+   | Live epic status read | Next action |
+   | --- | --- |
+   | `Backlog` or `Todo` | Write `In Progress` once, then read back. |
+   | `In Progress`, a canonical status after `Backlog`, or `Cancelled` | No write. |
+   | Any other or unrecognized status | No write; record `reason=status_unrecognized`. |
+   | Read fails or returns no status | No write, never guess; record `reason=status_read_failed`. |
+
+   | Write and read-back result | Next action |
+   | --- | --- |
+   | Read-back shows `In Progress` | Done. |
+   | The team has no `In Progress` status | Record `reason=status_option_missing`; the human adds the status to the Linear team. |
+   | Write fails, or read-back still differs | Apply the `TRACKER_WRITE_UNCONFIRMED` retry-once rule in [`linear.md`](../integrations/linear.md#priority-drift-detection), then record `reason=write_unconfirmed_after_retry`. |
+
+6. **Keep children on the fine-grained chain** — each child keeps the canonical
+   stage chain from
+   [`tracker-status-mapping.md`](../tracker-status-mapping.md). Do not move the
+   epic through `Writing Spec`, `In Development`, or `Merged` as each child
+   reaches that stage, and never set a child to `In Progress`. At closeout
+   (Step 11), move the epic to `Released` only when the epic outcome is
+   accepted in production; every child being merged or released is not enough
+   on its own.
+
 See [`linear.md`](../integrations/linear.md) for the bridge pattern and the
 full `TRACKER_ACTION_REQUIRED=` reference table.
 
@@ -857,7 +894,10 @@ When all gates permit merge:
 After the final native child item reaches a terminal state, verify live native
 sub-issues and Project statuses before closing the parent epic or marking it
 complete. Do not close the parent epic from stale memory, branch names, or prior
-resolver output alone.
+resolver output alone. On a Linear tracker, the epic parent stays
+`In Progress` (or moves to `Merged` through graduation closeout) until the
+epic outcome is accepted in production; only then move it to `Released`
+([Step 2, Linear provider, steps 5 and 6](#linear-provider)).
 
 Stop only when all in-scope items are merged, remaining items are blocked by a
 real external condition or authority boundary, or the invocation policy forbids

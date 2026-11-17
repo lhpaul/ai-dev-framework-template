@@ -34,6 +34,27 @@ Only these exact strings are valid. Names from other trackers, such as
 `In Progress`, `In Review`, `Todo`, or `Done`, are not aliases. Nothing maps
 them to a canonical value, because mapping them would be a guess.
 
+### Linear Epic Parents: Out-of-Band `In Progress`
+
+There is one documented exception, and it is not part of the vocabulary above.
+On a Linear tracker, a parent **Epic** uses `In Progress` while its children
+are in flight. Like `Cancelled`, it is out of band:
+
+- It applies only to a Linear epic parent, never to a child item and never on
+  GitHub Projects.
+- `tracker-status-for.sh` never resolves it, `--list` never prints it, and no
+  event in the mapping below emits it. Requesting it from the helpers still
+  fails.
+- The orchestrator sets it once, through the Linear MCP bridge, when `/run-epic`
+  starts mutating work and the epic is still `Backlog` or `Todo`. Children
+  keep the canonical chain, and the epic moves to `Released` only after its
+  outcome is accepted in production.
+
+The full rules are in
+[`integrations/linear.md`](integrations/linear.md#epic-parents-in-progress)
+and Protocol 95
+([`protocols/95-run-epic-protocol.md`](protocols/95-run-epic-protocol.md#linear-provider)).
+
 ## Event-to-Status Mapping
 
 The stage is set by the branch that carries the work:
