@@ -293,6 +293,26 @@ sub-issue enumeration. Apply this flow instead:
    Apply the statuses from your pre-resolved context when grouping items as
    eligible, blocked, in review, etc.
 
+5. **Set the epic parent to `In Progress` once** — for `--epic`, after the
+   policy is confirmed and before dispatching the first child, read the epic's
+   live Linear status via MCP. If it is `Backlog` or `Todo`, set it to
+   `In Progress` via the Linear MCP, once, and read it back. If it is already
+   `In Progress` or later, leave it unchanged. This is the only time
+   `/run-epic` writes `In Progress`. `In Progress` is an out-of-band, epic-only
+   Linear status
+   ([`linear.md`](../integrations/linear.md#epic-parents-in-progress)); it is
+   not in the canonical vocabulary, and `tracker-status-for.sh` never resolves
+   it.
+
+6. **Keep children on the fine-grained chain** — each child keeps the canonical
+   stage chain from
+   [`tracker-status-mapping.md`](../tracker-status-mapping.md). Do not move the
+   epic through `Writing Spec`, `In Development`, or `Merged` as each child
+   reaches that stage, and never set a child to `In Progress`. At closeout
+   (Step 11), move the epic to `Released` only when the epic outcome is
+   accepted in production; every child being merged or released is not enough
+   on its own.
+
 See [`linear.md`](../integrations/linear.md) for the bridge pattern and the
 full `TRACKER_ACTION_REQUIRED=` reference table.
 
@@ -857,7 +877,10 @@ When all gates permit merge:
 After the final native child item reaches a terminal state, verify live native
 sub-issues and Project statuses before closing the parent epic or marking it
 complete. Do not close the parent epic from stale memory, branch names, or prior
-resolver output alone.
+resolver output alone. On a Linear tracker, the epic parent stays
+`In Progress` (or moves to `Merged` through graduation closeout) until the
+epic outcome is accepted in production; only then move it to `Released`
+([Step 2, Linear provider](#linear-provider)).
 
 Stop only when all in-scope items are merged, remaining items are blocked by a
 real external condition or authority boundary, or the invocation policy forbids
