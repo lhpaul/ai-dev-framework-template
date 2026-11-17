@@ -4,14 +4,14 @@
 #
 # Issue #1539: on bash 3.2 (macOS /bin/bash) each ${var//pattern/repl} pass is
 # quadratic in the string length, so a 58 KB value took 18 s and 117 KB did not
-# finish in two minutes. print_kv_escaped now escapes bounded chunks.
+# finish in two minutes. print_kv_escaped now streams bounded chunks.
 #
 # Every case runs under each available bash: the invoking one, /bin/bash and
 # Homebrew bash. On macOS /bin/bash is 3.2, the shell that exposed the blowup.
 #
 # Usage: bash scripts/development-workflow/tests/test-workflow-lib-print-kv-escaped.sh
 # covers: scripts/development-workflow/workflow-lib.sh
-# duration: 10
+# duration: 30
 
 set -euo pipefail
 
@@ -24,9 +24,16 @@ LIB="$REPO_ROOT/scripts/development-workflow/workflow-lib.sh"
 # bash 3.2. The margin absorbs slow CI runners without hiding a regression.
 RUNTIME_BOUND_SECONDS=5
 # Structural bound: no full-string expansion pass may see more than one chunk
-# (512 bytes, plus one byte to keep a UTF-8 C1 pair whole). This catches a
-# return to whole-string passes even on bash versions where it is not slow.
+# (512 bytes, plus one carried byte that keeps a UTF-8 C1 pair whole). This
+# catches a return to whole-string passes even on bash versions where it is
+# not slow.
 MAX_CHUNK_BYTES=513
+# Scaling bound: escaping 8x the input may cost at most this many times as
+# much. Linear work scores about 8; slicing or accumulating the whole string
+# per chunk scored above 20 at these sizes, and whole-string passes time out.
+SCALING_INPUT_FACTOR=8
+SCALING_RATIO_BOUND=14
+SCALING_TIMEOUT_SECONDS=60
 
 PASS=0
 FAIL=0
@@ -79,6 +86,25 @@ legacy_print_kv_escaped() {
   printf '%s=%s\n' "$1" "$value"
 }
 LEGACY
+
+# Runs a command with stdout to a file and a hard timeout; prints the elapsed
+# seconds, or "timeout" (exit 1) when the bound is hit.
+cat >"$WORK_DIR/timed.py" <<'PY'
+import subprocess
+import sys
+import time
+
+bound, output, command = float(sys.argv[1]), sys.argv[2], sys.argv[3:]
+start = time.monotonic()
+try:
+    with open(output, "wb") as handle:
+        result = subprocess.run(command, stdout=handle, timeout=bound)
+except subprocess.TimeoutExpired:
+    print("timeout")
+    sys.exit(1)
+print("%.3f" % (time.monotonic() - start))
+sys.exit(result.returncode)
+PY
 
 # Reads a fixture file into $value without losing trailing newlines.
 cat >"$WORK_DIR/read-value.sh" <<'READ'
@@ -206,25 +232,9 @@ large_bytes="$(wc -c <"$LARGE" | tr -d ' ')"
 for shell in ${SHELLS[@]+"${SHELLS[@]}"}; do
   version="$("$shell" -c 'printf %s "$BASH_VERSION"')"
   timing_status=0
-  elapsed="$(python3 - "$RUNTIME_BOUND_SECONDS" "$WORK_DIR/large.out" "$shell" -c \
+  elapsed="$(python3 "$WORK_DIR/timed.py" "$RUNTIME_BOUND_SECONDS" "$WORK_DIR/large.out" "$shell" -c \
     'source "$1"; source "$2"; read_value "$3"; print_kv_escaped KEY "$value"' \
-    synthetic "$LIB" "$WORK_DIR/read-value.sh" "$LARGE" <<'PY'
-import subprocess
-import sys
-import time
-
-bound, output, command = float(sys.argv[1]), sys.argv[2], sys.argv[3:]
-start = time.monotonic()
-try:
-    with open(output, "wb") as handle:
-        result = subprocess.run(command, stdout=handle, timeout=bound)
-except subprocess.TimeoutExpired:
-    print("timeout")
-    sys.exit(1)
-print("%.2f" % (time.monotonic() - start))
-sys.exit(result.returncode)
-PY
-  )" || timing_status=$?
+    synthetic "$LIB" "$WORK_DIR/read-value.sh" "$LARGE")" || timing_status=$?
   if [ "$timing_status" -eq 0 ]; then
     pass "bash $version: ${large_bytes}-byte value escaped in ${elapsed}s (bound ${RUNTIME_BOUND_SECONDS}s)"
   else
@@ -258,6 +268,51 @@ if [ "$max_chunk" -gt 0 ] && [ "$max_chunk" -le "$MAX_CHUNK_BYTES" ]; then
 else
   fail "an escape pass saw $max_chunk bytes (bound $MAX_CHUNK_BYTES)"
 fi
+
+# AC-2 / AC-3: scaling. Time an empty value (shell start-up), the large value
+# and SCALING_INPUT_FACTOR copies of it; the escaping cost must grow linearly.
+# A fixed total bound alone cannot tell linear from quadratic work.
+SCALED="$WORK_DIR/scaled"
+python3 - "$LARGE" "$SCALED" "$SCALING_INPUT_FACTOR" <<'PY'
+import sys
+
+data = open(sys.argv[1], "rb").read()
+open(sys.argv[2], "wb").write(data * int(sys.argv[3]))
+PY
+: >"$WORK_DIR/empty"
+for shell in ${SHELLS[@]+"${SHELLS[@]}"}; do
+  version="$("$shell" -c 'printf %s "$BASH_VERSION"')"
+  scaling_failed=0
+  timings=""
+  for input in "$WORK_DIR/empty" "$LARGE" "$SCALED"; do
+    timing_status=0
+    elapsed="$(python3 "$WORK_DIR/timed.py" "$SCALING_TIMEOUT_SECONDS" "$WORK_DIR/scaled.out" "$shell" -c \
+      'source "$1"; source "$2"; read_value "$3"; print_kv_escaped KEY "$value"' \
+      synthetic "$LIB" "$WORK_DIR/read-value.sh" "$input")" || timing_status=$?
+    if [ "$timing_status" -ne 0 ]; then
+      scaling_failed=1
+      fail "bash $version: $(basename "$input") value did not finish within ${SCALING_TIMEOUT_SECONDS}s (${elapsed:-error})"
+      break
+    fi
+    timings="$timings $elapsed"
+  done
+  [ "$scaling_failed" -eq 0 ] || continue
+  # shellcheck disable=SC2086 # timings is a list of three numbers
+  if ratio="$(python3 - "$SCALING_RATIO_BOUND" $timings <<'PY'
+import sys
+
+bound, base, small, big = (float(value) for value in sys.argv[1:])
+# Floor the small cost so timer noise on a fast machine cannot inflate the ratio.
+ratio = max(big - base, 0.0) / max(small - base, 0.05)
+print("%.1f" % ratio)
+sys.exit(0 if ratio < bound else 1)
+PY
+  )"; then
+    pass "bash $version: ${SCALING_INPUT_FACTOR}x input costs ${ratio}x (bound ${SCALING_RATIO_BOUND}x; timings:$timings s)"
+  else
+    fail "bash $version: ${SCALING_INPUT_FACTOR}x input costs ${ratio}x (bound ${SCALING_RATIO_BOUND}x; timings:$timings s)"
+  fi
+done
 
 # AC-4: the BLOCKING_<n>_BODY emitters in pr-review-loop.sh use
 # workflow_diagnostic_kv_escaped. Its output must stay identical to
