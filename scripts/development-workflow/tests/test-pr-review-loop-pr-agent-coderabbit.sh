@@ -2872,7 +2872,7 @@ run_test "1578_resolved_major_thread_is_not_needs_fixes" "RESULT=escalate" \
 run_test "1578_resolved_major_thread_reports_rate_limit_exhaustion" "REASON=rate_limit_max_retries" \
   "$(printf '%s\n' "$_1578_out" | grep '^REASON=' | tail -n 1)"
 run_test "1578_resolved_major_thread_has_no_stale_findings" "absent" \
-  "$(printf '%s\n' "$_1578_out" | grep -q '^REASON=stale_findings$' && echo present || echo absent)"
+  "$(grep -q '^REASON=stale_findings$' <<< "$_1578_out" && echo present || echo absent)"
 run_test "1578_resolved_major_thread_reports_zero_blocking" "BLOCKING_COUNT=0" \
   "$(printf '%s\n' "$_1578_out" | grep '^BLOCKING_COUNT=' | tail -n 1)"
 run_test "1578_fallback_consults_graphql_thread_state" "yes" \
