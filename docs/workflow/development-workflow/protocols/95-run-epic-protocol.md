@@ -897,7 +897,7 @@ complete. Do not close the parent epic from stale memory, branch names, or prior
 resolver output alone. On a Linear tracker, the epic parent stays
 `In Progress` (or moves to `Merged` through graduation closeout) until the
 epic outcome is accepted in production; only then move it to `Released`
-([Step 2, Linear provider](#linear-provider)).
+([Step 2, Linear provider, steps 5 and 6](#linear-provider)).
 
 Stop only when all in-scope items are merged, remaining items are blocked by a
 real external condition or authority boundary, or the invocation policy forbids
