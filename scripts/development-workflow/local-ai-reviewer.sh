@@ -303,7 +303,13 @@ run_with_timeout() {
     kill -TERM -- "-$child_pid" 2>/dev/null || kill -TERM "$child_pid" 2>/dev/null || true
     local terminate_elapsed=0
     local terminate_grace_seconds=2
-    while kill -0 "$child_pid" 2>/dev/null && [ "$terminate_elapsed" -lt "$terminate_grace_seconds" ]; do
+    # The grace period belongs to the whole process group, not only its leader
+    # (#2172). A leader that is a shell which did not exec the command (dash's
+    # `sh -c` does not) dies at TERM at once, while the command is still
+    # running its own TERM/EXIT cleanup. Stopping the wait when only the leader
+    # is gone would KILL that cleanup halfway and leave its files behind.
+    while { kill -0 "$child_pid" 2>/dev/null || kill -0 -- "-$child_pid" 2>/dev/null; } &&
+      [ "$terminate_elapsed" -lt "$terminate_grace_seconds" ]; do
       sleep 1
       terminate_elapsed=$((terminate_elapsed + 1))
     done
