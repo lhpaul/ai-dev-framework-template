@@ -1831,6 +1831,7 @@ issue_tracker:
   provider: linear
 PRREF_LINEAR_CONFIG
 prref_linear_log="$TMP_ROOT/prref-linear-kind.log"
+set +e
 prref_linear_output="$(
   GH_MERGED_HEAD="$prref_linear_branch" \
   GH_MERGED_PR=2103 \
@@ -1842,8 +1843,11 @@ prref_linear_output="$(
   "$HELPER" --inspect-targets --repo-root "$prref_linear_repo" --cleanup-repo-root "$prref_linear_repo" \
     --base develop --pr 2103 "$prref_linear_branch" 2>/dev/null
 )"
+prref_linear_status=$?
+set -e
+run_test "pr_closing_ref_linear_inspect_succeeds" "0" "$prref_linear_status"
 run_test "pr_closing_ref_linear_projection_unchanged" "lh-97:linear" \
-  "$(printf '%s' "$prref_linear_output" | jq -r '[.issues[] | "\(.id):\(.provider)"] | join(",")')"
+  "$(printf '%s' "$prref_linear_output" | jq -r '[.issues[] | "\(.id):\(.provider)"] | join(",")' 2>/dev/null || true)"
 run_test "pr_closing_ref_linear_no_kind_lookup" "" "$(cat "$prref_linear_log" 2>/dev/null || true)"
 
 echo ""
