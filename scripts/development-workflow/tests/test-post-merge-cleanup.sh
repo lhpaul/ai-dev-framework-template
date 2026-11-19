@@ -1850,6 +1850,63 @@ run_test "pr_closing_ref_linear_projection_unchanged" "lh-97:linear" \
   "$(printf '%s' "$prref_linear_output" | jq -r '[.issues[] | "\(.id):\(.provider)"] | join(",")' 2>/dev/null || true)"
 run_test "pr_closing_ref_linear_no_kind_lookup" "" "$(cat "$prref_linear_log" 2>/dev/null || true)"
 
+# #2021 review: a PR whose closing refs override an ambiguous team-prefixed
+# slug (fix/http-500) must keep overriding it when every ref turns out to be
+# a pull request. "Had closing refs, none of them issues" is not "had no
+# closing refs", so it must not authorize the slug-derived #500 fallback —
+# live or in the merge-budget projection. (no_closing_reference_falls_back_to_slug_issue
+# above still pins the genuine no-refs fallback.)
+prref_slug_branch="fix/http-500-retry-thing"
+prref_slug_repo="$(make_repo prref-slug "$prref_slug_branch" yes)"
+prref_slug_output="$(
+  GH_MERGED_HEAD="$prref_slug_branch" \
+  GH_MERGED_PR=2104 \
+  GH_PR_TITLE="fix: retry thing" \
+  GH_PR_BODY="Follows the approach of the earlier change. Closes #326" \
+  GH_PULL_REQUEST_REFS="326" \
+  GH_ISSUE_STATE=OPEN \
+  WORKFLOW_TARGET_GITHUB_REPO=example/repo \
+  PATH="$stub_bin:$PATH" \
+  "$HELPER" --repo-root "$prref_slug_repo" --base develop --pr 2104 "$prref_slug_branch" 2>&1
+)"
+run_test "pr_closing_ref_all_prs_no_slug_fallback" "no" \
+  "$(if grep -Eq "Closing issue #(500|326)|Processing issue #(500|326)" <<<"$prref_slug_output"; then printf yes; else printf no; fi)"
+run_contains "pr_closing_ref_all_prs_slug_note" \
+  "PR #2104's closing keyword refs all resolve to pull requests; no issue to close or move on the tracker." \
+  "$prref_slug_output"
+
+prref_slug_inspect_repo="$(make_repo prref-slug-inspect "$prref_slug_branch" yes)"
+prref_slug_inspect_output="$(
+  GH_MERGED_HEAD="$prref_slug_branch" \
+  GH_MERGED_PR=2104 \
+  GH_PR_TITLE="fix: retry thing" \
+  GH_PR_BODY="Follows the approach of the earlier change. Closes #326" \
+  GH_PULL_REQUEST_REFS="326" \
+  PATH="$stub_bin:$PATH" \
+  "$HELPER" --inspect-targets --repo-root "$prref_slug_inspect_repo" --cleanup-repo-root "$prref_slug_inspect_repo" \
+    --base develop --pr 2104 "$prref_slug_branch" 2>/dev/null
+)"
+run_test "pr_closing_ref_all_prs_inspect_plans_no_slug_issue" "0" \
+  "$(printf '%s' "$prref_slug_inspect_output" | jq -r '.issues | length' 2>/dev/null || printf 'unreadable')"
+
+# Mixed refs on the same ambiguous slug: the real issue still overrides the
+# slug, and only the pull-request ref is skipped.
+prref_slug_mixed_repo="$(make_repo prref-slug-mixed "$prref_slug_branch" yes)"
+prref_slug_mixed_output="$(
+  GH_MERGED_HEAD="$prref_slug_branch" \
+  GH_MERGED_PR=2104 \
+  GH_PR_TITLE="fix: retry thing" \
+  GH_PR_BODY=$'Closes #326\nCloses #2105' \
+  GH_PULL_REQUEST_REFS="326" \
+  GH_ISSUE_STATE=OPEN \
+  WORKFLOW_TARGET_GITHUB_REPO=example/repo \
+  PATH="$stub_bin:$PATH" \
+  "$HELPER" --repo-root "$prref_slug_mixed_repo" --base develop --pr 2104 "$prref_slug_branch" 2>&1
+)"
+run_contains "pr_closing_ref_mixed_slug_closes_real_issue" "Closing issue #2105..." "$prref_slug_mixed_output"
+run_test "pr_closing_ref_mixed_slug_no_fallback_or_pr" "no" \
+  "$(if grep -Eq "Closing issue #(500|326)|Processing issue #(500|326)" <<<"$prref_slug_mixed_output"; then printf yes; else printf no; fi)"
+
 echo ""
 echo "Passed: $PASS_COUNT"
 echo "Failed: $FAIL_COUNT"

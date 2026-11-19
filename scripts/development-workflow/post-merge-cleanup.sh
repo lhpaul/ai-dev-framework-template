@@ -1061,9 +1061,11 @@ pr_close_label() {
 # same number in the hub is an unrelated issue, so bare refs are NOT applied
 # (announced on stderr) and only explicit "Fixes <hub owner/repo>#NNN" refs
 # are honoured. When the PR lives in the hub's own repo this is identical to
-# fetch_pr_closing_issues. Same return contract as fetch_pr_closing_issues;
-# an undeterminable hub slug is warned about and yields no refs rather than
-# guessing (never mutating a tracker on a guess).
+# fetch_pr_closing_issues. Same return contract as fetch_pr_closing_issues,
+# plus status 3 from exclude_pull_request_refs when the PR had closing refs
+# but every one resolved to a pull request (#2021); an undeterminable hub
+# slug is warned about and yields no refs rather than guessing (never
+# mutating a tracker on a guess).
 fetch_hub_tracker_closing_issues() {
   local pr_repo="${1:-}" pr_number="${2:-}" hub_slug status=0
   if [ "$#" -ne 2 ] || [ -z "$pr_repo" ] || [[ ! "$pr_number" =~ ^[0-9]+$ ]]; then
@@ -1098,7 +1100,13 @@ fetch_hub_tracker_closing_issues() {
 # close, so such refs are dropped here with a NOTE on stderr naming each one;
 # this runs before both the merge-budget projection (--inspect-targets) and
 # the live closeout, so neither plans nor performs tracker/close steps for a
-# PR. Echoes the remaining refs (one per line, possibly empty).
+# PR. Echoes the remaining refs, each newline-terminated (possibly empty).
+# Returns 3 (with empty output) when <refs> was non-empty but every ref was a
+# pull request: "the PR had closing refs, none of them issues" must stay
+# distinct from "the PR had no closing refs", because the team-prefixed
+# branch fallback is authorized only by the latter — a PR whose closing refs
+# override an ambiguous slug-derived identifier (fix/http-500) keeps
+# overriding it when those refs turn out to be pull requests.
 # Fails closed: when the kind of any ref cannot be determined (API failure or
 # an unrecognised answer) it returns 1 without echoing anything, matching
 # fetch_pr_closing_issues' failure contract — an unknown ref is never
@@ -1106,7 +1114,7 @@ fetch_hub_tracker_closing_issues() {
 # Linear is unchanged: its tracker duties use native identifiers, not GitHub
 # issue numbers, so refs pass through untouched there.
 exclude_pull_request_refs() {
-  local tracker_repo="${1:-}" pr_number="${2:-}" refs="${3:-}" provider ref kind kept=""
+  local tracker_repo="${1:-}" pr_number="${2:-}" refs="${3:-}" provider ref kind kept="" excluded=0
   if [ "$#" -ne 3 ] || [ -z "$tracker_repo" ] || [[ ! "$pr_number" =~ ^[0-9]+$ ]]; then
     echo "ERROR: exclude_pull_request_refs requires <tracker_repo> <pr_number> <refs_newline_list>." >&2
     return 2
@@ -1126,6 +1134,7 @@ exclude_pull_request_refs() {
     case "$kind" in
       issue) kept="${kept}${ref}"$'\n' ;;
       pull_request)
+        excluded=$((excluded + 1))
         echo "NOTE: closing-keyword reference #${ref} in PR #${pr_number} resolves to a pull request in '${tracker_repo}', not an issue; skipping tracker update and close for it." >&2
         ;;
       *)
@@ -1134,6 +1143,9 @@ exclude_pull_request_refs() {
         ;;
     esac
   done <<< "$refs"
+  if [ -z "$kept" ] && [ "$excluded" -gt 0 ]; then
+    return 3
+  fi
   printf '%s' "$kept"
 }
 
@@ -1312,8 +1324,13 @@ if [ "$inspect_targets" -eq 1 ]; then
     plan) inspection_status="Plan Ready"; inspection_refs="$ISSUE_NUMBER" ;;
     *)
       if [ "$branch_owner_kind" = implementation ]; then
-      inspection_refs="$(fetch_hub_tracker_closing_issues "$inspection_repo" "$merged_pr_number")" || exit 1
-      if [ -n "$ISSUE_NUMBER" ] && { [ "$ISSUE_ID_TYPE" = numeric ] || [ -z "$inspection_refs" ]; }; then
+      inspection_refs_status=0
+      inspection_refs="$(fetch_hub_tracker_closing_issues "$inspection_repo" "$merged_pr_number")" || inspection_refs_status=$?
+      case "$inspection_refs_status" in 0|3) ;; *) exit 1 ;; esac
+      # Status 3: the PR's closing refs were all pull requests. They still
+      # override an ambiguous team-prefixed branch identifier (#2021), exactly
+      # as the live path below does.
+      if [ -n "$ISSUE_NUMBER" ] && { [ "$ISSUE_ID_TYPE" = numeric ] || { [ -z "$inspection_refs" ] && [ "$inspection_refs_status" -ne 3 ]; }; }; then
         inspection_refs="$(printf '%s\n%s\n' "$ISSUE_NUMBER" "$inspection_refs" | sed '/^$/d' | sort -un)"
       fi
       fi ;;
@@ -1380,6 +1397,7 @@ elif [ -n "$ISSUE_IDENTIFIER" ]; then
     # PR body has no closing reference at all (e.g. no PR could be resolved,
     # or the PR genuinely does not close an issue).
     PR_OVERRIDE_ISSUES=""
+    PR_OVERRIDE_STATUS=0
     PR_FOR_OVERRIDE=""
     if [ "$ISSUE_ID_TYPE" = "team-prefixed" ]; then
       pr_override_repo="$TARGET_GITHUB_REPO"
@@ -1398,10 +1416,14 @@ elif [ -n "$ISSUE_IDENTIFIER" ]; then
         }
       fi
       if [ -n "$PR_FOR_OVERRIDE" ]; then
-        PR_OVERRIDE_ISSUES="$(fetch_hub_tracker_closing_issues "$pr_override_repo" "$PR_FOR_OVERRIDE")" || {
-          echo "ERROR: could not fetch PR #${PR_FOR_OVERRIDE} body from '$pr_override_repo' (gh command failed)." >&2
-          exit 1
-        }
+        PR_OVERRIDE_ISSUES="$(fetch_hub_tracker_closing_issues "$pr_override_repo" "$PR_FOR_OVERRIDE")" || PR_OVERRIDE_STATUS=$?
+        case "$PR_OVERRIDE_STATUS" in
+          0|3) ;;
+          *)
+            echo "ERROR: could not fetch PR #${PR_FOR_OVERRIDE} body from '$pr_override_repo' (gh command failed)." >&2
+            exit 1
+            ;;
+        esac
       fi
     fi
 
@@ -1409,6 +1431,11 @@ elif [ -n "$ISSUE_IDENTIFIER" ]; then
       echo "Team-prefixed identifier '$ISSUE_IDENTIFIER' in branch '$TO_DELETE' is ambiguous; using closing keyword refs from PR #${PR_FOR_OVERRIDE} instead: $(printf '%s' "$PR_OVERRIDE_ISSUES" | tr '\n' ' ')"
       close_issues_from_pr "$PR_FOR_OVERRIDE" "$PR_OVERRIDE_ISSUES" "$pr_override_repo" || exit 1
       warn_unprocessed_title_refs "$pr_override_repo" "$PR_FOR_OVERRIDE" "$PR_OVERRIDE_ISSUES"
+    elif [ "$PR_OVERRIDE_STATUS" -eq 3 ]; then
+      # #2021: the PR's closing refs override the ambiguous slug-derived
+      # identifier even when they all turn out to be pull requests; falling
+      # back to '$ISSUE_IDENTIFIER' would update or close an unrelated item.
+      echo "Team-prefixed identifier '$ISSUE_IDENTIFIER' in branch '$TO_DELETE' is ambiguous and PR #${PR_FOR_OVERRIDE}'s closing keyword refs all resolve to pull requests; no issue to close or move on the tracker."
     else
       # Update the tracker status BEFORE closing the issue so that
       # gh project item-list can still find the item (it only returns items
@@ -1463,10 +1490,15 @@ elif [ -n "$ISSUE_IDENTIFIER" ]; then
       # every closing reference from the PR title, body, and commit messages
       # that is not the branch-derived issue, and warn about bare title refs.
       if [ -n "${MERGED_PR:-}" ]; then
-        if ! EXTRA_CLOSES="$(fetch_hub_tracker_closing_issues "$merged_pr_repo" "$MERGED_PR")"; then
-          echo "ERROR: could not fetch PR #${MERGED_PR} closing refs from '$merged_pr_repo' (gh command failed)." >&2
-          exit 1
-        fi
+        extra_closes_status=0
+        EXTRA_CLOSES="$(fetch_hub_tracker_closing_issues "$merged_pr_repo" "$MERGED_PR")" || extra_closes_status=$?
+        case "$extra_closes_status" in
+          0|3) ;;
+          *)
+            echo "ERROR: could not fetch PR #${MERGED_PR} closing refs from '$merged_pr_repo' (gh command failed)." >&2
+            exit 1
+            ;;
+        esac
         EXTRA_CLOSES="$(printf '%s\n' "$EXTRA_CLOSES" | grep -vx "$ISSUE_NUMBER" || true)"
         if [ -n "$EXTRA_CLOSES" ]; then
           echo "PR #${MERGED_PR} also closes: $(printf '%s' "$EXTRA_CLOSES" | tr '\n' ' ')"
@@ -1509,10 +1541,15 @@ else
         fi
       fi
       if [ -n "$CLOSING_PR" ]; then
-        if ! CLOSES_ISSUES="$(fetch_hub_tracker_closing_issues "$pr_closes_repo" "$CLOSING_PR")"; then
-          echo "ERROR: could not fetch PR #${CLOSING_PR} body from '$pr_closes_repo' (gh command failed)." >&2
-          exit 1
-        fi
+        closes_issues_status=0
+        CLOSES_ISSUES="$(fetch_hub_tracker_closing_issues "$pr_closes_repo" "$CLOSING_PR")" || closes_issues_status=$?
+        case "$closes_issues_status" in
+          0|3) ;;
+          *)
+            echo "ERROR: could not fetch PR #${CLOSING_PR} body from '$pr_closes_repo' (gh command failed)." >&2
+            exit 1
+            ;;
+        esac
         if [ -n "$CLOSES_ISSUES" ]; then
           echo "Found closing keyword refs in PR #${CLOSING_PR}: issues $(printf '%s' "$CLOSES_ISSUES" | tr '\n' ' ')"
           workflow_command_with_safe_stderr cd "$HUB_REPO_ROOT"
