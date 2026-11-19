@@ -76,6 +76,24 @@ case "$1 $2" in
     number="${GH_MERGED_PR:-0}"
     printf '{"data":{"repository":{"pullRequest":{"number":%s,"state":"%s","headRefName":"%s","headRefOid":"%040d","baseRefName":"develop","isInMergeQueue":false,"autoMergeRequest":null}}}}\n' "$number" "${GH_PR_STATE:-MERGED}" "${GH_PR_HEAD_REF_NAME:-${GH_MERGED_HEAD:-}}" 1 ;;
   "api repos/"*|"api --paginate")
+    if [[ "${2:-}" =~ ^repos/[^/]+/[^/]+/issues/([0-9]+)$ ]]; then
+      # #2021: issue-vs-pull-request kind lookup for a closing-keyword ref.
+      # Space-separated GH_PULL_REQUEST_REFS name refs that are pull requests;
+      # GH_ISSUE_KIND_FAIL_REFS name refs whose lookup fails. Each lookup is
+      # logged to GH_ISSUE_KIND_LOG when set.
+      ref="${BASH_REMATCH[1]}"
+      [ -z "${GH_ISSUE_KIND_LOG:-}" ] || printf '%s\n' "$2" >>"$GH_ISSUE_KIND_LOG"
+      if [[ " ${GH_ISSUE_KIND_FAIL_REFS:-} " == *" $ref "* ]]; then
+        echo "mock issue kind lookup failure" >&2
+        exit 1
+      fi
+      if [[ " ${GH_PULL_REQUEST_REFS:-} " == *" $ref "* ]]; then
+        printf 'pull_request\n'
+      else
+        printf 'issue\n'
+      fi
+      exit 0
+    fi
     common="$(git rev-parse --git-common-dir)"
     endpoint="${3:-${2:-}}"
     for value in "$@"; do case "$value" in repos/*/issues/*/comments*) endpoint="$value" ;; esac; done
@@ -1717,6 +1735,116 @@ run_contains "hub_numeric_branch_close_comment_names_product_repo" \
   "1538 --comment Closed by example/repo#97." "$h1538g_out"
 run_test "hub_numeric_branch_extra_bare_ref_not_closed" "yes" "$(lacks "also closes" "$h1538g_out")"
 run_test "hub_numeric_branch_extra_bare_ref_no_tracker_update" "yes" "$(lacks "Processing issue #601" "$h1538g_out")"
+
+# #2021: GitHub numbers issues and pull requests from one sequence, so a
+# closing keyword can name a pull request (PR #2017's commit message named
+# merged PR #326 in prose). A ref that resolves to a pull request is skipped
+# with a NOTE naming it; a real issue ref next to it keeps working.
+prref_branch="fix/2100-pr-closing-ref"
+prref_commits=$'test: cover closing refs\n\nKeeps the plain-prose Closes #326 behavior.\nCloses #2102'
+prref_repo="$(make_repo prref-close "$prref_branch" yes)"
+prref_log="$TMP_ROOT/prref-kind.log"
+prref_output="$(
+  GH_MERGED_HEAD="$prref_branch" \
+  GH_MERGED_PR=2101 \
+  GH_PR_TITLE="fix(#2100): thing" \
+  GH_PR_BODY="No closing keyword in the body." \
+  GH_PR_COMMITS_TEXT="$prref_commits" \
+  GH_PULL_REQUEST_REFS="326" \
+  GH_ISSUE_KIND_LOG="$prref_log" \
+  GH_ISSUE_STATE=OPEN \
+  WORKFLOW_TARGET_GITHUB_REPO=example/repo \
+  PATH="$stub_bin:$PATH" \
+  "$HELPER" --repo-root "$prref_repo" --base develop --pr 2101 "$prref_branch" 2>&1
+)"
+run_contains "pr_closing_ref_skip_note_names_ref" \
+  "NOTE: closing-keyword reference #326 in PR #2101 resolves to a pull request in 'example/repo', not an issue" \
+  "$prref_output"
+run_test "pr_closing_ref_not_processed" "no" \
+  "$(if grep -Fq "Processing issue #326" <<<"$prref_output"; then printf yes; else printf no; fi)"
+run_test "pr_closing_ref_not_closed" "no" \
+  "$(if grep -Fq "issue close 326" <<<"$prref_output"; then printf yes; else printf no; fi)"
+run_contains "pr_closing_ref_real_commit_issue_processed" "Processing issue #2102 from PR #2101" "$prref_output"
+run_contains "pr_closing_ref_real_commit_issue_closed" "Closing issue #2102..." "$prref_output"
+run_contains "pr_closing_ref_branch_issue_closed" "Closing issue #2100..." "$prref_output"
+run_contains "pr_closing_ref_kind_checked_in_tracker_repo" "repos/example/repo/issues/326" "$(cat "$prref_log" 2>/dev/null || true)"
+
+# #2021: the merge budget plans tracker/close steps from --inspect-targets, so
+# the projection must leave the pull-request ref out as well.
+prref_inspect_repo="$(make_repo prref-inspect "$prref_branch" yes)"
+prref_inspect_output="$(
+  GH_MERGED_HEAD="$prref_branch" \
+  GH_MERGED_PR=2101 \
+  GH_PR_TITLE="fix(#2100): thing" \
+  GH_PR_BODY="No closing keyword in the body." \
+  GH_PR_COMMITS_TEXT="$prref_commits" \
+  GH_PULL_REQUEST_REFS="326" \
+  PATH="$stub_bin:$PATH" \
+  "$HELPER" --inspect-targets --repo-root "$prref_inspect_repo" --cleanup-repo-root "$prref_inspect_repo" \
+    --base develop --pr 2101 "$prref_branch" 2>/dev/null
+)"
+run_test "pr_closing_ref_inspect_plans_only_issues" "2100,2102" \
+  "$(printf '%s' "$prref_inspect_output" | jq -r '[.issues[].id] | join(",")')"
+
+# #2021: when the issue/PR kind cannot be determined, cleanup fails closed —
+# the ref is neither closed as an issue nor silently dropped. Cleanup admits
+# its merge session from the --inspect-targets projection first, so the
+# failure surfaces there: the session ends Deferred before any mutation.
+prref_fail_repo="$(make_repo prref-fail "$prref_branch" yes)"
+set +e
+prref_fail_output="$(
+  GH_MERGED_HEAD="$prref_branch" \
+  GH_MERGED_PR=2101 \
+  GH_PR_TITLE="fix(#2100): thing" \
+  GH_PR_BODY="No closing keyword in the body." \
+  GH_PR_COMMITS_TEXT="$prref_commits" \
+  GH_ISSUE_KIND_FAIL_REFS="2102" \
+  GH_ISSUE_STATE=OPEN \
+  WORKFLOW_TARGET_GITHUB_REPO=example/repo \
+  PATH="$stub_bin:$PATH" \
+  "$HELPER" --repo-root "$prref_fail_repo" --base develop --pr 2101 "$prref_branch" 2>&1
+)"
+prref_fail_status=$?
+set -e
+run_test "pr_closing_ref_unknown_kind_fails" "2" "$prref_fail_status"
+run_contains "pr_closing_ref_unknown_kind_session_deferred" '"outcome": "Deferred"' "$prref_fail_output"
+run_test "pr_closing_ref_unknown_kind_no_close_recorded" "no" \
+  "$(if [ -e "$prref_fail_repo/.git/1890-closed-2102" ]; then printf yes; else printf no; fi)"
+run_test "pr_closing_ref_unknown_kind_not_closed" "no" \
+  "$(if grep -Fq "Closing issue #2102" <<<"$prref_fail_output"; then printf yes; else printf no; fi)"
+
+prref_fail_inspect_repo="$(make_repo prref-fail-inspect "$prref_branch" yes)"
+run_fails_contains "pr_closing_ref_unknown_kind_inspect_fails_closed" \
+  "could not determine whether closing-keyword reference #2102" \
+  env GH_MERGED_HEAD="$prref_branch" GH_MERGED_PR=2101 GH_PR_TITLE="fix(#2100): thing" \
+    GH_PR_BODY="No closing keyword in the body." GH_PR_COMMITS_TEXT="$prref_commits" \
+    GH_ISSUE_KIND_FAIL_REFS="2102" PATH="$stub_bin:$PATH" \
+    "$HELPER" --inspect-targets --repo-root "$prref_fail_inspect_repo" --cleanup-repo-root "$prref_fail_inspect_repo" \
+      --base develop --pr 2101 "$prref_branch"
+
+# #2021: Linear is unchanged — its duties use native identifiers, so closing
+# refs are not looked up as GitHub issues/pull requests at all.
+prref_linear_branch="fix/lh-97-linear-pr-ref"
+prref_linear_repo="$(make_repo prref-linear "$prref_linear_branch" yes)"
+cat >"$prref_linear_repo/.ai-dev-workflow.yaml" <<'PRREF_LINEAR_CONFIG'
+issue_tracker:
+  provider: linear
+PRREF_LINEAR_CONFIG
+prref_linear_log="$TMP_ROOT/prref-linear-kind.log"
+prref_linear_output="$(
+  GH_MERGED_HEAD="$prref_linear_branch" \
+  GH_MERGED_PR=2103 \
+  GH_PR_TITLE="fix: linear thing" \
+  GH_PR_BODY="Closes #326" \
+  GH_ISSUE_KIND_FAIL_REFS="326" \
+  GH_ISSUE_KIND_LOG="$prref_linear_log" \
+  PATH="$stub_bin:$PATH" \
+  "$HELPER" --inspect-targets --repo-root "$prref_linear_repo" --cleanup-repo-root "$prref_linear_repo" \
+    --base develop --pr 2103 "$prref_linear_branch" 2>/dev/null
+)"
+run_test "pr_closing_ref_linear_projection_unchanged" "lh-97:linear" \
+  "$(printf '%s' "$prref_linear_output" | jq -r '[.issues[] | "\(.id):\(.provider)"] | join(",")')"
+run_test "pr_closing_ref_linear_no_kind_lookup" "" "$(cat "$prref_linear_log" 2>/dev/null || true)"
 
 echo ""
 echo "Passed: $PASS_COUNT"

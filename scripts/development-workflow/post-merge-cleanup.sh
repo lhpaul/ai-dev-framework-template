@@ -1070,19 +1070,71 @@ fetch_hub_tracker_closing_issues() {
     echo "ERROR: fetch_hub_tracker_closing_issues requires <pr_repo> <pr_number>." >&2
     return 2
   fi
+  local refs
   pr_repo_is_hub_tracker_repo "$pr_repo" || status=$?
   case "$status" in
-    0) fetch_pr_closing_issues "$pr_repo" "$pr_number" ;;
+    0)
+      refs="$(fetch_pr_closing_issues "$pr_repo" "$pr_number")" || return $?
+      exclude_pull_request_refs "$pr_repo" "$pr_number" "$refs"
+      ;;
     1)
       hub_slug="$(hub_github_repo_slug)" || return 1
       echo "NOTE: PR #${pr_number} lives in product repository '${pr_repo}', not the workflow hub ('${hub_slug}'); bare closing-keyword refs (e.g. 'Fixes #NNN') name product-repo issues and are NOT applied to the hub tracker. Only 'Fixes ${hub_slug}#NNN' references are honoured." >&2
-      fetch_pr_closing_issues "$pr_repo" "$pr_number" "$hub_slug"
+      refs="$(fetch_pr_closing_issues "$pr_repo" "$pr_number" "$hub_slug")" || return $?
+      exclude_pull_request_refs "$hub_slug" "$pr_number" "$refs"
       ;;
     *)
       echo "WARNING: could not resolve the workflow hub GitHub repository; closing-keyword refs from PR #${pr_number} in '${pr_repo}' were NOT applied to the hub tracker." >&2
       return 0
       ;;
   esac
+}
+
+# exclude_pull_request_refs <tracker_repo> <pr_number> <refs_newline_list>
+# GitHub numbers issues and pull requests from one sequence, so a closing
+# keyword next to "#NNN" can name a pull request (#2021: a commit message in
+# PR #2017 described a test case as "plain-prose `Closes` #326", and #326 is
+# an old merged PR). A pull request is not an issue to move on the tracker or
+# close, so such refs are dropped here with a NOTE on stderr naming each one;
+# this runs before both the merge-budget projection (--inspect-targets) and
+# the live closeout, so neither plans nor performs tracker/close steps for a
+# PR. Echoes the remaining refs (one per line, possibly empty).
+# Fails closed: when the kind of any ref cannot be determined (API failure or
+# an unrecognised answer) it returns 1 without echoing anything, matching
+# fetch_pr_closing_issues' failure contract — an unknown ref is never
+# silently treated as an issue, and never silently dropped either.
+# Linear is unchanged: its tracker duties use native identifiers, not GitHub
+# issue numbers, so refs pass through untouched there.
+exclude_pull_request_refs() {
+  local tracker_repo="${1:-}" pr_number="${2:-}" refs="${3:-}" provider ref kind kept=""
+  if [ "$#" -ne 3 ] || [ -z "$tracker_repo" ] || [[ ! "$pr_number" =~ ^[0-9]+$ ]]; then
+    echo "ERROR: exclude_pull_request_refs requires <tracker_repo> <pr_number> <refs_newline_list>." >&2
+    return 2
+  fi
+  [ -n "$refs" ] || return 0
+  provider="$(workflow_normalize_issue_tracker_provider "$(workflow_config_provider issue_tracker "$HUB_REPO_ROOT/.ai-dev-workflow.yaml")")"
+  if [ "$provider" = linear ]; then
+    printf '%s\n' "$refs"
+    return 0
+  fi
+  while IFS= read -r ref; do
+    [ -n "$ref" ] || continue
+    if ! kind="$(gh api "repos/${tracker_repo}/issues/${ref}" --jq 'if .pull_request then "pull_request" else "issue" end' 2>/dev/null)"; then
+      echo "ERROR: could not determine whether closing-keyword reference #${ref} from PR #${pr_number} is an issue or a pull request in '${tracker_repo}'; refusing to treat it as an issue." >&2
+      return 1
+    fi
+    case "$kind" in
+      issue) kept="${kept}${ref}"$'\n' ;;
+      pull_request)
+        echo "NOTE: closing-keyword reference #${ref} in PR #${pr_number} resolves to a pull request in '${tracker_repo}', not an issue; skipping tracker update and close for it." >&2
+        ;;
+      *)
+        echo "ERROR: unexpected kind '${kind}' for closing-keyword reference #${ref} from PR #${pr_number} in '${tracker_repo}'; refusing to treat it as an issue." >&2
+        return 1
+        ;;
+    esac
+  done <<< "$refs"
+  printf '%s' "$kept"
 }
 
 cleanup_close_issue() {
