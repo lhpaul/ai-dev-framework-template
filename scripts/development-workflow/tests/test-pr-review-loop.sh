@@ -83,8 +83,14 @@ set +e
 _default_advisory_output="$(bash "$REPO_ROOT/scripts/development-workflow/run-advisory-checks.sh" 123)"
 _default_advisory_status=$?
 set -e
-run_test "project_advisory_default_stub_exit" "0" "$_default_advisory_status"
-run_test "project_advisory_default_stub_empty" "" "$_default_advisory_output"
+# The shipped no-op body is a template property: consumers may replace it with
+# advisory checks that print stdout or exit non-zero (#2168).
+if [ "$(workflow_template_is_template "$REPO_ROOT/.ai-dev-workflow.yaml")" = "true" ]; then
+  run_test "project_advisory_default_stub_exit" "0" "$_default_advisory_status"
+  run_test "project_advisory_default_stub_empty" "" "$_default_advisory_output"
+else
+  echo "SKIP: shipped no-op advisory body checks - consumer-owned run-advisory-checks.sh"
+fi
 
 _marker_script="$_ADVISORY_TMP/marker-advisory.sh"
 _marker_file="$_ADVISORY_TMP/marker-count.txt"
