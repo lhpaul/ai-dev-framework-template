@@ -7,9 +7,9 @@
 #
 # - Caller contract, checked in every repository: a PR number is required, a
 #   missing or empty one fails with usage on stderr and no stdout, and the
-#   caller-shaped invocation (stderr discarded, exit status ignored) yields the
-#   script's stdout unchanged. These hold for the shipped no-op and for any
-#   replacement body.
+#   caller-shaped invocation (stderr discarded, exit status ignored) keeps a
+#   hook's stdout and drops its stderr. These hold for the shipped no-op and
+#   for any replacement body, whose output need not be deterministic.
 # - Shipped no-op body, checked only in the template itself
 #   (template.is_template: true): a successful run exits 0 and prints nothing.
 #   A consumer whose body prints advisory stdout skips these checks.
@@ -63,14 +63,30 @@ if grep -Fq "Usage:" <<<"$STDERR"; then pass "empty PR number prints usage on st
 
 # pr-review-loop.sh runs the script with stderr discarded and its exit status
 # ignored (run_project_advisory_checks, covered through the real caller in
-# test-pr-review-loop.sh). Whatever the body prints or returns, that
-# invocation shape must carry exactly the script's stdout: stderr never leaks
-# into the advisory section, and stdout survives a non-zero exit.
+# test-pr-review-loop.sh). That invocation shape is checked with a controlled,
+# deterministic hook that writes advisory stdout and a stderr diagnostic and
+# exits non-zero: the advisory section must hold exactly that stdout. The
+# consumer-owned hook is not run twice and compared, because the contract does
+# not require its output to be deterministic (timestamps, durations, PIDs).
+caller_fixture_dir="$(mktemp -d)"
+caller_fixture="$caller_fixture_dir/run-advisory-checks.sh"
+cat > "$caller_fixture" <<'EOF_CALLER_FIXTURE'
+#!/usr/bin/env bash
+printf '\n\n**Advisory checks** _(informational - never blocks merge)_\n'
+printf -- '- fixture advisory for PR %s\n' "$1"
+printf 'fixture diagnostic\n' >&2
+exit 7
+EOF_CALLER_FIXTURE
+expected_caller_output="$(printf '\n\n**Advisory checks** _(informational - never blocks merge)_\n- fixture advisory for PR 1572')"
+caller_output="$(bash "$caller_fixture" 1572 2>/dev/null || true)"
+rm -rf "$caller_fixture_dir"
+if [ "$caller_output" = "$expected_caller_output" ]; then pass "caller shape keeps hook stdout across a non-zero exit"; else fail "caller shape keeps hook stdout across a non-zero exit"; fi
+if grep -Fq "fixture diagnostic" <<<"$caller_output"; then fail "caller shape drops hook stderr"; else pass "caller shape drops hook stderr"; fi
+
 run_script 1572
 direct_stdout="$STDOUT"
+direct_stderr="$STDERR"
 direct_code="$CODE"
-caller_output="$(bash "$SCRIPT_UNDER_TEST" 1572 2>/dev/null || true)"
-if [ "$caller_output" = "$direct_stdout" ]; then pass "caller-shaped invocation yields the script's stdout only"; else fail "caller-shaped invocation yields the script's stdout only"; fi
 
 # ---------------------------------------------------------------------------
 # Shipped no-op body (template only)
@@ -79,8 +95,9 @@ if [ "$caller_output" = "$direct_stdout" ]; then pass "caller-shaped invocation 
 if [ "$(workflow_template_is_template "$CONFIG_FILE")" = "true" ]; then
   if [ "$direct_code" -eq 0 ]; then pass "default body exits 0 with a PR number"; else fail "default body exits 0 with a PR number (exit=$direct_code)"; fi
   if [ -z "$direct_stdout" ]; then pass "default body prints no advisory output"; else fail "default body prints no advisory output"; fi
-  if [ -z "$STDERR" ]; then pass "default body prints nothing to stderr"; else fail "default body prints nothing to stderr"; fi
-  if [ -z "$caller_output" ]; then pass "default body yields an empty advisory section"; else fail "default body yields an empty advisory section"; fi
+  if [ -z "$direct_stderr" ]; then pass "default body prints nothing to stderr"; else fail "default body prints nothing to stderr"; fi
+  default_caller_output="$(bash "$SCRIPT_UNDER_TEST" 1572 2>/dev/null || true)"
+  if [ -z "$default_caller_output" ]; then pass "default body yields an empty advisory section"; else fail "default body yields an empty advisory section"; fi
 else
   printf 'SKIP: shipped no-op body checks - consumer-owned run-advisory-checks.sh\n'
 fi
@@ -90,8 +107,8 @@ fi
 # ---------------------------------------------------------------------------
 
 # Run a copy of this suite in a disposable repository so both sides of the
-# split are proven: a consumer body that prints advisory stdout, writes stderr
-# and exits non-zero passes the caller contract, and the same body under
+# split are proven: a consumer body that prints non-deterministic advisory
+# stdout, writes stderr and exits non-zero passes the caller contract, and the same body under
 # template mode fails the shipped no-op checks.
 if [ "$(workflow_template_is_template "$CONFIG_FILE")" = "true" ] \
   && [ -z "${RUN_ADVISORY_CHECKS_SUITE_NESTED:-}" ]; then
@@ -113,6 +130,7 @@ set -euo pipefail
 _pr_number="${1:?Usage: $0 <pr-number>}"
 printf '\n\n**Advisory checks** _(informational - never blocks merge)_\n'
 printf -- '- Dead exports for PR %s: none found\n' "$_pr_number"
+printf -- '- Checked by process %s at %s\n' "$$" "$(date +%s)"
 printf 'consumer diagnostic\n' >&2
 exit 3
 EOF_CONSUMER_ADVISORY
@@ -133,7 +151,7 @@ EOF_CONSUMER_ADVISORY
   set -e
   if [ "$template_code" -ne 0 ]; then pass "template mode rejects a non-empty default body"; else fail "template mode rejects a non-empty default body"; fi
   if grep -Fq "FAIL: default body prints no advisory output" <<<"$template_log"; then pass "template mode names the pinned no-op check"; else fail "template mode names the pinned no-op check"; fi
-  if grep -Eq "^FAIL: (missing|empty) PR number|^FAIL: caller-shaped" <<<"$template_log"; then fail "template mode keeps the caller contract green"; else pass "template mode keeps the caller contract green"; fi
+  if grep -Eq "^FAIL: (missing|empty) PR number|^FAIL: caller shape" <<<"$template_log"; then fail "template mode keeps the caller contract green"; else pass "template mode keeps the caller contract green"; fi
 fi
 
 printf '\n%s passed, %s failed\n' "$PASS_COUNT" "$FAIL_COUNT"
