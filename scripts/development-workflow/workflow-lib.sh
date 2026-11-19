@@ -4671,7 +4671,9 @@ extract_github_issue_number() {
 
   # Keep sorted-document/first-complete-line precedence. Bash's ERE matcher
   # avoids launching grep (and a pipeline) for every line of every document.
-  for f in "${doc_files[@]}"; do
+  # ${arr[@]+"${arr[@]}"}: an empty array under `set -u` is an unbound-variable
+  # error in bash 3.2 (macOS /bin/bash); bash 4.4+ treats it as empty.
+  for f in ${doc_files[@]+"${doc_files[@]}"}; do
     while IFS= read -r line; do
       if [[ "$line" =~ $issue_pattern ]]; then
         issue_number="${BASH_REMATCH[1]}"
