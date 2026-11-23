@@ -590,6 +590,8 @@ for identifier_case in \
   'tilde-fenced|## Problem\nSample output:\n~~~\nREASON ambiguous\nunclear\n~~~\n\n## Acceptance Criteria\n- The report labels each proposed item.\n' \
   'mixed-fence|## Problem\nSample:\n```\nline\n~~~\nREASON ambiguous\n```\n\n## Acceptance Criteria\n- The report labels each proposed item.\n' \
   'two-distinct-fences|## Problem\nFirst sample:\n~~~\nREASON ambiguous\n~~~\nBetween the blocks.\n```\nunclear ambiguous\n```\n\n## Acceptance Criteria\n- The report labels each proposed item.\n' \
+  'unclosed-fence|## Problem\nSee the report.\n\n## Acceptance Criteria\n- The report labels each proposed item.\n\n## Notes\n```\nREASON ambiguous\nunclear\n' \
+  'longer-fence|## Problem\nSample:\n````\n```\nREASON ambiguous\n```\nunclear ambiguous\n````\n\n## Acceptance Criteria\n- The report labels each proposed item.\n' \
   'quoted|## Problem\nThe verdict is labelled "ambiguous" by the loop.\n\n## Acceptance Criteria\n- The report labels each proposed item.\n'; do
   identifier_name="${identifier_case%%|*}"
   identifier_body="$(printf '%b' "${identifier_case#*|}")"
