@@ -207,19 +207,6 @@ recommendation_json="$(printf '%s\n' "$scope_json" | jq -c \
   def item_signal_text($item):
     (($item.title // "") + " " + ($item.body // "") + " " + ($item.type // "") + " " + (($item.labels // []) | join(" ")) + " " + ($item.integrationBranchLabel // ""))
     | ascii_downcase;
-  # Prose-only signal text for wording heuristics (issue #2136). Identifiers and
-  # code are not requirement wording: a quoted literal such as 'ambiguous', a
-  # `backticked` span, a fenced block, or a snake_case code such as
-  # pr_agent_ambiguous_review must not read as unresolved-product language.
-  # Genuine wording ("this flow is ambiguous") is untouched. Security and
-  # data-model signals deliberately keep using item_signal_text.
-  def item_prose_signal_text($item):
-    item_signal_text($item)
-    | gsub("```[\\s\\S]*?```"; " ")
-    | gsub("`[^`]*`"; " ")
-    | gsub("\\x27[^\\s\\x27]+\\x27"; " ")
-    | gsub("\"[^\\s\"]+\""; " ")
-    | gsub("[[:alnum:]]+(_[[:alnum:]]+)+"; " ");
   def stable_unique:
     reduce .[] as $value ([]; if index($value) then . else . + [$value] end);
   def normalize_signal_label:
@@ -321,6 +308,25 @@ recommendation_json="$(printf '%s\n' "$scope_json" | jq -c \
     | map(criteria_section_problem(.))
     | map(select(length > 0))
     | .[0] // "";
+  # Prose-only signal text for wording heuristics (issue #2136). Identifiers and
+  # code are not requirement wording: a `backticked` span, a fenced block, or a
+  # snake_case code such as pr_agent_ambiguous_review must not read as
+  # unresolved-product language, and neither must a quoted literal such as
+  # a quoted single word in the title or description. Inside Acceptance Criteria
+  # sections quotes are real wording, so only code is stripped there and quoted
+  # words still count. Security and data-model
+  # signals deliberately keep using item_signal_text.
+  def strip_code_spans:
+    gsub("```[\\s\\S]*?```"; " ")
+    | gsub("`[^`]*`"; " ")
+    | gsub("[[:alnum:]]+(_[[:alnum:]]+)+"; " ");
+  def strip_quoted_literals:
+    gsub("\\x27[^\\s\\x27]+\\x27"; " ")
+    | gsub("\"[^\\s\"]+\""; " ");
+  def item_prose_signal_text($item):
+    (item_signal_text($item) | strip_code_spans | strip_quoted_literals) as $outside_criteria
+    | (acceptance_criteria_sections($item) | map(ascii_downcase | strip_code_spans) | join("\n")) as $criteria
+    | $outside_criteria + "\n" + $criteria;
   def infer_workflow_stage($item):
     ($item.status // "" | ascii_downcase) as $s |
     if $s == "backlog" or ($s | test("writing spec|spec in review|spec")) then "spec"
