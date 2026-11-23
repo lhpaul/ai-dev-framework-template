@@ -623,6 +623,16 @@ inline_fence_fixture="$(write_fixture inline-fence-mention "$(jq '
 inline_fence_output="$(recommend_json "$inline_fence_fixture" "\$run-item 401")"
 run_test "inline_triple_backtick_mention_does_not_hide_real_ambiguity" "1" "$(printf '%s\n' "$inline_fence_output" | product_checkpoint_count)"
 
+# A stray backtick in the title must not pair with one in the body and hide the
+# real ambiguity wording between them.
+cross_field_fixture="$(write_fixture cross-field-backtick "$(jq '
+  .groups.eligible[0].title = "Handle the `odd title" | .items[0].title = "Handle the `odd title"
+  | .groups.eligible[0].body = "## Problem\nThe expected behavior is ambiguous and unclear, see `code` here.\n\n## Acceptance Criteria\n- The report labels each proposed item.\n"
+  | .items[0].body = .groups.eligible[0].body
+' "$complete_criteria_fixture")")"
+cross_field_output="$(recommend_json "$cross_field_fixture" "\$run-item 401")"
+run_test "stray_title_backtick_does_not_hide_body_ambiguity" "1" "$(printf '%s\n' "$cross_field_output" | product_checkpoint_count)"
+
 # Quoted words inside Acceptance Criteria are requirement wording, not codes.
 quoted_criteria_fixture="$(write_fixture quoted-criteria "$(jq '
   .groups.eligible[0].body = "## Problem\nThe reason is reported.\n\n## Acceptance Criteria\n- The expected behavior is \"ambiguous\".\n"

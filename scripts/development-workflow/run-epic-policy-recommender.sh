@@ -314,7 +314,10 @@ recommendation_json="$(printf '%s\n' "$scope_json" | jq -c \
   # unresolved-product language, and neither must a quoted single word in the
   # title or description. Acceptance Criteria sections are handled separately:
   # quotes there are real wording, so only code is stripped and quoted words
-  # still count. Each part of the text is counted once. Security and data-model
+  # still count. Each part of the text is counted once. Code and quotes are
+  # stripped per source field (title, body, type, each label, integration branch
+  # label) before joining, so a stray backtick in one field cannot pair with one
+  # in another. Security and data-model
   # signals deliberately keep using item_signal_text. A fence opens only at the
   # start of a line (up to 3 spaces of indentation, CommonMark style), so an
   # inline mention of a triple backtick never opens one. A fence of N backticks
@@ -346,7 +349,11 @@ recommendation_json="$(printf '%s\n' "$scope_json" | jq -c \
       )
     | .out | join("\n");
   def item_prose_signal_text($item):
-    ($item | .body = body_outside_criteria($item) | item_signal_text(.) | strip_code_spans | strip_quoted_literals) as $outside_criteria
+    ([($item.title // ""), body_outside_criteria($item), ($item.type // "")]
+      + (($item.labels // []) | map(tostring))
+      + [($item.integrationBranchLabel // "")]
+      | map(ascii_downcase | strip_code_spans | strip_quoted_literals)
+      | join("\n")) as $outside_criteria
     | (acceptance_criteria_sections($item | .body = (($item.body // "") | strip_fenced_blocks)) | map(ascii_downcase | strip_code_spans) | join("\n")) as $criteria
     | $outside_criteria + "\n" + $criteria;
   def infer_workflow_stage($item):
