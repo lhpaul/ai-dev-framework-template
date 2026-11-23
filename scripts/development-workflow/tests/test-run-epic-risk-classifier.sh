@@ -889,9 +889,20 @@ typo_why_safe_fixture="$(write_fixture why-safe-typo '{
 }')"
 typo_stderr_file="$TMP_ROOT/typo-why-safe.stderr"
 typo_stdout="$("$CLASSIFIER" --pr 43 --why-safe-file "$typo_why_safe_fixture" --max-risk medium --json 2>"$typo_stderr_file")"
-run_test "why_safe_file_unknown_key_warns_on_stderr" "yes" "$(grep -Fq 'WARNING: --why-safe-file has unknown key(s) that are ignored: rollback_cleanup_risk' "$typo_stderr_file" && echo yes || echo no)"
+run_test "why_safe_file_unknown_key_warns_on_stderr" "yes" "$(grep -Fq 'WARNING: --why-safe-file has unknown key(s) that are ignored: "rollback_cleanup_risk" (valid keys' "$typo_stderr_file" && echo yes || echo no)"
 run_test "why_safe_file_unknown_key_stdout_stays_json" "blocked" "$(printf '%s\n' "$typo_stdout" | jq -r '.risk')"
 run_test "why_safe_file_unknown_key_missing_field_still_blocks" "yes" "$(printf '%s\n' "$typo_stdout" | jq -e '.blockers[] | select(test("why_safe_to_merge"))' >/dev/null && echo yes || echo no)"
+multi_why_safe_fixture="$(write_fixture why-safe-multi '{
+  "scope": "s", "tests": "t", "reviewer_outcome": "r", "ci_outcome": "c",
+  "rollback_or_cleanup_risk": "x", "zeta": 1, "alpha": 2
+}')"
+multi_stderr_file="$TMP_ROOT/multi-why-safe.stderr"
+"$CLASSIFIER" --pr 43 --why-safe-file "$multi_why_safe_fixture" --max-risk medium --json >/dev/null 2>"$multi_stderr_file"
+run_test "why_safe_file_mixed_valid_and_multiple_unknown_keys_listed" "yes" "$(grep -Fq 'ignored: "zeta", "alpha" (valid keys' "$multi_stderr_file" && echo yes || echo no)"
+empty_key_why_safe_fixture="$(write_fixture why-safe-empty-key '{"": "only an unnamed key"}')"
+empty_key_stderr_file="$TMP_ROOT/empty-key-why-safe.stderr"
+"$CLASSIFIER" --pr 43 --why-safe-file "$empty_key_why_safe_fixture" --max-risk medium --json >/dev/null 2>"$empty_key_stderr_file"
+run_test "why_safe_file_empty_string_key_still_warns" "yes" "$(grep -Fq 'ignored: "" (valid keys' "$empty_key_stderr_file" && echo yes || echo no)"
 valid_stderr_file="$TMP_ROOT/valid-why-safe.stderr"
 "$CLASSIFIER" --pr 43 --why-safe-file "$why_safe_fixture" --max-risk medium --json >/dev/null 2>"$valid_stderr_file"
 run_test "why_safe_file_valid_keys_emit_no_warning" "0" "$(grep -c 'WARNING' "$valid_stderr_file" || true)"

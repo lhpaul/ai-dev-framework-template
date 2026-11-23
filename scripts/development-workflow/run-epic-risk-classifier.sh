@@ -706,9 +706,11 @@ if [ -n "$why_safe_file" ]; then
   # A misspelled key is otherwise treated as a missing field with no feedback
   # (#1841). Warn on stderr only: the classification and --json stdout are
   # unchanged, and the missing-field blocker still reports the real gap.
+  # Count keys instead of testing the rendered list so an empty-string key,
+  # which renders as nothing, still warns. Keys print JSON-quoted.
   if ! unknown_why_safe_keys="$(printf '%s\n' "$why_safe_json" | jq -r '
       del(.scope, .tests, .reviewer_outcome, .ci_outcome, .rollback_or_cleanup_risk)
-      | keys_unsorted | join(", ")')"; then
+      | keys_unsorted | select(length > 0) | map(@json) | join(", ")')"; then
     error_exit "could not inspect --why-safe-file keys: $why_safe_file"
   fi
   if [ -n "$unknown_why_safe_keys" ]; then
