@@ -879,6 +879,23 @@ run_fails_contains "rejects_missing_why_safe_file" "input file not found" \
 run_fails_contains "rejects_flag_as_why_safe_file_value" "--why-safe-file requires a value" \
   "$CLASSIFIER" --pr 43 --why-safe-file --max-risk medium --json
 
+# Unknown --why-safe-file keys warn on stderr without changing classification (#1841).
+typo_why_safe_fixture="$(write_fixture why-safe-typo '{
+  "scope": "single read-only classifier helper",
+  "tests": "fixture tests cover risk classes",
+  "reviewer_outcome": "reviewer loop clean",
+  "ci_outcome": "CI green",
+  "rollback_cleanup_risk": "misspelled key"
+}')"
+typo_stderr_file="$TMP_ROOT/typo-why-safe.stderr"
+typo_stdout="$("$CLASSIFIER" --pr 43 --why-safe-file "$typo_why_safe_fixture" --max-risk medium --json 2>"$typo_stderr_file")"
+run_test "why_safe_file_unknown_key_warns_on_stderr" "yes" "$(grep -Fq 'WARNING: --why-safe-file has unknown key(s) that are ignored: rollback_cleanup_risk' "$typo_stderr_file" && echo yes || echo no)"
+run_test "why_safe_file_unknown_key_stdout_stays_json" "blocked" "$(printf '%s\n' "$typo_stdout" | jq -r '.risk')"
+run_test "why_safe_file_unknown_key_missing_field_still_blocks" "yes" "$(printf '%s\n' "$typo_stdout" | jq -e '.blockers[] | select(test("why_safe_to_merge"))' >/dev/null && echo yes || echo no)"
+valid_stderr_file="$TMP_ROOT/valid-why-safe.stderr"
+"$CLASSIFIER" --pr 43 --why-safe-file "$why_safe_fixture" --max-risk medium --json >/dev/null 2>"$valid_stderr_file"
+run_test "why_safe_file_valid_keys_emit_no_warning" "0" "$(grep -c 'WARNING' "$valid_stderr_file" || true)"
+
 # A fork source must not replace the target product identity.
 fork_root="$TMP_ROOT/fork-hub"
 mkdir -p "$fork_root"

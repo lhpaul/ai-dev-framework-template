@@ -41,6 +41,9 @@ shape -- all five fields are required, non-blank strings:
     "rollback_or_cleanup_risk": "what happens if this needs to be reverted"
   }
 
+Any other key (for example a misspelled "rollback_cleanup_risk") is ignored and
+reported as a WARNING on stderr; the classification and stdout are unchanged.
+
 --input <file> expects the SAME normalized shape --pr builds internally, not
 raw `gh pr view` JSON. Worked example (only pr_number is required; every other
 field is optional and defaults per classify_state's rules):
@@ -699,6 +702,17 @@ if [ -n "$why_safe_file" ]; then
   why_safe_json="$(normalize_fixture "$why_safe_file")"
   if ! printf '%s\n' "$why_safe_json" | jq -e 'type == "object"' >/dev/null 2>&1; then
     error_exit "--why-safe-file must contain a JSON object: $why_safe_file"
+  fi
+  # A misspelled key is otherwise treated as a missing field with no feedback
+  # (#1841). Warn on stderr only: the classification and --json stdout are
+  # unchanged, and the missing-field blocker still reports the real gap.
+  if ! unknown_why_safe_keys="$(printf '%s\n' "$why_safe_json" | jq -r '
+      del(.scope, .tests, .reviewer_outcome, .ci_outcome, .rollback_or_cleanup_risk)
+      | keys_unsorted | join(", ")')"; then
+    error_exit "could not inspect --why-safe-file keys: $why_safe_file"
+  fi
+  if [ -n "$unknown_why_safe_keys" ]; then
+    echo "WARNING: --why-safe-file has unknown key(s) that are ignored: $unknown_why_safe_keys (valid keys: scope, tests, reviewer_outcome, ci_outcome, rollback_or_cleanup_risk)" >&2
   fi
   if ! state_json="$(printf '%s\n' "$state_json" | jq --argjson why "$why_safe_json" '.why_safe_to_merge = $why')"; then
     error_exit "failed to merge --why-safe-file into classified state"
