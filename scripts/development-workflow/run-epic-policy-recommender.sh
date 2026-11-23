@@ -319,12 +319,14 @@ recommendation_json="$(printf '%s\n' "$scope_json" | jq -c \
   # start of a line (up to 3 spaces of indentation, CommonMark style), so an
   # inline mention of a triple backtick never opens one. A fence of N backticks
   # or tildes closes only with a run of the same character of length N or more;
-  # an unclosed fence runs to the end of the text.
+  # an unclosed fence runs to the end of the text. An inline code span of N
+  # backticks closes with a run of exactly N backticks (it may span lines and
+  # contain shorter runs); an opener with no matching closer stays literal.
   def strip_fenced_blocks:
     gsub("(?m)^ {0,3}(`{3,})[^`\\n]*(?=\\n|\\z)[\\s\\S]*?(?:\\n {0,3}\\1`*[ \\t\\r]*(?=\\n|\\z)|\\z)|(?m)^ {0,3}(~{3,})[^\\n]*(?=\\n|\\z)[\\s\\S]*?(?:\\n {0,3}\\2~*[ \\t\\r]*(?=\\n|\\z)|\\z)"; " ");
   def strip_code_spans:
     strip_fenced_blocks
-    | gsub("`[^`]*`"; " ")
+    | gsub("(?<!`)(`+)(?!`)[\\s\\S]*?(?<!`)\\1(?!`)"; " ")
     | gsub("[[:alnum:]]+(_[[:alnum:]]+)+"; " ");
   def strip_quoted_literals:
     gsub("\\x27[^\\s\\x27]+\\x27"; " ")

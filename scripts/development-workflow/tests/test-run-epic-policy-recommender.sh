@@ -593,6 +593,9 @@ for identifier_case in \
   'unclosed-fence|## Problem\nSee the report.\n\n## Acceptance Criteria\n- The report labels each proposed item.\n\n## Notes\n```\nREASON ambiguous\nunclear\n' \
   'longer-fence|## Problem\nSample:\n````\n```\nREASON ambiguous\n```\nunclear ambiguous\n````\n\n## Acceptance Criteria\n- The report labels each proposed item.\n' \
   'indented-fence|## Problem\nSample output:\n  ```\nREASON ambiguous\nunclear\n  ```\nThree spaces:\n   ~~~\nunclear ambiguous\n   ~~~\n\n## Acceptance Criteria\n- The report labels each proposed item.\n' \
+  'double-backtick-span|## Problem\nThe code ``ambiguous`` is reported.\n\n## Acceptance Criteria\n- The report labels each proposed item.\n' \
+  'mixed-run-span|## Problem\nThe code ``a ` ambiguous`` and ```b `` ambiguous``` are reported.\n\n## Acceptance Criteria\n- The report labels each proposed item.\n' \
+  'multiline-span|## Problem\nThe code `first line\nambiguous second line` is reported.\n\n## Acceptance Criteria\n- The report labels each proposed item.\n' \
   'quoted|## Problem\nThe verdict is labelled "ambiguous" by the loop.\n\n## Acceptance Criteria\n- The report labels each proposed item.\n'; do
   identifier_name="${identifier_case%%|*}"
   identifier_body="$(printf '%b' "${identifier_case#*|}")"
