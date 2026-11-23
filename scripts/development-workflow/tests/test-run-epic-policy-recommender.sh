@@ -567,6 +567,44 @@ ambiguous_fixture_word="$(write_fixture ambiguous-word "$(jq '
 ambiguous_output_word="$(recommend_json "$ambiguous_fixture_word" "\$run-epic --items 401")"
 run_test "ambiguous_word_still_recommends_product_checkpoint" "issue signals unresolved product requirements or acceptance-criteria ambiguity" "$(printf '%s\n' "$ambiguous_output_word" | jq -r '.recommendedPolicy.checkpoints[] | select(.stage == "spec" and .domain == "product") | .reason')"
 
+# Issue #2136: identifiers and code are not requirement wording. The #2116 text
+# quotes the reason literal 'ambiguous' in its title and cites
+# `pr_agent_ambiguous_review` in its body; neither may raise the spec/product
+# checkpoint, while real ambiguous wording still does.
+product_checkpoint_count() {
+  jq -r '[.recommendedPolicy.checkpoints[]? | select(.stage == "spec" and .domain == "product")] | length'
+}
+issue_2116_title="pr-review-loop: a human override of local-ai-reviewer can never close the loop, because PR-Agent verification then escalates as 'ambiguous'"
+issue_2116_body='## Problem\nThe loop ends with `RESULT=escalate`, `REASON=pr_agent_ambiguous_review`. Do not use `pr_agent_ambiguous_review`, which says PR-Agent output was unparseable.\n\n## Acceptance\n- [ ] With a valid override marker, the loop reaches the ready phase.\n- [ ] An override for an older head has no effect.\n'
+issue_2116_fixture="$(write_fixture issue-2116 "$(jq --arg t "$issue_2116_title" --arg b "$(printf '%b' "$issue_2116_body")" '
+  .groups.eligible[0].title = $t | .groups.eligible[0].body = $b
+  | .items[0].title = $t | .items[0].body = $b
+' "$complete_criteria_fixture")")"
+issue_2116_output="$(recommend_json "$issue_2116_fixture" "\$run-item 401")"
+run_test "issue_2116_text_does_not_recommend_product_checkpoint" "0" "$(printf '%s\n' "$issue_2116_output" | product_checkpoint_count)"
+
+for identifier_case in \
+  'backtick|## Problem\nThe code `ambiguous` is reported.\n\n## Acceptance Criteria\n- The report labels each proposed item.\n' \
+  'snake_case|## Problem\nThe reason pr_agent_ambiguous_review is reported.\n\n## Acceptance Criteria\n- The report labels each proposed item.\n' \
+  'fenced|## Problem\nSample output:\n```\nREASON ambiguous\nunclear\n```\n\n## Acceptance Criteria\n- The report labels each proposed item.\n' \
+  'quoted|## Problem\nThe verdict is labelled "ambiguous" by the loop.\n\n## Acceptance Criteria\n- The report labels each proposed item.\n'; do
+  identifier_name="${identifier_case%%|*}"
+  identifier_body="$(printf '%b' "${identifier_case#*|}")"
+  identifier_fixture="$(write_fixture "identifier-$identifier_name" "$(jq --arg b "$identifier_body" '
+    .groups.eligible[0].body = $b | .items[0].body = $b
+  ' "$complete_criteria_fixture")")"
+  identifier_output="$(recommend_json "$identifier_fixture" "\$run-item 401")"
+  run_test "ambiguous_inside_${identifier_name}_does_not_recommend_product_checkpoint" "0" "$(printf '%s\n' "$identifier_output" | product_checkpoint_count)"
+done
+
+# Real ambiguity in criteria wording, next to an identifier, still checkpoints.
+ambiguous_criteria_fixture="$(write_fixture ambiguous-criteria "$(jq '
+  .groups.eligible[0].body = "## Problem\nThe reason `pr_agent_ambiguous_review` is reported.\n\n## Acceptance Criteria\n- The expected behavior is ambiguous and unclear.\n"
+  | .items[0].body = .groups.eligible[0].body
+' "$complete_criteria_fixture")")"
+ambiguous_criteria_output="$(recommend_json "$ambiguous_criteria_fixture" "\$run-item 401")"
+run_test "ambiguous_criteria_wording_still_recommends_product_checkpoint" "1" "$(printf '%s\n' "$ambiguous_criteria_output" | product_checkpoint_count)"
+
 case_variant_fixture="$(write_fixture case-variant "$(jq '.groups.eligible[0].body = "## ACCEPTANCE CRITERIA\n- The heading case is normalized.\n" | .items[0].body = .groups.eligible[0].body' "$complete_criteria_fixture")")"
 case_variant_output="$(recommend_json "$case_variant_fixture" "\$run-epic --items 401")"
 run_test "acceptance_criteria_heading_case_variants_are_normal_structure" "0" "$(printf '%s\n' "$case_variant_output" | jq -r '[.recommendedPolicy.checkpoints[]? | select(.stage == "spec" and .domain == "product")] | length')"

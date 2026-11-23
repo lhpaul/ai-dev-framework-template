@@ -207,6 +207,19 @@ recommendation_json="$(printf '%s\n' "$scope_json" | jq -c \
   def item_signal_text($item):
     (($item.title // "") + " " + ($item.body // "") + " " + ($item.type // "") + " " + (($item.labels // []) | join(" ")) + " " + ($item.integrationBranchLabel // ""))
     | ascii_downcase;
+  # Prose-only signal text for wording heuristics (issue #2136). Identifiers and
+  # code are not requirement wording: a quoted literal such as 'ambiguous', a
+  # `backticked` span, a fenced block, or a snake_case code such as
+  # pr_agent_ambiguous_review must not read as unresolved-product language.
+  # Genuine wording ("this flow is ambiguous") is untouched. Security and
+  # data-model signals deliberately keep using item_signal_text.
+  def item_prose_signal_text($item):
+    item_signal_text($item)
+    | gsub("```[\\s\\S]*?```"; " ")
+    | gsub("`[^`]*`"; " ")
+    | gsub("\\x27[^\\s\\x27]+\\x27"; " ")
+    | gsub("\"[^\\s\"]+\""; " ")
+    | gsub("[[:alnum:]]+(_[[:alnum:]]+)+"; " ");
   def stable_unique:
     reduce .[] as $value ([]; if index($value) then . else . + [$value] end);
   def normalize_signal_label:
@@ -355,7 +368,8 @@ recommendation_json="$(printf '%s\n' "$scope_json" | jq -c \
     security_signal_details($item) as $security_signals |
     infer_workflow_stage($item) as $stage |
     acceptance_criteria_problem($item) as $criteria_problem |
-    ($text | test("\\bambiguous\\b|\\bunclear\\b|\\btbd\\b|\\bopen question\\b|\\bunresolved product\\b")) as $unresolved_product_signal |
+    item_prose_signal_text($item) as $prose_text |
+    ($prose_text | test("\\bambiguous\\b|\\bunclear\\b|\\btbd\\b|\\bopen question\\b|\\bunresolved product\\b")) as $unresolved_product_signal |
     ($item.number) as $num |
     (
       []
@@ -380,7 +394,7 @@ recommendation_json="$(printf '%s\n' "$scope_json" | jq -c \
             satisfaction_state: "pending"
           }]
         else . end
-      | if $text | test("\\btrade[- ]?offs?\\b|\\barchitecture\\b.{0,30}\\bproduct\\b|\\bproduct\\b.{0,30}\\btechnical\\b|\\bambiguous\\b.{0,40}\\b(architecture|product|technical)\\b") then
+      | if $prose_text | test("\\btrade[- ]?offs?\\b|\\barchitecture\\b.{0,30}\\bproduct\\b|\\bproduct\\b.{0,30}\\btechnical\\b|\\bambiguous\\b.{0,40}\\b(architecture|product|technical)\\b") then
           . + [{
             item_number: $num,
             stage: (if $stage == "spec" then "plan" else $stage end),
