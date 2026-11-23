@@ -587,6 +587,7 @@ for identifier_case in \
   'backtick|## Problem\nThe code `ambiguous` is reported.\n\n## Acceptance Criteria\n- The report labels each proposed item.\n' \
   'snake_case|## Problem\nThe reason pr_agent_ambiguous_review is reported.\n\n## Acceptance Criteria\n- The report labels each proposed item.\n' \
   'fenced|## Problem\nSample output:\n```\nREASON ambiguous\nunclear\n```\n\n## Acceptance Criteria\n- The report labels each proposed item.\n' \
+  'tilde-fenced|## Problem\nSample output:\n~~~\nREASON ambiguous\nunclear\n~~~\n\n## Acceptance Criteria\n- The report labels each proposed item.\n' \
   'quoted|## Problem\nThe verdict is labelled "ambiguous" by the loop.\n\n## Acceptance Criteria\n- The report labels each proposed item.\n'; do
   identifier_name="${identifier_case%%|*}"
   identifier_body="$(printf '%b' "${identifier_case#*|}")"

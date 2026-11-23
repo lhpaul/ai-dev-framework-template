@@ -317,7 +317,7 @@ recommendation_json="$(printf '%s\n' "$scope_json" | jq -c \
   # words still count. Security and data-model
   # signals deliberately keep using item_signal_text.
   def strip_code_spans:
-    gsub("```[\\s\\S]*?```"; " ")
+    gsub("(```|~~~)[\\s\\S]*?(```|~~~)"; " ")
     | gsub("`[^`]*`"; " ")
     | gsub("[[:alnum:]]+(_[[:alnum:]]+)+"; " ");
   def strip_quoted_literals:
@@ -325,7 +325,7 @@ recommendation_json="$(printf '%s\n' "$scope_json" | jq -c \
     | gsub("\"[^\\s\"]+\""; " ");
   def item_prose_signal_text($item):
     (item_signal_text($item) | strip_code_spans | strip_quoted_literals) as $outside_criteria
-    | (acceptance_criteria_sections($item | .body = ((.body // "") | gsub("```[\\s\\S]*?```"; " "))) | map(ascii_downcase | strip_code_spans) | join("\n")) as $criteria
+    | (acceptance_criteria_sections($item | .body = ((.body // "") | gsub("(```|~~~)[\\s\\S]*?(```|~~~)"; " "))) | map(ascii_downcase | strip_code_spans) | join("\n")) as $criteria
     | $outside_criteria + "\n" + $criteria;
   def infer_workflow_stage($item):
     ($item.status // "" | ascii_downcase) as $s |
