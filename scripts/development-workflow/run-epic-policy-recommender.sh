@@ -315,11 +315,13 @@ recommendation_json="$(printf '%s\n' "$scope_json" | jq -c \
   # title or description. Acceptance Criteria sections are handled separately:
   # quotes there are real wording, so only code is stripped and quoted words
   # still count. Each part of the text is counted once. Security and data-model
-  # signals deliberately keep using item_signal_text. A fence of N backticks or
-  # tildes closes only with a run of the same character of length N or more; an
-  # unclosed fence runs to the end of the text.
+  # signals deliberately keep using item_signal_text. A fence opens only at the
+  # start of a line (up to 3 spaces of indentation, CommonMark style), so an
+  # inline mention of a triple backtick never opens one. A fence of N backticks
+  # or tildes closes only with a run of the same character of length N or more;
+  # an unclosed fence runs to the end of the text.
   def strip_fenced_blocks:
-    gsub("(`{3,})[\\s\\S]*?(\\1`*|\\z)|(~{3,})[\\s\\S]*?(\\3~*|\\z)"; " ");
+    gsub("(?m)^ {0,3}(`{3,})[^`\\n]*(?=\\n|\\z)[\\s\\S]*?(?:\\n {0,3}\\1`*[ \\t\\r]*(?=\\n|\\z)|\\z)|(?m)^ {0,3}(~{3,})[^\\n]*(?=\\n|\\z)[\\s\\S]*?(?:\\n {0,3}\\2~*[ \\t\\r]*(?=\\n|\\z)|\\z)"; " ");
   def strip_code_spans:
     strip_fenced_blocks
     | gsub("`[^`]*`"; " ")

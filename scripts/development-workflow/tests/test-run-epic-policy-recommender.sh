@@ -592,6 +592,7 @@ for identifier_case in \
   'two-distinct-fences|## Problem\nFirst sample:\n~~~\nREASON ambiguous\n~~~\nBetween the blocks.\n```\nunclear ambiguous\n```\n\n## Acceptance Criteria\n- The report labels each proposed item.\n' \
   'unclosed-fence|## Problem\nSee the report.\n\n## Acceptance Criteria\n- The report labels each proposed item.\n\n## Notes\n```\nREASON ambiguous\nunclear\n' \
   'longer-fence|## Problem\nSample:\n````\n```\nREASON ambiguous\n```\nunclear ambiguous\n````\n\n## Acceptance Criteria\n- The report labels each proposed item.\n' \
+  'indented-fence|## Problem\nSample output:\n  ```\nREASON ambiguous\nunclear\n  ```\nThree spaces:\n   ~~~\nunclear ambiguous\n   ~~~\n\n## Acceptance Criteria\n- The report labels each proposed item.\n' \
   'quoted|## Problem\nThe verdict is labelled "ambiguous" by the loop.\n\n## Acceptance Criteria\n- The report labels each proposed item.\n'; do
   identifier_name="${identifier_case%%|*}"
   identifier_body="$(printf '%b' "${identifier_case#*|}")"
@@ -609,6 +610,15 @@ ambiguous_criteria_fixture="$(write_fixture ambiguous-criteria "$(jq '
 ' "$complete_criteria_fixture")")"
 ambiguous_criteria_output="$(recommend_json "$ambiguous_criteria_fixture" "\$run-item 401")"
 run_test "ambiguous_criteria_wording_still_recommends_product_checkpoint" "1" "$(printf '%s\n' "$ambiguous_criteria_output" | product_checkpoint_count)"
+
+# An inline mention of a triple backtick does not open a fence, so real
+# ambiguity in the criteria that follows it is still detected.
+inline_fence_fixture="$(write_fixture inline-fence-mention "$(jq '
+  .groups.eligible[0].body = "## Problem\nThe parser treats ``` as a fence marker.\n\n## Acceptance Criteria\n- The behavior is ambiguous and unclear.\n"
+  | .items[0].body = .groups.eligible[0].body
+' "$complete_criteria_fixture")")"
+inline_fence_output="$(recommend_json "$inline_fence_fixture" "\$run-item 401")"
+run_test "inline_triple_backtick_mention_does_not_hide_real_ambiguity" "1" "$(printf '%s\n' "$inline_fence_output" | product_checkpoint_count)"
 
 # Quoted words inside Acceptance Criteria are requirement wording, not codes.
 quoted_criteria_fixture="$(write_fixture quoted-criteria "$(jq '
