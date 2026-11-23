@@ -317,7 +317,7 @@ recommendation_json="$(printf '%s\n' "$scope_json" | jq -c \
   # still count. Each part of the text is counted once. Security and data-model
   # signals deliberately keep using item_signal_text.
   def strip_fenced_blocks:
-    gsub("(```|~~~)[\\s\\S]*?(```|~~~)"; " ");
+    gsub("(```|~~~)[\\s\\S]*?\\1"; " ");
   def strip_code_spans:
     strip_fenced_blocks
     | gsub("`[^`]*`"; " ")
