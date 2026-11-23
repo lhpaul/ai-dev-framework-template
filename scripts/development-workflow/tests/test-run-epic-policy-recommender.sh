@@ -613,6 +613,15 @@ quoted_criteria_fixture="$(write_fixture quoted-criteria "$(jq '
 quoted_criteria_output="$(recommend_json "$quoted_criteria_fixture" "\$run-item 401")"
 run_test "quoted_ambiguous_in_acceptance_criteria_still_recommends_product_checkpoint" "1" "$(printf '%s\n' "$quoted_criteria_output" | product_checkpoint_count)"
 
+# A heading inside a fenced example must not end the criteria section early and
+# leak the example text (fences are stripped before section extraction).
+fenced_criteria_fixture="$(write_fixture fenced-criteria "$(jq '
+  .groups.eligible[0].body = "## Acceptance Criteria\n- The report labels each proposed item.\n```\nREASON ambiguous\n## Example\n```\n- The report names held items.\n"
+  | .items[0].body = .groups.eligible[0].body
+' "$complete_criteria_fixture")")"
+fenced_criteria_output="$(recommend_json "$fenced_criteria_fixture" "\$run-item 401")"
+run_test "fenced_heading_inside_acceptance_criteria_does_not_leak_example_text" "0" "$(printf '%s\n' "$fenced_criteria_output" | product_checkpoint_count)"
+
 case_variant_fixture="$(write_fixture case-variant "$(jq '.groups.eligible[0].body = "## ACCEPTANCE CRITERIA\n- The heading case is normalized.\n" | .items[0].body = .groups.eligible[0].body' "$complete_criteria_fixture")")"
 case_variant_output="$(recommend_json "$case_variant_fixture" "\$run-epic --items 401")"
 run_test "acceptance_criteria_heading_case_variants_are_normal_structure" "0" "$(printf '%s\n' "$case_variant_output" | jq -r '[.recommendedPolicy.checkpoints[]? | select(.stage == "spec" and .domain == "product")] | length')"
