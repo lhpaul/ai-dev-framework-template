@@ -309,23 +309,39 @@ recommendation_json="$(printf '%s\n' "$scope_json" | jq -c \
     | map(select(length > 0))
     | .[0] // "";
   # Prose-only signal text for wording heuristics (issue #2136). Identifiers and
-  # code are not requirement wording: a `backticked` span, a fenced block, or a
+  # code are not requirement wording: a backticked span, a fenced block, or a
   # snake_case code such as pr_agent_ambiguous_review must not read as
-  # unresolved-product language, and neither must a quoted literal such as
-  # a quoted single word in the title or description. Inside Acceptance Criteria
-  # sections quotes are real wording, so only code is stripped there and quoted
-  # words still count. Security and data-model
+  # unresolved-product language, and neither must a quoted single word in the
+  # title or description. Acceptance Criteria sections are handled separately:
+  # quotes there are real wording, so only code is stripped and quoted words
+  # still count. Each part of the text is counted once. Security and data-model
   # signals deliberately keep using item_signal_text.
+  def strip_fenced_blocks:
+    gsub("(```|~~~)[\\s\\S]*?(```|~~~)"; " ");
   def strip_code_spans:
-    gsub("(```|~~~)[\\s\\S]*?(```|~~~)"; " ")
+    strip_fenced_blocks
     | gsub("`[^`]*`"; " ")
     | gsub("[[:alnum:]]+(_[[:alnum:]]+)+"; " ");
   def strip_quoted_literals:
     gsub("\\x27[^\\s\\x27]+\\x27"; " ")
     | gsub("\"[^\\s\"]+\""; " ");
+  def body_outside_criteria($item):
+    (($item.body // "") | strip_fenced_blocks | gsub("\r\n"; "\n") | split("\n")) as $lines
+    | reduce range(0; ($lines | length)) as $i (
+        {active: false, level: 0, out: []};
+        ($lines[$i]) as $line
+        | if acceptance_criteria_heading($line) then
+            .active = true | .level = heading_level($line)
+          elif (.active and (heading_level($line) > 0) and (heading_level($line) <= .level)) then
+            .active = false | .level = 0 | .out += [$line]
+          elif .active then .
+          else .out += [$line]
+          end
+      )
+    | .out | join("\n");
   def item_prose_signal_text($item):
-    (item_signal_text($item) | strip_code_spans | strip_quoted_literals) as $outside_criteria
-    | (acceptance_criteria_sections($item | .body = ((.body // "") | gsub("(```|~~~)[\\s\\S]*?(```|~~~)"; " "))) | map(ascii_downcase | strip_code_spans) | join("\n")) as $criteria
+    ($item | .body = body_outside_criteria($item) | item_signal_text(.) | strip_code_spans | strip_quoted_literals) as $outside_criteria
+    | (acceptance_criteria_sections($item | .body = (($item.body // "") | strip_fenced_blocks)) | map(ascii_downcase | strip_code_spans) | join("\n")) as $criteria
     | $outside_criteria + "\n" + $criteria;
   def infer_workflow_stage($item):
     ($item.status // "" | ascii_downcase) as $s |

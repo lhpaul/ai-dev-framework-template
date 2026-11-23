@@ -623,6 +623,15 @@ fenced_criteria_fixture="$(write_fixture fenced-criteria "$(jq '
 fenced_criteria_output="$(recommend_json "$fenced_criteria_fixture" "\$run-item 401")"
 run_test "fenced_heading_inside_acceptance_criteria_does_not_leak_example_text" "0" "$(printf '%s\n' "$fenced_criteria_output" | product_checkpoint_count)"
 
+# Text after the Acceptance Criteria section is "outside criteria": quoted
+# literals there are still stripped, and criteria text is counted once.
+after_criteria_fixture="$(write_fixture after-criteria "$(jq '
+  .groups.eligible[0].body = "## Acceptance Criteria\n- The report labels each proposed item.\n\n## Notes\nThe verdict is labelled \"ambiguous\" by the loop.\n"
+  | .items[0].body = .groups.eligible[0].body
+' "$complete_criteria_fixture")")"
+after_criteria_output="$(recommend_json "$after_criteria_fixture" "\$run-item 401")"
+run_test "quoted_ambiguous_after_acceptance_criteria_section_does_not_recommend_product_checkpoint" "0" "$(printf '%s\n' "$after_criteria_output" | product_checkpoint_count)"
+
 case_variant_fixture="$(write_fixture case-variant "$(jq '.groups.eligible[0].body = "## ACCEPTANCE CRITERIA\n- The heading case is normalized.\n" | .items[0].body = .groups.eligible[0].body' "$complete_criteria_fixture")")"
 case_variant_output="$(recommend_json "$case_variant_fixture" "\$run-epic --items 401")"
 run_test "acceptance_criteria_heading_case_variants_are_normal_structure" "0" "$(printf '%s\n' "$case_variant_output" | jq -r '[.recommendedPolicy.checkpoints[]? | select(.stage == "spec" and .domain == "product")] | length')"
