@@ -398,6 +398,7 @@ if ! is_positive_int "$resolved_issue"; then
           priority: "",
           dependencies: {state: "none", issues: []},
           pullRequests: {open: [], merged: []},
+          prEvidenceUnavailable: true,
           group: "eligible",
           trackerReadDeferred: true,
           ambiguityReason: null
@@ -422,6 +423,7 @@ if ! is_positive_int "$resolved_issue"; then
         priority: "",
         dependencies: {state: "none", issues: []},
         pullRequests: {open: [], merged: []},
+        prEvidenceUnavailable: true,
         group: "eligible",
         trackerReadDeferred: true,
         ambiguityReason: null

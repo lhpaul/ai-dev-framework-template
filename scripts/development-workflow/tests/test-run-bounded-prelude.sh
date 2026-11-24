@@ -209,6 +209,10 @@ linear_resolver_json="$(AI_DEV_WORKFLOW_CONFIG_FILE="$guardrails_config" \
   "$ITEM_RESOLVER" --issue LEA-185 --json)"
 run_test "linear_resolver_json_defers_tracker" "true" "$(printf '%s\n' "$linear_resolver_json" | jq -r '.trackerReadDeferred')"
 run_test "linear_resolver_json_uses_backlog_placeholder" "Backlog" "$(printf '%s\n' "$linear_resolver_json" | jq -r '.items[0].status')"
+# #1805: the deferred placeholder ran no PR lookup, so its empty PR list is not
+# confirmed absence.
+run_test "linear_resolver_json_pr_evidence_unavailable" "true" "$(printf '%s\n' "$linear_resolver_json" | jq -r '.items[0].prEvidenceUnavailable')"
+run_test "linear_resolver_json_group_pr_evidence_unavailable" "true" "$(printf '%s\n' "$linear_resolver_json" | jq -r '.groups.eligible[0].prEvidenceUnavailable')"
 
 linear_target_json="$(AI_DEV_WORKFLOW_CONFIG_FILE="$guardrails_config" \
   "$ITEM_RESOLVER" --target LEA-185 --json)"

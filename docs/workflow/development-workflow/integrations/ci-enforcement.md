@@ -60,9 +60,10 @@ runs.
 
 ## Reviewer-Loop Guard Status
 
-The workflow posts a GitHub commit status check (`success` or `failure`) for
-in-scope implementation PRs to assert that the automated reviewer loop ran to
-completion for the PR's current head — not merely that a summary comment exists.
+The workflow posts a GitHub commit status check (`success`, `pending`, or
+`failure`) for in-scope implementation PRs to assert that the automated
+reviewer loop ran to completion for the PR's current head — not merely that a
+summary comment exists.
 
 The check is named **"Reviewer-loop completion guard (#\<PR_NUMBER\>)"**. The PR
 number is included in the context name so that two PRs sharing the same commit
@@ -91,15 +92,29 @@ The verdict is read from the **latest** matching summary comment (#1810):
 - `failure` — a `hotfix/*` PR has a `skipped` summary, including `release_pr`. Hotfixes require completed review.
 - `failure` — its `Result:` is anything else (for example `escalate`), so an
   escalated, non-converged PR cannot pass the guard.
-- `failure` — its `Result:` is `clean` but the recorded head is older than the
-  current head, or no current head was recorded (history unavailable, so the
-  summary carries an empty stub or a preserved older block). Re-run the
+- `pending` — on a `pull_request_target` event, its `Result:` is `clean` but
+  the recorded head is older than the current head (#1838). A push after the
+  loop reviewed an earlier head opens this window.
+- `failure` — the same older-head clean summary on a `workflow_dispatch` run,
+  or a `clean` summary with no recorded current head (history unavailable, so
+  the summary carries an empty stub or a preserved older block). Re-run the
   reviewer loop for the current head.
-- `failure` — no matching comment found; the PR is not yet
-  reviewer-loop-complete.
+- `pending` — on a `pull_request_target` event, no matching comment found yet
+  (#1838), for example at `ready_for_review` before the loop's first summary.
+- `failure` — no matching comment found on a `workflow_dispatch` run; the PR
+  is not reviewer-loop-complete.
 - `failure` (transient) — required PR metadata, head fields, or comments could
   not be read; the workflow exits with code 1 so GitHub can retry on the next
   event.
+
+A `pending` status is not a pass. The `policy` job exits 0 for it, so the job
+check does not stay red on the PR head while the status waits. The
+`workflow_dispatch` run that `pr-review-loop.sh` triggers after posting its
+summary then sets the same status context to `success` or `failure`. That
+dispatch run is attached to the default branch, not the PR head, so a red job
+check from the earlier event would never be replaced. Merge gates must read the
+guard status context, not the `policy` job conclusion. A `failure` status
+always exits 1.
 
 ---
 

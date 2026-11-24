@@ -40,6 +40,17 @@ cat > "$MOCK_BIN/gh" <<'MOCK_GH'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$MOCK_GH_CALL_LOG"
 
+# #1805 failure injection: fail one per-prefix fallback search, or one PR view.
+if [ -n "${MOCK_PREFIX_SEARCH_FAIL:-}" ] \
+  && [[ "$*" == "search prs ${MOCK_PREFIX_SEARCH_FAIL} in:head "*"--head ${MOCK_PREFIX_SEARCH_FAIL_PREFIX:-fix}/ "* ]]; then
+  printf 'HTTP 403: API rate limit exceeded\n' >&2
+  exit 1
+fi
+if [ -n "${MOCK_PR_VIEW_FAIL:-}" ] && [[ "$*" == "pr view ${MOCK_PR_VIEW_FAIL} "* ]]; then
+  printf 'error connecting to api.github.com\n' >&2
+  exit 1
+fi
+
 case "$*" in
   auth\ status)
     exit 0
@@ -694,6 +705,57 @@ case "$linear_text_output" in
   *) deferred_before_header="no" ;;
 esac
 run_test "tracker_read_deferred_before_human_header" "yes" "$deferred_before_header"
+
+# --- #1805: PR-search failure is distinct from confirmed-no-PR evidence ---
+confirmed_none_output="$(run_json --items 115)"
+run_test "pr_evidence_confirmed_none_is_available" "false" "$(printf '%s\n' "$confirmed_none_output" | jq -r '.items[0].prEvidenceUnavailable')"
+run_test "pr_evidence_confirmed_none_empty_arrays" "0" "$(printf '%s\n' "$confirmed_none_output" | jq '.items[0].pullRequests | (.open | length) + (.merged | length)')"
+run_test "pull_requests_shape_unchanged" "merged,open" "$(printf '%s\n' "$confirmed_none_output" | jq -r '.items[0].pullRequests | keys | join(",")')"
+run_test "pr_evidence_field_in_groups" "false" "$(printf '%s\n' "$confirmed_none_output" | jq -r '.groups.eligible[0].prEvidenceUnavailable')"
+
+prefix_failure_output="$(MOCK_PREFIX_SEARCH_FAIL=115 run_json --items 115)"
+run_test "prefix_search_failure_marks_unavailable" "true" "$(printf '%s\n' "$prefix_failure_output" | jq -r '.items[0].prEvidenceUnavailable')"
+run_test "prefix_search_failure_keeps_empty_arrays" "0" "$(printf '%s\n' "$prefix_failure_output" | jq '.items[0].pullRequests | (.open | length) + (.merged | length)')"
+run_test "prefix_search_failure_shape_unchanged" "merged,open" "$(printf '%s\n' "$prefix_failure_output" | jq -r '.items[0].pullRequests | keys | join(",")')"
+run_test "prefix_search_failure_keeps_group" "eligible" "$(printf '%s\n' "$prefix_failure_output" | jq -r '.items[0].group')"
+
+pr_view_failure_output="$(MOCK_PR_VIEW_FAIL=2114 run_json --items 114)"
+run_test "pr_view_failure_marks_unavailable" "true" "$(printf '%s\n' "$pr_view_failure_output" | jq -r '.items[0].prEvidenceUnavailable')"
+run_test "pr_view_failure_drops_unreadable_pr" "0" "$(printf '%s\n' "$pr_view_failure_output" | jq '.items[0].pullRequests.open | length')"
+
+fallback_found_output="$(run_json --items 114)"
+run_test "fallback_found_pr_is_available" "false" "$(printf '%s\n' "$fallback_found_output" | jq -r '.items[0].prEvidenceUnavailable')"
+
+primary_conclusive_output="$(MOCK_PR_LIST_SEARCH=1 MOCK_PREFIX_SEARCH_FAIL=114 MOCK_PREFIX_SEARCH_FAIL_PREFIX=feature run_json --items 114)"
+run_test "primary_search_hit_is_available" "false" "$(printf '%s\n' "$primary_conclusive_output" | jq -r '.items[0].prEvidenceUnavailable')"
+run_test "primary_search_hit_preserves_pr" "2114" "$(printf '%s\n' "$primary_conclusive_output" | jq -r '.items[0].pullRequests.open[0].number')"
+
+primary_empty_prefix_failure_output="$(MOCK_PR_LIST_SEARCH=1 MOCK_PR_LIST_SEARCH_EMPTY=114 MOCK_PREFIX_SEARCH_FAIL=114 MOCK_PREFIX_SEARCH_FAIL_PREFIX=fix run_json --items 114)"
+run_test "primary_empty_prefix_failure_with_hit_is_present" "2114" "$(printf '%s\n' "$primary_empty_prefix_failure_output" | jq -r '.items[0].pullRequests.open[0].number')"
+run_test "primary_empty_prefix_failure_with_hit_flags_incomplete" "true" "$(printf '%s\n' "$primary_empty_prefix_failure_output" | jq -r '.items[0].prEvidenceUnavailable')"
+
+base_scan_output="$(run_json --items 103)"
+run_test "base_scan_result_is_available" "false" "$(printf '%s\n' "$base_scan_output" | jq -r '.items[0].prEvidenceUnavailable')"
+
+# #1805 end to end through run-bounded-prelude.sh: the single-item framework-mode
+# Backlog-routing gate (#1583) must read a failed PR lookup as `unavailable`
+# (pass, deferred) instead of `none` (stop). Issue 115 is a mocked Workflow-typed
+# Backlog item with no PRs, folders, or branches. In a consumer repository the
+# gate is skipped entirely, so neither run stops there.
+prelude_stop_condition() {
+  "$REPO_ROOT/scripts/development-workflow/run-bounded-prelude.sh" \
+    --original-command "/run-item 115" --issue 115 \
+    --delegate-review --no-may-merge --may-start-backlog true --max-risk medium \
+    --json 2>/dev/null | jq -r '.stopCondition // "none"' || true
+}
+prelude_confirmed_none_stop="$(prelude_stop_condition)"
+prelude_search_failure_stop="$(MOCK_PREFIX_SEARCH_FAIL=115 prelude_stop_condition)"
+if [ "$(grep -E '^[[:space:]]*is_template:[[:space:]]*true' "$REPO_ROOT/.ai-dev-workflow.yaml" >/dev/null 2>&1 && echo true || echo false)" = "true" ]; then
+  run_test "prelude_confirmed_no_pr_still_stops" "missing_tracker_context" "$prelude_confirmed_none_stop"
+else
+  run_test "prelude_confirmed_no_pr_consumer_mode_no_stop" "none" "$prelude_confirmed_none_stop"
+fi
+run_test "prelude_pr_search_failure_does_not_stop" "none" "$prelude_search_failure_stop"
 
 echo ""
 echo "=== Summary ==="

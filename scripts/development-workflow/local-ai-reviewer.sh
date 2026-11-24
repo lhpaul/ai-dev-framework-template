@@ -303,7 +303,13 @@ run_with_timeout() {
     kill -TERM -- "-$child_pid" 2>/dev/null || kill -TERM "$child_pid" 2>/dev/null || true
     local terminate_elapsed=0
     local terminate_grace_seconds=2
-    while kill -0 "$child_pid" 2>/dev/null && [ "$terminate_elapsed" -lt "$terminate_grace_seconds" ]; do
+    # The grace period belongs to the whole process group, not only its leader
+    # (#2172). A leader that is a shell which did not exec the command (dash's
+    # `sh -c` does not) dies at TERM at once, while the command is still
+    # running its own TERM/EXIT cleanup. Stopping the wait when only the leader
+    # is gone would KILL that cleanup halfway and leave its files behind.
+    while { kill -0 "$child_pid" 2>/dev/null || kill -0 -- "-$child_pid" 2>/dev/null; } &&
+      [ "$terminate_elapsed" -lt "$terminate_grace_seconds" ]; do
       sleep 1
       terminate_elapsed=$((terminate_elapsed + 1))
     done
@@ -968,13 +974,20 @@ strict_run_all_registry_entries() {
 # ---------------------------------------------------------------------------
 
 # Branch tier. Literal prefixes, never a regex: `specification/foo` must not
-# match `spec/*`.
+# match `spec/*`. Implementation-ness comes from branch_prefix() via
+# workflow_branch_is_implementation (#2183), so feat/* and backport/* PRs get
+# the implementation checklist; a bare `backport/` stays `default`.
 reviewer_stage_for_branch() {
   case "${1:-}" in
     spec/*) printf 'spec\n' ;;
     implementation-plan/*) printf 'plan\n' ;;
-    feature/*|refactor/*|fix/*|hotfix/*) printf 'implementation\n' ;;
-    *) printf 'default\n' ;;
+    *)
+      if workflow_branch_is_implementation "${1:-}"; then
+        printf 'implementation\n'
+      else
+        printf 'default\n'
+      fi
+      ;;
   esac
 }
 

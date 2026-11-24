@@ -59,6 +59,13 @@ Related:
 The JSON output includes:
 
 - `scope` — full resolver payload (`groups`, `items`, `baseBranch`, `policy` flags)
+- `scope.items[].prEvidenceUnavailable` — `true` when the resolver could not
+  complete the item's PR lookup (for example, a rate-limited or failed
+  `gh search prs` / `gh pr view` call), or ran none (Linear deferred
+  placeholder). Then an empty `pullRequests` list is not proof that no PR
+  exists, and callers must treat PR evidence as unavailable. `false` means the
+  lookup completed. `pullRequests` keeps its `{open, merged}` shape; a scope
+  without the field reads as `false`.
 - `scope.baseReason`, `scope.baseWarnings`, and `scope.baseValidation` — the
   selected base branch rationale, visible fallback warnings, and read-only
   remote-branch validation result

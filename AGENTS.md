@@ -69,6 +69,7 @@ Repository-specific workflow providers are declared in [`.ai-dev-workflow.yaml`]
 | --- | --- | --- | --- | --- | --- |
 | Project Setup | `project-setup` agent | `/setup-project` | `workflow-project-setup` skill | `workflow-project-setup` skill | Follow `docs/workflow/setup/protocol.md` |
 | Add backlog item | `/add-backlog-item` | `/add-backlog-item` | `/add-backlog-item` alias | `/add-backlog-item` alias | Follow `docs/workflow/development-workflow/protocols/00-add-backlog-item-protocol.md` |
+| Review backlog | `/review-backlog` | `/review-backlog` | `/review-backlog` alias | `/review-backlog` alias | Follow `docs/workflow/development-workflow/protocols/09-review-backlog-protocol.md` — periodic three-gate backlog audit; complements `/run-work` |
 | Write Spec | `product-manager` agent | `/generate-new-feature` | `workflow-spec-writer` skill | `workflow-spec-writer` skill | Follow `docs/workflow/development-workflow/protocols/01-generate-spec-protocol.md` |
 | Write Plan | `tech-lead` agent | `/generate-implementation-plan` | `workflow-plan-writer` skill | `workflow-plan-writer` skill | Follow `docs/workflow/development-workflow/protocols/02-generate-implementation-plan-protocol.md` |
 | Implement | `developer` agent | `/implement-development` | `workflow-implementer` skill | `workflow-implementer` skill | Follow `docs/workflow/development-workflow/protocols/03-implement-development-protocol.md` |
@@ -93,7 +94,7 @@ Repository-specific workflow providers are declared in [`.ai-dev-workflow.yaml`]
 
 The repository ships Codex skill definitions in two compatible locations:
 
-- `.agents/skills/`: repo-scoped Codex discovery path, including command-style aliases such as `/add-backlog-item`, `/run-work`, `/run-item`, `/run-items`, `/run-item-work` (deprecated alias), `/run-epic`, `/run-reviewer-loop`, `/batch-merge`, `/post-merge-cleanup`, `/post-merge-qa` (alias `/merged-qa-tester`), `/prepare-release`, `/graduate-development`, `/retrospective`, and `/sync-template`.
+- `.agents/skills/`: repo-scoped Codex discovery path, including command-style aliases such as `/add-backlog-item`, `/review-backlog`, `/run-work`, `/run-item`, `/run-items`, `/run-item-work` (deprecated alias), `/run-epic`, `/run-reviewer-loop`, `/batch-merge`, `/post-merge-cleanup`, `/post-merge-qa` (alias `/merged-qa-tester`), `/prepare-release`, `/graduate-development`, `/retrospective`, and `/sync-template`.
 - `.codex/skills/`: legacy canonical workflow skill definitions used by existing template integrations.
 
 Install them into your local Codex skill directories before first use:
@@ -225,8 +226,9 @@ Read [`docs/best-practices/STACK-SPECIFIC.md`](docs/best-practices/STACK-SPECIFI
 
 ### Safety Rules
 
-- Private local workflow configuration, environment files, private keys and credential files are not agent inspection or editing targets. Do not open them manually, copy their contents into fixtures, or include their values in transcripts or review artifacts. Public versioned examples remain readable.
-- Authorized protocol scripts deliberately read the selected private configuration as part of normal execution. Select external sources explicitly; never restore implicit inheritance from another checkout or copy private files into worktrees. Preflight stages only validated reviewer settings.
+- `.ai-dev-workflow.local.yaml` (or `.ai-dev-workflow.local.yml`) is shared local workflow configuration: checkout paths, product repos, review settings and references to where secrets live (`secret_ref`, `private_key_path`), never secret values. Agents may read it and run protocol scripts that read it; they do not edit it unless asked. Earlier guidance allowed secret values in this file: if yours still holds one, move it to `.ai-dev-workflow.local.env` or a `.ai-dev-workflow.local.private.*` file and leave a `secret_ref` in its place. An agent that finds a secret value there does not repeat or use it, and tells the human to move it.
+- Environment files (including `.ai-dev-workflow.local.env`), `.ai-dev-workflow.local.private.*` files, backups of the local YAML (such as `.ai-dev-workflow.local.yaml.retired`), private keys and credential files are not agent inspection or editing targets. Do not open them manually, copy their contents into fixtures, or include their values in transcripts or review artifacts. Public versioned examples remain readable.
+- Protocol scripts read the selected local configuration as part of normal execution. Select external sources explicitly; never restore implicit inheritance from another checkout or copy private files into worktrees. Preflight stages only validated reviewer settings.
 - Prove configuration isolation, safe diagnostics and prevention controls with disposable synthetic repositories and fabricated values. Runtime-specific permission rules do not enforce arbitrary external sessions.
 
 - **No `git push --force`**, `git reset --hard`, or rebase on shared branches without explicit human approval

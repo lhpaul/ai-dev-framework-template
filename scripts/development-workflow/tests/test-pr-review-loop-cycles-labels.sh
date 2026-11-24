@@ -1520,6 +1520,26 @@ run_test "restore_label_hotfix_branch_calls_gh_edit" "1" "$_edit_calls"
 rm -f "$_call_log_11"
 unset MOCK_GH_CALL_LOG MOCK_GH_COMMENTS_OUTPUT MOCK_GH_HEAD_SHA MOCK_GH_OWNERSHIP_BRANCH
 
+# Test 11.5b (#2183): feat/* and backport/* are implementation branches per
+# branch_prefix(), so the restore path covers them like hotfix/*.
+for _rfr_branch in "feat/77-alias" "backport/v1.2.3"; do
+  if ! _call_log_11="$(mktemp)"; then
+    echo "ERROR: failed to allocate regression-label test temp file" >&2
+    exit 1
+  fi
+  export MOCK_GH_OUTPUT="false"
+  export MOCK_GH_HEAD_SHA="$_SUMMARY_CURRENT_HEAD_SHA"
+  export MOCK_GH_COMMENTS_OUTPUT="$_SUMMARY_COMMENT_JSON"
+  export MOCK_GH_CALL_LOG="$_call_log_11"
+  export MOCK_GH_OWNERSHIP_BRANCH="$_rfr_branch"
+  restore_regression_label_if_missing "77" "$_rfr_branch" 2>/dev/null
+  _edit_calls="$(grep -c -- '--add-label' "$_call_log_11" 2>/dev/null)" || _edit_calls="0"
+  run_test "2183_restore_label_${_rfr_branch%%/*}_branch_calls_gh_edit" "1" "$_edit_calls"
+  rm -f "$_call_log_11"
+  unset MOCK_GH_CALL_LOG MOCK_GH_COMMENTS_OUTPUT MOCK_GH_HEAD_SHA MOCK_GH_OWNERSHIP_BRANCH
+done
+unset _rfr_branch
+
 # Test 11.6: restore function is defined before the HARNESS_MODE return point
 # (source-level ordering check — ensures the function remains testable after
 # future refactors move it).
@@ -1742,29 +1762,30 @@ fi
 run_test "reviewer_failed_accumulator_or" "1" "$_rf_accumulated"
 unset _rf_accumulated
 
-unset MOCK_GH_CALL_LOG MOCK_GH_EXIT MOCK_GH_LABEL_VIEW_EXIT MOCK_GH_LABEL_CREATE_EXIT MOCK_GH_PR_EDIT_EXIT
+unset MOCK_GH_CALL_LOG MOCK_GH_EXIT MOCK_GH_LABEL_PROBE_EXIT MOCK_GH_LABEL_PROBE_STDERR MOCK_GH_LABEL_CREATE_EXIT MOCK_GH_LABEL_CREATE_STDERR MOCK_GH_PR_EDIT_EXIT
 
 _call_log_12="$(mktemp)"
 export MOCK_GH_CALL_LOG="$_call_log_12"
-export MOCK_GH_LABEL_VIEW_EXIT=1
+export MOCK_GH_LABEL_PROBE_EXIT=1
+export MOCK_GH_LABEL_PROBE_STDERR="gh: Not Found (HTTP 404)"
 sync_reviewer_failed_label "42" "1" 2>/dev/null
 _create_calls="$(grep -c -- 'label create reviewer-failed' "$_call_log_12" 2>/dev/null)" || _create_calls="0"
 _add_calls="$(grep -c -- 'pr edit 42 --add-label reviewer-failed' "$_call_log_12" 2>/dev/null)" || _add_calls="0"
 run_test "reviewer_failed_required_creates_missing_label" "1" "$_create_calls"
 run_test "reviewer_failed_required_adds_label" "1" "$_add_calls"
 rm -f "$_call_log_12"
-unset MOCK_GH_CALL_LOG MOCK_GH_LABEL_VIEW_EXIT
+unset MOCK_GH_CALL_LOG MOCK_GH_LABEL_PROBE_EXIT MOCK_GH_LABEL_PROBE_STDERR
 
 _call_log_12="$(mktemp)"
 export MOCK_GH_CALL_LOG="$_call_log_12"
-export MOCK_GH_LABEL_VIEW_EXIT=0
+export MOCK_GH_LABEL_PROBE_EXIT=0
 sync_reviewer_failed_label "42" "1" 2>/dev/null
 _create_calls="$(grep -c -- 'label create reviewer-failed' "$_call_log_12" 2>/dev/null)" || _create_calls="0"
 _add_calls="$(grep -c -- 'pr edit 42 --add-label reviewer-failed' "$_call_log_12" 2>/dev/null)" || _add_calls="0"
 run_test "reviewer_failed_existing_label_no_create" "0" "$_create_calls"
 run_test "reviewer_failed_existing_label_adds_label" "1" "$_add_calls"
 rm -f "$_call_log_12"
-unset MOCK_GH_CALL_LOG MOCK_GH_LABEL_VIEW_EXIT
+unset MOCK_GH_CALL_LOG MOCK_GH_LABEL_PROBE_EXIT MOCK_GH_LABEL_PROBE_STDERR
 
 _call_log_12="$(mktemp)"
 export MOCK_GH_CALL_LOG="$_call_log_12"
@@ -1796,8 +1817,10 @@ unset MOCK_GH_CALL_LOG MOCK_GH_EXIT MOCK_GH_PR_EDIT_EXIT
 
 _call_log_12="$(mktemp)"
 export MOCK_GH_CALL_LOG="$_call_log_12"
-export MOCK_GH_LABEL_VIEW_EXIT=1
+export MOCK_GH_LABEL_PROBE_EXIT=1
+export MOCK_GH_LABEL_PROBE_STDERR="gh: Not Found (HTTP 404)"
 export MOCK_GH_LABEL_CREATE_EXIT=1
+export MOCK_GH_LABEL_CREATE_STDERR="mock gh: label create refused (HTTP 403)"
 _sync_exit=0
 _warn_output="$(sync_reviewer_failed_label "42" "1" 2>&1)" || _sync_exit=$?
 _add_calls="$(grep -c -- 'pr edit 42 --add-label reviewer-failed' "$_call_log_12" 2>/dev/null)" || _add_calls="0"
@@ -1809,8 +1832,54 @@ else
   _warn_emitted="no"
 fi
 run_test "reviewer_failed_create_failure_warns" "yes" "$_warn_emitted"
+# #1764: the create failure is reported verbatim, not folded into a benign skip.
+_gh_msg_hits="$(printf '%s\n' "$_warn_output" | grep -c 'mock gh: label create refused (HTTP 403)')" || _gh_msg_hits="0"
+run_test "reviewer_failed_create_failure_reports_gh_message" "1" "$_gh_msg_hits"
 rm -f "$_call_log_12"
-unset MOCK_GH_CALL_LOG MOCK_GH_LABEL_VIEW_EXIT MOCK_GH_LABEL_CREATE_EXIT _warn_output _sync_exit
+unset MOCK_GH_CALL_LOG MOCK_GH_LABEL_PROBE_EXIT MOCK_GH_LABEL_PROBE_STDERR MOCK_GH_LABEL_CREATE_EXIT MOCK_GH_LABEL_CREATE_STDERR _warn_output _sync_exit _gh_msg_hits
+
+# #1764: a probe failure that is not a 404 (auth/network/server error) means
+# "could not tell", so no create is attempted and the WARN says so.
+_call_log_12="$(mktemp)"
+export MOCK_GH_CALL_LOG="$_call_log_12"
+export MOCK_GH_LABEL_PROBE_EXIT=1
+export MOCK_GH_LABEL_PROBE_STDERR="gh: Bad gateway (HTTP 502)"
+_sync_exit=0
+_warn_output="$(sync_reviewer_failed_label "42" "1" 2>&1)" || _sync_exit=$?
+_create_calls="$(grep -c -- 'label create' "$_call_log_12" 2>/dev/null)" || _create_calls="0"
+_add_calls="$(grep -c -- 'pr edit 42 --add-label reviewer-failed' "$_call_log_12" 2>/dev/null)" || _add_calls="0"
+run_test "reviewer_failed_probe_unknown_returns_0" "0" "$_sync_exit"
+run_test "reviewer_failed_probe_unknown_no_create" "0" "$_create_calls"
+run_test "reviewer_failed_probe_unknown_still_attempts_add" "1" "$_add_calls"
+_unknown_hits="$(printf '%s\n' "$_warn_output" | grep -c 'could not determine whether the reviewer-failed label exists')" || _unknown_hits="0"
+run_test "reviewer_failed_probe_unknown_warns_could_not_determine" "1" "$_unknown_hits"
+rm -f "$_call_log_12"
+unset MOCK_GH_CALL_LOG MOCK_GH_LABEL_PROBE_EXIT MOCK_GH_LABEL_PROBE_STDERR _warn_output _sync_exit
+
+# #1764: an existing label produces no WARN and the probe is a read (gh api),
+# never the nonexistent `gh label view`.
+_call_log_12="$(mktemp)"
+export MOCK_GH_CALL_LOG="$_call_log_12"
+export MOCK_GH_LABEL_PROBE_EXIT=0
+_warn_output="$(sync_reviewer_failed_label "42" "1" 2>&1)" || _warn_rc=$?
+_probe_calls="$(grep -c -- 'api repos/{owner}/{repo}/labels/reviewer-failed' "$_call_log_12" 2>/dev/null)" || _probe_calls="0"
+_view_calls="$(grep -c -- 'label view' "$_call_log_12" 2>/dev/null)" || _view_calls="0"
+run_test "reviewer_failed_existing_label_probed_via_gh_api" "1" "$_probe_calls"
+run_test "reviewer_failed_never_calls_label_view" "0" "$_view_calls"
+_warn_hits="$(printf '%s\n' "$_warn_output" | grep -c 'WARN')" || _warn_hits="0"
+run_test "reviewer_failed_existing_label_no_warn" "0" "$_warn_hits"
+rm -f "$_call_log_12"
+unset MOCK_GH_CALL_LOG MOCK_GH_LABEL_PROBE_EXIT _warn_output _probe_calls _view_calls _warn_hits _warn_rc
+
+# #1764: the mock gh rejects verbs the real binary lacks (violation canary:
+# before the fix the stub accepted `gh label view`).
+_stub_view_exit=0
+gh label view reviewer-failed >/dev/null 2>&1 || _stub_view_exit=$?
+run_test "mock_gh_rejects_label_view" "1" "$_stub_view_exit"
+_stub_list_exit=0
+gh label list >/dev/null 2>&1 || _stub_list_exit=$?
+run_test "mock_gh_accepts_label_list" "0" "$_stub_list_exit"
+unset _stub_view_exit _stub_list_exit
 
 _call_log_12="$(mktemp)"
 export MOCK_GH_CALL_LOG="$_call_log_12"
@@ -1839,7 +1908,7 @@ else
 fi
 run_test "reviewer_failed_helpers_before_harness_return" "yes" "$_reviewer_failed_ordering_ok"
 unset _reviewer_failed_required _reviewer_failed_fn_line _sync_fn_line _harness_return_line _reviewer_failed_ordering_ok
-unset MOCK_GH_EXIT MOCK_GH_LABEL_VIEW_EXIT MOCK_GH_LABEL_CREATE_EXIT MOCK_GH_PR_EDIT_EXIT
+unset MOCK_GH_EXIT MOCK_GH_LABEL_PROBE_EXIT MOCK_GH_LABEL_PROBE_STDERR MOCK_GH_LABEL_CREATE_EXIT MOCK_GH_LABEL_CREATE_STDERR MOCK_GH_PR_EDIT_EXIT
 
 # ---------------------------------------------------------------------------
 # Area 12b: ready-phase gate distinguishes GitHub API rate-limit exhaustion

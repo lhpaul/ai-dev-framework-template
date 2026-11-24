@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # test-pr-review-loop-failure-paths-3.sh — pr-review-loop.sh harness: Area 13
 # (PR #801 failure paths), part 3 of 4.
-# duration: 115
+# duration: 130
 # covers: scripts/development-workflow/pr-review-loop.sh
 # covers: scripts/development-workflow/tests/lib/pr-review-loop-harness.sh
 # covers: docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md
@@ -2760,6 +2760,122 @@ fi
 run_test "codex_footer_near_miss_async_reaction_final_safe_fails_resolves_at_async_reaction_final" "async_reaction_final" "$_codex_footer_near_miss_async_reaction_final_safe_fails_site"
 rm -rf "$_codex_footer_near_miss_async_reaction_final_safe_fails_mock_dir"
 unset _codex_footer_near_miss_async_reaction_final_safe_fails_mock_dir _codex_footer_near_miss_async_reaction_final_safe_fails_output _codex_footer_near_miss_async_reaction_final_safe_fails_exit _codex_footer_near_miss_async_reaction_final_safe_fails_site
+# Async verdict-site positive paths (#1499). The near-miss scenarios above
+# prove that a body which does NOT reproduce CODEX_APPROVED_TEMPLATES
+# safe-fails at the async-arrival and async-final verdict sites. These
+# scenarios are their positive-path counterparts: a genuine clean approval
+# (the evidenced template, including its flavor slot) must reach
+# VERDICT: APPROVED, exit 0, AT each of those two sites. Each site is
+# exercised twice — once with the approval as a SHA-pinned root comment and
+# once as a current-head submitted review from the PR reviews endpoint —
+# because codex_combine_terminal_evidence reaches the same verdict branch
+# from both sources. Every mock returns the approval on exactly one poll
+# (keyed on the issue-comments call counter), so a regression that
+# downgrades a genuine approval at one site cannot be rescued by an earlier
+# or later site rediscovering the same body; it ends in a non-APPROVED
+# verdict instead. The site assertion pins which branch produced the
+# verdict.
+#
+# Arguments: <scenario name> <head sha> <comment id base> <evidence source:
+# comment|review> <site: async_arrival|async_final>.
+_codex_async_positive_path_run() {
+  local name="$1" head="$2" id_base="$3" source="$4" site="$5"
+  local mock_dir output exit_code=0 observed_site approval_call
+  mock_dir="$(mktemp -d)"
+  printf '0\n' > "$mock_dir/comment_calls"
+  # Call 1 is the pre-trigger dedup check and call 2 the main poll loop's
+  # bot-response check; both stay empty. Call 3 is the async-arrival grace
+  # poll; call 4 is the async-final re-poll after the acknowledgement wait.
+  if [ "$site" = "async_arrival" ]; then
+    approval_call=3
+  else
+    approval_call=4
+  fi
+  {
+    printf '#!/usr/bin/env bash\n'
+    printf 'HEAD_SHA=%q\nID_BASE=%q\nSOURCE=%q\nSITE=%q\nAPPROVAL_CALL=%q\n' \
+      "$head" "$id_base" "$source" "$site" "$approval_call"
+    cat <<'CODEX_ASYNC_POSITIVE_PATH_GH'
+approval_body() {
+  jq -rn --arg short "${HEAD_SHA:0:10}" '"Codex Review: Didn'\''t find any major issues. Swish! **Reviewed commit:** `" + $short + "` <details> <summary>ℹ️ About Codex in GitHub</summary> <br/> [Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you - Open a pull request for review - Mark a draft as ready - Comment \"@codex review\". If Codex has suggestions, it will comment; otherwise it will react with 👍. Codex can also answer questions or update the PR. Try commenting \"@codex address that feedback\". </details>"'
+}
+calls_file="$(dirname "$0")/comment_calls"
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf '%s\n' "$HEAD_SHA"; exit 0 ;;
+  *"--method POST"*)
+    jq -nc --argjson id "$ID_BASE" '{id:$id,created_at:"2026-01-01T00:00:00Z"}'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    # The reviews fetch at each site runs right after that site's own
+    # issue-comments fetch, so the comment counter identifies the site.
+    if [ "$SOURCE" = "review" ] && [ "$(cat "$calls_file")" -eq "$APPROVAL_CALL" ]; then
+      jq -nc --arg sha "$HEAD_SHA" --arg body "$(approval_body)" \
+        '[{submitted_at:"2026-01-01T00:00:02Z",commit_id:$sha,state:"COMMENTED",user:{login:"chatgpt-codex-connector[bot]"},body:$body}]'
+    else
+      printf '[]\n'
+    fi
+    exit 0 ;;
+  *"issues/"*"/timeline"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    calls="$(cat "$calls_file")"
+    calls=$((calls + 1))
+    printf '%s\n' "$calls" > "$calls_file"
+    if [ "$SOURCE" = "comment" ] && [ "$calls" -eq "$APPROVAL_CALL" ]; then
+      jq -nc --argjson id "$((ID_BASE + 1))" --arg body "$(approval_body)" \
+        '[{id:$id,created_at:"2026-01-01T00:00:02Z",user:{login:"chatgpt-codex-connector[bot]"},body:$body}]'
+    elif [ "$SITE" = "async_final" ] && [ "$calls" -eq 3 ]; then
+      # A bare, non-terminal acknowledgement on the async-arrival poll
+      # sends execution to the one-shot sleep-and-recheck (async-final).
+      jq -nc --argjson id "$((ID_BASE + 2))" '[{id:$id,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("If Codex has suggestions, it will comment; otherwise it will react with 👍. Codex can also answer questions or update the PR. Try commenting \"@codex address that feedback\".")}]'
+    else
+      printf '[]\n'
+    fi
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_ASYNC_POSITIVE_PATH_GH
+  } > "$mock_dir/gh"
+  chmod +x "$mock_dir/gh"
+
+  PATH="$mock_dir:$PATH" \
+    "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+    42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+    >"$mock_dir/output.txt" 2>&1 || exit_code=$?
+  output="$(cat "$mock_dir/output.txt")"
+  run_test "${name}_exit_clean" "0" "$exit_code"
+  run_test "${name}_verdict" "VERDICT: APPROVED" \
+    "$(printf '%s\n' "$output" | grep "^VERDICT:" || true)"
+  if [ "$site" = "async_arrival" ] && grep -q "^INFO: async-arrival bot response detected during grace period" <<< "$output" \
+    && ! grep -q "^INFO: final async bot response detected after acknowledgement wait" <<< "$output"; then
+    observed_site="async_arrival"
+  elif [ "$site" = "async_final" ] && grep -q "^INFO: final async bot response detected after acknowledgement wait" <<< "$output"; then
+    observed_site="async_final"
+  else
+    observed_site="other"
+  fi
+  run_test "${name}_resolves_at_${site}" "$site" "$observed_site"
+  rm -rf "$mock_dir"
+}
+
+_codex_async_positive_path_run "codex_clean_approval_async_arrival_comment_approved" \
+  "cafe0000011234567" 490 comment async_arrival
+_codex_async_positive_path_run "codex_clean_approval_async_arrival_review_approved" \
+  "cafe0000021234567" 500 review async_arrival
+_codex_async_positive_path_run "codex_clean_approval_async_final_comment_approved" \
+  "cafe0000031234567" 510 comment async_final
+_codex_async_positive_path_run "codex_clean_approval_async_final_review_approved" \
+  "cafe0000041234567" 520 review async_final
+unset -f _codex_async_positive_path_run
 
 
 # ---------------------------------------------------------------------------

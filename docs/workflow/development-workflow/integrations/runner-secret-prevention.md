@@ -1,5 +1,15 @@
 # Private runner configuration: upgrade and prevention
 
+> `.ai-dev-workflow.local.yaml` (or `.yml`) is machine-local (never committed) but not secret: it holds paths,
+> settings and secret references, never secret values. Agents may read it and run protocol scripts
+> that read it; they do not edit it unless asked. Secret values belong in `.ai-dev-workflow.local.env`,
+> `.ai-dev-workflow.local.private.*`, env files or a secret manager, which agents never inspect.
+>
+> **Migration:** earlier guidance placed secret values in `.ai-dev-workflow.local.yaml`. Before
+> letting agents read it, move any secret value out of it into `.ai-dev-workflow.local.env` or a
+> `.ai-dev-workflow.local.private.*` file and leave a `secret_ref` or path in the YAML. Backups such
+> as `.ai-dev-workflow.local.yaml.retired` may still hold old values, so they stay read-denied.
+
 Upgrading removes automatic inheritance of private workflow settings from the
 primary checkout into linked worktrees. Implicit selection uses only the current
 checkout's `.ai-dev-workflow.local.yaml`. Missing, empty and product-only local
@@ -108,10 +118,12 @@ secret detector or a control over arbitrary external terminal sessions.
 
 Private workflow variants, conventional credentials and private-key filenames are
 excluded by Git; public local examples, `.pub` keys and public certificate files
-remain trackable. Versioned Claude Read/Edit denies cover named private surfaces
-while preserving the allow policy. Those runtime-specific rules do not claim
-universal enforcement. Agents must not inspect private files manually; authorized
-protocol scripts retain deliberate selected-source access. Verify controls with
+remain trackable. Versioned Claude Read/Edit denies cover env, `.local.private.*`,
+credential and key surfaces and local YAML backups (`.yaml.*`, `.yml.*`), plus Edit of
+`.ai-dev-workflow.local.yaml`, while
+preserving the allow policy. Those runtime-specific rules do not claim universal
+enforcement. Agents may read `.ai-dev-workflow.local.yaml` but must not inspect
+secret files manually; protocol scripts retain deliberate selected-source access. Verify controls with
 fabricated values in disposable repositories, without launching a real review
 service or copying workstation configuration.
 

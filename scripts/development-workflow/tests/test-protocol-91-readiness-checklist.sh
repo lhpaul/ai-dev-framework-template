@@ -413,6 +413,15 @@ function = source.split("restore_regression_label_if_missing() {", 1)[1].split(
     "\ndoc_branch_default_max_wait()", 1
 )[0]
 function = "restore_regression_label_if_missing() {" + function
+# The function classifies the branch through workflow-lib.sh (#2183); load the
+# real branch_prefix / workflow_branch_is_implementation definitions rather
+# than a stub so the extract keeps the production classification.
+lib = (Path(sys.argv[1]).parent / "workflow-lib.sh").read_text()
+classifiers = ""
+for name in ("branch_prefix", "workflow_branch_is_implementation"):
+    body = lib.split("\n" + name + "() {\n", 1)[1].split("\n}\n", 1)[0]
+    classifiers += name + "() {\n" + body + "\n}\n"
+function = classifiers + function
 with tempfile.TemporaryDirectory(prefix="nested-result-") as directory:
     root = Path(directory)
     helper = root / "apply-readiness-labels.sh"

@@ -7,6 +7,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.52.0] - 2026-11-24
+
+### Added
+
+- **Backlog review protocol (`/review-backlog`)** (#2155): new Protocol 09 audits the whole backlog in three confirmed gates (structural ledger, order, closeout), detects tracker capabilities instead of assuming them per provider, and complements `/run-work`; aliases for Claude Code, Cursor, Codex and DSH.
+
+### Changed
+
+- **Agents can read the shared local workflow config** (#2190): `.ai-dev-workflow.local.yaml` holds paths, review settings and secret references, never secret values, so agents may read it and run protocol scripts that read it; they still do not edit it unless asked. `.claude/settings.json` drops the `Read` deny for the active file and keeps it for backups and the `Edit` deny. Before upgrading, move any secret value still in the YAML into `.ai-dev-workflow.local.env` or a `.ai-dev-workflow.local.private.*` file; env files, private files, keys and credentials remain off limits.
+
+### Fixed
+
+- **Haystack `action_required` with a positive rating** (#1332): the Haystack guide explains it is a review-policy request for a human look, not a code-finding failure, and how the reviewer loop reports it.
+- **Linear epics use `In Progress`** (#1447): `/run-epic` sets a `Backlog`/`Todo` epic to `In Progress` once; children keep the fine-grained stages and the epic moves to `Released` only after the epic outcome ships. GitHub Projects is unaffected.
+- **Codex async verdict positive coverage** (#1499): tests now drive a genuine clean approval to `VERDICT: APPROVED` at both async verdict sites, so a regression that downgrades approvals is caught.
+- **No close-to-`Merged` built-in workflow** (#1530): the GitHub Projects guide recommends disabling the built-in "item closed" Status update (or pointing it at `Cancelled`), so not-planned closes no longer read as delivered.
+- **`print_kv_escaped` is linear on macOS bash 3.2** (#1539): long values are escaped in 512-byte chunks (117 KB in well under a second instead of minutes) with byte-identical output.
+- **CodeRabbit stale-findings fallback skips resolved threads** (#1578): resolved findings no longer cause `REASON=stale_findings` with nothing to fix; an exhausted rate limit escalates as `rate_limit_max_retries`, and unreadable thread state still counts the comment.
+- **`reviewer-failed` label probe** (#1764): the loop probes with `gh api` instead of the nonexistent `gh label view`, creating the label only on HTTP 404 and dropping the misleading create-failed warning.
+- **Scope resolver separates a failed PR lookup from "no PR"** (#1805): scope items carry `prEvidenceUnavailable`, and the `/run-item` framework-mode Backlog gate treats it as unavailable evidence, so a failed PR search no longer stops in-progress items.
+- **Stale `In Development` correction really resets the tracker** (#1811): a dedicated `workflow_correct_stale_in_development_status` helper performs the one sanctioned `In Development` → `Plan Ready` move that the rollback guard previously skipped silently.
+- **Reviewer loop fails fast when `codex-github` has no local reviewer** (#1817): the expensive-reviewer gate reports `config_error` and the loop escalates on the first evaluation with `REASON=expensive_gate_local_reviewer_not_configured` instead of deferring until the cap.
+- **Plan outcome record may lag the head by one stamp-only push** (#1820): the rigor rules accept the head's only parent when nothing but the `Plan revision:` SHA changed, ending the review deadlock; the read-only `outcome-record-revision-check.sh` applies the rule.
+- **PR policy no longer goes red before the reviewer loop posts** (#1838): the completion guard is `pending` (and `policy` exits 0) while the loop summary is missing or for an older head; real failures still fail, and pending still blocks readiness.
+- **`--why-safe-file` unknown keys** (#1841): `run-epic-risk-classifier.sh` warns on stderr about unknown keys instead of silently treating the field as missing.
+- **Self-check accepts the detached worktree left by merged cleanup** (#1846): with `--pr` and `--expected-base`, a detached HEAD at or past the base tip of a merged PR no longer flags branch and worktree discrepancies.
+- **Description-only fixes can be re-reviewed without an empty commit** (#1853): a `failed_for_head` refusal is keyed on the head and review inputs, so a changed PR body or eligible comment allows a re-review, and an infrastructure failure gets one automatic retry.
+- **`extract_github_issue_number` under bash 3.2** (#1871): the empty-array expansion is guarded, so `set -u` no longer aborts on development folders without markdown files.
+- **PR-Agent HTML-only inline code with quoted attributes** (#1979): tag recognition honors quoted attribute boundaries, so values like `title="</summary>"` no longer escalate.
+- **Linear release completion is verified by read-back** (#2009): cleanup reports Complete only when an independent read of every in-scope item shows the release label and `Released` status; otherwise it names what is missing.
+- **Post-merge cleanup skips pull-request closing references** (#2021): a closing keyword pointing at a PR is skipped with a NOTE and the merge-session projection plans no tracker step for it; unknown kinds fail closed.
+- **Ambiguity checkpoint ignores identifiers and code** (#2136): `run-epic-policy-recommender.sh` ignores `ambiguous`/`unclear`/`tbd` inside code, quoted literals and `snake_case` identifiers; real ambiguous wording still raises the checkpoint.
+- **Advisory checks tests no longer pin the shipped no-op body** (#2168): consumers that replace `run-advisory-checks.sh` with their own checks can keep both suites after a sync.
+- **0.51.0 Claude backend migration note** (#2170): set `review.local_ai_reviewer.backend: claude` only when the local patch made Claude the repository default; otherwise leave it unset and keep exporting `LOCAL_AI_REVIEWER_BACKEND=claude`. Corrects the 0.51.0 changelog sentence.
+- **Reviewer watchdogs give the TERM grace to the whole process group** (#2172, #2198): timed-out `local-ai-reviewer.sh` and `coderabbit-cli-reviewer.sh` runs no longer cut off their own cleanup on dash-based hosts (including Ubuntu CI), so review copies are not left behind.
+- **PR-Agent draft gate ignores the canonical resolved-findings history** (#2177): a structurally valid final "✅ Resolved findings" block is excluded from classification; fake, nested, unclosed or non-final sections still fail closed.
+- **`feat/*` and `backport/*` PRs stay reviewer-gated for readiness labels** (#2183): a shared `workflow_branch_is_implementation` helper drives the readiness-label gate, Step 7b checks and the local reviewer tier; a bare `backport/` stays non-implementation.
+
 ## [0.51.0] - 2026-11-11
 
 ### Added
@@ -3464,7 +3502,8 @@ Known limitation: human-verification headings split by HTML comments can still b
 - `.claude/settings.json` with pre-approved permissions for common git and fetch operations; `.claude/settings.local.json.example` documenting machine-specific overrides for optional integrations
 - `.gitignore` covering local Claude settings, `.env` files, and common system files
 
-[Unreleased]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.51.0...HEAD
+[Unreleased]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.52.0...HEAD
+[0.52.0]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.51.0...v0.52.0
 [0.51.0]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.50.0...v0.51.0
 [0.50.0]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.49.0...v0.50.0
 [0.49.0]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.48.9...v0.49.0

@@ -928,6 +928,18 @@ plan_prs_json='{"open":[{"headRefName":"implementation-plan/9007-open-plan-branc
 plan_json_evidence="$(workflow_branch_pr_evidence_from_json 9007 "$plan_prs_json")"
 run_test "branch_pr_evidence_from_json_recognizes_plan_prefix" "present" "$plan_json_evidence"
 
+# #1805: the resolver's prEvidenceUnavailable flag separates a failed PR lookup
+# from confirmed absence. Empty arrays plus the flag read as `unavailable`; a
+# matching PR still reads as `present`; an omitted flag keeps the prior reading.
+unavailable_flag_evidence="$(cd "$REF_REPO_NONE" && workflow_branch_pr_evidence_single_item 9004 false '{"open":[],"merged":[]}' true)"
+run_test "single_item_pr_lookup_failure_is_unavailable" "unavailable" "$unavailable_flag_evidence"
+available_flag_evidence="$(cd "$REF_REPO_NONE" && workflow_branch_pr_evidence_single_item 9004 false '{"open":[],"merged":[]}' false)"
+run_test "single_item_confirmed_no_pr_is_none" "none" "$available_flag_evidence"
+omitted_flag_evidence="$(cd "$REF_REPO_NONE" && workflow_branch_pr_evidence_single_item 9004 false '{"open":[],"merged":[]}')"
+run_test "single_item_omitted_flag_keeps_none" "none" "$omitted_flag_evidence"
+present_despite_flag_evidence="$(cd "$REF_REPO_NONE" && workflow_branch_pr_evidence_single_item 9004 false '{"open":[{"headRefName":"fix/9004-partial-lookup"}],"merged":[]}' true)"
+run_test "single_item_found_pr_outranks_unavailable_flag" "present" "$present_despite_flag_evidence"
+
 # ===========================================================================
 # End-to-end real scan -> lanes fixture (#1583). Unlike the gate-level
 # scan_backlog_no_artifacts_held cases above (which call

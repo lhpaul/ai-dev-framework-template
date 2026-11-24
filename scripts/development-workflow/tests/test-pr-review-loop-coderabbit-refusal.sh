@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # test-pr-review-loop-coderabbit-refusal.sh — pr-review-loop.sh harness: the
-# CodeRabbit "Already reviewed the last commit" refusal recovery (#1591).
+# CodeRabbit "Already reviewed the last commit" refusal recovery (#1591) and
+# the exhausted-retry stale-findings fallback (#1578).
 # duration: 240
 # covers: scripts/development-workflow/pr-review-loop.sh
 # covers: scripts/development-workflow/tests/lib/pr-review-loop-harness.sh
@@ -25,6 +26,7 @@
 #
 # Areas in this suite:
 #   Area 1591: CodeRabbit 'Already reviewed the last commit' refusal (issue #1591)
+#   Area 1578: stale-findings fallback ignores resolved threads
 #
 # Usage: bash scripts/development-workflow/tests/test-pr-review-loop-coderabbit-refusal.sh [--area <name>]... [--list-areas]
 # No external tooling required beyond bash, git, and jq (git only locates the
@@ -361,6 +363,106 @@ rm -rf "$_1591_answered_dir" "$_1591_capped_dir" "$_1591_capped3_dir" "$_1591_fa
 unset -f _1591_run _1591_count
 unset _1591_last_dir _1591_refusal_body _1591_quota_body _1591_before_trigger _1591_full _1591_real_re \
   _1591_answered_dir _1591_capped_dir _1591_capped3_dir _1591_failpost_dir _1591_walkthrough_dir _1591_held_dir _1591_refund_dir _1591_reask_dir _1591_holdthenwalk_dir _1591_twoold_dir _1591_twosame_dir _1591_zerocap_dir _1591_mutated0_dir _1591_stale_dir _1591_quota_dir
+
+# ---------------------------------------------------------------------------
+# Area 1578: stale-findings fallback ignores resolved review threads
+# ---------------------------------------------------------------------------
+# When CodeRabbit never reviews the current HEAD (rate-limit retries exhausted),
+# the loop falls back to scanning CodeRabbit's existing inline comments. A
+# finding keeps its 🟠 Major badge after its thread is resolved, so the scan
+# must consult GraphQL thread resolution before counting it as blocking.
+# Measured on PR #1575: two resolved Major threads, zero unresolved threads,
+# and the fallback still reported RESULT=needs_fixes REASON=stale_findings.
+#
+# The same comment is replayed under three thread states. The unresolved case
+# is the planted violation that proves the filter is targeted, and the GraphQL
+# failure case pins the conservative behavior: an unreadable thread state never
+# turns a finding into a false clean.
+echo ""
+echo "=== Area 1578: stale-findings fallback ignores resolved threads ==="
+
+HARNESS_MODE=1 source "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh"
+unset MOCK_GH_OUTPUT MOCK_GH_POST_EXIT MOCK_GH_POST_OUTPUT MOCK_GH_CALL_LOG MOCK_GH_EXIT
+
+_1578_mock_dir="$(mktemp -d)"
+cat > "$_1578_mock_dir/gh" <<'CR_GH_1578'
+#!/usr/bin/env bash
+# Strict mock: every gh call the exhausted-retry path makes is enumerated, and
+# anything else is a hard error so a dropped or renamed request cannot pass.
+printf '%s\n' "$*" >> "$CR_1578_CALL_LOG"
+case "$*" in
+  "auth status") exit 0 ;;
+  *"repo view"*"nameWithOwner"*) printf 'owner/repo\n'; exit 0 ;;
+  *"pulls/42 --jq .head.sha"*) printf 'abc1578sha\n'; exit 0 ;;
+  *"commits/abc1578sha --jq .commit.committer.date"*) printf '2020-01-01T00:00:00Z\n'; exit 0 ;;
+  *"commits/abc1578sha/statuses"*) printf '[]\n'; exit 0 ;;
+  *"pulls/42/comments"*)
+    # A Major finding on an earlier commit, posted before the HEAD commit.
+    printf '%s\n' '[{"id":3836152628,"user":{"login":"coderabbitai[bot]"},"in_reply_to_id":null,"path":"scripts/example.sh","line":10,"commit_id":"old1578sha","created_at":"2019-12-31T23:00:00Z","updated_at":"2019-12-31T23:00:00Z","body":"_⚠️ Potential issue_ | _🟠 Major_\n\nQuote the variable expansion."}]'
+    exit 0 ;;
+  *"pulls/42/reviews"*) printf '[]\n'; exit 0 ;;
+  *"issues/42/comments"*)
+    printf '%s\n' '[{"user":{"login":"coderabbitai[bot]"},"created_at":"2020-01-01T00:05:00Z","updated_at":"2020-01-01T00:05:00Z","body":"Review limit reached — rate limit in effect."}]'
+    exit 0 ;;
+  *"api graphql"*)
+    case "$CR_1578_THREAD_STATE" in
+      resolved)
+        printf '%s\n' '{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"isResolved":true,"comments":{"nodes":[{"databaseId":3836152628,"author":{"login":"coderabbitai"}}]}}]}'
+        exit 0 ;;
+      unresolved)
+        printf '%s\n' '{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"isResolved":false,"comments":{"nodes":[{"databaseId":3836152628,"author":{"login":"coderabbitai"}}]}}]}'
+        exit 0 ;;
+      *)
+        printf 'GraphQL: API rate limit exceeded\n' >&2
+        exit 1 ;;
+    esac ;;
+  *"pr comment 42"*) exit 0 ;;
+  *)
+    printf 'UNEXPECTED gh invocation in 1578 mock: %s\n' "$*" >&2
+    exit 1 ;;
+esac
+CR_GH_1578
+chmod +x "$_1578_mock_dir/gh"
+
+_1578_run() {
+  : > "$_1578_mock_dir/calls.log"
+  PATH="$_1578_mock_dir:$PATH" CR_1578_CALL_LOG="$_1578_mock_dir/calls.log" \
+    CR_1578_THREAD_STATE="$1" \
+    CODERABBIT_NO_TRIGGER_TIMEOUT=1 CODERABBIT_RATE_LIMIT_WAIT=1 CODERABBIT_RATE_LIMIT_MIN_WAIT=1 \
+    CODERABBIT_RATE_LIMIT_MAX_RETRIES=1 \
+    run_coderabbit_review "42" "fix/42-test" "1" "3" 2>/dev/null || true
+}
+
+# AC-1 / AC-2 / AC-3: a resolved Major thread under exhausted retries.
+_1578_out="$(_1578_run resolved)"
+run_test "1578_resolved_major_thread_is_not_needs_fixes" "RESULT=escalate" \
+  "$(printf '%s\n' "$_1578_out" | grep '^RESULT=' | tail -n 1)"
+run_test "1578_resolved_major_thread_reports_rate_limit_exhaustion" "REASON=rate_limit_max_retries" \
+  "$(printf '%s\n' "$_1578_out" | grep '^REASON=' | tail -n 1)"
+run_test "1578_resolved_major_thread_has_no_stale_findings" "absent" \
+  "$(grep -q '^REASON=stale_findings$' <<< "$_1578_out" && echo present || echo absent)"
+run_test "1578_resolved_major_thread_reports_zero_blocking" "BLOCKING_COUNT=0" \
+  "$(printf '%s\n' "$_1578_out" | grep '^BLOCKING_COUNT=' | tail -n 1)"
+run_test "1578_fallback_consults_graphql_thread_state" "yes" \
+  "$([ "$(grep_count_or_zero 'api graphql' "$_1578_mock_dir/calls.log")" -ge 1 ] && echo yes || echo no)"
+
+# Planted violation: the same finding on an unresolved thread still blocks.
+_1578_out="$(_1578_run unresolved)"
+run_test "1578_unresolved_major_thread_is_needs_fixes" "RESULT=needs_fixes" \
+  "$(printf '%s\n' "$_1578_out" | grep '^RESULT=' | tail -n 1)"
+run_test "1578_unresolved_major_thread_reason_is_stale_findings" "REASON=stale_findings" \
+  "$(printf '%s\n' "$_1578_out" | grep '^REASON=' | tail -n 1)"
+run_test "1578_unresolved_major_thread_counts_one_blocking" "BLOCKING_COUNT=1" \
+  "$(printf '%s\n' "$_1578_out" | grep '^BLOCKING_COUNT=' | tail -n 1)"
+
+# Unreadable thread state keeps the previous conservative result.
+_1578_out="$(_1578_run graphql_failure)"
+run_test "1578_graphql_failure_keeps_stale_findings" "REASON=stale_findings" \
+  "$(printf '%s\n' "$_1578_out" | grep '^REASON=' | tail -n 1)"
+
+rm -rf "$_1578_mock_dir"
+unset -f _1578_run
+unset _1578_mock_dir _1578_out
 
 # ---------------------------------------------------------------------------
 # Summary

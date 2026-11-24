@@ -694,13 +694,19 @@ After building the initial candidate list from the eligibility table above and a
      STALE_STATUS_CORRECTION: issue #<N> tracker shows 'In Development' but no branch or PR found. Correcting to 'Plan Ready'.
      ~~~
 
-   - Update the tracker status to `Plan Ready` using `update_tracker_status_best_effort` (BR-6):
+   - Reset the tracker status to `Plan Ready` through the dedicated correction helper (BR-6, issue #1811). This is an explicit backward move, so it does not go through a plain `update_tracker_status_best_effort "$ISSUE_NUMBER" "Plan Ready"` call: that helper's rollback guard always skips a move from `In Development` back to `Plan Ready`, which made this step a silent no-op. `workflow_correct_stale_in_development_status` (in `scripts/development-workflow/workflow-lib.sh`) is bounded on both ends: the target is fixed to `Plan Ready`, and it writes only when the live Status is still exactly `In Development` — any other Status is skipped with no write. Every other status update keeps the default rollback guard:
 
      <!-- workflow-shell-contract: bash-zsh -->
      ```bash
-     update_tracker_status_best_effort "$ISSUE_NUMBER" "Plan Ready"
+     STALE_CORRECTION_OUTPUT="$(workflow_correct_stale_in_development_status "$ISSUE_NUMBER")"
+     printf '%s\n' "$STALE_CORRECTION_OUTPUT"
+     case "$STALE_CORRECTION_OUTPUT" in
+       *"TRACKER_STATUS_APPLIED issue=${ISSUE_NUMBER} "*) STALE_CORRECTION_APPLIED=true ;;
+       *) STALE_CORRECTION_APPLIED=false ;;
+     esac
      ```
 
+   - Report the reset as done only when the helper printed `TRACKER_STATUS_APPLIED` (`STALE_CORRECTION_APPLIED=true`). Otherwise (tracker unavailable, item not on the board, Status no longer `In Development`, Linear deferred action) report that the correction was not applied, quoting the helper's warning, skip, or `TRACKER_ACTION_REQUIRED=` line. The correction stays best-effort: it does not block dispatch.
    - Re-classify the item as `Plan Ready` in the candidate list so it follows the `Plan Ready` dispatch path in Step 2.5 and Step 3.
 
 4. **If either check returns non-zero** (branch or PR found): the item is genuinely in progress — do not reset the status (BR-5 inverse; AC-8).

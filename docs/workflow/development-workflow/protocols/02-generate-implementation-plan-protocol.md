@@ -527,7 +527,10 @@ If no blocking human decision remains:
    - Rows for Rule 1 external citations (contract, manifest, notice, protected
      artifact) include the first-inspecting round's finding when applicable.
    - Authors refresh the record whenever plan text changes; the revision SHA
-     must match the PR head before `ready-for-human-review`.
+     must be current for the PR head before `ready-for-human-review` — the
+     head itself, or its only parent when the last push changed nothing but the
+     `Plan revision:` SHA (the one-push stamp lag defined in
+     [`plan-authoring-rigor-rules.md`](../plan-authoring-rigor-rules.md)).
    - These obligations apply to every Protocol 02 plan, including Refactor /
      no-spec work items — there is no bypass when a product spec is absent.
 

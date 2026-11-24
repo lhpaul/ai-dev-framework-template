@@ -218,6 +218,9 @@ categories:
     - path: docs/testing/workflow/tracker-type-field-classification.smoke-test.md
       mode_scope: hub_only
       note: protocol-level runbook that test-framework-mode-type-routing.sh asserts on (#1874)
+    - path: docs/testing/workflow/review-backlog-protocol.smoke-test.md
+      mode_scope: hub_only
+      note: protocol-level runbook that test-review-backlog-protocol.sh asserts on (#2155)
 
   special_handling:
     - path: .claude/settings.json
@@ -386,7 +389,7 @@ migration_notes:
     applies_if_syncing_from_before: "0.51.0"
     manual_steps:
       - "Before syncing, look for a local patch to scripts/development-workflow/local-ai-reviewer.sh that adds a claude backend or changes the default backend, and for a local scripts/development-workflow/local-claude-review-command.sh, which the template file with the same name overwrites."
-      - "After syncing, to keep Claude as the repository default, set review.local_ai_reviewer.backend: claude in .ai-dev-workflow.yaml and merge that change to the base branch; pr-review-loop.sh reads the base branch's copy, so it takes effect on later pull requests."
+      - "After syncing, decide by what the local patch did. If it made Claude the repository default (or you want Claude as the default now), set review.local_ai_reviewer.backend: claude in .ai-dev-workflow.yaml and merge that change to the base branch; pr-review-loop.sh reads the base branch's copy, so it takes effect on later pull requests. If it only added a Claude backend and Codex stayed the default, leave the key unset and keep exporting LOCAL_AI_REVIEWER_BACKEND=claude on the machines that review with Claude."
       - "LOCAL_CLAUDE_REVIEWER_* settings keep working. Set LOCAL_CLAUDE_REVIEWER_MODEL to keep a pinned model, because the template uses the Claude Code CLI's default model."
       - "REVIEW.md and agent guidance now stay in the review copy; drop any local step that removed them."
       - "Drop any doc_branch_default_max_wait patch for local-ai-reviewer; local-ai-reviewer already gets 1200 s on every branch."

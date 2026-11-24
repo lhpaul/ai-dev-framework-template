@@ -1,0 +1,7 @@
+interface:
+  display_name: "Review backlog"
+  short_description: "Periodic three-gate backlog review; complements /run-work."
+  default_prompt: "Run /review-backlog: resolve scope and tracker capabilities, deliver the Gate 1 structural ledger, then the Gate 2 order and the Gate 3 closeout, waiting for my confirmation at each gate."
+
+policy:
+  allow_implicit_invocation: false

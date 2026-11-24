@@ -564,6 +564,31 @@ reviewer_for_branch() {
   esac
 }
 
+# workflow_branch_is_implementation <branch>
+#
+# Returns 0 when <branch> belongs to an implementation branch class according
+# to branch_prefix(): feature (including the feat/ alias, #1401), fix,
+# refactor, hotfix, and backport (including backport/hotfix/*, #2158). A bare
+# `backport/` is `unknown` and returns 1, as do spec, plan, release and any
+# other branch. This is the single source of truth for reviewer-gated
+# implementation-ness (#2183): readiness labels, the Step 7b regression-label
+# checks and the local reviewer's checklist tier read it instead of keeping
+# their own glob lists.
+#
+# Deliberately not routed through this helper (#2183 review):
+#   - workflow_tracker_stage_for_branch: backport/* never owns an item's
+#     tracker Status (a backport carries already-merged work), so only the
+#     feat/ alias is added there.
+#   - run-item-scope-resolver.sh / run-work-router.sh target-token parsing and
+#     run-nested-artifact-guard.sh issue matching: they resolve which work item
+#     a branch belongs to, not whether it is reviewer-gated.
+workflow_branch_is_implementation() {
+  case "$(branch_prefix "${1:-}")" in
+    feature|fix|refactor|hotfix|backport) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 print_kv() {
   printf '%s=%s\n' "$1" "$2"
 }
@@ -812,9 +837,10 @@ bot_login_for_platform() {
   esac
 }
 
-print_kv_escaped() {
-  local value="$2" control escaped code octal
-  local LC_ALL=C
+# Escape one bounded chunk into _WORKFLOW_KV_ESCAPED_CHUNK. Callers set
+# LC_ALL=C (dynamic scope) so every expansion below is byte-oriented.
+_workflow_kv_escape_chunk() {
+  local value="$1" control escaped code octal
   value="${value//\\/\\\\}"
   value="${value//$'\r'/\\r}"
   value="${value//$'\n'/\\n}"
@@ -839,7 +865,40 @@ print_kv_escaped() {
       value="${value//$control/$escaped}"
     done
   fi
-  printf '%s=%s\n' "$1" "$value"
+  _WORKFLOW_KV_ESCAPED_CHUNK="$value"
+}
+
+# Bash 3.2's ${var//pattern/replacement} is quadratic in the string length
+# (issue #1539: 58 KB took 18 s). A value longer than one chunk is therefore
+# streamed: read 512 bytes at a time, escape each chunk and print it at once.
+# Slicing or accumulating the whole string would copy it once per chunk and
+# stay quadratic. Every escape maps one byte, or one UTF-8 C1 pair (\302
+# followed by \200-\237), to a fixed spelling, so escaping chunks
+# independently is byte-identical to escaping the whole value as long as no
+# chunk splits such a pair: a chunk-final \302 is carried into the next chunk.
+print_kv_escaped() {
+  local value="$2" chunk="" carry="" status=0
+  local LC_ALL=C
+  if [ "${#value}" -le 512 ]; then
+    _workflow_kv_escape_chunk "$value"
+    printf '%s=%s\n' "$1" "$_WORKFLOW_KV_ESCAPED_CHUNK"
+    return
+  fi
+  printf '%s=' "$1" || status=$?
+  while IFS= read -r -d '' -n 512 chunk || [ -n "$chunk" ]; do
+    chunk="$carry$chunk"
+    carry=""
+    if [ "${chunk: -1}" = $'\302' ]; then
+      carry=$'\302'
+      chunk="${chunk%?}"
+    fi
+    _workflow_kv_escape_chunk "$chunk"
+    printf '%s' "$_WORKFLOW_KV_ESCAPED_CHUNK" || status=$?
+    chunk=""
+  done < <(printf '%s' "$value")
+  # A lone trailing \302 is not a C1 pair and is printed unchanged.
+  printf '%s\n' "$carry" || status=$?
+  return "$status"
 }
 
 soft_suggestion_prefixes() {
@@ -2116,13 +2175,17 @@ workflow_canonical_tracker_statuses() {
 # workflow_tracker_stage_for_branch <branch>
 #
 # Prints the workflow stage (spec | plan | implementation) that owns a workflow
-# branch. Returns 1 with no output for any other branch (release/*,
-# backport/*, develop-<slug>, ...), which never drives an item's Status here.
+# branch. feat/* is the feature/* alias (#1401) and owns the implementation
+# stage like feature/* (#2183). Returns 1 with no output for any other branch
+# (release/*, backport/*, develop-<slug>, ...), which never drives an item's
+# Status here: a backport carries work whose item Status was already driven by
+# its original implementation branch, so it stays out even though
+# workflow_branch_is_implementation() counts it as reviewer-gated.
 workflow_tracker_stage_for_branch() {
   case "$1" in
     spec/?*) printf 'spec\n' ;;
     implementation-plan/?*) printf 'plan\n' ;;
-    feature/?*|fix/?*|refactor/?*|hotfix/?*) printf 'implementation\n' ;;
+    feature/?*|feat/?*|fix/?*|refactor/?*|hotfix/?*) printf 'implementation\n' ;;
     *) return 1 ;;
   esac
 }
@@ -3142,7 +3205,10 @@ ensure_on_project_board() {
 #   tracker-status-for.sh) rather than typing it; see
 #   docs/workflow/development-workflow/tracker-status-mapping.md.
 # - Respects status progression ordering and never rolls status backward
-#   (GitHub Projects path only; ordering is not enforced for Linear).
+#   unless the caller passes allow-backward (GitHub Projects path only;
+#   ordering is not enforced for Linear). For the stale "In Development"
+#   correction use workflow_correct_stale_in_development_status instead of
+#   passing allow-backward by hand (issue #1811).
 # - Owner is resolved via workflow_resolve_github_project_owner (see that function
 #   for the tiered fallback chain: env var → gh repo view → git remote URL).
 # - project_number falls back to issue_tracker.project_number in .ai-dev-workflow.yaml.
@@ -3347,6 +3413,35 @@ update_tracker_status_best_effort() {
     bash -c 'source "$1/workflow-lib.sh"; shift; _workflow_update_tracker_status_best_effort_impl "$@"' \
       budget-tracker "$helper_dir" "$@" || return 0
   return 0
+}
+
+# workflow_correct_stale_in_development_status <issue_number>
+#
+# The stale-tracker-status correction of Protocol 90 ("Stale `In Development`
+# correction") and Protocol 91 (its BATCH_CONTEXT equivalent), issue #1811.
+#
+# update_tracker_status_best_effort refuses every backward move unless the
+# caller passes allow-backward, so a plain "Plan Ready" call against an item at
+# "In Development" is always skipped as a rollback. This helper is the one
+# sanctioned backward move for that step, and it is bounded on both ends:
+# - the target is fixed to "Plan Ready"; callers cannot choose another status;
+# - the source must be exactly "In Development" (required_current_status), so
+#   an item at any other Status, including one further along such as
+#   "Development in Review", "Merged" or "Released", is skipped with no write.
+# Only that one pair receives allow-backward; every other caller keeps the
+# default rollback guard.
+#
+# The caller still owns the stale evidence (no implementation branch and no
+# open PR for the item) and must establish it before calling. Output and exit
+# status are those of update_tracker_status_best_effort: the reset happened
+# only when the output carries a TRACKER_STATUS_APPLIED line.
+workflow_correct_stale_in_development_status() {
+  local issue_number="${1:-}"
+  if [ -z "$issue_number" ]; then
+    echo "Warning: no issue number given; skipping stale 'In Development' correction."
+    return 0
+  fi
+  update_tracker_status_best_effort "$issue_number" "Plan Ready" "In Development" "allow-backward"
 }
 
 # workflow_github_milestone_number <version>
@@ -4576,7 +4671,9 @@ extract_github_issue_number() {
 
   # Keep sorted-document/first-complete-line precedence. Bash's ERE matcher
   # avoids launching grep (and a pipeline) for every line of every document.
-  for f in "${doc_files[@]}"; do
+  # ${arr[@]+"${arr[@]}"}: an empty array under `set -u` is an unbound-variable
+  # error in bash 3.2 (macOS /bin/bash); bash 4.4+ treats it as empty.
+  for f in ${doc_files[@]+"${doc_files[@]}"}; do
     while IFS= read -r line; do
       if [[ "$line" =~ $issue_pattern ]]; then
         issue_number="${BASH_REMATCH[1]}"
@@ -4769,15 +4866,20 @@ workflow_branch_pr_evidence() {
   fi
 }
 
-# workflow_branch_pr_evidence_single_item <issue_number> <tracker_read_deferred> <pull_requests_json>
+# workflow_branch_pr_evidence_single_item <issue_number> <tracker_read_deferred> <pull_requests_json> [pr_evidence_unavailable]
 #
 # Single-item-path combiner: live branch (both ref namespaces, local `git
 # show-ref`, no API call) + the PR evidence already carried in the resolved
 # scope JSON. Costs no extra tracker/API call, per #1583's tracker-read-cost
 # accounting. A deferred (Linear placeholder) scope is always `unavailable`.
+# <pr_evidence_unavailable> is the scope item's `prEvidenceUnavailable` value
+# (#1805): when `true`, the resolver's PR lookup could not complete, so an
+# empty PR list reads as `unavailable` rather than `none`. A matching PR still
+# reads as `present`. Omitted or any other value keeps the prior behavior.
 # Prints one of: present | none | unavailable.
 workflow_branch_pr_evidence_single_item() {
   local issue_number="$1" tracker_read_deferred="$2" prs_json="$3"
+  local pr_evidence_unavailable="${4:-false}"
   local ref_evidence json_evidence
 
   if [ "$tracker_read_deferred" = "true" ]; then
@@ -4795,6 +4897,9 @@ workflow_branch_pr_evidence_single_item() {
   if [ "$json_evidence" = "present" ]; then
     printf 'present\n'
     return 0
+  fi
+  if [ "$pr_evidence_unavailable" = "true" ]; then
+    json_evidence="unavailable"
   fi
 
   if [ "$ref_evidence" = "unavailable" ] || [ "$json_evidence" = "unavailable" ]; then

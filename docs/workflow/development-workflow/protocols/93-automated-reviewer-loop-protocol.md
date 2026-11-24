@@ -283,8 +283,19 @@ Conditions are evaluated in order and stop at the first unmet one:
    platform list and its `platform_reviewed_heads` entry classifies as
    `current` against `loop_head_sha`. Exact-match allow-list: both derived
    values must be the literal `1`. Missing, unexpected, or stale values defer
-   (`local_reviewer_not_configured`, `local_evidence_missing`, or
-   `local_evidence_stale`). Derived from in-loop state — never from the
+   (`local_evidence_missing` or `local_evidence_stale`). When
+   `local-ai-reviewer` is in **neither** `review.on_draft.github` nor
+   `review.on_ready.github` (`EXPENSIVE_GATE_REASON=local_reviewer_not_configured`),
+   no retry can ever satisfy this condition, so the gate does not defer: it
+   returns `EXPENSIVE_GATE_RESULT=config_error` with
+   `EXPENSIVE_GATE_ESCALATION=expensive_gate_local_reviewer_not_configured`,
+   and the loop ends at once with `RESULT=escalate` /
+   `REASON=expensive_gate_local_reviewer_not_configured` (#1817). The outcome
+   is a repository configuration error, not a PR defect; it spends no
+   deferral budget. Fix it by adding `local-ai-reviewer` to the effective
+   config, by removing the expensive platform, or with
+   `PR_REVIEW_LOOP_FORCE_EXPENSIVE_REVIEWERS=1` for a justified one-off run.
+   Derived from in-loop state — never from the
    `LOCAL_AI_*` stdout keys as environment variables. On `spec/*` branches the
    local reviewer also runs a second, non-blocking strict-spec pass (see
    [`integrations/local-ai-reviewer.md`](../integrations/local-ai-reviewer.md)
@@ -348,12 +359,19 @@ occurrence counter (`PR_REVIEW_LOOP_MAX_EXPENSIVE_DEFERRALS`, default `3`) —
 the existing cycle caps cannot bound them because they unique-bucket
 `needs_fixes` by head+result. At the cap the loop escalates with
 `RESULT=escalate`. `EXPENSIVE_GATE_ESCALATION` is emitted **only** on a
-`deferral_cap` result and is one of:
+`deferral_cap` or `config_error` result, and the loop uses it as the
+escalation `REASON`. It is one of:
 
 - `expensive_gate_deferral_cap` — budget exhausted for this head
 - `expensive_gate_deferral_budget_unreadable` — ledger marker present but
   unreadable (`EXPENSIVE_GATE_DEFERRALS=-1`); an *absent* ledger is `0` and
   defers normally
+- `expensive_gate_local_reviewer_not_configured` — `config_error`:
+  `local-ai-reviewer` is not configured, so condition 1 can never be met. The
+  loop escalates on the first evaluation, before any deferral and in both the
+  per-platform gate and the ready-phase preflight (so the PR is not marked
+  ready). The ledger records `expensive_gate.result: config_error`, which the
+  head-scoped deferral count does not include.
 
 `PR_REVIEW_LOOP_FORCE_EXPENSIVE_REVIEWERS=1` bypasses the gate for manual
 escalation: the gate still evaluates and emits `EXPENSIVE_GATE_RESULT=forced`
@@ -393,7 +411,9 @@ local reviewer still owes a pass when evidence is stale.
 | `prior_findings` | Verdict is not clean |
 | `no_evidence` | Configured local reviewer has not reported on this head |
 | `no_local_reviewer` | Repository has no local reviewer configured; gate proceeds |
-| `failed_for_head` | A prior pass failed on this head; refusing without dispatch |
+| `failed_for_head` | A prior pass failed on this head and neither the head nor the review inputs changed; refusing without dispatch |
+| `review_inputs_changed` | Every `needs_fixes` failure on this head reviewed different PR body/comment evidence than the current one; the head is re-reviewed |
+| `infrastructure_retry` | One run on this head failed for an infrastructure reason (timeout, crash, unavailable pass); the one bounded retry runs |
 | `head_moved_during_pass` | Live PR head does not match `loop_head_sha` on a proceed path. This includes a clean second pass whose head then moved, and also `not_required` / `no_local_reviewer` paths that never dispatched a pass because the live-head re-read failed the equality test. The cycle still uses aggregate `REASON=head_moved_during_run`. |
 | `local_pass_unavailable` | Pass skipped, escalated, unparseable, or clean without current-head `REVIEWED_HEAD` evidence |
 | `human_override` | A valid human override for `loop_head_sha` stands in for the pass (see below); the reviewer is not run |
@@ -415,7 +435,37 @@ When a pass fails on an unchanged head, the ledger entry records
 `**Second local pass:** second local pass: <reason> → <result>` when a pass ran.
 
 An ordinary pass retains the existing cycle accounting. A failed pass on an
-unchanged head refuses with `RESULT=escalate`, `REASON=failed_for_head` by default.
+unchanged head with unchanged review inputs refuses with `RESULT=escalate`,
+`REASON=failed_for_head` by default (#1853). The ledger keys the refusal on
+`local_second_pass_failed_head` plus `local_second_pass_failed_kind`
+(`needs_fixes` or `infrastructure`) and, for `needs_fixes`,
+`local_second_pass_failed_evidence`: the review-evidence fingerprint (PR body
+and eligible conversation comments, the same `snapshot_sha256` the local
+reviewer's context bundle carries) that the failing review saw.
+
+- A `needs_fixes` failure refuses while the current fingerprint equals the
+  recorded one. A description edit or a new PR conversation comment changes
+  the fingerprint, so the next run re-reviews the same head
+  (`LOCAL_SECOND_PASS_REASON=review_inputs_changed`) without an empty commit.
+  Review-thread replies and thread resolution are not part of the fingerprint;
+  record a rationale as a PR conversation comment to re-arm the review.
+- An infrastructure failure (escalate, timeout, crash, unavailable pass)
+  allows exactly one automatic retry on the head
+  (`LOCAL_SECOND_PASS_REASON=infrastructure_retry`); a second loop invocation
+  that failed for an infrastructure reason on that head refuses. Invocations
+  are counted by ledger entry (`iteration`), not by `run_id`, because
+  `PR_REVIEW_LOOP_RUN_ID` is shared by every invocation of one orchestration
+  run.
+- Fail closed: a record written before #1853 (no kind), a `needs_fixes` record
+  without its fingerprint, or current evidence that cannot be collected
+  refuses as before. Prior failures stay in the history.
+- Each automatic same-head re-review spends a cycle on both axes
+  (`max_cycles` and `max_total_cycles`): a `needs_fixes` or `needs_rerun`
+  entry whose `local_second_pass_reason` is `review_inputs_changed` or
+  `infrastructure_retry` is counted by its own ledger `iteration` instead of
+  being deduplicated by `(head_sha, result)`, so repeated input edits cannot
+  evade the caps.
+
 An explicit `--retry-local-review-head <full-lowercase-sha>` can request a fresh
 configured local review after infrastructure repair or publication of relevant
 proof for recorded findings. It never supplies a clean verdict itself.

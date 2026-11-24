@@ -105,13 +105,26 @@ for event in dispatch ready-for-human-review merged released; do
 done
 run_test "mapping_emits_only_canonical_statuses" "" "$unknown_emitted"
 
+# The Linear epic-parent `In Progress` exception (#1447) is documented, but it
+# stays out of band: it is not in the vocabulary, has no position in the
+# status order, and the documented vocabulary section does not list it.
+in_progress_in_vocab="$(workflow_canonical_tracker_statuses | grep -cxF 'In Progress' || true)"
+run_test "in_progress_not_in_vocabulary" "0" "$in_progress_in_vocab"
+run_test "in_progress_has_no_status_order" "-1" "$(workflow_status_order "In Progress")"
+case "|${doc_vocab}|" in *"|In Progress|"*) r="listed" ;; *) r="absent" ;; esac
+run_test "in_progress_not_in_doc_vocabulary" "absent" "$r"
+if grep -q '^### Linear Epic Parents: Out-of-Band `In Progress`$' "$DOC"; then r="documented"; else r="missing"; fi
+run_test "in_progress_epic_exception_documented" "documented" "$r"
+
 # --- 3. Branch -> stage and refusals -----------------------------------------
 run_test "stage_spec_branch" "spec" "$(workflow_tracker_stage_for_branch spec/12-x)"
 run_test "stage_plan_branch" "plan" "$(workflow_tracker_stage_for_branch implementation-plan/12-x)"
-for prefix in feature fix refactor hotfix; do
+for prefix in feature feat fix refactor hotfix; do
   run_test "stage_${prefix}_branch" "implementation" "$(workflow_tracker_stage_for_branch "${prefix}/12-x")"
 done
-for branch in release/v1.2.3 backport/hotfix/12-x develop-epic develop spec/ ""; do
+# backport/* never owns an item's Status, even though it is reviewer-gated
+# (#2183): only the feat/ alias joins the implementation stage.
+for branch in release/v1.2.3 backport/hotfix/12-x backport/v1.2.3 feat/ develop-epic develop spec/ ""; do
   rc=0
   workflow_tracker_stage_for_branch "$branch" >/dev/null 2>&1 || rc=$?
   run_test "stage_refused_for_'${branch}'" "1" "$rc"

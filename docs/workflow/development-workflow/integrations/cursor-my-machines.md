@@ -69,9 +69,12 @@ product_repos:
 The name must match the shared product entry. Relative local paths resolve from
 the hub root. See [Repository Modes](../repository-modes.md#local-configuration)
 for `checkout_root` and path precedence. Do not commit machine paths or private
-configuration. Agents must not open, print, or copy private configuration or
-credential files; authorized workflow scripts may read the selected local
-configuration. Use fabricated configuration in regression fixtures.
+configuration. Agents may read `.ai-dev-workflow.local.yaml`, which holds paths,
+settings and secret references but no secret values, and workflow scripts read
+the selected local configuration. Agents must not open, print, or copy env files
+(including `.ai-dev-workflow.local.env`), `.ai-dev-workflow.local.private.*`
+files, backups of the local YAML, or credential files. Use fabricated
+configuration in regression fixtures.
 
 ## Preflight before starting workflow mutations
 

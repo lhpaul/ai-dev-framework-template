@@ -272,9 +272,12 @@ authorization, and data-migration changes.
 `local-ai-reviewer.sh` to add a Claude backend or change the default (for
 example MOME issue 3814) loses that patch when it syncs this template, and the
 template's `local-claude-review-command.sh` replaces a local file with the same
-name. To keep Claude as the repository default after syncing, set
-`review.local_ai_reviewer.backend: claude` in `.ai-dev-workflow.yaml` and merge
-it to the base branch; it applies to later pull requests. Existing
+name. If the patch made Claude the repository default (or you want that default
+now), set `review.local_ai_reviewer.backend: claude` in `.ai-dev-workflow.yaml`
+after syncing and merge it to the base branch; it applies to later pull
+requests. If the patch only added a Claude backend and Codex stayed the
+default, leave the shared key unset and keep exporting
+`LOCAL_AI_REVIEWER_BACKEND=claude` on the machines that review with Claude. Existing
 `LOCAL_CLAUDE_REVIEWER_*` settings keep working; set
 `LOCAL_CLAUDE_REVIEWER_MODEL` to keep a pinned model, because the template uses
 the CLI default. Unlike such a patch, the template keeps `REVIEW.md` and agent

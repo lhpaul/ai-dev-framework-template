@@ -308,6 +308,54 @@ recommendation_json="$(printf '%s\n' "$scope_json" | jq -c \
     | map(criteria_section_problem(.))
     | map(select(length > 0))
     | .[0] // "";
+  # Prose-only signal text for wording heuristics (issue #2136). Identifiers and
+  # code are not requirement wording: a backticked span, a fenced block, or a
+  # snake_case code such as pr_agent_ambiguous_review must not read as
+  # unresolved-product language, and neither must a quoted single word in the
+  # title or description. Acceptance Criteria sections are handled separately:
+  # quotes there are real wording, so only code is stripped and quoted words
+  # still count. Each part of the text is counted once. Code and quotes are
+  # stripped per source field (title, body, type, each label, integration branch
+  # label) before joining, so a stray backtick in one field cannot pair with one
+  # in another. Security and data-model
+  # signals deliberately keep using item_signal_text. A fence opens only at the
+  # start of a line (up to 3 spaces of indentation, CommonMark style), so an
+  # inline mention of a triple backtick never opens one. A fence of N backticks
+  # or tildes closes only with a run of the same character of length N or more;
+  # an unclosed fence runs to the end of the text. An inline code span of N
+  # backticks closes with a run of exactly N backticks (it may span lines and
+  # contain shorter runs); an opener with no matching closer stays literal.
+  def strip_fenced_blocks:
+    gsub("(?m)^ {0,3}(`{3,})[^`\\n]*(?=\\n|\\z)[\\s\\S]*?(?:\\n {0,3}\\1`*[ \\t\\r]*(?=\\n|\\z)|\\z)|(?m)^ {0,3}(~{3,})[^\\n]*(?=\\n|\\z)[\\s\\S]*?(?:\\n {0,3}\\2~*[ \\t\\r]*(?=\\n|\\z)|\\z)"; " ");
+  def strip_code_spans:
+    strip_fenced_blocks
+    | gsub("(?<!`)(`+)(?!`)[\\s\\S]*?(?<!`)\\1(?!`)"; " ")
+    | gsub("[[:alnum:]]+(_[[:alnum:]]+)+"; " ");
+  def strip_quoted_literals:
+    gsub("\\x27[^\\s\\x27]+\\x27"; " ")
+    | gsub("\"[^\\s\"]+\""; " ");
+  def body_outside_criteria($item):
+    (($item.body // "") | strip_fenced_blocks | gsub("\r\n"; "\n") | split("\n")) as $lines
+    | reduce range(0; ($lines | length)) as $i (
+        {active: false, level: 0, out: []};
+        ($lines[$i]) as $line
+        | if acceptance_criteria_heading($line) then
+            .active = true | .level = heading_level($line)
+          elif (.active and (heading_level($line) > 0) and (heading_level($line) <= .level)) then
+            .active = false | .level = 0 | .out += [$line]
+          elif .active then .
+          else .out += [$line]
+          end
+      )
+    | .out | join("\n");
+  def item_prose_signal_text($item):
+    ([($item.title // ""), body_outside_criteria($item), ($item.type // "")]
+      + (($item.labels // []) | map(tostring))
+      + [($item.integrationBranchLabel // "")]
+      | map(ascii_downcase | strip_code_spans | strip_quoted_literals)
+      | join("\n")) as $outside_criteria
+    | (acceptance_criteria_sections($item | .body = (($item.body // "") | strip_fenced_blocks)) | map(ascii_downcase | strip_code_spans) | join("\n")) as $criteria
+    | $outside_criteria + "\n" + $criteria;
   def infer_workflow_stage($item):
     ($item.status // "" | ascii_downcase) as $s |
     if $s == "backlog" or ($s | test("writing spec|spec in review|spec")) then "spec"
@@ -355,7 +403,8 @@ recommendation_json="$(printf '%s\n' "$scope_json" | jq -c \
     security_signal_details($item) as $security_signals |
     infer_workflow_stage($item) as $stage |
     acceptance_criteria_problem($item) as $criteria_problem |
-    ($text | test("\\bambiguous\\b|\\bunclear\\b|\\btbd\\b|\\bopen question\\b|\\bunresolved product\\b")) as $unresolved_product_signal |
+    item_prose_signal_text($item) as $prose_text |
+    ($prose_text | test("\\bambiguous\\b|\\bunclear\\b|\\btbd\\b|\\bopen question\\b|\\bunresolved product\\b")) as $unresolved_product_signal |
     ($item.number) as $num |
     (
       []
@@ -380,7 +429,7 @@ recommendation_json="$(printf '%s\n' "$scope_json" | jq -c \
             satisfaction_state: "pending"
           }]
         else . end
-      | if $text | test("\\btrade[- ]?offs?\\b|\\barchitecture\\b.{0,30}\\bproduct\\b|\\bproduct\\b.{0,30}\\btechnical\\b|\\bambiguous\\b.{0,40}\\b(architecture|product|technical)\\b") then
+      | if $prose_text | test("\\btrade[- ]?offs?\\b|\\barchitecture\\b.{0,30}\\bproduct\\b|\\bproduct\\b.{0,30}\\btechnical\\b|\\bambiguous\\b.{0,40}\\b(architecture|product|technical)\\b") then
           . + [{
             item_number: $num,
             stage: (if $stage == "spec" then "plan" else $stage end),

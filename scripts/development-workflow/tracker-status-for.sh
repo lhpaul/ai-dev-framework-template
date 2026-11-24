@@ -78,7 +78,7 @@ if [ -n "$branch" ] && [ -n "$stage" ]; then
 fi
 if [ -n "$branch" ]; then
   if ! stage="$(workflow_tracker_stage_for_branch "$branch")"; then
-    printf 'ERROR: branch %s does not own an item stage; expected spec/*, implementation-plan/*, feature/*, fix/*, refactor/*, or hotfix/*.\n' "$branch" >&2
+    printf 'ERROR: branch %s does not own an item stage; expected spec/*, implementation-plan/*, feature/* (or feat/*), fix/*, refactor/*, or hotfix/*.\n' "$branch" >&2
     exit 2
   fi
 fi

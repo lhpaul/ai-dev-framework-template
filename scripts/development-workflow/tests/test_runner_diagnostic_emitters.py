@@ -827,22 +827,35 @@ esac
         self.assertFalse(self.f.log.exists())  # No mutation/provider was reached.
 
     def test_D48_reviewer_failed_label_creation_child_channels(self):
+        """The label probe is `gh api .../labels/<name>` (issue #1764: `gh label view` never existed).
+
+        Child stdout never leaks, child stderr is redacted, and the three probe
+        outcomes stay distinct: exists, absent (HTTP 404, create), unknown (no create).
+        """
         calls = self.f.root / 'label-calls'
         source = shlex.quote(str(self.f.runtime / 'pr-review-loop.sh'))
         for shell in ('/bin/bash', '/opt/homebrew/bin/bash'):
             if not Path(shell).exists():
                 continue
-            for view_status, create_status in ((0, 0), (1, 0), (1, 17)):
-                with self.subTest(shell=shell, view_status=view_status, create_status=create_status):
+            # (probe status, probe stderr says 404, create status, expected calls)
+            for probe_status, probe_404, create_status, expected in (
+                (0, False, 0, ['probe']),
+                (1, True, 0, ['probe', 'create']),
+                (1, True, 17, ['probe', 'create']),
+                (1, False, 0, ['probe']),
+            ):
+                with self.subTest(shell=shell, probe_status=probe_status, probe_404=probe_404,
+                                  create_status=create_status):
                     calls.write_text('')
+                    probe_error = 'gh: Not Found (HTTP 404)' if probe_404 else 'gh: Bad gateway (HTTP 502)'
                     body = '''gh() {
-  case "$1:$2:$3" in
-    label:view:reviewer-failed)
-      printf 'view\\n' >>CALLS
+  case "$1:$2" in
+    api:repos/{owner}/{repo}/labels/reviewer-failed)
+      printf 'probe\\n' >>CALLS
       printf 'token=fabricatedChildError\\n'
-      printf 'Authorization: Bearer SECRET\\n' >&2
-      return VIEW_STATUS ;;
-    label:create:reviewer-failed)
+      printf 'Authorization: Bearer SECRET\\nPROBE_ERROR\\n' >&2
+      return PROBE_STATUS ;;
+    label:create)
       printf 'create\\n' >>CALLS
       printf 'token=fabricatedChildError\\n'
       printf 'Authorization: Bearer SECRET\\nlabel-create synthetic context\\n' >&2
@@ -852,17 +865,24 @@ esac
 }
 ensure_reviewer_failed_label_exists
 '''.replace('CALLS', shlex.quote(str(calls))).replace('SECRET', self.secret)
-                    body = body.replace('VIEW_STATUS', str(view_status)).replace('CREATE_STATUS', str(create_status))
+                    body = body.replace('PROBE_STATUS', str(probe_status)).replace('CREATE_STATUS', str(create_status))
+                    body = body.replace('PROBE_ERROR', probe_error)
                     result = self.safe(self.run_command([shell, '-c', 'HARNESS_MODE=1 source ' + source + '\n' + body]), 0)
                     self.assertEqual(result.stdout, '')
-                    self.assertEqual(calls.read_text().splitlines(), ['view'] if view_status == 0 else ['view', 'create'])
-                    if view_status == 0:
+                    self.assertEqual(calls.read_text().splitlines(), expected)
+                    self.assertNotIn(self.secret, result.stderr)
+                    if probe_status == 0:
                         self.assertEqual(result.stderr, '')
-                    else:
+                    elif not probe_404:
+                        self.assertIn('[REDACTED]', result.stderr)
+                        self.assertIn('could not determine whether the reviewer-failed label exists', result.stderr)
+                        self.assertNotIn('failed to create', result.stderr)
+                    elif create_status != 0:
                         self.assertIn('[REDACTED]', result.stderr)
                         self.assertIn('label-create synthetic context', result.stderr)
-                        self.assertEqual('WARN: failed to create reviewer-failed label' in result.stderr,
-                                         create_status != 0)
+                        self.assertIn('WARN: failed to create reviewer-failed label', result.stderr)
+                    else:
+                        self.assertEqual(result.stderr, '')
 
     def test_D49_pr_agent_active_check_child_stderr(self):
         """Actual PR-Agent pending-count path keeps requests/counts and masks GH stderr."""
@@ -2834,7 +2854,8 @@ expensive_gate_max_deferrals=3
                             self.assertIn('configuration:', result.stderr)
                         else:
                             values = dict(line.split('=', 1) for line in result.stdout.splitlines())
-                            self.assertEqual(values['EXPENSIVE_GATE_RESULT'], 'forced' if state == 'empty' and force else ('deferred' if state == 'empty' else 'dispatched'))
+                            # #1817: an unconfigured local reviewer is a configuration error, not a deferral.
+                            self.assertEqual(values['EXPENSIVE_GATE_RESULT'], 'forced' if state == 'empty' and force else ('config_error' if state == 'empty' else 'dispatched'))
                             self.assertEqual(values['EXPENSIVE_GATE_REASON'], 'local_reviewer_not_configured' if state == 'empty' else '')
 
     def test_D92_actual_platform_loop_empty_ready_and_failed_selected_source(self):

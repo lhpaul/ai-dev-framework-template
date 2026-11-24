@@ -944,10 +944,15 @@ Outputs stable key=value lines including:
   PHASE_AFTER_CLEAN_SKIP_REASON=<result> (emitted when the phase never starts)
   PHASE_AFTER_CLEAN_NET_NEW_BLOCKER=0|1 (compatibility alias for READY_PHASE_NET_NEW_BLOCKER)
   LOCAL_SECOND_PASS=0|1 (1 when a second local pass ran before the ready-phase gate)
-  LOCAL_SECOND_PASS_REASON=not_required|head_changed|prior_findings|no_evidence|no_local_reviewer|failed_for_head|head_moved_during_pass|local_pass_unavailable|human_override
+  LOCAL_SECOND_PASS_REASON=not_required|head_changed|prior_findings|no_evidence|no_local_reviewer|failed_for_head|review_inputs_changed|infrastructure_retry|head_moved_during_pass|local_pass_unavailable|human_override
     (head_moved_during_pass: live PR head != loop_head_sha on a proceed path,
     including not_required/no_local_reviewer when no pass ran, and after a
     clean pass; aggregate REASON remains head_moved_during_run;
+    failed_for_head: a failed review on this head refuses while the head and
+    the review inputs are unchanged (#1853);
+    review_inputs_changed: every needs_fixes failure on this head reviewed a
+    different PR body/comment evidence snapshot, so the head is re-reviewed;
+    infrastructure_retry: the one bounded retry after a timeout/crash on this head;
     human_override: a valid human override for this head stood in for the pass)
   Human override of local-ai-reviewer (#2116): when a PR comment opens with
     <!-- reviewer-loop-human-override:v1 {"platform":"local-ai-reviewer","head":"<sha>","reason":"<why>"} -->
@@ -1049,7 +1054,8 @@ Outputs stable key=value lines including:
   EXPENSIVE_GATE_PLATFORM / EXPENSIVE_GATE_RESULT / EXPENSIVE_GATE_REASON / EXPENSIVE_GATE_HEAD
   EXPENSIVE_GATE_DEFERRALS / EXPENSIVE_GATE_MAX_DEFERRALS
                   Emitted per expensive platform (currently codex-github) immediately before dispatch.
-                  RESULT is dispatched|deferred|forced|deferral_cap. Conditions are evaluated in order:
+                  RESULT is dispatched|deferred|forced|deferral_cap|config_error. Conditions are
+                  evaluated in order:
                   (1) local-ai-reviewer configured and current-head clean evidence,
                   (2) every preceding peer (same-bucket non-expensive + earlier buckets) has
                   acceptable evidence (clean, or skipped with allow-listed reason),
@@ -1065,11 +1071,17 @@ Outputs stable key=value lines including:
                   gate still runs again immediately before run_platform_review. Deferrals are bounded
                   by PR_REVIEW_LOOP_MAX_EXPENSIVE_DEFERRALS
                   (default 3, head-scoped occurrence count); at the cap the loop escalates.
-  EXPENSIVE_GATE_ESCALATION=expensive_gate_deferral_cap|expensive_gate_deferral_budget_unreadable
-                  Emitted ONLY when EXPENSIVE_GATE_RESULT=deferral_cap — exhausted budget vs
-                  unreadable ledger. Absent otherwise.
+                  When local-ai-reviewer is absent from the configured platform lists
+                  (EXPENSIVE_GATE_REASON=local_reviewer_not_configured), condition (1) can never
+                  be met: the gate returns RESULT=config_error and the loop escalates at once
+                  without deferring or spending deferral budget (issue #1817).
+  EXPENSIVE_GATE_ESCALATION=expensive_gate_deferral_cap|expensive_gate_deferral_budget_unreadable|
+                            expensive_gate_local_reviewer_not_configured
+                  Emitted ONLY when EXPENSIVE_GATE_RESULT=deferral_cap (exhausted budget vs
+                  unreadable ledger) or config_error (local reviewer not configured). Absent otherwise.
   REASON=expensive_gate_deferred (RESULT=needs_fixes; expensive reviewer held back)
   REASON=expensive_gate_deferral_cap|expensive_gate_deferral_budget_unreadable (RESULT=escalate)
+  REASON=expensive_gate_local_reviewer_not_configured (RESULT=escalate; configuration error)
   STAGE_SKIP_ENABLED=0|1
   STAGE_SKIP_DISABLED_REASON=disabled_by_env|compare_mode|explicit_platform_selection|head_unknown|history_unavailable
   STAGE_SKIPPED_PLATFORMS=<comma-separated platforms>
@@ -1154,7 +1166,8 @@ Environment variables:
   PR_REVIEW_LOOP_FORCE_EXPENSIVE_REVIEWERS=1
                                      Bypass the expensive-reviewer gate for manual escalation. The gate still
                                      evaluates and emits EXPENSIVE_GATE_* with RESULT=forced and the reason it
-                                     would have deferred; justify use in the PR.
+                                     would have deferred (including local_reviewer_not_configured); justify use
+                                     in the PR.
   PR_REVIEW_LOOP_SMALL_FINDINGS_STOP_ROUNDS=<n>
                                      Consecutive small-findings rounds required before RESULT=clean with
                                      REASON=small_findings_terminal (default: 2; valid range 1–999). A round
@@ -1966,6 +1979,19 @@ expensive_reviewer_gate() {
       expensive_gate_last_reason="$reason"
       print_kv EXPENSIVE_GATE_RESULT forced
       return 0
+    fi
+    # Issue #1817: a missing local-ai-reviewer is a repository configuration
+    # error, not a PR defect. No retry can satisfy condition 1, so deferring
+    # would only report needs_fixes with zero findings until the deferral cap.
+    # Escalate at once with a distinct reason and spend no deferral budget.
+    if [ "$reason" = "local_reviewer_not_configured" ]; then
+      gate_result="config_error"
+      escalation="expensive_gate_local_reviewer_not_configured"
+      expensive_gate_last_result="$gate_result"
+      expensive_gate_last_reason="$reason"
+      print_kv EXPENSIVE_GATE_RESULT config_error
+      print_kv EXPENSIVE_GATE_ESCALATION "$escalation"
+      return 1
     fi
     if [ "$deferrals" = "-1" ]; then
       gate_result="deferral_cap"
@@ -8863,12 +8889,26 @@ run_coderabbit_review() {
         # CodeRabbit didn't review this HEAD. Check for stale findings before skipping.
         # Only consider unresolved inline comments here. Exclude resolved findings
         # (replies starting with ✅ resolve their parent comment) — same pattern as Devin.
+        #
+        # Also exclude comments whose GraphQL review thread is resolved (#1578).
+        # A finding keeps its original 🔴/🟠 badge after its thread is resolved,
+        # and the resolution is not always visible as a ✅-prefixed REST reply, so
+        # without this filter a rate-limit exhaustion on a PR whose findings were
+        # all fixed reported needs_fixes for threads nobody can act on. The IDs
+        # come from the same helper the thread gate's REST supplement uses; on a
+        # GraphQL failure it returns [] and this scan keeps its previous,
+        # conservative behavior instead of turning a finding into a false clean.
+        local stale_resolved_ids_json
+        stale_resolved_ids_json="$(get_resolved_thread_comment_ids "$pr_number" "$repo" "${bot_login%\[bot\]}")"
+        if ! printf '%s\n' "${stale_resolved_ids_json:-}" | jq -e 'type == "array"' >/dev/null 2>&1; then
+          stale_resolved_ids_json="[]"
+        fi
         local stale_count=0
         local stale_blocking_count=0
         local stale_comments
         stale_comments="$(
           workflow_command_with_safe_stderr gh api "repos/$repo/pulls/$pr_number/comments" --paginate \
-            | jq -s -r --arg bot "$bot_login" '
+            | jq -s -r --arg bot "$bot_login" --argjson thread_resolved_ids "$stale_resolved_ids_json" '
                 (
                   [
                     .[][]
@@ -8886,7 +8926,8 @@ run_coderabbit_review() {
                     .in_reply_to_id == null and
                     ((.body // "") | test("^✅") | not) and
                     ((.body // "") | test("✅ Addressed") | not) and
-                    (.id as $comment_id | ($resolved_ids | index($comment_id) | not))
+                    (.id as $comment_id | ($resolved_ids | index($comment_id) | not)) and
+                    (.id as $comment_id | ($thread_resolved_ids | index($comment_id) | not))
                   )
                 | { path, line: (.line // .original_line // 0), body: (.body // ""), commit_id: (.commit_id // "") }
                 | @json
@@ -10101,15 +10142,43 @@ reviewer_failed_label_required_for_result() {
   return 1
 }
 
+# ensure_reviewer_failed_label_exists (issue #1764)
+#
+# `gh label` has no `view` subcommand, so existence is probed through the REST
+# endpoint instead. The probe has three outcomes that must not be conflated:
+#   - exit 0                 -> label exists; nothing to create
+#   - failure with HTTP 404  -> label is absent; create it
+#   - any other failure      -> existence unknown (auth/network/rate limit);
+#                               do not guess "absent" and attempt a create
+# A failed create is reported with gh's own (redacted) message. The function
+# stays non-fatal: `gh pr edit --add-label` in the caller still runs.
 ensure_reviewer_failed_label_exists() {
-  if gh label view "$REVIEWER_FAILED_LABEL" >/dev/null 2>&1; then
+  local probe_err probe_status=0 create_err create_status=0
+
+  probe_err="$(gh api "repos/{owner}/{repo}/labels/${REVIEWER_FAILED_LABEL}" --silent 2>&1 >/dev/null)" || probe_status=$?
+  if [ "$probe_status" -eq 0 ]; then
     return 0
   fi
 
-  if ! workflow_command_with_safe_stderr gh label create "$REVIEWER_FAILED_LABEL" \
+  case "$probe_err" in
+    *"HTTP 404"*) ;;
+    *)
+      workflow_diagnostic "WARN: could not determine whether the ${REVIEWER_FAILED_LABEL} label exists (gh api exit ${probe_status}): ${probe_err:-no error output}; not attempting to create it; proceeding with reviewer loop" >&2
+      return 0
+      ;;
+  esac
+
+  create_err="$(gh label create "$REVIEWER_FAILED_LABEL" \
       --color "$REVIEWER_FAILED_LABEL_COLOR" \
-      --description "$REVIEWER_FAILED_LABEL_DESCRIPTION" >/dev/null; then
-    workflow_diagnostic "WARN: failed to create ${REVIEWER_FAILED_LABEL} label; proceeding with reviewer loop" >&2
+      --description "$REVIEWER_FAILED_LABEL_DESCRIPTION" 2>&1 >/dev/null)" || create_status=$?
+  if [ "$create_status" -ne 0 ]; then
+    case "$create_err" in
+      # Another run created it between the probe and the create: the label exists.
+      *"already exists"*) ;;
+      *)
+        workflow_diagnostic "WARN: failed to create ${REVIEWER_FAILED_LABEL} label (gh label create exit ${create_status}): ${create_err:-no error output}; proceeding with reviewer loop" >&2
+        ;;
+    esac
   fi
 
   return 0
@@ -10504,8 +10573,13 @@ METRICS_HEADER
 restore_regression_label_if_missing() {
   local pr_number="$1"
   local branch_name="$2"
-  case "${branch_name:-}" in
-    feature/*|fix/*|refactor/*|hotfix/*)
+  # Implementation-ness comes from branch_prefix() (#2183): feat/* and
+  # backport/* PRs carry ready-for-regression like the other implementation
+  # classes, so they get the same restore.
+  local _rfr_branch_class="other"
+  workflow_branch_is_implementation "${branch_name:-}" && _rfr_branch_class="implementation"
+  case "$_rfr_branch_class" in
+    implementation)
       local _rfr_has_label=""
       # pipefail is needed here: if gh fails, jq would still see empty input and
       # output "false", causing a spurious re-apply. Use command substitution with
@@ -11461,6 +11535,93 @@ reviewer_loop_local_second_pass_failed_for_head() {
   '
 }
 
+# reviewer_loop_local_failed_head_decision <history_payload> <head_sha> <current_evidence_sha>
+#
+# #1853: decides whether failed local reviews recorded for <head_sha> still
+# refuse a re-review. The refusal is keyed on the head and on the review
+# inputs, not on the head alone. Prints exactly one of:
+#   none                   no failed review is recorded for the head
+#   refuse                 the anti-thrash refusal (REASON=failed_for_head)
+#   review_inputs_changed  every needs_fixes failure on the head reviewed
+#                          evidence (PR body and eligible comments) that differs
+#                          from <current_evidence_sha>
+#   infrastructure_retry   exactly one loop invocation on the head failed for
+#                          an infrastructure reason (timeout, crash, unavailable
+#                          pass), so the one bounded retry is still unspent.
+#                          Invocations are counted by ledger iteration, never
+#                          by run_id: PR_REVIEW_LOOP_RUN_ID is shared by every
+#                          invocation of one orchestration run.
+# Fail closed: a legacy record without the kind, a needs_fixes record without
+# its evidence, an unknown current evidence, a second infrastructure failure,
+# or an unreadable payload all print refuse.
+reviewer_loop_local_failed_head_decision() {
+  local payload="${1:-}" head="${2:-}" current="${3:-}" decision=""
+  [ -n "$payload" ] || payload='{}'
+  decision="$(printf '%s' "$payload" | jq -r --arg head "$head" --arg current "$current" '
+    [(.entries // []) | to_entries[]
+      | select((.value.local_second_pass_failed_head // "") == $head)
+      | .value + {_key: (if (.value.iteration | type) == "number"
+                         then "iteration:\(.value.iteration)" else "entry:\(.key)" end)}
+    ] as $failed
+    | [$failed[] | select(.local_second_pass_failed_kind == "needs_fixes")] as $findings
+    | ([$failed[] | select(.local_second_pass_failed_kind == "infrastructure") | ._key]
+       | unique | length) as $infra
+    | if ($failed | length) == 0 then "none"
+      elif any($failed[]; (.local_second_pass_failed_kind // "") as $kind
+             | $kind != "needs_fixes" and $kind != "infrastructure") then "refuse"
+      elif any($findings[]; (.local_second_pass_failed_evidence // "") as $seen
+             | $seen == "" or $current == "" or $seen == $current) then "refuse"
+      elif $infra >= 2 then "refuse"
+      elif ($findings | length) > 0 then "review_inputs_changed"
+      else "infrastructure_retry"
+      end
+  ' 2>/dev/null)" || decision=""
+  case "$decision" in
+    none|refuse|review_inputs_changed|infrastructure_retry) printf '%s\n' "$decision" ;;
+    *) printf 'refuse\n' ;;
+  esac
+}
+
+# reviewer_loop_current_review_evidence_sha <pr_number> <head_sha>
+#
+# #1853: the canonical review-evidence fingerprint (PR body plus eligible
+# conversation comments, the inputs the local reviewer's context bundle
+# carries) for the live head. Prints an empty string when the evidence cannot
+# be collected, which the failed-head decision treats as unchanged inputs.
+reviewer_loop_current_review_evidence_sha() {
+  local pr="${1:-}" head="${2:-}" context="" repo="" sha=""
+  context="$(mktemp)" || { printf '\n'; return 0; }
+  repo="$(repo_slug 2>/dev/null)" || repo=""
+  if [ -n "$repo" ] && [ -n "$pr" ] && [ -n "$head" ] &&
+      workflow_collect_review_evidence "$repo" "$pr" "$head" "$context" 2>/dev/null; then
+    sha="$(jq -r '.snapshot_sha256 // ""' "$context" 2>/dev/null)" || sha=""
+  fi
+  rm -f "$context"
+  printf '%s\n' "$sha"
+}
+
+# reviewer_loop_record_local_failed_head <needs_fixes|infrastructure> [evidence_sha]
+#
+# #1853: records this run's failed-head key: the head, the failure kind, and
+# for needs_fixes the review evidence the failing review saw. Within one run a
+# needs_fixes record is never downgraded to infrastructure, and two needs_fixes
+# failures that saw different evidence keep no evidence, so the record refuses.
+reviewer_loop_record_local_failed_head() {
+  local kind="${1:-infrastructure}" evidence="${2:-}"
+  [ "$kind" = needs_fixes ] || { kind=infrastructure; evidence=""; }
+  if [ "${local_second_pass_failed_head_record:-}" = "${loop_head_sha:-}" ] &&
+      [ "${local_second_pass_failed_kind_record:-}" = needs_fixes ]; then
+    if [ "$kind" = needs_fixes ] &&
+        [ "$evidence" != "${local_second_pass_failed_evidence_record:-}" ]; then
+      local_second_pass_failed_evidence_record=""
+    fi
+    return 0
+  fi
+  local_second_pass_failed_head_record="${loop_head_sha:-}"
+  local_second_pass_failed_kind_record="$kind"
+  local_second_pass_failed_evidence_record="$evidence"
+}
+
 # A retry authorizes review, never a verdict. Unknown history stays blocked
 # unless a legacy platform record retains the exact raw needs_rerun result.
 reviewer_loop_local_retry_allowed() {
@@ -11666,18 +11827,22 @@ reviewer_loop_platform_pre_dispatch() {
       # Re-emit gate telemetry on the loop's stdout contract.
       printf '%s\n' "$expensive_gate_output"
       last_platform="$platform_name"
-      if [ "${expensive_gate_last_result:-}" = "deferral_cap" ]; then
+      if [ "${expensive_gate_last_result:-}" = "deferral_cap" ] \
+          || [ "${expensive_gate_last_result:-}" = "config_error" ]; then
         aggregate_result="escalate"
         _eg_escalation="$(kv_value_default EXPENSIVE_GATE_ESCALATION "$expensive_gate_output" "")"
-        if [ "$_eg_escalation" = "expensive_gate_deferral_budget_unreadable" ]; then
-          aggregate_reason="expensive_gate_deferral_budget_unreadable"
-        else
-          aggregate_reason="expensive_gate_deferral_cap"
-        fi
+        case "$_eg_escalation" in
+          expensive_gate_deferral_budget_unreadable|expensive_gate_local_reviewer_not_configured)
+            aggregate_reason="$_eg_escalation"
+            ;;
+          *)
+            aggregate_reason="expensive_gate_deferral_cap"
+            ;;
+        esac
         _eg_escalation=""
         aggregate_output="$(printf 'RESULT=escalate\nREASON=%s\nCOMMENT_COUNT=0\nBLOCKING_COUNT=0\nSUGGESTION_COUNT=0\n' "$aggregate_reason")"
         aggregate_status=2
-        platform_result_tokens+=("${platform_name}:deferred (${expensive_gate_last_reason:-cap})")
+        platform_result_tokens+=("${platform_name}:${expensive_gate_last_result/deferral_cap/deferred} (${expensive_gate_last_reason:-cap})")
       else
         aggregate_result="needs_fixes"
         aggregate_reason="expensive_gate_deferred"
@@ -11970,7 +12135,16 @@ reviewer_loop_second_local_pass_before_ready_gate() {
     return 1
   fi
 
-  if [ "$(reviewer_loop_local_second_pass_failed_for_head "$_sl_prior_payload" "$loop_head_sha")" -gt 0 ] 2>/dev/null; then
+  # #1853: the refusal is keyed on the head and the review inputs. A probe value
+  # that can never equal a fingerprint shows whether the evidence can change
+  # the decision; only then is the current evidence collected.
+  local _sl_failed_decision
+  _sl_failed_decision="$(reviewer_loop_local_failed_head_decision "$_sl_prior_payload" "$loop_head_sha" "#probe")"
+  if [ "$_sl_failed_decision" = review_inputs_changed ]; then
+    _sl_failed_decision="$(reviewer_loop_local_failed_head_decision "$_sl_prior_payload" "$loop_head_sha" \
+      "$(reviewer_loop_current_review_evidence_sha "$pr_number_arg" "$loop_head_sha")")"
+  fi
+  if [ "$_sl_failed_decision" != none ]; then
     if [ "${retry_local_review_head:-}" = "$loop_head_sha" ] && [ "${local_review_retry_head_record:-}" = "$loop_head_sha" ] && [ "${local_review_retry_attempt_json:-null}" != null ]; then
       # Consume before dispatch, including failed/unknown-head attempts.
       local_review_retry_head_record="$retry_local_review_head"
@@ -11979,6 +12153,9 @@ reviewer_loop_second_local_pass_before_ready_gate() {
         return 1
       fi
       workflow_diagnostic "INFO: explicitly retrying failed local review for ${loop_head_sha}; prior history retained" >&2
+    elif [ "$_sl_failed_decision" = review_inputs_changed ] || [ "$_sl_failed_decision" = infrastructure_retry ]; then
+      local_second_pass_reason="$_sl_failed_decision"
+      workflow_diagnostic "INFO: re-reviewing ${loop_head_sha} after a failed local review (${_sl_failed_decision}); prior history retained" >&2
     else
       local_second_pass=0
       local_second_pass_reason="failed_for_head"
@@ -12048,7 +12225,11 @@ reviewer_loop_second_local_pass_before_ready_gate() {
     last_platform="local-ai-reviewer"
     return 1
   fi
-  local_second_pass_failed_head_record="$loop_head_sha"
+  if [ "$_sl_gate_result" = "needs_fixes" ]; then
+    reviewer_loop_record_local_failed_head needs_fixes "$(kv_value_default EVIDENCE_SNAPSHOT_SHA256 "$_sl_output" "")"
+  else
+    reviewer_loop_record_local_failed_head infrastructure
+  fi
   if [ "$_sl_gate_result" = "needs_fixes" ]; then
     aggregate_output="$(printf 'RESULT=needs_fixes\nREASON=%s\nCOMMENT_COUNT=%s\nBLOCKING_COUNT=%s\nSUGGESTION_COUNT=%s\n' \
       "${_sl_gate_reason:-}" \
@@ -12177,7 +12358,7 @@ reviewer_loop_process_platform_output() {
   if [ "$platform_name" = pr-agent ] &&
       [ "$(kv_value_default EVIDENCE_REVIEW_FAILED_HEAD "$platform_output" "")" = "${loop_head_sha:-}" ] &&
       { [ "$platform_result" = needs_fixes ] || [ "$platform_result" = needs_rerun ]; }; then
-    local_second_pass_failed_head_record="$loop_head_sha"
+    reviewer_loop_record_local_failed_head needs_fixes "$(kv_value_default EVIDENCE_SNAPSHOT_SHA256 "$platform_output" "")"
   fi
   platform_blocking_outputs+=("${platform_name}"$'\036'"${platform_output}")
 
@@ -13583,6 +13764,8 @@ reviewer_loop_history_build_entry() {
     --argjson localSecondPass "${local_second_pass:-0}" \
     --arg localSecondPassReason "${local_second_pass_reason:-not_required}" \
     --arg localSecondPassFailedHead "${local_second_pass_failed_head_record:-}" \
+    --arg localSecondPassFailedKind "${local_second_pass_failed_kind_record:-}" \
+    --arg localSecondPassFailedEvidence "${local_second_pass_failed_evidence_record:-}" \
     --arg localReviewRetryHead "${local_review_retry_head_record:-}" \
     --argjson localRetryAttempt "${local_review_retry_attempt_json:-null}" \
     '{
@@ -13678,6 +13861,10 @@ reviewer_loop_history_build_entry() {
       }
     | if ($localSecondPassFailedHead | length) > 0 then
         . + {local_second_pass_failed_head: $localSecondPassFailedHead}
+        + (if ($localSecondPassFailedKind | length) > 0
+            then {local_second_pass_failed_kind: $localSecondPassFailedKind} else {} end)
+        + (if ($localSecondPassFailedEvidence | length) > 0
+            then {local_second_pass_failed_evidence: $localSecondPassFailedEvidence} else {} end)
       else
         .
       end'
@@ -14097,6 +14284,10 @@ reviewer_loop_resolve_run_id() {
 #            auto-fix, then a different NEW issue found on that state) —
 #            see the block comment above for why deduping by head_sha
 #            alone would be too aggressive.
+#            An automatic same-head re-review (#1853:
+#            local_second_pass_reason review_inputs_changed or
+#            infrastructure_retry) adds its ledger iteration to the key, so
+#            every such re-review spends a cycle on both axes.
 #   run_count — the same DISTINCT-(head_sha,result)-PAIR count, but
 #            restricted to entries whose `run_id` field exactly equals
 #            <run_id> — i.e. the per-run-cap count (Protocol 91's `cycle`
@@ -14172,11 +14363,20 @@ reviewer_loop_history_entries_count() {
           | select((.result // "") == "needs_fixes" or (.result // "") == "needs_rerun")
           | select((.reason // "") != "head_moved_during_run")
         ] as $qualifying
-        | ($qualifying
-            | [.[] | select((.head_sha // "") | length > 0) | ((.head_sha // "") + "|" + (.result // ""))]
+        # #1853: an automatic same-head re-review (review inputs changed, or
+        # the one infrastructure retry) is its own dispatch, so its key adds
+        # the ledger iteration instead of collapsing into (head_sha, result).
+        | def cycle_key:
+            (.head_sha // "") + "|" + (.result // "")
+            + (if ((.local_second_pass_reason // "") == "review_inputs_changed"
+                   or (.local_second_pass_reason // "") == "infrastructure_retry")
+               then "|rereview:" + ((.iteration // .recorded_at // "") | tostring)
+               else "" end);
+          ($qualifying
+            | [.[] | select((.head_sha // "") | length > 0) | cycle_key]
             | unique | length) as $legacyLifetime
         | ($qualifying
-            | [.[] | select(($runId | length) > 0 and (.run_id // "") == $runId and ((.head_sha // "") | length > 0)) | ((.head_sha // "") + "|" + (.result // ""))]
+            | [.[] | select(($runId | length) > 0 and (.run_id // "") == $runId and ((.head_sha // "") | length > 0)) | cycle_key]
             | unique | length) as $legacyRun
         | ($new | map(.local_review_retry_attempt) | unique_by(.id)) as $attempts
         | "\($legacyLifetime + ($attempts | length)) \($legacyRun + ([$attempts[] | select(.run_id == $runId)] | length))"
@@ -16281,6 +16481,8 @@ local_second_pass=0
 local_second_pass_reason="not_required"
 local_second_pass_result=""
 local_second_pass_failed_head_record=""
+local_second_pass_failed_kind_record=""
+local_second_pass_failed_evidence_record=""
 reviewer_loop_platform_loop_should_break=0
 reviewer_loop_last_platform_result=""
 reviewer_loop_last_platform_reason=""
@@ -16409,18 +16611,22 @@ for index in "${!platforms[@]}"; do
         printf '%s\n' "$expensive_gate_output"
         if [ "$expensive_gate_status" -ne 0 ]; then
           last_platform="$_eg_plat"
-          if [ "${expensive_gate_last_result:-}" = "deferral_cap" ]; then
+          if [ "${expensive_gate_last_result:-}" = "deferral_cap" ] \
+              || [ "${expensive_gate_last_result:-}" = "config_error" ]; then
             aggregate_result="escalate"
             _eg_escalation="$(kv_value_default EXPENSIVE_GATE_ESCALATION "$expensive_gate_output" "")"
-            if [ "$_eg_escalation" = "expensive_gate_deferral_budget_unreadable" ]; then
-              aggregate_reason="expensive_gate_deferral_budget_unreadable"
-            else
-              aggregate_reason="expensive_gate_deferral_cap"
-            fi
+            case "$_eg_escalation" in
+              expensive_gate_deferral_budget_unreadable|expensive_gate_local_reviewer_not_configured)
+                aggregate_reason="$_eg_escalation"
+                ;;
+              *)
+                aggregate_reason="expensive_gate_deferral_cap"
+                ;;
+            esac
             unset _eg_escalation
             aggregate_output="$(printf 'RESULT=escalate\nREASON=%s\nCOMMENT_COUNT=0\nBLOCKING_COUNT=0\nSUGGESTION_COUNT=0\n' "$aggregate_reason")"
             aggregate_status=2
-            platform_result_tokens+=("${_eg_plat}:deferred (${expensive_gate_last_reason:-cap})")
+            platform_result_tokens+=("${_eg_plat}:${expensive_gate_last_result/deferral_cap/deferred} (${expensive_gate_last_reason:-cap})")
           else
             aggregate_result="needs_fixes"
             aggregate_reason="expensive_gate_deferred"
@@ -16639,7 +16845,7 @@ _ADVISORY_ENTRY_LINES_
   fi
 
   # Step 7b regression-label assertion (clean path, implementation PRs only).
-  # When the reviewer loop exits clean for a feature/fix/refactor/hotfix branch,
+  # When the reviewer loop exits clean for an implementation branch,
   # the next required step is Step 7b (apply ready-for-regression before Step 8).
   # Check whether the label is already present and append a warning to the summary
   # comment if it is missing. This makes the missing label visible to agents and
@@ -16648,8 +16854,12 @@ _ADVISORY_ENTRY_LINES_
   # the script's exit code or prevent the summary comment from being posted.
   local regression_label_section=""
   if [ "$result" = "clean" ]; then
-    case "${branch_name:-}" in
-      feature/*|fix/*|refactor/*|hotfix/*)
+    # Implementation-ness comes from branch_prefix() (#2183), so feat/* and
+    # backport/* PRs get the same Step 7b assertion.
+    local _step7b_branch_class="other"
+    workflow_branch_is_implementation "${branch_name:-}" && _step7b_branch_class="implementation"
+    case "$_step7b_branch_class" in
+      implementation)
         local _has_regression_label
         _has_regression_label="$(gh pr view "$pr_number" --json labels \
           --jq '[.labels[].name] | any(. == "ready-for-regression")' 2>/dev/null)" \
@@ -16712,6 +16922,11 @@ $(reviewer_loop_head_evidence_render "${loop_head_sha:-}" "${platform_reviewed_h
         expensive_gate_section="
 
 **Expensive reviewer gate:** ${expensive_gate_last_platform} — deferral cap reached (${expensive_gate_last_reason}) at head \`${expensive_gate_last_head}\`. Escalating so a human can unblock."
+        ;;
+      config_error)
+        expensive_gate_section="
+
+**Expensive reviewer gate:** ${expensive_gate_last_platform} — configuration error (${expensive_gate_last_reason}) at head \`${expensive_gate_last_head}\`. This platform requires \`local-ai-reviewer\` in \`review.on_draft.github\` or \`review.on_ready.github\`, and no retry can change that, so the loop escalates now instead of deferring. Add \`local-ai-reviewer\` to the effective config, remove the expensive platform, or set \`PR_REVIEW_LOOP_FORCE_EXPENSIVE_REVIEWERS=1\` for a justified one-off run."
         ;;
       forced)
         expensive_gate_section="

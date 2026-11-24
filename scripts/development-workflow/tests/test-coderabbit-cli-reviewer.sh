@@ -485,6 +485,30 @@ run_test "1789_rwt_early_exit_137" "137 0" "$(rwt_probe 30 sh -c 'exit 137')"
 run_test "1789_rwt_sleeps_past_budget" "124 1" "$(rwt_probe 1 sleep 10)"
 run_test "1789_rwt_finishes_in_final_poll_second" "5 0" "$(rwt_probe 2 sh -c 'sleep 1.5; exit 5')"
 
+# #2198: the TERM grace period covers the whole process group (same case as
+# #2172 in test-local-ai-reviewer.sh). The leader is a shell that cannot exec
+# its command (a command follows it), like dash's `sh -c`, so it dies at TERM
+# at once. The command under it traps TERM and spends 1.2s cleaning up before
+# it writes its marker. A watchdog that ends the grace period when only the
+# leader is gone KILLs the group at the next 1s poll, before the marker exists;
+# one that waits for the group lets the cleanup finish within the 2s grace, so
+# the marker is present when run_with_timeout returns.
+rwt_cleanup_dir="$(mktemp -d)"
+cat > "$rwt_cleanup_dir/slow-cleanup" <<'RWT_SLOW_CLEANUP'
+#!/usr/bin/env bash
+trap 'sleep 1.2; : > "$1"; exit 143' TERM
+sleep 30 &
+wait
+RWT_SLOW_CLEANUP
+chmod +x "$rwt_cleanup_dir/slow-cleanup"
+rwt_marker="$rwt_cleanup_dir/cleanup-finished"
+run_test "2198_rwt_non_exec_leader_expires" "124 1" \
+  "$(rwt_probe 1 sh -c '"$0" "$1"; status=$?; exit "$status"' "$rwt_cleanup_dir/slow-cleanup" "$rwt_marker")"
+run_test "2198_rwt_group_cleanup_finishes_before_return" "yes" \
+  "$([ -e "$rwt_marker" ] && echo yes || echo no)"
+rm -rf "$rwt_cleanup_dir"
+unset rwt_cleanup_dir rwt_marker
+
 # A CLI that leaves a background descendant: the group KILL reaps it too.
 RWT_PIDFILE="$(mktemp)"
 run_test "1789_rwt_descendant_result" "124 1" \

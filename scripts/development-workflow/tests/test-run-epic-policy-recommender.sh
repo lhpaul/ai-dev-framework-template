@@ -567,6 +567,98 @@ ambiguous_fixture_word="$(write_fixture ambiguous-word "$(jq '
 ambiguous_output_word="$(recommend_json "$ambiguous_fixture_word" "\$run-epic --items 401")"
 run_test "ambiguous_word_still_recommends_product_checkpoint" "issue signals unresolved product requirements or acceptance-criteria ambiguity" "$(printf '%s\n' "$ambiguous_output_word" | jq -r '.recommendedPolicy.checkpoints[] | select(.stage == "spec" and .domain == "product") | .reason')"
 
+# Issue #2136: identifiers and code are not requirement wording. The #2116 text
+# quotes the reason literal 'ambiguous' in its title and cites
+# `pr_agent_ambiguous_review` in its body; neither may raise the spec/product
+# checkpoint, while real ambiguous wording still does.
+product_checkpoint_count() {
+  jq -r '[.recommendedPolicy.checkpoints[]? | select(.stage == "spec" and .domain == "product")] | length'
+}
+issue_2116_title="pr-review-loop: a human override of local-ai-reviewer can never close the loop, because PR-Agent verification then escalates as 'ambiguous'"
+issue_2116_body='## Problem\nThe loop ends with `RESULT=escalate`, `REASON=pr_agent_ambiguous_review`. Do not use `pr_agent_ambiguous_review`, which says PR-Agent output was unparseable.\n\n## Acceptance\n- [ ] With a valid override marker, the loop reaches the ready phase.\n- [ ] An override for an older head has no effect.\n'
+issue_2116_fixture="$(write_fixture issue-2116 "$(jq --arg t "$issue_2116_title" --arg b "$(printf '%b' "$issue_2116_body")" '
+  .groups.eligible[0].title = $t | .groups.eligible[0].body = $b
+  | .items[0].title = $t | .items[0].body = $b
+' "$complete_criteria_fixture")")"
+issue_2116_output="$(recommend_json "$issue_2116_fixture" "\$run-item 401")"
+run_test "issue_2116_text_does_not_recommend_product_checkpoint" "0" "$(printf '%s\n' "$issue_2116_output" | product_checkpoint_count)"
+
+for identifier_case in \
+  'backtick|## Problem\nThe code `ambiguous` is reported.\n\n## Acceptance Criteria\n- The report labels each proposed item.\n' \
+  'snake_case|## Problem\nThe reason pr_agent_ambiguous_review is reported.\n\n## Acceptance Criteria\n- The report labels each proposed item.\n' \
+  'fenced|## Problem\nSample output:\n```\nREASON ambiguous\nunclear\n```\n\n## Acceptance Criteria\n- The report labels each proposed item.\n' \
+  'tilde-fenced|## Problem\nSample output:\n~~~\nREASON ambiguous\nunclear\n~~~\n\n## Acceptance Criteria\n- The report labels each proposed item.\n' \
+  'mixed-fence|## Problem\nSample:\n```\nline\n~~~\nREASON ambiguous\n```\n\n## Acceptance Criteria\n- The report labels each proposed item.\n' \
+  'two-distinct-fences|## Problem\nFirst sample:\n~~~\nREASON ambiguous\n~~~\nBetween the blocks.\n```\nunclear ambiguous\n```\n\n## Acceptance Criteria\n- The report labels each proposed item.\n' \
+  'unclosed-fence|## Problem\nSee the report.\n\n## Acceptance Criteria\n- The report labels each proposed item.\n\n## Notes\n```\nREASON ambiguous\nunclear\n' \
+  'longer-fence|## Problem\nSample:\n````\n```\nREASON ambiguous\n```\nunclear ambiguous\n````\n\n## Acceptance Criteria\n- The report labels each proposed item.\n' \
+  'indented-fence|## Problem\nSample output:\n  ```\nREASON ambiguous\nunclear\n  ```\nThree spaces:\n   ~~~\nunclear ambiguous\n   ~~~\n\n## Acceptance Criteria\n- The report labels each proposed item.\n' \
+  'double-backtick-span|## Problem\nThe code ``ambiguous`` is reported.\n\n## Acceptance Criteria\n- The report labels each proposed item.\n' \
+  'mixed-run-span|## Problem\nThe code ``a ` ambiguous`` and ```b `` ambiguous``` are reported.\n\n## Acceptance Criteria\n- The report labels each proposed item.\n' \
+  'multiline-span|## Problem\nThe code `first line\nambiguous second line` is reported.\n\n## Acceptance Criteria\n- The report labels each proposed item.\n' \
+  'quoted|## Problem\nThe verdict is labelled "ambiguous" by the loop.\n\n## Acceptance Criteria\n- The report labels each proposed item.\n'; do
+  identifier_name="${identifier_case%%|*}"
+  identifier_body="$(printf '%b' "${identifier_case#*|}")"
+  identifier_fixture="$(write_fixture "identifier-$identifier_name" "$(jq --arg b "$identifier_body" '
+    .groups.eligible[0].body = $b | .items[0].body = $b
+  ' "$complete_criteria_fixture")")"
+  identifier_output="$(recommend_json "$identifier_fixture" "\$run-item 401")"
+  run_test "ambiguous_inside_${identifier_name}_does_not_recommend_product_checkpoint" "0" "$(printf '%s\n' "$identifier_output" | product_checkpoint_count)"
+done
+
+# Real ambiguity in criteria wording, next to an identifier, still checkpoints.
+ambiguous_criteria_fixture="$(write_fixture ambiguous-criteria "$(jq '
+  .groups.eligible[0].body = "## Problem\nThe reason `pr_agent_ambiguous_review` is reported.\n\n## Acceptance Criteria\n- The expected behavior is ambiguous and unclear.\n"
+  | .items[0].body = .groups.eligible[0].body
+' "$complete_criteria_fixture")")"
+ambiguous_criteria_output="$(recommend_json "$ambiguous_criteria_fixture" "\$run-item 401")"
+run_test "ambiguous_criteria_wording_still_recommends_product_checkpoint" "1" "$(printf '%s\n' "$ambiguous_criteria_output" | product_checkpoint_count)"
+
+# An inline mention of a triple backtick does not open a fence, so real
+# ambiguity in the criteria that follows it is still detected.
+inline_fence_fixture="$(write_fixture inline-fence-mention "$(jq '
+  .groups.eligible[0].body = "## Problem\nThe parser treats ``` as a fence marker.\n\n## Acceptance Criteria\n- The behavior is ambiguous and unclear.\n"
+  | .items[0].body = .groups.eligible[0].body
+' "$complete_criteria_fixture")")"
+inline_fence_output="$(recommend_json "$inline_fence_fixture" "\$run-item 401")"
+run_test "inline_triple_backtick_mention_does_not_hide_real_ambiguity" "1" "$(printf '%s\n' "$inline_fence_output" | product_checkpoint_count)"
+
+# A stray backtick in the title must not pair with one in the body and hide the
+# real ambiguity wording between them.
+cross_field_fixture="$(write_fixture cross-field-backtick "$(jq '
+  .groups.eligible[0].title = "Handle the `odd title" | .items[0].title = "Handle the `odd title"
+  | .groups.eligible[0].body = "## Problem\nThe expected behavior is ambiguous and unclear, see `code` here.\n\n## Acceptance Criteria\n- The report labels each proposed item.\n"
+  | .items[0].body = .groups.eligible[0].body
+' "$complete_criteria_fixture")")"
+cross_field_output="$(recommend_json "$cross_field_fixture" "\$run-item 401")"
+run_test "stray_title_backtick_does_not_hide_body_ambiguity" "1" "$(printf '%s\n' "$cross_field_output" | product_checkpoint_count)"
+
+# Quoted words inside Acceptance Criteria are requirement wording, not codes.
+quoted_criteria_fixture="$(write_fixture quoted-criteria "$(jq '
+  .groups.eligible[0].body = "## Problem\nThe reason is reported.\n\n## Acceptance Criteria\n- The expected behavior is \"ambiguous\".\n"
+  | .items[0].body = .groups.eligible[0].body
+' "$complete_criteria_fixture")")"
+quoted_criteria_output="$(recommend_json "$quoted_criteria_fixture" "\$run-item 401")"
+run_test "quoted_ambiguous_in_acceptance_criteria_still_recommends_product_checkpoint" "1" "$(printf '%s\n' "$quoted_criteria_output" | product_checkpoint_count)"
+
+# A heading inside a fenced example must not end the criteria section early and
+# leak the example text (fences are stripped before section extraction).
+fenced_criteria_fixture="$(write_fixture fenced-criteria "$(jq '
+  .groups.eligible[0].body = "## Acceptance Criteria\n- The report labels each proposed item.\n```\nREASON ambiguous\n## Example\n```\n- The report names held items.\n"
+  | .items[0].body = .groups.eligible[0].body
+' "$complete_criteria_fixture")")"
+fenced_criteria_output="$(recommend_json "$fenced_criteria_fixture" "\$run-item 401")"
+run_test "fenced_heading_inside_acceptance_criteria_does_not_leak_example_text" "0" "$(printf '%s\n' "$fenced_criteria_output" | product_checkpoint_count)"
+
+# Text after the Acceptance Criteria section is "outside criteria": quoted
+# literals there are still stripped, and criteria text is counted once.
+after_criteria_fixture="$(write_fixture after-criteria "$(jq '
+  .groups.eligible[0].body = "## Acceptance Criteria\n- The report labels each proposed item.\n\n## Notes\nThe verdict is labelled \"ambiguous\" by the loop.\n"
+  | .items[0].body = .groups.eligible[0].body
+' "$complete_criteria_fixture")")"
+after_criteria_output="$(recommend_json "$after_criteria_fixture" "\$run-item 401")"
+run_test "quoted_ambiguous_after_acceptance_criteria_section_does_not_recommend_product_checkpoint" "0" "$(printf '%s\n' "$after_criteria_output" | product_checkpoint_count)"
+
 case_variant_fixture="$(write_fixture case-variant "$(jq '.groups.eligible[0].body = "## ACCEPTANCE CRITERIA\n- The heading case is normalized.\n" | .items[0].body = .groups.eligible[0].body' "$complete_criteria_fixture")")"
 case_variant_output="$(recommend_json "$case_variant_fixture" "\$run-epic --items 401")"
 run_test "acceptance_criteria_heading_case_variants_are_normal_structure" "0" "$(printf '%s\n' "$case_variant_output" | jq -r '[.recommendedPolicy.checkpoints[]? | select(.stage == "spec" and .domain == "product")] | length')"

@@ -232,9 +232,17 @@ summary_fixture() {
 guard_state_for() {
   local found="$1"
   local body="$2"
+  # Optional third argument: the event name the verdict runs under. Omitted,
+  # it stays unset, which is the strict non-pull_request_target posture.
+  local event_name="${3:-}"
   # shellcheck disable=SC2034 # read by the eval'd workflow functions
   (
     FOUND="$found"
+    if [ -n "$event_name" ]; then
+      EVENT_NAME="$event_name"
+    else
+      unset EVENT_NAME
+    fi
     HEAD_SHA="$LIVE_HEAD"
     LATEST_SUMMARY_BODY="$body"
     summarize_reviewer_loop_result
@@ -275,6 +283,69 @@ run_test "guard_missing_summary_fails" "failure" \
   "$(guard_state_for 0 "")"
 run_test "guard_no_longer_passes_on_presence_alone" "yes" \
   "$(not_contains 'DESCRIPTION="Reviewer-loop summary present."')"
+
+echo ""
+echo "=== Pending window before the loop's summary (#1838) ==="
+
+# Synthetic fixtures only: subshells isolate all state and nothing calls
+# GitHub. On pull_request_target the two "loop has not run for this head yet"
+# windows report pending; every genuine failure keeps failing, and the
+# workflow_dispatch path that resolves the status stays strict.
+PRT=pull_request_target
+run_test "prt_missing_summary_is_pending" "pending" \
+  "$(guard_state_for 0 "" "$PRT")"
+run_test "prt_clean_stale_head_is_pending" "pending" \
+  "$(guard_state_for 1 "$(summary_fixture clean "$STALE_HEAD")" "$PRT")"
+run_test "prt_clean_current_head_succeeds" "success" \
+  "$(guard_state_for 1 "$(summary_fixture clean "$LIVE_HEAD")" "$PRT")"
+run_test "prt_escalated_current_head_fails" "failure" \
+  "$(guard_state_for 1 "$(summary_fixture 'escalate — max_total_cycles_exceeded' "$LIVE_HEAD")" "$PRT")"
+run_test "prt_escalated_stale_head_fails" "failure" \
+  "$(guard_state_for 1 "$(summary_fixture 'escalate — max_total_cycles_exceeded' "$STALE_HEAD")" "$PRT")"
+run_test "prt_needs_fixes_stale_head_fails" "failure" \
+  "$(guard_state_for 1 "$(summary_fixture needs_fixes "$STALE_HEAD")" "$PRT")"
+run_test "prt_clean_without_head_history_fails" "failure" \
+  "$(guard_state_for 1 "$(summary_fixture clean "")" "$PRT")"
+export BRANCH=hotfix/1838-synthetic
+run_test "prt_hotfix_skipped_summary_fails" "failure" \
+  "$(guard_state_for 1 "$(summary_fixture 'skipped — release_pr' "$LIVE_HEAD")" "$PRT")"
+unset BRANCH
+run_test "dispatch_missing_summary_fails" "failure" \
+  "$(guard_state_for 0 "" workflow_dispatch)"
+run_test "dispatch_clean_stale_head_fails" "failure" \
+  "$(guard_state_for 1 "$(summary_fixture clean "$STALE_HEAD")" workflow_dispatch)"
+run_test "dispatch_clean_current_head_succeeds" "success" \
+  "$(guard_state_for 1 "$(summary_fixture clean "$LIVE_HEAD")" workflow_dispatch)"
+
+# Job exit: failure exits 1 and pending exits 0, after the status is posted.
+run_test "pending_exits_zero_after_status" "yes" \
+  "$(contains 'echo "Guard PENDING: ${DESCRIPTION} Awaiting the reviewer-loop summary dispatch."')"
+run_test "failure_still_exits_nonzero" "yes" "$(contains 'echo "Guard FAILED: ${DESCRIPTION}"')"
+run_test "comment_fetch_failure_still_fails" "yes" \
+  "$(contains 'Could not fetch PR comments. Re-run the workflow to retry.')"
+# The exit decision follows the posted status: the job stays red only for a
+# real failure. Exercise the block the workflow runs after posting the status.
+extract_guard_exit_block() {
+  awk '
+    $0 == "          if [ \"$STATE\" = \"failure\" ]; then" { found=1 }
+    found { print }
+    found && /^          echo "Guard PASSED/ { exit }
+  ' "$WORKFLOW" | sed 's/^          //'
+}
+GUARD_EXIT_BLOCK="$(extract_guard_exit_block)"
+guard_exit_for() {
+  # shellcheck disable=SC2034 # read by the eval'd exit block
+  (
+    STATE="$1"
+    DESCRIPTION="synthetic"
+    eval "$GUARD_EXIT_BLOCK"
+  ) > /dev/null 2>&1 && echo 0 || echo 1
+}
+run_test "guard_exit_block_extractable" "yes" \
+  "$(grep -Fq 'Guard PENDING' <<<"$GUARD_EXIT_BLOCK" && echo yes || echo no)"
+run_test "guard_exit_pending_is_zero" "0" "$(guard_exit_for pending)"
+run_test "guard_exit_failure_is_one" "1" "$(guard_exit_for failure)"
+run_test "guard_exit_success_is_zero" "0" "$(guard_exit_for success)"
 
 echo ""
 echo "=== Summary parsing under pipefail, synthetic bodies (#2019) ==="

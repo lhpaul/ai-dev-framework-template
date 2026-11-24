@@ -551,10 +551,13 @@ run_test "T-B12b_capacity_budget_no_room_first_attempt_full" "2" "$(head -n 1 "$
 run_test "T-B12b_capacity_budget_no_room_diag" "yes" "$(yes_no rerr_has 'no budget left for another attempt')"
 
 # T-B13: a run past the budget is No verdict yet and leaves no copy behind.
+# The copy is checked as soon as the reviewer returns, with no settling sleep
+# (#2172): the watchdog waits for the whole process group to finish its TERM
+# cleanup before it returns, so a copy still present here was abandoned, not
+# about to be removed, and waiting longer would only hide that.
 review AI_DEV_WORKFLOW_CONFIG_FILE="$NEUTRAL_CFG" LOCAL_AI_REVIEWER_BACKEND=claude STANDIN_SLEEP=30 -- --timeout 3
 run_test "T-B13_result" "waiting_on_reviewer" "$(kv RESULT)"
 run_test "T-B13_exit" "4" "$RRC"
-sleep 3
 run_test "T-B13_no_leftover_dir" "0" "$(find "$TMPDIR" -maxdepth 1 -name 'local-claude-review.*' | grep -c . || true)"
 review AI_DEV_WORKFLOW_CONFIG_FILE="$NEUTRAL_CFG" LOCAL_AI_REVIEWER_BACKEND=claude --
 run_test "T-B13_following_run_clean" "clean" "$(kv RESULT)"
