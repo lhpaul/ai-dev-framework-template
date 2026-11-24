@@ -43,7 +43,13 @@ it, the expensive-reviewer gate requires four current-head conditions,
 evaluated in order and stopping at the first unmet one:
 
 1. `local-ai-reviewer` is configured and has current-head clean evidence
-   (exact `1` on both derived keys; missing/stale/unexpected values defer)
+   (exact `1` on both derived keys; missing/stale/unexpected values defer).
+   **Configuration requirement:** selecting `codex-github` in
+   `review.on_draft.github` or `review.on_ready.github` also requires
+   `local-ai-reviewer` in one of those lists. Without it the gate returns
+   `EXPENSIVE_GATE_RESULT=config_error` and the loop escalates at once with
+   `REASON=expensive_gate_local_reviewer_not_configured` (#1817) instead of
+   reporting `needs_fixes` with zero findings until the deferral cap
 2. Every preceding peer under the reordered platform list (same-bucket
    non-expensive peers plus earlier buckets) has acceptable evidence —
    `clean`, or `skipped` with an allow-listed reason
@@ -71,11 +77,15 @@ full gate (including same-bucket peers) still runs again immediately before
 Deferrals are bounded by `PR_REVIEW_LOOP_MAX_EXPENSIVE_DEFERRALS` (default
 `3`, head-scoped occurrence count). At the cap the loop escalates.
 `EXPENSIVE_GATE_ESCALATION` is emitted **only** when
-`EXPENSIVE_GATE_RESULT=deferral_cap` and is one of:
+`EXPENSIVE_GATE_RESULT` is `deferral_cap` or `config_error`, and is one of:
 
 - `expensive_gate_deferral_cap` — budget exhausted
 - `expensive_gate_deferral_budget_unreadable` — ledger unreadable
   (`EXPENSIVE_GATE_DEFERRALS=-1`); an absent ledger is `0` and defers normally
+- `expensive_gate_local_reviewer_not_configured` — `config_error`;
+  `local-ai-reviewer` is not configured. Escalates on the first evaluation,
+  spends no deferral budget, and in the ready phase stops before `gh pr ready`.
+  Add `local-ai-reviewer` to the effective config or remove `codex-github`
 
 Override with `PR_REVIEW_LOOP_FORCE_EXPENSIVE_REVIEWERS=1` for a one-off run
 (justify in the PR). The gate still emits `EXPENSIVE_GATE_RESULT=forced` with

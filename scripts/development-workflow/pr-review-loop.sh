@@ -1054,7 +1054,8 @@ Outputs stable key=value lines including:
   EXPENSIVE_GATE_PLATFORM / EXPENSIVE_GATE_RESULT / EXPENSIVE_GATE_REASON / EXPENSIVE_GATE_HEAD
   EXPENSIVE_GATE_DEFERRALS / EXPENSIVE_GATE_MAX_DEFERRALS
                   Emitted per expensive platform (currently codex-github) immediately before dispatch.
-                  RESULT is dispatched|deferred|forced|deferral_cap. Conditions are evaluated in order:
+                  RESULT is dispatched|deferred|forced|deferral_cap|config_error. Conditions are
+                  evaluated in order:
                   (1) local-ai-reviewer configured and current-head clean evidence,
                   (2) every preceding peer (same-bucket non-expensive + earlier buckets) has
                   acceptable evidence (clean, or skipped with allow-listed reason),
@@ -1070,11 +1071,17 @@ Outputs stable key=value lines including:
                   gate still runs again immediately before run_platform_review. Deferrals are bounded
                   by PR_REVIEW_LOOP_MAX_EXPENSIVE_DEFERRALS
                   (default 3, head-scoped occurrence count); at the cap the loop escalates.
-  EXPENSIVE_GATE_ESCALATION=expensive_gate_deferral_cap|expensive_gate_deferral_budget_unreadable
-                  Emitted ONLY when EXPENSIVE_GATE_RESULT=deferral_cap — exhausted budget vs
-                  unreadable ledger. Absent otherwise.
+                  When local-ai-reviewer is absent from the configured platform lists
+                  (EXPENSIVE_GATE_REASON=local_reviewer_not_configured), condition (1) can never
+                  be met: the gate returns RESULT=config_error and the loop escalates at once
+                  without deferring or spending deferral budget (issue #1817).
+  EXPENSIVE_GATE_ESCALATION=expensive_gate_deferral_cap|expensive_gate_deferral_budget_unreadable|
+                            expensive_gate_local_reviewer_not_configured
+                  Emitted ONLY when EXPENSIVE_GATE_RESULT=deferral_cap (exhausted budget vs
+                  unreadable ledger) or config_error (local reviewer not configured). Absent otherwise.
   REASON=expensive_gate_deferred (RESULT=needs_fixes; expensive reviewer held back)
   REASON=expensive_gate_deferral_cap|expensive_gate_deferral_budget_unreadable (RESULT=escalate)
+  REASON=expensive_gate_local_reviewer_not_configured (RESULT=escalate; configuration error)
   STAGE_SKIP_ENABLED=0|1
   STAGE_SKIP_DISABLED_REASON=disabled_by_env|compare_mode|explicit_platform_selection|head_unknown|history_unavailable
   STAGE_SKIPPED_PLATFORMS=<comma-separated platforms>
@@ -1159,7 +1166,8 @@ Environment variables:
   PR_REVIEW_LOOP_FORCE_EXPENSIVE_REVIEWERS=1
                                      Bypass the expensive-reviewer gate for manual escalation. The gate still
                                      evaluates and emits EXPENSIVE_GATE_* with RESULT=forced and the reason it
-                                     would have deferred; justify use in the PR.
+                                     would have deferred (including local_reviewer_not_configured); justify use
+                                     in the PR.
   PR_REVIEW_LOOP_SMALL_FINDINGS_STOP_ROUNDS=<n>
                                      Consecutive small-findings rounds required before RESULT=clean with
                                      REASON=small_findings_terminal (default: 2; valid range 1–999). A round
@@ -1971,6 +1979,19 @@ expensive_reviewer_gate() {
       expensive_gate_last_reason="$reason"
       print_kv EXPENSIVE_GATE_RESULT forced
       return 0
+    fi
+    # Issue #1817: a missing local-ai-reviewer is a repository configuration
+    # error, not a PR defect. No retry can satisfy condition 1, so deferring
+    # would only report needs_fixes with zero findings until the deferral cap.
+    # Escalate at once with a distinct reason and spend no deferral budget.
+    if [ "$reason" = "local_reviewer_not_configured" ]; then
+      gate_result="config_error"
+      escalation="expensive_gate_local_reviewer_not_configured"
+      expensive_gate_last_result="$gate_result"
+      expensive_gate_last_reason="$reason"
+      print_kv EXPENSIVE_GATE_RESULT config_error
+      print_kv EXPENSIVE_GATE_ESCALATION "$escalation"
+      return 1
     fi
     if [ "$deferrals" = "-1" ]; then
       gate_result="deferral_cap"
@@ -11806,18 +11827,22 @@ reviewer_loop_platform_pre_dispatch() {
       # Re-emit gate telemetry on the loop's stdout contract.
       printf '%s\n' "$expensive_gate_output"
       last_platform="$platform_name"
-      if [ "${expensive_gate_last_result:-}" = "deferral_cap" ]; then
+      if [ "${expensive_gate_last_result:-}" = "deferral_cap" ] \
+          || [ "${expensive_gate_last_result:-}" = "config_error" ]; then
         aggregate_result="escalate"
         _eg_escalation="$(kv_value_default EXPENSIVE_GATE_ESCALATION "$expensive_gate_output" "")"
-        if [ "$_eg_escalation" = "expensive_gate_deferral_budget_unreadable" ]; then
-          aggregate_reason="expensive_gate_deferral_budget_unreadable"
-        else
-          aggregate_reason="expensive_gate_deferral_cap"
-        fi
+        case "$_eg_escalation" in
+          expensive_gate_deferral_budget_unreadable|expensive_gate_local_reviewer_not_configured)
+            aggregate_reason="$_eg_escalation"
+            ;;
+          *)
+            aggregate_reason="expensive_gate_deferral_cap"
+            ;;
+        esac
         _eg_escalation=""
         aggregate_output="$(printf 'RESULT=escalate\nREASON=%s\nCOMMENT_COUNT=0\nBLOCKING_COUNT=0\nSUGGESTION_COUNT=0\n' "$aggregate_reason")"
         aggregate_status=2
-        platform_result_tokens+=("${platform_name}:deferred (${expensive_gate_last_reason:-cap})")
+        platform_result_tokens+=("${platform_name}:${expensive_gate_last_result/deferral_cap/deferred} (${expensive_gate_last_reason:-cap})")
       else
         aggregate_result="needs_fixes"
         aggregate_reason="expensive_gate_deferred"
@@ -16586,18 +16611,22 @@ for index in "${!platforms[@]}"; do
         printf '%s\n' "$expensive_gate_output"
         if [ "$expensive_gate_status" -ne 0 ]; then
           last_platform="$_eg_plat"
-          if [ "${expensive_gate_last_result:-}" = "deferral_cap" ]; then
+          if [ "${expensive_gate_last_result:-}" = "deferral_cap" ] \
+              || [ "${expensive_gate_last_result:-}" = "config_error" ]; then
             aggregate_result="escalate"
             _eg_escalation="$(kv_value_default EXPENSIVE_GATE_ESCALATION "$expensive_gate_output" "")"
-            if [ "$_eg_escalation" = "expensive_gate_deferral_budget_unreadable" ]; then
-              aggregate_reason="expensive_gate_deferral_budget_unreadable"
-            else
-              aggregate_reason="expensive_gate_deferral_cap"
-            fi
+            case "$_eg_escalation" in
+              expensive_gate_deferral_budget_unreadable|expensive_gate_local_reviewer_not_configured)
+                aggregate_reason="$_eg_escalation"
+                ;;
+              *)
+                aggregate_reason="expensive_gate_deferral_cap"
+                ;;
+            esac
             unset _eg_escalation
             aggregate_output="$(printf 'RESULT=escalate\nREASON=%s\nCOMMENT_COUNT=0\nBLOCKING_COUNT=0\nSUGGESTION_COUNT=0\n' "$aggregate_reason")"
             aggregate_status=2
-            platform_result_tokens+=("${_eg_plat}:deferred (${expensive_gate_last_reason:-cap})")
+            platform_result_tokens+=("${_eg_plat}:${expensive_gate_last_result/deferral_cap/deferred} (${expensive_gate_last_reason:-cap})")
           else
             aggregate_result="needs_fixes"
             aggregate_reason="expensive_gate_deferred"
@@ -16893,6 +16922,11 @@ $(reviewer_loop_head_evidence_render "${loop_head_sha:-}" "${platform_reviewed_h
         expensive_gate_section="
 
 **Expensive reviewer gate:** ${expensive_gate_last_platform} — deferral cap reached (${expensive_gate_last_reason}) at head \`${expensive_gate_last_head}\`. Escalating so a human can unblock."
+        ;;
+      config_error)
+        expensive_gate_section="
+
+**Expensive reviewer gate:** ${expensive_gate_last_platform} — configuration error (${expensive_gate_last_reason}) at head \`${expensive_gate_last_head}\`. This platform requires \`local-ai-reviewer\` in \`review.on_draft.github\` or \`review.on_ready.github\`, and no retry can change that, so the loop escalates now instead of deferring. Add \`local-ai-reviewer\` to the effective config, remove the expensive platform, or set \`PR_REVIEW_LOOP_FORCE_EXPENSIVE_REVIEWERS=1\` for a justified one-off run."
         ;;
       forced)
         expensive_gate_section="

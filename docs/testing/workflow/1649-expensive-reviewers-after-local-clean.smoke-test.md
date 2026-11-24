@@ -100,7 +100,7 @@ Drive the fixture with exactly one condition unmet at a time and read
 | `local-ai-reviewer` entry of `platform_reviewed_heads` records a head that is not `loop_head_sha` | `deferred` / `local_evidence_stale` |
 | That entry is absent while `local-ai-reviewer` is in the resolved list | `deferred` / `local_evidence_missing` |
 | The derivation helper returns any value other than `0` or `1` | `deferred` / `local_evidence_missing` |
-| `local-ai-reviewer` is not in the resolved platform list | `deferred` / `local_reviewer_not_configured` |
+| `local-ai-reviewer` is not in the resolved platform list | `config_error` / `local_reviewer_not_configured` (escalates at once since #1817) |
 | Reorder suppressed, so a same-bucket peer has not run yet | `deferred` / `peer_reviewer_not_run` |
 | A peer ran and returned `needs_fixes` or `escalate` | `deferred` / `peer_reviewer_not_clean` |
 | A peer ran and returned `skipped` / `unavailable`, `timeout`, or `unauthorized` | `deferred` / `peer_reviewer_not_clean` |
@@ -217,8 +217,8 @@ expensive reviewer, with nothing guaranteeing the retry the gate depends on.
 Every run below also configures `local-ai-reviewer` on draft with a current-head
 `platform_reviewed_heads` entry, so condition 1 is satisfied and each run
 isolates condition 2. Condition 1 is evaluated first, so a run expecting
-dispatch without it would defer with `local_reviewer_not_configured` regardless
-of the peer set.
+dispatch without it would stop with `config_error` /
+`local_reviewer_not_configured` regardless of the peer set.
 
 1. Configure `codex-github`, `pr-agent` and `local-ai-reviewer` on draft and
    `bugbot` on ready. Run the loop with both draft peers clean and `bugbot` not
