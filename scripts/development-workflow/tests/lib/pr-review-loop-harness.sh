@@ -291,13 +291,33 @@ case "$*" in
     printf '%s\n' "${MOCK_GH_READY_OUTPUT:-{}}"
     exit "${MOCK_GH_READY_EXIT:-${MOCK_GH_EXIT:-0}}"
     ;;
-  *"label view"*)
-    printf '%s\n' "${MOCK_GH_LABEL_VIEW_OUTPUT:-${MOCK_GH_OUTPUT:-{}}}"
-    exit "${MOCK_GH_LABEL_VIEW_EXIT:-${MOCK_GH_EXIT:-0}}"
+  # Like the real binary, reject any `gh label` verb it does not have (issue
+  # #1764: `gh label view` never existed). The real subcommands are clone,
+  # create, delete, edit and list; an unknown one exits 1 with this message.
+  "label "*)
+    case "${2:-}" in
+      clone|create|delete|edit|list) ;;
+      *)
+        printf 'unknown command "%s" for "gh label"\n' "${2:-}" >&2
+        exit 1
+        ;;
+    esac
+    case "$*" in
+      *"label create"*)
+        [ -z "${MOCK_GH_LABEL_CREATE_STDERR:-}" ] || printf '%s\n' "$MOCK_GH_LABEL_CREATE_STDERR" >&2
+        printf '%s\n' "${MOCK_GH_LABEL_CREATE_OUTPUT:-${MOCK_GH_OUTPUT:-{}}}"
+        exit "${MOCK_GH_LABEL_CREATE_EXIT:-${MOCK_GH_EXIT:-0}}"
+        ;;
+    esac
+    printf '%s\n' "${MOCK_GH_OUTPUT:-[]}"
+    exit "${MOCK_GH_EXIT:-0}"
     ;;
-  *"label create"*)
-    printf '%s\n' "${MOCK_GH_LABEL_CREATE_OUTPUT:-${MOCK_GH_OUTPUT:-{}}}"
-    exit "${MOCK_GH_LABEL_CREATE_EXIT:-${MOCK_GH_EXIT:-0}}"
+  # Label existence probe: gh api repos/{owner}/{repo}/labels/<name>.
+  # MOCK_GH_LABEL_PROBE_EXIT (default 0 = label exists) and
+  # MOCK_GH_LABEL_PROBE_STDERR (e.g. "gh: Not Found (HTTP 404)") control it.
+  "api repos/"*"/labels/"*)
+    [ -z "${MOCK_GH_LABEL_PROBE_STDERR:-}" ] || printf '%s\n' "$MOCK_GH_LABEL_PROBE_STDERR" >&2
+    exit "${MOCK_GH_LABEL_PROBE_EXIT:-0}"
     ;;
   *"pr edit"*)
     printf '%s\n' "${MOCK_GH_PR_EDIT_OUTPUT:-${MOCK_GH_OUTPUT:-{}}}"

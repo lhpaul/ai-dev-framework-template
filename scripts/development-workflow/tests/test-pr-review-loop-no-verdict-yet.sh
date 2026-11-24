@@ -1501,7 +1501,7 @@ _1789_reconcile() {
   [ "$1" = "1" ] && _labels='reviewer-failed'
   (
     export MOCK_GH_CALL_LOG="$_1789_rec_log" MOCK_GH_OUTPUT="$_labels"
-    unset MOCK_GH_EXIT MOCK_GH_PR_EDIT_EXIT MOCK_GH_LABEL_VIEW_EXIT MOCK_GH_LABEL_CREATE_EXIT
+    unset MOCK_GH_EXIT MOCK_GH_PR_EDIT_EXIT MOCK_GH_LABEL_PROBE_EXIT MOCK_GH_LABEL_CREATE_EXIT
     reviewer_loop_reconcile_reviewer_failed_label "42" "$aggregate_result" "$aggregate_reason" 2>/dev/null
   ) || _st=$?
   _adds="$(grep -c -- 'pr edit 42 --add-label reviewer-failed' "$_1789_rec_log" || true)"
@@ -1598,7 +1598,7 @@ run_test "1789_T3.5_remove_failure_warns" "1" \
 run_test "1789_T3.5_remove_failure_aggregate_unchanged" "clean" "$aggregate_result"
 _1789_reset_processing_globals
 reviewer_loop_process_platform_output "bugbot" 1 "$(_1789_o escalate fetch-failed)" 2 1 >/dev/null 2>&1
-_1789_err="$(export MOCK_GH_OUTPUT='some-other-label' MOCK_GH_LABEL_VIEW_EXIT=0 MOCK_GH_PR_EDIT_EXIT=1; unset MOCK_GH_CALL_LOG MOCK_GH_EXIT; \
+_1789_err="$(export MOCK_GH_OUTPUT='some-other-label' MOCK_GH_LABEL_PROBE_EXIT=0 MOCK_GH_PR_EDIT_EXIT=1; unset MOCK_GH_CALL_LOG MOCK_GH_EXIT; \
   reviewer_loop_reconcile_reviewer_failed_label "42" "$aggregate_result" "$aggregate_reason" 2>&1 >/dev/null)" && _1789_rc=0 || _1789_rc=$?
 run_test "1789_T3.5_add_failure_status" "0" "$_1789_rc"
 run_test "1789_T3.5_add_failure_warns" "1" \
