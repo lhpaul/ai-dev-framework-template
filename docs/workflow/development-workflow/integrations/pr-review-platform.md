@@ -141,6 +141,18 @@ tool/subscription differences. If the effective config is absent, or if both
 effective lists are omitted or empty, no reviewer tool runs and the result is
 skipped. Explicit `--platform` flags always override the config file.
 
+**Expensive platforms need a local reviewer.** `codex-github` is an
+expensive reviewer: `pr-review-loop.sh` dispatches it only after current-head
+clean evidence from `local-ai-reviewer`. When `codex-github` is listed in
+either bucket but `local-ai-reviewer` is in neither, that evidence can never
+exist. The loop treats it as a configuration error: the gate emits
+`EXPENSIVE_GATE_RESULT=config_error` and the loop escalates on the first
+evaluation with `REASON=expensive_gate_local_reviewer_not_configured`, without
+running `codex-github` or marking the PR ready. List `local-ai-reviewer` with
+`codex-github`, drop `codex-github`, or set
+`PR_REVIEW_LOOP_FORCE_EXPENSIVE_REVIEWERS=1` for a justified one-off run. See
+[`codex-github.md`](codex-github.md) § Expensive reviewer gate.
+
 `review.on_ready.github` is optional. Platforms listed there run only after
 draft GitHub reviewers are clean and the PR has been converted with
 `gh pr ready`. `pr-review-loop.sh` emits `READY_PHASE_*` telemetry showing

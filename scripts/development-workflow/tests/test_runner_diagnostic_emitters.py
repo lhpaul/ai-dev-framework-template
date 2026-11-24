@@ -2854,7 +2854,8 @@ expensive_gate_max_deferrals=3
                             self.assertIn('configuration:', result.stderr)
                         else:
                             values = dict(line.split('=', 1) for line in result.stdout.splitlines())
-                            self.assertEqual(values['EXPENSIVE_GATE_RESULT'], 'forced' if state == 'empty' and force else ('deferred' if state == 'empty' else 'dispatched'))
+                            # #1817: an unconfigured local reviewer is a configuration error, not a deferral.
+                            self.assertEqual(values['EXPENSIVE_GATE_RESULT'], 'forced' if state == 'empty' and force else ('config_error' if state == 'empty' else 'dispatched'))
                             self.assertEqual(values['EXPENSIVE_GATE_REASON'], 'local_reviewer_not_configured' if state == 'empty' else '')
 
     def test_D92_actual_platform_loop_empty_ready_and_failed_selected_source(self):

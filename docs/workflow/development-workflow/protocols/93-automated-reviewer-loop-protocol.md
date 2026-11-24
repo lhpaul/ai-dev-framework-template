@@ -283,8 +283,19 @@ Conditions are evaluated in order and stop at the first unmet one:
    platform list and its `platform_reviewed_heads` entry classifies as
    `current` against `loop_head_sha`. Exact-match allow-list: both derived
    values must be the literal `1`. Missing, unexpected, or stale values defer
-   (`local_reviewer_not_configured`, `local_evidence_missing`, or
-   `local_evidence_stale`). Derived from in-loop state — never from the
+   (`local_evidence_missing` or `local_evidence_stale`). When
+   `local-ai-reviewer` is in **neither** `review.on_draft.github` nor
+   `review.on_ready.github` (`EXPENSIVE_GATE_REASON=local_reviewer_not_configured`),
+   no retry can ever satisfy this condition, so the gate does not defer: it
+   returns `EXPENSIVE_GATE_RESULT=config_error` with
+   `EXPENSIVE_GATE_ESCALATION=expensive_gate_local_reviewer_not_configured`,
+   and the loop ends at once with `RESULT=escalate` /
+   `REASON=expensive_gate_local_reviewer_not_configured` (#1817). The outcome
+   is a repository configuration error, not a PR defect; it spends no
+   deferral budget. Fix it by adding `local-ai-reviewer` to the effective
+   config, by removing the expensive platform, or with
+   `PR_REVIEW_LOOP_FORCE_EXPENSIVE_REVIEWERS=1` for a justified one-off run.
+   Derived from in-loop state — never from the
    `LOCAL_AI_*` stdout keys as environment variables. On `spec/*` branches the
    local reviewer also runs a second, non-blocking strict-spec pass (see
    [`integrations/local-ai-reviewer.md`](../integrations/local-ai-reviewer.md)
@@ -348,12 +359,19 @@ occurrence counter (`PR_REVIEW_LOOP_MAX_EXPENSIVE_DEFERRALS`, default `3`) —
 the existing cycle caps cannot bound them because they unique-bucket
 `needs_fixes` by head+result. At the cap the loop escalates with
 `RESULT=escalate`. `EXPENSIVE_GATE_ESCALATION` is emitted **only** on a
-`deferral_cap` result and is one of:
+`deferral_cap` or `config_error` result, and the loop uses it as the
+escalation `REASON`. It is one of:
 
 - `expensive_gate_deferral_cap` — budget exhausted for this head
 - `expensive_gate_deferral_budget_unreadable` — ledger marker present but
   unreadable (`EXPENSIVE_GATE_DEFERRALS=-1`); an *absent* ledger is `0` and
   defers normally
+- `expensive_gate_local_reviewer_not_configured` — `config_error`:
+  `local-ai-reviewer` is not configured, so condition 1 can never be met. The
+  loop escalates on the first evaluation, before any deferral and in both the
+  per-platform gate and the ready-phase preflight (so the PR is not marked
+  ready). The ledger records `expensive_gate.result: config_error`, which the
+  head-scoped deferral count does not include.
 
 `PR_REVIEW_LOOP_FORCE_EXPENSIVE_REVIEWERS=1` bypasses the gate for manual
 escalation: the gate still evaluates and emits `EXPENSIVE_GATE_RESULT=forced`
