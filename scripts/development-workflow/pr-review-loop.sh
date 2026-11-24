@@ -10121,15 +10121,43 @@ reviewer_failed_label_required_for_result() {
   return 1
 }
 
+# ensure_reviewer_failed_label_exists (issue #1764)
+#
+# `gh label` has no `view` subcommand, so existence is probed through the REST
+# endpoint instead. The probe has three outcomes that must not be conflated:
+#   - exit 0                 -> label exists; nothing to create
+#   - failure with HTTP 404  -> label is absent; create it
+#   - any other failure      -> existence unknown (auth/network/rate limit);
+#                               do not guess "absent" and attempt a create
+# A failed create is reported with gh's own (redacted) message. The function
+# stays non-fatal: `gh pr edit --add-label` in the caller still runs.
 ensure_reviewer_failed_label_exists() {
-  if gh label view "$REVIEWER_FAILED_LABEL" >/dev/null 2>&1; then
+  local probe_err probe_status=0 create_err create_status=0
+
+  probe_err="$(gh api "repos/{owner}/{repo}/labels/${REVIEWER_FAILED_LABEL}" --silent 2>&1 >/dev/null)" || probe_status=$?
+  if [ "$probe_status" -eq 0 ]; then
     return 0
   fi
 
-  if ! workflow_command_with_safe_stderr gh label create "$REVIEWER_FAILED_LABEL" \
+  case "$probe_err" in
+    *"HTTP 404"*) ;;
+    *)
+      workflow_diagnostic "WARN: could not determine whether the ${REVIEWER_FAILED_LABEL} label exists (gh api exit ${probe_status}): ${probe_err:-no error output}; not attempting to create it; proceeding with reviewer loop" >&2
+      return 0
+      ;;
+  esac
+
+  create_err="$(gh label create "$REVIEWER_FAILED_LABEL" \
       --color "$REVIEWER_FAILED_LABEL_COLOR" \
-      --description "$REVIEWER_FAILED_LABEL_DESCRIPTION" >/dev/null; then
-    workflow_diagnostic "WARN: failed to create ${REVIEWER_FAILED_LABEL} label; proceeding with reviewer loop" >&2
+      --description "$REVIEWER_FAILED_LABEL_DESCRIPTION" 2>&1 >/dev/null)" || create_status=$?
+  if [ "$create_status" -ne 0 ]; then
+    case "$create_err" in
+      # Another run created it between the probe and the create: the label exists.
+      *"already exists"*) ;;
+      *)
+        workflow_diagnostic "WARN: failed to create ${REVIEWER_FAILED_LABEL} label (gh label create exit ${create_status}): ${create_err:-no error output}; proceeding with reviewer loop" >&2
+        ;;
+    esac
   fi
 
   return 0
