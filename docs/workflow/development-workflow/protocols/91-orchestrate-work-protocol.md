@@ -313,14 +313,16 @@ belongs to, or from the runner's completion plan. Classify from the PR diff. The
 merge step and `post-merge-cleanup` close only `fixed` issues: the runner must
 not name a `deferred` issue in any closing keyword, and must not run an explicit
 close for it. The helper detects violations rather than preventing them. It reads
-each `deferred` issue live and reports a `discrepancy` when it is closed or when
+each `deferred` GitHub issue live (a Linear identifier's state is not readable
+through GitHub, so only the PR-text scan applies to it, and its row says the
+tracker state was not read) and reports a `discrepancy` when it is closed or when
 the PR title, body or commit messages close it (same closing-keyword reading
 `post-merge-cleanup.sh` uses, via `closing-keyword-lib.sh`), and
 `unavailable_required` when its state or the PR text cannot be read. The helper
 cannot know which follow-ups were filed, so enumerating all of them is the
 runner's obligation.
-The helper's `followup.#<N>` rows (each issue with its disposition, and deferred
-issues confirmed still open) are part of the pasted
+The helper's `followup.#<N>` / `followup.<TEAM>-<N>` rows (each issue with its
+disposition, and deferred GitHub issues confirmed still open) are part of the pasted
 `## Ground-Truth Completion Verification` section and therefore part of the PR
 merge completion record. Run the check again after merge for the cleanup claim
 so continued-open status is verified against the merged state. A run with filed
