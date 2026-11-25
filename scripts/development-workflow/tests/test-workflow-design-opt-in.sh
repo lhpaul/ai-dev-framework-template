@@ -259,6 +259,12 @@ run_resolution_cases() {
   call_helper "$repo"
   assert_out "T-symlink dangling symlink" "$(expect_invalid "$(config_problem 'not a readable regular file')")"
 
+  # A FIFO is never opened for reading, so the check cannot block on it.
+  repo="$(new_repo)"
+  mkfifo "$repo/.ai-dev-workflow.yaml"
+  call_helper "$repo"
+  assert_out "T-fifo FIFO at the path" "$(expect_invalid "$(config_problem 'not a readable regular file')")"
+
   repo="$(new_repo)"
   printf 'design:\n  home: \377\376\n' >"$repo/.ai-dev-workflow.yaml"
   call_helper "$repo"
