@@ -195,8 +195,7 @@ repository root (default: the checkout the library belongs to) and prints one
 
 <!-- workflow-shell-contract: bash -->
 ```bash
-source scripts/development-workflow/workflow-lib.sh
-workflow_design_opt_in "$PWD"
+bash -c 'source scripts/development-workflow/workflow-lib.sh && workflow_design_opt_in "$PWD"'
 ```
 
 | Line | Not opted in | Opted in | Invalid configuration |
