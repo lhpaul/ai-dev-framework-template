@@ -163,9 +163,9 @@ All repository searches ran at `d8b9f005` (V0) unless the row says otherwise.
 | --- | --- | --- | --- |
 | V0 | Repo revision | `git rev-parse --short HEAD` on `implementation-plan/2211-mockup-framework-layout` at creation | `d8b9f005` (= `origin/develop`) |
 | V1 | Spec merged | `git ls-tree --name-only HEAD docs/specs/developments/20261125124423_2211-mockup-framework-layout/` | lists `1_2211-mockup-framework-layout_specs.md`; spec PR #2226 is squash-merged as `d8b9f005` |
-| V2 | Repository mode | `grep -n '^mode:' .ai-dev-workflow.yaml` | no output; the only `mode:` line is `guardrails.mode` (indented) |
-| V3 | No existing design-key reader | `git grep -n -E "workflow_design\|design_opt_in\|\bdesign\.(root\|home\|kind)\b\|get\(.design.\)" HEAD -- scripts/ .github/ ':!*.md'` | no output (searched every script and workflow directory, where a reader could live) |
-| V4 | No live design tree or scaffold | `git ls-tree --name-only HEAD \| grep -x -E 'design\|template'` and `git ls-tree --name-only HEAD template/` | `template` only; `template/` holds `product-repo-injection` and `workflow-hub` |
+| V2 | Repository mode | S-V2 below | no output; the only `mode:` line is `guardrails.mode` (indented) |
+| V3 | No existing design-key reader | S-V3 below (with a control search proving the pattern form matches) | no match, exit 1; control prints a non-zero count for `workflow-lib.sh`. Searched every script and workflow directory, where a reader could live |
+| V4 | No live design tree or scaffold | S-V4 below | `template` only; `template/` holds `product-repo-injection` and `workflow-hub` |
 | V5 | No existing framework reference | `git grep -il mockup HEAD -- docs/workflow REVIEW.md AGENTS.md README.md .claude .cursor .codex .agents` | `design-assets.md` (attachments, #2210 scope), `00-add-backlog-item-protocol.md`, `02-generate-implementation-plan-protocol.md` (mentions only); no layout or opt-in contract |
 | V6 | Template-owned header | `grep -n 'TEMPLATE-OWNED' .ai-dev-workflow.yaml` | `START` on line 1, `END` on line 46; no other markers |
 | V7 | Sync classification of touched surfaces | `python3 -B scripts/development-workflow/select-sync-manifest-entries.py --manifest sync-manifest.yaml --role single_repo` (also `workflow_hub`, `product_repo`) | `docs/workflow/` always_sync `hub_only` glob `**/*`; `scripts/development-workflow/` always_sync `hub_only`; `scripts/development-workflow/workflow-lib.sh` and `workflow-config-resolver.py` always_sync `product_repo_injection`; `.ai-dev-workflow.yaml` project_specific, `mixed_content: true`, `html_comments`; `README.md` project_specific; `template/` has entries only for `workflow-hub/` and `product-repo-injection/` |
@@ -180,6 +180,23 @@ All repository searches ran at `d8b9f005` (V0) unless the row says otherwise.
 | V16 | Bytecode cache visibility | `grep -n pycache .gitignore` | `__pycache__/` is ignored, so a cache would not show in `git status`; P2 still uses `-B` so nothing is written |
 | V17 | Same-surface open PRs | `gh pr list --state open --limit 100 --json number,headRefName,files` filtered to `.ai-dev-workflow.yaml`, `sync-manifest.yaml`, `workflow-lib.sh`, the workflow README, `README.md`, `template/`, `design/` (2026-11-25) | no open PR touches these surfaces |
 | V18 | Vault target | `git -C /Users/lhpaul/Git/Cerebro/LH log --oneline -1` and `grep -n '^#' '40 - Conocimiento/Estándares/HTML Mockup Framework.md'` (2026-11-25) | repo `lhpaul/lh-cerebro`, branch `main`, head `b05bb0a`; headings listed in L8's mapping table; other vault files have uncommitted edits, the target file does not |
+
+### Search commands
+
+The searches whose regular expressions contain alternation are recorded here,
+outside the table, so no Markdown escaping alters them. Run from the
+repository root.
+
+```bash
+# S-V2
+grep -n '^mode:' .ai-dev-workflow.yaml
+# S-V3 (rev d8b9f005), then the control search
+git grep -n -E 'workflow_design|design_opt_in|design\.(root|home|kind)|get\(.design.\)' d8b9f005 -- scripts/ .github/ ':!*.md'
+git grep -c -E 'workflow_template|is_template' d8b9f005 -- scripts/development-workflow/workflow-lib.sh
+# S-V4 (rev d8b9f005)
+git ls-tree --name-only d8b9f005 | grep -x -E 'design|template'
+git ls-tree --name-only d8b9f005 template/
+```
 
 ### Reader probe
 
