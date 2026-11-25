@@ -530,6 +530,11 @@ exists for that head. A removed marker, a revoked permission or a new head
 refuses as before. Any other `skipped` reason, such as
 `LOCAL_AI_REVIEWER_DISABLED=1` (`disabled_by_config`), still refuses readiness.
 
+The expensive-reviewer gate (`expensive_reviewer_gate`) treats a current-head
+`skipped` / `human_override` record for `local-ai-reviewer` as a clean local
+verdict, and accepts it as peer evidence only for that platform. Other skip
+reasons and other platforms are refused as before (#2166).
+
 If PR-Agent verification needs a local-ai-reviewer pass and cannot get one,
 because the reviewer is not configured, is disabled, or already failed on the
 head without `--retry-local-review-head`, the PR-Agent platform escalates
