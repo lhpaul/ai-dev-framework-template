@@ -107,10 +107,10 @@ Each decision is stated here once; every other section refers to it by label.
   - Row 4: `design` is null, empty, an empty mapping, a list or a scalar.
   - Rows 5 and 6: the key is absent or its value is not exactly one of the
     accepted strings (non-string values included).
-  - Row 7: `root` is present and is not a string, is empty after trimming
-    whitespace (a deliberate tightening of BR6's "non-empty": a
-    whitespace-only path is treated as empty, and L1 states this), is absolute (starts with `/` or `\`, or with a drive letter
-    and colon), or normalises lexically (backslashes read as `/`) to `..` or a
+  - Row 7: `root` is present and is not a string, is the empty string
+    (exactly as BR6 says; a whitespace-only string is non-empty and is
+    judged by the remaining checks), is absolute (starts with `/` or `\`, or
+    with a drive letter and colon), or normalises lexically (backslashes read as `/`) to `..` or a
     path starting with `../`. The check is lexical only; no file is inspected
     (BR15). A root that normalises to `.` is inside the repository.
   - Unknown keys in the block are ignored (BR7).
@@ -279,9 +279,8 @@ spec rules named, not restated here.
    the `<!-- TEMPLATE-OWNED-START -->` / `<!-- TEMPLATE-OWNED-END -->` markers
    already used by `sync-manifest.yaml`'s `html_comments` scheme, with the
    Project section after the end marker.
-7. **Opting in** — the `design` block (BR4 example, BR5, BR6 with the P5
-   row 7 whitespace-only tightening, the default root), the opt-in resolution
-   table and the three outcomes, BR1 (stages gate
+7. **Opting in** — the `design` block (BR4 example, BR5, BR6, the default
+   root), the opt-in resolution table and the three outcomes, BR1 (stages gate
    on the block, never on prose), BR18, and how a stage reads the outcome:
    source `workflow-lib.sh` and call `workflow_design_opt_in`, with the P3
    output lines. The usage snippet carries
@@ -459,8 +458,8 @@ guarantees; an equivalent set may replace them):
 | T-quoted | quoting and comments | `home: "knowledge"`, `kind: 'design-intent'  # note` | `opted_in` |
 | T-flow | flow mapping | `design: {home: product, kind: reproduction}` | `opted_in` |
 | T-padded | boundary whitespace inside quotes | `home: "knowledge "` | `invalid`, `design.home` |
-| T-root-forms | root boundaries | `root: null`, `root: ''`, `root: '  '`, `root: true`, nested mapping, `root: C:/design`, `root: design/../..`, `root: ..\design` | `invalid`, `design.root` |
-| T-root-inside | root normalisation | `root: ./design`, `root: design/../mocks`, `root: .` | `opted_in`, root printed as configured |
+| T-root-forms | root boundaries | `root: null`, `root: ''`, `root: true`, nested mapping, `root: C:/design`, `root: design/../..`, `root: ..\design` | `invalid`, `design.root` |
+| T-root-inside | root normalisation | `root: ./design`, `root: design/../mocks`, `root: .`, `root: '  '` (non-empty per BR6) | `opted_in`, root printed as configured |
 | T-quoted-42 | numeric lookalike | `root: "42"` | `opted_in` |
 | T-control | output escaping (P3) | roots containing a tab, LF, CR, DEL and a C1 control (double-quoted YAML escapes), and a backslash | one physical line each, escaped as `print_kv_escaped` would (`\t`, `\n`, `\r`, `\x7f`, `\u0085`, `\\`) |
 | T-truncate | detail length (P3) | an unknown home of exactly 80 characters, and one of 81; a valid block whose root is 120 characters | the 80-character value is echoed whole; the 81-character value is cut to 80 plus `…`; the 120-character root is printed whole in `DESIGN_ROOT` |
