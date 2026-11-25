@@ -260,7 +260,17 @@ part the template now owns, and still finds the reasoning and history there.
   mockup. A difference between the two is not an error at this level (D4).
 - BR9 (one layout): A repository uses exactly one of the three repository-type
   layouts. The documentation states this rule; the knowledge-repo layout is the
-  same shape as monorepo apps.
+  same shape as monorepo apps. Paths are relative to the repository root and
+  use the default design root `design/`; a configured `design.root` relocates
+  the whole tree, keeping every path below it unchanged. Every layout has the
+  design README `design/README.md`, the token file `design/tokens.json` and the
+  mockups README `design/mockups/README.md`.
+
+  | Repository type | Mockup location | Shared viewer folder | Token file | Link from a mockup to the token file |
+  | --- | --- | --- | --- | --- |
+  | Monorepo apps | `design/mockups/<app>/`, one folder per app | `design/mockups/shared/` | `design/tokens.json` | `../../tokens.json` |
+  | Single app | `design/mockups/` | `design/mockups/shared/` | `design/tokens.json` | `../tokens.json` |
+  | Knowledge repo | `design/mockups/<app>/`, same as monorepo apps | `design/mockups/shared/` | `design/tokens.json` | `../../tokens.json` |
 - BR10 (tokens by kind): For a design-intent mockup, the token file is the
   source and its values are mirrored in the mockup's root style block in the
   same commit. For a reproduction, the source is the running app's stylesheet,
@@ -396,10 +406,16 @@ design tree.
 
 - [ ] AC1: The template ships a framework reference page reachable from the
   workflow documentation index. It shows the design tree with the design
-  README, token file, mockups README, shared folder and per-app folders.
+  README (`design/README.md`), token file (`design/tokens.json`), mockups
+  README (`design/mockups/README.md`), shared folder (`design/mockups/shared/`)
+  and per-app folders (`design/mockups/<app>/`), under the default design root
+  `design/`.
 - [ ] AC2: The reference describes the three repository types (monorepo apps,
-  single app, knowledge repo) with the mockup location and token path for each,
-  and states "choose one layout per repository; do not mix them".
+  single app, knowledge repo) with the mockup location and token path for each
+  as listed in BR9 (monorepo apps and knowledge repo: `design/mockups/<app>/`
+  reaching `design/tokens.json` by `../../tokens.json`; single app:
+  `design/mockups/` reaching it by `../tokens.json`), and states "choose one
+  layout per repository; do not mix them".
 - [ ] AC3: The reference states the token rule for each kind: design intent
   mirrors the token file in the mockup's root style block in the same commit;
   a reproduction harvests the running app's stylesheet and does not mirror the
