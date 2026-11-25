@@ -208,6 +208,8 @@ with its governed scope and discharge point:
 | S4 | If the vault target file has uncommitted changes before L8 starts, stop and ask the vault owner | the file `40 - Conocimiento/Estándares/HTML Mockup Framework.md` only; other dirty vault files are left untouched and never block | L8 step 1 |
 | S5 | If the implementing role cannot write to the vault path, stop with `STAGE_ROLE_TOOL_OR_PATH_DENIED:` (Protocol 91) | L8 steps 2 to 5 | L8 step 2 |
 | S6 | The vault's link to the template reference must resolve once the implementation PR is merged | the single URL in the vault header (L8) | smoke runbook Step 10 (post-merge) |
+| S7 | If the implementation PR is reverted, the vault commit is reverted in the same change window | the single L8 vault commit | the revert itself (Risks & Mitigations, "Reversal") |
+| S8 | Once a later item consumes the helper or a consumer writes a `design` block, reversing the contract is that later item's responsibility | reversal of the P3 contract and the `design` block after first consumption | the later item's own plan (#2209, #2212, #2213, #2210, #2208 or #2214) |
 
 ---
 
@@ -499,6 +501,20 @@ written.
 | The vault link points at `develop` before the PR merges | High until merge | Low | S6 post-merge check |
 | Vault edit swept up with unrelated dirty vault files | Medium | Medium | L8 commits by explicit path and checks `show --stat` |
 
+### Reversal
+
+Every template change in this item is additive and leaves no state behind:
+no configuration value, migration, sync-state entry or consumer file depends
+on it, and no stage calls `workflow_design_opt_in` until #2209, #2212, #2213 or
+#2210 land. Reverting the implementation PR's squash commit on `develop`
+therefore restores the previous behaviour. A consumer that synced in between
+keeps an unused reference page, helper and suite, which change no behaviour;
+the next sync offers their removal or update like any other framework file.
+
+The vault commit is reversed with `git -C /Users/lhpaul/Git/Cerebro/LH revert <vault-sha>`,
+under S7, so the vault never points at a reference page that no longer exists
+on `develop`. After first consumption of the contract, S8 governs reversal.
+
 ---
 
 ## Code Samples
@@ -558,5 +574,8 @@ Commit after each numbered step that leaves the tree coherent.
     - **Mockup framework layout and design opt-in key** (#2211): the template now holds the HTML Mockup Framework contract in `docs/workflow/development-workflow/mockup-framework.md` (design tree, repository types, token rules, README sections, source-of-truth hierarchy), ships an opt-in starter tree under `template/design-scaffold/` that sync never copies, documents an inactive `design:` block in `.ai-dev-workflow.yaml`, and adds `workflow_design_opt_in` to `workflow-lib.sh`, which reports Not opted in, Opted in or Invalid configuration from the versioned configuration only.
     ```
 
-11. Run the smoke runbook Steps 1 to 9.
-12. L8 vault edit and commit; record it in the PR description (AC18).
+11. L8 vault edit and commit (steps 1 to 4).
+12. Open the implementation PR (or update its description) and record the
+    vault change there (L8 step 5, AC18).
+13. Run the smoke runbook Steps 1 to 9; Step 9 reads the vault commit and the
+    PR description record made in steps 11 and 12.
