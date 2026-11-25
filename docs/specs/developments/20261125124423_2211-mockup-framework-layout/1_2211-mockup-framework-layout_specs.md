@@ -249,9 +249,10 @@ part the template now owns, and still finds the reasoning and history there.
 - BR5 (exact values): Home accepts only `knowledge` or `product`. Kind accepts
   only `design-intent` or `reproduction`. Values are matched exactly, including
   case; anything else is invalid.
-- BR6 (design root): A configured design root must be a non-empty path
-  relative to the repository root that stays inside the repository. An
-  absolute path or one that leaves the repository is invalid.
+- BR6 (design root): A configured design root must be a non-empty string path
+  relative to the repository root that stays inside the repository. A value
+  that is not a string (number, boolean, list or mapping), an absolute path, or
+  one that leaves the repository is invalid.
 - BR7 (extensible block): Fields the opt-in check does not define are ignored
   and do not change the outcome, so #1669 and later items can add fields
   without breaking older helpers.
@@ -318,7 +319,7 @@ in exactly one of the three outcomes.
 | 4 | The `design` key is present but its value is empty, null, or not a set of fields | Invalid configuration (block has no usable fields) |
 | 5 | `design.home` is missing or not one of the accepted values | Invalid configuration (names home) |
 | 6 | `design.kind` is missing or not one of the accepted values | Invalid configuration (names kind) |
-| 7 | `design.root` is present and empty, null, absolute, or outside the repository | Invalid configuration (names design root) |
+| 7 | `design.root` is present and is not a string (number, boolean, list or mapping), or is empty, null, absolute, or outside the repository | Invalid configuration (names design root) |
 | 8 | None of rows 1 to 7 apply | Opted in, with design root (`design.root`, default `design/` when absent), home and kind |
 
 Unknown extra fields in the block never match any row (BR7).
@@ -451,7 +452,9 @@ design tree.
   outcome of the matching resolution-table row for each of these cases: no
   configuration file; unparseable configuration; no design block; empty block;
   missing home; unknown home; missing kind; unknown kind; wrong-case value;
-  absolute design root; design root outside the repository; valid block
+  absolute design root; design root outside the repository; numeric design
+  root (for example `root: 42`); list design root (for example
+  `root: [design]`); valid block
   without a design root (default root reported); valid block with a custom
   root; valid block with an unknown extra field (still Opted in); a design
   block present only in machine-local configuration (Not opted in).
