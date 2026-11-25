@@ -180,6 +180,7 @@ All repository searches ran at `d8b9f005` (V0) unless the row says otherwise.
 | V16 | Bytecode cache visibility | `grep -n pycache .gitignore` | `__pycache__/` is ignored, so a cache would not show in `git status`; P2 still uses `-B` so nothing is written |
 | V17 | Same-surface open PRs | `gh pr list --state open --limit 100 --json number,headRefName,files` filtered to `.ai-dev-workflow.yaml`, `sync-manifest.yaml`, `workflow-lib.sh`, the workflow README, `README.md`, `template/`, `design/` (2026-11-25) | no open PR touches these surfaces |
 | V18 | Vault target | `git -C /Users/lhpaul/Git/Cerebro/LH log --oneline -1` and `grep -n '^#' '40 - Conocimiento/Estándares/HTML Mockup Framework.md'` (2026-11-25) | repo `lhpaul/lh-cerebro`, branch `main`, head `b05bb0a`; headings listed in L8's mapping table; other vault files have uncommitted edits, the target file does not |
+| V19 | Path-limited commit semantics (L8 step 4) | in a scratch repository with committed files `a` and `b`: modify both, `git add b`, then `git commit --only -m x -- a`; inspect `git show --stat HEAD` and `git diff --cached --name-only` (2026-11-25) | the commit lists only `a`; `b` remains staged and uncommitted |
 
 ### Search commands
 
@@ -402,11 +403,14 @@ page's content is final.
    | Framework changelog | keep; add a dated row recording the move of the contract to the template (#2211) |
 
    Also update the front-matter `updated:` date.
-4. Commit only that file:
-   `git -C /Users/lhpaul/Git/Cerebro/LH add -- '<file>'` and commit with a
-   message naming #2211; confirm with `git -C /Users/lhpaul/Git/Cerebro/LH show --stat HEAD`
-   that the commit lists only that file. Do not push; pushing the vault is
-   left to its owner, and the PR description records whether it was pushed.
+4. Commit only that file with a path-limited commit, which records only the
+   named path and leaves anything else already staged in the vault's index
+   staged and uncommitted:
+   `git -C /Users/lhpaul/Git/Cerebro/LH commit --only -m '<message naming #2211>' -- '<file>'`
+   (no `git add` and no bare `git commit`). Confirm with
+   `git -C /Users/lhpaul/Git/Cerebro/LH show --stat HEAD` that the commit
+   lists only that file. Do not push; pushing the vault is left to its owner,
+   and the PR description records whether it was pushed.
 5. Record in the implementation PR description (AC18): the file path, a
    one-paragraph summary, the vault commit SHA and its push state.
 
