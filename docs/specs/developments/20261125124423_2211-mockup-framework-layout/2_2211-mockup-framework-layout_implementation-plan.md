@@ -78,11 +78,16 @@ Each decision is stated here once; every other section refers to it by label.
   `design.home` (row 5), `design.kind` (row 6), `design.root` (row 7); rows 5
   to 7 are emitted in that order. Each `<detail>` names the value found or
   says it is absent, and lists the accepted values (UX rules); the
-  `configuration` detail never echoes file content. Values are printed on one
-  physical line with the same escapes `print_kv_escaped` uses (backslash, CR,
-  LF, tab, other C0/DEL and C1 controls); a string value longer than 80
-  characters is truncated with `…`; a list or mapping is described by its type,
-  never by its content. Exit status 2 with no stdout is reserved for caller
+  `configuration` detail never echoes file content. Every value is printed on
+  one physical line with the same escapes `print_kv_escaped` uses (backslash,
+  CR, LF, tab, other C0/DEL and C1 controls). Inside a `DESIGN_PROBLEM`
+  detail only, a found string longer than 80 characters is cut to its first
+  80 characters plus `…` before escaping (truncate the decoded value, then
+  escape), and a list or mapping is described by its type, never by its
+  content; `DESIGN_ROOT`, `DESIGN_HOME` and `DESIGN_KIND` are never truncated.
+  Output is written as UTF-8 regardless of the locale (bytes to
+  `sys.stdout.buffer`, unencodable characters replaced), so a valid non-ASCII
+  root never fails the program. Exit status 2 with no stdout is reserved for caller
   or environment errors, not outcomes: a supplied `repo_root` argument that is
   empty or not a directory, or, with no argument, a failure of
   `workflow_repo_root` to resolve the checkout.
@@ -436,7 +441,8 @@ guarantees; an equivalent set may replace them):
 | T-root-inside | root normalisation | `root: ./design`, `root: design/../mocks`, `root: .` | `opted_in`, root printed as configured |
 | T-quoted-42 | numeric lookalike | `root: "42"` | `opted_in` |
 | T-control | output escaping (P3) | roots containing a tab, LF, CR, DEL and a C1 control (double-quoted YAML escapes), and a backslash | one physical line each, escaped as `print_kv_escaped` would (`\t`, `\n`, `\r`, `\x7f`, `\u0085`, `\\`) |
-| T-truncate | detail length (P3) | an unknown home of exactly 80 characters, and one of 81 | the 80-character value is echoed whole; the 81-character value is cut to 80 plus `…` |
+| T-truncate | detail length (P3) | an unknown home of exactly 80 characters, and one of 81; a valid block whose root is 120 characters | the 80-character value is echoed whole; the 81-character value is cut to 80 plus `…`; the 120-character root is printed whole in `DESIGN_ROOT` |
+| T-locale | output encoding (P3) | a valid block with a non-ASCII root, run under `LC_ALL=C` | `opted_in`, root printed as UTF-8 |
 | T-dup | duplicate key | `home` twice | `invalid`, `configuration` |
 | T-toplevel | top level not a mapping | `- a` | `invalid`, `configuration` |
 | T-empty | empty and comment-only files | `''`, `# x` | `not_opted_in` |
