@@ -118,6 +118,7 @@ The setup agent will have a structured conversation with you to understand your 
 │       └── development-workflow/
 │           ├── README.md                  # Master workflow document
 │           ├── agent-model-config.md      # Model tier policy and overrides
+│           ├── mockup-framework.md        # HTML Mockup Framework contract and design opt-in
 │           ├── protocols/                 # Canonical stage protocols
 │           │   ├── 01-generate-spec-protocol.md
 │           │   ├── 01-review-spec-protocol.md
@@ -156,6 +157,11 @@ The setup agent will have a structured conversation with you to understand your 
 │   │   ├── workflow-next-action.sh      # Classifies the next deterministic workflow action
 │   │   └── install-codex-skills.sh      # (Codex only) Installs repo skills into your local Codex config
 │   └── README.md                        # Points to development-workflow; add your own scripts here
+│
+├── template/
+│   ├── design-scaffold/                 # Opt-in starter design tree (never synced; copied by setup or adoption)
+│   ├── product-repo-injection/          # Product repository injection skeleton (reference only)
+│   └── workflow-hub/                    # Workflow hub skeleton (reference only)
 │
 ├── .claude/
 │   └── agents/                           # Claude Code subagent definitions
