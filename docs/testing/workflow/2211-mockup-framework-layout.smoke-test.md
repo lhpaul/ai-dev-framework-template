@@ -146,10 +146,15 @@ bash scripts/development-workflow/select-test-suites.sh --changed-files "$SCRATC
 git diff --numstat origin/develop -- scripts/development-workflow/workflow-lib.sh
 ```
 
-Run every listed suite.
+Run every listed suite. Then open the two full `workflow-tests` runs the
+implementation PR description records (baseline on `develop` at the
+merge-base, and after on the implementation branch head, both started by
+`workflow_dispatch`).
 
-**Expected result**: every selected suite passes; the numstat line shows 0
-deleted lines for `workflow-lib.sh`; CI `workflow-tests` is green on the PR.
+**Expected result**: every selected suite passes; every suite that passed in
+the baseline full run also passes in the after full run; the numstat line
+shows 0 deleted lines for `workflow-lib.sh`; CI `workflow-tests` is green on
+the PR.
 
 ### Step 8: Sync into a disposable consumer
 

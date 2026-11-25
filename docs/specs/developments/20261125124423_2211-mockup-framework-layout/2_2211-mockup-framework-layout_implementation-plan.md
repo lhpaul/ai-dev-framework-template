@@ -463,10 +463,25 @@ are the spec's own list, and the indicative rows each cover a P5 boundary or a
 spec guarantee. Scaffold and documentation are checked by smoke steps, not by
 a custom matcher.
 
-**AC15 evidence**: run every suite that
-`select-test-suites.sh --changed-files <list>` selects for the PR's change
-set locally, then rely on CI's `workflow-tests` run for the same selection;
-plus the L4 numstat check.
+**AC15 evidence**: AC15 covers every suite that passed before the change,
+not only the suites a pull request selects, so the evidence is two full runs
+of the existing `workflow-tests.yml`, triggered by `workflow_dispatch` (which
+runs `select-test-suites.sh --all`; no workflow file is edited):
+
+1. Baseline: `gh workflow run workflow-tests.yml --ref develop` while
+   `develop` is still at the implementation branch's merge-base (or reuse a
+   completed full run whose head is that merge-base). Record the run URL and
+   its passing suites.
+2. After: `gh workflow run workflow-tests.yml --ref <implementation branch>`
+   at the PR head. Every suite that passed in the baseline must pass; a suite
+   that failed in the baseline is listed with its baseline failure and is not
+   attributed to this change.
+3. Record both run URLs and the comparison in the implementation PR
+   description.
+
+The suites selected for the change set are also run locally during
+implementation (Implementation Order step 9), and the L4 numstat check shows
+no existing line of `workflow-lib.sh` changed.
 
 **AC16 evidence**: the L7 table, and smoke runbook Step 8 (disposable
 consumer).
@@ -561,6 +576,8 @@ workflow_design_opt_in() {
 Commit after each numbered step that leaves the tree coherent.
 
 1. Re-run V7 and V17 (operational assumption check); stop on a change.
+   Take the AC15 baseline full run (Testing Strategy, "AC15 evidence"
+   item 1) while `develop` is at the branch's merge-base.
 2. L4 helper. Run `bash -n` and `shellcheck` on `workflow-lib.sh`.
 3. L5 suite; run it until it passes, then record its `# duration:`.
 4. L3 commented block; confirm T-template still passes and that
@@ -572,8 +589,9 @@ Commit after each numbered step that leaves the tree coherent.
    the scaffold READMEs, outside CI scope per V14),
    `python3 scripts/lint/markdown-heuristic-lint.py` on the same files, and
    `python3 scripts/lint/workflow-shell-snippet-lint.py --base-ref origin/develop`.
-9. AC15: run the selected suites; `python3 -B scripts/development-workflow/check-sync-manifest-coverage.py`
-   must print `RESULT=clean`.
+9. Run the selected suites locally; `python3 -B scripts/development-workflow/check-sync-manifest-coverage.py`
+   must print `RESULT=clean`. After pushing, take the AC15 "after" full
+   run and compare it with the baseline ("AC15 evidence" items 2 and 3).
 10. Changelog fragment `changelog.d/2211.added.mockup-framework-layout.md`:
 
     ```markdown
