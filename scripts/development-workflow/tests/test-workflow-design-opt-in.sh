@@ -469,7 +469,7 @@ run_template_case() {
 # Taken before the first helper call, so a cache written by any call shows.
 CACHE_BEFORE="$(snapshot_cache)"
 
-for SHELL_UNDER_TEST in "${SHELLS[@]}"; do
+for SHELL_UNDER_TEST in ${SHELLS[@]+"${SHELLS[@]}"}; do
   printf '== shell: %s (%s)\n' "$SHELL_UNDER_TEST" "$("$SHELL_UNDER_TEST" -c 'printf %s "$BASH_VERSION"')"
   run_binding_cases
   run_resolution_cases
