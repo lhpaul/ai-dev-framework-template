@@ -188,7 +188,7 @@ run_binding_cases() {
 }
 
 run_resolution_cases() {
-  local repo form problems
+  local repo form expected_root
   case_config "T-multi several problems" $'design:\n  home: studio\n  root: /srv/design\n' \
     "$(expect_invalid "design.home: found \"studio\"; $HOME_ACCEPTED" \
       "design.kind: absent; $KIND_ACCEPTED" \
@@ -230,11 +230,11 @@ run_resolution_cases() {
 
   for form in ./design design/../mocks . "'  '" "..design" "design/.."; do
     case "$form" in
-      "'  '") problems='  ' ;;
-      *) problems="$form" ;;
+      "'  '") expected_root='  ' ;;
+      *) expected_root="$form" ;;
     esac
     case_config "T-root-inside $form" "$(with_root "$form")" \
-      "$(expect_opted "$problems" configured knowledge design-intent)"
+      "$(expect_opted "$expected_root" configured knowledge design-intent)"
   done
   case_config "T-quoted-42 numeric lookalike" "$(with_root '"42"')" \
     "$(expect_opted 42 configured knowledge design-intent)"
