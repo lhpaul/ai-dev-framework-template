@@ -156,7 +156,7 @@ do not change the outcome, so later items can extend the block.
 - The opt-in is a repository decision, so it is read only from the versioned
   `.ai-dev-workflow.yaml`. Machine-local configuration
   (`.ai-dev-workflow.local.yaml`) can neither opt a project in nor out, nor
-  change its design root, home or kind.
+  change its design root (default `design/`), home or kind.
 - The check reads configuration only. It does not create, change or inspect
   design files, and it reads the configuration again every time it is asked.
 
