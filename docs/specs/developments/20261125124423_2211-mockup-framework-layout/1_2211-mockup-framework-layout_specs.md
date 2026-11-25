@@ -233,7 +233,19 @@ part the template now owns, and still finds the reasoning and history there.
   resolution table below. It never returns a guessed value.
 - BR4 (fields): The block has three fields this item defines: the design root,
   the home and the kind. Home and kind are required. The design root is
-  optional and defaults to `design/` at the repository root.
+  optional and defaults to `design/` at the repository root. In the versioned
+  workflow configuration file the block is the top-level key `design`, whose
+  mapping holds `root` (the design root), `home` and `kind`. Key names are
+  matched exactly, including case; a key spelled differently is an unknown
+  field (BR7), so a block whose only home key is `Home` is missing `design.home`.
+  A valid block, with the optional `root` shown:
+
+  ```yaml
+  design:
+    root: design/        # optional; defaults to design/ when omitted
+    home: knowledge
+    kind: design-intent
+  ```
 - BR5 (exact values): Home accepts only `knowledge` or `product`. Kind accepts
   only `design-intent` or `reproduction`. Values are matched exactly, including
   case; anything else is invalid.
@@ -292,12 +304,12 @@ in exactly one of the three outcomes.
 | --- | --- | --- |
 | 1 | The versioned workflow configuration file does not exist | Not opted in |
 | 2 | The configuration file exists but cannot be read or parsed | Invalid configuration (configuration unreadable) |
-| 3 | The configuration has no design key at all | Not opted in |
-| 4 | The design key is present but its value is empty, null, or not a set of fields | Invalid configuration (block has no usable fields) |
-| 5 | Home is missing or not one of the accepted values | Invalid configuration (names home) |
-| 6 | Kind is missing or not one of the accepted values | Invalid configuration (names kind) |
-| 7 | Design root is present and empty, null, absolute, or outside the repository | Invalid configuration (names design root) |
-| 8 | None of rows 1 to 7 apply | Opted in, with design root (default `design/` when absent), home and kind |
+| 3 | The configuration has no top-level `design` key at all | Not opted in |
+| 4 | The `design` key is present but its value is empty, null, or not a set of fields | Invalid configuration (block has no usable fields) |
+| 5 | `design.home` is missing or not one of the accepted values | Invalid configuration (names home) |
+| 6 | `design.kind` is missing or not one of the accepted values | Invalid configuration (names kind) |
+| 7 | `design.root` is present and empty, null, absolute, or outside the repository | Invalid configuration (names design root) |
+| 8 | None of rows 1 to 7 apply | Opted in, with design root (`design.root`, default `design/` when absent), home and kind |
 
 Unknown extra fields in the block never match any row (BR7).
 
