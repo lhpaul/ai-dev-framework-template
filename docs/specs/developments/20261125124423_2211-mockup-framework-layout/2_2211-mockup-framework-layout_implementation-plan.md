@@ -236,6 +236,7 @@ with its governed scope and discharge point:
 | S6 | Two links must resolve once the implementation PR is merged | the URL in the vault header (L8) and the reference page's scaffold URL (P7) | smoke runbook Step 10 (post-merge) |
 | S7 | If the implementation PR is reverted, the vault commit is reverted in the same change window | the single L8 vault commit | the revert itself (Risks & Mitigations, "Reversal") |
 | S8 | Once a later item consumes the helper or a consumer writes a `design` block, reversing the contract is that later item's responsibility | reversal of the P3 contract and the `design` block after first consumption | the later item's own plan (#2209, #2212, #2213, #2210, #2208 or #2214) |
+| S9 | The AC15 "after" full run must be taken at the final PR head; a commit pushed after it requires a new "after" run | every implementation-branch commit after the recorded run | Implementation Order step 14, before the implementation PR gets `ready-for-human-review` |
 
 ---
 
@@ -494,7 +495,8 @@ runs `select-test-suites.sh --all`; no workflow file is edited):
    completed full run whose head is that merge-base). Record the run URL and
    its passing suites.
 2. After: `gh workflow run workflow-tests.yml --ref <implementation branch>`
-   at the PR head. Every suite that passed in the baseline must pass; a suite
+   at the final PR head, after the branch's last commit (S9). Every suite
+   that passed in the baseline must pass; a suite
    that failed in the baseline is listed with its baseline failure and is not
    attributed to this change.
 3. Record both run URLs and the comparison in the implementation PR
@@ -611,8 +613,7 @@ Commit after each numbered step that leaves the tree coherent.
    `python3 scripts/lint/markdown-heuristic-lint.py` on the same files, and
    `python3 scripts/lint/workflow-shell-snippet-lint.py --base-ref origin/develop`.
 9. Run the selected suites locally; `python3 -B scripts/development-workflow/check-sync-manifest-coverage.py`
-   must print `RESULT=clean`. After pushing, take the AC15 "after" full
-   run and compare it with the baseline ("AC15 evidence" items 2 and 3).
+   must print `RESULT=clean`.
 10. Changelog fragment `changelog.d/2211.added.mockup-framework-layout.md`:
 
     ```markdown
@@ -624,3 +625,6 @@ Commit after each numbered step that leaves the tree coherent.
     vault change there (L8 step 5, AC18).
 13. Run the smoke runbook Steps 1 to 9; Step 9 reads the vault commit and the
     PR description record made in steps 11 and 12.
+14. With every implementation commit pushed, take the AC15 "after" full run
+    at the final PR head and record the comparison with the baseline in the
+    PR description ("AC15 evidence" items 2 and 3; S9).
