@@ -311,8 +311,10 @@ stage shows from the opt-in check.
 - Structure text in the scaffold (headings, section names, folder names) is in
   English, matching the vault rule that mockup structure is English and
   content is in the product's language.
-- An Invalid configuration message names the field, the value found and the
-  accepted values, so the maintainer can fix it without reading code.
+- An Invalid configuration message for a field problem names the field, the
+  value found (or that it is absent) and the accepted values, so the
+  maintainer can fix it without reading code. For an unreadable configuration
+  it says the configuration could not be read, without echoing file content.
 - The reference states the default design root wherever the root is
   mentioned.
 
@@ -407,8 +409,9 @@ design tree.
 - [ ] AC8: Each scaffold README has a Framework section followed by a
   separately delimited Project section; the Project section contains only
   guidance for the product's own inventory.
-- [ ] AC9: The starter token file is valid JSON and states that its values are
-  examples to replace.
+- [ ] AC9: The starter token file is valid JSON, and the scaffold marks its
+  values as examples to replace (in the token file itself or in the design
+  README's Project section).
 - [ ] AC10: The scaffold contains no product screens, manifest or viewer code.
 
 ### Opt-in configuration and check
@@ -425,7 +428,8 @@ design tree.
   root; valid block with an unknown extra field (still Opted in); a design
   block present only in machine-local configuration (Not opted in).
 - [ ] AC13: A block with several problems reports every problem in one result,
-  each naming the field, the value found and the accepted values.
+  each naming the field, the value found (or that it is absent) and the
+  accepted values.
 - [ ] AC14: The opt-in check leaves the repository unchanged (no file created,
   modified or deleted) in every case of AC12.
 - [ ] AC15: The automated workflow test suites that passed before this change
@@ -434,9 +438,10 @@ design tree.
 
 ### Sync and ownership
 
-- [ ] AC16: Simulating template sync into a consumer without a design block
-  creates no design tree and changes no configuration value; the only
-  configuration difference offered is the template-owned comment text.
+- [ ] AC16: Applying the sync manifest's classification of every new or changed
+  file to a disposable consumer without a design block creates no design tree
+  and changes no configuration value; the only configuration difference
+  offered is the template-owned comment text.
 - [ ] AC17: The vault standard's header names the template as canonical for
   the contract and links to the template reference; each section now owned by
   the template (layout, repository types, tokens, README sections,
