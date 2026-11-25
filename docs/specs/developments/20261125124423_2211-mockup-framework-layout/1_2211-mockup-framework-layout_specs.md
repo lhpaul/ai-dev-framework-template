@@ -271,6 +271,10 @@ part the template now owns, and still finds the reasoning and history there.
   not create, change or inspect design files.
 - BR16 (fresh read): The opt-in check reads the configuration of the checkout
   it runs in each time it is asked; it does not reuse an earlier answer.
+- BR18 (versioned record only): The opt-in is a repository decision, so it is
+  read only from the versioned repository workflow configuration. Machine-local
+  workflow configuration can neither opt a project in nor out, nor change its
+  design root, home or kind.
 - BR17 (canonical owner): After this item, the template reference is the
   contract for layout, repository types, tokens, README sections, the
   source-of-truth hierarchy and the opt-in block. The vault standard points to
@@ -286,10 +290,10 @@ in exactly one of the three outcomes.
 
 | # | Situation | Outcome |
 | --- | --- | --- |
-| 1 | The workflow configuration file does not exist | Not opted in |
+| 1 | The versioned workflow configuration file does not exist | Not opted in |
 | 2 | The configuration file exists but cannot be read or parsed | Invalid configuration (configuration unreadable) |
-| 3 | The configuration has no design block | Not opted in |
-| 4 | The design block is present but empty, null, or not a set of fields | Invalid configuration (block has no usable fields) |
+| 3 | The configuration has no design key at all | Not opted in |
+| 4 | The design key is present but its value is empty, null, or not a set of fields | Invalid configuration (block has no usable fields) |
 | 5 | Home is missing or not one of the accepted values | Invalid configuration (names home) |
 | 6 | Kind is missing or not one of the accepted values | Invalid configuration (names kind) |
 | 7 | Design root is present and empty, null, absolute, or outside the repository | Invalid configuration (names design root) |
@@ -418,7 +422,8 @@ design tree.
   missing home; unknown home; missing kind; unknown kind; wrong-case value;
   absolute design root; design root outside the repository; valid block
   without a design root (default root reported); valid block with a custom
-  root; valid block with an unknown extra field (still Opted in).
+  root; valid block with an unknown extra field (still Opted in); a design
+  block present only in machine-local configuration (Not opted in).
 - [ ] AC13: A block with several problems reports every problem in one result,
   each naming the field, the value found and the accepted values.
 - [ ] AC14: The opt-in check leaves the repository unchanged (no file created,
@@ -471,7 +476,7 @@ design tree.
 | O4 | AC8, BR12 |
 | O5 | AC4, BR11 |
 | O6 | AC5, AC11, AC12, BR4, BR5, BR6 |
-| O7 | AC12, AC13, AC14, BR15, BR16 |
+| O7 | AC12, AC13, AC14, BR15, BR16, BR18 |
 | O8 | AC11, AC12, BR1, BR2 |
 | O9 | AC5 (documented, writable shape); writing it is Out of Scope (setup, adoption) |
 | O10 | AC12 (unknown extra field), BR7 |
