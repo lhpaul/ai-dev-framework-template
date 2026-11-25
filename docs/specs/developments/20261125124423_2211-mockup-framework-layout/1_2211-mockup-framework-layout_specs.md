@@ -271,14 +271,14 @@ part the template now owns, and still finds the reasoning and history there.
   not create, change or inspect design files.
 - BR16 (fresh read): The opt-in check reads the configuration of the checkout
   it runs in each time it is asked; it does not reuse an earlier answer.
-- BR18 (versioned record only): The opt-in is a repository decision, so it is
-  read only from the versioned repository workflow configuration. Machine-local
-  workflow configuration can neither opt a project in nor out, nor change its
-  design root, home or kind.
 - BR17 (canonical owner): After this item, the template reference is the
   contract for layout, repository types, tokens, README sections, the
   source-of-truth hierarchy and the opt-in block. The vault standard points to
   it and keeps rationale and history.
+- BR18 (versioned record only): The opt-in is a repository decision, so it is
+  read only from the versioned repository workflow configuration. Machine-local
+  workflow configuration can neither opt a project in nor out, nor change its
+  design root, home or kind.
 
 ### Opt-in resolution table
 
