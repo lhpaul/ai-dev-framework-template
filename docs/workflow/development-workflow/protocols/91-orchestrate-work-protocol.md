@@ -293,7 +293,7 @@ bash ./scripts/development-workflow/item-completion-self-check.sh \
   [--require-review-summary true] \
   [--require-review-threads true] \
   [--expected-tracker-status "<status>"] \
-  [--followup <issue>=<fixed|deferred>]...
+  [--followup <issue|LINEAR-ID>=<fixed|deferred>]...
 ```
 
 **Follow-up issue disposition (issue #1331).** Before the merge step and in every
@@ -341,6 +341,9 @@ reference counts, because a bare `#N` names a product-repository issue.
 | `deferred` | `OPEN` | PR text unreadable or scan failed | `unavailable_required` | Rerun; a failed scan is never read as "no closing keyword" |
 | `deferred` | `OPEN` | not run (`--pr` omitted) | `unavailable_required` | Rerun with `--pr`; for the cleanup claim pass the merged PR number |
 | any | n/a | tracker repository unresolvable | `unavailable_required` | Fix repository resolution, rerun |
+| `deferred`, Linear ID (`<TEAM>-<number>`) | not read (not a GitHub issue) | no closing keyword | `verified`, row says the tracker state was not read | Confirm the Linear issue stays open in the Linear tracker |
+| `deferred`, Linear ID | not read | closing keyword present | `discrepancy` | Remove the keyword from the PR body or commit message before merge |
+| `deferred`, Linear ID | not read | PR text unreadable or `--pr` omitted | `unavailable_required` | Rerun with `--pr` |
 
 Every claimed surface in the summary must be `verified`, `not_applicable`, or
 `unavailable_*` with a reason in that section. Use flags that match the state

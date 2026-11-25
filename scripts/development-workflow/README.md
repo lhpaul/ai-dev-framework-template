@@ -799,8 +799,10 @@ What it does:
 - Records external runtime/browser/database claims through explicit
   `--claim <name|required|evidence>` records.
 - Records each filed follow-up issue's disposition through repeatable
-  `--followup <issue>=<fixed|deferred>` (#1331): `deferred` issues must be open
-  and not closed by the PR body; `fixed` issues are listed as eligible to close.
+  `--followup <issue|LINEAR-ID>=<fixed|deferred>` (#1331, Linear IDs such as
+  `LEA-123` #2221): `deferred` issues must be open and not closed by the PR body;
+  `fixed` issues are listed as eligible to close. Linear state is not read, only
+  the closing-keyword check applies.
 - Exits non-zero for any `discrepancy` or `unavailable_required` result.
 
 Use this when:

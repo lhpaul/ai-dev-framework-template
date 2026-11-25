@@ -19,7 +19,7 @@ Usage:
     [--require-review-summary true|false] [--require-review-threads true|false] \
     [--tracker-required true|false] [--expected-tracker-status <status>] \
     [--changed-file-prefix <prefix>] [--claim <name|required|evidence>] \
-    [--followup <issue>=<fixed|deferred>]...
+    [--followup <issue|LINEAR-ID>=<fixed|deferred>]...
 
 Prints a stable Markdown section headed "## Ground-Truth Completion Verification".
 Rows are marked verified, not_applicable, unavailable_optional,
@@ -31,7 +31,12 @@ surface exits non-zero.
 (future-work issue; must stay open). A deferred issue that is closed, or that
 the PR body closes with a closing keyword (Closes/Fixes/Resolves #N), is a
 discrepancy. Deferred issues whose state or PR text cannot be read, or checked
-without --pr, are unavailable_required. In workflow_hub mode the issue state is
+without --pr, are unavailable_required. <issue> is a GitHub issue number or a
+Linear issue identifier (<TEAM>-<number>, for example LEA-123); malformed
+values are rejected. A Linear follow-up is not a GitHub issue, so its state is
+not read: a deferred Linear follow-up is checked only for a closing keyword in
+the PR title, body or commit messages (discrepancy when present) and its row
+says the tracker state was not read. In workflow_hub mode the issue state is
 read from the tracker (hub) repository and only qualified <hub>#N references
 count as closing it.
 
@@ -159,8 +164,8 @@ while [ "$#" -gt 0 ]; do
       ;;
     --followup)
       require_option_value "$@"
-      if ! [[ "$2" =~ ^[1-9][0-9]*=(fixed|deferred)$ ]]; then
-        workflow_diagnostic "--followup requires <issue-number>=<fixed|deferred>." >&2
+      if ! [[ "$2" =~ ^([1-9][0-9]*|[A-Z][A-Z0-9]*-[1-9][0-9]*)=(fixed|deferred)$ ]]; then
+        workflow_diagnostic "--followup requires <issue-number|LINEAR-ID>=<fixed|deferred>." >&2
         usage >&2
         exit 64
       fi
@@ -1096,7 +1101,10 @@ if [ "${#followups[@]}" -gt 0 ]; then
 
   if [ -n "$followup_setup_error" ]; then
     for followup in ${followups[@]+"${followups[@]}"}; do
-      add_row "followup.#${followup%%=*}" "unavailable_required" "$followup_setup_error" "repo_slug / tracker repository"
+      case "${followup%%=*}" in
+        *[!0-9]*) add_row "followup.${followup%%=*}" "unavailable_required" "$followup_setup_error" "repo_slug / tracker repository" ;;
+        *) add_row "followup.#${followup%%=*}" "unavailable_required" "$followup_setup_error" "repo_slug / tracker repository" ;;
+      esac
     done
   else
     if [ -n "$pr_number" ]; then
@@ -1128,6 +1136,18 @@ if [ "${#followups[@]}" -gt 0 ]; then
                 printf '%s\n' "$q_hits" | grep -oE '[0-9]+$' || exit 1
               fi
             done
+            # Linear identifiers (<TEAM>-<number>) are not tied to a repository,
+            # so a closing keyword followed by one counts as written. Emitted
+            # upper-cased to match the --followup spelling.
+            for l_src in "$followup_text_title_body" "$followup_text_commits"; do
+              l_stripped="$(printf '%s' "$l_src" | strip_fenced_pr_body_blocks)" || exit 1
+              l_status=0
+              l_hits="$(printf '%s' "$l_stripped" | grep -ioE "(^|[^[:alnum:]_])(close[sd]?|fix(es|ed)?|resolve[sd]?)[[:space:]]+(issue[[:space:]]+)?[A-Za-z][A-Za-z0-9]*-[0-9]+")" || l_status=$?
+              [ "$l_status" -le 1 ] || exit 1
+              if [ -n "$l_hits" ]; then
+                printf '%s\n' "$l_hits" | grep -oE '[A-Za-z][A-Za-z0-9]*-[0-9]+$' | tr '[:lower:]' '[:upper:]' || exit 1
+              fi
+            done
           }
         )"; then
         followup_text_ok="true"
@@ -1140,6 +1160,10 @@ if [ "${#followups[@]}" -gt 0 ]; then
       followup_number="${followup%%=*}"
       followup_class="${followup#*=}"
       followup_surface="followup.#$followup_number"
+      followup_is_linear=false
+      case "$followup_number" in
+        *[!0-9]*) followup_is_linear=true; followup_surface="followup.$followup_number" ;;
+      esac
       followup_closing="unknown"
       if [ "$followup_text_ok" = "true" ]; then
         # Pure-Bash membership: no pipe, temp file or child process, so there is
@@ -1154,6 +1178,19 @@ if [ "${#followups[@]}" -gt 0 ]; then
         continue
       fi
       followup_state=""
+      if [ "$followup_is_linear" = "true" ]; then
+        # Linear state is not readable through gh: say so rather than claim "open".
+        if [ "$followup_closing" = "present" ]; then
+          add_row "$followup_surface" "discrepancy" "deferred but PR title, body or commit messages close it with a closing keyword" "gh pr view $pr_number --json body,title,commits"
+        elif [ "$followup_text_ok" = "false" ]; then
+          add_row "$followup_surface" "unavailable_required" "deferred; Linear follow-up; PR text unreadable: $followup_text_error" "gh pr view $pr_number --json body,title,commits"
+        elif [ "$followup_text_ok" = "not_requested" ]; then
+          add_row "$followup_surface" "unavailable_required" "deferred; Linear follow-up; closing keywords not checked because --pr was omitted" "--followup $followup requires --pr to prove the PR does not close it"
+        else
+          add_row "$followup_surface" "verified" "deferred to future PR; Linear follow-up, tracker state not read; not closed by PR (closing keyword absent)" "gh pr view $pr_number --json body,title,commits"
+        fi
+        continue
+      fi
       if ! followup_state="$(gh issue view "$followup_number" --repo "$followup_tracker_repo" --json state --jq '.state' 2>&1)"; then
         add_row "$followup_surface" "unavailable_required" "deferred; state unreadable: $followup_state" "gh issue view $followup_number --repo $followup_tracker_repo --json state"
       elif [ "$followup_state" != "OPEN" ]; then

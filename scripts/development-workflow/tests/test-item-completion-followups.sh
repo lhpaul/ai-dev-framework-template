@@ -241,6 +241,43 @@ else
 fi
 git -C "$repo" switch -q fix/1331-followups
 
+# Linear follow-up identifiers (#2221): <TEAM>-<number> is accepted beside GitHub numbers.
+export MOCK_PR_BODY=$'Fixes the thing.\n\nCloses #1331\nSee also LEA-124 (deferred).'
+export MOCK_PR_COMMITS=''
+out="$(check --pr 7 --followup LEA-123=fixed --followup LEA-124=deferred --followup 1895=deferred)"
+expect_status "linear_and_github_dispositions_pass" 0 "$out"
+expect_row "linear_fixed_enumerated" "| followup.LEA-123 | verified | fixed in this PR; eligible to close on merge; closing keyword absent |" "$out"
+expect_row "linear_deferred_enumerated" "| followup.LEA-124 | verified | deferred to future PR; Linear follow-up, tracker state not read; not closed by PR (closing keyword absent) |" "$out"
+expect_row "github_row_unchanged_beside_linear" "| followup.#1895 | verified | deferred to future PR; open; not closed by PR (closing keyword absent) |" "$out"
+
+# Planted violation: PR body or a commit message closes a deferred Linear follow-up.
+for body in 'Closes LEA-124' 'fixes lea-124' '(Resolves issue LEA-124)'; do
+  export MOCK_PR_BODY="$body"
+  out="$(check --pr 7 --followup LEA-124=deferred)"
+  expect_status "linear_keyword_variant_blocks: $body" 1 "$out"
+  expect_row "linear_keyword_variant_row: $body" "| followup.LEA-124 | discrepancy | deferred but PR title, body or commit messages close it with a closing keyword |" "$out"
+done
+export MOCK_PR_BODY='Closes #1331'
+export MOCK_PR_COMMITS=$'fix: thing\n\nCloses LEA-124'
+out="$(check --pr 7 --followup LEA-124=deferred)"
+expect_status "linear_commit_keyword_blocks" 1 "$out"
+export MOCK_PR_COMMITS=''
+
+# A longer Linear number sharing the prefix, and a fenced example, are not matches.
+export MOCK_PR_BODY=$'Closes LEA-1245\n```\nCloses LEA-124\n```'
+out="$(check --pr 7 --followup LEA-124=deferred)"
+expect_status "linear_longer_number_and_fence_not_matched" 0 "$out"
+
+# A Linear deferred follow-up cannot be proven without the PR text.
+out="$(check --followup LEA-124=deferred)"
+expect_status "linear_deferred_without_pr_fails_closed" 1 "$out"
+expect_row "linear_deferred_without_pr_row" "| followup.LEA-124 | unavailable_required | deferred; Linear follow-up; closing keywords not checked because --pr was omitted |" "$out"
+export MOCK_FAIL_PR_BODY=1
+out="$(check --pr 7 --followup LEA-124=deferred)"
+expect_status "linear_deferred_unreadable_pr_fails_closed" 1 "$out"
+unset MOCK_FAIL_PR_BODY
+export MOCK_PR_BODY='Closes #1331'
+
 # Without --followup nothing is added.
 out="$(check --pr 7)"
 expect_status "no_followup_flag_passes" 0 "$out"
@@ -248,7 +285,7 @@ if grep -Fq "followup." <<< "$out"; then echo "FAIL: no_followup_rows_absent"; F
 else echo "PASS: no_followup_rows_absent"; PASS_COUNT=$((PASS_COUNT + 1)); fi
 
 # Malformed values are rejected up front.
-for bad in 1895 abc=deferred 1895=maybe 1895= =deferred "1a=fixed"; do
+for bad in 1895 abc=deferred 1895=maybe 1895= =deferred "1a=fixed" LEA-123 LEA-123=maybe lea-123=fixed LEA123=fixed LEA-=fixed LEA-0=fixed LEA-12a=deferred -123=fixed 1LEA-12=fixed; do
   out="$(check --followup "$bad")"
   expect_status "malformed_rejected: $bad" 64 "$out"
 done
