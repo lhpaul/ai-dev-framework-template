@@ -1448,9 +1448,9 @@ expensive_gate_local_ai_head_current() {
 # expensive_gate_local_ai_result_clean
 #
 # Prints 1 when the latest local-ai-reviewer peer evidence records a clean
-# verdict, 0 when it records any other verdict, or empty when absent.
+# verdict (or a skipped|human_override, #2166), 0 when it records any other verdict, or empty when absent.
 expensive_gate_local_ai_result_clean() {
-  local evidence result
+  local evidence result reason
 
   evidence="$(expensive_gate_lookup_peer_evidence local-ai-reviewer)"
   if [ -z "$evidence" ]; then
@@ -1459,26 +1459,39 @@ expensive_gate_local_ai_result_clean() {
   fi
 
   result="${evidence%%|*}"
-  if [ "$result" = "clean" ]; then
+  reason="${evidence#*|}"
+  if [ "$reason" = "$evidence" ]; then
+    reason=""
+  fi
+  # #2166: a head-bound human override of local-ai-reviewer (#2116) is recorded
+  # as skipped|human_override and counts as a clean local verdict. Head currency
+  # is checked separately by expensive_gate_local_ai_head_current.
+  if [ "$result" = "clean" ] || { [ "$result" = "skipped" ] && [ "$reason" = "human_override" ]; }; then
     printf '1\n'
   else
     printf '0\n'
   fi
 }
 
-# expensive_gate_peer_evidence_acceptable <result> <reason>
+# expensive_gate_peer_evidence_acceptable <result> <reason> [platform]
 #
 # Acceptable when result is clean, or skipped with an allow-listed reason
 # AND reviewer_failed_label_required_for_result returns false for the pair.
+# skipped|human_override (#2116) is acceptable only for local-ai-reviewer
+# (#2166); for any other or unspecified platform it is refused.
 expensive_gate_peer_evidence_acceptable() {
   local result="$1"
   local reason="${2:-}"
+  local platform="${3:-}"
 
   case "$result" in
     clean)
       return 0
       ;;
     skipped)
+      if [ "$reason" = "human_override" ] && [ "$platform" = "local-ai-reviewer" ]; then
+        return 0
+      fi
       if array_contains_value "$reason" "${EXPENSIVE_GATE_ACCEPTED_SKIP_REASONS[@]}"; then
         if ! reviewer_failed_label_required_for_result "$result" "$reason"; then
           return 0
@@ -1577,7 +1590,7 @@ expensive_gate_check_peers() {
     if [ "$peer_reason" = "$peer_result" ]; then
       peer_reason=""
     fi
-    if ! expensive_gate_peer_evidence_acceptable "$peer_result" "$peer_reason"; then
+    if ! expensive_gate_peer_evidence_acceptable "$peer_result" "$peer_reason" "$platform"; then
       printf 'peer_reviewer_not_clean\n'
       return 0
     fi

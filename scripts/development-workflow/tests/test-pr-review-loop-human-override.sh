@@ -16,6 +16,7 @@
 #   Area 2116b: loop dispatch honors a current-head override
 #   Area 2116c: ledger record and summary audit
 #   Area 2116d: second local pass before the ready gate
+#   Area 2116e: expensive-reviewer gate accepts a current-head override (#2166)
 #
 # Every case is synthetic: a fake gh on PATH serves fabricated comments and
 # permissions. Readiness and completion-check cases live in
@@ -363,6 +364,74 @@ run_test "2116_fixture_has_no_unexpected_gh_calls" absent "$([ -e "$HO_UNEXPECTE
 [ ! -e "$HO_UNEXPECTED_LOG" ] || cat "$HO_UNEXPECTED_LOG" >&2
 
 echo "=== Area 2116d complete ==="
+
+# ---------------------------------------------------------------------------
+# Area 2116e: expensive-reviewer gate accepts a current-head override (#2166)
+# ---------------------------------------------------------------------------
+echo ""
+echo "=== Area 2116e: expensive-reviewer gate accepts a current-head override ==="
+
+# Feed the real override output through the real platform processor, then ask
+# the expensive-reviewer gate predicates about the recorded evidence.
+# shellcheck disable=SC2034 # Production processor consumes the initialized globals.
+_ho_gate_case() (
+  export HO_PERMS='maint=write'
+  _ho_set_comments "$(_ho_marker_comment 1 maint User "$(_ho_payload "$_ho_head")")"
+  loop_head_sha="$_ho_head"
+  phase_after_clean_enabled=0
+  compare_mode=0
+  aggregate_result=clean
+  aggregate_reason=""
+  aggregate_output=""
+  aggregate_status=0
+  total_comment_count=0
+  total_blocking_count=0
+  total_suggestion_count=0
+  reviewer_failed_required=0
+  aggregate_advisory_labels=""
+  platform_result_records=()
+  platform_reviewed_heads=()
+  platform_peer_evidence=()
+  platform_result_tokens=()
+  platform_blocking_outputs=()
+  aggregate_blocking_paths=()
+  aggregate_blocking_findings=()
+  platform_policy_status_notes=()
+  compare_verdicts=()
+  human_override_records=()
+  local out
+  out="$(PATH="$_ho_dir:$PATH" reviewer_loop_local_ai_human_override_output 42 fix/2116-test 2>/dev/null)"
+  PATH="$_ho_dir:$PATH" reviewer_loop_process_platform_output local-ai-reviewer 2 "$out" 0 1 >/dev/null
+  platforms=(local-ai-reviewer codex-github)
+  printf 'CLEAN=%s\nHEAD_CURRENT=%s\nPEER_REASON=%s\n' \
+    "$(expensive_gate_local_ai_result_clean)" \
+    "$(expensive_gate_local_ai_head_current "$_ho_head")" \
+    "$(expensive_gate_check_peers codex-github)"
+  if expensive_gate_peer_evidence_acceptable skipped human_override local-ai-reviewer; then
+    printf 'PEER_ACCEPTABLE=1\n'
+  else
+    printf 'PEER_ACCEPTABLE=0\n'
+  fi
+)
+_ho_out="$(_ho_gate_case)"
+run_test "2116e_override_counts_as_clean" 1 "$(kv_value_default CLEAN "$_ho_out" missing)"
+run_test "2116e_override_head_current" 1 "$(kv_value_default HEAD_CURRENT "$_ho_out" missing)"
+run_test "2116e_override_peer_acceptable" 1 "$(kv_value_default PEER_ACCEPTABLE "$_ho_out" missing)"
+run_test "2116e_override_peer_check_passes" "" "$(kv_value_default PEER_REASON "$_ho_out" "")"
+unset -f _ho_gate_case
+unset _ho_out
+
+# Ordinary skips stay refused, and human_override is honored only for the
+# local-ai-reviewer platform.
+_ho_peer() { expensive_gate_peer_evidence_acceptable "$@" && echo acceptable || echo refused; }
+run_test "2116e_unavailable_skip_refused" refused "$(_ho_peer skipped unavailable local-ai-reviewer)"
+run_test "2116e_disabled_by_config_skip_refused" refused "$(_ho_peer skipped disabled_by_config local-ai-reviewer)"
+run_test "2116e_override_other_platform_refused" refused "$(_ho_peer skipped human_override pr-agent)"
+run_test "2116e_override_no_platform_refused" refused "$(_ho_peer skipped human_override)"
+run_test "2116e_clean_still_acceptable" acceptable "$(_ho_peer clean "")"
+unset -f _ho_peer
+
+echo "=== Area 2116e complete ==="
 
 rm -rf "$_ho_dir"
 unset -f _ho_marker_comment _ho_payload _ho_set_comments
