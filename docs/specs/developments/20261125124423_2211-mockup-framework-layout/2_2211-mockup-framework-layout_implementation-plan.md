@@ -149,7 +149,7 @@ Each decision is stated here once; every other section refers to it by label.
 | AC12 | L4 | T1 to T17; smoke Step 6 |
 | AC13 | L4 (P3) | T-multi; smoke Step 6 |
 | AC14 | L4 (P2) | T-unchanged |
-| AC15 | L4 (additive) | Testing Strategy "AC15 evidence"; smoke Step 7 |
+| AC15 | L4 (additive) | Testing Strategy "AC15 evidence"; smoke Step 7 (Part A at Implementation Order step 13, Part B at step 14) |
 | AC16 | L7 | smoke Step 8 |
 | AC17, AC18 | L8 | smoke Step 9 |
 
@@ -623,8 +623,10 @@ Commit after each numbered step that leaves the tree coherent.
 11. L8 vault edit and commit (steps 1 to 4).
 12. Open the implementation PR (or update its description) and record the
     vault change there (L8 step 5, AC18).
-13. Run the smoke runbook Steps 1 to 9; Step 9 reads the vault commit and the
-    PR description record made in steps 11 and 12.
+13. Run the smoke runbook Steps 1 to 6, Part A of Step 7, and Steps 8 and
+    9; Step 9 reads the vault commit and the PR description record made in
+    steps 11 and 12.
 14. With every implementation commit pushed, take the AC15 "after" full run
-    at the final PR head and record the comparison with the baseline in the
-    PR description ("AC15 evidence" items 2 and 3; S9).
+    at the final PR head, update the PR description's AC15 record with the
+    comparison ("AC15 evidence" items 2 and 3; a description edit, not a
+    commit, so S9 still holds), then run Part B of smoke Step 7.

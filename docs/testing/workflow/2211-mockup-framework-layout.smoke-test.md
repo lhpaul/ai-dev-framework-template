@@ -142,6 +142,8 @@ each naming the value found or that it is absent, and the accepted values.
 
 **Maps to**: AC15
 
+**Part A — local, before the final push** (plan Implementation Order step 13):
+
 ```bash
 SCRATCH="$(mktemp -d)"
 git diff --name-only origin/develop...HEAD > "$SCRATCH/changed.txt"
@@ -149,15 +151,17 @@ bash scripts/development-workflow/select-test-suites.sh --changed-files "$SCRATC
 git diff --numstat origin/develop -- scripts/development-workflow/workflow-lib.sh
 ```
 
-Run every listed suite. Then open the two full `workflow-tests` runs the
-implementation PR description records (baseline on `develop` at the
-merge-base, and after on the implementation branch head, both started by
-`workflow_dispatch`).
+Run every listed suite.
 
-**Expected result**: every selected suite passes; every suite that passed in
-the baseline full run also passes in the after full run; the numstat line
-shows 0 deleted lines for `workflow-lib.sh`; CI `workflow-tests` is green on
-the PR.
+**Part B — full runs, after the final push** (plan Implementation Order
+step 14): open the two full `workflow-tests` runs the implementation PR
+description records (baseline on `develop` at the merge-base, and after on
+the final implementation branch head, both started by `workflow_dispatch`).
+
+**Expected result**: Part A: every selected suite passes and the numstat line
+shows 0 deleted lines for `workflow-lib.sh`. Part B: every suite that passed
+in the baseline full run also passes in the after full run, the after run's
+head equals the PR head, and CI `workflow-tests` is green on the PR.
 
 ### Step 8: Sync into a disposable consumer
 
