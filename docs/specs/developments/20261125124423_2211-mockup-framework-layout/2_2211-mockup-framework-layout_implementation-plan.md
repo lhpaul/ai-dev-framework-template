@@ -124,10 +124,14 @@ Each decision is stated here once; every other section refers to it by label.
   The helper never prints partial output: it captures the program's stdout
   and prints it only after the check above.
 - **P7 — Reference page.** The contract page is
-  `docs/workflow/development-workflow/mockup-framework.md`. It points to the
-  scaffold by a code-span path, not a relative link, because consumers sync
-  the docs tree but not `template/design-scaffold/` (P1), and a relative link
-  would break their link lint.
+  `docs/workflow/development-workflow/mockup-framework.md`. It links to the
+  scaffold with an absolute URL to the upstream template,
+  `https://github.com/lhpaul/ai-dev-framework-template/tree/develop/template/design-scaffold/design`,
+  and also names the in-repository path `template/design-scaffold/design/` as
+  a code span. It never uses a relative link: consumers sync the docs tree but
+  not the scaffold (P1), so a relative link would be dead in a consumer and
+  break its link lint, while the absolute link resolves everywhere once the
+  implementation PR is merged (UC1 "follow a link to the scaffold").
 - **P8 — Commented example placement.** The inactive design block example sits
   inside the existing `# <!-- TEMPLATE-OWNED-START -->` / `END` header of
   `.ai-dev-workflow.yaml` (V6), so template sync offers it to consumers as
@@ -212,7 +216,7 @@ with its governed scope and discharge point:
 | S3 | A permission-denied file is tested only when the suite does not run as root | the single unreadable-file case in L5 | L5 test T-unreadable, skipped with a printed reason when `id -u` is 0 |
 | S4 | If the vault target file has uncommitted changes before L8 starts, stop and ask the vault owner | the file `40 - Conocimiento/Estándares/HTML Mockup Framework.md` only; other dirty vault files are left untouched and never block | L8 step 1 |
 | S5 | If the implementing role cannot write to the vault path, stop with `STAGE_ROLE_TOOL_OR_PATH_DENIED:` (Protocol 91) | L8 steps 2 to 5 | L8 step 2 |
-| S6 | The vault's link to the template reference must resolve once the implementation PR is merged | the single URL in the vault header (L8) | smoke runbook Step 10 (post-merge) |
+| S6 | Two links must resolve once the implementation PR is merged | the URL in the vault header (L8) and the reference page's scaffold URL (P7) | smoke runbook Step 10 (post-merge) |
 | S7 | If the implementation PR is reverted, the vault commit is reverted in the same change window | the single L8 vault commit | the revert itself (Risks & Mitigations, "Reversal") |
 | S8 | Once a later item consumes the helper or a consumer writes a `design` block, reversing the contract is that later item's responsibility | reversal of the P3 contract and the `design` block after first consumption | the later item's own plan (#2209, #2212, #2213, #2210, #2208 or #2214) |
 
@@ -266,9 +270,9 @@ spec rules named, not restated here.
    `<!-- workflow-shell-contract: bash -->` because sourcing the library needs
    Bash; it does not iterate or split arguments, so no Bash/zsh behavioural
    evidence is required.
-8. **Starting from the scaffold** — the P1 location as a code span
-   (`template/design-scaffold/design/`), the copy step, keeping one layout,
-   and that copying does not opt a project in (UC2).
+8. **Starting from the scaffold** — the P7 link and path to the P1
+   location, the copy step, keeping one layout, and that copying does not opt
+   a project in (UC2).
 9. **Forthcoming** — names #2206 (manifest contract and verify script), #2207
    (viewer and shell), #2208 (setup) and #2214 (adoption) as forthcoming
    without describing their content (AC6).
@@ -518,7 +522,7 @@ written.
 | A syntax error in `workflow-lib.sh` breaks every script that sources it | Low | High | `bash -n` and `shellcheck` before commit; the selected suites (AC15) all source the library |
 | A resolver refactor renames `capture_config_text` or `validate_selected_yaml` | Low | Medium | the suite covers the resolver file, so such a change runs it; P6 fails closed meanwhile |
 | Echoed values leak sensitive text | Low | Low | only the three design fields are echoed, from the versioned file, escaped and truncated (P3); local configuration is never read (P4) |
-| Consumers see a broken link to the unsynced scaffold | Medium if linked | Low | P7 code-span path |
+| Consumers see a broken link to the unsynced scaffold | Medium if linked relatively | Low | P7 absolute upstream link plus code-span path |
 | The vault link points at `develop` before the PR merges | High until merge | Low | S6 post-merge check |
 | Vault edit swept up with unrelated dirty vault files | Medium | Medium | L8 commits by explicit path and checks `show --stat` |
 

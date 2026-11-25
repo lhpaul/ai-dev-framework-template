@@ -95,14 +95,17 @@ python3 -m json.tool template/design-scaffold/design/tokens.json >/dev/null && e
 git ls-files template/design-scaffold | grep -E '\.(html?|js|mjs|png|jpe?g|svg)$|manifest' || echo "no screens, manifest or viewer code"
 ```
 
-Then open both scaffold READMEs.
+Then open both scaffold READMEs, and in the reference page find the
+scaffold link.
 
 **Expected result**: the listing shows the design README, token file,
 mockups README, `mockups/shared/` and one example per-app folder; the three
 echo lines print; each README has `## Framework` inside the template-owned
 markers followed by `## Project` holding only guidance; the token file (or
 the design README's Project section) says the values are examples to
-replace.
+replace; the reference page links to the scaffold with the absolute URL
+`https://github.com/lhpaul/ai-dev-framework-template/tree/develop/template/design-scaffold/design`
+(no relative link) and names the path `template/design-scaffold/design/`.
 
 ### Step 5: Template stays not opted in; the documented example is valid
 
@@ -196,11 +199,14 @@ the file, a summary, the commit and its push state.
 
 ### Step 10: Post-merge link check
 
-**Maps to**: AC17
+**Maps to**: AC17, Use Case 1
 
 1. After the implementation PR merges, open the vault header link.
+2. Open the reference page's scaffold link.
 
-**Expected result**: the link resolves to the reference page on `develop`.
+**Expected result**: the vault link resolves to the reference page on
+`develop`; the scaffold link resolves to `template/design-scaffold/design/`
+on `develop`.
 
 ---
 
