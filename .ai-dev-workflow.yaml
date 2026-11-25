@@ -51,8 +51,8 @@
 #
 #   design:
 #     root: design/        # optional; defaults to design/ when omitted
-#     home: knowledge      # knowledge|product
-#     kind: design-intent  # design-intent|reproduction
+#     home: knowledge
+#     kind: design-intent
 # <!-- TEMPLATE-OWNED-END -->
 
 schema_version: 2

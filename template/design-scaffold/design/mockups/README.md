@@ -10,8 +10,9 @@ This folder holds the HTML mockups of the design tree.
 - **Single app**: put the mockups directly in this folder and remove the
   per-app folders.
 - Use one of these layouts per repository; do not mix them.
-- `shared/` is reserved for shared viewer assets, delivered by a later
-  framework item; keep it.
+- `shared/` is reserved for the shared viewer assets that the framework's
+  viewer and shell (AI Development Framework template #2207) will provide;
+  keep it.
 - Structure (folder names, headings, identifiers) is in English; mockup
   content is in the product's language.
 
