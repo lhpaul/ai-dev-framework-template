@@ -82,9 +82,10 @@ Each decision is stated here once; every other section refers to it by label.
   physical line with the same escapes `print_kv_escaped` uses (backslash, CR,
   LF, tab, other C0/DEL and C1 controls); a string value longer than 80
   characters is truncated with `…`; a list or mapping is described by its type,
-  never by its content. Exit status 2 with no stdout is reserved for a
-  supplied `repo_root` argument that is empty or not a directory (caller
-  error, not an outcome).
+  never by its content. Exit status 2 with no stdout is reserved for caller
+  or environment errors, not outcomes: a supplied `repo_root` argument that is
+  empty or not a directory, or, with no argument, a failure of
+  `workflow_repo_root` to resolve the checkout.
 - **P4 — Configuration source.** The helper reads only
   `<repo_root>/.ai-dev-workflow.yaml`, where `repo_root` defaults to
   `workflow_repo_root`. It never reads `.ai-dev-workflow.local.yaml`, and it
@@ -102,7 +103,8 @@ Each decision is stated here once; every other section refers to it by label.
   - Rows 5 and 6: the key is absent or its value is not exactly one of the
     accepted strings (non-string values included).
   - Row 7: `root` is present and is not a string, is empty after trimming
-    whitespace, is absolute (starts with `/` or `\`, or with a drive letter
+    whitespace (a deliberate tightening of BR6's "non-empty": a
+    whitespace-only path is treated as empty, and L1 states this), is absolute (starts with `/` or `\`, or with a drive letter
     and colon), or normalises lexically (backslashes read as `/`) to `..` or a
     path starting with `../`. The check is lexical only; no file is inspected
     (BR15). A root that normalises to `.` is inside the repository.
@@ -110,8 +112,12 @@ Each decision is stated here once; every other section refers to it by label.
 - **P6 — Fail-closed fallback.** If `python3` is unavailable or the inline
   program exits non-zero or prints no `DESIGN_OPT_IN=` first line, the helper
   prints the row 1 result when no filesystem entry exists at the path and the
-  row 2 result otherwise. The helper never prints partial output: it captures
-  the program's stdout and prints it only after the check above.
+  row 2 outcome otherwise. That row 2 problem line says the check itself could
+  not run (`python3` or the configuration reader failed) and that the file may
+  be valid, so a maintainer is not sent to debug a good configuration; it is
+  distinct from the ordinary row 2 wording that the file could not be read.
+  The helper never prints partial output: it captures the program's stdout
+  and prints it only after the check above.
 - **P7 — Reference page.** The contract page is
   `docs/workflow/development-workflow/mockup-framework.md`. It points to the
   scaffold by a code-span path, not a relative link, because consumers sync
@@ -244,8 +250,9 @@ spec rules named, not restated here.
    the `<!-- TEMPLATE-OWNED-START -->` / `<!-- TEMPLATE-OWNED-END -->` markers
    already used by `sync-manifest.yaml`'s `html_comments` scheme, with the
    Project section after the end marker.
-7. **Opting in** — the `design` block (BR4 example, BR5, BR6, the default
-   root), the opt-in resolution table and the three outcomes, BR1 (stages gate
+7. **Opting in** — the `design` block (BR4 example, BR5, BR6 with the P5
+   row 7 whitespace-only tightening, the default root), the opt-in resolution
+   table and the three outcomes, BR1 (stages gate
    on the block, never on prose), BR18, and how a stage reads the outcome:
    source `workflow-lib.sh` and call `workflow_design_opt_in`, with the P3
    output lines. The usage snippet carries
@@ -426,7 +433,8 @@ guarantees; an equivalent set may replace them):
 | T-root-forms | root boundaries | `root: null`, `root: ''`, `root: '  '`, `root: true`, nested mapping, `root: C:/design`, `root: design/../..`, `root: ..\design` | `invalid`, `design.root` |
 | T-root-inside | root normalisation | `root: ./design`, `root: design/../mocks`, `root: .` | `opted_in`, root printed as configured |
 | T-quoted-42 | numeric lookalike | `root: "42"` | `opted_in` |
-| T-control | output escaping | `root: "de\tsign"` | one physical line, `DESIGN_ROOT=de\tsign` |
+| T-control | output escaping (P3) | roots containing a tab, LF, CR, DEL and a C1 control (double-quoted YAML escapes), and a backslash | one physical line each, escaped as `print_kv_escaped` would (`\t`, `\n`, `\r`, `\x7f`, `\u0085`, `\\`) |
+| T-truncate | detail length (P3) | an unknown home of exactly 80 characters, and one of 81 | the 80-character value is echoed whole; the 81-character value is cut to 80 plus `…` |
 | T-dup | duplicate key | `home` twice | `invalid`, `configuration` |
 | T-toplevel | top level not a mapping | `- a` | `invalid`, `configuration` |
 | T-empty | empty and comment-only files | `''`, `# x` | `not_opted_in` |
@@ -438,8 +446,8 @@ guarantees; an equivalent set may replace them):
 | T-local-override | BR18, opposite direction | versioned valid block, local file with a different home | versioned values |
 | T-fresh | BR16 | call, edit the file, call again | outcome follows the edit |
 | T-unchanged | AC14 | a sorted `find` listing plus `cksum` of every file in the scratch repository, and the set of `__pycache__` entries under the scripts directory, before and after all calls | identical |
-| T-fallback-absent / T-fallback-present | S2 | `PATH` without `python3`, no file / with a file | `not_opted_in` / `invalid` with `configuration` |
-| T-badarg | caller error | `workflow_design_opt_in ""` and a non-directory path | exit 2, empty stdout |
+| T-fallback-absent / T-fallback-present | S2 | `PATH` without `python3`, no file / with a valid file | `not_opted_in` / `invalid` whose `configuration` problem says the check could not run and the file may be valid (P6) |
+| T-badarg | caller error | `workflow_design_opt_in ""`, a non-directory path, and no argument with `workflow_repo_root` stubbed to fail | exit 2, empty stdout |
 | T-template | S1, AC11 | this repository's own config | `not_opted_in` |
 
 **Proportionality (Gate B)**: one suite against one helper; the binding rows
@@ -516,7 +524,8 @@ workflow_design_opt_in() {
     printf '%s\n' "$out"
   elif [ -e "$config" ] || [ -L "$config" ]; then
     printf '%s\n' 'DESIGN_OPT_IN=invalid' 'DESIGN_OPT_IN_LABEL=Invalid configuration' \
-      'DESIGN_PROBLEM_COUNT=1' 'DESIGN_PROBLEM=configuration: .ai-dev-workflow.yaml could not be read'
+      'DESIGN_PROBLEM_COUNT=1' \
+      'DESIGN_PROBLEM=configuration: the opt-in check could not run (python3 or the configuration reader failed); the file may be valid'
   else
     printf '%s\n' 'DESIGN_OPT_IN=not_opted_in' 'DESIGN_OPT_IN_LABEL=Not opted in'
   fi
