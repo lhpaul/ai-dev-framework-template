@@ -171,15 +171,19 @@ head equals the PR head, and CI `workflow-tests` is green on the PR.
    `python3 -B scripts/development-workflow/select-sync-manifest-entries.py --manifest sync-manifest.yaml --role single_repo`
    and confirm each changed path matches the plan's L7 table (no entry for
    `template/design-scaffold/`).
-2. Create a consumer: `git init` a scratch directory and copy
+2. Create a consumer: `git init` a scratch directory, copy
    `.ai-dev-workflow.yaml` from `origin/develop` into it with
-   `template.is_template` set to `false`; commit.
+   `template.is_template` set to `false`, and copy
+   `scripts/development-workflow/workflow-config-resolver.py` from
+   `origin/develop` (every role already has it, since it ships with
+   `workflow-lib.sh`; plan V7); commit.
 3. Apply only what sync would: copy the always-sync changed files (the
    reference page, the workflow README, `workflow-lib.sh`, the new suite)
    into the same paths, and replace only the lines between the consumer's
    `TEMPLATE-OWNED-START` and `END` markers with the branch's header block.
 4. In the consumer, run `git diff -- .ai-dev-workflow.yaml`,
-   `test ! -e design && echo "no design tree"`, and the helper.
+   `test ! -e design && echo "no design tree"`, and
+   `bash -c 'source "$1/scripts/development-workflow/workflow-lib.sh"; workflow_design_opt_in "$1"' _ <consumer>`.
 
 **Expected result**: the configuration diff touches only comment lines inside
 the template-owned header; no `design/` directory exists; the helper prints
