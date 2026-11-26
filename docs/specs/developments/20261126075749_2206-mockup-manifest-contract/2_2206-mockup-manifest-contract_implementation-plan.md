@@ -362,7 +362,7 @@ All repository searches ran at `bc0c80a0` (V0) unless the row says otherwise.
 | V6 | No existing CSS reader | S-V6 below | the only `html.parser` users are `apply-readiness-labels.sh`, `graduation-closeout-lib.sh`, `pr-agent-runtime.py` and its test `tests/test_pr_agent_inline_code.py` (review-text extraction); no `:root` or CSS rule reading anywhere under `scripts/` |
 | V7 | Python baseline | `/usr/bin/python3 --version`; `python3 --version` (2026-11-26) | `3.9.6` (macOS system) and `3.14.8`; the module must run on 3.9 |
 | V8 | Python invocation pattern | `grep -n 'python3 -I -B' scripts/development-workflow/workflow-lib.sh` | `workflow_design_opt_in` already runs `python3 -I -B -c` |
-| V9 | Suite discovery and fixture folder | `sed -n 11,31p scripts/development-workflow/select-test-suites.sh` | a suite `test-<name>.sh` covers `<name>.sh`, `<name>.py`, its own file and its own fixture directory; `# covers:` adds paths |
+| V9 | Suite discovery and fixture folder | `sed -n 11,31p scripts/development-workflow/select-test-suites.sh`; `sed -n 264,305p` (`suite_patterns`) | a suite `test-<name>.sh` always covers its own file and `tests/fixtures/<name>/**`; it covers `<name>.sh` and `<name>.py` by naming only when it declares no `# covers:` line, so a suite with `# covers:` lines must also list its own subject scripts |
 | V10 | Harness CI path filter | `sed -n '/^on:/,/^jobs:/p' .github/workflows/workflow-tests.yml` | `pull_request` paths `scripts/development-workflow/**` and the workflow file, so the new suite runs on the implementation PR |
 | V11 | Coverage checker and fixtures | `grep -n fixtures scripts/development-workflow/check-sync-manifest-coverage.py` | test discovery excludes paths containing `/fixtures/` |
 | V12 | Consumer-safe test rule | `sed -n 134,168p scripts/development-workflow/README.md` | template-only assertions must be gated by `workflow_template_is_template` with a printed `SKIP:` line |
@@ -483,11 +483,14 @@ At implementation start, re-run V3 and V14 (S5).
 ### L4 — Test suite (`scripts/development-workflow/tests/test-mockup-manifest-verify.sh`, new)
 
 - The header comment names the spec. Add
+  `# covers: scripts/development-workflow/mockup-manifest-verify.sh`,
+  `# covers: scripts/development-workflow/mockup-manifest-verify.py`,
   `# covers: scripts/development-workflow/workflow-lib.sh` and
-  `# covers: scripts/development-workflow/workflow-config-resolver.py`,
-  because tree mode depends on them. Add a `# duration:` line measured
-  locally. The suite's own `.sh`, `.py` and fixture folder are covered by
-  naming (V9).
+  `# covers: scripts/development-workflow/workflow-config-resolver.py`. The
+  first two are required because declaring any `# covers:` line turns off
+  the naming fallback (V9); the last two because tree mode depends on them.
+  Add a `# duration:` line measured locally. The suite file and its fixture
+  folder are always covered (V9).
 - Each case copies the fixture tree, or writes its input, into a fresh
   `mktemp -d` directory. It runs the entry point and compares stdout lines
   and the exit status.
