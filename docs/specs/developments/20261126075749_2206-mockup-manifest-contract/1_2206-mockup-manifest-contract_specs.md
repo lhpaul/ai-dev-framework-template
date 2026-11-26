@@ -327,10 +327,12 @@ citation is broken.
   manifest contract. The vault standard's Manifest section becomes a pointer,
   and its Tooling section's verify note points to the template (D1, D4).
 - BR19 (value types): Every entry of `screens`, `states` and `viewports` is an
-  object. Every field whose rule in BR2 to BR4 is text (`export`, `route`,
-  `nav_screen`, `dom_id`, `title`, `url`, `design_ref`, `state_label`,
-  `label`) is a non-empty string when present. A value of another type is a
-  problem that names the field and the type found.
+  object. Every field whose rule in BR2 to BR4, BR7 or BR8 is text (`export`,
+  `route`, `nav_screen`, `dom_id`, `title`, `url`, `design_ref`,
+  `state_label`, and the `label` of a state, a navigation group, a navigation
+  entry or a viewport) is a non-empty string when present. A value of another
+  type, or an empty string, is a problem that names the field and the value
+  found.
 
 ### Manifest verification table
 
