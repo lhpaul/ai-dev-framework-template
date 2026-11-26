@@ -1,0 +1,8 @@
+/* Linked token stylesheet: the verify script reads it because the page links
+   it with a relative href inside the repository. */
+:root {
+  --color-surface-0: #ffffff;
+  --color-surface-1: #f6f8fa;
+  --radius-md: 6px;
+  --font-body: 'Inter', system-ui, sans-serif;
+}
