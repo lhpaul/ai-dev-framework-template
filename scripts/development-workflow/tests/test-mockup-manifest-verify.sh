@@ -559,6 +559,8 @@ run_form_cases() {
   form "T-form-double-equals" 1 "" '%s == %s;\n' "$a" "$j"
   form "T-form-second-statement" 1 "" '%s = %s; console.log(1)\n' "$a" "$j"
   form "T-form-two-assignments" 1 "" '%s = %s;\n%s = %s;\n' "$a" "$j" "$a" "$j"
+  form "T-form-line-comment-u2028 (code after the separator)" 1 "" '%s = %s;\n// c\342\200\250console.log(1)\n' "$a" "$j"
+  form "T-form-line-comment-u2029 (code after the separator)" 1 "" '%s = %s;\n// c\342\200\251console.log(1)\n' "$a" "$j"
   form "T-form-comment-in-json" 1 "" '%s = {"a": 1 /* x */};\n' "$a"
   form "T-form-json5 (trailing comma)" 1 "" '%s = {"a": 1,};\n' "$a"
   form "T-form-json5 (single quotes)" 1 "" "%s = {'a': 1};\n" "$a"

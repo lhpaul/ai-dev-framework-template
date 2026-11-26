@@ -354,7 +354,9 @@ def skip_space_and_comments(text, index):
         if char in JS_WS:
             index += 1
         elif text.startswith("//", index):
-            while index < n and text[index] not in "\r\n":
+            # A line comment ends at any JavaScript line terminator, so code after
+            # U+2028 or U+2029 is code, not comment text.
+            while index < n and text[index] not in "\r\n\u2028\u2029":
                 index += 1
         elif text.startswith("/*", index):
             end = text.find("*/", index + 2)

@@ -386,7 +386,9 @@ running app's stylesheet.
   is not an object. Keys starting with `$` are metadata, and nothing under
   them is a token. The property name is `--` followed by the token's path
   joined by hyphens, so `color.primary` becomes `--color-primary`. The value
-  must equal the token's value, ignoring only surrounding whitespace. A token
+  must equal the token's value, ignoring only surrounding whitespace. A CSS
+  comment counts as one space, as in a browser, so a comment around a value is
+  ignored and a comment inside it (`#ff/**/ffff`) is a mismatch. A token
   whose value is not a string is a problem. Extra properties are allowed.
 - **What is read.** Plain `:root` rules (a style rule whose selector list has
   `:root` as one of its selectors) in the page's own `<style>` blocks and in
