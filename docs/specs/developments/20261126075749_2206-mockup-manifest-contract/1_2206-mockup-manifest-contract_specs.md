@@ -247,8 +247,13 @@ citation is broken.
   | `label` | No | A readable state-selector label. |
   | `title` | No | A metadata title that temporarily replaces the screen title. |
 
-- BR5 (a state is not a screen): A state never declares `screen_id`, `route`,
-  `dom_id`, `nav_screen` or `kind`. A visual variant (an empty form, a
+- BR5 (a state is not a screen): A state never declares a screen-level
+  field: any field of BR3 except `title`, which BR4 also defines for a state.
+  The forbidden set is `screen_id`, `kind`, `export`, `route`, `nav_screen`,
+  `dom_id`, `url`, `design_ref`, `state_label` and `states`. Each one found on
+  a state is a problem. The vault standard named only the first five of these
+  and ended its list with an ellipsis; the contract states the whole set. A
+  visual variant (an empty form, a
   validation error, an open modal) is a state of the screen that owns it.
   `navigation` and `screens` name real destinations only.
 - BR6 (slugs): A `screen_id`, a `state_id` and a viewport `id` are lowercase
@@ -482,6 +487,7 @@ consumer's design tree.
   `screen_id`; a navigation entry citing an unknown screen at a nested depth; a `nav_screen` citing an unknown screen;
   duplicate `state_id` within a screen; a screen with states and no initial
   state; a screen with two initial states; a state declaring `route`; a
+  state declaring `export`; a state declaring nested `states`; a
   duplicate viewport id; a viewport with a non-positive width; a Design intent
   page missing one token; a Design intent page with one token at a different
   value; a Design intent token file with a token that is not a string; a
