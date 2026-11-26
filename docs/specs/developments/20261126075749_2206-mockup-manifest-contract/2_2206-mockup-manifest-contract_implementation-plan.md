@@ -395,7 +395,7 @@ All repository searches ran at `bc0c80a0` (V0) unless the row says otherwise.
 | V13 | Forthcoming list | `grep -n -A8 '^## Forthcoming' docs/workflow/development-workflow/mockup-framework.md` | four bullets; the first is "Manifest contract and verify script — #2206." |
 | V14 | Same-surface open PRs | `gh pr list --state open --limit 100 --json number,headRefName,files`, filtered to paths matching `mockup`, `design-scaffold`, `workflow-lib.sh`, `sync-manifest.yaml`, `scripts/development-workflow/README.md` (2026-11-26) | none |
 | V15 | Shell snippet lint scope | `sed -n 1,60p scripts/lint/workflow-shell-snippet-lint.py` | `docs/workflow/` and `scripts/development-workflow/` are in scope, so a shell snippet in the reference or the scripts README needs a `workflow-shell-contract` marker |
-| V16 | Vault sections L5 replaces | read-only `grep -n '^#' "40 - Conocimiento/Estándares/HTML Mockup Framework.md"` in the owner's vault checkout (2026-11-26; nothing written) | the heading `Manifest (mockup-manifest.js)` (level 2) at line 332 with sub-sections Top-level fields, Screen, State, Manifest workflow and `### Optional: verify + smoke (code repos)` (line 407), then `## Tokens`; `## Tooling (optional)` at line 447 opens with the note `> The verify part moves to the template with #2206.` |
+| V16 | Vault sections L5 replaces | none: data provided by the template owner (Luis, 2026-11-26), not reproducible from this repository; it is not repository evidence | the vault file `40 - Conocimiento/Estándares/HTML Mockup Framework.md` has a level-2 section `Manifest (mockup-manifest.js)` whose sub-sections include `### Optional: verify + smoke (code repos)`, and a section `## Tooling (optional)` that opens with the note `> The verify part moves to the template with #2206.`; L5 is anchored to these section names only, and the owner confirms the structure when applying it (D4) |
 
 ### Search commands
 
@@ -547,7 +547,9 @@ PR does not edit the vault."
 
 Replacement for the vault's whole Manifest section (heading
 `Manifest (mockup-manifest.js)`), including all its sub-sections, among
-them `### Optional: verify + smoke (code repos)` (V16):
+them `### Optional: verify + smoke (code repos)`. The target is named by
+section heading only, as the template owner described it (V16); the owner
+confirms the section structure when applying the text:
 
 ```markdown
 ## Manifest (`mockup-manifest.js`)
@@ -560,8 +562,9 @@ The manifest is the contract between mockup content, the viewer and any tooling,
 ```
 
 Replacement for the note `> The verify part moves to the template with
-#2206.` that opens the `## Tooling (optional)` section (V16); the rest of
-that section is unchanged:
+#2206.` that opens the `## Tooling (optional)` section, named as the
+template owner described it (V16); the owner confirms the note when applying
+the text, and the rest of that section is unchanged:
 
 ```markdown
 > The manifest checks ship in the template as `scripts/development-workflow/mockup-manifest-verify.sh` (#2206): one manifest, a whole opted-in design tree, the id inventory a spec may cite, and whether a citation resolves. See *Manifest* in the [template reference](https://github.com/lhpaul/ai-dev-framework-template/blob/develop/docs/workflow/development-workflow/mockup-framework.md). Playwright viewer smoke and image crop tooling stay optional per repository.
