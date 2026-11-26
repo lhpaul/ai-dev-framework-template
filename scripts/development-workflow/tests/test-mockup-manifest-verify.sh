@@ -627,6 +627,9 @@ run_css_cases() {
   css "T-css-nested-rule" "$a" ':root { --a: v; .x & { --a: other } }' 0 "line:PROBLEM_COUNT=0"
   css "T-css-string-semicolon" '{"f": "\"a;b\""}' ':root { --f: "a;b"; }' 0 "line:PROBLEM_COUNT=0"
   css "T-css-value-comment" "$a" ':root { --a: v /* note */; }' 0 "line:PROBLEM_COUNT=0"
+  css "T-css-value-comment-around" "$a" ':root { --a: /* a */v/* b */; }' 0 "line:PROBLEM_COUNT=0"
+  css "T-css-value-comment-inside" '{"a": "vw"}' ':root { --a: v/**/w; }' 1 \
+    'prefix:PROBLEM=BR10 token a: --a in index.html <style> #1 line 5: found "v w"; expected "vw"' "line:PROBLEM_COUNT=1"
   css "T-css-important-in-string" '{"f": "\"x !important\""}' ':root { --f: "x !important"; }' 0 "line:PROBLEM_COUNT=0"
   css "T-css-trim" '{"a": "16px"}' ':root{--a:   16px  ;}' 0 "line:PROBLEM_COUNT=0"
   css "T-css-inner-whitespace" '{"a": "a b"}' ':root { --a: a  b; }' 1 \

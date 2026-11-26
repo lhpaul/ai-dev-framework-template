@@ -656,7 +656,10 @@ class PageParser(HTMLParser):
 
 
 def css_chars(text, first_line):
-    """Characters with comments removed: (char, structural, line).
+    """Characters with each comment replaced by one space: (char, structural, line).
+
+    A comment separates tokens, as in a browser, so `a/**/b` is `a b`, never
+    `ab`.
 
     `structural` is False inside strings, after a backslash escape, and inside
     parentheses or brackets (except braces, which always nest)."""
@@ -670,6 +673,7 @@ def css_chars(text, first_line):
         if char == "/" and text.startswith("/*", i):
             end = text.find("*/", i + 2)
             stop = n if end < 0 else end + 2
+            out.append((" ", depth == 0, line))
             line += text.count("\n", i, stop)
             i = stop
             continue
