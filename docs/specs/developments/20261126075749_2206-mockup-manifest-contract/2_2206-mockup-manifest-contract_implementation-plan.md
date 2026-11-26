@@ -82,7 +82,8 @@ Each decision is stated here once; every other section refers to it by label.
   - `1`: a failing outcome (Does not conform, Invalid configuration, Cannot
     check, Does not resolve).
   - `2`: a caller or environment error. The cause is a usage error, a
-    `--repo-root` that is not a directory, a missing `python3`, or a failed
+    `--repo-root` that is not a directory, a missing `python3`, `tree` run
+    outside a Git repository without `--repo-root` (P10), or a failed
     opt-in read in `tree` (P8). The message goes to stderr and nothing goes
     to stdout. A manifest path that is missing or is a directory is never a
     caller error: it is verification row 1 (P4), so `inventory` and
@@ -126,7 +127,8 @@ Each decision is stated here once; every other section refers to it by label.
      with `O_NONBLOCK` added to the open flags. A read error, or the opened
      file no longer being a regular file (checked with `os.fstat`), also
      gives row 1. So a FIFO or device named `mockup-manifest.js` can never
-     block the tool.
+     block the tool. This is the tool's one way of reading a file; P6
+     reads the page, the token file and every linked stylesheet with it.
   2. Decode as strict UTF-8 and drop one leading BOM. A decode error gives
      row 2 ("not UTF-8 text").
   3. Scan from the start. Skip ASCII whitespace, `//` comments (to the next
@@ -185,6 +187,10 @@ Each decision is stated here once; every other section refers to it by label.
       a Single app manifest at `design/mockups/mockup-manifest.js` and a
       per-app manifest at `design/mockups/<app>/mockup-manifest.js` both
       find `design/tokens.json`. No such folder is a BR11 problem.
+    - The page, the token file and each in-repository linked stylesheet are
+      read with P4 step 1's read, so a missing path, a non-regular file
+      (directory, FIFO, socket or device) or a read error makes the file
+      unreadable without blocking.
     - Each problem names the file:
       - a missing or unreadable page or token file;
       - a page that is not UTF-8;
@@ -658,10 +664,14 @@ The mirroring cases:
 - T-ac6-no-index-html
 - T-ac6-not-in-mockups
 
-Beyond the AC6 list, one BR11 case covers an unreadable page:
+Beyond the AC6 list, two BR11 cases cover unreadable mirroring files:
 
 - T-page-unreadable: a `chmod 000` `index.html` beside a Design intent
   manifest gives a BR11 problem naming the page (S2).
+- T-mirroring-fifo: a FIFO `tokens.json`, and in a second run a FIFO linked
+  `styles/tokens.css` (both made with `mkfifo`), each give a BR11 problem
+  naming that file, and both runs finish before the suite's 30-second
+  watchdog (L4, P6).
 
 Each case asserts:
 
@@ -855,9 +865,8 @@ history.
 NAME = "window.__MOCKUP_MANIFEST__"
 
 def read_manifest(path):
-    try:
-        raw = open(path, "rb").read()
-    except OSError:
+    raw = read_regular_file(path)                 # os.stat first, O_NONBLOCK open, os.fstat check
+    if raw is None:                               # missing, not a regular file, or a read error
         return None, ("BR1", "manifest", "manifest file not found or unreadable")
     try:
         text = raw.decode("utf-8")
