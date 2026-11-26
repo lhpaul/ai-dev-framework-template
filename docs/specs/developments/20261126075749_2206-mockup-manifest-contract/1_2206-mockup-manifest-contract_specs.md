@@ -140,9 +140,9 @@ exactly what to fix. No file has changed.
 
 **Considerations**:
 
-- A file that is not readable as data (missing, not the D3 form, invalid JSON,
-  or not an object) does not conform. The script reports that single reason,
-  because no field can be checked.
+- A file that is missing or cannot be read, or is not readable as data (not
+  the D3 form, invalid JSON, or not an object), does not conform. The script
+  reports that single reason, because no field can be checked.
 - Every other problem is reported in one run, not only the first one.
 
 ### Use Case 3: Verify the design tree of an opted-in project
@@ -200,8 +200,8 @@ citation is broken.
 
 ## Business Rules
 
-- BR1 (data only): A manifest file conforms in form only when it contains
-  exactly one assignment of a plain JSON object to the global manifest name
+- BR1 (data only): A manifest file is named `mockup-manifest.js`. It conforms
+  in form only when it contains exactly one assignment of a plain JSON object to the global manifest name
   `window.__MOCKUP_MANIFEST__`. Comments may come before and after it, and a
   closing semicolon is allowed. Any other code makes the file not readable as
   data. The verify script never runs, imports or evaluates a manifest (D3).
@@ -264,25 +264,30 @@ citation is broken.
   viewer (#2207) may add review settings such as the viewport. They never
   change which screen or state is named.
 - BR10 (token mirroring, design intent only): For a Design intent manifest,
-  every token in the design tree's token file appears in the mockup page's root
-  style rules. The rules are read from the page's own style blocks and from
+  every token in the design tree's token file appears in the mockup page's
+  `:root` style rules. The rules are read from the page's own style blocks and from
   stylesheets it links inside the repository. The property name is `--`
   followed by the token's path joined by hyphens (`color.primary` becomes
   `--color-primary`). The value is the token's value, with only surrounding
   whitespace ignored. Keys starting with `$` are metadata, not tokens. Extra
-  properties in the root rules are allowed (D6). A Reproduction manifest is not
+  properties in the `:root` rules are allowed (D6). A Reproduction manifest is not
   checked for mirroring, because it harvests the running app's stylesheet
   (#2211 BR10).
 - BR11 (where the token file and page are): The mockup page is `index.html`
   in the manifest's folder. The token file is `tokens.json` in the folder that
   contains the `mockups` folder holding the manifest. That rule finds
-  `design/tokens.json` in every #2211 repository type. A missing page or token
-  file is a mirroring problem for a Design intent manifest.
+  `design/tokens.json` in every #2211 repository type, and
+  `<design root>/tokens.json` under a configured design root. For a Design
+  intent manifest, each of these is a mirroring problem: a missing or
+  unreadable page, a missing or unreadable token file, a token file that is
+  not a JSON object, and a manifest that is not inside a `mockups` folder, so
+  that no token file can be located.
 - BR12 (unknown fields): Fields the contract does not define, such as notes or
   timestamps, are ignored and do not change the outcome. The one exception is
   the screen-level fields BR5 forbids in a state.
-- BR13 (all problems at once): After the form check (BR1) passes, every check
-  runs, and the result lists every problem found.
+- BR13 (all problems at once): After the file checks (rows 1 to 3 of the
+  manifest verification table) pass, every check runs, and the result lists
+  every problem found.
 - BR14 (read-only): The verify script creates, changes and deletes nothing. It
   does not use the network, and it reads the files again on every run.
 - BR15 (language): Structure text (ids, labels, navigation entries, state
@@ -295,11 +300,18 @@ citation is broken.
   inventory or a guess.
 - BR17 (tree check gates on the opt-in): The tree check verifies manifests
   only when the project is Opted in (#2211). The manifests checked are every
-  manifest file in the design root's `mockups` folder and its subfolders,
-  except the `shared` folder.
+  `mockup-manifest.js` file in the design root's `mockups` folder and its
+  subfolders, except the shared viewer folder `mockups/shared/`. Each
+  manifest's own `$kind` governs its checks; a difference from the kind
+  configured in the `design` block is not a problem (#2211 Kind precedence).
 - BR18 (canonical owner): After this item, the template reference is the
-  manifest contract. The vault standard's Manifest section becomes a pointer
-  (D1, D4).
+  manifest contract. The vault standard's Manifest section becomes a pointer,
+  and its Tooling section's verify note points to the template (D1, D4).
+- BR19 (value types): Every entry of `screens`, `states` and `viewports` is an
+  object. Every field whose rule in BR2 to BR4 is text (`export`, `route`,
+  `nav_screen`, `dom_id`, `title`, `url`, `design_ref`, `state_label`,
+  `label`) is a non-empty string when present. A value of another type is a
+  problem that names the field and the type found.
 
 ### Manifest verification table
 
@@ -311,7 +323,7 @@ with that single problem. If none of them match, every check in row 4 runs.
 | 1 | The manifest file does not exist or cannot be read | Does not conform (manifest file not found or unreadable) |
 | 2 | The file is not in the BR1 form, or the assigned value is not valid JSON | Does not conform (not readable as data) |
 | 3 | The assigned JSON value is not an object | Does not conform (manifest is not an object) |
-| 4 | Every check of BR2 to BR8 and BR10 to BR12 | Conforms when no check finds a problem; otherwise Does not conform, listing every problem |
+| 4 | Every check of BR2 to BR8, BR10 to BR12 and BR19 | Conforms when no check finds a problem; otherwise Does not conform, listing every problem |
 
 ### Tree verification table
 
@@ -344,8 +356,8 @@ These rules cover the reference page and the messages the script shows.
   navigation entry, by id when it has one), the rule, the value found or its
   absence, and the accepted values. A maintainer can fix it without reading
   code.
-- A not-readable-as-data message says why: file missing, code other than the
-  single assignment, invalid JSON, or not an object. It does not echo the
+- A file-level message says why: file missing or unreadable, code other than
+  the single assignment, invalid JSON, or not an object. It does not echo the
   file's content.
 - Each outcome is shown with its display label from the tables below.
 - The reference and the script use the same names for every field, rule and
@@ -419,8 +431,8 @@ consumer's design tree.
 
 - [ ] AC1: The framework reference has a Manifest section that documents the
   file form (BR1), every top-level, screen and state field with its
-  requirement and accepted values (BR2 to BR4, BR8), and the rules of BR5 to
-  BR7, BR9 and BR15.
+  requirement and accepted values (BR2 to BR4, BR8, BR19), and the rules of
+  BR5 to BR7, BR9 to BR12 and BR15.
 - [ ] AC2: The Manifest section states the checklist (navigation ids exist in
   screens, states are local and unique, exactly one initial state, no
   screen-level fields in a state, tokens mirrored for design intent) and says
@@ -444,13 +456,15 @@ consumer's design tree.
   (including `design intent` with a space); missing or unknown `$status`;
   unknown `frame`; `default_screen` not in `screens`; empty `screens`;
   duplicate `screen_id`; a `screen_id` that is not a slug; missing or unknown
-  screen `kind`; an image screen without `export`; a navigation entry citing an
+  screen `kind`; an image screen without `export`; a `title` that is not a
+  string; an empty `states` list; a state without `state_id`; a navigation entry citing an
   unknown screen at a nested depth; a `nav_screen` citing an unknown screen;
   duplicate `state_id` within a screen; a screen with states and no initial
   state; a screen with two initial states; a state declaring `route`; a
   duplicate viewport id; a viewport with a non-positive width; a Design intent
   page missing one token; a Design intent page with one token at a different
-  value; a Design intent manifest whose token file is missing.
+  value; a Design intent manifest whose token file is missing; a Design intent
+  manifest whose token file is not valid JSON.
 - [ ] AC7: The same `state_id` under two different screens conforms.
 - [ ] AC8: A fixture with several problems reports every problem in one
   result. Each problem names its place, rule, found value or absence, and the
@@ -523,7 +537,7 @@ consumer's design tree.
 | Objective | Covered by |
 | --- | --- |
 | O1 | AC1, AC4, AC5, AC6, BR2, BR8 |
-| O2 | AC1, AC6, BR3, BR6 |
+| O2 | AC1, AC6, BR3, BR6, BR19 |
 | O3 | AC1, AC6, AC7, BR4 |
 | O4 | AC1, AC6, BR5 |
 | O5 | AC1, AC13, BR9 |
