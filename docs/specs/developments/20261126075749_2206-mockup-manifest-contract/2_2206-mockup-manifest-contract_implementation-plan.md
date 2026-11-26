@@ -175,10 +175,15 @@ Each decision is stated here once; every other section refers to it by label.
   - **Unknown fields (BR12).** Never reported, except the BR5 fields on a
     state.
   - **`$status` (BR2).** Changes nothing.
-  - **Mirroring trigger.** P6 runs only when `$kind` is exactly
-    `design-intent`. With any other `$kind` value P6 is skipped and the
-    only kind-related problem is the BR2 `$kind` problem, because the kind
-    is unknown; every other check of row 4 still runs (BR13).
+  - **Mirroring trigger.** `$kind` decides P6, in three cases:
+    - `design-intent`: P6 runs.
+    - `reproduction`: P6 is skipped and no problem is reported, because a
+      Reproduction harvests the running app's stylesheet (BR10, AC5).
+    - missing, not a string, or any other value: P6 is skipped because the
+      kind is unknown. The BR2 `$kind` problem is the only kind-related
+      problem.
+
+    In every case every other check of row 4 still runs (BR13).
 - **P6 — Token mirroring (BR10, BR11).**
   - **Locating files.**
     - The page is `index.html` in the manifest's folder.
