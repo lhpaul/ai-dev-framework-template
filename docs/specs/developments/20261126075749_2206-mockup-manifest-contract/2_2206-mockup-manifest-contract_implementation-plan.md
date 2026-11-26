@@ -256,9 +256,14 @@ Each decision is stated here once; every other section refers to it by label.
   See the Parser-risk addendum in Testing Strategy, where each case maps to
   a test.
 - **P8 — Tree walk (BR17, tree rows 1 to 6).**
-  - **Opt-in.** The Bash entry point sources `workflow-lib.sh`, runs
-    `workflow_design_opt_in "$repo_root"` and pipes its output into the Python
-    module's `tree` subcommand, with no temporary file.
+  - **Opt-in.** The Bash entry point sources `workflow-lib.sh` and captures
+    the complete output of `workflow_design_opt_in "$repo_root"` in a shell
+    variable by command substitution, with no temporary file. Only when the
+    helper exited `0` does it start the Python module's `tree` subcommand,
+    giving it that output on stdin. A non-zero helper exit stops the entry
+    point with exit `2` and empty stdout before the module runs, so no result
+    can be printed for a helper that failed after writing valid-looking
+    lines.
     - Input whose first line is not `DESIGN_OPT_IN=` (for example the empty
       output of a failed helper) is an environment error: the module prints
       nothing to stdout and exits `2`.
@@ -446,8 +451,10 @@ At implementation start, re-run V3 and V14 (S5).
 - `tree` resolves the repository root: `--repo-root`, else
   `git rev-parse --show-toplevel`, else exit `2`. It sources
   `workflow-lib.sh` from its own directory and runs
-  `workflow_design_opt_in "$root" | python3 -I -B "$py" tree --repo-root "$root"`.
-  A non-zero `workflow_design_opt_in` exit is an environment error (exit `2`).
+  `optin="$(workflow_design_opt_in "$root")" || exit 2`, then
+  `printf '%s\n' "$optin" | python3 -I -B "$py" tree --repo-root "$root"`
+  (P8). A non-zero helper exit is an environment error: exit `2`, empty
+  stdout, and the module never starts.
 - `shellcheck --severity=warning` clean.
 
 ### L2 — Logic (`scripts/development-workflow/mockup-manifest-verify.py`, new) (P2-P10)
@@ -722,6 +729,10 @@ fabricated `.ai-dev-workflow.yaml`.
   manifests are still listed (P4 step 1, P8).
 - T-tree-opt-in-failed: input to the module's `tree` subcommand without a
   `DESIGN_OPT_IN=` first line gives exit 2 and empty stdout (P8).
+- T-tree-opt-in-helper-fails: a copy of the entry point and module beside a
+  stub `workflow-lib.sh` whose `workflow_design_opt_in` prints a valid
+  `DESIGN_OPT_IN=opted_in` block and then returns `1` gives exit 2 and empty
+  stdout (P8, L1).
 - T-template: run in this repository, the result is `not_opted_in` (S1).
 
 **Inventory and citations (AC13, AC14).**
@@ -884,7 +895,8 @@ def read_manifest(path):
 # Illustrative — the tree subcommand in the entry point.
 # shellcheck source=scripts/development-workflow/workflow-lib.sh
 source "$script_dir/workflow-lib.sh"
-workflow_design_opt_in "$root" | python3 -I -B "$script_dir/mockup-manifest-verify.py" tree --repo-root "$root"
+optin="$(workflow_design_opt_in "$root")" || exit 2
+printf '%s\n' "$optin" | python3 -I -B "$script_dir/mockup-manifest-verify.py" tree --repo-root "$root"
 ```
 
 ---
