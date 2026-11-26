@@ -4,13 +4,13 @@ The HTML Mockup Framework is a convention for version-controlled, interactive
 HTML mockups with no build step. This page is the framework's contract inside
 the template: where the design tree lives, how a repository lays it out, where
 tokens come from, how the design READMEs are split, which source wins a
-disagreement, and how a project opts in.
+disagreement, how a project opts in, and what a mockup manifest contains.
 
 ## Status and ownership
 
 This page is the canonical contract for the layout, repository types, tokens,
 README sections, source-of-truth hierarchy and the `design` opt-in block
-(#2211). The vault standard `HTML Mockup Framework.md` keeps the rationale and
+(#2211), and for the mockup manifest and its verify script (#2206). The vault standard `HTML Mockup Framework.md` keeps the rationale and
 history behind these rules and points here; when the two differ, this page
 wins. Later changes to the contract are made here first.
 
@@ -247,12 +247,229 @@ To start a design tree by hand:
 
 Copying the scaffold does not by itself opt the project in; only step 5 does.
 
+## Manifest
+
+Every mockup folder has a manifest, `mockup-manifest.js`, that names each
+screen and its local states (#2206). Specs, reviews and tooling cite designs
+by these ids. The verify script
+`scripts/development-workflow/mockup-manifest-verify.sh` checks the manifest,
+so a reviewer does not check ids or token mirroring by hand.
+
+### File form
+
+A manifest is data, never code. The file contains exactly one assignment of a
+plain JSON object to the global name `window.__MOCKUP_MANIFEST__`. Comments
+(`//` and `/* … */`) may come before and after it, and a closing semicolon is
+allowed:
+
+```js
+// Mockups for the sign-in flow.
+window.__MOCKUP_MANIFEST__ = {
+  "$kind": "design-intent",
+  "$status": "complete",
+  "default_screen": "login-email",
+  "frame": "phone",
+  "navigation": [
+    { "label": "Authentication", "items": [{ "screen_id": "login-email" }] }
+  ],
+  "screens": [
+    {
+      "screen_id": "login-email",
+      "kind": "html",
+      "states": [
+        { "state_id": "empty", "initial": true },
+        { "state_id": "invalid", "label": "Validation error" }
+      ]
+    }
+  ]
+};
+```
+
+The file is not readable as data when it holds any other code (a function
+wrapper, a second statement, a different global name), when the assigned value
+is not valid JSON (a JavaScript object literal with unquoted keys, single
+quotes or trailing commas, comments inside the value, `NaN`, a duplicate key),
+or when the file is not UTF-8. The assigned value must be a JSON object. The
+verify script reads the file as data and never runs, imports or evaluates it,
+so it needs no JavaScript runtime.
+
+### Top-level fields
+
+| Field | Required | Accepted values |
+| --- | --- | --- |
+| `$kind` | Yes | `design-intent` (Design intent) or `reproduction` (Reproduction): the mockup kind of the whole file. |
+| `$status` | Yes | `complete` (Complete: every screen is listed) or `skeleton` (Skeleton: a partial inventory). It records completeness and changes no check. |
+| `default_screen` | Yes | A `screen_id` that exists in `screens`. |
+| `frame` | Yes | `phone` (Phone), `desktop` (Desktop) or `browser` (Browser, which can show a `url`). |
+| `viewports` | No | A non-empty list of review presets, each with `id`, `label`, `width` and `height`. |
+| `navigation` | Yes | The flow-drawer navigation tree: a list of groups. It may be empty. |
+| `screens` | Yes | A non-empty list of the real screens. |
+
+### Screen fields
+
+| Field | Required | Accepted values |
+| --- | --- | --- |
+| `screen_id` | Yes | An English kebab-case slug, unique across the manifest's screens. |
+| `kind` | Yes | `html` (HTML) or `image` (Image, an exported image): the screen's content type, not the mockup kind. |
+| `export` | When `kind` is `image` | The path of the exported image. |
+| `route` | No | The app router path. |
+| `nav_screen` | No | The `screen_id` the flow drawer highlights; it must exist in `screens`. |
+| `dom_id` | No | The screen's page element id, needed only when it differs from `s-<screen_id>`. |
+| `title` | No | A readable metadata title. |
+| `url` | No | The address shown in a `browser` frame. |
+| `design_ref` | No | The design-tool frame name. It is never used as the `screen_id`. |
+| `state_label` | No | A title for the screen's state group. |
+| `states` | No | The screen's local states. When present it is a non-empty list. |
+
+### State fields
+
+| Field | Required | Accepted values |
+| --- | --- | --- |
+| `state_id` | Yes | A slug, unique within its screen. The same id may appear under other screens. |
+| `initial` | No | `true` or `false`. Exactly one state of the screen sets it to `true`. |
+| `label` | No | A readable state-selector label. |
+| `title` | No | A metadata title that temporarily replaces the screen title. |
+
+**Value types.** Every entry of `screens`, `states` and `viewports` is an
+object. Every text field (`export`, `route`, `nav_screen`, `dom_id`, `title`,
+`url`, `design_ref`, `state_label`, and the `label` of a state, a navigation
+group, a navigation entry or a viewport) is a non-empty string when present.
+
+### Rules
+
+- **A state is not a screen.** A visual variant (an empty form, a validation
+  error, an open modal) is a state of the screen that owns it, never another
+  screen; `navigation` and `screens` name real destinations only. A state
+  never declares a screen-level field: `screen_id`, `kind`, `export`, `route`,
+  `nav_screen`, `dom_id`, `url`, `design_ref`, `state_label` or `states`. Only
+  `title` is shared, because a state has its own `title`.
+- **Slugs.** A `screen_id`, a `state_id` and a viewport `id` are lowercase
+  ASCII letters and digits in hyphen-separated groups, starting with a letter,
+  for example `login-email`, `resend-ready` or `step-2`. A design-tool frame
+  name is never a valid `screen_id`.
+- **Navigation.** `navigation` is a list of groups. A group is an object with
+  a required `label` and a required `items` list of entries. An entry is an
+  object with a required `screen_id`, an optional `label` and an optional
+  `items` list of nested entries, to any depth. Any `items` list may be empty.
+  Every `screen_id` cited at any depth exists in `screens`; a screen need not
+  appear in the navigation. A navigation label may name a router path or a
+  product section.
+- **Viewports.** When present, `viewports` is a non-empty list. Viewport ids
+  are unique slugs, every viewport has a `label`, and `width` and `height` are
+  positive whole numbers. A viewport is a review setting, never a state.
+- **Unknown fields.** Fields this contract does not define, such as notes or
+  timestamps, are ignored and do not change the outcome. The one exception is
+  the screen-level fields a state must not declare.
+- **Language.** Structure text (ids, labels, navigation entries, state group
+  titles) is English, and a `label` is left out when it would only restate
+  its id. Content is in the product's language. The verify script checks only
+  the slug form of ids; whether a label is English is not machine-checkable.
+
+### Links
+
+A screen and state are linked as `#screen=<screen_id>&state=<state_id>`. A
+link without `state` opens the screen's initial state, or the screen itself
+when it has no states. The viewer may add review settings such as the
+viewport; they never change which screen or state is named.
+
+### Token mirroring
+
+A Design intent manifest mirrors every token of the token file in its page's
+`:root` style rules. A Reproduction is not checked, because it harvests the
+running app's stylesheet.
+
+- **Where the files are.** The page is `index.html` in the manifest's folder.
+  The token file is `tokens.json` in the folder that contains the `mockups`
+  folder holding the manifest: `design/tokens.json` for every repository type,
+  or `<design root>/tokens.json` under a configured design root.
+- **Names and values.** A token is a value at any depth of the token file that
+  is not an object. Keys starting with `$` are metadata, and nothing under
+  them is a token. The property name is `--` followed by the token's path
+  joined by hyphens, so `color.primary` becomes `--color-primary`. The value
+  must equal the token's value, ignoring only surrounding whitespace. A CSS
+  comment counts as one space, as in a browser, so a comment around a value is
+  ignored and a comment inside it (`#ff/**/ffff`) is a mismatch. A token
+  whose value is not a string is a problem. Extra properties are allowed.
+- **What is read.** Plain `:root` rules (a style rule whose selector list has
+  `:root` as one of its selectors) in the page's own `<style>` blocks and in
+  stylesheets the page links with a relative path inside the repository,
+  including declarations nested in at-rules such as media queries, and the
+  root element's `style` attribute. Every declaration of a token's property
+  there must carry the token's value, and a declaration marked `!important` is
+  a problem.
+- **Stated limitation.** The check is static: it reads declarations and does
+  not model the cascade or render the page. Other selectors that can match the
+  root element (such as `html`, `:root.dark` or an attribute selector),
+  stylesheets brought in by `@import` or from outside the repository, and
+  scripts that change properties at run time are not read, so a token declared
+  only there is reported missing.
+- **Problems.** For a Design intent manifest, a missing or unreadable page, a
+  linked in-repository stylesheet that is missing or unreadable, a missing or
+  unreadable token file, a token file that is not a JSON object, and a
+  manifest that is not inside a `mockups` folder are each a problem.
+
+### Checklist and verify script
+
+The checklist below is what `mockup-manifest-verify.sh` performs:
+
+1. Navigation ids exist in `screens`.
+2. States are local to their screen and unique within it.
+3. Every screen with states has exactly one initial state.
+4. No state carries a screen-level field.
+5. For Design intent, every token is mirrored in `:root`.
+
+Beyond the checklist, the script checks every field rule on this page: the
+file form, required fields, accepted values, value types, slugs and
+viewports. It reports every problem in one run, once the file is readable as
+data, and changes no file.
+
+<!-- workflow-shell-contract: bash -->
+```bash
+bash scripts/development-workflow/mockup-manifest-verify.sh manifest design/mockups/<app>/mockup-manifest.js
+```
+
+| Subcommand | Arguments | Answers |
+| --- | --- | --- |
+| `manifest` | `<manifest-path> [--repo-root <dir>]` | Whether one manifest conforms. Works whether or not the project is opted in. |
+| `tree` | `[--repo-root <dir>]` | Whether every manifest under the design root's `mockups` folder conforms, except the shared viewer folder `mockups/shared/`. Runs only when the project is opted in. |
+| `inventory` | `<manifest-path> [--repo-root <dir>]` | The screen and state ids a spec may cite, the initial state of each screen, and each link. |
+| `resolve` | `<manifest-path> --screen <id> [--state <id>] [--repo-root <dir>]` | Whether one citation resolves. |
+
+Output is `KEY=value` lines. Each problem is one
+`PROBLEM=<rule> <place>: <detail>` line naming the rule, the place (screen,
+state, viewport or navigation entry), the value found or its absence, and
+what was expected.
+Exit 0 is a non-failing outcome, 1 a failing one, and 2 a caller or
+environment error. The scripts README lists every key.
+
+| Code value | Display label | Failing | Meaning |
+| --- | --- | --- | --- |
+| `conforms` | Conforms | No | The manifest, or every manifest in the tree, passes every check. |
+| `does_not_conform` | Does not conform | Yes | At least one problem; every problem is named. |
+| `not_opted_in` | Not opted in | No | Tree check only: the project is not opted in; nothing was checked. |
+| `invalid_configuration` | Invalid configuration | Yes | Tree check only: the `design` block is unusable; nothing was checked. |
+| `no_mockups_found` | No mockups found | No | Tree check only: opted in, with no manifest yet. |
+
+A tree check also fails when a folder under `mockups` cannot be read, or is a
+symlink, because the search would be incomplete; each such folder is named.
+
+| Code value | Display label | Meaning |
+| --- | --- | --- |
+| `resolves` | Resolves | The screen, or the screen and state pair, exists. |
+| `does_not_resolve` | Does not resolve | Unknown screen, or a state the named screen does not have. |
+| `cannot_check` | Cannot check | The manifest does not conform, so no inventory or citation answer is given. |
+
+A caller treats Does not resolve and Cannot check as a broken citation. A
+manifest that does not conform never yields an inventory.
+
+Worked examples, valid and invalid, are the
+[verify script's fixtures](../../../scripts/development-workflow/tests/fixtures/mockup-manifest-verify/).
+
 ## Forthcoming
 
 These parts of the framework are delivered by later items and are not part of
 this contract yet:
 
-- Manifest contract and verify script — #2206.
 - Viewer and shell — #2207.
 - Setup bootstrap — #2208.
 - Adoption in an existing repository — #2214.

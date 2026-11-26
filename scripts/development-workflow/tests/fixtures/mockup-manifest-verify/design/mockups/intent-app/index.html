@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Intent app - mockup-manifest-verify fixture</title>
+  <link rel="stylesheet" href="styles/tokens.css">
+  <style>
+    :root {
+      --color-primary: #1f6feb;
+      --color-text: #1f2328;
+      --space-sm: 8px;
+      --space-md: 16px;
+    }
+
+    /* The same token property declared a second time, with the same value. */
+    :root {
+      --color-primary: #1f6feb;
+    }
+
+    .screen {
+      padding: var(--space-md);
+      color: var(--color-text);
+    }
+  </style>
+</head>
+<body>
+  <section class="screen" id="s-login-email">Sign in</section>
+  <section class="screen" id="s-login-code">Enter the code</section>
+  <section class="screen" id="home-screen">Home</section>
+  <section class="screen" id="s-onboarding-illustration">
+    <img src="exports/onboarding-illustration.png" alt="Welcome">
+  </section>
+</body>
+</html>

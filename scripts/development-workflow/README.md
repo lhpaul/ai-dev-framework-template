@@ -1405,6 +1405,51 @@ including audits, independently verified; report the recovery command and
 Ground-Truth Completion Verification. Preserve journals and a compatible reader
 before reverting this optional contract; ordinary sessions need no migration.
 
+### `mockup-manifest-verify.sh`
+
+Verifies HTML Mockup Framework manifests (#2206) against the contract in
+[Manifest](../../docs/workflow/development-workflow/mockup-framework.md#manifest).
+The Bash entry point validates arguments and runs the standard-library module
+`mockup-manifest-verify.py` (Python 3.9 or later) as `python3 -I -B`. A
+manifest is read as data and never executed, so no JavaScript runtime is
+needed. The tool creates, changes and deletes nothing, uses no network, and
+reads every file again on each run.
+
+<!-- workflow-shell-contract: bash -->
+```bash
+bash scripts/development-workflow/mockup-manifest-verify.sh manifest design/mockups/<app>/mockup-manifest.js
+```
+
+| Subcommand | Arguments | Keys, in order |
+| --- | --- | --- |
+| `manifest` | `<manifest-path> [--repo-root <dir>]` | `MANIFEST_RESULT` (`conforms` / `does_not_conform`), `MANIFEST_RESULT_LABEL`, `MANIFEST_PATH`, `MANIFEST_KIND`, `PROBLEM_COUNT`, `PROBLEM` (repeated) |
+| `tree` | `[--repo-root <dir>]` (default: the current Git toplevel) | `TREE_RESULT` (`not_opted_in` / `invalid_configuration` / `no_mockups_found` / `conforms` / `does_not_conform`), `TREE_RESULT_LABEL`; for an invalid opt-in the `DESIGN_PROBLEM_COUNT` and `DESIGN_PROBLEM` lines of `workflow_design_opt_in` unchanged; when opted in `DESIGN_ROOT`, `MOCKUPS_FOLDER`, `UNREADABLE_FOLDER_COUNT`, `UNREADABLE_FOLDER` (repeated), `MANIFEST_COUNT`, then per manifest `MANIFEST_<n>_PATH`, `MANIFEST_<n>_RESULT`, `MANIFEST_<n>_PROBLEM_COUNT`, `MANIFEST_<n>_PROBLEM` (repeated) |
+| `inventory` | `<manifest-path> [--repo-root <dir>]` | `INVENTORY_RESULT` (`listed` / `cannot_check`), `INVENTORY_RESULT_LABEL`; for `cannot_check` the `manifest` keys; for `listed` `SCREEN_COUNT`, then per screen `SCREEN_<n>_ID`, `SCREEN_<n>_LINK`, `SCREEN_<n>_STATE_COUNT` and per state `SCREEN_<n>_STATE_<m>_ID`, `SCREEN_<n>_STATE_<m>_INITIAL`, `SCREEN_<n>_STATE_<m>_LINK` |
+| `resolve` | `<manifest-path> --screen <id> [--state <id>] [--repo-root <dir>]` | `CITATION_RESULT` (`resolves` / `does_not_resolve` / `cannot_check`), `CITATION_RESULT_LABEL`, `CITATION_REASON` (`none` / `unknown_screen` / `unknown_state` / `manifest_does_not_conform`), `CITATION_LINK` (only for `resolves`); for `cannot_check` the `manifest` keys |
+
+- Exit `0` is a non-failing outcome (Conforms, Not opted in, No mockups found,
+  an inventory listed, Resolves), `1` a failing one (Does not conform, Invalid
+  configuration, Cannot check, Does not resolve), and `2` a caller or
+  environment error with stderr only and empty stdout: a usage error, a
+  `--repo-root` that is not a directory, a missing `python3`, `tree` outside a
+  Git repository without `--repo-root`, or a failed opt-in read. A missing
+  manifest path is not a caller error; it does not conform.
+- `tree` gates on `workflow_design_opt_in` from `workflow-lib.sh` and checks
+  every `mockup-manifest.js` under `<design root>/mockups/` except
+  `mockups/shared/`. An unreadable or symlinked folder fails the tree and is
+  named in `UNREADABLE_FOLDER`.
+- Each problem is `PROBLEM=<rule> <place>: <detail>`, with the spec rule id
+  (`BR1` to `BR19`), the place (`manifest`, `screen <id>`,
+  `screen <id> state <id>`, `navigation[<i>].items[<j>]`, `viewport <id>`,
+  `token <path>`), the value found or `absent`, and what was expected. Values
+  use the `workflow_design_opt_in` escaping. Paths are relative to the
+  repository root when inside it.
+- Without `--repo-root`, `manifest`, `inventory` and `resolve` use the Git
+  toplevel of the manifest's folder, else the folder that contains the design
+  root. The root decides which linked stylesheets are inside the repository.
+- Suite: `tests/test-mockup-manifest-verify.sh`, with fixtures in
+  `tests/fixtures/mockup-manifest-verify/`.
+
 ### `post-merge-cleanup.sh`
 
 Paired release operators use `prepare-release-post-merge-cleanup.sh
