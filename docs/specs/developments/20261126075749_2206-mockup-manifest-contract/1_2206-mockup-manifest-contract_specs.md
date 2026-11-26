@@ -347,9 +347,14 @@ Rows are evaluated in order, and the first match decides the outcome.
 | --- | --- | --- |
 | 1 | The opt-in outcome is Not opted in | Not opted in (nothing checked) |
 | 2 | The opt-in outcome is Invalid configuration | Invalid configuration (opt-in problems listed, nothing checked) |
-| 3 | Opted in, and the design tree has no manifest under BR17 (including a missing mockups folder) | No mockups found |
-| 4 | Opted in, and every manifest found conforms | Conforms |
-| 5 | Opted in, and one or more manifests found do not conform | Does not conform (each failing manifest and its problems listed) |
+| 3 | Opted in, and the mockups folder, or any folder below it that BR17 searches, exists but cannot be read | Does not conform (each unreadable folder named; every manifest that could be read is still checked and listed) |
+| 4 | Opted in, and the design tree has no manifest under BR17 (including a missing mockups folder) | No mockups found |
+| 5 | Opted in, and every manifest found conforms | Conforms |
+| 6 | Opted in, and one or more manifests found do not conform | Does not conform (each failing manifest and its problems listed) |
+
+Row 3 comes before rows 4 and 5 because an unreadable folder means the search
+is incomplete: the check can prove neither that no manifest exists nor that
+every manifest conforms, so it fails rather than pass.
 
 ### Citation table
 
@@ -500,8 +505,9 @@ consumer's design tree.
   outcome of the matching tree-table row for each of these: not opted in;
   invalid opt-in block; opted in with no manifests; opted in with all
   manifests conforming; opted in with one failing manifest among conforming
-  ones (only that one is listed as failing). A manifest under `shared` is not
-  checked.
+  ones (only that one is listed as failing); opted in with an unreadable
+  subfolder of the mockups folder beside a conforming manifest (Does not
+  conform, naming that folder). A manifest under `shared` is not checked.
 - [ ] AC12: Run in the template repository, the tree check reports Not opted
   in.
 - [ ] AC13: For a conforming fixture, the id inventory lists every screen id,
