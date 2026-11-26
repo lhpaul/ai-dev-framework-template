@@ -168,8 +168,9 @@ Each decision is stated here once; every other section refers to it by label.
     state.
   - **`$status` (BR2).** Changes nothing.
   - **Mirroring trigger.** P6 runs only when `$kind` is exactly
-    `design-intent`. With any other `$kind` value only the BR2 `$kind`
-    problem is reported, because the kind is unknown.
+    `design-intent`. With any other `$kind` value P6 is skipped and the
+    only kind-related problem is the BR2 `$kind` problem, because the kind
+    is unknown; every other check of row 4 still runs (BR13).
 - **P6 — Token mirroring (BR10, BR11).**
   - **Locating files.**
     - The page is `index.html` in the manifest's folder.
@@ -392,7 +393,7 @@ with its governed scope and discharge point:
 | ID | Obligation | Governed scope | Discharged at |
 | --- | --- | --- | --- |
 | S1 | The template-repository tree assertion (AC12) runs only when `workflow_template_is_template` returns `true` | the single T-template case in the new suite, which reads this repository's own configuration | L4 T-template; prints `SKIP: T-template - not the template repository` in consumers |
-| S2 | A permission-denied folder or file is tested only when the suite does not run as root | T-tree-unreadable and T-ac6-unreadable-page | L4, skipped with a printed reason when `id -u` is 0 |
+| S2 | A permission-denied folder or file is tested only when the suite does not run as root | T-tree-unreadable and T-page-unreadable | L4, skipped with a printed reason when `id -u` is 0 |
 | S3 | Mirroring runs only when `$kind` is exactly `design-intent` | every manifest P6 sees, in `manifest`, `tree`, `inventory` and `resolve` | P5's last check; T-repro-valid and T-ac6-kind-unknown |
 | S4 | A linked stylesheet is read only when its href is relative and its real path is inside the repository root (P10) | every `<link rel=stylesheet>` in a Design intent page | P6 link resolution; T-css-link-outside, T-css-link-absolute |
 | S5 | When the implementation-start re-run of V3 or V14 differs from this log, implementation stops before file edits | Implementation Order step 1 only | Implementation Order step 1 |
@@ -639,6 +640,11 @@ The mirroring cases:
 - T-ac6-tokens-not-object
 - T-ac6-no-index-html
 - T-ac6-not-in-mockups
+
+Beyond the AC6 list, one BR11 case covers an unreadable page:
+
+- T-page-unreadable: a `chmod 000` `index.html` beside a Design intent
+  manifest gives a BR11 problem naming the page (S2).
 
 Each case asserts:
 

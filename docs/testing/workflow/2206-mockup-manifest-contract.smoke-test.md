@@ -145,9 +145,12 @@ Below, `FX` stands for the fixtures folder and `TOOL` for the tool path.
 
 1. Run `python3 -B scripts/development-workflow/check-sync-manifest-coverage.py`.
 2. Run `bash scripts/development-workflow/tests/test-mockup-manifest-verify.sh`.
-3. Copy the new and changed paths into a scratch consumer that has no
-   `design` block, following the plan's L6 classification table, then run
-   `bash TOOL tree --repo-root <consumer>` there.
+3. Create a scratch consumer: a Git repository whose
+   `.ai-dev-workflow.yaml` has no `design` block, holding a copy of this
+   checkout's `scripts/development-workflow/` folder (the helpers the tool
+   sources, now including the new files). Copy the remaining new and changed
+   paths into it, following the plan's L6 classification table. From the
+   consumer's root, run `bash TOOL tree`.
 
 **Expected result**:
 
