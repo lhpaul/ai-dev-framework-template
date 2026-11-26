@@ -659,6 +659,9 @@ Protocol prefixes are stable family identifiers, not a promise of contiguous num
 - `docs/workflow/development-workflow/design-assets.md` — capture, storage
   (`<dev-folder>/assets/`), discovery order, and lightweight plan/smoke fidelity
   hooks for graphical design references (not a visual-regression platform)
+- `docs/workflow/development-workflow/mockup-framework.md` — HTML Mockup
+  Framework contract: design tree, repository types, token rules, README
+  sections, source-of-truth hierarchy and the `design` opt-in block
 
 ### Core Protocols
 
@@ -694,7 +697,7 @@ Protocol prefixes are stable family identifiers, not a promise of contiguous num
 - `docs/workflow/development-workflow/guardrails-enforcement.md` — single source of truth for how orchestration resolves effective guardrails (three-layer precedence), the config-field→run-epic-policy mapping table, the six enforcement gates (load+report, backlog-start, PR-open, delegated review, delegated merge, completion), named stop conditions and the stop-message contract, conservative defaults, and audit-evidence rules
 - `docs/workflow/development-workflow/tracker-status-mapping.md` — canonical tracker Status vocabulary and the single event-to-Status mapping (`dispatch`, `ready-for-human-review`, `merged`, `released`, and the readiness labels that leave Status unchanged), resolved by `tracker-status-for.sh`
 - `docs/workflow/development-workflow/architecture-decision-escalation.md` — canonical requirement for well-formed `architecture_decision` escalation content: axis decomposition, coverage verdicts, per-citation conformance declarations, and the requested decision scoped to genuinely open axes only
-- `.ai-dev-workflow.yaml` - repo-level workflow integration manifest (`mode`, `workflow_hub.product_repos[]`, `product_repo.workflow_hub`, `review.on_draft.runner`, `review.on_draft.github`, `review.on_ready.github`, `template.is_template`, `template.repository`, `template.last_synced_version`, `issue_tracker.provider`, `vcs.provider`, `browser_automation.provider`, `guardrails`)
+- `.ai-dev-workflow.yaml` - repo-level workflow integration manifest (`mode`, `workflow_hub.product_repos[]`, `product_repo.workflow_hub`, `review.on_draft.runner`, `review.on_draft.github`, `review.on_ready.github`, `template.is_template`, `template.repository`, `template.last_synced_version`, `issue_tracker.provider`, `vcs.provider`, `browser_automation.provider`, `guardrails`, `design`)
 - `.ai-dev-workflow.local.example.yaml` - placeholder-only example for gitignored local checkout, secret-reference, review-runner, and tool overrides
 
 Repository helpers:

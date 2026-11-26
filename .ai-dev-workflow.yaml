@@ -43,6 +43,16 @@
 # - If this file is absent, or both review.on_draft.github and
 #   review.on_ready.github are omitted or empty, the review loop reports skipped
 #   (not configured).
+#
+# HTML Mockup Framework opt-in: the top-level `design` block is the only
+# record that this repository uses the framework; when it is absent the
+# repository is not opted in. Contract and accepted values:
+# docs/workflow/development-workflow/mockup-framework.md. Example (inactive):
+#
+#   design:
+#     root: design/        # optional; defaults to design/ when omitted
+#     home: knowledge
+#     kind: design-intent
 # <!-- TEMPLATE-OWNED-END -->
 
 schema_version: 2

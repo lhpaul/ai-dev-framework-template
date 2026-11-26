@@ -1391,6 +1391,221 @@ workflow_template_is_template() {
   esac
 }
 
+# workflow_design_opt_in [repo_root]
+#
+# Reports whether the repository opted in to the HTML Mockup Framework
+# (#2211; spec docs/specs/developments/20261125124423_2211-mockup-framework-layout/,
+# contract docs/workflow/development-workflow/mockup-framework.md). The
+# top-level `design` block of the versioned configuration is the only opt-in
+# record; stages gate on this helper, never on prose or on a design folder.
+#
+# Source rule: reads only <repo_root>/.ai-dev-workflow.yaml (repo_root
+# defaults to workflow_repo_root), freshly on every call. It never reads
+# .ai-dev-workflow.local.* and ignores AI_DEV_WORKFLOW_CONFIG_FILE and
+# WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT: machine-local configuration cannot opt
+# a repository in or out. Parsing reuses the resolver's strict reader
+# (capture_config_text, validate_selected_yaml); -B keeps Python from writing
+# a bytecode cache, so the call changes no file.
+#
+# Output contract (stdout, exit 0 for every outcome; one KEY=value per line,
+# values escaped like print_kv_escaped):
+#   DESIGN_OPT_IN=not_opted_in|opted_in|invalid
+#   DESIGN_OPT_IN_LABEL=Not opted in|Opted in|Invalid configuration
+#   opted_in only:  DESIGN_ROOT, DESIGN_ROOT_SOURCE=configured|default,
+#                   DESIGN_HOME, DESIGN_HOME_LABEL, DESIGN_KIND, DESIGN_KIND_LABEL
+#   invalid only:   DESIGN_PROBLEM_COUNT, then one DESIGN_PROBLEM=<field>: <detail>
+#                   per problem; <field> is configuration, design, design.home,
+#                   design.kind or design.root (home, kind, root in that order)
+# Exit 2 with no stdout means a caller or environment error: a repo_root
+# argument that is empty or not a directory, or, with no argument, a
+# workflow_repo_root failure. If python3 or the reader cannot run, the helper
+# fails closed: Not opted in when no file exists, otherwise Invalid
+# configuration with a problem saying the check could not run.
+workflow_design_opt_in() {
+  local repo_root config out
+  local program='
+import importlib.util
+import os
+import posixpath
+import re
+import sys
+from pathlib import Path
+
+HOMES = {"knowledge": "Knowledge repository", "product": "Product repository"}
+KINDS = {"design-intent": "Design intent", "reproduction": "Reproduction"}
+ROOT_RULE = ("expected a non-empty relative path that stays inside the repository, "
+             "or omit root to use the default design/")
+CONFIG_RULE = "it must be readable UTF-8 YAML whose top level is a mapping"
+
+
+def escape(text):
+    out = []
+    for char in text:
+        code = ord(char)
+        if char == "\\":
+            out.append("\\\\")
+        elif char == "\r":
+            out.append("\\r")
+        elif char == "\n":
+            out.append("\\n")
+        elif char == "\t":
+            out.append("\\t")
+        elif code < 32 or code == 127:
+            out.append("\\x%02x" % code)
+        elif 128 <= code <= 159:
+            out.append("\\u%04x" % code)
+        else:
+            out.append(char)
+    return "".join(out)
+
+
+def emit(pairs):
+    data = "".join("%s=%s\n" % (key, escape(value)) for key, value in pairs)
+    sys.stdout.buffer.write(data.encode("utf-8", "replace"))
+    sys.stdout.buffer.flush()
+
+
+def describe(value):
+    if value is None:
+        return "null (no value)"
+    if isinstance(value, bool):
+        return "a boolean (%s)" % ("true" if value else "false")
+    if isinstance(value, (int, float)):
+        return "a number (%r)" % value
+    if isinstance(value, str):
+        if value == "":
+            return "an empty string"
+        if len(value) > 80:
+            value = value[:80] + "…"
+        return "\"%s\"" % value
+    if isinstance(value, list):
+        return "a list" if value else "an empty list"
+    if isinstance(value, dict):
+        return "a mapping" if value else "an empty mapping"
+    return "an unsupported value"
+
+
+def accepted(values):
+    return ", ".join("%s (%s)" % item for item in values.items())
+
+
+def not_opted_in():
+    emit([("DESIGN_OPT_IN", "not_opted_in"), ("DESIGN_OPT_IN_LABEL", "Not opted in")])
+
+
+def invalid(problems):
+    pairs = [("DESIGN_OPT_IN", "invalid"), ("DESIGN_OPT_IN_LABEL", "Invalid configuration"),
+             ("DESIGN_PROBLEM_COUNT", str(len(problems)))]
+    emit(pairs + [("DESIGN_PROBLEM", problem) for problem in problems])
+
+
+def unreadable(reason):
+    invalid(["configuration: .ai-dev-workflow.yaml exists but could not be read or parsed (%s); %s"
+             % (reason, CONFIG_RULE)])
+
+
+def enum_problem(block, field, values):
+    if field not in block:
+        found = "absent"
+    elif isinstance(block[field], str) and block[field] in values:
+        return None
+    else:
+        found = "found " + describe(block[field])
+    return "design.%s: %s; accepted values: %s" % (field, found, accepted(values))
+
+
+def root_problem(root):
+    if not isinstance(root, str):
+        reason = "found %s, which is not a string" % describe(root)
+    elif root == "":
+        reason = "found an empty string"
+    else:
+        slashed = root.replace("\\", "/")
+        normal = posixpath.normpath(slashed)
+        if slashed.startswith("/") or re.match(r"[A-Za-z]:", root):
+            reason = "found %s, which is an absolute path" % describe(root)
+        elif normal == ".." or normal.startswith("../"):
+            reason = "found %s, which leaves the repository" % describe(root)
+        else:
+            return None
+    return "design.root: %s; %s" % (reason, ROOT_RULE)
+
+
+def main():
+    loader = importlib.util.spec_from_file_location("workflow_config_resolver", sys.argv[1])
+    resolver = importlib.util.module_from_spec(loader)
+    loader.loader.exec_module(resolver)
+    config = sys.argv[2]
+    if not os.path.lexists(config):
+        return not_opted_in()
+    path = Path(config)
+    try:
+        text = resolver.capture_config_text(path)
+    except UnicodeDecodeError:
+        return unreadable("not valid UTF-8")
+    except (resolver.ConfigError, OSError):
+        return unreadable("not a readable regular file")
+    if text is None:
+        return not_opted_in()
+    try:
+        data = resolver.validate_selected_yaml(text, path)
+    except (resolver.ConfigError, ValueError, RecursionError) as exc:
+        reason = getattr(exc, "error_type", "") or "invalid YAML"
+        line = getattr(exc, "line", None)
+        if isinstance(line, int):
+            reason += ", line %d" % line
+        return unreadable(reason)
+    if not isinstance(data, dict):
+        return unreadable("selected source must be a mapping")
+    if "design" not in data:
+        return not_opted_in()
+    block = data["design"]
+    if not isinstance(block, dict) or not block:
+        return invalid(["design: found %s; expected a mapping with the fields home, kind "
+                        "and optional root" % describe(block)])
+    problems = [problem for problem in (
+        enum_problem(block, "home", HOMES),
+        enum_problem(block, "kind", KINDS),
+        root_problem(block["root"]) if "root" in block else None,
+    ) if problem]
+    if problems:
+        return invalid(problems)
+    configured = "root" in block
+    emit([
+        ("DESIGN_OPT_IN", "opted_in"), ("DESIGN_OPT_IN_LABEL", "Opted in"),
+        ("DESIGN_ROOT", block["root"] if configured else "design/"),
+        ("DESIGN_ROOT_SOURCE", "configured" if configured else "default"),
+        ("DESIGN_HOME", block["home"]), ("DESIGN_HOME_LABEL", HOMES[block["home"]]),
+        ("DESIGN_KIND", block["kind"]), ("DESIGN_KIND_LABEL", KINDS[block["kind"]]),
+    ])
+
+
+main()
+'
+
+  if [ "$#" -gt 0 ]; then
+    [ -n "$1" ] && [ -d "$1" ] || return 2
+    repo_root="$1"
+  else
+    repo_root="$(workflow_repo_root)" || return 2
+    [ -n "$repo_root" ] || return 2
+  fi
+  config="$repo_root/.ai-dev-workflow.yaml"
+
+  # Print nothing until the program has produced a complete outcome.
+  if have_cmd python3 &&
+    out="$(python3 -I -B -c "$program" "$(workflow_config_resolver_script)" "$config" 2>/dev/null)" &&
+    [ "${out%%=*}" = "DESIGN_OPT_IN" ]; then
+    printf '%s\n' "$out"
+  elif [ -e "$config" ] || [ -L "$config" ]; then
+    printf '%s\n' 'DESIGN_OPT_IN=invalid' 'DESIGN_OPT_IN_LABEL=Invalid configuration' \
+      'DESIGN_PROBLEM_COUNT=1' \
+      'DESIGN_PROBLEM=configuration: the opt-in check could not run (python3 or the configuration reader failed); the file may be valid'
+  else
+    printf '%s\n' 'DESIGN_OPT_IN=not_opted_in' 'DESIGN_OPT_IN_LABEL=Not opted in'
+  fi
+}
+
 # _workflow_config_review_scalar <config_file> <key>
 #
 # Internal helper shared by workflow_config_review_max_cycles and
