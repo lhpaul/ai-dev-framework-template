@@ -281,17 +281,24 @@ citation is broken.
 - BR10 (token mirroring, design intent only): For a Design intent manifest,
   every token in the design tree's token file appears in the mockup page's
   `:root` style rules. The rules are read from the page's own style blocks and from
-  stylesheets it links inside the repository. The property name is `--`
+  stylesheets it links inside the repository. A `:root` rule is a style rule
+  whose selector list has the plain selector `:root` as one of its selectors.
+  The property name is `--`
   followed by the token's path joined by hyphens (`color.primary` becomes
   `--color-primary`). The value is the token's value, with only surrounding
   whitespace ignored. The check is static: it reads declarations and does not
-  model the cascade or render the page. So that it can never certify a value
-  the browser would not show, every declaration of a token's property in the
-  page's `:root` rules, including ones nested in at-rules such as media
-  queries, must carry the token's value, and a declaration marked
-  `!important` is a problem. Declarations in the root element's `style`
-  attribute are checked the same way. Scripts that change properties
-  at run time are outside the check. A token is a value
+  model the cascade or render the page. So that the declarations it reads can
+  never certify a value the browser would not show, every declaration of a
+  token's property in the page's `:root` rules, including ones nested in
+  at-rules such as media queries, must carry the token's value, and a
+  declaration marked `!important` is a problem. Declarations in the root
+  element's `style` attribute count as `:root` declarations and are checked
+  the same way. The check reads nothing else, and this is a stated limitation:
+  other selectors that can match the root element (such as `html`,
+  `:root.dark` or an attribute selector), stylesheets brought in by `@import`
+  or from outside the repository, and scripts that change properties at run
+  time are outside the check, and a token declared only there is missing. A
+  token is a value
   at any depth that is not an object. Keys starting with `$` are metadata, and
   nothing under them is a token. A token whose value is not a string is a
   mirroring problem that names the token. Extra properties in the `:root`
@@ -304,7 +311,8 @@ citation is broken.
   `design/tokens.json` in every #2211 repository type, and
   `<design root>/tokens.json` under a configured design root. For a Design
   intent manifest, each of these is a mirroring problem: a missing or
-  unreadable page, a missing or unreadable token file, a token file that is
+  unreadable page, a stylesheet the page links inside the repository that is
+  missing or unreadable, a missing or unreadable token file, a token file that is
   not a JSON object, and a manifest that is not inside a `mockups` folder, so
   that no token file can be located.
 - BR12 (unknown fields): Fields the contract does not define, such as notes or
@@ -501,7 +509,8 @@ consumer's design tree.
   page missing one token; a Design intent page with one token at a different
   value; a Design intent page that declares one token property twice, the
   later declaration matching and the earlier one different; a Design intent
-  page that marks a mirrored token property `!important`; a Design intent token file with a token that is not a string; a
+  page that marks a mirrored token property `!important`; a Design intent
+  page that links a missing stylesheet inside the repository; a Design intent token file with a token that is not a string; a
   Design intent manifest whose token file is missing; a Design intent manifest
   whose token file is not valid JSON; a Design intent manifest whose token file
   is not a JSON object; a Design intent manifest with no `index.html` beside
@@ -618,5 +627,8 @@ consumer's design tree.
 - Generated reproduction manifests and their build or staleness check, pixel
   and byte gates, and the fidelity kit (#1470 out of scope; #1442).
 - A token schema beyond the mirroring rule, and token tooling.
+- Modelling the CSS cascade or rendering the page to check token values:
+  declarations outside the `:root` rules BR10 reads are not checked (BR10
+  stated limitation).
 - Any change to CI workflows, reviewer configuration, checkpoint policy or the
   repository's workflow configuration.
