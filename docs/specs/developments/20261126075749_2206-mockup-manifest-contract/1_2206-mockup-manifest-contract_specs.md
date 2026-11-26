@@ -214,7 +214,7 @@ citation is broken.
   | `default_screen` | Yes | A `screen_id` that exists in `screens`. |
   | `frame` | Yes | `phone`, `desktop` or `browser`. |
   | `viewports` | No | A list of review presets, each with `id`, `label`, `width` and `height`. |
-  | `navigation` | Yes | The flow-drawer navigation tree. |
+  | `navigation` | Yes | The flow-drawer navigation tree: a list of groups (BR7). It may be empty. |
   | `screens` | Yes | A non-empty list: the complete inventory of real screens. |
 
 - BR3 (screen fields): Each entry in `screens` has these fields:
@@ -250,10 +250,14 @@ citation is broken.
   ASCII letters and digits in hyphen-separated groups, starting with a letter,
   for example `login-email`, `resend-ready` or `step-2`. A design-tool frame
   name is never a valid `screen_id`.
-- BR7 (navigation references): Every `screen_id` cited at any depth of the
-  navigation tree exists in `screens`. Navigation entries carry `label` and,
-  optionally, nested entries. A navigation label may name a router path or a
-  product section.
+- BR7 (navigation tree): `navigation` is a list of groups. A group is an
+  object with a required `label` and an `items` list of entries. An entry is
+  an object with a required `screen_id`, an optional `label`, and an optional
+  `items` list of nested entries, to any depth. Every `screen_id` cited at any
+  depth exists in `screens`. A screen need not appear in the navigation. A
+  navigation label may name a router path or a product section. This is the
+  shape every reference manifest already uses (RADAR, Leasity, MOME and Zeki,
+  read on 2026-11-26), so the contract records it rather than inventing one.
 - BR8 (viewports): When `viewports` is present, it is a non-empty list.
   Viewport ids are unique and follow BR6, every viewport has a `label`, and
   `width` and `height` are positive whole numbers. A viewport is a review
@@ -457,8 +461,9 @@ consumer's design tree.
   unknown `frame`; `default_screen` not in `screens`; empty `screens`;
   duplicate `screen_id`; a `screen_id` that is not a slug; missing or unknown
   screen `kind`; an image screen without `export`; a `title` that is not a
-  string; an empty `states` list; a state without `state_id`; a navigation entry citing an
-  unknown screen at a nested depth; a `nav_screen` citing an unknown screen;
+  string; an empty `states` list; a state without `state_id`; `navigation` that is not a
+  list; a navigation group without `label`; a navigation entry without
+  `screen_id`; a navigation entry citing an unknown screen at a nested depth; a `nav_screen` citing an unknown screen;
   duplicate `state_id` within a screen; a screen with states and no initial
   state; a screen with two initial states; a state declaring `route`; a
   duplicate viewport id; a viewport with a non-positive width; a Design intent
