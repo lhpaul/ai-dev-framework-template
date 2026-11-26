@@ -347,8 +347,8 @@ Rows are evaluated in order, and the first match decides the outcome.
 | --- | --- | --- |
 | 1 | The opt-in outcome is Not opted in | Not opted in (nothing checked) |
 | 2 | The opt-in outcome is Invalid configuration | Invalid configuration (opt-in problems listed, nothing checked) |
-| 3 | Opted in, and the mockups folder, or any folder below it that BR17 searches, exists but cannot be read | Does not conform (each unreadable folder named; every manifest that could be read is still checked and listed) |
-| 4 | Opted in, and the design tree has no manifest under BR17 (including a missing mockups folder) | No mockups found |
+| 3 | Opted in, and the mockups folder, or any folder below it that BR17 searches, exists but cannot be read, or whether the mockups folder exists cannot be determined | Does not conform (each unreadable folder named; every manifest that could be read is still checked and listed) |
+| 4 | Opted in, and the design tree has no manifest under BR17 (including a mockups folder confirmed missing) | No mockups found |
 | 5 | Opted in, and every manifest found conforms | Conforms |
 | 6 | Opted in, and one or more manifests found do not conform | Does not conform (each failing manifest and its problems listed) |
 
