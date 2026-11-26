@@ -154,7 +154,10 @@ write_manifest() {
 snapshot() {
   local dir="$1"
   if [ "$dir" = "$REPO_ROOT" ]; then
-    GIT_OPTIONAL_LOCKS=0 git -C "$REPO_ROOT" status --porcelain --untracked-files=all 2>&1 || true
+    if ! GIT_OPTIONAL_LOCKS=0 git -C "$REPO_ROOT" status --porcelain --untracked-files=all 2>&1; then
+      # check() fails a case whose snapshot could not be taken.
+      printf 'SNAPSHOT_FAILED\n'
+    fi
     return 0
   fi
   (
@@ -252,6 +255,7 @@ check() {
     [ "$TIMED_OUT" = 0 ] || why="$why; killed by the 30-second watchdog"
     [ "$RC" = "$want_rc" ] || why="$why; exit $RC, expected $want_rc"
     [ "$before" = "$after" ] || why="$why; the case directory changed"
+    case "$before$after" in *SNAPSHOT_FAILED*) why="$why; the directory snapshot failed" ;; esac
     if [ "$want_rc" = 2 ] && [ -n "$OUT" ]; then
       why="$why; stdout is not empty on a caller error"
     fi
@@ -334,7 +338,7 @@ ac6() {
   dir="$(new_case)"
   copy_fixture "$dir"
   mutate "$dir/$INTENT" "$code"
-  check "$name" "$dir" 1 "${specs[@]}" -- manifest "$dir/$INTENT" --repo-root "$dir"
+  check "$name" "$dir" 1 ${specs[@]+"${specs[@]}"} -- manifest "$dir/$INTENT" --repo-root "$dir"
 }
 
 # ac6_files <name> <setup function> <expected problem start> [count]: the
@@ -346,7 +350,7 @@ ac6_files() {
   dir="$(new_case)"
   copy_fixture "$dir"
   "$setup" "$dir"
-  check "$name" "$dir" 1 "${specs[@]}" -- manifest "$dir/${AC6_MANIFEST:-$INTENT}" --repo-root "$dir"
+  check "$name" "$dir" 1 ${specs[@]+"${specs[@]}"} -- manifest "$dir/${AC6_MANIFEST:-$INTENT}" --repo-root "$dir"
 }
 
 FORM_PREFIX="BR1 manifest: not readable as data: "
