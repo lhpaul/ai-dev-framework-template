@@ -119,8 +119,14 @@ Each decision is stated here once; every other section refers to it by label.
   says why the file is not data and never echoes file content (UX rules).
   Paths are printed relative to the repository root when they are inside it.
 - **P4 — Reading the manifest file (BR1, verification rows 1 to 3).**
-  1. Open and read the file in binary mode. A missing file, a directory or a
-     read error gives row 1.
+  1. First `os.stat` the path, following symlinks, which never blocks.
+     Missing (including a dangling symlink), or any type other than a
+     regular file (a directory, FIFO, socket or device), gives row 1 before
+     anything is opened. Then open and read the regular file in binary mode,
+     with `O_NONBLOCK` added to the open flags. A read error, or the opened
+     file no longer being a regular file (checked with `os.fstat`), also
+     gives row 1. So a FIFO or device named `mockup-manifest.js` can never
+     block the tool.
   2. Decode as strict UTF-8 and drop one leading BOM. A decode error gives
      row 2 ("not UTF-8 text").
   3. Scan from the start. Skip ASCII whitespace, `//` comments (to the next
@@ -285,9 +291,13 @@ Each decision is stated here once; every other section refers to it by label.
 - **P10 — Repository root.**
   - `--repo-root` when given, else `git -C <manifest folder> rev-parse
     --show-toplevel`.
-  - When neither gives a directory, the folder that contains the design root
-    is used. That is the parent of the token file's folder, or, failing that,
-    the manifest's own folder.
+  - `tree` always has a root: `--repo-root`, or the current Git toplevel, or
+    exit 2 (L1). Every manifest the walk finds uses that one root, so the
+    fallback below never applies to `tree`.
+  - For `manifest`, `inventory` and `resolve` only, when neither
+    `--repo-root` nor Git gives a directory, the root is the folder that
+    contains the design root. That is the parent of the token file's folder,
+    or, failing that, the manifest's own folder.
   - The root decides only whether a linked stylesheet is "inside the
     repository" and how paths are printed.
 - **P11 — Read-only and fresh (BR14, AC15).**
@@ -498,6 +508,10 @@ At implementation start, re-run V3 and V14 (S5).
   `find` listing with file sizes and `cksum` output) and asserts the two are
   equal (AC15).
 - Cases run under the invoking `bash` and `/bin/bash`.
+- Each case runs the tool under a 30-second watchdog: the run is started in
+  the background and killed if still alive after 30 seconds, which fails the
+  case. macOS has no `timeout` command by default, so the suite does not use
+  one.
 - No real `.ai-dev-workflow.local.*` file is read or written. Tree cases
   write a fabricated versioned `.ai-dev-workflow.yaml` into the disposable
   repository.
@@ -692,6 +706,10 @@ fabricated `.ai-dev-workflow.yaml`.
 - T-tree-dangling-manifest: a dangling `mockup-manifest.js` symlink in an
   app folder is listed with `does_not_conform` (row 1), so the tree does not
   conform (P8).
+- T-tree-fifo-manifest: a FIFO named `mockup-manifest.js` (made with
+  `mkfifo`) in an app folder is listed with `does_not_conform` (row 1); the
+  run finishes before the suite's 30-second watchdog (L4) and the other
+  manifests are still listed (P4 step 1, P8).
 - T-tree-opt-in-failed: input to the module's `tree` subcommand without a
   `DESIGN_OPT_IN=` first line gives exit 2 and empty stdout (P8).
 - T-template: run in this repository, the result is `not_opted_in` (S1).
