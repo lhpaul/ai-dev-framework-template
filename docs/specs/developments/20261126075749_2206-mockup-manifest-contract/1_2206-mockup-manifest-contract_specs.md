@@ -200,11 +200,13 @@ citation is broken.
 
 ## Business Rules
 
-- BR1 (data only): A manifest file is named `mockup-manifest.js`. It conforms
-  in form only when it contains exactly one assignment of a plain JSON object to the global manifest name
-  `window.__MOCKUP_MANIFEST__`. Comments may come before and after it, and a
-  closing semicolon is allowed. Any other code makes the file not readable as
-  data. The verify script never runs, imports or evaluates a manifest (D3).
+- BR1 (data only): A manifest file is named `mockup-manifest.js`. It is in
+  the data form only when it contains exactly one assignment of a JSON value
+  to the global manifest name `window.__MOCKUP_MANIFEST__`. Comments may come
+  before and after it, and a closing semicolon is allowed. Any other code, or
+  an assigned value that is not valid JSON, makes the file not readable as
+  data. The assigned value must also be a JSON object (verification table
+  row 3). The verify script never runs, imports or evaluates a manifest (D3).
 - BR2 (top-level fields): The top-level object has these fields:
 
   | Field | Required | Rule |
@@ -215,7 +217,10 @@ citation is broken.
   | `frame` | Yes | `phone`, `desktop` or `browser`. |
   | `viewports` | No | A list of review presets, each with `id`, `label`, `width` and `height`. |
   | `navigation` | Yes | The flow-drawer navigation tree: a list of groups (BR7). It may be empty. |
-  | `screens` | Yes | A non-empty list: the complete inventory of real screens. |
+  | `screens` | Yes | A non-empty list of the real screens. |
+
+  `$status` records how complete the inventory is. It does not change which
+  checks run.
 
 - BR3 (screen fields): Each entry in `screens` has these fields:
 
@@ -251,9 +256,10 @@ citation is broken.
   for example `login-email`, `resend-ready` or `step-2`. A design-tool frame
   name is never a valid `screen_id`.
 - BR7 (navigation tree): `navigation` is a list of groups. A group is an
-  object with a required `label` and an `items` list of entries. An entry is
-  an object with a required `screen_id`, an optional `label`, and an optional
-  `items` list of nested entries, to any depth. Every `screen_id` cited at any
+  object with a required `label` and a required `items` list of entries. An
+  entry is an object with a required `screen_id`, an optional `label`, and an
+  optional `items` list of nested entries, to any depth. Any `items` list may
+  be empty. Every `screen_id` cited at any
   depth exists in `screens`. A screen need not appear in the navigation. A
   navigation label may name a router path or a product section. This is the
   shape every reference manifest already uses (RADAR, Leasity, MOME and Zeki,
@@ -273,8 +279,12 @@ citation is broken.
   stylesheets it links inside the repository. The property name is `--`
   followed by the token's path joined by hyphens (`color.primary` becomes
   `--color-primary`). The value is the token's value, with only surrounding
-  whitespace ignored. Keys starting with `$` are metadata, not tokens. Extra
-  properties in the `:root` rules are allowed (D6). A Reproduction manifest is not
+  whitespace ignored. When the page declares a property more than once, the
+  last declaration in page order counts, as in a browser. A token is a value
+  at any depth that is not an object. Keys starting with `$` are metadata, and
+  nothing under them is a token. A token whose value is not a string is a
+  mirroring problem that names the token. Extra properties in the `:root`
+  rules are allowed (D6). A Reproduction manifest is not
   checked for mirroring, because it harvests the running app's stylesheet
   (#2211 BR10).
 - BR11 (where the token file and page are): The mockup page is `index.html`
@@ -325,7 +335,7 @@ with that single problem. If none of them match, every check in row 4 runs.
 | # | Situation | Outcome |
 | --- | --- | --- |
 | 1 | The manifest file does not exist or cannot be read | Does not conform (manifest file not found or unreadable) |
-| 2 | The file is not in the BR1 form, or the assigned value is not valid JSON | Does not conform (not readable as data) |
+| 2 | The file is not the single BR1 assignment surrounded only by comments, or the assigned value is not valid JSON | Does not conform (not readable as data) |
 | 3 | The assigned JSON value is not an object | Does not conform (manifest is not an object) |
 | 4 | Every check of BR2 to BR8, BR10 to BR12 and BR19 | Conforms when no check finds a problem; otherwise Does not conform, listing every problem |
 
@@ -450,7 +460,8 @@ consumer's design tree.
 - [ ] AC4: The verify script reports Conforms for a valid Design intent
   fixture. That fixture has several screens, a screen with states and one
   initial state, a nested navigation tree, viewports and an image screen. Its
-  page mirrors every token.
+  token file has a `$`-prefixed metadata key, and its page mirrors every token,
+  some of them in a stylesheet it links inside the repository.
 - [ ] AC5: The verify script reports Conforms for a valid Reproduction fixture
   whose page does not mirror the token file.
 - [ ] AC6: For each of these invalid fixtures, the verify script reports Does
@@ -462,14 +473,17 @@ consumer's design tree.
   duplicate `screen_id`; a `screen_id` that is not a slug; missing or unknown
   screen `kind`; an image screen without `export`; a `title` that is not a
   string; an empty `states` list; a state without `state_id`; `navigation` that is not a
-  list; a navigation group without `label`; a navigation entry without
+  list; a navigation group without `label`; a navigation group without `items`; a navigation entry without
   `screen_id`; a navigation entry citing an unknown screen at a nested depth; a `nav_screen` citing an unknown screen;
   duplicate `state_id` within a screen; a screen with states and no initial
   state; a screen with two initial states; a state declaring `route`; a
   duplicate viewport id; a viewport with a non-positive width; a Design intent
   page missing one token; a Design intent page with one token at a different
-  value; a Design intent manifest whose token file is missing; a Design intent
-  manifest whose token file is not valid JSON.
+  value; a Design intent token file with a token that is not a string; a
+  Design intent manifest whose token file is missing; a Design intent manifest
+  whose token file is not valid JSON; a Design intent manifest whose token file
+  is not a JSON object; a Design intent manifest with no `index.html` beside
+  it; a Design intent manifest that is not inside a `mockups` folder.
 - [ ] AC7: The same `state_id` under two different screens conforms.
 - [ ] AC8: A fixture with several problems reports every problem in one
   result. Each problem names its place, rule, found value or absence, and the
