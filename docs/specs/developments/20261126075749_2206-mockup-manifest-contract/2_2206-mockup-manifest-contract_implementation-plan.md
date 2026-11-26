@@ -82,9 +82,11 @@ Each decision is stated here once; every other section refers to it by label.
   - `1`: a failing outcome (Does not conform, Invalid configuration, Cannot
     check, Does not resolve).
   - `2`: a caller or environment error. The cause is a usage error, a
-    `--repo-root` that is not a directory, a missing `python3`, or a manifest
-    path that is a directory in `inventory` or `resolve`. The message goes to
-    stderr and nothing goes to stdout.
+    `--repo-root` that is not a directory, a missing `python3`, or a failed
+    opt-in read in `tree` (P8). The message goes to stderr and nothing goes
+    to stdout. A manifest path that is missing or is a directory is never a
+    caller error: it is verification row 1 (P4), so `inventory` and
+    `resolve` answer `cannot_check`.
 
   Callers treat every non-zero exit as failing.
 
@@ -129,7 +131,8 @@ Each decision is stated here once; every other section refers to it by label.
   4. Skip whitespace and comments, then decode one JSON value with
      `json.JSONDecoder.raw_decode`, using two hooks. `parse_constant` rejects
      `NaN` and `Infinity`. `object_pairs_hook` rejects a duplicate key at any
-     depth. Either rejection, or any decode error, gives row 2.
+     depth. Either rejection, any decode error, or a `RecursionError` from
+     nesting too deep for the decoder gives row 2.
   5. After the value, skip whitespace and comments, accept one optional `;`,
      skip again and require end of file. Anything else, such as a second
      statement or a trailing call, gives row 2.
@@ -146,9 +149,9 @@ Each decision is stated here once; every other section refers to it by label.
   4. Viewports.
   5. Mirroring (P6).
 
-  Rules that need a known screen set use the set of string `screen_id`s
-  collected from screen objects in pass 2. Those rules are `default_screen`,
-  `nav_screen` and navigation references.
+  Rules that need a known screen set use the set of string `screen_id`s of
+  the screen objects, collected before pass 1 so the order above is kept.
+  Those rules are `default_screen`, `nav_screen` and navigation references.
 
   The rules:
   - **Slug (BR6).** `^[a-z][a-z0-9]*(-[a-z0-9]+)*$`.
@@ -170,12 +173,16 @@ Each decision is stated here once; every other section refers to it by label.
 - **P6 — Token mirroring (BR10, BR11).**
   - **Locating files.**
     - The page is `index.html` in the manifest's folder.
-    - The token file is `tokens.json` in the parent of the nearest ancestor
-      folder named exactly `mockups`. No such ancestor is a BR11 problem.
+    - The token file is `tokens.json` in the parent of the nearest folder
+      named exactly `mockups`, starting with the manifest's own folder. So
+      a Single app manifest at `design/mockups/mockup-manifest.js` and a
+      per-app manifest at `design/mockups/<app>/mockup-manifest.js` both
+      find `design/tokens.json`. No such folder is a BR11 problem.
     - Each problem names the file:
       - a missing or unreadable page or token file;
-      - a token file that is not UTF-8, not valid JSON (duplicate keys
-        rejected as in P4) or not an object.
+      - a page that is not UTF-8;
+      - a token file that is not UTF-8, not valid JSON (duplicate keys and
+        too-deep nesting rejected as in P4) or not an object.
     - When the page cannot be read, the token file is still checked, but no
       token can be compared.
   - **Tokens.**
@@ -193,7 +200,10 @@ Each decision is stated here once; every other section refers to it by label.
     - Strip any `?…` or `#…` and percent-decode.
     - These hrefs are not read, which is the BR10 stated limitation:
       - one with a URL scheme, or starting with `//` or `/`;
-      - one whose real path resolves outside the repository root.
+      - one whose real path resolves outside the real path of the
+        repository root. Both sides are compared after `os.path.realpath`,
+        so a temporary root under `/var` and its `/private/var` real path
+        on macOS agree.
     - An in-repository link that is missing, unreadable or not UTF-8 is a
       BR11 problem.
     - `@import` is never followed.
@@ -236,10 +246,14 @@ Each decision is stated here once; every other section refers to it by label.
   - **Opt-in.** The Bash entry point sources `workflow-lib.sh`, runs
     `workflow_design_opt_in "$repo_root"` and pipes its output into the Python
     module's `tree` subcommand, with no temporary file.
+    - Input whose first line is not `DESIGN_OPT_IN=` (for example the empty
+      output of a failed helper) is an environment error: the module prints
+      nothing to stdout and exits `2`.
     - `not_opted_in` gives row 1.
     - `invalid` gives row 2, with the `DESIGN_PROBLEM` lines passed through.
     - Otherwise the mockups folder is
-      `<repo_root>/<DESIGN_ROOT>/mockups`.
+      `<repo_root>/<DESIGN_ROOT>/mockups`, with the `DESIGN_ROOT` value
+      unescaped first (#2211 escaping, P3).
   - **The mockups folder.** It is examined with `os.lstat`.
     - `FileNotFoundError` or `NotADirectoryError` on any component means the
       folder is confirmed missing: row 4 when nothing else applies.
@@ -252,8 +266,10 @@ Each decision is stated here once; every other section refers to it by label.
     - Descend real directories.
     - A symlinked directory, or a folder whose listing raises `OSError`, is
       recorded as an unreadable folder (row 3), and the walk continues.
-    - Every entry named exactly `mockup-manifest.js` that is a regular file,
-      or a symlink to one, is verified with P4 to P6.
+    - Every entry named exactly `mockup-manifest.js` that is not a real
+      directory is verified with P4 to P6. A regular file, or a symlink to
+      one, is read; a dangling symlink or a special file gives row 1, so it
+      is listed as failing rather than skipped.
   - **Outcome.** Apply rows 3 to 6 in order. Every manifest found is listed
     with its result.
 - **P9 — Inventory and citations (BR16, citation rows 1 to 4).**
@@ -277,8 +293,8 @@ Each decision is stated here once; every other section refers to it by label.
   - Python runs as `python3 -I -B`, so no bytecode cache is written and no
     user site is imported. Every file is opened read-only.
   - Nothing is cached between runs, and no network module is imported.
-  - The Bash entry point creates no file. It runs Git only for P10's
-    `rev-parse` and for the `tree` default root.
+  - The Bash entry point creates no file and runs Git only for the `tree`
+    default root. The Python module runs Git only for P10's `rev-parse`.
 - **P12 — Fixtures and tests.**
   - **Committed fixtures.**
     `scripts/development-workflow/tests/fixtures/mockup-manifest-verify/` (the
@@ -342,7 +358,7 @@ All repository searches ran at `bc0c80a0` (V0) unless the row says otherwise.
 | V3 | Sync classification | `python3 -B scripts/development-workflow/select-sync-manifest-entries.py --manifest sync-manifest.yaml --role <role>` for `single_repo`, `workflow_hub`, `product_repo` | `scripts/development-workflow/` and `docs/workflow/` are always_sync `hub_only` glob `**/*` for `single_repo` and `workflow_hub`; `product_repo` receives only the explicit `product_repo_injection` / `shared` entries, none of which is a new file of this plan |
 | V4 | No existing manifest reader or verifier | S-V4 below | no output; searched every script, workflow, workflow doc and template directory, where a reader could live |
 | V5 | Opt-in helper present | `git grep -c -E 'workflow_design_opt_in' bc0c80a0 -- scripts/development-workflow/workflow-lib.sh` (also the control for S-V4's search form) | `2` |
-| V6 | No existing CSS reader | S-V6 below | the only `html.parser` users are `apply-readiness-labels.sh`, `graduation-closeout-lib.sh` and `pr-agent-runtime.py` (review-text extraction); no `:root` or CSS rule reading anywhere under `scripts/` |
+| V6 | No existing CSS reader | S-V6 below | the only `html.parser` users are `apply-readiness-labels.sh`, `graduation-closeout-lib.sh`, `pr-agent-runtime.py` and its test `tests/test_pr_agent_inline_code.py` (review-text extraction); no `:root` or CSS rule reading anywhere under `scripts/` |
 | V7 | Python baseline | `/usr/bin/python3 --version`; `python3 --version` (2026-11-26) | `3.9.6` (macOS system) and `3.14.8`; the module must run on 3.9 |
 | V8 | Python invocation pattern | `grep -n 'python3 -I -B' scripts/development-workflow/workflow-lib.sh` | `workflow_design_opt_in` already runs `python3 -I -B -c` |
 | V9 | Suite discovery and fixture folder | `sed -n 11,31p scripts/development-workflow/select-test-suites.sh` | a suite `test-<name>.sh` covers `<name>.sh`, `<name>.py`, its own file and its own fixture directory; `# covers:` adds paths |
@@ -351,7 +367,8 @@ All repository searches ran at `bc0c80a0` (V0) unless the row says otherwise.
 | V12 | Consumer-safe test rule | `sed -n 134,168p scripts/development-workflow/README.md` | template-only assertions must be gated by `workflow_template_is_template` with a printed `SKIP:` line |
 | V13 | Forthcoming list | `grep -n -A8 '^## Forthcoming' docs/workflow/development-workflow/mockup-framework.md` | four bullets; the first is "Manifest contract and verify script — #2206." |
 | V14 | Same-surface open PRs | `gh pr list --state open --limit 100 --json number,headRefName,files`, filtered to paths matching `mockup`, `design-scaffold`, `workflow-lib.sh`, `sync-manifest.yaml`, `scripts/development-workflow/README.md` (2026-11-26) | none |
-| V15 | Shell snippet lint scope | `sed -n 1,60p scripts/lint/workflow-shell-snippet-lint.py` | `docs/workflow/` is in scope, so the reference's new snippet needs a `workflow-shell-contract` marker |
+| V15 | Shell snippet lint scope | `sed -n 1,60p scripts/lint/workflow-shell-snippet-lint.py` | `docs/workflow/` and `scripts/development-workflow/` are in scope, so a shell snippet in the reference or the scripts README needs a `workflow-shell-contract` marker |
+| V16 | Vault sections L5 replaces | read-only `grep -n '^#' "40 - Conocimiento/Estándares/HTML Mockup Framework.md"` in the owner's vault checkout (2026-11-26; nothing written) | the heading `Manifest (mockup-manifest.js)` (level 2) at line 332 with sub-sections Top-level fields, Screen, State, Manifest workflow and `### Optional: verify + smoke (code repos)` (line 407), then `## Tokens`; `## Tooling (optional)` at line 447 opens with the note `> The verify part moves to the template with #2206.` |
 
 ### Search commands
 
@@ -480,36 +497,38 @@ At implementation start, re-run V3 and V14 (S5).
 - No real `.ai-dev-workflow.local.*` file is read or written. Tree cases
   write a fabricated versioned `.ai-dev-workflow.yaml` into the disposable
   repository.
+- The suite is `shellcheck --severity=warning` clean, because the
+  shellcheck CI job checks every `*.sh` under `scripts/development-workflow/`.
 - Cases are listed in Testing Strategy.
 
 ### L5 — Vault hand-off text (implementation PR description, P14) (AC19)
 
 The implementation PR description carries, under a heading **Vault
 replacement text (applied by the template owner)**, these two texts verbatim,
-plus the note: "The template owner replaces these sections in
-`40 - Conocimiento/Estándares/HTML Mockup Framework.md`; this PR does not edit
-the vault."
+plus the note: "The template owner replaces the Manifest section and the
+Tooling note in `40 - Conocimiento/Estándares/HTML Mockup Framework.md`; this
+PR does not edit the vault."
 
 Replacement for the vault's whole Manifest section (heading
-`Manifest (mockup-manifest.js)`), including its sub-sections:
+`Manifest (mockup-manifest.js)`), including all its sub-sections, among
+them `### Optional: verify + smoke (code repos)` (V16):
 
 ```markdown
 ## Manifest (`mockup-manifest.js`)
 
 Contract: see *Manifest* in the [template reference](https://github.com/lhpaul/ai-dev-framework-template/blob/develop/docs/workflow/development-workflow/mockup-framework.md) (#2206): the data-only file form, every top-level, screen and state field, the rule that a state never carries screen-level fields, the navigation shape, the `#screen=<screen_id>&state=<state_id>` link format, token mirroring, and the verify script that performs the checklist. What follows is the rationale.
 
-The manifest is the contract between mockup content, the viewer and any tooling, which is why it is data and not code: a checker can then read it without running it, and a reviewer can trust the check rather than re-reading ids by hand. A visual variant stays a state of its screen because a second `screen_id` for an error or an empty form breaks every link and inventory that counts destinations.
+The manifest is the contract between mockup content, the viewer and any tooling, which is why it is data and not code: a checker can then read it without running it, and a reviewer can trust the check rather than re-reading ids by hand. It is still a `.js` file that assigns `window.__MOCKUP_MANIFEST__`, so it loads under `file://` and HTTP without `fetch`. A visual variant stays a state of its screen because a second `screen_id` for an error or an empty form breaks every link and inventory that counts destinations.
 
 **Reproduction** manifests may still be generated from per-state sources, one file per state per viewport (Brokers Portal: 155 states across 14 screens and two viewports). That is sanctioned for reproductions only, because the output is a single manifest that CI can rebuild and compare; a hand-edited manifest at that size is unverifiable.
 ```
 
-Replacement for the `### Optional: verify + smoke (code repos)` sub-section
-of the Tooling section:
+Replacement for the note `> The verify part moves to the template with
+#2206.` that opens the `## Tooling (optional)` section (V16); the rest of
+that section is unchanged:
 
 ```markdown
-### Verify
-
-The manifest checks ship in the template as `scripts/development-workflow/mockup-manifest-verify.sh` (#2206): one manifest, a whole opted-in design tree, the id inventory a spec may cite, and whether a citation resolves. See *Manifest* in the [template reference](https://github.com/lhpaul/ai-dev-framework-template/blob/develop/docs/workflow/development-workflow/mockup-framework.md). Playwright viewer smoke and image crop tooling stay optional per repository.
+> The manifest checks ship in the template as `scripts/development-workflow/mockup-manifest-verify.sh` (#2206): one manifest, a whole opted-in design tree, the id inventory a spec may cite, and whether a citation resolves. See *Manifest* in the [template reference](https://github.com/lhpaul/ai-dev-framework-template/blob/develop/docs/workflow/development-workflow/mockup-framework.md). Playwright viewer smoke and image crop tooling stay optional per repository.
 ```
 
 ### L6 — Supporting surfaces
@@ -529,7 +548,7 @@ The manifest checks ship in the template as `scripts/development-workflow/mockup
   | `scripts/development-workflow/tests/fixtures/mockup-manifest-verify/**` | always_sync, `hub_only` | test data inside the scripts tree; never at a design root, so no design tree is created (D2) |
   | `docs/workflow/development-workflow/mockup-framework.md` | always_sync, `hub_only` | documentation only |
   | `scripts/development-workflow/README.md` | always_sync, `hub_only` | documentation only |
-  | `changelog.d/2206.added.mockup-manifest-verify.md` | release fragment | assembled at release |
+  | `changelog.d/2206.added.mockup-manifest-verify.md` | project_specific, `shared` (directory glob) | never written over a consumer's own fragments; assembled at the template's release |
   | `docs/testing/workflow/2206-mockup-manifest-contract.smoke-test.md` | not in the manifest | not synced, like most per-item runbooks |
 
 - No existing script, workflow, `.ai-dev-workflow.yaml`, reviewer
@@ -658,6 +677,14 @@ fabricated `.ai-dev-workflow.yaml`.
   manifests still listed (S2).
 - T-tree-symlinked-folder: a symlinked subfolder is listed as unreadable.
 - T-tree-custom-root: `root: ui/` finds `ui/mockups`.
+- T-tree-single-app: a Single app tree with the intent-app files directly in
+  `design/mockups/` (and a `shared/` folder beside them) gives `conforms`
+  and `MANIFEST_COUNT=1`; its mirroring reads `design/tokens.json` (P6).
+- T-tree-dangling-manifest: a dangling `mockup-manifest.js` symlink in an
+  app folder is listed with `does_not_conform` (row 1), so the tree does not
+  conform (P8).
+- T-tree-opt-in-failed: input to the module's `tree` subcommand without a
+  `DESIGN_OPT_IN=` first line gives exit 2 and empty stdout (P8).
 - T-template: run in this repository, the result is `not_opted_in` (S1).
 
 **Inventory and citations (AC13, AC14).**
@@ -717,6 +744,7 @@ fixture cases is one case that covers both.
 | Value not an object | `[]`, `"x"`, `null` | row 3 | T-ac6-not-object |
 | Comment marker inside a JSON string | `{"$note": "see // and /* here"}` | accepted; the string is data | T-form-markers-in-string |
 | Empty file | zero bytes | row 2 | T-form-empty |
+| Nesting deeper than the decoder allows | `{"a":` + 100000 × `[` | row 2, no traceback | T-form-deep-nesting |
 
 **CSS and HTML reading (P6):**
 
@@ -747,6 +775,7 @@ fixture cases is one case that covers both.
 | Link outside the repository | `../../../../outside.css` resolving above `--repo-root` | not read; no problem | T-css-link-outside |
 | Query and fragment | `styles/tokens.css?v=2#x` | reads `styles/tokens.css` | T-html-href-query |
 | Percent-encoded href | `styles/my%20tokens.css` | reads `styles/my tokens.css` | T-html-href-encoded |
+| Root reached through a symlinked temporary path | `--repo-root /var/…` whose real path is `/private/var/…` (macOS), linked `styles/tokens.css` | read as inside the repository; conforms | T-css-link-realpath |
 
 **Suppression semantics**: not applicable; the tool has no inline directives.
 
@@ -807,7 +836,7 @@ def read_manifest(path):
         text = raw.decode("utf-8")
     except UnicodeDecodeError:
         return None, ("BR1", "manifest", "not readable as data: not UTF-8 text")
-    text = text[1:] if text.startswith("﻿") else text
+    text = text[1:] if text.startswith("\ufeff") else text
     i = skip_space_and_comments(text, 0)          # raises NotData on /* unterminated
     if not text.startswith(NAME, i):
         return None, ("BR1", "manifest", "not readable as data: expected window.__MOCKUP_MANIFEST__ =")
@@ -832,7 +861,7 @@ Commit after each numbered step that leaves the tree coherent.
 2. Fixtures (P12), then L2 `read_manifest` and `check_fields` with the
    `manifest` subcommand and `emit`.
 3. L1 entry point for `manifest`. Run `bash -n` and
-   `shellcheck --severity=warning`.
+   `shellcheck --severity=warning` on it and, from step 4 on, on the suite.
 4. L4 suite: valid fixtures, file-form and AC6 field cases, run under both
    Bash versions and under `/usr/bin/python3` when present.
 5. L2 `check_mirroring` with the CSS/HTML reader; add the mirroring AC6 cases

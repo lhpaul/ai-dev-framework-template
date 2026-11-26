@@ -104,8 +104,10 @@ Below, `FX` stands for the fixtures folder and `TOOL` for the tool path.
 2. In a scratch Git repository with a valid `design` block (`home: product`,
    `kind: design-intent`), copy `FX/design` to `design/`, then run
    `bash TOOL tree --repo-root <scratch>`.
-3. Make one subfolder of `design/mockups/` unreadable (`chmod 000`) and run
-   it again. Restore the permissions afterwards.
+3. Create an extra folder `design/mockups/locked/`, make it unreadable
+   (`chmod 000`) and run it again. Do not lock `intent-app` or `repro-app`.
+   Restore the permissions afterwards. Skip this sub-step when running as
+   root, where `chmod 000` does not block reading.
 
 **Expected result**:
 
@@ -125,7 +127,8 @@ Below, `FX` stands for the fixtures folder and `TOOL` for the tool path.
    - an existing `--screen` and `--state`;
    - an unknown `--screen`;
    - a `--state` that belongs only to another screen.
-3. Run `resolve` on `FX/invalid-examples/several-problems.js`.
+3. Run `resolve` on `FX/invalid-examples/several-problems.js` with any
+   `--screen` value.
 
 **Expected result**:
 
