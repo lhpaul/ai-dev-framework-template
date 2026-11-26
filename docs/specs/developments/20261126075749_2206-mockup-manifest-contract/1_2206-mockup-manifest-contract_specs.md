@@ -284,8 +284,14 @@ citation is broken.
   stylesheets it links inside the repository. The property name is `--`
   followed by the token's path joined by hyphens (`color.primary` becomes
   `--color-primary`). The value is the token's value, with only surrounding
-  whitespace ignored. When the page declares a property more than once, the
-  last declaration in page order counts, as in a browser. A token is a value
+  whitespace ignored. The check is static: it reads declarations and does not
+  model the cascade or render the page. So that it can never certify a value
+  the browser would not show, every declaration of a token's property in the
+  page's `:root` rules, including ones nested in at-rules such as media
+  queries, must carry the token's value, and a declaration marked
+  `!important` is a problem. Declarations in the root element's `style`
+  attribute are checked the same way. Scripts that change properties
+  at run time are outside the check. A token is a value
   at any depth that is not an object. Keys starting with `$` are metadata, and
   nothing under them is a token. A token whose value is not a string is a
   mirroring problem that names the token. Extra properties in the `:root`
@@ -473,7 +479,8 @@ consumer's design tree.
   fixture. That fixture has several screens, a screen with states and one
   initial state, a nested navigation tree, viewports and an image screen. Its
   token file has a `$`-prefixed metadata key, and its page mirrors every token,
-  some of them in a stylesheet it links inside the repository.
+  some of them in a stylesheet it links inside the repository, and one token
+  property is declared twice with the same value.
 - [ ] AC5: The verify script reports Conforms for a valid Reproduction fixture
   whose page does not mirror the token file.
 - [ ] AC6: For each of these invalid fixtures, the verify script reports Does
@@ -492,7 +499,9 @@ consumer's design tree.
   state declaring `export`; a state declaring nested `states`; a
   duplicate viewport id; a viewport with a non-positive width; a Design intent
   page missing one token; a Design intent page with one token at a different
-  value; a Design intent token file with a token that is not a string; a
+  value; a Design intent page that declares one token property twice, the
+  later declaration matching and the earlier one different; a Design intent
+  page that marks a mirrored token property `!important`; a Design intent token file with a token that is not a string; a
   Design intent manifest whose token file is missing; a Design intent manifest
   whose token file is not valid JSON; a Design intent manifest whose token file
   is not a JSON object; a Design intent manifest with no `index.html` beside
