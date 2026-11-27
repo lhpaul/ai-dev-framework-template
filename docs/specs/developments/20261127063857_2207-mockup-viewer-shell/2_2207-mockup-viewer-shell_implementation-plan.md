@@ -511,11 +511,19 @@ template-owned markers.
   must reach every viewport-table row and every BR4/BR17 message.
 - **T-verify**: `mockup-manifest-verify.sh manifest` on the example manifest
   reports Conforms (AC2).
-- **T-http**: start `python3 -u -m http.server --bind 127.0.0.1 0` in the
-  mockups folder (unbuffered, or the port line never reaches a redirected
-  output, V14), read the port from its first line with a bounded poll, dump
-  the example over HTTP,
-  assert the same attributes as T-open, stop the server (trap).
+- **T-http**: no server output is parsed. The suite picks a free port with
+  a one-line `python3 -c` that binds a socket to `127.0.0.1` port 0 and
+  prints `getsockname()[1]` (an integer from the socket API, checked to be
+  all digits), then starts `python3 -m http.server <port> --bind 127.0.0.1`
+  in the mockups folder with its output discarded. Readiness is a bounded
+  poll (10 s) that requests `http://127.0.0.1:<port>/example-app/` with
+  `python3 -c` and `urllib` until it returns HTTP 200. If the server process
+  exits or the poll times out (for example, another process took the port
+  in between), the suite retries once with a new port, then reports
+  `FAIL http: server did not start`. It then dumps the example over HTTP,
+  asserts the same attributes as T-open, and stops the server (trap). V14
+  is why the announcement line is not used: it is free text that only
+  appears unbuffered.
 - **T-outcomes** (AC19): re-run the suite in a child process with
   `MOCKUP_VIEWER_CHROME=/nonexistent` (exclusive, P11), once with `CI=true` (expect exit 1, `FAILED: Chrome not found`) and once
   with `CI` and `GITHUB_ACTIONS` unset (expect exit 0, `SKIPPED: Chrome not
