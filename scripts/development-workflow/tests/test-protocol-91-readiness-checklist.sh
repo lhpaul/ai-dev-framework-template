@@ -217,12 +217,26 @@ unset _PLANT_TMP _PLANT_PROTOCOL _planted_balance
 _sigpipe_report="$(python3 - "$PROTOCOL" <<'PYTEST'
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 import tempfile
 
 protocol = Path(sys.argv[1]).read_text(encoding="utf-8")
-assert 'echo "$LOOP_SUMMARY_BODY" |' not in protocol, "pipe-fed LOOP_SUMMARY_BODY grep remains"
+def pipe_fed_sites(text):
+    return [n for n, line in enumerate(text.splitlines(), 1)
+            if re.search(r'echo\s+"\$LOOP_SUMMARY_BODY"\s*\|', line)]
+
+assert pipe_fed_sites(protocol) == [], ("pipe-fed LOOP_SUMMARY_BODY grep remains", pipe_fed_sites(protocol))
+# Planted-violation proof for the static guard: re-introduce the pre-#2229
+# check 0.5 pipe on its own line and require the guard to report that line.
+_static_plant_line = protocol.splitlines().index(
+    next(line for line in protocol.splitlines() if line.startswith("# Check 0.5:"))
+) + 2
+_static_plant = protocol.splitlines()
+_static_plant.insert(_static_plant_line - 1, 'echo "$LOOP_SUMMARY_BODY" | grep -Eiq clean')
+assert pipe_fed_sites("\n".join(_static_plant)) == [_static_plant_line], "static guard missed planted pipe"
+print("PASS: static_pipe_guard_planted_violation_detected", file=sys.stderr)
 check05 = "# Check 0.5:" + protocol.split("# Check 0.5:", 1)[1].split("# Check 0.6:", 1)[0]
 skipped_if = next(
     line for line in protocol.splitlines()
@@ -270,10 +284,10 @@ assert planted != check05
 rc, out = run(planted, clean)
 assert rc == 7, ("planted pipe did not reproduce SIGPIPE false block", rc, out[-300:])
 print("PASS: check05_planted_pipe_reproduces_false_block", file=sys.stderr)
-print(f"verified:{len(cases) + 1}")
+print(f"verified:{len(cases) + 2}")
 PYTEST
 )"
-run_test "check05_check06_large_summary_sigpipe_safe" "verified:6" "$_sigpipe_report"
+run_test "check05_check06_large_summary_sigpipe_safe" "verified:7" "$_sigpipe_report"
 
 echo ""
 # --- 9. Execute the actual Protocol 91 ready-transition preflight ------------
