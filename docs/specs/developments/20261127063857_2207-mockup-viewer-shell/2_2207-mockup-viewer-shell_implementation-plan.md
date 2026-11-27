@@ -37,7 +37,10 @@ discovery. No workflow, reviewer configuration, checkpoint policy or
 
 **Dependencies**: #2206 (merged in #2232; its verify script checks the example
 manifest, V6) and #2211 (merged in #2228; the scaffold, V3). The spec is merged
-on `develop` as `b28c1192` (V1).
+on `develop` as `b28c1192` (V1). Implementation Order step 1 re-checks both on
+the implementation base; if either has been reverted, or the verify script or
+the scaffold is missing there, the implementation stops and reports a blocked
+dependency instead of recreating them.
 
 **Template-Fit Check (Protocol 02 Step 0)**: re-run at plan time and passed.
 The viewer is plain HTML, CSS and browser JavaScript with no framework, build
@@ -717,14 +720,18 @@ function onMessage(event) {
 
 Commit after each numbered step that leaves the tree coherent.
 
-1. Re-run V3 to V5 and V11; stop on a change.
-2. L2 manifest and `exports/overview.svg`; run the verify script (T-verify).
+1. Re-run V3 to V6 and V11 on the implementation base; stop on a change, and stop as a blocked dependency if #2206 or #2211 is no longer present (Dependencies).
+2. All of L2: the manifest, `exports/overview.svg` and `index.html` (its
+   `:root` token mirror, screens, `#mockup-viewer` element, script tags and
+   boot script). The page exists from this step on, so the verify script's
+   Design intent mirroring check finds it (T-verify) and the suite's P12 gate
+   passes in step 3. Run the verify script (T-verify).
 3. L4 suite skeleton (P12 gate, P11 discovery, `run_chrome`, the
    `<pre id="results">` parser and the summary), so steps 4 to 6 add cases to
    a runnable suite; L1 `viewer.js` pure parts (`buildDomMap`,
    `getTargetFromUrl`) and the harness's T-resolve group; run the suite.
-4. L1 host and product roles, `viewer.css`, and L2 `index.html`; add T-open,
-   T-address, T-select, T-history, T-title.
+4. L1 host and product roles and `viewer.css`, which the step 2 page already
+   loads; add T-open, T-address, T-select, T-history, T-title.
 5. L1 drawers, accessibility and panels; add T-drawers, T-a11y, T-headers,
    T-rows, T-nav, T-states, T-image.
 6. L1 viewports, frames and chrome-off; variants; add T-viewport,
