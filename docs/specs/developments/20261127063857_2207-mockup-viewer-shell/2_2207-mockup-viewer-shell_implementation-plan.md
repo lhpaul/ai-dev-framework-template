@@ -86,7 +86,10 @@ Each decision is stated here once; every other section refers to it by label.
   capture tool cannot select it by accident. A host never nests a host: the
   product role never creates a frame.
   - **Host**: resolves the address (P4), rewrites it canonically with
-    `history.replaceState`, paints the shell when chrome is on (P5), creates
+    `history.replaceState`, hides every page screen element in its own
+    document with the `hidden` attribute (so the frame holds the only live
+    copy of the product, and keyboard focus and assistive technology never
+    reach a copy behind the canvas), paints the shell when chrome is on (P5), creates
     the product frame with `src` = the page's own file name plus the canonical
     hash with `chrome=off` added, sizes it by the viewport table and draws the
     product frame decoration around it (P6). It never changes the frame's
@@ -117,6 +120,9 @@ Each decision is stated here once; every other section refers to it by label.
   `file://` every origin is `null`, so the origin cannot be checked and the
   source check is the guard. `postMessage` uses target origin `*` for the
   same reason; the payload is only ids that are already in the address.
+  The host sets `handler` to true only for a selection in the pages drawer
+  (RADAR runs `navHandlers` on a navigation click only); a state or viewport
+  selection, a hand-edited address and back or forward send false.
   The host numbers each `show` with an increasing `seq`. A `shown` that
   echoes the latest `seq` answers the host and adds no history entry (the
   host already pushed one for the selection, BR16). The product echoes the
@@ -444,7 +450,8 @@ template-owned markers.
   T-open and proves the `postMessage` path without any flag (AC3).
 - **Layer 2 — harness**: `fixtures/mockup-viewer/harness.html?case=<name>`
   with `--allow-file-access-from-files`. The harness loads the example (or a
-  variant) in an iframe, waits for `data-mockup-ready`, drives the case
+  variant) in an iframe, waits for `data-mockup-ready` or `data-mockup-error`
+  (the no-manifest variant never becomes ready), drives the case
   through the host and product documents, and writes `PASS <case>` or
   `FAIL <case>: <seen>` lines into `<pre id="results">`. The suite parses
   only that element. One Chrome run per case group, so a hang names its
@@ -471,8 +478,9 @@ template-owned markers.
   with `CI` and `GITHUB_ACTIONS` unset (expect exit 0, `SKIPPED: Chrome not
   found`); and with a temporary copy of the repository root missing the
   scaffold (expect `NOT APPLICABLE`). A planted broken check
-  (`MOCKUP_VIEWER_PLANT=title`, honoured only by the harness) must produce
-  `FAIL title`.
+  (`MOCKUP_VIEWER_PLANT=title`, which the suite passes to the harness as a
+  `plant=title` query parameter; only the harness reads it, never the
+  viewer) must produce `FAIL title`.
 - No case writes inside the repository; the HTTP server serves read-only.
 
 ### L5 — Framework reference (`mockup-framework.md`, changed) (AC21)
@@ -529,10 +537,10 @@ Named cases (L4). Each maps to the ACs in the coverage table above.
 | T-resolve | harness, pure | every address-table row and BR5 key rule: empty, repeated, unknown keys, legacy form, canonical order (AC5) |
 | T-address | harness | rows 1 to 8 end to end, with the address rewritten and no history entry added (AC5) |
 | T-select | harness | screen and state selection close the drawer and push one history entry (AC6) |
-| T-history | harness | hand-edited hash and back/forward update canvas and panels (AC7) |
+| T-history | harness | hand-edited hash and back/forward update canvas and panels; a hand edit resolving to the target already shown is still rewritten to the canonical form (AC7, AC5) |
 | T-title | harness | title rule (AC8) |
 | T-drawers | harness | start closed, mutual exclusion, close by selection, button, scrim and `Escape` (host and forwarded), frame box unchanged (AC9) |
-| T-a11y | harness | `aria-*`, `inert`, focus into the drawer and back to its edge button (AC10) |
+| T-a11y | harness | `aria-*`, `inert`, focus into the drawer and back to its edge button; every page screen element in the host document carries `hidden` (AC10) |
 | T-headers, T-rows | harness | BR9 headers; BR10 rows for a screen with and without states, `url` row for `browser`, `updated` `—` (AC11) |
 | T-nav | harness | nesting, `nav_screen` anchor and parent marking on the example (L2), every citing entry and no highlight when uncited on the navigation variant (AC12) |
 | T-states, T-image | harness | no-states message; image with `alt` (AC13) |
@@ -579,9 +587,12 @@ there are no data races; the hazards are ordering ones.
 - **Re-entrancy / in-flight tracking**: a selection increments `seq` before
   posting `show`; the answer is matched by `seq` (P3). A second selection
   before the first answer supersedes it; the late answer is stale.
-- **Event deduplication**: `applyTarget()` is a no-op when the resolved target
-  equals the current one, so a hand-edited hash that resolves to the same
-  target, or an echoed `shown`, adds nothing. `history.pushState` and
+- **Event deduplication**: when the resolved target equals the current one,
+  `applyTarget()` posts no `show`, pushes no history entry and repaints
+  nothing, so an echoed `shown` adds nothing. It still rewrites the address
+  to the canonical hash with `replaceState` when the address differs, so a
+  hand-edited hash that resolves to the target already shown (for example
+  `#home` while Home is shown) is corrected as BR5 and D10 require. `history.pushState` and
   `replaceState` fire no `hashchange`, so the host's own rewrites do not loop.
 - **Listener and resource cleanup**: listeners live for the page's lifetime;
   the first-load timer is cleared on the first `shown`. Nothing else is
@@ -643,6 +654,7 @@ None. The example mockup (L2) and the variants (L4) are the test data.
 | Risk | Likelihood | Impact | Mitigation |
 | --- | --- | --- | --- |
 | Hosted Ubuntu runner lacks Chrome | Low | High | P11 prints the binary; row 2 fails loudly; stop for a human decision instead of editing a workflow |
+| Chrome's sandbox cannot start on the hosted runner as a non-root user | Low | High | The case fails as row 5 with Chrome's stderr in the log; widening `--no-sandbox` beyond root is a human decision, not an implementation change |
 | Headless timing flakiness | Medium | Medium | P9 readiness attributes with bounded polls; one Chrome run per case group; watchdog |
 | A browser blocks `file://` self-framing in future | Low | High | V7 probe becomes T-open; the reference documents HTTP as the fallback open |
 | A message from another frame drives the shell | Low | Low | P3 source check; payload is ids only |
@@ -708,7 +720,7 @@ Commit after each numbered step that leaves the tree coherent.
    T-rows, T-nav, T-states, T-image.
 6. L1 viewports, frames and chrome-off; variants; add T-viewport,
    T-chrome-off, T-chrome-off-nav, T-no-manifest, T-missing-content.
-7. L4 discovery, gate, T-http and T-outcomes; `bash -n` and `shellcheck`;
+7. L4 discovery, gate, T-files, T-http and T-outcomes; `bash -n` and `shellcheck`;
    record the suite's `# duration:`.
 8. L3 README, L5 reference. Run `npx markdownlint-cli2` and
    `python3 scripts/lint/markdown-heuristic-lint.py` on the changed Markdown,

@@ -84,6 +84,7 @@ Below, `EX` stands for the absolute path of the example page.
 4. Open it again and select the nested Account details entry.
 5. In the product, follow the link from Account details to the edit screen,
    then open the pages drawer.
+6. Close the drawer and press the browser's Back button once.
 
 **Expected result**:
 
@@ -97,8 +98,8 @@ Below, `EX` stands for the absolute path of the example page.
   entry is marked as its parent.
 - With the edit screen shown (it has no entry of its own), the Account
   details entry is highlighted as its navigation anchor and Account is still
-  marked as its parent. One press of the browser's Back button returns to
-  Account details.
+  marked as its parent.
+- One press of Back returns to Account details.
 
 ### Step 4: Inspector and states
 
@@ -141,7 +142,8 @@ Below, `EX` stands for the absolute path of the example page.
 **Maps to**: AC15
 
 1. On Sign in, select Mobile in the viewport switch.
-2. Narrow the browser window below 393 px wide.
+2. Make the page area narrower than 393 px (desktop Chrome windows stop
+   shrinking near 500 px, so dock DevTools to the side and widen it).
 3. Select Desktop.
 
 **Expected result**:
@@ -149,7 +151,7 @@ Below, `EX` stands for the absolute path of the example page.
 - The product is shown at 393 × 852 (plus the browser bar), centred, with the
   mobile layout; the address gains `viewport=mobile`; the screen and state do
   not change.
-- With a narrow window, the canvas scrolls; the product is not scaled.
+- With a narrow page area, the canvas scrolls; the product is not scaled.
 - Desktop shows 1440 × 900 and the canvas scrolls when the window is
   smaller.
 
