@@ -381,8 +381,8 @@ the Linux runner (S3).
 
 ### L1 — Viewer (`shared/viewer.js`, `shared/viewer.css`, new) (AC1, AC5 to AC17)
 
-- `viewer.js`: start from RADAR's `viewer.js` (269 lines, read 2026-11-27,
-  D5) for `loadManifest`, `buildDomMap`, the navigation flattening and the
+- `viewer.js`: start from RADAR's `viewer.js` (external repository, read
+  2026-11-27, D5) for `loadManifest`, `buildDomMap`, the navigation flattening and the
   state-list rendering. Add, from Leasity `brokers-portal-next`, the viewport
   switch and `chrome=off` handling, generalised into P4 and P6. Add the role
   split (P2), the message protocol (P3), shell generation (P5) and product
@@ -460,7 +460,11 @@ template-owned markers.
   through the host and product documents, and writes `PASS <case>` or
   `FAIL <case>: <seen>` lines into `<pre id="results">`. The suite parses
   only that element. One Chrome run per case group, so a hang names its
-  group.
+  group. **Exception — T-resolve**: that group loads
+  `../../../../../template/design-scaffold/design/mockups/shared/viewer.js`
+  and the example's `mockup-manifest.js` straight into the harness document
+  and calls `MockupViewer.getTargetFromUrl` directly, with no example frame
+  and no readiness wait, so it runs before the roles exist (step 3).
 - **Variants** (`fixtures/mockup-viewer/variants/`): copies of the example
   page pointing at alternative manifests, for table rows the example cannot
   reach: no viewports; one viewport (Design intent, Reproduction); several
@@ -553,7 +557,7 @@ Named cases (L4). Each maps to the ACs in the coverage table above.
 | T-nav | harness | nesting, `nav_screen` anchor and parent marking on the example (L2), every citing entry and no highlight when uncited on the navigation variant (AC12) |
 | T-states, T-image | harness | no-states message; image with `alt` (AC13) |
 | T-no-manifest, T-missing-content | harness | BR4 and BR17 messages (AC14) |
-| T-viewport | harness | every viewport-table row: frame size, centring, canvas scroll when oversize, switch state; product `innerWidth` and `innerHeight` equal the size shown, for `browser` and `phone` too; a viewport selection keeps the screen and state and pushes one history entry (AC15) |
+| T-viewport | harness | every viewport-table row: frame size, centring, canvas scroll when oversize, switch state; product `innerWidth` and `innerHeight` equal the size shown, for `browser` and `phone` too; a viewport selection keeps the screen and state and pushes one history entry; the edge buttons stay visible and inside the host window at every declared viewport and with a narrow host window (AC15, BR7) |
 | T-chrome-off | harness | no shell nodes painted, `Escape` inert, browser bar present, frame size same as with shell (AC16) |
 | T-chrome-off-nav | harness | product link at top-level `chrome=off` keeps `chrome=off` and adds one history entry (AC17) |
 | T-outcomes | child runs | rows 1, 2, 3 and a planted failure (AC19) |
@@ -728,19 +732,28 @@ Commit after each numbered step that leaves the tree coherent.
    every stylesheet the page links, reporting a missing one as a BR11 problem
    (`mockup-manifest-verify.py` `collect_sources`), so the file must exist
    before T-verify runs. The page exists from this step on, so the mirroring
-   check finds it (T-verify) and the suite's P12 gate passes in step 3. Run
-   the verify script (T-verify).
+   check finds it (T-verify) and the suite's P12 gate passes in step 3.
+   Remove both `.gitkeep` files (`shared/` and `example-app/` now hold
+   files). Run the verify script by hand.
 3. L4 suite skeleton (P12 gate, P11 discovery, `run_chrome`, the
    `<pre id="results">` parser and the summary), so steps 4 to 6 add cases to
    a runnable suite; L1 `viewer.js` pure parts (`buildDomMap`,
-   `getTargetFromUrl`) and the harness's T-resolve group; run the suite.
-4. L1 host and product roles and the shell styles in `viewer.css`, which the
-   step 2 page already loads; add T-open, T-address, T-select, T-history,
-   T-title.
-5. L1 drawers, accessibility and panels; add T-drawers, T-a11y, T-headers,
-   T-rows, T-nav, T-states, T-image.
-6. L1 viewports, frames and chrome-off; variants; add T-viewport,
-   T-chrome-off, T-chrome-off-nav, T-no-manifest, T-missing-content.
+   `getTargetFromUrl`); the harness's T-resolve group, which loads
+   `viewer.js` directly (L4 Layer 2 exception), because the step 2 page's
+   boot script cannot become ready until step 4; add T-verify as a suite
+   case (the manifest and page exist from step 2); run the suite.
+4. L1 host and product roles; all of P5's shell markup (both edge buttons,
+   both `<aside>` drawers, `#mockup-nav`, `#state-panel`, the `#meta-*` rows,
+   and the viewport switch when more than one viewport is declared), with
+   their behaviour left to steps 5 and 6; the shell styles in `viewer.css`,
+   which the step 2 page already loads; add T-open, T-address, T-title.
+5. L1 drawers, accessibility and panels; the variants T-rows and T-nav need
+   (no `synced_at`, Reproduction with `persona`/`forced`, and the navigation
+   variant); add T-select, T-history, T-drawers, T-a11y, T-headers, T-rows,
+   T-nav, T-states, T-image.
+6. L1 viewports, frames and chrome-off; the remaining variants; add
+   T-viewport, T-chrome-off, T-chrome-off-nav, T-no-manifest,
+   T-missing-content.
 7. L4 T-files, T-http and T-outcomes; `bash -n` and `shellcheck`;
    record the suite's `# duration:`.
 8. L3 README, L5 reference. Run `npx markdownlint-cli2` and
