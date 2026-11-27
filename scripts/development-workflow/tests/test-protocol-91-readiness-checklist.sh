@@ -234,7 +234,7 @@ _static_plant_line = protocol.splitlines().index(
     next(line for line in protocol.splitlines() if line.startswith("# Check 0.5:"))
 ) + 2
 _static_plant = protocol.splitlines()
-_static_plant.insert(_static_plant_line - 1, 'echo "$LOOP_SUMMARY_BODY" | grep -Eiq clean')
+_static_plant.insert(_static_plant_line - 1, 'echo "$LOOP_SUMMARY_BODY" | grep -Eiq clean')  # workflow-shell-guard: allow SH006 - deliberate planted violation fixture, never executed
 assert pipe_fed_sites("\n".join(_static_plant)) == [_static_plant_line], "static guard missed planted pipe"
 print("PASS: static_pipe_guard_planted_violation_detected", file=sys.stderr)
 check05 = "# Check 0.5:" + protocol.split("# Check 0.5:", 1)[1].split("# Check 0.6:", 1)[0]
