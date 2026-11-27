@@ -208,6 +208,73 @@ run_test "planted_graphql_extra_brace_fails" "unbalanced" "$_planted_balance"
 rm -rf "$_PLANT_TMP"
 unset _PLANT_TMP _PLANT_PROTOCOL _planted_balance
 
+# --- 5. Check 0.5 / 0.6 survive a summary larger than the pipe buffer --------
+# Issue #2229: `echo "$LOOP_SUMMARY_BODY" | grep -Eiq ...` under pipefail let
+# grep -q exit on its first match and close the pipe, so echo died of SIGPIPE
+# (141) on an ~87 KB summary and check 0.5 called a clean summary non-clean.
+# Execute the shipped check 0.5 block and the check 0.6 skipped-detection
+# condition against a ~1 MB summary under `set -euo pipefail`.
+_sigpipe_report="$(python3 - "$PROTOCOL" <<'PYTEST'
+import os
+from pathlib import Path
+import subprocess
+import sys
+import tempfile
+
+protocol = Path(sys.argv[1]).read_text(encoding="utf-8")
+assert 'echo "$LOOP_SUMMARY_BODY" |' not in protocol, "pipe-fed LOOP_SUMMARY_BODY grep remains"
+check05 = "# Check 0.5:" + protocol.split("# Check 0.5:", 1)[1].split("# Check 0.6:", 1)[0]
+skipped_if = next(
+    line for line in protocol.splitlines()
+    if line.startswith('if [ "${REVIEWER_LOOP_SKIPPED_NO_PLATFORMS:-false}" = "true" ]')
+    and "LOOP_SUMMARY_BODY" in line
+)
+check06 = skipped_if + "\n  echo SETTLE_SKIPPED\nelse\n  echo SETTLE_APPLIES\nfi\n"
+padding = ("x" * 99 + "\n") * 10000  # ~1 MB, far above any pipe buffer
+stub = 'gh() { cat "$SUMMARY_FILE"; }\nPR_NUMBER=2229\n'
+
+def run(code, body):
+    with tempfile.TemporaryDirectory(prefix="protocol91-sigpipe-") as directory:
+        summary = Path(directory) / "summary"
+        summary.write_text(body)
+        env = dict(os.environ, SUMMARY_FILE=str(summary))
+        env.pop("REVIEWER_LOOP_SKIPPED_NO_PLATFORMS", None)
+        result = subprocess.run(["bash", "-c", "set -euo pipefail\n" + stub + code],
+                                env=env, text=True, capture_output=True)
+        return result.returncode, result.stdout
+
+clean = "## Automated Reviewer Loop Summary\nResult: clean\n" + padding
+dirty = "## Automated Reviewer Loop Summary\nResult: escalate\n" + padding
+skipped = "## Automated Reviewer Loop Summary\nResult: skipped\n" + padding
+small = "## Automated Reviewer Loop Summary\nResult: clean\n"
+
+cases = [
+    ("check05_large_clean_passes", check05, clean, 0, "clean/skipped"),
+    ("check05_small_clean_passes", check05, small, 0, "clean/skipped"),
+    ("check05_large_non_clean_blocks", check05, dirty, 7, "not clean/skipped"),
+    ("check06_large_skipped_detected", check05 + check06, skipped, 0, "SETTLE_SKIPPED"),
+    ("check06_large_clean_applies", check05 + check06, clean, 0, "SETTLE_APPLIES"),
+]
+for name, code, body, want_rc, want_text in cases:
+    rc, out = run(code, body)
+    assert rc == want_rc and want_text in out, (name, rc, out[-300:])
+    print(f"PASS: {name}", file=sys.stderr)
+
+# Planted-violation proof: restoring the pipe must reproduce the false block.
+needle = "<<<\"$LOOP_SUMMARY_BODY\"; then"
+assert needle in check05
+planted = check05.replace(
+    "] && grep -Eiq", '] && echo "$LOOP_SUMMARY_BODY" | grep -Eiq', 1
+).replace(" <<<\"$LOOP_SUMMARY_BODY\"; then", "; then", 1)
+assert planted != check05
+rc, out = run(planted, clean)
+assert rc == 7, ("planted pipe did not reproduce SIGPIPE false block", rc, out[-300:])
+print("PASS: check05_planted_pipe_reproduces_false_block", file=sys.stderr)
+print(f"verified:{len(cases) + 1}")
+PYTEST
+)"
+run_test "check05_check06_large_summary_sigpipe_safe" "verified:6" "$_sigpipe_report"
+
 echo ""
 # --- 9. Execute the actual Protocol 91 ready-transition preflight ------------
 # Execute the shipped fenced block with isolated loop/ownership/GitHub mocks.
