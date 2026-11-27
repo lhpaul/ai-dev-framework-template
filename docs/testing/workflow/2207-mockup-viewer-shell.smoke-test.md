@@ -40,7 +40,7 @@ Below, `EX` stands for the absolute path of the example page.
 
 ### Step 1: Read the reference and the scaffold README
 
-**Maps to**: AC1, AC4, AC21
+**Maps to**: AC1, AC4, AC20, AC21
 
 1. List `template/design-scaffold/design/mockups/shared/` and
    `.../example-app/`.
@@ -57,6 +57,8 @@ Below, `EX` stands for the absolute path of the example page.
   operations with their purpose, the address format and its two tables, the
   drawers, inspector rows, frames, viewports and chrome-off mode.
 - Forthcoming lists #2208 and #2214 only.
+- The reference says a pull request changing only scaffold files is covered
+  by the nightly full run (AC20).
 - The README says what `shared/` holds and how to open the example both ways.
 
 ### Step 2: Open the example by double-click
@@ -80,6 +82,8 @@ Below, `EX` stands for the absolute path of the example page.
 2. Press `Tab` once, then `Escape`.
 3. Open the pages drawer again and select Sign in.
 4. Open it again and select the nested Account details entry.
+5. In the product, follow the link from Account details to the edit screen,
+   then open the pages drawer.
 
 **Expected result**:
 
@@ -89,8 +93,12 @@ Below, `EX` stands for the absolute path of the example page.
 - `Escape` closes the drawer and focus returns to the left edge button.
 - Selecting Sign in closes the drawer and shows its initial `empty` state;
   the address is `#screen=sign-in&state=empty`.
-- With Account details shown, the Account entry is highlighted (its
-  navigation anchor) and its group parent is marked.
+- With Account details shown, its nested entry is highlighted and the Account
+  entry is marked as its parent.
+- With the edit screen shown (it has no entry of its own), the Account
+  details entry is highlighted as its navigation anchor and Account is still
+  marked as its parent. One press of the browser's Back button returns to
+  Account details.
 
 ### Step 4: Inspector and states
 
@@ -178,8 +186,9 @@ Below, `EX` stands for the absolute path of the example page.
 **Maps to**: AC2, AC18, AC19, AC20, AC22, AC23, AC24
 
 1. Run `bash scripts/development-workflow/tests/test-mockup-viewer.sh`.
-2. Run it again with `MOCKUP_VIEWER_CHROME=/nonexistent` and Chrome removed
-   from `PATH`, once with `CI=true` and once without `CI`.
+2. Run it again with `MOCKUP_VIEWER_CHROME=/nonexistent` (which disables
+   every other Chrome search), once with `CI=true` and once with `CI` and
+   `GITHUB_ACTIONS` unset.
 3. Run `scripts/development-workflow/mockup-manifest-verify.sh manifest
    template/design-scaffold/design/mockups/example-app/mockup-manifest.js`.
 4. Run `python3 -B scripts/development-workflow/check-sync-manifest-coverage.py`.

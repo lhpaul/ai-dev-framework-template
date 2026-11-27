@@ -88,36 +88,44 @@ Each decision is stated here once; every other section refers to it by label.
   - **Host**: resolves the address (P4), rewrites it canonically with
     `history.replaceState`, paints the shell when chrome is on (P5), creates
     the product frame with `src` = the page's own file name plus the canonical
-    hash with `chrome=off` added, and sizes it by the viewport table (P6). It
-    sets `data-mockup-screen`, `data-mockup-state`, `data-mockup-viewport` and
-    `data-mockup-chrome` on `<body>` and the document title (UC2), so a plain
-    `--dump-dom` can observe the result (P9).
+    hash with `chrome=off` added, sizes it by the viewport table and draws the
+    product frame decoration around it (P6). It never changes the frame's
+    `src` after creating it; every later change is a `show` message (P3),
+    because a fragment navigation inside a frame adds a browser history entry
+    (V13). It sets `data-mockup-screen`, `data-mockup-state`,
+    `data-mockup-viewport`, `data-mockup-chrome` and `data-mockup-hash` (the
+    canonical hash it wrote) on `<body>` and the document title (UC2), so a
+    plain `--dump-dom` can observe the result (P9).
   - **Product**: hides the shell markup, shows the resolved screen and state
-    (P7), draws the product frame decoration (P6), and reports each shown
-    target to its parent (P3). Opened at top level with `chrome=off`, a page
-    is still the host (with no shell), so the frame sizing of the viewport
-    table also holds in chrome-off mode (viewport table, last paragraph).
+    (P7), and reports each shown target to its parent (P3). Opened at top
+    level with `chrome=off`, a page is still the host (with no shell), so
+    the frame sizing of the viewport table also holds in chrome-off mode
+    (viewport table, last paragraph).
 
 - **P3 — Message protocol (`mockup-viewer/1`).** Messages are plain objects
   with a `type` and ids only; no product content crosses.
 
   | Direction | `type` | Fields | Effect |
   | --- | --- | --- | --- |
-  | host → product | `mockup-viewer:show` | `seq` (integer), `screen`, `state`, `viewport`, `handler` (boolean) | Product runs `navHandlers[screen]` when `handler` is true and one exists, otherwise shows the target |
+  | host → product | `mockup-viewer:show` | `seq` (integer), `screen`, `state`, `handler` (boolean) | Product runs `navHandlers[screen]` when `handler` is true and one exists, otherwise shows the target |
   | product → host | `mockup-viewer:shown` | `seq` (echoed, or absent), `screen`, `state` | Host updates the address, panels and title |
   | product → host | `mockup-viewer:key` | `key` (`Escape` only) | Host closes the open drawer (BR7) |
 
   The host accepts a message only when `event.source` is its own product
-  frame's `contentWindow` and `type` starts with `mockup-viewer:`. Under
+  frame's `contentWindow` and `type` starts with `mockup-viewer:`; the
+  product accepts `show` only when `event.source` is `window.parent`. Under
   `file://` every origin is `null`, so the origin cannot be checked and the
   source check is the guard. `postMessage` uses target origin `*` for the
   same reason; the payload is only ids that are already in the address.
   The host numbers each `show` with an increasing `seq`. A `shown` that
   echoes the latest `seq` answers the host and adds no history entry (the
-  host already pushed one for the selection, BR16). A `shown` with an older
-  `seq` is stale and ignored. A `shown` with no `seq` was started by the
-  product itself (a link inside the product, AC17) and adds one history entry,
-  unless it names the target already shown.
+  host already pushed one for the selection, BR16). The product echoes the
+  `seq` of the `show` it is handling on the `shown` that answers it, including
+  a target a `navHandlers` entry shows before it returns. A `shown` with an
+  older `seq` is stale and ignored. A `shown` with no `seq` was started by the
+  product itself (a link inside the product, AC17, through P7's
+  product-initiated navigation) and adds one history entry, unless it names
+  the target already shown.
 
 - **P4 — Address resolution is one pure function.**
   `MockupViewer.getTargetFromUrl(manifest, domMap, hash)` takes the hash
@@ -155,20 +163,24 @@ Each decision is stated here once; every other section refers to it by label.
     elements, never the frame's box (BR6).
 
 - **P6 — Frame sizing.** The host's canvas is a fixed full-window element
-  with `overflow: auto`.
-  - Full window (desktop, browser): the frame fills the canvas.
+  with `overflow: auto`. The product frame decoration (the browser bar and
+  the device frame, BR13) is drawn by the host around the `<iframe>`, never
+  inside the product document, so the product window is always exactly the
+  size shown and its media queries and `vh` units match a window of that size.
+  - Full window (desktop, browser): the frame fills the canvas, below the
+    browser bar for `browser`.
   - A viewport (desktop, browser): the frame is `width` × `height` CSS
-    pixels, plus the browser bar's height for `browser`, centred, never
-    scaled; when larger than the window the canvas scrolls (viewport table
+    pixels, centred, never scaled, with the browser bar above it for
+    `browser`; when larger than the window the canvas scrolls (viewport table
     footnote). The product window's `innerWidth` therefore equals the
     viewport width (V8).
-  - `phone`: the frame fills the canvas and the product draws a centred
-    device frame whose screen area is the viewport's size, or 393 × 852 when
-    none is declared (viewport table footnote). The product reads the size
-    from the `viewport` key of its own hash.
-  - `browser`: the product draws a browser bar above its screens showing the
-    current screen's `url` (BR13). The bar and the device frame are product
-    decoration, so they are present in chrome-off mode.
+  - `phone`: the frame is the device's screen area, sized to the viewport
+    shown, or in Full window to the first declared viewport, or 393 × 852
+    when none is declared (viewport table footnote), centred inside a host-drawn
+    device frame.
+  - `browser`: the bar shows the current screen's `url` from the manifest,
+    updated on every applied target (BR13). The bar and the device frame are
+    product decoration, so the host draws them in chrome-off mode too.
 
 - **P7 — Showing a screen and state in the product.** The page marks each
   HTML screen as an element with class `screen` and the id from
@@ -183,6 +195,14 @@ Each decision is stated here once; every other section refers to it by label.
   in the product area. This keeps the vault standard's "`go()` stays in the
   page" intent: `go` is replaced by `onShow`, which receives the same
   arguments.
+  - **Product-initiated navigation**: product code moves the product with
+    `viewer.show(screenId, stateId)` on the object `init` returns (P8). The
+    product role also intercepts clicks on `a[href^="#screen="]` links with
+    `preventDefault` and routes them to `viewer.show`. The product never
+    assigns `location` or `location.hash`; it updates its own hash only with
+    `history.replaceState`. A fragment navigation inside the frame would add
+    a browser history entry of its own (V13), so a product link would add two
+    entries instead of BR16's one.
 
 - **P8 — Viewer interface (BR3).** `window.MockupViewer`, an IIFE, no module
   syntax, so it loads as a classic script under `file://`:
@@ -190,7 +210,7 @@ Each decision is stated here once; every other section refers to it by label.
   | Operation | Signature | Notes |
   | --- | --- | --- |
   | `loadManifest` | `(url?) → Promise<manifest>` | RADAR order: `window.__MOCKUP_MANIFEST__`, embedded `#mockup-manifest` JSON, then optional `fetch(url)`. Rejects when none is found. |
-  | `init` | `(manifest, options) → viewer` | `options`: `appName`, `navHandlers`, `onShow`. Detects the role (P2), builds the shell (P5) or wires the product (P7). |
+  | `init` | `(manifest, options) → viewer` | `options`: `appName`, `navHandlers`, `onShow`. Detects the role (P2), builds the shell (P5) or wires the product (P7). In the product role, `viewer.show(screenId, stateId)` is product-initiated navigation (P7). |
   | `buildNav` | `(manifest, navRoot, onNavigate, navHandlers)` | RADAR's flattening of nested `items`, with depth classes and `data-nav-parent`. |
   | `buildDomMap` | `(manifest) → { screen_id: dom_id }` | Unchanged from RADAR. |
   | `getTargetFromUrl` | `(manifest, domMap, hash?) → target` | P4. |
@@ -204,8 +224,8 @@ Each decision is stated here once; every other section refers to it by label.
   frame (`MockupViewer.init(null, options)` is allowed for this).
 
 - **P9 — Observable state for tests.** Besides the `<body>` data attributes
-  (P2), the host sets `data-mockup-ready="1"` after the product's first
-  `shown`, and `data-mockup-error="<reason>"` for BR4 and frame-load
+  (P2, including `data-mockup-hash`), the host sets `data-mockup-ready="1"`
+  after the product's first `shown`, and `data-mockup-error="<reason>"` for BR4 and frame-load
   failures. The product sets the same attributes on its own `<body>`. These
   are the only test hooks; they are documented in the reference as
   read-only signals that capture tools (#2213, #2216) may also wait on.
@@ -215,10 +235,14 @@ Each decision is stated here once; every other section refers to it by label.
   level (V9). The viewer reads both from the current state. `synced_at` is
   read from the top level and shown as written.
 
-- **P11 — Chrome discovery and CI detection (test outcome table).** Chrome is
-  the first of: `$MOCKUP_VIEWER_CHROME` when set and executable;
+- **P11 — Chrome discovery and CI detection (test outcome table).** When
+  `$MOCKUP_VIEWER_CHROME` is set and non-empty it is the only candidate: used
+  when executable, otherwise Chrome is not found (rows 2 and 3), with no
+  further search. When it is unset or empty, Chrome is the first of
   `google-chrome`, `google-chrome-stable`, `chromium`, `chromium-browser` on
-  `PATH`; `/Applications/Google Chrome.app/Contents/MacOS/Google Chrome`. CI
+  `PATH`, then `/Applications/Google Chrome.app/Contents/MacOS/Google Chrome`.
+  The exclusive override is what lets T-outcomes hide Chrome on a macOS
+  machine, where the application path is found whatever `PATH` holds. CI
   is detected by `CI=true` or `GITHUB_ACTIONS=true`. The suite prints the
   Chrome path and `--version` before any case, so the CI log shows which
   binary ran (V10). Chrome runs with `--headless=new --disable-gpu
@@ -269,7 +293,7 @@ Each decision is stated here once; every other section refers to it by label.
 | AC17 | P3 | T-chrome-off-nav |
 | AC18 | L4 | the suite itself |
 | AC19 | P11, P12 | T-outcomes |
-| AC20 | P13 | PR CI run log (S3) |
+| AC20 | P13, L5 | PR CI run log (S3), smoke Step 1 |
 | AC21 | L5 | smoke Step 1 |
 | AC22 | — | S4 |
 | AC23 | L6 | S5 |
@@ -296,8 +320,11 @@ merge, 2026-11-27).
 | V10 | A harness can reach both nested frames under `file://` | probe harness, with and without `--allow-file-access-from-files` | without: `contentDocument` is `null`; with: host and product documents readable, synthetic `Escape` dispatched |
 | V11 | The CI trigger and selection model | `.github/workflows/workflow-tests.yml` header; `select-test-suites.sh` lines 11-30 | `pull_request` paths limited to `scripts/development-workflow/**` with nightly backstop (#1997); suites select by `# covers:` globs and their own fixtures |
 | V12 | Suite count today | `ls scripts/development-workflow/tests \| grep -c '^test-'` | 168 |
+| V13 | A fragment navigation inside a frame adds a browser history entry; `history.replaceState` inside it does not | probe page framing itself under `file://` (frame clicks an `<a href="#…">`, then calls `replaceState`), parent reports `history.length`, `--headless=new --dump-dom --virtual-time-budget=5000` | `history.length` 2 before, 3 after the in-frame link click, still 3 after the in-frame `replaceState`; 4 after one parent `pushState` |
+| V14 | `python3 -m http.server` prints its port line only when unbuffered | start `python3 -m http.server --bind 127.0.0.1 0 > out` and read `out` after 3 s; repeat with `python3 -u` | without `-u`: empty; with `-u`: `Serving HTTP on 127.0.0.1 port <n> (…)` |
+| V15 | No existing script, test or workflow reads the removed `.gitkeep` files or the reference sections this plan edits | `git grep -n -e design-scaffold -e '\.gitkeep' -e mockup-framework b28c1192 -- scripts .github .claude .cursor .agents .codex` | 7 lines: a link to `mockup-framework.md#manifest` in `scripts/development-workflow/README.md` (an anchor this plan keeps), contract comments in `mockup-manifest-verify.py`, `mockup-manifest-verify.sh` and `workflow-lib.sh`, and `.gitkeep` only in the unrelated `changelog.d/` handling of `changelog-fragments.sh` and its test; no `design-scaffold` match |
 
-The probes in V7, V8 and V10 were run on macOS with Google Chrome; the
+The probes in V7, V8, V10 and V13 were run on macOS with Google Chrome; the
 implementation re-runs them as suite cases, and the CI run is the evidence for
 the Linux runner (S3).
 
@@ -310,9 +337,11 @@ the Linux runner (S3).
   repository; P11 prints the binary and version in CI, and S3 records it.
   If CI finds no Chrome, the suite fails by design (row 2) and the
   implementation stops for a human decision rather than changing a workflow.
-- Rule 5 (composed call site): the suite is checked through the selector and
-  shard runner it will actually run under (S3), not only by direct
-  invocation.
+- Rule 5 (composed call site): not triggered. The plan changes, deletes or
+  replaces no unit that has consumers: the removed `.gitkeep` files and the
+  edited reference sections have none (V15), and the selector is unchanged.
+  The new suite is still checked through the selector and shard runner it
+  will actually run under (S3), not only by direct invocation.
 
 ---
 
@@ -365,19 +394,26 @@ the Linux runner (S3).
   - `home` (no states, `url`),
   - `sign-in` (states `empty` initial, `filled`, `invalid`; `state_label`),
   - `account` with a nested navigation entry `account-details`,
-  - `account-details` (`nav_screen` `account`),
+  - `account-details` (no `nav_screen`, so showing it highlights the nested
+    entry and marks `Account` as its parent), with a product link to
+    `account-edit`,
+  - `account-edit` (no navigation entry, `nav_screen` `account-details`, so
+    showing it highlights the nested `Account details` entry as its anchor),
   - `overview-image` (`kind` `image`, `export` `exports/overview.svg`).
 
   Two navigation groups (`Main`, `Account`), one nested entry. `synced_at`
   is set to a fixed date so the `updated` row shows a value; the variants
   (L4) cover its absence. **Indicative enumeration**: the implementer may
-  rename screens as long as every BR18 feature remains.
+  rename screens as long as every BR18 feature remains and the example still
+  shows a nested entry's parent marking and a `nav_screen` anchor (AC12).
 - `index.html`: `<style>` with a `:root` block mirroring every token of
   `../../tokens.json` by name and value (#2206 BR10), product styles using
   `@media (max-width: 600px)` so the mobile viewport visibly changes layout,
   one `.screen` element per HTML screen, `[data-state]` variants for
   `sign-in`, a product link inside `sign-in` that moves to its `filled`
-  state (used by AC17), `<div id="mockup-viewer"></div>`, the two scripts and
+  state (used by AC17) and the `account-details` link to `account-edit`, both
+  plain `<a href="#screen=…">` links that the product role intercepts (P7),
+  `<div id="mockup-viewer"></div>`, the two scripts and
   the boot script (P8). Content is short English placeholder text marked as
   to be replaced.
 - `exports/overview.svg`: a small hand-written SVG (text and shapes only).
@@ -402,8 +438,9 @@ template-owned markers.
   `mktemp -d` profile removed on exit (trap).
 - **Layer 1 — no flag (real open)**: dump `file://…/example-app/index.html`
   with no hash and with `#screen=sign-in&state=invalid`; assert the host
-  `<body>` attributes (P9), the canonical-hash rewrite is reflected in a
-  `data-mockup-hash` attribute, the shell nodes exist, and the title. This is
+  `<body>` attributes (P9), the canonical-hash rewrite is reflected in
+  `data-mockup-hash` (P2), the two edge buttons and the viewport switch exist
+  and carry no `hidden` attribute, and the title. This is
   T-open and proves the `postMessage` path without any flag (AC3).
 - **Layer 2 — harness**: `fixtures/mockup-viewer/harness.html?case=<name>`
   with `--allow-file-access-from-files`. The harness loads the example (or a
@@ -416,19 +453,21 @@ template-owned markers.
   page pointing at alternative manifests, for table rows the example cannot
   reach: no viewports; one viewport (Design intent, Reproduction); several
   viewports Reproduction; `phone` frame; no manifest; a screen without a page
-  element; no `synced_at`; Reproduction with `persona`/`forced`. Each loads
+  element; no `synced_at`; Reproduction with `persona`/`forced`; navigation
+  with two entries citing one screen and a screen no entry cites (T-nav). Each loads
   the shipped `template/design-scaffold/design/mockups/shared/viewer.js` and
   `viewer.css` by a relative path, never a copy, so the shipped viewer is what
   runs. **Indicative enumeration**: the set
   must reach every viewport-table row and every BR4/BR17 message.
 - **T-verify**: `mockup-manifest-verify.sh manifest` on the example manifest
   reports Conforms (AC2).
-- **T-http**: start `python3 -m http.server --bind 127.0.0.1 0` in the mockups
-  folder, read the port from its first line, dump the example over HTTP,
+- **T-http**: start `python3 -u -m http.server --bind 127.0.0.1 0` in the
+  mockups folder (unbuffered, or the port line never reaches a redirected
+  output, V14), read the port from its first line with a bounded poll, dump
+  the example over HTTP,
   assert the same attributes as T-open, stop the server (trap).
 - **T-outcomes** (AC19): re-run the suite in a child process with
-  `MOCKUP_VIEWER_CHROME=/nonexistent` and `PATH` stripped of Chrome names,
-  once with `CI=true` (expect exit 1, `FAILED: Chrome not found`) and once
+  `MOCKUP_VIEWER_CHROME=/nonexistent` (exclusive, P11), once with `CI=true` (expect exit 1, `FAILED: Chrome not found`) and once
   with `CI` and `GITHUB_ACTIONS` unset (expect exit 0, `SKIPPED: Chrome not
   found`); and with a temporary copy of the repository root missing the
   scaffold (expect `NOT APPLICABLE`). A planted broken check
@@ -447,8 +486,13 @@ template-owned markers.
   (BR10, P10), pages drawer and state list (BR11, BR12), frames and viewports
   (BR13, BR14) with the viewport table, chrome-off mode (BR15) and capture
   guidance, navigation and history (BR16), messages (BR4, BR17), the
-  read-only test hooks (P9), and the message protocol (P3) as an
-  informative note.
+  read-only test hooks (P9), the message protocol (P3) as an informative
+  note, and the product-code rules: address its own window and move only
+  through `viewer.show` or `#screen=` links, never by assigning `location`
+  (P7).
+- Automated test coverage (AC20): the viewer suite runs on a pull request
+  only when the workflow test harness starts, so a pull request changing only
+  scaffold files is covered by the nightly full run (P13).
 - Starting from the scaffold: mention the working example.
 - Forthcoming: remove "Viewer and shell — #2207"; keep #2208 and #2214.
 
@@ -490,10 +534,10 @@ Named cases (L4). Each maps to the ACs in the coverage table above.
 | T-drawers | harness | start closed, mutual exclusion, close by selection, button, scrim and `Escape` (host and forwarded), frame box unchanged (AC9) |
 | T-a11y | harness | `aria-*`, `inert`, focus into the drawer and back to its edge button (AC10) |
 | T-headers, T-rows | harness | BR9 headers; BR10 rows for a screen with and without states, `url` row for `browser`, `updated` `—` (AC11) |
-| T-nav | harness | nesting, `nav_screen` anchor, every citing entry, parents, no highlight when uncited (AC12) |
+| T-nav | harness | nesting, `nav_screen` anchor and parent marking on the example (L2), every citing entry and no highlight when uncited on the navigation variant (AC12) |
 | T-states, T-image | harness | no-states message; image with `alt` (AC13) |
 | T-no-manifest, T-missing-content | harness | BR4 and BR17 messages (AC14) |
-| T-viewport | harness | every viewport-table row: frame size, centring, canvas scroll when oversize, switch state; product `innerWidth` equals viewport width (AC15) |
+| T-viewport | harness | every viewport-table row: frame size, centring, canvas scroll when oversize, switch state; product `innerWidth` and `innerHeight` equal the size shown, for `browser` and `phone` too; a viewport selection keeps the screen and state and pushes one history entry (AC15) |
 | T-chrome-off | harness | no shell nodes painted, `Escape` inert, browser bar present, frame size same as with shell (AC16) |
 | T-chrome-off-nav | harness | product link at top-level `chrome=off` keeps `chrome=off` and adds one history entry (AC17) |
 | T-outcomes | child runs | rows 1, 2, 3 and a planted failure (AC19) |
@@ -602,7 +646,7 @@ None. The example mockup (L2) and the variants (L4) are the test data.
 | Headless timing flakiness | Medium | Medium | P9 readiness attributes with bounded polls; one Chrome run per case group; watchdog |
 | A browser blocks `file://` self-framing in future | Low | High | V7 probe becomes T-open; the reference documents HTTP as the fallback open |
 | A message from another frame drives the shell | Low | Low | P3 source check; payload is ids only |
-| Product code breaks inside a frame (for example `window.top` use) | Low | Medium | documented in the reference: product code addresses its own window |
+| Product code breaks inside a frame (for example `window.top` use, or assigning `location.hash`) | Low | Medium | documented in the reference (L5): product code addresses its own window and navigates only through P7 |
 | Consumers run the synced suite and fail | Low | Medium | P12 Not applicable |
 
 ### Reversal
