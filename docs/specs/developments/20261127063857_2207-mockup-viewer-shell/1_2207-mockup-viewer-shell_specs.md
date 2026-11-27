@@ -70,8 +70,8 @@ Derived from those sources by this spec, and open to override at spec review:
   viewports. This spec reconciles the two. With no viewport in the address, a
   Design intent frame fills the window. Choosing a viewport renders the
   product at that viewport's width and height, centred, with the canvas around
-  it. A Reproduction always shows a viewport, because the standard holds it to
-  an exact size.
+  it. A Reproduction that declares viewports always shows one of them, because
+  the standard holds it to an exact size.
 - **D9: Every declared viewport is available for every state.** The vault
   standard disables, rather than hides, a viewport that a state was not
   captured at. The manifest contract (#2206) has no field that says which
@@ -79,8 +79,10 @@ Derived from those sources by this spec, and open to override at spec review:
   rule returns when a later item adds such a field (Out of Scope).
 - **D10: An unresolvable address is corrected, not kept.** When the address
   names an unknown screen, state or viewport, the viewer opens the default it
-  falls back to and rewrites the address to match what is shown. The address
-  bar then never names something the canvas is not showing.
+  falls back to and rewrites the address to match what is shown. An address
+  that leaves a value out is completed the same way. The address bar then
+  never names something the canvas is not showing, and copying it always links
+  to exactly what is shown.
 
 ## Use Cases
 
@@ -189,8 +191,8 @@ size.
 
 ### Use Case 4: Prove the scaffold still works
 
-**Actor**: A template maintainer, or CI on a pull request that changes the
-scaffold or its test.
+**Actor**: A template maintainer, or the template's CI: a pull request that
+starts the workflow test harness, or the harness's nightly full run.
 **Preconditions**: The template repository.
 
 **Steps**:
@@ -208,6 +210,10 @@ scaffold or its test.
 - In CI, a missing Chrome is a failure, never a skip (D3).
 - In a repository without the scaffold, such as a synced consumer, the suite
   is Not applicable and never fails.
+- Because no CI workflow changes (D3), the suite runs only where the existing
+  workflow test harness already runs. A pull request that changes only
+  scaffold files does not start the harness, so its CI coverage is the
+  nightly full run (AC20).
 
 ## Business Rules
 
@@ -223,20 +229,34 @@ scaffold or its test.
   product content, its screens and any product-specific behaviour, such as
   starting a wizard. The viewer never edits product content. It does not check
   the manifest either: the verify script (#2206) does.
-- BR3 (viewer interface): The viewer offers the operations named by the
-  framework and by the issue: load the manifest, initialise the viewer, build
-  the pages navigation, map each screen to its page element, read the target
-  from the address, update the drawers for a screen and state, and update the
-  metadata. The reference names each with its purpose. Their exact signatures
-  are decided in the plan, starting from the RADAR viewer (D5).
+- BR3 (viewer interface): The viewer is the file `mockups/shared/viewer.js`.
+  It defines one global, `MockupViewer`, with the operations named by the
+  framework and by the issue: `loadManifest` (load the manifest), `init`
+  (initialise the viewer), `buildNav` (build the pages navigation),
+  `buildDomMap` (map each screen to its page element), `getTargetFromUrl`
+  (read the target from the address), `updatePanels` (update the drawers for a
+  screen and state) and `updateMeta` (update the metadata). The reference
+  names each with its purpose. Their exact signatures are decided in the plan,
+  starting from the RADAR viewer (D5).
 - BR4 (loading the manifest): The viewer takes the manifest the page's
   manifest script defined. When no manifest is found, or the manifest lists no
   screens, the canvas shows a visible message saying so. The page is never
   blank or silent.
-- BR5 (address resolution): The address carries the screen, the state, the
-  viewport and the chrome mode. The address resolution table below decides
-  what opens. Review settings never change which screen or state is named
-  (#2206 BR9).
+- BR5 (address format and resolution): The address is the page's hash, in the
+  form `#screen=<screen_id>&state=<state_id>&viewport=<viewport_id>&chrome=off`.
+  Its keys are `screen` (a screen id), `state` (a state id of that screen),
+  `viewport` (a declared viewport id) and `chrome` (only `off` has a meaning,
+  BR15). Every key is optional. A key with an empty value counts as not given,
+  and when a key repeats, its first occurrence counts. Other keys are ignored.
+  A hash that contains no `=` is the legacy form `#<screen_id>`. The address
+  resolution table and the viewport table below decide what opens. After every
+  resolution the address is replaced with the canonical form of what is shown:
+  the keys in the order above, `state` only when the screen has states,
+  `viewport` only when the size shown is a viewport, and `chrome=off` only in
+  chrome-off mode. Replacing the address on load or after a correction never
+  adds a browser history entry, so going back never returns to an address that
+  would be corrected again. Review settings never change which screen or state
+  is named (#2206 BR9).
 - BR6 (shell layout): The product canvas fills the whole window. The two
   drawers and the scrim are overlays fixed to the window. Opening or closing a
   drawer never resizes, moves or reflows the product canvas. The shell's
@@ -268,21 +288,25 @@ scaffold or its test.
   | `route` | The screen's route, or `—` | Always |
   | `url` | The screen's URL, or `—` | `browser` frame only |
   | `kind` | The screen's content type, `html` when absent | Always |
-  | `persona` | The persona value | Reproduction only, and only when present (D6) |
-  | `forced` | The current state's forced value | Reproduction only, and only when present (D6) |
-  | `updated` | The mockup's sync date as written in the manifest, or `—` | Always |
+  | `persona` | The manifest's `persona` value | Reproduction only, and only when present (D6) |
+  | `forced` | The current state's `forced` value | Reproduction only, and only when present (D6) |
+  | `updated` | The manifest's top-level `synced_at` value as written, or `—` | Always |
 
-  The sync date is shown as written. The viewer does not convert it to a
+  The vault standard names these source fields. It does not say where a
+  Reproduction manifest carries `persona`; the plan confirms that from the
+  Leasity reference manifest (D5). The sync date is shown as written. The viewer does not convert it to a
   locale, because the shell's structure is English (#2206 BR15).
 - BR11 (pages drawer): The pages drawer shows each navigation group under its
   label, with its entries in manifest order. A nested entry is indented under
-  its parent. An entry without a label shows its screen id. The current
-  screen's entry is highlighted. When the current screen is not in the
-  navigation, the screen it names as its navigation anchor is highlighted. The
-  entries above the highlighted one are marked as its parents.
+  its parent. An entry without a label shows its screen id. The highlighted
+  screen is the current screen's navigation anchor (`nav_screen`, #2206 BR3)
+  when it names one, and otherwise the current screen itself. Every entry
+  citing the highlighted screen is highlighted. When no entry cites it,
+  nothing is highlighted. The entries above a highlighted one are marked as
+  its parents.
 - BR12 (state list): For a screen with one or more states, the inspector lists
   every state in manifest order under the screen's state-group title, or the
-  screen title when it has none. The current state is marked. A state without
+  screen title when it has none, or the screen id when it has neither. The current state is marked. A state without
   a label shows its state id. For a screen with no states, the inspector shows
   a short message that the screen has no local states.
 - BR13 (frames): The manifest's frame decides how the product is framed.
@@ -304,13 +328,16 @@ scaffold or its test.
   address. Any other value, or no value, means the shell is shown. A value
   other than `off` is dropped from the address.
 - BR16 (navigation keeps the address in step): Every selection in the shell
-  (a screen, a state, a viewport) updates the address. Changing the address by
+  (a screen, a state, a viewport) updates the address and adds one browser
+  history entry. Changing the address by
   hand, or with the browser's back and forward, updates the canvas and the
   drawers to match, using the same table.
 - BR17 (missing screen content): When the page has no element for the
   resolved screen, the canvas shows a visible message naming the screen id,
-  instead of an empty canvas. An image screen shows its exported image, with
-  the screen's title, or its id, as the image's text alternative.
+  instead of an empty canvas. An image screen (`kind` `image`) needs no page
+  element: the canvas shows the image at its `export` path, read from the app
+  folder, with the screen's title, or its id, as the image's text
+  alternative.
 - BR18 (example mockup): The scaffold's example mockup is Design intent. It
   has at least two navigation groups, a nested navigation entry, a screen with
   several states and one initial state, a screen with no states, an image
@@ -330,8 +357,8 @@ scaffold or its test.
 ### Address resolution table
 
 Evaluate the screen first, then the state, then the viewport, then the chrome
-mode. When any value was corrected, the address is rewritten to the resolved
-values (D10). "Default screen" is the manifest's default screen, or its first
+mode. After resolution, the address is rewritten to the canonical form of what
+opened (BR5, D10). "Default screen" is the manifest's default screen, or its first
 screen when the default names no screen.
 
 | # | Address | Screen opened | State opened |
@@ -365,11 +392,16 @@ carrying a state.
 | 7 | Several declared, Reproduction, a declared viewport given | That viewport | Shown, that viewport active |
 | 8 | Viewports declared, and the address names one that is not declared | As if no viewport were given (rows 2, 3, 4 or 6), and the unknown value is dropped | As in that row |
 
+Row 8 is checked first: an address naming an undeclared viewport is resolved
+as if it named none. Otherwise exactly one of rows 1 to 7 matches.
+
 "Full window" means the product fills the canvas, except a `phone` frame,
-which shows its device frame at the first declared viewport's size, or a
-default phone size when none is declared. "That viewport" means the product is
-rendered at exactly that width and height, centred in the canvas. The product
-is laid out as it would be in a window of that size.
+which shows its device frame at the first declared viewport's size, or at the
+standard's phone size of 393 × 852 when none is declared. "That viewport"
+means the product is rendered at exactly that width and height, centred in the
+canvas. The product is laid out as it would be in a window of that size. The
+product is never scaled. When that size is larger than the window, the canvas
+scrolls so that every part of the product can be reached.
 
 ### Test outcome table
 
@@ -419,7 +451,7 @@ Rows are evaluated in order, and the first match decides the outcome.
 
 | Value | Display label | Description |
 | --- | --- | --- |
-| no viewport | Full window | The product fills the canvas (Design intent only). |
+| no viewport | Full window | The product fills the canvas (Design intent, or any mockup that declares no viewport). |
 | a viewport id | The viewport's label | The product at that viewport's exact width and height. |
 
 **Test outcomes**: Passed; Failed; Skipped; Not applicable. Only Failed is
@@ -477,8 +509,11 @@ design tree.
 ### Address and navigation
 
 - [ ] AC5: Each row of the address resolution table produces the screen and
-  state it names. A corrected address (rows 3, 5, 6 and 8, and any legacy
-  address) is rewritten to the resolved canonical values.
+  state it names, and the address then reads the canonical form of what opened
+  (BR5). A corrected value (rows 3, 5, 6 and 8, and any legacy address) is
+  replaced, a missing state is filled in, and neither adds a browser history
+  entry. A key with an empty value, a repeated key and an unknown key behave
+  as BR5 says.
 - [ ] AC6: Selecting a screen in the pages drawer opens it in its initial
   state, closes the drawer and updates the address. Selecting a state in the
   inspector opens it, closes the drawer and updates the address.
@@ -533,8 +568,12 @@ design tree.
   applicable without the scaffold, Failed when Chrome is missing in CI, a
   visible Skipped when Chrome is missing outside CI, Passed when every check
   passes, and Failed naming the check when a check is broken on purpose.
-- [ ] AC20: The suite runs in the template's CI on pull requests that change
-  the scaffold's viewer or example, or the suite itself, and it passes there.
+- [ ] AC20: The template's existing workflow test harness selects the suite
+  with no CI workflow change (D3), and the suite passes in CI on the
+  implementation pull request. Its coverage declaration names the scaffold's
+  viewer and example, so the harness's nightly full run and every pull request
+  that starts the harness and changes them run it. The reference states that a
+  pull request changing only scaffold files is covered by the nightly run.
 
 ### Reference and regression
 
