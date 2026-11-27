@@ -194,13 +194,18 @@ Below, `EX` stands for the absolute path of the example page.
 3. Run `scripts/development-workflow/mockup-manifest-verify.sh manifest
    template/design-scaffold/design/mockups/example-app/mockup-manifest.js`.
 4. Run `python3 -B scripts/development-workflow/check-sync-manifest-coverage.py`.
-5. Create a disposable consumer: `git init` a `mktemp -d` directory and copy
-   into it, at the same paths, only the new and changed files the plan's L6
-   table classifies as synced (`docs/workflow/development-workflow/mockup-framework.md`,
-   `scripts/development-workflow/tests/test-mockup-viewer.sh` and
-   `scripts/development-workflow/tests/fixtures/mockup-viewer/`); skip the
-   paths L6 marks as not in the manifest or project_specific. From the
-   consumer's root, check for `design/` and `template/`, then run
+5. Create a disposable consumer from the sync manifest's own classification,
+   not from a hand-picked list, once per role (`single_repo`,
+   `workflow_hub`, `product_repo`): `git init` a fresh `mktemp -d` directory
+   and run
+   `python3 -B scripts/development-workflow/select-sync-manifest-entries.py
+   --manifest sync-manifest.yaml --role <role>`. Then, for every path that
+   `git diff --name-only origin/develop...HEAD` lists, copy it into the
+   consumer at the same path when it equals a `SELECTED` entry's `path`, sits
+   under a `SELECTED` directory entry, or matches its `glob`, in category
+   `always_sync` or `special_handling`. Copy nothing else. From the
+   consumer's root, list the whole tree (`find . -path ./.git -prune -o
+   -print`), check for `design/` and `template/`, then run
    `bash scripts/development-workflow/tests/test-mockup-viewer.sh`.
 6. On the implementation PR, open the `workflow test harnesses` run and the PR
    description.
@@ -212,8 +217,10 @@ Below, `EX` stands for the absolute path of the example page.
   visible `SKIPPED: Chrome not found` (exit 0) without it.
 - The verify script reports Conforms.
 - The coverage check reports `RESULT=clean`.
-- The disposable consumer has no `design/` folder and no `template/` folder,
-  and the copied suite prints
+- For every role, the consumer tree holds only the selected files (the
+  plan's L6 table gives the expected set per role); it has no `design/`
+  folder, no `template/` folder and no scaffold file, and the copied suite
+  prints
   `NOT APPLICABLE: no design scaffold in this repository` and exits 0.
 - The PR's test run selected and passed `test-mockup-viewer.sh` and logged the
   Chrome version; the PR description carries the vault replacement text for

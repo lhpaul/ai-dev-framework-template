@@ -569,7 +569,7 @@ Named cases (L4). Each maps to the ACs in the coverage table above.
 | T-http | no flag | same over HTTP (AC3) |
 | T-resolve | harness, pure | every address-table row and BR5 key rule: empty, repeated, unknown keys, legacy form, canonical order (AC5); and every viewport-table row, using in-harness manifest objects for rows the example cannot reach (AC15) |
 | T-address | harness | rows 1 to 8 end to end, with the address rewritten and no history entry added (AC5) |
-| T-select | harness | screen and state selection close the drawer and push one history entry (AC6) |
+| T-select | harness | screen and state selection close the drawer and push one history entry; selecting the screen, state or viewport already shown also closes the drawer and pushes exactly one entry (AC6, BR16) |
 | T-history | harness | hand-edited hash and back/forward update canvas and panels; a hand edit resolving to the target already shown is still rewritten to the canonical form (AC7, AC5) |
 | T-title | harness | title rule (AC8) |
 | T-drawers | harness | start closed, mutual exclusion, close by selection, button, scrim and `Escape` (host and forwarded), frame box unchanged (AC9) |
@@ -620,9 +620,15 @@ there are no data races; the hazards are ordering ones.
 - **Re-entrancy / in-flight tracking**: a selection increments `seq` before
   posting `show`; the answer is matched by `seq` (P3). A second selection
   before the first answer supersedes it; the late answer is stale.
-- **Event deduplication**: when the resolved target equals the current one,
-  `applyTarget()` posts no `show`, pushes no history entry and repaints
-  nothing, so an echoed `shown` adds nothing. It still rewrites the address
+- **Event deduplication**: `applyTarget()` takes the event's source. A shell
+  selection (a screen, a state or a viewport chosen in the shell) always
+  pushes exactly one history entry, even when it names the target already
+  shown (BR16: every selection adds one entry); for a same-target selection
+  it posts no `show` and repaints nothing, and only closes the drawer.
+  Deduplication applies to every other source: when a `shown` echo, a
+  product-initiated `shown`, a `hashchange` or a `popstate` resolves to the
+  target already shown, `applyTarget()` posts no `show`, pushes no history
+  entry and repaints nothing, so an echoed `shown` adds nothing. It still rewrites the address
   to the canonical hash with `replaceState` when the address differs, so a
   hand-edited hash that resolves to the target already shown (for example
   `#home` while Home is shown) is corrected as BR5 and D10 require. `history.pushState` and
