@@ -1712,7 +1712,14 @@ parse_result="$(
   ' 2>/dev/null
 )" || parse_result=""
 
-parse_status="$(printf '%s\n' "$parse_result" | awk -F= '$1 == "PARSE_STATUS" { print $2; exit }')"
+# Read one key from the parser output. Consume all input (no early exit): the
+# output carries finding text and can exceed a pipe buffer, where an early awk
+# exit would SIGPIPE printf under pipefail (#2171).
+parse_result_value() {
+  printf '%s\n' "$parse_result" | awk -F= -v key="$1" '$1 == key && !found { print $2; found = 1 }'
+}
+
+parse_status="$(parse_result_value PARSE_STATUS)"
 case "$parse_status" in
   ok) ;;
   head_mismatch)
@@ -1726,11 +1733,11 @@ case "$parse_status" in
     ;;
 esac
 
-result="$(printf '%s\n' "$parse_result" | awk -F= '$1 == "RESULT" { print $2; exit }')"
-reason="$(printf '%s\n' "$parse_result" | awk -F= '$1 == "REASON" { print $2; exit }')"
-comment_count="$(printf '%s\n' "$parse_result" | awk -F= '$1 == "COMMENT_COUNT" { print $2; exit }')"
-blocking_count="$(printf '%s\n' "$parse_result" | awk -F= '$1 == "BLOCKING_COUNT" { print $2; exit }')"
-suggestion_count="$(printf '%s\n' "$parse_result" | awk -F= '$1 == "SUGGESTION_COUNT" { print $2; exit }')"
+result="$(parse_result_value RESULT)"
+reason="$(parse_result_value REASON)"
+comment_count="$(parse_result_value COMMENT_COUNT)"
+blocking_count="$(parse_result_value BLOCKING_COUNT)"
+suggestion_count="$(parse_result_value SUGGESTION_COUNT)"
 # The carrier is always the parser's last line; read only that line.
 suggestions_json="$(printf '%s\n' "$parse_result" | awk '/^SUGGESTIONS_JSON=/ { value = $0 } END { sub(/^SUGGESTIONS_JSON=/, "", value); print value }')"
 printf '%s' "$suggestions_json" | jq -e 'type == "array"' >/dev/null 2>&1 || suggestions_json='[]'
@@ -1886,7 +1893,7 @@ write_evidence_file() {
     --argjson comment_count "$final_comment_count" \
     --argjson blocking_count "$final_blocking_count" \
     --argjson suggestion_count "$final_suggestion_count" \
-    --argjson suggestions "$final_suggestions_json" \
+    --rawfile suggestions_raw <(printf '%s' "$final_suggestions_json") \
     --argjson strict_spec "$strict_spec_json" \
     --argjson strict_plan "$strict_plan_json" \
     '{
@@ -1908,7 +1915,7 @@ write_evidence_file() {
         blocking: $blocking_count,
         suggestions: $suggestion_count
       },
-      suggestions: $suggestions,
+      suggestions: ($suggestions_raw | fromjson),
       context_summary: {
         changed_files: $changed_files,
         pr_body: $pr_body,
