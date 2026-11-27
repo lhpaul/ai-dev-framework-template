@@ -3464,7 +3464,11 @@ if [ -z "$LOOP_SUMMARY_BODY" ]; then
     exit 7  # Exit code 7 = "reviewer-loop summary missing or non-clean"
   fi
 fi
-if [ -n "$LOOP_SUMMARY_BODY" ] && echo "$LOOP_SUMMARY_BODY" | grep -Eiq '(^|[ *[:space:]])Result:([ *[:space:]])*(clean|skipped)([ [:space:]—.,;:)]|$)|No blocking PR feedback'; then
+# Feed the summary to grep through a here-string, never `echo ... | grep -q`:
+# grep -q exits on its first match and closes the pipe, so with pipefail a
+# summary larger than the pipe buffer makes echo die of SIGPIPE (141) and a
+# clean summary reads as non-clean (issue #2229).
+if [ -n "$LOOP_SUMMARY_BODY" ] && grep -Eiq '(^|[ *[:space:]])Result:([ *[:space:]])*(clean|skipped)([ [:space:]—.,;:)]|$)|No blocking PR feedback' <<<"$LOOP_SUMMARY_BODY"; then
   echo "✅ Automated reviewer-loop summary result is clean/skipped."
 elif [ -n "$LOOP_SUMMARY_BODY" ]; then
   echo "ERROR: Latest automated reviewer-loop summary is not clean/skipped."
@@ -3499,7 +3503,7 @@ settle_head_ok() {
 # never settled, or whose platform never submitted a review for this HEAD, is
 # refused here rather than re-checked with a wait of this script's own.
 SETTLE_APPLIES=1
-if [ "${REVIEWER_LOOP_SKIPPED_NO_PLATFORMS:-false}" = "true" ]   || { [ -n "$LOOP_SUMMARY_BODY" ] && echo "$LOOP_SUMMARY_BODY" | grep -Eiq '(^|[ *[:space:]])Result:([ *[:space:]])*skipped([ [:space:]—.,;:)]|$)'; }; then
+if [ "${REVIEWER_LOOP_SKIPPED_NO_PLATFORMS:-false}" = "true" ]   || { [ -n "$LOOP_SUMMARY_BODY" ] && grep -Eiq '(^|[ *[:space:]])Result:([ *[:space:]])*skipped([ [:space:]—.,;:)]|$)' <<<"$LOOP_SUMMARY_BODY"; }; then
   SETTLE_APPLIES=0
   echo "✅ Settle-state check not applicable: Step 7 was skipped."
 elif [ -z "${POST_CLEAN_RECHECK:-}" ]; then
