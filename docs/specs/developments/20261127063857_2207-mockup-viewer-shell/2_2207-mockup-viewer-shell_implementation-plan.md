@@ -90,8 +90,10 @@ Each decision is stated here once; every other section refers to it by label.
     document with the `hidden` attribute (so the frame holds the only live
     copy of the product, and keyboard focus and assistive technology never
     reach a copy behind the canvas), paints the shell when chrome is on (P5), creates
-    the product frame with `src` = the page's own file name plus the canonical
-    hash with `chrome=off` added, sizes it by the viewport table and draws the
+    the product frame with `src` = the page's own address without its hash
+    (`location.href` up to `#`, which also works when HTTP serves the page
+    as a folder URL such as `/example-app/`) plus the canonical hash with
+    `chrome=off` added, sizes it by the viewport table and draws the
     product frame decoration around it (P6). It never changes the frame's
     `src` after creating it; every later change is a `show` message (P3),
     because a fragment navigation inside a frame adds a browser history entry
@@ -318,7 +320,7 @@ merge, 2026-11-27).
 | V2 | Repository mode | `grep -n '^mode:' .ai-dev-workflow.yaml` | no match, so `single_repo` |
 | V3 | Scaffold content today | `git ls-tree -r --name-only HEAD template/design-scaffold` | 5 files: two READMEs, `tokens.json`, `example-app/.gitkeep`, `shared/.gitkeep` |
 | V4 | The scaffold is not in the sync manifest | `grep -n design-scaffold sync-manifest.yaml` | no match (#2211 P1) |
-| V5 | Sync scope of the touched trees | `sync-manifest.yaml` lines 73, 109 and 309 | `docs/workflow/` always_sync; `scripts/development-workflow/` `**/*` always_sync `hub_only`; `changelog.d/` project_specific |
+| V5 | Sync scope of the touched trees | `sync-manifest.yaml` lines 73, 109 and 309 | `docs/workflow/` `**/*` always_sync `hub_only`; `scripts/development-workflow/` `**/*` always_sync `hub_only`; `changelog.d/` project_specific |
 | V6 | The verify script exists | `ls scripts/development-workflow/mockup-manifest-verify.sh` | present (#2232) |
 | V7 | `file://` self-embedding and `postMessage` work in headless Chrome with no flag | probe page in a scratch directory, `--headless=new --dump-dom` | parent received `{"type":"hello","w":393,...}`, origin `null` |
 | V8 | A frame sized 393 px gives the product `innerWidth` 393 | same probe | `innerWidth` 393 |
@@ -517,7 +519,7 @@ template-owned markers.
   | Path | Category and scope | Effect on a consumer |
   | --- | --- | --- |
   | `template/design-scaffold/**` | not in the manifest (#2211 P1) | none; never copied (D2) |
-  | `docs/workflow/development-workflow/mockup-framework.md` | always_sync | documentation only |
+  | `docs/workflow/development-workflow/mockup-framework.md` | always_sync, `hub_only` | documentation only |
   | `scripts/development-workflow/tests/test-mockup-viewer.sh` and `fixtures/mockup-viewer/**` | always_sync, `hub_only` | Not applicable without the scaffold (P12); fixtures sit in the scripts tree, never at a design root |
   | `changelog.d/2207.added.mockup-viewer-shell.md` | project_specific | not written over consumer fragments |
   | `docs/testing/workflow/2207-mockup-viewer-shell.smoke-test.md` | not in the manifest | not synced |
@@ -629,6 +631,8 @@ shellcheck --severity=warning scripts/development-workflow/tests/test-mockup-vie
 - S2: `bash -n` and `shellcheck` are clean.
 - S3: the implementation PR's `workflow test harnesses` run selects and
   passes the suite; its log shows the Chrome path and version (P11).
+  Because the PR adds files under `scripts/development-workflow/tests/fixtures/`,
+  a full-run trigger in `select-test-suites.sh`, that run includes every suite.
 - S4: the selected suites and the full suite list pass locally (AC22).
 - S5: `python3 -B scripts/development-workflow/check-sync-manifest-coverage.py`
   reports `RESULT=clean` (AC23).
