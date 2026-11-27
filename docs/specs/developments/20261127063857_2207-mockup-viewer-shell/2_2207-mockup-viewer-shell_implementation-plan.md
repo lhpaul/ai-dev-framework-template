@@ -464,7 +464,9 @@ template-owned markers.
   `../../../../../template/design-scaffold/design/mockups/shared/viewer.js`
   and the example's `mockup-manifest.js` straight into the harness document
   and calls `MockupViewer.getTargetFromUrl` directly, with no example frame
-  and no readiness wait, so it runs before the roles exist (step 3).
+  and no readiness wait, so it runs before the roles exist (step 3). For the
+  viewport-table rows the example manifest cannot reach, the group builds
+  small manifest objects in the harness itself (P4).
 - **Variants** (`fixtures/mockup-viewer/variants/`): copies of the example
   page pointing at alternative manifests, for table rows the example cannot
   reach: no viewports; one viewport (Design intent, Reproduction); several
@@ -485,8 +487,9 @@ template-owned markers.
 - **T-outcomes** (AC19): re-run the suite in a child process with
   `MOCKUP_VIEWER_CHROME=/nonexistent` (exclusive, P11), once with `CI=true` (expect exit 1, `FAILED: Chrome not found`) and once
   with `CI` and `GITHUB_ACTIONS` unset (expect exit 0, `SKIPPED: Chrome not
-  found`); and with a temporary copy of the repository root missing the
-  scaffold (expect `NOT APPLICABLE`). A planted broken check
+  found`); and in a minimal temporary root holding only the suite and its
+  fixtures at their repository paths, with no `template/` or `design/`
+  (expect `NOT APPLICABLE`), never a copy of the whole repository. A planted broken check
   (`MOCKUP_VIEWER_PLANT=title`, which the suite passes to the harness as a
   `plant=title` query parameter; only the harness reads it, never the
   viewer) must produce `FAIL title`. Every child run carries
@@ -542,11 +545,11 @@ Named cases (L4). Each maps to the ACs in the coverage table above.
 
 | Case | Layer | What it proves |
 | --- | --- | --- |
-| T-files | static | P1 files exist; `.gitkeep` files removed |
+| T-files | static | the five scaffold files P1 marks new (`shared/viewer.js`, `shared/viewer.css`, `example-app/index.html`, `example-app/mockup-manifest.js`, `example-app/exports/overview.svg`) exist, and both `.gitkeep` files are absent (AC1); it does not check the changelog fragment (step 9) or any other P1 path outside the scaffold |
 | T-verify | static | example manifest Conforms (AC2) |
 | T-open | no flag | real `file://` open: default screen, initial state, shell nodes, canonical hash (AC3) |
 | T-http | no flag | same over HTTP (AC3) |
-| T-resolve | harness, pure | every address-table row and BR5 key rule: empty, repeated, unknown keys, legacy form, canonical order (AC5) |
+| T-resolve | harness, pure | every address-table row and BR5 key rule: empty, repeated, unknown keys, legacy form, canonical order (AC5); and every viewport-table row, using in-harness manifest objects for rows the example cannot reach (AC15) |
 | T-address | harness | rows 1 to 8 end to end, with the address rewritten and no history entry added (AC5) |
 | T-select | harness | screen and state selection close the drawer and push one history entry (AC6) |
 | T-history | harness | hand-edited hash and back/forward update canvas and panels; a hand edit resolving to the target already shown is still rewritten to the canonical form (AC7, AC5) |
@@ -747,11 +750,14 @@ Commit after each numbered step that leaves the tree coherent.
    and the viewport switch when more than one viewport is declared), with
    their behaviour left to steps 5 and 6; the shell styles in `viewer.css`,
    which the step 2 page already loads; add T-open, T-address, T-title.
-5. L1 drawers, accessibility and panels; the variants T-rows and T-nav need
+5. L1 drawers, accessibility and panels; the host's `hashchange` and
+   `popstate` handling (Concurrent-event-source addendum) that T-history
+   exercises; the variants T-rows and T-nav need
    (no `synced_at`, Reproduction with `persona`/`forced`, and the navigation
    variant); add T-select, T-history, T-drawers, T-a11y, T-headers, T-rows,
    T-nav, T-states, T-image.
-6. L1 viewports, frames and chrome-off; the remaining variants; add
+6. L1 viewports, frames and chrome-off; the BR4 (no manifest) and BR17
+   (missing content) messages; the remaining variants; add
    T-viewport, T-chrome-off, T-chrome-off-nav, T-no-manifest,
    T-missing-content.
 7. L4 T-files, T-http and T-outcomes; `bash -n` and `shellcheck`;
