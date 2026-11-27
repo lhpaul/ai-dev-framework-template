@@ -360,20 +360,38 @@ the Linux runner (S3).
 
 ### Applicable
 
-- **Browser availability on CI**: assumed present on hosted Ubuntu runners
-  (D3). Mitigated by P11's printed evidence and row 2's hard fail.
-- **Opaque `file://` origins**: the message guard relies on `event.source`
-  rather than origin (P3). V7 confirms delivery with origin `null`.
-- **Headless timing**: the harness waits on P9's `data-mockup-ready`
-  attributes with a bounded poll, never fixed sleeps; Chrome runs under the
-  suite's watchdog (L4).
+Verified at 2026-11-27T19:23Z against `origin/develop` `b28c1192`. Scope:
+the current invocation's single item (#2207) and the open pull requests
+that could touch the same surfaces (#2242, #2243, #2244, the only other
+open PRs; none of them changes a path in the table). No repository-wide scan
+beyond that set.
+
+| Assumption surface | Recorded value | Authoritative source | Verified at | Bounded cross-check scope | Result |
+| --- | --- | --- | --- | --- | --- |
+| Approved base | `develop`, at `b28c1192`, which holds the merged spec (#2233) | run-item policy binding (`base: develop`); `git rev-parse origin/develop` | 2026-11-27T19:23Z, `b28c1192` | #2207; #2242 to #2244 file lists | `Verified` |
+| Artifact owner | `single_repo`: this repository owns the plan and the code | `.ai-dev-workflow.yaml` has no `mode:` key (V2) | 2026-11-27T19:23Z, `b28c1192` | #2207; #2242 to #2244 do not change `.ai-dev-workflow.yaml` | `Verified` |
+| Dependencies #2206 and #2211 | the verify script and the five scaffold files are on the base | `git ls-tree origin/develop` for `scripts/development-workflow/mockup-manifest-verify.sh` and `template/design-scaffold/` (5 files; V3, V6) | 2026-11-27T19:23Z, `b28c1192` | #2207; #2242 to #2244 touch neither path | `Verified` |
+| Scaffold not synced | `sync-manifest.yaml` has no `design-scaffold` entry (#2211 P1) | `git show origin/develop:sync-manifest.yaml` (0 matches; V4) | 2026-11-27T19:23Z, `b28c1192` | #2207; #2242 to #2244 do not change `sync-manifest.yaml` | `Verified` |
+| CI runner and path filter | `workflow-tests.yml` runs on `ubuntu-latest`; its `pull_request` trigger is path-filtered (#1997), with the nightly full run as backstop (AC20) | `.github/workflows/workflow-tests.yml` lines 70 to 73 and 120 | 2026-11-27T19:23Z, `b28c1192` | #2207; #2242 to #2244 do not change the workflow or `select-test-suites.sh` | `Verified` |
+
+That the `ubuntu-latest` image ships Google Chrome is a Rule 4 claim, not an
+operational value this repository records. It is handled in Factual claim
+evidence: P11 prints the binary and version in CI, S3 records it, and a
+missing Chrome fails the suite by design (row 2), stopping for a human
+decision. Implementation step 1 re-verifies every row above on the
+implementation base and stops on `Stale or conflicting` evidence.
+
+Two design constraints that are not concurrent-work assumptions are kept
+here for the implementer: opaque `file://` origins (the message guard relies
+on `event.source`, P3; V7 confirms delivery with origin `null`), and
+headless timing (the harness waits on P9's `data-mockup-ready` with a
+bounded poll under the suite's watchdog, L4).
 
 ### Not applicable
 
-- Concurrency, tracker or GitHub API usage: the suite and the viewer make no
-  network or API calls.
-- Secrets and local configuration: no `.ai-dev-workflow.local.*` file is read
-  or written.
+- Tracker or GitHub API state, secrets and local configuration: the suite
+  and the viewer make no network or API calls, and no
+  `.ai-dev-workflow.local.*` file is read or written.
 
 ---
 
@@ -727,7 +745,7 @@ function onMessage(event) {
 
 Commit after each numbered step that leaves the tree coherent.
 
-1. Re-run V3 to V6 and V11 on the implementation base; stop on a change, and stop as a blocked dependency if #2206 or #2211 is no longer present (Dependencies).
+1. Re-run V3 to V6 and V11 and every Cross-Cutting Operational Assumption Check row on the implementation base; stop on a change or a `Stale or conflicting` row, and stop as a blocked dependency if #2206 or #2211 is no longer present (Dependencies).
 2. All of L2: the manifest, `exports/overview.svg` and `index.html` (its
    `:root` token mirror, screens, `#mockup-viewer` element, script tags and
    boot script), plus an initial L1 `shared/viewer.css`. The page links
