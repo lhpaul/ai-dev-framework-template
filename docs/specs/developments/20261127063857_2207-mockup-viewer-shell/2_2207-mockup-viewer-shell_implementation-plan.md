@@ -591,7 +591,7 @@ Named cases (L4). Each maps to the ACs in the coverage table above.
 | T-http | no flag | same over HTTP (AC3) |
 | T-resolve | harness, pure | every address-table row and BR5 key rule: empty, repeated, unknown keys, legacy form, canonical order (AC5); and every viewport-table row, using in-harness manifest objects for rows the example cannot reach (AC15) |
 | T-address | harness | rows 1 to 8 end to end, with the address rewritten and no history entry added (AC5) |
-| T-race | harness | a product link and a host selection crossing in both orders end with the address, the panels and the product on the same target, and the selection's history entry is not duplicated (P3) |
+| T-race | harness | a product link and a host selection crossing in both orders end with the address, the panels and the product on the same target, and the selection's history entry is not duplicated; with a request for B in flight, a product navigation to C followed by a selection of C ends on C, and B's late reply is ignored as stale (P3) |
 | T-select | harness | screen and state selection close the drawer and push one history entry; selecting the screen, state or viewport already shown also closes the drawer and pushes exactly one entry (AC6, BR16) |
 | T-history | harness | hand-edited hash and back/forward update canvas and panels; a hand edit resolving to the target already shown is still rewritten to the canonical form (AC7, AC5) |
 | T-title | harness | title rule (AC8) |
@@ -648,8 +648,12 @@ there are no data races; the hazards are ordering ones.
 - **Event deduplication**: `applyTarget()` takes the event's source. A shell
   selection (a screen, a state or a viewport chosen in the shell) always
   pushes exactly one history entry, even when it names the target already
-  shown (BR16: every selection adds one entry); for a same-target selection
-  it posts no `show` and repaints nothing, and only closes the drawer.
+  shown (BR16: every selection adds one entry), and always posts a `show`
+  with a new `seq`, so the latest selection supersedes any request still in
+  flight (P3). The product answers every `show` with a `shown` carrying its
+  `seq`; when it already shows that target it changes nothing and does not
+  re-run `onShow`. A same-target selection therefore repaints nothing in the
+  host beyond closing the drawer.
   Deduplication applies to every other source: when a `shown` echo, a
   product-initiated `shown`, a `hashchange` or a `popstate` resolves to the
   target already shown, `applyTarget()` posts no `show`, pushes no history
