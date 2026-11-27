@@ -723,15 +723,20 @@ Commit after each numbered step that leaves the tree coherent.
 1. Re-run V3 to V6 and V11 on the implementation base; stop on a change, and stop as a blocked dependency if #2206 or #2211 is no longer present (Dependencies).
 2. All of L2: the manifest, `exports/overview.svg` and `index.html` (its
    `:root` token mirror, screens, `#mockup-viewer` element, script tags and
-   boot script). The page exists from this step on, so the verify script's
-   Design intent mirroring check finds it (T-verify) and the suite's P12 gate
-   passes in step 3. Run the verify script (T-verify).
+   boot script), plus an initial L1 `shared/viewer.css`. The page links
+   `../shared/viewer.css` (P1), and the verify script's mirroring check reads
+   every stylesheet the page links, reporting a missing one as a BR11 problem
+   (`mockup-manifest-verify.py` `collect_sources`), so the file must exist
+   before T-verify runs. The page exists from this step on, so the mirroring
+   check finds it (T-verify) and the suite's P12 gate passes in step 3. Run
+   the verify script (T-verify).
 3. L4 suite skeleton (P12 gate, P11 discovery, `run_chrome`, the
    `<pre id="results">` parser and the summary), so steps 4 to 6 add cases to
    a runnable suite; L1 `viewer.js` pure parts (`buildDomMap`,
    `getTargetFromUrl`) and the harness's T-resolve group; run the suite.
-4. L1 host and product roles and `viewer.css`, which the step 2 page already
-   loads; add T-open, T-address, T-select, T-history, T-title.
+4. L1 host and product roles and the shell styles in `viewer.css`, which the
+   step 2 page already loads; add T-open, T-address, T-select, T-history,
+   T-title.
 5. L1 drawers, accessibility and panels; add T-drawers, T-a11y, T-headers,
    T-rows, T-nav, T-states, T-image.
 6. L1 viewports, frames and chrome-off; variants; add T-viewport,
