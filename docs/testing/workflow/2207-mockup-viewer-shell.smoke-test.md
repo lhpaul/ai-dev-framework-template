@@ -205,8 +205,11 @@ Below, `EX` stands for the absolute path of the example page.
    under a `SELECTED` directory entry, or matches its `glob`, in category
    `always_sync` or `special_handling`. Copy nothing else. From the
    consumer's root, list the whole tree (`find . -path ./.git -prune -o
-   -print`), check for `design/` and `template/`, then run
-   `bash scripts/development-workflow/tests/test-mockup-viewer.sh`.
+   -print`) and check for `design/` and `template/`. Only for a role that
+   received the suite (it is `hub_only`, so `single_repo` and `workflow_hub`
+   do and `product_repo` does not), run
+   `bash scripts/development-workflow/tests/test-mockup-viewer.sh`; for
+   `product_repo`, confirm the suite is absent instead.
 6. On the implementation PR, open the `workflow test harnesses` run and the PR
    description.
 
@@ -219,9 +222,10 @@ Below, `EX` stands for the absolute path of the example page.
 - The coverage check reports `RESULT=clean`.
 - For every role, the consumer tree holds only the selected files (the
   plan's L6 table gives the expected set per role); it has no `design/`
-  folder, no `template/` folder and no scaffold file, and the copied suite
-  prints
-  `NOT APPLICABLE: no design scaffold in this repository` and exits 0.
+  folder, no `template/` folder and no scaffold file. In the `single_repo`
+  and `workflow_hub` consumers the copied suite prints
+  `NOT APPLICABLE: no design scaffold in this repository` and exits 0; the
+  `product_repo` consumer has no copy of the suite.
 - The PR's test run selected and passed `test-mockup-viewer.sh` and logged the
   Chrome version; the PR description carries the vault replacement text for
   the three viewer sections and says the template owner applies it.
