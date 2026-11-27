@@ -137,6 +137,20 @@ Each decision is stated here once; every other section refers to it by label.
   product itself (a link inside the product, AC17, through P7's
   product-initiated navigation) and adds one history entry, unless it names
   the target already shown.
+  **Precedence when a host request and a product navigation cross**: the
+  product handles its events one at a time and posts one `shown` for each
+  target it shows, and messages from one window to another are delivered in
+  the order they were posted. So the last `shown` the host receives always
+  names what the product is showing, and the host follows `shown` messages in
+  arrival order. The `seq` check drops only a sequenced `shown` older than
+  the latest `seq`, because the reply to that latest `show` is still to come
+  and will supersede it. An unsequenced `shown` never invalidates an
+  outstanding `seq`: if the product shows its own target and then handles the
+  pending `show`, the sequenced reply arrives last and is what the product
+  shows, so the host applies it (with `replaceState`, since the selection
+  already pushed its entry). If the product handles the `show` first, the
+  unsequenced `shown` arrives last and wins. Either way, the address, the
+  panels and the product end on the same target (T-race).
 
 - **P4 — Address resolution is one pure function.**
   `MockupViewer.getTargetFromUrl(manifest, domMap, hash)` takes the hash
@@ -291,7 +305,7 @@ Each decision is stated here once; every other section refers to it by label.
 | AC4 | L3 | smoke Step 1 |
 | AC5 | P4 | T-resolve (pure, every row), T-address (end to end) |
 | AC6 | P3, P5 | T-select |
-| AC7 | P3, P4 | T-history |
+| AC7 | P3, P4 | T-history, T-race |
 | AC8 | P2 | T-title |
 | AC9 | P5, P6 | T-drawers |
 | AC10 | P5 | T-a11y |
@@ -569,6 +583,7 @@ Named cases (L4). Each maps to the ACs in the coverage table above.
 | T-http | no flag | same over HTTP (AC3) |
 | T-resolve | harness, pure | every address-table row and BR5 key rule: empty, repeated, unknown keys, legacy form, canonical order (AC5); and every viewport-table row, using in-harness manifest objects for rows the example cannot reach (AC15) |
 | T-address | harness | rows 1 to 8 end to end, with the address rewritten and no history entry added (AC5) |
+| T-race | harness | a product link and a host selection crossing in both orders end with the address, the panels and the product on the same target, and the selection's history entry is not duplicated (P3) |
 | T-select | harness | screen and state selection close the drawer and push one history entry; selecting the screen, state or viewport already shown also closes the drawer and pushes exactly one entry (AC6, BR16) |
 | T-history | harness | hand-edited hash and back/forward update canvas and panels; a hand edit resolving to the target already shown is still rewritten to the canonical form (AC7, AC5) |
 | T-title | harness | title rule (AC8) |
@@ -619,7 +634,9 @@ there are no data races; the hazards are ordering ones.
   through it.
 - **Re-entrancy / in-flight tracking**: a selection increments `seq` before
   posting `show`; the answer is matched by `seq` (P3). A second selection
-  before the first answer supersedes it; the late answer is stale.
+  before the first answer supersedes it; the late answer is stale. A
+  product-initiated `shown` crossing an outstanding `show` follows P3's
+  arrival-order precedence and does not invalidate the `seq` (T-race).
 - **Event deduplication**: `applyTarget()` takes the event's source. A shell
   selection (a screen, a state or a viewport chosen in the shell) always
   pushes exactly one history entry, even when it names the target already
@@ -778,7 +795,7 @@ Commit after each numbered step that leaves the tree coherent.
    `popstate` handling (Concurrent-event-source addendum) that T-history
    exercises; the variants T-rows and T-nav need
    (no `synced_at`, Reproduction with `persona`/`forced`, and the navigation
-   variant); add T-select, T-history, T-drawers, T-a11y, T-headers, T-rows,
+   variant); add T-select, T-race, T-history, T-drawers, T-a11y, T-headers, T-rows,
    T-nav, T-states, T-image.
 6. L1 viewports, frames and chrome-off; the BR4 (no manifest) and BR17
    (missing content) messages; the remaining variants; add
