@@ -147,8 +147,9 @@ needed, and can link to each one.
 
 - Pages drawer: the mockup's name as a heading, the link format
   `#screen=…&state=…` verbatim under it, and the navigation groups with their
-  entries. The entry for the current screen is highlighted, and so are the
-  entries above it in the tree.
+  entries. The entry for the current screen, or for its navigation anchor, is
+  highlighted, and the entries above it in the tree are marked as its parents
+  (BR11).
 - Inspector drawer: the heading `Inspector`, the current screen's states with
   the current one marked, and the metadata rows (BR10).
 - The page title in the browser tab: the state's title when it has one,
@@ -393,7 +394,9 @@ carrying a state.
 | 8 | Viewports declared, and the address names one that is not declared | As if no viewport were given (rows 2, 3, 4 or 6), and the unknown value is dropped | As in that row |
 
 Row 8 is checked first: an address naming an undeclared viewport is resolved
-as if it named none. Otherwise exactly one of rows 1 to 7 matches.
+as if it named none. Otherwise exactly one of rows 1 to 7 matches. The Switch
+column applies while the shell is shown. In chrome-off mode no switch is
+painted (BR15), and the size shown is the same as with the shell shown.
 
 "Full window" means the product fills the canvas, except a `phone` frame,
 which shows its device frame at the first declared viewport's size, or at the
@@ -451,7 +454,7 @@ Rows are evaluated in order, and the first match decides the outcome.
 
 | Value | Display label | Description |
 | --- | --- | --- |
-| no viewport | Full window | The product fills the canvas (Design intent, or any mockup that declares no viewport). |
+| no viewport | Full window | The product fills the canvas, or a `phone` frame shows its device frame (viewport table). Design intent, or any mockup that declares no viewport. |
 | a viewport id | The viewport's label | The product at that viewport's exact width and height. |
 
 **Test outcomes**: Passed; Failed; Skipped; Not applicable. Only Failed is
