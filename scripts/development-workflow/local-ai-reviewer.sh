@@ -1630,6 +1630,8 @@ parse_result="$(
     def line_value:
       [.line?, .startLine?, .start_line?, .location.line?]
       | map(select((type == "number") or (type == "string" and length > 0))) | .[0] // "";
+    # Keep every emitted value on one line so finding text cannot forge keys.
+    def one_line: tostring | gsub("\n"; "\\n");
     def severity_text:
       [.severity?, .level?, .priority?, .type?, .classification?, .kind?, .result?]
       | map(select(type == "string")) | join(" ") | ascii_downcase;
@@ -1671,9 +1673,9 @@ parse_result="$(
             | to_entries
             | map(
                 [
-                  "BLOCKING_\(.key + 1)_PATH=\(.value | path_value)",
-                  "BLOCKING_\(.key + 1)_LINE=\(.value | line_value)",
-                  "BLOCKING_\(.key + 1)_BODY=\(.value | text_value | gsub("\n"; "\\n"))"
+                  "BLOCKING_\(.key + 1)_PATH=\(.value | path_value | one_line)",
+                  "BLOCKING_\(.key + 1)_LINE=\(.value | line_value | one_line)",
+                  "BLOCKING_\(.key + 1)_BODY=\(.value | text_value | one_line)"
                 ]
               )
             | flatten
@@ -1683,9 +1685,9 @@ parse_result="$(
             | to_entries
             | map(
                 [
-                  "SUGGESTION_\(.key + 1)_PATH=\(.value | path_value)",
-                  "SUGGESTION_\(.key + 1)_LINE=\(.value | line_value)",
-                  "SUGGESTION_\(.key + 1)_BODY=\(.value | text_value | gsub("\n"; "\\n"))"
+                  "SUGGESTION_\(.key + 1)_PATH=\(.value | path_value | one_line)",
+                  "SUGGESTION_\(.key + 1)_LINE=\(.value | line_value | one_line)",
+                  "SUGGESTION_\(.key + 1)_BODY=\(.value | text_value | one_line)"
                 ]
               )
             | flatten
@@ -1729,7 +1731,8 @@ reason="$(printf '%s\n' "$parse_result" | awk -F= '$1 == "REASON" { print $2; ex
 comment_count="$(printf '%s\n' "$parse_result" | awk -F= '$1 == "COMMENT_COUNT" { print $2; exit }')"
 blocking_count="$(printf '%s\n' "$parse_result" | awk -F= '$1 == "BLOCKING_COUNT" { print $2; exit }')"
 suggestion_count="$(printf '%s\n' "$parse_result" | awk -F= '$1 == "SUGGESTION_COUNT" { print $2; exit }')"
-suggestions_json="$(printf '%s\n' "$parse_result" | awk '/^SUGGESTIONS_JSON=/ { sub(/^SUGGESTIONS_JSON=/, ""); print; exit }')"
+# The carrier is always the parser's last line; read only that line.
+suggestions_json="$(printf '%s\n' "$parse_result" | awk '/^SUGGESTIONS_JSON=/ { value = $0 } END { sub(/^SUGGESTIONS_JSON=/, "", value); print value }')"
 printf '%s' "$suggestions_json" | jq -e 'type == "array"' >/dev/null 2>&1 || suggestions_json='[]'
 
 comment_count="${comment_count:-0}"
