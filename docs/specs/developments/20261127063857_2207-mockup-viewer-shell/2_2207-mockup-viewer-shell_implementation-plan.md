@@ -302,7 +302,7 @@ Each decision is stated here once; every other section refers to it by label.
 | AC20 | P13, L5 | PR CI run log (S3), smoke Step 1 |
 | AC21 | L5 | smoke Step 1 |
 | AC22 | — | S4 |
-| AC23 | L6 | S5 |
+| AC23 | L6 | S5, smoke Step 9 (disposable consumer) |
 | AC24 | P14 | PR description, smoke Step 9 |
 
 ---
@@ -480,7 +480,10 @@ template-owned markers.
   scaffold (expect `NOT APPLICABLE`). A planted broken check
   (`MOCKUP_VIEWER_PLANT=title`, which the suite passes to the harness as a
   `plant=title` query parameter; only the harness reads it, never the
-  viewer) must produce `FAIL title`.
+  viewer) must produce `FAIL title`. Every child run carries
+  `MOCKUP_VIEWER_CHILD=1`, and a suite run with it set skips T-outcomes, so
+  the planted child (the one child that finds Chrome and runs the cases) never
+  starts children of its own.
 - No case writes inside the repository; the HTTP server serves read-only.
 
 ### L5 — Framework reference (`mockup-framework.md`, changed) (AC21)
@@ -712,15 +715,17 @@ Commit after each numbered step that leaves the tree coherent.
 
 1. Re-run V3 to V5 and V11; stop on a change.
 2. L2 manifest and `exports/overview.svg`; run the verify script (T-verify).
-3. L1 `viewer.js` pure parts (`buildDomMap`, `getTargetFromUrl`) and the
-   harness's T-resolve group; run it.
+3. L4 suite skeleton (P12 gate, P11 discovery, `run_chrome`, the
+   `<pre id="results">` parser and the summary), so steps 4 to 6 add cases to
+   a runnable suite; L1 `viewer.js` pure parts (`buildDomMap`,
+   `getTargetFromUrl`) and the harness's T-resolve group; run the suite.
 4. L1 host and product roles, `viewer.css`, and L2 `index.html`; add T-open,
    T-address, T-select, T-history, T-title.
 5. L1 drawers, accessibility and panels; add T-drawers, T-a11y, T-headers,
    T-rows, T-nav, T-states, T-image.
 6. L1 viewports, frames and chrome-off; variants; add T-viewport,
    T-chrome-off, T-chrome-off-nav, T-no-manifest, T-missing-content.
-7. L4 discovery, gate, T-files, T-http and T-outcomes; `bash -n` and `shellcheck`;
+7. L4 T-files, T-http and T-outcomes; `bash -n` and `shellcheck`;
    record the suite's `# duration:`.
 8. L3 README, L5 reference. Run `npx markdownlint-cli2` and
    `python3 scripts/lint/markdown-heuristic-lint.py` on the changed Markdown,
