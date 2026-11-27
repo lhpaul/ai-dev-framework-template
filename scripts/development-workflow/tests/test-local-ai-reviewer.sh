@@ -327,6 +327,44 @@ run_test "needs_fixes_with_only_suggestion_exit" "0" "$(exit_code)"
 run_test "needs_fixes_with_only_suggestion_blocking" "BLOCKING_COUNT=0" "$(line_for BLOCKING_COUNT)"
 run_test "needs_fixes_with_only_suggestion_suggestions" "SUGGESTION_COUNT=1" "$(line_for SUGGESTION_COUNT)"
 
+# #2171: suggestion text is exposed on stdout and in the evidence file, redacted,
+# without changing the clean verdict or emitting blocking details.
+reset_mocks
+LOCAL_AI_REVIEWER_COMMAND=local-reviewer-mock
+LOCAL_AI_REVIEWER_EVIDENCE_FILE="$EVIDENCE_FILE"
+set_mock_stdout '{"result":"clean","findings":[{"severity":"suggestion","path":"scripts/example.sh","line":7,"message":"consider renaming\nthe helper"},{"severity":"nit","file":"docs/a.md","message":"token ghp_FAKE_PLACEHOLDER in prose"}]}'
+export LOCAL_AI_REVIEWER_COMMAND LOCAL_AI_REVIEWER_EVIDENCE_FILE MOCK_LOCAL_REVIEWER_STDOUT
+run_reviewer "$MOCK_BIN:$PATH"
+run_test "2171_suggestion_result" "RESULT=clean" "$(line_for RESULT)"
+run_test "2171_suggestion_exit" "0" "$(exit_code)"
+run_test "2171_suggestion_blocking" "BLOCKING_COUNT=0" "$(line_for BLOCKING_COUNT)"
+run_test "2171_suggestion_count" "SUGGESTION_COUNT=2" "$(line_for SUGGESTION_COUNT)"
+run_test "2171_suggestion_no_blocking_detail" "no" "$(grep -q "^BLOCKING_1_PATH=" "$OUTPUT_FILE" && echo yes || echo no)"
+run_test "2171_suggestion_1_path" "SUGGESTION_1_PATH=scripts/example.sh" "$(line_for SUGGESTION_1_PATH)"
+run_test "2171_suggestion_1_line" "SUGGESTION_1_LINE=7" "$(line_for SUGGESTION_1_LINE)"
+run_test "2171_suggestion_1_body" 'SUGGESTION_1_BODY=consider renaming\nthe helper' "$(line_for SUGGESTION_1_BODY)"
+run_test "2171_suggestion_2_path" "SUGGESTION_2_PATH=docs/a.md" "$(line_for SUGGESTION_2_PATH)"
+run_test "2171_suggestion_2_body_redacted" "no" "$(grep -q 'ghp_FAKE_PLACEHOLDER' "$OUTPUT_FILE" && echo yes || echo no)"
+run_test "2171_suggestion_internal_json_hidden" "no" "$(grep -q "^SUGGESTIONS_JSON=" "$OUTPUT_FILE" && echo yes || echo no)"
+run_test "2171_evidence_suggestion_count" "2" "$(jq -r '.suggestions | length' "$EVIDENCE_FILE")"
+run_test "2171_evidence_suggestion_path" "scripts/example.sh" "$(jq -r '.suggestions[0].path' "$EVIDENCE_FILE")"
+run_test "2171_evidence_suggestion_body" "consider renaming
+the helper" "$(jq -r '.suggestions[0].body' "$EVIDENCE_FILE")"
+run_test "2171_evidence_suggestion_redacted" "no" "$(grep -q 'ghp_FAKE_PLACEHOLDER' "$EVIDENCE_FILE" && echo yes || echo no)"
+run_test "2171_evidence_counts_unchanged" "2" "$(jq -r '.counts.suggestions' "$EVIDENCE_FILE")"
+unset LOCAL_AI_REVIEWER_EVIDENCE_FILE
+
+# #2171: blocking emission is unchanged when suggestions accompany a blocker.
+reset_mocks
+LOCAL_AI_REVIEWER_COMMAND=local-reviewer-mock
+set_mock_stdout '{"findings":[{"severity":"important","path":"scripts/example.sh","line":3,"message":"real bug"},{"severity":"minor","path":"docs/b.md","message":"tiny wording"}]}'
+export LOCAL_AI_REVIEWER_COMMAND MOCK_LOCAL_REVIEWER_STDOUT
+run_reviewer "$MOCK_BIN:$PATH"
+run_test "2171_mixed_result" "RESULT=needs_fixes" "$(line_for RESULT)"
+run_test "2171_mixed_blocking_body" "BLOCKING_1_BODY=real bug" "$(line_for BLOCKING_1_BODY)"
+run_test "2171_mixed_no_blocking_2" "no" "$(grep -q "^BLOCKING_2_PATH=" "$OUTPUT_FILE" && echo yes || echo no)"
+run_test "2171_mixed_suggestion_body" "SUGGESTION_1_BODY=tiny wording" "$(line_for SUGGESTION_1_BODY)"
+
 reset_mocks
 LOCAL_AI_REVIEWER_COMMAND=local-reviewer-mock
 set_mock_stdout '{"findings":[{"severity":"important","clear_in_scope":false,"message":"out-of-scope blocker"}]}'
