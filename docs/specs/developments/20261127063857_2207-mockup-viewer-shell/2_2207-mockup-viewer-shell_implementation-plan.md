@@ -591,7 +591,7 @@ Named cases (L4). Each maps to the ACs in the coverage table above.
 | T-http | no flag | same over HTTP (AC3) |
 | T-resolve | harness, pure | every address-table row and BR5 key rule: empty, repeated, unknown keys, legacy form, canonical order (AC5); and every viewport-table row, using in-harness manifest objects for rows the example cannot reach (AC15) |
 | T-address | harness | rows 1 to 8 end to end, with the address rewritten and no history entry added (AC5) |
-| T-race | harness | a product link and a host selection crossing in both orders end with the address, the panels and the product on the same target, and the selection's history entry is not duplicated; with a request for B in flight, a product navigation to C followed by a selection of C ends on C, and B's late reply is ignored as stale (P3) |
+| T-race | harness | a product link and a host selection crossing in both orders end with the address, the panels and the product on the same target, and the selection's history entry is not duplicated; with a request for B in flight, a product navigation to C followed by a selection of C ends on C, and a back navigation to the target already shown ends on that target; in both, B's late reply is ignored as stale (P3, AC7) |
 | T-select | harness | screen and state selection close the drawer and push one history entry; selecting the screen, state or viewport already shown also closes the drawer and pushes exactly one entry (AC6, BR16) |
 | T-history | harness | hand-edited hash and back/forward update canvas and panels; a hand edit resolving to the target already shown is still rewritten to the canonical form (AC7, AC5) |
 | T-title | harness | title rule (AC8) |
@@ -645,23 +645,29 @@ there are no data races; the hazards are ordering ones.
   before the first answer supersedes it; the late answer is stale. A
   product-initiated `shown` crossing an outstanding `show` follows P3's
   arrival-order precedence and does not invalidate the `seq` (T-race).
-- **Event deduplication**: `applyTarget()` takes the event's source. A shell
-  selection (a screen, a state or a viewport chosen in the shell) always
-  pushes exactly one history entry, even when it names the target already
-  shown (BR16: every selection adds one entry), and always posts a `show`
-  with a new `seq`, so the latest selection supersedes any request still in
-  flight (P3). The product answers every `show` with a `shown` carrying its
-  `seq`; when it already shows that target it changes nothing and does not
-  re-run `onShow`. A same-target selection therefore repaints nothing in the
-  host beyond closing the drawer.
-  Deduplication applies to every other source: when a `shown` echo, a
-  product-initiated `shown`, a `hashchange` or a `popstate` resolves to the
-  target already shown, `applyTarget()` posts no `show`, pushes no history
-  entry and repaints nothing, so an echoed `shown` adds nothing. It still rewrites the address
-  to the canonical hash with `replaceState` when the address differs, so a
-  hand-edited hash that resolves to the target already shown (for example
-  `#home` while Home is shown) is corrected as BR5 and D10 require. `history.pushState` and
-  `replaceState` fire no `hashchange`, so the host's own rewrites do not loop.
+- **Event deduplication**: `applyTarget()` takes the event's source, and the
+  sources split in two.
+  - **Host-originated events** (a shell selection, a `hashchange`, a
+    `popstate`, the first load) always post a `show` with a new `seq`, even
+    when they name the target already shown. So the latest host event always
+    supersedes any request still in flight, and a late reply to an older
+    request is stale (P3). The product answers every `show` with a `shown`
+    carrying its `seq`; when it already shows that target it changes nothing
+    and does not re-run `onShow`. History follows BR16: a shell selection
+    pushes exactly one entry, even for the target already shown; a
+    `hashchange` or `popstate` pushes none. When the resolved target equals
+    the one shown, the host repaints nothing beyond closing a drawer, and it
+    still rewrites the address to the canonical hash with `replaceState`
+    when the address differs, so a hand-edited hash that resolves to the
+    target already shown (for example `#home` while Home is shown) is
+    corrected as BR5 and D10 require.
+  - **Product messages** (a `shown` echo or a product-initiated `shown`)
+    never post a `show`. When one resolves to the target already shown, the
+    host pushes no history entry and repaints nothing, so an echoed `shown`
+    adds nothing.
+
+  `history.pushState` and `replaceState` fire no `hashchange`, so the host's
+  own rewrites do not loop.
 - **Listener and resource cleanup**: listeners live for the page's lifetime;
   the first-load timer is cleared on the first `shown`. Nothing else is
   allocated.
