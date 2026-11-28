@@ -1082,7 +1082,10 @@ is_bugbot_explicit_skip_message() {
 is_bugbot_usage_limit_message() {
   local body="$1"
 
-  printf '%s\n' "$body" | grep -Eiq 'usage or spend limit|usage[/-]spend[ -]?limit|usage[ -]?limit|spend[ -]?limit'
+  # Here-string, not `printf | grep -q`: under `set -o pipefail` grep -q exits
+  # on the first match, the producer gets SIGPIPE on large bodies (>64 KB) and
+  # the pipeline returns 141, a false "no match" (#2144, same class as #1877).
+  grep -Eiq 'usage or spend limit|usage[/-]spend[ -]?limit|usage[ -]?limit|spend[ -]?limit' <<<"$body"
 }
 
 open_pr_number_for_branch() {
@@ -4957,7 +4960,7 @@ workflow_branch_ref_evidence() {
   for prefix in spec implementation-plan feature fix refactor hotfix; do
     while IFS= read -r ref; do
       [ -z "$ref" ] && continue
-      if printf '%s\n' "$ref" | grep -qE "^([A-Za-z][A-Za-z0-9]{0,7}-)?${issue_number}(-|\$)"; then
+      if grep -qE "^([A-Za-z][A-Za-z0-9]{0,7}-)?${issue_number}(-|\$)" <<<"$ref"; then
         printf 'present\n'
         return 0
       fi

@@ -846,6 +846,22 @@ else
 fi
 run_test "bugbot_clean_phrase_not_usage_limit" "active" "$actual"
 
+# Regression #2144: a >64 KB multi-line body whose match is on the first line.
+# With `printf | grep -q` under pipefail the producer got SIGPIPE (rc 141) and
+# the match was reported as a miss. Run in a pipefail subshell like the library.
+bugbot_large_usage_limit_body="Bugbot couldn't run - usage limit reached"
+for _ in $(seq 1 3000); do
+  bugbot_large_usage_limit_body+=$'\n'"padding line for the large comment body regression test #2144"
+done
+if (set -o pipefail; is_bugbot_usage_limit_message "$bugbot_large_usage_limit_body"); then
+  actual="usage_limit"
+else
+  actual="active rc=$?"
+fi
+run_test "bugbot_usage_limit_large_body_no_sigpipe" "usage_limit" "$actual"
+run_test "bugbot_usage_limit_large_body_exceeds_pipe_buffer" "true" \
+  "$([ "${#bugbot_large_usage_limit_body}" -gt 65536 ] && echo true || echo false)"
+
 bugbot_explicit_skip_body="Skipping Bugbot: your auto mode classified this PR to skip. Visit the Bugbot dashboard to update your settings."
 if is_bugbot_explicit_skip_message "$bugbot_explicit_skip_body"; then
   actual="explicit_skip"
