@@ -115,6 +115,11 @@ Strict contract checks (#1650 spec, #1655 plan):
 
   Strict findings are emitted as STRICT_<n>_CHECK/PATH/LINE/BODY and never
   change RESULT or BLOCKING_<n>_*.
+
+Suggestions (#2171):
+  When SUGGESTION_COUNT > 0, each non-blocking finding is emitted (redacted) as
+  SUGGESTION_<n>_PATH/LINE/BODY and recorded in the evidence file's
+  "suggestions" array. Suggestions never change RESULT or BLOCKING_<n>_*.
 EOF
 }
 
@@ -1625,6 +1630,8 @@ parse_result="$(
     def line_value:
       [.line?, .startLine?, .start_line?, .location.line?]
       | map(select((type == "number") or (type == "string" and length > 0))) | .[0] // "";
+    # Keep every emitted value on one line so finding text cannot forge keys.
+    def one_line: tostring | gsub("\n"; "\\n");
     def severity_text:
       [.severity?, .level?, .priority?, .type?, .classification?, .kind?, .result?]
       | map(select(type == "string")) | join(" ") | ascii_downcase;
@@ -1666,14 +1673,29 @@ parse_result="$(
             | to_entries
             | map(
                 [
-                  "BLOCKING_\(.key + 1)_PATH=\(.value | path_value)",
-                  "BLOCKING_\(.key + 1)_LINE=\(.value | line_value)",
-                  "BLOCKING_\(.key + 1)_BODY=\(.value | text_value | gsub("\n"; "\\n"))"
+                  "BLOCKING_\(.key + 1)_PATH=\(.value | path_value | one_line)",
+                  "BLOCKING_\(.key + 1)_LINE=\(.value | line_value | one_line)",
+                  "BLOCKING_\(.key + 1)_BODY=\(.value | text_value | one_line)"
                 ]
               )
             | flatten
             | join("\n")) as $blocking_lines
-        | if $unknown > 0 then
+        | ($findings | map(select((blocking | not) and advisory))) as $suggestion_findings
+        | ($suggestion_findings
+            | to_entries
+            | map(
+                [
+                  "SUGGESTION_\(.key + 1)_PATH=\(.value | path_value | one_line)",
+                  "SUGGESTION_\(.key + 1)_LINE=\(.value | line_value | one_line)",
+                  "SUGGESTION_\(.key + 1)_BODY=\(.value | text_value | one_line)"
+                ]
+              )
+            | flatten
+            | join("\n")) as $suggestion_lines
+        | ($suggestion_findings
+            | map({path: path_value, line: line_value, body: text_value})
+            | tojson) as $suggestions_json
+        | (if $unknown > 0 then
             "PARSE_STATUS=ok\nRESULT=needs_fixes\nCOMMENT_COUNT=\($comments)\nBLOCKING_COUNT=\($blocking + $unknown)\nSUGGESTION_COUNT=\($advisory)\n\($blocking_lines)"
           elif $result == "clean" and $blocking > 0 then
             "PARSE_STATUS=ok\nRESULT=needs_fixes\nCOMMENT_COUNT=\($comments)\nBLOCKING_COUNT=\($blocking)\nSUGGESTION_COUNT=\($advisory)\n\($blocking_lines)"
@@ -1684,12 +1706,20 @@ parse_result="$(
             "PARSE_STATUS=ok\nRESULT=clean\nCOMMENT_COUNT=\($comments)\nBLOCKING_COUNT=0\nSUGGESTION_COUNT=\($advisory)"
           else
             "PARSE_STATUS=ok\nRESULT=\($result)\nREASON=\($root.reason // "")\nCOMMENT_COUNT=\($comments)\nBLOCKING_COUNT=\($blocking)\nSUGGESTION_COUNT=\($advisory)\n\(if $result == "needs_fixes" then $blocking_lines else "" end)"
-          end
+          end)
+        | . + "\n\($suggestion_lines)\nSUGGESTIONS_JSON=\($suggestions_json)"
       end
   ' 2>/dev/null
 )" || parse_result=""
 
-parse_status="$(printf '%s\n' "$parse_result" | awk -F= '$1 == "PARSE_STATUS" { print $2; exit }')"
+# Read one key from the parser output. Consume all input (no early exit): the
+# output carries finding text and can exceed a pipe buffer, where an early awk
+# exit would SIGPIPE printf under pipefail (#2171).
+parse_result_value() {
+  printf '%s\n' "$parse_result" | awk -F= -v key="$1" '$1 == key && !found { print $2; found = 1 }'
+}
+
+parse_status="$(parse_result_value PARSE_STATUS)"
 case "$parse_status" in
   ok) ;;
   head_mismatch)
@@ -1703,11 +1733,14 @@ case "$parse_status" in
     ;;
 esac
 
-result="$(printf '%s\n' "$parse_result" | awk -F= '$1 == "RESULT" { print $2; exit }')"
-reason="$(printf '%s\n' "$parse_result" | awk -F= '$1 == "REASON" { print $2; exit }')"
-comment_count="$(printf '%s\n' "$parse_result" | awk -F= '$1 == "COMMENT_COUNT" { print $2; exit }')"
-blocking_count="$(printf '%s\n' "$parse_result" | awk -F= '$1 == "BLOCKING_COUNT" { print $2; exit }')"
-suggestion_count="$(printf '%s\n' "$parse_result" | awk -F= '$1 == "SUGGESTION_COUNT" { print $2; exit }')"
+result="$(parse_result_value RESULT)"
+reason="$(parse_result_value REASON)"
+comment_count="$(parse_result_value COMMENT_COUNT)"
+blocking_count="$(parse_result_value BLOCKING_COUNT)"
+suggestion_count="$(parse_result_value SUGGESTION_COUNT)"
+# The carrier is always the parser's last line; read only that line.
+suggestions_json="$(printf '%s\n' "$parse_result" | awk '/^SUGGESTIONS_JSON=/ { value = $0 } END { sub(/^SUGGESTIONS_JSON=/, "", value); print value }')"
+printf '%s' "$suggestions_json" | jq -e 'type == "array"' >/dev/null 2>&1 || suggestions_json='[]'
 
 comment_count="${comment_count:-0}"
 blocking_count="${blocking_count:-0}"
@@ -1819,6 +1852,9 @@ write_evidence_file() {
 
   [ -n "${LOCAL_AI_REVIEWER_EVIDENCE_FILE:-}" ] || return 0
 
+  local final_suggestions_json='[]'
+  [ "$final_suggestion_count" -gt 0 ] 2>/dev/null && final_suggestions_json="$suggestions_json"
+
   local strict_spec_json strict_plan_json
   strict_spec_json="$(strict_build_strict_evidence_json "$strict_spec_state" "$strict_spec_count" \
     "$strict_spec_checks" "$strict_spec_applied" "$strict_spec_unknown_count" "$strict_spec_reason")"
@@ -1857,6 +1893,7 @@ write_evidence_file() {
     --argjson comment_count "$final_comment_count" \
     --argjson blocking_count "$final_blocking_count" \
     --argjson suggestion_count "$final_suggestion_count" \
+    --rawfile suggestions_raw <(printf '%s' "$final_suggestions_json") \
     --argjson strict_spec "$strict_spec_json" \
     --argjson strict_plan "$strict_plan_json" \
     '{
@@ -1878,6 +1915,7 @@ write_evidence_file() {
         blocking: $blocking_count,
         suggestions: $suggestion_count
       },
+      suggestions: ($suggestions_raw | fromjson),
       context_summary: {
         changed_files: $changed_files,
         pr_body: $pr_body,
@@ -1922,6 +1960,11 @@ emit_ordinary_and_strict() {
   print_kv EVIDENCE_VERIFICATION_JSON "$evidence_verification_json"
   if [ "$final_result" = "needs_fixes" ]; then
     printf '%s\n' "$parse_result" | awk '/^BLOCKING_[0-9]+_(PATH|LINE|BODY)=/ { print }' | workflow_redact_text
+  fi
+  # Suggestions stay non-blocking; their text is exposed so operators can
+  # triage or deliberately dismiss them (#2171).
+  if [ "$final_suggestion_count" -gt 0 ] 2>/dev/null; then
+    printf '%s\n' "$parse_result" | awk '/^SUGGESTION_[0-9]+_(PATH|LINE|BODY)=/ { print }' | workflow_redact_text
   fi
   emit_strict_spec_output "$strict_spec_state" "$strict_spec_count" \
     "$strict_spec_checks" "$strict_spec_unknown_count" "$strict_spec_reason" "$strict_spec_applied" \
